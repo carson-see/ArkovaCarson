@@ -11,6 +11,24 @@ name: Staging Soak Evidence
 # The only CI-only path is T0 inside scripts/ci/check-staging-evidence.ts.
 # Every other prod-bound PR must produce real evidence; T1 expedited evidence
 # still requires exact head SHA, health/smoke, rollback, rationale, and approval.
+#
+# SCRUM-3026 (2026-07-28) — live-state fix: `github.sha` and
+# `github.event.pull_request.*` are FROZEN at the moment the triggering event
+# was delivered. A bare re-run of an already-created job (GitHub UI "Re-run
+# jobs", `gh run rerun`, a branch-protection re-request, or any re-check that
+# doesn't create a brand-new webhook delivery) replays that frozen snapshot
+# untouched — a PR body edit made afterward, or a base that has moved because
+# other PRs merged in the same wave (07-27 10-PR wave), is invisible to the
+# rerun. That voided RC-manifest base coverage and made post-event body edits
+# never reach the gate. Fix: resolve PR head/base/body LIVE via `gh api` at
+# job-run time (same pattern as the labels-live-read fix already in
+# scripts/ci/lib/ciContext.ts's `fetchLiveLabels`/`resolvePrLabels`) and check
+# out the live-resolved merge-preview SHA instead of the frozen `github.sha`
+# value, so a stale rerun still evaluates CURRENT PR state. This does not
+# loosen any evidence requirement — it only makes the inputs to those
+# requirements current. See docs/runbooks/ci/mint-fresh-event.md for the
+# sanctioned way to force a genuinely fresh event end-to-end (new commit +
+# push, optional PR-body head-SHA bump) instead of relying on an opaque rerun.
 
 on:
   pull_request:
@@ -34,12 +52,13 @@ jobs:
       contents: read
       pull-requests: read
     env:
-      BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
-      HEAD_REF_SHA: ${{ github.event.pull_request.head.sha }}
-      PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-      PR_BODY: ${{ github.event.pull_request.body }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       PR_TITLE: ${{ github.event.pull_request.title }}
+      # PR_LABELS is a seed only — scripts/ci/lib/ciContext.ts's
+      # resolvePrLabels() unions this with a LIVE `gh api` fetch at read time
+      # (fetchLiveLabels), so a label added after this frozen payload was
+      # captured is still honored on a bare rerun.
+      PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
     steps:
       # Mergify merge queue creates speculative draft PRs (branch mergify/merge-queue/*)
       # whose body doesn't carry the original PR's staging evidence section.
@@ -51,10 +70,77 @@ jobs:
           echo "Mergify merge queue speculative check — skipping staging evidence gate."
           echo "The original PR passed this gate before entering the queue."
 
+      # SCRUM-3026: resolve the PR's CURRENT head SHA, base SHA, merge-preview
+      # SHA, and body via the GitHub API — never the frozen event payload.
+      # Runs on every execution of this job, including a bare rerun of an old
+      # run, so staleness cannot survive a re-check. Fails CLOSED: an
+      # unresolvable head/base SHA stops the job rather than silently
+      # evaluating against an unknown state.
+      - name: Resolve live PR state
+        id: live_pr
+        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          if [[ -z "${PR_NUMBER}" ]]; then
+            echo "::error::No pull_request.number in event context; cannot resolve live PR state."
+            exit 1
+          fi
+          DATA="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")"
+          HEAD_SHA="$(jq -r '.head.sha // empty' <<<"${DATA}")"
+          BASE_SHA="$(jq -r '.base.sha // empty' <<<"${DATA}")"
+          MERGE_SHA="$(jq -r '.merge_commit_sha // empty' <<<"${DATA}")"
+          MERGEABLE_STATE="$(jq -r '.mergeable_state // empty' <<<"${DATA}")"
+          if [[ -z "${HEAD_SHA}" || -z "${BASE_SHA}" ]]; then
+            echo "::error::gh api returned an empty head/base SHA for PR #${PR_NUMBER} — cannot resolve live PR state."
+            exit 1
+          fi
+          CHECKOUT_SHA="${MERGE_SHA}"
+          if [[ -z "${CHECKOUT_SHA}" ]]; then
+            echo "::warning::PR #${PR_NUMBER} has no computed merge_commit_sha yet (GitHub still calculating mergeability, or the PR has a conflict) — falling back to the branch head SHA for checkout."
+            CHECKOUT_SHA="${HEAD_SHA}"
+          elif [[ "${MERGEABLE_STATE}" == "dirty" || "${MERGEABLE_STATE}" == "unknown" ]]; then
+            # GitHub nulls merge_commit_sha and recomputes it asynchronously
+            # whenever the base moves, but the field can still return a
+            # STALE-but-present SHA during that recompute window (mergeable_state
+            # is the freshness signal, not merge_commit_sha's mere presence). A
+            # `dirty` (real conflict) or `unknown` (still computing) state means
+            # the returned merge_commit_sha cannot be trusted as the current
+            # merge preview, so fall back to the branch head SHA the same way
+            # the null case above does, rather than checking out a snapshot that
+            # may already be behind the live base.
+            echo "::warning::PR #${PR_NUMBER} merge_commit_sha is present but mergeable_state=${MERGEABLE_STATE} (stale/still-computing merge preview) — falling back to the branch head SHA for checkout."
+            CHECKOUT_SHA="${HEAD_SHA}"
+          fi
+          {
+            echo "head_sha=${HEAD_SHA}"
+            echo "base_sha=${BASE_SHA}"
+            echo "checkout_sha=${CHECKOUT_SHA}"
+          } >> "${GITHUB_OUTPUT}"
+          # SECURITY (adversarial review, 2026-07-28): the PR body is fully
+          # author-controlled. A FIXED heredoc delimiter here would let an
+          # author terminate the multiline value early by putting the literal
+          # delimiter string on its own line in their PR body, then inject
+          # arbitrary `key=value` lines into this step's remaining
+          # $GITHUB_OUTPUT — including overwriting head_sha/base_sha/
+          # checkout_sha written above (GitHub Actions takes the LAST
+          # occurrence of a given output name within a step). That would let a
+          # PR author forge the very state this workflow exists to make
+          # unforgeable. Per GitHub's own guidance, use a per-run random
+          # delimiter an attacker cannot predict or embed in advance.
+          BODY_DELIM="ghadelim_$(openssl rand -hex 16)"
+          {
+            echo "body<<${BODY_DELIM}"
+            jq -r '.body // ""' <<<"${DATA}"
+            echo "${BODY_DELIM}"
+          } >> "${GITHUB_OUTPUT}"
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ steps.live_pr.outputs.checkout_sha }}
           fetch-depth: 0
 
       - name: Setup Node.js
@@ -69,4 +155,16 @@ jobs:
 
       - name: Run staging-evidence check
         if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
-        run: npx tsx scripts/ci/check-staging-evidence.ts
+        env:
+          # Live-resolved (SCRUM-3026) — supersede the frozen event payload
+          # for exactly the fields that go stale on a bare rerun.
+          PR_BODY: ${{ steps.live_pr.outputs.body }}
+          HEAD_REF_SHA: ${{ steps.live_pr.outputs.head_sha }}
+          BASE_REF_SHA: ${{ steps.live_pr.outputs.base_sha }}
+        # Resolved local binary, not `npx tsx` (SonarCloud githubactions:S6505/
+        # S8543 — `npx` can install packages on-demand and run their lifecycle
+        # scripts). `npm ci` two steps above already installs the pinned
+        # `"tsx": "4.23.1"` devDependency, so `node_modules/.bin/tsx` is
+        # deterministic and uses the locked version. Matches the identical fix
+        # for this exact class of finding in ci.yml:140 / ci.yml:939.
+        run: node_modules/.bin/tsx scripts/ci/check-staging-evidence.ts
