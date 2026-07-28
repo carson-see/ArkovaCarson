@@ -122,9 +122,13 @@ Reports, per invocation:
    overrides, for both `anchors` and `anchor_proofs`.
 4. **Active long-running queries holding locks** — `pg_locks` joined to
    `pg_stat_activity`, filtered to `relation IN ('anchors','anchor_proofs')`,
-   reporting pid, lock mode, granted state, and running duration; any query
+   reporting pid, lock mode, granted state, and running duration; a query
    text matching `%batch_insert_anchors%` is flagged as the known SCRUM-3031
-   wedge signature regardless of duration.
+   wedge signature once it has also run past
+   `WEDGE_SIGNATURE_DURATION_FLOOR_SECONDS` (5s) — a bare name match alone is
+   not enough, since PR #1730 reuses that RPC name for a fixed, ~11ms-healthy
+   implementation and a duration-less match would otherwise WARN on every
+   routine call once that lands.
 
 ### Verdict criteria (SCRUM-2984 readiness bar, defined here — this doc is the
 source of truth for the thresholds until a Confluence page supersedes it)
@@ -198,10 +202,21 @@ for this run specifically:
 
 - **`db-health-monitor.ts`** (SCRUM-1254, runs on its existing schedule) —
   watch for `dead_tuple_ratio` / `dead_tuple_autovacuum_age` Sentry alerts on
-  `anchors` or `anchor_proofs` (it already monitors both — `HOT_TABLES`
-  includes `anchors`; `anchor_proofs` bloat is covered by the same
-  `get_table_bloat_stats` RPC if added to that list, or watched manually via
-  `scripts/ops/materializer-preflight.ts` re-runs between invocations).
+  `anchors`. **It does NOT currently monitor `anchor_proofs`** —
+  `services/worker/src/jobs/db-health-monitor.ts`'s `HOT_TABLES` is
+  `['anchors', 'public_records', 'audit_events', 'job_queue']`, and
+  `anchor_proofs` is not in that list. The underlying `get_table_bloat_stats`
+  RPC is generic (`table_names text[]` against `pg_stat_user_tables`, no
+  hardcoded table names), so adding `anchor_proofs` to `HOT_TABLES` would be
+  a cheap query-level change — but it's a `services/worker/src/` runtime
+  edit, which would pull this PR out of its declared T1/docs-only,
+  zero-worker-change scope and into a worker-behavior change requiring its
+  own T2 staging soak (CLAUDE.md §1.12). Out of scope here; tracked as a
+  follow-up rather than folded into this PR. Until that follow-up lands,
+  **manual `scripts/ops/materializer-preflight.ts` re-runs between
+  invocations are the only bloat/autovacuum signal `anchor_proofs` gets —
+  they are REQUIRED during the live run, not optional supplementary
+  coverage.**
 - **Locks** — re-run `scripts/ops/materializer-preflight.ts`'s lock-contention
   check between invocations (or a tighter ad hoc `pg_locks`/`pg_stat_activity`
   query) — specifically watch for the SCRUM-3031 `batch_insert_anchors`
@@ -286,8 +301,10 @@ hold:
    means something flipped the Phase-3 enforcement flag out of sequence —
    treat as an incident, not a retry-and-continue situation).
 4. **`db-health-monitor` fires** a `dead_tuple_ratio`, `dead_tuple_autovacuum_age`,
-   or `pg_cron_failure` alert touching `anchors` or `anchor_proofs` during the
-   run.
+   or `pg_cron_failure` alert touching `anchors` during the run (`anchor_proofs`
+   is not in `HOT_TABLES` — see §4 — so `anchor_proofs` bloat/staleness is
+   caught only by the manual `scripts/ops/materializer-preflight.ts` re-runs,
+   which must be treated as the equivalent abort trigger for that table).
 5. **`conflictSkipped` is unexpectedly large** relative to `inserted` for a
    page — the advisory lock should prevent a second concurrent materializer
    invocation from racing this run, but its session-pooling caveat (§3) means

@@ -40,7 +40,11 @@
  *   3. autovacuum_staleness — last_autovacuum/last_autoanalyze age + dead tuples
  *   4. lock_contention    — long-held locks on anchors / anchor_proofs,
  *                           flagging the known SCRUM-3031 batch_insert_anchors
- *                           wedge signature by name
+ *                           wedge signature by name (a signature match still
+ *                           needs WEDGE_SIGNATURE_DURATION_FLOOR_SECONDS of
+ *                           runtime to count — a bare name match is not
+ *                           enough, since #1730 reuses that RPC name for a
+ *                           fixed, fast implementation)
  *
  * Exit 0 = verdict PASS. Exit 1 = verdict WARN, or a connectivity/query
  * failure (fail-closed either way — never let a broken preflight look like
@@ -125,6 +129,18 @@ export const BLOAT_RATIO_WARN_THRESHOLD = 0.2;
 export const VACUUM_AGE_WARN_THRESHOLD_HOURS = 24;
 export const VACUUM_DEAD_TUPLE_WARN_THRESHOLD = 100_000;
 export const LOCK_CONTENTION_WARN_SECONDS = 60;
+/** `classifyWedgeSignature` is a bare substring match on query text, so it
+ *  fires for ANY call naming `batch_insert_anchors` — including a healthy,
+ *  fast one. PR #1730 replaces the SCRUM-3031 wedge RPC with `CREATE OR
+ *  REPLACE FUNCTION batch_insert_anchors` — same name, ~11ms healthy calls —
+ *  so once that lands, a signature-alone WARN (no duration floor) would fire
+ *  spuriously on every routine call during the very run this preflight
+ *  gates. A signature match must therefore also clear a duration floor
+ *  before it counts as an offender. 5s gives >400x headroom above the ~11ms
+ *  healthy call while still catching genuine wedge behavior (which has
+ *  historically held locks for tens of seconds to minutes) well before the
+ *  general LOCK_CONTENTION_WARN_SECONDS bar. */
+export const WEDGE_SIGNATURE_DURATION_FLOOR_SECONDS = 5;
 
 /** Lock modes at or above RowExclusive conflict with a concurrent writer;
  *  weaker modes (AccessShare, RowShare) are not contention risks here. */
@@ -226,8 +242,17 @@ export function mapPgstattupleApproxRows(rows: Record<string, unknown>[]): Bloat
     .filter((r) => isTargetTable(r.relname))
     .map((r) => {
       const dead = toNumber(r.dead_tuple_count);
-      const approxTotal = toNumber(r.approx_tuple_count);
-      const live = Math.max(approxTotal - dead, 0);
+      // pgstattuple_approx()'s approx_tuple_count is documented (Postgres
+      // docs, pgstattuple appendix, "pgstattuple_approx" section, checked
+      // 2026-07-28 against docs/current — column list: "approx_tuple_count
+      // bigint — Number of live tuples (estimated)") as ALREADY the live-
+      // tuple estimate, not live+dead combined. dead_tuple_count is a
+      // separate exact count. Do NOT subtract dead from it again — that
+      // previously double-counted dead tuples out of the live estimate,
+      // inflating deadTupleRatio (and collapsing it to 100% whenever
+      // dead_tuple_count >= approx_tuple_count), which corrupted this
+      // script's primary bloat gate for the SCRUM-2984 go/no-go call.
+      const live = toNumber(r.approx_tuple_count);
       const denom = live + dead;
       return {
         table: r.relname as TargetTable,
@@ -256,13 +281,22 @@ export function mapPgStatUserTablesToBloatRows(rows: Record<string, unknown>[]):
     });
 }
 
-/** Age in whole hours of the more recent of two ISO timestamps (or null if
- *  both are null). `now` is injectable for deterministic tests. */
+/** Age in hours (to 1 decimal place) of the more recent of two ISO
+ *  timestamps (or null if both are null). `now` is injectable for
+ *  deterministic tests.
+ *
+ *  Rounds rather than floors: `Math.floor` under-reported age by up to 59
+ *  minutes (e.g. a vacuum 24h59m ago floored to "24h", sitting exactly at
+ *  the WARN threshold instead of over it), silently delaying the
+ *  autovacuum_staleness WARN past the intended 24h boundary. Rounding to 1
+ *  decimal keeps the comparison accurate to within ~3 minutes while still
+ *  reading cleanly in operator-facing messages. */
 function mostRecentAgeHours(a: string | null, b: string | null, now: Date): number | null {
   const times = [a, b].filter((v): v is string => v !== null).map((v) => new Date(v).getTime());
   if (times.length === 0) return null;
   const mostRecent = Math.max(...times);
-  return Math.floor((now.getTime() - mostRecent) / 3_600_000);
+  const exactHours = (now.getTime() - mostRecent) / 3_600_000;
+  return Math.round(exactHours * 10) / 10;
 }
 
 export function mapAutovacuumRows(
@@ -372,7 +406,8 @@ export function evaluateLockContention(rows: LockContentionRow[]): PreflightFind
     (r) =>
       r.granted &&
       CONFLICTING_LOCK_MODES.has(r.lockMode) &&
-      (r.runningSeconds > LOCK_CONTENTION_WARN_SECONDS || r.isKnownWedgeSignature),
+      (r.runningSeconds > LOCK_CONTENTION_WARN_SECONDS ||
+        (r.isKnownWedgeSignature && r.runningSeconds > WEDGE_SIGNATURE_DURATION_FLOOR_SECONDS)),
   );
   if (offenders.length === 0) {
     return [

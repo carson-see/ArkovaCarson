@@ -13,6 +13,7 @@ import {
   LOCK_CONTENTION_WARN_SECONDS,
   VACUUM_AGE_WARN_THRESHOLD_HOURS,
   VACUUM_DEAD_TUPLE_WARN_THRESHOLD,
+  WEDGE_SIGNATURE_DURATION_FLOOR_SECONDS,
   buildReport,
   classifyWedgeSignature,
   evaluateAutovacuumStaleness,
@@ -64,15 +65,37 @@ describe('mapGapRow', () => {
 // ---------------------------------------------------------------------------
 
 describe('mapPgstattupleApproxRows', () => {
+  // approx_tuple_count from pgstattuple_approx() is documented (Postgres
+  // docs, pgstattuple appendix) as ALREADY the estimated live-tuple count —
+  // NOT live+dead combined. dead_tuple_count is a separate, exact count.
+  // liveTuples must equal approx_tuple_count as-is; subtracting dead again
+  // double-counts it out of the live estimate.
   it('maps dead/live tuples and computes ratio', () => {
     const rows = mapPgstattupleApproxRows([
       { relname: 'anchors', dead_tuple_count: 100, approx_tuple_count: 1000 },
       { relname: 'anchor_proofs', dead_tuple_count: 0, approx_tuple_count: 6110 },
     ]);
     expect(rows).toEqual([
-      { table: 'anchors', liveTuples: 900, deadTuples: 100, deadTupleRatio: 0.1, source: 'pgstattuple_approx' },
+      { table: 'anchors', liveTuples: 1000, deadTuples: 100, deadTupleRatio: 100 / 1100, source: 'pgstattuple_approx' },
       { table: 'anchor_proofs', liveTuples: 6110, deadTuples: 0, deadTupleRatio: 0, source: 'pgstattuple_approx' },
     ]);
+  });
+
+  // Regression case for the double-subtraction bug: under the buggy
+  // `live = max(approxTotal - dead, 0)` formula, dead >= approx collapses
+  // liveTuples to 0 and deadTupleRatio to a nonsensical 100%, even though
+  // approx_tuple_count is already the live estimate and dead_tuple_count is
+  // an independent exact count — the two are not mutually exclusive splits
+  // of the same total, so dead can legitimately meet or exceed approx
+  // without the table being 100% dead.
+  it('does not collapse to 100% dead when dead_tuple_count >= approx_tuple_count (regression: double-subtraction)', () => {
+    const rows = mapPgstattupleApproxRows([
+      { relname: 'anchors', dead_tuple_count: 1200, approx_tuple_count: 1000 },
+    ]);
+    expect(rows[0].liveTuples).toBe(1000);
+    expect(rows[0].deadTuples).toBe(1200);
+    expect(rows[0].deadTupleRatio).toBeCloseTo(1200 / 2200, 6);
+    expect(rows[0].deadTupleRatio).not.toBe(1);
   });
 
   it('ignores rows for tables outside the target set', () => {
@@ -144,6 +167,28 @@ describe('mapAutovacuumRows', () => {
       NOW,
     );
     expect(rows[0].vacuumAgeHours).toBeNull();
+  });
+
+  // Regression case for the Math.floor under-report: a vacuum 24h59m ago is
+  // truly past the 24h WARN boundary. Math.floor((24h59m)) === 24, which is
+  // NOT > VACUUM_AGE_WARN_THRESHOLD_HOURS (24) and would wrongly stay under
+  // the boundary for nearly a full hour. Rounding to 1 decimal reports ~25h
+  // instead, correctly past the boundary.
+  it('does not under-report age at the 24h boundary (regression: Math.floor)', () => {
+    const rows = mapAutovacuumRows(
+      [
+        {
+          relname: 'anchors',
+          last_autovacuum: '2026-07-27T11:01:00Z', // exactly 24h59m before NOW
+          last_autoanalyze: null,
+          autovacuum_count: 5,
+          n_dead_tup: VACUUM_DEAD_TUPLE_WARN_THRESHOLD + 1,
+        },
+      ],
+      NOW,
+    );
+    expect(rows[0].vacuumAgeHours).toBeGreaterThan(VACUUM_AGE_WARN_THRESHOLD_HOURS);
+    expect(evaluateAutovacuumStaleness(rows)[0].severity).toBe('warn');
   });
 });
 
@@ -348,14 +393,14 @@ describe('evaluateLockContention', () => {
     expect(findings[0].severity).toBe('warn');
   });
 
-  it('warns immediately on the known SCRUM-3031 wedge signature even under the duration threshold', () => {
+  it('warns on the known SCRUM-3031 wedge signature once past the (lower) wedge duration floor, well under the general threshold', () => {
     const rows: LockContentionRow[] = [
       {
         pid: 99,
         relation: 'anchors',
         lockMode: 'RowExclusiveLock',
         granted: true,
-        runningSeconds: 5,
+        runningSeconds: WEDGE_SIGNATURE_DURATION_FLOOR_SECONDS + 1,
         queryText: 'SELECT batch_insert_anchors($1)',
         isKnownWedgeSignature: true,
       },
@@ -363,6 +408,27 @@ describe('evaluateLockContention', () => {
     const findings = evaluateLockContention(rows);
     expect(findings[0].severity).toBe('warn');
     expect(findings[0].message).toMatch(/SCRUM-3031/);
+  });
+
+  // Regression case: PR #1730 reuses the batch_insert_anchors name for a
+  // fixed, ~11ms-healthy RPC. A bare substring match on query text with no
+  // duration floor would fire a spurious WARN on every routine call once
+  // that lands. A signature match must also clear
+  // WEDGE_SIGNATURE_DURATION_FLOOR_SECONDS before it counts as an offender.
+  it('does not warn on a fast healthy call that merely matches the wedge signature by name', () => {
+    const rows: LockContentionRow[] = [
+      {
+        pid: 100,
+        relation: 'anchors',
+        lockMode: 'RowExclusiveLock',
+        granted: true,
+        runningSeconds: 0,
+        queryText: 'SELECT batch_insert_anchors($1, $2)',
+        isKnownWedgeSignature: true,
+      },
+    ];
+    const findings = evaluateLockContention(rows);
+    expect(findings[0].severity).toBe('pass');
   });
 
   it('ignores a granted AccessShareLock regardless of duration', () => {
