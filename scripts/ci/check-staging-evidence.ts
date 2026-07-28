@@ -2194,6 +2194,11 @@ const STAGING_TOOLING_ALLOW = [
   // CI gate that parses vercel.json + scans on-device runtime sources. Runs only
   // in CI, never ships to prod runtime, so it is T0 tooling.
   /^scripts\/ci\/check-csp-runtime-deps(\.test)?\.ts$/,
+  // SCRUM-3032/3033/3034 (CTO ruling R14, 2026-07-28 Wave 0 / G3): orphaned
+  // hook/component export lint. Static-analysis CI gate (TypeScript AST scan
+  // over src/), runs only in CI; never ships to prod runtime → T0 tooling,
+  // same class as the other scripts/ci/check-*.ts gates above.
+  /^scripts\/ci\/check-orphaned-exports(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   // SCRUM-2977: anti-hollow-soak pre-clock guard set. A pure guard module + CLI
   // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
