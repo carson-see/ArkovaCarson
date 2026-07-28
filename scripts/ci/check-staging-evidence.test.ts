@@ -235,6 +235,25 @@ describe('check-staging-evidence', () => {
       expect(requiredTierFor(['scripts/ci-supabase-start.sh']).tier).toBe('T0');
     });
 
+    it('returns T0 for the SCRUM-3026 mint-fresh-event re-trigger helper + its test', () => {
+      // scripts/ci/mint-fresh-event.sh only ever mints a tree-identical empty
+      // commit / bumps a PR-body field via `gh`; it runs as an operator/agent
+      // CLI and never ships to prod runtime.
+      expect(requiredTierFor(['scripts/ci/mint-fresh-event.sh']).tier).toBe('T0');
+      expect(requiredTierFor(['scripts/ci/mint-fresh-event.test.sh']).tier).toBe('T0');
+    });
+
+    it('does not grandfather a mint-fresh-event lookalike outside the exact filename', () => {
+      // Fail-closed check: the allowlist regex is anchored to the exact
+      // filename, not a scripts/ci/ prefix carve-out.
+      expect(
+        requiredTierFor(['scripts/ci/mint-fresh-event-v2.sh']).tier,
+      ).toBe('T1');
+      expect(
+        requiredTierFor(['scripts/ci/lib/mint-fresh-event.sh']).tier,
+      ).toBe('T0'); // scripts/ci/lib/ is already an allowlisted directory
+    });
+
     // --- G1 (PI-0.5): KPI-3 rehearsal + clean-room .mjs tooling classify T0 ---
     it('returns T0 for the KPI-3 rehearsal tooling bundle', () => {
       expect(
@@ -1354,6 +1373,8 @@ describe('check-staging-evidence', () => {
           'scripts/ci/check-staging-gcloud-policy.ts',
           'scripts/ci/staging-honesty-preflight.ts',
           'scripts/ci/staging-honesty-preflight.test.ts',
+          'scripts/ci/mint-fresh-event.sh',
+          'scripts/ci/mint-fresh-event.test.sh',
           '.github/workflows/ci.yml',
           'CLAUDE.md',
           'docs/staging/README.md',
