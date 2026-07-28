@@ -3,10 +3,26 @@
  *
  * Covers the happy path, no-config-503, upstream-failure, RPC-failure, and
  * input-validation branches. No live network — Middesk client is mocked.
+ *
+ * SECURITY REGRESSION COVERAGE (fix, 2026-07-28): neither route previously
+ * checked that `:orgId` had anything to do with the authenticated caller —
+ * any authenticated user could submit ANY org's legal name/EIN/address to
+ * Middesk, or read any org's KYB status, by guessing/enumerating org UUIDs.
+ * `_org-auth.js` is mocked here so the "cross-org" tests below drive the
+ * authorization decision directly (the helpers' own DB behavior is covered
+ * in `api/_org-auth.test.ts`).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express, { Request, Response, NextFunction } from 'express';
 import request from 'supertest';
+
+const isCallerOrgAdminResult = vi.fn();
+const isUserMemberOfOrgResult = vi.fn();
+
+vi.mock('../_org-auth.js', () => ({
+  isCallerOrgAdminResult: (...args: unknown[]) => isCallerOrgAdminResult(...args),
+  isUserMemberOfOrgResult: (...args: unknown[]) => isUserMemberOfOrgResult(...args),
+}));
 
 vi.mock('../../utils/db.js', () => ({
   db: {
@@ -74,6 +90,10 @@ function createApp(userId: string | null = 'user-1') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: the caller is an admin AND a member of VALID_ORG_ID — the
+  // existing happy-path tests below exercise a legitimate same-org caller.
+  isCallerOrgAdminResult.mockResolvedValue({ value: true, error: false });
+  isUserMemberOfOrgResult.mockResolvedValue({ value: true, error: false });
 });
 
 describe('POST /api/v1/org-kyb/:orgId/start', () => {
@@ -91,6 +111,39 @@ describe('POST /api/v1/org-kyb/:orgId/start', () => {
       .post('/api/v1/org-kyb/not-a-uuid/start')
       .send(VALID_PAYLOAD);
     expect(res.status).toBe(400);
+  });
+
+  // ─── Cross-tenant isolation (KEY DELIVERABLE) ───────────────────────
+  it('caller who is a member but NOT an admin of :orgId is REJECTED (403)', async () => {
+    isCallerOrgAdminResult.mockResolvedValue({ value: false, error: false });
+    const app = createApp('member-not-admin');
+    const res = await request(app)
+      .post(`/api/v1/org-kyb/${VALID_ORG_ID}/start`)
+      .send(VALID_PAYLOAD);
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('forbidden');
+    expect(mockSubmit).not.toHaveBeenCalled();
+  });
+
+  it('caller with NO relationship at all to :orgId is REJECTED (403), never trusted', async () => {
+    isCallerOrgAdminResult.mockResolvedValue({ value: false, error: false });
+    const app = createApp('stranger');
+    const res = await request(app)
+      .post(`/api/v1/org-kyb/${VALID_ORG_ID}/start`)
+      .send(VALID_PAYLOAD);
+    expect(res.status).toBe(403);
+    expect(isCallerOrgAdminResult).toHaveBeenCalledWith('stranger', VALID_ORG_ID);
+    expect(mockSubmit).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 (not a masked 403) on a DB/operational error during the admin check', async () => {
+    isCallerOrgAdminResult.mockResolvedValue({ value: false, error: true });
+    const app = createApp();
+    const res = await request(app)
+      .post(`/api/v1/org-kyb/${VALID_ORG_ID}/start`)
+      .send(VALID_PAYLOAD);
+    expect(res.status).toBe(500);
+    expect(mockSubmit).not.toHaveBeenCalled();
   });
 
   it('returns 400 on invalid EIN', async () => {
@@ -182,6 +235,24 @@ describe('GET /api/v1/org-kyb/:orgId/status', () => {
     const app = createApp(null);
     const res = await request(app).get(`/api/v1/org-kyb/${VALID_ORG_ID}/status`);
     expect(res.status).toBe(401);
+  });
+
+  // ─── Cross-tenant isolation (KEY DELIVERABLE) ───────────────────────
+  it('caller who is NOT a member of :orgId is REJECTED (404, no cross-org existence leak)', async () => {
+    isUserMemberOfOrgResult.mockResolvedValue({ value: false, error: false });
+    const app = createApp('stranger');
+    const res = await request(app).get(`/api/v1/org-kyb/${VALID_ORG_ID}/status`);
+    expect(res.status).toBe(404);
+    expect(isUserMemberOfOrgResult).toHaveBeenCalledWith('stranger', VALID_ORG_ID);
+    expect(mockDb.from).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 (not a masked 404) on a DB/operational error during the membership check', async () => {
+    isUserMemberOfOrgResult.mockResolvedValue({ value: false, error: true });
+    const app = createApp();
+    const res = await request(app).get(`/api/v1/org-kyb/${VALID_ORG_ID}/status`);
+    expect(res.status).toBe(500);
+    expect(mockDb.from).not.toHaveBeenCalled();
   });
 
   it('returns 404 when org not visible', async () => {

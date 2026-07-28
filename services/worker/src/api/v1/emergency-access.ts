@@ -1,13 +1,37 @@
 /**
  * HIPAA Emergency Access API — REG-10 (SCRUM-571)
  *
- * POST   /api/v1/emergency-access           — Request emergency access
- * PATCH  /api/v1/emergency-access/:id/approve — Approve (dual-control)
- * PATCH  /api/v1/emergency-access/:id/revoke  — Revoke early
- * GET    /api/v1/emergency-access            — List grants for org
+ * POST   /api/v1/emergency-access             — Request emergency access (org member)
+ * PATCH  /api/v1/emergency-access/:id/approve — Approve (dual-control; ORG_ADMIN only)
+ * PATCH  /api/v1/emergency-access/:id/revoke  — Revoke early (org member)
+ * GET    /api/v1/emergency-access             — List grants for org (org member)
  *
  * Section 164.312(a)(2)(ii): Emergency access procedure.
  * Time-limited, dual-control approved, fully logged.
+ *
+ * SECURITY (fix, 2026-07-28): all four routes previously trusted `req.orgId`
+ * as set by the old `requireOrgId`, which read `x-org-id` verbatim with no
+ * membership check — any authenticated Arkova user could read, request,
+ * AND APPROVE another org's HIPAA emergency-access grants. `requireOrgId` is
+ * now membership-validating (see its own doc comment).
+ *
+ * Privilege level per route (least privilege):
+ *   - POST / (request)   — org membership. Emergency access exists precisely
+ *     so any authorized clinician/staff member can request it under
+ *     pressure; gating the *request* behind admin would defeat the point.
+ *   - PATCH /:id/approve — ORG_ADMIN required (NEW gate). Approval GRANTS
+ *     elevated access to PHI-adjacent healthcare credentials — this is the
+ *     privilege-escalating half of dual control and must not be reachable by
+ *     an arbitrary org member (the self-approval check below is necessary
+ *     but not sufficient — two non-admin members could rubber-stamp each
+ *     other without oversight).
+ *   - PATCH /:id/revoke  — org membership (unchanged level). Revocation only
+ *     REDUCES standing access/risk; requiring admin here would block a
+ *     requester from self-cancelling an erroneous or no-longer-needed
+ *     request. Still fully org-scoped and audit-logged.
+ *   - GET / (list)       — org membership (unchanged level). Visibility into
+ *     which grants are active for one's own org is an oversight feature, not
+ *     a privileged one; every listed grant is already fully audited.
  */
 
 import { Router, Request, Response } from 'express';
@@ -16,6 +40,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { EMERGENCY_ACCESS_MAX_HOURS } from '../../constants/hipaa.js';
 import { requireOrgId } from '../../middleware/requireOrgId.js';
+import { requireOrgAdmin } from '../../middleware/requireOrgAdmin.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
@@ -97,9 +122,9 @@ emergencyAccessRouter.post('/', async (req: Request, res: Response) => {
   }
 });
 
-// ─── PATCH /:id/approve — Dual-control approval ────────────────────────────
+// ─── PATCH /:id/approve — Dual-control approval (ORG_ADMIN required) ───────
 
-emergencyAccessRouter.patch('/:id/approve', async (req: Request, res: Response) => {
+emergencyAccessRouter.patch('/:id/approve', requireOrgAdmin, async (req: Request, res: Response) => {
   try {
     const approverId = req.authUserId;
     if (!approverId) {
