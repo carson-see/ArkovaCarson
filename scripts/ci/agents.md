@@ -6,7 +6,7 @@ CI gate scripts. Each one fails the build with a structured exit code + actionab
 
 - **`check-staging-evidence.ts`** — enforces CLAUDE.md §1.11 / §1.12 staging soak evidence on every PR. Path-based detector classifies the touched files into Tier T1/T2/T3, then verifies the PR body declares the required tier and includes the matching required fields. T1 is a 2h soak path, not a zero-soak bypass. Field regexes accept optional markdown checkbox prefixes (`- [x]` / `- [ ]`) and use `[^\S\n]*` for horizontal-only whitespace to prevent cross-line value capture (PR #801).
   - **Staging integrity fields (T2/T3):** PR body evidence must name `PR head SHA`, `Base SHA`, `Staging project ref`, `Cloud Run service/tag URL`, `Image digest`, `Evidence scope`, `Preflight timestamp`, and `Preflight result`. The gate rejects copied evidence when the PR head SHA differs, rejects diagnostic-only scope, and requires the captured preflight result to include `environment_type=clean_mirror`. **Base SHA movement is path-aware (surface-intersection, not SHA-exact / T0-only):** when the evidence `Base SHA` differs from the current base, the gate computes the files main changed in the interval (`baseDriftFiles` in tests, `changedFilesBetween` in CI) and tests them against THIS PR's soak surface = its own changed files ∪ the SHARED prod-runtime surface (`SHARED_PROD_RUNTIME_RULES` = the T2+ subset of `PATH_RULES`: migrations, chain, security, anchor lifecycle, cron, billing, queue/concurrency, public API, stripe/webhooks/auth/ai, edge). **Disjoint drift preserves evidence with no attestation.** Same-surface drift fails closed (re-soak, no override), with a strictly-narrower fallback: a T0-only intersecting drift set can still be preserved by an approved `Base drift impact:` note (documenting changed files, no runtime/schema/migration/staging/soak/deploy impact, and a named approver). An unresolvable drift-file list fails closed.
-  - **`isStagingToolingOnly()` allowlist** (per-tool meta-PRs that don't need a soak): `scripts/staging/`, `scripts/ci/check-staging-evidence(.test).ts`, `scripts/ci/check-staging-gcloud-policy(.test).ts`, `scripts/ci/lib/`, `scripts/gcp-setup/`, `services/worker/scripts/load-test/`, `tests/k6/`, `tests/load/`, `docs/staging/`, `docs/ops/gemini-model-upgrade.md`, `.github/workflows/ci.yml`, `.github/workflows/staging-evidence.yml`, `CLAUDE.md`, `HANDOFF.md`, `.gitignore`, `.claude/settings.json`, `.claude/hooks/`, `package.json`, `package-lock.json`, `agents.md`.
+  - **`isStagingToolingOnly()` allowlist** (per-tool meta-PRs that don't need a soak): `scripts/staging/`, `scripts/ci/check-staging-evidence(.test).ts`, `scripts/ci/mint-fresh-event(.test).sh` (SCRUM-3026 re-trigger helper), `scripts/ci/check-staging-gcloud-policy(.test).ts`, `scripts/ci/lib/`, `scripts/gcp-setup/`, `services/worker/scripts/load-test/`, `tests/k6/`, `tests/load/`, `docs/staging/`, `docs/ops/gemini-model-upgrade.md`, `.github/workflows/ci.yml`, `.github/workflows/staging-evidence.yml`, `CLAUDE.md`, `HANDOFF.md`, `.gitignore`, `.claude/settings.json`, `.claude/hooks/`, `package.json`, `package-lock.json`, `agents.md`.
   - Also allowlisted (PR #798): `eslint-rules/`, `**/eslint.config.(js|cjs|mjs)` — lint config is dev-time tooling with no runtime impact.
   - **Residual-risk exception (PR #924):** when preflight is not `clean_mirror`, a `### Residual-risk note` section with 5 required sub-fields (Contamination type, Affected rows, Impact on this PR, Reason not cleaned, Approved by) satisfies the gate. Implements the CLAUDE.md §1.11A escape valve that was previously uncodified.
   - **T2/T3 deploy-evidence value validation (PR #980):** `requiredValueErrors()` previously began with `if (tier !== 'T1') return []`, so it ran only for T1 — at T2/T3 the deploy fields were label-presence-only (via `missingFields()`) and a PR could pass with every artifact left as `PENDING`. T2/T3 now run the stricter analog: concrete deploy artifacts (`Worker revision`, `Image digest`, `Staging deploy log id`, `Cloud Run service/tag URL`) reject empty, `PENDING`/`TBD`-style placeholders, **and** `N/A`; `Cloud Run service/tag URL` must additionally contain a URL; remaining evidence fields (`Staging branch`, `Staging project ref`, `E2E result`, `Migration applied`, `Rollback rehearsed`, and the T3 trigger/flush/isolation fields) reject empty + placeholders while still allowing legitimate `N/A`/`none` (e.g. `Migration applied: none`). Fields with dedicated validators (SHAs, evidence scope, preflight, soak timestamps) are skipped here to avoid duplicate errors.
@@ -46,6 +46,31 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - Fail messages must tell the operator (a) what failed, (b) why it matters, (c) how to fix or override.
 
 ## Recent Changes
+- 2026-07-28 SCRUM-3026 (Wave G gate fix, RTE lane): fixed the Staging Soak
+  Evidence Gate's stale-checkout bug. `github.sha` and
+  `github.event.pull_request.*` are frozen at the triggering webhook
+  delivery; a bare rerun (GitHub UI "Re-run jobs", `gh run rerun`, a
+  branch-protection re-request, or a Mergify re-check without a new
+  delivery) replayed that frozen snapshot, which voided RC-manifest base
+  coverage during the 2026-07-27 10-PR wave and hid post-event body edits.
+  `.github/workflows/staging-evidence.yml` now runs a `Resolve live PR state`
+  step (`id: live_pr`, `gh api repos/.../pulls/<N>`) on every execution;
+  checkout pins to the live-resolved merge-preview SHA
+  (`steps.live_pr.outputs.checkout_sha`, falling back to the branch head SHA
+  if GitHub hasn't computed `merge_commit_sha` yet) instead of the frozen
+  `github.sha`, and the evidence-check step's `PR_BODY` / `HEAD_REF_SHA` /
+  `BASE_REF_SHA` bind to that step's outputs instead of raw
+  `github.event.pull_request.*` values. Mirrors the labels-live-read pattern
+  already in `scripts/ci/lib/ciContext.ts` (`fetchLiveLabels` /
+  `resolvePrLabels`). `staging-evidence-workflow-contract.test.ts` rewritten
+  to pin the new shape and reject every regression back to a frozen-payload
+  binding. Added `mint-fresh-event.sh` (+ `.test.sh`, stubbed git/gh, 37
+  assertions) — the sanctioned way to force a genuinely fresh PR event
+  (tree-identical empty commit + push, optional `PR head SHA:` body bump via
+  `gh pr edit`) when a real new event is needed rather than a live re-read of
+  the existing one. Runbook: `docs/runbooks/ci/mint-fresh-event.md`. Does not
+  weaken any evidence requirement — only makes the inputs to those
+  requirements current. NOT merged — T0, PR under review.
 - 2026-07-15 Deploy Worker full-history preflight parity: added
   `deploy-worker-history-contract.test.ts` to require `fetch-depth: 0` before
   the deploy workflow runs history-bound worker tests. The narrow
