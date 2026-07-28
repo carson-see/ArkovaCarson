@@ -137,6 +137,63 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
+    // pentest-prep (API contract audit): was mounted and live but missing
+    // from the served spec — a pentester enumerating from this document
+    // would never have found it.
+    '/verify/{publicId}/proof': {
+      get: {
+        summary: 'Get Merkle inclusion proof',
+        description:
+          'Returns the Merkle inclusion proof for a batch-anchored credential: the proof path, batch root, and the on-chain transaction it was committed in. `verified` is computed by locally recomputing the root from the proof — never trusted from stored status. Pass `?format=signed` to receive the bundle wrapped in a signed envelope bound to the issuer DID (requires PROOF_SIGNING_KEY_PEM/PROOF_SIGNING_KEY_ID to be configured; otherwise 503).',
+        operationId: 'getMerkleProof',
+        tags: ['Verification'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }, {}],
+        parameters: [
+          {
+            name: 'publicId',
+            in: 'path',
+            required: true,
+            description: 'The public ID of the credential',
+            schema: { type: 'string', minLength: 3 },
+          },
+          {
+            name: 'format',
+            in: 'query',
+            required: false,
+            description: 'Pass `signed` to receive a DID-bound signed proof envelope instead of the raw bundle.',
+            schema: { type: 'string', enum: ['signed'] },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Merkle inclusion proof',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    public_id: { type: 'string' },
+                    fingerprint: { type: 'string' },
+                    merkle_root: { type: 'string', nullable: true },
+                    merkle_proof: { type: 'array', items: { type: 'string' }, nullable: true },
+                    tx_id: { type: 'string', nullable: true },
+                    block_height: { type: 'integer', nullable: true },
+                    block_timestamp: { type: 'string', format: 'date-time', nullable: true },
+                    batch_id: { type: 'string', nullable: true },
+                    verified: { type: 'boolean', description: 'Recomputed locally from the proof path — never trusted from stored anchor status.' },
+                    proof_bundle: { type: 'object', nullable: true, additionalProperties: true, description: 'PROOF-05: self-contained bundle (block header, OP_RETURN payload, schema version) when the confirmation layer has been populated; null otherwise.' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '404': { description: 'Record not found, or no Merkle proof available (not batch-anchored)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
+          '503': { description: 'Signed-format requested but signing is not configured, or the proof is in an indeterminate state', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
     '/credentials/{publicId}/ctdl': {
       get: {
         summary: 'Get CTDL JSON-LD for a credential',
@@ -497,6 +554,56 @@ export const openApiSpec: Record<string, any> = {
           '201': { description: 'Embedding generated and stored' },
           '401': { $ref: '#/components/responses/Unauthorized' },
           '402': { description: 'Insufficient AI credits', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          // pentest-prep: this prefix passes through aiExtractionGate()
+          // (ENABLE_AI_EXTRACTION) at the router.ts mount — was missing 503.
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
+    // pentest-prep (API contract audit): mounted and live, missing from the
+    // served spec.
+    '/ai/embed/batch': {
+      post: {
+        summary: 'Re-embed credentials in batch',
+        description: 'Re-generates embeddings for up to 100 credentials owned by the caller\'s org in one request. Costs 1 AI credit per credential embedded.',
+        operationId: 'aiBatchGenerateEmbedding',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['anchorIds'],
+                properties: {
+                  anchorIds: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string', format: 'uuid' } },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Batch embedding result',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    total: { type: 'integer' },
+                    succeeded: { type: 'integer' },
+                    failed: { type: 'integer' },
+                    errors: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                  },
+                },
+              },
+            },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
         },
       },
     },
@@ -514,10 +621,50 @@ export const openApiSpec: Record<string, any> = {
         responses: {
           '200': { description: 'Feedback recorded' },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
         },
       },
     },
-    '/ai/integrity': {
+    // pentest-prep (API contract audit): mounted and live, missing from the
+    // served spec.
+    '/ai/feedback/accuracy': {
+      get: {
+        summary: 'Get extraction accuracy stats',
+        description: "Aggregate accuracy stats derived from stored feedback, scoped to the caller's org.",
+        operationId: 'aiGetFeedbackAccuracy',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        parameters: [
+          { name: 'credentialType', in: 'query', schema: { type: 'string' }, description: 'Filter to a single credential type' },
+          { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 90, default: 30 }, description: 'Lookback window in days' },
+        ],
+        responses: {
+          '200': { description: 'Accuracy stats for the requested window', content: { 'application/json': { schema: { type: 'object', properties: { stats: { type: 'object', additionalProperties: true }, days: { type: 'integer' } } } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
+    '/ai/feedback/analysis': {
+      get: {
+        summary: 'Analyze feedback for prompt-improvement suggestions',
+        description: 'Cross-org aggregate analysis of stored extraction feedback, used to tune extraction prompts. ORG_ADMIN only.',
+        operationId: 'aiGetFeedbackAnalysis',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        parameters: [
+          { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 90, default: 30 }, description: 'Lookback window in days' },
+        ],
+        responses: {
+          '200': { description: 'Prompt-improvement analysis report', content: { 'application/json': { schema: { type: 'object', additionalProperties: true } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'Admin access required', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
+    '/ai/integrity/compute': {
       post: {
         summary: 'Compute integrity score',
         description: 'Compute a fraud/integrity score for a credential. Scores below 60 are auto-flagged for review. Gated by ENABLE_AI_FRAUD flag.',
@@ -531,6 +678,31 @@ export const openApiSpec: Record<string, any> = {
         responses: {
           '200': { description: 'Integrity score with breakdown', content: { 'application/json': { schema: { $ref: '#/components/schemas/IntegrityResponse' } } } },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '404': { $ref: '#/components/responses/NotFound' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
+    // pentest-prep (API contract audit): the prior '/ai/integrity' entry
+    // (no sub-path) never matched the actual mount — the real route is
+    // POST /ai/integrity/compute (above). This GET entry was entirely
+    // missing.
+    '/ai/integrity/{anchorId}': {
+      get: {
+        summary: 'Get a stored integrity score',
+        description: "Retrieve a previously-computed integrity score for an anchor. Returns 404 if none has been computed yet, or if the anchor does not belong to the caller's org (existence is not leaked).",
+        operationId: 'aiGetIntegrityScore',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        parameters: [
+          { name: 'anchorId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+        ],
+        responses: {
+          '200': { description: 'Stored integrity score', content: { 'application/json': { schema: { $ref: '#/components/schemas/IntegrityResponse' } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '404': { $ref: '#/components/responses/NotFound' },
           '503': { $ref: '#/components/responses/ServiceUnavailable' },
         },
       },
@@ -546,6 +718,77 @@ export const openApiSpec: Record<string, any> = {
           '200': { description: 'Review queue items', content: { 'application/json': { schema: { $ref: '#/components/schemas/ReviewQueueResponse' } } } },
           '401': { $ref: '#/components/responses/Unauthorized' },
           '403': { $ref: '#/components/responses/Forbidden' },
+          // pentest-prep: this whole prefix passes through aiFraudGate()
+          // (ENABLE_AI_FRAUD) at the router.ts mount — was missing 503.
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
+    // pentest-prep (API contract audit): mounted and live, missing from the
+    // served spec.
+    '/ai/review/stats': {
+      get: {
+        summary: 'Get review queue statistics',
+        description: 'Counts of review-queue items by status for the caller\'s org. Org-admin only.',
+        operationId: 'aiGetReviewQueueStats',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        responses: {
+          '200': {
+            description: 'Review queue counts by status',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    total: { type: 'integer' },
+                    pending: { type: 'integer' },
+                    investigating: { type: 'integer' },
+                    escalated: { type: 'integer' },
+                    approved: { type: 'integer' },
+                    dismissed: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'Admin access required to view review queue stats', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
+    '/ai/review/{itemId}': {
+      patch: {
+        summary: 'Apply a review-queue action',
+        description: 'Approve, escalate, investigate, or dismiss a flagged review item. Org-admin only.',
+        operationId: 'aiApplyReviewAction',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        parameters: [
+          { name: 'itemId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['action'],
+                properties: {
+                  action: { type: 'string', enum: ['APPROVE', 'INVESTIGATE', 'ESCALATE', 'DISMISS'] },
+                  notes: { type: 'string', maxLength: 2000 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Review action applied', content: { 'application/json': { schema: { type: 'object', properties: { success: { type: 'boolean' }, itemId: { type: 'string' }, action: { type: 'string' } } } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'Admin access required to review items', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
         },
       },
     },
@@ -702,6 +945,157 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
+    // pentest-prep (API contract audit): batch-create and batch-verify were
+    // mounted and live but missing from the served spec.
+    '/attestations/batch-create': {
+      post: {
+        summary: 'Create attestations in batch',
+        description: 'Create up to 100 attestations in one request. Requires JWT. Each item is inserted individually (public_id collision retry, 3x); a per-item failure does not fail the batch. Costs no AI credits — metadata is only available when ENABLE_AI_EXTRACTION is on (503 if any item carries metadata while the flag is off).',
+        operationId: 'batchCreateAttestations',
+        tags: ['Attestations'],
+        security: [{ SupabaseJWT: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['attestations'],
+                properties: {
+                  attestations: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 100,
+                    items: {
+                      type: 'object',
+                      required: ['attestation_type', 'attester_name', 'subject_identifier', 'claims'],
+                      description: 'Same shape as the POST /attestations request body.',
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '201': {
+            description: 'Batch processed (per-item success/failure — HTTP 201 even with partial failures)',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    results: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          index: { type: 'integer' },
+                          public_id: { type: 'string' },
+                          status: { type: 'string' },
+                          fingerprint: { type: 'string' },
+                          evidence_count: { type: 'integer' },
+                          warning: { type: 'string' },
+                          error: { type: 'string' },
+                        },
+                      },
+                    },
+                    summary: {
+                      type: 'object',
+                      properties: {
+                        total: { type: 'integer' },
+                        created: { type: 'integer' },
+                        failed: { type: 'integer' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '503': { description: 'Attestation metadata supplied while ENABLE_AI_EXTRACTION is off', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/attestations/batch-verify': {
+      post: {
+        summary: 'Verify attestations in batch',
+        description: 'Look up verification status for up to 100 public IDs in one request. Requires an API key with verify:batch scope.',
+        operationId: 'batchVerifyAttestations',
+        tags: ['Attestations'],
+        'x-arkova-required-scopes': ['verify:batch'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['public_ids'],
+                properties: {
+                  public_ids: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string', minLength: 3 } },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Per-ID verification results with a summary tally',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    results: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          public_id: { type: 'string' },
+                          found: { type: 'boolean' },
+                          status: { type: 'string' },
+                          attestation_type: { type: 'string' },
+                          subject_identifier: { type: 'string' },
+                          attester: { type: 'object', nullable: true, properties: { name: { type: 'string' }, type: { type: 'string' } } },
+                          issued_at: { type: 'string', format: 'date-time', nullable: true },
+                          expires_at: { type: 'string', format: 'date-time', nullable: true },
+                          chain_proof: {
+                            type: 'object',
+                            nullable: true,
+                            properties: {
+                              tx_id: { type: 'string' },
+                              block_height: { type: 'integer', nullable: true },
+                              timestamp: { type: 'string', format: 'date-time', nullable: true },
+                              explorer_url: { type: 'string', nullable: true },
+                            },
+                          },
+                        },
+                      },
+                    },
+                    summary: {
+                      type: 'object',
+                      properties: {
+                        total: { type: 'integer' },
+                        verified: { type: 'integer' },
+                        not_found: { type: 'integer' },
+                        expired: { type: 'integer' },
+                        revoked: { type: 'integer' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '429': { $ref: '#/components/responses/RateLimited' },
+        },
+      },
+    },
     '/verify/entity': {
       get: {
         summary: 'Entity verification',
@@ -723,7 +1117,7 @@ export const openApiSpec: Record<string, any> = {
     '/compliance/check': {
       post: {
         summary: 'Compliance check',
-        description: 'Check an entity against regulatory records for compliance risk scoring. x402 payment gate.',
+        description: 'Check an entity against SEC filings, Federal Register regulatory actions, and public attestations for a heuristic compliance risk score. x402 payment gate.',
         operationId: 'complianceCheck',
         tags: ['Compliance'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }, {}],
@@ -735,16 +1129,65 @@ export const openApiSpec: Record<string, any> = {
                 type: 'object',
                 required: ['entity_name'],
                 properties: {
-                  entity_name: { type: 'string' },
-                  entity_type: { type: 'string', enum: ['person', 'organization'] },
-                  jurisdiction: { type: 'string' },
+                  entity_name: { type: 'string', minLength: 1, maxLength: 200 },
+                  // pentest-prep: was documented as ['person','organization'];
+                  // the actual Zod enum is ['individual','organization'].
+                  entity_type: { type: 'string', enum: ['individual', 'organization'], default: 'organization' },
+                  check_types: {
+                    type: 'array',
+                    default: ['all'],
+                    items: { type: 'string', enum: ['sec_filings', 'sanctions', 'regulatory_actions', 'attestations', 'all'] },
+                  },
+                  jurisdiction: { type: 'string', maxLength: 100 },
                 },
               },
             },
           },
         },
         responses: {
-          '200': { description: 'Compliance check results with risk score', content: { 'application/json': { schema: { type: 'object', properties: { entity: { type: 'string' }, risk_score: { type: 'number' }, findings: { type: 'array', items: { type: 'object' } } } } } } },
+          '200': {
+            description: 'Compliance check results with risk score',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    entity: {
+                      type: 'object',
+                      properties: {
+                        name: { type: 'string' },
+                        type: { type: 'string', enum: ['individual', 'organization'] },
+                        jurisdiction: { type: 'string', description: 'Echoes the request jurisdiction; omitted when not supplied.' },
+                      },
+                    },
+                    compliance_status: { type: 'string', enum: ['clear', 'review_required'] },
+                    risk_level: { type: 'string', enum: ['low', 'medium', 'high'] },
+                    total_findings: { type: 'integer' },
+                    findings_by_severity: {
+                      type: 'object',
+                      properties: { critical: { type: 'integer' }, warning: { type: 'integer' }, info: { type: 'integer' } },
+                    },
+                    findings: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          category: { type: 'string', enum: ['sec_filing', 'regulatory_action', 'attestation'] },
+                          severity: { type: 'string', enum: ['info', 'warning', 'critical'] },
+                          source: { type: 'string' },
+                          title: { type: 'string' },
+                          date: { type: 'string', format: 'date-time', nullable: true },
+                          source_url: { type: 'string', nullable: true },
+                          anchor_status: { type: 'string', nullable: true },
+                        },
+                      },
+                    },
+                    checked_at: { type: 'string', format: 'date-time' },
+                  },
+                },
+              },
+            },
+          },
           '400': { $ref: '#/components/responses/BadRequest' },
           '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
         },
@@ -923,6 +1366,46 @@ export const openApiSpec: Record<string, any> = {
           '401': { $ref: '#/components/responses/Unauthorized' },
           '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '429': { $ref: '#/components/responses/RateLimited' },
+        },
+      },
+    },
+    // pentest-prep (API contract audit): mounted and live, missing from the
+    // served spec. The handler itself is unauthenticated static reference
+    // data, but the /cle prefix mounts the same x402 payment-gate middleware
+    // as its sibling routes (see /cle/verify, /cle/credits, /cle/submit) —
+    // a 402 is possible if ENABLE_X402_PAYMENTS is on and no key/payment
+    // is presented, same as the rest of this prefix.
+    '/cle/requirements': {
+      get: {
+        summary: 'List CLE requirements by jurisdiction',
+        description: 'Returns the built-in reference table of continuing legal education requirements per US jurisdiction (general-practitioner defaults; newly-admitted/specialist/pro-bono exemptions may apply).',
+        operationId: 'getCleRequirements',
+        tags: ['Compliance'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }, {}],
+        responses: {
+          '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '200': {
+            description: 'CLE requirements by jurisdiction',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    total_jurisdictions: { type: 'integer' },
+                    jurisdictions: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        additionalProperties: true,
+                        properties: { jurisdiction: { type: 'string' } },
+                      },
+                    },
+                    note: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -1132,6 +1615,74 @@ export const openApiSpec: Record<string, any> = {
         responses: {
           '200': { description: 'Delivery log entries', content: { 'application/json': { schema: { type: 'object', properties: { deliveries: { type: 'array', items: { $ref: '#/components/schemas/WebhookDelivery' } }, total: { type: 'integer' } } } } } },
           '401': { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    // pentest-prep (API contract audit): replay + DLQ self-service were
+    // mounted and live but missing from the served spec (SCRUM-1172 /
+    // HAKI-REQ-03 AC3).
+    '/webhooks/deliveries/{id}/replay': {
+      post: {
+        summary: 'Replay a webhook delivery',
+        description: 'Re-fires a previously-attempted delivery using its original payload, signed with a fresh timestamp. Inserts a new delivery log row (idempotency_key=`replay-{id}-{ts}`) — the original attempt is preserved for audit. Cross-org access returns 404.',
+        operationId: 'replayWebhookDelivery',
+        tags: ['Webhooks'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' }, description: 'The delivery log ID to replay' }],
+        responses: {
+          '200': {
+            description: 'Replay attempted (ok reflects whether the retried delivery itself succeeded)',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    replayed: { type: 'boolean' },
+                    ok: { type: 'boolean' },
+                    delivery_id: { type: 'string', format: 'uuid', nullable: true },
+                    status_code: { type: 'integer', nullable: true },
+                  },
+                },
+              },
+            },
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'Endpoint URL now targets a private network (SSRF protection re-validated on replay)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '404': { description: 'Delivery not found or does not belong to your organization', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '409': { description: 'Cannot replay to a disabled webhook endpoint', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/webhooks/dlq': {
+      get: {
+        summary: 'List dead-lettered webhook deliveries',
+        description: 'Self-service dead-letter queue: deliveries that exhausted all retry attempts. ORG_ADMIN only.',
+        operationId: 'listWebhookDlq',
+        tags: ['Webhooks'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, minimum: 1, maximum: 100 } },
+        ],
+        responses: {
+          '200': { description: 'Dead-letter queue entries', content: { 'application/json': { schema: { type: 'object', properties: { entries: { type: 'array', items: { type: 'object', additionalProperties: true } }, total: { type: 'integer' } } } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'ORG_ADMIN required', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/webhooks/dlq/{id}/resolve': {
+      post: {
+        summary: 'Resolve a dead-lettered webhook delivery',
+        description: 'Marks a dead-letter queue entry as resolved (acknowledged). Mutates delivery evidence, so ORG_ADMIN only.',
+        operationId: 'resolveWebhookDlqEntry',
+        tags: ['Webhooks'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' }, description: 'The DLQ entry ID' }],
+        responses: {
+          '200': { description: 'DLQ entry resolved', content: { 'application/json': { schema: { type: 'object', properties: { resolved: { type: 'boolean' }, id: { type: 'string', format: 'uuid' } } } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { description: 'ORG_ADMIN required', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '404': { description: 'DLQ entry not found or does not belong to your organization', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
         },
       },
     },

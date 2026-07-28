@@ -166,6 +166,19 @@ export async function handleListPendingResolution(
  * an external_file_id. Resolution RPC enforces ORG_ADMIN role, row-locks the
  * collision set, flips selected → PENDING, siblings → REVOKED, and records
  * the audit event.
+ *
+ * `actorUserId` (endpoint-reachability audit / SCRUM-2213 bug class — see
+ * services/worker/src/api/agents.md): was already threaded through by the
+ * route (admin.ts already resolves + gates on it), but this handler only
+ * used it for the post-success notification lookup — never passed it into
+ * the RPC call itself. `resolve_anchor_queue_by_public_id` resolves the
+ * caller via `auth.uid()`, which is always NULL under the worker's
+ * service_role client, so it raised 'Profile not found' → 403 for every
+ * caller. Now passed as `p_caller_user_id` to a NEW service_role-only RPC
+ * overload (migration 0367) that takes the identity explicitly instead of
+ * reading `auth.uid()`. Every existing authorization check inside the RPC
+ * (profile exists, role = ORG_ADMIN, caller's org matches the target
+ * anchor's org) is unchanged.
  */
 export async function handleResolveQueue(
   req: Request,
@@ -184,11 +197,19 @@ export async function handleResolveQueue(
     return;
   }
 
+  if (!actorUserId) {
+    res.status(401).json({
+      error: { code: 'authentication_required', message: 'Authentication required' },
+    });
+    return;
+  }
+
   try {
     const { data, error } = await callRpc<string>(db, 'resolve_anchor_queue_by_public_id', {
       p_external_file_id: parsed.data.external_file_id,
       p_selected_public_id: parsed.data.selected_public_id,
       p_reason: parsed.data.reason ?? null,
+      p_caller_user_id: actorUserId,
     });
 
     if (error) {

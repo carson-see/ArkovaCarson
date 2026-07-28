@@ -17,5 +17,6 @@ export type { CleProviderApprovalStatus } from './cleComplianceCopy';
 export { extractCleMetadataView } from './cleMetadataView';
 export { MetadataFieldRenderer } from './MetadataFieldRenderer';
 export { CredentialSourceImportDialog } from './CredentialSourceImportDialog';
+export { CtdlRegistryImportDialog } from './CtdlRegistryImportDialog';
 export { TemplateSchemaBuilder } from './TemplateSchemaBuilder';
 export type { TemplateFieldDefinition } from './TemplateSchemaBuilder';
