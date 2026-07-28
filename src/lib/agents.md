@@ -29,6 +29,11 @@ New `extractors/` subfolder (see its own `agents.md`) — `ocrWorker.ts` `extrac
 ## 2026-07-28 Admin credit-adjust copy block (L2-A5)
 
 `copy.ts` gained `ADMIN_CREDIT_ADJUST_LABELS` (placed right after `TREASURY_LABELS`) — the platform-admin org credit add/remove dialog on `AdminOrganizationsPage.tsx`: balance display, add/remove toggle, amount/reason inputs, the two-step review→confirm summary copy (as functions, not templated in JSX, so §1.3 `lint:copy` scans the literal string), and success/error toasts. No banned terms (§1.3) — "Credits" is not banned; internal-only page so no §1.3 exemption needed either way.
+## 2026-07-28 Accept-invite route + copy + validator (SCRUM-3012)
+
+- `routes.ts` gained `ACCEPT_INVITE: '/accept-invite'` — the previously-missing consumer of the org-invite email link (`AcceptInvitePage.tsx`).
+- `copy.ts` gained `ACCEPT_INVITE_LABELS` (contiguous append-only block near `AUTH_FORM_LABELS`) — every string on the accept-invite page, including the honest "verification email could not be sent" copy so a worker-side send failure is never silently swallowed into a fake success screen.
+- `validators.ts` gained `AcceptInvitationSchema` (token + 8-char-min password + optional full name) for the new-account form on that page.
 
 ## 2026-07-21 Treasury CSP + status-budget copy (SCRUM-2901, PR #1600)
 

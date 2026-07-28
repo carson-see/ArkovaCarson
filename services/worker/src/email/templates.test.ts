@@ -7,6 +7,7 @@ import {
   buildActivationEmail,
   buildAnchorSecuredEmail,
   buildRevocationEmail,
+  buildAccountVerificationEmail,
   buildDomainVerificationEmail,
 } from './templates.js';
 
@@ -129,6 +130,34 @@ describe('buildRevocationEmail', () => {
     const banned = ['wallet', 'gas', 'hash', 'blockchain', 'bitcoin', 'crypto', 'transaction'];
     for (const term of banned) {
       expect(result.html.toLowerCase()).not.toContain(term);
+    }
+  });
+});
+
+describe('buildAccountVerificationEmail', () => {
+  const baseData = {
+    recipientEmail: 'invitee@example.com',
+    organizationName: 'Example Org',
+    verificationUrl: 'https://app.arkova.ai/auth/v1/verify?token=abc&type=signup&redirect_to=https://app.arkova.ai/login',
+  };
+
+  it('returns subject and HTML with the organization name', () => {
+    const result = buildAccountVerificationEmail(baseData);
+    expect(result.subject).toContain('Example Org');
+    expect(result.html).toContain('Example Org');
+  });
+
+  it('includes the verification URL', () => {
+    const result = buildAccountVerificationEmail(baseData);
+    expect(result.html).toContain(baseData.verificationUrl);
+  });
+
+  it('does not contain banned terminology', () => {
+    const result = buildAccountVerificationEmail(baseData);
+    const banned = ['wallet', 'gas', 'hash', 'blockchain', 'bitcoin', 'crypto', 'transaction'];
+    for (const term of banned) {
+      expect(result.html.toLowerCase()).not.toContain(term);
+      expect(result.subject.toLowerCase()).not.toContain(term);
     }
   });
 });
