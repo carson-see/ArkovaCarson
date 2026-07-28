@@ -1,8 +1,8 @@
 /**
  * Org KYB routes (SCRUM-1162)
  *
- *   POST /api/v1/org-kyb/:orgId/start   — submit org to Middesk
- *   GET  /api/v1/org-kyb/:orgId/status  — read org's current KYB state + recent events
+ *   POST /api/v1/org-kyb/:orgId/start   — submit org to Middesk (ORG_ADMIN only)
+ *   GET  /api/v1/org-kyb/:orgId/status  — read org's current KYB state + recent events (org member)
  *
  * Constitution refs:
  *   - 1.4: Middesk API key + webhook secret from Secret Manager. Never log.
@@ -11,6 +11,19 @@
  *
  * Per 2026-04-24 decision, there is no `ENABLE_ORG_KYB` feature flag — the
  * route is always registered. Missing `MIDDESK_API_KEY` surfaces as 503.
+ *
+ * SECURITY (fix, 2026-07-28): neither route checked that `:orgId` (a route
+ * param, not RLS-protected here — `db` is the service_role client, which
+ * BYPASSES RLS by design) had anything to do with the authenticated caller.
+ * Any authenticated Arkova user could submit ANY org's legal name/EIN/address
+ * to Middesk (an irreversible third-party disclosure of another org's PII),
+ * and read any org's KYB verification status/history, just by guessing or
+ * enumerating org UUIDs. Fixed via the same `_org-auth.ts` single source of
+ * truth used elsewhere:
+ *   - POST /start  — ORG_ADMIN required. Submitting legal/EIN/address data to
+ *     a third-party KYB vendor is a significant, hard-to-reverse action.
+ *   - GET /status  — org membership only. Viewing verification status is
+ *     lower-sensitivity (no PII in the response) than initiating a submission.
  */
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
@@ -22,6 +35,7 @@ import {
   MiddeskConfigError,
   type MiddeskBusinessInput,
 } from '../../integrations/kyb/middesk.js';
+import { isCallerOrgAdminResult, isUserMemberOfOrgResult } from '../_org-auth.js';
 
 export const orgKybRouter = Router();
 
@@ -57,6 +71,21 @@ orgKybRouter.post('/:orgId/start', async (req: Request, res: Response) => {
     return;
   }
   const orgId: string = orgIdRaw;
+
+  // ORG_ADMIN required — submitting legal name/EIN/address to Middesk on
+  // behalf of an org is a significant, effectively-irreversible action.
+  const { value: isAdmin, error: adminCheckError } = await isCallerOrgAdminResult(userId, orgId);
+  if (adminCheckError) {
+    logger.error({ userId, orgId }, 'org-kyb: admin lookup failed');
+    res.status(500).json({ error: { code: 'internal_error', message: 'Failed to verify permissions' } });
+    return;
+  }
+  if (!isAdmin) {
+    res.status(403).json({
+      error: { code: 'forbidden', message: 'Organization administrator role required' },
+    });
+    return;
+  }
 
   const parsed = StartKybSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -151,7 +180,23 @@ orgKybRouter.get('/:orgId/status', async (req: Request, res: Response) => {
   }
   const orgId: string = orgIdRaw;
 
-  // RLS on `organizations` + `kyb_events` gate this to org members.
+  // Org membership required. NOTE: `db` is the service_role client (see
+  // utils/db.ts) which BYPASSES RLS by design — the `organizations`/
+  // `kyb_events` RLS policies do NOT gate this service_role-executed query
+  // (a prior comment here incorrectly claimed they did; that was never true
+  // for this code path). This app-layer membership check is the only thing
+  // that scopes this read to the caller's own org.
+  const { value: isMember, error: memberCheckError } = await isUserMemberOfOrgResult(userId, orgId);
+  if (memberCheckError) {
+    logger.error({ userId, orgId }, 'org-kyb: membership lookup failed');
+    res.status(500).json({ error: { code: 'internal_error', message: 'Failed to verify permissions' } });
+    return;
+  }
+  if (!isMember) {
+    res.status(404).json({ error: { code: 'not_found', message: 'Org not found or not visible' } });
+    return;
+  }
+
   // Narrow row shape — migration 0250 adds these columns; types regenerate
   // after prod apply (see HANDOFF.md "types regen" follow-up).
   type OrgKybRow = {

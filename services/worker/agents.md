@@ -379,6 +379,7 @@ current state.
 - **DON'T** call real Stripe or Bitcoin APIs — use mock interfaces
 - **DON'T** set `anchor.status = 'SECURED'` from client code — worker-only via service_role
 - **DON'T** import `generateFingerprint` — fingerprinting is client-side only (Constitution 1.6)
+- **DON'T** add OCR libraries (`pdfjs-dist`, `tesseract.js`) — OCR runs on the user's device (`src/lib/ocrWorker.ts`, Constitution 1.6). Both were removed as orphaned zero-importer `devDependencies`; needing one here means the design routes document content server-side, which 1.6 forbids
 - **DON'T** modify existing migration files — write compensating migrations
 
 ## Dependencies

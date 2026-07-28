@@ -24,6 +24,12 @@ import type {
   SearchResult,
   FingerprintVerification,
   AnchorDetails,
+  BulkAnchorInput,
+  AnchorBulkOptions,
+  BulkAnchorResponse,
+  BulkAnchorDuplicate,
+  BulkAnchorRowError,
+  BulkAnchorResultRow,
   OrganizationSummary,
   OrganizationDetails,
   RecordDetails,
@@ -47,6 +53,20 @@ const DEFAULT_BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app
  * this SDK method yet (follow-up: INT-01b).
  */
 export const VERIFY_BATCH_SYNC_LIMIT = 20;
+
+/**
+ * Maximum rows per `anchorBulk()` call. Mirrors the worker's
+ * `BulkAnchorRequestSchema.anchors` cap in
+ * `services/worker/src/api/v1/anchor-bulk.ts` (`.max(1000)`), which bounds
+ * validation cost (O(n²) intra-batch duplicate detection) server-side.
+ *
+ * The SDK throws client-side rather than auto-chunking: chunking would split
+ * duplicate detection across requests (a fingerprint repeated across chunk
+ * boundaries would only be caught by the slower DB-side check, not the
+ * cheaper intra-batch check) and would deduct credits per chunk with no
+ * atomicity across the whole logical batch. Same posture as `verifyBatch()`.
+ */
+export const BULK_ANCHOR_MAX_ROWS = 1000;
 
 const DEFAULT_RETRY_CONFIG: Required<Omit<RetryConfig, 'sleep'>> = {
   retries: 2,
@@ -112,6 +132,116 @@ export class Arkova {
       createdAt: result.created_at,
       networkReceiptId: result.chain_tx_id,
     };
+  }
+
+  /**
+   * Bulk-anchor up to {@link BULK_ANCHOR_MAX_ROWS} (1000) documents in a
+   * single request (HAKI-REQ-02 / SCRUM-1171).
+   *
+   * Each row must provide exactly one of:
+   *   - `fingerprint` — a pre-computed 64-char hex SHA-256 you already have
+   *     (e.g. from a batch job that hashed files independently), or
+   *   - `data` — raw string/binary content the SDK fingerprints client-side
+   *     via the same {@link Arkova.fingerprint} helper `anchor()` uses, so
+   *     the document body never leaves this process for that row.
+   *
+   * Mixing both forms in one call is supported (see example below).
+   *
+   * @example
+   *   const result = await arkova.anchorBulk([
+   *     { fingerprint: 'abc123...64hex', externalId: 'invoice-001' },
+   *     { data: fileBytes, documentType: 'contract', matterOrCaseRef: 'CASE-42' },
+   *   ], { duplicateStrategy: 'skip', batchId: 'nightly-2026-07-28' });
+   *
+   *   console.log(result.queued, result.duplicates, result.errors);
+   *
+   * @param options.dryRun Validate every row (including dedup checks) without
+   *   queuing or deducting credits. `result.anchors` is omitted on dry runs.
+   * @param options.duplicateStrategy How to handle a fingerprint that already
+   *   exists in-batch or in the org. Server default: `'fail'` (409s the
+   *   whole batch on any duplicate) — pass `'skip' | 'supersede' | 'link'`
+   *   to proceed instead.
+   * @throws {ArkovaError} `code: 'batch_too_large'` if more than
+   *   {@link BULK_ANCHOR_MAX_ROWS} rows are supplied (no network call made).
+   * @throws {ArkovaError} `code: 'invalid_request'` if a row supplies neither
+   *   `fingerprint` nor `data`, or supplies both (no network call made).
+   * @throws {ArkovaError} `code: 'duplicate_fingerprints'` (HTTP 409) if
+   *   `duplicateStrategy` is `'fail'` (or omitted) and the batch contains
+   *   duplicates — `err.problem` is undefined here; inspect the thrown
+   *   error's `message`, or pre-check with `{ dryRun: true }`.
+   */
+  async anchorBulk(
+    inputs: BulkAnchorInput[],
+    options: AnchorBulkOptions = {},
+  ): Promise<BulkAnchorResponse> {
+    if (inputs.length === 0) {
+      return {
+        batchId: options.batchId ?? null,
+        validated: 0,
+        queued: 0,
+        duplicates: [],
+        errors: [],
+        dryRun: options.dryRun ?? false,
+        anchors: [],
+      };
+    }
+
+    if (inputs.length > BULK_ANCHOR_MAX_ROWS) {
+      throw new ArkovaError(
+        `anchorBulk accepts at most ${BULK_ANCHOR_MAX_ROWS} rows per call. ` +
+          'Split into multiple calls (each with its own or a shared batchId to correlate them in audit events).',
+        400,
+        'batch_too_large',
+      );
+    }
+
+    const rows = await Promise.all(inputs.map((input, i) => this.buildBulkAnchorRow(input, i)));
+
+    const response = await this.fetch('/api/v1/anchor/bulk', {
+      method: 'POST',
+      body: JSON.stringify({
+        anchors: rows,
+        dry_run: options.dryRun,
+        duplicate_strategy: options.duplicateStrategy,
+        batch_id: options.batchId,
+      }),
+    });
+
+    const result = await jsonOrThrow<{
+      batch_id: string | null;
+      validated: number;
+      queued: number;
+      duplicates: Array<Record<string, unknown>>;
+      errors: Array<Record<string, unknown>>;
+      dry_run: boolean;
+      anchors?: Array<Record<string, unknown>>;
+    }>(response, 'Bulk anchor request failed');
+
+    return mapBulkAnchorResponse(result);
+  }
+
+  /** Shape one `anchorBulk()` input into the wire (snake_case) row shape, fingerprinting `data` rows client-side. */
+  private async buildBulkAnchorRow(input: BulkAnchorInput, index: number): Promise<Record<string, unknown>> {
+    const hasFingerprint = input.fingerprint !== undefined;
+    const hasData = input.data !== undefined;
+    if (hasFingerprint === hasData) {
+      throw new ArkovaError(
+        `anchorBulk row ${index}: provide exactly one of "fingerprint" or "data"${hasFingerprint ? ' (both were given)' : ' (neither was given)'}.`,
+        400,
+        'invalid_request',
+      );
+    }
+
+    const fingerprint = hasFingerprint ? (input.fingerprint as string) : await this.fingerprint(input.data as string | ArrayBuffer);
+
+    const row: Record<string, unknown> = { fingerprint };
+    if (input.credentialType !== undefined) row.credential_type = input.credentialType;
+    if (input.description !== undefined) row.description = input.description;
+    if (input.originalDocumentDate !== undefined) row.original_document_date = input.originalDocumentDate;
+    if (input.documentType !== undefined) row.document_type = input.documentType;
+    if (input.matterOrCaseRef !== undefined) row.matter_or_case_ref = input.matterOrCaseRef;
+    if (input.externalId !== undefined) row.external_id = input.externalId;
+    return row;
   }
 
   /**
@@ -707,6 +837,57 @@ function mapVerificationResult(row: Record<string, unknown>): VerificationResult
     anchorTimestamp: row.anchor_timestamp as string,
     networkReceiptId: (row.network_receipt_id as string | null) ?? null,
     recordUri: row.record_uri as string,
+  };
+}
+
+function mapBulkAnchorDuplicate(row: Record<string, unknown>): BulkAnchorDuplicate {
+  return {
+    row: row.row as number,
+    fingerprint: row.fingerprint as string,
+    scope: row.scope as BulkAnchorDuplicate['scope'],
+    decision: row.decision as BulkAnchorDuplicate['decision'],
+  };
+}
+
+function mapBulkAnchorRowError(row: Record<string, unknown>): BulkAnchorRowError {
+  return {
+    row: row.row as number,
+    field: row.field as string | undefined,
+    code: row.code as string,
+    message: row.message as string,
+  };
+}
+
+function mapBulkAnchorResultRow(row: Record<string, unknown>): BulkAnchorResultRow {
+  return {
+    publicId: row.public_id as string,
+    fingerprint: row.fingerprint as string,
+    status: row.status as BulkAnchorResultRow['status'],
+    originalDocumentDate: (row.original_document_date as string | null) ?? null,
+    documentType: (row.document_type as string | null) ?? null,
+    matterOrCaseRef: (row.matter_or_case_ref as string | null) ?? null,
+    externalId: (row.external_id as string | null) ?? null,
+    anchoredAt: row.anchored_at as string,
+  };
+}
+
+function mapBulkAnchorResponse(data: {
+  batch_id: string | null;
+  validated: number;
+  queued: number;
+  duplicates: Array<Record<string, unknown>>;
+  errors: Array<Record<string, unknown>>;
+  dry_run: boolean;
+  anchors?: Array<Record<string, unknown>>;
+}): BulkAnchorResponse {
+  return {
+    batchId: data.batch_id,
+    validated: data.validated,
+    queued: data.queued,
+    duplicates: data.duplicates.map(mapBulkAnchorDuplicate),
+    errors: data.errors.map(mapBulkAnchorRowError),
+    dryRun: data.dry_run,
+    anchors: data.anchors?.map(mapBulkAnchorResultRow),
   };
 }
 

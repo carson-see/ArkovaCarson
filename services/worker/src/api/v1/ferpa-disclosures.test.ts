@@ -1,6 +1,28 @@
+/**
+ * Tests for FERPA Disclosure Log API — REG-01 (SCRUM-561).
+ *
+ * SECURITY REGRESSION COVERAGE (fix, 2026-07-28): all three routes previously
+ * read `x-org-id` directly off the request with NO membership check — any
+ * authenticated user could read/write ANY org's FERPA disclosure log by
+ * supplying an arbitrary header. They now go through the membership-
+ * validating `requireOrgId` (POST) and additionally `requireOrgAdmin` (the
+ * two GET routes, per the docstring's "admin/compliance_officer only"
+ * intent). `_org-auth.js` is mocked so each test drives the authorization
+ * decision directly — see `requireOrgId.test.ts` / `requireOrgAdmin.test.ts`
+ * for the middleware's own unit coverage.
+ */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+
+// ─── Org-auth resolver (the fix under test drives these) ─────────────────
+const isUserMemberOfOrgResult = vi.fn();
+const isCallerOrgAdminResult = vi.fn();
+
+vi.mock('../_org-auth.js', () => ({
+  isUserMemberOfOrgResult: (...args: unknown[]) => isUserMemberOfOrgResult(...args),
+  isCallerOrgAdminResult: (...args: unknown[]) => isCallerOrgAdminResult(...args),
+}));
 
 // Mock db before importing router
 vi.mock('../../utils/db.js', () => {
@@ -78,11 +100,21 @@ vi.mock('../../utils/logger.js', () => ({
 import ferpaRouter from './ferpa-disclosures.js';
 import { db } from '../../utils/db.js';
 
-function createApp() {
+function createApp(userId: string | null = 'user-org-A') {
   const app = express();
   app.use(express.json());
+  app.use((req, _res, next) => {
+    if (userId) req.authUserId = userId;
+    next();
+  });
   app.use('/api/v1/ferpa', ferpaRouter);
   return app;
+}
+
+/** Default: caller is a member AND admin of the org named in the header. */
+function asMemberAndAdmin() {
+  isUserMemberOfOrgResult.mockResolvedValue({ value: true, error: false });
+  isCallerOrgAdminResult.mockResolvedValue({ value: true, error: false });
 }
 
 describe('FERPA Disclosure Log API', () => {
@@ -90,6 +122,7 @@ describe('FERPA Disclosure Log API', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    asMemberAndAdmin();
     app = createApp();
   });
 
@@ -103,6 +136,14 @@ describe('FERPA Disclosure Log API', () => {
       student_opt_out_checked: true,
     };
 
+    it('returns 401 when unauthenticated', async () => {
+      const res = await request(createApp(null))
+        .post('/api/v1/ferpa/disclosures')
+        .set('x-org-id', 'org-A')
+        .send(validBody);
+      expect(res.status).toBe(401);
+    });
+
     it('returns 400 when x-org-id header is missing', async () => {
       const res = await request(app)
         .post('/api/v1/ferpa/disclosures')
@@ -112,10 +153,33 @@ describe('FERPA Disclosure Log API', () => {
       expect(res.body.error).toBe('x-org-id header required');
     });
 
+    // ─── Cross-tenant isolation (KEY DELIVERABLE) ───────────────────────
+    it('org-A caller writing to org-B header is REJECTED (403), never trusted', async () => {
+      isUserMemberOfOrgResult.mockResolvedValue({ value: false, error: false });
+      const res = await request(app)
+        .post('/api/v1/ferpa/disclosures')
+        .set('x-org-id', 'org-B')
+        .send(validBody);
+
+      expect(res.status).toBe(403);
+      expect(isUserMemberOfOrgResult).toHaveBeenCalledWith('user-org-A', 'org-B');
+      expect(db.from).not.toHaveBeenCalledWith('ferpa_disclosure_log');
+    });
+
+    it('legitimate same-org caller still succeeds (201)', async () => {
+      const res = await request(app)
+        .post('/api/v1/ferpa/disclosures')
+        .set('x-org-id', 'org-A')
+        .send(validBody);
+
+      expect(res.status).toBe(201);
+      expect(isUserMemberOfOrgResult).toHaveBeenCalledWith('user-org-A', 'org-A');
+    });
+
     it('returns 400 when body validation fails', async () => {
       const res = await request(app)
         .post('/api/v1/ferpa/disclosures')
-        .set('x-org-id', 'test-org-id')
+        .set('x-org-id', 'org-A')
         .send({ requesting_party_name: '' }); // missing required fields
 
       expect(res.status).toBe(400);
@@ -125,7 +189,7 @@ describe('FERPA Disclosure Log API', () => {
     it('returns 400 when education_record_ids is empty', async () => {
       const res = await request(app)
         .post('/api/v1/ferpa/disclosures')
-        .set('x-org-id', 'test-org-id')
+        .set('x-org-id', 'org-A')
         .send({ ...validBody, education_record_ids: [] });
 
       expect(res.status).toBe(400);
@@ -135,7 +199,7 @@ describe('FERPA Disclosure Log API', () => {
     it('returns 201 with valid body and org-id', async () => {
       const res = await request(app)
         .post('/api/v1/ferpa/disclosures')
-        .set('x-org-id', 'test-org-id')
+        .set('x-org-id', 'org-A')
         .send(validBody);
 
       expect(res.status).toBe(201);
@@ -147,7 +211,7 @@ describe('FERPA Disclosure Log API', () => {
     it('validates party_type enum', async () => {
       const res = await request(app)
         .post('/api/v1/ferpa/disclosures')
-        .set('x-org-id', 'test-org-id')
+        .set('x-org-id', 'org-A')
         .send({ ...validBody, requesting_party_type: 'invalid_type' });
 
       expect(res.status).toBe(400);
@@ -156,14 +220,14 @@ describe('FERPA Disclosure Log API', () => {
     it('validates exception category enum', async () => {
       const res = await request(app)
         .post('/api/v1/ferpa/disclosures')
-        .set('x-org-id', 'test-org-id')
+        .set('x-org-id', 'org-A')
         .send({ ...validBody, disclosure_exception: 'invalid_exception' });
 
       expect(res.status).toBe(400);
     });
   });
 
-  describe('GET /api/v1/ferpa/disclosures', () => {
+  describe('GET /api/v1/ferpa/disclosures — ORG_ADMIN gate', () => {
     it('returns 400 when x-org-id header is missing', async () => {
       const res = await request(app).get('/api/v1/ferpa/disclosures');
 
@@ -171,10 +235,29 @@ describe('FERPA Disclosure Log API', () => {
       expect(res.body.error).toBe('x-org-id header required');
     });
 
-    it('returns paginated disclosures', async () => {
+    it('returns 403 when the caller is a member but NOT an org admin', async () => {
+      isCallerOrgAdminResult.mockResolvedValue({ value: false, error: false });
       const res = await request(app)
         .get('/api/v1/ferpa/disclosures')
-        .set('x-org-id', 'test-org-id');
+        .set('x-org-id', 'org-A');
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('Organization administrator role required');
+    });
+
+    // ─── Cross-tenant isolation (KEY DELIVERABLE) ───────────────────────
+    it('org-A admin reading org-B header is REJECTED (403), never trusted', async () => {
+      isUserMemberOfOrgResult.mockResolvedValue({ value: false, error: false });
+      const res = await request(app)
+        .get('/api/v1/ferpa/disclosures')
+        .set('x-org-id', 'org-B');
+      expect(res.status).toBe(403);
+      expect(db.from).not.toHaveBeenCalledWith('ferpa_disclosure_log');
+    });
+
+    it('legitimate same-org ORG_ADMIN caller still succeeds (200)', async () => {
+      const res = await request(app)
+        .get('/api/v1/ferpa/disclosures')
+        .set('x-org-id', 'org-A');
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('disclosures');
@@ -186,14 +269,14 @@ describe('FERPA Disclosure Log API', () => {
     it('validates invalid page parameter', async () => {
       const res = await request(app)
         .get('/api/v1/ferpa/disclosures?page=0')
-        .set('x-org-id', 'test-org-id');
+        .set('x-org-id', 'org-A');
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('Validation failed');
     });
   });
 
-  describe('GET /api/v1/ferpa/disclosures/export', () => {
+  describe('GET /api/v1/ferpa/disclosures/export — ORG_ADMIN gate', () => {
     beforeEach(() => {
       const mockFrom = vi.mocked(db.from);
       mockFrom.mockReturnValue({
@@ -237,10 +320,27 @@ describe('FERPA Disclosure Log API', () => {
       expect(res.status).toBe(400);
     });
 
-    it('returns CSV with correct content type', async () => {
+    it('returns 403 when the caller is a member but NOT an org admin', async () => {
+      isCallerOrgAdminResult.mockResolvedValue({ value: false, error: false });
       const res = await request(app)
         .get('/api/v1/ferpa/disclosures/export')
-        .set('x-org-id', 'test-org-id');
+        .set('x-org-id', 'org-A');
+      expect(res.status).toBe(403);
+    });
+
+    // ─── Cross-tenant isolation (KEY DELIVERABLE) ───────────────────────
+    it('org-A admin exporting org-B header is REJECTED (403), never trusted', async () => {
+      isUserMemberOfOrgResult.mockResolvedValue({ value: false, error: false });
+      const res = await request(app)
+        .get('/api/v1/ferpa/disclosures/export')
+        .set('x-org-id', 'org-B');
+      expect(res.status).toBe(403);
+    });
+
+    it('legitimate same-org ORG_ADMIN caller still gets the CSV (200)', async () => {
+      const res = await request(app)
+        .get('/api/v1/ferpa/disclosures/export')
+        .set('x-org-id', 'org-A');
 
       expect(res.status).toBe(200);
       expect(res.headers['content-type']).toContain('text/csv');
