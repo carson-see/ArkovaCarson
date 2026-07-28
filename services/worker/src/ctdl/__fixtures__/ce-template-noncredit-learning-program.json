@@ -1,0 +1,34 @@
+{
+  "@context": "https://credreg.net/ctdl/schema/context/json",
+  "@id": "https://credentialengineregistry.org/graph/ce-00000000-0000-4000-8000-000000000001",
+  "@graph": [
+    {
+      "@id": "https://credentialengineregistry.org/resources/ce-00000000-0000-4000-8000-000000000001",
+      "@type": "ceterms:LearningProgram",
+      "ceterms:ctid": "ce-00000000-0000-4000-8000-000000000001",
+      "ceterms:name": { "en-US": "Certified Production Technician Noncredit Program" },
+      "ceterms:description": {
+        "en-US": "A noncredit workforce-training program covering safety, quality practices, manufacturing processes, and maintenance awareness. Does not lead to college credit or a degree."
+      },
+      "ceterms:ownedBy": [
+        "https://credentialengineregistry.org/resources/ce-00000000-0000-4000-8000-000000000002"
+      ],
+      "ceterms:availableOnlineAt": ["https://example-community-college.edu/noncredit/cpt"],
+      "ceterms:subjectWebpage": "https://example-community-college.edu/noncredit/cpt",
+      "ceterms:credentialStatusType": {
+        "@type": "ceterms:CredentialAlignmentObject",
+        "ceterms:framework": "https://credreg.net/ctdl/terms/CredentialStatus",
+        "ceterms:targetNode": "credentialStat:Active",
+        "ceterms:frameworkName": { "en-US": "Credential Status" },
+        "ceterms:targetNodeName": { "en-US": "Active" }
+      },
+      "ceterms:dateEffective": "2026-01-01"
+    },
+    {
+      "@id": "https://credentialengineregistry.org/resources/ce-00000000-0000-4000-8000-000000000002",
+      "@type": "ceterms:CredentialOrganization",
+      "ceterms:ctid": "ce-00000000-0000-4000-8000-000000000002",
+      "ceterms:name": { "en-US": "Example Community College" }
+    }
+  ]
+}

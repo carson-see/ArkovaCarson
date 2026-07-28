@@ -87,3 +87,7 @@ Both take `pageUrl` as a prop. Use `getAppBaseUrl()` from `@/lib/routes` to buil
 ## UX-03 copy compliance (2026-07-06)
 
 `PipelineAdminPage.tsx` job-trigger footer reworded "worker service" → "background service" (UX-03 / SCRUM-1029 banned engineering copy). Decision on the (a) reword vs (b) treasury-style scan-exclusion choice: **reword.** The `EXCLUDE_PATTERNS` ops-dashboard exclusion (precedent: `src/components/admin/treasury/**`) was considered and rejected — the rest of this ~1,700-line admin page's copy is compliant and should stay under lint:copy scan; do NOT add this page to `EXCLUDE_PATTERNS`. Surfaced by the SCRUM-2666 cross-line lint:copy fix (PR #1440); this reword also clears that PR's grandfathered baseline entry for `PipelineAdminPage.tsx:1196` (it goes stale once #1440 lands — its owner removes it).
+
+## 2026-07-28 L3-A6 — MyCredentialsPage "From Public Registry" entry point
+
+`MyCredentialsPage.tsx` gains a second header button (`data-testid="add-from-registry-button"`) next to the existing "Add Source" button, opening `CtdlRegistryImportDialog` (`src/components/credentials/`). Two-step flow: look up a public Credential Registry record by CTID (`GET /api/v1/credentials/ctdl/import`), then add it (`POST /api/v1/credentials/ctdl/registry-anchor`, new route). Part of the L3-A6 CE Noncredit Data Taxonomy 3.0 anchoring POC — see `docs/partners/ce-noncredit-anchoring-poc.md` for the research + honest-limits writeup and `services/worker/src/ctdl/agents.md` for the parser fix this UI exercises.
