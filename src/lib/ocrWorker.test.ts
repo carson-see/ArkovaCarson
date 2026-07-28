@@ -5,9 +5,28 @@
  * MIME type and file extension: mammoth for .docx, pdfjs for PDF,
  * text reader for plain text files, and throws for unsupported types.
  *
- * Heavy engines (Tesseract, real PDF.js, real mammoth) are mocked.
+ * Heavy engines (Tesseract, real PDF.js, real mammoth) are mocked. F4
+ * (2026-07-28, founder 22-format KPI) ADDS real, unmocked `utif2` /
+ * `heic-decode` / `upng-js` decoding of real committed fixture files under
+ * `src/lib/__fixtures__/ocr/` — these are the NEW decode logic this suite
+ * proves, not just routing around a mock. Tesseract recognition output itself
+ * stays mocked (deterministic, matches the file's pre-existing policy above);
+ * genuine end-to-end Tesseract OCR of these fixtures is exercised manually /
+ * in a real browser, not under jsdom (Tesseract's worker+wasm+CSP-pinned-path
+ * machinery isn't practical to run for real inside vitest+jsdom).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const FIXTURES_DIR = join(dirname(fileURLToPath(import.meta.url)), '__fixtures__', 'ocr');
+
+/** Loads a real committed fixture file's bytes as a `File`. */
+function fixtureFile(filename: string, type: string): File {
+  const bytes = readFileSync(join(FIXTURES_DIR, filename));
+  return new File([bytes], filename, { type });
+}
 
 // ---------------------------------------------------------------------------
 // Mock mammoth (dynamic import)
@@ -55,7 +74,14 @@ vi.mock('tesseract.js', () => ({
 // ---------------------------------------------------------------------------
 // Import under test — AFTER mocks are declared
 // ---------------------------------------------------------------------------
-import { extractText, extractTextFromImage, TESSERACT_VENDOR_PATHS } from './ocrWorker';
+import {
+  extractText,
+  extractTextFromImage,
+  extractTextFromPDF,
+  TESSERACT_VENDOR_PATHS,
+  TIFF_MAX_PAGES,
+  SCANNED_PDF_OCR_MAX_PAGES,
+} from './ocrWorker';
 import {
   OcrEngineLoadError,
   UnsupportedImageFormatError,
@@ -296,15 +322,23 @@ describe('Tesseract self-host + fail-closed (WEBEXT-02/03)', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// SCRUM-2911 sub-item 1 — unsupported image formats (.heic / .tiff) SOFT-FAIL.
+// SCRUM-2911 lineage / F4 (2026-07-28, founder 22-format KPI) — TIFF/HEIC
+// image-family completion.
 //
-// Browsers can't decode HEIC/TIFF, so Tesseract recognition throws. Previously
-// that failure was wrapped as OcrEngineLoadError (a §1.6 fail-closed error),
-// which surfaced the FALSE "privacy failure" screen even though the document
-// was never at risk. These must instead raise a BENIGN UnsupportedImageFormatError
-// WITHOUT ever loading/running the OCR engine — nothing left the device.
+// Pre-F4: browsers couldn't decode HEIC/TIFF at all, so the WHOLE FORMAT
+// CATEGORY was soft-failed as UnsupportedImageFormatError before the OCR
+// engine ever loaded. F4 adds real client-side decode (utif2 for TIFF,
+// heic-decode for HEIC, both re-encoded to PNG via upng-js — no canvas), so
+// these formats now decode+OCR successfully. The soft-fail contract MOVES
+// from format-level to file-level: only a genuinely corrupt/malformed file
+// within one of these formats still raises the typed benign error, and it
+// must still do so WITHOUT ever loading the OCR engine.
+//
+// `utif2` / `heic-decode` / `upng-js` are REAL (not mocked) in this suite —
+// they decode real committed fixture bytes from `__fixtures__/ocr/`. Only
+// Tesseract recognition output is mocked (matches the file's stated policy).
 // ───────────────────────────────────────────────────────────────────────────
-describe('unsupported image formats soft-fail (SCRUM-2911)', () => {
+describe('F4 — TIFF decode + OCR (real utif2, real fixtures)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCreateWorker.mockResolvedValue({
@@ -314,67 +348,413 @@ describe('unsupported image formats soft-fail (SCRUM-2911)', () => {
     mockTesseractRecognize.mockResolvedValue({ data: { text: 'ocr text' } });
   });
 
-  it.each([
-    ['photo.heic', 'image/heic'],
-    ['photo.heif', 'image/heif'],
-    ['scan.tiff', 'image/tiff'],
-    ['scan.tif', 'image/tif'],
-  ])('raises a benign UnsupportedImageFormatError for %s (%s)', async (name, type) => {
-    const file = fakeFile(name, type, 'binary-image-bytes');
+  it('decodes a real single-page TIFF and OCRs it (method tesseract, pageCount 1)', async () => {
+    const file = fixtureFile('text.tiff', 'image/tiff');
 
-    const caught = await extractTextFromImage(file).catch((e: unknown) => e);
+    const result = await extractTextFromImage(file);
 
-    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
-    // This is a benign case — it must NOT be a §1.6 privacy fail-closed error.
-    expect(isPiiStripFailClosedError(caught)).toBe(false);
-    expect(caught).not.toBeInstanceOf(OcrEngineLoadError);
-    // The engine must never even be loaded — no privacy guarantee was in play.
-    expect(mockCreateWorker).not.toHaveBeenCalled();
+    expect(result.method).toBe('tesseract');
+    expect(result.pageCount).toBe(1);
+    expect(result.text).toBe('ocr text');
+    expect(mockCreateWorker).toHaveBeenCalledTimes(1);
   });
 
-  it('detects unsupported formats by extension even when MIME is empty', async () => {
-    const file = fakeFile('IMG_0042.HEIC', '', 'binary-image-bytes');
+  it('decodes a real MULTI-PAGE TIFF and OCRs every page, joining distinct per-page text', async () => {
+    let call = 0;
+    mockTesseractRecognize.mockImplementation(async () => ({
+      data: { text: `PAGE-${++call}` },
+    }));
 
-    const caught = await extractTextFromImage(file).catch((e: unknown) => e);
+    const file = fixtureFile('multipage.tiff', 'image/tiff');
+    const result = await extractTextFromImage(file);
 
-    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
-    expect(mockCreateWorker).not.toHaveBeenCalled();
+    expect(result.pageCount).toBe(3); // multipage.tiff has 3 real pages
+    expect(mockCreateWorker).toHaveBeenCalledTimes(3); // one worker per page, via the shared Tesseract runner
+    expect(result.text).toBe('PAGE-1\n\nPAGE-2\n\nPAGE-3');
   });
 
-  it('still runs OCR for supported image formats (png/jpg)', async () => {
-    const file = fakeFile('scan.png', 'image/png', 'fake-image-bytes');
+  it('caps multi-page processing at TIFF_MAX_PAGES (real 22-page fixture, cap is 20)', async () => {
+    const file = fixtureFile('overcap.tiff', 'image/tiff');
+    const result = await extractTextFromImage(file);
+
+    expect(TIFF_MAX_PAGES).toBe(20);
+    expect(result.pageCount).toBe(20);
+    expect(mockCreateWorker).toHaveBeenCalledTimes(20);
+  });
+
+  it('detects TIFF by extension even when MIME is empty (real browser metadata often omits it)', async () => {
+    const file = fixtureFile('text.tiff', '');
     const result = await extractTextFromImage(file);
     expect(result.method).toBe('tesseract');
     expect(mockCreateWorker).toHaveBeenCalledTimes(1);
   });
 
-  it('routes HEIC/TIFF through extractText to the benign error (not fail-closed)', async () => {
-    const heic = fakeFile('photo.heic', 'image/heic', 'binary');
-    const caught = await extractText(heic).catch((e: unknown) => e);
-    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
-    expect(isPiiStripFailClosedError(caught)).toBe(false);
+  it('extractText: routes a real .tiff with GENERIC MIME (application/octet-stream) to OCR, not the unsupported-file-type error', async () => {
+    const file = fixtureFile('text.tiff', 'application/octet-stream');
+    const result = await extractText(file);
+    expect(result.method).toBe('tesseract');
+    expect(mockCreateWorker).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('F4 — HEIC decode + OCR (real heic-decode, real fixtures)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateWorker.mockResolvedValue({
+      recognize: mockTesseractRecognize,
+      terminate: mockTesseractTerminate,
+    });
+    mockTesseractRecognize.mockResolvedValue({ data: { text: 'ocr text' } });
   });
 
-  // P2 — dispatch consistency for real browser file metadata: `.heic`/`.tiff`
-  // often arrive with an empty or generic MIME (not `image/*`). Those must still
-  // hit the typed benign error, NOT the generic "unsupported file type" path.
-  it('extractText: .heic with EMPTY MIME → typed UnsupportedImageFormatError (not generic)', async () => {
-    const file = fakeFile('IMG_0042.HEIC', '', 'binary-image-bytes');
-    const caught = await extractText(file).catch((e: unknown) => e);
-    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
-    // Not the generic OCR_LABELS.UNSUPPORTED_FILE_TYPE error.
-    expect((caught as Error).message).not.toMatch(/Unsupported file type/);
-    // No handler should have been invoked.
-    expect(mockCreateWorker).not.toHaveBeenCalled();
+  it('decodes a real HEIC file and OCRs it (method tesseract, pageCount 1)', async () => {
+    const file = fixtureFile('text.heic', 'image/heic');
+
+    const result = await extractTextFromImage(file);
+
+    expect(result.method).toBe('tesseract');
+    expect(result.pageCount).toBe(1);
+    expect(result.text).toBe('ocr text');
+    expect(mockCreateWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it('detects HEIC by extension even when MIME is empty', async () => {
+    const file = fixtureFile('text.heic', '');
+    const result = await extractTextFromImage(file);
+    expect(result.method).toBe('tesseract');
+    expect(mockCreateWorker).toHaveBeenCalledTimes(1);
+  });
+
+  it('extractText: routes a real .heic with EMPTY MIME to OCR (not the generic unsupported-file-type error)', async () => {
+    const file = fixtureFile('text.heic', '');
+    const result = await extractText(file);
+    expect(result.method).toBe('tesseract');
+    expect(mockCreateWorker).toHaveBeenCalledTimes(1);
     expect(mockExtractRawText).not.toHaveBeenCalled();
     expect(mockGetDocument).not.toHaveBeenCalled();
   });
+});
 
-  it('extractText: .tiff with GENERIC MIME (application/octet-stream) → typed UnsupportedImageFormatError', async () => {
-    const file = fakeFile('scan.tiff', 'application/octet-stream', 'binary-image-bytes');
-    const caught = await extractText(file).catch((e: unknown) => e);
+describe('F4 — genuinely corrupt/hostile TIFF and HEIC files still soft-fail benignly', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateWorker.mockResolvedValue({
+      recognize: mockTesseractRecognize,
+      terminate: mockTesseractTerminate,
+    });
+    mockTesseractRecognize.mockResolvedValue({ data: { text: 'ocr text' } });
+  });
+
+  it('a truncated/corrupt TIFF raises the benign UnsupportedImageFormatError WITHOUT loading the OCR engine', async () => {
+    // Real fixture: text.tiff truncated to 2000 bytes. utif2 does not always
+    // THROW on malformed input (SCRUM-2911 lineage) — it can silently return
+    // an IFD with no usable width/height, which the production code detects
+    // and treats as an undecodable page.
+    const file = fixtureFile('corrupt.tiff', 'image/tiff');
+
+    const caught = await extractTextFromImage(file).catch((e: unknown) => e);
+
     expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
-    expect((caught as Error).message).not.toMatch(/Unsupported file type/);
+    expect(isPiiStripFailClosedError(caught)).toBe(false);
+    expect(caught).not.toBeInstanceOf(OcrEngineLoadError);
     expect(mockCreateWorker).not.toHaveBeenCalled();
+  });
+
+  it('a truncated/corrupt HEIC raises the benign UnsupportedImageFormatError WITHOUT loading the OCR engine', async () => {
+    // Real fixture: text.heic truncated to 100 bytes — heic-decode validates
+    // the HEIC brand box up front and throws cleanly.
+    const file = fixtureFile('corrupt.heic', 'image/heic');
+
+    const caught = await extractTextFromImage(file).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
+    expect(isPiiStripFailClosedError(caught)).toBe(false);
+    expect(caught).not.toBeInstanceOf(OcrEngineLoadError);
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+  });
+
+  it('does not hang on a non-TIFF/non-HEIC byte soup carrying a .tiff extension', async () => {
+    const file = fakeFile('garbage.tiff', 'image/tiff', 'not actually a tiff file at all, just garbage bytes 12345');
+
+    const caught = await Promise.race([
+      extractTextFromImage(file).catch((e: unknown) => e),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('TIMED OUT — hung on hostile input')), 5000)),
+    ]);
+
+    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+  });
+
+  it('does not hang on a non-HEIC byte soup carrying a .heic extension', async () => {
+    const file = fakeFile('garbage.heic', 'image/heic', 'not actually a heic file at all, just garbage bytes 12345');
+
+    const caught = await Promise.race([
+      extractTextFromImage(file).catch((e: unknown) => e),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('TIMED OUT — hung on hostile input')), 5000)),
+    ]);
+
+    expect(caught).toBeInstanceOf(UnsupportedImageFormatError);
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+  });
+});
+
+describe('F4 — fail-closed dominance: a REAL OCR-engine failure still wins over the format layer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // This is the regression test for the dominance rule stated in the module
+  // docs: "real PII/OCR-engine failures still fail closed; format-undecodable
+  // stays benign." A well-formed TIFF/HEIC decodes FINE (format layer has
+  // nothing to complain about) — but if Tesseract itself then fails to load
+  // or run, that must surface as OcrEngineLoadError (§1.6 fail-closed), never
+  // be misclassified as a benign UnsupportedImageFormatError.
+  it('TIFF: decode succeeds, but Tesseract engine load fails → OcrEngineLoadError (fail-closed), not benign', async () => {
+    mockCreateWorker.mockRejectedValue(new Error('Failed to fetch dynamically imported module'));
+    const file = fixtureFile('text.tiff', 'image/tiff');
+
+    const caught = await extractTextFromImage(file).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(OcrEngineLoadError);
+    expect((caught as OcrEngineLoadError).failClosed).toBe(true);
+    expect(isPiiStripFailClosedError(caught)).toBe(true);
+    expect(caught).not.toBeInstanceOf(UnsupportedImageFormatError);
+  });
+
+  it('HEIC: decode succeeds, but Tesseract recognition throws → OcrEngineLoadError (fail-closed), not benign', async () => {
+    mockCreateWorker.mockResolvedValue({
+      recognize: mockTesseractRecognize,
+      terminate: mockTesseractTerminate,
+    });
+    mockTesseractRecognize.mockRejectedValue(new Error('wasm OOM'));
+    const file = fixtureFile('text.heic', 'image/heic');
+
+    const caught = await extractTextFromImage(file).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(OcrEngineLoadError);
+    expect(isPiiStripFailClosedError(caught)).toBe(true);
+    expect(caught).not.toBeInstanceOf(UnsupportedImageFormatError);
+    expect(mockTesseractTerminate).toHaveBeenCalled(); // worker still released on failure
+  });
+
+  it('still runs OCR for already-supported raster formats (png/jpg) — unaffected by F4', async () => {
+    mockCreateWorker.mockResolvedValue({
+      recognize: mockTesseractRecognize,
+      terminate: mockTesseractTerminate,
+    });
+    mockTesseractRecognize.mockResolvedValue({ data: { text: 'ocr text' } });
+    const file = fakeFile('scan.png', 'image/png', 'fake-image-bytes');
+    const result = await extractTextFromImage(file);
+    expect(result.method).toBe('tesseract');
+    expect(mockCreateWorker).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// F4 — verify png/jpg/jpeg/gif/webp genuinely route through the Tesseract
+// path with REAL fixture bytes (not the old placeholder `'fake-image-bytes'`
+// strings). Real, unmocked pdfjs+utif2+heic-decode decoding is proven in the
+// two describe blocks above and in `ocrWorker.realDecode.test.ts`; Tesseract
+// execution itself stays mocked here per the file's stated policy.
+// ───────────────────────────────────────────────────────────────────────────
+describe('F4 — png/jpg/jpeg/gif/webp verification with real fixture bytes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateWorker.mockResolvedValue({
+      recognize: mockTesseractRecognize,
+      terminate: mockTesseractTerminate,
+    });
+    mockTesseractRecognize.mockResolvedValue({ data: { text: 'ARKOVA TEST' } });
+  });
+
+  it.each([
+    ['text.png', 'image/png'],
+    ['text.jpg', 'image/jpeg'],
+    ['text.gif', 'image/gif'],
+    ['text.webp', 'image/webp'],
+  ])('extractTextFromImage(%s) routes to Tesseract and returns its text', async (filename, type) => {
+    const file = fixtureFile(filename, type);
+    const result = await extractTextFromImage(file);
+
+    expect(result.method).toBe('tesseract');
+    expect(result.text).toBe('ARKOVA TEST');
+    expect(mockCreateWorker).toHaveBeenCalledTimes(1);
+    // Tesseract receives the real File directly — no TIFF/HEIC decode/re-encode detour.
+    expect(mockTesseractRecognize).toHaveBeenCalledWith(file);
+  });
+
+  it.each([
+    ['text.png', 'image/png'],
+    ['text.jpg', 'image/jpeg'],
+    ['text.gif', 'image/gif'],
+    ['text.webp', 'image/webp'],
+  ])('extractText(%s) top-level dispatcher routes the same way', async (filename, type) => {
+    const file = fixtureFile(filename, type);
+    const result = await extractText(file);
+    expect(result.method).toBe('tesseract');
+    expect(mockCreateWorker).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// F4 — scanned/image-only PDF OCR fallback (the highest-value gap for the
+// Kenyan legal-docs pilot per the sprint brief). PDF.js itself stays mocked
+// (existing policy); this suite proves the ROUTING contract: a text-layer PDF
+// never takes the slow OCR path, a scanned PDF does, and both page-count and
+// wall-clock caps degrade gracefully instead of hanging.
+//
+// jsdom has no real `<canvas>` backend (the `canvas` npm package isn't
+// installed — a deliberate scope call, see the PR body). `page.render()` is
+// fully mocked below and never touches the canvas context, so a minimal
+// non-null stub for `getContext('2d')` + `toBlob` is sufficient to exercise
+// the fallback loop's OWN logic (page/time caps, Tesseract dispatch) without
+// needing real pixel rendering.
+// ───────────────────────────────────────────────────────────────────────────
+describe('F4 — scanned/image-only PDF OCR fallback', () => {
+  let getContextSpy: ReturnType<typeof vi.spyOn>;
+  let toBlobSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateWorker.mockResolvedValue({
+      recognize: mockTesseractRecognize,
+      terminate: mockTesseractTerminate,
+    });
+    mockTesseractRecognize.mockResolvedValue({ data: { text: 'ocr text' } });
+
+    getContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({} as unknown as CanvasRenderingContext2D);
+    toBlobSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, 'toBlob')
+      .mockImplementation(function (this: HTMLCanvasElement, callback: BlobCallback) {
+        callback(new Blob(['fake-page-render'], { type: 'image/png' }));
+      });
+  });
+
+  afterEach(() => {
+    getContextSpy.mockRestore();
+    toBlobSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  /** Wires the shared pdfjs mocks to a fake document with the given per-page text ('' = no text layer / scanned). */
+  function mockPdfWithPages(pageTexts: string[]) {
+    const mockRender = vi.fn().mockReturnValue({ promise: Promise.resolve() });
+    mockGetPage.mockImplementation(async (pageNum: number) => {
+      const text = pageTexts[pageNum - 1] ?? '';
+      return {
+        getTextContent: vi.fn().mockResolvedValue({ items: text ? [{ str: text }] : [] }),
+        getViewport: vi.fn().mockReturnValue({ width: 100, height: 100 }),
+        render: mockRender,
+      };
+    });
+    mockGetDocument.mockReturnValue({
+      promise: Promise.resolve({ numPages: pageTexts.length, getPage: mockGetPage }),
+    });
+    return { mockRender };
+  }
+
+  it('a real text-layer PDF (non-empty text) does NOT take the OCR fallback path', async () => {
+    const { mockRender } = mockPdfWithPages(['ARKOVA REAL TEXT LAYER PDF']);
+    const file = fakeFile('text-layer.pdf', 'application/pdf', '%PDF-fake');
+
+    const result = await extractTextFromPDF(file);
+
+    expect(result.method).toBe('pdfjs');
+    expect(result.text).toBe('ARKOVA REAL TEXT LAYER PDF');
+    // The slow path must never fire for a text PDF.
+    expect(mockRender).not.toHaveBeenCalled();
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+  });
+
+  it('a scanned/image-only PDF (empty text layer on every page) triggers the OCR fallback', async () => {
+    let call = 0;
+    mockTesseractRecognize.mockImplementation(async () => ({ data: { text: `PAGE-${++call}` } }));
+    const { mockRender } = mockPdfWithPages(['', '']); // 2 pages, no text layer at all
+
+    const file = fakeFile('scanned.pdf', 'application/pdf', '%PDF-fake');
+    const result = await extractTextFromPDF(file);
+
+    expect(result.method).toBe('pdfjs-ocr');
+    expect(result.pageCount).toBe(2);
+    expect(mockRender).toHaveBeenCalledTimes(2);
+    expect(mockCreateWorker).toHaveBeenCalledTimes(2); // one Tesseract worker per rendered page
+    expect(result.text).toBe('PAGE-1\n\nPAGE-2');
+  });
+
+  it('a PDF with text on SOME pages but not others does not trigger OCR (any real text anywhere short-circuits it)', async () => {
+    const { mockRender } = mockPdfWithPages(['', 'real text on page 2']);
+    const file = fakeFile('mixed.pdf', 'application/pdf', '%PDF-fake');
+
+    const result = await extractTextFromPDF(file);
+
+    expect(result.method).toBe('pdfjs');
+    expect(mockRender).not.toHaveBeenCalled();
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+  });
+
+  it('caps the OCR fallback at SCANNED_PDF_OCR_MAX_PAGES for a huge scanned document', async () => {
+    const pageTexts = new Array(25).fill(''); // 25 empty-text pages, cap is 20
+    const { mockRender } = mockPdfWithPages(pageTexts);
+
+    const file = fakeFile('huge-scan.pdf', 'application/pdf', '%PDF-fake');
+    const result = await extractTextFromPDF(file);
+
+    expect(SCANNED_PDF_OCR_MAX_PAGES).toBe(20);
+    expect(result.pageCount).toBe(20);
+    expect(mockRender).toHaveBeenCalledTimes(20);
+    expect(mockCreateWorker).toHaveBeenCalledTimes(20);
+  });
+
+  it('bounds the OCR fallback by wall-clock time, degrading gracefully instead of hanging', async () => {
+    vi.useFakeTimers();
+    const { mockRender } = mockPdfWithPages(['', '', '', '']); // 4 pages
+    // After the first page renders, jump the clock past the time budget so
+    // the loop bails before processing the remaining pages.
+    let renderCalls = 0;
+    mockRender.mockImplementation(() => {
+      renderCalls++;
+      if (renderCalls === 1) {
+        vi.setSystemTime(Date.now() + 181_000); // > SCANNED_PDF_OCR_MAX_DURATION_MS (180_000)
+      }
+      return { promise: Promise.resolve() };
+    });
+
+    const file = fakeFile('slow-scan.pdf', 'application/pdf', '%PDF-fake');
+    const resultPromise = extractTextFromPDF(file);
+    const result = await resultPromise;
+
+    expect(result.method).toBe('pdfjs-ocr');
+    // Only the first page was processed before the deadline check bailed.
+    expect(result.pageCount).toBe(1);
+    expect(mockRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('degrades gracefully (no throw, no hang) when canvas support is unavailable', async () => {
+    getContextSpy.mockReturnValue(null);
+    const { mockRender } = mockPdfWithPages(['', '']);
+
+    const file = fakeFile('no-canvas.pdf', 'application/pdf', '%PDF-fake');
+    const result = await Promise.race([
+      extractTextFromPDF(file),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('TIMED OUT')), 5000)),
+    ]);
+
+    expect(result.method).toBe('pdfjs-ocr');
+    expect(result.text).toBe('');
+    expect(mockRender).not.toHaveBeenCalled(); // bailed before ever rendering
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+  });
+
+  it('fail-closed dominance: a real OCR-engine failure in the scanned-PDF path still surfaces OcrEngineLoadError', async () => {
+    mockCreateWorker.mockRejectedValue(new Error('Failed to fetch dynamically imported module'));
+    mockPdfWithPages(['']);
+
+    const file = fakeFile('scanned-engine-fail.pdf', 'application/pdf', '%PDF-fake');
+    const caught = await extractTextFromPDF(file).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(OcrEngineLoadError);
+    expect((caught as OcrEngineLoadError).failClosed).toBe(true);
   });
 });

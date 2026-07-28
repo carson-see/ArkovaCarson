@@ -2,6 +2,15 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-07-28 SECURITY — requireOrgId cross-tenant bypass (fix) + new requireOrgAdmin
+
+**VULNERABILITY CLASS — do not reintroduce:** `requireOrgId.ts` previously read `req.headers['x-org-id']` **verbatim** and attached it to `req.orgId` with **no check** that the authenticated caller belonged to that org. Any authenticated Arkova user (any valid JWT, any org) could impersonate any other org on every route mounted behind it, just by sending an arbitrary header — a full cross-tenant read/write bypass on the FERPA disclosure log, directory opt-out, HIPAA audit trail, and HIPAA emergency-access grants. Because `utils/db.ts`'s `db` client is **service_role and bypasses RLS by design**, RLS provided zero protection here — the header WAS the entire tenant boundary.
+
+**Fix:**
+- `requireOrgId.ts` is now `async` and validates the header against real membership via `isUserMemberOfOrgResult` (`../api/_org-auth.ts` — the same canonical seam `org-cpe-log-export.ts`/`version-resolution.ts` already used correctly). A caller identity is resolved from `req.authUserId ?? req.userId` (set by a real JWT `requireAuth` upstream — never by this header). No membership → 403. A DB/operational error during the lookup → 500 (never a masked 403, matching the `*Result` fail-closed-but-observable pattern used throughout `_org-auth.ts`).
+- **`requireOrgAdmin.ts` (NEW)** — chain AFTER `requireOrgId` for routes that need ORG_ADMIN, not merely membership (e.g. reading a HIPAA audit trail, approving emergency access). Delegates to `isCallerOrgAdminResult`.
+- **Pattern for any new org-scoped route:** never read `x-org-id` (or any client-controlled org identifier) directly and trust it. Mount `requireOrgId` (+ `requireOrgAdmin` if the route needs admin) upstream of the handler; read `req.orgId` afterward. If the org id instead comes from a route param (not a header), call `isUserMemberOfOrgResult`/`isCallerOrgAdminResult` directly in the handler before touching the DB — see `api/v1/org-kyb.ts` for that pattern.
+- Full route-by-route detail (which routes were affected, the privilege level chosen per route, and why) is documented in `api/v1/agents.md`'s "2026-07-28 SECURITY" entry.
 ## 2026-07-22 PR #1555 (SCRUM-2703/2705) rebase note — exact row-count callsite reviewed, not changed
 
 _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`)._
@@ -78,7 +87,8 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - **webhookHmac.ts** — Inbound connector webhook HMAC verification with 5-minute replay window.
 - **paymentTierRouter.ts** — Routes requests based on payment tier.
 - **requirePaymentCurrent.ts** — Rejects requests from orgs with lapsed payments.
-- **requireOrgId.ts** — Ensures `org_id` is present on authenticated requests.
+- **requireOrgId.ts** — Resolves + VALIDATES `org_id` on authenticated requests (membership-checked against `x-org-id`, never trusted verbatim — see 2026-07-28 SECURITY note above).
+- **requireOrgAdmin.ts** — Chains after `requireOrgId`; requires the caller be ORG_ADMIN of `req.orgId` (see 2026-07-28 SECURITY note above).
 - **usageTracking.ts** — Tracks API usage for billing/analytics.
 - **adesFeatureGate.ts** — AdES (Advanced Electronic Signatures) feature gate.
 - **aiFeatureGate.ts** — AI feature gate for Gemini/embedding endpoints. Per-flag fail-direction on DB read failure (SCRUM-2247): kill-switchable flags fail closed; `ENABLE_AI_EXTRACTION` keeps its launch default; last-known-good DB value preferred over both on a transient blip.

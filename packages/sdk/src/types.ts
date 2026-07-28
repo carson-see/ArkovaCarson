@@ -447,3 +447,97 @@ export interface FingerprintDetails extends Omit<RecordDetails, 'fingerprint'> {
 }
 
 export type DocumentDetails = RecordDetails;
+
+/**
+ * Bulk anchor credential types — mirrors the worker's
+ * `services/worker/src/api/v1/anchor-bulk.ts` `CREDENTIAL_TYPES` enum.
+ * Keep in sync; the server is authoritative and rejects unknown values.
+ */
+export const BULK_ANCHOR_CREDENTIAL_TYPES = [
+  'DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'CPE', 'CLE',
+  'BADGE', 'ATTESTATION', 'FINANCIAL', 'LEGAL', 'INSURANCE', 'SEC_FILING', 'PATENT',
+  'REGULATION', 'PUBLICATION', 'CHARITY', 'ACCREDITATION', 'FINANCIAL_ADVISOR',
+  'BUSINESS_ENTITY', 'RESUME', 'MEDICAL', 'MILITARY', 'IDENTITY',
+  'CONTRACT_PRESIGNING', 'CONTRACT_POSTSIGNING', 'OTHER',
+] as const;
+
+export type BulkAnchorCredentialType = typeof BULK_ANCHOR_CREDENTIAL_TYPES[number];
+
+/** How the server should handle a fingerprint that already exists (in-batch or in-org). */
+export type BulkAnchorDuplicateStrategy = 'skip' | 'supersede' | 'link' | 'fail';
+
+/**
+ * A single row for `arkova.anchorBulk()`. Provide exactly one of `fingerprint`
+ * (a pre-computed 64-char hex SHA-256) or `data` (raw content — the SDK
+ * fingerprints it client-side via the same `fingerprint()` helper `anchor()`
+ * uses, so the document never leaves the caller's process for this step).
+ */
+export interface BulkAnchorInput {
+  /** Pre-computed SHA-256 fingerprint (64-char hex). Mutually exclusive with `data`. */
+  fingerprint?: string;
+  /** Raw data to fingerprint client-side before submission. Mutually exclusive with `fingerprint`. */
+  data?: string | ArrayBuffer;
+  credentialType?: BulkAnchorCredentialType;
+  /** Free-form note, max 1000 chars. */
+  description?: string;
+  /** Real-world date the document was created/executed (ISO 8601). Distinct from the anchor timestamp. */
+  originalDocumentDate?: string;
+  /** Free-form classifier — "contract", "1099", "engagement_letter", etc. */
+  documentType?: string;
+  /** External tenant reference (case number, matter, etc.). */
+  matterOrCaseRef?: string;
+  /** Customer-system primary key for round-tripping. */
+  externalId?: string;
+}
+
+/** Options for `arkova.anchorBulk()`. */
+export interface AnchorBulkOptions {
+  /** Validate every row but don't queue or deduct credits. */
+  dryRun?: boolean;
+  /** Strategy when a fingerprint already exists in the org or elsewhere in the batch. Server default: 'fail'. */
+  duplicateStrategy?: BulkAnchorDuplicateStrategy;
+  /** Client-supplied batch ID, surfaced in audit events and duplicate rows. */
+  batchId?: string;
+}
+
+export interface BulkAnchorDuplicate {
+  /** Index into the input array this duplicate corresponds to. */
+  row: number;
+  fingerprint: string;
+  /** Whether the duplicate was found earlier in the same batch or already in the org's records. */
+  scope: 'in_batch' | 'in_db';
+  decision: BulkAnchorDuplicateStrategy;
+}
+
+export interface BulkAnchorRowError {
+  /** Index into the input array this error corresponds to. */
+  row: number;
+  field?: string;
+  code: string;
+  message: string;
+}
+
+export interface BulkAnchorResultRow {
+  publicId: string;
+  fingerprint: string;
+  status: 'PENDING';
+  originalDocumentDate: string | null;
+  documentType: string | null;
+  matterOrCaseRef: string | null;
+  externalId: string | null;
+  anchoredAt: string;
+}
+
+/** Response from `arkova.anchorBulk()`. */
+export interface BulkAnchorResponse {
+  batchId: string | null;
+  /** Total rows accepted by schema validation (before dedup/insert). */
+  validated: number;
+  /** Rows actually queued for anchoring (0 when `dryRun` is true). */
+  queued: number;
+  duplicates: BulkAnchorDuplicate[];
+  errors: BulkAnchorRowError[];
+  dryRun: boolean;
+  /** Present when `dryRun` is false — the rows that were actually inserted. */
+  anchors?: BulkAnchorResultRow[];
+}

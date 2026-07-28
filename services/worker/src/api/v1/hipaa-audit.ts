@@ -1,10 +1,18 @@
 /**
  * HIPAA Audit Report API — REG-07 (SCRUM-566)
  *
- * GET  /api/v1/hipaa/audit         — List healthcare credential access events
- * GET  /api/v1/hipaa/audit/export  — Export as CSV
+ * GET  /api/v1/hipaa/audit         — List healthcare credential access events (ORG_ADMIN only)
+ * GET  /api/v1/hipaa/audit/export  — Export as CSV (ORG_ADMIN only)
  *
  * Section 164.312(b): Audit controls — record and examine activity.
+ *
+ * SECURITY (fix, 2026-07-28): both routes previously trusted `req.orgId`
+ * as set by `requireOrgId`, which read `x-org-id` verbatim off the request
+ * with no membership check — a cross-tenant read of another org's HIPAA
+ * audit trail. `requireOrgId` is now membership-validating (see its own
+ * doc comment), and `requireOrgAdmin` is added on top of it here: reading a
+ * HIPAA audit trail is materially more sensitive than ordinary org
+ * membership and should require ORG_ADMIN, not merely being a member.
  */
 
 import { Router, Request, Response } from 'express';
@@ -13,6 +21,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { HIPAA_HEALTHCARE_TYPES } from '../../constants/hipaa.js';
 import { requireOrgId } from '../../middleware/requireOrgId.js';
+import { requireOrgAdmin } from '../../middleware/requireOrgAdmin.js';
 import { sendCsvResponse } from '../../utils/csv.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -20,7 +29,7 @@ const dbAny = db as any;
 
 export const hipaaAuditRouter = Router();
 
-hipaaAuditRouter.use(requireOrgId);
+hipaaAuditRouter.use(requireOrgId, requireOrgAdmin);
 
 export const AuditQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),

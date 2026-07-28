@@ -285,6 +285,9 @@ function noTextSourceKind(method: OCRResult['method']): NoTextSourceKind {
   switch (method) {
     case 'pdfjs':
       return 'pdf';
+    // F4: scanned-PDF OCR fallback — still a PDF source for labeling purposes.
+    case 'pdfjs-ocr':
+      return 'pdf';
     case 'tesseract':
       return 'image';
     default:

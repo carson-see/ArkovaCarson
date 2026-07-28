@@ -1,15 +1,28 @@
 /**
  * FERPA Disclosure Log API — REG-01 (SCRUM-561)
  *
- * POST /api/v1/ferpa/disclosures    — Log a new disclosure (service_role or API key with verify scope)
- * GET  /api/v1/ferpa/disclosures    — List disclosures (org-scoped, admin/compliance_officer only)
- * GET  /api/v1/ferpa/disclosures/export — Export as CSV for institutional compliance audits
+ * POST /api/v1/ferpa/disclosures    — Log a new disclosure (any authenticated org member)
+ * GET  /api/v1/ferpa/disclosures    — List disclosures (org-scoped, ORG_ADMIN only)
+ * GET  /api/v1/ferpa/disclosures/export — Export as CSV for institutional compliance audits (ORG_ADMIN only)
+ *
+ * SECURITY (fix, 2026-07-28): all three routes previously read `x-org-id`
+ * directly off `req.headers` with NO verification that the authenticated
+ * caller belonged to that org — a cross-tenant read/write bypass. They now go
+ * through the shared, membership-validating `requireOrgId` middleware (which
+ * checks real `org_members`/`profiles` membership via `_org-auth.ts`), plus
+ * `requireOrgAdmin` on the two read routes per the docstring's stated
+ * "admin/compliance_officer only" intent (a FERPA disclosure log is an audit
+ * trail — same sensitivity class as the HIPAA audit trail in hipaa-audit.ts).
+ * POST stays membership-level: logging a disclosure event is a routine
+ * operational action any authorized org member should be able to perform.
  */
 
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { requireOrgId } from '../../middleware/requireOrgId.js';
+import { requireOrgAdmin } from '../../middleware/requireOrgAdmin.js';
 
 const router = Router();
 
@@ -17,6 +30,8 @@ const router = Router();
 const dbAny = db as any;
 
 import { FERPA_PARTY_TYPES, FERPA_EXCEPTION_CATEGORIES } from '../../constants/ferpa.js';
+
+router.use(requireOrgId);
 
 // ─── Validation Schemas ──────────────────────────────────────────────────────
 
@@ -47,11 +62,7 @@ export type FerpaDisclosure = z.infer<typeof CreateDisclosureSchema>;
 
 router.post('/disclosures', async (req, res) => {
   try {
-    const orgId = req.headers['x-org-id'] as string;
-    if (!orgId) {
-      res.status(400).json({ error: 'x-org-id header required' });
-      return;
-    }
+    const orgId = req.orgId as string;
 
     const parsed = CreateDisclosureSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -99,14 +110,12 @@ router.post('/disclosures', async (req, res) => {
 });
 
 // ─── GET /api/v1/ferpa/disclosures ───────────────────────────────────────────
+// ORG_ADMIN only — per docstring, this is an "admin/compliance_officer only"
+// audit-trail read (same sensitivity class as the HIPAA audit trail).
 
-router.get('/disclosures', async (req, res) => {
+router.get('/disclosures', requireOrgAdmin, async (req, res) => {
   try {
-    const orgId = req.headers['x-org-id'] as string;
-    if (!orgId) {
-      res.status(400).json({ error: 'x-org-id header required' });
-      return;
-    }
+    const orgId = req.orgId as string;
 
     const parsed = ListDisclosuresSchema.safeParse(req.query);
     if (!parsed.success) {
@@ -150,14 +159,11 @@ router.get('/disclosures', async (req, res) => {
 });
 
 // ─── GET /api/v1/ferpa/disclosures/export ────────────────────────────────────
+// ORG_ADMIN only — CSV export of the same audit trail as the list route above.
 
-router.get('/disclosures/export', async (req, res) => {
+router.get('/disclosures/export', requireOrgAdmin, async (req, res) => {
   try {
-    const orgId = req.headers['x-org-id'] as string;
-    if (!orgId) {
-      res.status(400).json({ error: 'x-org-id header required' });
-      return;
-    }
+    const orgId = req.orgId as string;
 
     const from_date = req.query.from_date as string | undefined;
     const to_date = req.query.to_date as string | undefined;
