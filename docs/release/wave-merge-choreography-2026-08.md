@@ -18,6 +18,43 @@
 
 ---
 
+## 0.1 Deploy-pause gate (CTO ruling 2026-07-28) — read before merging ANY Wave M/D/F/S PR
+
+`deploy-worker.yml` auto-deploys to prod Cloud Run on every push to `main`
+touching `services/worker/**`. Waves M/D/F/S merge T2/T3 worker + migration
+PRs BEFORE the 72h soak matures, not after (§0 of
+[72h-soak-runbook-2026-08.md](./72h-soak-runbook-2026-08.md)) — that is the
+deliberate merge-before-soak sequencing this doc exists to choreograph.
+Left ungated, **every worker-touching merge in this wave would auto-deploy
+unsoaked chain/billing/migration code straight to prod** the moment Mergify
+lands it, defeating the entire point of soaking first.
+
+**Before merging any Wave M/D/F/S PR that touches `services/worker/**`:**
+confirm `vars.DEPLOY_WORKER_PAUSED=true` is set on the repo (`gh variable
+list` should show it). If it is not set, merging is not blocked mechanically
+— set it first, or the merge will trigger a live prod deploy.
+
+Mechanism (full detail: `.github/workflows/agents.md`
+"Deploy-worker pause gate"): a `deploy-gate` job in `deploy-worker.yml` reads
+the `DEPLOY_WORKER_PAUSED` repository Actions variable. When `true`, the
+`deploy` job (image build/push/Cloud Run deploy) is skipped with a loud
+`::warning::` + job-summary banner on every push; `pre-deploy-checks`
+(typecheck/lint/test/copy-lint) still runs unconditionally, so CI signal on
+each merge stays real. `workflow_dispatch` always bypasses the pause — if a
+specific hotfix genuinely needs to ship mid-wave, dispatch the workflow
+manually rather than unpausing globally.
+
+**Re-enable at the end of the wave:** once the 72h soak (§1 go/no-go of the
+soak runbook) is complete and the wave's PRs are either merged-and-verified
+or deliberately deferred, `gh variable set DEPLOY_WORKER_PAUSED --body false`
+(or delete it) so the next worker-touching merge resumes normal auto-deploy.
+Do not leave it paused indefinitely after the wave closes — that silently
+reintroduces the pre-existing "merge to `main` doesn't reach prod" gap this
+same wave is trying to close out (`revision-drift.yml` will start firing on
+the resulting drift within an hour).
+
+---
+
 ## 0. Live PR inventory as captured (2026-07-28, re-verify before use)
 
 ```bash
