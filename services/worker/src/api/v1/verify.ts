@@ -71,7 +71,7 @@ export interface VerificationResult {
    * `fingerprint` was computed. 'document_bytes' = a real file's bytes were
    * fingerprinted client-side (Constitution 1.6). 'issuer_record_attestation'
    * = no source document was supplied; the issuer's asserted record content
-   * was fingerprinted. null = unclassified (anchor predates migration 0375;
+   * was fingerprinted. null = unclassified (anchor predates migration 0376;
    * never guessed, Constitution 1.5). Additive nullable — Constitution 1.8.
    */
   fingerprint_source?: 'document_bytes' | 'issuer_record_attestation' | null;
@@ -155,7 +155,7 @@ export interface AnchorByPublicId {
   confidence_scores: Record<string, unknown> | null;
   /** API-RICH-02 (SCRUM-895): Fine-grained sub-type from anchors.sub_type (GRE-01). */
   sub_type: string | null;
-  /** R19: fingerprint evidence class from anchors.fingerprint_source (migration 0375). */
+  /** R19: fingerprint evidence class from anchors.fingerprint_source (migration 0376). */
   fingerprint_source: string | null;
 }
 
@@ -355,7 +355,7 @@ export interface AnchorSelectRow {
   file_mime: string | null;
   file_size: number | null;
   org_id: string | null;
-  /** R19: fingerprint evidence class (migration 0375). */
+  /** R19: fingerprint evidence class (migration 0376). */
   fingerprint_source: string | null;
   /** anchors.metadata JSONB — source of jurisdiction + legacy merkle_root. */
   metadata: Record<string, unknown> | null;

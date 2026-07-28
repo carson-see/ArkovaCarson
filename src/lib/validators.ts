@@ -232,7 +232,7 @@ export const AnchorCreateSchema = z.object({
   // R19 (CTO ruling 2026-07-28): evidence class for how `fingerprint` was
   // computed. 'document_bytes' for the single-document Secure Document flow
   // (generateFingerprint hashes real file bytes client-side, Constitution
-  // 1.6). Bulk/CSV row-mode goes through bulk_create_anchors (0375), which
+  // 1.6). Bulk/CSV row-mode goes through bulk_create_anchors (0376), which
   // computes this server-side — never client-trusted there.
   fingerprint_source: z
     .enum(['document_bytes', 'issuer_record_attestation'])

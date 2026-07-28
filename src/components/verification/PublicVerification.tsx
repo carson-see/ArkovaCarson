@@ -96,7 +96,7 @@ interface PublicAnchorData {
   source_payload_hash?: string;
   fetched_at?: string;
   /** R19 (CTO ruling 2026-07-28): document_bytes | issuer_record_attestation | null (unclassified).
-   * Surfaced by `get_public_anchor` as a top-level additive-nullable key (0375). */
+   * Surfaced by `get_public_anchor` as a top-level additive-nullable key (0376). */
   fingerprint_source?: string | null;
   /** CPE-R1 (SCRUM-1847): structured CPE metadata, when present on the anchor.
    * Surfaced by the `get_public_anchor` RPC. extraction_confidence is never

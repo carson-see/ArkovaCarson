@@ -1,4 +1,4 @@
--- 0375_r19_anchor_fingerprint_source.sql
+-- 0376_r19_anchor_fingerprint_source.sql
 -- CTO ruling R19 (2026-07-28, ratified sprint plan) — advances SCRUM-2481
 -- (server-side evidence-level trust, open P0).
 --
@@ -59,10 +59,10 @@
 --
 -- ROLLBACK:
 --   DROP FUNCTION IF EXISTS public.bulk_create_anchors(jsonb);
---   -- (recreate the pre-0375 body from 00000000000000_baseline_at_main_HEAD.sql
+--   -- (recreate the pre-0376 body from 00000000000000_baseline_at_main_HEAD.sql
 --   --  lines 1168-1263 if rollback must restore prior behavior exactly)
 --   CREATE OR REPLACE FUNCTION public.get_public_anchor(p_public_id text) ...
---   -- (restore the pre-0375 body from 0355_scrum2485_public_anchor_base_projection_allowlist.sql)
+--   -- (restore the pre-0376 body from 0355_scrum2485_public_anchor_base_projection_allowlist.sql)
 --   ALTER TABLE public.anchors
 --     DROP CONSTRAINT IF EXISTS anchors_fingerprint_source_check;
 --   ALTER TABLE public.anchors

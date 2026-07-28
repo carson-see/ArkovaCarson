@@ -94,7 +94,7 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
       // synthesized from row text (fingerprintProvided === false) requires
       // the issuer-attestation acknowledgement before the batch may proceed.
       // Client-side gate mirrors the server-side class computation in
-      // bulk_create_anchors (0375) — this does not replace it, it prevents
+      // bulk_create_anchors (0376) — this does not replace it, it prevents
       // an unacknowledged submission from ever reaching the RPC.
       const requiresAttestation = records.some(r => r.fingerprintProvided === false);
       if (requiresAttestation && !options.attested) {
@@ -132,7 +132,7 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
             fileSize: r.fileSize || null,
             credentialType: r.credentialType || null,
             metadata: r.metadata || null,
-            // R19: narrow boolean signal only — bulk_create_anchors (0375)
+            // R19: narrow boolean signal only — bulk_create_anchors (0376)
             // computes fingerprint_source server-side from this, never from
             // a client-supplied label.
             fingerprintProvided: r.fingerprintProvided ?? false,
