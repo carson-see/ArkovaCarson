@@ -1746,6 +1746,149 @@ describe('check-staging-evidence', () => {
       });
     });
 
+    describe('deferred_consolidated_soak mode (CTO ruling 2026-07-28, SCRUM-2980)', () => {
+      const headSha = '2222222222222222222222222222222222222222';
+      const baseSha = 'ae2209fd771ff088d8f3ef12070f4028cbd421a7';
+      const rcPath = 'docs/staging/rc-manifests/rc-2026-08-launch-72h.json';
+      const rcBody = `## Staging Soak Evidence
+- Tier: T3
+- RC manifest path: ${rcPath}
+`;
+
+      // Deliberately minimal: no environment/soak/migration_plan blocks at
+      // all — proving deferred mode does not require them (that's the point;
+      // there is no real evidence yet).
+      const deferredManifest = (overrides: Record<string, unknown> = {}) => ({
+        schema_version: 1,
+        rc_id: 'RC-2026-08-launch-72h',
+        created_at: '2026-07-28T14:57:46Z',
+        created_by: 'RM agent',
+        release_owner: 'Carson',
+        approval_status: 'pending',
+        approval_actor: '',
+        approval_time: '',
+        soak_mode: 'deferred_consolidated_soak',
+        train_launch_sha: baseSha,
+        target_main_sha: baseSha,
+        allowed_base_shas: [baseSha],
+        covered_main_shas: [baseSha],
+        included_prs: [
+          {
+            number: 1615,
+            head_sha: headSha,
+            base_sha: baseSha,
+            risk_tier: 'T3',
+            owner: 'L1',
+            ci_summary: 'required checks green',
+            rollback_note: 'revert PR and re-apply prior migration state',
+            migration_files: ['supabase/migrations/0359_materializer.sql'],
+          },
+        ],
+        ...overrides,
+      });
+
+      const runDeferred = (
+        rc: unknown,
+        opts: { body?: string; files?: string[]; deployWorkerPaused?: boolean } = {},
+      ) => check({
+        body: opts.body ?? rcBody,
+        files: opts.files ?? ['supabase/migrations/0359_materializer.sql'],
+        headSha,
+        baseSha,
+        deployWorkerPaused: opts.deployWorkerPaused,
+        rcManifestLoader: (path) => {
+          expect(path).toBe(rcPath);
+          return JSON.stringify(rc);
+        },
+      });
+
+      it('passes a manifest-listed PR when the deploy gate is positively confirmed engaged', () => {
+        const r = runDeferred(deferredManifest(), { deployWorkerPaused: true });
+        expect(r.ok).toBe(true);
+        // Must never render as "evidence present" — the note has to say
+        // DEFERRED / NOT satisfied in plain language.
+        const notes = r.notes.join(' ');
+        expect(notes).toMatch(/DEFERRED/);
+        expect(notes).toMatch(/NOT satisfied/i);
+      });
+
+      it('fails closed when the deploy gate is NOT confirmed engaged (undefined)', () => {
+        const r = runDeferred(deferredManifest(), { deployWorkerPaused: undefined });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/DEPLOY_WORKER_PAUSED/);
+      });
+
+      it('fails closed when the deploy gate is explicitly false', () => {
+        const r = runDeferred(deferredManifest(), { deployWorkerPaused: false });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/DEPLOY_WORKER_PAUSED/);
+      });
+
+      it('fails closed for a PR NOT listed in included_prs[], even with the gate paused', () => {
+        const r = runDeferred(deferredManifest({
+          included_prs: [{
+            number: 9999,
+            head_sha: '9999999999999999999999999999999999999999',
+            base_sha: baseSha,
+            risk_tier: 'T3',
+            owner: 'other',
+            ci_summary: 'green',
+            rollback_note: 'revert',
+            migration_files: ['supabase/migrations/0359_materializer.sql'],
+          }],
+        }), { deployWorkerPaused: true });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/current PR head/i);
+      });
+
+      it('rejects approval_status="approved" while soak_mode is deferred — that combination is a contradiction', () => {
+        const r = runDeferred(deferredManifest({ approval_status: 'approved' }), { deployWorkerPaused: true });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/pending/i);
+      });
+
+      it('rejects an unrecognized soak_mode value rather than silently falling through', () => {
+        const r = runDeferred(deferredManifest({ soak_mode: 'skip_everything' }), { deployWorkerPaused: true });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/not a recognized value/i);
+      });
+
+      it('does not require environment/soak/migration_plan blocks (the whole point of deferred mode)', () => {
+        // deferredManifest() already omits all three; this asserts the
+        // *reason* it passes is not "they happened to be present."
+        const r = runDeferred(deferredManifest(), { deployWorkerPaused: true });
+        expect(r.ok).toBe(true);
+      });
+
+      it('a manifest with soak_mode absent uses the EXACT existing (non-deferred) behavior — still fails on a non-"approved" approval_status', () => {
+        // Sanity check that omitting soak_mode entirely reverts to today's
+        // pre-existing rule (approval_status must be exactly "approved"),
+        // proving the new mode does not weaken the default path. Uses
+        // "rejected" rather than "pending" as the bad value here because
+        // "pending" independently trips the PRE-EXISTING (unrelated to this
+        // change) isFilledValue() incomplete-placeholder rejection on this
+        // same field — asserted separately below — which would make this
+        // particular assertion ambiguous about which code path produced it.
+        const r = runDeferred(deferredManifest({ soak_mode: undefined, approval_status: 'rejected' }), { deployWorkerPaused: true });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/approval_status must be approved/i);
+      });
+
+      it('a manifest with soak_mode absent and approval_status="pending" fails via the PRE-EXISTING placeholder rule (unchanged by this PR)', () => {
+        // This is the exact behavior that motivated deferred mode's own
+        // approval_status check to bypass requireRcString() — the normal
+        // path's requireRcString() already rejects the bare word "pending"
+        // as an incomplete-placeholder value before it ever reaches the
+        // "!== approved" comparison. That is 100% pre-existing behavior
+        // (see requireRcString/isFilledValue/INCOMPLETE_VALUE_PATTERNS,
+        // none of which this PR touches) — this test pins it so a future
+        // change to either code path can't silently alter it.
+        const r = runDeferred(deferredManifest({ soak_mode: undefined }), { deployWorkerPaused: true });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/approval_status.*must be a real value/i);
+      });
+    });
+
     it('fails T3 PR with evidence section but missing required fields', () => {
       const incomplete = `## Staging Soak Evidence\n- Tier: T3\n`;
       const r = check({

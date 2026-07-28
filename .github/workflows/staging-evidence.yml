@@ -161,6 +161,17 @@ jobs:
           PR_BODY: ${{ steps.live_pr.outputs.body }}
           HEAD_REF_SHA: ${{ steps.live_pr.outputs.head_sha }}
           BASE_REF_SHA: ${{ steps.live_pr.outputs.base_sha }}
+          # CTO ruling 2026-07-28 (SCRUM-2980): hard precondition for the
+          # deferred_consolidated_soak RC-manifest mode
+          # (scripts/ci/check-staging-evidence.ts). `vars.*` is read fresh
+          # from the repo's live Actions-variable state at THIS run, not
+          # from the frozen webhook payload — so this positively confirms
+          # (or positively fails to confirm) that deploy-worker.yml's
+          # `deploy-gate` job is actually pausing Cloud Run deploys right
+          # now, every time this check runs. See .github/workflows/
+          # deploy-worker.yml and .github/workflows/agents.md "Deploy-worker
+          # pause gate" for the deploy-side half of this coupled control.
+          DEPLOY_WORKER_PAUSED: ${{ vars.DEPLOY_WORKER_PAUSED }}
         # Resolved local binary, not `npx tsx` (SonarCloud githubactions:S6505/
         # S8543 — `npx` can install packages on-demand and run their lifecycle
         # scripts). `npm ci` two steps above already installs the pinned

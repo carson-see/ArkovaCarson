@@ -132,6 +132,65 @@ Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lig
   inline in the workflow (why `edited` is omitted) rather than leaving it
   silently absent.
 
+## Deploy-worker pause gate (`vars.DEPLOY_WORKER_PAUSED`, 2026-08 launch wave)
+
+`deploy-worker.yml` auto-deploys to prod Cloud Run on every push to `main`
+touching `services/worker/**`. During the 2026-08 wave-merge window
+(`docs/release/wave-merge-choreography-2026-08.md`) T2/T3 worker + migration
+PRs are deliberately merged BEFORE the 72h soak (CTO ruling 2026-07-28) —
+left ungated, every one of those merges would auto-deploy unsoaked chain/
+billing/migration code straight to prod. `.github/workflows/deploy-worker.yml`
+now has a `deploy-gate` job between `pre-deploy-checks` and `deploy`:
+
+- **`vars.DEPLOY_WORKER_PAUSED`** — a repository Actions **variable** (not a
+  secret; Settings -> Secrets and variables -> Actions -> Variables). Default
+  (unset, or anything other than the literal string `"true"`) is **unpaused**
+  — fail-open to normal auto-deploy, so nobody has to remember to unpause
+  after routine work.
+- Gates ONLY the `deploy` job (image build/scan/push, canary deploy, smoke
+  test, promote-to-full, health verify). `pre-deploy-checks`
+  (typecheck/lint/zk-artifacts/`npm test`/copy-lint) is unconditional and
+  always runs on every push — quality gates never go dark, paused or not.
+- When paused, the `deploy-gate` job's "Evaluate DEPLOY_WORKER_PAUSED" step
+  emits a `::warning::` annotation AND a `$GITHUB_STEP_SUMMARY` banner on
+  **every** push-triggered run, naming the commit, the reason, and both the
+  override and reversal procedures — a paused deploy is loud, not a silent
+  skip nobody notices.
+- **`workflow_dispatch`** (Actions tab -> Deploy Worker -> Run workflow, or
+  `gh workflow run deploy-worker.yml`) ALWAYS bypasses the pause — a human
+  explicitly dispatching this workflow is by definition an intentional
+  deploy. This is the one and only override path; there is no PR label or
+  env var that also bypasses it (keeps the escape hatch to a single,
+  auditable, human-initiated action).
+- **Reversal:** `gh variable set DEPLOY_WORKER_PAUSED --body false` or
+  `gh variable delete DEPLOY_WORKER_PAUSED` — takes effect on the next push,
+  no code change / PR / redeploy of this workflow required.
+- **`if:` semantics note** (repo just got bitten by a related class of bug —
+  keep this precise): `deploy` declares an explicit
+  `if: needs.deploy-gate.result == 'success' && needs.deploy-gate.outputs.proceed == 'true'`
+  rather than relying on the implicit default `if: success()`. A bare
+  `success()` on a job only inspects its OWN direct `needs:` — fine here
+  since `deploy` needs only `deploy-gate` — but an explicit boolean
+  expression on a job-level `if:` is evaluated regardless of the needed
+  job's outcome unless `result == 'success'` is spelled out; without that
+  clause a crashed `deploy-gate` (empty `outputs.proceed`) would still
+  correctly evaluate false (`'' == 'true'` is false) but a future edit that
+  reuses this pattern must keep the `result == 'success'` guard explicit
+  rather than assuming the default applies. Both `deploy-gate`'s own step
+  (`id: check`) and `deploy`'s job-level `if:` were checked against
+  `actionlint` (`brew install actionlint`) — zero findings.
+- **Tier:** the change to `deploy-worker.yml` itself is classified **T2**
+  by `scripts/ci/check-staging-evidence.ts`'s own `PATH_RULES` (`worker
+  deploy config: prod runtime`) — the file's only T0 exemption is a
+  Dependabot `uses:`-only bump (`isDeployWorkerUsesOnlyBump`), which this
+  change does not qualify for (it adds a real job + `if:`/`env:`/`run:`
+  content, not a version-pin or checkout-hardening line). The PR carrying
+  this change declares `Tier: T2` honestly rather than self-declaring a
+  lower tier to dodge the gate — see the PR body's residual-risk note for
+  why the mechanical T2 classification does not match this diff's actual
+  blast radius (it changes deploy ORCHESTRATION only: no secret, env var,
+  image, region, scaling, or IAM line is touched, and the default state is
+  unpaused/unchanged behavior).
 ## `$GITHUB_OUTPUT` heredoc delimiters must be per-run random (2026-07-28)
 
 Any step that frames **author-controlled** text inside a `$GITHUB_OUTPUT` (or
