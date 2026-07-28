@@ -28,12 +28,23 @@ set -uo pipefail
 BUILTIN_DRIVERS=(union text binary)
 
 # Commands that "succeed" without ever writing the merged result to %A.
+#
+# Drivers are conventionally written with gitattributes(5) placeholders — e.g.
+# `true %O %A %B` — so matching the bare word is not enough: `true` ignores its
+# arguments and exits 0 either way. Compare only the command word, and treat
+# `cat %A` alike (it prints ours to stdout and leaves %A untouched, which is
+# the same silent keep-ours outcome).
 is_noop_driver() {
-  local cmd
+  local cmd word
   # shellcheck disable=SC2001
   cmd=$(echo "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   case "$cmd" in
-    true | /bin/true | /usr/bin/true | ':' | 'exit 0') return 0 ;;
+    'exit 0' | 'exit 0 '*) return 0 ;;
+    'cat %A' | 'cat %A '*) return 0 ;;
+  esac
+  word=${cmd%%[[:space:]]*}
+  case "$word" in
+    true | /bin/true | /usr/bin/true | ':') return 0 ;;
     *) return 1 ;;
   esac
 }

@@ -109,8 +109,19 @@ a shallow checkout cannot reach. `dependency-scan` already pins full history for
 `ciContext.ts` (see the SCRUM-1246 comment on its checkout step); do not move
 this step into a shallow job.
 
-`BASE_REF_SHA` comes from `github.event.pull_request.base.sha`, so on
-push-to-main runs it is empty and the gate skips rather than failing.
+`BASE_REF_SHA` comes from `github.event.pull_request.base.sha`, so it is empty
+on push events. The gate then skips on `GITHUB_EVENT_NAME != 'pull_request'`
+rather than falling back to `origin/main`. That fallback matters: this job also
+runs on push to `staging` and `develop` (see `on.push.branches`), where
+`merge-base(origin/main, HEAD)` is a real but unrelated ancestor, so the gate
+would diff a diverged branch against main and fail on history the push never
+touched. Only a PR has a meaningful "theirs" side. With no `GITHUB_EVENT_NAME`
+at all (local runs) it still defaults to `origin/main`, which is what you want
+from a developer shell.
+
+The job needs `pull-requests: read` for the live label fetch behind the
+`agents-md-deletion-approved` override; without it the override silently
+reverts to frozen-payload-only behavior and stops working on re-runs.
 ## `pull_request` `types:` contract (SCRUM-3029/3030, 2026-07-28)
 
 - GitHub's default `types:` for a bare `pull_request:` trigger is
