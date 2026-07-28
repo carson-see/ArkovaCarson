@@ -2,6 +2,25 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-07-22 PR #1555 (SCRUM-2703/2705) rebase note — exact row-count callsite reviewed, not changed
+
+_Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`)._
+
+`perOrgRateLimit.ts::getCapacityCount` requests an exact row-count from PostgREST (the R0-8 baseline check flags it: +1 non-test callsite). Reviewed and left as-is: both `CAPACITY_TABLES` targets (`organization_rules`, `webhook_endpoints`) are queried with `.eq('org_id', orgId)` against an indexed `org_id` btree (`idx_organization_rules_org_trigger`, `idx_webhook_endpoints_org_id`), and per-org cardinality is bounded by the tier caps themselves (≤100 rules, ≤10 connectors) — not the unindexed multi-million-row `anchors`-table scan pattern R0-8 targets. Capacity enforcement also needs an accurate row-count (compared against small integer tier limits); an estimated count or `pg_class.reltuples` would give an inaccurate, whole-table (not org-scoped) figure and risk incorrect quota allow/deny. This PR carries the `count-exact-allowed` label to cover that single reviewed callsite (RTE/CTO may later special-case it in the baseline script instead). Prose here deliberately avoids the literal grep token so this note does not itself inflate the R0-8 baseline count.
+
+## 2026-07-15 SCRUM-2703/2705 quota invariants
+
+_Restored 2026-07-28 — same union-merge-driver incident as above._
+
+- `perOrgRateLimit.ts` accepts organization ids only from authenticated caller
+  context. Daily cardinality is atomically incremented; capacity counts query
+  only code-owned table mappings and fail closed on lookup uncertainty.
+- `x402PaymentGate.ts` derives payer identity only from the verified on-chain
+  USDC Transfer sender and places only its HMAC in `req.x402PayerContext`.
+- `x402PayerRateLimit.ts` is bounded process-local memory. Full-store or missing
+  identity conditions return 503; do not evict or silently bypass.
+- Canonical org/payer quota 429s must emit an integer `Retry-After`.
+
 ## 2026-07-21 Partner Provisioning Gate (SCRUM-2990)
 
 - `partnerProvisioningGate.ts` gates the entire `/api/partner-provisioning` surface behind the `ENABLE_PARTNER_PROVISIONING` switchboard flag. Mirrors `featureGate.ts` (ENABLE_VERIFICATION_API / §1.9) exactly: `get_flag` RPC, 60s TTL cache, FAIL CLOSED on absent/false/non-boolean/read-error, and the env var is deliberately NOT a runtime fallback (unseeded flag row = surface dark, the intended pre-launch default; seeding is DBA/release-ops-owned). Dark = **404** (not the verification gate's 503): the surface is unreleased and must not disclose its existence. Registered in `flagRegistry.ts` `DB_FLAGS`; listed inert in `scripts/ci/config-drift/expected-prod-config.json` `pendingLaunchFlags` per the WH-6 precedent (pin the effective value only once the prod row is seeded).

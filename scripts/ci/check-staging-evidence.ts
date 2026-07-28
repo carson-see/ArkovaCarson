@@ -2151,6 +2151,12 @@ const STAGING_TOOLING_ALLOW = [
   // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.
   /^scripts\/ci-supabase-start\.sh$/,
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
+  // SCRUM-3026: sanctioned re-trigger helper — mints a fresh PR event
+  // (tree-identical empty commit + push, optional PR-body head-SHA bump via
+  // `gh pr edit`) so event-driven CI gates re-evaluate CURRENT PR state
+  // instead of a stale `gh run rerun` replay of the frozen event payload.
+  // Runs only as an operator/agent CLI; never ships to prod runtime.
+  /^scripts\/ci\/mint-fresh-event(\.test)?\.sh$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
   // SCRUM-2897: evidence-identity gate — a pure body/head-SHA identity checker
@@ -2188,6 +2194,11 @@ const STAGING_TOOLING_ALLOW = [
   // CI gate that parses vercel.json + scans on-device runtime sources. Runs only
   // in CI, never ships to prod runtime, so it is T0 tooling.
   /^scripts\/ci\/check-csp-runtime-deps(\.test)?\.ts$/,
+  // SCRUM-3032/3033/3034 (CTO ruling R14, 2026-07-28 Wave 0 / G3): orphaned
+  // hook/component export lint. Static-analysis CI gate (TypeScript AST scan
+  // over src/), runs only in CI; never ships to prod runtime → T0 tooling,
+  // same class as the other scripts/ci/check-*.ts gates above.
+  /^scripts\/ci\/check-orphaned-exports(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   // SCRUM-2977: anti-hollow-soak pre-clock guard set. A pure guard module + CLI
   // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
