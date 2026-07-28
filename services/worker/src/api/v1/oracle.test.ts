@@ -65,6 +65,7 @@ describe('Oracle endpoint', () => {
         file_size: null,
         confidence_scores: null,
         sub_type: null,
+        fingerprint_source: null,
       });
 
       expect(result.verified).toBe(true);
@@ -103,6 +104,7 @@ describe('Oracle endpoint', () => {
         file_size: null,
         confidence_scores: null,
         sub_type: null,
+        fingerprint_source: null,
       });
 
       expect(result.verified).toBe(false);
@@ -137,6 +139,7 @@ describe('Oracle endpoint', () => {
         file_size: null,
         confidence_scores: null,
         sub_type: null,
+        fingerprint_source: null,
       });
 
       expect(result.verified).toBe(false);

@@ -49,9 +49,11 @@ import { ExplorerLink } from '@/components/ui/ExplorerLink';
 import { ComplianceBadge } from '@/components/anchor/ComplianceBadge';
 import { EvidenceLayersSection } from '@/components/verification/EvidenceLayersSection';
 import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
+import { FingerprintSourceDisplay } from '@/components/verification/FingerprintSourceDisplay';
 import { LinkedInCredentialHelper } from '@/components/verification/LinkedInCredentialHelper';
 import { ArkovaBadge } from '@/components/verification/ArkovaBadge';
 import { isIssuerAuthenticated, parseVerificationLevel, sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
+import { parseFingerprintSource } from '@/lib/fingerprintSource';
 
 interface PublicAnchorData {
   public_id: string;
@@ -93,6 +95,9 @@ interface PublicAnchorData {
   evidence_package_hash?: string;
   source_payload_hash?: string;
   fetched_at?: string;
+  /** R19 (CTO ruling 2026-07-28): document_bytes | issuer_record_attestation | null (unclassified).
+   * Surfaced by `get_public_anchor` as a top-level additive-nullable key (0375). */
+  fingerprint_source?: string | null;
   /** CPE-R1 (SCRUM-1847): structured CPE metadata, when present on the anchor.
    * Surfaced by the `get_public_anchor` RPC. extraction_confidence is never
    * rendered (CpeMetadataSection redacts it). */
@@ -511,6 +516,19 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
                 { type: 'timestamp', present: false },
               ]}
             />
+          </>
+        )}
+
+        {/* ============================================================
+            SECTION 2d: Fingerprint Source (R19, advances SCRUM-2481)
+            ============================================================
+            Document-derived vs record-derived (issuer attestation) — an
+            axis orthogonal to Source Provenance below. Renders nothing for
+            unclassified (pre-R19) anchors. */}
+        {parseFingerprintSource(data.fingerprint_source) && (
+          <>
+            <Separator />
+            <FingerprintSourceDisplay value={data.fingerprint_source} />
           </>
         )}
 

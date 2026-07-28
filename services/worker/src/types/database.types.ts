@@ -596,6 +596,7 @@ export type Database = {
           file_size: number | null
           filename: string
           fingerprint: string
+          fingerprint_source: string | null
           id: string
           issued_at: string | null
           label: string | null
@@ -642,6 +643,7 @@ export type Database = {
           file_size?: number | null
           filename: string
           fingerprint: string
+          fingerprint_source?: string | null
           id?: string
           issued_at?: string | null
           label?: string | null
@@ -688,6 +690,7 @@ export type Database = {
           file_size?: number | null
           filename?: string
           fingerprint?: string
+          fingerprint_source?: string | null
           id?: string
           issued_at?: string | null
           label?: string | null

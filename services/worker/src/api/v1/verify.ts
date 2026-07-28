@@ -66,6 +66,15 @@ export interface VerificationResult {
   confidence_scores?: Record<string, unknown> | null;
   /** GRE-01 fine-grained credential sub-type (e.g., 'official_undergraduate'). */
   sub_type?: string | null;
+  /**
+   * R19 (CTO ruling 2026-07-28, advances SCRUM-2481): evidence class for how
+   * `fingerprint` was computed. 'document_bytes' = a real file's bytes were
+   * fingerprinted client-side (Constitution 1.6). 'issuer_record_attestation'
+   * = no source document was supplied; the issuer's asserted record content
+   * was fingerprinted. null = unclassified (anchor predates migration 0375;
+   * never guessed, Constitution 1.5). Additive nullable — Constitution 1.8.
+   */
+  fingerprint_source?: 'document_bytes' | 'issuer_record_attestation' | null;
   error?: string;
 }
 
@@ -146,6 +155,8 @@ export interface AnchorByPublicId {
   confidence_scores: Record<string, unknown> | null;
   /** API-RICH-02 (SCRUM-895): Fine-grained sub-type from anchors.sub_type (GRE-01). */
   sub_type: string | null;
+  /** R19: fingerprint evidence class from anchors.fingerprint_source (migration 0375). */
+  fingerprint_source: string | null;
 }
 
 /**
@@ -230,6 +241,7 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     'file_size',
     'confidence_scores',
     'sub_type',
+    'fingerprint_source',
   ] as const;
   for (const key of API_RICH_KEYS) {
     const v = anchor[key];
@@ -264,6 +276,7 @@ export const EMPTY_API_RICH_FIELDS = {
   file_size: null,
   confidence_scores: null,
   sub_type: null,
+  fingerprint_source: null,
 } as const;
 
 /** Fire-and-forget audit log for verification queries */
@@ -342,6 +355,8 @@ export interface AnchorSelectRow {
   file_mime: string | null;
   file_size: number | null;
   org_id: string | null;
+  /** R19: fingerprint evidence class (migration 0375). */
+  fingerprint_source: string | null;
   /** anchors.metadata JSONB — source of jurisdiction + legacy merkle_root. */
   metadata: Record<string, unknown> | null;
   organization: { display_name: string } | null;
@@ -418,6 +433,7 @@ export function mapAnchorRow(row: AnchorSelectRow): AnchorByPublicId {
     file_size: row.file_size ?? null,
     confidence_scores: latestManifest?.confidence_scores ?? null,
     sub_type: row.sub_type ?? null,
+    fingerprint_source: row.fingerprint_source ?? null,
   };
 }
 
@@ -431,7 +447,7 @@ const defaultLookup: PublicIdLookup = {
           'credential_type, sub_type, issued_at, expires_at, description, directory_info_opt_out, ' +
           'compliance_controls, chain_confirmations, version_number, ' +
           'revocation_tx_id, revocation_block_height, file_mime, file_size, ' +
-          'org_id, metadata, ' +
+          'org_id, fingerprint_source, metadata, ' +
           'organization:org_id(display_name), parent:parent_anchor_id(public_id), ' +
           'anchor_proofs(merkle_root), ' +
           'extraction_manifests(confidence_scores, extraction_timestamp)',

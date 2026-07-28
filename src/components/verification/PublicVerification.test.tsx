@@ -287,6 +287,72 @@ describe('PublicVerification', () => {
     expect(screen.queryByText(/token=secret/)).not.toBeInTheDocument();
   });
 
+  // R19 (CTO ruling 2026-07-28, advances SCRUM-2481): fingerprint_source
+  // renders as a distinct section, orthogonal to Source Provenance/EvidenceLevel.
+  describe('R19: fingerprint_source', () => {
+    it('renders the document-derived tier for fingerprint_source=document_bytes', async () => {
+      rpcMock.mockResolvedValue({
+        data: {
+          ...baseAnchor,
+          status: 'SECURED',
+          secured_at: '2026-04-01T12:00:00Z',
+          network_receipt_id: 'receipt-123',
+          fingerprint_source: 'document_bytes',
+        },
+        error: null,
+      });
+
+      render(<PublicVerification publicId="ARK-DOC-123" />);
+
+      const display = await screen.findByTestId('fingerprint-source-display');
+      expect(display).toBeInTheDocument();
+      const badge = screen.getByTestId('fingerprint-source-badge');
+      expect(badge).toHaveAttribute('data-fingerprint-source', 'document_bytes');
+      expect(screen.getByText('Document Fingerprint')).toBeInTheDocument();
+    });
+
+    it('renders the record-derived (issuer attestation) tier without implying document custody', async () => {
+      rpcMock.mockResolvedValue({
+        data: {
+          ...baseAnchor,
+          status: 'SECURED',
+          secured_at: '2026-04-01T12:00:00Z',
+          network_receipt_id: 'receipt-123',
+          fingerprint_source: 'issuer_record_attestation',
+        },
+        error: null,
+      });
+
+      render(<PublicVerification publicId="ARK-DOC-123" />);
+
+      const badge = await screen.findByTestId('fingerprint-source-badge');
+      expect(badge).toHaveAttribute('data-fingerprint-source', 'issuer_record_attestation');
+      expect(screen.getByText('Issuer-Attested Record')).toBeInTheDocument();
+
+      // R-7 claims gate: must state no source document was supplied.
+      const asserted = screen.getByTestId('fingerprint-source-triad-asserted');
+      expect(asserted.textContent?.toLowerCase()).toContain('no source document');
+    });
+
+    it('renders nothing when fingerprint_source is null (unclassified/pre-R19 anchor)', async () => {
+      rpcMock.mockResolvedValue({
+        data: {
+          ...baseAnchor,
+          status: 'SECURED',
+          secured_at: '2026-04-01T12:00:00Z',
+          network_receipt_id: 'receipt-123',
+          fingerprint_source: null,
+        },
+        error: null,
+      });
+
+      render(<PublicVerification publicId="ARK-DOC-123" />);
+
+      await screen.findByText('Cryptographic Proof');
+      expect(screen.queryByTestId('fingerprint-source-display')).not.toBeInTheDocument();
+    });
+  });
+
   // SCRUM-2481: a captured_url anchor's PUBLIC page must never present the
   // green issuer-verified evidence badge, and must surface the NOT-asserted
   // issuer-identity disclaimer.

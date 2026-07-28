@@ -402,6 +402,16 @@ export const bulkAnchorSchema = z.object({
   email: z.string().email().optional(),
   credentialType: z.enum(VALID_CREDENTIAL_TYPES).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  // R19 (CTO ruling 2026-07-28): true when the CSV mapped a `fingerprint`
+  // column (a pre-computed hash the customer supplied — document-derived,
+  // whether from a real upload or the customer's own hashing tooling). false
+  // when Arkova synthesized the fingerprint from row text because no
+  // fingerprint column was mapped (issuer-attestation, record-derived — see
+  // buildRowCanonical below). Sent to bulk_create_anchors as
+  // `fingerprintProvided`; the SERVER computes the evidence class from this
+  // boolean rather than trusting a free-text label (closes the SCRUM-2481
+  // client-trust gap for this field).
+  fingerprintProvided: z.boolean().optional(),
 });
 
 export type BulkAnchorRecord = z.infer<typeof bulkAnchorSchema>;
@@ -474,6 +484,10 @@ export function extractAnchorRecords(
       filename: hasFilename
         ? getValueByIndex(row, mapping.filename)
         : autoFilename(row, i + 1),
+      // R19: structural signal for fingerprint_source, set at the SAME
+      // moment the sync/async branch decision is made below — never a
+      // separate, spoofable label.
+      fingerprintProvided: hasFingerprint,
     };
 
     if (mapping.fileSize !== null) {

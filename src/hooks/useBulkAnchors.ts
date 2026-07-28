@@ -11,7 +11,14 @@ import { supabase } from '@/lib/supabase';
 import { WORKER_URL } from '@/lib/workerClient';
 import type { BulkAnchorRecord } from '@/lib/csvParser';
 import { useEntitlements } from '@/hooks/useEntitlements';
-import { ENTITLEMENT_LABELS, TOAST } from '@/lib/copy';
+import { ENTITLEMENT_LABELS, TOAST, RECORD_ATTESTATION_LABELS } from '@/lib/copy';
+
+/** R19: options for createBulkAnchors. `attested` must be true whenever the
+ * batch contains any record-derived (fingerprintProvided === false) rows —
+ * the issuer-attestation acknowledgement gate (BulkUploadWizard ReviewStep). */
+export interface CreateBulkAnchorsOptions {
+  attested?: boolean;
+}
 
 interface BulkAnchorResult {
   fingerprint: string;
@@ -30,7 +37,7 @@ interface BulkCreateResult {
 }
 
 interface UseBulkAnchorsReturn {
-  createBulkAnchors: (records: BulkAnchorRecord[]) => Promise<BulkCreateResult | null>;
+  createBulkAnchors: (records: BulkAnchorRecord[], options?: CreateBulkAnchorsOptions) => Promise<BulkCreateResult | null>;
   loading: boolean;
   progress: number;
   processedCount: number;
@@ -67,7 +74,7 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
   }, []);
 
   const createBulkAnchors = useCallback(
-    async (records: BulkAnchorRecord[]): Promise<BulkCreateResult | null> => {
+    async (records: BulkAnchorRecord[], options: CreateBulkAnchorsOptions = {}): Promise<BulkCreateResult | null> => {
       // Wait for entitlements to load before allowing creation
       if (entitlementsLoading) {
         setError('Checking plan quota — please try again');
@@ -80,6 +87,18 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
           .replace('{remaining}', String(remaining ?? 0))
           .replace('{requested}', String(records.length));
         setError(msg);
+        return null;
+      }
+
+      // R19 (CTO ruling 2026-07-28): any record whose fingerprint was
+      // synthesized from row text (fingerprintProvided === false) requires
+      // the issuer-attestation acknowledgement before the batch may proceed.
+      // Client-side gate mirrors the server-side class computation in
+      // bulk_create_anchors (0375) — this does not replace it, it prevents
+      // an unacknowledged submission from ever reaching the RPC.
+      const requiresAttestation = records.some(r => r.fingerprintProvided === false);
+      if (requiresAttestation && !options.attested) {
+        setError(RECORD_ATTESTATION_LABELS.ACKNOWLEDGEMENT_REQUIRED_ERROR);
         return null;
       }
 
@@ -113,6 +132,10 @@ export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnch
             fileSize: r.fileSize || null,
             credentialType: r.credentialType || null,
             metadata: r.metadata || null,
+            // R19: narrow boolean signal only — bulk_create_anchors (0375)
+            // computes fingerprint_source server-side from this, never from
+            // a client-supplied label.
+            fingerprintProvided: r.fingerprintProvided ?? false,
             ...(targetOrgId ? { orgId: targetOrgId } : {}),
           }));
 

@@ -1,5 +1,9 @@
 # agents.md — types
-_Last updated: 2026-06-16_
+_Last updated: 2026-07-28_
+
+## 2026-07-28 R19 — anchors.fingerprint_source (manual patch, not a live regen)
+
+Migration `0375` (unmerged, file-only) adds `anchors.fingerprint_source text` (nullable, CHECK-constrained). Hand-patched into the `anchors` Row/Insert/Update shapes here since the migration hasn't been applied to any project this session could `gen:types` against. **Regenerate for real** (`npx supabase gen types typescript`) once `0375` lands on a reachable Supabase project — this manual patch is a stopgap, not a substitute.
 
 ## What This Folder Contains
 

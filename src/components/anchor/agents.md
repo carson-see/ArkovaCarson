@@ -1,6 +1,10 @@
 # agents.md — components/anchor
 
-_Last updated: 2026-05-26 (SCRUM-2013 credential type drift fix)_
+_Last updated: 2026-07-28 (R19 fingerprint_source, advances SCRUM-2481)_
+
+## 2026-07-28 R19 — document_bytes on the single-doc Secure flow
+
+`SecureDocumentDialog.tsx` now sets `fingerprint_source: 'document_bytes'` on the `validateAnchorCreate(...)` payload for every anchor it creates — this flow always hashes real file bytes client-side via `generateFingerprint` (§1.6), so it is document-derived by construction. See `src/lib/agents.md` for the full evidence-class design.
 
 ## What This Folder Contains
 
