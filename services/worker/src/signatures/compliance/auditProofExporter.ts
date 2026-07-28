@@ -90,9 +90,19 @@ export interface BulkExportResult {
 
 /**
  * Generate an audit proof package for a single credential + signature.
+ *
+ * SECURITY (fix, 2026-07-28): `orgId` is REQUIRED and the query is scoped by
+ * it (`.eq('org_id', orgId)`), matching `bulkExportSignatures`' scoping
+ * pattern below. Previously this function took only `signaturePublicId` with
+ * no org scoping at all, so the caller (`GET /api/v1/signatures/:id/audit-proof`
+ * in `signatureCompliance.ts`) could fetch ANY org's signature audit proof —
+ * a cross-tenant read of signer PII, certificate details, and eIDAS/ESIGN
+ * compliance data. A caller-org mismatch and a truly-missing signature both
+ * resolve to the same `null` (→ 404) to avoid confirming cross-org existence.
  */
 export async function generateAuditProof(
   signaturePublicId: string,
+  orgId: string,
 ): Promise<AuditProofPackage | null> {
   // Fetch signature with related data
   // Note: signatures/signing_certificates/timestamp_tokens tables are new (migrations 0160-0162)
@@ -108,10 +118,11 @@ export async function generateAuditProof(
       )
     `)
     .eq('public_id', signaturePublicId)
+    .eq('org_id', orgId)
     .single();
 
   if (error || !sig) {
-    logger.warn({ signaturePublicId }, 'Audit proof: signature not found');
+    logger.warn({ signaturePublicId, orgId }, 'Audit proof: signature not found');
     return null;
   }
 

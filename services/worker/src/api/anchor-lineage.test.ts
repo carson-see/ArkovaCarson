@@ -172,11 +172,46 @@ describe('handleSupersedeAnchor', () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  // ─── Endpoint-reachability regression (SCRUM-2213 bug class) ───
+  // Before the fix, admin.ts resolved `userId` via `extractAuthUserId()`,
+  // gated on it being truthy (401 if not), then called
+  // `handleSupersedeAnchor(req, res)` — discarding the already-verified
+  // identity. The RPC then resolved the caller via `auth.uid()`, which is
+  // always NULL under the worker's service_role client, so it raised
+  // 'Profile not found' → 403 for EVERY caller, including legitimate org
+  // admins. This test proves the identity is now threaded all the way to the
+  // RPC call as `p_caller_user_id`, which is what migration 0367's new
+  // service_role-only overload requires.
+  it('401s when no callerUserId is supplied (structural reachability guard)', async () => {
+    const { res, status } = mockRes();
+    await handleSupersedeAnchor(
+      mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: VALID_HASH } }),
+      res,
+    );
+    expect(status).toHaveBeenCalledWith(401);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('passes callerUserId to the RPC as p_caller_user_id (the SCRUM-2213 fix)', async () => {
+    rpcMock.mockResolvedValue({ data: 'new-id', error: null });
+    const { res } = mockRes();
+    await handleSupersedeAnchor(
+      mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: VALID_HASH } }),
+      res,
+      'user-1',
+    );
+    expect(rpcMock).toHaveBeenCalledWith(
+      'supersede_anchor',
+      expect.objectContaining({ p_caller_user_id: 'user-1' }),
+    );
+  });
+
   it('400s on invalid id', async () => {
     const { res, status } = mockRes();
     await handleSupersedeAnchor(
       mockReq({ params: { id: 'not-uuid' }, body: { new_fingerprint: VALID_HASH } }),
       res,
+      'user-1',
     );
     expect(status).toHaveBeenCalledWith(400);
   });
@@ -186,6 +221,7 @@ describe('handleSupersedeAnchor', () => {
     await handleSupersedeAnchor(
       mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: 'short' } }),
       res,
+      'user-1',
     );
     expect(status).toHaveBeenCalledWith(400);
   });
@@ -196,6 +232,7 @@ describe('handleSupersedeAnchor', () => {
     await handleSupersedeAnchor(
       mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: VALID_HASH } }),
       res,
+      'user-1',
     );
     expect(json).toHaveBeenCalledWith({ new_anchor_id: 'new-id' });
   });
@@ -209,6 +246,7 @@ describe('handleSupersedeAnchor', () => {
     await handleSupersedeAnchor(
       mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: VALID_HASH } }),
       res,
+      'user-1',
     );
     expect(status).toHaveBeenCalledWith(403);
     expect(json).toHaveBeenCalledWith({
@@ -225,6 +263,7 @@ describe('handleSupersedeAnchor', () => {
     await handleSupersedeAnchor(
       mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: VALID_HASH } }),
       res,
+      'user-1',
     );
     expect(status).toHaveBeenCalledWith(409);
   });
@@ -235,6 +274,7 @@ describe('handleSupersedeAnchor', () => {
     await handleSupersedeAnchor(
       mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: VALID_HASH } }),
       res,
+      'user-1',
     );
     expect(status).toHaveBeenCalledWith(404);
   });
@@ -261,6 +301,7 @@ describe('handleSupersedeAnchor', () => {
     await handleSupersedeAnchor(
       mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: VALID_HASH, reason: 'corrected' } }),
       res,
+      'user-1',
     );
 
     expect(json).toHaveBeenCalledWith({ new_anchor_id: 'new-anchor-uuid' });
@@ -294,6 +335,7 @@ describe('handleSupersedeAnchor', () => {
     await handleSupersedeAnchor(
       mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: VALID_HASH } }),
       res,
+      'user-1',
     );
 
     const credCall = mockDispatchWebhookEvent.mock.calls.find((c) => c[1] === 'credential.status_changed');
@@ -315,6 +357,7 @@ describe('handleSupersedeAnchor', () => {
     await handleSupersedeAnchor(
       mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: VALID_HASH } }),
       res,
+      'user-1',
     );
 
     expect(mockDispatchWebhookEvent.mock.calls.some((c) => c[1] === 'anchor.superseded')).toBe(true);
@@ -332,6 +375,7 @@ describe('handleSupersedeAnchor', () => {
     await handleSupersedeAnchor(
       mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: VALID_HASH } }),
       res,
+      'user-1',
     );
 
     expect(json).toHaveBeenCalledWith({ new_anchor_id: 'new-anchor-uuid' });
@@ -349,6 +393,7 @@ describe('handleSupersedeAnchor', () => {
     await handleSupersedeAnchor(
       mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: VALID_HASH } }),
       res,
+      'user-1',
     );
 
     expect(json).toHaveBeenCalledWith({ new_anchor_id: 'new-anchor-uuid' });
@@ -362,6 +407,7 @@ describe('handleSupersedeAnchor', () => {
     await handleSupersedeAnchor(
       mockReq({ params: { id: VALID_UUID }, body: { new_fingerprint: VALID_HASH } }),
       res,
+      'user-1',
     );
 
     expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();

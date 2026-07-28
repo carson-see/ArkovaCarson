@@ -38,4 +38,30 @@ describe('api v1 router attestation batch routes', () => {
       "router.use('/webhooks/self-service', requireAuth, webhooksSelfServiceRateLimiter, webhooksSelfServiceRouter)",
     );
   });
+
+  // Endpoint-reachability audit: signaturesRouter was mounted three times at
+  // '/sign', '/signatures', '/verify-signature' — its own internal route
+  // strings already carry those segments, so Express required them TWICE
+  // (`POST /api/v1/sign/sign`), 404ing every documented AdES endpoint. Fixed
+  // by mounting the router once at '/', matching the signatureComplianceRouter
+  // / keyInventoryRouter precedent immediately below it.
+  it('mounts signaturesRouter once at the API root, not at /sign, /signatures, or /verify-signature sub-paths', () => {
+    const routerSource = readFileSync(new URL('./router.ts', import.meta.url), 'utf8');
+
+    expect(routerSource).not.toMatch(/router\.use\(\s*['"]\/sign['"]\s*,[\s\S]{0,80}signaturesRouter\s*\)/);
+    expect(routerSource).not.toMatch(/router\.use\(\s*['"]\/signatures['"]\s*,[\s\S]{0,80}signaturesRouter\s*\)/);
+    expect(routerSource).not.toMatch(/router\.use\(\s*['"]\/verify-signature['"]\s*,[\s\S]{0,80}signaturesRouter\s*\)/);
+    expect(routerSource).toMatch(/router\.use\(\s*['"]\/['"]\s*,\s*adesSignatureGate\(\),\s*requireSignatureAuth,\s*signaturesRouter\s*\)/);
+  });
+
+  it('gates /sign and /signatures* behind requireSignatureAuth but lets /verify-signature and unrelated paths through unauthenticated', () => {
+    const routerSource = readFileSync(new URL('./router.ts', import.meta.url), 'utf8');
+    const fnStart = routerSource.indexOf('function requireSignatureAuth');
+    const fnBody = routerSource.slice(fnStart, routerSource.indexOf('router.use(\'/\', adesSignatureGate(), requireSignatureAuth, signaturesRouter)'));
+
+    expect(fnStart).toBeGreaterThan(-1);
+    expect(fnBody).toContain("p === '/sign'");
+    expect(fnBody).toContain("p.startsWith('/signatures/')");
+    expect(fnBody).toContain('requireAuth(req, res, next)');
+  });
 });

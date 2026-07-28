@@ -320,7 +320,12 @@ adminRouter.post('/anchor/:id/supersede', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
   try {
-    await handleSupersedeAnchor(req, res);
+    // Endpoint-reachability audit / SCRUM-2213: userId was resolved above but
+    // never passed through — handleSupersedeAnchor called the supersede_anchor
+    // RPC with no caller identity, so it resolved via auth.uid() (always NULL
+    // under the worker's service_role client) and 403'd every caller. Thread
+    // the already-verified JWT identity through.
+    await handleSupersedeAnchor(req, res, userId);
   } catch (error) {
     logger.error({ error }, 'Anchor supersede request failed');
     res.status(500).json({ error: 'Internal server error' });

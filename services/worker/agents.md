@@ -24,6 +24,79 @@ independently-checkable chain-confirmation: `document fingerprint → app_merkle
 - **0340 columns used:** `block_header` + `block_hash`. NO new migration (the 0340 columns already exist). `merkle_index` (FIX-1) feeds the `txIndex`-style structure; `op_return_payload` + `proof_schema_version` untouched (S2 verifier / format concerns).
 - Tests (NO real Bitcoin API): `chain/confirmation-proof.test.ts` (22, +1 CVE-2012-2459 degenerate-tree reject), `jobs/confirmation-proof-populate.test.ts` (10), `jobs/confirmation-proof-backfill.test.ts` (4), `routes/cron.test.ts` (+2 `populate-confirmation-proofs` endpoint), `utils/anchorProofs.test.ts` (+1 missing-row + .select assertion), `chain/utxo-provider.test.ts` (+6). Full worker suite green except the pre-existing `ai/zk-proof.test.ts` env gate (needs `npm run build:circuit`).
 
+## SCRUM-1791 — entitlement read-side stale-period clamp (2026-06-23)
+
+_Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`); confirmed via `git diff` between merge #1255's parents that this section was byte-for-byte discarded, not superseded by later edits._
+
+Closes the read-side half of the `subscriptions.current_period_*` SEV1. The
+write-side roll-forward already landed (`f5f1e051`: `handlePaymentSucceeded`
+advances the period from `invoice.lines.data[0].period`), but it depends on the
+Stripe webhook landing with a usable period — when BOTH documented fallbacks
+fire (a missed `customer.subscription.updated` AND an invoice with no line
+period) the row stays stale, the original 18-day-stale prod row.
+
+- **`routes/billing.ts`**: new `effectiveUsagePeriodStart(periodStart, periodEnd)`
+  + `currentMonthStartIso()`. `handleBillingStatus` now scopes `countAnchorUsage`
+  by the EFFECTIVE period start: the stored `current_period_start` **only while
+  the window is current** (`current_period_end` in the future), otherwise the
+  current UTC calendar-month boundary — the same bound the already-safe frontend
+  RPC `get_user_monthly_anchor_count` (`created_at >= date_trunc('month', now())`)
+  uses. A stale row can no longer make the usage meter span multiple cycles →
+  no false `percentUsed > 100` → a paid+current user is never gated out. The
+  customer-facing `billing.currentPeriodEnd` still reports the stored value
+  verbatim (we don't fabricate a next-billing date; the clamp is meter-only).
+- **`routes/billing-status.test.ts`**: `chain()`/`routeTables()` gained an
+  `onGte` capture so tests assert the exact `created_at` lower bound. New
+  describe `SCRUM-1791 stale-period read clamp`: clamp on past `period_end`,
+  clamp on null start, trust a fresh window verbatim, and stored stale
+  `currentPeriodEnd` still surfaced.
+- **`stripe/handlers.test.ts`**: new describe `SCRUM-1791 entitlement lifecycle`
+  — lapsed-then-renewed re-grant (active + period advanced + grace cleared in one
+  invoice), cancellation revoke (status→canceled + audit), mid-period upgrade
+  window recompute from `items[0]`.
+
+Code-only, no migration. Read path only; write path unchanged.
+
+## SCRUM-2492 — connector-byte handling hardening (§1.6A enforcement) (2026-06-16)
+
+_Restored 2026-07-28 — same union-merge-driver incident as above. This section documents the CLAUDE.md §1.6A carve-out's enforcement mechanism and remains current._
+
+Closed the §1.6A gap where 0-of-6 controls were enforced. Connector-fetched
+document bytes (DocuSign / Drive) are now blocked from every leak sink — at
+build time AND runtime. The connector happy path was already clean, so this is
+regression-prevention + closing latent error-path leaks. Six cohesive pieces:
+
+- **`eslint-rules/no-connector-bytes-to-sink.cjs`** (new, ERROR on connector
+  files): flags raw bytes (`Buffer`/typed-array/`*.bytes`/`documentBytes`/raw
+  `.toString()`) reaching `logger.*`, `Sentry.capture*`/breadcrumb/context,
+  `Error`/`throw`/template literals, `last_error:`/`failJob(...)`, `fs.write*`,
+  `.insert/.update/.upsert` row values, or `JSON.stringify(...)`. Single-hop
+  alias tracking; range-dedupe. Scoped via `eslint.config.js` to
+  `src/integrations/**` + `docusign-*` job files; PKI/timestamp `arrayBuffer()`
+  readers (`src/signatures/**`) are out of scope. 0 real violations.
+- **`integrations/oauth/docusign.ts` / `drive.ts`**: `DocusignApiError` /
+  `DriveApiError` are byte-safe BY CONSTRUCTION — dropped the `body: unknown`
+  field; now `{ message, status }` only (mirrors `CredentialSourceImportError`).
+  All ~20 construction sites updated; the document-fetch non-2xx path no longer
+  reads the response body.
+- **`utils/logger.ts`**: `formatters.log` recursively strips any binary value
+  (`Buffer`/TypedArray/DataView/ArrayBuffer + `{type:'Buffer',data:[…]}` shape)
+  to `[REDACTED_BYTES]` by TYPE regardless of key; `redact` paths cover known
+  byte field names; the `err`/`error` serializer runs the same sanitizer.
+  Exported `redactBinaryValues`.
+- **`utils/sentry.ts`**: `scrubBinaryValues` runs FIRST in `scrubPiiFromEvent`
+  and `scrubPiiFromBreadcrumb` — type-based binary drop across contexts/extra/
+  tags/exception/arbitrary keys, before the existing key-name PII pass.
+- **`utils/jobQueue.ts`**: `failJob` routes `last_error` through
+  `sanitizeLastError` (detects raw Buffer/typed-array, `{type:'Buffer'}` JSON,
+  control-byte runs, and low-entropy repeated-char runs → token) instead of a
+  bare `substring(0,1000)`. The dead-letter warn log uses the sanitized value.
+- **`jobs/connector-byte-safety.test.ts`** (new): the mandated runtime test —
+  drives a 5 MiB Buffer (`Buffer.alloc(5*1024*1024, 0x25)`) through every sink
+  and asserts the bytes appear in none of: thrown error message/fields,
+  `job_queue.last_error`, captured pino output, or a Sentry event through
+  `scrubPiiFromEvent`.
+
 ## Train D proof-integrity foundation (2026-06-15, branch `feat/train-d-proof-foundation`)
 
 ## Train D proof-integrity foundation (2026-06-15, branch `feat/train-d-proof-foundation`)
@@ -306,6 +379,7 @@ current state.
 - **DON'T** call real Stripe or Bitcoin APIs — use mock interfaces
 - **DON'T** set `anchor.status = 'SECURED'` from client code — worker-only via service_role
 - **DON'T** import `generateFingerprint` — fingerprinting is client-side only (Constitution 1.6)
+- **DON'T** add OCR libraries (`pdfjs-dist`, `tesseract.js`) — OCR runs on the user's device (`src/lib/ocrWorker.ts`, Constitution 1.6). Both were removed as orphaned zero-importer `devDependencies`; needing one here means the design routes document content server-side, which 1.6 forbids
 - **DON'T** modify existing migration files — write compensating migrations
 
 ## Dependencies
@@ -360,3 +434,15 @@ vi.mock('../config.js', () => ({
   get config() { return mutableState; }  // reads from hoisted ref
 }));
 ```
+
+## 2026-07-15 S3.3 Wave 3 Lane 2 quotas and verified-payer limits
+
+- SCRUM-2703 mounts trusted-identity organization quotas on the real anchor,
+  persisted-rule, and webhook-create surfaces. Daily anchor usage uses the
+  atomic `increment_org_usage` RPC; rule/webhook capacity reads are
+  authoritative but remain read-before-insert and therefore are not an atomic
+  cross-instance hard cap.
+- SCRUM-2705 keys the bounded, process-local Nessie payer limiter only by an
+  HMAC of the verified on-chain Transfer sender. Never place a raw wallet
+  address in request limiter context, limiter state, or logs.
+- Post-Wave-3 staging smoke is deferred; offline tests are not soak evidence.

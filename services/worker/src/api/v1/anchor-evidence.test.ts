@@ -111,6 +111,23 @@ describe('buildEvidencePackage (SCRUM-1173)', () => {
     expect(pkg.chain_data_available).toBe(true);
   });
 
+  it('pentest-prep: omits the jurisdiction key entirely when the anchor has none (frozen schema §1.8)', () => {
+    const pkg = buildEvidencePackage(
+      defaultAnchor({ jurisdiction: null }),
+      [],
+      { includeActorPublicId: false },
+    );
+    expect(pkg).not.toHaveProperty('jurisdiction');
+    expect(JSON.stringify(pkg)).not.toContain('"jurisdiction"');
+  });
+
+  it('pentest-prep: includes jurisdiction when the anchor has one', () => {
+    const pkg = buildEvidencePackage(defaultAnchor({ jurisdiction: 'KE' }), [], {
+      includeActorPublicId: false,
+    });
+    expect(pkg.jurisdiction).toBe('KE');
+  });
+
   it('AC2: public projection — never includes raw internal UUIDs', () => {
     const pkg = buildEvidencePackage(defaultAnchor(), [], { includeActorPublicId: false });
     const serialized = JSON.stringify(pkg);

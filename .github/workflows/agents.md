@@ -11,6 +11,8 @@
 
 `staging-evidence.yml` passes both `BASE_REF_SHA` and `HEAD_REF_SHA` into `scripts/ci/check-staging-evidence.ts`; the gate compares those SHAs against the PR-body evidence. Exact PR head SHA must always match. Base SHA movement is impact-assessed: T0 docs/tests/CI/tooling-only drift can preserve soak evidence with an approved `Base drift impact:` note, while runtime/schema/staging/deploy drift still fails closed.
 
+**SCRUM-3026 (2026-07-28) — live PR state, not the frozen event payload.** A `Resolve live PR state` step (`id: live_pr`) runs `gh api repos/.../pulls/<N>` at the START of every job execution and resolves the PR's CURRENT head SHA, base SHA, merge-preview SHA, and body — never `github.sha` / `github.event.pull_request.*` directly, which are frozen at the moment the triggering webhook was delivered and replay stale on a bare rerun (GitHub UI "Re-run jobs", `gh run rerun`, a re-request, or a Mergify re-check without a new delivery). Checkout pins `ref: ${{ steps.live_pr.outputs.checkout_sha }}` (the live-resolved merge-preview SHA, falling back to the branch head SHA if GitHub hasn't finished computing `merge_commit_sha`); the evidence-check step's `PR_BODY` / `HEAD_REF_SHA` / `BASE_REF_SHA` bind to that same step's outputs. `scripts/ci/staging-evidence-workflow-contract.test.ts` pins this shape and rejects any regression back to a raw `github.sha` / `github.event.pull_request.*` binding. `scripts/ci/mint-fresh-event.sh` is the sanctioned helper for forcing a genuinely fresh webhook event (tree-identical empty commit + push) when a live re-read of the existing event isn't enough — see `docs/runbooks/ci/mint-fresh-event.md`.
+
 The root `typecheck-lint` job also runs `npm run lint:batch-drain-evidence`. Keep that focused command current when a batch-drain evidence, admission, crash, observation, or shared time/parser file is added; local-only lint is not an enforceable gate.
 
 ## SCRUM-1068 — Sonatype SCA
@@ -100,8 +102,167 @@ Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lig
   `npm test`. The staging-tier classifier treats only an additive full-history
   checkout change as T0; removing it or choosing a shallow depth fails closed.
 
+## 2026-07-28 — agents.md append-only gate (union-drop backstop)
+
+`ci.yml` `dependency-scan` gained **Block dropped agents.md content
+(append-only)** (`scripts/ci/check-agents-md-append-only.ts`). It must stay in a
+job with `fetch-depth: 0` — it resolves `merge-base(BASE_REF_SHA, HEAD)`, which
+a shallow checkout cannot reach. `dependency-scan` already pins full history for
+`ciContext.ts` (see the SCRUM-1246 comment on its checkout step); do not move
+this step into a shallow job.
+
+`BASE_REF_SHA` comes from `github.event.pull_request.base.sha`, so it is empty
+on push events. The gate then skips on `GITHUB_EVENT_NAME != 'pull_request'`
+rather than falling back to `origin/main`. That fallback matters: this job also
+runs on push to `staging` and `develop` (see `on.push.branches`), where
+`merge-base(origin/main, HEAD)` is a real but unrelated ancestor, so the gate
+would diff a diverged branch against main and fail on history the push never
+touched. Only a PR has a meaningful "theirs" side. With no `GITHUB_EVENT_NAME`
+at all (local runs) it still defaults to `origin/main`, which is what you want
+from a developer shell.
+
+The job needs `pull-requests: read` for the live label fetch behind the
+`agents-md-deletion-approved` override; without it the override silently
+reverts to frozen-payload-only behavior and stops working on re-runs.
+## `pull_request` `types:` contract (SCRUM-3029/3030, 2026-07-28)
+
+- GitHub's default `types:` for a bare `pull_request:` trigger is
+  `[opened, synchronize, reopened]`. `synchronize` fires only on a new
+  commit — a **body-only edit** (bumping a head-SHA reference after a soak,
+  updating a `## Staging Soak Evidence` block, adding an approver note)
+  never re-fires the workflow unless `edited` is explicitly listed. A
+  workflow gating merge-relevant evidence (migration drift, staging
+  evidence, anything a PR body can update without a new commit) that omits
+  `edited` will keep showing a stale run as current — `gh pr checks` cannot
+  tell the difference. See
+  `docs/runbooks/ci/verifying-current-check-runs.md` for the full failure
+  mode and the cross-check procedure via
+  `gh api repos/{owner}/{repo}/commits/<head-sha>/check-runs`.
+- `migration-drift.yml` was fixed under SCRUM-3029: `on.pull_request.types`
+  is now `[opened, synchronize, reopened, edited]`. The job is a read-only
+  script + one Supabase Management API call (well under a minute), so
+  re-running on every body edit is cheap; the existing
+  `concurrency: { group: migration-drift-${{ github.ref }}, cancel-in-progress: true }`
+  already coalesces back-to-back edits on the same PR (pull_request
+  `github.ref` is PR-scoped, `refs/pull/<n>/merge`) — no additional
+  concurrency change was needed.
+- When adding or reviewing a new `pull_request`-triggered workflow: if the
+  gate can be satisfied or invalidated by a PR **body** change alone (any
+  evidence-block / head-SHA-reference / approval-note workflow), add
+  `edited` to `types:` unless the job is expensive enough that re-running it
+  on every body edit is a real cost — in that case, document the tradeoff
+  inline in the workflow (why `edited` is omitted) rather than leaving it
+  silently absent.
+
+## Deploy-worker pause gate (`vars.DEPLOY_WORKER_PAUSED`, 2026-08 launch wave)
+
+`deploy-worker.yml` auto-deploys to prod Cloud Run on every push to `main`
+touching `services/worker/**`. During the 2026-08 wave-merge window
+(`docs/release/wave-merge-choreography-2026-08.md`) T2/T3 worker + migration
+PRs are deliberately merged BEFORE the 72h soak (CTO ruling 2026-07-28) —
+left ungated, every one of those merges would auto-deploy unsoaked chain/
+billing/migration code straight to prod. `.github/workflows/deploy-worker.yml`
+now has a `deploy-gate` job between `pre-deploy-checks` and `deploy`:
+
+- **`vars.DEPLOY_WORKER_PAUSED`** — a repository Actions **variable** (not a
+  secret; Settings -> Secrets and variables -> Actions -> Variables). Default
+  (unset, or anything other than the literal string `"true"`) is **unpaused**
+  — fail-open to normal auto-deploy, so nobody has to remember to unpause
+  after routine work.
+- Gates ONLY the `deploy` job (image build/scan/push, canary deploy, smoke
+  test, promote-to-full, health verify). `pre-deploy-checks`
+  (typecheck/lint/zk-artifacts/`npm test`/copy-lint) is unconditional and
+  always runs on every push — quality gates never go dark, paused or not.
+- When paused, the `deploy-gate` job's "Evaluate DEPLOY_WORKER_PAUSED" step
+  emits a `::warning::` annotation AND a `$GITHUB_STEP_SUMMARY` banner on
+  **every** push-triggered run, naming the commit, the reason, and both the
+  override and reversal procedures — a paused deploy is loud, not a silent
+  skip nobody notices.
+- **`workflow_dispatch`** (Actions tab -> Deploy Worker -> Run workflow, or
+  `gh workflow run deploy-worker.yml`) ALWAYS bypasses the pause — a human
+  explicitly dispatching this workflow is by definition an intentional
+  deploy. This is the one and only override path; there is no PR label or
+  env var that also bypasses it (keeps the escape hatch to a single,
+  auditable, human-initiated action).
+- **Reversal:** `gh variable set DEPLOY_WORKER_PAUSED --body false` or
+  `gh variable delete DEPLOY_WORKER_PAUSED` — takes effect on the next push,
+  no code change / PR / redeploy of this workflow required.
+- **`if:` semantics note** (repo just got bitten by a related class of bug —
+  keep this precise): `deploy` declares an explicit
+  `if: needs.deploy-gate.result == 'success' && needs.deploy-gate.outputs.proceed == 'true'`
+  rather than relying on the implicit default `if: success()`. A bare
+  `success()` on a job only inspects its OWN direct `needs:` — fine here
+  since `deploy` needs only `deploy-gate` — but an explicit boolean
+  expression on a job-level `if:` is evaluated regardless of the needed
+  job's outcome unless `result == 'success'` is spelled out; without that
+  clause a crashed `deploy-gate` (empty `outputs.proceed`) would still
+  correctly evaluate false (`'' == 'true'` is false) but a future edit that
+  reuses this pattern must keep the `result == 'success'` guard explicit
+  rather than assuming the default applies. Both `deploy-gate`'s own step
+  (`id: check`) and `deploy`'s job-level `if:` were checked against
+  `actionlint` (`brew install actionlint`) — zero findings.
+- **Tier:** the change to `deploy-worker.yml` itself is classified **T2**
+  by `scripts/ci/check-staging-evidence.ts`'s own `PATH_RULES` (`worker
+  deploy config: prod runtime`) — the file's only T0 exemption is a
+  Dependabot `uses:`-only bump (`isDeployWorkerUsesOnlyBump`), which this
+  change does not qualify for (it adds a real job + `if:`/`env:`/`run:`
+  content, not a version-pin or checkout-hardening line). The PR carrying
+  this change declares `Tier: T2` honestly rather than self-declaring a
+  lower tier to dodge the gate — see the PR body's residual-risk note for
+  why the mechanical T2 classification does not match this diff's actual
+  blast radius (it changes deploy ORCHESTRATION only: no secret, env var,
+  image, region, scaling, or IAM line is touched, and the default state is
+  unpaused/unchanged behavior).
+## `$GITHUB_OUTPUT` heredoc delimiters must be per-run random (2026-07-28)
+
+Any step that frames **author-controlled** text inside a `$GITHUB_OUTPUT` (or
+`$GITHUB_ENV`) heredoc MUST use a per-run random delimiter, never a fixed
+literal:
+
+```bash
+DELIM="ghadelim_$(openssl rand -hex 16)"
+{
+  echo "key<<${DELIM}"
+  echo "$VALUE"
+  echo "${DELIM}"
+} >> "$GITHUB_OUTPUT"
+```
+
+**Why.** A fixed, guessable delimiter (`EOF`, or any constant) lets an author
+put that exact string on its own line inside the content being framed. That
+terminates the heredoc early, and everything after it is parsed as literal
+`key=value` lines appended to `$GITHUB_OUTPUT` — including a forged duplicate
+of the key being written. GitHub Actions resolves a duplicate output name to
+its **LAST** occurrence, so the forgery wins. This is GitHub's own documented
+remedy for the class.
+
+Fixed instances:
+
+- `staging-evidence.yml` "Resolve live PR state" — the PR-body heredoc
+  (`STAGING_EVIDENCE_PR_BODY_EOF` → `BODY_DELIM`), PR #1724.
+- `ci.yml` "Aggregate commit messages" (`id: commits`) — the commit-message
+  heredoc (`EOF` → `MSGS_DELIM`). The `msgs` output feeds `PR_COMMITS_MSGS`
+  into two governance gates in the same job (`check-handoff-claims.ts` and
+  `check-confluence-coverage.ts`), so a forged payload let a PR author steer
+  what those gates believed the PR's commit history said. Verified
+  empirically: with the fixed delimiter a crafted commit message replaced
+  `msgs` wholesale; with the random one the same payload stays inert text
+  inside the real message.
+
+Both are pinned by contract tests that assert the delimiter is a
+runtime-derived shell variable assigned from a command substitution, and that
+the closing line reuses the same variable — plus mutation tests that revert to
+a fixed literal and expect a throw. See
+`scripts/ci/staging-evidence-workflow-contract.test.ts` and
+`scripts/ci/ci-workflow-contract.test.ts`.
+
+Out of scope: plain shell heredocs that feed a **static, repo-authored** script
+into a program (e.g. `node <<'NODE'` in the golden-audit summary step). Those
+frame no author-controlled value and write no key/value file.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
+- `docs/runbooks/ci/verifying-current-check-runs.md` — cross-checking `gh pr checks` against actual check-run timestamps; the frozen-event-payload rerun trap and its fix (SCRUM-3030)
 - S0-4.3 stacked-PR + tiered-merge playbook (drafted Mergify/branch-protection diff for Carson) → Google Doc "ARKOVA PI-1 S0-E4 — Mergify / Stacked-PR + Tiered-Merge Playbook" (Drive ARKOVA PI-1-S0): https://docs.google.com/document/d/1iontJPUkhLQkQyZG4PETGuPj3kf23Kgn-1kDxqukfr8/edit
 - `docs/confluence/16_migration_drift_prevention.md` — ADR for Option A (read-only diff)
