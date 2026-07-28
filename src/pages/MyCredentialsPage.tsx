@@ -22,7 +22,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useMyCredentials, type ReceivedCredential } from '@/hooks/useMyCredentials';
 import { AppShell } from '@/components/layout';
-import { CredentialSourceImportDialog } from '@/components/credentials';
+import { CredentialSourceImportDialog, CtdlRegistryImportDialog } from '@/components/credentials';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -106,6 +106,7 @@ function CredentialCard({ credential }: Readonly<{ credential: ReceivedCredentia
 export function MyCredentialsPage() {
   const navigate = useNavigate();
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [registryImportDialogOpen, setRegistryImportDialogOpen] = useState(false);
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { credentials, loading, refreshCredentials } = useMyCredentials();
@@ -132,10 +133,20 @@ export function MyCredentialsPage() {
             {MY_CREDENTIALS_LABELS.PAGE_SUBTITLE}
           </p>
         </div>
-        <Button onClick={() => setImportDialogOpen(true)} className="shrink-0">
-          <Plus className="mr-2 h-4 w-4" />
-          {MY_CREDENTIALS_LABELS.ADD_SOURCE}
-        </Button>
+        <div className="flex shrink-0 gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setRegistryImportDialogOpen(true)}
+            data-testid="add-from-registry-button"
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            {MY_CREDENTIALS_LABELS.ADD_FROM_REGISTRY}
+          </Button>
+          <Button onClick={() => setImportDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            {MY_CREDENTIALS_LABELS.ADD_SOURCE}
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -169,6 +180,11 @@ export function MyCredentialsPage() {
       <CredentialSourceImportDialog
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
+        onImported={refreshCredentials}
+      />
+      <CtdlRegistryImportDialog
+        open={registryImportDialogOpen}
+        onOpenChange={setRegistryImportDialogOpen}
         onImported={refreshCredentials}
       />
     </AppShell>

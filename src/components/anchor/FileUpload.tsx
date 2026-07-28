@@ -218,6 +218,10 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  // The file input is a full-bleed overlay (see below); it must be inert both
+  // when the caller disables the control and once a file is chosen.
+  const inputInert = disabled || !!selectedFile || !!pendingModeFile;
+
   return (
     <div className="space-y-4">
       {/* Privacy notice - file never leaves device */}
@@ -244,13 +248,26 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
         onDrop={handleDrop}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click(); }}
       >
+        {/*
+          Full-bleed overlay so a click anywhere in the drop zone opens the
+          picker. `disabled` alone does NOT take an element out of hit-testing
+          (computed `pointer-events` stays `auto`), and because this input is
+          positioned while the content below is not, it paints on top
+          regardless of DOM order (CSS 2.1 Appendix E) — so while inert it
+          would still swallow clicks meant for that content. Dropping it out of
+          hit-testing whenever it is inert keeps the selected-file controls,
+          and anything added to this drop zone later, clickable by default.
+        */}
         <input
           ref={inputRef}
           type="file"
           multiple
-          className="absolute inset-0 cursor-pointer opacity-0"
+          className={cn(
+            'absolute inset-0 cursor-pointer opacity-0',
+            inputInert && 'pointer-events-none'
+          )}
           onChange={handleChange}
-          disabled={disabled || !!selectedFile || !!pendingModeFile}
+          disabled={inputInert}
         />
 
         {pendingModeFile ? (

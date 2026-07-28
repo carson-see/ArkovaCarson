@@ -5,8 +5,9 @@
  * Separate from Dashboard which shows an overview.
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   FileText,
   CheckCircle,
@@ -21,13 +22,23 @@ import {
   Download,
   Loader2,
   GraduationCap,
+  FolderInput,
+  FolderX,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
 import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
+import { useFolders, type Folder } from '@/hooks/useFolders';
 import { AppShell } from '@/components/layout';
 import { SecureDocumentDialog } from '@/components/anchor';
+import {
+  FolderSidebar,
+  FolderFormDialog,
+  DeleteFolderDialog,
+  MoveToFolderDialog,
+  type FolderSelection,
+} from '@/components/folders';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -50,9 +61,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
-import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, FOLDER_LABELS } from '@/lib/copy';
 import { formatDate, formatFileSize } from '@/lib/formatters';
 import type { Record } from '@/components/records';
+
+/** Local discriminated state for the shared create/rename folder dialog. */
+type FolderDialogState = { mode: 'create' } | { mode: 'rename'; folder: Folder };
 
 const statusConfig = {
   PENDING: { label: 'Pending', variant: 'warning' as const, icon: Clock },
@@ -74,6 +88,7 @@ export function MyRecordsPage() {
   const { profile, loading: profileLoading } = useProfile();
   const { records, loading: recordsLoading, refreshAnchors } = useAnchors();
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
+  const { folders, loading: foldersLoading, createFolder, renameFolder, deleteFolder, assignRecord } = useFolders();
 
   // NCA-FU2 (SCRUM-906) — deep-linked from the compliance scorecard with
   // `?action=upload&credential_type=...`. URL params are scrubbed post-mount
@@ -84,6 +99,12 @@ export function MyRecordsPage() {
   const [secureDialogOpen, setSecureDialogOpen] = useState(shouldAutoOpenUpload);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+
+  // SCRUM-2940: folder sidebar/filter state + create/rename/delete/move dialogs.
+  const [folderFilter, setFolderFilter] = useState<FolderSelection>('ALL');
+  const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Folder | null>(null);
+  const [moveTarget, setMoveTarget] = useState<Record | null>(null);
 
   useEffect(() => {
     if (shouldAutoOpenUpload) {
@@ -113,15 +134,64 @@ export function MyRecordsPage() {
     }
   }, [revokeAnchor, refreshAnchors]);
 
-  // Filter records by search query and status
-  const filteredRecords = records.filter((r) => {
+  // SCRUM-2940 — folder create/rename share one dialog; onSubmit rethrows on
+  // failure so FolderFormDialog can show the inline duplicate-name/generic
+  // error and keep itself open. Only a resolved submit reaches the toast.
+  const handleFolderSubmit = useCallback(async (name: string) => {
+    if (!folderDialog) return;
+    if (folderDialog.mode === 'create') {
+      await createFolder(name);
+      toast.success(FOLDER_LABELS.TOAST_CREATED);
+    } else {
+      await renameFolder(folderDialog.folder.id, name);
+      toast.success(FOLDER_LABELS.TOAST_RENAMED);
+    }
+  }, [folderDialog, createFolder, renameFolder]);
+
+  const handleDeleteFolderConfirm = useCallback(async () => {
+    if (!deleteTarget) return;
+    try {
+      await deleteFolder(deleteTarget.id);
+      toast.success(FOLDER_LABELS.TOAST_DELETED);
+      // Records fall back to Unfiled (ON DELETE SET NULL) — if we were
+      // viewing the folder being deleted, fall back to All Records so the
+      // view doesn't silently go empty.
+      setFolderFilter((prev) => (prev === deleteTarget.id ? 'ALL' : prev));
+    } catch {
+      toast.error(FOLDER_LABELS.ERR_DELETE);
+    }
+  }, [deleteFolder, deleteTarget]);
+
+  const handleMoveSelect = useCallback(async (folderId: string | null) => {
+    if (!moveTarget) return;
+    try {
+      await assignRecord(moveTarget.id, folderId);
+      toast.success(folderId === null ? FOLDER_LABELS.TOAST_UNFILED : FOLDER_LABELS.TOAST_ASSIGNED);
+    } catch {
+      toast.error(FOLDER_LABELS.ERR_ASSIGN);
+    }
+  }, [assignRecord, moveTarget]);
+
+  const handleRemoveFromFolder = useCallback(async (record: Record) => {
+    try {
+      await assignRecord(record.id, null);
+      toast.success(FOLDER_LABELS.TOAST_UNFILED);
+    } catch {
+      toast.error(FOLDER_LABELS.ERR_ASSIGN);
+    }
+  }, [assignRecord]);
+
+  // Filter records by folder, then search query and status.
+  const filteredRecords = useMemo(() => records.filter((r) => {
+    if (folderFilter === 'UNFILED' && r.folderId) return false;
+    if (folderFilter !== 'ALL' && folderFilter !== 'UNFILED' && r.folderId !== folderFilter) return false;
     if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       return r.filename.toLowerCase().includes(q) || r.fingerprint.toLowerCase().includes(q);
     }
     return true;
-  });
+  }), [records, folderFilter, statusFilter, searchQuery]);
 
   return (
     <AppShell
@@ -154,6 +224,21 @@ export function MyRecordsPage() {
         </Alert>
       )}
 
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+        {/* Folder sidebar/filter (SCRUM-2940) */}
+        <aside className="lg:w-60 shrink-0">
+          <FolderSidebar
+            folders={folders}
+            loading={foldersLoading}
+            selected={folderFilter}
+            onSelect={setFolderFilter}
+            onNewFolder={() => setFolderDialog({ mode: 'create' })}
+            onRename={(folder) => setFolderDialog({ mode: 'rename', folder })}
+            onDelete={(folder) => setDeleteTarget(folder)}
+          />
+        </aside>
+
+        <div className="flex-1 min-w-0">
       {/* Filters */}
       <Card>
         <CardHeader className="pb-4">
@@ -297,6 +382,27 @@ export function MyRecordsPage() {
                             Download Proof
                           </DropdownMenuItem>
                         )}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMoveTarget(record);
+                          }}
+                        >
+                          <FolderInput className="mr-2 h-4 w-4" />
+                          {FOLDER_LABELS.ASSIGN_TRIGGER}
+                        </DropdownMenuItem>
+                        {record.folderId && (
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveFromFolder(record);
+                            }}
+                          >
+                            <FolderX className="mr-2 h-4 w-4" />
+                            {FOLDER_LABELS.REMOVE_FROM_FOLDER}
+                          </DropdownMenuItem>
+                        )}
                         {record.status !== 'REVOKED' && (
                           <>
                             <DropdownMenuSeparator />
@@ -321,6 +427,8 @@ export function MyRecordsPage() {
           ))}
         </CardContent>
       </Card>
+        </div>
+      </div>
 
       {/* Secure Document Dialog */}
       <SecureDocumentDialog
@@ -329,6 +437,28 @@ export function MyRecordsPage() {
         onSuccess={handleSecureSuccess}
         initialCredentialType={initialCredentialType}
         initialJurisdiction={initialJurisdiction}
+      />
+
+      {/* Folder dialogs (SCRUM-2940) */}
+      <FolderFormDialog
+        open={folderDialog !== null}
+        onOpenChange={(open) => { if (!open) setFolderDialog(null); }}
+        mode={folderDialog?.mode ?? 'create'}
+        initialName={folderDialog?.mode === 'rename' ? folderDialog.folder.name : undefined}
+        onSubmit={handleFolderSubmit}
+      />
+      <DeleteFolderDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        folderName={deleteTarget?.name ?? ''}
+        onConfirm={handleDeleteFolderConfirm}
+      />
+      <MoveToFolderDialog
+        open={moveTarget !== null}
+        onOpenChange={(open) => { if (!open) setMoveTarget(null); }}
+        folders={folders}
+        currentFolderId={moveTarget?.folderId ?? null}
+        onSelect={handleMoveSelect}
       />
     </AppShell>
   );

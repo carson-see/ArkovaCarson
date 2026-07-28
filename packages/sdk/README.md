@@ -141,6 +141,52 @@ const fp = await arkova.fingerprint('hello world');
 // "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 ```
 
+### `arkova.anchorBulk(inputs, options?)`
+
+Anchor up to 1000 documents in one call — wires `POST /api/v1/anchor/bulk` (HAKI-REQ-02). Each row is either a pre-computed `fingerprint` (you already hashed the file) or raw `data` (the SDK fingerprints it client-side, same as `anchor()` — the document body never leaves this process for that row). You can mix both forms in one call.
+
+```typescript
+import { readFile } from 'node:fs/promises';
+
+const contractBytes = await readFile('./contract.pdf');
+
+const result = await arkova.anchorBulk(
+  [
+    // Already hashed elsewhere — send the fingerprint directly.
+    { fingerprint: 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9', externalId: 'invoice-001' },
+    // Raw content — the SDK hashes it for you before it's ever sent.
+    {
+      data: contractBytes.buffer,
+      credentialType: 'CONTRACT_PRESIGNING',
+      documentType: 'contract',
+      matterOrCaseRef: 'CASE-42',
+      originalDocumentDate: '2025-11-03T00:00:00Z',
+    },
+  ],
+  { duplicateStrategy: 'skip', batchId: 'nightly-2026-07-28' },
+);
+
+console.log(result.queued);      // 2
+console.log(result.duplicates);  // [] — none this run
+console.log(result.errors);      // [] — per-row insert failures land here, batch still succeeds
+result.anchors?.forEach((a) => console.log(a.publicId, a.status)); // "PENDING" until secured
+```
+
+**Options:**
+
+| Option | Default | Effect |
+|---|---|---|
+| `dryRun` | `false` | Validate every row (schema + dedup) without queuing or deducting credits. `result.anchors` is omitted. |
+| `duplicateStrategy` | `'fail'` (server-side) | `'fail'` 409s the whole batch on any duplicate fingerprint (in-batch or already anchored in your org); `'skip'` drops duplicate rows and queues the rest; `'supersede'` / `'link'` are accepted for lineage workflows — see the worker's `anchor-bulk.ts` for exact semantics. |
+| `batchId` | none | Your own correlation ID, echoed back and surfaced in audit events. |
+
+**Limits:**
+
+- Empty array → returns a zero-row response immediately, no network call.
+- More than 1000 rows → throws `ArkovaError` with `code: 'batch_too_large'` (no network call). The SDK does not auto-chunk: splitting a logical batch across requests would let a duplicate fingerprint slip past the (cheaper) intra-batch check and would deduct credits per chunk instead of atomically for the whole batch. Split manually and correlate with a shared `batchId` if you need more than 1000 rows.
+- A row with neither `fingerprint` nor `data` (or with both) throws `ArkovaError` with `code: 'invalid_request'` before any network call.
+- 402 response → `insufficient_credits`; 409 response (only with `duplicateStrategy: 'fail'`) → `duplicate_fingerprints`.
+
 ---
 
 ## Verification
@@ -483,6 +529,7 @@ Override with `baseUrl` config option for staging or local development.
 |---|---|
 | `arkova.fingerprint(data)` | Compute SHA-256 hash client-side |
 | `arkova.anchor(data)` | Anchor a document fingerprint |
+| `arkova.anchorBulk(inputs, options?)` | Anchor up to 1000 documents in one call |
 | `arkova.verify(publicId)` | Verify by public ID |
 | `arkova.verify(data, receipt)` | Verify by data + receipt (offline tamper check) |
 | `arkova.verifyBatch(publicIds)` | Verify up to 20 credentials at once |

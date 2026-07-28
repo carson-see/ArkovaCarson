@@ -120,6 +120,63 @@ test.describe('Anchor Creation (Secure Document)', () => {
     }
   });
 
+  /**
+   * Regression: the drop zone's full-bleed `<input type="file">` painted over
+   * the Remove button and swallowed its clicks. Full root cause + fix in
+   * `e2e/agents.md` (2026-07-28 entry).
+   *
+   * MUST stay E2E: jsdom has no layout or hit-testing, so `fireEvent.click`
+   * dispatches straight at the target and passes against the broken build.
+   * Asserts the OUTCOME (button is the hit-test winner and the click lands),
+   * not the CSS mechanism, so it holds if the fix is ever reimplemented.
+   */
+  test('Remove file button is not intercepted by the drop-zone input', async ({
+    individualPage,
+  }) => {
+    await openSecureDocumentDialog(individualPage);
+    await expectSecureDocumentUploadStep(individualPage);
+    const dialog = getSecureDocumentDialog(individualPage);
+
+    const fileInput = dialog.locator('input[type="file"]');
+    await fileInput.setInputFiles({
+      name: 'e2e-remove-intercept.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('E2E remove-button hit-test regression'),
+    });
+
+    await expect(dialog.getByText('Document Fingerprint')).toBeVisible({ timeout: 10_000 });
+
+    // `exact: true` is required: the drop-zone wrapper is itself a
+    // `div[role="button"]`, and its accessible name is computed from its
+    // subtree — so it swallows the sr-only "Remove file" text and a default
+    // (substring) name match resolves to 2 elements.
+    const removeBtn = dialog.getByRole('button', { name: 'Remove file', exact: true });
+    // Not redundant with the click below: this guarantees a non-zero box
+    // before the hit-test measures its centre point.
+    await expect(removeBtn).toBeVisible();
+
+    // Explicit hit-test so a regression reports the actual interceptor rather
+    // than a bare click timeout. `elementFromPoint` is the same paint-order
+    // resolution a real user click goes through.
+    const topElementAtButtonCenter = await removeBtn.evaluate((btn) => {
+      const r = btn.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (!hit) return 'NONE (outside viewport)';
+      return btn.contains(hit)
+        ? 'REMOVE_BUTTON'
+        : `${hit.tagName}[type=${hit.getAttribute('type') ?? 'n/a'}] class="${hit.className}"`;
+    });
+    expect(topElementAtButtonCenter).toBe('REMOVE_BUTTON');
+
+    // Real trusted click — Playwright's actionability check fails with
+    // "…intercepts pointer events" against the unfixed build.
+    await removeBtn.click({ timeout: 5_000 });
+
+    // handleRemove() actually ran: back to the empty drop zone.
+    await expect(dialog.getByText('Document Fingerprint')).toBeHidden();
+    await expect(dialog.getByText(/Drag and drop/i).first()).toBeVisible();
+  });
+
   test('cancel closes the dialog without creating a record', async ({ individualPage }) => {
     await openSecureDocumentDialog(individualPage);
     const dialog = getSecureDocumentDialog(individualPage);

@@ -18,12 +18,20 @@
  * bundle/report generation.
  *
  * Authorization matrix:
+ *   /signatures/:id/audit-proof (membership-only): org id present        → 200
+ *                                                  no org (null)         → 403
  *   /signatures/export          (membership-only): org id present        → 200
  *                                                  no org (null)         → 403
  *   /signatures/soc2-evidence   (admin-gated):     org id + admin        → 200
  *                                                  no org / not admin    → 403
  *   /signatures/gdpr-article30  (admin-gated):     same as soc2-evidence
  *   /signatures/eidas-report    (admin-gated):     same as soc2-evidence
+ *
+ * SECURITY REGRESSION COVERAGE (fix, 2026-07-28): `/signatures/:id/audit-proof`
+ * previously had NO org check at all — any authenticated user could pull any
+ * other org's signature audit proof. `generateAuditProof` now takes and is
+ * scoped by `orgId`; the tests below prove the fix by asserting the resolved
+ * org is always forwarded and a caller with no org membership is rejected.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
@@ -99,6 +107,46 @@ beforeEach(() => {
   generateSoc2EvidenceBundle.mockResolvedValue({ bundle: 'soc2' });
   generateGdprArticle30Export.mockResolvedValue({ report: 'gdpr' });
   generateEidasComplianceReport.mockResolvedValue({ report: 'eidas' });
+  generateAuditProof.mockResolvedValue({ version: '1.0', credential: {}, compliance: {}, evidence_layers: [], disclaimers: [] });
+});
+
+// ─── GET /signatures/:id/audit-proof (membership-only) — cross-tenant fix ────
+describe('GET /api/v1/signatures/:id/audit-proof — membership-only, cross-tenant fix', () => {
+  it('returns 401 when unauthenticated', async () => {
+    const res = await request(buildApp()).get('/api/v1/signatures/sig-1/audit-proof');
+    expect(res.status).toBe(401);
+    expect(generateAuditProof).not.toHaveBeenCalled();
+  });
+
+  it('returns 403 when the caller has no org — the proof generator is never called', async () => {
+    getCallerOrgId.mockResolvedValue(null);
+    const res = await request(buildApp('stranger')).get('/api/v1/signatures/sig-1/audit-proof');
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('No organization membership found');
+    expect(generateAuditProof).not.toHaveBeenCalled();
+  });
+
+  it('legitimate same-org caller succeeds and the CALLER-resolved org is forwarded, never a client-supplied one', async () => {
+    const res = await request(buildApp('owner-1')).get('/api/v1/signatures/sig-1/audit-proof');
+    expect(res.status).toBe(200);
+    expect(generateAuditProof).toHaveBeenCalledWith('sig-1', 'org-owned');
+  });
+
+  it('does NOT require admin for the membership-only audit-proof read', async () => {
+    isCallerOrgAdmin.mockResolvedValue(false);
+    const res = await request(buildApp('member-1')).get('/api/v1/signatures/sig-1/audit-proof');
+    expect(res.status).toBe(200);
+    expect(isCallerOrgAdmin).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 (not the caller org) when generateAuditProof resolves null — e.g. the signature belongs to another org', async () => {
+    // This is the scoped-query behavior in auditProofExporter.ts: a signature
+    // that exists but belongs to a DIFFERENT org resolves to null, same as a
+    // truly-missing signature — no cross-org existence is ever confirmed.
+    generateAuditProof.mockResolvedValueOnce(null);
+    const res = await request(buildApp('owner-1')).get('/api/v1/signatures/other-orgs-sig/audit-proof');
+    expect(res.status).toBe(404);
+  });
 });
 
 // ─── GET /signatures/export (membership-only) ────────────────────────────────

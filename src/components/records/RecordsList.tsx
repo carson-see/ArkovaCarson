@@ -41,6 +41,8 @@ export interface Record {
   metadata?: { [key: string]: unknown } | null;
   /** Issuer name extracted from metadata */
   issuerName?: string | null;
+  /** SCRUM-2940: folder this record is filed under; null = Unfiled. */
+  folderId?: string | null;
 }
 
 interface RecordsListProps {
