@@ -32,9 +32,9 @@ function makeDb(opts: {
   rpcResult?: { data: unknown; error: unknown };
   auditResult?: { data: unknown; error: unknown };
 } = {}) {
-  const rpc = vi.fn(async () => opts.rpcResult ?? { data: 'artifact-1', error: null });
-  const single = vi.fn(async () => opts.auditResult ?? { data: { id: 'evt-1' }, error: null });
-  const insert = vi.fn(() => ({ select: () => ({ single }) }));
+  const rpc = vi.fn(async (..._args: unknown[]) => opts.rpcResult ?? { data: 'artifact-1', error: null });
+  const single = vi.fn(async (..._args: unknown[]) => opts.auditResult ?? { data: { id: 'evt-1' }, error: null });
+  const insert = vi.fn((..._args: unknown[]) => ({ select: () => ({ single }) }));
   const from = vi.fn(() => ({ insert }));
   return { db: { rpc, from }, rpc, insert };
 }

@@ -30,7 +30,7 @@ function okBytesResponse(bytes: Buffer, contentType = 'application/pdf') {
 describe('fetchDriveFileBytes — transport selection', () => {
   it('uses alt=media for binary (non-Google-native) files', async () => {
     const bytes = Buffer.from('%PDF-1.7 binary payload');
-    const fetchImpl = vi.fn(async () => okBytesResponse(bytes));
+    const fetchImpl = vi.fn(async (..._args: unknown[]) => okBytesResponse(bytes));
     const result = await fetchDriveFileBytes({
       fileId: 'file-123',
       accessToken: 'tok',
@@ -47,7 +47,7 @@ describe('fetchDriveFileBytes — transport selection', () => {
 
   it('uses files.export (PDF) for a Google-native doc', async () => {
     const bytes = Buffer.from('exported pdf bytes');
-    const fetchImpl = vi.fn(async () => okBytesResponse(bytes));
+    const fetchImpl = vi.fn(async (..._args: unknown[]) => okBytesResponse(bytes));
     const result = await fetchDriveFileBytes({
       fileId: 'doc-1',
       accessToken: 'tok',

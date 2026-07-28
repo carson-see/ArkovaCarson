@@ -38,6 +38,15 @@ import { z } from 'zod';
 import { GOOGLE_DRIVE_VENDOR } from '../../constants/connectors.js';
 
 /**
+ * job_queue `type` for the Drive file-changed job. Single source of truth —
+ * both the producer side (`drive-changes-runner.ts`, which enqueues via
+ * `submitJob`) and the consumer side (`jobs/drive-file-changed.ts`, which
+ * drains via `processNextJob`) import this constant rather than each owning
+ * their own string literal, so the two ends can never drift apart.
+ */
+export const DRIVE_FILE_CHANGED_JOB_TYPE = 'google_drive.file_changed' as const;
+
+/**
  * Payload of a `google_drive.file_changed` job — the durable hand-off the Drive
  * changes runner writes once a change matches a watched folder. Carries only
  * connector-native identifiers + PII-safe context; NEVER document bytes.

@@ -20,6 +20,7 @@ import { processNextJob } from '../utils/jobQueue.js';
 import {
   processDriveFileChangedJob,
   DRIVE_ARTIFACT_SOURCE,
+  DRIVE_FILE_CHANGED_JOB_TYPE,
   type DriveArtifactProducerDeps,
   type DriveArtifactSinkResult,
 } from '../integrations/connectors/drive-artifact-producer.js';
@@ -30,7 +31,11 @@ import {
 import { fetchDriveFileBytes } from '../integrations/oauth/drive.js';
 import { createDefaultKmsClient } from '../integrations/oauth/crypto.js';
 
-export const DRIVE_FILE_CHANGED_JOB_TYPE = 'google_drive.file_changed';
+// Re-exported for back-compat with existing importers — the job type is now
+// owned by drive-artifact-producer.ts (see DRIVE_FILE_CHANGED_JOB_TYPE there
+// for why: it must be importable from drive-changes-runner.ts too, and that
+// module cannot depend on this one without creating a cycle).
+export { DRIVE_FILE_CHANGED_JOB_TYPE };
 const DEFAULT_DRIVE_FILE_JOB_LIMIT = 10;
 const MAX_DRIVE_FILE_JOB_LIMIT = 100;
 // Sentinel returned when the connector-artifact enqueue is gated off — mirrors

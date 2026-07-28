@@ -24,6 +24,10 @@ interface DriveConnection {
   connected_at: string | null;
   subscription_expires_at: string | null;
   scope: string | null;
+  // SCRUM-2903 (GD-PROD): last time the changes-feed runner advanced this
+  // integration's persisted page token — the closest available "last synced"
+  // signal (org_integrations has no dedicated last-sync column).
+  last_token_advanced_at: string | null;
 }
 
 export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
@@ -31,6 +35,11 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
   const [statusLoading, setStatusLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // SCRUM-2903 (GD-PROD): count of this org's anchors materialized from the
+  // Drive connector (connector-artifact-drain.ts stamps
+  // anchors.metadata.connector_source='google_drive' on every Drive-sourced
+  // anchor it creates). null while loading / not yet fetched; 0 is a real count.
+  const [documentsSecured, setDocumentsSecured] = useState<number | null>(null);
 
   const refreshConnection = useCallback(async () => {
     setStatusLoading(true);
@@ -40,7 +49,7 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error: queryError } = await (supabase as any)
         .from('org_integrations')
-        .select('id, account_label, connected_at, subscription_expires_at, scope')
+        .select('id, account_label, connected_at, subscription_expires_at, scope, last_token_advanced_at')
         .eq('org_id', orgId)
         .eq('provider', 'google_drive')
         .is('revoked_at', null)
@@ -55,6 +64,22 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
       }
 
       setConnection(data ?? null);
+
+      // Only worth a second round-trip once we know the org has a live
+      // connection — an unconnected org has zero Drive-sourced anchors by
+      // definition, and this avoids a wasted query on first paint.
+      if (data) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- anchors.metadata is jsonb, filtered via PostgREST's ->> operator
+        const { count, error: countError } = await (supabase as any)
+          .from('anchors')
+          .select('id', { count: 'exact', head: true })
+          .eq('org_id', orgId)
+          .eq('metadata->>connector_source', 'google_drive')
+          .is('deleted_at', null);
+        setDocumentsSecured(countError ? null : (count ?? 0));
+      } else {
+        setDocumentsSecured(null);
+      }
     } catch {
       setError('Unable to load Drive connection status.');
       setConnection(null);
@@ -120,6 +145,7 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
       }
 
       setConnection(null);
+      setDocumentsSecured(null);
       toast.success('Google Drive disconnected.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to disconnect Google Drive.');
@@ -131,6 +157,9 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
   const connected = !!connection;
   const subscriptionDate = connection?.subscription_expires_at
     ? new Date(connection.subscription_expires_at).toLocaleDateString('en-US', { dateStyle: 'medium' })
+    : null;
+  const lastSyncedDate = connection?.last_token_advanced_at
+    ? new Date(connection.last_token_advanced_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
     : null;
 
   return (
@@ -170,6 +199,14 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
               {connected && subscriptionDate && (
                 <p className="mt-1 text-xs text-muted-foreground">
                   Push channel renews before {subscriptionDate}
+                </p>
+              )}
+              {connected && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {lastSyncedDate ? `Last synced ${lastSyncedDate}` : 'Not yet synced'}
+                  {documentsSecured !== null && (
+                    <> &middot; {documentsSecured} document{documentsSecured === 1 ? '' : 's'} secured via Drive</>
+                  )}
                 </p>
               )}
             </div>
