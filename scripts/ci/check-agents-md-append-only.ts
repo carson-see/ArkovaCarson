@@ -52,9 +52,20 @@ function git(args: string[], cwd = REPO): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 
+/**
+ * Like {@link git}, but returns null instead of throwing — and silences stderr.
+ * The expected-miss cases (a file added or deleted by this PR, so absent from
+ * one side) make `git show` print `fatal: path … does not exist`, which would
+ * otherwise spam the CI log with alarming-looking noise on every such PR.
+ */
 function gitOrNull(args: string[], cwd = REPO): string | null {
   try {
-    return git(args, cwd);
+    return execFileSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
   } catch {
     return null;
   }
