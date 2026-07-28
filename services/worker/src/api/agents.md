@@ -1,6 +1,16 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-07-21 (SCRUM-2990 partner-provisioning guard tests)_
+_Last updated: 2026-07-28 (endpoint-reachability audit: supersede/queue-resolve auth.uid() fix)_
+
+## 2026-07-28 — supersede_anchor / resolve_anchor_queue_by_public_id: the SCRUM-2213 trap, again (endpoint-reachability audit)
+
+`POST /api/anchor/:id/supersede` and `POST /api/queue/resolve` were both always-403 for every caller, including legitimate org admins — the SAME bug class as the 2026-05-30 entry below, just not yet fixed for these two RPCs.
+
+- **`anchor-lineage.ts` (`handleSupersedeAnchor`):** `admin.ts` already resolved `userId` via `extractAuthUserId()` and gated on it (401 if missing) — but then called `handleSupersedeAnchor(req, res)`, discarding the identity. The RPC resolved the caller via `auth.uid()` (NULL under service_role) → 'Profile not found' → 403 always. Fix: `handleSupersedeAnchor` now takes a required `callerUserId` third param (401 if missing — a structural belt-and-suspenders, since `admin.ts` already gates), and `admin.ts` now passes `userId` through.
+- **`queue-resolution.ts` (`handleResolveQueue`):** `actorUserId` WAS already threaded through by the route, but the handler only used it for the post-success notification lookup — never passed into the RPC call. Same `auth.uid()` failure, same 403-always outcome.
+- **Fix pattern (SCRUM-2213 option B — "pass an explicit `p_user_id` into the RPC"):** migration `0367_worker_rpc_caller_identity_supersede_queue_resolve.sql` (FILE-ONLY / pre-soak) adds a NEW 4-arg overload of `supersede_anchor()` and `resolve_anchor_queue_by_public_id()`, each taking a REQUIRED `p_caller_user_id uuid` param (no default — so PostgREST can never resolve a 3-key call to this overload; no signature ambiguity) instead of reading `auth.uid()`. Every existing authorization check (profile exists, role = ORG_ADMIN, caller's org matches target) is preserved verbatim in the new overload — only WHO the RPC thinks is calling changed, not what it lets them do. The original 3-arg `auth.uid()`-based overloads are untouched.
+- **Security-critical detail:** the new 4-arg overloads are `REVOKE ALL … FROM PUBLIC, anon, authenticated; GRANT EXECUTE … TO service_role` — NOT the broad anon/authenticated/service_role grant the 3-arg versions carry. If `authenticated` could call the identity-carrying overload directly via PostgREST, any authenticated caller could pass an arbitrary `p_caller_user_id` and impersonate another user/org-admin. Only the worker (service_role, and only after independently verifying the caller's JWT via `extractAuthUserId`) can reach this path. Never widen this grant.
+- Worker call sites now build the RPC args with `p_caller_user_id` set from the JWT-verified id — never from `req.body`/`req.params`.
 
 ## 2026-07-21 — Lane 2 PI-0.5: partner-provisioning skeleton is flag-gated + statically guarded (SCRUM-2990)
 
