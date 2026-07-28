@@ -13,9 +13,11 @@
  *   - 1.9: Gated by ENABLE_PAYMENT_TIERS flag
  */
 
+import crypto from 'node:crypto';
 import { Request, Response, NextFunction } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { getCorrelationId } from '../utils/correlationId.js';
 
 export type PaymentTier = 'credits' | 'stripe_metered' | 'x402' | 'admin_bypass' | 'beta_unlimited';
 
@@ -107,7 +109,40 @@ async function tryCredits(orgId: string, userId: string, cost: number): Promise<
 
 // ─── Tier 2: Stripe Metered Billing ─────────────────────────────────────
 
-async function tryStripeMetered(userId: string, orgId: string): Promise<PaymentResolution | null> {
+/**
+ * SCRUM-2971: deterministic idempotency key for a Stripe-metered billing_events
+ * row. Built from (org_id, user_id, requestId) only — a retry that resolves
+ * to the SAME requestId always hashes to the SAME key and collapses onto the
+ * row from the first attempt; a different request always gets its own row.
+ */
+export function stripeMeteredIdempotencyKey(orgId: string, userId: string, requestId: string): string {
+  const material = `api_metered_usage:${orgId}:${userId}:${requestId}`;
+  return crypto.createHash('sha256').update(material).digest('hex');
+}
+
+/**
+ * SCRUM-2971: request-scoped stable id for this specific API call, used to
+ * dedupe metered billing_events inserts on retry. Priority order:
+ *   1. `Idempotency-Key` header — the existing Stripe-style caller contract
+ *      already documented in `middleware/idempotency.ts` (DX-4); if the
+ *      client is retry-aware it resends the same value.
+ *   2. Correlation ID (`X-Request-Id` / `X-Correlation-Id`, see
+ *      `utils/correlationId.ts`) — resent by retry-aware HTTP clients that
+ *      preserve headers across a retry of the same logical request.
+ *   3. A fresh random id as a last resort. A header-less retry with
+ *      neither identifier present cannot be deduped — that is a known,
+ *      documented limitation, and strictly no worse than the previous
+ *      fully-unprotected (NULL idempotency_key) state.
+ */
+function stripeMeteredRequestId(req: Request): string {
+  const headerKey = req.headers['idempotency-key'];
+  if (typeof headerKey === 'string' && headerKey.length > 0) return headerKey;
+  const correlationId = getCorrelationId();
+  if (correlationId) return correlationId;
+  return crypto.randomUUID();
+}
+
+async function tryStripeMetered(userId: string, orgId: string, req: Request): Promise<PaymentResolution | null> {
   try {
     // Check for active metered subscription
     const { data } = await db
@@ -119,18 +154,28 @@ async function tryStripeMetered(userId: string, orgId: string): Promise<PaymentR
 
     if (!data) return null;
 
-    // Record metered usage (will be invoiced at end of billing period)
+    // Record metered usage (will be invoiced at end of billing period).
+    // Idempotent: a retry that reuses the same request-scoped id (see
+    // stripeMeteredRequestId) collapses onto the row already inserted
+    // instead of double-recording usage (= double Stripe billing).
     try {
-      await db.from('billing_events').insert({
+      const requestId = stripeMeteredRequestId(req);
+      const { error: insertError } = await db.from('billing_events').insert({
         org_id: orgId,
         user_id: userId,
         event_type: 'api_metered_usage',
+        idempotency_key: stripeMeteredIdempotencyKey(orgId, userId, requestId),
         payload: {
           stripe_subscription_id: data.stripe_subscription_id,
           timestamp: new Date().toISOString(),
           source: 'payment_tier_router',
         },
       });
+      if (insertError && (insertError as { code?: string }).code !== '23505') {
+        // Non-critical — usage still authorized. 23505 (already recorded,
+        // an idempotent retry) isn't even worth a warn; anything else is.
+        logger.warn({ error: insertError, orgId, userId }, 'Failed to record stripe-metered billing event');
+      }
     } catch {
       // Non-critical — usage still authorized
     }
@@ -274,7 +319,7 @@ export function paymentTierRouter() {
 
     // 2. Stripe metered billing
     if (orgId) {
-      const stripe = await tryStripeMetered(userId, orgId);
+      const stripe = await tryStripeMetered(userId, orgId, req);
       if (stripe) {
         payReq.paymentResolution = stripe;
         next();

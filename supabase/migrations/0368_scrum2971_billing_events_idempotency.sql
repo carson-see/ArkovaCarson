@@ -1,0 +1,73 @@
+-- SCRUM-2971: billing_events metered inserts lack idempotency enforcement.
+--
+-- PROBLEM
+-- -------
+-- `billing_events` carries UNIQUE(idempotency_key) and UNIQUE(stripe_event_id)
+-- (baseline schema), but BOTH columns are nullable — and Postgres UNIQUE
+-- constraints allow unlimited NULLs, so a row with idempotency_key = NULL
+-- never collides with any other row. Two call sites inserted metered-usage
+-- rows without ever populating either column:
+--   - services/worker/src/billing/meteredBilling.ts        (recordMeteredUsage)
+--   - services/worker/src/middleware/paymentTierRouter.ts  (tryStripeMetered)
+-- A client/network retry of the same metered API call therefore inserted a
+-- second, fully-unprotected billing_events row. reportMeteredUsageToStripe()
+-- later SUMS billing_events.payload.quantity per org/period and reports the
+-- total to Stripe as a metered usage event — so a duplicate row is a real
+-- overbilling risk, not just an audit-log blemish.
+--
+-- A third call site was found during the pre-migration insert-site audit
+-- (services/worker/src/stripe/handlers.ts::recordBillingAudit) that also
+-- left idempotency_key NULL. It is already protected against duplicates by
+-- its own claim-first webhook_event_claims flow + stripe_event_id UNIQUE
+-- constraint, but it is fixed in the same PR (idempotency_key := eventId)
+-- so this migration's NOT NULL enforcement does not break the Stripe
+-- webhook audit-write path.
+--
+-- CODE FIX (same PR, lands with this migration)
+-- -----------------------------------------------
+-- All three writers now derive/set a real idempotency_key before insert:
+--   - meteredBilling.ts:        sha256(org_id:endpoint:requestId) — requestId
+--     is a REQUIRED, caller-supplied request-scoped stable id (NOT just a
+--     billing-period bucket — recordMeteredUsage is per-call metering, so a
+--     second legitimate unit of usage in the same period must NOT collapse
+--     into the first; only a retry that reuses the SAME requestId should).
+--   - paymentTierRouter.ts:     sha256(org_id:user_id:requestId), requestId
+--     resolved from Idempotency-Key header > correlation id > random UUID.
+--   - stripe/handlers.ts:       idempotency_key := stripe event id (already
+--     globally unique and already the concurrency-serialization key for
+--     this specific path).
+-- All three treat a resulting 23505 unique_violation as "already recorded"
+-- (idempotent no-op), matching the existing pattern in
+-- middleware/x402PaymentLogger.ts (`idempotency_key: x402:<tx_hash>`).
+--
+-- DB FIX (this migration)
+-- ------------------------
+-- Enforce the invariant at the DB layer for every writer, present and
+-- future, not just the three sites patched above: idempotency_key must be
+-- non-NULL on every NEW billing_events row.
+--
+-- Approach: NOT VALID CHECK constraint, deliberately left un-validated.
+--   - `ADD CONSTRAINT ... CHECK (...) NOT VALID` enforces the check on every
+--     INSERT/UPDATE from the moment this migration lands — this is the
+--     "NEW rows" enforcement the ticket asks for.
+--   - Adding a NOT VALID constraint takes only a brief catalog-only lock
+--     (no table rewrite, no full-table scan) — safe against a live,
+--     multi-million-row table. This is the "doesn't lock the table long"
+--     requirement.
+--   - We deliberately do NOT run VALIDATE CONSTRAINT in this migration:
+--     production almost certainly has pre-existing rows with
+--     idempotency_key IS NULL (that's the bug this migration closes), and
+--     VALIDATE CONSTRAINT scans + rejects on that legacy data — it would
+--     fail this migration outright. Backfilling legacy rows with a
+--     synthesized key (e.g. derived from `id`) and then running
+--     VALIDATE CONSTRAINT is a safe, non-blocking follow-up, tracked
+--     separately — it does not block closing the live write-path gap.
+--
+-- ROLLBACK: ALTER TABLE public.billing_events DROP CONSTRAINT IF EXISTS billing_events_idempotency_key_not_null;
+
+ALTER TABLE public.billing_events
+  ADD CONSTRAINT billing_events_idempotency_key_not_null
+  CHECK (idempotency_key IS NOT NULL) NOT VALID;
+
+COMMENT ON CONSTRAINT billing_events_idempotency_key_not_null ON public.billing_events IS
+  'SCRUM-2971: every NEW billing_events row must carry a real idempotency_key so the existing UNIQUE(idempotency_key) constraint actually serializes duplicate metered-usage/audit inserts (Postgres UNIQUE allows unlimited NULLs, which previously let retries slip through). NOT VALID and deliberately left un-validated — legacy pre-fix rows with idempotency_key IS NULL are exempt; only rows inserted/updated after this migration are checked. See migration header for the full rationale and the paired worker-code fix.';

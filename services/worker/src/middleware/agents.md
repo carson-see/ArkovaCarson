@@ -57,7 +57,7 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - **webhookIdempotency.ts** — Webhook-specific idempotency middleware.
 - **perOrgRateLimit.ts** — Per-org-per-day tier-based quota enforcement. Atomic check-then-increment via `increment_org_usage` RPC.
 - **webhookHmac.ts** — Inbound connector webhook HMAC verification with 5-minute replay window.
-- **paymentTierRouter.ts** — Routes requests based on payment tier.
+- **paymentTierRouter.ts** — Routes requests based on payment tier. Not yet mounted in `index.ts` (tested in isolation only). SCRUM-2971: the Tier-2 `tryStripeMetered` path now derives a request-scoped id (`Idempotency-Key` header → correlation id (`utils/correlationId.ts`) → random UUID fallback) and inserts the `billing_events` row with `idempotency_key = sha256(api_metered_usage:org_id:user_id:requestId)` (exported as `stripeMeteredIdempotencyKey`). A duplicate insert (23505, e.g. a client retry that resent the same `Idempotency-Key`) is swallowed as an idempotent no-op — the request still authorizes. See migration `0368`.
 - **requirePaymentCurrent.ts** — Rejects requests from orgs with lapsed payments.
 - **requireOrgId.ts** — Ensures `org_id` is present on authenticated requests.
 - **usageTracking.ts** — Tracks API usage for billing/analytics.
