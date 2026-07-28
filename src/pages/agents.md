@@ -16,6 +16,13 @@ item. Filtering reads `Record.folderId`, added to `useAnchors`'s select (see
 **not** wired to folders in this pass — only the dedicated My Records page is
 in scope for SCRUM-2940 v1. Full component-level notes live in
 `src/components/folders/agents.md`.
+_Last updated: 2026-07-28_
+
+## L2-A5 — AdminOrganizationsPage credit adjust (founder admin-controls, founder rule A2)
+
+`AdminOrganizationsPage.tsx` adds a `Credits` column (mobile card + desktop table, next to the existing SCRUM-2225 free-tier cap control) showing `credit_balance` from the enriched `GET /api/admin/organizations` response, plus a per-org "Adjust credits" button opening a two-step dialog: **input step** (Add/Remove toggle, whole-number amount, mandatory reason `Textarea`, current balance shown) → **confirm step** (plain-language summary + old→new balance preview) → `POST /api/admin/organizations/:id/credits/adjust`. A fresh `crypto.randomUUID()` idempotency key is minted when the admin clicks Review (not on dialog open), so re-opening the dialog for a different adjustment never reuses a stale key, and repeated clicks on Confirm within one review screen are safe retries, not double-charges. Errors from the RPC (`insufficient_balance`, etc.) surface as a toast and leave the dialog open so the admin can correct the amount — success closes the dialog and refetches the list. All copy in `src/lib/copy.ts` `ADMIN_CREDIT_ADJUST_LABELS` (see `src/lib/agents.md`). Backend: `services/worker/src/api/admin-actions.ts` `handleAdjustOrgCredit` (see that folder's `agents.md`).
+
+Test file `AdminOrganizationsPage.test.tsx` (new) covers: balance render, full review→confirm→API-payload-shape flow for both Add and Remove (asserts the exact signed `amount` + idempotency-key UUID shape sent), the Review button being inert until both amount and reason are filled, and the insufficient-balance error path leaving the dialog open. `src/test/setup.ts`'s global `crypto` mock gained a `randomUUID()` implementation (jsdom doesn't provide one) — needed by this flow and available to any future client-side idempotency-key code.
 
 ## PR #1561 — WebMCP search URL consumption
 
