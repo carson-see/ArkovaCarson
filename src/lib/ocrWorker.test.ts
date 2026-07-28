@@ -498,6 +498,167 @@ describe('F4 — genuinely corrupt/hostile TIFF and HEIC files still soft-fail b
   });
 });
 
+// ───────────────────────────────────────────────────────────────────────────
+// F2/F3 (SCRUM sprint amendment A3, founder 22-LOI-format KPI) — real
+// extraction dispatch for the ZIP-XML family (.odt/.odp/.pptx/.epub) and RTF
+// / SVG. These go through the REAL parsers (jszip / rtfExtract / svgExtract
+// are NOT mocked in this file — only mammoth/pdfjs-dist/tesseract.js are),
+// end-to-end through the public `extractText()` dispatcher.
+// ───────────────────────────────────────────────────────────────────────────
+describe('extractText dispatch — F2 ZIP-XML family + F3 RTF/SVG (real parsers)', () => {
+  it('routes .odt to the zip-xml handler and extracts real content', async () => {
+    const { buildOdtFixture } = await import('./extractors/__fixtures__/buildZipFixtures');
+    const file = await buildOdtFixture(['Founder Letter of Intent for Acme Corp.']);
+
+    const result = await extractText(file);
+
+    expect(result.method).toBe('zip-xml');
+    expect(result.text).toContain('Founder Letter of Intent for Acme Corp.');
+    expect(mockExtractRawText).not.toHaveBeenCalled();
+  });
+
+  it('routes .odp to the zip-xml handler and extracts real slide content', async () => {
+    const { buildOdpFixture } = await import('./extractors/__fixtures__/buildZipFixtures');
+    const file = await buildOdpFixture([['Welcome Slide', 'Anchored evidence, verified forever.']]);
+
+    const result = await extractText(file);
+
+    expect(result.method).toBe('zip-xml');
+    expect(result.text).toContain('Welcome Slide');
+    expect(result.text).toContain('Anchored evidence, verified forever.');
+  });
+
+  it('routes .pptx to the zip-xml handler and extracts real per-slide content', async () => {
+    const { buildPptxFixture } = await import('./extractors/__fixtures__/buildZipFixtures');
+    const file = await buildPptxFixture([['Slide One'], ['Slide Two']]);
+
+    const result = await extractText(file);
+
+    expect(result.method).toBe('zip-xml');
+    expect(result.text).toContain('Slide One');
+    expect(result.text).toContain('Slide Two');
+  });
+
+  it('routes .epub to the zip-xml handler and extracts real chapter content in spine order', async () => {
+    const { buildEpubFixture } = await import('./extractors/__fixtures__/buildZipFixtures');
+    const file = await buildEpubFixture([['Chapter One text.'], ['Chapter Two text.']]);
+
+    const result = await extractText(file);
+
+    expect(result.method).toBe('zip-xml');
+    expect(result.text).toContain('Chapter One text.');
+    expect(result.text).toContain('Chapter Two text.');
+  });
+
+  it('routes .rtf to the real control-word stripper, not the plain-text fallback', async () => {
+    const { SAMPLE_RTF } = await import('./extractors/__fixtures__/textFixtures');
+    const file = fakeFile('loi.rtf', 'application/rtf', SAMPLE_RTF);
+
+    const result = await extractText(file);
+
+    expect(result.method).toBe('rtf');
+    expect(result.text).toContain('Letter of Intent');
+    // The original bug: dumping raw control words. Must be gone.
+    expect(result.text).not.toContain('\\fonttbl');
+    expect(result.text).not.toContain('\\par');
+  });
+
+  it('routes .rtf by extension alone when the MIME type is empty', async () => {
+    const { SAMPLE_RTF } = await import('./extractors/__fixtures__/textFixtures');
+    const file = fakeFile('loi.rtf', '', SAMPLE_RTF);
+
+    const result = await extractText(file);
+
+    expect(result.method).toBe('rtf');
+    expect(result.text).toContain('Letter of Intent');
+  });
+
+  it('routes .svg to the SVG text extractor and does not send it through Tesseract OCR', async () => {
+    const { SAMPLE_SVG } = await import('./extractors/__fixtures__/textFixtures');
+    const file = fakeFile('seal.svg', 'image/svg+xml', SAMPLE_SVG);
+
+    const result = await extractText(file);
+
+    expect(result.method).toBe('svg');
+    expect(result.text).toContain('Arkova Anchor Seal');
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+  });
+
+  it('does not route .ods here — reserved for the F1 SheetJS spreadsheet path', async () => {
+    const file = fakeFile('data.ods', 'application/vnd.oasis.opendocument.spreadsheet', 'not-parsed-here');
+    // Not a zip-xml kind and not a recognized text/image type either —
+    // must fall through to the generic unsupported-type error, NOT silently
+    // succeed via this module (that would collide with F1's SheetJS path).
+    await expect(extractText(file)).rejects.toThrow(/Unsupported file type/);
+  });
+
+  it('a corrupt file with a zip-xml extension fails gracefully (not a hang/crash)', async () => {
+    const { buildCorruptZipFixture } = await import('./extractors/__fixtures__/buildZipFixtures');
+    const file = buildCorruptZipFixture('corrupt.odt', 'application/vnd.oasis.opendocument.text');
+    await expect(extractText(file)).rejects.toThrow();
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// F3 verification — .md/.html/.xml/.json/.txt are claimed supported via the
+// plain-text reader. Prove real content round-trips exactly (multi-line,
+// unicode, structural characters all preserved) — these are ALREADY the
+// correct extraction for these formats (they're read as literal source),
+// so this is a verification pass, not a behavior change.
+// ───────────────────────────────────────────────────────────────────────────
+describe('F3 verification — text family (.md/.html/.xml/.json/.txt) real extraction', () => {
+  it('.md — extracts real Markdown content exactly, including headings and lists', async () => {
+    const content = '# Founder LOI\n\n- Term: 12 months\n- Renewal: automatic\n\n**Signed**, The Parties';
+    const file = fakeFile('loi.md', 'text/markdown', content);
+    const result = await extractText(file);
+    expect(result.method).toBe('text');
+    expect(result.text).toBe(content);
+  });
+
+  it('.html — extracts real HTML source exactly (literal file content, not garbled)', async () => {
+    const content = '<html><body><h1>Founder LOI</h1><p>Term: 12 months</p></body></html>';
+    const file = fakeFile('loi.html', 'text/html', content);
+    const result = await extractText(file);
+    expect(result.method).toBe('text');
+    expect(result.text).toBe(content);
+  });
+
+  it('.xml — extracts real XML source exactly, including nested elements', async () => {
+    const content = '<?xml version="1.0"?><loi><term months="12"/><parties><a>Acme</a><b>Arkova</b></parties></loi>';
+    const file = fakeFile('loi.xml', 'application/xml', content);
+    const result = await extractText(file);
+    expect(result.method).toBe('text');
+    expect(result.text).toBe(content);
+  });
+
+  it('.json — extracts real JSON content exactly, valid and parseable after extraction', async () => {
+    const data = { term_months: 12, parties: ['Acme Corp', 'Arkova'], renewal: 'automatic' };
+    const content = JSON.stringify(data, null, 2);
+    const file = fakeFile('loi.json', 'application/json', content);
+    const result = await extractText(file);
+    expect(result.method).toBe('text');
+    expect(result.text).toBe(content);
+    expect(JSON.parse(result.text)).toEqual(data);
+  });
+
+  it('.txt — extracts real plain text exactly, including multi-line and unicode content', async () => {
+    const content = 'Founder Letter of Intent\n\nAcme Corp ↔ Arkova\nTerm: 12 months\n— Signed —';
+    const file = fakeFile('loi.txt', 'text/plain', content);
+    const result = await extractText(file);
+    expect(result.method).toBe('text');
+    expect(result.text).toBe(content);
+  });
+
+  it('.txt — round-trips a large multi-paragraph document without truncation', async () => {
+    const paragraph = 'The quick brown fox jumps over the lazy dog. '.repeat(50);
+    const content = Array.from({ length: 20 }, (_, i) => `Paragraph ${i + 1}: ${paragraph}`).join('\n\n');
+    const file = fakeFile('big.txt', 'text/plain', content);
+    const result = await extractText(file);
+    expect(result.text).toBe(content);
+    expect(result.text.length).toBe(content.length);
+  });
+});
+
 describe('F4 — fail-closed dominance: a REAL OCR-engine failure still wins over the format layer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
