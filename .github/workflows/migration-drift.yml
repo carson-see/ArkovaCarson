@@ -23,9 +23,21 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # SCRUM-3029: default GitHub types are [opened, synchronize, reopened].
+    # Body-only edits (e.g. bumping the PR head-SHA-in-body after a soak, or
+    # updating staging evidence) never fire a `synchronize` — they're covered
+    # only by `edited`. Without it, a soaked PR's migration-drift check can
+    # go stale relative to the PR body/evidence and `gh pr checks` still
+    # reports the old run as current. The job is a read-only script + one
+    # Supabase Management API call (<1 min), so re-running it on every body
+    # edit is cheap; the PR-ref concurrency group below still coalesces
+    # rapid-fire edits to the latest one.
+    types: [opened, synchronize, reopened, edited]
 
-# Cancel stale runs on the same branch — no reason to keep a drift-check
-# running when a newer commit has replaced it.
+# Cancel stale runs on the same PR/branch — no reason to keep a drift-check
+# running when a newer commit (or, per SCRUM-3029, a newer body edit) has
+# replaced it. `github.ref` for pull_request events is already PR-scoped
+# (refs/pull/<n>/merge), so this also coalesces back-to-back `edited` runs.
 concurrency:
   group: migration-drift-${{ github.ref }}
   cancel-in-progress: true
@@ -396,11 +408,32 @@ jobs:
       # the 2026-06-15 re-regression class this gate exists to catch). To
       # temporarily soften, re-add prefixes to ledger-numeric-exemptions.json
       # with a dated note — do not silently re-add --report-only.
+      # SonarCloud githubactions:S6505/S8543 (2026-07-28): this step used to
+      # invoke `npx tsx`, which can install packages on-demand and run their
+      # lifecycle scripts. That line is pre-existing (unrelated to this PR's
+      # `types:[...]` trigger change — it only *shifted* line numbers when
+      # Sonar re-attributed it as "new code"), but since we're touching this
+      # file anyway, fix it for real: install once via `npm ci` and invoke the
+      # resolved local binary, matching the identical fix already applied for
+      # this exact script in ci.yml:140 and for tla-precheck in ci.yml:939.
+      - name: Setup Node.js
+        if: ${{ env.PROD_LEDGER_JSON_PATH != '' }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        if: ${{ env.PROD_LEDGER_JSON_PATH != '' }}
+        run: npm ci --ignore-scripts
+
       - name: Full-ledger numeric-integrity audit (SCRUM-2500 / S0-4.2)
         if: ${{ env.PROD_LEDGER_JSON_PATH != '' }}
         env:
           LEDGER_JSON_PATH: ${{ env.PROD_LEDGER_JSON_PATH }}
-        run: npx tsx scripts/ci/check-ledger-numeric-integrity.ts
+        # Resolved local binary, not `npx tsx` — see comment above.
+        run: node_modules/.bin/tsx scripts/ci/check-ledger-numeric-integrity.ts
 
       - name: Check prod drain function body and grants
         if: ${{ !(github.event_name == 'pull_request' && github.actor == 'dependabot[bot]') && hashFiles('supabase/migrations/0283_drain_submitted_to_secured_helper.sql') != '' }}
