@@ -111,9 +111,39 @@ this step into a shallow job.
 
 `BASE_REF_SHA` comes from `github.event.pull_request.base.sha`, so on
 push-to-main runs it is empty and the gate skips rather than failing.
+## `pull_request` `types:` contract (SCRUM-3029/3030, 2026-07-28)
+
+- GitHub's default `types:` for a bare `pull_request:` trigger is
+  `[opened, synchronize, reopened]`. `synchronize` fires only on a new
+  commit — a **body-only edit** (bumping a head-SHA reference after a soak,
+  updating a `## Staging Soak Evidence` block, adding an approver note)
+  never re-fires the workflow unless `edited` is explicitly listed. A
+  workflow gating merge-relevant evidence (migration drift, staging
+  evidence, anything a PR body can update without a new commit) that omits
+  `edited` will keep showing a stale run as current — `gh pr checks` cannot
+  tell the difference. See
+  `docs/runbooks/ci/verifying-current-check-runs.md` for the full failure
+  mode and the cross-check procedure via
+  `gh api repos/{owner}/{repo}/commits/<head-sha>/check-runs`.
+- `migration-drift.yml` was fixed under SCRUM-3029: `on.pull_request.types`
+  is now `[opened, synchronize, reopened, edited]`. The job is a read-only
+  script + one Supabase Management API call (well under a minute), so
+  re-running on every body edit is cheap; the existing
+  `concurrency: { group: migration-drift-${{ github.ref }}, cancel-in-progress: true }`
+  already coalesces back-to-back edits on the same PR (pull_request
+  `github.ref` is PR-scoped, `refs/pull/<n>/merge`) — no additional
+  concurrency change was needed.
+- When adding or reviewing a new `pull_request`-triggered workflow: if the
+  gate can be satisfied or invalidated by a PR **body** change alone (any
+  evidence-block / head-SHA-reference / approval-note workflow), add
+  `edited` to `types:` unless the job is expensive enough that re-running it
+  on every body edit is a real cost — in that case, document the tradeoff
+  inline in the workflow (why `edited` is omitted) rather than leaving it
+  silently absent.
 
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
+- `docs/runbooks/ci/verifying-current-check-runs.md` — cross-checking `gh pr checks` against actual check-run timestamps; the frozen-event-payload rerun trap and its fix (SCRUM-3030)
 - S0-4.3 stacked-PR + tiered-merge playbook (drafted Mergify/branch-protection diff for Carson) → Google Doc "ARKOVA PI-1 S0-E4 — Mergify / Stacked-PR + Tiered-Merge Playbook" (Drive ARKOVA PI-1-S0): https://docs.google.com/document/d/1iontJPUkhLQkQyZG4PETGuPj3kf23Kgn-1kDxqukfr8/edit
 - `docs/confluence/16_migration_drift_prevention.md` — ADR for Option A (read-only diff)

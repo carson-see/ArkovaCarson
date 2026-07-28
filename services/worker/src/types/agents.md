@@ -27,3 +27,9 @@ After a clean local `supabase db reset --local`, the canonical generator added t
 - `database.types.ts` is generated. Regenerate via the canonical root `npm run gen:types` (`supabase gen types typescript --local`) after `npx supabase db reset --local`, redirecting to `services/worker/src/types/database.types.ts`, then commit the diff. Use **`--local`** (deterministic from the committed migration ledger), NOT `--linked` — the worker file must stay byte-identical to the frontend `src/types/database.types.ts`, which is generated `--local`. Drift between the two is what forced the 0326→0339 catch-up.
 - If you need to narrow or override generated types (e.g. tightening a `string` column to a union), create a separate override file in this directory rather than editing `database.types.ts`.
 - Ambient declarations (`.d.ts`) are for optional dependencies only — don't use them to avoid installing required packages.
+
+## 2026-07-15 x402 request context
+
+- `Request.x402PayerContext` is a discriminated union: an explicit API-key or
+  payments-disabled bypass, or a verified opaque `payerKey`. Never add a raw
+  wallet address to this request type.

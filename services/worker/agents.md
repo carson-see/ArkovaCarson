@@ -360,3 +360,15 @@ vi.mock('../config.js', () => ({
   get config() { return mutableState; }  // reads from hoisted ref
 }));
 ```
+
+## 2026-07-15 S3.3 Wave 3 Lane 2 quotas and verified-payer limits
+
+- SCRUM-2703 mounts trusted-identity organization quotas on the real anchor,
+  persisted-rule, and webhook-create surfaces. Daily anchor usage uses the
+  atomic `increment_org_usage` RPC; rule/webhook capacity reads are
+  authoritative but remain read-before-insert and therefore are not an atomic
+  cross-instance hard cap.
+- SCRUM-2705 keys the bounded, process-local Nessie payer limiter only by an
+  HMAC of the verified on-chain Transfer sender. Never place a raw wallet
+  address in request limiter context, limiter state, or logs.
+- Post-Wave-3 staging smoke is deferred; offline tests are not soak evidence.
