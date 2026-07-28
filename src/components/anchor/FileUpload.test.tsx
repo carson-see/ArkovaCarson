@@ -1,17 +1,29 @@
 /**
- * FileUpload Component Tests (SCRUM-1789)
+ * FileUpload Component Tests (SCRUM-1789; W2 / F1 dual-mode 2026-07-28)
  *
  * Verifies upload routing: single file → onFileSelect, multi-file → onBulkDetected,
- * CSV/XLSX → onBulkDetected, disabled state blocks processing.
- * Also tests exported helper functions: isBulkUploadFile, isJsonFile.
+ * single CSV/XLSX/XLS/TSV → explicit mode-choice step (W2), disabled state blocks
+ * processing. Also tests exported helper functions: isBulkUploadFile, isJsonFile.
+ *
+ * W2 / F1 (founder ruling 2026-07-28): FOUND BUG — a dropped spreadsheet used to
+ * be intercepted by isBulkUploadFile() and routed to onBulkDetected() BEFORE
+ * generateFingerprint was ever called, so a spreadsheet could never reach the
+ * single-document anchoring path. The "does not reach generateFingerprint before
+ * a mode is chosen" tests below pin the pre-choice half of that behavior (still
+ * correct — routing must not happen automatically); the "record mode" describe
+ * block pins that row-mode/bulk import is UNCHANGED; the "document mode" describe
+ * block is the actual regression test proving the bug is fixed — choosing
+ * "Secure this file as a document" now reaches generateFingerprint / onFileSelect
+ * for a real spreadsheet file, which was previously impossible for ANY choice.
  */
 
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FileUpload, isBulkUploadFile, isJsonFile } from './FileUpload';
 
+const mockGenerateFingerprint = vi.fn().mockResolvedValue('a'.repeat(64));
 vi.mock('@/lib/fileHasher', () => ({
-  generateFingerprint: vi.fn().mockResolvedValue('a'.repeat(64)),
+  generateFingerprint: (...args: unknown[]) => mockGenerateFingerprint(...args),
 }));
 
 vi.mock('@/components/layout/ArkovaLogo', () => ({
@@ -64,27 +76,103 @@ describe('FileUpload', () => {
     expect(onBulkDetected).not.toHaveBeenCalled();
   });
 
-  it('routes CSV file to bulk mode', () => {
-    const { input, onFileSelect, onBulkDetected } = renderUpload();
-    const csvFile = new File(['col1,col2\nval1,val2'], 'records.csv', { type: 'text/csv' });
-    changeFiles(input, csvFile);
-    expect(onBulkDetected).toHaveBeenCalledWith([csvFile]);
-    expect(onFileSelect).not.toHaveBeenCalled();
-  });
-
-  it('routes XLSX file to bulk mode', () => {
-    const { input, onFileSelect, onBulkDetected } = renderUpload();
-    const xlsxFile = new File(['xlsx-data'], 'records.xlsx', {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    });
-    changeFiles(input, xlsxFile);
-    expect(onBulkDetected).toHaveBeenCalledWith([xlsxFile]);
-    expect(onFileSelect).not.toHaveBeenCalled();
-  });
-
   it('renders upload affordance text', () => {
     render(<FileUpload onFileSelect={vi.fn()} />);
     expect(screen.getByText(/drag and drop your document/i)).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// W2 / F1 — spreadsheet dual-mode (founder ruling 2026-07-28)
+//
+// A single dropped/selected spreadsheet no longer routes straight to
+// onBulkDetected (row/records mode) OR straight to onFileSelect (document
+// mode) — it pauses on an explicit mode-choice step and neither callback
+// fires until the user picks. A multi-file drop is untouched (still routes
+// straight to onBulkDetected, tested above).
+// ---------------------------------------------------------------------------
+describe('FileUpload — spreadsheet dual-mode (W2 / F1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([
+    ['records.csv', 'text/csv'],
+    ['records.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    ['records.xls', 'application/vnd.ms-excel'],
+    ['records.tsv', ''],
+  ])('a single %s file pauses on the mode-choice step (neither callback fires yet)', (name, type) => {
+    const { input, onFileSelect, onBulkDetected } = renderUpload();
+    const file = new File(['a,b\n1,2'], name, { type });
+    changeFiles(input, file);
+
+    expect(screen.getByTestId('spreadsheet-mode-choice')).toBeInTheDocument();
+    expect(screen.getByText(name)).toBeInTheDocument();
+    expect(onBulkDetected).not.toHaveBeenCalled();
+    expect(onFileSelect).not.toHaveBeenCalled();
+    expect(mockGenerateFingerprint).not.toHaveBeenCalled();
+  });
+
+  it('a mixed multi-file drop (one of which is a spreadsheet) still routes straight to bulk mode — W1 surface untouched', () => {
+    const { input, onFileSelect, onBulkDetected } = renderUpload();
+    const files = [
+      new File(['pdf-bytes'], 'cert.pdf', { type: 'application/pdf' }),
+      new File(['csv-bytes'], 'roster.csv', { type: 'text/csv' }),
+    ];
+    changeFiles(input, files);
+
+    expect(onBulkDetected).toHaveBeenCalledWith(files);
+    expect(onFileSelect).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('spreadsheet-mode-choice')).not.toBeInTheDocument();
+  });
+
+  describe('record mode (row-mode / bulk-import path — UNCHANGED, this is the original intent)', () => {
+    it('choosing "Import as a list of records" calls onBulkDetected with exactly the one file, and never calls onFileSelect/generateFingerprint', () => {
+      const { input, onFileSelect, onBulkDetected } = renderUpload();
+      const file = new File(['a,b\n1,2'], 'roster.csv', { type: 'text/csv' });
+      changeFiles(input, file);
+
+      fireEvent.click(screen.getByTestId('spreadsheet-mode-records'));
+
+      expect(onBulkDetected).toHaveBeenCalledTimes(1);
+      expect(onBulkDetected).toHaveBeenCalledWith([file]);
+      expect(onFileSelect).not.toHaveBeenCalled();
+      expect(mockGenerateFingerprint).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('spreadsheet-mode-choice')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('document mode (regression test — this is the bug fix)', () => {
+    it('choosing "Secure this file as a document" reaches generateFingerprint and calls onFileSelect — previously IMPOSSIBLE for any spreadsheet', async () => {
+      const { input, onFileSelect, onBulkDetected } = renderUpload();
+      const file = new File(['a,b\n1,2'], 'quarterly-report.xlsx', {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      changeFiles(input, file);
+
+      fireEvent.click(screen.getByTestId('spreadsheet-mode-document'));
+
+      await vi.waitFor(() => {
+        expect(mockGenerateFingerprint).toHaveBeenCalledWith(file);
+        expect(onFileSelect).toHaveBeenCalledWith(file, 'a'.repeat(64));
+      });
+      expect(onBulkDetected).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('spreadsheet-mode-choice')).not.toBeInTheDocument();
+    });
+  });
+
+  it('"Choose a different file" clears the pending spreadsheet and returns to the empty drop zone', () => {
+    const { input, onFileSelect, onBulkDetected } = renderUpload();
+    const file = new File(['a,b\n1,2'], 'roster.csv', { type: 'text/csv' });
+    changeFiles(input, file);
+    expect(screen.getByTestId('spreadsheet-mode-choice')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText(/choose a different file/i));
+
+    expect(screen.queryByTestId('spreadsheet-mode-choice')).not.toBeInTheDocument();
+    expect(screen.getByText(/drag and drop your document/i)).toBeInTheDocument();
+    expect(onBulkDetected).not.toHaveBeenCalled();
+    expect(onFileSelect).not.toHaveBeenCalled();
   });
 });
 

@@ -2524,7 +2524,8 @@ export const EXTRACTION_RECOVERY_LABELS = {
 export const OCR_LABELS = {
   UNSUPPORTED_FILE_TYPE: (typeOrExt: string) =>
     `Unsupported file type for text extraction: ${typeOrExt}. ` +
-    'Supported: PDF, Word (.docx), images, and text files. ' +
+    'Supported: PDF, Word (.docx), OpenDocument (.odt/.odp), PowerPoint (.pptx), ' +
+    'EPUB, RTF, SVG, images, and text files. ' +
     'The document can still be secured without AI metadata.',
   /**
    * §1.6 FAIL-CLOSED (WEBEXT-03). Surfaced when the on-device document reader
@@ -3691,4 +3692,23 @@ export const FOLDER_LABELS = {
   TOAST_DELETED: 'Folder deleted',
   TOAST_ASSIGNED: 'Record moved',
   TOAST_UNFILED: 'Record removed from folder',
+} as const;
+
+/**
+ * Spreadsheet dual-mode (W2 / F1, founder ruling 2026-07-28).
+ * A dropped .csv/.xlsx/.xls/.tsv file is ambiguous: it could be a list of
+ * individual records to import (the original bulk-issuance intent), or a
+ * single non-credential spreadsheet the user wants secured as one document.
+ * This copy backs the explicit choice shown between drop and dispatch —
+ * neither mode is inferred silently. §1.3: no banned crypto/chain terms.
+ */
+export const SPREADSHEET_MODE_LABELS = {
+  TITLE: 'How should this file be secured?',
+  DESCRIPTION: 'Spreadsheets can go two ways — pick the one that matches this file.',
+  RECORDS_OPTION: 'Import as a list of records',
+  RECORDS_HINT: 'Each row becomes its own secured record. Use this for rosters, batches of documents, and similar lists.',
+  DOCUMENT_OPTION: 'Secure this file as a document',
+  DOCUMENT_HINT: 'The whole file is secured as a single record, the same as a PDF or Word document.',
+  FILE_SIZE_LABEL: 'Size',
+  CHOOSE_DIFFERENT_FILE: 'Choose a different file',
 } as const;
