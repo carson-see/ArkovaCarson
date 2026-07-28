@@ -144,6 +144,18 @@ jobs:
       - name: Block migration agents.md collisions (S0-E4)
         run: node_modules/.bin/tsx scripts/ci/check-agents-md-migration-collision.ts
 
+      # Backstop for the 2026-07-28 union-driver incident: a local
+      # `merge.union.driver = true` shadowed git's built-in union algorithm with
+      # a no-op, so merges silently kept "ours" and discarded "theirs" (169
+      # lines lost off main across 31 commits). agents.md is append-only, so a
+      # line in the merge base but not at head is content this branch deletes
+      # from main on merge. Cause-agnostic by design.
+      - name: Block dropped agents.md content (append-only)
+        env:
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node_modules/.bin/tsx scripts/ci/check-agents-md-append-only.ts
+
       - name: Require justification for new anchors indexes (SCRUM-1286)
         run: npm run ci:anchor-index-justification
 

@@ -100,6 +100,18 @@ Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lig
   `npm test`. The staging-tier classifier treats only an additive full-history
   checkout change as T0; removing it or choosing a shallow depth fails closed.
 
+## 2026-07-28 — agents.md append-only gate (union-drop backstop)
+
+`ci.yml` `dependency-scan` gained **Block dropped agents.md content
+(append-only)** (`scripts/ci/check-agents-md-append-only.ts`). It must stay in a
+job with `fetch-depth: 0` — it resolves `merge-base(BASE_REF_SHA, HEAD)`, which
+a shallow checkout cannot reach. `dependency-scan` already pins full history for
+`ciContext.ts` (see the SCRUM-1246 comment on its checkout step); do not move
+this step into a shallow job.
+
+`BASE_REF_SHA` comes from `github.event.pull_request.base.sha`, so on
+push-to-main runs it is empty and the gate skips rather than failing.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
