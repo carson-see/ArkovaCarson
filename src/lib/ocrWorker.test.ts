@@ -93,6 +93,18 @@ function fakeFile(name: string, type: string, content = ''): File {
   return new File([content], name, { type });
 }
 
+/**
+ * Loads one of the real, genuinely-generated spreadsheet fixtures under
+ * src/lib/fixtures/spreadsheets/ (built with the actual `xlsx` (SheetJS)
+ * writer — see src/lib/fixtures/spreadsheets/agents.md for regeneration) and
+ * wraps it as a File. `xlsx` is NOT mocked in this test file, so these tests
+ * exercise the real SheetJS reader against real binary bytes end-to-end.
+ */
+function spreadsheetFixtureFile(filename: string, type: string): File {
+  const bytes = readFileSync(join(import.meta.dirname, 'fixtures', 'spreadsheets', filename));
+  return new File([bytes], filename, { type });
+}
+
 describe('extractText routing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -498,6 +510,86 @@ describe('F4 — genuinely corrupt/hostile TIFF and HEIC files still soft-fail b
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// F1 (founder amendment 2026-07-28) — spreadsheet document-mode extraction.
+//
+// REGRESSION PIN: before this change, .xlsx/.xls/.ods fell all the way
+// through extractText's dispatch chain (not PDF, not DOCX, not an image, not
+// in TEXT_TYPES/TEXT_EXTENSIONS) and hit the generic
+// `throw new Error(OCR_LABELS.UNSUPPORTED_FILE_TYPE(...))` at the bottom —
+// a silent soft-fail, not a real extraction. These tests exercise the REAL
+// `xlsx` (SheetJS) package (not mocked in this file) against genuinely
+// generated binary fixture files, proving extraction actually works rather
+// than merely not throwing.
+// ─────────────────────────────────────────────────────────────────────────
+describe('extractText — spreadsheet document-mode extraction (F1)', () => {
+  const EXPECTED_ROWS = [
+    'Name,Role,Notes',
+    'Alice Rivera,Engineer,Backend team',
+    'Bob Chen,Designer,Design system',
+    'Cara Osei,PM,Roadmap owner',
+  ];
+
+  it.each([
+    ['sample-roster.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    ['sample-roster.xls', 'application/vnd.ms-excel'],
+    ['sample-roster.ods', 'application/vnd.oasis.opendocument.spreadsheet'],
+  ])('extracts real row/column text from a genuine %s fixture via SheetJS (method: "spreadsheet")', async (filename, type) => {
+    const file = spreadsheetFixtureFile(filename, type);
+
+    const result = await extractText(file);
+
+    expect(result.method).toBe('spreadsheet');
+    expect(result.pageCount).toBe(1); // one sheet ("Roster") in the fixture
+    for (const row of EXPECTED_ROWS) {
+      expect(result.text).toContain(row);
+    }
+    // The extraction must not have gone through any of the other engines.
+    expect(mockExtractRawText).not.toHaveBeenCalled();
+    expect(mockGetDocument).not.toHaveBeenCalled();
+    expect(mockCreateWorker).not.toHaveBeenCalled();
+  });
+
+  it('routes .xlsx by extension alone even with an empty/generic MIME (real browser file metadata)', async () => {
+    const bytes = readFileSync(join(import.meta.dirname, 'fixtures', 'spreadsheets', 'sample-roster.xlsx'));
+    const file = new File([bytes], 'sample-roster.xlsx', { type: '' });
+
+    const result = await extractText(file);
+
+    expect(result.method).toBe('spreadsheet');
+    expect(result.text).toContain('Alice Rivera,Engineer,Backend team');
+  });
+
+  it('a real, genuine .csv fixture extracts as plain text (unchanged TEXT_TYPES path — CSV was never broken)', async () => {
+    const file = spreadsheetFixtureFile('sample-roster.csv', 'text/csv');
+
+    const result = await extractText(file);
+
+    expect(result.method).toBe('text');
+    for (const row of EXPECTED_ROWS) {
+      expect(result.text).toContain(row);
+    }
+  });
+
+  it('an empty workbook (no sheets) does not throw — returns empty text instead of a soft-fail error', async () => {
+    // Round-trip a File built from a workbook with a sheet but zero populated
+    // rows, exercising the `sheet ? … : ''` guard without a real binary asset.
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([[]]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Empty');
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+    const file = new File([buf], 'empty.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+
+    const result = await extractText(file);
+
+    expect(result.method).toBe('spreadsheet');
+    expect(result.pageCount).toBe(1);
+    expect(result.text).toContain('# Empty');
+  });
+});
 // ───────────────────────────────────────────────────────────────────────────
 // F2/F3 (SCRUM sprint amendment A3, founder 22-LOI-format KPI) — real
 // extraction dispatch for the ZIP-XML family (.odt/.odp/.pptx/.epub) and RTF

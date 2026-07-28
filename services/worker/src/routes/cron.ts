@@ -27,6 +27,11 @@ import { processPendingAnchors } from '../jobs/anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
 import { runBackCatalogClassifier, createDbGucReader, createDbLocker } from '../jobs/proof-backcatalog-classifier.js';
+import {
+  runProofMaterializer,
+  createDbGucReader as createMaterializerGucReader,
+  createDbLocker as createMaterializerLocker,
+} from '../jobs/proof-materializer.js';
 import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
@@ -353,8 +358,9 @@ cronRouter.post('/populate-confirmation-proofs', async (_req, res) => {
 // catalogue (anchors/anchor_proofs); the resumable census still persists its
 // own durable job_queue checkpoint row in both modes. Write mode needs
 // execute=true AND PROOF_CLASSIFIER_CONFIRM=EXECUTE, halts when ambiguous > 0,
-// refuses while the 0340 GUC is on (or unconfirmable), and today stops on the
-// honest 0354 schema gap (no class column exists yet).
+// refuses while the 0340 GUC is on (or unconfirmable), and persists exactly the
+// one 0354 class column via the resumable label-apply pass (the pre-0354
+// schema-gap refusal is retained as a generic fail-honest guard).
 // Resumable via a durable job_queue checkpoint — re-POST to continue a long
 // census; restart=true starts a fresh one.
 // F1 CONCURRENCY GUARD: createDbLocker gives the run a (scope,mode)-keyed
@@ -375,34 +381,72 @@ const ClassifyProofBackcatalogParamsSchema = z.object({
   restart: ClassifierBooleanishSchema.optional(),
 });
 
+/** Boolean-ish query/body flag → strict boolean (shared by both proof routes). */
+const proofRouteFlag = (v: boolean | 'true' | 'false' | '1' | '0' | undefined) =>
+  v === true || v === 'true' || v === '1';
+
+/**
+ * Shared boundary parse for the two proof back-catalogue routes (classifier +
+ * SCRUM-2917 materializer). They deliberately share ONE schema — the bounds are
+ * a single source of truth — so the org_id validation and 400 envelope live
+ * here once. `errorLabel` keeps each route's 400 body text distinct.
+ */
+function parseProofBackcatalogParams(
+  req: Request,
+  errorLabel: string,
+):
+  | {
+      ok: true;
+      orgId: string | undefined;
+      execute: boolean;
+      batchSize: number | undefined;
+      maxBatches: number | undefined;
+      restart: boolean;
+    }
+  | { ok: false; status: number; body: Record<string, unknown> } {
+  const rawOrgId = req.query.org_id ?? req.body?.org_id;
+  let orgId: string | undefined;
+  if (rawOrgId !== undefined) {
+    const parsedOrgId = z.string().uuid().safeParse(String(rawOrgId).trim());
+    if (!parsedOrgId.success) {
+      return { ok: false, status: 400, body: { error: 'Invalid org_id' } };
+    }
+    orgId = parsedOrgId.data;
+  }
+
+  const parsedParams = ClassifyProofBackcatalogParamsSchema.safeParse({
+    execute: req.query.execute ?? req.body?.execute,
+    batch_size: req.query.batch_size ?? req.body?.batch_size,
+    max_batches: req.query.max_batches ?? req.body?.max_batches,
+    restart: req.query.restart ?? req.body?.restart,
+  });
+  if (!parsedParams.success) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: `Invalid ${errorLabel} parameters`,
+        details: parsedParams.error.flatten().fieldErrors,
+      },
+    };
+  }
+  return {
+    ok: true,
+    orgId,
+    execute: proofRouteFlag(parsedParams.data.execute),
+    batchSize: parsedParams.data.batch_size,
+    maxBatches: parsedParams.data.max_batches,
+    restart: proofRouteFlag(parsedParams.data.restart),
+  };
+}
+
 cronRouter.post('/classify-proof-backcatalog', async (req, res) => {
   try {
-    const rawOrgId = req.query.org_id ?? req.body?.org_id;
-    let orgId: string | undefined;
-    if (rawOrgId !== undefined) {
-      const parsedOrgId = z.string().uuid().safeParse(String(rawOrgId).trim());
-      if (!parsedOrgId.success) {
-        res.status(400).json({ error: 'Invalid org_id' });
-        return;
-      }
-      orgId = parsedOrgId.data;
-    }
-
-    const parsedParams = ClassifyProofBackcatalogParamsSchema.safeParse({
-      execute: req.query.execute ?? req.body?.execute,
-      batch_size: req.query.batch_size ?? req.body?.batch_size,
-      max_batches: req.query.max_batches ?? req.body?.max_batches,
-      restart: req.query.restart ?? req.body?.restart,
-    });
-    if (!parsedParams.success) {
-      res.status(400).json({
-        error: 'Invalid classifier parameters',
-        details: parsedParams.error.flatten().fieldErrors,
-      });
+    const params = parseProofBackcatalogParams(req, 'classifier');
+    if (!params.ok) {
+      res.status(params.status).json(params.body);
       return;
     }
-    const flag = (v: boolean | 'true' | 'false' | '1' | '0' | undefined) =>
-      v === true || v === 'true' || v === '1';
 
     const result = await runBackCatalogClassifier(
       {
@@ -413,16 +457,67 @@ cronRouter.post('/classify-proof-backcatalog', async (req, res) => {
         confirmToken: config.proofClassifierConfirm,
       },
       {
-        execute: flag(parsedParams.data.execute),
-        orgId,
-        batchSize: parsedParams.data.batch_size,
-        maxBatches: parsedParams.data.max_batches,
-        restart: flag(parsedParams.data.restart),
+        execute: params.execute,
+        orgId: params.orgId,
+        batchSize: params.batchSize,
+        maxBatches: params.maxBatches,
+        restart: params.restart,
       },
     );
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Back-catalogue proof classifier failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// SCRUM-2917: insert-capable direct-anchor proof MATERIALIZER.
+//
+// MANUAL TRIGGER ONLY — deliberately NOT scheduled (no Cloud Scheduler
+// binding, no in-process backup): populating the ~2.96M-anchor back catalogue
+// is an operator-driven, Carson-gated T3 run. Same authenticated-POST pattern
+// as /classify-proof-backcatalog above.
+//
+// DRY-RUN BY DEFAULT: plans the honest direct-anchor skeleton INSERT set
+// (anchor_id, receipt_id := chain_tx_id, proof_completeness_class =
+// 'direct_anchored', materialize_run_id) with ZERO writes to anchor_proofs.
+// Write mode needs execute=true AND PROOF_MATERIALIZER_CONFIRM=EXECUTE (dual
+// guard inside the job), halts on any ambiguous row BEFORE writing its page,
+// refuses while the 0340/0360 GUC is on (or unconfirmable in write mode), and
+// is idempotent via ON CONFLICT (anchor_id) DO NOTHING. It NEVER fabricates
+// merkle_root / proof_path / op_return_payload — direct anchors keep those
+// EMPTY (honest); the CTO-ruled 0360 predicate means these skeletons do NOT
+// satisfy the SECURED gate until the SCRUM-2491 backfill fills op_return.
+// Resumable via a durable job_queue checkpoint; one runId per census is the
+// per-run rollback key (0359 materialize_run_id column).
+// Zod boundary + advisory-locker wiring mirror the classifier route exactly.
+cronRouter.post('/materialize-proof-backcatalog', async (req, res) => {
+  try {
+    const params = parseProofBackcatalogParams(req, 'materializer');
+    if (!params.ok) {
+      res.status(params.status).json(params.body);
+      return;
+    }
+
+    const result = await runProofMaterializer(
+      {
+        client: db,
+        guc: createMaterializerGucReader(db),
+        locker: createMaterializerLocker(db),
+        logger,
+        confirmToken: config.proofMaterializerConfirm,
+      },
+      {
+        execute: params.execute,
+        orgId: params.orgId,
+        batchSize: params.batchSize,
+        maxBatches: params.maxBatches,
+        restart: params.restart,
+      },
+    );
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Proof materializer failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

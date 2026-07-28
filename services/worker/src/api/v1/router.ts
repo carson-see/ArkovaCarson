@@ -523,10 +523,42 @@ router.use('/cle', x402PaymentGate('/api/v1/cle'), cleVerifyRouter);
 router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), x402PayerRateLimit, aiRateLimiter, nessieQueryRouter);
 
 // ─── AdES Signatures — Phase III (PH3-ESIG-01) ───
-// Feature-gated + JWT auth required — signatures are org-managed resources
-router.use('/sign', adesSignatureGate(), requireAuth, signaturesRouter);
-router.use('/signatures', adesSignatureGate(), requireAuth, signaturesRouter);
-router.use('/verify-signature', adesSignatureGate(), signaturesRouter);
+// Feature-gated + JWT auth required (except the public verify-signature check)
+// — signatures are org-managed resources.
+//
+// Mounted ONCE at '/': signaturesRouter's own route strings already carry the
+// full documented contract paths (`/sign`, `/signatures/:id`,
+// `/verify-signature`, `/signatures`, `/signatures/:id/revoke` — see the
+// header comment in signatures.ts and docs/stories/23_phase3_esignatures.md
+// §4). Splitting the mount across `/sign` + `/signatures` +
+// `/verify-signature` prefixes (as before) double-prefixed every path —
+// Express strips the mount prefix before matching internal routes, so
+// mounting this same router under a '/sign' prefix required the '/sign'
+// segment TWICE (once for the mount, once for the route inside the router)
+// and never matched the single documented path. All 5 documented AdES
+// endpoints 404'd (endpoint-reachability audit finding #1).
+//
+// `adesSignatureGate()` and `requireSignatureAuth` below both path-guard
+// themselves (same pattern as `adesFeatureGate.ts`'s own fix for the
+// 2026-04-18 prod incident where an unguarded gate at `router.use('/', …)`
+// 503'd unrelated `/api/v1/*` traffic) so this root mount is safe alongside
+// the `signatureComplianceRouter` / `keyInventoryRouter` mounts below, which
+// already use the same root-mount pattern.
+function requireSignatureAuth(req: Request, res: Response, next: NextFunction): void {
+  const p = req.path;
+  const isSignPath = p === '/sign' || p.startsWith('/sign?');
+  const isSignaturesPath = p === '/signatures' || p.startsWith('/signatures/') || p.startsWith('/signatures?');
+  if (!isSignPath && !isSignaturesPath) {
+    // Not a `/sign` or `/signatures*` request — includes `/verify-signature`
+    // (intentionally public, mirrors `/verify/:publicId`; signatures.ts
+    // conditionally skips the audit-event write when req.authUserId is
+    // absent) and every unrelated `/api/v1/*` path. Never block those here.
+    next();
+    return;
+  }
+  requireAuth(req, res, next);
+}
+router.use('/', adesSignatureGate(), requireSignatureAuth, signaturesRouter);
 // Compliance endpoints — audit proofs, bulk export, SOC 2 evidence (PH3-ESIG-03)
 router.use('/', adesSignatureGate(), requireAuth, signatureComplianceRouter);
 // ─── Key Inventory — COMP-05 (SOC 2 CC6.1 audit evidence) ───

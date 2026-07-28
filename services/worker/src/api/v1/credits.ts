@@ -17,11 +17,7 @@ import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
-
-interface AuthenticatedRequest extends Request {
-  userId?: string;
-  orgId?: string;
-}
+import { getCallerOrgId } from '../_org-auth.js';
 
 export const creditsRouter = Router();
 
@@ -45,9 +41,23 @@ const purchaseSchema = z.object({
 // ─── GET /api/v1/credits — Check balance ─────────────────────────────
 
 creditsRouter.get('/', async (req: Request, res: Response) => {
-  const authReq = req as AuthenticatedRequest;
-  const userId = authReq.userId;
-  const orgId = authReq.orgId;
+  // NOTE (endpoint-reachability audit): this router is mounted under the v1
+  // router's OWN `requireAuth` (services/worker/src/api/v1/router.ts), which
+  // populates the `authUserId` request field — a DIFFERENT function from
+  // `requireAuth` in services/worker/src/routes/middleware.ts, which
+  // populates the `userId` (+ separately, requireOrgId.ts populates `orgId`)
+  // request fields instead. Both auth helpers are legitimately named
+  // `requireAuth` but populate different fields (see the doc comment in
+  // src/types/express.d.ts). This handler previously read the userId/orgId
+  // request fields directly, which the v1 mount never populates — every
+  // legitimately authenticated v1 caller got an unconditional 401. Org id is
+  // resolved from the caller's own profile (getCallerOrgId), NOT a
+  // client-supplied `x-org-id` header — deriving it from a header here would
+  // let any authenticated caller read/spend another org's credit pool by
+  // supplying a different org id (unlike hipaa-audit.ts / directory-opt-out.ts
+  // / emergency-access.ts, credits touches billing, so header-trust is not an
+  // acceptable tradeoff for this endpoint).
+  const userId = req.authUserId;
 
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' });
@@ -55,8 +65,9 @@ creditsRouter.get('/', async (req: Request, res: Response) => {
   }
 
   try {
+    const orgId = await getCallerOrgId(userId);
     const { data, error } = await db.rpc('check_unified_credits', {
-      p_org_id: orgId as string,
+      p_org_id: orgId ?? undefined,
       p_user_id: userId,
     });
 
@@ -85,14 +96,14 @@ creditsRouter.get('/', async (req: Request, res: Response) => {
 // ─── POST /api/v1/credits/purchase — Buy a credit pack ───────────────
 
 creditsRouter.post('/purchase', async (req: Request, res: Response) => {
-  const authReq = req as AuthenticatedRequest;
-  const userId = authReq.userId;
-  const orgId = authReq.orgId;
+  const userId = req.authUserId;
 
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' });
     return;
   }
+
+  const orgId = await getCallerOrgId(userId);
 
   const parsed = purchaseSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -114,7 +125,7 @@ creditsRouter.post('/purchase', async (req: Request, res: Response) => {
     if (!config.stripeSecretKey && config.nodeEnv !== 'production') {
       // Direct credit grant for development/testing only — NEVER in production
       const { error: grantError } = await db.rpc('deduct_unified_credits', {
-        p_org_id: orgId as string,
+        p_org_id: orgId ?? undefined,
         p_user_id: userId,
         p_amount: -pack.credits, // negative deduction = grant
       });

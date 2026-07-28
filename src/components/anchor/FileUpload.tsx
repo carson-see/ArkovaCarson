@@ -3,14 +3,24 @@
  *
  * Drag-and-drop file upload with fingerprint generation.
  * Files are processed locally - never uploaded to servers.
+ *
+ * W2 / F1 (founder ruling 2026-07-28): a single spreadsheet (.csv/.xlsx/.xls/
+ * .tsv) is ambiguous — it could be a list of records to import (row mode,
+ * the original bulk-issuance intent — kept, unchanged) or one non-credential
+ * file to secure as a document (new). Rather than silently routing every
+ * spreadsheet to bulk mode, a single spreadsheet file pauses on an explicit
+ * mode-choice step; the user picks, and only then does the file continue
+ * down the matching path. A multi-file drop (mixed batch) is untouched by
+ * this change and still routes straight to bulk mode — see isBulkUploadFile.
  */
 
 import { useState, useCallback, useRef } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
-import { Upload, FileText, X, Loader2, Lock } from 'lucide-react';
+import { Upload, FileText, FileSpreadsheet, X, Loader2, Lock, List } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { generateFingerprint } from '@/lib/fileHasher';
+import { SPREADSHEET_MODE_LABELS } from '@/lib/copy';
 
 /** Check if a file is a bulk upload format (CSV/XLSX) */
 export function isBulkUploadFile(file: File): boolean {
@@ -88,6 +98,10 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
   const [dragActive, setDragActive] = useState(false);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // W2 / F1: a single spreadsheet file waiting on an explicit document-vs-
+  // records choice. Non-null only between "single spreadsheet dropped" and
+  // "user picked a mode" — never persisted, never remembered across drops.
+  const [pendingModeFile, setPendingModeFile] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const processFile = useCallback(async (file: File) => {
@@ -119,6 +133,31 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
     }
   }, []);
 
+  /**
+   * Shared dispatch for a drop or file-input selection. W2 / F1: a LONE
+   * spreadsheet file pauses on the mode-choice step instead of being routed
+   * straight to bulk mode — a mixed/multi-file drop (W1's surface) is
+   * untouched and still goes straight to bulk mode, same as before.
+   */
+  const dispatchFiles = useCallback((files: File[]) => {
+    if (files.length > 1) {
+      onBulkDetected?.(files);
+      return;
+    }
+    const [file] = files;
+    if (isBulkUploadFile(file)) {
+      setPendingModeFile(file);
+      return;
+    }
+    if (isJsonFile(file) && onAttestationDetected) {
+      parseAttestationFile(file).then((att) => {
+        if (att) { onAttestationDetected(att); } else { processFile(file); }
+      });
+      return;
+    }
+    processFile(file);
+  }, [processFile, onBulkDetected, onAttestationDetected]);
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -128,42 +167,46 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
 
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
-      // Multiple files or CSV/XLSX → bulk mode
-      if (files.length > 1 || isBulkUploadFile(files[0])) {
-        onBulkDetected?.(Array.from(files));
-        return;
-      }
-      // JSON → check if attestation
-      if (isJsonFile(files[0]) && onAttestationDetected) {
-        parseAttestationFile(files[0]).then((att) => {
-          if (att) { onAttestationDetected(att); } else { processFile(files[0]); }
-        });
-        return;
-      }
-      processFile(files[0]);
+      dispatchFiles(Array.from(files));
     }
-  }, [disabled, processFile, onBulkDetected, onAttestationDetected]);
+  }, [disabled, dispatchFiles]);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      if (files.length > 1 || isBulkUploadFile(files[0])) {
-        onBulkDetected?.(Array.from(files));
-        return;
-      }
-      if (isJsonFile(files[0]) && onAttestationDetected) {
-        parseAttestationFile(files[0]).then((att) => {
-          if (att) { onAttestationDetected(att); } else { processFile(files[0]); }
-        });
-        return;
-      }
-      processFile(files[0]);
+      dispatchFiles(Array.from(files));
     }
-  }, [processFile, onBulkDetected, onAttestationDetected]);
+  }, [dispatchFiles]);
 
   const handleRemove = useCallback(() => {
     setSelectedFile(null);
     setError(null);
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
+  }, []);
+
+  /** W2 / F1: user picked "Import as a list of records" for the pending spreadsheet. */
+  const handleChooseRecords = useCallback(() => {
+    if (!pendingModeFile) return;
+    onBulkDetected?.([pendingModeFile]);
+    setPendingModeFile(null);
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
+  }, [pendingModeFile, onBulkDetected]);
+
+  /** W2 / F1: user picked "Secure this file as a document" — normal single-doc path. */
+  const handleChooseDocument = useCallback(() => {
+    if (!pendingModeFile) return;
+    const file = pendingModeFile;
+    setPendingModeFile(null);
+    void processFile(file);
+  }, [pendingModeFile, processFile]);
+
+  /** W2 / F1: back out of the mode choice and let the user pick a different file. */
+  const handleChooseDifferentFile = useCallback(() => {
+    setPendingModeFile(null);
     if (inputRef.current) {
       inputRef.current.value = '';
     }
@@ -177,7 +220,7 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
 
   // The file input is a full-bleed overlay (see below); it must be inert both
   // when the caller disables the control and once a file is chosen.
-  const inputInert = disabled || !!selectedFile;
+  const inputInert = disabled || !!selectedFile || !!pendingModeFile;
 
   return (
     <div className="space-y-4">
@@ -197,7 +240,7 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
             ? 'border-primary bg-primary/5'
             : 'border-muted-foreground/25 hover:border-muted-foreground/50',
           disabled && 'cursor-not-allowed opacity-50',
-          selectedFile && 'border-solid border-muted'
+          (selectedFile || pendingModeFile) && 'border-solid border-muted'
         )}
         onDragEnter={handleDrag}
         onDragLeave={handleDrag}
@@ -227,7 +270,73 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
           disabled={inputInert}
         />
 
-        {selectedFile ? (
+        {pendingModeFile ? (
+          // relative + z-10: the always-present drop-zone `<input>` is
+          // position:absolute, which CSS paints ABOVE non-positioned content
+          // regardless of DOM order (positioned descendants paint after
+          // in-flow ones — CSS2.1 Appendix E). Without promoting this block
+          // into its own stacking position, the (disabled, but still
+          // hit-test-eligible) input silently swallows clicks on the mode
+          // buttons in a real browser, even though it never surfaces in
+          // jsdom-based tests (fireEvent.click bypasses hit-testing).
+          <div className="relative z-10 space-y-4" data-testid="spreadsheet-mode-choice">
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 shrink-0">
+                <FileSpreadsheet className="h-6 w-6 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0 text-left">
+                <p className="text-sm font-medium truncate">{pendingModeFile.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {SPREADSHEET_MODE_LABELS.FILE_SIZE_LABEL}: {formatFileSize(pendingModeFile.size)}
+                </p>
+              </div>
+            </div>
+
+            <div className="text-left">
+              <p className="text-sm font-medium text-foreground">{SPREADSHEET_MODE_LABELS.TITLE}</p>
+              <p className="text-xs text-muted-foreground mt-1">{SPREADSHEET_MODE_LABELS.DESCRIPTION}</p>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={handleChooseRecords}
+                disabled={disabled}
+                className="flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors hover:border-primary hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
+                data-testid="spreadsheet-mode-records"
+              >
+                <span className="flex items-center gap-2 text-sm font-medium">
+                  <List className="h-4 w-4 text-primary shrink-0" />
+                  {SPREADSHEET_MODE_LABELS.RECORDS_OPTION}
+                </span>
+                <span className="text-xs text-muted-foreground">{SPREADSHEET_MODE_LABELS.RECORDS_HINT}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleChooseDocument}
+                disabled={disabled}
+                className="flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors hover:border-primary hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50"
+                data-testid="spreadsheet-mode-document"
+              >
+                <span className="flex items-center gap-2 text-sm font-medium">
+                  <FileText className="h-4 w-4 text-primary shrink-0" />
+                  {SPREADSHEET_MODE_LABELS.DOCUMENT_OPTION}
+                </span>
+                <span className="text-xs text-muted-foreground">{SPREADSHEET_MODE_LABELS.DOCUMENT_HINT}</span>
+              </button>
+            </div>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleChooseDifferentFile}
+              disabled={disabled}
+            >
+              {SPREADSHEET_MODE_LABELS.CHOOSE_DIFFERENT_FILE}
+            </Button>
+          </div>
+        ) : selectedFile ? (
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
               <FileText className="h-6 w-6 text-primary" />
