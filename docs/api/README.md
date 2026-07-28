@@ -4,7 +4,7 @@
 
 This directory is the canonical home for Arkova's developer-facing API documentation. Everything here is written for engineers shipping integrations: REST endpoints, MCP tools, SDKs, embeddable widgets, and the webhook lifecycle.
 
-The full machine-readable v1 API spec is at [`openapi.yaml`](./openapi.yaml). The API v2 agent spec is published at `https://api.arkova.ai/v2/openapi.json` and mirrored by the worker at `/api/v2/openapi.json`. Hosted Swagger UI is at [`https://app.arkova.ai/api/docs`](https://app.arkova.ai/api/docs).
+The full machine-readable v1 API spec is served live at [`https://app.arkova.ai/api/docs/spec.json`](https://app.arkova.ai/api/docs/spec.json) (canonical — see `docs/api/canonical-sources.md`); [`openapi.yaml`](./openapi.yaml) is a static offline/Swagger-import mirror that may lag the live spec. The API v2 agent spec is published at `https://api.arkova.ai/v2/openapi.json` and mirrored by the worker at `/api/v2/openapi.json`. Hosted Swagger UI is at [`https://app.arkova.ai/api/docs`](https://app.arkova.ai/api/docs).
 
 ---
 
