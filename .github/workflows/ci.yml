@@ -390,6 +390,38 @@ jobs:
           FAIL_ON_MISSING_CONFLUENCE: 'false'
         run: node_modules/.bin/tsx scripts/ci/check-confluence-coverage.ts
 
+  # Orphaned-export lint (SCRUM-3032/3033/3034, CTO ruling R14, 2026-07-28).
+  # Fails CLOSED only on exported hooks/components NEWLY introduced in this PR
+  # with zero non-test/non-storybook importers (the folders #1657 / CTDL #1603
+  # pattern); pre-existing orphans print as a WARN-only inventory. The script
+  # itself enforces the new-vs-preexisting split, so continue-on-error stays
+  # false — a NEW orphan must block the PR.
+  orphaned-export-lint:
+    name: Orphaned Export Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Orphaned hook/component export gate
+        env:
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node_modules/.bin/tsx scripts/ci/check-orphaned-exports.ts
+
   # TDD enforcement — production code changes must include test changes.
   # Actual enforcement runs only on pull_request events: TDD is a gate for
   # PRs being merged, not a retroactive check on main. On push events the
