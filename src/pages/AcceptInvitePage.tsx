@@ -48,22 +48,22 @@ export function AcceptInvitePage() {
   const { preview, previewLoading, previewError, loadPreview, accepting, acceptError, acceptInvitation } =
     useAcceptInvite();
 
-  const token = searchParams.get('token') ?? '';
-  // Lazy initializer, not an effect-body setState: a missing token is known
-  // synchronously from the URL, so 'invalid' is the correct FIRST render —
-  // no effect ever needs to run for that case.
-  const [pageState, setPageState] = useState<PageState>(() => (token ? 'loading' : 'invalid'));
+  const inviteToken = searchParams.get('token') ?? '';
+  // Lazy initializer, not an effect-body setState: a missing invite token is
+  // known synchronously from the URL, so 'invalid' is the correct FIRST
+  // render — no effect ever needs to run for that case.
+  const [pageState, setPageState] = useState<PageState>(() => (inviteToken ? 'loading' : 'invalid'));
   const [result, setResult] = useState<AcceptInvitationResponse | null>(null);
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!token) return; // nothing to load; initial state already 'invalid'
-    loadPreview(token)
+    if (!inviteToken) return; // nothing to load; initial state already 'invalid'
+    loadPreview(inviteToken)
       .then(() => setPageState('ready'))
       .catch(() => setPageState('invalid'));
-  }, [token, loadPreview]);
+  }, [inviteToken, loadPreview]);
 
   const callerEmailMatches =
     !!user?.email && !!preview?.email && user.email.toLowerCase() === preview.email.toLowerCase();
@@ -72,7 +72,7 @@ export function AcceptInvitePage() {
     setFormError(null);
     setPageState('submitting');
     try {
-      const accepted = await acceptInvitation({ token });
+      const accepted = await acceptInvitation({ token: inviteToken });
       setResult(accepted);
       setPageState('success');
     } catch {
@@ -84,7 +84,7 @@ export function AcceptInvitePage() {
     e.preventDefault();
     setFormError(null);
 
-    const parsed = AcceptInvitationSchema.safeParse({ token, password, fullName });
+    const parsed = AcceptInvitationSchema.safeParse({ token: inviteToken, password, fullName });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? ACCEPT_INVITE_LABELS.ERROR_GENERIC);
       return;
