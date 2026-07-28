@@ -53,6 +53,56 @@ reintroduces the pre-existing "merge to `main` doesn't reach prod" gap this
 same wave is trying to close out (`revision-drift.yml` will start firing on
 the resulting drift within an hour).
 
+## 0.2 Merge-before-soak: `deferred_consolidated_soak` mode (CTO ruling 2026-07-28)
+
+With §0.1's deploy gate engaged, merging an unsoaked T2/T3 PR is safe in the
+narrow sense that it can no longer reach prod by itself — but the Staging
+Soak Evidence Gate (`scripts/ci/check-staging-evidence.ts`, required by
+Mergify via `check-success`) still demands real soak evidence for T1/T2/T3,
+and a PR-body evidence block alone satisfies the pre-merge git hook but NOT
+that CI gate. Without a mechanism for this, Mergify merges nothing above T0
+for the whole wave, soak or no soak.
+
+`docs/staging/rc-manifests/rc-2026-08-launch-72h.json` now carries a
+top-level `"soak_mode": "deferred_consolidated_soak"` field. This activates
+a distinct, narrower code path in `check-staging-evidence.ts`
+(`deferredConsolidatedSoakCoverage()`) that lets a PR listed in the
+manifest's `included_prs[]` pass the gate **without** real soak evidence,
+subject to hard constraints — full detail in the function's own doc comment
+and in `scripts/ci/check-staging-evidence.test.ts`'s
+`deferred_consolidated_soak mode` describe block:
+
+- Activated **only** by that exact manifest field — never a PR body string,
+  never a label, never anything a PR author controls alone (the manifest is
+  its own reviewed file).
+- **Hard precondition, checked first, fails closed:** the gate must
+  positively confirm `vars.DEPLOY_WORKER_PAUSED === 'true'` on the live run
+  (threaded from `staging-evidence.yml`'s `vars` context, resolved fresh at
+  CI-run time — not the frozen webhook payload). If the deploy gate isn't
+  confirmed engaged, deferred mode refuses to activate and the PR falls back
+  to needing real evidence.
+- The check's passing output states plainly, every time, that evidence is
+  **DEFERRED and NOT satisfied** — it never renders as "evidence present."
+- `approval_status` on the manifest stays the literal string `"pending"`
+  for as long as `soak_mode` is set — setting it to `"approved"` while
+  deferred is active is itself a gate error (that combination claims real
+  evidence exists, which deferred mode by definition does not have).
+- A PR not listed in `included_prs[]` gets none of this — it needs real
+  evidence exactly as before. A manifest without the `soak_mode` field
+  behaves EXACTLY as it always has (unit-tested).
+
+**This is a deliberate trade, not a loophole:** evidence-before-merge is
+traded for evidence-before-DEPLOY. The residual risk is that `main` carries
+unsoaked T2/T3 worker/migration code for the duration of the soak window —
+**any hotfix needed during that window must go through the same
+`deploy-gate`** (`workflow_dispatch` to force an intentional deploy, or wait
+for the wave's soak to mature and the pause to lift). At soak maturity, the
+correct sequence is: remove `soak_mode` from the manifest, fill in the real
+`environment`/`soak`/`migration_plan` evidence blocks, THEN flip
+`approval_status` to `"approved"` — returning to the normal, non-deferred
+RC-manifest evidence path this gate has always enforced, and only then
+un-pausing `DEPLOY_WORKER_PAUSED` for the wave's single verified deploy.
+
 ---
 
 ## 0. Live PR inventory as captured (2026-07-28, re-verify before use)
