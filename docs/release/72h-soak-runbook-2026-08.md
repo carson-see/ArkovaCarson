@@ -536,6 +536,99 @@ path (`CLAUDE.md` §1.12).
   lands); this soak proves the preflight and the DRY-RUN path work, not the
   live materialization run.
 
+- **PR #1758 / migration `0377` — RPC-revoke positive-path coverage (SEC-RECON, required in the first 6h, not the last).**
+  0377 REVOKEs anon/authenticated `EXECUTE` on six `SECURITY DEFINER` RPCs
+  (`submit_batch_anchors`, `batch_insert_anchors`, `allocate_monthly_credits`,
+  `deduct_ai_credits`, `deduct_unified_credits`, `roll_over_monthly_allocation`)
+  and DROPs the legacy `invite_member(uuid,text,text,uuid)` overload.
+  Pre-mortem (`RELEASE-PLAN-2026-08-FINAL.md` §8 item 13) found every real
+  caller of all seven routes through the worker's shared `service_role`
+  client (`services/worker/src/utils/db.ts`) or, for the one frontend caller
+  (`invite_member`), resolves by named args to the untouched safe 3-arg
+  overload — so no BREAKS/UNKNOWN callers were found. **"Anon is denied" is
+  NOT sufficient soak evidence for this PR — every test below must prove the
+  legitimate caller still succeeds, because the danger class here is a
+  fail-open silent revenue leak, not a loud outage.** Run each of the
+  following for real against the rig, not the opt-in unit-level
+  `src/tests/sec-recon-unguarded-rpc-family-revokes.test.ts` (that suite
+  only proves permission shape on a throwaway DB, not that the worker's real
+  business flow still completes correctly):
+  1. **`submit_batch_anchors`** — drive a seeded PENDING anchor through the
+     real broadcast path to BROADCASTING and let `batch-anchor.ts`'s cron
+     call the RPC for real. Expect: anchor flips to SUBMITTED with
+     `chain_tx_id`/`chain_block_height` set within one cron tick. Failure
+     looks like: anchor stuck at BROADCASTING past one tick, OR (the silent
+     case) the anchor still completes because the direct-UPDATE fallback
+     silently engaged — grep rig logs for `"falling back to direct SUBMITTED
+     updates"` / `"submit_batch_anchors failed twice"` as the real signal;
+     a green anchor count alone does not prove the RPC itself works.
+  2. **`batch_insert_anchors`** — run `processPublicRecordAnchoring()` with
+     ≥1 seeded `public_records` row. Expect: `anchors` rows created in one
+     RPC round-trip, log line `"Batch insert chunk complete"`. Failure looks
+     like: `"Batch insert RPC failed — falling back to serial inserts"` in
+     logs even though the final anchor count still looks correct (silent
+     degradation via the serial fallback) — grep for the fallback string
+     explicitly, do not rely on row-count alone.
+  3. **`allocate_monthly_credits`** — trigger `processMonthlyCredits()` (via
+     the Cloud Scheduler `/jobs/*` wiring in §3, not in-process cron) with
+     ≥1 org seeded with `credits.cycle_end <= now()`. Expect: return value
+     > 0, org balance resets/rolls, one EXPIRY + one ALLOCATION audit-
+     transaction row appear. Failure looks like: return value 0 with
+     `"Failed to process monthly credit allocations"` logged and the seeded
+     org's balance unchanged — **this job has no fallback and no Sentry
+     wiring; a silent break here is invisible until the next billing cycle
+     unless this test explicitly checks the balance delta.**
+  4. **`deduct_ai_credits`** — call a real AI endpoint (e.g.
+     `/api/v1/ai/extract`) as an authenticated org member with a known
+     `ai_credits` balance. Expect: response succeeds AND balance decrements
+     by the documented cost — **assert the balance delta, not just HTTP
+     200.** `services/worker/src/api/v1/ai-extract.ts:248-252` explicitly
+     FAILS OPEN on RPC error (`"AI credit deduction failed — proceeding
+     with extraction"`) — if the RPC is broken, the request still returns
+     200 and only a `logger.error` (no Sentry) marks the free extraction.
+     This is the single most dangerous silent-failure path in the set:
+     a broken RPC here is a revenue leak invisible to both the user and any
+     status dashboard, only a balance-delta assertion catches it.
+  5. **`deduct_unified_credits`** — call a credit-gated worker path (e.g. a
+     metered `/api/v1/anchor` call) as an org with prepaid `unified_credits`
+     available. Expect: resolution is `tier: 'credits'` and the balance
+     decrements. Failure looks like: `tryCredits()` returns `null` and
+     `paymentTierRouter.ts` silently falls through to `tier: 'stripe_metered'`
+     — the request still succeeds (200 OK), so **assert the resolved tier
+     explicitly**, not just success; the Stripe fallback masks an RPC
+     failure as a normal transaction while charging the customer's card
+     instead of consuming prepaid credit.
+  6. **`roll_over_monthly_allocation`** — trigger `runAllocationRollover()`
+     for a rig-seeded org with an open (`closed_at IS NULL`)
+     `org_monthly_allocation` period. Expect: `summary.rolled` includes the
+     org, a new open period row appears with correct carry-over math.
+     Failure looks like: `summary.errors` increments and
+     `"rollover RPC failed"` is logged for that org while the loop
+     continues silently to the next org — check `summary.errors` and
+     `summary.rolled` explicitly, not just that the job completed without
+     throwing.
+  7. **`invite_member` (safe 3-arg, untouched)** — through the real
+     `useInviteMember` hook flow as an ORG_ADMIN. Expect: invitation
+     created, 200, invitation email queued. Failure looks like:
+     `insufficient_privilege` or a function-not-found error, which would
+     mean PostgREST somehow resolved the request to the dropped 4-arg
+     overload instead of the named-arg 3-arg overload — not expected per
+     the static param-name analysis, but this test is what falsifies that
+     assumption for real rather than by inspection alone.
+  - **Negative tests (restated from the PR's own opt-in suite, for this
+    runbook's own evidence record — anon-denied alone is not the point but
+    still required):** anon call to each of the six → `42501`/permission
+    denied; authenticated (non-member) call to each of the six → same;
+    `POST /rest/v1/rpc/invite_member` with the dropped 4-arg positional/named
+    shape → `404`/`PGRST202` (function not found — confirms the DROP, not
+    just a REVOKE, which is a different failure signature than the other six).
+  - **Abort trigger specific to this PR:** any of the 7 positive-path tests
+    above fails, OR a fallback/degraded-path log line (`"falling back to..."`,
+    `"failed twice"`, `"proceeding with extraction"`) appears during the
+    positive-path test window — do not treat "the end-to-end result still
+    looked right" as passing evidence when a fallback silently absorbed a
+    real RPC failure. Add this row to §8's abort table.
+
 ### ISOLATION
 - Prod (`vzwyaatejekddvltxyye`) unchanged across the whole 72h window — spot
   check anchor count + a hash of recent rows at soak start, midpoint, and end.
@@ -638,6 +731,7 @@ the whole window, not either/or.**
 | Prod credit-ledger or anchor-count discrepancy discovered during a daily check | Stop, escalate — isolation pillar failure is a stop-the-line event per §1.11A. |
 | **5xx rate >0.5% over any 5-min window** (§0.7 continuous monitor) | Stop, diagnose before resuming — this is the numeric "catch it early" definition the founder's hardening ask calls for explicitly. |
 | **Any credit-ledger or cross-tenant-isolation breach at ANY point in the window**, not just a daily check | Stop immediately, zero tolerance — money-correctness and tenant-isolation bugs do not get a magnitude threshold. |
+| **PR #1758 / migration `0377`: any of the 7 positive-path RPC tests (§5 EDGE CASES) fails, OR a fallback/degraded-path log line fires during the positive-path test window** (`"falling back to..."`, `"failed twice"`, `"proceeding with extraction"`, unexpected `tier: 'stripe_metered'` resolution) | Stop, diagnose before resuming — a fallback silently absorbing a real RPC failure is not passing evidence; `deduct_ai_credits`'s fail-open path in particular means the request can look successful while leaking free usage. |
 
 When in doubt, stop and escalate to RM/CTO — a false-green soak has repeatedly
 cost real money (`memory/feedback_soak_merge_grade_procedure.md`).
