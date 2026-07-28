@@ -446,6 +446,39 @@ vi.mock('../jobs/proof-backcatalog-classifier.js', () => ({
   createDbLocker: (...args: unknown[]) => mockCreateDbLocker(...args),
 }));
 
+// SCRUM-2917: insert-capable direct-anchor proof MATERIALIZER. Manual-trigger
+// endpoint (authenticated POST), dry-run plan by default; write mode is behind
+// the dual guard (execute=true + PROOF_MATERIALIZER_CONFIRM) inside the job.
+const mockRunProofMaterializer = vi.fn().mockResolvedValue({
+  mode: 'dry-run',
+  refused: false,
+  refusalReason: null,
+  executeRefusalReason: null,
+  gucState: 'off',
+  scope: 'global',
+  runId: '11111111-1111-4111-8111-111111111111',
+  runComplete: true,
+  resumed: false,
+  batchesProcessed: 1,
+  rowsScanned: 5,
+  planned: { toInsert: 3, skippedExisting: 1, skippedBatchProvable: 0, skippedAlreadyComplete: 1 },
+  inserted: 0,
+  conflictSkipped: 0,
+  skippedNoTx: 0,
+  haltedAmbiguous: false,
+  ambiguousReasons: {},
+  cursor: 'a05',
+});
+const mockMaterializerCreateDbLocker = vi.fn((..._args: unknown[]) => ({
+  acquire: vi.fn().mockResolvedValue(true),
+  release: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../jobs/proof-materializer.js', () => ({
+  runProofMaterializer: (...args: unknown[]) => mockRunProofMaterializer(...args),
+  createDbGucReader: vi.fn(() => ({ getProofEnforcementGuc: vi.fn() })),
+  createDbLocker: (...args: unknown[]) => mockMaterializerCreateDbLocker(...args),
+}));
+
 // ─── Import after mocks ───
 import { cronRouter } from './cron.js';
 import { config } from '../config.js';
@@ -967,6 +1000,92 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/classify-proof-backcatalog');
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Processing failed');
+    });
+  });
+
+  // SCRUM-2917: manual-trigger insert-capable proof materializer. Same
+  // cronAuth + Zod boundary + JSON-result / 500-on-error shape as the
+  // classifier route it mirrors. NOT scheduled; prod EXECUTE is Carson-gated
+  // inside the job (dual guard), not here.
+  describe('POST /materialize-proof-backcatalog', () => {
+    it('runs the dry-run plan by default and wires guc/locker/confirm deps', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/materialize-proof-backcatalog');
+      expect(res.status).toBe(200);
+      expect(res.body.mode).toBe('dry-run');
+      expect(res.body.planned).toEqual({
+        toInsert: 3,
+        skippedExisting: 1,
+        skippedBatchProvable: 0,
+        skippedAlreadyComplete: 1,
+      });
+      expect(mockRunProofMaterializer).toHaveBeenCalledTimes(1);
+      const [deps, options] = mockRunProofMaterializer.mock.calls[0];
+      expect(options.execute).toBe(false);
+      expect(options.orgId).toBeUndefined();
+      // Concurrency guard: the handler wires the real advisory locker.
+      expect(mockMaterializerCreateDbLocker).toHaveBeenCalled();
+      expect(deps.locker).toBeDefined();
+      // The confirm token comes from typed config (PROOF_MATERIALIZER_CONFIRM),
+      // never from an ad-hoc env read in the route.
+      expect('confirmToken' in deps).toBe(true);
+    });
+
+    it('forwards org scoping, execute, batching and restart options', async () => {
+      const app = createApp();
+      const orgId = '44444444-4444-4444-8444-444444444444';
+      const res = await request(app)
+        .post(`/cron/materialize-proof-backcatalog?org_id=${orgId}&execute=true&restart=true`)
+        .send({ batch_size: 200, max_batches: 5 });
+      expect(res.status).toBe(200);
+      const [, options] = mockRunProofMaterializer.mock.calls[0];
+      expect(options).toMatchObject({
+        orgId,
+        execute: true,
+        restart: true,
+        batchSize: 200,
+        maxBatches: 5,
+      });
+    });
+
+    it('rejects an invalid org_id before running anything', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/materialize-proof-backcatalog?org_id=not-a-uuid');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid org_id');
+      expect(mockRunProofMaterializer).not.toHaveBeenCalled();
+    });
+
+    it('rejects malformed or out-of-range tuning params with 400 (Zod at the boundary)', async () => {
+      const app = createApp();
+      const badFlag = await request(app).post('/cron/materialize-proof-backcatalog?execute=yes');
+      expect(badFlag.status).toBe(400);
+      const badBatch = await request(app)
+        .post('/cron/materialize-proof-backcatalog')
+        .send({ batch_size: 'abc' });
+      expect(badBatch.status).toBe(400);
+      const badMax = await request(app)
+        .post('/cron/materialize-proof-backcatalog')
+        .send({ max_batches: 10_000 });
+      expect(badMax.status).toBe(400);
+      expect(mockRunProofMaterializer).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 on materializer failure (fail-closed)', async () => {
+      mockRunProofMaterializer.mockRejectedValueOnce(new Error('insert failed'));
+      const app = createApp();
+      const res = await request(app).post('/cron/materialize-proof-backcatalog');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
+    });
+
+    it('is protected by cronAuth — 401 unauthenticated in production', async () => {
+      mockRunProofMaterializer.mockClear();
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      const app = createApp();
+      const res = await request(app).post('/cron/materialize-proof-backcatalog');
+      expect(res.status).toBe(401);
+      expect(mockRunProofMaterializer).not.toHaveBeenCalled();
     });
   });
 
