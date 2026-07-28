@@ -11,6 +11,28 @@
 > - **git log** = what changed, by whom, when
 
 
+### 2026-07-28 (CTO/RTE) — Final pre-launch sprint COMPLETE: ~40 PRs merged, 5 migrations applied to prod, live cross-tenant + anon-RPC vulnerabilities CLOSED, deploy paused, rig provisioning for the 72h signet soak
+
+**Sprint:** started with 8 open PRs, ended ~40 merged in one day via parallel worktree-isolated agents. Plan of record + 19 CTO rulings: `docs/staging/sprint-2026-07-28-plan-of-record.md`. Findings: `docs/staging/sprint-2026-07-28-findings.md`.
+
+**PROD MIGRATIONS APPLIED THIS SESSION** (Supabase MCP + §0 rule 10 numeric reconcile, each functionally verified): **0367** (worker RPC caller-identity overloads, service_role-only), **0368** (billing_events idempotency, NOT VALID — no scan), **0370** (batch_insert_anchors implicit-cast index defeat, SCRUM-3031), **0376** (anchors.fingerprint_source evidence class + get_public_anchor allow-list), **0377** (SECURITY: revoke anon/authenticated EXECUTE on 6 unguarded SECURITY DEFINER RPCs + DROP vulnerable invite_member 4-arg overload). **Ledger head 0377; 0365-0377 all numeric.** 0376 verified `count(*) WHERE fingerprint_source IS NOT NULL = 0` — no backfill, per §1.5.
+
+**FOUR CRITICAL FINDINGS — all from adversarial review, none from CI:**
+1. **LIVE cross-tenant authorization bypass.** `middleware/requireOrgId.ts` trusted the `x-org-id` REQUEST HEADER without membership validation. The worker `db` client is service_role and bypasses RLS, so that header WAS the entire tenant boundary: any authenticated user could read/write any other org's FERPA + HIPAA data, including APPROVING another org's emergency-access request. Fixed PR #1749 (118 cross-tenant tests, red-first verified). MERGED.
+2. **Six SECURITY DEFINER RPCs callable by `anon` via PostgREST with zero auth** — incl. `submit_batch_anchors`, which accepted caller-supplied `tx_id`/`block_height`/`merkle_root` and could FORGE chain receipts. Plus a legacy `invite_member` overload enabling privilege escalation. Migration 0377 APPLIED + verified (anon/authenticated denied, service_role retained — the outage risk was over-revoking, not under-). **A sweep of ~115 functions found MORE in the same class, NOT yet fixed:** `finalize_public_record_anchor_batch`, `drain_submitted_to_secured_for_tx`, `bulk_promote_confirmed`, and `archive_old_audit_events` (can wipe the audit trail with `retention_days=0`). Backlogged.
+3. **CI silently skipped whole job tails.** GitHub's default `success()` evaluates over ALL prior steps, so a flake in the root suite skipped the entire worker test suite; same shape in `dependency-scan` (~20 sequential security gates). **"Green" overstated coverage for the entire 45-day window the soak is about to certify.** Fixed #1748.
+4. **`merge.union.driver=true` in local `.git/config`** shadowed git's built-in union driver with the shell command `true` (writes nothing, exits 0) — silent `agents.md` data loss on every local merge. 86 lines lost across 31 commits since May; ~380 restored. Guards #1734. **Check `git config --local --get-regexp '^merge\.'` in any other clone.**
+
+**Also:** `/api/v1/anchor/bulk` was BROKEN not merely unwired (insert omitted `filename`, NOT NULL — mocked tests hid it, #1738). Dual drifted OpenAPI specs, served spec missing 8+ live endpoints incl. a mutating admin action (#1751, pen-test relevant). Silent fail-open credit RPCs — free AI extraction on `deduct_ai_credits` failure, customer charged instead of consuming a paid credit on `deduct_unified_credits` failure (#1764, OPEN).
+
+**SOAK STATE:** `DEPLOY_WORKER_PAUSED=true` is SET and verified — merges land without shipping; the deferred-soak gate mode fail-closes unless it confirms that variable. Rig `launch-72h-2026-08` provisioning in flight on **signet**, medium tier (founder-authorized), anti-hollow verification required before the clock starts. **Clock NOT started.** Plan: `docs/release/RELEASE-PLAN-2026-08-FINAL.md`, runbook `72h-soak-runbook-2026-08.md`, `POSTMORTEM-sprint-2026-07-28.md`, `PREMORTEM-72h-soak-2026-08.md`.
+
+**10k-DAU finding (architectural, not tuning):** the nightly 3am flush caps at `BATCH_ANCHOR_MAX_SIZE=10000` per invocation with no intra-day cadence; 25k anchors/day cannot drain in one nightly pass. Needs a design change before that scale.
+
+**NEXT:** legacy soak covering ALL code predating the launch-soak window (zero gap, verified abutment) + provenance audit flagging/replacing unknown-actor code. Plan in flight.
+
+_Last refreshed: 2026-07-28 by CTO/RTE — migration applies and grant matrices verified by direct Supabase MCP queries against `vzwyaatejekddvltxyye` this session; PR states via `gh pr view`; the union-driver bug reproduced in a scratch repo. Rig details are pending the provisioning agent's report and are NOT asserted here._
+
 ### 2026-07-28 (CTO) — Final pre-launch sprint: 29 PRs prepared, 3 CRITICAL security/CI defects found, soak not yet started
 
 **Sprint shape.** Founder directive: last two big sprints before launch; prepare ALL PRs; NOTHING soaks now (one comprehensive 72h soak on **signet** afterwards covering everything merged in the last 45 days, then independent pen test, fix-all, release; a separate ONE-WEEK full-application soak follows pen testing). Council of 5 (L1/L2/L3 leads + RTE + RM) planned + pre-mortemed; 19 CTO rulings recorded in the session plan of record.
