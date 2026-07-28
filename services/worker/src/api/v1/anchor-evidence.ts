@@ -65,7 +65,9 @@ export interface EvidencePackage {
   issuer_name: string | null;
   recipient_identifier: string | null;
   description: string | null;
-  jurisdiction: string | null;
+  /** Frozen schema (Constitution 1.8): omitted entirely when the anchor has
+   *  no jurisdiction tag — never returned as a literal `null`. */
+  jurisdiction?: string;
   lifecycle: LifecycleEntry[];
   links: {
     record_uri: string;
@@ -252,7 +254,8 @@ export function buildEvidencePackage(
     issuer_name: anchor.org_name,
     recipient_identifier: anchor.recipient_hash,
     description: anchor.description,
-    jurisdiction: anchor.jurisdiction,
+    // Frozen schema: omit jurisdiction when null, never return null (Constitution 1.8)
+    ...(anchor.jurisdiction ? { jurisdiction: anchor.jurisdiction } : {}),
     lifecycle: events.map((e) => buildLifecycleEntry(e, actorMap, options.includeActorPublicId)),
     links: {
       record_uri: buildVerifyUrl(anchor.public_id),

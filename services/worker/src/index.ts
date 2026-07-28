@@ -111,7 +111,12 @@ app.use(corsMiddleware);
 // ─── Health check — always available, no auth (Constitution 1.9) ───
 // P7-TS-06: Enhanced with subsystem checks (anchoring, KMS, fee rate)
 // BUG-UAT-12: CORS handled globally above (SCRUM-499)
-app.get('/health', async (req, res) => {
+// pentest-prep: CLAUDE.md §1.9 states "/api/health always available", but only
+// `/health` was ever mounted — confirmed live (both api.arkova.ai and the
+// Cloud Run origin 404 on /api/health). `/api/health` is registered as a
+// byte-identical alias of the SAME handler below; `/health` itself is
+// unchanged.
+const healthCheckHandler = async (req: Request, res: Response) => {
   const detailed = req.query.detailed === 'true';
 
   const deps: HealthCheckDeps = {
@@ -185,7 +190,11 @@ app.get('/health', async (req, res) => {
     res.setHeader('Retry-After', '60');
   }
   res.status(result.statusCode).json(result.body);
-});
+};
+
+app.get('/health', healthCheckHandler);
+// pentest-prep / CLAUDE.md §1.9 alias — see comment above healthCheckHandler.
+app.get('/api/health', healthCheckHandler);
 
 // ─── Stripe webhook — raw body required, before json parser ───
 app.post(

@@ -197,7 +197,12 @@ class MerkleProofResponse(ArkovaModel):
             if raw is not None and not isinstance(raw, ProofBundle):
                 try:
                     ProofBundle.model_validate(raw)
-                except Exception:
+                # Blind by design (081a4b74, PROOF-05/SCRUM-2338): ANY failure to
+                # construct a bundle must fail closed to `None` rather than take
+                # the whole (frozen) response down with it. Today every malformed
+                # input surfaces as `ValidationError`; the broad catch is what
+                # keeps the contract holding if that ever stops being true.
+                except Exception:  # noqa: BLE001
                     values = dict(values)
                     values["proof_bundle"] = None
         return values

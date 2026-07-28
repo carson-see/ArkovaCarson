@@ -48,16 +48,17 @@ import base64
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Union
 
 __all__ = [
     "REASON_CODES",
     "VerifyOutcome",
+    "decode_anchor_payload",
     "verify_bundle",
     "verify_merkle_inclusion",
-    "decode_anchor_payload",
 ]
 
 # ── Frozen reason enum (reason_enum_version 1.0.0) — DO NOT reorder/rename ──
@@ -110,7 +111,7 @@ def _is_hex64(value: Any) -> bool:
     return isinstance(value, str) and bool(_HEX64.match(value))
 
 
-def _as_int(value: Any) -> Optional[int]:
+def _as_int(value: Any) -> int | None:
     """JS ``Number.isInteger`` parity for a JSON-parsed value.
 
     ``json.load`` distinguishes ``1`` (int) from ``1.0`` (float); ``JSON.parse``
@@ -137,7 +138,7 @@ def _has_structural_guard(leaf_index: Any, leaf_count: Any) -> bool:
     return li is not None and lc is not None and lc >= 1
 
 
-def _branch_entry_parts(entry: Any) -> Optional[Tuple[bytes, str]]:
+def _branch_entry_parts(entry: Any) -> tuple[bytes, str] | None:
     """Validated ``(sibling bytes, position)`` of one branch entry, or None."""
     if not isinstance(entry, dict) or not _is_hex64(entry.get("hash")):
         return None
@@ -149,12 +150,12 @@ def _branch_entry_parts(entry: Any) -> Optional[Tuple[bytes, str]]:
 
 def _walk_branch(
     running: bytes,
-    branch: List[Any],
+    branch: list[Any],
     root: str,
     structural: bool,
     row_index: int,
     row_size: int,
-) -> Tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """Fold the inclusion branch upward, applying the structural guard per level."""
     for entry in branch:
         parts = _branch_entry_parts(entry)
@@ -181,9 +182,9 @@ def verify_merkle_inclusion(
     leaf_hex: str,
     branch: Any,
     root_hex: str,
-    leaf_index: Optional[int] = None,
-    leaf_count: Optional[int] = None,
-) -> Tuple[bool, Optional[str]]:
+    leaf_index: int | None = None,
+    leaf_count: int | None = None,
+) -> tuple[bool, str | None]:
     """Walk the inclusion branch from the fingerprint to the committed root.
 
     Returns ``(True, None)`` only when the recomputed root equals ``root_hex``
@@ -218,7 +219,7 @@ def verify_merkle_inclusion(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _decode_single_push(script: bytes) -> Optional[bytes]:
+def _decode_single_push(script: bytes) -> bytes | None:
     """Return the pushed bytes of an exact ``OP_RETURN <one push>`` script.
 
     Accepts direct pushes (0x01–0x4b), OP_PUSHDATA1 (0x4c) and OP_PUSHDATA2
@@ -245,7 +246,7 @@ def _decode_single_push(script: bytes) -> Optional[bytes]:
     return script[offset : offset + length]
 
 
-def decode_anchor_payload(vout: Any) -> Optional[str]:
+def decode_anchor_payload(vout: Any) -> str | None:
     """Extract the committed 32-byte root from a receipt's outputs, or None.
 
     The push must START with the 4-byte ASCII marker ``ARKV``; the root is read
@@ -279,7 +280,16 @@ def decode_anchor_payload(vout: Any) -> Optional[str]:
 
 # A node is either a mapping of Esplora path → canned response, or a callable
 # path → response (text endpoints return str; JSON endpoints return dict/list).
-NodeSource = Union[Dict[str, Any], Callable[[str], Any]]
+# NOT PEP 604 (`X | Y`): this alias is a module-level RUNTIME expression, so
+# `from __future__ import annotations` does not defer it. `dict[...] | Callable[...]`
+# raises TypeError on 3.9 and would silently drop this module's documented
+# "Python >= 3.9, stdlib only" drop-in guarantee (see the module docstring).
+# That 3.9 floor is deliberately NARROWER than the packaged SDK's
+# `requires-python = ">=3.10"`: this file is meant to be copy-pasteable
+# standalone by a third party holding only the format spec, so it does not get
+# to assume the package's floor. Not a stale suppression — do not "fix" it on
+# the next ruff bump.
+NodeSource = Union[dict[str, Any], Callable[[str], Any]]  # noqa: UP007
 
 _POST_PAYLOAD_FAILURES = frozenset(
     {"height_mismatch", "block_hash_mismatch", "header_unavailable", "inclusion_failed"}
@@ -299,16 +309,20 @@ _STATUS_TO_CODE = {
 }
 
 
-def _node_fetch(node: NodeSource, path: str) -> Optional[Any]:
+def _node_fetch(node: NodeSource, path: str) -> Any | None:
     try:
         if callable(node):
             return node(path)
         return node.get(path)
-    except Exception:
+    # Blind by design: `node` is a caller-injected mapping/callable across the
+    # documented trust boundary. A third-party node raising anything at all must
+    # degrade to "no answer" (and the caller's fail-closed reason code), never
+    # crash the verifier.
+    except Exception:  # noqa: BLE001
         return None
 
 
-def _header_observed_time(header: bytes) -> Optional[str]:
+def _header_observed_time(header: bytes) -> str | None:
     """Network Observed Time MEASURED off the 80-byte header (LE uint32 seconds
     at bytes [68, 72)), rendered as an ISO-8601 UTC instant with milliseconds."""
     if len(header) < 80:
@@ -322,14 +336,14 @@ def _header_observed_time(header: bytes) -> Optional[str]:
 class _ChainResult:
     status: str
     header_measured: bool = False
-    observed_time: Optional[str] = None
+    observed_time: str | None = None
 
     @property
     def confirmed(self) -> bool:
         return self.status == "confirmed"
 
 
-def _receipt_failure(tx: Any, txid: str) -> Optional[str]:
+def _receipt_failure(tx: Any, txid: str) -> str | None:
     """Failing status for the fetched receipt body itself, or None when sound.
 
     The receipt is bound to its OWN identity before anything else is read.
@@ -346,7 +360,7 @@ def _receipt_failure(tx: Any, txid: str) -> Optional[str]:
     return None
 
 
-def _payload_failure(vout: Any, root: str) -> Optional[str]:
+def _payload_failure(vout: Any, root: str) -> str | None:
     """Failing status for the committed payload at the fixed offset, or None."""
     extracted = decode_anchor_payload(vout)
     if extracted is None:
@@ -358,7 +372,7 @@ def _payload_failure(vout: Any, root: str) -> Optional[str]:
 
 def _height_binding_failure(
     node: NodeSource, tx_status_height: Any, block_height: int, tx_block_hash: str
-) -> Optional[str]:
+) -> str | None:
     """Height binding + independent height→hash reorg check, or None."""
     if tx_status_height != block_height:
         return "height_mismatch"
@@ -369,7 +383,7 @@ def _height_binding_failure(
     return None
 
 
-def _load_header(node: NodeSource, tx_block_hash: str) -> Optional[bytes]:
+def _load_header(node: NodeSource, tx_block_hash: str) -> bytes | None:
     """The exactly-80-byte header hashing to the claimed block id, or None."""
     header_hex = _node_fetch(node, "/block/" + tx_block_hash + "/header")
     header_hex = header_hex.strip().lower() if isinstance(header_hex, str) else ""
@@ -487,7 +501,7 @@ _ED_L = 2**252 + 27742317777372353535851937790883648493
 _ED_D = (-121665 * pow(121666, _ED_P - 2, _ED_P)) % _ED_P
 _ED_I = pow(2, (_ED_P - 1) // 4, _ED_P)
 
-_Point = Tuple[int, int, int, int]  # extended homogeneous (X, Y, Z, T)
+_Point = tuple[int, int, int, int]  # extended homogeneous (X, Y, Z, T)
 _ED_NEUTRAL: _Point = (0, 1, 1, 0)
 
 
@@ -512,7 +526,7 @@ def _ed_scalar_mult(scalar: int, point: _Point) -> _Point:
     return result
 
 
-def _ed_decompress(encoded: bytes) -> Optional[_Point]:
+def _ed_decompress(encoded: bytes) -> _Point | None:
     if len(encoded) != 32:
         return None
     y = int.from_bytes(encoded, "little")
@@ -569,7 +583,7 @@ def _ed25519_verify(public_key: bytes, message: bytes, signature: bytes) -> bool
 _SPKI_ED25519_PREFIX = bytes.fromhex("302a300506032b6570032100")
 
 
-def _public_key_from_pem(pem: str) -> Optional[bytes]:
+def _public_key_from_pem(pem: str) -> bytes | None:
     """Extract the raw 32-byte Ed25519 key from a SubjectPublicKeyInfo PEM."""
     body = re.sub(r"-----(BEGIN|END) PUBLIC KEY-----|\s", "", pem or "")
     try:
@@ -583,8 +597,8 @@ def _public_key_from_pem(pem: str) -> Optional[bytes]:
 
 
 def _resolve_signing_pem(
-    signed_bundle: Any, keys: Any, have_key_set: bool, public_key_pem: Optional[str]
-) -> Tuple[Optional[Any], Optional[str]]:
+    signed_bundle: Any, keys: Any, have_key_set: bool, public_key_pem: str | None
+) -> tuple[Any | None, str | None]:
     """Resolve the verification PEM as ``(pem, failure_code)``.
 
     The published-key-set path resolves the bundle's ``signing_key_id`` against
@@ -610,7 +624,7 @@ def _resolve_signing_pem(
     return resolved.get("pem"), None
 
 
-def _decode_signature_value(signature: Any) -> Optional[bytes]:
+def _decode_signature_value(signature: Any) -> bytes | None:
     """The detached Ed25519 signature bytes, or None when malformed."""
     if not isinstance(signature, dict) or signature.get("alg") != "Ed25519":
         return None
@@ -624,7 +638,7 @@ def _decode_signature_value(signature: Any) -> Optional[bytes]:
         return None
 
 
-def _verify_signature(signed_bundle: Any, published_keys: Any, public_key_pem: Optional[str]) -> Tuple[str, Optional[str]]:
+def _verify_signature(signed_bundle: Any, published_keys: Any, public_key_pem: str | None) -> tuple[str, str | None]:
     """Returns (status, failure_code): 'skipped'/'verified'/'failed'."""
     keys = (published_keys or {}).get("keys") if isinstance(published_keys, dict) else None
     have_key_set = isinstance(keys, list) and len(keys) > 0
@@ -656,7 +670,7 @@ def _verify_signature(signed_bundle: Any, published_keys: Any, public_key_pem: O
 def _same_instant(a: str, b: str) -> bool:
     """Two ISO-8601 instants denote the same moment (formatting-tolerant)."""
 
-    def parse(value: str) -> Optional[float]:
+    def parse(value: str) -> float | None:
         try:
             return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
         except ValueError:
@@ -673,8 +687,8 @@ class VerifyOutcome:
     """The Python verifier's verdict — mirrors the TS report's machine core."""
 
     ok: bool
-    reason_code: Optional[str]
-    steps: List[Dict[str, Optional[str]]] = field(default_factory=list)
+    reason_code: str | None
+    steps: list[dict[str, str | None]] = field(default_factory=list)
     signature_status: str = "skipped"
 
     @property
@@ -682,14 +696,14 @@ class VerifyOutcome:
         return "VERIFIED" if self.ok else "NOT_VERIFIED"
 
 
-def _step(step_id: str, status: str, code: Optional[str] = None) -> Dict[str, Optional[str]]:
-    entry: Dict[str, Optional[str]] = {"id": step_id, "status": status}
+def _step(step_id: str, status: str, code: str | None = None) -> dict[str, str | None]:
+    entry: dict[str, str | None] = {"id": step_id, "status": status}
     if code is not None:
         entry["code"] = code
     return entry
 
 
-def _schema_gate(packet: Dict[str, Any]) -> Tuple[bool, Dict[str, Optional[str]]]:
+def _schema_gate(packet: dict[str, Any]) -> tuple[bool, dict[str, str | None]]:
     """Step 0 — schema gate: refuse to interpret an unknown format.
 
     Only a real JSON number equal to 1 passes: bool is rejected explicitly
@@ -709,7 +723,7 @@ def _schema_gate(packet: Dict[str, Any]) -> Tuple[bool, Dict[str, Optional[str]]
     )
 
 
-def _recompute_step(packet: Dict[str, Any]) -> Dict[str, Optional[str]]:
+def _recompute_step(packet: dict[str, Any]) -> dict[str, str | None]:
     """Step 1 — recompute the published root from the fingerprint + branch."""
     ok, code = verify_merkle_inclusion(
         packet.get("fingerprint"),
@@ -721,7 +735,7 @@ def _recompute_step(packet: Dict[str, Any]) -> Dict[str, Optional[str]]:
     return _step("recompute", "pass" if ok else "fail", None if ok else code)
 
 
-def _timestamp_step(claimed: Any, result: _ChainResult) -> Dict[str, Optional[str]]:
+def _timestamp_step(claimed: Any, result: _ChainResult) -> dict[str, str | None]:
     """Step 3b — §1.5 timestamp honesty against the header-MEASURED time."""
     if not result.header_measured or result.observed_time is None:
         return _step("timestamp_honesty", "fail", "TIMESTAMP_MISMATCH")
@@ -730,7 +744,7 @@ def _timestamp_step(claimed: Any, result: _ChainResult) -> Dict[str, Optional[st
     return _step("timestamp_honesty", "fail", "TIMESTAMP_MISMATCH")
 
 
-def _chain_steps(packet: Dict[str, Any], node: Optional[NodeSource]) -> List[Dict[str, Optional[str]]]:
+def _chain_steps(packet: dict[str, Any], node: NodeSource | None) -> list[dict[str, str | None]]:
     """Steps 2, 3 & 3b — independent on-chain confirmation + timestamp honesty
     (or their explicit skips when no node / receipt binding is available)."""
     if node is None or packet.get("tx_id") is None or packet.get("block_height") is None:
@@ -753,8 +767,8 @@ def _chain_steps(packet: Dict[str, Any], node: Optional[NodeSource]) -> List[Dic
 
 
 def _select_reason(
-    failing: List[Dict[str, Optional[str]]], signature_status: str, signature_code: Optional[str]
-) -> Optional[str]:
+    failing: list[dict[str, str | None]], signature_status: str, signature_code: str | None
+) -> str | None:
     """The frozen machine reason: the FIRST failing step's code, else the
     signature failure class when only the requested signature check failed."""
     if failing:
@@ -765,11 +779,11 @@ def _select_reason(
 
 
 def verify_bundle(
-    packet: Dict[str, Any],
-    node: Optional[NodeSource] = None,
-    signed_bundle: Optional[Dict[str, Any]] = None,
-    published_keys: Optional[Dict[str, Any]] = None,
-    public_key_pem: Optional[str] = None,
+    packet: dict[str, Any],
+    node: NodeSource | None = None,
+    signed_bundle: dict[str, Any] | None = None,
+    published_keys: dict[str, Any] | None = None,
+    public_key_pem: str | None = None,
 ) -> VerifyOutcome:
     """Verify an Arkova proof packet, optionally against an independent node
     and/or a signed bundle + published key set. Returns a :class:`VerifyOutcome`
@@ -778,7 +792,7 @@ def verify_bundle(
     The verifier IGNORES the packet's own ``verified`` claim entirely.
     """
     schema_supported, schema_step = _schema_gate(packet)
-    steps: List[Dict[str, Optional[str]]] = [schema_step]
+    steps: list[dict[str, str | None]] = [schema_step]
 
     if not schema_supported:
         # An unknown schema means every interpretation below would be a guess —

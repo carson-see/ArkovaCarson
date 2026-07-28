@@ -11,7 +11,7 @@ Use this page as an engineering index for code review and drift checks. If code 
 | Surface | Repo mirror or implementation | Notes |
 |---|---|---|
 | API documentation index | `docs/api/README.md` | Entry point for developer-facing API docs. |
-| API v1 OpenAPI | `docs/api/openapi.yaml` | Frozen v1 REST contract and Swagger import source. |
+| API v1 OpenAPI | `services/worker/src/api/v1/docs.ts` (served live at `GET /api/docs`, `GET /api/docs/spec.json`, and the `GET /api/v1/openapi.json` redirect) | **Canonical, runtime-served spec** (pentest-prep audit, 2026-07-28). Same pattern as v2 (`services/worker/src/api/v2/openapi.ts`) — the thing a pen tester actually enumerates from is authoritative, not a hand-maintained static mirror. `docs.routeParity.test.ts` fails CI when a mounted `/api/v1` route in the routers it covers is absent from this spec. |
 | API v2 OpenAPI | `services/worker/src/api/v2/openapi.ts` and `/api/v2/openapi.json` | Machine-readable v2 agent contract. |
 | API v2 migration | `docs/api/v2-migration.md` | Human migration guide for v1 to v2. |
 | Agent workflow | `docs/api/agent-workflows.md` | Canonical call order for REST v2, MCP, TypeScript, and Python. |
@@ -33,6 +33,7 @@ Use this page as an engineering index for code review and drift checks. If code 
 | Confluence `API Changelog` page | Source-of-truth page may need updates when repo mirrors change. | Keep aligned with this PR's API docs and release notes |
 | Confluence `SCRUM-1049 - API-V2 ... AUDIT` pages | Audit/planning evidence. | Keep linked from Jira/story artifacts |
 | Confluence `API-V2-07 - v1 -> v2 deprecation calendar` | Historical plan; contains stale host/spec claims. | `docs/api/v1-deprecation-communication-plan.md`, `docs/api/v2-migration.md`, and Confluence update |
+| `docs/api/openapi.yaml` | **Demoted, 2026-07-28.** No longer authoritative for the v1 endpoint list — it drifted 12+ mounted routes behind the runtime-served spec, which a pen tester actually enumerates from. Kept as a static Swagger-import / offline-reading convenience and because `scripts/ci/check-api-scope-vocabulary.ts` still checks it for `API_KEY_SCOPES` vocabulary parity; do not treat its endpoint list as complete. | `services/worker/src/api/v1/docs.ts` / `GET /api/docs/spec.json` |
 
 ## SCRUM-1584 SDK Contract Decision
 
