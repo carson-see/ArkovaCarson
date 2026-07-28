@@ -46,6 +46,14 @@ Object.defineProperty(globalThis, 'crypto', {
       }
       return array;
     },
+    // jsdom does not implement crypto.randomUUID(); code that mints
+    // client-side idempotency keys (e.g. AdminOrganizationsPage credit
+    // adjust, L2-A5) needs a real-shaped UUID for its format assertions.
+    randomUUID: (): `${string}-${string}-${string}-${string}-${string}` => {
+      const hex = () => Math.floor(Math.random() * 16).toString(16);
+      const block = (n: number) => Array.from({ length: n }, hex).join('');
+      return `${block(8)}-${block(4)}-4${block(3)}-a${block(3)}-${block(12)}`;
+    },
   },
   writable: true,
 });
