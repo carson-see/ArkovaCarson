@@ -11,6 +11,8 @@
 
 `staging-evidence.yml` passes both `BASE_REF_SHA` and `HEAD_REF_SHA` into `scripts/ci/check-staging-evidence.ts`; the gate compares those SHAs against the PR-body evidence. Exact PR head SHA must always match. Base SHA movement is impact-assessed: T0 docs/tests/CI/tooling-only drift can preserve soak evidence with an approved `Base drift impact:` note, while runtime/schema/staging/deploy drift still fails closed.
 
+**SCRUM-3026 (2026-07-28) — live PR state, not the frozen event payload.** A `Resolve live PR state` step (`id: live_pr`) runs `gh api repos/.../pulls/<N>` at the START of every job execution and resolves the PR's CURRENT head SHA, base SHA, merge-preview SHA, and body — never `github.sha` / `github.event.pull_request.*` directly, which are frozen at the moment the triggering webhook was delivered and replay stale on a bare rerun (GitHub UI "Re-run jobs", `gh run rerun`, a re-request, or a Mergify re-check without a new delivery). Checkout pins `ref: ${{ steps.live_pr.outputs.checkout_sha }}` (the live-resolved merge-preview SHA, falling back to the branch head SHA if GitHub hasn't finished computing `merge_commit_sha`); the evidence-check step's `PR_BODY` / `HEAD_REF_SHA` / `BASE_REF_SHA` bind to that same step's outputs. `scripts/ci/staging-evidence-workflow-contract.test.ts` pins this shape and rejects any regression back to a raw `github.sha` / `github.event.pull_request.*` binding. `scripts/ci/mint-fresh-event.sh` is the sanctioned helper for forcing a genuinely fresh webhook event (tree-identical empty commit + push) when a live re-read of the existing event isn't enough — see `docs/runbooks/ci/mint-fresh-event.md`.
+
 The root `typecheck-lint` job also runs `npm run lint:batch-drain-evidence`. Keep that focused command current when a batch-drain evidence, admission, crash, observation, or shared time/parser file is added; local-only lint is not an enforceable gate.
 
 ## SCRUM-1068 — Sonatype SCA
@@ -189,6 +191,52 @@ now has a `deploy-gate` job between `pre-deploy-checks` and `deploy`:
   blast radius (it changes deploy ORCHESTRATION only: no secret, env var,
   image, region, scaling, or IAM line is touched, and the default state is
   unpaused/unchanged behavior).
+## `$GITHUB_OUTPUT` heredoc delimiters must be per-run random (2026-07-28)
+
+Any step that frames **author-controlled** text inside a `$GITHUB_OUTPUT` (or
+`$GITHUB_ENV`) heredoc MUST use a per-run random delimiter, never a fixed
+literal:
+
+```bash
+DELIM="ghadelim_$(openssl rand -hex 16)"
+{
+  echo "key<<${DELIM}"
+  echo "$VALUE"
+  echo "${DELIM}"
+} >> "$GITHUB_OUTPUT"
+```
+
+**Why.** A fixed, guessable delimiter (`EOF`, or any constant) lets an author
+put that exact string on its own line inside the content being framed. That
+terminates the heredoc early, and everything after it is parsed as literal
+`key=value` lines appended to `$GITHUB_OUTPUT` — including a forged duplicate
+of the key being written. GitHub Actions resolves a duplicate output name to
+its **LAST** occurrence, so the forgery wins. This is GitHub's own documented
+remedy for the class.
+
+Fixed instances:
+
+- `staging-evidence.yml` "Resolve live PR state" — the PR-body heredoc
+  (`STAGING_EVIDENCE_PR_BODY_EOF` → `BODY_DELIM`), PR #1724.
+- `ci.yml` "Aggregate commit messages" (`id: commits`) — the commit-message
+  heredoc (`EOF` → `MSGS_DELIM`). The `msgs` output feeds `PR_COMMITS_MSGS`
+  into two governance gates in the same job (`check-handoff-claims.ts` and
+  `check-confluence-coverage.ts`), so a forged payload let a PR author steer
+  what those gates believed the PR's commit history said. Verified
+  empirically: with the fixed delimiter a crafted commit message replaced
+  `msgs` wholesale; with the random one the same payload stays inert text
+  inside the real message.
+
+Both are pinned by contract tests that assert the delimiter is a
+runtime-derived shell variable assigned from a command substitution, and that
+the closing line reuses the same variable — plus mutation tests that revert to
+a fixed literal and expect a throw. See
+`scripts/ci/staging-evidence-workflow-contract.test.ts` and
+`scripts/ci/ci-workflow-contract.test.ts`.
+
+Out of scope: plain shell heredocs that feed a **static, repo-authored** script
+into a program (e.g. `node <<'NODE'` in the golden-audit summary step). Those
+frame no author-controlled value and write no key/value file.
 
 ## Related
 
