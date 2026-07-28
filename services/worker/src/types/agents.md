@@ -2,6 +2,10 @@
 
 Shared TypeScript type definitions for the worker service.
 
+## 2026-07-28 R19 — anchors.fingerprint_source (manual patch, not a live regen)
+
+Same manual patch as `src/types/agents.md` — migration `0376` (unmerged, file-only) adds `anchors.fingerprint_source`. Regenerate for real once `0376` lands on a reachable project.
+
 ## 2026-06-16 — Resynced to migration head 0339 (108 → 114 tables)
 
 `database.types.ts` had drifted since migration 0326 (108 tables). Regenerated from a

@@ -295,6 +295,10 @@ export function SecureDocumentDialog({
         file_size: fileData.file.size,
         file_mime: fileData.file.type || null,
         org_id: secureOrgId,
+        // R19 (CTO ruling 2026-07-28): this flow always hashes real file
+        // bytes client-side via generateFingerprint (Constitution 1.6) —
+        // document-derived by construction.
+        fingerprint_source: 'document_bytes',
         ...(selectedTemplate ? { credential_type: selectedTemplate.credential_type } : {}),
         ...(description.trim() ? { description: description.trim() } : {}),
       });

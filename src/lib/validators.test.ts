@@ -117,6 +117,34 @@ describe('AnchorCreateSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  // R19 (CTO ruling 2026-07-28): fingerprint_source evidence class.
+  describe('fingerprint_source (R19)', () => {
+    it('accepts document_bytes', () => {
+      const result = AnchorCreateSchema.safeParse({ ...validData, fingerprint_source: 'document_bytes' });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts issuer_record_attestation', () => {
+      const result = AnchorCreateSchema.safeParse({ ...validData, fingerprint_source: 'issuer_record_attestation' });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts null (unclassified)', () => {
+      const result = AnchorCreateSchema.safeParse({ ...validData, fingerprint_source: null });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts omitted fingerprint_source (optional)', () => {
+      const result = AnchorCreateSchema.safeParse(validData);
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects an arbitrary string — the vocabulary is closed, never free text', () => {
+      const result = AnchorCreateSchema.safeParse({ ...validData, fingerprint_source: 'issuer_anchored' });
+      expect(result.success).toBe(false);
+    });
+  });
+
   it('rejects negative file size', () => {
     const result = AnchorCreateSchema.safeParse({
       ...validData,

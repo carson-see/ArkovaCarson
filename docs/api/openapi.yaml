@@ -1066,6 +1066,19 @@ components:
           description: >-
             API-RICH-02: Fine-grained credential subtype from anchors.sub_type.
             REST responses use snake_case; SDKs expose this as subType.
+        fingerprint_source:
+          type: string
+          nullable: true
+          enum: [document_bytes, issuer_record_attestation]
+          description: >-
+            R19 (CTO ruling 2026-07-28, advances SCRUM-2481): evidence class
+            for how `fingerprint` was computed. `document_bytes` = a real
+            file's bytes were fingerprinted client-side (Constitution 1.6).
+            `issuer_record_attestation` = no source document was supplied;
+            the issuing organization's asserted record content was
+            fingerprinted directly (e.g. a CSV bulk-import row with no
+            fingerprint column mapped). `null` = unclassified (anchor
+            predates this field; never guessed, Constitution 1.5).
         error:
           type: string
 

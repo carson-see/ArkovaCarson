@@ -38,6 +38,7 @@ export function buildTestAnchor(overrides: Partial<AnchorByPublicId> = {}): Anch
     file_size: null,
     confidence_scores: null,
     sub_type: null,
+    fingerprint_source: null,
     ...overrides,
   };
 }

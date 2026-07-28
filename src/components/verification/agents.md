@@ -1,6 +1,11 @@
 # agents.md — verification
+_Last updated: 2026-07-28 (R19 fingerprint-source evidence class, advances SCRUM-2481)_
 _Last updated: 2026-07-06 (SCRUM-2501 FE-PROOF-GATE proof-availability state machine)_
 _Last updated: 2026-07-06 (SCRUM-2495 does-not-assert disclaimer)_
+
+## 2026-07-28 R19 — FingerprintSourceDisplay (advances SCRUM-2481)
+
+New `FingerprintSourceDisplay.tsx` (mirrors `EvidenceLevelBadge.tsx` + `SourceProvenanceDisplay.tsx`) renders the `fingerprint_source` evidence class — document-derived (`document_bytes`) vs record-derived issuer attestation (`issuer_record_attestation`) — with a measured/asserted/NOT-asserted triad per §1.5. Wired into `PublicVerification.tsx` as SECTION 2d, immediately before Source Provenance (2e) — orthogonal axis, renders nothing for unclassified (pre-`0376`) anchors. Backed by `@/lib/fingerprintSource.ts`. Do NOT add these two values to the `EvidenceLevel` union in `@/lib/sourceProvenance.ts` / `EvidenceLevelBadge.tsx` — they classify a different thing (source-import authentication tier vs what-was-hashed). R-7 invariant: `issuer_record_attestation` copy must never state or imply Arkova received a source document — enforced by `FingerprintSourceDisplay.test.tsx`.
 
 ## What This Folder Contains
 

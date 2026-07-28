@@ -1,5 +1,9 @@
 # agents.md — components/upload
-_Last updated: 2026-05-16_
+_Last updated: 2026-07-28_
+
+## 2026-07-28 R19 — issuer-attestation acknowledgement (advances SCRUM-2481)
+
+`BulkUploadWizard.tsx` `ReviewStep`: when `mapping.fingerprint === null` (no fingerprint column mapped — every valid row becomes record-derived, `fingerprintProvided: false`), renders a `RECORD_ATTESTATION_LABELS` notice + checkbox (`data-testid="record-attestation-notice"` / `"record-attestation-checkbox"`) and disables "Process N Records" until checked. `attested` is wizard-level state threaded into `createBulkAnchors(records, { attested })` — `useBulkAnchors.ts` re-checks it and blocks the RPC call (client-side gate; the SQL layer independently computes the class server-side from `fingerprintProvided`, migration `0376`). Confirmed **`CSVUploadWizard.tsx` is unreachable dead code** (no live JSX render site — `SecureDocumentDialog.tsx` renders `BulkUploadWizard`, not `CSVUploadWizard`); the attestation gate was intentionally NOT added there. If `CSVUploadWizard.tsx` is ever wired up, it needs the same gate before shipping.
 
 ## What This Folder Contains
 Bulk upload and AI extraction components for CSV/Excel document anchoring workflows.
