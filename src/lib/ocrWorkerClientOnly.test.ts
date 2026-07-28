@@ -76,15 +76,17 @@ describe('§1.6 guard: ocrWorker.ts + F4 decode deps never imported in services/
     expect(violations).toEqual([]);
   });
 
-  it('services/worker/package.json declaring pdfjs-dist/tesseract.js as devDependencies has zero actual importers (orphaned, not a live violation)', () => {
-    // Known pre-existing state (not introduced by F4): these two packages are
-    // listed as devDependencies in services/worker/package.json but nothing
-    // in services/worker/src imports them (verified by the test above). This
-    // assertion documents that fact so a future importer trips the guard
-    // above rather than this one silently going stale.
+  it('services/worker/package.json does NOT declare pdfjs-dist/tesseract.js as devDependencies (client-only OCR deps must never reappear in the worker manifest)', () => {
+    // #1743 removed these two orphaned devDependencies from
+    // services/worker/package.json (they had zero importers — verified by
+    // the source-import scan above). This assertion flipped from
+    // "documents orphaned presence" to asserting absence, which is the
+    // stronger guard: it fails CI the moment either package is
+    // (re)introduced to the worker manifest, per §1.6, rather than waiting
+    // for an actual import to trip the scan above.
     const pkgRaw = readFileSync(join(REPO_ROOT, 'services', 'worker', 'package.json'), 'utf8');
     const pkg = JSON.parse(pkgRaw) as { devDependencies?: Record<string, string> };
     const devDeps = pkg.devDependencies ?? {};
-    expect(Object.keys(devDeps)).toEqual(expect.arrayContaining(['pdfjs-dist', 'tesseract.js']));
+    expect(Object.keys(devDeps)).not.toEqual(expect.arrayContaining(['pdfjs-dist', 'tesseract.js']));
   });
 });
