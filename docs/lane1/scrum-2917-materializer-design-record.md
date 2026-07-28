@@ -5,9 +5,22 @@
 > This file is the in-repo draft/mirror for the PR and the Confluence write-up.
 >
 > Slice: PI-0.5 next-24h, Lane 1 (Trust & Chain), 2026-07-21.
-> Status: DESIGN + ISOLATED TDD BUILD ONLY. No prod write, no populate run, no
-> soak. Execute steps are T3 and Carson/CTO-gated behind the isolated rig +
-> backup-restore drill (RTE-provisioned).
+> Status (at authoring, 2026-07-21): DESIGN + ISOLATED TDD BUILD ONLY. No prod
+> write, no populate run, no soak. Execute steps are T3 and Carson/CTO-gated
+> behind the isolated rig + backup-restore drill (RTE-provisioned).
+>
+> **UPDATE 2026-07-27 — status is now split, be precise:** the DDL/trigger
+> change (migrations 0359 `materialize_run_id` column + partial index, and
+> 0360's compensating `CREATE OR REPLACE` of the 0340 SECURED-completeness
+> trigger predicate) WAS applied to prod ~13:26-13:32Z via Supabase MCP after
+> a 48h isolated-rig T3 soak (PR #1615 "Staging Soak Evidence"; ledger numeric
+> head reconciled to 0364 at apply time, confirmed 0366 as of 2026-07-28). The
+> materializer's own row-INSERT backfill (`proof-materializer.ts` actually
+> populating `anchor_proofs` skeleton rows for the back-catalogue) has **NOT**
+> run against prod — no populate run, no execute-mode invocation outside the
+> isolated rig. "No prod write, no populate run, no soak" above was true only
+> for that INSERT/backfill path at authoring time; it never described the
+> schema/trigger DDL, which is now live.
 
 ## 1. Problem
 

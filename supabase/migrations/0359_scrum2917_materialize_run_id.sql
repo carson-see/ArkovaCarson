@@ -8,6 +8,15 @@
 -- (no prod, no staging, no rig). Tier T3 (touches supabase/migrations/).
 -- DO NOT APPLY until the RTE rig is stood up and an explicit go is given.
 --
+-- UPDATE 2026-07-27: APPLIED TO PROD ~13:26-13:32Z via Supabase MCP
+-- (SET lock_timeout='5s' preamble; zero lock waits, anchoring uninterrupted)
+-- after a 48h isolated-rig T3 soak — see PR #1615 "Staging Soak Evidence"
+-- section for the full evidence block (rig, image digest, preflight,
+-- E2E cycles). Ledger numeric head reconciled to 0364 at apply time per
+-- CLAUDE.md §0 rule 10; confirmed still present via `list_migrations`
+-- 2026-07-28 (head now 0366). The DO-NOT-APPLY note above described the
+-- state at authoring time only and is kept verbatim as historical context.
+--
 -- WHAT / WHY: the SCRUM-2917 proof materializer INSERTs anchor_proofs rows for
 -- back-catalogue anchors. Every row a materializer run creates is stamped with
 -- that run's uuid in `materialize_run_id`, so a bad run can be rolled back

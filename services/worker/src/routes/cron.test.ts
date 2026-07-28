@@ -1078,6 +1078,15 @@ describe('cron routes', () => {
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Processing failed');
     });
+
+    it('is protected by cronAuth — 401 unauthenticated in production', async () => {
+      mockRunProofMaterializer.mockClear();
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      const app = createApp();
+      const res = await request(app).post('/cron/materialize-proof-backcatalog');
+      expect(res.status).toBe(401);
+      expect(mockRunProofMaterializer).not.toHaveBeenCalled();
+    });
   });
 
   describe('POST /process-revocations', () => {
