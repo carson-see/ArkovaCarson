@@ -132,6 +132,8 @@ Landed per the Architect-review finding that the prior watch-window ledger (`doc
 | `0366` | `lane2/scrum-2940-folders` / PR (this) | SCRUM-2940 | `0366_scrum2940_anchors_folder_id_index.sql` | RESERVED — pre-soak, file-only, NOT applied. **`CREATE INDEX CONCURRENTLY` — split out of 0365** because CONCURRENTLY cannot run in the migration builder's txn wrapper (lock-audit finding). Apply outside a txn during the T3 soak; verify `indisvalid` |
 | `0364+` (band) | advisor train (post-PI-0.5) | — | not yet filed | RESERVED band — advisor train does not inherit any PI-0.5 prefix; claim by adding a row here in the same PR |
 
+| `0370` | `fix/scrum-3031-batch-insert-anchors-wedge` (this PR) | SCRUM-3031 | `0370_scrum3031_batch_insert_anchors_fix.sql` | RESERVED — pre-soak, file-only, NOT applied to prod/rig. T3 (touches `supabase/migrations/`). `CREATE OR REPLACE FUNCTION batch_insert_anchors` — dedup-lookup type-mismatch fix (root cause of the ~106s zero-row wedge, R15) |
+
 All rows above are Draft/`do-not-merge`, pre-soak, and NOT applied to prod except `0358` (in-flight, apply precedes merge per standing policy). Full rig-reservation cross-reference: `docs/staging/rig-reservation-ledger-and-migration-registry-2026-07-20.md`.
 
 ## Recent migrations (PR SCRUM-2940 folders)
