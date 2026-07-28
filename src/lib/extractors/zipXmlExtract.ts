@@ -40,10 +40,15 @@ async function loadZip(file: File): Promise<JSZip> {
   try {
     return await JSZipCtor.loadAsync(arrayBuffer);
   } catch (err) {
-    throw new Error(
+    // Single-arg Error + manual `cause` assignment, not `new Error(msg, { cause
+    // }))` — tsconfig.build.json's ES2021 lib target doesn't have the ES2022
+    // 2-arg Error constructor overload (TS2554). Same pattern as
+    // PiiStripFailClosedError in ocrFailClosed.ts.
+    const error = new Error(
       `Couldn't read "${file.name}" as a zip container — the file may be corrupt or not a real ${fileExtensionLabel(file.name)} document.`,
-      { cause: err },
     );
+    (error as { cause?: unknown }).cause = err;
+    throw error;
   }
 }
 
