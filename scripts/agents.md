@@ -13,6 +13,8 @@ Operational, CI, deployment, and security scripts. Run manually or from CI workf
 - **`staging/`** — staging environment tooling (deploy, migrations).
 - **`uat/`** — UAT screenshot capture scripts.
 - **`admin/`** — admin provisioning scripts (sandbox orgs).
+- **`kpi/`** — partner-KPI reconciliation tooling (has its own agents.md). HakiChain LOI KPI #2 weekly reconciliation lives here; sibling to `kpi3/` (KPI #3) but a separate directory/data-source.
+- **`kpi3/`** — KPI #3 (independent, non-issuer verification) clean-room tooling: `external-verify.mjs` (dependency-free public-explorer verifier) + `haki-provision-plan.mjs` (KPI #1 provisioning DRY-RUN planner, founder-gated).
 
 ## Top-level files
 - **`deploy-worker.sh`** — builds and deploys the worker to Cloud Run. Must use `--platform linux/amd64` and full 40-char SHA.
