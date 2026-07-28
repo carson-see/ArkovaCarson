@@ -264,3 +264,32 @@ for this wave.
 ---
 
 _Last refreshed: 2026-07-28 by Release Manager agent (SCRUM-2980 companion draft) — PR inventory, base SHAs, and CI status verified live via `gh pr list`/`gh pr view` against `main` at `ae2209fd771ff088d8f3ef12070f4028cbd421a7`. Wave-S content is necessarily incomplete — new PRs were opening during this session. Re-verify before executing any wave._
+
+---
+
+## Sprint-S collision map (CTO, 2026-07-28) — VERIFIED BY REAL MERGE TESTS
+
+Empirical `git merge --no-commit` runs in scratch worktrees, not `merge-tree` guesses. **A named human owner must execute these unions. Do NOT let "whichever lands last" resolve them.**
+
+### MANDATORY LAND ORDER
+`#1735 → #1736 → #1737 → #1738 → #1740` (#1732 has zero collisions, lands any time.)
+
+### Collision 1 — `src/lib/ocrWorker.ts` is THREE-way (#1735, #1736, #1740)
+All three edit the same `extractText()` dispatcher, the `OCRResult.method` union, and adjacent format constants.
+**The dangerous one is #1740**, because it does not merely add a branch — it DELETES the SCRUM-2911 blanket TIFF/HEIC soft-fail (`isUnsupportedImageFile` / `UNSUPPORTED_IMAGE_TYPES` / `UNSUPPORTED_IMAGE_EXTENSIONS`) and replaces it with real decode. #1735/#1736 still carry that block. Verified: after merging #1735→#1740 the definitions vanish (correct 3-way behavior) while #1735's **call site** survives inside the conflict markers — so accepting "ours" at that hunk yields a file that references a deleted function.
+**Required union:**
+- `OCRResult.method` = `'pdfjs' | 'pdfjs-ocr' | 'tesseract' | 'mammoth' | 'text' | 'zip-xml' | 'rtf' | 'svg' | 'spreadsheet'`
+- Dispatcher order: DOCX → RTF(#1735) → SVG(#1735) → ZIP-XML(#1735) → Spreadsheet(#1736) → **#1740's real `isTiffFile(file) || isHeicFile(file)` decode branch** (the `isUnsupportedImageFile` soft-fail block MUST be deleted) → `image/*` → text.
+- `vite.config.ts` `manualChunks`: keep `vendor-zip`(#1735) AND `vendor-tiff`/`vendor-heic`/`vendor-png-encode`(#1740).
+- SVG branch MUST stay before the generic `image/*` branch, or `image/svg+xml` falls into Tesseract.
+TypeScript catches a wrong union (extractors won't type-check), so failure mode is CI-red, not silent.
+**Owner: #1740's author performs the final union rebase** (most context on what superseded what).
+
+### Collision 2 — `src/components/anchor/FileUpload.tsx` (#1736 vs #1738) — SILENT REGRESSION RISK
+Both renamed the shared dispatch fn (`dispatchFiles` #1736 vs `handleFilesDetected` #1738) with **semantically different single-spreadsheet behavior**. #1736 pauses on the mode-choice step (`setPendingModeFile`); #1738 (branched earlier, unaware) routes a lone spreadsheet straight to `onBulkDetected` — the exact bug #1736 exists to fix.
+**Taking #1738's block silently reverts the founder-P0 spreadsheet-as-document deliverable. Both versions compile — there is NO compile error to catch this.**
+**Required union:** multi-file path takes #1738's all-spreadsheet-vs-mixed check (`onBulkDetected` vs `onMixedBatchDetected`); single-spreadsheet path takes #1736's `setPendingModeFile`, never `onBulkDetected`.
+**Land #1736 BEFORE #1738; #1738 rebases onto it.**
+
+### Post-merge verification (mandatory)
+After BOTH collisions resolve, confirm by behavior not by clean exit: (a) a lone `.xlsx` drop still reaches the mode-choice step; (b) a mixed multi-file drop reaches `onMixedBatchDetected`; (c) TIFF/HEIC take the real decode path and `isUnsupportedImageFile` no longer exists anywhere; (d) `grep -a` for `isUnsupportedImageFile` returns zero hits.

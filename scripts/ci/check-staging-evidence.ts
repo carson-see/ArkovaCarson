@@ -2151,6 +2151,12 @@ const STAGING_TOOLING_ALLOW = [
   // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.
   /^scripts\/ci-supabase-start\.sh$/,
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
+  // SCRUM-3026: sanctioned re-trigger helper — mints a fresh PR event
+  // (tree-identical empty commit + push, optional PR-body head-SHA bump via
+  // `gh pr edit`) so event-driven CI gates re-evaluate CURRENT PR state
+  // instead of a stale `gh run rerun` replay of the frozen event payload.
+  // Runs only as an operator/agent CLI; never ships to prod runtime.
+  /^scripts\/ci\/mint-fresh-event(\.test)?\.sh$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
   // SCRUM-2897: evidence-identity gate — a pure body/head-SHA identity checker

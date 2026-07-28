@@ -346,10 +346,25 @@ jobs:
           else
             MSGS=$(git log --format=%B -1)
           fi
+          # The commit messages framed below are fully PR-author-controlled
+          # (any commit message in the PR). A FIXED heredoc delimiter here
+          # would let a PR author put that exact string on its own line inside
+          # a commit message to terminate the heredoc early, after which the
+          # rest of the message is parsed as literal `key=value` lines appended
+          # to $GITHUB_OUTPUT — including a forged `msgs=` line that overrides
+          # the real one, since GitHub Actions resolves a duplicate output name
+          # to its LAST occurrence. `msgs` feeds PR_COMMITS_MSGS into the
+          # HANDOFF.md verification lint and the Confluence coverage gate
+          # below, so a forgery would let a PR author steer what those
+          # governance gates believe the PR's commit history says. Per GitHub's
+          # own guidance, use a per-run random delimiter the author cannot
+          # predict or embed in advance. Same class as the staging-evidence.yml
+          # PR-body heredoc fixed in PR #1724.
+          MSGS_DELIM="ghadelim_$(openssl rand -hex 16)"
           {
-            echo 'msgs<<EOF'
+            echo "msgs<<${MSGS_DELIM}"
             echo "$MSGS"
-            echo 'EOF'
+            echo "${MSGS_DELIM}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Coverage monotonic enforcement
