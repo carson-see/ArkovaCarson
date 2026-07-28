@@ -283,7 +283,12 @@ def decode_anchor_payload(vout: Any) -> str | None:
 # NOT PEP 604 (`X | Y`): this alias is a module-level RUNTIME expression, so
 # `from __future__ import annotations` does not defer it. `dict[...] | Callable[...]`
 # raises TypeError on 3.9 and would silently drop this module's documented
-# "Python >= 3.9, stdlib only" drop-in guarantee.
+# "Python >= 3.9, stdlib only" drop-in guarantee (see the module docstring).
+# That 3.9 floor is deliberately NARROWER than the packaged SDK's
+# `requires-python = ">=3.10"`: this file is meant to be copy-pasteable
+# standalone by a third party holding only the format spec, so it does not get
+# to assume the package's floor. Not a stale suppression — do not "fix" it on
+# the next ruff bump.
 NodeSource = Union[dict[str, Any], Callable[[str], Any]]  # noqa: UP007
 
 _POST_PAYLOAD_FAILURES = frozenset(

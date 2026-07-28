@@ -182,10 +182,14 @@ class MerkleProofResponse(ArkovaModel):
             if raw is not None and not isinstance(raw, ProofBundle):
                 try:
                     ProofBundle.model_validate(raw)
-                # Blind by design: ANY failure to construct a bundle must fail
-                # closed to `None`, not propagate and take the whole (frozen)
-                # response down with it. Narrowing to `ValidationError` would let
-                # a non-pydantic coercion error escape and break that contract.
+                # Blind by design (081a4b74, PROOF-05/SCRUM-2338): ANY failure to
+                # construct a bundle must fail closed to `None` rather than
+                # propagate and take the whole (frozen) response down with it.
+                # Defense in depth, not a reproducible escape path — with the
+                # current model every malformed input tested does surface as
+                # `ValidationError`. The broad catch keeps the contract holding
+                # if that ever stops being true (a future validator, a pydantic
+                # change), which is the whole point of a fail-closed gate.
                 except Exception:  # noqa: BLE001
                     values = dict(values)
                     values["proof_bundle"] = None

@@ -38,10 +38,16 @@ Python SDK for the Arkova Verification API v2. Sync + async clients using `httpx
   87 findings on untouched code, which would have failed the first real publish.
   Bump the pin deliberately and clear any new findings in the same PR; do not
   reopen the range.
-- Four `# noqa`s here are load-bearing, each with an inline justification — do
-  not "clean them up": `proofs.py` `UP007` on `NodeSource` (module-level runtime
-  alias; PEP 604 there raises `TypeError` on 3.9 and breaks the documented
-  stdlib-only drop-in), `proofs.py` + `models.py` `BLE001` (fail-closed catches
-  across the injected-node trust boundary and the frozen-response validator),
-  and `client.py` `PYI034` ×2 (`typing.Self` is 3.11+; `requires-python` is 3.10
-  and the package carries no `typing_extensions` dependency).
+- Five `# noqa`s here are load-bearing, each with an inline justification — do
+  not "clean them up":
+  - `proofs.py:287` `UP007` on `NodeSource` — module-level runtime alias, so
+    `from __future__ import annotations` does not defer it; PEP 604 there raises
+    `TypeError` on 3.9 and breaks this file's own stdlib-only drop-in promise.
+    Note that promise is NARROWER than the packaged SDK's
+    `requires-python = ">=3.10"`: `proofs.py` is meant to be copy-pasteable
+    standalone, so it holds a 3.9 floor the rest of the package does not.
+  - `proofs.py:316` + `models.py:189` `BLE001` — deliberate fail-closed catches
+    (injected-node trust boundary; frozen-response proof-bundle validator).
+  - `client.py:139` + `client.py:253` `PYI034` ×2 — `typing.Self` is 3.11+;
+    `requires-python` is 3.10 and the package carries no `typing_extensions`
+    dependency.
