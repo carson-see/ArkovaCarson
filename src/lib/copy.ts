@@ -3266,6 +3266,11 @@ export const SOURCE_PROVENANCE_LABELS = {
   SHARE_LINKEDIN_DESCRIPTION: 'Use your Arkova verification URL as the Credential URL on LinkedIn.',
   PROOF_SECTION_TITLE: 'Evidence Package',
   PROOF_SECTION_DESCRIPTION: 'Cryptographic proof of source provenance included in the verification record.',
+  // SCRUM-2913 (Lane 2 wiring, R-7 §1.13): this is a PROVENANCE link only —
+  // "this record's evidence was sourced from this registry entry" — never a
+  // claim that Arkova is listed, registered, or endorsed by Credential Engine.
+  REGISTRY_REFERENCE_LABEL: 'Registry reference',
+  REGISTRY_REFERENCE_DESCRIPTION: 'A source reference, not a Credential Engine listing or endorsement.',
 } as const;
 
 // ─── LinkedIn Share (CSI-03 / SCRUM-1599) ─────────────────────────────────────

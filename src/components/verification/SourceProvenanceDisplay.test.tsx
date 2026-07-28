@@ -98,6 +98,64 @@ describe('SourceProvenanceDisplay', () => {
   });
 });
 
+// ─── SCRUM-2913 (Lane 2 wiring): CE Registry provenance link ─────────────────
+describe('SourceProvenanceDisplay — CE Registry provenance (registry_url)', () => {
+  const REGISTRY_URL = 'https://credentialengineregistry.org/resources/ce-11111111-2222-4333-8444-555555555555';
+
+  it('renders the registry reference as a link when registry_url is present', () => {
+    render(<SourceProvenanceDisplay data={{ registry_url: REGISTRY_URL }} />);
+
+    const link = screen.getByTestId('registry-reference-link');
+    expect(link).toHaveAttribute('href', REGISTRY_URL);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(screen.getByText('Registry reference:')).toBeInTheDocument();
+  });
+
+  it('shows R-7-honest provenance copy, never a listing/endorsement claim', () => {
+    render(<SourceProvenanceDisplay data={{ registry_url: REGISTRY_URL }} />);
+
+    const description = screen.getByTestId('registry-reference-description');
+    expect(description.textContent?.toLowerCase()).not.toContain('listed');
+    expect(description.textContent?.toLowerCase()).not.toContain('endorsed');
+    expect(description.textContent).toContain('not a Credential Engine listing or endorsement');
+  });
+
+  it('does not render a registry reference when registry_url is absent', () => {
+    render(<SourceProvenanceDisplay data={FULL_DATA} />);
+    expect(screen.queryByTestId('registry-reference-link')).not.toBeInTheDocument();
+  });
+
+  it('strips tokens from registry_url before display, same as source_url', () => {
+    render(<SourceProvenanceDisplay data={{ registry_url: `${REGISTRY_URL}?token=secret&locale=en` }} />);
+
+    const link = screen.getByTestId('registry-reference-link');
+    expect(link.getAttribute('href')).not.toContain('token=secret');
+    expect(link.getAttribute('href')).toContain('locale=en');
+  });
+
+  it('does not show an unsafe registry_url (credential-embedded userinfo)', () => {
+    render(<SourceProvenanceDisplay data={{ registry_url: 'https://user:pass@evil.example/resources/ce-x' }} />);
+    expect(screen.queryByTestId('registry-reference-link')).not.toBeInTheDocument();
+  });
+
+  it('renders BOTH source_url and registry_url as distinct rows when both are present', () => {
+    render(<SourceProvenanceDisplay data={{ ...FULL_DATA, registry_url: REGISTRY_URL }} />);
+
+    expect(screen.getByTestId('source-url-link')).toHaveAttribute(
+      'href',
+      'https://www.credly.com/badges/12345678-abcd-efgh',
+    );
+    expect(screen.getByTestId('registry-reference-link')).toHaveAttribute('href', REGISTRY_URL);
+  });
+
+  it('renders the section (hasAnyContent) for registry_url alone, with no other provenance data', () => {
+    const { container } = render(<SourceProvenanceDisplay data={{ registry_url: REGISTRY_URL }} />);
+    expect(container.firstChild).not.toBeNull();
+    expect(screen.getByTestId('source-provenance-display')).toBeInTheDocument();
+  });
+});
+
 // ─── SCRUM-2481: measured / asserted / NOT-asserted triad ────────────────────
 describe('SourceProvenanceDisplay — SCRUM-2481 evidence triad', () => {
   it('renders the measured/asserted/NOT-asserted triad for a captured_url card', () => {

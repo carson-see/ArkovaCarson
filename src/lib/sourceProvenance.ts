@@ -36,6 +36,19 @@ export interface SourceProvenanceData {
   evidence_package_hash?: string | null;
   source_payload_hash?: string | null;
   fetched_at?: string | null;
+  /**
+   * SCRUM-2913 (Lane 2 wiring) — Credential Engine Registry PROVENANCE link
+   * ("this anchor's evidence was sourced from this CE Registry URL"), sourced
+   * from `get_public_anchor`'s `metadata.registry_url` (0362). NOT an
+   * assertion that Arkova is listed/registered in the CE Registry (R-7 §1.13).
+   */
+  registry_url?: string | null;
+  /**
+   * SCRUM-2913 (Lane 2 wiring) — SHA-256 hex integrity fingerprint of the
+   * exact CE Registry envelope consumed, from `metadata.ce_envelope_sha256`.
+   * Present only alongside `registry_url`.
+   */
+  ce_envelope_sha256?: string | null;
 }
 
 export interface EvidenceProofFields {
