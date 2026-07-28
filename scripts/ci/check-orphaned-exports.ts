@@ -34,6 +34,19 @@
  * orphans are WARN-only, with the full inventory always printed so the
  * existing debt is visible.
  *
+ * "New" is decided by export IDENTITY (name + kind) against the MERGE-BASE
+ * version of the same file (or its pre-rename path, via `git diff
+ * --find-renames`) — NOT by whether the declaration's line number falls in
+ * the diff's added-line set. An earlier line-position-based implementation
+ * mis-scored two cases, both fixed here (adversarial review, PR #1723,
+ * 2026-07-28): (1) a purely cosmetic reformat of an existing orphan's
+ * declaration line (e.g. whitespace-only edits) shifts which line the
+ * declaration starts on with zero behavior/importer change, which flipped
+ * pre-existing debt into a false hard failure; (2) a file rename/move showed
+ * as 100% "added" content under a plain `git diff` with no rename detection,
+ * which would have misclassified that file's exports as new. See
+ * `exportIdentityKey` / `buildMergeBaseExportIndex` / `classifyOrphans`.
+ *
  * Known limitations (documented rather than silently wrong):
  *   - Only exported `function`/`const`/`class` declarations are treated as
  *     candidate hooks/components — anonymous default exports
@@ -44,6 +57,25 @@
  *   - A local `import { X } from './x'; export { X };` two-step re-export
  *     (as opposed to the single-statement `export { X } from './x'` barrel
  *     form used throughout this repo) is not traced.
+ *   - `isComponentLikeInitializer`'s PascalCase-name + CallExpression-
+ *     initializer heuristic can sweep in non-components that happen to match
+ *     both shapes — e.g. `export const FooContext = createContext(...)` or a
+ *     PascalCase Zod schema built via `z.object(...)`. Harmless when the
+ *     binding is genuinely imported somewhere (it's simply never flagged as
+ *     orphaned); latent false-positive surface if such a binding is ever
+ *     legitimately unused, since it would print as an "orphaned component"
+ *     rather than being excluded outright.
+ *   - INVERSE GAP (known, not closed by this revision): if a PR deletes the
+ *     last real importer of an EXISTING hook/component without touching that
+ *     hook's own file, the export becomes newly unreachable but is only ever
+ *     classified pre-existing (WARN), never fail-closed — this gate compares
+ *     export IDENTITY against the merge base, not REACHABILITY against the
+ *     merge base. Closing it requires reconstructing the full import graph
+ *     at the merge base (every file under `src/hooks` + `src/components`,
+ *     not just the ones touched by the diff) to detect a reachable-at-base /
+ *     unreachable-at-head transition — materially more scope than the
+ *     identity fix above, and out of scope for this time-critical PR per CTO
+ *     ruling; tracked as a follow-up rather than attempted here.
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -320,8 +352,12 @@ export function buildRepoGraph(files: ReadonlyMap<string, string>): RepoGraph {
     let source: ts.SourceFile;
     try {
       source = parseSource(path, text);
-    } catch {
-      continue; // unparseable file — skip rather than crash the whole gate
+    } catch (error) {
+      // Unparseable file — skip rather than crash the whole gate, but make
+      // the skip VISIBLE in CI logs rather than silent (a silently-skipped
+      // file could hide a real orphan or a real importer edge).
+      console.warn(`::warning::orphaned-exports: failed to parse ${path}, skipping (${String(error)}).`);
+      continue;
     }
 
     const kindForFile: ExportKind | null = isHookFile(path)
@@ -379,60 +415,100 @@ export function isReachable(
 }
 
 // ─── Diff scoping (fail-closed only for NEW exports, R14) ──────────────────
+//
+// See the module doc comment above for why this is IDENTITY-based (export
+// name + kind, resolved against the merge-base version of the file / its
+// pre-rename path) rather than POSITION-based (declaration line number).
 
-/** Parse `git diff --unified=0` output into a map of repo-relative file path
- * -> set of ADDED line numbers (in the NEW/HEAD version of the file). Pure —
- * takes diff text directly so it is testable without shelling out to git. */
-export function parseAddedLines(diffText: string): Map<string, Set<number>> {
-  const result = new Map<string, Set<number>>();
-  let currentFile: string | null = null;
-  let newLineCursor = 0;
-
-  for (const line of diffText.split('\n')) {
-    if (line.startsWith('+++ ')) {
-      const path = line.slice(4).trim();
-      currentFile = path === '/dev/null' ? null : path.replace(/^b\//, '');
-      continue;
-    }
-    if (line.startsWith('@@')) {
-      const m = /@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-      newLineCursor = m ? Number(m[1]) : 0;
-      continue;
-    }
-    if (currentFile === null) continue;
-    if (line.startsWith('\\')) continue; // "\ No newline at end of file"
-    if (line.startsWith('+')) {
-      let lines = result.get(currentFile);
-      if (!lines) {
-        lines = new Set<number>();
-        result.set(currentFile, lines);
-      }
-      lines.add(newLineCursor);
-      newLineCursor += 1;
-    } else if (line.startsWith('-')) {
-      // removed line — does not consume a new-file line number
-    } else if (line !== '') {
-      newLineCursor += 1; // context line (only appears with non-zero --unified)
-    }
-  }
-  return result;
+/** "hook:useFoo" / "component:Foo" — the identity used to ask "did an export
+ * with this name and kind already exist, for this file's identity, at the
+ * merge base?" Hooks and components live in disjoint directories in
+ * practice, but the kind is included in the key regardless so a same-named
+ * hook and component are never conflated. */
+export function exportIdentityKey(name: string, kind: ExportKind): string {
+  return `${kind}:${name}`;
 }
 
-/** Classify orphaned exports (no real importer, per `isReachable`) as new
- * (declaration line intersects the PR's added lines — fail-closed, R14) or
- * pre-existing (warn-only). */
-export function classifyOrphans(
+/** Unreachable candidate exports (per `isReachable`) — the pool
+ * `classifyOrphans` splits into new vs. pre-existing. Pulled out as its own
+ * step so callers only need to fetch merge-base content for the (typically
+ * small) set of files that actually have a candidate, not the whole
+ * `src/hooks` + `src/components` tree. */
+export function findOrphanCandidates(
   exports: readonly DiscoveredExport[],
   edges: readonly ImportEdge[],
-  addedLines: ReadonlyMap<string, ReadonlySet<number>>,
-): OrphanFinding[] {
-  const orphans: OrphanFinding[] = [];
-  for (const exp of exports) {
-    if (isReachable(edges, exp.file, exp.name)) continue;
-    const added = addedLines.get(exp.file);
-    orphans.push({ ...exp, isNew: added ? added.has(exp.line) : false });
+): DiscoveredExport[] {
+  return exports.filter((exp) => !isReachable(edges, exp.file, exp.name));
+}
+
+/** Parses `git diff --find-renames --name-status <base>..HEAD` output into a
+ * map of current-path -> merge-base (pre-rename) path, for the `R<score>`
+ * rename lines only. Pure — takes the text directly so it is testable
+ * without shelling out to git. */
+export function parseRenameMap(nameStatusText: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const line of nameStatusText.split('\n')) {
+    if (!line.startsWith('R')) continue;
+    const parts = line.split('\t');
+    if (parts.length < 3) continue;
+    const [, oldPath, newPath] = parts;
+    if (!oldPath || !newPath) continue;
+    map.set(newPath, oldPath);
   }
-  return orphans;
+  return map;
+}
+
+/** Given merge-base file contents (identity-path -> source text, for exactly
+ * the file identities the current orphan candidates resolve to), builds the
+ * set of export identities (`exportIdentityKey`) that already existed, per
+ * file, at the merge base. Reuses `collectDeclaredExports` so "what counts
+ * as a candidate export" can never drift between the current-tree scan and
+ * this merge-base comparison. */
+export function buildMergeBaseExportIndex(
+  files: ReadonlyMap<string, string>,
+): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const [path, text] of files) {
+    let source: ts.SourceFile;
+    try {
+      source = parseSource(path, text);
+    } catch {
+      continue; // unparseable at the merge base — treat as "no prior exports" (fails closed, not open)
+    }
+    const kindForFile: ExportKind | null = isHookFile(path)
+      ? 'hook'
+      : isComponentFile(path)
+        ? 'component'
+        : null;
+    if (!kindForFile) continue;
+    const set = new Set<string>();
+    for (const d of collectDeclaredExports(source, path, kindForFile)) {
+      set.add(exportIdentityKey(d.name, d.kind));
+    }
+    index.set(path, set);
+  }
+  return index;
+}
+
+/** Classify orphan CANDIDATES (already filtered to "no real importer" via
+ * `findOrphanCandidates`) as new (no export of the same name+kind existed,
+ * at the merge base, under the file's identity — fail-closed, R14) or
+ * pre-existing (warn-only). `renameMap` maps a current path to its merge-base
+ * identity path for files git detected as renamed/moved (`parseRenameMap`);
+ * a file absent from it uses its own current path as the identity. Robust to
+ * both pure reformatting (identity is unchanged even though the line moves)
+ * and file moves (identity resolves through the rename map). */
+export function classifyOrphans(
+  candidates: readonly DiscoveredExport[],
+  mergeBaseExports: ReadonlyMap<string, ReadonlySet<string>>,
+  renameMap: ReadonlyMap<string, string> = new Map(),
+): OrphanFinding[] {
+  return candidates.map((exp) => {
+    const identityFile = renameMap.get(exp.file) ?? exp.file;
+    const existedAtMergeBase =
+      mergeBaseExports.get(identityFile)?.has(exportIdentityKey(exp.name, exp.kind)) ?? false;
+    return { ...exp, isNew: !existedAtMergeBase };
+  });
 }
 
 // ─── Filesystem walking (impure — production wiring only) ──────────────────
@@ -481,33 +557,83 @@ function resolveMergeBaseSha(): string {
   }
 }
 
-function gitDiffAddedLines(mergeBaseSha: string): Map<string, Set<number>> {
+/** `git diff --find-renames --name-status` between the merge base and HEAD,
+ * parsed into a current-path -> pre-rename-path map. Without `--find-renames`
+ * a moved file shows as 100% added content and its exports would otherwise
+ * be misclassified as new (see module doc comment). On any git failure, warn
+ * and return an empty map — a moved orphan may then misclassify as new,
+ * which is the fail-CLOSED direction (extra warn-only noise avoided, never
+ * silently suppressing a real new orphan). */
+function gitRenameMap(mergeBaseSha: string): Map<string, string> {
   if (!existsSync(join(REPO, 'src', 'hooks')) && !existsSync(join(REPO, 'src', 'components'))) {
     return new Map();
   }
-  let diffText: string;
   try {
-    diffText = execFileSync(
+    const text = execFileSync(
       GIT_BIN,
-      ['diff', '--unified=0', '--no-color', `${mergeBaseSha}..HEAD`, '--', 'src/hooks', 'src/components'],
+      [
+        'diff',
+        '--find-renames',
+        '--name-status',
+        '--no-color',
+        `${mergeBaseSha}..HEAD`,
+        '--',
+        'src/hooks',
+        'src/components',
+      ],
       { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
     );
+    return parseRenameMap(text);
   } catch (error) {
     console.warn(
-      `::warning::orphaned-exports: could not compute the PR diff (${String(error)}); ` +
-        'treating every finding as pre-existing (warn-only) rather than failing closed on an infra hiccup.',
+      `::warning::orphaned-exports: could not compute rename detection (${String(error)}); ` +
+        'proceeding without it (a moved orphan file could misclassify as new — safe/fail-closed direction).',
     );
     return new Map();
   }
-  return parseAddedLines(diffText);
+}
+
+/** Fetches merge-base content for exactly the file identities the current
+ * orphan candidates need (via `git show <sha>:<path>`) — bounded by the
+ * (typically small) orphan count, not the full hooks/components tree. A
+ * path absent from the merge base (new file, or pre-rename path git could
+ * not resolve) is simply absent from the returned map; `classifyOrphans`
+ * correctly treats that as "no prior exports" (fails closed). */
+function loadMergeBaseFileMap(mergeBaseSha: string, identityPaths: ReadonlySet<string>): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const path of identityPaths) {
+    try {
+      const content = execFileSync(GIT_BIN, ['show', `${mergeBaseSha}:${path}`], {
+        cwd: REPO,
+        encoding: 'utf8',
+        maxBuffer: 16 * 1024 * 1024,
+        // "Did not exist at the merge base" is the ORDINARY case for a
+        // brand-new file, not a rare failure — silence git's stderr
+        // ("fatal: path ... exists on disk, but not in <sha>") so a routine
+        // new file doesn't print a scary-looking fatal line in CI logs for
+        // an outcome this function already handles correctly via `catch`.
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      map.set(path, content);
+    } catch {
+      // Did not exist at the merge base under this identity path — leave absent.
+    }
+  }
+  return map;
 }
 
 function main(): void {
   const files = loadFileMap(REPO);
   const { exports, edges } = buildRepoGraph(files);
+  const candidates = findOrphanCandidates(exports, edges);
+
   const mergeBaseSha = resolveMergeBaseSha();
-  const addedLines = gitDiffAddedLines(mergeBaseSha);
-  const orphans = classifyOrphans(exports, edges, addedLines);
+  const renameMap = gitRenameMap(mergeBaseSha);
+  const identityPaths = new Set(candidates.map((c) => renameMap.get(c.file) ?? c.file));
+  const mergeBaseFiles = loadMergeBaseFileMap(mergeBaseSha, identityPaths);
+  const mergeBaseExports = buildMergeBaseExportIndex(mergeBaseFiles);
+
+  const orphans = classifyOrphans(candidates, mergeBaseExports, renameMap);
 
   const newOrphans = orphans.filter((o) => o.isNew);
   const preexisting = orphans.filter((o) => !o.isNew);

@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildMergeBaseExportIndex,
   buildRepoGraph,
   classifyOrphans,
   collectDeclaredExports,
   collectRawImports,
+  exportIdentityKey,
+  findOrphanCandidates,
   isComponentFile,
   isHookFile,
   isReachable,
   isTestOrStorybookFile,
-  parseAddedLines,
+  parseRenameMap,
   specifierResolvedPath,
   type DiscoveredExport,
 } from './check-orphaned-exports.ts';
@@ -249,68 +252,150 @@ describe('isReachable', () => {
   });
 });
 
-describe('parseAddedLines', () => {
-  it('parses a unified=0 diff into added-line numbers per file', () => {
-    const diff = [
-      'diff --git a/src/hooks/useFoo.ts b/src/hooks/useFoo.ts',
-      'new file mode 100644',
-      '--- /dev/null',
-      '+++ b/src/hooks/useFoo.ts',
-      '@@ -0,0 +1,3 @@',
-      '+export function useFoo() {',
-      '+  return 1;',
-      '+}',
-    ].join('\n');
-    const added = parseAddedLines(diff);
-    expect([...added.get('src/hooks/useFoo.ts')!].sort((a, b) => a - b)).toEqual([1, 2, 3]);
-  });
-
-  it('tracks the correct new-file line number for a hunk that starts mid-file', () => {
-    const diff = [
-      '--- a/src/hooks/useFoo.ts',
-      '+++ b/src/hooks/useFoo.ts',
-      '@@ -10,0 +11,2 @@',
-      '+export function useBar() {}',
-      '+export function useBaz() {}',
-    ].join('\n');
-    const added = parseAddedLines(diff);
-    expect([...added.get('src/hooks/useFoo.ts')!].sort((a, b) => a - b)).toEqual([11, 12]);
-  });
-
-  it('ignores removed lines and deleted files', () => {
-    const diff = ['--- a/src/hooks/useFoo.ts', '+++ /dev/null', '@@ -1,2 +0,0 @@', '-export function useFoo() {}', '-'].join(
-      '\n',
-    );
-    expect(parseAddedLines(diff).size).toBe(0);
+describe('exportIdentityKey', () => {
+  it('combines kind and name so a same-named hook and component never collide', () => {
+    expect(exportIdentityKey('Foo', 'hook')).not.toBe(exportIdentityKey('Foo', 'component'));
   });
 });
 
-describe('classifyOrphans — the diff-scoping split (CTO ruling R14)', () => {
-  const exp: DiscoveredExport = { file: 'src/hooks/useOrphan.ts', name: 'useOrphan', kind: 'hook', line: 1 };
+describe('findOrphanCandidates', () => {
+  it('filters exports down to the unreachable ones only', () => {
+    const reachable: DiscoveredExport = { file: 'src/hooks/useUsed.ts', name: 'useUsed', kind: 'hook', line: 1 };
+    const orphan: DiscoveredExport = { file: 'src/hooks/useOrphan.ts', name: 'useOrphan', kind: 'hook', line: 1 };
+    const edges = [
+      {
+        from: 'src/pages/X.tsx',
+        to: reachable.file,
+        bindings: new Map([[reachable.name, reachable.name]]),
+        kind: 'import' as const,
+      },
+    ];
+    const candidates = findOrphanCandidates([reachable, orphan], edges);
+    expect(candidates).toEqual([orphan]);
+  });
+});
 
-  it('marks an unreachable export as NEW when its line is in the added-lines set', () => {
-    const addedLines = new Map([[exp.file, new Set([1])]]);
-    const [finding] = classifyOrphans([exp], [], addedLines);
+describe('parseRenameMap', () => {
+  it('parses an R<score> rename line into new-path -> old-path', () => {
+    const nameStatus = 'R100\tsrc/hooks/useOld.ts\tsrc/hooks/useNew.ts';
+    const map = parseRenameMap(nameStatus);
+    expect(map.get('src/hooks/useNew.ts')).toBe('src/hooks/useOld.ts');
+  });
+
+  it('ignores non-rename lines (A/M/D status)', () => {
+    const nameStatus = ['M\tsrc/hooks/useFoo.ts', 'A\tsrc/hooks/useBar.ts', 'D\tsrc/hooks/useBaz.ts'].join('\n');
+    expect(parseRenameMap(nameStatus).size).toBe(0);
+  });
+
+  it('handles multiple rename lines', () => {
+    const nameStatus = [
+      'R095\tsrc/hooks/useA.ts\tsrc/hooks/useA2.ts',
+      'R100\tsrc/components/Foo.tsx\tsrc/components/Bar.tsx',
+    ].join('\n');
+    const map = parseRenameMap(nameStatus);
+    expect(map.get('src/hooks/useA2.ts')).toBe('src/hooks/useA.ts');
+    expect(map.get('src/components/Bar.tsx')).toBe('src/components/Foo.tsx');
+  });
+});
+
+describe('buildMergeBaseExportIndex', () => {
+  it('indexes declared hook/component exports by identity key, per file', () => {
+    const files = new Map<string, string>([
+      ['src/hooks/useFoo.ts', `export function useFoo() { return 1; }\n`],
+      ['src/components/Foo.tsx', `export const Foo = () => <div />;\n`],
+      ['src/lib/util.ts', `export function useNotScanned() { return 1; }\n`], // outside hooks/components — ignored
+    ]);
+    const index = buildMergeBaseExportIndex(files);
+    expect(index.get('src/hooks/useFoo.ts')).toEqual(new Set([exportIdentityKey('useFoo', 'hook')]));
+    expect(index.get('src/components/Foo.tsx')).toEqual(new Set([exportIdentityKey('Foo', 'component')]));
+    expect(index.has('src/lib/util.ts')).toBe(false);
+  });
+});
+
+describe('classifyOrphans — identity-based new-vs-pre-existing split (CTO ruling R14)', () => {
+  // Regression (1): a cosmetic reformat of an existing orphan's declaration
+  // line must NOT flip it to a new orphan. Reproduces the adversarial-review
+  // finding against the original line-position implementation: the export's
+  // line moved (2 -> 3 below, simulating a leading blank-line insertion) but
+  // the identity (name + kind) is unchanged and already present at the
+  // merge base for this exact file path.
+  it('regression: a cosmetic reformat that shifts the declaration line stays pre-existing (exit-0 case)', () => {
+    const candidate: DiscoveredExport = {
+      file: 'src/hooks/useDebounce.ts',
+      name: 'useDebounce',
+      kind: 'hook',
+      line: 3, // shifted from line 2 at the merge base by a purely cosmetic edit
+    };
+    const mergeBaseExports = new Map([
+      ['src/hooks/useDebounce.ts', new Set([exportIdentityKey('useDebounce', 'hook')])],
+    ]);
+    const [finding] = classifyOrphans([candidate], mergeBaseExports);
+    expect(finding.isNew).toBe(false);
+  });
+
+  // Regression (2): a genuinely new orphaned export (name never existed at
+  // the merge base under this file's identity) must still fail closed.
+  it('regression: a genuinely new orphaned export still fails closed (exit-1 case)', () => {
+    const candidate: DiscoveredExport = {
+      file: 'src/hooks/useBrandNew.ts',
+      name: 'useBrandNew',
+      kind: 'hook',
+      line: 1,
+    };
+    // Merge base has no entry at all for this file (it did not exist).
+    const [finding] = classifyOrphans([candidate], new Map());
     expect(finding.isNew).toBe(true);
   });
 
-  it('marks an unreachable export as pre-existing (warn-only) when its line is NOT in the added-lines set', () => {
-    const addedLines = new Map([[exp.file, new Set([42])]]);
-    const [finding] = classifyOrphans([exp], [], addedLines);
+  // Control: an unrelated file with no merge-base history change at all
+  // (mirrors "touching an unrelated comment line stays exit 0" from the
+  // adversarial review) — same shape as the reformat case, asserting the
+  // identity match is what drives the result, not incidental line stability.
+  it('control: an untouched pre-existing orphan (line unchanged) stays pre-existing', () => {
+    const candidate: DiscoveredExport = {
+      file: 'src/hooks/useDebounce.ts',
+      name: 'useDebounce',
+      kind: 'hook',
+      line: 2,
+    };
+    const mergeBaseExports = new Map([
+      ['src/hooks/useDebounce.ts', new Set([exportIdentityKey('useDebounce', 'hook')])],
+    ]);
+    const [finding] = classifyOrphans([candidate], mergeBaseExports);
     expect(finding.isNew).toBe(false);
   });
 
-  it('marks an unreachable export as pre-existing when the file has no diff entry at all (push/main context)', () => {
-    const [finding] = classifyOrphans([exp], [], new Map());
+  // Regression (3): a file rename/move of an existing orphaned file stays
+  // pre-existing — resolved through the rename map to its merge-base
+  // identity path, not misclassified as new by the "100% added content"
+  // artifact of a plain `git diff` with no rename detection.
+  it('regression: a renamed/moved file resolves through the rename map and stays pre-existing', () => {
+    const candidate: DiscoveredExport = {
+      file: 'src/hooks/useMoved2.ts', // new path after the move
+      name: 'useMoved',
+      kind: 'hook',
+      line: 1,
+    };
+    const mergeBaseExports = new Map([
+      ['src/hooks/useMoved.ts', new Set([exportIdentityKey('useMoved', 'hook')])], // old path, merge-base identity
+    ]);
+    const renameMap = new Map([['src/hooks/useMoved2.ts', 'src/hooks/useMoved.ts']]);
+    const [finding] = classifyOrphans([candidate], mergeBaseExports, renameMap);
     expect(finding.isNew).toBe(false);
   });
 
-  it('omits a reachable export entirely — it is not an orphan, new or otherwise', () => {
-    const edges = [
-      { from: 'src/pages/X.tsx', to: exp.file, bindings: new Map([[exp.name, exp.name]]), kind: 'import' as const },
-    ];
-    const addedLines = new Map([[exp.file, new Set([1])]]);
-    expect(classifyOrphans([exp], edges, addedLines)).toEqual([]);
+  it('a genuinely new export in a file that DID exist at the merge base (but without this export) still fails closed', () => {
+    const candidate: DiscoveredExport = {
+      file: 'src/hooks/useMixed.ts',
+      name: 'useNewOne',
+      kind: 'hook',
+      line: 5,
+    };
+    const mergeBaseExports = new Map([
+      ['src/hooks/useMixed.ts', new Set([exportIdentityKey('useExistingOne', 'hook')])],
+    ]);
+    const [finding] = classifyOrphans([candidate], mergeBaseExports);
+    expect(finding.isNew).toBe(true);
   });
 });
 
@@ -404,16 +489,45 @@ describe('buildRepoGraph — end-to-end fixture scenarios', () => {
     expect(isReachable(edges, 'src/components/StorybookOnly.tsx', 'StorybookOnly')).toBe(false);
   });
 
-  it('full pipeline: buildRepoGraph + classifyOrphans separates a new orphan from a pre-existing one', () => {
+  it('full pipeline: buildRepoGraph + findOrphanCandidates + classifyOrphans separates a new orphan from a pre-existing one', () => {
     const files = new Map<string, string>([
       ['src/hooks/useNewOrphan.ts', `export function useNewOrphan() { return 1; }\n`],
       ['src/hooks/useOldOrphan.ts', `export function useOldOrphan() { return 1; }\n`],
     ]);
     const { exports, edges } = buildRepoGraph(files);
-    const addedLines = new Map([['src/hooks/useNewOrphan.ts', new Set([1])]]);
-    const orphans = classifyOrphans(exports, edges, addedLines);
+    const candidates = findOrphanCandidates(exports, edges);
+    // Merge base only knew about useOldOrphan — useNewOrphan is genuinely new.
+    const mergeBaseExports = new Map([
+      ['src/hooks/useOldOrphan.ts', new Set([exportIdentityKey('useOldOrphan', 'hook')])],
+    ]);
+    const orphans = classifyOrphans(candidates, mergeBaseExports);
 
     const byName = Object.fromEntries(orphans.map((o) => [o.name, o.isNew]));
     expect(byName).toEqual({ useNewOrphan: true, useOldOrphan: false });
+  });
+
+  it('full pipeline: a cosmetic reformat of an existing orphan (line shift, same file+identity, no diff-added-lines mechanism involved) stays pre-existing', () => {
+    // Regression fixture for the adversarial-review finding: simulates the
+    // real repro (useDebounce.ts's declaration line shifted by a whitespace-
+    // only edit) end-to-end through buildRepoGraph -> findOrphanCandidates ->
+    // classifyOrphans, with the merge-base version of the SAME file (as it
+    // looked before the cosmetic edit) supplying the identity match.
+    const currentFiles = new Map<string, string>([
+      [
+        'src/hooks/useDebounce.ts',
+        `\nexport function useDebounce(delay: number=300) { return delay; }\n`, // line 2, cosmetic reformat
+      ],
+    ]);
+    const mergeBaseFiles = new Map<string, string>([
+      ['src/hooks/useDebounce.ts', `export function useDebounce(delay: number = 300) { return delay; }\n`], // line 1, pre-reformat
+    ]);
+    const { exports, edges } = buildRepoGraph(currentFiles);
+    const candidates = findOrphanCandidates(exports, edges);
+    const mergeBaseExports = buildMergeBaseExportIndex(mergeBaseFiles);
+    const orphans = classifyOrphans(candidates, mergeBaseExports);
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].line).not.toBe(1); // the line genuinely moved...
+    expect(orphans[0].isNew).toBe(false); // ...but identity resolution keeps it pre-existing
   });
 });
