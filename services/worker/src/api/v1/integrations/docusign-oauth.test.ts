@@ -1451,7 +1451,7 @@ describe('DocuSign OAuth — DS-01 verified-org entitlement gate', () => {
     expect(res.body.code).toBe('verification_lookup_failed');
   });
 
-  it('CALLBACK backstop: a signed state for an org that is no longer VERIFIED is rejected (no connection persisted)', async () => {
+  it('CALLBACK backstop: a signed state for an org that is no longer VERIFIED is rejected (no connection persisted, no rule seeded)', async () => {
     const captured: Record<string, unknown[]> = {};
     const capture = (method: string, value: unknown) => {
       captured[method] = [...(captured[method] ?? []), value];
@@ -1503,5 +1503,243 @@ describe('DocuSign OAuth — DS-01 verified-org entitlement gate', () => {
     expect(callback.headers.location).toContain('docusign_error=org_unverified');
     // No token upsert happened — the connection was not persisted.
     expect(captured.upsert).toBeUndefined();
+    // …and the auto-seed never ran (denied before persist).
+    const tablesQueried = callbackDb.from.mock.calls.map((c) => c[0]);
+    expect(tablesQueried).not.toContain('organization_rules');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// SCRUM-3027 — auto-seed the "DocuSign Completion" rule on org connect.
+//
+// Founder-confirmed default-on behavior: a successful org DocuSign connect
+// auto-seeds the ESIGN_COMPLETED → AUTO_ANCHOR (queue-mode, enabled) rule so
+// contracts flow with zero further clicks. The seed is idempotent + non-stomping
+// (skips when the org already has ANY ESIGN_COMPLETED rule) and never breaks the
+// connect flow (failure isolation). Unit coverage of the seeder lives in
+// `integrations/connectors/docusign-rule-seed.test.ts`; these tests pin the
+// wiring at the OAuth callback seam.
+// ─────────────────────────────────────────────────────────────────────
+describe('DocuSign OAuth — SCRUM-3027 auto-seed DocuSign Completion rule', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** organization_rules chain that distinguishes the idempotency SELECT from the seed INSERT. */
+  function orgRulesChain(opts: {
+    selectResult: QueryResult;
+    insertResult: QueryResult;
+    onInsert?: (row: Record<string, unknown>) => void;
+  }) {
+    const selectBuilder: Record<string, unknown> = {};
+    selectBuilder.eq = vi.fn(() => selectBuilder);
+    selectBuilder.limit = vi.fn(() => Promise.resolve(opts.selectResult));
+    return {
+      select: vi.fn(() => selectBuilder),
+      insert: vi.fn((row: Record<string, unknown>) => {
+        opts.onInsert?.(row);
+        return Promise.resolve(opts.insertResult);
+      }),
+    };
+  }
+
+  function connectFetchImpl() {
+    return vi.fn(async (input: FetchInput, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://account-d.docusign.com/oauth/token') {
+        return new Response(JSON.stringify({
+          access_token: 'access-token-seed',
+          expires_in: 3600,
+          refresh_token: 'refresh-token-seed',
+          scope: 'signature extended',
+          token_type: 'Bearer',
+        }), { status: 200 });
+      }
+      if (url === 'https://account-d.docusign.com/oauth/userinfo') {
+        return new Response(JSON.stringify({
+          sub: 'docusign-sub-1',
+          email: 'admin@example.com',
+          accounts: [{
+            account_id: 'docusign-account-1',
+            account_name: 'Acme Legal',
+            base_uri: 'https://demo.docusign.net',
+            is_default: true,
+          }],
+        }), { status: 200 });
+      }
+      if (url.includes('/connect') && (!init?.method || init.method === 'GET')) {
+        return new Response(JSON.stringify({ configurations: [] }), { status: 200 });
+      }
+      if (url.includes('/connect') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ connectId: '99001' }), { status: 201 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+  }
+
+  function buildSeedApp(db: unknown, fetchImpl: ReturnType<typeof connectFetchImpl>) {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as unknown as { userId: string }).userId = TEST_USER_ID;
+      next();
+    });
+    app.use('/api/v1/integrations', createDocusignOAuthRouter({
+      db: asTestDb(db),
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+        DOCUSIGN_CONNECT_HMAC_SECRET: 'hmac-secret-123',
+        WORKER_PUBLIC_URL: 'https://arkova-worker.example.com',
+        GCP_SECRET_MANAGER_PROJECT_ID: 'test-project',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stateSecret: 'test-state-secret',
+      frontendUrl: 'http://localhost:5173',
+      now: () => new Date('2026-04-24T12:00:00.000Z'),
+      kms: {
+        async encrypt() { return Buffer.from('encrypted-token-payload'); },
+        async decrypt() { return Buffer.from('{}'); },
+      },
+      refreshTokenStore: {
+        async put() { return undefined; },
+        async get() { return null; },
+        async delete() { return undefined; },
+      },
+    }));
+    return app;
+  }
+
+  async function runConnect(app: express.Express) {
+    const start = await request(app)
+      .post('/api/v1/integrations/docusign/oauth/start')
+      .set('host', 'worker.test')
+      .send({ org_id: TEST_ORG_ID, return_to: 'http://localhost:5173/organizations/org-1?tab=settings' });
+    const state = new URL(start.body.authorizationUrl).searchParams.get('state');
+    return request(app)
+      .get('/api/v1/integrations/docusign/oauth/callback')
+      .set('host', 'worker.test')
+      .query({ code: 'docusign-code', state });
+  }
+
+  it('auto-seeds the DocuSign Completion rule (enabled, ESIGN_COMPLETED → AUTO_ANCHOR) when the org has none', async () => {
+    const seededRows: Array<Record<string, unknown>> = [];
+    const integrationEvents: Array<Record<string, unknown>> = [];
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID, verification_status: 'VERIFIED' }, error: null });
+        if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null });
+        if (table === 'integration_events') {
+          return mockQuery({ data: null, error: null }, (m, v) => {
+            if (m === 'insert') integrationEvents.push(v as Record<string, unknown>);
+          });
+        }
+        if (table === 'organization_rules') {
+          return orgRulesChain({
+            selectResult: { data: [], error: null },
+            insertResult: { data: { id: 'seeded-rule-1' }, error: null },
+            onInsert: (row) => seededRows.push(row),
+          });
+        }
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+
+    const callback = await runConnect(buildSeedApp(db, connectFetchImpl()));
+
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toContain('docusign=connected');
+
+    // Fire-and-forget seed — wait for it to settle.
+    await vi.waitFor(() => expect(seededRows).toHaveLength(1), { timeout: 2000 });
+    const row = seededRows[0];
+    expect(row.org_id).toBe(TEST_ORG_ID);
+    expect(row.trigger_type).toBe('ESIGN_COMPLETED');
+    expect(row.action_type).toBe('AUTO_ANCHOR');
+    expect(row.trigger_config).toEqual({ vendors: ['docusign'] });
+    expect(row.action_config).toEqual({ tag: 'docusign' });
+    expect(row.enabled).toBe(true);
+    expect(row.schema_version).toBe(1);
+    expect(row.created_by_user_id).toBe(TEST_USER_ID);
+
+    await vi.waitFor(() => {
+      expect(integrationEvents.some((e) => e.event_type === 'docusign_completion_rule_seeded')).toBe(true);
+    }, { timeout: 2000 });
+  });
+
+  it('seeds NOTHING on re-connect when the org already has an ESIGN_COMPLETED rule (non-stomping)', async () => {
+    const seededRows: Array<Record<string, unknown>> = [];
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID, verification_status: 'VERIFIED' }, error: null });
+        if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null });
+        if (table === 'integration_events') return mockQuery({ data: null, error: null });
+        if (table === 'organization_rules') {
+          // Admin already chose an ESIGN_COMPLETED rule (any action) — must not stomp it.
+          return orgRulesChain({
+            selectResult: { data: [{ id: 'admin-existing-rule' }], error: null },
+            insertResult: { data: null, error: null },
+            onInsert: (row) => seededRows.push(row),
+          });
+        }
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+
+    const callback = await runConnect(buildSeedApp(db, connectFetchImpl()));
+
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toContain('docusign=connected');
+
+    // Let the fire-and-forget seed settle, then prove no insert occurred.
+    await vi.waitFor(() => {
+      const queried = (db.from.mock.calls.map((c) => c[0]) as string[]);
+      expect(queried).toContain('organization_rules');
+    }, { timeout: 2000 });
+    expect(seededRows).toHaveLength(0);
+  });
+
+  it('connect still succeeds (failure isolation) when the rule seed insert errors', async () => {
+    const integrationEvents: Array<Record<string, unknown>> = [];
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID, verification_status: 'VERIFIED' }, error: null });
+        if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null });
+        if (table === 'integration_events') {
+          return mockQuery({ data: null, error: null }, (m, v) => {
+            if (m === 'insert') integrationEvents.push(v as Record<string, unknown>);
+          });
+        }
+        if (table === 'organization_rules') {
+          return orgRulesChain({
+            selectResult: { data: [], error: null },
+            insertResult: { data: null, error: { message: 'insert boom' } },
+          });
+        }
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+
+    const callback = await runConnect(buildSeedApp(db, connectFetchImpl()));
+
+    // Connect is unaffected by the seed failure.
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toContain('docusign=connected');
+
+    // The failure is surfaced (loud log inside the seeder + a warning event).
+    await vi.waitFor(() => {
+      expect(integrationEvents.some((e) => e.event_type === 'docusign_completion_rule_seed_failed')).toBe(true);
+    }, { timeout: 2000 });
+    await vi.waitFor(() => {
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: TEST_ORG_ID }),
+        expect.stringContaining('DocuSign Completion rule auto-seed'),
+      );
+    }, { timeout: 2000 });
   });
 });

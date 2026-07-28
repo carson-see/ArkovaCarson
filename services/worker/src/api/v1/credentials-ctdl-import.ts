@@ -63,9 +63,9 @@ import { getCorrelationId } from '../../utils/correlationId.js';
 import { logger } from '../../utils/logger.js';
 
 /** Response body byte cap enforced BEFORE parsing (belt to the 10k-node cap). */
-const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 /** Default wall-clock deadline for the whole outbound call. */
-const DEFAULT_REGISTRY_TIMEOUT_MS = 8_000;
+export const DEFAULT_REGISTRY_TIMEOUT_MS = 8_000;
 
 export interface CredentialsCtdlImportRouterOptions {
   /** Injected SSRF-safe fetch deps (resolve + pinned dispatch). Defaults to prod. */
@@ -76,15 +76,19 @@ export interface CredentialsCtdlImportRouterOptions {
   registryTimeoutMs?: number;
 }
 
-/** Timeout sentinel so the handler can map an aborted fetch to 504 distinctly. */
-class RegistryTimeoutError extends Error {
+/**
+ * Timeout sentinel so the handler can map an aborted fetch to 504 distinctly.
+ * Exported (L3-A6) so the registry-anchor route reuses the SAME fetch/timeout
+ * error identity instead of a second, near-duplicate class.
+ */
+export class RegistryTimeoutError extends Error {
   constructor() {
     super('CE registry fetch exceeded its deadline');
     this.name = 'RegistryTimeoutError';
   }
 }
 
-type ImportOutcome =
+export type ImportOutcome =
   | 'invalid_ctid'
   | 'imported'
   | 'not_found'
@@ -154,13 +158,17 @@ function errMessage(error: unknown): string {
   return 'unknown error';
 }
 
-/** Build the registry graph URL from the SERVER-side base only. */
-function buildRegistryGraphUrl(ctid: string): string {
+/**
+ * Build the registry graph URL from the SERVER-side base only. Exported
+ * (L3-A6) so the registry-anchor route builds the identical URL shape without
+ * a second implementation of the base-URL trim + path join.
+ */
+export function buildRegistryGraphUrl(ctid: string): string {
   const base = DEFAULT_REGISTRY_BASE_URL.replace(/\/+$/, '');
   return `${base}/graph/${ctid}`;
 }
 
-interface RegistryFetchResult {
+export interface RegistryFetchResult {
   status: number;
   text: string;
 }
@@ -169,8 +177,12 @@ interface RegistryFetchResult {
  * Fetch the registry envelope with full SSRF protection and a hard wall-clock
  * deadline. `maxRedirects: 0` means any 3xx is refused (never chased to another
  * host). The body byte cap is enforced by safeFetch before we decode it.
+ *
+ * Exported (L3-A6): this IS the §1.6A-compliant safeFetch → discard path the
+ * registry-anchor route reuses verbatim — a second outbound-fetch
+ * implementation is exactly what §1.6A hardening exists to avoid duplicating.
  */
-async function fetchRegistryGraph(
+export async function fetchRegistryGraph(
   url: string,
   deps: SafeFetchDeps,
   timeoutMs: number,
@@ -203,8 +215,14 @@ function sendError(
   res.status(args.httpStatus).json({ error: errorCode });
 }
 
-/** Map a SafeFetchError code to an HTTP status + stable error code. */
-function mapSafeFetchError(error: SafeFetchError): { status: number; code: string; outcome: ImportOutcome } {
+/**
+ * Map a SafeFetchError code to an HTTP status + stable error code. Exported
+ * (L3-A6) so the registry-anchor route maps the SAME safeFetch failure modes
+ * to the SAME status/code pairs — no drift between the two consumers of
+ * {@link fetchRegistryGraph}. `ImportOutcome` is this module's audit-outcome
+ * union; the registry-anchor route ignores the `outcome` field it doesn't use.
+ */
+export function mapSafeFetchError(error: SafeFetchError): { status: number; code: string; outcome: ImportOutcome } {
   switch (error.code) {
     case 'response_too_large':
       return { status: 413, code: 'registry_record_too_large', outcome: 'too_large' };

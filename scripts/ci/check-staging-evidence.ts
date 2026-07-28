@@ -2151,6 +2151,12 @@ const STAGING_TOOLING_ALLOW = [
   // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.
   /^scripts\/ci-supabase-start\.sh$/,
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
+  // SCRUM-3026: sanctioned re-trigger helper — mints a fresh PR event
+  // (tree-identical empty commit + push, optional PR-body head-SHA bump via
+  // `gh pr edit`) so event-driven CI gates re-evaluate CURRENT PR state
+  // instead of a stale `gh run rerun` replay of the frozen event payload.
+  // Runs only as an operator/agent CLI; never ships to prod runtime.
+  /^scripts\/ci\/mint-fresh-event(\.test)?\.sh$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
   // SCRUM-2897: evidence-identity gate — a pure body/head-SHA identity checker
@@ -2188,6 +2194,11 @@ const STAGING_TOOLING_ALLOW = [
   // CI gate that parses vercel.json + scans on-device runtime sources. Runs only
   // in CI, never ships to prod runtime, so it is T0 tooling.
   /^scripts\/ci\/check-csp-runtime-deps(\.test)?\.ts$/,
+  // SCRUM-3032/3033/3034 (CTO ruling R14, 2026-07-28 Wave 0 / G3): orphaned
+  // hook/component export lint. Static-analysis CI gate (TypeScript AST scan
+  // over src/), runs only in CI; never ships to prod runtime → T0 tooling,
+  // same class as the other scripts/ci/check-*.ts gates above.
+  /^scripts\/ci\/check-orphaned-exports(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   // SCRUM-2977: anti-hollow-soak pre-clock guard set. A pure guard module + CLI
   // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
@@ -2295,6 +2306,19 @@ interface CheckOptions {
    * Missing/incomplete data or any importer voids the offline-T0 carve-out.
    */
   s33Lane1ImportScan?: S33Lane1ImportScan;
+  /**
+   * Live-confirmed state of deploy-worker.yml's `deploy-gate` job
+   * (`vars.DEPLOY_WORKER_PAUSED === 'true'` at the moment THIS run
+   * executed). Populated in {@link main} from `process.env
+   * .DEPLOY_WORKER_PAUSED`, which `.github/workflows/staging-evidence.yml`
+   * threads through from the live `vars` context — not from anything a PR
+   * author controls. `undefined`/`false` means "not positively confirmed
+   * paused" and must be treated as unpaused for gating purposes (fail
+   * closed on ambiguity). This is the hard precondition for
+   * {@link deferredConsolidatedSoakCoverage} (CTO ruling 2026-07-28,
+   * SCRUM-2980) — see that function for why.
+   */
+  deployWorkerPaused?: boolean;
 }
 
 function addErrors(result: CheckResult, errors: string[]): void {
@@ -2641,7 +2665,15 @@ function parseRcManifest(path: string, raw: string, errors: string[]): Record<st
   return parsed;
 }
 
-function validateRcManifestMetadata(
+/**
+ * Fields common to BOTH the normal (approved) and deferred-consolidated-soak
+ * RC-manifest evidence paths: schema version, core identity/provenance
+ * fields, and current-base coverage. Approval semantics differ between the
+ * two paths (approved vs the literal "pending") and are validated
+ * separately by each caller — this helper deliberately does not touch
+ * `approval_status`/`approval_actor`/`approval_time`.
+ */
+function requireRcCoreIdentityFields(
   manifest: Record<string, unknown>,
   opts: CheckOptions,
   errors: string[],
@@ -2655,17 +2687,26 @@ function validateRcManifestMetadata(
   requireRcTimestamp(errors, manifest, 'created_at', 'created_at');
   requireRcString(errors, manifest, 'created_by', 'created_by');
   requireRcString(errors, manifest, 'release_owner', 'release_owner');
+  requireRcString(errors, manifest, 'train_launch_sha', 'train_launch_sha');
+
+  if (!rcCurrentBaseCovered(manifest, opts.baseSha)) {
+    errors.push('RC manifest does not cover the current base SHA; update the manifest or re-check main drift.');
+  }
+}
+
+function validateRcManifestMetadata(
+  manifest: Record<string, unknown>,
+  opts: CheckOptions,
+  errors: string[],
+): void {
+  requireRcCoreIdentityFields(manifest, opts, errors);
+
   const approvalStatus = requireRcString(errors, manifest, 'approval_status', 'approval_status');
   if (approvalStatus !== null && approvalStatus.trim().toLowerCase() !== 'approved') {
     errors.push('RC manifest approval_status must be approved.');
   }
   requireRcString(errors, manifest, 'approval_actor', 'approval_actor');
   requireRcTimestamp(errors, manifest, 'approval_time', 'approval_time');
-  requireRcString(errors, manifest, 'train_launch_sha', 'train_launch_sha');
-
-  if (!rcCurrentBaseCovered(manifest, opts.baseSha)) {
-    errors.push('RC manifest does not cover the current base SHA; update the manifest or re-check main drift.');
-  }
 }
 
 function validateCoveredRcPr(
@@ -2788,6 +2829,130 @@ function validateRcMigrationPlan(
   requireRcString(errors, migrationPlan, 'reapply_proof', 'migration_plan.reapply_proof');
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Deferred-consolidated-soak mode (CTO ruling 2026-07-28, SCRUM-2980)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The 2026-08 launch wave deliberately merges T2/T3 worker + migration PRs
+// BEFORE their 72h consolidated soak matures (docs/release/
+// wave-merge-choreography-2026-08.md), then soaks the INTEGRATED head on
+// main, then un-pauses a single deploy. That sequencing is only sound
+// because deploy-worker.yml's `deploy-gate` job (vars.DEPLOY_WORKER_PAUSED)
+// makes "merge" and "reach prod" two separable events — see
+// .github/workflows/agents.md "Deploy-worker pause gate" for the deploy
+// side of this control.
+//
+// This block is the merge-gate side of the same trade: it lets a PR pass
+// the Staging Soak Evidence Gate WITHOUT real soak evidence, ONLY when BOTH
+// of the following are true, and it is designed so NEITHER can be forged by
+// a PR author acting alone:
+//   1. The PR is explicitly listed in `included_prs[]` of an RC manifest
+//      JSON file (its own PR, its own review) whose top-level `soak_mode`
+//      field is the exact literal "deferred_consolidated_soak" — never a
+//      label, never a PR-body string, never anything the PR under test
+//      controls by itself.
+//   2. `vars.DEPLOY_WORKER_PAUSED` is POSITIVELY confirmed engaged for the
+//      CURRENT run (opts.deployWorkerPaused === true, threaded from the
+//      live `vars` context by staging-evidence.yml — see {@link
+//      CheckOptions.deployWorkerPaused}). Missing/false/anything else is
+//      "not confirmed" and fails closed — this function never assumes
+//      paused-by-default.
+//
+// The check summary MUST always say plainly that evidence is DEFERRED and
+// NOT satisfied when this path is taken — a passing check here is never
+// allowed to read as "evidence present." See the ⚠️ note emitted below.
+const DEFERRED_CONSOLIDATED_SOAK_MODE = 'deferred_consolidated_soak';
+
+function isDeferredConsolidatedSoakManifest(manifest: Record<string, unknown>): boolean {
+  return stringAt(manifest, 'soak_mode') === DEFERRED_CONSOLIDATED_SOAK_MODE;
+}
+
+/**
+ * Metadata checks for deferred mode. Deliberately narrower than {@link
+ * validateRcManifestMetadata}: it does NOT require `approval_actor` /
+ * `approval_time` (legitimately blank while pending) and it inverts the
+ * approval_status assertion — deferred mode requires the literal "pending",
+ * never "approved" (that combination is a contradiction: "approved" claims
+ * real evidence exists, which deferred mode by definition does not have).
+ */
+function deferredConsolidatedSoakMetadataErrors(
+  manifest: Record<string, unknown>,
+  opts: CheckOptions,
+  errors: string[],
+): void {
+  requireRcCoreIdentityFields(manifest, opts, errors);
+
+  // Deliberately NOT requireRcString() here: "pending" is a legitimate,
+  // REQUIRED exact value in deferred mode, but requireRcString()/isFilledValue()
+  // treat the bare word "pending" as an incomplete-placeholder value (it's in
+  // INCOMPLETE_VALUE_PATTERNS, for the unrelated "someone forgot to fill this
+  // in" case elsewhere in this file) and would reject it before the actual
+  // comparison below ever ran.
+  const approvalStatusRaw = stringAt(manifest, 'approval_status');
+  if (approvalStatusRaw === null || approvalStatusRaw.trim().toLowerCase() !== 'pending') {
+    errors.push(
+      'RC manifest declares soak_mode="deferred_consolidated_soak" but approval_status is not '
+      + 'the literal string "pending". Deferred mode is, by definition, evidence that has not yet '
+      + 'been produced — "approved" while deferred is active is a contradiction the gate rejects. '
+      + 'Once the real soak completes: remove soak_mode, fill in real environment/soak/'
+      + 'migration_plan evidence, THEN flip approval_status to "approved" through the normal '
+      + '(non-deferred) path.',
+    );
+  }
+}
+
+/** The hard precondition: fails closed unless positively confirmed. */
+function deferredConsolidatedSoakDeployGateErrors(opts: CheckOptions): string[] {
+  if (opts.deployWorkerPaused === true) return [];
+  return [
+    'RC manifest declares soak_mode="deferred_consolidated_soak", but this run could not '
+    + 'positively confirm the deploy-worker.yml deploy gate (vars.DEPLOY_WORKER_PAUSED) is '
+    + 'engaged. Deferred-consolidated-soak evidence is coupled to the deploy pause BY DESIGN — '
+    + 'merging without real soak evidence is only safe when the merge cannot also trigger a prod '
+    + 'deploy. Set the DEPLOY_WORKER_PAUSED repository variable to the literal string "true" '
+    + 'before this mode can activate, or provide real staging soak evidence instead.',
+  ];
+}
+
+function deferredConsolidatedSoakCoverage(
+  declared: Tier,
+  required: { tier: Tier; reason: string },
+  files: string[],
+  opts: CheckOptions,
+  parsed: Record<string, unknown>,
+  path: string,
+): { errors: string[]; notes: string[] } {
+  const errors: string[] = [];
+  const notes: string[] = [];
+
+  // Hard precondition FIRST — fail closed before evaluating anything else
+  // in the manifest if the deploy gate cannot be positively confirmed.
+  errors.push(...deferredConsolidatedSoakDeployGateErrors(opts));
+  if (errors.length > 0) return { errors, notes };
+
+  deferredConsolidatedSoakMetadataErrors(parsed, opts, errors);
+
+  const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
+  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors);
+  if (coveredPr === null) return { errors, notes };
+
+  if (errors.length === 0) {
+    const rcId = stringAt(parsed, 'rc_id') ?? path;
+    notes.push(
+      `⚠️  DEFERRED-CONSOLIDATED-SOAK MODE (${rcId}): staging soak evidence is DEFERRED and is `
+      + 'NOT satisfied for this PR. This check passes ONLY because (a) the PR is explicitly '
+      + 'listed in a repo-reviewed RC manifest with soak_mode="deferred_consolidated_soak", and '
+      + '(b) vars.DEPLOY_WORKER_PAUSED was positively confirmed engaged on this run, so merging '
+      + 'this PR cannot trigger a prod deploy. Real evidence is still owed: the 72h consolidated '
+      + 'soak runs against the integrated head AFTER this wave merges, per '
+      + 'docs/release/72h-soak-runbook-2026-08.md. approval_status on the manifest remains '
+      + '"pending" until that soak completes and the manifest returns to the normal '
+      + '(non-deferred) evidence path.',
+    );
+  }
+  return { errors, notes };
+}
+
 function rcManifestCoverage(
   body: string,
   declared: Tier,
@@ -2819,6 +2984,20 @@ function rcManifestCoverage(
 
   const parsed = parseRcManifest(path, raw, errors);
   if (parsed === null) return { errors, notes };
+
+  const soakModeRaw = stringAt(parsed, 'soak_mode');
+  if (soakModeRaw !== null && soakModeRaw !== DEFERRED_CONSOLIDATED_SOAK_MODE) {
+    errors.push(
+      `RC manifest soak_mode "${soakModeRaw}" is not a recognized value. The only supported `
+      + `value is "${DEFERRED_CONSOLIDATED_SOAK_MODE}"; omit the field entirely to use the `
+      + 'normal (non-deferred) evidence path.',
+    );
+    return { errors, notes };
+  }
+  if (isDeferredConsolidatedSoakManifest(parsed)) {
+    return deferredConsolidatedSoakCoverage(declared, required, files, opts, parsed, path);
+  }
+
   validateRcManifestMetadata(parsed, opts, errors);
   const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
   const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors);
@@ -2924,6 +3103,10 @@ function main(): void {
     prNumber,
     diffProvider: gitFileDiffProvider(baseRef),
     s33Lane1ImportScan: gitS33Lane1ImportScan(),
+    // Live-threaded from `vars.DEPLOY_WORKER_PAUSED` by
+    // .github/workflows/staging-evidence.yml — see CheckOptions.deployWorkerPaused
+    // for why this must be a literal 'true' string match, not truthiness.
+    deployWorkerPaused: process.env.DEPLOY_WORKER_PAUSED === 'true',
   });
 
   for (const note of result.notes) console.log(`ℹ️  ${note}`);

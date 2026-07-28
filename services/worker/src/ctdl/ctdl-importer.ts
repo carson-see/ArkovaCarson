@@ -207,6 +207,37 @@ export interface ParseCtdlOptions {
    * **Default `false`** so the existing per-node surface is unchanged.
    */
   credentialNodesOnly?: boolean;
+  /**
+   * L3-A6 CE Noncredit POC opt-in (2026-07-28). When `true` (and only in
+   * combination with `credentialNodesOnly: true`), `parseCtdlCredentials` ALSO
+   * admits CTDL noncredit-PROGRAM classes (see
+   * {@link CTDL_NONCREDIT_PROGRAM_CLASSES} / {@link isCtdlNoncreditProgramClass})
+   * — `ceterms:LearningProgram`, `ceterms:LearningOpportunityProfile`,
+   * `ceterms:LearningOpportunity`, `ceterms:Course`.
+   *
+   * WHY THIS EXISTS: Credential Engine's Noncredit Data Taxonomy 3.0 → CTDL
+   * benchmark model (published 2026-07-16,
+   * guidance.credentialengine.org/noncredit-data-taxonomy/) maps noncredit
+   * program records onto `ceterms:LearningProgram` (a documented CTDL subclass
+   * of `ceterms:LearningOpportunityProfile`) — NOT onto the `CTDL_CREDENTIAL_CLASSES`
+   * enumeration (Certificate/License/Degree/Badge/…). Verified against the real
+   * importer: with `credentialNodesOnly: true` alone, a `ceterms:LearningProgram`
+   * node is silently dropped — it fails BOTH the enumeration AND the
+   * credential-shaped fallback pattern (`CREDENTIAL_CLASS_FALLBACK` only matches
+   * `Certificat|Licen|Degree|Badge|Diploma|Credential` substrings, none of which
+   * `LearningProgram` contains), so noncredit is treated as non-credential junk
+   * by default — exactly the class of record this POC exists to anchor. Many
+   * noncredit offerings never award a formal credential at all (that is the
+   * defining trait of "noncredit"), so gating solely on the credential-class
+   * enumeration would make noncredit records unimportable by construction.
+   *
+   * **Default `false`** — additive, byte-for-byte unchanged default behavior for
+   * every existing caller (SCRUM-2913's credential-only surface, `ctdl-importer.
+   * real-fixtures.test.ts`, the fuzz suite). Never applies via the fallback veto
+   * — noncredit classes are explicitly enumerated, mirroring how
+   * `CTDL_CREDENTIAL_CLASSES` bypasses `NON_CREDENTIAL_CLASS_VETO`.
+   */
+  includeNoncreditProgramClasses?: boolean;
 }
 
 /** Prod CE Registry base — the default when no `registryBaseUrl` is injected. */
@@ -736,16 +767,71 @@ export function isCtdlCredentialClass(type: string | null): boolean {
   return CREDENTIAL_CLASS_FALLBACK.test(clean);
 }
 
+// -----------------------------------------------------------------------------
+// CTDL noncredit-PROGRAM class filter (L3-A6 — CE Noncredit Data Taxonomy 3.0
+// POC, 2026-07-28). See `ParseCtdlOptions.includeNoncreditProgramClasses` for
+// the full "why" — CE's NDT-3.0 → CTDL benchmark model maps noncredit program
+// records onto ceterms:LearningProgram (subclass of ceterms:LearningOpportunity
+// Profile), none of which pass CTDL_CREDENTIAL_CLASSES or its fallback pattern.
+// -----------------------------------------------------------------------------
+
+/**
+ * Enumerated CTDL noncredit-PROGRAM classes — the record shapes CE's Noncredit
+ * Data Taxonomy 3.0 benchmark model actually publishes. Sourced from the CTDL
+ * types list (credreg.net/page/typeslist) and
+ * guidance.credentialengine.org/noncredit-data-taxonomy/:
+ *   - `ceterms:LearningProgram` — "Set of learning opportunities that leads to
+ *     an outcome, usually a credential like a degree or certificate" — the
+ *     primary class for a noncredit program record.
+ *   - `ceterms:LearningOpportunityProfile` — the broader class LearningProgram
+ *     specializes; some noncredit publishers emit records typed directly at
+ *     this level rather than the narrower LearningProgram subclass.
+ *   - `ceterms:LearningOpportunity` — CTDL's general opportunity class,
+ *     occasionally used interchangeably with LearningOpportunityProfile in
+ *     publisher data.
+ *   - `ceterms:Course` — course-level noncredit offerings (a documented CTDL
+ *     sibling subclass of LearningOpportunityProfile, alongside LearningProgram).
+ * Explicitly enumerated (not pattern-matched) because every one of these class
+ * names ends in a suffix (`Profile`/`LearningOpportunity`) that
+ * `NON_CREDENTIAL_CLASS_VETO` deliberately rejects for the credential-class
+ * fallback — the veto must never gate this explicit, intentional admission.
+ */
+export const CTDL_NONCREDIT_PROGRAM_CLASSES: ReadonlySet<string> = new Set([
+  'ceterms:LearningProgram',
+  'ceterms:LearningOpportunityProfile',
+  'ceterms:LearningOpportunity',
+  'ceterms:Course',
+]);
+
+/** True when `type` names one of {@link CTDL_NONCREDIT_PROGRAM_CLASSES} verbatim. */
+export function isCtdlNoncreditProgramClass(type: string | null): boolean {
+  if (!type) return false;
+  const clean = type.trim();
+  if (clean.length === 0) return false;
+  return CTDL_NONCREDIT_PROGRAM_CLASSES.has(clean);
+}
+
+/**
+ * True when `type` is admitted by the current parse options: a CTDL credential
+ * class always; a CTDL noncredit-program class only when
+ * `includeNoncreditProgramClasses` is set.
+ */
+function isAdmittedClass(type: string | null, options: ParseCtdlOptions): boolean {
+  if (isCtdlCredentialClass(type)) return true;
+  return options.includeNoncreditProgramClasses === true && isCtdlNoncreditProgramClass(type);
+}
+
 /**
  * True when a node's raw `@type` value (string OR JSON-LD array) carries ANY
- * credential class. Array scanning is bounded by {@link MAX_TYPE_ENTRIES}.
+ * admitted class (credential, or — opt-in — noncredit program). Array scanning
+ * is bounded by {@link MAX_TYPE_ENTRIES}.
  */
-function hasCredentialClass(typeValue: unknown): boolean {
-  if (typeof typeValue === 'string') return isCtdlCredentialClass(typeValue);
+function hasCredentialClass(typeValue: unknown, options: ParseCtdlOptions): boolean {
+  if (typeof typeValue === 'string') return isAdmittedClass(typeValue, options);
   if (!Array.isArray(typeValue)) return false;
   return typeValue
     .slice(0, MAX_TYPE_ENTRIES)
-    .some((entry) => typeof entry === 'string' && isCtdlCredentialClass(entry));
+    .some((entry) => typeof entry === 'string' && isAdmittedClass(entry, options));
 }
 
 /**
@@ -760,13 +846,13 @@ function hasCredentialClass(typeValue: unknown): boolean {
  * the resolution stays total). Scoped to the credential-filtered path only —
  * the default unfiltered surface keeps `resolvePrimaryType` behavior.
  */
-function resolveCredentialType(typeValue: unknown): string | null {
+function resolveCredentialType(typeValue: unknown, options: ParseCtdlOptions): string | null {
   if (typeof typeValue === 'string') {
-    return isCtdlCredentialClass(typeValue) ? cleanString(typeValue) : null;
+    return isAdmittedClass(typeValue, options) ? cleanString(typeValue) : null;
   }
   if (!Array.isArray(typeValue)) return null;
   for (const entry of typeValue.slice(0, MAX_TYPE_ENTRIES)) {
-    if (typeof entry === 'string' && isCtdlCredentialClass(entry)) {
+    if (typeof entry === 'string' && isAdmittedClass(entry, options)) {
       return cleanString(entry);
     }
   }
@@ -828,17 +914,18 @@ export function parseCtdlCredentials(
     if (id && !nodesById.has(id)) nodesById.set(id, node);
   }
 
-  // Pass 2 — parse credential-class nodes only.
+  // Pass 2 — parse admitted-class nodes only (credential classes always;
+  // noncredit-program classes when `includeNoncreditProgramClasses` is set).
   const records: ImportedCtdlRecord[] = [];
   for (const node of nodes) {
     if (!isRecord(node)) continue;
-    if (!hasCredentialClass(node['@type'])) continue;
+    if (!hasCredentialClass(node['@type'], options)) continue;
     let record = parseCtdlNode(node, options);
-    // Mixed @type arrays: the record must be LABELED with the credential
-    // class that admitted it, never a co-listed non-credential class.
-    const credentialType = resolveCredentialType(node['@type']);
-    if (credentialType !== null && credentialType !== record.type) {
-      record = ImportedCtdlRecordSchema.parse({ ...record, type: credentialType });
+    // Mixed @type arrays: the record must be LABELED with the admitted class
+    // that let it through, never a co-listed non-admitted class.
+    const admittedType = resolveCredentialType(node['@type'], options);
+    if (admittedType !== null && admittedType !== record.type) {
+      record = ImportedCtdlRecordSchema.parse({ ...record, type: admittedType });
     }
     records.push(enrichIssuerFromGraph(record, nodesById));
   }

@@ -83,3 +83,13 @@ mv "$tmp_file" "$state_file"
 chmod 600 "$state_file" 2>/dev/null || true
 
 echo "CLAUDE.md acknowledged ${claude_hash} at ${ack_time}"
+
+# Session-start guard for the 2026-07-28 silent-merge-corruption class; the
+# failure is described in full in check-git-merge-config.sh. It runs HERE
+# because the offending setting lives in uncommitted .git/config, which CI
+# cannot see — only a per-checkout check catches it, and it has to fire before
+# the session's first merge.
+merge_config_check="${repo_root}/scripts/agent/check-git-merge-config.sh"
+if [[ -x "$merge_config_check" ]]; then
+  "$merge_config_check" || exit 1
+fi

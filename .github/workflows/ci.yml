@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@27b0417c16317ca9a472a9a8092acce143b49c55 # v3.95.9
+        uses: trufflesecurity/trufflehog@6f3c981e7b77f235fd2702dd74af25fc4b72bf11 # v3.96.0
         with:
           extra_args: --only-verified
 
@@ -61,6 +61,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # ciContext.fetchLiveLabels() reads labels from the API so a label-gated
+      # override still works on a plain re-run, where the frozen pull_request
+      # payload would not carry it (PR #1336). Degrades to env-only without this.
+      pull-requests: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -143,6 +147,20 @@ jobs:
       # (CLAUDE.md §6); each block must carry a (PR #NNNN) discriminator.
       - name: Block migration agents.md collisions (S0-E4)
         run: node_modules/.bin/tsx scripts/ci/check-agents-md-migration-collision.ts
+
+      # Backstop for the 2026-07-28 union-driver incident: a local
+      # `merge.union.driver = true` shadowed git's built-in union algorithm with
+      # a no-op, so merges silently kept "ours" and discarded "theirs" (86 lines
+      # lost off main across 19 commits). agents.md is append-only, so a line in
+      # the merge base but not at head is content this branch deletes from main
+      # on merge. Cause-agnostic by design. Needs the job's `fetch-depth: 0` to
+      # resolve merge-base; on push events (no PR payload) the script skips.
+      - name: Block dropped agents.md content (append-only)
+        env:
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node_modules/.bin/tsx scripts/ci/check-agents-md-append-only.ts
 
       - name: Require justification for new anchors indexes (SCRUM-1286)
         run: npm run ci:anchor-index-justification
@@ -328,10 +346,25 @@ jobs:
           else
             MSGS=$(git log --format=%B -1)
           fi
+          # The commit messages framed below are fully PR-author-controlled
+          # (any commit message in the PR). A FIXED heredoc delimiter here
+          # would let a PR author put that exact string on its own line inside
+          # a commit message to terminate the heredoc early, after which the
+          # rest of the message is parsed as literal `key=value` lines appended
+          # to $GITHUB_OUTPUT — including a forged `msgs=` line that overrides
+          # the real one, since GitHub Actions resolves a duplicate output name
+          # to its LAST occurrence. `msgs` feeds PR_COMMITS_MSGS into the
+          # HANDOFF.md verification lint and the Confluence coverage gate
+          # below, so a forgery would let a PR author steer what those
+          # governance gates believe the PR's commit history says. Per GitHub's
+          # own guidance, use a per-run random delimiter the author cannot
+          # predict or embed in advance. Same class as the staging-evidence.yml
+          # PR-body heredoc fixed in PR #1724.
+          MSGS_DELIM="ghadelim_$(openssl rand -hex 16)"
           {
-            echo 'msgs<<EOF'
+            echo "msgs<<${MSGS_DELIM}"
             echo "$MSGS"
-            echo 'EOF'
+            echo "${MSGS_DELIM}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Coverage monotonic enforcement
@@ -389,6 +422,38 @@ jobs:
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           FAIL_ON_MISSING_CONFLUENCE: 'false'
         run: node_modules/.bin/tsx scripts/ci/check-confluence-coverage.ts
+
+  # Orphaned-export lint (SCRUM-3032/3033/3034, CTO ruling R14, 2026-07-28).
+  # Fails CLOSED only on exported hooks/components NEWLY introduced in this PR
+  # with zero non-test/non-storybook importers (the folders #1657 / CTDL #1603
+  # pattern); pre-existing orphans print as a WARN-only inventory. The script
+  # itself enforces the new-vs-preexisting split, so continue-on-error stays
+  # false — a NEW orphan must block the PR.
+  orphaned-export-lint:
+    name: Orphaned Export Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Orphaned hook/component export gate
+        env:
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node_modules/.bin/tsx scripts/ci/check-orphaned-exports.ts
 
   # TDD enforcement — production code changes must include test changes.
   # Actual enforcement runs only on pull_request events: TDD is a gate for
@@ -598,15 +663,47 @@ jobs:
           echo "service_role_key=$SUPABASE_SERVICE_ROLE_KEY" >> "$GITHUB_OUTPUT"
 
       - name: Run database reset
+        id: db-reset
         run: supabase db reset
 
+      # CI-worker-test-skip fix — this step (root frontend/scripts suite) and
+      # everything below it through "Run worker tests with coverage" are
+      # INDEPENDENT verification suites that happen to share one job for
+      # setup-cost reasons (one Supabase stack, one Node toolchain). Before
+      # this fix, every step below had the GitHub Actions default
+      # `if: success()`, which evaluates over ALL prior steps in the job —
+      # not just the immediately preceding one. A failure here (even an
+      # unrelated flaky root-suite timeout) silently SKIPPED "Run RLS
+      # tests", "Install worker dependencies", the zk circuit build, and
+      # "Run worker tests with coverage" for the rest of the job, with no
+      # if: always() to catch it. Confirmed on PR #1727
+      # (gh run view --job 90310187553): skipped steps show `-`, and the
+      # worker suite never ran. Net effect: a PR could look CI-covered while
+      # the entire worker suite silently never executed.
+      #
+      # Fix: give every step from here on `if: always()` so each
+      # independently-meaningful check always attempts to run regardless of
+      # what failed earlier in the job, PLUS an explicit "Aggregate test
+      # suite results" gate at the end that fails the job if ANY of them
+      # reported failure/cancelled. The job already fails automatically the
+      # moment any non-continue-on-error step fails (GitHub's default job
+      # conclusion logic), so the aggregate step is defense-in-depth against
+      # a future regression (e.g. someone adding continue-on-error to one of
+      # these steps without realizing it would silently defeat that
+      # propagation) — not the sole mechanism. This intentionally stays a
+      # single job (not split into parallel jobs) to avoid touching
+      # .mergify.yml's `check-success = Tests` conditions (5 occurrences)
+      # while 29 PRs are in flight against this file.
       - name: Run tests with coverage
+        id: root-coverage
         run: npm run test:coverage
 
       - name: Run RLS tests
         # SCRUM-1301: 8 assertion failures resolved — migration 0265 restores
         # get_flag + chain/legal_hold protections; test assertions updated for
         # 0174 (SECURED not ACTIVE) and 0180 (unified error message).
+        id: rls-tests
+        if: always() && steps.supabase-keys.outcome == 'success' && steps.db-reset.outcome == 'success'
         run: npm run test:rls
         env:
           SUPABASE_URL: ${{ steps.supabase-keys.outputs.url }}
@@ -615,6 +712,8 @@ jobs:
           RLS_TEST_PASSWORD: Arkova2026!
 
       - name: Install worker dependencies
+        id: worker-deps
+        if: always()
         working-directory: services/worker
         run: |
           for attempt in 1 2 3; do
@@ -638,13 +737,15 @@ jobs:
       # ~30s circom compile + plonk setup; cache miss rebuilds from source.
       - name: Cache zk circuit artifacts
         id: cache-zk-artifacts
+        if: always() && steps.worker-deps.outcome == 'success'
         uses: actions/cache@v6.1.0
         with:
           path: services/worker/circuits/artifacts
           key: zk-artifacts-${{ runner.os }}-circom2.1.9-${{ hashFiles('services/worker/circuits/extraction-proof.circom', 'services/worker/circuits/build.sh', 'services/worker/package-lock.json') }}
 
       - name: Install circom (cache miss only)
-        if: steps.cache-zk-artifacts.outputs.cache-hit != 'true'
+        id: install-circom
+        if: always() && steps.worker-deps.outcome == 'success' && steps.cache-zk-artifacts.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           CIRCOM_VERSION=v2.1.9
@@ -659,7 +760,8 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Build zk circuit artifacts (cache miss only)
-        if: steps.cache-zk-artifacts.outputs.cache-hit != 'true'
+        id: build-zk-circuit
+        if: always() && steps.worker-deps.outcome == 'success' && steps.cache-zk-artifacts.outputs.cache-hit != 'true'
         working-directory: services/worker
         run: npm run build:circuit
 
@@ -668,14 +770,54 @@ jobs:
         # but the artifacts somehow aren't on disk. Without this, the
         # zk-proof integration tests would error at module load (which is
         # also fine — but earlier failure = clearer signal).
+        id: verify-zk-artifacts
+        if: always() && steps.worker-deps.outcome == 'success'
         run: |
           ls -lh services/worker/circuits/artifacts/extraction-proof_js/extraction-proof.wasm
           ls -lh services/worker/circuits/artifacts/extraction-proof_final.zkey
           ls -lh services/worker/circuits/artifacts/verification_key.json
 
       - name: Run worker tests with coverage
+        id: worker-coverage
+        if: always() && steps.worker-deps.outcome == 'success'
         working-directory: services/worker
         run: npm run test:coverage
+
+      # Explicit aggregate gate (defense-in-depth, see comment above "Run
+      # tests with coverage"). Treats 'skipped' as fine (e.g. the circom
+      # install/build steps deliberately skip on a cache hit) but fails the
+      # job loudly and with a clear summary if any required suite step
+      # reported failure or cancellation — even if a future edit
+      # accidentally adds continue-on-error to one of them upstream.
+      - name: Aggregate test suite results
+        if: always()
+        run: |
+          declare -A results=(
+            [db-reset]="${{ steps.db-reset.outcome }}"
+            [root-coverage]="${{ steps.root-coverage.outcome }}"
+            [rls-tests]="${{ steps.rls-tests.outcome }}"
+            [worker-deps]="${{ steps.worker-deps.outcome }}"
+            [cache-zk-artifacts]="${{ steps.cache-zk-artifacts.outcome }}"
+            [install-circom]="${{ steps.install-circom.outcome }}"
+            [build-zk-circuit]="${{ steps.build-zk-circuit.outcome }}"
+            [verify-zk-artifacts]="${{ steps.verify-zk-artifacts.outcome }}"
+            [worker-coverage]="${{ steps.worker-coverage.outcome }}"
+          )
+          failed=0
+          echo "== Test suite step outcomes =="
+          for name in db-reset root-coverage rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage; do
+            outcome="${results[$name]}"
+            echo "  ${name}: ${outcome}"
+            if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
+              echo "::error::Required test step '${name}' reported outcome '${outcome}'"
+              failed=1
+            fi
+          done
+          if [ "$failed" -eq 1 ]; then
+            echo "::error::One or more required test suites failed — see outcomes above. Both the root suite and the worker suite are required; a failure in either fails this job regardless of step ordering."
+            exit 1
+          fi
+          echo "All required test suite steps passed (or were intentionally skipped, e.g. zk cache hit)."
 
   # AI eval regression gate (GAP-1) — catches prompt quality regressions before deploy
   ai-eval-gate:

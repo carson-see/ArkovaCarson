@@ -92,6 +92,313 @@ describe('anchor', () => {
   });
 });
 
+describe('anchorBulk', () => {
+  it('returns a zero-row response for empty input without a network call', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    const result = await client.anchorBulk([]);
+    expect(result).toEqual({
+      batchId: null,
+      validated: 0,
+      queued: 0,
+      duplicates: [],
+      errors: [],
+      dryRun: false,
+      anchors: [],
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects more than 1000 rows with batch_too_large error (no network call)', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    const rows = Array.from({ length: 1001 }, (_, i) => ({ fingerprint: 'a'.repeat(64), externalId: `row-${i}` }));
+    await expect(client.anchorBulk(rows)).rejects.toThrow(ArkovaError);
+    await expect(client.anchorBulk(rows)).rejects.toMatchObject({ code: 'batch_too_large' });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('accepts exactly 1000 rows (boundary, not over cap)', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    const rows = Array.from({ length: 1000 }, () => ({ fingerprint: 'a'.repeat(64) }));
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        batch_id: null,
+        validated: 1000,
+        queued: 1000,
+        duplicates: [],
+        errors: [],
+        dry_run: false,
+        anchors: [],
+      }),
+    });
+    const result = await client.anchorBulk(rows);
+    expect(result.validated).toBe(1000);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends pre-computed fingerprints as-is and posts snake_case fields to /api/v1/anchor/bulk', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        batch_id: 'batch-1',
+        validated: 1,
+        queued: 1,
+        duplicates: [],
+        errors: [],
+        dry_run: false,
+        anchors: [
+          {
+            public_id: 'ARK-2026-100',
+            fingerprint: 'a'.repeat(64),
+            status: 'PENDING',
+            original_document_date: '2025-01-01T00:00:00Z',
+            document_type: 'contract',
+            matter_or_case_ref: 'CASE-1',
+            external_id: 'ext-1',
+            anchored_at: '2026-01-01T00:00:00Z',
+          },
+        ],
+      }),
+    });
+
+    const result = await client.anchorBulk(
+      [
+        {
+          fingerprint: 'a'.repeat(64),
+          credentialType: 'CONTRACT_PRESIGNING',
+          description: 'signed NDA',
+          originalDocumentDate: '2025-01-01T00:00:00Z',
+          documentType: 'contract',
+          matterOrCaseRef: 'CASE-1',
+          externalId: 'ext-1',
+        },
+      ],
+      { batchId: 'batch-1', duplicateStrategy: 'skip' },
+    );
+
+    expect(result.batchId).toBe('batch-1');
+    expect(result.queued).toBe(1);
+    expect(result.anchors).toHaveLength(1);
+    expect(result.anchors?.[0]).toEqual({
+      publicId: 'ARK-2026-100',
+      fingerprint: 'a'.repeat(64),
+      status: 'PENDING',
+      originalDocumentDate: '2025-01-01T00:00:00Z',
+      documentType: 'contract',
+      matterOrCaseRef: 'CASE-1',
+      externalId: 'ext-1',
+      anchoredAt: '2026-01-01T00:00:00Z',
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/anchor/bulk'),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'X-API-Key': 'ak_test' }),
+      }),
+    );
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({
+      anchors: [
+        {
+          fingerprint: 'a'.repeat(64),
+          credential_type: 'CONTRACT_PRESIGNING',
+          description: 'signed NDA',
+          original_document_date: '2025-01-01T00:00:00Z',
+          document_type: 'contract',
+          matter_or_case_ref: 'CASE-1',
+          external_id: 'ext-1',
+        },
+      ],
+      dry_run: undefined,
+      duplicate_strategy: 'skip',
+      batch_id: 'batch-1',
+    });
+  });
+
+  it('fingerprints `data` rows client-side, leaving raw content out of the request body', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        batch_id: null,
+        validated: 1,
+        queued: 1,
+        duplicates: [],
+        errors: [],
+        dry_run: false,
+        anchors: [],
+      }),
+    });
+
+    const expectedFp = await client.fingerprint('raw document body');
+    await client.anchorBulk([{ data: 'raw document body' }]);
+
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.anchors[0].fingerprint).toBe(expectedFp);
+    expect(JSON.stringify(body)).not.toContain('raw document body');
+  });
+
+  it('supports mixed fingerprint and data rows in one batch', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        batch_id: null,
+        validated: 2,
+        queued: 2,
+        duplicates: [],
+        errors: [],
+        dry_run: false,
+        anchors: [],
+      }),
+    });
+
+    const expectedFp = await client.fingerprint('second document');
+    await client.anchorBulk([
+      { fingerprint: 'b'.repeat(64) },
+      { data: 'second document' },
+    ]);
+
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.anchors).toHaveLength(2);
+    expect(body.anchors[0].fingerprint).toBe('b'.repeat(64));
+    expect(body.anchors[1].fingerprint).toBe(expectedFp);
+  });
+
+  it('rejects a row that supplies neither fingerprint nor data, without a network call', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await expect(client.anchorBulk([{} as any])).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a row that supplies both fingerprint and data, without a network call', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    await expect(
+      client.anchorBulk([{ fingerprint: 'a'.repeat(64), data: 'x' }]),
+    ).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('passes dry_run through and surfaces the dry-run response without inserting', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        batch_id: null,
+        validated: 3,
+        queued: 2,
+        duplicates: [{ row: 1, fingerprint: 'c'.repeat(64), scope: 'in_batch', decision: 'skip' }],
+        errors: [],
+        dry_run: true,
+      }),
+    });
+
+    const result = await client.anchorBulk(
+      [
+        { fingerprint: 'a'.repeat(64) },
+        { fingerprint: 'c'.repeat(64) },
+        { fingerprint: 'c'.repeat(64) },
+      ],
+      { dryRun: true, duplicateStrategy: 'skip' },
+    );
+
+    expect(result.dryRun).toBe(true);
+    expect(result.queued).toBe(2);
+    expect(result.duplicates).toEqual([
+      { row: 1, fingerprint: 'c'.repeat(64), scope: 'in_batch', decision: 'skip' },
+    ]);
+    expect(result.anchors).toBeUndefined();
+
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.dry_run).toBe(true);
+  });
+
+  it('surfaces per-row insert errors from a partially-successful batch (HTTP 201, errors populated)', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        batch_id: null,
+        validated: 2,
+        queued: 1,
+        duplicates: [],
+        errors: [{ row: 1, code: 'insert_failed', message: 'Failed to create anchor record.' }],
+        dry_run: false,
+        anchors: [
+          {
+            public_id: 'ARK-2026-200',
+            fingerprint: 'a'.repeat(64),
+            status: 'PENDING',
+            original_document_date: null,
+            document_type: null,
+            matter_or_case_ref: null,
+            external_id: null,
+            anchored_at: '2026-01-01T00:00:00Z',
+          },
+        ],
+      }),
+    });
+
+    const result = await client.anchorBulk([{ fingerprint: 'a'.repeat(64) }, { fingerprint: 'b'.repeat(64) }]);
+
+    expect(result.queued).toBe(1);
+    expect(result.errors).toEqual([{ row: 1, code: 'insert_failed', message: 'Failed to create anchor record.' }]);
+    expect(result.anchors).toHaveLength(1);
+  });
+
+  it('throws ArkovaError with duplicates payload when duplicate_strategy=fail returns 409', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: 'duplicate_fingerprints',
+        message: 'Batch contains 1 duplicate fingerprint(s); pick a duplicate_strategy other than "fail" to proceed.',
+        duplicates: [{ row: 1, fingerprint: 'a'.repeat(64), scope: 'in_db', decision: 'fail' }],
+      }),
+    });
+
+    await expect(
+      client.anchorBulk([{ fingerprint: 'a'.repeat(64) }, { fingerprint: 'a'.repeat(64) }]),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'duplicate_fingerprints',
+    });
+  });
+
+  it('throws ArkovaError on 402 insufficient credits', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 402,
+      json: async () => ({
+        error: 'insufficient_credits',
+        balance: 0,
+        required: 5,
+        message: 'Not enough credits.',
+      }),
+    });
+
+    await expect(client.anchorBulk(Array.from({ length: 5 }, () => ({ fingerprint: 'a'.repeat(64) })))).rejects.toMatchObject({
+      statusCode: 402,
+      code: 'insufficient_credits',
+    });
+  });
+});
+
 describe('verify', () => {
   it('verifies by public ID', async () => {
     const client = new Arkova({ apiKey: 'ak_test' });
