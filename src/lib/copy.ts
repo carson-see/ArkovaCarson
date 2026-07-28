@@ -3618,3 +3618,41 @@ export const OPS_SLO_LABELS = {
   NO_DATA_YET: 'No data yet',
   FETCH_ERROR_TITLE: 'Unable to load platform SLOs',
 } as const;
+
+/**
+ * Folders (SCRUM-2940) — user- and org-scoped record organization.
+ * §1.3: user-facing copy uses "folder" / "records" / "documents" only,
+ * never banned crypto terms.
+ */
+export const FOLDER_LABELS = {
+  NAV_TITLE: 'Folders',
+  ALL_RECORDS: 'All Records',
+  UNFILED: 'Unfiled',
+  NEW_FOLDER: 'New Folder',
+  CREATE_TITLE: 'Create Folder',
+  RENAME_TITLE: 'Rename Folder',
+  DELETE_TITLE: 'Delete Folder',
+  NAME_LABEL: 'Folder name',
+  NAME_PLACEHOLDER: 'e.g. Invoices, Certificates',
+  ASSIGN_TITLE: 'Move to Folder',
+  ASSIGN_TRIGGER: 'Move to folder',
+  REMOVE_FROM_FOLDER: 'Remove from folder',
+  SAVE: 'Save',
+  CANCEL: 'Cancel',
+  CREATE: 'Create',
+  DELETE_CONFIRM: (name: string) =>
+    `Delete the folder "${name}"? Records inside it move to Unfiled — they are not deleted.`,
+  EMPTY_TITLE: 'No folders yet',
+  EMPTY_BODY: 'Create a folder to organize your records for easier browsing.',
+  FOLDER_EMPTY: 'No records in this folder yet.',
+  ERR_DUPLICATE_NAME: 'A folder with that name already exists.',
+  ERR_CREATE: 'Could not create the folder. Please try again.',
+  ERR_RENAME: 'Could not rename the folder. Please try again.',
+  ERR_DELETE: 'Could not delete the folder. Please try again.',
+  ERR_ASSIGN: 'Could not move the record. Please try again.',
+  TOAST_CREATED: 'Folder created',
+  TOAST_RENAMED: 'Folder renamed',
+  TOAST_DELETED: 'Folder deleted',
+  TOAST_ASSIGNED: 'Record moved',
+  TOAST_UNFILED: 'Record removed from folder',
+} as const;

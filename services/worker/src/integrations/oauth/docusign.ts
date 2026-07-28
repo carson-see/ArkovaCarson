@@ -262,7 +262,10 @@ export async function fetchDocusignCombinedDocument(args: {
   deps?: DocusignClientDeps;
 }): Promise<{ bytes: Buffer; contentType: string | null }> {
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
-  const base = args.baseUri.replace(/\/+$/, '');
+  // Trim trailing slashes without a `/+$/` regex (super-linear backtracking on
+  // adversarial input — Sonar S5852); linear scan instead.
+  let base = args.baseUri;
+  while (base.endsWith('/')) base = base.slice(0, -1);
   const url = `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/envelopes/${encodeURIComponent(args.envelopeId)}/documents/combined`;
   const res = await fetchImpl(url, {
     headers: { Authorization: `Bearer ${args.accessToken}` },
@@ -532,9 +535,17 @@ export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignC
   const nested = parsed.data?.envelopeSummary;
   const envelopeId = parsed.envelopeId ?? parsed.data?.envelopeId ?? parsed.envelopeSummary?.envelopeId ?? nested?.envelopeId;
   const accountId = parsed.accountId ?? parsed.data?.accountId ?? parsed.envelopeSummary?.accountId ?? nested?.accountId;
-  const status = (parsed.status ?? parsed.data?.status ?? parsed.envelopeSummary?.status ?? nested?.status ?? '').toLowerCase();
-  const event = parsed.event.toLowerCase();
-  if (event !== 'envelope-completed' || status !== 'completed' || !envelopeId || !accountId) {
+  // Minimal SIM deliveries (dashboard-created listeners without eventData
+  // includes) carry NO status field at any nesting level — the event name is
+  // the completion assertion (prod evidence 2026-07-27, envelope 624c1d84…,
+  // retryCount 7). Status is corroborative-only: when a status field IS
+  // present it must agree; when absent, the event name is authoritative.
+  const rawStatus = parsed.status ?? parsed.data?.status ?? parsed.envelopeSummary?.status ?? nested?.status;
+  const status = rawStatus?.toLowerCase();
+  const isCompletedEvent = parsed.event.toLowerCase() === 'envelope-completed';
+  const statusContradictsCompletion = status !== undefined && status !== 'completed';
+  const hasEnvelopeIdentity = Boolean(envelopeId) && Boolean(accountId);
+  if (!isCompletedEvent || statusContradictsCompletion || !hasEnvelopeIdentity) {
     throw new Error('DocuSign Connect payload is not a completed envelope event');
   }
 

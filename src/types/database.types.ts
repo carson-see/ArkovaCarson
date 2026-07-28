@@ -596,6 +596,7 @@ export type Database = {
           file_size: number | null
           filename: string
           fingerprint: string
+          folder_id: string | null
           id: string
           issued_at: string | null
           label: string | null
@@ -642,6 +643,7 @@ export type Database = {
           file_size?: number | null
           filename: string
           fingerprint: string
+          folder_id?: string | null
           id?: string
           issued_at?: string | null
           label?: string | null
@@ -688,6 +690,7 @@ export type Database = {
           file_size?: number | null
           filename?: string
           fingerprint?: string
+          folder_id?: string | null
           id?: string
           issued_at?: string | null
           label?: string | null
@@ -714,6 +717,13 @@ export type Database = {
           version_number?: number
         }
         Relationships: [
+          {
+            foreignKeyName: "anchors_folder_id_fkey"
+            columns: ["folder_id"]
+            isOneToOne: false
+            referencedRelation: "folders"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "anchors_org_id_fkey"
             columns: ["org_id"]
@@ -2883,6 +2893,68 @@ export type Database = {
           x402_revenue_usd?: number | null
         }
         Relationships: []
+      }
+      folders: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          name: string
+          org_id: string | null
+          owner_scope: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          name: string
+          org_id?: string | null
+          owner_scope: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          name?: string
+          org_id?: string | null
+          owner_scope?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "folders_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folders_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folders_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "folders_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       freemail_domains: {
         Row: {

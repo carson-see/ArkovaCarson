@@ -233,6 +233,46 @@ describe('parseDocusignConnectPayload', () => {
     expect(event.envelopeDocuments?.[0]?.name).toBe('Docusign Test.pdf');
   });
 
+  // Regression — prod 2026-07-27 (founder's Connect Logs, envelope
+  // 624c1d84…, retryCount 7): the dashboard-created SIM listener delivers a
+  // MINIMAL payload — event name + apiVersion + data.{accountId,userId,
+  // envelopeId} — with NO status field at any nesting level. The event name
+  // itself asserts completion; requiring a redundant status field rejected
+  // every real delivery. Status is now corroborative-only: checked when
+  // present, event-name-authoritative when absent.
+  it('accepts minimal SIM payloads with no status field (event name authoritative)', () => {
+    const event = parseDocusignConnectPayload(
+      JSON.stringify({
+        event: 'envelope-completed',
+        apiVersion: 'v2.1',
+        uri: '/restapi/v2.1/accounts/5c350ceb-34ee-4ae9-99f2-768c2f289cc8/envelopes/624c1d84-9989-81d3-8218-bcab4aa705ed',
+        retryCount: 7,
+        configurationId: 21766068,
+        generatedDateTime: '2026-07-26T18:05:15.2042177Z',
+        data: {
+          accountId: '5c350ceb-34ee-4ae9-99f2-768c2f289cc8',
+          userId: '4db2bee6-8850-40dc-bc7b-bda5a9e863a9',
+          envelopeId: '624c1d84-9989-81d3-8218-bcab4aa705ed',
+        },
+      }),
+    );
+
+    expect(event.envelopeId).toBe('624c1d84-9989-81d3-8218-bcab4aa705ed');
+    expect(event.accountId).toBe('5c350ceb-34ee-4ae9-99f2-768c2f289cc8');
+    expect(event.status).toBe('completed');
+  });
+
+  it('still rejects completed-named events whose PRESENT status contradicts completion', () => {
+    expect(() =>
+      parseDocusignConnectPayload(
+        JSON.stringify({
+          event: 'envelope-completed',
+          data: { envelopeId: 'env-9', accountId: 'acct-9', status: 'voided' },
+        }),
+      ),
+    ).toThrow(/completed envelope/i);
+  });
+
   it('rejects non-completed events', () => {
     expect(() =>
       parseDocusignConnectPayload(
