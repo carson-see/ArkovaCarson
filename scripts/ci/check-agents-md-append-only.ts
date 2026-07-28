@@ -17,10 +17,10 @@
  * deletion recorded in branch history propagates to main on merge.
  *
  * Edits are legitimate and must not trip the gate, so a vanished line is first
- * matched back to a surviving counterpart two ways: a markdown table row by its
- * first cell (its identity), any other line by token similarity. Each surviving
- * line can account for at most one vanished line. Only genuinely unmatched
- * disappearances are reported.
+ * matched back to a surviving counterpart two ways: a KEYED entry (a table row,
+ * or a bullet led by a bold/code name) by its key alone, and any other line by
+ * shared prefix or token overlap. Each surviving line can account for at most
+ * one vanished line. Only genuinely unmatched disappearances are reported.
  *
  * Override: PR label `agents-md-deletion-approved` (deliberate consolidation).
  * Exit 0 = pass, 1 = violation, 2 = config error.
@@ -28,7 +28,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { isMainModule, hasLabel } from './lib/ciContext.js';
+import { isMainModule, hasLabel, GIT_BIN } from './lib/ciContext.js';
 
 const REPO = process.env.AGENTS_MD_LINT_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
 const OVERRIDE_LABEL = 'agents-md-deletion-approved';
@@ -37,8 +37,10 @@ const OVERRIDE_LABEL = 'agents-md-deletion-approved';
 const IGNORED_LINE_RE = /^_Last updated:/;
 /** Below this length a line carries no distinguishing content (bullets, `---`, `|---|`). */
 const MIN_SIGNIFICANT_LENGTH = 20;
-/** Best-match token overlap at or above this reads as "edited", not "deleted". */
-const EDIT_SIMILARITY_THRESHOLD = 0.5;
+/** Share of the base line's words that must survive in a head line to read as an edit. */
+const EDIT_CONTAINMENT_THRESHOLD = 0.75;
+/** Below this many distinct words, containment is too easy to satisfy by chance. */
+const MIN_CONTAINMENT_TOKENS = 5;
 /** A shared leading run this long (and this much of the base line) reads as an edit. */
 const MIN_EDIT_PREFIX = 40;
 const MIN_EDIT_PREFIX_RATIO = 0.5;
@@ -49,7 +51,7 @@ export interface Drop {
 }
 
 function git(args: string[], cwd = REPO): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return execFileSync(GIT_BIN, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 
 /**
@@ -60,7 +62,7 @@ function git(args: string[], cwd = REPO): string {
  */
 function gitOrNull(args: string[], cwd = REPO): string | null {
   try {
-    return execFileSync('git', args, {
+    return execFileSync(GIT_BIN, args, {
       cwd,
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
@@ -91,12 +93,42 @@ function tableRowKey(line: string): string | null {
   return first;
 }
 
-/** Jaccard overlap; 1 = identical token sets, 0 = disjoint. */
-function similarity(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0;
+/** `- **requireOrgId.ts** — …` / `- \`FileUpload.tsx\` — …` → the leading name. */
+const BULLET_KEY_RE = /^[-*]\s+(?:\*\*([^*]+)\*\*|`([^`]+)`)/;
+
+/**
+ * The line's identity, if it has one.
+ *
+ * agents.md documents things — a migration prefix, a module — as "key, then
+ * prose about it", in two interchangeable shapes: a table row keyed by its
+ * first cell, and a bullet keyed by a leading bold/code name. Both get their
+ * PROSE rewritten wholesale while the entry plainly still exists, so identity
+ * has to be matched structurally. Scoring the prose instead is what made
+ * PR #1749's `- **requireOrgId.ts** — Ensures …` → `— Resolves + VALIDATES …`
+ * look like a deletion: same entry, almost no shared wording.
+ */
+function lineKey(line: string): string | null {
+  const row = tableRowKey(line);
+  if (row !== null) return row;
+  const bullet = BULLET_KEY_RE.exec(line.trim());
+  const name = (bullet?.[1] ?? bullet?.[2])?.trim().toLowerCase();
+  return name ? name : null;
+}
+
+/**
+ * Share of `a`'s words that also appear in `b` — how much of the base line
+ * SURVIVES in the candidate, ignoring whatever the candidate added.
+ *
+ * Deliberately asymmetric. Jaccard would divide by the union, so enlarging a
+ * line pushes the score down and a heavily-extended line reads as a deletion —
+ * backwards for an append-only invariant, where the only question is whether
+ * the original content is still there.
+ */
+function containment(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0) return 0;
   let shared = 0;
   for (const t of a) if (b.has(t)) shared += 1;
-  return shared / (a.size + b.size - shared);
+  return shared / a.size;
 }
 
 function commonPrefixLength(a: string, b: string): number {
@@ -109,21 +141,29 @@ function commonPrefixLength(a: string, b: string): number {
 /**
  * How strongly `head` reads as an edited form of `base`; 0 = unrelated.
  *
- * Jaccard alone is not enough. The dominant real edit is "keep the line and
- * append to it" (`- \`FileUpload.tsx\` — …` gaining a new clause), and appending
- * text drives symmetric overlap DOWN — a substantial addition pushes a genuine
- * edit below any threshold loose enough to still catch real deletions. A long
- * shared prefix identifies that case directly, so score it first and fall back
- * to token overlap for edits that rewrite the front of the line.
+ * Two arms, because edits arrive in two shapes. A long shared prefix catches
+ * "keep the line and append to it". Containment catches the rest — an edit that
+ * inserts or rewrites mid-line, like PR #1755's `GPL/AGPL/SSPL` ->
+ * `GPL/AGPL/LGPL/SSPL`, which diverges at character 21 (under the prefix bar)
+ * while preserving every original word.
+ *
+ * Containment is required rather than Jaccard for the reason given on that
+ * function: growing a line must not make it look deleted. The token floor stops
+ * a short line from matching any long line that happens to contain its words.
  */
-function editScore(base: string, head: string): number {
+function editScore(base: string, baseTokens: Set<string>, head: string): number {
   const prefix = commonPrefixLength(base, head);
   const significant = base.trim().length;
   if (prefix >= MIN_EDIT_PREFIX && prefix >= significant * MIN_EDIT_PREFIX_RATIO) {
-    return 1 + prefix; // prefix matches outrank token matches, longest prefix wins
+    return 1 + prefix; // prefix matches outrank word matches, longest prefix wins
   }
-  const score = similarity(tokens(base), tokens(head));
-  return score >= EDIT_SIMILARITY_THRESHOLD ? score : 0;
+  // The word floor is the guard against a short line matching any long line
+  // that happens to contain its words. Deliberately NOT a length-growth cap:
+  // appending a long explanation to an existing line is a normal agents.md
+  // edit (PR #1755 grew one ~7x), and capping growth re-broke exactly that.
+  if (baseTokens.size < MIN_CONTAINMENT_TOKENS) return 0;
+  const score = containment(baseTokens, tokens(head));
+  return score >= EDIT_CONTAINMENT_THRESHOLD ? score : 0;
 }
 
 /**
@@ -150,27 +190,28 @@ export function findDrops(baseText: string, headText: string): string[] {
   const newHeadLines = headLines.filter(
     (l) => !baseSet.has(l) && l.trim().length >= MIN_SIGNIFICANT_LENGTH,
   );
-  const newHeadKeys = newHeadLines.map(tableRowKey);
+  const newHeadKeys = newHeadLines.map(lineKey);
   // Each new head line is the rewrite of at most ONE base line. Without this,
   // a single unrelated addition could absorb every deletion in the file.
   const claimed = new Array(newHeadLines.length).fill(false);
 
   const drops: string[] = [];
   for (const line of candidates) {
-    const key = tableRowKey(line);
+    const key = lineKey(line);
     let match = -1;
 
     if (key !== null) {
-      // A table row's identity IS its first cell. Match on that alone and never
-      // fall back to prose scoring: ledger rows share so much boilerplate
-      // ("RESERVED — pre-soak, file-only") that an unrelated NEW row would
-      // otherwise look like a rewrite of the deleted one and hide a real drop.
+      // A keyed entry IS its key. Match on that alone and never fall back to
+      // prose scoring: ledger rows share so much boilerplate ("RESERVED —
+      // pre-soak, file-only") that an unrelated NEW row would otherwise look
+      // like a rewrite of the deleted one and hide a real drop.
       match = newHeadKeys.findIndex((k, i) => !claimed[i] && k === key);
     } else {
+      const lineTokens = tokens(line);
       let bestScore = 0;
       newHeadLines.forEach((h, i) => {
         if (claimed[i] || newHeadKeys[i] !== null) return;
-        const score = editScore(line, h);
+        const score = editScore(line, lineTokens, h);
         if (score > bestScore) {
           bestScore = score;
           match = i;
@@ -189,7 +230,10 @@ function show(rev: string, path: string): string | null {
 }
 
 export function auditRange(baseRev: string, headRev: string): Drop[] {
-  const paths = git(['ls-tree', '-r', '--name-only', baseRev])
+  // Only files that actually differ can contain a drop. Listing the whole tree
+  // instead would `git show` both sides of every agents.md in the repo (~200
+  // files, ~400 subprocesses) on every PR, including PRs that touch none.
+  const paths = git(['diff', '--name-only', baseRev, headRev])
     .split('\n')
     .filter((p) => p.endsWith('agents.md'));
 
@@ -213,7 +257,8 @@ function main(): void {
     return;
   }
 
-  const explicitBase = process.env.BASE_REF_SHA?.trim();
+  // BASE_REF is the secondary name other gates accept (see ciContext.getBaseRef).
+  const explicitBase = process.env.BASE_REF_SHA?.trim() || process.env.BASE_REF?.trim();
   const eventName = process.env.GITHUB_EVENT_NAME;
   // This job also runs on push to main/staging/develop, where the PR payload —
   // and so BASE_REF_SHA — is empty. Falling back to origin/main there would

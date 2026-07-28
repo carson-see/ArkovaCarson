@@ -123,6 +123,43 @@ describe('findDrops — agents.md append-only gate', () => {
     expect(findDrops(base, head)).toEqual([]);
   });
 
+  it('does NOT flag a bullet entry whose PROSE was rewritten (the #1749 requireOrgId class)', () => {
+    // Same documented module, almost no shared wording and only a ~24-char
+    // shared prefix — below the prefix arm. The bullet's leading name is its
+    // identity, exactly like a table row's first cell.
+    const base = '- **requireOrgId.ts** — Ensures `org_id` is present on authenticated requests.';
+    const head =
+      '- **requireOrgId.ts** — Resolves + VALIDATES `org_id` on authenticated requests ' +
+      '(membership-checked against `x-org-id`, never trusted verbatim).';
+    expect(findDrops(base, head)).toEqual([]);
+  });
+
+  it('FLAGS a bullet entry whose key disappears entirely', () => {
+    const base = [
+      '- **requireOrgId.ts** — Ensures `org_id` is present on authenticated requests.',
+      '- **requireAuth.ts** — Rejects unauthenticated requests before any handler runs.',
+    ].join('\n');
+    const head = '- **requireOrgId.ts** — Resolves + VALIDATES `org_id` on authenticated requests.';
+    expect(findDrops(base, head).join(' ')).toContain('requireAuth.ts');
+  });
+
+  it('does NOT flag a line edited MID-STRING while keeping its words (the #1755 LGPL class)', () => {
+    // Diverges at character 21 (under the prefix bar) and also grows, which
+    // would sink a Jaccard score — but every original word survives.
+    const base = '- The local GPL/AGPL/SSPL deny-list is always enforced with `npm run security:license-denylist`; legacy `snarkjs` GPL transitive packages are documented in the allowlist.';
+    const head = '- The local GPL/AGPL/LGPL/SSPL deny-list is always enforced with `npm run security:license-denylist`; legacy `snarkjs` GPL transitive packages and `libheif-js` (LGPL-3.0) are documented in the allowlist.';
+    expect(findDrops(base, head)).toEqual([]);
+  });
+
+  it('FLAGS a short line whose words happen to appear in an unrelated long line', () => {
+    // Containment alone would match this; the token floor is what stops it.
+    const base = 'The drain runs nightly.';
+    const head =
+      'The reconciler sweeps stuck anchors, then the batch drain runs nightly at 3am ' +
+      'across every organization in the queue.';
+    expect(findDrops(base, head)).toHaveLength(1);
+  });
+
   it('still flags a deletion when a similar-looking line was already in the base', () => {
     // The surviving `0365` row is unchanged, so it must not be mistaken for the
     // edited counterpart of the deleted `0366` row and mask the drop.

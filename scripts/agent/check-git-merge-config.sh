@@ -24,9 +24,6 @@
 
 set -uo pipefail
 
-# Driver names implemented inside git; naming one in config shadows the built-in.
-BUILTIN_DRIVERS=(union text binary)
-
 # Commands that "succeed" without ever writing the merged result to %A.
 #
 # Drivers are conventionally written with gitattributes(5) placeholders — e.g.
@@ -81,21 +78,22 @@ while IFS= read -r line; do
   driver_name=${key#merge.}
   driver_name=${driver_name%.driver}
 
-  for builtin in "${BUILTIN_DRIVERS[@]}"; do
-    if [[ "$driver_name" == "$builtin" ]]; then
+  # Naming a built-in is always wrong, whatever the command does.
+  case "$driver_name" in
+    union | text | binary)
       echo "ERROR: '${key} = ${value}' in ${origin}" >&2
-      echo "  '${builtin}' is a git BUILT-IN merge driver. Defining it in config" >&2
-      echo "  overrides the real algorithm for every path with 'merge=${builtin}'" >&2
+      echo "  '${driver_name}' is a git BUILT-IN merge driver. Defining it in config" >&2
+      echo "  overrides the real algorithm for every path with 'merge=${driver_name}'" >&2
       echo "  in .gitattributes (this repo: agents.md, ~200 files)." >&2
       if is_noop_driver "$value"; then
         echo "  '${value}' is a NO-OP: it writes no merged content and exits 0," >&2
         echo "  so git reports a clean merge while discarding all of \"theirs\"." >&2
       fi
-      fix_hint "$builtin" >&2
+      fix_hint "$driver_name" >&2
       violations=$((violations + 1))
-      continue 2
-    fi
-  done
+      continue
+      ;;
+  esac
 
   # Non-built-in name, but a no-op command is silent data loss regardless.
   if is_noop_driver "$value"; then
