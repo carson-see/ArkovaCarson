@@ -2,6 +2,13 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-07-28 SOAK FINDINGS — F-1 (org-queue-scheduler 500s) + F-3 (SUBMITTED/NULL-txid recovery gap)
+
+Both open, from the 2026-08 72h signet soak pair. Canonical writeup: `docs/staging/SOAK-FINDINGS-2026-08.md`.
+
+- **F-1 (HIGH, open):** `org-queue-scheduler` returns 500 on ~28-33% of invocations across both rigs (flapping, recovers on later 5-min cycles; ~60x the gate matrix's 0.5% threshold). Confirmed NOT caused by migration `0378`. Root-cause not found yet — start at `claim_due_org_queue_runs` (likely contention or a partial-failure path under concurrent load).
+- **F-3 (MEDIUM, open):** an anchor left `SUBMITTED` with NULL `chain_tx_id` — the state a broadcast attempt produces if it fails between the status write and the txid write — has NO recovery path. `recover_stuck_broadcasts` queries only `BROADCASTING`-state anchors, so this state is structurally outside every scheduled job's scope. Verified by live fault injection that the job correctly recovers its in-scope `BROADCASTING` state, isolating the gap precisely.
+
 ## 2026-07-28 — Lane 1: batch_insert_anchors wedge fix + RPC hardening (SCRUM-3031, `publicRecordAnchor.ts`, migration 0370)
 
 CTO ruling R15 root-cause investigation into `batch_insert_anchors` burning ~106s/call and inserting ZERO rows on repeat calls, holding `RowExclusiveLock` on `anchors` (~2.97M rows) near-continuously — suspected root cause of the 259k pending-anchoring backlog never draining; blocked the 0365/0366 prod DDL apply for ~15min on 2026-07-27.

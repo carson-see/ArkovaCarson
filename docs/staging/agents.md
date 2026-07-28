@@ -24,6 +24,18 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 - Soak JSON files are append-only evidence; do not modify after creation.
 - These are engineering artifacts, not documentation (Confluence is the doc source of truth).
 
+## 2026-07-28 — Two 72h signet soaks RUNNING (SCRUM-2980)
+
+- **`SOAK-FINDINGS-2026-08.md`** — canonical findings log for the `launch-72h-2026-08` + `legacy-soak-2026-08` soak pair. Severity-ordered (F-1 through F-5, all open except the disclosed F-4 exception); full security detail lives in the Confluence bug tracker, not here.
+- Two live soak rigs, do not disturb (frozen soak evidence):
+
+  | Soak | Cloud Run rev | Clock start (UTC) | Clears (EST) |
+  |---|---|---|---|
+  | launch-72h-2026-08 | `00004-qgj` | 2026-07-28T19:43:55Z | Fri 07-31 3:43 PM |
+  | legacy-soak-2026-08 | `00002-4sr` | 2026-07-28T21:32:17Z | Fri 07-31 5:32 PM |
+
+  See HANDOFF.md's 2026-07-28 evening entry for the full soak table (Supabase project refs, frozen head SHAs).
+
 ## 2026-07-15 S3.3 Wave 3 Lane 2
 
 - `429-limiter-map-s33.md` now records per-org and Nessie payer limiters as

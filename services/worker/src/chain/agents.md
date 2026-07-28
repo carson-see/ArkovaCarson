@@ -6,6 +6,10 @@ _Last updated: 2026-07-06_
 
 Bitcoin chain client implementation for anchoring document fingerprints on-chain via OP_RETURN transactions.
 
+## 2026-07-28 SOAK FINDING F-4 — GetBlockHybridProvider.broadcastTx has no mempool fallback (open, disclosed exception)
+
+Only `listUnspent` has a mempool fallback on `GetBlockHybridProvider`; `broadcastTx` does not. A GetBlock outage during broadcast produces a computed-but-never-broadcast txid — a silent no-broadcast failure that actually occurred during provisioning of the 2026-08 72h signet soak pair. Separately: no valid signet GetBlock credential exists in Secret Manager, so neither soak rig exercises this path (both broadcast via `MempoolUtxoProvider` instead) — prod's sovereign GetBlock broadcast path is unexercised by these soaks and needs separate verification before launch. Canonical writeup: `docs/staging/SOAK-FINDINGS-2026-08.md`.
+
 ## 2026-07-15 — SCRUM-2692 pre-broadcast durable-write barrier
 
 `SubmitFingerprintRequest.preBroadcastHook` is an optional barrier invoked with the immutable `PreparedChainTx` after signing and before `broadcastSignedTx`. Both Bitcoin single-input and fragmented multi-input construction paths share this boundary; a rejected hook makes zero provider broadcast calls. `MockChainClient` mirrors the same prepare → hook → broadcast composition. Signer selection is unchanged: active signet WIF behavior is reused and the production mainnet KMS path is untouched.

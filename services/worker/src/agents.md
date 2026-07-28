@@ -1,7 +1,11 @@
 # services/worker/src/
-_Last updated: 2026-07-28 (pentest-prep: /api/health alias)_
+_Last updated: 2026-07-28 (72h soak F-2 finding)_
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
+
+## 2026-07-28 SOAK FINDING F-2 — per-IP limiter shadows per-API-key limiter (HIGH, open)
+
+`index.ts:377` mounts a 60 req/min **per-source-IP** limiter on a broad `/api` prefix, ahead of the real 1,000/min-per-API-key limiter. All `/api/v1/*` traffic is capped at 60/min regardless of key tier — contradicts §1.10. This is why the 72h signet soak load plateaued at ~2.6 RPS against a 28 RPS target (a product defect, not rig capacity). Would throttle every paying customer at launch. Canonical writeup: `docs/staging/SOAK-FINDINGS-2026-08.md`. Anyone touching rate limiting in `index.ts` or `middleware/` must know this before adding/reordering limiter mounts.
 
 ## 2026-07-28 GET /api/health alias (pentest-prep, CLAUDE.md §1.9)
 
