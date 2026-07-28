@@ -21,8 +21,10 @@
  *       uses the RLS helpers to actually invoke the RPCs and assert anon +
  *       authenticated get permission-denied on the deduct functions while the
  *       deliberately-public verification RPC stays callable. Gated OFF by
- *       default — this suite is authored file-only and 0364 is NOT applied to
- *       any DB in this window (PI-0.5 T3 pre-soak).
+ *       default so this suite never needs live DB creds in CI. 0364 is now
+ *       PROD-APPLIED (2026-07-27 ~13:26-13:32Z, part of the 0359-0364 batch,
+ *       exempted via #1712 — see supabase/migrations/agents.md); this suite
+ *       was verified against the isolated T3 soak rig pre-apply.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -129,8 +131,8 @@ describe('SCRUM-2905: migration 0364 revokes anon/authenticated on credit mutato
 
 // ---------------------------------------------------------------------------
 // (2) LIVE RLS INTEGRATION — opt-in only. Requires 0364 applied to a THROWAWAY
-// DB and RUN_LIVE_RLS=1 + the RLS helper env vars. Never runs in CI here; this
-// migration is file-only / pre-soak this window.
+// DB and RUN_LIVE_RLS=1 + the RLS helper env vars. Never runs in default CI
+// (no live DB creds there); 0364 itself is PROD-APPLIED (see header note).
 // ---------------------------------------------------------------------------
 const RUN_LIVE = process.env.RUN_LIVE_RLS === '1';
 
