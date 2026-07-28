@@ -29,6 +29,9 @@ New `extractors/` subfolder (see its own `agents.md`) — `ocrWorker.ts` `extrac
 ## 2026-07-28 Admin credit-adjust copy block (L2-A5)
 
 `copy.ts` gained `ADMIN_CREDIT_ADJUST_LABELS` (placed right after `TREASURY_LABELS`) — the platform-admin org credit add/remove dialog on `AdminOrganizationsPage.tsx`: balance display, add/remove toggle, amount/reason inputs, the two-step review→confirm summary copy (as functions, not templated in JSX, so §1.3 `lint:copy` scans the literal string), and success/error toasts. No banned terms (§1.3) — "Credits" is not banned; internal-only page so no §1.3 exemption needed either way.
+## 2026-07-28 QUEUE-01 / SCRUM-2894 (L2-A1, founder P0) — Add to Queue / Secure Instantly wiring
+
+First real consumer of the `queueContract.ts` types (previously orphaned outside `copy.ts` — `rg queueContract` matched only copy.ts before this PR). `SecureDocumentDialog.tsx` now imports `exposedSecuringPaths`/`SecuringPath` from it; `useSecuringCapability.ts` (hooks) builds the `SecuringCapability` object. `routes.ts` gained `ROUTES.SECURE_QUEUE = '/queue'` (the `consumer_secure_queue` surface). `queryClient.ts` gained `queryKeys.secureQueue(userId, orgId, scope)`. `validators.ts` gained `validateAnchorUpdate()` (thin wrapper around the pre-existing `AnchorUpdateSchema`, used for the queue-item soft-delete). `copy.ts` gained an append-only `SECURE_QUEUE_PAGE_LABELS` block at EOF (kept separate from the existing `SECURE_QUEUE_LABELS`/`SECURING_CHOICE_LABELS` block at ~line 3420 to avoid colliding with concurrent copy.ts PRs this sprint — terminology scrub, spreadsheet dual-mode, etc.). `canSecureInstantly` is hardcoded false in `useSecuringCapability.ts` per CTO ruling R5 (Instant-Secure ships dark, flag off) — wiring the real server field is a follow-up, not this PR.
 
 ## 2026-07-21 Treasury CSP + status-budget copy (SCRUM-2901, PR #1600)
 

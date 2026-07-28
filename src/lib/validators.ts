@@ -505,6 +505,16 @@ export function validateProfileUpdate(data: unknown): ProfileUpdate {
 }
 
 /**
+ * Validate and parse anchor update data (QUEUE-01 / SCRUM-2894 — the consumer
+ * secure-queue "Remove" action uses this for the soft-delete `deleted_at`
+ * write, scoped by the existing `anchors_update_own` RLS policy).
+ * @throws ZodError if validation fails
+ */
+export function validateAnchorUpdate(data: unknown): AnchorUpdate {
+  return AnchorUpdateSchema.parse(data);
+}
+
+/**
  * Validate a SHA-256 fingerprint
  * Returns normalized lowercase fingerprint or null if invalid
  */

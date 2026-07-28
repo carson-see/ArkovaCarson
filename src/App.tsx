@@ -63,6 +63,7 @@ const SearchPage = lazyWithRetry(() => import('@/pages/SearchPage').then(m => ({
 const IssuerRegistryPage = lazyWithRetry(() => import('@/pages/IssuerRegistryPage').then(m => ({ default: m.IssuerRegistryPage })));
 const PublicProfilePage = lazyWithRetry(() => import('@/pages/PublicProfilePage').then(m => ({ default: m.PublicProfilePage })));
 const MyCredentialsPage = lazyWithRetry(() => import('@/pages/MyCredentialsPage').then(m => ({ default: m.MyCredentialsPage })));
+const SecureQueuePage = lazyWithRetry(() => import('@/pages/SecureQueuePage').then(m => ({ default: m.SecureQueuePage })));
 const TreasuryAdminPage = lazyWithRetry(() => import('@/pages/TreasuryAdminPage').then(m => ({ default: m.TreasuryAdminPage })));
 const PlatformOverviewPage = lazyWithRetry(() => import('@/pages/PlatformOverviewPage').then(m => ({ default: m.PlatformOverviewPage })));
 const SystemHealthPage = lazyWithRetry(() => import('@/pages/SystemHealthPage').then(m => ({ default: m.SystemHealthPage })));
@@ -259,6 +260,8 @@ export function App() {
           <Route path={ROUTES.DOCUMENTS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Documents"><DocumentsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.RECORDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Records"><MyRecordsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.MY_CREDENTIALS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="MyCredentials"><MyCredentialsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          {/* QUEUE-01 / SCRUM-2894 — consumer secure queue (Pending Documents) */}
+          <Route path={ROUTES.SECURE_QUEUE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="SecureQueue"><SecureQueuePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.RECORD_DETAIL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="RecordDetail"><RecordDetailPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.VERIFY_MY_RECORD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="VerifyMyRecord"><VerifyMyRecordPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ORGANIZATIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Organizations"><OrganizationsListPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
