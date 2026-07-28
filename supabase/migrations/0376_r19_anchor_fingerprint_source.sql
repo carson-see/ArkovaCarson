@@ -103,8 +103,11 @@ COMMENT ON COLUMN public.anchors.fingerprint_source IS
 -- 2. bulk_create_anchors: server computes fingerprint_source from a narrow
 --    boolean signal (`fingerprintProvided`) instead of trusting an arbitrary
 --    client-supplied label. Body otherwise IDENTICAL to the baseline
---    definition (00000000000000_baseline_at_main_HEAD.sql:1168-1263) — only
---    the new anchor_fingerprint_source local + its two references are added.
+--    definition (00000000000000_baseline_at_main_HEAD.sql:1168-1263) — the
+--    new anchor_fingerprint_source local + its two references are added,
+--    every bare auth.uid() is wrapped per SCRUM-1278, and the dead
+--    quota_remaining/batch_size gate is dropped (see inline comment below;
+--    check_anchor_quota() has permanently returned NULL since R1-7).
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION "public"."bulk_create_anchors"("anchors_data" "jsonb") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -126,22 +129,22 @@ DECLARE
   anchor_credential_type credential_type;
   anchor_metadata jsonb;
   anchor_fingerprint_source text;
-  quota_remaining integer;
-  batch_size integer;
   lock_key bigint;
 BEGIN
-  SELECT * INTO caller_profile FROM profiles WHERE id = auth.uid();
+  SELECT * INTO caller_profile FROM profiles WHERE id = (SELECT auth.uid());
   IF NOT FOUND THEN RAISE EXCEPTION 'Profile not found' USING ERRCODE = 'P0001'; END IF;
 
-  lock_key := ('x' || left(md5(auth.uid()::text), 15))::bit(64)::bigint;
+  lock_key := ('x' || left(md5((SELECT auth.uid())::text), 15))::bit(64)::bigint;
   PERFORM pg_advisory_xact_lock(lock_key);
 
-  quota_remaining := check_anchor_quota();
-  batch_size := jsonb_array_length(anchors_data);
-
-  IF quota_remaining IS NOT NULL AND batch_size > quota_remaining THEN
-    RAISE EXCEPTION 'Quota exceeded: % records remaining but % requested', quota_remaining, batch_size USING ERRCODE = 'P0002';
-  END IF;
+  -- R19 cleanup: baseline's quota_remaining/batch_size gate is dropped here.
+  -- check_anchor_quota() is permanently locked to RETURN NULL (0084 beta
+  -- no-quota policy re-affirmed by R1-7 / SCRUM-1261 — see its COMMENT in
+  -- the baseline dump); both `IS NOT NULL` guards below it could never fire.
+  -- Carrying the dead branches forward into a new migration file re-trips
+  -- the feedback_no_credit_limits_beta lint (scripts/ci/feedback-rules/
+  -- no-credit-limits-beta.ts) on literal text match even though the check
+  -- has never executed in prod. Removing inert code, not behavior.
 
   FOR anchor_record IN SELECT * FROM jsonb_array_elements(anchors_data)
   LOOP
@@ -182,21 +185,15 @@ BEGIN
       anchor_fingerprint_source := NULL;
     END IF;
 
-    SELECT id INTO existing_anchor_id FROM anchors WHERE fingerprint = anchor_fingerprint AND user_id = auth.uid() AND deleted_at IS NULL;
+    SELECT id INTO existing_anchor_id FROM anchors WHERE fingerprint = anchor_fingerprint AND user_id = (SELECT auth.uid()) AND deleted_at IS NULL;
 
     IF existing_anchor_id IS NOT NULL THEN
       skipped_count := skipped_count + 1;
       results := results || jsonb_build_object('fingerprint', anchor_fingerprint, 'status', 'skipped', 'reason', 'duplicate', 'existingId', existing_anchor_id);
     ELSE
-      IF quota_remaining IS NOT NULL AND created_count >= quota_remaining THEN
-        failed_count := failed_count + 1;
-        results := results || jsonb_build_object('fingerprint', anchor_fingerprint, 'status', 'failed', 'reason', 'quota_exceeded');
-        CONTINUE;
-      END IF;
-
       BEGIN
         INSERT INTO anchors (user_id, org_id, fingerprint, filename, file_size, credential_type, metadata, fingerprint_source, status)
-        VALUES (auth.uid(), caller_profile.org_id, anchor_fingerprint, anchor_filename, anchor_file_size, anchor_credential_type, anchor_metadata, anchor_fingerprint_source, 'PENDING')
+        VALUES ((SELECT auth.uid()), caller_profile.org_id, anchor_fingerprint, anchor_filename, anchor_file_size, anchor_credential_type, anchor_metadata, anchor_fingerprint_source, 'PENDING')
         RETURNING id INTO new_anchor_id;
 
         created_count := created_count + 1;
@@ -210,7 +207,7 @@ BEGIN
 
   -- Audit event — actor_id only, NO actor_email (column dropped in 0170)
   INSERT INTO audit_events (event_type, event_category, actor_id, org_id, target_type, target_id, details)
-  VALUES ('BULK_VERIFICATION_RUN', 'ANCHOR', auth.uid(), caller_profile.org_id, 'batch',
+  VALUES ('BULK_VERIFICATION_RUN', 'ANCHOR', (SELECT auth.uid()), caller_profile.org_id, 'batch',
     'bulk_create_' || to_char(now(), 'YYYYMMDD_HH24MISS'),
     jsonb_build_object('total', jsonb_array_length(anchors_data), 'created', created_count, 'skipped', skipped_count, 'failed', failed_count)::text);
 
