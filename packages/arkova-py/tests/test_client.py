@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
 
-from arkova import Anchor, Arkova, ArkovaError, AsyncArkova, FingerprintVerification
+from arkova import (
+    BULK_ANCHOR_MAX_ROWS,
+    Anchor,
+    Arkova,
+    ArkovaError,
+    AsyncArkova,
+    BulkAnchorInput,
+    FingerprintVerification,
+)
 
 
 def json_response(
@@ -557,3 +566,472 @@ def test_user_agent_matches_installed_package_version() -> None:
         client.search("anything")
 
     assert seen == [f"arkova-python/{expected_version}"]
+
+
+# ── anchor() / anchor_bulk() write path (HAKI-REQ-02) ────────────────────
+
+
+def test_fingerprint_matches_known_sha256() -> None:
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(lambda r: json_response({}))) as client:
+        fp = client.fingerprint("hello world")
+    assert fp == "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+
+
+def test_anchor_sends_precomputed_fingerprint_via_bearer_auth() -> None:
+    seen_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_requests.append(request)
+        return json_response(
+            {
+                "public_id": "ARK-2026-001",
+                "fingerprint": "a" * 64,
+                "status": "PENDING",
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            status_code=201,
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        receipt = client.anchor(fingerprint="a" * 64)
+
+    assert receipt.public_id == "ARK-2026-001"
+    assert receipt.status == "PENDING"
+    assert receipt.chain_tx_id is None
+    assert len(seen_requests) == 1
+    req = seen_requests[0]
+    assert req.method == "POST"
+    assert req.url.path == "/v1/anchor"
+    assert req.headers.get("authorization") == "Bearer ak_test"
+    assert json.loads(req.content) == {"fingerprint": "a" * 64}
+
+
+def test_anchor_fingerprints_data_client_side_raw_content_never_sent() -> None:
+    seen_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_requests.append(request)
+        return json_response(
+            {
+                "public_id": "ARK-2026-002",
+                "fingerprint": "irrelevant",
+                "status": "PENDING",
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            status_code=201,
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        expected_fp = client.fingerprint("raw document body")
+        client.anchor("raw document body")
+
+    assert len(seen_requests) == 1
+    body = seen_requests[0].content
+    assert b"raw document body" not in body
+    assert json.loads(body) == {"fingerprint": expected_fp}
+
+
+def test_anchor_rejects_neither_fingerprint_nor_data_without_network_call() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no network call expected")
+
+    with (
+        Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(ArkovaError) as exc_info,
+    ):
+        client.anchor()
+
+    assert exc_info.value.code == "invalid_request"
+
+
+def test_anchor_rejects_both_fingerprint_and_data_without_network_call() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no network call expected")
+
+    with (
+        Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(ArkovaError) as exc_info,
+    ):
+        client.anchor("data", fingerprint="a" * 64)
+
+    assert exc_info.value.code == "invalid_request"
+
+
+def test_anchor_plain_json_error_surfaces_message_and_code() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response({"error": "Invalid fingerprint"}, status_code=400)
+
+    with (
+        Arkova(api_key="ak_test", retries=0, transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(ArkovaError) as exc_info,
+    ):
+        client.anchor(fingerprint="a" * 64)
+
+    assert exc_info.value.status_code == 400
+    # No separate `message` key on this payload — `error` doubles as both the
+    # code and the display message (parity with the TS SDK's `jsonOrThrow`
+    # fallback chain: `json.message ?? json.error ?? generic`).
+    assert str(exc_info.value) == "Invalid fingerprint"
+
+
+def test_anchor_bulk_empty_input_returns_zero_row_response_no_network_call() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no network call expected")
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.anchor_bulk([])
+
+    assert result.validated == 0
+    assert result.queued == 0
+    assert result.duplicates == []
+    assert result.errors == []
+    assert result.dry_run is False
+    assert result.anchors == []
+
+
+def test_anchor_bulk_rejects_over_cap_without_network_call() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no network call expected")
+
+    rows = [BulkAnchorInput(fingerprint="a" * 64) for _ in range(BULK_ANCHOR_MAX_ROWS + 1)]
+    with (
+        Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(ArkovaError) as exc_info,
+    ):
+        client.anchor_bulk(rows)
+
+    assert exc_info.value.code == "batch_too_large"
+
+
+def test_anchor_bulk_accepts_exactly_max_rows_boundary() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "batch_id": None,
+                "validated": BULK_ANCHOR_MAX_ROWS,
+                "queued": BULK_ANCHOR_MAX_ROWS,
+                "duplicates": [],
+                "errors": [],
+                "dry_run": False,
+                "anchors": [],
+            },
+            status_code=201,
+        )
+
+    rows = [BulkAnchorInput(fingerprint="a" * 64) for _ in range(BULK_ANCHOR_MAX_ROWS)]
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.anchor_bulk(rows)
+
+    assert result.validated == BULK_ANCHOR_MAX_ROWS
+
+
+def test_anchor_bulk_sends_snake_case_fields_and_options() -> None:
+    seen_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_requests.append(request)
+        return json_response(
+            {
+                "batch_id": "batch-1",
+                "validated": 1,
+                "queued": 1,
+                "duplicates": [],
+                "errors": [],
+                "dry_run": False,
+                "anchors": [
+                    {
+                        "public_id": "ARK-2026-100",
+                        "fingerprint": "a" * 64,
+                        "status": "PENDING",
+                        "original_document_date": "2025-01-01T00:00:00Z",
+                        "document_type": "contract",
+                        "matter_or_case_ref": "CASE-1",
+                        "external_id": "ext-1",
+                        "anchored_at": "2026-01-01T00:00:00Z",
+                    }
+                ],
+            },
+            status_code=201,
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.anchor_bulk(
+            [
+                BulkAnchorInput(
+                    fingerprint="a" * 64,
+                    credential_type="CONTRACT_PRESIGNING",
+                    description="signed NDA",
+                    original_document_date="2025-01-01T00:00:00Z",
+                    document_type="contract",
+                    matter_or_case_ref="CASE-1",
+                    external_id="ext-1",
+                )
+            ],
+            batch_id="batch-1",
+            duplicate_strategy="skip",
+        )
+
+    assert result.batch_id == "batch-1"
+    assert result.queued == 1
+    assert result.anchors is not None
+    assert result.anchors[0].public_id == "ARK-2026-100"
+    assert result.anchors[0].matter_or_case_ref == "CASE-1"
+
+    assert len(seen_requests) == 1
+    req = seen_requests[0]
+    assert req.url.path == "/v1/anchor/bulk"
+    body = json.loads(req.content)
+    assert body == {
+        "anchors": [
+            {
+                "fingerprint": "a" * 64,
+                "credential_type": "CONTRACT_PRESIGNING",
+                "description": "signed NDA",
+                "original_document_date": "2025-01-01T00:00:00Z",
+                "document_type": "contract",
+                "matter_or_case_ref": "CASE-1",
+                "external_id": "ext-1",
+            }
+        ],
+        "duplicate_strategy": "skip",
+        "batch_id": "batch-1",
+    }
+
+
+def test_anchor_bulk_mixed_fingerprint_and_data_rows() -> None:
+    seen_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_requests.append(request)
+        return json_response(
+            {
+                "batch_id": None,
+                "validated": 2,
+                "queued": 2,
+                "duplicates": [],
+                "errors": [],
+                "dry_run": False,
+                "anchors": [],
+            },
+            status_code=201,
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        expected_fp = client.fingerprint("second document")
+        client.anchor_bulk(
+            [
+                BulkAnchorInput(fingerprint="b" * 64),
+                BulkAnchorInput(data="second document"),
+            ]
+        )
+
+    body = json.loads(seen_requests[0].content)
+    assert len(body["anchors"]) == 2
+    assert body["anchors"][0]["fingerprint"] == "b" * 64
+    assert body["anchors"][1]["fingerprint"] == expected_fp
+    assert b"second document" not in seen_requests[0].content
+
+
+def test_anchor_bulk_row_rejects_neither_fingerprint_nor_data_without_network_call() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no network call expected")
+
+    with (
+        Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(ArkovaError) as exc_info,
+    ):
+        client.anchor_bulk([BulkAnchorInput()])
+
+    assert exc_info.value.code == "invalid_request"
+
+
+def test_anchor_bulk_row_rejects_both_fingerprint_and_data_without_network_call() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("no network call expected")
+
+    with (
+        Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(ArkovaError) as exc_info,
+    ):
+        client.anchor_bulk([BulkAnchorInput(fingerprint="a" * 64, data="x")])
+
+    assert exc_info.value.code == "invalid_request"
+
+
+def test_anchor_bulk_dry_run_surfaces_duplicates_without_inserting() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content)["dry_run"] is True
+        return json_response(
+            {
+                "batch_id": None,
+                "validated": 3,
+                "queued": 2,
+                "duplicates": [
+                    {"row": 1, "fingerprint": "c" * 64, "scope": "in_batch", "decision": "skip"}
+                ],
+                "errors": [],
+                "dry_run": True,
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.anchor_bulk(
+            [
+                BulkAnchorInput(fingerprint="a" * 64),
+                BulkAnchorInput(fingerprint="c" * 64),
+                BulkAnchorInput(fingerprint="c" * 64),
+            ],
+            dry_run=True,
+            duplicate_strategy="skip",
+        )
+
+    assert result.dry_run is True
+    assert result.queued == 2
+    assert result.duplicates[0].row == 1
+    assert result.duplicates[0].scope == "in_batch"
+    assert result.anchors is None
+
+
+def test_anchor_bulk_surfaces_per_row_errors_on_partial_success() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "batch_id": None,
+                "validated": 2,
+                "queued": 1,
+                "duplicates": [],
+                "errors": [{"row": 1, "code": "insert_failed", "message": "Failed to create anchor record."}],
+                "dry_run": False,
+                "anchors": [
+                    {
+                        "public_id": "ARK-2026-200",
+                        "fingerprint": "a" * 64,
+                        "status": "PENDING",
+                        "original_document_date": None,
+                        "document_type": None,
+                        "matter_or_case_ref": None,
+                        "external_id": None,
+                        "anchored_at": "2026-01-01T00:00:00Z",
+                    }
+                ],
+            },
+            status_code=201,
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.anchor_bulk(
+            [BulkAnchorInput(fingerprint="a" * 64), BulkAnchorInput(fingerprint="b" * 64)]
+        )
+
+    assert result.queued == 1
+    assert result.errors[0].row == 1
+    assert result.errors[0].code == "insert_failed"
+    assert result.anchors is not None
+    assert len(result.anchors) == 1
+
+
+def test_anchor_bulk_409_duplicate_fail_preserves_code_and_status() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "error": "duplicate_fingerprints",
+                "message": (
+                    'Batch contains 1 duplicate fingerprint(s); pick a duplicate_strategy '
+                    'other than "fail" to proceed.'
+                ),
+                "duplicates": [{"row": 1, "fingerprint": "a" * 64, "scope": "in_db", "decision": "fail"}],
+            },
+            status_code=409,
+        )
+
+    with (
+        Arkova(api_key="ak_test", retries=0, transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(ArkovaError) as exc_info,
+    ):
+        client.anchor_bulk([BulkAnchorInput(fingerprint="a" * 64), BulkAnchorInput(fingerprint="a" * 64)])
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "duplicate_fingerprints"
+
+
+def test_anchor_bulk_402_insufficient_credits_preserves_code_and_status() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {"error": "insufficient_credits", "balance": 0, "required": 5, "message": "Not enough credits."},
+            status_code=402,
+        )
+
+    with (
+        Arkova(api_key="ak_test", retries=0, transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(ArkovaError) as exc_info,
+    ):
+        client.anchor_bulk([BulkAnchorInput(fingerprint="a" * 64) for _ in range(5)])
+
+    assert exc_info.value.status_code == 402
+    assert exc_info.value.code == "insufficient_credits"
+
+
+def test_async_anchor_and_anchor_bulk_wire_to_correct_paths_with_bearer_auth() -> None:
+    async def run() -> tuple[str, str, list[str]]:
+        seen_paths: list[str] = []
+        seen_auth: list[str | None] = []
+
+        def anchor_handler(request: httpx.Request) -> httpx.Response:
+            seen_paths.append(request.url.path)
+            seen_auth.append(request.headers.get("authorization"))
+            return json_response(
+                {
+                    "public_id": "ARK-2026-ASYNC",
+                    "fingerprint": "a" * 64,
+                    "status": "PENDING",
+                    "created_at": "2026-01-01T00:00:00Z",
+                },
+                status_code=201,
+            )
+
+        async with AsyncArkova(
+            api_key="ak_test", transport=httpx.MockTransport(anchor_handler)
+        ) as client:
+            receipt = await client.anchor(fingerprint="a" * 64)
+            public_id = receipt.public_id
+
+        bulk_paths: list[str] = []
+
+        def bulk_handler(request: httpx.Request) -> httpx.Response:
+            bulk_paths.append(request.url.path)
+            return json_response(
+                {
+                    "batch_id": None,
+                    "validated": 1,
+                    "queued": 1,
+                    "duplicates": [],
+                    "errors": [],
+                    "dry_run": False,
+                    "anchors": [],
+                },
+                status_code=201,
+            )
+
+        async with AsyncArkova(
+            api_key="ak_test", transport=httpx.MockTransport(bulk_handler)
+        ) as client:
+            bulk_result = await client.anchor_bulk([BulkAnchorInput(fingerprint="b" * 64)])
+
+        return public_id, bulk_result.dry_run and "dry" or "not-dry", seen_paths + bulk_paths
+
+    public_id, dry_marker, paths = asyncio.run(run())
+    assert public_id == "ARK-2026-ASYNC"
+    assert dry_marker == "not-dry"
+    assert paths == ["/v1/anchor", "/v1/anchor/bulk"]
+
+
+def test_async_anchor_bulk_empty_input_no_network_call() -> None:
+    async def run() -> int:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            raise AssertionError("no network call expected")
+
+        async with AsyncArkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+            result = await client.anchor_bulk([])
+            return result.queued
+
+    assert asyncio.run(run()) == 0

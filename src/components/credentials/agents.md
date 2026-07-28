@@ -36,6 +36,12 @@ Credential display components. `CredentialRenderer` is the core component that r
 - `./cleComplianceCopy` — local CLE copy const (provider-approval labels, disclaimer, ethics review banner)
 - `@/components/ui/badge`, `@/components/ui/button`, `@/components/ui/tooltip` — shadcn/ui primitives
 
+## 2026-07-28 L3-A6 — CtdlRegistryImportDialog (CE Noncredit Data Taxonomy POC)
+
+- New `CtdlRegistryImportDialog.tsx`, mirroring `CredentialSourceImportDialog.tsx`'s two-step lookup→add UX. Step 1 calls `GET /api/v1/credentials/ctdl/import?ctid=` (read-only, existing SCRUM-2913 route) and shows the fetch+fingerprint result (record type/name/issuer, envelope fingerprint). Step 2 calls `POST /api/v1/credentials/ctdl/registry-anchor` (new route, re-fetches + staleness-checks against the fingerprint shown in step 1) and shows the resulting record link.
+- Wired into `src/pages/MyCredentialsPage.tsx` as a second "From Public Registry" button next to the existing "Add Source" button — the entry point required by the plan's rule A2 ("every user-facing capability ships its UI in the same PR").
+- Copy: `CE_REGISTRY_IMPORT_LABELS` in `src/lib/copy.ts`. §1.3-safe: "Fingerprint" not "Hash", "public registry" not chain terminology, "Add Record" not "Issue Credential" (SCRUM-1672 restricts that phrase to the verified-org issuance flow).
+
 ## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
 
 CredentialRenderer display labels ("Academic Degree", "Professional Certification") + CredentialTemplatesManager "Document Type" label scrubbed. Component/file names keep the internal Credential* naming (§1.3 internal-code exemption). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).

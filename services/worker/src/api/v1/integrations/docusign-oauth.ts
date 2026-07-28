@@ -43,6 +43,10 @@ import {
   settleConnectProvisioning,
   type ConnectorAlertStateDb,
 } from '../../../integrations/connectors/docusign-connect-health.js';
+import {
+  seedDocusignCompletionRule,
+  type RuleSeedDb,
+} from '../../../integrations/connectors/docusign-rule-seed.js';
 import type { TypeSafeDatabase } from '../../../types/database-overrides.js';
 import { resolveIntegrationStateSecret, createLazyOAuthRouter } from './oauth-state.js';
 
@@ -683,6 +687,48 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
           account_id: account.account_id,
         },
       });
+
+      // SCRUM-3027: auto-seed the "DocuSign Completion" rule (ESIGN_COMPLETED →
+      // AUTO_ANCHOR, queue-mode, enabled) so contracts flow with zero further
+      // clicks. Fire-and-forget + non-fatal (mirrors Connect provisioning): the
+      // seeder is idempotent (skips when the org already has ANY ESIGN_COMPLETED
+      // rule — never stomps an admin's choice) and never throws. We surface the
+      // outcome as an `integration_events` row; a failure has already been
+      // logged loudly + captured to Sentry inside the seeder (PII-safe).
+      void seedDocusignCompletionRule({
+        db: db as unknown as RuleSeedDb,
+        orgId: payload.orgId,
+        createdByUserId: payload.userId,
+        now: deps.now?.() ?? new Date(),
+      })
+        .then((seed) => {
+          if (seed.seeded) {
+            return recordIntegrationEvent(db, {
+              orgId: payload.orgId,
+              integrationId: integration?.id,
+              eventType: 'docusign_completion_rule_seeded',
+              status: 'success',
+              details: { rule_id: seed.ruleId },
+            });
+          }
+          if (seed.reason === 'exists') return undefined; // admin already has a rule — nothing to surface
+          return recordIntegrationEvent(db, {
+            orgId: payload.orgId,
+            integrationId: integration?.id,
+            eventType: 'docusign_completion_rule_seed_failed',
+            status: 'warning',
+            details: { reason: seed.reason },
+          });
+        })
+        .catch((seedError: unknown) => {
+          logger.error(
+            {
+              orgId: payload.orgId,
+              message: seedError instanceof Error ? seedError.message : String(seedError),
+            },
+            'DocuSign Completion rule seed post-processing failed',
+          );
+        });
 
       // Auto-provision Connect listener (fire-and-forget, non-fatal).
       // Don't block the redirect — user shouldn't wait for DocuSign API calls.

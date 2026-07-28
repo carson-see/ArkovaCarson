@@ -1,5 +1,5 @@
 # agents.md — hooks
-_Last updated: 2026-07-21_
+_Last updated: 2026-07-27_
 
 ## What This Folder Contains
 
@@ -8,6 +8,14 @@ React hooks for data fetching and mutations against Supabase. Each hook encapsul
 ## Recent Changes
 
 - 2026-07-28 R19 (advances SCRUM-2481): `useBulkAnchors.ts` `createBulkAnchors(records, options?)` gained a second `{ attested?: boolean }` param. Any batch containing a record whose `fingerprintProvided === false` (row-mode CSV import, no fingerprint column mapped — `src/lib/csvParser.ts`) requires `options.attested === true` or the hook rejects BEFORE calling the `bulk_create_anchors` RPC (sets `error`, returns `null`, never a partial submission). The RPC payload now carries `fingerprintProvided: r.fingerprintProvided ?? false` per row (fails closed to "record-derived, attestation required" when the flag is missing — never silently assumed `document_bytes`); the SQL function computes `fingerprint_source` server-side from this boolean (migration `0376`). Caller: `BulkUploadWizard.tsx`.
+- 2026-07-27 SCRUM-2940 (Folders UI): `useAnchors.ts` — the `AnchorPartial`
+  select/Pick gained `folder_id`, mapped to `Record.folderId` (`null` =
+  Unfiled, distinct from `undefined`/not-fetched). This is the minimal select
+  extension called for by the Folders UI work — `useFolders.ts` itself
+  (create/rename/delete/assignRecord) was already complete from PR #1657 and
+  was NOT restructured. Realtime INSERT/UPDATE payloads already carry
+  `folder_id` for free (they map the full `AnchorRow`), so no realtime-path
+  change was needed.
 _The following three entries were lost off `main` by the 2026-07-28 union-merge-driver incident and restored the same day — see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`._
 
 - 2026-07-06 WH-02/03 (SCRUM-2397/2398, Lane 2 S3): created `useWebhookDeliveries.ts` — `useWebhookDeliveries()` reads `webhook_delivery_logs` DIRECTLY via Supabase with a **metadata-only select** (never `payload`/`response_body`; §1.6); org scoping + org-admin gating are enforced by RLS policy `webhook_delivery_logs_read_org`, not client filters. `replay()` POSTs to the worker's JWT-authed `/api/v1/webhooks/self-service/deliveries/:id/replay` (worker re-verifies ORG_ADMIN; every replay inserts a NEW delivery-log row, original preserved for audit). `useWebhookDlq()` lists the dead-letter queue through the worker (the `webhook_dead_letter_queue` table is service_role-only RLS — the browser cannot read it directly) + `dismiss()`. `sendWebhookTestPing()` fires the WH-02 signed test ping. All user-facing error strings come from `WEBHOOK_LABELS` — raw worker/Postgres errors are never surfaced (§1.4).

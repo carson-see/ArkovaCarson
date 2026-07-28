@@ -4,6 +4,15 @@
  * PATCH /api/v1/directory-opt-out/:publicId   — Toggle opt-out for a single anchor
  * POST  /api/v1/directory-opt-out/bulk        — Bulk import opt-out status
  * GET   /api/v1/directory-opt-out             — List opt-out status for org's education anchors
+ *
+ * All three routes are org-membership-level (not admin-gated) — routine
+ * per-record toggles a staff member manages for their own org's anchors.
+ * SECURITY (fix, 2026-07-28): `requireOrgId` (../../middleware/requireOrgId.js)
+ * is now membership-validating — it previously read `x-org-id` verbatim with
+ * no check that the caller belonged to the requested org, allowing any
+ * authenticated Arkova user to read/write any other org's opt-out flags. See
+ * that file's doc comment for the full fix. No change needed in this file
+ * beyond the middleware itself.
  */
 
 import { Router } from 'express';

@@ -1,7 +1,15 @@
-from .client import AsyncArkova, Arkova
+from .client import BULK_ANCHOR_MAX_ROWS, Arkova, AsyncArkova
 from .errors import ArkovaError
 from .models import (
     Anchor,
+    AnchorReceipt,
+    BulkAnchorCredentialType,
+    BulkAnchorDuplicate,
+    BulkAnchorDuplicateStrategy,
+    BulkAnchorInput,
+    BulkAnchorResponse,
+    BulkAnchorResultRow,
+    BulkAnchorRowError,
     FingerprintVerification,
     MerkleProofEntry,
     MerkleProofResponse,
@@ -22,10 +30,20 @@ from .proofs import (
 )
 
 __all__ = [
+    "BULK_ANCHOR_MAX_ROWS",
+    "REASON_CODES",
     "Anchor",
+    "AnchorReceipt",
     "Arkova",
     "ArkovaError",
     "AsyncArkova",
+    "BulkAnchorCredentialType",
+    "BulkAnchorDuplicate",
+    "BulkAnchorDuplicateStrategy",
+    "BulkAnchorInput",
+    "BulkAnchorResponse",
+    "BulkAnchorResultRow",
+    "BulkAnchorRowError",
     "FingerprintVerification",
     "MerkleProofEntry",
     "MerkleProofResponse",
@@ -34,7 +52,6 @@ __all__ = [
     "ProblemDetail",
     "ProofBundle",
     "ProofBundleSignature",
-    "REASON_CODES",
     "SearchResponse",
     "SearchResult",
     "VerificationResult",
