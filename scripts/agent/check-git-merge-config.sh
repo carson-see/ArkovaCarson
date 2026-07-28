@@ -13,7 +13,7 @@
 # is the shell no-op: it writes nothing to %A and exits 0, so git records a
 # clean merge while keeping "ours" and silently discarding every line unique to
 # "theirs". No conflict markers, no error, no exit code. Months of agents.md
-# sections were lost that way (169 lines off main across 31 commits).
+# sections were lost that way (86 lines off main across 19 commits).
 #
 # The built-in driver names (union/text/binary) need NO driver config at all.
 # Any `merge.<builtin>.driver` is therefore always wrong, and a no-op command

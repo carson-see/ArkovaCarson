@@ -8,7 +8,7 @@
  * BUILT-IN driver overrides git's real union algorithm, and `true` is a no-op
  * that exits 0 without writing %A. Git recorded clean merges while keeping
  * "ours" and discarding every line unique to "theirs" — silently, for months
- * (169 lines lost off main across 31 commits; 4 open PRs still carrying drops).
+ * (86 lines lost off main across 19 commits; 3 open PRs still carrying drops).
  *
  * The local config is fixed and `scripts/agent/check-git-merge-config.sh`
  * blocks its return. This gate is the backstop that does not care about the

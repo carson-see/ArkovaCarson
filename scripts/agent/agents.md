@@ -13,7 +13,7 @@ Local agent bootstrap helpers. These scripts are guardrails for agent behavior o
 driver overrides the real algorithm, and `true` is the shell no-op — it writes
 nothing to `%A` and exits 0, so git recorded **clean** merges while keeping
 "ours" and discarding every line unique to "theirs". No conflict markers, no
-error. 169 lines were lost off `main` across 31 commits before it was found.
+error. 86 lines were lost off `main` across 19 commits before it was found.
 
 - **DO** let `ack-claude-bootstrap.sh` run the guard every session. `.git/config`
   is not committed, so CI cannot see this class — a per-checkout check at

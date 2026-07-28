@@ -123,5 +123,5 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 ## Open work
 
 - S0-4.2 follow-up (Carson-gated): once `check-ledger-numeric-integrity.ts` runs green against prod, retire the stale `0299–0310` exemptions in `.github/workflows/migration-drift.yml` `exempt_regex` (fail-closed — verify first).
-- 2026-07-28 union-drop remediation (open): the append-only gate stops NEW drops but does not restore what was already lost — 169 lines off `main` across 31 commits (since 2026-05-01) and live drops on open PRs #1615/#1618/#1652/#1654. Recover with `git show <pre-loss-commit>:<file>`; audit scripts are session-scratch, re-derivable from the gate's `findDrops`.
+- 2026-07-28 union-drop remediation (open): the append-only gate stops NEW drops but does not restore what was already lost — 86 lines off `main` across 19 commits (since 2026-05-01) and live drops on open PRs #1618/#1652/#1654. Recover with `git show <pre-loss-commit>:<file>`; audit scripts are session-scratch, re-derivable from the gate's `findDrops`.
 - L2-S1 follow-up (Sprint 3.3): replace the `check-s33-sequencing-gate.ts` prod-green STUB with a real read-only probe (release-evidence cron / /api/health + gcloud revision match) and wire the gate into `provision-isolated-rig.sh --apply` as a preflight refusal.
