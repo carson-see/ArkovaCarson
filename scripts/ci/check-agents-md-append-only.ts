@@ -59,6 +59,22 @@ function tokens(line: string): Set<string> {
   return new Set(line.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? []);
 }
 
+/**
+ * First cell of a markdown table row, lowercased and stripped of backticks —
+ * the row's identity. Migration-ledger rows are keyed this way (`| \`0361\` | …`)
+ * and get rewritten wholesale when a reservation is claimed, struck, or
+ * renumbered; the prose can change past any similarity threshold while the row
+ * plainly still exists. Returns null for anything that is not a table row.
+ */
+function tableRowKey(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('|')) return null;
+  const first = trimmed.slice(1).split('|')[0]?.replace(/`/g, '').trim().toLowerCase();
+  // Ignore separator rows (`|---|---|`) and empty leading cells, which carry no identity.
+  if (!first || /^:?-+:?$/.test(first)) return null;
+  return first;
+}
+
 /** Jaccard overlap; 1 = identical token sets, 0 = disjoint. */
 function similarity(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
@@ -88,11 +104,18 @@ export function findDrops(baseText: string, headText: string): string[] {
   // so its counterpart is necessarily new. Comparing against unchanged lines
   // would let any similar-looking neighbour mask a real deletion.
   const baseSet = new Set(baseText.split('\n'));
-  const newHeadTokens = headLines
-    .filter((l) => !baseSet.has(l) && l.trim().length >= MIN_SIGNIFICANT_LENGTH)
-    .map(tokens);
+  const newHeadLines = headLines.filter(
+    (l) => !baseSet.has(l) && l.trim().length >= MIN_SIGNIFICANT_LENGTH,
+  );
+  const newHeadTokens = newHeadLines.map(tokens);
+  // A row whose identity still exists at head was rewritten, not removed.
+  const newHeadRowKeys = new Set(
+    newHeadLines.map(tableRowKey).filter((k): k is string => k !== null),
+  );
 
   return candidates.filter((line) => {
+    const key = tableRowKey(line);
+    if (key !== null && newHeadRowKeys.has(key)) return false;
     const t = tokens(line);
     return !newHeadTokens.some((h) => similarity(t, h) >= EDIT_SIMILARITY_THRESHOLD);
   });

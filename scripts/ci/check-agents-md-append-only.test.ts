@@ -59,6 +59,25 @@ describe('findDrops — agents.md append-only gate', () => {
     expect(drops[0]).toContain('0361');
   });
 
+  it('does NOT flag a ledger row rewritten past the similarity threshold (the #1615 struck-0361 class)', () => {
+    // PR #1615 deliberately restruck this reservation. The row still exists,
+    // keyed by its first cell, but the prose shares almost no tokens.
+    const base = '| `0361` | (unclaimed) | SCRUM-2916 | watermark partial index | RESERVED — placeholder, not yet filed |';
+    const head =
+      '| `0361` | (unclaimed — RELEASED 2026-07-28) | SCRUM-2916 | watermark partial index | ' +
+      'STRUCK — PR #1615 Wave-0 conflict-resolution shipped SCRUM-2916 as design-only, so the prefix returns to the pool |';
+    expect(findDrops(base, head)).toEqual([]);
+  });
+
+  it('FLAGS a removed table row whose first cell no longer appears at head', () => {
+    const base = [
+      '| `0363` | lane2 | G4 | flag seed | RESERVED |',
+      '| `0364` | security-revokes PR #1652 | — | security revokes | RESERVED — pre-soak, file-only |',
+    ].join('\n');
+    const head = '| `0363` | lane2 | G4 | flag seed | RESERVED |';
+    expect(findDrops(base, head).join(' ')).toContain('0364');
+  });
+
   it('still flags a deletion when a similar-looking line was already in the base', () => {
     // The surviving `0365` row is unchanged, so it must not be mistaken for the
     // edited counterpart of the deleted `0366` row and mask the drop.
