@@ -605,6 +605,25 @@ describe('check-staging-evidence', () => {
       ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T2');
     });
 
+    // This test calls the REAL (unmocked) findS33RuntimeImporters(), which
+    // does a synchronous BFS over services/worker/src's actual import graph
+    // starting at src/index.ts — real readFileSync + regex parse per
+    // reachable file, by design (it's asserting the ACTUAL runtime graph,
+    // not a stubbed one). Locally this takes ~1s cold / ~0.4s warm, but it
+    // timed out in CI (observed on PR #1727, scripts/ci/check-staging-
+    // evidence.test.ts:608) against vitest's 5000ms default test timeout.
+    // Root cause is CI resource contention, not a logic bug or infinite
+    // loop: this "test" job also runs the full Supabase Docker Compose
+    // stack (Postgres/PostgREST/GoTrue/Realtime/Kong) concurrently on the
+    // same 2-vCPU ubuntu-22.04 runner, and vitest's default thread pool
+    // schedules many other test files in parallel — the same class of
+    // slow-runner headroom already called out for the E2E worker health
+    // check above ("slow runners can push past the old 60s ceiling").
+    // Bumping to a generous 20s (this test file's other real-graph test at
+    // line ~698 gets the same treatment) rather than mocking the graph walk
+    // here, because these two tests are specifically the ones asserting the
+    // REAL graph is empty/correct — mocking would remove the thing under
+    // test.
     it('classifies the real full #1545 candidate as T0 using the actual runtime graph', () => {
       const candidate = [
         '.gitleaks.toml',
@@ -644,7 +663,7 @@ describe('check-staging-evidence', () => {
       expect(requiredTierFor(candidate, {
         s33RuntimeImporterProvider: () => realRuntimeImporters,
       }).tier).toBe('T0');
-    });
+    }, 20_000);
 
     it('classifies the exact Wave-2 trusted-main acceptance boundary as offline T0', () => {
       const candidate = [
@@ -689,6 +708,8 @@ describe('check-staging-evidence', () => {
       ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T2');
     });
 
+    // Second real (unmocked) findS33RuntimeImporters() call in this file —
+    // see the timeout-budget comment on the "#1545 candidate" test above.
     it('classifies only the exact inert Wave-3 deterministic evaluator as offline T0', () => {
       const candidate = [
         'docs/lane3/s33-wave3-v71-offline-gates.json',
@@ -706,7 +727,7 @@ describe('check-staging-evidence', () => {
       expect(requiredTierFor([
         'services/worker/src/ai/eval/s33-wave3-deterministic-eval-gates-v2.ts',
       ], { s33RuntimeImporterProvider: () => [] }).tier).toBe('T2');
-    });
+    }, 20_000);
 
     it('allows only the exact inert Wave-2 corpus filename shape and fails closed on runtime reachability', () => {
       const corpus = 'services/worker/src/ai/eval/golden-dataset-s33-wave2-top15-heldout.ts';
