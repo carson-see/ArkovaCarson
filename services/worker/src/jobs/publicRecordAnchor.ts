@@ -21,7 +21,7 @@
  *   - 1.9: ENABLE_PROD_NETWORK_ANCHORING gates real Bitcoin chain calls
  */
 
-import { db } from '../utils/db.js';
+import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getChainClientAsync } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
@@ -533,15 +533,115 @@ async function insertAnchorSerialFallback(
   return created;
 }
 
+// SCRUM-3031: hard client-side ceiling on the batch_insert_anchors RPC call.
+// Well below the RPC's own 120s statement_timeout (see migration 0370) so
+// the worker fails fast and falls back to serial inserts instead of
+// blocking indefinitely on a wedged call — the root-cause fix (0370) makes
+// this call cheap even at prod scale, but this is defense-in-depth against
+// any future regression re-wedging the same table.
+export const BATCH_INSERT_RPC_TIMEOUT_MS = 20_000;
+
+function isRpcTimeoutError(err: unknown): boolean {
+  return err instanceof Error && err.message.includes('timed out');
+}
+
+/** Narrow shape of what `client.rpc(...)` returns that this function relies
+ *  on: a thenable resolving to `{ data, error }`, optionally chainable with
+ *  `.abortSignal()` (real supabase-js `PostgrestFilterBuilder` always has
+ *  this; kept optional here only so lightweight test doubles that return a
+ *  bare Promise don't need to implement the full builder surface). */
+type AbortableRpcResult = PromiseLike<{ data: unknown; error: unknown }> & {
+  abortSignal?: (signal: AbortSignal) => PromiseLike<{ data: unknown; error: unknown }>;
+};
+
+/**
+ * Calls batch_insert_anchors with a hard client-side timeout — SINGLE
+ * ATTEMPT, no retry (SCRUM-3031 review follow-up).
+ *
+ * A prior version of this function retried timeout-classified failures up
+ * to 3x with jittered backoff. That was a correctness bug, not a hardening
+ * improvement: `withDbTimeout` is a bare `Promise.race` against a
+ * `setTimeout` — when it "times out" client-side, the original RPC call
+ * (and, critically, the Postgres backend query it triggered) does NOT stop.
+ * PostgREST does not cancel the backend statement when the HTTP client
+ * disconnects (open PostgREST behavior — see
+ * https://github.com/PostgREST/postgrest/issues/3517 — "the underlying
+ * query continues to run on PostgREST['s] db pool [...] until reaching its
+ * timeout"). So a "timeout then retry" here used to launch a SECOND
+ * `batch_insert_anchors` execution while the FIRST one could still be
+ * running server-side, holding `RowExclusiveLock` on `anchors` — up to 3
+ * stacked overlapping executions on repeated timeouts. That is the exact
+ * wedge scenario this hardening exists to prevent, so the retry loop could
+ * make it worse, not better.
+ *
+ * Fix: this function now makes exactly ONE attempt. It still passes an
+ * `AbortController` signal into `client.rpc(...).abortSignal(...)` so a
+ * timed-out attempt aborts the CLIENT-SIDE fetch — this frees the local
+ * HTTP connection/socket immediately instead of leaking it until the RPC's
+ * own 120s `statement_timeout` elapses, and gives the fastest possible
+ * local signal that the call is dead. But per the PostgREST issue above,
+ * this abort is NOT guaranteed to cancel the server-side Postgres
+ * statement — do not rely on it for that. On a timeout, we do not retry;
+ * we surface the error immediately, exactly like a real (non-timeout)
+ * Postgrest error, and the caller (`insertAnchorChunk`) falls through to
+ * `insertAnchorSerialFallback`. That per-row fallback can theoretically
+ * still contend with a still-running original statement's row locks, but
+ * that is bounded, row-level contention — nothing like the "up to 3
+ * stacked full-batch executions holding a table-wide lock" scenario the
+ * retry loop introduced.
+ *
+ * Exported for direct unit testing (mirrors buildAnchorFilename /
+ * mapCredentialType already being exported for the same reason).
+ */
+export async function callBatchInsertAnchorsOnce(
+  client: SupabaseClient,
+  chunk: PipelineAnchorInsert[],
+  chunkStart: number,
+): Promise<{ data: Array<{ id: string; fingerprint: string }> | null; error: unknown }> {
+  const controller = new AbortController();
+  // Abort the client-side fetch at the same deadline withDbTimeout uses, so
+  // a timed-out attempt's connection is torn down promptly rather than left
+  // to run until the RPC's own 120s statement_timeout (see function
+  // docstring — this does NOT guarantee server-side statement cancellation).
+  const abortTimer = setTimeout(() => controller.abort(), BATCH_INSERT_RPC_TIMEOUT_MS);
+
+  try {
+    const { data, error } = await withDbTimeout(
+      // Wrapped in an async arrow so this is a real Promise<T> — the
+      // PostgrestFilterBuilder client.rpc() returns is PromiseLike but
+      // doesn't structurally match Promise<T> for withDbTimeout's generic.
+      async () => {
+        const builder = client.rpc('batch_insert_anchors', { p_anchors: chunk }) as unknown as AbortableRpcResult;
+        const withAbort = typeof builder.abortSignal === 'function'
+          ? builder.abortSignal(controller.signal)
+          : builder;
+        return withAbort;
+      },
+      BATCH_INSERT_RPC_TIMEOUT_MS,
+    );
+    // A returned (not thrown) Postgrest error is a real failure, not a
+    // timeout — surface it immediately, same as pre-SCRUM-3031 behavior.
+    return { data: (data ?? null) as Array<{ id: string; fingerprint: string }> | null, error: error ?? null };
+  } catch (err) {
+    if (isRpcTimeoutError(err)) {
+      logger.warn(
+        { chunkIndex: chunkStart, chunkSize: chunk.length },
+        'batch_insert_anchors RPC timed out — client-side fetch aborted; NOT retrying (a second concurrent execution against the same rows is exactly the wedge this hardening prevents); falling back to serial insert',
+      );
+    }
+    return { data: null, error: err };
+  } finally {
+    clearTimeout(abortTimer);
+  }
+}
+
 async function insertAnchorChunk(
   client: SupabaseClient,
   chunk: PipelineAnchorInsert[],
   chunkStart: number,
   ownerId: string,
 ): Promise<Array<{ id: string; fingerprint: string }>> {
-  const { data: result, error: rpcError } = await client.rpc('batch_insert_anchors', {
-    p_anchors: chunk,
-  });
+  const { data: result, error: rpcError } = await callBatchInsertAnchorsOnce(client, chunk, chunkStart);
 
   if (rpcError) {
     logger.error({ error: rpcError, chunkIndex: chunkStart, chunkSize: chunk.length }, 'Batch insert RPC failed — falling back to serial inserts');

@@ -67,6 +67,8 @@ vi.mock('../../utils/logger.js', () => ({
 
 vi.mock('../../utils/db.js', () => ({
   db: {},
+  // SCRUM-3031: passthrough by default; see publicRecordAnchor-rpc-hardening.test.ts.
+  withDbTimeout: vi.fn((operation: () => Promise<unknown>) => operation()),
 }));
 
 vi.mock('../../chain/client.js', () => ({
