@@ -32,22 +32,16 @@ Python SDK for the Arkova Verification API v2. Sync + async clients using `httpx
 - Default base URL: `https://api.arkova.ai/v2`. Auth via `Authorization: Bearer ak_*` header.
 - Published to PyPI via `.github/workflows/publish-python-sdk.yml`.
 - **Lint gate:** that workflow's `ruff check src tests` is the publish gate, and
-  `ruff` is pinned to a SINGLE minor (`>=0.16,<0.17`) in `pyproject.toml`. ruff
-  gives no default-rule-set stability guarantee below 1.0 — 0.16.0 silently
-  widened its implicit defaults (adding I / UP / SIM / PYI / BLE / RUF) and put
-  87 findings on untouched code, which would have failed the first real publish.
-  Bump the pin deliberately and clear any new findings in the same PR; do not
-  reopen the range.
-- Five `# noqa`s here are load-bearing, each with an inline justification — do
-  not "clean them up":
-  - `proofs.py:287` `UP007` on `NodeSource` — module-level runtime alias, so
-    `from __future__ import annotations` does not defer it; PEP 604 there raises
-    `TypeError` on 3.9 and breaks this file's own stdlib-only drop-in promise.
-    Note that promise is NARROWER than the packaged SDK's
-    `requires-python = ">=3.10"`: `proofs.py` is meant to be copy-pasteable
-    standalone, so it holds a 3.9 floor the rest of the package does not.
-  - `proofs.py:316` + `models.py:189` `BLE001` — deliberate fail-closed catches
+  `ruff` is pinned to an EXACT version in `pyproject.toml` — see the comment on
+  the pin there for why a range is not sufficient. Bump it deliberately and
+  clear any new findings in the same PR.
+- **Five `# noqa`s here are load-bearing** — each carries its own inline
+  justification, so read the code, not a line number (these drift). Do not
+  "clean them up":
+  - `UP007` on `proofs.py`'s `NodeSource` — that file holds a Python 3.9 floor
+    deliberately NARROWER than the package's `requires-python = ">=3.10"`,
+    because it is meant to be copy-pasteable standalone.
+  - `BLE001` in `proofs.py` and `models.py` — deliberate fail-closed catches
     (injected-node trust boundary; frozen-response proof-bundle validator).
-  - `client.py:139` + `client.py:253` `PYI034` ×2 — `typing.Self` is 3.11+;
-    `requires-python` is 3.10 and the package carries no `typing_extensions`
-    dependency.
+  - `PYI034` ×2 in `client.py` — `typing.Self` is 3.11+, the floor is 3.10, and
+    the package carries no `typing_extensions` dependency.
