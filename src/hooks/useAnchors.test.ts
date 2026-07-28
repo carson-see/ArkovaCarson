@@ -86,6 +86,7 @@ describe('useAnchors', () => {
         chain_timestamp: '2026-03-01T01:00:00Z',
         file_size: 1024,
         credential_type: 'DIPLOMA',
+        folder_id: 'folder-9',
       },
     ];
 
@@ -96,12 +97,13 @@ describe('useAnchors', () => {
         limit: vi.fn().mockResolvedValue({ data: mockAnchors, error: null }),
       }),
     });
-    mockFrom.mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          is: mockIs,
-        }),
+    const mockSelect = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        is: mockIs,
       }),
+    });
+    mockFrom.mockReturnValue({
+      select: mockSelect,
     });
 
     const { useAnchors } = await import('./useAnchors');
@@ -121,7 +123,11 @@ describe('useAnchors', () => {
       securedAt: '2026-03-01T01:00:00Z',
       fileSize: 1024,
       credentialType: 'DIPLOMA',
+      folderId: 'folder-9',
     });
+    // SCRUM-2940: the folders UI filters by folder_id, so the anchors select
+    // must include it (do not restructure the hook, just extend the select).
+    expect(mockSelect).toHaveBeenCalledWith(expect.stringContaining('folder_id'));
   });
 
   it('sets error when fetch fails', async () => {
@@ -165,6 +171,7 @@ describe('useAnchors', () => {
         chain_timestamp: null,
         file_size: null,
         credential_type: null,
+        folder_id: null,
       },
     ];
 
@@ -193,5 +200,6 @@ describe('useAnchors', () => {
     expect(result.current.records[0].securedAt).toBeUndefined();
     expect(result.current.records[0].fileSize).toBe(0);
     expect(result.current.records[0].credentialType).toBeUndefined();
+    expect(result.current.records[0].folderId).toBeNull();
   });
 });

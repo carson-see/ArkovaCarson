@@ -67,6 +67,7 @@ import { regulatoryLookupRouter } from './regulatory-lookup.js';
 import { cleVerifyRouter } from './cle-verify.js';
 import { credentialsCtdlRouter } from './credentials-ctdl.js';
 import { credentialsCtdlImportRouter } from './credentials-ctdl-import.js';
+import { credentialsCtdlRegistryAnchorRouter } from './credentials-ctdl-registry-anchor.js';
 import { webhooksRouter } from './webhooks.js';
 import { webhooksSelfServiceRouter } from './webhooks-self-service.js';
 // atsWebhookRouter moved to index.ts for raw-body HMAC (SCRUM-1214/1215)
@@ -324,6 +325,15 @@ const ctdlImportRateLimiter = rateLimit({
   keyGenerator: (req) => `ctdl-import:${req.authUserId ?? req.ip ?? 'unknown'}`,
 });
 
+// L3-A6: the registry-anchor route ALSO does a live outbound CE Registry
+// fetch AND writes an anchor + deducts org credit, so it gets a tighter
+// bucket than the read-only preview above.
+const ctdlRegistryAnchorRateLimiter = rateLimit({
+  windowMs: 60_000,
+  maxRequests: 5,
+  keyGenerator: (req) => `ctdl-registry-anchor:${req.authUserId ?? req.ip ?? 'unknown'}`,
+});
+
 // AI endpoints — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S4)
 router.use('/ai/extract-batch', aiExtractionGate(), requireAuth, aiRateLimiter, aiBatchExtractRouter);
 router.use('/ai/extract', aiExtractionGate(), requireAuth, aiRateLimiter, aiExtractRouter);
@@ -459,6 +469,14 @@ router.use('/anchor', anchorAnonAllow, anchorExtractionManifestRouter);
 // runs for the public serializer's `/credentials/:publicId/ctdl` route below.
 // Disjoint from `/:publicId/ctdl`, so the two /credentials mounts never collide.
 router.use('/credentials/ctdl/import', requireAuth, ctdlImportRateLimiter, credentialsCtdlImportRouter);
+// L3-A6: same requireAuth-scoping rationale as the import consumer above —
+// mounted at the full sub-path so auth + rate-limit apply only here.
+router.use(
+  '/credentials/ctdl/registry-anchor',
+  requireAuth,
+  ctdlRegistryAnchorRateLimiter,
+  credentialsCtdlRegistryAnchorRouter,
+);
 router.use('/credentials', anchorAnonAllow, credentialsCtdlRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───

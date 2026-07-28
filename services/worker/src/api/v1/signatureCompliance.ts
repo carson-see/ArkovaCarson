@@ -25,12 +25,36 @@ const router = Router();
 /**
  * GET /api/v1/signatures/:id/audit-proof
  * Generate a comprehensive audit proof package for a signature.
+ *
+ * SECURITY (fix, 2026-07-28): this route had NO org check at all — any
+ * authenticated user could pull any other org's signature audit proof
+ * (signer PII, certificate chain, eIDAS/ESIGN compliance assessment) just by
+ * guessing/enumerating signature public ids. Fixed with the same
+ * membership-level gate as the sibling `/signatures/export` route in this
+ * file (an audit proof for one signature is the same sensitivity class as
+ * the bulk export — both membership-level, not admin-gated). `generateAuditProof`
+ * now requires and scopes by `orgId` (see auditProofExporter.ts).
  */
 router.get('/signatures/:id/audit-proof', async (req: Request<{ id: string }>, res: Response) => {
   try {
+    const userId = req.authUserId;
+    if (!userId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    // Owner-inclusive org resolution (owners are linked via profiles.org_id,
+    // not guaranteed an org_members row) — same helper as every other gate
+    // in this file.
+    const orgId = await getCallerOrgId(userId);
+    if (!orgId) {
+      res.status(403).json({ error: 'No organization membership found' });
+      return;
+    }
+
     const { id } = req.params;
 
-    const proof = await generateAuditProof(id);
+    const proof = await generateAuditProof(id, orgId);
     if (!proof) {
       res.status(404).json({ error: 'Signature not found' });
       return;

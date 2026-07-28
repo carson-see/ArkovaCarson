@@ -1,5 +1,21 @@
 # agents.md — pages
-_Last updated: 2026-07-16_
+_Last updated: 2026-07-27_
+
+## SCRUM-2940 — Folders UI (founder escalation, PR #1657 follow-up)
+
+PR #1657 merged the folders DATA LAYER (`useFolders`, `folders` table,
+`anchors.folder_id`) with **zero** UI — `useFolders` had no importers outside
+its own file, so there was no way to create a folder or file a record into
+one. `MyRecordsPage.tsx` is now the consumer: a `FolderSidebar`
+(`@/components/folders`) filters the record list by `'ALL' | 'UNFILED' |
+<folder id>`; create/rename/delete flow through `FolderFormDialog` /
+`DeleteFolderDialog`; each record's action menu gained "Move to folder"
+(`MoveToFolderDialog`) and, when already filed, a direct "Remove from folder"
+item. Filtering reads `Record.folderId`, added to `useAnchors`'s select (see
+`src/hooks/agents.md`). `DashboardPage.tsx`'s `RecordsList`-based view is
+**not** wired to folders in this pass — only the dedicated My Records page is
+in scope for SCRUM-2940 v1. Full component-level notes live in
+`src/components/folders/agents.md`.
 
 ## PR #1561 — WebMCP search URL consumption
 
@@ -20,6 +36,18 @@ ignored, and the input itself carries the same maximum length.
 ## SCRUM-1755 — Secure Document vs Issue Credential split
 
 `DashboardPage.tsx` + `OrgProfilePage.tsx` — split "Secure Document" (universal) from "Issue Credential" (verified-org admin only). Dashboard empty-state CTA always opens `SecureDocumentDialog` (pre-1755 it opened `IssueCredentialForm` for ORG_ADMIN under a "Secure Document" label — the bug). Issue Credential header button is gated on `useCanIssueCredential()` AND `ENABLE_ISSUE_CREDENTIAL_SPLIT`. `OrgProfilePage` swaps the dual Bulk Upload + Issue Credential buttons for a single primary "Secure Document" button (auto-detects bulk inside the dialog) plus a gated outline "Issue Credential" button. The legacy bulk-only dialog wrapper was removed; `SecureDocumentDialog` handles every input shape.
+
+## SCRUM-3010 STEP 1 — Org registry cross-member privacy gate (frontend)
+
+_Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`)._
+
+`OrgProfilePage.tsx` — the Home-tab org records table (`OrgRegistryTable`) previously rendered UNCONDITIONALLY, so any org member (not just owner/admin/platform admin) could VIEW and CSV-EXPORT the entire org's records (every coworker's filenames, fingerprints, credential_type, label, metadata) — a live cross-member privacy leak (§1.6 flavor). Fix (STEP 1, frontend-only, T1): pass `isAdmin={isAdmin}` and `currentUserId={user?.id}` into `OrgRegistryTable`. Admins keep the org-wide registry; a non-admin member is scoped to their OWN rows only (by `user_id`, mirroring `useAnchors`), and the CSV export is gated the same way. Non-admin members still see their personal records on `/dashboard` (already correct). The org-wide `recordsCount` stat is an aggregate integer (no per-record metadata) and is intentionally left visible. STEP 2 (RLS tightening so this is enforced server-side, not just in the browser query) is a separate T3 story, deferred post-soak.
+
+## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
+
+_Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`)._
+
+Page-level scrub: SearchPage title/placeholder, Documents TypeBadge ("Issued"), Attestations type descs, HowItWorks JSON-LD HowTo name, Developers/About/Terms/Contact/NotFound/Privacy stats + footer links ("Search Records", "Records Secured", "Document Types"), VerifyMyRecordPage "Document Type", Developers pricing row "AI assistant query" (Nessie codename removed from user copy; endpoint path kept). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
 
 ## What This Folder Contains
 
@@ -84,10 +112,19 @@ Both take `pageUrl` as a prop. Use `getAppBaseUrl()` from `@/lib/routes` to buil
 - 2026-06-29 PROOF-04 second-pass (Carson P1 #1352): `RecordDetailPage.onDownloadProof` no longer hand-rolls the `anchor_proofs` fetch — it calls `sourceProofInput(supabase, anchor)` from `@/lib/sourceProofInput`, which sources `leaf_count` (RLS-scoped batch-row count, the field that arms the CVE-2012-2459 guard; the old inline path left it `null`). When the returned `complete` is false (a batch member whose leaf_count couldn't be sourced), the handler warns via `toast.warning` and passes `proofComplete:false` so the certificate does not present an incomplete packet as a complete offline proof. The inline `isMerkleEntry` guard moved into `sourceProofInput.ts`.
 
 - 2026-07-06 CPE-02 (SCRUM-2380, Lane 3 S3): `ComplianceDashboardPage.tsx` mounts `OrgCpeMemberDashboard` (per-member secured/pending CPE tiles, live `useOrgCpeMemberSummary` hook, no migration) below the export panel. The page test stubs the hook (React-Query backed; the card has its own suites).
+## 2026-07-22 Platform-admin role-source cutover (SCRUM-2939 / PI05-ADMIN)
+
+_Restored 2026-07-28 — same union-merge-driver incident as the SCRUM-3010 section above._
+
+Every admin page now derives platform-admin status from `isPlatformAdmin(profile)` (`profiles.is_platform_admin` DB flag) instead of the removed `isPlatformAdmin(user?.email)` whitelist. `ComplianceDashboardPage` stays org-accessible (`role === 'ORG_ADMIN' || isPlatformAdmin(profile)`) — it is NOT a platform-only surface and is deliberately NOT wrapped by `PlatformAdminRoute`. Page tests grant admin by setting `is_platform_admin: true` on the mocked profile and deny by overriding `useProfile` (NOT `user.email`).
+
 ## UX-03 copy compliance (2026-07-06)
 
 `PipelineAdminPage.tsx` job-trigger footer reworded "worker service" → "background service" (UX-03 / SCRUM-1029 banned engineering copy). Decision on the (a) reword vs (b) treasury-style scan-exclusion choice: **reword.** The `EXCLUDE_PATTERNS` ops-dashboard exclusion (precedent: `src/components/admin/treasury/**`) was considered and rejected — the rest of this ~1,700-line admin page's copy is compliant and should stay under lint:copy scan; do NOT add this page to `EXCLUDE_PATTERNS`. Surfaced by the SCRUM-2666 cross-line lint:copy fix (PR #1440); this reword also clears that PR's grandfathered baseline entry for `PipelineAdminPage.tsx:1196` (it goes stale once #1440 lands — its owner removes it).
 
+## 2026-07-28 L3-A6 — MyCredentialsPage "From Public Registry" entry point
+
+`MyCredentialsPage.tsx` gains a second header button (`data-testid="add-from-registry-button"`) next to the existing "Add Source" button, opening `CtdlRegistryImportDialog` (`src/components/credentials/`). Two-step flow: look up a public Credential Registry record by CTID (`GET /api/v1/credentials/ctdl/import`), then add it (`POST /api/v1/credentials/ctdl/registry-anchor`, new route). Part of the L3-A6 CE Noncredit Data Taxonomy 3.0 anchoring POC — see `docs/partners/ce-noncredit-anchoring-poc.md` for the research + honest-limits writeup and `services/worker/src/ctdl/agents.md` for the parser fix this UI exercises.
 ## SCRUM-3010 STEP 1 — Org registry cross-member privacy gate (frontend)
 
 `OrgProfilePage.tsx` — the Home-tab org records table (`OrgRegistryTable`) previously rendered UNCONDITIONALLY, so any org member (not just owner/admin/platform admin) could VIEW and CSV-EXPORT the entire org's records (every coworker's filenames, fingerprints, credential_type, label, metadata) — a live cross-member privacy leak (§1.6 flavor). Fix (STEP 1, frontend-only, T1): pass `isAdmin={isAdmin}` and `currentUserId={user?.id}` into `OrgRegistryTable`. Admins keep the org-wide registry; a non-admin member is scoped to their OWN rows only (by `user_id`, mirroring `useAnchors`), and the CSV export is gated the same way. Non-admin members still see their personal records on `/dashboard` (already correct). The org-wide `recordsCount` stat is an aggregate integer (no per-record metadata) and is intentionally left visible. STEP 2 (RLS tightening so this is enforced server-side, not just in the browser query) is a separate T3 story, deferred post-soak.
