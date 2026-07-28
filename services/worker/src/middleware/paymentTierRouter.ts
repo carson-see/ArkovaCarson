@@ -110,6 +110,43 @@ async function tryCredits(orgId: string, userId: string, cost: number): Promise<
 // ─── Tier 2: Stripe Metered Billing ─────────────────────────────────────
 
 /**
+ * KNOWN UNDER-BILLING VECTOR (SCRUM-2971 code review follow-up) — READ
+ * BEFORE MOUNTING `paymentTierRouter()` IN index.ts.
+ *
+ * `stripeMeteredRequestId()` below trusts the client-supplied
+ * `Idempotency-Key` header as the SOLE input to the Tier-2 billing_events
+ * idempotency key (`stripeMeteredIdempotencyKey`). A subscriber who sends
+ * the SAME `Idempotency-Key` value on every metered call — not just on
+ * genuine retries of one call — causes every insert after the first to
+ * collide on `UNIQUE(idempotency_key)` (23505 in `tryStripeMetered`),
+ * which is swallowed as an idempotent no-op. The request is still
+ * authorized (usage served), but at most ONE `billing_events` row is EVER
+ * written for that org+user+key: silent, effectively unbounded
+ * under-billing, not merely a missed audit row —
+ * `reportMeteredUsageToStripe()` sums these rows to invoice Stripe.
+ *
+ * This is currently UNREACHABLE: `paymentTierRouter` is not imported or
+ * mounted anywhere in `services/worker/src/index.ts` (verified via
+ * `grep -rl paymentTierRouter services/worker/src` — only this file, its
+ * own test, `middleware/agents.md`, and the `express.d.ts` type
+ * augmentation reference it). The moment that changes, this vector goes
+ * live.
+ *
+ * `paymentTierRouter.mount-guard.test.ts` enforces this mechanically: it
+ * fails CI the instant `paymentTierRouter` is referenced from
+ * `index.ts` UNLESS `STRIPE_METERED_UNDER_BILLING_RISK_ACKED` below has
+ * been explicitly flipped to `true`. Flipping it requires EITHER (a)
+ * rebinding the idempotency key to something other than a raw,
+ * fully-client-controlled header — e.g. a server-derived per-request-
+ * window component so a replayed header can only collapse calls within
+ * one bounded window instead of unboundedly many — OR (b) an explicit,
+ * dated, named sign-off recorded in this comment that the risk is
+ * accepted for launch. Do not flip the flag to unblock mounting without
+ * doing one of those two things; that defeats the guard's purpose.
+ */
+export const STRIPE_METERED_UNDER_BILLING_RISK_ACKED = false;
+
+/**
  * SCRUM-2971: deterministic idempotency key for a Stripe-metered billing_events
  * row. Built from (org_id, user_id, requestId) only — a retry that resolves
  * to the SAME requestId always hashes to the SAME key and collapses onto the

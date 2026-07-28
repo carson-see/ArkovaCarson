@@ -36,9 +36,16 @@
 --   - stripe/handlers.ts:       idempotency_key := stripe event id (already
 --     globally unique and already the concurrency-serialization key for
 --     this specific path).
--- All three treat a resulting 23505 unique_violation as "already recorded"
--- (idempotent no-op), matching the existing pattern in
--- middleware/x402PaymentLogger.ts (`idempotency_key: x402:<tx_hash>`).
+-- meteredBilling.ts and paymentTierRouter.ts both treat a resulting 23505
+-- unique_violation as "already recorded" (idempotent no-op), matching the
+-- existing pattern in middleware/x402PaymentLogger.ts
+-- (`idempotency_key: x402:<tx_hash>`). stripe/handlers.ts::recordBillingAudit
+-- does NOT special-case 23505 — it re-throws on any insert error, including
+-- one. In practice this never fires on a genuine Stripe-retry duplicate
+-- because `claimEvent()` (webhook_event_claims, UNIQUE(stripe_event_id))
+-- already bails BEFORE recordBillingAudit runs for that case — but the
+-- claim above that "all three writers" swallow 23505 was incorrect and is
+-- corrected here. (PR review follow-up, SCRUM-2971.)
 --
 -- DB FIX (this migration)
 -- ------------------------
@@ -60,8 +67,23 @@
 --     VALIDATE CONSTRAINT scans + rejects on that legacy data — it would
 --     fail this migration outright. Backfilling legacy rows with a
 --     synthesized key (e.g. derived from `id`) and then running
---     VALIDATE CONSTRAINT is a safe, non-blocking follow-up, tracked
---     separately — it does not block closing the live write-path gap.
+--     VALIDATE CONSTRAINT is a safe, non-blocking follow-up.
+--
+--     TODO(billing/RTE, SCRUM-2971 follow-up — file a Jira sub-task under
+--     this ticket's epic before or during the next backfill sprint; Jira is
+--     being reconciled separately, this migration lands ahead of that
+--     reconciliation): write a NEW migration (next available NNNN — do not
+--     reuse or edit this file, per CLAUDE.md §1.2) that (1) backfills every
+--     `billing_events` row where `idempotency_key IS NULL` with a
+--     synthesized value, e.g. `'legacy_backfill:' || id::text`, so each
+--     legacy row still satisfies `UNIQUE(idempotency_key)`, then (2) runs
+--     `ALTER TABLE public.billing_events VALIDATE CONSTRAINT
+--     billing_events_idempotency_key_not_null;` to close the "NOT VALID"
+--     gap and make the invariant fully enforced, not just enforced on new
+--     rows. Until that lands, a direct row-level write that bypasses the
+--     three patched call sites (e.g. a manual SQL insert or a future
+--     writer added without idempotency_key) is still only caught for NEW
+--     rows, and pre-existing NULL rows remain un-backfilled/unvalidated.
 --
 -- ROLLBACK: ALTER TABLE public.billing_events DROP CONSTRAINT IF EXISTS billing_events_idempotency_key_not_null;
 
