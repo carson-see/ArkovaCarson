@@ -1,0 +1,107 @@
+{
+  "status": "clock_started_smoke_gate_pass",
+  "rig_name": "legacy-soak-2026-08",
+  "profile": "chain",
+  "plan_doc": "docs/release/PLAN-legacy-soak-pre-launch-window.md",
+  "runbook_doc": "docs/release/72h-soak-runbook-2026-08.md",
+  "generated_at": "2026-07-28T21:40:00Z",
+  "build_head_note": "The plan doc does not define a separate legacy-era checkout to build from -- SS4.1 of the plan states the legacy soak exercises pre-2026-06-13 code paths that SURVIVE on today's main (measured by git blame in the plan's SS1), not a historical git checkout. Built at the current frozen main HEAD, same convention as the launch soak.",
+  "prior_blocked_attempt_note": "This rig's first --apply run hit the same transient Supabase COMING_UP DNS race as the launch soak (blocked_after_project_create, original_rc=1). Steps 2-6 were completed MANUALLY against the SAME already-created project ref (ryasykzdduzymschbucr) rather than re-running the script, to avoid orphaning a duplicate paid project -- identical recovery pattern to the launch soak's own session.",
+  "cloud_run_service": "arkova-worker-legacy-soak-2026-08-staging",
+  "cloud_run_region": "us-central1",
+  "cloud_run_url": "https://arkova-worker-legacy-soak-2026-08-staging-270018525501.us-central1.run.app",
+  "cloud_run_sizing": {
+    "cpu": 2,
+    "memory": "2Gi",
+    "concurrency": 80,
+    "min_instances": 1,
+    "max_instances": 10,
+    "rationale": "Matches launch-72h-2026-08's sizing exactly per task spec (medium tier, not the script's mock-profile default)."
+  },
+  "gcp_project": "arkova1",
+  "supabase_org_id": "byhkazrpmivhcsuqjtva",
+  "supabase_project_name": "arkova-soak-legacy-soak-2026-08",
+  "supabase_project_ref": "ryasykzdduzymschbucr",
+  "supabase_compute_addon": {
+    "resized_to": "NOT YET RESIZED -- see open_items. Provisioned at default (Micro/Small) tier; task spec requires Medium via PATCH /v1/projects/{ref}/billing/addons before this rig can be cited as full-10k-DAU-load-capable evidence."
+  },
+  "secrets": {
+    "supabase_url": "supabase-url-legacy-soak-2026-08-staging",
+    "supabase_service_role_key": "supabase-service-role-key-legacy-soak-2026-08-staging",
+    "bitcoin_rpc_url": "arkova-s33-rig-b1-bitcoin-core-signet-rpc-url (referenced only -- BITCOIN_UTXO_PROVIDER=mempool means this path is never called; same disclosed GetBlock exception as the launch rig)",
+    "bitcoin_rpc_auth": "arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth (referenced only, same reason)",
+    "bitcoin_treasury_wif": "treasury-wif-legacy-soak-2026-08-staging -- NEW, ISOLATED secret, NOT arkova-s33-rig-b1-treasury-wif-signet. Deliberate deviation from the task's suggested default: see treasury_decision below.",
+    "db_password": "db-password-legacy-soak-2026-08-staging (operator-generated, Secret Manager only, never printed)"
+  },
+  "treasury_decision": {
+    "chosen": "isolated new signet keypair, NOT the shared arkova-s33-rig-b1-treasury-wif-signet used by launch-72h-2026-08",
+    "address": "tb1qrjarsqj0ewqh3u9fdcu7yfyl0sx78k4savtmv7",
+    "generated_via": "services/worker/scripts/generate-signet-keypair.ts",
+    "funded_via": "public signet faucet https://alt.signetfaucet.com (Cloudflare-gated, cleared automatically; primary signetfaucet.com has a manual CAPTCHA which was correctly not attempted per policy)",
+    "funded_amount_confirmed_sats": 757540,
+    "rationale": "At session start the shared launch-soak treasury (tb1qxca7ke7hgguarqxkwwydrfenn8ymnspxq765eq) held ~77222 confirmed sats -- technically enough balance, but two soaks concurrently broadcasting from the SAME address/WIF risk independent listUnspent() UTXO-selection races (both workers picking the same UTXO -> one broadcast rejected/conflicted), which is a reliability risk to the launch soak's own evidence, not just a balance risk. Task instruction explicitly allows deriving/funding a separate address in this situation and explicitly says do not starve the launch soak -- an isolated address with its own funding removes the contention risk entirely rather than just reducing it.",
+    "launch_soak_treasury_untouched": true
+  },
+  "image": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:da20bd4efe38bf140f94ed7f4ef547bce853a10217e5c37d7adc68e8c16dab3d",
+  "declared_source_head": "42ad98c9c48cacdddd078a73cdae2fcaf59f1ac2",
+  "source_head_note": "main HEAD at session start (origin/main matched local HEAD, verified via git rev-parse before build). Not reset or forced.",
+  "deployed_revision": "arkova-worker-legacy-soak-2026-08-staging-00002-4sr",
+  "deployed_image_digest": "sha256:da20bd4efe38bf140f94ed7f4ef547bce853a10217e5c37d7adc68e8c16dab3d",
+  "deployed_source_head": "42ad98c9c48cacdddd078a73cdae2fcaf59f1ac2",
+  "revision_history": [
+    "00001-xw7: initial deploy (medium sizing, signet, BITCOIN_UTXO_PROVIDER=mempool, ENABLE_ORG_CREDIT_ENFORCEMENT=true set at deploy time -- both lessons applied up front from the launch rig's own findings, unlike the launch rig which discovered them mid-session). flagRegistry cached the seed-only switchboard_flags row (1 row) at this boot.",
+    "00002-4sr: forced restart (RESTART_TS env bump) AFTER mirroring all 23 prod switchboard_flags rows into the rig DB, so flagRegistry.init() picks up the full mirrored flag set at boot. Treated as the clock-anchor revision, same convention as the launch rig's 00004-qgj."
+  ],
+  "environment_verified_live": {
+    "network": "signet (confirmed via GET /health -> \"network\":\"signet\", not inferred from config)",
+    "bitcoin_utxo_provider": "mempool (env var set explicitly at deploy; MEMPOOL_API_URL deliberately left UNSET per known contract-bug lesson)",
+    "enable_org_credit_enforcement": "true (Cloud Run env var, set explicitly -- this flag is env-source-only per flagRegistry.ts:30, DB mirror alone would have been a no-op, same trap the launch rig hit and documented)"
+  },
+  "environment_gaps_carried_from_task_lessons": {
+    "lesson_2_treasury_secret": "Deviated deliberately -- used an isolated new secret instead of arkova-s33-rig-b1-treasury-wif-signet. See treasury_decision.",
+    "lesson_3_org_credit_enforcement": "Applied at initial deploy, not as a later fix.",
+    "lesson_4_flag_boot_order": "Applied correctly this session (mirror-then-restart), avoiding the launch rig's original boot-order bug.",
+    "lesson_5_schedulers": "All 5 jobs (including recover-broadcasts, added manually since rig_id != RIG-B1) created and force-run once each; all show a real lastAttemptTime.",
+    "lesson_6_mempool_api_url": "Confirmed unset -- not included in --set-env-vars.",
+    "lesson_7_bitcoin_network": "Verified live via /health JSON body, not just deploy intent.",
+    "lesson_8_jwt_expiry": "NOT INDEPENDENTLY VERIFIED THIS SESSION -- see open_items."
+  },
+  "gcloud_environment_finding": "gcloud's bundled Python 3.9 crashes (CommandLoadFailure: unsupported operand type(s) for |) when loading the 'run', 'builds', and 'scheduler' component groups in this shell. Fixed for this session via `export CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14` (Homebrew python@3.14, pre-installed on this machine). This is an environment-level finding, not specific to this rig; flagging in case future sessions in this same shell hit the same crash.",
+  "clean_mirror": {
+    "artifact": "docs/staging/legacy-soak-2026-08/preflight-legacy-soak-2026-08.json",
+    "result": "environment_type=clean_mirror",
+    "verified_at": "2026-07-28T21:34:08.367Z",
+    "missing_from_staging_informational": ["0362", "0364"]
+  },
+  "anti_hollow_verification": {
+    "cloud_scheduler": "5/5 jobs ENABLED, all show a real lastAttemptTime (force-run once each at ~21:33 UTC).",
+    "baseline_fixture": "scripts/staging/seed-baseline-fixture.sql applied -- 1 SUBMITTED anchor (5eed0000-...-c1) present, satisfying preflight Check 5.",
+    "batch_anchor_forced_run_note": "The seed fixture is status=SUBMITTED (already-broadcast semantics), not PENDING, so it is NOT eligible for batch-anchors -- both non-forced and initial forced runs against it alone correctly returned processed=0/batchId=null. A second, purpose-made PENDING anchor (id b1c56602-ed81-4d89-b0ff-6eec0b04e470, fingerprint md5-derived 64-hex synthetic) was inserted directly via MCP execute_sql to give the forced-run a real eligible row, mirroring the launch soak's own 'fresh single PENDING anchor' method.",
+    "batch_anchor_forced_run": "POST /jobs/batch-anchors?force=true against the fresh PENDING anchor returned batchId=batch_1785274559967_1, merkleRoot=645500957a5b81b639499e6d274f526ef1d5cb99a7df782079a26be4f0aba97e (matches the seeded fingerprint), txId=60b0b57486f13977f3c3e1a6671f28e01567d32bf8b418ce0dc6fe84af7f5cc0. DB row transitioned PENDING -> SUBMITTED with matching chain_tx_id, verified via MCP execute_sql against ryasykzdduzymschbucr.",
+    "public_explorer_confirmation": "txid 60b0b57486f13977f3c3e1a6671f28e01567d32bf8b418ce0dc6fe84af7f5cc0 independently visible on https://mempool.space/signet/api/tx/... within ~5s of broadcast, spending a real UTXO (757540 sats) from this rig's own isolated treasury address tb1qrjarsqj0ewqh3u9fdcu7yfyl0sx78k4savtmv7 -- confirmed via direct curl, not asserted from worker logs alone.",
+    "treasury_funded": "Confirmed on-chain balance 757540 sats at tb1qrjarsqj0ewqh3u9fdcu7yfyl0sx78k4savtmv7 via mempool.space/signet/api/address (chain_stats, post-confirmation), independent of worker logs.",
+    "auth_check": "Unauthenticated GET /health returns 403 (Cloud Run IAM, --no-allow-unauthenticated), verified via curl with no Authorization header.",
+    "zero_5xx": "grep of the most recent 200 log lines for the service found no 5xx responses.",
+    "flags_verified_live": "All 23 prod switchboard_flags rows present in rig DB post-mirror (verified via MCP execute_sql). ENABLE_ORG_CREDIT_ENFORCEMENT verified as a Cloud Run env var directly (gcloud run services describe), not inferred from the DB row (which is env-only per flagRegistry.ts:30 and is expected to read false in the DB while true in practice)."
+  },
+  "getblock_disclosed_residual_risk_exception": "Same as launch-72h-2026-08: no valid signet GetBlock credential exists in Secret Manager; GetBlockHybridProvider.broadcastTx has no mempool fallback (silent no-broadcast risk, filed to backlog by the launch soak session). This rig broadcasts via the public mempool.space provider exclusively (BITCOIN_UTXO_PROVIDER=mempool set at initial deploy, not discovered mid-session). GetBlock broadcast parity with prod remains unverified by either soak.",
+  "prod_isolation_check": "vzwyaatejekddvltxyye anchors count = 2,974,776 read via MCP execute_sql at session start, consistent with the launch soak's own same-day baseline (2,974,776) -- no drift observed between the two sessions' baseline reads.",
+  "load_generation": "NOT STARTED. Task requires full 10k-DAU load per the plan's SS4.4. No load-generation runbook step (script, k6/artillery config, or equivalent) was found in this repo for either soak as of this session -- the launch soak's own provenance artifact does not show a load generator running either. Stated explicitly per instruction rather than implied: this rig has real infrastructure, a real broadcast, and live schedulers, but is not yet under the target load profile. This is an open item, not a claimed-complete step.",
+  "supabase_compute_tier_open_item": "Task requires Medium compute via PATCH /v1/projects/{ref}/billing/addons before the 10k-DAU load model is meaningful (per the launch rig's own note that an undersized rig makes latency evidence an artifact of rig size, not code). NOT YET DONE this session -- see open_items.",
+  "open_items": [
+    "Resize Supabase compute add-on to Medium (ci_medium) via PATCH /v1/projects/ryasykzdduzymschbucr/billing/addons -- not yet performed.",
+    "Start 10k-DAU load generation once a load-generation mechanism is identified/built -- no such mechanism exists yet in the repo for either soak.",
+    "Independently verify JWT/API-key secret expiry exceeds the 72h window (lesson 8) -- not checked this session.",
+    "SS4.3 journey-table exercises (the actual legacy-code-path audits: x-org-id sweep, SECURITY DEFINER grant sweep, credit fail-open grep, WIF/KMS precedence review, SS1.6 privacy audit, RLS adversarial pass, edge MCP surface pass, integrations review) are NOT started -- this session covered provisioning + anti-hollow verification + smoke gate only, per the RTE task's explicit scope (provision, verify anti-hollow, start clock, run T+0-2h smoke gate). Per the plan's own pre-mortem #1, the T+0-2h gate is supposed to hard-stop on confirming each SS4.3 row has an assigned, scheduled exercise -- that confirmation has NOT been done yet and is flagged here rather than silently treated as satisfied by infra-up alone."
+  ],
+  "state_path": "docs/staging/legacy-soak-2026-08/isolated-rig-provision-legacy-soak-2026-08.json",
+  "soak_clock": {
+    "started": true,
+    "start_timestamp": "2026-07-28T21:32:17.475418Z",
+    "clock_anchor_revision": "arkova-worker-legacy-soak-2026-08-staging-00002-4sr",
+    "clock_anchor_note": "Revision creation timestamp of the flags-mirrored restart, same convention as launch-72h-2026-08's 00004-qgj (the config-correct revision, not necessarily the first-deployed one).",
+    "frozen_head_sha": "42ad98c9c48cacdddd078a73cdae2fcaf59f1ac2",
+    "image_digest": "sha256:da20bd4efe38bf140f94ed7f4ef547bce853a10217e5c37d7adc68e8c16dab3d",
+    "required_end_timestamp": "2026-07-31T21:32:17Z (start + 72h, matching this task's --required-uptime-min 4320 / --required-wall-min 4380 inputs; the plan doc itself leaves final duration open per its SS6.3 non-goal -- this uses the same 72h floor as the launch soak pending an explicit different figure from Carson/CTO)"
+  }
+}

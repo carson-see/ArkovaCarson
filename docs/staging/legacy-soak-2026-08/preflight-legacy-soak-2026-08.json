@@ -1,0 +1,48 @@
+{
+  "environment_type": "clean_mirror",
+  "staging_project_ref": "ryasykzdduzymschbucr",
+  "timestamp": "2026-07-28T21:34:08.367Z",
+  "checks": [
+    {
+      "name": "staging_only_rows",
+      "passed": true,
+      "details": "No PR-only or staging-only migration rows found."
+    },
+    {
+      "name": "duplicate_names",
+      "passed": true,
+      "details": "No duplicate migration names."
+    },
+    {
+      "name": "duplicate_versions",
+      "passed": true,
+      "details": "No duplicate migration versions."
+    },
+    {
+      "name": "known_artifacts",
+      "passed": true,
+      "details": "No known artifact rows."
+    },
+    {
+      "name": "submitted_anchors",
+      "passed": true,
+      "details": "1 SUBMITTED anchor(s) found."
+    },
+    {
+      "name": "prod_divergence",
+      "passed": true,
+      "details": "Rig ledger reconciles with repo migration files + canonical baseline. 2 pre-baseline/version-shape prod row(s) subsumed by the canonical baseline (informational)."
+    },
+    {
+      "name": "prod_facts",
+      "passed": true,
+      "details": "Prod facts verified: vacuum-anchors scheduled, refresh_pipeline_dashboard_cache exists, refresh-pipeline-dashboard-cache scheduled."
+    }
+  ],
+  "artifact_rows": [],
+  "missing_from_staging": [
+    "0362",
+    "0364"
+  ],
+  "extra_vs_prod": []
+}
