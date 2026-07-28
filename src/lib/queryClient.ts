@@ -45,6 +45,7 @@ export const queryKeys = {
   checklist: (userId: string, orgId?: string | null) => ['checklist', userId, orgId ?? 'none'] as const,
   userOrgs: (userId: string) => ['userOrgs', userId] as const,
   anchorStats: () => ['anchorStats'] as const,
+  folders: (userId: string, orgId?: string | null) => ['folders', userId, orgId ?? 'none'] as const,
   apiKeys: (userId: string) => ['apiKeys', userId] as const,
   apiUsage: (userId: string) => ['apiUsage', userId] as const,
   platformStats: () => ['platformStats'] as const,
