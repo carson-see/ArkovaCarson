@@ -32,6 +32,7 @@ export default defineConfig({
           if (!id.includes('node_modules')) return undefined;
           if (id.includes('@huggingface/transformers')) return 'vendor-ai-ner';
           if (id.includes('pdfjs-dist')) return 'vendor-pdf';
+          if (id.includes('/jszip/')) return 'vendor-zip';
           if (id.includes('@tanstack/react-query')) return 'vendor-query';
           if (id.includes('@supabase/supabase-js')) return 'vendor-supabase';
           if (

@@ -71,6 +71,7 @@
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "jspdf": "4.2.1",
+    "jszip": "3.10.1",
     "lucide-react": "1.25.0",
     "mammoth": "1.12.0",
     "pdfjs-dist": "6.1.200",

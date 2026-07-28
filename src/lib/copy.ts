@@ -2488,7 +2488,8 @@ export const EXTRACTION_RECOVERY_LABELS = {
 export const OCR_LABELS = {
   UNSUPPORTED_FILE_TYPE: (typeOrExt: string) =>
     `Unsupported file type for text extraction: ${typeOrExt}. ` +
-    'Supported: PDF, Word (.docx), images, and text files. ' +
+    'Supported: PDF, Word (.docx), OpenDocument (.odt/.odp), PowerPoint (.pptx), ' +
+    'EPUB, RTF, SVG, images, and text files. ' +
     'The document can still be secured without AI metadata.',
   /**
    * §1.6 FAIL-CLOSED (WEBEXT-03). Surfaced when the on-device document reader

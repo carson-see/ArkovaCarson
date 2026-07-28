@@ -1,6 +1,10 @@
 # agents.md — lib
 
-_Last updated: 2026-07-21_
+_Last updated: 2026-07-28_
+
+## 2026-07-28 F2/F3 real client-side extraction (founder 22-LOI-format KPI, sprint amendment A3)
+
+New `extractors/` subfolder (see its own `agents.md`) — `ocrWorker.ts` `extractText()` now genuinely extracts `.odt`/`.odp`/`.pptx`/`.epub` (F2, ZIP-XML family via new `jszip` dep) and `.rtf`/`.svg` (F3) instead of soft-failing to manual entry; also verified (no change needed) that `.md`/`.html`/`.xml`/`.json`/`.txt` already extract correctly via the existing plain-text reader. `OCRResult.method` gained `'zip-xml' | 'rtf' | 'svg'`. `.ods` is deliberately NOT handled here — coordinate with the F1 spreadsheet dual-mode (SheetJS) workstream, which owns it. `copy.ts` `OCR_LABELS.UNSUPPORTED_FILE_TYPE` updated to list the newly-supported formats. All new parsers are dynamically imported (lazy-load, same pattern as `mammoth`/`pdfjs-dist`/`tesseract.js`); `vite.config.ts` gained a `vendor-zip` manualChunk for `jszip`.
 
 ## 2026-07-21 Treasury CSP + status-budget copy (SCRUM-2901, PR #1600)
 
@@ -13,7 +17,7 @@ _Last updated: 2026-07-21_
 
 ## What This Folder Contains
 
-Core utility modules shared across the frontend. Every write path uses Zod validation; all UI copy lives in `copy.ts`. Client-side processing modules (`piiStripper`, `fileHasher`, `aiExtraction`, `mlRuntime`, `ocrWorker`) must NEVER be imported in `services/worker/`.
+Core utility modules shared across the frontend. Every write path uses Zod validation; all UI copy lives in `copy.ts`. Client-side processing modules (`piiStripper`, `fileHasher`, `aiExtraction`, `mlRuntime`, `ocrWorker`, `extractors/*`) must NEVER be imported in `services/worker/`.
 
 ## Key Files
 
@@ -29,7 +33,7 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - `piiStripper.ts` / `enhancedPiiStripper.ts` — PII redaction before data leaves browser. `enhancedPiiStripper` is **§1.6 FAIL-CLOSED** (WEBEXT-03): when NER is requested and the model fails to load/run it THROWS (does not degrade to regex-only); regex-only is returned only on explicit `enableNER: false`.
 - `nerPiiDetector.ts` — CLIENT-SIDE NER PII detection via transformers.js (`Xenova/bert-base-NER`, q8). **Self-hosted + pinned (SCRUM-2503 / #1253):** loads weights from the Arkova app origin `/models/` (`public/models/`, covered by `connect-src 'self'`) with `env.allowRemoteModels = false` — it never hits the HF CDN. Exports `NER_MODEL_ID` + `NER_MODEL_REVISION` (a pinned 40-char commit SHA, not floating `main`) so the build-time vendoring + integrity lockfile load the EXACT same artifact the runtime does, and `TRANSFORMERS_JS_VERSION` (`4.2.0`) which MUST match `scripts/ner-weights.lock.json` `transformersJsVersion` + the embedded version of the vendored bundle `public/vendor/transformers.web.min.js` (skew is a hard build failure via `scripts/vendor-transformers-version.test.ts`). On a missing/failed load it throws a typed `NERModelLoadError` (never silently returns null). **Producer/consumer SCOPE:** #1253 is the PRODUCER (self-host loader + typed error + integrity pin); the end-to-end §1.6 fail-CLOSED guarantee — making the stripper THROW instead of degrading to regex-only — is delivered by the CONSUMER change in `enhancedPiiStripper.ts` (Lane 2 / #1262 / WEBEXT-03). Failed loads are NOT cached — a later call can retry. Weights are vendored + SHA-256-verified by `scripts/fetch-ner-model.ts` against `scripts/ner-weights.lock.json` (`public/models/` is git-ignored, the binary is never committed).
 - `aiExtraction.ts` — OCR + PII strip + server extraction orchestrator (client-side). **§1.6 FAIL-CLOSED gate**: any on-device PII-model / OCR-engine failure is caught BEFORE the network call (`isPiiStripFailClosedError`), surfaces `ExtractionProgress.failClosed = true`, and returns null — NO metadata egress on the failure path.
-- `ocrWorker.ts` — client-side OCR (PDF.js + Tesseract.js). **WEBEXT-02**: Tesseract self-hosted via `TESSERACT_VENDOR_PATHS` (`/vendor/tesseract/...`, CSP `'self'`) — no `cdn.jsdelivr` runtime fetch. **WEBEXT-03**: fails closed with `OcrEngineLoadError` on any load/recognition fault.
+- `ocrWorker.ts` — client-side OCR (PDF.js + Tesseract.js) + document text extraction dispatcher. **WEBEXT-02**: Tesseract self-hosted via `TESSERACT_VENDOR_PATHS` (`/vendor/tesseract/...`, CSP `'self'`) — no `cdn.jsdelivr` runtime fetch. **WEBEXT-03**: fails closed with `OcrEngineLoadError` on any load/recognition fault. **F2/F3 (2026-07-28)**: `extractText()` also dispatches to `extractors/` (ZIP-XML family + RTF + SVG) — see that folder's `agents.md`.
 - `ocrFailClosed.ts` — **§1.6 fail-closed contract** (WEBEXT-03). Typed errors (`PiiStripFailClosedError` + `OcrEngineLoadError`/`NerPiiFailClosedError`) + `isPiiStripFailClosedError` (the single egress gate). Recognizes Lane 1's `NERModelLoadError` structurally by name (DEPENDS ON #1253 — not yet on main).
 - `proofPackage.ts` — proof package generation and validation for anchor verification
 - `complianceMapping.ts` — static credential-type-to-regulatory-control mapping
