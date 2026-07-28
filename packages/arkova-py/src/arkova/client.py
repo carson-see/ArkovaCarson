@@ -278,7 +278,10 @@ class Arkova:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "Arkova":
+    # PYI034 wants `Self`, which is typing.Self (3.11+); this package supports
+    # 3.10 and carries no typing_extensions dependency. Returning the concrete
+    # class is the correct annotation for the minimum supported interpreter.
+    def __enter__(self) -> Arkova:  # noqa: PYI034
         return self
 
     def __exit__(self, *_exc: object) -> None:
@@ -456,7 +459,8 @@ class AsyncArkova:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def __aenter__(self) -> "AsyncArkova":
+    # See the `__enter__` note above: `Self` is 3.11+, this package supports 3.10.
+    async def __aenter__(self) -> AsyncArkova:  # noqa: PYI034
         return self
 
     async def __aexit__(self, *_exc: object) -> None:

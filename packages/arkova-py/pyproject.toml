@@ -29,7 +29,22 @@ dependencies = [
 dev = [
   "build>=1.2,<2",
   "pytest>=8,<9",
-  "ruff>=0.8,<1",
+  # EXACT pin, on purpose. ruff has no stable-default guarantee below 1.0:
+  # 0.16.0 widened its implicit default rule set (adding I / UP / SIM / PYI /
+  # BLE / RUF), which turned the publish workflow's `ruff check src tests` red
+  # with 87 findings against unchanged code. The old `>=0.8,<1` range let that
+  # land silently.
+  #
+  # A range like `>=0.16,<0.17` is NOT enough: the default set is a curated
+  # ~413-rule subset, so a PATCH release can add a rule to it too. And it cannot
+  # be fenced with an explicit `[tool.ruff.lint] select` either — that subset is
+  # not expressible as rule prefixes (selecting the 38 prefixes it draws from
+  # yields 288 findings, because it includes only parts of E, D, PTH, PLR, ...).
+  # Pinning the exact version is the only way to make this gate deterministic.
+  #
+  # To upgrade: bump this, run `ruff check src tests`, fix any new findings in
+  # the same PR.
+  "ruff==0.16.0",
 ]
 
 [project.urls]

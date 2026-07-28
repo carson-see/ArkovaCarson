@@ -136,7 +136,12 @@ router.post('/', async (req: Request, res: Response) => {
       entity: {
         name: entity_name,
         type: entity_type,
-        jurisdiction: jurisdiction ?? null,
+        // Omit when absent for consistency with the frozen-schema jurisdiction
+        // convention used elsewhere (Constitution 1.8) — even though this
+        // value is caller-echoed input, not anchor state, a caller relying on
+        // "jurisdiction present ⇒ truthy" should get the same contract on
+        // every endpoint, not a literal null here and an omitted key there.
+        ...(jurisdiction ? { jurisdiction } : {}),
       },
       compliance_status: risk_level === 'low' ? 'clear' : 'review_required',
       risk_level,

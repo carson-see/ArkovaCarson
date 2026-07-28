@@ -1,7 +1,11 @@
 # services/worker/src/
-_Last updated: 2026-07-21 (SCRUM-2990 partner-provisioning flag gate)_
+_Last updated: 2026-07-28 (pentest-prep: /api/health alias)_
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
+
+## 2026-07-28 GET /api/health alias (pentest-prep, CLAUDE.md §1.9)
+
+- `index.ts` extracted the inline `/health` handler into a named `healthCheckHandler` const and registers it at BOTH `app.get('/health', ...)` and `app.get('/api/health', ...)` — byte-identical handler, `/health` behavior unchanged. CLAUDE.md §1.9 asserts "/api/health always available" but only `/health` was ever mounted; confirmed live 404 on `/api/health` at both `api.arkova.ai` and the Cloud Run origin before this fix. Do not diverge the two routes — if `/health` ever needs route-specific behavior, keep `/api/health` wired to the same handler unless there's an explicit reason to split.
 
 ## 2026-07-21 SCRUM-2990 partner-provisioning surface is flag-gated (reserved prefix)
 

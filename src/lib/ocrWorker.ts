@@ -20,6 +20,13 @@
  * cannot load or recognition throws, `extractTextFromImage` raises an
  * `OcrEngineLoadError` (a fail-closed error) so the orchestrator blocks egress.
  *
+ * F2/F3 (SCRUM sprint amendment A3, founder 22-LOI-format KPI) — the ZIP-XML
+ * family (.odt/.odp/.pptx/.epub, via `extractors/zipXmlExtract.ts` + JSZip),
+ * RTF (`extractors/rtfExtract.ts`, a real control-word stripper), and SVG
+ * (`extractors/svgExtract.ts`) all extract for real now instead of soft-
+ * failing to manual entry. Each parser is dynamically imported on first use,
+ * same lazy-load pattern as pdfjs-dist/mammoth/tesseract.js above.
+ *
  * F4 (founder 22-LOI-format KPI, 2026-07-28) — image family completion:
  *   - TIFF (incl. multi-page): decoded client-side via `utif2` (MIT, pure JS,
  *     no wasm) into raw RGBA, then re-encoded to a real PNG via `upng-js`
@@ -186,7 +193,7 @@ export interface OCRResult {
    * `noTextSourceKind()` in `aiExtraction.ts` can still label a no-text
    * outcome as `'pdf'` rather than the generic `'document'`.
    */
-  method: 'pdfjs' | 'pdfjs-ocr' | 'tesseract' | 'mammoth' | 'text';
+  method: 'pdfjs' | 'pdfjs-ocr' | 'tesseract' | 'mammoth' | 'text' | 'zip-xml' | 'rtf' | 'svg' | 'spreadsheet';
   durationMs: number;
 }
 
@@ -571,6 +578,91 @@ async function extractTextFromDocx(
 }
 
 /**
+ * Extract text from a ZIP-XML family document — .odt / .odp (OpenDocument),
+ * .pptx (Office Open XML presentation), or .epub (zipped XHTML ebook).
+ *
+ * F2 (SCRUM sprint amendment A3). Runs entirely in the browser via
+ * `extractors/zipXmlExtract.ts` (JSZip + DOMParser). `.ods` is intentionally
+ * NOT routed here — it's covered by the F1 spreadsheet dual-mode SheetJS
+ * path, which needs cell/row structure a flat text walk would lose.
+ */
+async function extractTextFromZipXml(
+  file: File,
+  kind: 'odt' | 'odp' | 'pptx' | 'epub',
+  onProgress?: (progress: OCRProgress) => void,
+): Promise<OCRResult> {
+  const start = Date.now();
+  onProgress?.({ stage: 'loading', progress: 10 });
+  const { extractTextFromOpenDocument, extractTextFromPptx, extractTextFromEpub } =
+    await import('./extractors/zipXmlExtract');
+  onProgress?.({ stage: 'processing', progress: 40 });
+
+  let text: string;
+  if (kind === 'odt' || kind === 'odp') {
+    text = await extractTextFromOpenDocument(file);
+  } else if (kind === 'pptx') {
+    text = await extractTextFromPptx(file);
+  } else {
+    text = await extractTextFromEpub(file);
+  }
+
+  onProgress?.({ stage: 'complete', progress: 100 });
+  return {
+    text,
+    pageCount: 1,
+    method: 'zip-xml',
+    durationMs: Date.now() - start,
+  };
+}
+
+/**
+ * Extract text from an RTF file via the real control-word stripper (F3 /
+ * SCRUM sprint amendment A3) — replaces the old plain-text fallback that
+ * dumped raw RTF markup as garbage output.
+ */
+async function extractTextFromRtfFile(
+  file: File,
+  onProgress?: (progress: OCRProgress) => void,
+): Promise<OCRResult> {
+  const start = Date.now();
+  onProgress?.({ stage: 'loading', progress: 10 });
+  const { extractTextFromRtf } = await import('./extractors/rtfExtract');
+  onProgress?.({ stage: 'processing', progress: 50 });
+  const raw = await file.text();
+  const text = extractTextFromRtf(raw);
+  onProgress?.({ stage: 'complete', progress: 100 });
+  return {
+    text,
+    pageCount: 1,
+    method: 'rtf',
+    durationMs: Date.now() - start,
+  };
+}
+
+/**
+ * Extract text from an SVG file — strips markup, keeps `<title>`/`<desc>`/
+ * `<text>` content (F3 / SCRUM sprint amendment A3).
+ */
+async function extractTextFromSvgFile(
+  file: File,
+  onProgress?: (progress: OCRProgress) => void,
+): Promise<OCRResult> {
+  const start = Date.now();
+  onProgress?.({ stage: 'loading', progress: 10 });
+  const { extractTextFromSvg } = await import('./extractors/svgExtract');
+  onProgress?.({ stage: 'processing', progress: 50 });
+  const raw = await file.text();
+  const text = extractTextFromSvg(raw);
+  onProgress?.({ stage: 'complete', progress: 100 });
+  return {
+    text,
+    pageCount: 1,
+    method: 'svg',
+    durationMs: Date.now() - start,
+  };
+}
+
+/**
  * Extract text from a plain text file by reading it directly.
  * No OCR needed — just read the file contents.
  */
@@ -599,7 +691,7 @@ const TEXT_TYPES = new Set([
   'application/json', 'application/xml',
 ]);
 const TEXT_EXTENSIONS = new Set([
-  '.txt', '.csv', '.md', '.json', '.xml', '.html', '.htm', '.log', '.rtf',
+  '.txt', '.csv', '.md', '.json', '.xml', '.html', '.htm', '.log',
 ]);
 
 /** Word document MIME types (mammoth.js supports .docx only, not legacy .doc) */
@@ -607,6 +699,43 @@ const DOCX_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
 const DOCX_EXTENSIONS = new Set(['.docx']);
+
+/**
+ * F3 — RTF gets its own real control-word stripper (extractors/rtfExtract.ts)
+ * instead of falling through to the plain-text reader, which used to dump
+ * raw control words as garbage output.
+ */
+const RTF_TYPES = new Set(['application/rtf', 'text/rtf']);
+const RTF_EXTENSIONS = new Set(['.rtf']);
+
+/**
+ * F3 — SVG text-node extraction (extractors/svgExtract.ts). Checked BEFORE
+ * the generic `image/*` MIME branch below, since SVG's MIME type
+ * (`image/svg+xml`) would otherwise route into Tesseract OCR on a
+ * non-raster image.
+ */
+const SVG_TYPES = new Set(['image/svg+xml']);
+const SVG_EXTENSIONS = new Set(['.svg']);
+
+/**
+ * F2 — ZIP-XML family (extractors/zipXmlExtract.ts). `.ods` is deliberately
+ * excluded: it's covered by the F1 spreadsheet dual-mode SheetJS path
+ * (row-mode / anchor-as-document), which needs cell/row structure a flat
+ * text-node walk would destroy — coordinate with that workstream before
+ * adding `.ods` here.
+ */
+const ZIP_XML_KIND_BY_EXTENSION: Record<string, 'odt' | 'odp' | 'pptx' | 'epub'> = {
+  '.odt': 'odt',
+  '.odp': 'odp',
+  '.pptx': 'pptx',
+  '.epub': 'epub',
+};
+const ZIP_XML_KIND_BY_MIME: Record<string, 'odt' | 'odp' | 'pptx' | 'epub'> = {
+  'application/vnd.oasis.opendocument.text': 'odt',
+  'application/vnd.oasis.opendocument.presentation': 'odp',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'application/epub+zip': 'epub',
+};
 
 /**
  * Auto-detect file type and run appropriate text extraction.
@@ -624,6 +753,26 @@ export async function extractText(
   const ext = '.' + file.name.split('.').pop()?.toLowerCase();
   if (DOCX_TYPES.has(file.type) || DOCX_EXTENSIONS.has(ext)) {
     return extractTextFromDocx(file, onProgress);
+  }
+
+  // F3 — RTF: real control-word stripper (checked before the generic text
+  // fallback, which used to dump raw RTF markup as garbage output).
+  if (RTF_TYPES.has(file.type) || RTF_EXTENSIONS.has(ext)) {
+    return extractTextFromRtfFile(file, onProgress);
+  }
+
+  // F3 — SVG: XML text-node extraction. Checked before the generic `image/*`
+  // MIME branch below, since SVG's MIME type is `image/svg+xml`.
+  if (SVG_TYPES.has(file.type) || SVG_EXTENSIONS.has(ext)) {
+    return extractTextFromSvgFile(file, onProgress);
+  }
+
+  // F2 — ZIP-XML family: .odt / .odp / .pptx / .epub. Checked before the
+  // generic fallback throw; `.ods` is intentionally excluded (see
+  // ZIP_XML_KIND_BY_EXTENSION doc comment — F1 SheetJS path owns it).
+  const zipXmlKind = ZIP_XML_KIND_BY_EXTENSION[ext] ?? ZIP_XML_KIND_BY_MIME[file.type];
+  if (zipXmlKind) {
+    return extractTextFromZipXml(file, zipXmlKind, onProgress);
   }
 
   // F4: TIFF/HEIC — checked by MIME OR extension, BEFORE the generic `image/*`
