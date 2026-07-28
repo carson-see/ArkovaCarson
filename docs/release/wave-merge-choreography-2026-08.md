@@ -86,13 +86,31 @@ convenience — each migration builds on ledger state the prior one leaves.
    below. This is not optional even though it worked fine last time; the
    repo's history includes a real incident of parallel PRs colliding on
    `agents.md` (`supabase/migrations/agents.md`, #1031 behind #1022,
-   documented in `CLAUDE.md` §6). A config fix for a related agents.md-drop
-   bug is asserted to have landed 2026-07-28 per this sprint's session
-   briefing — **UNVERIFIED independently in this session** (no corresponding
-   commit found in `git log -- .gitattributes` as of `main`
-   `ae2209fd`). Treat the fix as unconfirmed and keep the manual verification
-   step regardless; it is cheap and this is exactly the failure mode it
-   catches.
+   documented in `CLAUDE.md` §6).
+
+   **Clarification (CTO, 2026-07-28):** an earlier draft of this doc marked the
+   2026-07-28 agents.md-drop fix "UNVERIFIED — no commit found in
+   `git log -- .gitattributes`". That search was in the wrong place, and the
+   absence of a commit is expected, not suspicious. Root cause was **local repo
+   config, never a tracked file**: this checkout's `.git/config` carried
+   `merge.union.driver = true`, which overrides git's *built-in* `union` merge
+   algorithm (requested by `.gitattributes: agents.md merge=union`) with the
+   shell command `true` — it writes nothing to the merged output and exits 0, so
+   git reports a clean merge while silently keeping "ours" and discarding
+   "theirs". Fixed by `git config --local --unset merge.union.driver` and
+   verified with a scratch-repo test (both sides' rows survive afterward; before,
+   the incoming side vanished). `.git/config` is not committed, so **no commit
+   exists or should be expected**.
+
+   Blast radius, verified: `main` was never corrupted — GitHub/Mergify merges run
+   server-side with the real union driver. Only *local* `git merge origin/main`
+   runs inside this checkout dropped content, which is what damaged PRs #1615 and
+   #1652 (both caught and repaired during Wave 0). **Any other clone may still
+   carry the bad config** — check with
+   `git config --local --get-regexp '^merge\.'` before merging there.
+
+   Keep the manual verification step below regardless. It is cheap, and it is
+   exactly the failure mode it catches.
 6. Move to the next PR in the trio only after steps 1-5 are clean.
 
 **Why serial, not parallel:** all three touch `supabase/migrations/agents.md`
