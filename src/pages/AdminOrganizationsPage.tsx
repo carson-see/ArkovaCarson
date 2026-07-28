@@ -20,6 +20,7 @@ import {
   Users,
   FileText,
   SlidersHorizontal,
+  Coins,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -27,6 +28,7 @@ import { useAdminList } from '@/hooks/useAdminList';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -43,6 +45,7 @@ import {
 import { workerFetch } from '@/lib/workerClient';
 import { ROUTES } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
+import { ADMIN_CREDIT_ADJUST_LABELS as CREDIT } from '@/lib/copy';
 
 interface AdminOrganization {
   id: string;
@@ -55,6 +58,7 @@ interface AdminOrganization {
   anchor_count: number;
   is_test: boolean;
   anchor_quota: number | null;
+  credit_balance: number | null;
   created_at: string;
 }
 
@@ -74,6 +78,15 @@ export function AdminOrganizationsPage() {
   const [capEnabled, setCapEnabled] = useState(true);
   const [quotaInput, setQuotaInput] = useState(String(DEFAULT_FREE_QUOTA));
   const [saving, setSaving] = useState(false);
+
+  // L2-A5 — credit adjust dialog state (founder admin-controls: add/remove credits).
+  const [creditsOrg, setCreditsOrg] = useState<AdminOrganization | null>(null);
+  const [creditsAction, setCreditsAction] = useState<'add' | 'remove'>('add');
+  const [creditsAmountInput, setCreditsAmountInput] = useState('');
+  const [creditsReasonInput, setCreditsReasonInput] = useState('');
+  const [creditsStep, setCreditsStep] = useState<'input' | 'confirm'>('input');
+  const [creditsIdempotencyKey, setCreditsIdempotencyKey] = useState<string | null>(null);
+  const [creditsSaving, setCreditsSaving] = useState(false);
 
   const isAdmin = isPlatformAdmin(profile);
 
@@ -140,6 +153,79 @@ export function AdminOrganizationsPage() {
       toast.error('Failed to update cap');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // L2-A5 — credit adjust dialog handlers.
+  const openCredits = (org: AdminOrganization) => {
+    setCreditsOrg(org);
+    setCreditsAction('add');
+    setCreditsAmountInput('');
+    setCreditsReasonInput('');
+    setCreditsStep('input');
+    setCreditsIdempotencyKey(null);
+  };
+
+  const closeCredits = () => {
+    setCreditsOrg(null);
+    setCreditsStep('input');
+    setCreditsIdempotencyKey(null);
+  };
+
+  const creditsAmountNum = parseInt(creditsAmountInput, 10);
+  const creditsAmountValid = Number.isInteger(creditsAmountNum) && creditsAmountNum > 0;
+  const creditsReasonValid = creditsReasonInput.trim().length > 0;
+  const creditsCurrentBalance = creditsOrg?.credit_balance ?? 0;
+  const creditsSignedAmount = creditsAction === 'add' ? creditsAmountNum : -creditsAmountNum;
+  const creditsNewBalance = creditsAmountValid ? creditsCurrentBalance + creditsSignedAmount : creditsCurrentBalance;
+
+  const reviewCredits = () => {
+    if (!creditsAmountValid) {
+      toast.error(CREDIT.AMOUNT_REQUIRED_ERROR);
+      return;
+    }
+    if (!creditsReasonValid) {
+      toast.error(CREDIT.REASON_REQUIRED_ERROR);
+      return;
+    }
+    setCreditsIdempotencyKey(crypto.randomUUID());
+    setCreditsStep('confirm');
+  };
+
+  const confirmCredits = async () => {
+    if (!creditsOrg || !creditsIdempotencyKey) return;
+    setCreditsSaving(true);
+    try {
+      const res = await workerFetch(`/api/admin/organizations/${encodeURIComponent(creditsOrg.id)}/credits/adjust`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: creditsSignedAmount,
+          reason: creditsReasonInput.trim(),
+          idempotency_key: creditsIdempotencyKey,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (data.error === 'insufficient_balance') {
+          toast.error(CREDIT.ERROR_INSUFFICIENT_BALANCE);
+        } else {
+          toast.error(data.error ?? CREDIT.ERROR_GENERIC);
+        }
+        return;
+      }
+      const amountLabel = creditsAmountInput;
+      toast.success(
+        creditsAction === 'add'
+          ? CREDIT.SUCCESS_ADD(amountLabel, creditsOrg.display_name)
+          : CREDIT.SUCCESS_REMOVE(amountLabel, creditsOrg.display_name),
+      );
+      closeCredits();
+      doFetch(page);
+    } catch {
+      toast.error(CREDIT.ERROR_GENERIC);
+    } finally {
+      setCreditsSaving(false);
     }
   };
 
@@ -270,6 +356,22 @@ export function AdminOrganizationsPage() {
                         <SlidersHorizontal className="h-3.5 w-3.5 mr-1" /> Set cap
                       </Button>
                     </div>
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">{CREDIT.COLUMN_LABEL}:</span>
+                        <Badge variant="secondary" className="text-[10px] font-mono">
+                          {org.credit_balance != null ? org.credit_balance.toLocaleString() : CREDIT.UNKNOWN_BALANCE}
+                        </Badge>
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7"
+                        onClick={(e) => { e.stopPropagation(); openCredits(org); }}
+                      >
+                        <Coins className="h-3.5 w-3.5 mr-1" /> {CREDIT.BUTTON_LABEL}
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -285,6 +387,7 @@ export function AdminOrganizationsPage() {
                       <th className="pb-2 pr-4">Members</th>
                       <th className="pb-2 pr-4">Records</th>
                       <th className="pb-2 pr-4">Free tier</th>
+                      <th className="pb-2 pr-4">{CREDIT.COLUMN_LABEL}</th>
                       <th className="pb-2">Created</th>
                     </tr>
                   </thead>
@@ -332,6 +435,22 @@ export function AdminOrganizationsPage() {
                               onClick={(e) => { e.stopPropagation(); openCap(org); }}
                             >
                               <SlidersHorizontal className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </td>
+                        <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="secondary" className="text-[10px] font-mono">
+                              {org.credit_balance != null ? org.credit_balance.toLocaleString() : CREDIT.UNKNOWN_BALANCE}
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              title={CREDIT.BUTTON_TITLE}
+                              onClick={(e) => { e.stopPropagation(); openCredits(org); }}
+                            >
+                              <Coins className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         </td>
@@ -400,6 +519,104 @@ export function AdminOrganizationsPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingOrg(null)} disabled={saving}>Cancel</Button>
             <Button onClick={saveCap} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* L2-A5 — credit adjust dialog (founder admin-controls: add/remove credits) */}
+      <Dialog open={!!creditsOrg} onOpenChange={(open) => { if (!open) closeCredits(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{CREDIT.DIALOG_TITLE}</DialogTitle>
+            <DialogDescription>
+              {creditsOrg ? CREDIT.DIALOG_DESCRIPTION(creditsOrg.display_name) : ''}
+            </DialogDescription>
+          </DialogHeader>
+
+          {creditsStep === 'input' ? (
+            <div className="space-y-4 py-2">
+              <div className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2">
+                <span className="text-sm text-muted-foreground">{CREDIT.CURRENT_BALANCE_LABEL}</span>
+                <span className="font-mono text-sm font-medium">{creditsCurrentBalance.toLocaleString()}</span>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant={creditsAction === 'add' ? 'default' : 'outline'}
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => setCreditsAction('add')}
+                >
+                  {CREDIT.ACTION_ADD}
+                </Button>
+                <Button
+                  type="button"
+                  variant={creditsAction === 'remove' ? 'default' : 'outline'}
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => setCreditsAction('remove')}
+                >
+                  {CREDIT.ACTION_REMOVE}
+                </Button>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="credits-amount">{CREDIT.AMOUNT_LABEL}</Label>
+                <Input
+                  id="credits-amount"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={creditsAmountInput}
+                  onChange={(e) => setCreditsAmountInput(e.target.value)}
+                  className="w-32"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="credits-reason">{CREDIT.REASON_LABEL}</Label>
+                <Textarea
+                  id="credits-reason"
+                  value={creditsReasonInput}
+                  onChange={(e) => setCreditsReasonInput(e.target.value)}
+                  placeholder={CREDIT.REASON_PLACEHOLDER}
+                  rows={3}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              <div className="rounded-md border p-3 space-y-2">
+                <p className="text-sm font-medium">
+                  {creditsAction === 'add'
+                    ? CREDIT.CONFIRM_SUMMARY_ADD(creditsAmountInput, creditsOrg?.display_name ?? '')
+                    : CREDIT.CONFIRM_SUMMARY_REMOVE(creditsAmountInput, creditsOrg?.display_name ?? '')}
+                </p>
+                <p className="text-xs text-muted-foreground">{CREDIT.REASON_LABEL}: {creditsReasonInput}</p>
+                <div className="flex items-center justify-between pt-2 border-t">
+                  <span className="text-xs text-muted-foreground">{CREDIT.NEW_BALANCE_LABEL}</span>
+                  <span className="font-mono text-sm font-medium">
+                    {creditsCurrentBalance.toLocaleString()} → {Math.max(creditsNewBalance, 0).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            {creditsStep === 'input' ? (
+              <>
+                <Button variant="outline" onClick={closeCredits}>Cancel</Button>
+                <Button onClick={reviewCredits}>{CREDIT.REVIEW_BUTTON}</Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => setCreditsStep('input')} disabled={creditsSaving}>
+                  {CREDIT.BACK_BUTTON}
+                </Button>
+                <Button onClick={confirmCredits} disabled={creditsSaving}>
+                  {creditsSaving ? CREDIT.CONFIRMING_BUTTON : CREDIT.CONFIRM_BUTTON}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
