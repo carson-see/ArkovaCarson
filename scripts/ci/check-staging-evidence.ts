@@ -2665,7 +2665,15 @@ function parseRcManifest(path: string, raw: string, errors: string[]): Record<st
   return parsed;
 }
 
-function validateRcManifestMetadata(
+/**
+ * Fields common to BOTH the normal (approved) and deferred-consolidated-soak
+ * RC-manifest evidence paths: schema version, core identity/provenance
+ * fields, and current-base coverage. Approval semantics differ between the
+ * two paths (approved vs the literal "pending") and are validated
+ * separately by each caller — this helper deliberately does not touch
+ * `approval_status`/`approval_actor`/`approval_time`.
+ */
+function requireRcCoreIdentityFields(
   manifest: Record<string, unknown>,
   opts: CheckOptions,
   errors: string[],
@@ -2679,17 +2687,26 @@ function validateRcManifestMetadata(
   requireRcTimestamp(errors, manifest, 'created_at', 'created_at');
   requireRcString(errors, manifest, 'created_by', 'created_by');
   requireRcString(errors, manifest, 'release_owner', 'release_owner');
+  requireRcString(errors, manifest, 'train_launch_sha', 'train_launch_sha');
+
+  if (!rcCurrentBaseCovered(manifest, opts.baseSha)) {
+    errors.push('RC manifest does not cover the current base SHA; update the manifest or re-check main drift.');
+  }
+}
+
+function validateRcManifestMetadata(
+  manifest: Record<string, unknown>,
+  opts: CheckOptions,
+  errors: string[],
+): void {
+  requireRcCoreIdentityFields(manifest, opts, errors);
+
   const approvalStatus = requireRcString(errors, manifest, 'approval_status', 'approval_status');
   if (approvalStatus !== null && approvalStatus.trim().toLowerCase() !== 'approved') {
     errors.push('RC manifest approval_status must be approved.');
   }
   requireRcString(errors, manifest, 'approval_actor', 'approval_actor');
   requireRcTimestamp(errors, manifest, 'approval_time', 'approval_time');
-  requireRcString(errors, manifest, 'train_launch_sha', 'train_launch_sha');
-
-  if (!rcCurrentBaseCovered(manifest, opts.baseSha)) {
-    errors.push('RC manifest does not cover the current base SHA; update the manifest or re-check main drift.');
-  }
 }
 
 function validateCoveredRcPr(
@@ -2863,15 +2880,7 @@ function deferredConsolidatedSoakMetadataErrors(
   opts: CheckOptions,
   errors: string[],
 ): void {
-  const schemaVersion = numberAt(manifest, 'schema_version');
-  if (schemaVersion !== 1) {
-    errors.push('RC manifest schema_version must be 1.');
-  }
-  requireRcString(errors, manifest, 'rc_id', 'rc_id');
-  requireRcTimestamp(errors, manifest, 'created_at', 'created_at');
-  requireRcString(errors, manifest, 'created_by', 'created_by');
-  requireRcString(errors, manifest, 'release_owner', 'release_owner');
-  requireRcString(errors, manifest, 'train_launch_sha', 'train_launch_sha');
+  requireRcCoreIdentityFields(manifest, opts, errors);
 
   // Deliberately NOT requireRcString() here: "pending" is a legitimate,
   // REQUIRED exact value in deferred mode, but requireRcString()/isFilledValue()
@@ -2889,10 +2898,6 @@ function deferredConsolidatedSoakMetadataErrors(
       + 'migration_plan evidence, THEN flip approval_status to "approved" through the normal '
       + '(non-deferred) path.',
     );
-  }
-
-  if (!rcCurrentBaseCovered(manifest, opts.baseSha)) {
-    errors.push('RC manifest does not cover the current base SHA; update the manifest or re-check main drift.');
   }
 }
 
