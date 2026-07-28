@@ -31,6 +31,20 @@ Python SDK for the Arkova Verification API v2. Sync + async clients using `httpx
 ## Conventions
 - Default base URL: `https://api.arkova.ai/v2`. Auth via `Authorization: Bearer ak_*` header.
 - Published to PyPI via `.github/workflows/publish-python-sdk.yml`.
+- **Lint gate:** that workflow's `ruff check src tests` is the publish gate, and
+  `ruff` is pinned to an EXACT version in `pyproject.toml` — see the comment on
+  the pin there for why a range is not sufficient. Bump it deliberately and
+  clear any new findings in the same PR.
+- **Five `# noqa`s here are load-bearing** — each carries its own inline
+  justification, so read the code, not a line number (these drift). Do not
+  "clean them up":
+  - `UP007` on `proofs.py`'s `NodeSource` — that file holds a Python 3.9 floor
+    deliberately NARROWER than the package's `requires-python = ">=3.10"`,
+    because it is meant to be copy-pasteable standalone.
+  - `BLE001` in `proofs.py` and `models.py` — deliberate fail-closed catches
+    (injected-node trust boundary; frozen-response proof-bundle validator).
+  - `PYI034` ×2 in `client.py` — `typing.Self` is 3.11+, the floor is 3.10, and
+    the package carries no `typing_extensions` dependency.
 
 ## Write path (anchor / anchor_bulk, added 2026-07-28)
 HAKI-REQ-02 (SCRUM-1171): this package was entirely read-only until this
