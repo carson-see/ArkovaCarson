@@ -401,6 +401,36 @@ describe('worker server', () => {
     });
   });
 
+  // pentest-prep: CLAUDE.md §1.9 says "/api/health always available" but only
+  // /health was ever mounted (confirmed 404 live on both api.arkova.ai and
+  // the Cloud Run origin). /api/health is now a byte-identical alias.
+  describe('GET /api/health (pentest-prep alias, CLAUDE.md §1.9)', () => {
+    it('returns the same healthy response shape as GET /health', async () => {
+      mockDbFrom.mockReturnValue(mockDbChain({ data: [{ id: '1' }], error: null }));
+
+      const res = await request(app, 'GET', '/api/health');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        status: 'healthy',
+        network: 'signet',
+        checks: { database: 'ok' },
+      });
+    });
+
+    it('returns degraded status when Supabase is unreachable, same as /health', async () => {
+      mockDbFrom.mockReturnValue(mockDbChain({ data: null, error: { message: 'connection refused' } }));
+
+      const res = await request(app, 'GET', '/api/health');
+
+      expect(res.status).toBe(503);
+      expect(res.body).toMatchObject({
+        status: 'degraded',
+        checks: { database: 'error' },
+      });
+    });
+  });
+
   describe('POST /jobs/process-anchors', () => {
     it('calls processPendingAnchors and returns result', async () => {
       mockProcessPendingAnchors.mockResolvedValue({ processed: 3, failed: 1 });

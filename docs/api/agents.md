@@ -2,6 +2,13 @@
 
 Developer-facing API documentation. Engineering mirrors and guides for the Arkova Verification API.
 
+## 2026-07-28 v1 spec canonical source flip (pentest-prep API contract audit)
+
+- `openapi.yaml` is DEMOTED — no longer canonical. It had drifted 12+ mounted `/api/v1` routes behind the runtime-served spec (`services/worker/src/api/v1/docs.ts`, served at `GET /api/docs/spec.json`), which is what a pen tester enumerating the API actually sees. `docs.ts` is now canonical, matching the v2 pattern (`services/worker/src/api/v2/openapi.ts`). See `docs/api/canonical-sources.md`.
+- New CI guard: `services/worker/src/api/v1/docs.routeParity.test.ts` extracts real routes from a set of v1 leaf routers (via `router.stack`, not a hand-transcribed list) and fails when a mounted route is missing from `openApiSpec`. It also re-reads `router.ts` to confirm its assumed mount prefixes still hold. Currently covers the routers touched by this audit (`verify-proof`, `attestations`, `webhooks`, `cle-verify`, `ai-review`, `ai-integrity`, `ai-embed`, `ai-feedback`) — the extraction logic is router-agnostic, so widening coverage to the rest of `/api/v1` is additive follow-up, not a rewrite.
+- Fixed a real spec bug found in the same audit: `POST /ai/integrity` never matched anything — the router actually mounts `POST /ai/integrity/compute`. Also added the previously-undocumented `GET /ai/integrity/{anchorId}`.
+- `openapi.yaml` is kept (not deleted) because `scripts/ci/check-api-scope-vocabulary.ts` still reads it for `API_KEY_SCOPES` vocabulary parity, and `docs/api/README.md` / `packages/sdk/README.md` link it as an offline/Swagger-import convenience. Its endpoint list is NOT guaranteed complete — do not add new hand-written entries there expecting them to be authoritative.
+
 ## 2026-05-22 Scope Notes
 
 - Document anchor submit with both accepted write scopes: `anchor:write` and `write:anchors`.

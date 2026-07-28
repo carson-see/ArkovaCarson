@@ -51,6 +51,179 @@ is known at the time of this refresh — do not fabricate any of it.
 
 ---
 
+## 0.6 Load model — 10,000 DAU (derived, not asserted; Founder requirement 2026-07-28)
+
+**Purpose:** the soak must sustain a concrete, defensible load, not "a lot of traffic." Every number below states its assumption so an auditor can follow the arithmetic to the headline figures; where an assumption is unverified, it is flagged as a gate item, not silently treated as fact.
+
+**Grounding — real prod scale (verified live, do not re-derive from memory):** 2,972,264 SECURED anchors total (`memory/project_anchor_count_live.md`, 2026-07-02); ~283,000 unanchored `public_records` in the feeder backlog (`memory/project_pending_anchoring_backlog.md`); `BATCH_ANCHOR_MAX_SIZE=10000` (prod env, `deploy-worker.yml`); `/api/v1/anchor/bulk` request cap = 1,000 rows/call (`services/worker/src/api/v1/anchor-bulk.ts:66`, `z.array(...).min(1).max(1000)`); prod worker Cloud Run: `--cpu 2 --memory 2Gi --min-instances 2 --max-instances 10`, no explicit `--concurrency` flag set (`deploy-worker.yml` canary deploy step), so Cloud Run's per-instance default of 80 concurrent requests applies; anchor batch drain is currently a **single nightly cron** (`daily-anchor-flush`, 3am EST `force` sweep — `batch-anchor.audit.test.ts` comments), not intra-day; migration 0370 fixed `batch_insert_anchors`'s `character(64)` implicit-cast Seq Scan (533ms→11.6ms) **measured at 1/15 of current prod scale** — the fix's complexity class was not re-verified at full scale or beyond, so its behavior at 10k-DAU projected volume is an open question, not a closed one (see bottleneck ranking below).
+
+**Assumptions (stated explicitly):**
+- **A1 — DAU:** 10,000 daily active authenticated org-side users (the founder's stated target). Public/anonymous verification traffic (third parties checking a receipt) is modeled separately — it does not scale 1:1 with DAU, since one anchor can be verified by many outside parties.
+- **A2 — Actions per DAU/day:** 2.5 documents secured per DAU per day, blended across a majority doing 1 single-document anchor/day and a smaller power-user cohort (~15% of DAU) running bulk uploads averaging tens of documents per call. This yields **≈25,000 documents/day** anchored. (Compare: current 283k backlog at the feeder-cron-paused state implies the org-facing volume today is a small fraction of this — 10k DAU is a genuine step-change, not an extrapolation of current traffic.)
+- **A3 — Diurnal peak multiplier:** 40% of daily volume lands in the single busiest hour (a conservative enterprise B2B "morning batch" pattern — some SaaS models run hotter at 55-60%; 40% is the defensible floor, not the ceiling). Peak-hour documents ≈ **10,000**, i.e. **≈2.8 anchor-creates/sec sustained** through the peak hour, with a further 3x burst multiplier inside the hottest 5-minute window ⇒ **≈8.3 anchor-creates/sec at burst**.
+- **A4 — Read:write ratio:** 10:1 (dashboard views, status polls, public verify-page loads, `/api/v1` reads dominate over writes in a records/verification product). Peak **all-endpoint RPS ≈ 28 req/s sustained, ≈83 req/s at burst** (10x the A3 figures).
+- **A5 — Peak concurrent sessions:** assume 15% of DAU (1,500 users) active within the peak hour, average session dwell 6 minutes ⇒ concurrency ≈ 1,500 × (6/60) = 150 typical concurrent sessions; round up for longer bulk-upload sessions and multi-tab usage ⇒ **design target: 250 peak concurrent sessions**.
+- **A6 — Batch/queue math:** 25,000 documents/day through a single nightly drain exceeds `BATCH_ANCHOR_MAX_SIZE=10000` in one invocation — **this alone requires either multiple drain passes per night or an intra-day drain cadence**; the current single-3am-cron design was sized for materially lower daily volume. This is a concrete, code-visible gap (see A6 in the bottleneck ranking).
+- **A7 — p95/p99 latency budgets per critical path** (targets the soak must demonstrate, not just "fast enough"): `POST /api/v1/anchor` (single) p95 ≤ 800ms / p99 ≤ 2s (excludes on-chain confirmation, which is async); `POST /api/v1/anchor/bulk` (≤1000 rows) p95 ≤ 8s / p99 ≤ 20s; public verify page (`GET` fingerprint lookup) p95 ≤ 400ms / p99 ≤ 1.2s; `/api/v1` authenticated reads p95 ≤ 500ms / p99 ≤ 1.5s; `/health` p99 ≤ 200ms (used as a canary — any regression here during load is itself a signal). These are soak-gate numbers (§0.7), not SLA commitments to customers.
+
+**Where 10k DAU breaks something — bottleneck ranking, most-likely-first:**
+
+1. **Single nightly batch drain (A6) — the FIRST bottleneck, and the one most likely to fail silently.** At 25,000 docs/day the drain either exceeds `BATCH_ANCHOR_MAX_SIZE=10000` per pass (requiring the job to loop or being capped and deferring the remainder — same pattern already seen in `anchorExpirySweep.ts`'s documented page-cap-defers-to-next-tick design) or simply runs long enough that the *next* day's queue starts stacking on top of an unfinished prior run. Load at which this breaks: **any sustained day above ~10,000 anchors** (the hard per-invocation cap), which A2's blended estimate crosses on day one at 10k DAU. **This is the named first bottleneck.**
+2. **`batch_insert_anchors` at scale beyond the 0370 benchmark.** The fix was verified at 1/15 prod scale; if the underlying complexity is superlinear (the original bug was a Seq Scan + disk sort, which is exactly the class that degrades non-linearly), the 11.6ms figure may not hold at 15x+ that benchmark size — re-profile with `EXPLAIN ANALYZE` at a dataset shaped like 25,000 anchors/day × real backlog size, not assume the fix holds.
+3. **DB connection ceiling.** 10 max Cloud Run instances × an unverified per-instance connection-pool size, against an unverified Supabase plan connection ceiling (pooled or direct) — **this exact number must be pulled live** (`SELECT * FROM pg_settings WHERE name='max_connections'` against the prod project, plus the Supabase dashboard's pooler config) before the soak; it is listed here as a named open verification, not a guess. At 250 peak concurrent sessions plus cron/webhook/scheduler background connections, exhaustion is plausible if per-instance pools aren't bounded conservatively.
+4. **Cloud Run instance/concurrency ceiling.** `max-instances 10`, default concurrency 80/instance ⇒ theoretical ceiling ≈800 concurrent requests server-side — comfortably above A5's 250-session target under normal conditions, but a bulk-upload spike (many long-lived multi-second bulk calls holding a request slot) consumes concurrency slots disproportionately to session count; a burst of concurrent bulk calls could exhaust available instances well before the raw session count would suggest.
+5. **`/api/v1/anchor/bulk`'s 1,000-row cap.** Not a breakage by itself (clients must paginate calls), but at A2's bulk-cohort volume (tens of thousands of docs/day from ~1,500 power users) it multiplies request count non-trivially — factor this into A4's RPS math for orgs that don't batch efficiently.
+6. **Client-side OCR/Tesseract CPU + the 20-page OCR cap** (`TIFF_MAX_PAGES` / `SCANNED_PDF_OCR_MAX_PAGES` = 20, `src/lib/ocrWorker.ts`). This is a *client*-side bottleneck (§1.6 keeps processing on-device), so it doesn't threaten backend capacity at 10k DAU, but it is a real user-experience ceiling for scanned-document-heavy orgs at scale — worth naming so it isn't mistaken for a server concern.
+7. **`API_KEY_HMAC`-scoped rate limits** (`CLAUDE.md` §1.10: 1,000 req/min per API key ≈ 16.7 RPS). A single high-volume integrator org at 10k-DAU scale could plausibly need more than one key's worth of throughput — not a breakage, but a support/onboarding consideration to flag alongside the technical bottlenecks.
+
+**Gate obligation:** items #3 (connection ceiling) and #1 (drain redesign) must be answered with real numbers — not this document's assumptions — before this wave's soak is treated as representative of 10k-DAU readiness. The 72h soak itself (§0.7 below) is scoped to the **current** 45-day-merged surface at **today's** traffic shape; it is not, by itself, a 10k-DAU load test. Where the soak's synthetic load exercises volume/concurrency (§5), record whether it reached A3-A5's numbers explicitly — do not let a soak that never approached 250 concurrent sessions or 28 RPS quietly stand in for 10k-DAU evidence.
+
+---
+
+## 0.7 Staged early-detection gates — this is the core hardening (Founder requirement 2026-07-28)
+
+A 72h soak that only reports at hour 71 is nearly worthless — the point of staging is to fail cheaply, early. Below is a staged gate structure with **named, numeric, unambiguous abort triggers** at each checkpoint, plus continuous monitors that page immediately rather than waiting for the next gate.
+
+### T+0–2h: Smoke gate — stop here and fix before burning 70 more hours
+
+All of the following must be TRUE by T+2h or the soak is aborted and restarted after a fix (not "noted and continued"):
+
+- [ ] `/health` returns `200` with the frozen head's `git_sha`, all subsystems `ok`, network=`signet` verified both label AND config (§1/§6 D1 trap check).
+- [ ] All migrations in the train (§1 go/no-go list) show as applied — `select version, name from supabase_migrations.schema_migrations order by version desc limit 10` matches the expected train tail.
+- [ ] All 5 Cloud Scheduler jobs (§3) show `state=ENABLED` and at least one successful run each — `gcloud scheduler jobs list --location=us-central1 --filter="name~launch-72h-2026-08" --format="table(name,state,lastAttemptTime,status.code)"`.
+- [ ] **First anchor SECURED end-to-end**, real chain path: submit one document → `PENDING` → `SUBMITTED` → `SECURED`, observed via `select status, submitted_at, secured_at from anchors where id=... ` polled to completion, cross-checked against a signet explorer link for the txid. Budget: must reach `SECURED` within a bounded window (use the signet confirmation-time norm, not mainnet's — record the actual elapsed time as the baseline for later gates).
+- [ ] Auth works: one real login + one API-key-authenticated request both succeed (200, not 401/403/500).
+- [ ] **5xx rate = 0** across all requests issued in the smoke window (any 5xx at T+2h is a hard stop — this is before any load is applied, so a 5xx here means the deploy itself is broken, not a load-induced regression).
+- [ ] `staging-honesty-preflight.ts` still reports `clean_mirror` (re-run, don't assume it holds from provisioning).
+
+**Abort trigger at this gate:** any unchecked box above. Action: stop, fix, redeploy if needed (new image = new frozen head = restart the clock per §8), re-run the T+0–2h gate from zero. Do not proceed to load-bearing exercises on an unverified smoke baseline.
+
+### T+6h gate
+
+- [ ] §5's VOLUME pillar first pass complete: ≥100 mixed-format bulk anchors through one call, zero silent drops (W1 fix verified — an error surfaces, not a silent empty prompt).
+- [ ] §5's CONCURRENCY pillar first pass complete: ≥15 parallel `POST /api/v1/anchor` calls, credit balance conserved exactly (before == after − expected deductions, to the cent/credit).
+- [ ] No 5xx rate above **0.5% over any 5-minute window** observed since T+2h (first load-bearing threshold check — see continuous monitors below for the standing definition).
+- [ ] Cloud Run revision uptime = elapsed time (no restart).
+- [ ] Anchor count monotonically increasing on the rig; prod anchor count unchanged except prod's own real traffic (isolation spot-check #1 of 3+, not deferred to daily-only).
+
+**Abort trigger:** 5xx > 0.5%/5min sustained across two consecutive checks, OR a credit-balance conservation failure of any size (this is a money-correctness bug, zero tolerance regardless of magnitude), OR prod anchor count moved unexpectedly.
+
+### T+24h gate
+
+- [ ] Full daily observation checklist (§7) run once, all boxes green.
+- [ ] SCRUM-3031 `batch_insert_anchors` regression check executed at least once: forced repeat-submission scenario completes in bounded time (no ~106s/zero-rows wedge, no near-continuous `RowExclusive` lock observed via `select * from pg_locks where relation='anchors'::regclass and mode='RowExclusiveLock'` sampled during the run).
+- [ ] p95/p99 latency budgets from §0.6-A7 measured against real traffic for at least `POST /api/v1/anchor`, `POST /api/v1/anchor/bulk`, and public verify — **no metric may exceed 1.5x its stated budget** (a soft warning below 1.5x, a hard abort at or above).
+- [ ] DocuSign E2E specs + webhook liveness triad (signed/unsigned/garbage-control) all pass.
+- [ ] Migration 0364/0377 unguarded-RPC-revoke check (§0.9 below) run at least once: anon denied confirmed AND worker's own service-role path still functions (both halves — see §0.9).
+- [ ] Queue-depth check: no queue table (`job_queue`, org anchor queue) shows unbounded growth — depth at T+24h ≤ depth at T+6h + (24h × expected steady-state enqueue rate); flag if growing faster than drain rate.
+
+**Abort trigger:** any latency budget breach ≥1.5x, the SCRUM-3031 wedge reproducing at all (zero tolerance — this is a named, already-found regression), or queue depth growing without bound.
+
+### T+48h gate
+
+- [ ] Full 4-pillar evidence standard (§5) at least one complete pass on every named exercise, not just VOLUME/CONCURRENCY (EDGE CASES + ISOLATION now included).
+- [ ] Failure-injection plan (§0.9) at least 3 of its scenarios executed with observed (not assumed) recovery behavior recorded.
+- [ ] Rollback rehearsal (apply → rollback → confirm → re-apply → confirm idempotent) complete for all migrations in the train — not deferred to T+72h.
+- [ ] Credit-ledger conservation check across the full 48h window (sum of `org_credits` deltas matches expected activity cumulative, not just the daily delta) — a slow drift that stays under the daily-check noise floor is exactly what a cumulative check catches and a daily-only check misses.
+- [ ] JWT/secret expiry confirmed ≥24h of remaining headroom past this checkpoint (§3.4).
+
+**Abort trigger:** cumulative credit-ledger drift of any nonzero amount unexplained by real activity, OR any failure-injection scenario's actual recovery behavior diverging from its expected behavior (§0.9) in a way that indicates data loss or a stuck state with no automatic recovery path.
+
+### T+72h exit
+
+- [ ] Cloud Run revision uptime ≥ 4320 minutes (72h), continuous, no restart (or, if a restart occurred, the clock was correctly reset per §8 and the FULL 72h re-accumulated from the restart point).
+- [ ] Every §5 pillar and both `RELEASE-PLAN-2026-08-FINAL.md` §5.1/§5.2 cross-feature journeys produced a real artifact (not "N/A", not a single seed).
+- [ ] Zero unresolved stop-the-line triggers from any gate above.
+- [ ] All continuous-monitor thresholds (below) show zero unacknowledged breaches in the final 24h window specifically (a clean tail, not just a clean average).
+- [ ] Manifest `approval_status` flipped to `"approved"` by Carson — the literal authorization event (§4 of `RELEASE-PLAN-2026-08-FINAL.md`).
+
+### Continuous monitors — page immediately, not at the next gate
+
+These are threshold breaches that must alert the operator in near-real-time (via whatever paging channel is wired for this soak — Sentry alert rules / a polling script with a webhook, not "check it at the next daily pass"):
+
+| Monitor | Threshold | Query/check |
+|---|---|---|
+| **5xx error rate** | >0.5% over any 5-minute window | Cloud Run request logs filtered `httpRequest.status>=500`, rate over count in the same window |
+| **p99 latency regression** | >1.5x the §0.6-A7 budget for the specific endpoint, sustained over 2 consecutive 5-min windows | Cloud Run request logs / APM if wired; fall back to a lightweight synthetic prober hitting each critical-path endpoint every 60s |
+| **Queue-depth growth** | Any queue (`job_queue`, org anchor queue) growing for >2 consecutive observation windows without a corresponding drain | `select count(*) from job_queue where status='pending'` sampled every 15 min, compared to prior sample |
+| **Credit-ledger imbalance** | Any nonzero unexplained delta between `org_credits` sum and expected activity | Reconciliation query run every 6h minimum (not just daily) |
+| **Anchors stuck in SUBMITTED** | Any anchor with `status='SUBMITTED'` and `submitted_at` older than 3x the signet confirmation-time baseline established at the T+0–2h gate | `select id, submitted_at from anchors where status='SUBMITTED' and submitted_at < now() - interval '<3x baseline>'` |
+| **Lock contention on `anchors`** | Any `RowExclusiveLock` (or stronger) held on `anchors` for >30s continuously | `select pid, mode, granted, age(clock_timestamp(), query_start) from pg_locks join pg_stat_activity using (pid) where relation='anchors'::regclass` sampled every 60s during load-bearing windows |
+| **Sentry error-rate spike** | >2x the T+0–2h baseline error rate in any rolling 15-min window | Sentry issue-rate query for the rig's project/environment (if the rig reports to a distinct Sentry environment — confirm this is wired before the clock starts, or this monitor is a gap, not a check) |
+| **Scheduler job failures** | Any of the 5 Cloud Scheduler jobs (§3) shows a non-`SUCCESS` last-attempt status | `gcloud scheduler jobs list --location=us-central1 --filter="name~launch-72h-2026-08" --format="table(name,status.code,lastAttemptTime)"` polled every 15 min |
+| **Worker restart** | Any restart at all | `gcloud run revisions describe <revision-id> --format="value(status.conditions)"` polled every 5 min; a restart resets the clock per §8, it does not merely log a note |
+
+### Daily observation checklist — commands an operator actually runs
+
+§7 below is the base checklist (kept as-is, still required 3x minimum). This section adds the **exact commands** for the numeric checks introduced above, to run once per 24h alongside §7:
+
+```bash
+# 5xx rate over the last 24h, bucketed hourly (Cloud Run request logs)
+gcloud logging read \
+  'resource.type="cloud_run_revision" resource.labels.service_name="arkova-worker-launch-72h-2026-08-staging" httpRequest.status>=500' \
+  --project=arkova1 --freshness=24h --format=json | jq 'length'
+
+# Queue depth snapshot (via Supabase MCP execute_sql against the rig project, or psql)
+# select count(*) from job_queue where status = 'pending';
+
+# Lock contention snapshot
+# select pid, mode, granted, age(clock_timestamp(), query_start) from pg_locks
+#   join pg_stat_activity using (pid) where relation = 'anchors'::regclass;
+
+# Stuck-SUBMITTED check (replace <baseline> with the T+0-2h measured signet confirmation time x3)
+# select id, submitted_at from anchors where status = 'SUBMITTED' and submitted_at < now() - interval '<baseline>';
+
+# Scheduler job health
+gcloud scheduler jobs list --location=us-central1 \
+  --filter="name~launch-72h-2026-08" \
+  --format="table(name,state,status.code,lastAttemptTime)"
+
+# Worker restart / uptime check
+gcloud run revisions describe <revision-id> --region=us-central1 \
+  --format="value(status.conditions)"
+```
+
+---
+
+## 0.8 SOC 2 Type 2 continuity controls — operating effectiveness over the 72h window
+
+Type 2 is about controls operating effectively **over time**, not a point-in-time snapshot. The table below maps CC6/CC7/CC8 to how *this soak specifically* exercises each control repeatedly across the 72h window, what artifact proves it, where it's stored, and who attests — supplementing (not duplicating) `RELEASE-PLAN-2026-08-FINAL.md` §4's stage-level mapping.
+
+| Criteria | Control | How the soak exercises it REPEATEDLY over 72h | Artifact | Storage | Attestation |
+|---|---|---|---|---|---|
+| **CC6.1 / CC6.6** — logical access, boundary protection | Cross-tenant isolation on the fixed `x-org-id` path | The per-org isolation check (§5 ISOLATION pillar) runs at soak start, T+24h, T+48h, T+72h (not once) — two synthetic orgs, concurrent load, confirming zero cross-boundary reads/writes each time, against the FIXED code specifically | Per-run isolation-check logs (request/response pairs showing 403/404 on cross-org attempts) | `docs/staging/launch-72h-2026-08/` | RTE executes each run; Carson attests at T+72h exit that all 4 runs are clean |
+| **CC6.1 / CC6.8** — access control, malicious-input resistance | Unguarded-RPC revoke (migration 0364/0377) — anon denied AND worker still works | Both halves tested at T+24h and again at T+48h: an anon-role SQL call against the revoked RPCs must fail; a service-role worker call through the normal API path must still succeed (§0.9) | `psql`/Supabase MCP query output pairs, timestamped, for both halves at both checkpoints | `docs/staging/launch-72h-2026-08/` | RTE executes; Carson attests |
+| **CC7.1 / CC7.2** — system operations, monitoring for anomalies | Continuous monitors (§0.7) | Not a single check — the 9 continuous monitors run for the full 72h; any breach produces a page + a logged exception-register entry (below), not a silent miss | Monitor-breach log (timestamp, monitor, value, resolution) | `docs/staging/launch-72h-2026-08/exception-register.md` (create if any breach occurs) | RTE logs each breach in near-real-time; Carson reviews the register at T+72h exit |
+| **CC7.2** — anomaly detection via failure injection | Failure-injection plan (§0.9) | Each of the 8 named fault scenarios executed at least once during the window (§0.7's T+48h gate requires ≥3 by that checkpoint, all 8 by T+72h) with expected-vs-observed behavior recorded | Per-scenario before/during/after logs | `docs/staging/launch-72h-2026-08/` | RTE executes; Carson attests recovery behavior matched expectations (or logs a deviation) |
+| **CC8.1** — change management | Deploy-gate engagement (`vars.DEPLOY_WORKER_PAUSED`) staying `true` for the soak's ENTIRE duration | Checked at every gate (T+0-2h through T+72h) as part of the standing checklist, not assumed to hold from the go/no-go check alone | `gh variable list` output captured at each gate checkpoint | `docs/staging/launch-72h-2026-08/` | RTE checks at each gate; a flip mid-soak (by anyone) is itself a contamination event per §8 |
+| **CC8.1** — change management, separation of duties | Manifest `approval_status` authorization | `approval_status` stays literal `"pending"` throughout execution; RTE (executor) never flips it — only Carson (authorizer) flips it, and only at T+72h exit once every gate above is clean | The manifest file's own git history (who committed the flip, when) | `docs/staging/rc-manifests/rc-2026-08-launch-72h.json` (git-tracked, immutable via commit history) | Carson (sole authorizer of the flip) |
+
+**Immutable evidence requirement:** every artifact above must be timestamped and either (a) a raw command-output capture (not an agent's prose summary of what it saw), or (b) a git-tracked file with commit history as its own provenance record. Deploy-log provenance rows (`public.staging_deploy_log`), preflight JSON, and `gcloud`/`psql` output redirected to files satisfy this; a chat-log claim that "the check passed" does not.
+
+**Exception register:** any deviation from expected behavior during the 72h window — a monitor breach, a failure-injection scenario that didn't recover as expected, an abort-and-restart, a manual intervention — gets a row in `docs/staging/launch-72h-2026-08/exception-register.md`: timestamp, what happened, who noticed (monitor/human), action taken, resolution. This is the SOC2 auditor's primary artifact for "did anything deviate, and was it handled" — an empty register at T+72h is a claim that must be true, not assumed true by omission.
+
+---
+
+## 0.9 Failure-injection / negative testing plan
+
+A soak that only exercises happy paths proves little. Each scenario below: the fault, how to inject it, the expected behavior, and where in §0.7's gate structure it must land.
+
+| # | Fault | Injection method | Expected behavior | Gate deadline |
+|---|---|---|---|---|
+| 1 | **GetBlock RPC outage** (chain-broadcast provider) | Temporarily point `BITCOIN_RPC_URL` at an unreachable endpoint (or use a firewall rule scoped to the rig's egress) for a bounded window (~10 min) | Broadcast attempts fail closed, retry/backoff engages (not a tight error loop), anchors stay in a recoverable pre-SUBMITTED state, `recover-broadcasts` cron picks them up once connectivity restores — no data loss, no forged-success state | By T+48h |
+| 2 | **mempool.space UTXO/fee-estimation outage** | Same pattern as #1, scoped to the mempool.space egress path | UTXO listing / fee estimation fails closed with a clear error, does not silently proceed with a stale/zero fee that could produce a stuck low-fee transaction | By T+48h |
+| 3 | **DB connection exhaustion** | Deliberately saturate the rig's connection pool (a load-harness script opening connections up to the verified ceiling from §0.6 bottleneck #3) while normal traffic continues | New requests fail fast with a clear 503/connection-pool-exhausted error, not a hang; existing in-flight requests complete; the pool recovers once the saturating load stops, no connection leak | By T+48h |
+| 4 | **Scheduler job killed mid-run** | `gcloud scheduler jobs run <job>` triggered, then the worker instance handling it is manually restarted/killed mid-execution (`gcloud run services update` forcing a revision bounce, or a manual instance kill if the platform allows) | The job's own idempotency/claim-release logic (per `batch-anchor.ts`'s documented "release the claim so the next cron can retry" pattern) prevents double-processing on the next tick; no anchor is left claimed-but-orphaned | By T+72h |
+| 5 | **Worker instance SIGKILL mid-batch** | `gcloud run services update-traffic` bounce, or direct container kill, while a batch-anchor run is actively processing | Partial batch state is recoverable — no anchor is left in an ambiguous state that neither the recovery cron nor a human can resolve; the SCRUM-3031-adjacent lock-contention monitor (§0.7) should show the lock releasing, not hanging | By T+72h |
+| 6 | **Malformed/hostile uploads** | Zip bomb, corrupt TIFF/HEIC (use the existing fixtures: `src/lib/__fixtures__/ocr/corrupt.tiff`, `corrupt.heic`, `corrupt.pdf`, `overcap.tiff`), oversized spreadsheet (>10MB / >10k rows) | Each rejected cleanly with a bounded-time 4xx, no worker crash, no OOM, no CPU pinning that starves other requests — the existing fixture corpus (already in-repo) makes this a real regression check, not synthetic | By T+24h |
+| 7 | **Duplicate webhook delivery** | Re-POST the same DocuSign webhook payload (same envelope ID / signature) twice in quick succession against `/webhooks/docusign` | Second delivery is recognized as a duplicate and no-ops (or is idempotently reprocessed to the same end state) — no double-anchor, no double-credit-charge | By T+24h |
+| 8 | **Credit exhaustion at the boundary** | Drive an org's credit balance to exactly zero, then submit one more anchor with `ENABLE_ORG_CREDIT_ENFORCEMENT=ON` (rig-only per R17) | Exactly a `402` at the boundary, clean and repeatable ×N — matches the pattern already proven on `maxsoak-154f9ff2`; re-verify it still holds against this wave's code | By T+24h |
+| 9 | **Cross-tenant access attempt** (org-A-vs-org-B, the #1749 fix under load) | Authenticated org-A session issues requests carrying org-B's `x-org-id` (or org-B resource IDs) against FERPA/HIPAA/audit-proof/org-KYB endpoints, under concurrent load matching §5's CONCURRENCY pillar | **DENIED** in every attempt — 403/404, zero data leakage, zero write-through, verified under load specifically (not just a single-request smoke check) since the original bug was header-trust, not a logic bug that only shows up serially | By T+24h, repeated at T+48h and T+72h (this is also a CC6.1 continuity control, §0.8) |
+
+Each scenario's actual observed behavior (not just "expected: pass/fail") gets logged with a timestamp, the exact injection command, and the exact recovery observation — this is what makes the failure-injection plan SOC2-usable evidence rather than a checklist that was merely "run."
+
+---
+
 ## 1. Go/No-Go checklist — everything that must be TRUE before the clock starts
 
 Do not start the soak clock until **every** row below is checked. This is the
@@ -363,6 +536,99 @@ path (`CLAUDE.md` §1.12).
   lands); this soak proves the preflight and the DRY-RUN path work, not the
   live materialization run.
 
+- **PR #1758 / migration `0377` — RPC-revoke positive-path coverage (SEC-RECON, required in the first 6h, not the last).**
+  0377 REVOKEs anon/authenticated `EXECUTE` on six `SECURITY DEFINER` RPCs
+  (`submit_batch_anchors`, `batch_insert_anchors`, `allocate_monthly_credits`,
+  `deduct_ai_credits`, `deduct_unified_credits`, `roll_over_monthly_allocation`)
+  and DROPs the legacy `invite_member(uuid,text,text,uuid)` overload.
+  Pre-mortem (`RELEASE-PLAN-2026-08-FINAL.md` §8 item 13) found every real
+  caller of all seven routes through the worker's shared `service_role`
+  client (`services/worker/src/utils/db.ts`) or, for the one frontend caller
+  (`invite_member`), resolves by named args to the untouched safe 3-arg
+  overload — so no BREAKS/UNKNOWN callers were found. **"Anon is denied" is
+  NOT sufficient soak evidence for this PR — every test below must prove the
+  legitimate caller still succeeds, because the danger class here is a
+  fail-open silent revenue leak, not a loud outage.** Run each of the
+  following for real against the rig, not the opt-in unit-level
+  `src/tests/sec-recon-unguarded-rpc-family-revokes.test.ts` (that suite
+  only proves permission shape on a throwaway DB, not that the worker's real
+  business flow still completes correctly):
+  1. **`submit_batch_anchors`** — drive a seeded PENDING anchor through the
+     real broadcast path to BROADCASTING and let `batch-anchor.ts`'s cron
+     call the RPC for real. Expect: anchor flips to SUBMITTED with
+     `chain_tx_id`/`chain_block_height` set within one cron tick. Failure
+     looks like: anchor stuck at BROADCASTING past one tick, OR (the silent
+     case) the anchor still completes because the direct-UPDATE fallback
+     silently engaged — grep rig logs for `"falling back to direct SUBMITTED
+     updates"` / `"submit_batch_anchors failed twice"` as the real signal;
+     a green anchor count alone does not prove the RPC itself works.
+  2. **`batch_insert_anchors`** — run `processPublicRecordAnchoring()` with
+     ≥1 seeded `public_records` row. Expect: `anchors` rows created in one
+     RPC round-trip, log line `"Batch insert chunk complete"`. Failure looks
+     like: `"Batch insert RPC failed — falling back to serial inserts"` in
+     logs even though the final anchor count still looks correct (silent
+     degradation via the serial fallback) — grep for the fallback string
+     explicitly, do not rely on row-count alone.
+  3. **`allocate_monthly_credits`** — trigger `processMonthlyCredits()` (via
+     the Cloud Scheduler `/jobs/*` wiring in §3, not in-process cron) with
+     ≥1 org seeded with `credits.cycle_end <= now()`. Expect: return value
+     > 0, org balance resets/rolls, one EXPIRY + one ALLOCATION audit-
+     transaction row appear. Failure looks like: return value 0 with
+     `"Failed to process monthly credit allocations"` logged and the seeded
+     org's balance unchanged — **this job has no fallback and no Sentry
+     wiring; a silent break here is invisible until the next billing cycle
+     unless this test explicitly checks the balance delta.**
+  4. **`deduct_ai_credits`** — call a real AI endpoint (e.g.
+     `/api/v1/ai/extract`) as an authenticated org member with a known
+     `ai_credits` balance. Expect: response succeeds AND balance decrements
+     by the documented cost — **assert the balance delta, not just HTTP
+     200.** `services/worker/src/api/v1/ai-extract.ts:248-252` explicitly
+     FAILS OPEN on RPC error (`"AI credit deduction failed — proceeding
+     with extraction"`) — if the RPC is broken, the request still returns
+     200 and only a `logger.error` (no Sentry) marks the free extraction.
+     This is the single most dangerous silent-failure path in the set:
+     a broken RPC here is a revenue leak invisible to both the user and any
+     status dashboard, only a balance-delta assertion catches it.
+  5. **`deduct_unified_credits`** — call a credit-gated worker path (e.g. a
+     metered `/api/v1/anchor` call) as an org with prepaid `unified_credits`
+     available. Expect: resolution is `tier: 'credits'` and the balance
+     decrements. Failure looks like: `tryCredits()` returns `null` and
+     `paymentTierRouter.ts` silently falls through to `tier: 'stripe_metered'`
+     — the request still succeeds (200 OK), so **assert the resolved tier
+     explicitly**, not just success; the Stripe fallback masks an RPC
+     failure as a normal transaction while charging the customer's card
+     instead of consuming prepaid credit.
+  6. **`roll_over_monthly_allocation`** — trigger `runAllocationRollover()`
+     for a rig-seeded org with an open (`closed_at IS NULL`)
+     `org_monthly_allocation` period. Expect: `summary.rolled` includes the
+     org, a new open period row appears with correct carry-over math.
+     Failure looks like: `summary.errors` increments and
+     `"rollover RPC failed"` is logged for that org while the loop
+     continues silently to the next org — check `summary.errors` and
+     `summary.rolled` explicitly, not just that the job completed without
+     throwing.
+  7. **`invite_member` (safe 3-arg, untouched)** — through the real
+     `useInviteMember` hook flow as an ORG_ADMIN. Expect: invitation
+     created, 200, invitation email queued. Failure looks like:
+     `insufficient_privilege` or a function-not-found error, which would
+     mean PostgREST somehow resolved the request to the dropped 4-arg
+     overload instead of the named-arg 3-arg overload — not expected per
+     the static param-name analysis, but this test is what falsifies that
+     assumption for real rather than by inspection alone.
+  - **Negative tests (restated from the PR's own opt-in suite, for this
+    runbook's own evidence record — anon-denied alone is not the point but
+    still required):** anon call to each of the six → `42501`/permission
+    denied; authenticated (non-member) call to each of the six → same;
+    `POST /rest/v1/rpc/invite_member` with the dropped 4-arg positional/named
+    shape → `404`/`PGRST202` (function not found — confirms the DROP, not
+    just a REVOKE, which is a different failure signature than the other six).
+  - **Abort trigger specific to this PR:** any of the 7 positive-path tests
+    above fails, OR a fallback/degraded-path log line (`"falling back to..."`,
+    `"failed twice"`, `"proceeding with extraction"`) appears during the
+    positive-path test window — do not treat "the end-to-end result still
+    looked right" as passing evidence when a fallback silently absorbed a
+    real RPC failure. Add this row to §8's abort table.
+
 ### ISOLATION
 - Prod (`vzwyaatejekddvltxyye`) unchanged across the whole 72h window — spot
   check anchor count + a hash of recent rows at soak start, midpoint, and end.
@@ -397,6 +663,15 @@ hold for 72h.
 
 ## 7. Daily observation checklist
 
+**This is the base checklist — it is now the FLOOR, not the whole picture.**
+§0.7 adds a staged gate structure (T+0–2h / T+6h / T+24h / T+48h / T+72h) with
+numeric abort thresholds, plus 9 continuous monitors that page in near-real-time
+rather than waiting for the next daily pass — run this checklist AND satisfy
+every §0.7 gate whose deadline falls within the window since the last check.
+Do not treat "the daily checklist is green" as sufficient on its own; a soak
+that only reports here is exactly the "reports at hour 71" failure mode §0.7
+exists to prevent.
+
 Run once per 24h window (three times over the 72h soak) and log the result
 against the evidence artifacts in §9:
 
@@ -424,6 +699,12 @@ against the evidence artifacts in §9:
 - [ ] JWT/secret expiry still comfortably ahead of the remaining window (§3.4).
 - [ ] No `do-not-merge`/`work-in-progress` label appeared on any included PR
       since the last check (Carson can veto mid-soak).
+- [ ] §0.7's 9 continuous monitors reviewed for the prior 24h: zero
+      unacknowledged breaches, or every breach has an exception-register row
+      (§0.8) with a resolution.
+- [ ] §0.7's numeric thresholds re-stated for the record: 5xx rate <0.5%/5min
+      held all day; no p99 latency breach ≥1.5x budget went unresolved; no
+      queue-depth growth without a corresponding drain.
 
 ---
 
@@ -431,7 +712,12 @@ against the evidence artifacts in §9:
 
 Stop the clock and mark evidence **invalid** the moment any of these appear —
 identical to `release-management-runbook.md` §8, reproduced here for this
-soak's operator convenience:
+soak's operator convenience. **These are the structural/contamination
+triggers; §0.7 adds the numeric performance/early-detection triggers
+(5xx rate, latency regression, queue depth, ledger imbalance, stuck
+SUBMITTED, lock contention, Sentry spike, scheduler failure) that fire
+continuously rather than only at a daily check — both tables are live for
+the whole window, not either/or.**
 
 | Trigger | Action |
 |---|---|
@@ -443,6 +729,9 @@ soak's operator convenience:
 | Rig hollow (worker never booted, or 0 SUBMITTED anchors) | Soak is a no-op. Fix wiring/seed, restart clock. |
 | CI red on a required check for any included PR | That PR is not mergeable regardless of soak status. Fix the gap, never workaround. |
 | Prod credit-ledger or anchor-count discrepancy discovered during a daily check | Stop, escalate — isolation pillar failure is a stop-the-line event per §1.11A. |
+| **5xx rate >0.5% over any 5-min window** (§0.7 continuous monitor) | Stop, diagnose before resuming — this is the numeric "catch it early" definition the founder's hardening ask calls for explicitly. |
+| **Any credit-ledger or cross-tenant-isolation breach at ANY point in the window**, not just a daily check | Stop immediately, zero tolerance — money-correctness and tenant-isolation bugs do not get a magnitude threshold. |
+| **PR #1758 / migration `0377`: any of the 7 positive-path RPC tests (§5 EDGE CASES) fails, OR a fallback/degraded-path log line fires during the positive-path test window** (`"falling back to..."`, `"failed twice"`, `"proceeding with extraction"`, unexpected `tier: 'stripe_metered'` resolution) | Stop, diagnose before resuming — a fallback silently absorbing a real RPC failure is not passing evidence; `deduct_ai_credits`'s fail-open path in particular means the request can look successful while leaking free usage. |
 
 When in doubt, stop and escalate to RM/CTO — a false-green soak has repeatedly
 cost real money (`memory/feedback_soak_merge_grade_procedure.md`).
@@ -481,3 +770,5 @@ Store artifacts under `docs/staging/` (JSON) and link them from the manifest's
 ---
 
 _Last refreshed: 2026-07-28 by RTE/Release Manager agent (SCRUM-2980, signet + two-soak + trap revision per founder directives D1/D2/D8, 2026-07-28 second batch) — every path/flag/script cited was re-verified live at repo commit `391cc7a01acf54538ad8d83c8c86ee5c11a80d86` and against live prod (`gcloud run services describe`, Supabase MCP `execute_sql`). Two real script-contract corrections landed in this pass: the prior draft's rig-naming example violated `provision-isolated-rig.sh`'s own `--name` regex (leading digit), and its image-tag scheme did not match `verify_source_head_image_digest`'s literal-SHA-tag requirement — both fixed in §2/§2a. No soak has started, no rig is provisioned, no PR has been merged as part of this revision. `docs/staging/rc-manifests/rc-2026-08-launch-72h.json` does not exist on disk yet — it is a go/no-go blocker (§1), not a stale-doc assumption. Re-verify PR states and migration numbers against `gh pr list` / the RC manifest before executing, since the wave's PR set was still open as of this writing._
+
+_Hardening pass 2 (2026-07-28, same day): added §0.6 (10k-DAU load model, derived from stated assumptions, cross-checked against real prod scale), §0.7 (staged early-detection gates T+0–2h/T+6h/T+24h/T+48h/T+72h with named numeric abort thresholds + 9 continuous monitors), §0.8 (SOC 2 Type 2 continuity control mapping — CC6/CC7/CC8 exercised repeatedly across the window, not once), §0.9 (8-scenario failure-injection plan) — per explicit founder requirement that the soak be robust for 10k DAU, SOC 2 Type 2 grade, and surface problems early rather than at hour 71. §7/§8 cross-reference the new numeric thresholds rather than duplicating them. This pass identifies the single nightly batch-drain design (§0.6, bottleneck #1) as the first thing 10k-DAU load breaks, and names the DB connection ceiling (§0.6, bottleneck #3) as an open live-verification gate, not yet answered with a real number — both should be tracked to closure before this wave's soak is cited as 10k-DAU evidence rather than 45-day-surface regression evidence. No code changed in this pass; docs-only per `CLAUDE.md` §0 rule 8 carve-out._
