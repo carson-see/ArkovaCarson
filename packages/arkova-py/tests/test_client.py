@@ -62,9 +62,11 @@ def test_problem_json_errors_preserve_retry_after() -> None:
         )
     )
 
-    with pytest.raises(ArkovaError) as exc_info:
-        with Arkova(api_key="ak_test", retries=0, transport=transport) as client:
-            client.list_orgs()
+    with (
+        pytest.raises(ArkovaError) as exc_info,
+        Arkova(api_key="ak_test", retries=0, transport=transport) as client,
+    ):
+        client.list_orgs()
 
     assert exc_info.value.status_code == 429
     assert exc_info.value.retry_after == 42

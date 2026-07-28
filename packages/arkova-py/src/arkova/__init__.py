@@ -1,4 +1,4 @@
-from .client import AsyncArkova, Arkova
+from .client import Arkova, AsyncArkova
 from .errors import ArkovaError
 from .models import (
     Anchor,
@@ -22,6 +22,7 @@ from .proofs import (
 )
 
 __all__ = [
+    "REASON_CODES",
     "Anchor",
     "Arkova",
     "ArkovaError",
@@ -34,7 +35,6 @@ __all__ = [
     "ProblemDetail",
     "ProofBundle",
     "ProofBundleSignature",
-    "REASON_CODES",
     "SearchResponse",
     "SearchResult",
     "VerificationResult",

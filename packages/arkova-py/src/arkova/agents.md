@@ -31,3 +31,17 @@ Python SDK for the Arkova Verification API v2. Sync + async clients using `httpx
 ## Conventions
 - Default base URL: `https://api.arkova.ai/v2`. Auth via `Authorization: Bearer ak_*` header.
 - Published to PyPI via `.github/workflows/publish-python-sdk.yml`.
+- **Lint gate:** that workflow's `ruff check src tests` is the publish gate, and
+  `ruff` is pinned to a SINGLE minor (`>=0.16,<0.17`) in `pyproject.toml`. ruff
+  gives no default-rule-set stability guarantee below 1.0 — 0.16.0 silently
+  widened its implicit defaults (adding I / UP / SIM / PYI / BLE / RUF) and put
+  87 findings on untouched code, which would have failed the first real publish.
+  Bump the pin deliberately and clear any new findings in the same PR; do not
+  reopen the range.
+- Four `# noqa`s here are load-bearing, each with an inline justification — do
+  not "clean them up": `proofs.py` `UP007` on `NodeSource` (module-level runtime
+  alias; PEP 604 there raises `TypeError` on 3.9 and breaks the documented
+  stdlib-only drop-in), `proofs.py` + `models.py` `BLE001` (fail-closed catches
+  across the injected-node trust boundary and the frozen-response validator),
+  and `client.py` `PYI034` ×2 (`typing.Self` is 3.11+; `requires-python` is 3.10
+  and the package carries no `typing_extensions` dependency).

@@ -4,7 +4,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-
 SearchType = Literal["all", "org", "record", "fingerprint", "document"]
 SearchResultType = Literal["org", "record", "fingerprint", "document"]
 
@@ -183,7 +182,11 @@ class MerkleProofResponse(ArkovaModel):
             if raw is not None and not isinstance(raw, ProofBundle):
                 try:
                     ProofBundle.model_validate(raw)
-                except Exception:
+                # Blind by design: ANY failure to construct a bundle must fail
+                # closed to `None`, not propagate and take the whole (frozen)
+                # response down with it. Narrowing to `ValidationError` would let
+                # a non-pydantic coercion error escape and break that contract.
+                except Exception:  # noqa: BLE001
                     values = dict(values)
                     values["proof_bundle"] = None
         return values

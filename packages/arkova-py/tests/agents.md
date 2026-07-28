@@ -23,3 +23,6 @@ Tests for the Arkova Python SDK.
 - Uses `httpx` transport mocks; never calls real Arkova API. `test_proofs.py`
   touches NO network at all (canned Esplora responses only, §1.7).
 - Run via `pytest` from the `packages/arkova-py/` root.
+- Tests are linted too — the publish workflow runs `ruff check src tests`, so a
+  ruff finding in this folder blocks the PyPI publish exactly like a `src/` one.
+  See `src/arkova/agents.md` for why `ruff` is pinned to a single minor.
