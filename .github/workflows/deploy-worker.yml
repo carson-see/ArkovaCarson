@@ -28,6 +28,45 @@ concurrency:
   group: deploy-worker
   cancel-in-progress: false
 
+# ---------------------------------------------------------------------------
+# DEPLOY PAUSE (2026-08 launch wave, CTO ruling 2026-07-28)
+# ---------------------------------------------------------------------------
+# `deploy-worker.yml` triggers on every push to `main` touching
+# `services/worker/**`. During the wave-merge window (see
+# docs/release/wave-merge-choreography-2026-08.md) T2/T3 worker + migration
+# PRs are being merged BEFORE the 72h soak, not after — the deliberate
+# merge-before-soak sequencing CTO ruled on 2026-07-28. Left ungated, that
+# means every one of those merges auto-deploys unsoaked chain/billing/
+# migration code straight to prod Cloud Run.
+#
+# `vars.DEPLOY_WORKER_PAUSED` (a repository Actions **variable**, not a
+# secret — Settings -> Secrets and variables -> Actions -> Variables) gates
+# ONLY the `deploy` job's actual Cloud Run deploy path. It does NOT touch
+# `pre-deploy-checks` (typecheck/lint/zk-artifacts/test/copy-lint) — those
+# quality gates keep running and keep failing loudly on every push,
+# paused or not, so regressions are still caught in real time.
+#
+#   - Default (variable unset or any value other than the literal string
+#     "true"): unpaused, normal auto-deploy — this is the fail-open-to-normal
+#     state, so nobody has to remember to unpause after a routine merge.
+#   - `DEPLOY_WORKER_PAUSED=true`: the `deploy-gate` job below emits a
+#     `::warning::` annotation + a job-summary banner on EVERY push-triggered
+#     run while paused (so a paused deploy is loud, not silently skipped),
+#     then the `deploy` job is skipped entirely (build/test steps already
+#     ran and already reported red/green independently).
+#   - `workflow_dispatch` (Actions tab -> Deploy Worker -> Run workflow, or
+#     `gh workflow run deploy-worker.yml`) ALWAYS bypasses the pause — a
+#     human explicitly dispatching this workflow is by definition an
+#     intentional deploy, paused or not. This is the "still enable an
+#     intentional deploy" escape hatch.
+#
+# Reversal: `gh variable set DEPLOY_WORKER_PAUSED --body false` (or delete
+# it: `gh variable delete DEPLOY_WORKER_PAUSED`) un-pauses immediately for
+# the next push — no code change, no PR, no redeploy of this workflow file.
+# Documented in docs/release/wave-merge-choreography-2026-08.md and
+# .github/workflows/agents.md.
+# ---------------------------------------------------------------------------
+
 env:
   PROJECT_ID: arkova1
   REGION: us-central1
@@ -139,9 +178,56 @@ jobs:
       - name: Copy lint
         run: npm run lint:copy
 
+  deploy-gate:
+    name: Deploy Gate (pause check)
+    needs: pre-deploy-checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - name: Evaluate DEPLOY_WORKER_PAUSED
+        id: check
+        env:
+          PAUSED: ${{ vars.DEPLOY_WORKER_PAUSED }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # workflow_dispatch is always a human deliberately asking for a
+          # deploy right now — the pause never applies to it, regardless of
+          # DEPLOY_WORKER_PAUSED's value. This is the intentional-override path.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Manual workflow_dispatch by ${ACTOR} — deploy proceeds regardless of DEPLOY_WORKER_PAUSED (intentional-override path)."
+            exit 0
+          fi
+
+          if [ "$PAUSED" = "true" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### :no_entry: DEPLOY PAUSED — Cloud Run deploy skipped for this push"
+              echo
+              echo "\`vars.DEPLOY_WORKER_PAUSED=true\`. Commit \`${SHA}\` passed \`pre-deploy-checks\` (typecheck/lint/test/copy-lint all ran normally) but the \`deploy\` job's Cloud Run steps were **not executed**."
+              echo
+              echo "**Why:** 2026-08 launch wave merge-before-soak sequencing (CTO ruling 2026-07-28) — see \`docs/release/wave-merge-choreography-2026-08.md\`."
+              echo
+              echo "**To deploy this commit anyway (human, intentional):** Actions tab -> Deploy Worker -> Run workflow (or \`gh workflow run deploy-worker.yml\`). \`workflow_dispatch\` always bypasses this pause."
+              echo
+              echo "**To resume automatic deploys for all future pushes:** \`gh variable set DEPLOY_WORKER_PAUSED --body false\` or \`gh variable delete DEPLOY_WORKER_PAUSED\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::DEPLOY PAUSED (vars.DEPLOY_WORKER_PAUSED=true) — Cloud Run deploy SKIPPED for commit ${SHA}. See job summary for why + how to re-enable/override."
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
   deploy:
     name: Build & Deploy (canary → full)
-    needs: pre-deploy-checks
+    needs: deploy-gate
+    if: needs.deploy-gate.result == 'success' && needs.deploy-gate.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

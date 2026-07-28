@@ -1,5 +1,21 @@
 # agents.md — pages
-_Last updated: 2026-07-16_
+_Last updated: 2026-07-27_
+
+## SCRUM-2940 — Folders UI (founder escalation, PR #1657 follow-up)
+
+PR #1657 merged the folders DATA LAYER (`useFolders`, `folders` table,
+`anchors.folder_id`) with **zero** UI — `useFolders` had no importers outside
+its own file, so there was no way to create a folder or file a record into
+one. `MyRecordsPage.tsx` is now the consumer: a `FolderSidebar`
+(`@/components/folders`) filters the record list by `'ALL' | 'UNFILED' |
+<folder id>`; create/rename/delete flow through `FolderFormDialog` /
+`DeleteFolderDialog`; each record's action menu gained "Move to folder"
+(`MoveToFolderDialog`) and, when already filed, a direct "Remove from folder"
+item. Filtering reads `Record.folderId`, added to `useAnchors`'s select (see
+`src/hooks/agents.md`). `DashboardPage.tsx`'s `RecordsList`-based view is
+**not** wired to folders in this pass — only the dedicated My Records page is
+in scope for SCRUM-2940 v1. Full component-level notes live in
+`src/components/folders/agents.md`.
 
 ## PR #1561 — WebMCP search URL consumption
 
@@ -105,3 +121,13 @@ Every admin page now derives platform-admin status from `isPlatformAdmin(profile
 ## UX-03 copy compliance (2026-07-06)
 
 `PipelineAdminPage.tsx` job-trigger footer reworded "worker service" → "background service" (UX-03 / SCRUM-1029 banned engineering copy). Decision on the (a) reword vs (b) treasury-style scan-exclusion choice: **reword.** The `EXCLUDE_PATTERNS` ops-dashboard exclusion (precedent: `src/components/admin/treasury/**`) was considered and rejected — the rest of this ~1,700-line admin page's copy is compliant and should stay under lint:copy scan; do NOT add this page to `EXCLUDE_PATTERNS`. Surfaced by the SCRUM-2666 cross-line lint:copy fix (PR #1440); this reword also clears that PR's grandfathered baseline entry for `PipelineAdminPage.tsx:1196` (it goes stale once #1440 lands — its owner removes it).
+
+## 2026-07-28 L3-A6 — MyCredentialsPage "From Public Registry" entry point
+
+`MyCredentialsPage.tsx` gains a second header button (`data-testid="add-from-registry-button"`) next to the existing "Add Source" button, opening `CtdlRegistryImportDialog` (`src/components/credentials/`). Two-step flow: look up a public Credential Registry record by CTID (`GET /api/v1/credentials/ctdl/import`), then add it (`POST /api/v1/credentials/ctdl/registry-anchor`, new route). Part of the L3-A6 CE Noncredit Data Taxonomy 3.0 anchoring POC — see `docs/partners/ce-noncredit-anchoring-poc.md` for the research + honest-limits writeup and `services/worker/src/ctdl/agents.md` for the parser fix this UI exercises.
+## SCRUM-3010 STEP 1 — Org registry cross-member privacy gate (frontend)
+
+`OrgProfilePage.tsx` — the Home-tab org records table (`OrgRegistryTable`) previously rendered UNCONDITIONALLY, so any org member (not just owner/admin/platform admin) could VIEW and CSV-EXPORT the entire org's records (every coworker's filenames, fingerprints, credential_type, label, metadata) — a live cross-member privacy leak (§1.6 flavor). Fix (STEP 1, frontend-only, T1): pass `isAdmin={isAdmin}` and `currentUserId={user?.id}` into `OrgRegistryTable`. Admins keep the org-wide registry; a non-admin member is scoped to their OWN rows only (by `user_id`, mirroring `useAnchors`), and the CSV export is gated the same way. Non-admin members still see their personal records on `/dashboard` (already correct). The org-wide `recordsCount` stat is an aggregate integer (no per-record metadata) and is intentionally left visible. STEP 2 (RLS tightening so this is enforced server-side, not just in the browser query) is a separate T3 story, deferred post-soak.
+
+## 2026-07-22 Platform-admin role-source cutover (SCRUM-2939 / PI05-ADMIN)
+Every admin page now derives platform-admin status from `isPlatformAdmin(profile)` (`profiles.is_platform_admin` DB flag) instead of the removed `isPlatformAdmin(user?.email)` whitelist. `ComplianceDashboardPage` stays org-accessible (`role === 'ORG_ADMIN' || isPlatformAdmin(profile)`) — it is NOT a platform-only surface and is deliberately NOT wrapped by `PlatformAdminRoute`. Page tests grant admin by setting `is_platform_admin: true` on the mocked profile and deny by overriding `useProfile` (NOT `user.email`).

@@ -1352,6 +1352,7 @@ export const MY_CREDENTIALS_LABELS = {
   VIEW_CREDENTIAL: 'View',
   VERIFY_CREDENTIAL: 'Verify',
   ADD_SOURCE: 'Add Source',
+  ADD_FROM_REGISTRY: 'From Public Registry',
   CLAIMED: 'Claimed',
   UNCLAIMED: 'Pending',
   CREDENTIAL_COUNT: '{count} documents',
@@ -1382,6 +1383,41 @@ export const CREDENTIAL_SOURCE_IMPORT_LABELS = {
   REQUEST_FAILED: 'Request failed',
   TOAST_ADDED: 'Record source added',
   TOAST_DUPLICATE: 'Record source already added',
+} as const;
+
+// =============================================================================
+// PUBLIC REGISTRY IMPORT (L3-A6 — CE Noncredit Data Taxonomy anchoring POC)
+// =============================================================================
+// SCRUM-1672-safe: "registry record" / "public registry", never "Issue
+// Credential". §1.3 banned-term-safe: "Fingerprint" not "Hash", no chain
+// terminology anywhere in this surface.
+
+export const CE_REGISTRY_IMPORT_LABELS = {
+  BUTTON: 'From Public Registry',
+  TITLE: 'Add from Public Registry',
+  DESCRIPTION: 'Look up a public registry record by its identifier and add a tamper-evident copy to your records.',
+  CTID_LABEL: 'Registry identifier',
+  CTID_PLACEHOLDER: 'ce-00000000-0000-0000-0000-000000000000',
+  LOOKUP: 'Look Up',
+  LOOKING_UP: 'Looking up…',
+  ADD: 'Add Record',
+  ADDING: 'Adding…',
+  CANCEL: 'Cancel',
+  RECORD_TYPE_FIELD: 'Record Type',
+  ISSUER_FIELD: 'Issuer',
+  RETRIEVED_FIELD: 'Retrieved',
+  FINGERPRINT_FIELD: 'Fingerprint',
+  REGISTRY_LINK_FIELD: 'Registry Source',
+  NOT_DETECTED: 'Not detected',
+  LOOKUP_FAILED: 'Lookup failed',
+  ADD_FAILED: 'Add failed',
+  REQUEST_FAILED: 'Request failed',
+  NOT_FOUND: 'No record found for this identifier.',
+  NO_RECORD: 'This registry record has nothing Arkova can add yet.',
+  TOAST_ADDED: 'Registry record added',
+  TOAST_DUPLICATE: 'Registry record already added',
+  CHANGED_ERROR: 'The registry record changed since lookup. Look it up again before adding.',
+  VIEW_RECORD: 'View record',
 } as const;
 
 // =============================================================================

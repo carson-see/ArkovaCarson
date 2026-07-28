@@ -33,6 +33,12 @@ export default defineConfig({
           if (id.includes('@huggingface/transformers')) return 'vendor-ai-ner';
           if (id.includes('pdfjs-dist')) return 'vendor-pdf';
           if (id.includes('/jszip/')) return 'vendor-zip';
+          // F4 (SCRUM founder 22-format KPI): TIFF/HEIC decode + shared PNG
+          // re-encoder, all lazy-loaded from ocrWorker.ts on first
+          // TIFF/HEIC/scanned-PDF upload — never in the initial bundle.
+          if (id.includes('utif2')) return 'vendor-tiff';
+          if (id.includes('heic-decode') || id.includes('libheif-js')) return 'vendor-heic';
+          if (id.includes('upng-js')) return 'vendor-png-encode';
           if (id.includes('@tanstack/react-query')) return 'vendor-query';
           if (id.includes('@supabase/supabase-js')) return 'vendor-supabase';
           if (

@@ -70,6 +70,7 @@
     "@tanstack/react-virtual": "3.14.7",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
+    "heic-decode": "2.1.0",
     "jspdf": "4.2.1",
     "jszip": "3.10.1",
     "lucide-react": "1.25.0",
@@ -83,6 +84,8 @@
     "sonner": "2.0.7",
     "tailwind-merge": "3.6.0",
     "tesseract.js": "7.0.0",
+    "upng-js": "2.1.0",
+    "utif2": "4.1.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
