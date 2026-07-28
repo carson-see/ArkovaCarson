@@ -306,6 +306,7 @@ current state.
 - **DON'T** call real Stripe or Bitcoin APIs — use mock interfaces
 - **DON'T** set `anchor.status = 'SECURED'` from client code — worker-only via service_role
 - **DON'T** import `generateFingerprint` — fingerprinting is client-side only (Constitution 1.6)
+- **DON'T** add OCR libraries (`pdfjs-dist`, `tesseract.js`) — OCR runs on the user's device (`src/lib/ocrWorker.ts`, Constitution 1.6). Both were removed as orphaned zero-importer `devDependencies`; needing one here means the design routes document content server-side, which 1.6 forbids
 - **DON'T** modify existing migration files — write compensating migrations
 
 ## Dependencies
@@ -318,12 +319,6 @@ current state.
 - `express` — HTTP server
 - `cloudflared` (binary, installed in Dockerfile) — Cloudflare Tunnel sidecar daemon
 - Supabase JS client (`@supabase/supabase-js`) — database operations
-
-**Do NOT add OCR libraries here.** `pdfjs-dist` and `tesseract.js` are client-side-only
-(`src/lib/ocrWorker.ts`); per Constitution §1.6 documents are OCR'd on the user's device and
-must never be processed in this service. Both were carried as orphaned worker `devDependencies`
-with zero importers and were removed — if you find yourself wanting either one in
-`services/worker/`, that is a §1.6 violation, not a missing dependency.
 
 ## Zero Trust Architecture (INFRA-01)
 
