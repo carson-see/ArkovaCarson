@@ -24,6 +24,7 @@ import { applyTemplate } from '@/lib/templateMapper';
 type FileUploadMockProps = {
   onFileSelect?: (file: File, fingerprint: string) => void;
   onBulkDetected?: (files: File[]) => void;
+  onMixedBatchDetected?: (files: File[]) => void;
   onAttestationDetected?: (data: {
     attestation_type: 'VERIFICATION';
     attester_name: string;
@@ -58,6 +59,17 @@ vi.mock('./FileUpload', () => ({
         >
           Drive bulk path
         </button>
+        <button
+          type="button"
+          onClick={() =>
+            props.onMixedBatchDetected?.([
+              new File(['a'], 'one.pdf', { type: 'application/pdf' }),
+              new File(['b'], 'two.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }),
+            ])
+          }
+        >
+          Drive mixed-batch path
+        </button>
       </div>
     );
   },
@@ -65,6 +77,7 @@ vi.mock('./FileUpload', () => ({
 
 vi.mock('@/components/upload', () => ({
   BulkUploadWizard: () => <div data-testid="bulk-wizard-stub" />,
+  MixedBatchUploadWizard: () => <div data-testid="mixed-batch-wizard-stub" />,
 }));
 
 vi.mock('react-router-dom', () => ({
@@ -187,6 +200,38 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
     });
 
     expect(screen.queryByTestId('bulk-wizard-stub')).not.toBeInTheDocument();
+    expect(screen.getByText(SECURE_DIALOG_LABELS.PROFILE_SCOPED_FLOW_UNAVAILABLE)).toBeInTheDocument();
+  });
+
+  // SCRUM-2911 W1 — routes a mixed-format multi-file drop (from FileUpload's
+  // onMixedBatchDetected) to the new MixedBatchUploadWizard, distinct from
+  // the CSV-only BulkUploadWizard path.
+  it('routes onMixedBatchDetected to the mixed-batch wizard', () => {
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+
+    expect(lastFileUploadProps?.onMixedBatchDetected).toBeTypeOf('function');
+    act(() => {
+      lastFileUploadProps?.onMixedBatchDetected?.([
+        new File(['a'], 'one.pdf', { type: 'application/pdf' }),
+        new File(['b'], 'two.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }),
+      ]);
+    });
+
+    expect(screen.getByTestId('mixed-batch-wizard-stub')).toBeInTheDocument();
+    expect(screen.queryByTestId('bulk-wizard-stub')).not.toBeInTheDocument();
+  });
+
+  it('blocks profile-scoped mixed-batch paths when opened for a different viewed org', () => {
+    mockProfileOrgId.current = 'profile-org';
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} orgId="viewed-org" />);
+
+    act(() => {
+      lastFileUploadProps?.onMixedBatchDetected?.([
+        new File(['a'], 'one.pdf', { type: 'application/pdf' }),
+      ]);
+    });
+
+    expect(screen.queryByTestId('mixed-batch-wizard-stub')).not.toBeInTheDocument();
     expect(screen.getByText(SECURE_DIALOG_LABELS.PROFILE_SCOPED_FLOW_UNAVAILABLE)).toBeInTheDocument();
   });
 

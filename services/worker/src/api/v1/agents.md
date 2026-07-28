@@ -32,6 +32,11 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 - `middleware/requireOrgAdmin.ts` (NEW) — chain AFTER `requireOrgId` when a route needs ORG_ADMIN, not merely membership. Delegates to `isCallerOrgAdminResult`.
 - **Do not read `x-org-id` (or any client-controlled org identifier) directly in a handler and trust it.** Either mount `requireOrgId` (+ `requireOrgAdmin` if needed) upstream, or — for routes where the org id is a route param, not a header (e.g. `org-kyb.ts`) — call `isUserMemberOfOrgResult` / `isCallerOrgAdminResult` directly before touching the DB.
 - **RLS is not a backstop here.** Every table this vulnerability touched (`ferpa_disclosure_log`, `emergency_access_grants`, `kyb_events`, `signatures`, `organizations`, `anchors`) already had correct FORCE RLS + org-scoped policies (verified against `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql`) — RLS was never the gap. The worker's service_role client bypasses RLS entirely, so application-code authorization (the `_org-auth.ts` helpers) is the ONLY tenant boundary for any service_role-executed query. Any new route added under this router needs its own explicit membership/admin check — RLS will not save it.
+## 2026-07-28 Dashboard bridge for mixed-format batch anchoring (SCRUM-2911 W1, founder P0)
+
+- **`anchor-bulk.ts` bug fix:** the insert into `anchors` never set `filename`, which is `NOT NULL` at the DB layer — every real (non-mocked) call to `POST /api/v1/anchor/bulk` would have failed a Postgres constraint violation; the unit suite's fully-mocked `db` never caught it. `BulkAnchorRowSchema` gained an optional `filename` field (additive, §1.8-safe); the insert falls back to a synthetic `bulk-${fingerprint.slice(0,12)}` placeholder when the caller doesn't supply one (mirrors `anchor-submit.ts`'s `api-${fingerprint}` pattern). Regression test in `anchor-bulk.test.ts`.
+- **New `anchor-bulk-self-service.ts`** (`POST /api/v1/anchor/bulk/self-service`, mounted in `router.ts` BEFORE `/anchor/bulk` — same route-shadowing rule as `/verify/search` before `/verify`): the browser dashboard cannot reach `/api/v1/anchor/bulk` directly because that route is `apiKeyAuth`-gated (`ak_...` keys only), and the dashboard authenticates with a Supabase session JWT. This bridge is the bulk-anchor analogue of `webhooks-self-service.ts` — mounted behind the router's local `requireAuth`, it re-derives `org_id` from `profiles` (never trusts the client), synthesizes an `ApiKeyMeta`-shaped caller (`scopes: ['anchor:write']`), and delegates into the SAME, byte-for-byte unmodified `anchorBulkRouter` — no duplicated dedup/credit/quota/insert logic. Any org member may call it (document creation, not an admin setting). No-org accounts get 403 `organization_required` (org-scoped credits are canonical per the 2026-07-28 CTO ruling R4; individuals still use the single-document flow). Dedicated rate limiter `anchorBulkSelfServiceRateLimiter` (10 req/min per user, Constitution §1.10 batch tier).
+- Frontend consumer: `src/components/upload/MixedBatchUploadWizard.tsx`, wired via `SecureDocumentDialog.tsx`'s `onMixedBatchDetected` (fired by `FileUpload.tsx` for a multi-file drop that isn't all-spreadsheets).
 
 ## 2026-07-22 inferJurisdiction word-boundary fix (bug hunt)
 
@@ -169,6 +174,7 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 | `GET /api/v1/credentials/<id>/ctdl` | anonymous OR `verify` |
 | `GET /api/v1/usage` | `usage:read` |
 | `/api/v1/anchor/bulk`, `/api/v1/contracts` | `anchor:write` |
+| `POST /api/v1/anchor/bulk/self-service` | Supabase JWT (any org member; org resolved from `profiles`) |
 | `POST /api/v1/exports/cpe-log` | Supabase JWT (own records only) |
 | `POST /api/v1/exports/org/cpe-log` | Supabase JWT + ORG_ADMIN (own-org members only) |
 | `POST /api/v1/exports/cle-log` | Supabase JWT (own records only) |

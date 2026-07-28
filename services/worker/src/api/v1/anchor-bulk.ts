@@ -49,6 +49,15 @@ const DUPLICATE_STRATEGIES = ['skip', 'supersede', 'link', 'fail'] as const;
 
 const BulkAnchorRowSchema = z.object({
   fingerprint: z.string().regex(FINGERPRINT_REGEX, 'must be a 64-character hex SHA-256 hash'),
+  /**
+   * Original filename, when the caller has one (e.g. dashboard mixed-format
+   * batch anchoring — SCRUM-2911 W1). `anchors.filename` is NOT NULL at the
+   * DB layer; API/agent callers that only have a bare fingerprint (the
+   * original HAKI-REQ-02 retroactive-anchoring case) can omit it and a
+   * synthetic placeholder is generated below. Additive optional field —
+   * §1.8-safe, does not change the frozen response shape.
+   */
+  filename: z.string().min(1).max(255).optional(),
   credential_type: z.enum(CREDENTIAL_TYPES).optional(),
   description: z.string().max(1000).optional(),
   /** Real-world date the document was created/executed (ISO 8601). Distinct from anchored_at. */
@@ -285,6 +294,12 @@ router.post('/', async (req: Request, res: Response) => {
           org_id: orgId,
           user_id: req.apiKey.userId,
           fingerprint: row.fingerprint.toLowerCase(),
+          // BUG FIX (SCRUM-2911 W1): `anchors.filename` is NOT NULL — this insert
+          // previously omitted it entirely, so every real (non-mocked) call to
+          // this route failed the DB constraint. Falls back to a synthetic,
+          // non-PII placeholder (mirrors anchor-submit.ts's `api-${fingerprint}`
+          // pattern) when the caller didn't supply one.
+          filename: row.filename ?? `bulk-${row.fingerprint.slice(0, 12)}`,
           credential_type: row.credential_type ?? null,
           status: 'PENDING',
           metadata,

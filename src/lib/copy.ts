@@ -780,6 +780,34 @@ export const SECURE_DIALOG_LABELS = {
 } as const;
 
 // =============================================================================
+// MIXED-FORMAT BATCH ANCHORING (SCRUM-2911 W1, founder P0 2026-07-28)
+// =============================================================================
+
+export const MIXED_BATCH_LABELS = {
+  TITLE: 'Secure Multiple Documents',
+  DESCRIPTION: 'Each file is fingerprinted on your device, then the batch is secured together.',
+  FINGERPRINTING: 'Fingerprinting documents...',
+  FINGERPRINTING_COUNT: '{done} of {total} fingerprinted',
+  SUBMITTING: 'Securing {count} documents...',
+  CANCEL: 'Cancel',
+  DONE: 'Done',
+  SECURE_MORE: 'Secure More Documents',
+  RESULTS_HEADING: 'Results',
+  SUMMARY_SECURED: 'Secured',
+  SUMMARY_DUPLICATE: 'Already Secured',
+  SUMMARY_FAILED: 'Failed',
+  CREDITS_CONSUMED: '{count} credits used',
+  STATUS_DUPLICATE: 'Already secured',
+  STATUS_FAILED: 'Failed',
+  STATUS_SECURED: 'Secured',
+  FINGERPRINT_FAILED: 'Could not fingerprint this file.',
+  NO_FILES_FINGERPRINTED: 'None of the selected files could be fingerprinted. Please try again.',
+  ORG_REQUIRED: 'Securing multiple documents at once requires an organization account. Secure documents one at a time, or contact your organization to get access.',
+  NETWORK_ERROR: 'Unable to reach the server. Please check your connection and try again.',
+  SUBMIT_FAILED: 'Failed to secure the batch. Please try again.',
+} as const;
+
+// =============================================================================
 // SECURE DOCUMENT FORM
 // =============================================================================
 

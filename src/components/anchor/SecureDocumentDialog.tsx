@@ -28,7 +28,7 @@ import {
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FileUpload, type AttestationUpload } from './FileUpload';
-import { BulkUploadWizard } from '@/components/upload';
+import { BulkUploadWizard, MixedBatchUploadWizard } from '@/components/upload';
 import { WORKER_URL } from '@/lib/workerClient';
 import { TemplateSelector } from './TemplateSelector';
 import type { TemplateOption } from './TemplateSelector';
@@ -58,7 +58,7 @@ interface SecureDocumentDialogProps {
   initialJurisdiction?: string;
 }
 
-type Step = 'upload' | 'extracting' | 'extraction-failed' | 'privacy-blocked' | 'template' | 'confirm' | 'processing' | 'success' | 'error' | 'bulk' | 'attestation-review' | 'attestation-submitting';
+type Step = 'upload' | 'extracting' | 'extraction-failed' | 'privacy-blocked' | 'template' | 'confirm' | 'processing' | 'success' | 'error' | 'bulk' | 'mixed-batch' | 'attestation-review' | 'attestation-submitting';
 
 interface FileData {
   file: File;
@@ -96,6 +96,7 @@ export function SecureDocumentDialog({
   const [linkCopied, setLinkCopied] = useState(false);
   const [description, setDescription] = useState('');
   const [bulkFiles, setBulkFiles] = useState<File[]>([]);
+  const [mixedBatchFiles, setMixedBatchFiles] = useState<File[]>([]);
 
   // AI extraction state
   const [aiEnabled, setAiEnabled] = useState(false);
@@ -136,6 +137,19 @@ export function SecureDocumentDialog({
 
     setBulkFiles(files);
     setStep('bulk');
+  }, [blockProfileScopedFlow, usesProfileScopedOverride]);
+
+  // SCRUM-2911 W1 (founder P0 2026-07-28): mixed-format batch anchoring —
+  // routes here whenever FileUpload detects a multi-file drop that is NOT
+  // entirely spreadsheets (see FileUpload.tsx's handleFilesDetected).
+  const handleMixedBatchDetected = useCallback((files: File[]) => {
+    if (usesProfileScopedOverride) {
+      blockProfileScopedFlow();
+      return;
+    }
+
+    setMixedBatchFiles(files);
+    setStep('mixed-batch');
   }, [blockProfileScopedFlow, usesProfileScopedOverride]);
 
   // Attestation upload state
@@ -506,6 +520,7 @@ export function SecureDocumentDialog({
     setTemplateResult(null);
     setAttestationData(null);
     setBulkFiles([]);
+    setMixedBatchFiles([]);
     onOpenChange(false);
   }, [onOpenChange]);
 
@@ -526,6 +541,7 @@ export function SecureDocumentDialog({
     setExtractionProgress(null);
     setTemplateResult(null);
     setBulkFiles([]);
+    setMixedBatchFiles([]);
   }, []);
 
   const handleCopyLink = useCallback(async () => {
@@ -548,7 +564,7 @@ export function SecureDocumentDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className={step === 'bulk' ? 'max-w-3xl max-h-[90vh] overflow-y-auto' : 'sm:max-w-lg max-h-[90vh] overflow-y-auto'}>
+      <DialogContent className={step === 'bulk' || step === 'mixed-batch' ? 'max-w-3xl max-h-[90vh] overflow-y-auto' : 'sm:max-w-lg max-h-[90vh] overflow-y-auto'}>
         <DialogHeader>
           {/* SCRUM-1755 — title is stable across single + bulk paths. The user
               clicked "Secure Document" and is securing one or many; the system
@@ -567,6 +583,7 @@ export function SecureDocumentDialog({
             <FileUpload
               onFileSelect={handleFileSelect}
               onBulkDetected={handleBulkDetected}
+              onMixedBatchDetected={handleMixedBatchDetected}
               onAttestationDetected={handleAttestationDetected}
               disabled={false}
             />
@@ -633,6 +650,19 @@ export function SecureDocumentDialog({
               onCancel={() => {
                 setBulkFiles([]);
                 setStep('upload');
+              }}
+            />
+          )}
+
+          {step === 'mixed-batch' && (
+            <MixedBatchUploadWizard
+              files={mixedBatchFiles}
+              onComplete={() => {
+                onSuccess?.();
+              }}
+              onCancel={() => {
+                setMixedBatchFiles([]);
+                handleClose();
               }}
             />
           )}
