@@ -7,9 +7,10 @@
   "approval_status": "pending",
   "approval_actor": "",
   "approval_time": "",
-  "approval_note": "DRAFT. Not approved. This manifest centralizes the single 72h soak window covering the whole Sprint A/B wave (satisfies T1/T2/T3 minimums simultaneously per CTO ruling R17). approval_status must be flipped to the literal string \"approved\" (scripts/ci/check-staging-evidence.ts requireRcString + exact-match check) by the release owner ONLY at documented soak maturity — see docs/release/72h-soak-runbook-2026-08.md go/no-go checklist. Until then this manifest is intentionally inert as merge-grade evidence; any PR citing it via `RC manifest path:` will fail the gate closed on approval_status, which is correct pre-soak behavior. LIVE REFRESH 2026-07-28T16:20:00Z: included_prs/allowed_base_shas/covered_main_shas brought current against a fresh `gh pr list` + `gh pr checks` pass (main tip now 400d0057, up from the prior draft's 8f536814). WAVE G STATUS: #1722 and #1723 (G1/G3) are MERGED; #1724 (G2 — the stale-merge-ref-checkout fix) is still OPEN, Ready (not draft), and its own CI is now fully green (no failing checks this pass) — it is NOT yet queued/merged. Per the go/no-go checklist in docs/release/72h-soak-runbook-2026-08.md §1, Wave G should be treated as merged before this manifest's soak evidence is trusted; #1724 landing is the remaining piece. Two more T0, Ready-or-draft, CI-green PRs were also found this pass (#1744 Ready+green, #1748 draft+green) that are unrelated cleanup/infra items, not blocked by soak at all (T0).",
+  "soak_mode": "deferred_consolidated_soak",
+  "approval_note": "DRAFT. Not approved. This manifest centralizes the single 72h soak window covering the whole Sprint A/B wave (satisfies T1/T2/T3 minimums simultaneously per CTO ruling R17). approval_status must be flipped to the literal string \"approved\" (scripts/ci/check-staging-evidence.ts requireRcString + exact-match check) by the release owner ONLY at documented soak maturity — see docs/release/72h-soak-runbook-2026-08.md go/no-go checklist. Until then this manifest is intentionally inert as merge-grade evidence; any PR citing it via `RC manifest path:` will fail the gate closed on approval_status, which is correct pre-soak behavior. CTO RULING 2026-07-28 (deferred-consolidated-soak): `soak_mode` above activates a distinct, narrower CI evidence path (`deferredConsolidatedSoakCoverage()` in scripts/ci/check-staging-evidence.ts) that lets an `included_prs[]` entry pass the Staging Soak Evidence Gate WITHOUT real soak evidence, on the explicit trade of \"evidence before merge\" for \"evidence before DEPLOY\": the gate's check summary states plainly, every time, that evidence is DEFERRED and NOT satisfied, and the check only passes at all when it can positively confirm `vars.DEPLOY_WORKER_PAUSED=true` is engaged on the live workflow run (services/worker/**-touching merges cannot reach prod while paused — see .github/workflows/deploy-worker.yml `deploy-gate` job and .github/workflows/agents.md \"Deploy-worker pause gate\"). This is NOT a substitute for the real 72h soak — it defers the soak from pre-merge to pre-deploy. `approval_status` stays the literal string \"pending\" for as long as `soak_mode` is set; do NOT flip it to \"approved\" while deferred mode is active — that combination is itself rejected by the gate (approved implies real evidence, which deferred mode by definition does not have). Once the real 72h soak (docs/release/72h-soak-runbook-2026-08.md) completes and matures, the correct sequence is: (1) remove `soak_mode` from this manifest, (2) fill in the real `environment`/`soak`/`migration_plan` blocks with actual evidence, (3) THEN flip `approval_status` to \"approved\" — restoring the normal (non-deferred) RC-manifest evidence path this gate has always enforced. Residual risk while deferred mode is active: `main` carries unsoaked T2/T3 worker/migration code for the duration of the soak window; any hotfix needed during that window must go through the same `deploy-gate` (`workflow_dispatch` to force an intentional deploy, or wait for the wave's soak + un-pause). LIVE REFRESH 2026-07-28T16:20:00Z: included_prs/allowed_base_shas/covered_main_shas brought current against a fresh `gh pr list` + `gh pr checks` pass (main tip now 400d0057, up from the prior draft's 8f536814). WAVE G STATUS (fully closed as of a later same-day refresh): #1722, #1723, AND #1724 (G1/G2/G3, including the stale-merge-ref-checkout fix) are all now MERGED into main (tip edee3004, confirmed via `git merge-base --is-ancestor`) — the staging-evidence gate the wave's PRs are graded against is running its fixed, live-PR-state version. Two more T0, Ready-or-draft, CI-green PRs were also found in the prior pass (#1744 Ready+green, #1748 draft+green) that are unrelated cleanup/infra items, not blocked by soak at all (T0); #1744 has since also merged (visible in the updated main tip below).",
   "train_launch_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
-  "target_main_sha": "400d005748ccca33db55dc119ce4db654fcf4b48",
+  "target_main_sha": "edee3004cc28556b57fae4a3ba353193574e8301",
   "allowed_base_shas": [
     "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
     "8e94f70539871db970e3a384f7da378b6b05af33",
@@ -20,7 +21,9 @@
     "5117887e371b852d526c1a0c45b36363be91a5e8",
     "72a384541b576f814166b7488523f2cd27be00c3",
     "746486a5b28a52354592a354b6da1ffc97aec14a",
-    "400d005748ccca33db55dc119ce4db654fcf4b48"
+    "400d005748ccca33db55dc119ce4db654fcf4b48",
+    "7bca4218360d9bed3c684617e0bc13c282d390d5",
+    "edee3004cc28556b57fae4a3ba353193574e8301"
   ],
   "covered_main_shas": [
     "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
@@ -32,7 +35,9 @@
     "5117887e371b852d526c1a0c45b36363be91a5e8",
     "72a384541b576f814166b7488523f2cd27be00c3",
     "746486a5b28a52354592a354b6da1ffc97aec14a",
-    "400d005748ccca33db55dc119ce4db654fcf4b48"
+    "400d005748ccca33db55dc119ce4db654fcf4b48",
+    "7bca4218360d9bed3c684617e0bc13c282d390d5",
+    "edee3004cc28556b57fae4a3ba353193574e8301"
   ],
   "_append_procedure": [
     "PURPOSE: this manifest is a living document from now (2026-07-28, PR wave still being opened) through 72h-soak completion. Follow this procedure every time a new sprint PR opens or a Mergify batch lands, per docs/release/wave-merge-choreography-2026-08.md.",
