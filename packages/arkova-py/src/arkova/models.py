@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-
 SearchType = Literal["all", "org", "record", "fingerprint", "document"]
 SearchResultType = Literal["org", "record", "fingerprint", "document"]
+
+# Mirrors the worker's CREDENTIAL_TYPES enum in
+# services/worker/src/api/v1/anchor-bulk.ts. Keep in sync; the server is
+# authoritative and rejects unknown values.
+BulkAnchorCredentialType = Literal[
+    "DEGREE", "LICENSE", "CERTIFICATE", "TRANSCRIPT", "PROFESSIONAL", "CPE", "CLE",
+    "BADGE", "ATTESTATION", "FINANCIAL", "LEGAL", "INSURANCE", "SEC_FILING", "PATENT",
+    "REGULATION", "PUBLICATION", "CHARITY", "ACCREDITATION", "FINANCIAL_ADVISOR",
+    "BUSINESS_ENTITY", "RESUME", "MEDICAL", "MILITARY", "IDENTITY",
+    "CONTRACT_PRESIGNING", "CONTRACT_POSTSIGNING", "OTHER",
+]
+
+# How the server should handle a fingerprint that already exists (in-batch or in-org).
+BulkAnchorDuplicateStrategy = Literal["skip", "supersede", "link", "fail"]
 
 
 class ArkovaModel(BaseModel):
@@ -268,3 +282,78 @@ class FingerprintDetail(RecordDetail):
 
 class DocumentDetail(RecordDetail):
     pass
+
+
+# ── Write path (anchor / anchor_bulk) ────────────────────────────────────
+# HAKI-REQ-02 (SCRUM-1171): POST /api/v1/anchor and /api/v1/anchor/bulk.
+# Response shape is distinct from the read-only `Anchor` model above (no
+# `verified` / `record_uri` — those only exist once the anchor is looked up).
+
+
+class AnchorReceipt(ArkovaModel):
+    """Response of ``POST /api/v1/anchor``."""
+
+    public_id: str
+    fingerprint: str
+    status: str
+    created_at: str
+    chain_tx_id: str | None = None
+
+
+@dataclass
+class BulkAnchorInput:
+    """One row for :meth:`arkova.client.Arkova.anchor_bulk` /
+    :meth:`arkova.client.AsyncArkova.anchor_bulk`.
+
+    Provide exactly one of ``fingerprint`` (a pre-computed 64-char hex
+    SHA-256) or ``data`` (raw content — fingerprinted client-side via the
+    same algorithm as ``Arkova.fingerprint()``, so the document body never
+    leaves this process for that row).
+    """
+
+    fingerprint: str | None = None
+    data: str | bytes | None = None
+    credential_type: BulkAnchorCredentialType | None = None
+    description: str | None = None
+    original_document_date: str | None = None
+    document_type: str | None = None
+    matter_or_case_ref: str | None = None
+    external_id: str | None = None
+
+
+class BulkAnchorDuplicate(ArkovaModel):
+    row: int
+    fingerprint: str
+    scope: Literal["in_batch", "in_db"]
+    decision: BulkAnchorDuplicateStrategy
+
+
+class BulkAnchorRowError(ArkovaModel):
+    row: int
+    field: str | None = None
+    code: str
+    message: str
+
+
+class BulkAnchorResultRow(ArkovaModel):
+    public_id: str
+    fingerprint: str
+    status: str
+    original_document_date: str | None = None
+    document_type: str | None = None
+    matter_or_case_ref: str | None = None
+    external_id: str | None = None
+    anchored_at: str
+
+
+class BulkAnchorResponse(ArkovaModel):
+    """Response of ``POST /api/v1/anchor/bulk``."""
+
+    batch_id: str | None = None
+    validated: int
+    queued: int
+    duplicates: list[BulkAnchorDuplicate] = Field(default_factory=list)
+    errors: list[BulkAnchorRowError] = Field(default_factory=list)
+    dry_run: bool
+    # Omitted by the server on dry runs.
+    anchors: list[BulkAnchorResultRow] | None = None
