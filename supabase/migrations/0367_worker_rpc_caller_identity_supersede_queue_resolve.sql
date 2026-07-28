@@ -190,7 +190,7 @@ $$;
 
 ALTER FUNCTION "public"."supersede_anchor"("old_anchor_id" "uuid", "new_fingerprint" "text", "reason" "text", "p_caller_user_id" "uuid") OWNER TO "postgres";
 
-COMMENT ON FUNCTION "public"."supersede_anchor"("old_anchor_id" "uuid", "new_fingerprint" "text", "reason" "text", "p_caller_user_id" "uuid") IS 'SCRUM-2213 fix: identical to the 3-arg supersede_anchor() except caller identity is an explicit required parameter instead of auth.uid() (which is always NULL under the worker''s service_role client). service_role-only — never grant to anon/authenticated (would allow identity spoofing).';
+COMMENT ON FUNCTION "public"."supersede_anchor"("old_anchor_id" "uuid", "new_fingerprint" "text", "reason" "text", "p_caller_user_id" "uuid") IS 'SCRUM-2213 fix: identical to the 3-arg supersede_anchor() except caller identity is an explicit required parameter instead of (SELECT auth.uid()) (which is always NULL under the worker''s service_role client). service_role-only — never grant to anon/authenticated (would allow identity spoofing).';
 
 REVOKE ALL ON FUNCTION "public"."supersede_anchor"("old_anchor_id" "uuid", "new_fingerprint" "text", "reason" "text", "p_caller_user_id" "uuid") FROM PUBLIC, "anon", "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."supersede_anchor"("old_anchor_id" "uuid", "new_fingerprint" "text", "reason" "text", "p_caller_user_id" "uuid") TO "service_role";
@@ -280,7 +280,7 @@ $$;
 
 ALTER FUNCTION "public"."resolve_anchor_queue_by_public_id"("p_external_file_id" "text", "p_selected_public_id" "text", "p_reason" "text", "p_caller_user_id" "uuid") OWNER TO "postgres";
 
-COMMENT ON FUNCTION "public"."resolve_anchor_queue_by_public_id"("p_external_file_id" "text", "p_selected_public_id" "text", "p_reason" "text", "p_caller_user_id" "uuid") IS 'SCRUM-2213 fix: identical to the 3-arg resolve_anchor_queue_by_public_id() except caller identity is an explicit required parameter instead of auth.uid(). service_role-only — never grant to anon/authenticated (would allow identity spoofing).';
+COMMENT ON FUNCTION "public"."resolve_anchor_queue_by_public_id"("p_external_file_id" "text", "p_selected_public_id" "text", "p_reason" "text", "p_caller_user_id" "uuid") IS 'SCRUM-2213 fix: identical to the 3-arg resolve_anchor_queue_by_public_id() except caller identity is an explicit required parameter instead of (SELECT auth.uid()). service_role-only — never grant to anon/authenticated (would allow identity spoofing).';
 
 REVOKE ALL ON FUNCTION "public"."resolve_anchor_queue_by_public_id"("p_external_file_id" "text", "p_selected_public_id" "text", "p_reason" "text", "p_caller_user_id" "uuid") FROM PUBLIC, "anon", "authenticated";
 GRANT EXECUTE ON FUNCTION "public"."resolve_anchor_queue_by_public_id"("p_external_file_id" "text", "p_selected_public_id" "text", "p_reason" "text", "p_caller_user_id" "uuid") TO "service_role";
