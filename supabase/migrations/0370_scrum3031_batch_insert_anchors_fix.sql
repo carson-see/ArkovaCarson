@@ -1,5 +1,63 @@
 -- SCRUM-3031: batch_insert_anchors wedge — dedup-lookup type mismatch (migration 0370)
 --
+-- REVIEW FOLLOW-UP (same PR, pre-apply — 0370 was never applied to prod/rig,
+-- see supabase/migrations/agents.md, so this file is being corrected in
+-- place rather than compensated with a new migration; per repo convention
+-- edits to an already-APPLIED migration are forbidden, edits to a
+-- never-applied one are not):
+--
+-- The first cut of this fix cast `input_data.fingerprint` directly to
+-- `character(64)` in the CTE (`(elem->>'fingerprint')::character(64)`).
+-- Verified empirically on real Postgres 17: that EXPLICIT cast silently
+-- TRUNCATES an overlong value with no error — `('<66 hex chars>')::character(64)`
+-- succeeds and keeps only the first 64 characters — whereas the PRE-0370
+-- path (`::text` in the CTE, relying on the INSERT target column's own
+-- IMPLICIT assignment cast to `anchors.fingerprint character(64)`) RAISES
+-- `value too long for type character(64)`. Two different overlong strings
+-- sharing a 64-char prefix compare EQUAL after that silent truncation.
+-- `public_records.content_hash` (the value that becomes this fingerprint —
+-- see `services/worker/src/jobs/publicRecordAnchor.ts`,
+-- `fingerprint: record.content_hash`) has no CHECK constraint and is
+-- computed by 20+ independent fetchers, so a malformed/overlong value here
+-- is reachable, not theoretical. Silently truncating it would let a
+-- corrupted fingerprint pass as valid-looking (if the 64-char prefix
+-- happens to match `^[A-Fa-f0-9]{64}$`) or collapse two distinct inputs
+-- into a false dedup match — on `anchors.fingerprint`, the product's
+-- integrity-critical field. That is a correctness regression this
+-- migration must not introduce.
+--
+-- Fix (this version): split the cast by role instead of casting the whole
+-- CTE column.
+--   - `input_data.fingerprint` stays `::text` (restores the pre-0370 INSERT
+--     path exactly) so the `inserted` CTE's `INSERT INTO anchors (...)`
+--     still goes through the target column's IMPLICIT assignment cast to
+--     `character(64)` — which RAISES loudly on any overlong value, for
+--     every row in the batch, before the `existing` CTE (or anything
+--     downstream) ever runs. (Postgres always executes a data-modifying CTE
+--     referenced by the final query, regardless of read order, so this
+--     validation is not optional/short-circuitable.) A too-short or
+--     non-hex value is still caught the same way it always was, by the
+--     target table's `anchors_fingerprint_format` CHECK constraint — no
+--     change there.
+--   - The `existing` CTE's dedup JOIN instead casts explicitly at the
+--     predicate: `a.fingerprint = d.fingerprint::character(64)`. This casts
+--     the NON-indexed side (`d.fingerprint`, a CTE-projected value) so
+--     `a.fingerprint` (the INDEXED column) stays untouched and the native
+--     `bpchar = bpchar` operator drives the index scan — same mechanism as
+--     the first cut, just relocated. This explicit cast can never silently
+--     truncate a bad value here, because by the time `existing` runs, the
+--     `inserted` CTE has already proven (via the implicit-cast raise, see
+--     above) that every fingerprint in the batch is <= 64 characters — so
+--     this cast can only pad with trailing spaces (for the pathological
+--     already-rejected-by-the-CHECK-constraint short/non-hex case), never
+--     truncate.
+--
+-- Net effect: identical query plan / index usage to the first cut (see
+-- EXPLAIN evidence below, re-verified against this version), but a
+-- malformed/overlong fingerprint anywhere in the batch now aborts the
+-- whole call loudly again, exactly like pre-0370, instead of silently
+-- corrupting a fingerprint or creating a false dedup match.
+--
 -- ROLLBACK: CREATE OR REPLACE FUNCTION public.batch_insert_anchors(p_anchors jsonb)
 --   RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
 --   SET statement_timeout TO '120s' AS $$
@@ -65,10 +123,17 @@
 --   widens, not narrows, at prod's 2.97M-row scale — this is the confirmed
 --   root cause of the wedge.
 --
---   Fix: cast input_data.fingerprint to `character(64)` (matching the
---   column's native type) so the join predicate stays native bpchar = bpchar
---   and both fingerprint-indexed access paths remain usable. Also swaps the
---   `a.id NOT IN (SELECT id FROM inserted)` anti-join for `NOT EXISTS`
+--   Fix: cast ONLY at the "existing" CTE's join predicate —
+--   `a.fingerprint = d.fingerprint::character(64)` — so the join predicate
+--   stays native bpchar = bpchar and both fingerprint-indexed access paths
+--   remain usable, WITHOUT casting `input_data.fingerprint` itself (which
+--   stays `::text`, preserving the INSERT path's implicit-assignment-cast
+--   validation — see the REVIEW FOLLOW-UP note at the top of this file for
+--   why an earlier version of this fix that cast the whole CTE column was a
+--   correctness regression: an explicit `::character(64)` cast silently
+--   truncates overlong input with no error, while the implicit
+--   assignment cast used for an INSERT target column raises). Also swaps
+--   the `a.id NOT IN (SELECT id FROM inserted)` anti-join for `NOT EXISTS`
 --   (defensive parity with the 0330 anti-join convention elsewhere in this
 --   codebase — no behavioral change here since `inserted.id` can never be
 --   NULL, but NOT EXISTS is the house style and avoids the NOT-IN/NULL
@@ -94,13 +159,19 @@ BEGIN
     SELECT
       (elem->>'user_id')::uuid AS user_id,
       (elem->>'org_id')::uuid AS org_id,
-      -- SCRUM-3031: cast to character(64) — anchors.fingerprint's native
-      -- type — NOT text. A text cast here forces an implicit cast on the
-      -- indexed anchors.fingerprint column in the "existing" join below,
-      -- which defeats idx_anchors_user_fingerprint_unique /
-      -- idx_anchors_fingerprint_lookup and degrades to a full Seq Scan +
-      -- disk-spilling sort of the entire anchors table on every call.
-      (elem->>'fingerprint')::character(64) AS fingerprint,
+      -- SCRUM-3031 (review follow-up): stays `::text`, NOT
+      -- `::character(64)`. This is deliberate, not the pre-0370 bug: an
+      -- explicit `::character(64)` cast HERE would silently truncate an
+      -- overlong fingerprint with no error (verified on real Postgres 17),
+      -- which could insert a corrupted-but-valid-looking fingerprint or
+      -- create a false dedup match — this table's dedup key must never
+      -- silently coerce. Keeping this `::text` means the `inserted` CTE's
+      -- `INSERT INTO anchors` below goes through the target column's own
+      -- IMPLICIT assignment cast to `character(64)`, which RAISES loudly
+      -- on any overlong value instead. The index-scan win from 0370 is
+      -- preserved a different way: see the `existing` CTE below, which
+      -- casts explicitly at the JOIN predicate instead of here.
+      (elem->>'fingerprint')::text AS fingerprint,
       (elem->>'filename')::text AS filename,
       (elem->>'credential_type')::credential_type AS credential_type,
       'PENDING'::anchor_status AS status,
@@ -119,7 +190,14 @@ BEGIN
   existing AS (
     SELECT a.id, a.fingerprint
     FROM anchors a
-    INNER JOIN input_data d ON a.user_id = d.user_id AND a.fingerprint = d.fingerprint
+    -- SCRUM-3031: explicit cast on d.fingerprint (the NON-indexed side) so
+    -- a.fingerprint (the INDEXED side) stays untouched and the native
+    -- bpchar = bpchar operator drives idx_anchors_user_fingerprint_unique /
+    -- idx_anchors_fingerprint_lookup. Safe from truncation: by the time
+    -- this CTE runs, the `inserted` CTE above has already validated every
+    -- input_data.fingerprint is <= 64 chars (its INSERT would have raised
+    -- otherwise), so this cast can only pad, never truncate.
+    INNER JOIN input_data d ON a.user_id = d.user_id AND a.fingerprint = d.fingerprint::character(64)
     WHERE a.deleted_at IS NULL
     AND NOT EXISTS (SELECT 1 FROM inserted i WHERE i.id = a.id)
   ),
@@ -139,6 +217,6 @@ $$;
 ALTER FUNCTION "public"."batch_insert_anchors"("p_anchors" "jsonb") OWNER TO "postgres";
 
 COMMENT ON FUNCTION "public"."batch_insert_anchors"("p_anchors" "jsonb") IS
-  'SCRUM-3031 (migration 0370): fingerprint cast fixed to character(64) so the dedup join keeps using idx_anchors_user_fingerprint_unique / idx_anchors_fingerprint_lookup instead of falling back to a full table scan + disk sort. NOT EXISTS replaces NOT IN for anti-join house style.';
+  'SCRUM-3031 (migration 0370): dedup join casts explicitly to character(64) ON THE JOIN PREDICATE ONLY (a.fingerprint = d.fingerprint::character(64)), keeping idx_anchors_user_fingerprint_unique / idx_anchors_fingerprint_lookup usable instead of falling back to a full table scan + disk sort. input_data.fingerprint itself stays ::text so the INSERT still validates via the target column''s implicit assignment cast (raises loudly on overlong input instead of the review-caught silent-truncation bug from casting the whole CTE column). NOT EXISTS replaces NOT IN for anti-join house style.';
 
 NOTIFY pgrst, 'reload schema';

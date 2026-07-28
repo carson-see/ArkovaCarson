@@ -33,20 +33,61 @@
  *       -> Seq Scan on public.anchors (200,011 rows, ~49ms)
  *       -> Sort Method: external merge  Disk: 33680kB
  *       Execution Time: 533.834 ms
- *     AFTER (0370 body):      Nested Loop + Memoize, actual time 0.380..11.512 ms
- *       -> Index Scan using idx_anchors_fingerprint_lookup
- *       Execution Time: 11.578 ms
- *   ~46x faster at 1/15th scale — O(batch_size * log(N)) index probes
- *   instead of O(N) full scan + sort, so the win widens (not narrows) at
- *   prod's full 2.97M-row table. Correctness re-verified post-fix with a
- *   mixed batch (500 pre-existing + 500 genuinely-new fingerprints):
- *   `total_returned=1000`, exactly 500 new rows landed, and a repeat call
- *   of the same all-conflicting batch completed in ~60ms end to end
- *   (function call + planning + execution).
+ *     AFTER (0370 body, split-cast version — see below): Nested Loop Anti
+ *     Join, actual time 0.031..33.149 ms for the dedup join itself
+ *       -> Index Scan using idx_anchors_fingerprint_lookup on anchors a
+ *          Index Cond: (fingerprint = (d.fingerprint)::character(64))
+ *       Total function call (1000-row all-conflicting batch, real
+ *       `SELECT batch_insert_anchors(...)`, auto_explain nested-statement
+ *       capture): Execution Time 78.570 ms end to end at 200,011-row scale.
+ *   O(batch_size * log(N)) index probes instead of O(N) full scan + sort,
+ *   so the win widens (not narrows) at prod's full 2.97M-row table.
+ *   Correctness re-verified post-fix with a mixed batch (500 pre-existing +
+ *   500 genuinely-new fingerprints): `total_returned=1000`, exactly 500 new
+ *   rows landed.
  *
- * Fix (migration 0370): cast `input_data.fingerprint` to `character(64)` —
- * the column's native type — so the join predicate stays native
- * bpchar = bpchar and the fingerprint-indexed access paths stay usable.
+ * REVIEW FOLLOW-UP — CORRECTNESS REGRESSION CAUGHT AND FIXED (same PR, pre-
+ * apply; 0370 was never applied to prod/rig per supabase/migrations/
+ * agents.md, so it was safe to correct in place rather than compensate):
+ * the *first cut* of this fix cast the whole `input_data.fingerprint`
+ * column to `character(64)`. Verified empirically on real Postgres 17: an
+ * EXPLICIT cast `(<66-char string>)::character(64)` silently TRUNCATES with
+ * no error (two different 66-char strings sharing a 64-char prefix compare
+ * EQUAL after truncation), whereas the target column's IMPLICIT assignment
+ * cast used by a bare INSERT (`value too long for type character(64)`,
+ * SQLSTATE 22001) correctly raises. Since `public_records.content_hash`
+ * (the value that becomes `fingerprint` — see
+ * `services/worker/src/jobs/publicRecordAnchor.ts`) has no CHECK constraint
+ * and is computed by 20+ independent fetchers, this was reachable: a
+ * malformed/overlong fingerprint would have silently become a
+ * valid-looking-but-wrong fingerprint (or a false dedup match) on
+ * `anchors.fingerprint`, the product's integrity-critical dedup key.
+ *
+ * Fix (this version): split the cast by role instead of casting the whole
+ * CTE column.
+ *   - `input_data.fingerprint` stays `::text` (restores the pre-0370 INSERT
+ *     path exactly), so the `inserted` CTE's `INSERT INTO anchors` still
+ *     goes through the target column's implicit assignment cast, which
+ *     RAISES loudly on any overlong fingerprint in the batch, before the
+ *     `existing` CTE (or anything downstream) runs.
+ *   - The `existing` CTE's dedup JOIN casts explicitly instead, but only on
+ *     the NON-indexed side: `a.fingerprint = d.fingerprint::character(64)`.
+ *     `a.fingerprint` (indexed) stays untouched, so the native
+ *     `bpchar = bpchar` operator still drives the index scan — same
+ *     mechanism, same performance win, just relocated. This cast can never
+ *     silently truncate a bad value, because by the time `existing` runs,
+ *     `inserted`'s implicit-cast raise has already proven every fingerprint
+ *     in the batch is <= 64 characters.
+ *   - Empirically re-verified (this session, real Postgres 17, same
+ *     200,011-row/1000-row-batch setup): the split-cast version still gets
+ *     `Index Scan using idx_anchors_fingerprint_lookup` (see EXPLAIN excerpt
+ *     above), AND a direct call to the fixed function with a 66-char
+ *     fingerprint now raises `value too long for type character(64)`
+ *     (22001) with nothing inserted — matching pre-0370 safe behavior. The
+ *     unfixed first-cut version, tested side by side, silently inserted the
+ *     truncated 64-char value with no error — confirming the regression and
+ *     the fix.
+ *
  * Also swaps `a.id NOT IN (SELECT id FROM inserted)` for
  * `NOT EXISTS (SELECT 1 FROM inserted i WHERE i.id = a.id)` — defensive
  * parity with the NOT-IN -> NOT-EXISTS anti-join convention established by
@@ -59,7 +100,9 @@
  * scrum-2203-unembedded-query-perf, and rls-performance.test.ts — the
  * EXPLAIN evidence above is the behavioral proof (obtained locally this
  * session, not inferred from prod), this file is the content guard that
- * keeps the type-correct cast (and the anti-join form) from regressing.
+ * keeps the type-correct split-cast (and the anti-join form) from
+ * regressing back to either the pre-0370 wedge OR the first-cut
+ * silent-truncation bug.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -92,21 +135,37 @@ describe('SCRUM-3031: batch_insert_anchors wedge fix (migration 0370)', () => {
     expect(sql).toContain('CREATE OR REPLACE FUNCTION');
   });
 
-  describe('the pathological type-mismatch cast is gone', () => {
-    it('casts fingerprint to character(64) — the anchors column type — not text', () => {
+  describe('the pathological type-mismatch cast is gone (index stays usable)', () => {
+    it('casts to character(64) ONLY at the existing-CTE join predicate, on the non-indexed side', () => {
       const block = functionBlock(migration());
-      expect(block).toMatch(/\(elem->>'fingerprint'\)::"?character"?\(64\)/i);
-    });
-
-    it('no longer casts fingerprint to bare text in input_data (the index-defeating cast)', () => {
-      const block = functionBlock(migration());
-      expect(block).not.toMatch(/\(elem->>'fingerprint'\)::text/i);
+      // a.fingerprint (indexed) must appear bare, cast applied to d.fingerprint only.
+      expect(block).toMatch(/a\.fingerprint\s*=\s*d\.fingerprint::"?character"?\(64\)/i);
     });
 
     it('the existing-anchors dedup join still compares on (user_id, fingerprint)', () => {
       const block = functionBlock(migration());
       expect(block).toMatch(/a\.user_id\s*=\s*d\.user_id/i);
       expect(block).toMatch(/a\.fingerprint\s*=\s*d\.fingerprint/i);
+    });
+  });
+
+  describe('correctness regression guard: no silent-truncation cast on the INSERT path', () => {
+    // A reviewer caught that an earlier version of this migration cast
+    // input_data.fingerprint itself to character(64) — an EXPLICIT cast,
+    // which silently truncates an overlong value instead of raising
+    // (verified empirically on real Postgres 17; see the file-header
+    // docstring and the migration's own REVIEW FOLLOW-UP comment). These
+    // assertions guard against that regression coming back.
+    it('input_data.fingerprint stays ::text — NOT ::character(64) — so the INSERT path keeps its loud implicit-cast validation', () => {
+      const block = functionBlock(migration());
+      expect(block).toMatch(/\(elem->>'fingerprint'\)::text/i);
+      expect(block).not.toMatch(/\(elem->>'fingerprint'\)::"?character"?\(64\)/i);
+    });
+
+    it('the migration file documents the silent-truncation-vs-loud-raise distinction for future readers', () => {
+      const sql = migration();
+      expect(sql).toMatch(/silently truncat/i);
+      expect(sql.toLowerCase()).toContain('value too long for type character(64)'.toLowerCase());
     });
   });
 
