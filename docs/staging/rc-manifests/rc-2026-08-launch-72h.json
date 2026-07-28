@@ -1,0 +1,305 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-08-launch-72h",
+  "created_at": "2026-07-28T14:57:46Z",
+  "created_by": "Release Manager (RM) agent \u2014 draft session ahead of Aug-launch 72h soak, 2026-07-28",
+  "release_owner": "Carson",
+  "approval_status": "pending",
+  "approval_actor": "",
+  "approval_time": "",
+  "approval_note": "DRAFT. Not approved. This manifest centralizes the single 72h soak window covering the whole Sprint A/B wave (satisfies T1/T2/T3 minimums simultaneously per CTO ruling R17). approval_status must be flipped to the literal string \"approved\" (scripts/ci/check-staging-evidence.ts requireRcString + exact-match check) by the release owner ONLY at documented soak maturity \u2014 see docs/release/72h-soak-runbook-2026-08.md go/no-go checklist. Until then this manifest is intentionally inert as merge-grade evidence; any PR citing it via `RC manifest path:` will fail the gate closed on approval_status, which is correct pre-soak behavior.",
+  "train_launch_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+  "target_main_sha": "8f536814f6a5e9f969422c90e4527b1ac0c23c7b",
+  "allowed_base_shas": [
+    "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+    "8e94f70539871db970e3a384f7da378b6b05af33",
+    "8f536814f6a5e9f969422c90e4527b1ac0c23c7b"
+  ],
+  "covered_main_shas": [
+    "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+    "8e94f70539871db970e3a384f7da378b6b05af33",
+    "8f536814f6a5e9f969422c90e4527b1ac0c23c7b"
+  ],
+  "_append_procedure": [
+    "PURPOSE: this manifest is a living document from now (2026-07-28, PR wave still being opened) through 72h-soak completion. Follow this procedure every time a new sprint PR opens or a Mergify batch lands, per docs/release/wave-merge-choreography-2026-08.md.",
+    "1. NEW PR OPENS (Wave S / any lane): append one object to `included_prs[]` with number/head_sha/base_sha/risk_tier (compute via `npx tsx` importing `requiredTierFor` from scripts/ci/check-staging-evidence.ts, or run the CI job and read its tier note) /owner/title/ci_summary/rollback_note/migration_files/soak_coverage. Do NOT renumber or reorder existing entries \u2014 append only, so exact-head history stays auditable.",
+    "2. MERGIFY BATCH LANDS (~every 10 PRs per batch_size, ~4 checkpoints expected for a ~40-PR wave): append the new `main` tip SHA to BOTH `allowed_base_shas` and `covered_main_shas` (do not remove old SHAs \u2014 PRs still soaking against an older base need it covered). Re-point any now-stale `included_prs[].base_sha` entries only if that PR was rebased; otherwise leave its recorded base_sha as the head it was actually soaked against.",
+    "3. A migration PR is assigned a new NNNN per the RTE table (0361, 0367-0378 per docs/release/wave-merge-choreography-2026-08.md) \u2014 append its file to `migration_plan.order` in ascending numeric order and add its `migration_files` entry to that PR's included_prs object.",
+    "4. AT SOAK MATURITY (72h elapsed, all stop conditions clear, preflight clean_mirror, positive-control evidence captured per the 4-pillar standard): the release owner (Carson) fills `environment`, `soak.start/end/result/evidence_links`, `migration_plan.rollback_proof/reapply_proof`, flips `approval_status` to the literal string \"approved\", fills `approval_actor`/`approval_time`, and each PR body adds `RC manifest path: docs/staging/rc-manifests/rc-2026-08-launch-72h.json` under its own `## Staging Soak Evidence` / `Tier:` line.",
+    "5. If a PR is dropped from the wave (closed, deferred, or fails CI unrecoverably in-window), move its object from `included_prs[]` to `excluded_prs[]` with a one-line reason \u2014 do not silently delete it."
+  ],
+  "included_prs": [
+    {
+      "number": 1615,
+      "head_sha": "9e830cd6c3eda9360a5d011cbbda98755e179e44",
+      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "risk_tier": "T3",
+      "owner": "L1 (per ratified sprint plan; unverified against Jira assignee)",
+      "title": "Lane 1 PI-0.5 slice: SCRUM-2917 proof materializer (CTO-ruled, design+build) + SCRUM-2916 dead-man design + KPI-3 Haki wiring",
+      "ci_summary": "Base is current main tip (fresh, no rebase needed). Detector-computed tier T3 (migration touches schema/data integrity: 0359, 0360). CI currently RED: `Tests` failing at last check run \u2014 needs investigation/fix before this PR can enter the soak wave. Staging Soak Evidence Gate red (expected pre-soak).",
+      "rollback_note": "Revert PR; apply each migration's own `-- ROLLBACK:` block (0359: restores prior `enforce_secured_anchor_proof_complete()`; 0360: drops `idx_anchor_proofs_materialize_run_id` + reverts predicate hardening). Migration 0361 (SCRUM-2916 watermark index) is RESERVED per the RTE table \u2014 builder claims it if the file lands in-branch during this session's continuation, else the reservation row is struck.",
+      "migration_files": [
+        "supabase/migrations/0359_scrum2917_materialize_run_id.sql",
+        "supabase/migrations/0360_scrum2917_secured_proof_predicate_hardening.sql"
+      ],
+      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) \u2014 the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+    },
+    {
+      "number": 1618,
+      "head_sha": "e0de3b8baa50ca88ade3f6c5968a18a0711545ce",
+      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "risk_tier": "T3",
+      "owner": "L3 (per ratified sprint plan; unverified against Jira assignee)",
+      "title": "feat(db): 0362 \u2014 public get_public_anchor allow-list adds registry_url + ce_envelope_sha256 (Lane 3 #1603 dep) [DRAFT \u2014 slice freeze]",
+      "ci_summary": "Base is current main tip. Detector-computed tier T3 (migration 0362). BLOCKING: PR carries the `do-not-merge` label (\"Blocks Mergify queue entry\") \u2014 per repo convention this must be explicitly removed by Carson/RTE before the PR can enter the Mergify queue even after a green soak; do not treat soak maturity alone as sufficient. Title also self-flags `[DRAFT \u2014 slice freeze]`. Staging Soak Evidence Gate red (expected pre-soak) plus other checks pending.",
+      "rollback_note": "Revert PR; apply 0362's own `-- ROLLBACK:` block (restores the 0356 `get_public_anchor` definition without `registry_url`/`ce_envelope_sha256` in the allow-list).",
+      "migration_files": [
+        "supabase/migrations/0362_scrum2913_public_anchor_registry_url_allowlist.sql"
+      ],
+      "soak_coverage": "NOT STARTED \u2014 additionally gated on the `do-not-merge` label removal (see ci_summary). Do not include in any soak batch until that label is confirmed removed by Carson/RTE."
+    },
+    {
+      "number": 1652,
+      "head_sha": "abbacd2b43f05f59a1c7e4ee92f320eff911cf4d",
+      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "risk_tier": "T3",
+      "owner": "L1 (per ratified sprint plan; unverified against Jira assignee)",
+      "title": "feat(security): revoke anon/authenticated EXECUTE on credit-deduction SECURITY DEFINER fns (SCRUM-2905/2918)",
+      "ci_summary": "Base is current main tip. Detector-computed tier T3 (migration 0364, also touches security-sensitive grant surface). Staging Soak Evidence Gate red (expected pre-soak); otherwise checks not fully enumerated this pass \u2014 re-verify at soak start.",
+      "rollback_note": "Revert PR; apply 0364's own `-- ROLLBACK:` block (restores pre-0364/0341 grant state: re-GRANT EXECUTE on `deduct_org_credit` etc. to anon/authenticated).",
+      "migration_files": [
+        "supabase/migrations/0364_scrum2905_security_advisor_revokes.sql"
+      ],
+      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) \u2014 the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+    },
+    {
+      "number": 1654,
+      "head_sha": "2d004c769fd7e025268e9b57c43926e3a0ea1f09",
+      "base_sha": "4c03d3531cec5fabded54de8d08ba3b7459a7eff",
+      "risk_tier": "T2",
+      "owner": "L3-B1 (per ratified sprint plan; unverified against Jira assignee)",
+      "title": "feat(connectors): Drive connector-artifact producer bridge (SCRUM-2903 GD-PROD) [DRAFT]",
+      "ci_summary": "BLOCKING: `gh pr view` reports mergeable=CONFLICTING, mergeStateStatus=DIRTY \u2014 this PR needs a rebase onto current main (ae2209fd) before it can be built at head for the soak; its recorded base_sha (4c03d353) is stale relative to main. Detector-computed tier T2 (worker behavior \u2014 Drive connector). Per R3 (CTO ruling), this is the wiring PR that finishes SCRUM-2903 (consumer QUEUE-06 already on main via #1366).",
+      "rollback_note": "Revert PR; restores pre-existing Drive connector state (producer bridge absent, no functional regression to non-Drive paths).",
+      "migration_files": [],
+      "soak_coverage": "NOT STARTED \u2014 blocked on rebase (CONFLICTING/DIRTY, see ci_summary) before it can even be built at a frozen head."
+    },
+    {
+      "number": 1711,
+      "head_sha": "2bc5aca479387276e0bb93ad9d982ceee3dce1af",
+      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "risk_tier": "T2",
+      "owner": "L3 (per ratified sprint plan; unverified against Jira assignee)",
+      "title": "feat(docusign): auto-seed DocuSign Completion queue-mode rule on org connect (SCRUM-3027)",
+      "ci_summary": "Base is current main tip. Detector-computed tier T2 (public API surface \u2014 rule-templates). Carries `needs-carson-merge` label (informational tier-marker only, not a Mergify gate per CLAUDE.md \u00a71.13). HANDOFF 2026-07-27 flagged `Check supabase/migrations vs prod` as failing on this PR and unroubleshot \u2014 RE-VERIFY this check at soak start; do not assume the migration-vs-prod concern is stale.",
+      "rollback_note": "Revert PR; restores pre-existing DocuSign Connect rule-seeding behavior (rule must be created manually per org/member, not auto-seeded).",
+      "migration_files": [],
+      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) \u2014 the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+    },
+    {
+      "number": 1716,
+      "head_sha": "14d1f4b65c9eedb22fc7e7e36bce4b401e15c593",
+      "base_sha": "08d5cec6ca86dd3d20fb4356d9a61c74a02f7415",
+      "risk_tier": "T1",
+      "owner": "Dependabot (automated; needs lane triage before Ready)",
+      "title": "chore(deps-worker): bump the worker-deps group in /services/worker with 7 updates",
+      "ci_summary": "Base is slightly behind current main (08d5cec6 vs ae2209fd) \u2014 needs a rebase/merge before build-at-head. Detector-computed tier T1 (package.json bump; package-lock.json alone is T0-exempt but package.json is not). Routine Dependabot batch; verify no worker-runtime-breaking major bumps in the 7-update set before including in the soak wave.",
+      "rollback_note": "Revert PR; restores prior worker dependency versions via lockfile.",
+      "migration_files": [],
+      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) \u2014 the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+    },
+    {
+      "number": 1721,
+      "head_sha": "4868882e646e387309b72bae8ce6245709b84167",
+      "base_sha": "51d56af0bfdb86964c283ad3dd6db6908fe629c1",
+      "risk_tier": "T1",
+      "owner": "L2 (lane2/scrum-2940-folders-ui, per HANDOFF 2026-07-27)",
+      "title": "[SCRUM-2940] Folders UI: sidebar, create/rename/delete, move-to-folder",
+      "ci_summary": "Base is slightly behind current main (51d56af0 vs ae2209fd) \u2014 needs a rebase/merge before build-at-head. Detector-computed tier T1 (frontend-only). Per HANDOFF 2026-07-27: typecheck/lint/lint:copy clean, 4,787 tests passing, live UAT already done at 1280px/375px this cycle \u2014 held for a real T1 soak (not soaked yet), correctly not merged without one. This is the fix for the folders-shipped-with-zero-UI bug (memory/feedback_ship_the_ui_not_just_the_hook.md).",
+      "rollback_note": "Revert PR; folders backend (hook, migrations 0365/0366, RLS) stays on main but again has no UI entry point \u2014 re-creates the exact gap this PR fixes, so prefer forward-fix over rollback if a defect surfaces post-merge.",
+      "migration_files": [],
+      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) \u2014 the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+    },
+    {
+      "number": 1723,
+      "head_sha": "a654aa59076274f61139dc7e6452fed27617b611",
+      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "risk_tier": "T1",
+      "owner": "RTE (Wave 0 gate fix G3)",
+      "title": "ci(lint): orphaned-export gate \u2014 fail new orphans, inventory pre-existing (SCRUM-3032/3033/3034)",
+      "ci_summary": "Base is current main tip. Detector-computed tier T1 (default \u2014 touches `.github/workflows/ci.yml` + `scripts/ci/check-orphaned-exports.ts`, neither matched by a PATH_RULE, so falls to the frontend/additive default; sprint plan also declares T1). Per R1/A2, this is the mechanical enforcement of the 'ship the UI in the same PR' rule (orphaned-export lint). Staging Soak Evidence Gate CANCELLED at capture (likely superseded run) \u2014 re-verify live before Wave G.",
+      "rollback_note": "Revert PR; orphaned-export CI check is removed (no runtime behavior change, CI-only).",
+      "migration_files": [],
+      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) \u2014 the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+    },
+    {
+      "number": 1724,
+      "head_sha": "d3b0f9187b16ddb84b693326afc7b8776414db38",
+      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "risk_tier": "T1",
+      "owner": "RTE (Wave 0 gate fix G2)",
+      "title": "ci(gates): staging-evidence gate evaluates live PR state + mint-fresh-event helper (SCRUM-3026)",
+      "ci_summary": "Base is current main tip. Detector-computed tier T1 (default \u2014 `.github/workflows/staging-evidence.yml` is T0-exempt via the generic workflows carve-out, but `scripts/ci/check-staging-evidence.ts`/`mint-fresh-event.sh` are not path-matched, so default T1 applies; sprint plan declares T1). SonarCloud Code Analysis currently FAILING \u2014 must be fixed before Wave G merge. This is the fix for the stale-`github.sha`-checkout bug that blocked the 2026-07-27 10-PR wave; it is also the gate this very manifest depends on for live-PR-state evaluation once merged.",
+      "rollback_note": "Revert PR; staging-evidence gate reverts to evaluating a stale merge-ref checkout (the pre-existing SCRUM-3026 bug).",
+      "migration_files": [],
+      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) \u2014 the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+    },
+    {
+      "number": 1725,
+      "head_sha": "acb6c774fd6816fe47c7e7efd46f9fda545ceada",
+      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "risk_tier": "T1",
+      "owner": "L2 (W3, per BULK AUDIT dispatch list)",
+      "title": "feat(sdk-ts): anchorBulk() \u2014 wire the bulk anchor endpoint",
+      "ci_summary": "Base is current main tip. Detector-computed tier T1 (default \u2014 `packages/sdk/**` is not matched by the SDK PATH_RULE, which only covers `packages/(arkova-py|embed|mcp-server|typescript|langchain)`; this package is `packages/sdk`, an unlisted directory name \u2014 flagging as a possible PATH_RULES gap worth a follow-up, not assumed intentional). Wires the previously-orphaned `POST /api/v1/anchor/bulk` backend (founder amendment A1, bulk uploads are launch-critical).",
+      "rollback_note": "Revert PR; TS SDK loses `anchorBulk()`, no backend/runtime impact (backend endpoint already exists and is otherwise unchanged).",
+      "migration_files": [],
+      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) \u2014 the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+    },
+    {
+      "number": 1726,
+      "head_sha": "3ad70472136b012ffc7fa974df93adc173cda3a4",
+      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "risk_tier": "T1",
+      "owner": "L2 (A6 MCP manifest parity, per ratified sprint plan)",
+      "title": "fix(mcp): discovery manifest parity \u2014 advertise the real 16-tool surface + drift guard",
+      "ci_summary": "Base is current main tip. Detector-computed tier T1 (default \u2014 `public/.well-known/mcp/server-card.json` + `services/edge/agents.md` + a test file; none matched by a PATH_RULE at T2+; note `services/edge/src/` IS a T2 PATH_RULE but only `agents.md` under that directory changed here, which is T0-exempt). `Check supabase/migrations vs prod` FAILING at capture \u2014 re-verify relevance (this PR touches no migrations; likely a pre-existing/unrelated CI flake, confirm before Wave S).",
+      "rollback_note": "Revert PR; MCP discovery manifest reverts to its prior (drifted) tool-count advertisement.",
+      "migration_files": [],
+      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) \u2014 the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+    },
+    {
+      "number": 1727,
+      "head_sha": "5092825438aec31ae78acf600a1d5e40d6866266",
+      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "risk_tier": "T3",
+      "owner": "L2-A8 (per ratified sprint plan)",
+      "title": "fix(billing): billing_events idempotency \u2014 deterministic keys + NOT NULL enforcement (SCRUM-2971, migration 0368)",
+      "ci_summary": "Base is current main tip. Detector-computed tier T3 (migration 0368, plus billing-path files under `services/worker/src/billing/` and `services/worker/src/stripe/`, both T3/T2 PATH_RULES independently). `Check supabase/migrations vs prod` FAILING \u2014 investigate before Wave S (may indicate 0368 numbering/ledger conflict; cross-check against the RTE migration table, which separately assigns 0368 to this same story).",
+      "rollback_note": "Revert PR; apply 0368's own `-- ROLLBACK:` block (`ALTER TABLE public.billing_events DROP CONSTRAINT IF EXISTS billing_events_idempotency_key_not_null`).",
+      "migration_files": [
+        "supabase/migrations/0368_scrum2971_billing_events_idempotency.sql"
+      ],
+      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) \u2014 the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+    },
+    {
+      "number": 1728,
+      "head_sha": "1af5a38d3c59dd32cf0d04a1f68c1ea4e623e8db",
+      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "risk_tier": "T1",
+      "owner": "L1 (Wave 1, materializer-EXECUTE runbook + preflight)",
+      "title": "ops(runbook): proof-materializer prod-execute runbook + read-only preflight (SCRUM-2983/2984)",
+      "ci_summary": "Base is current main tip. Detector-computed tier T1 (default \u2014 `scripts/ops/materializer-preflight.ts` is not matched by any PATH_RULE; docs + test + agents.md are T0-exempt on their own). `TypeCheck & Lint` currently FAILING \u2014 must be fixed before this PR is soak-eligible. This PR documents (does NOT execute) the prod materializer run; per the founder-reserved gate list, actual EXECUTE scheduling stays Carson's.",
+      "rollback_note": "Revert PR; the runbook/preflight script disappear, no runtime behavior change (read-only preflight, no prod mutation capability in this PR).",
+      "migration_files": [],
+      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) \u2014 the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+    },
+    {
+      "number": 1729,
+      "head_sha": "cd2978b565a50ec8d719d74a4ba4a07c4244d1a5",
+      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "risk_tier": "T2",
+      "owner": "L2 (W4 Python SDK anchor()+anchor_bulk(), per BULK AUDIT dispatch list; unverified against Jira assignee)",
+      "title": "feat(sdk-py): add anchor() + anchor_bulk() \u2014 Python SDK was read-only",
+      "ci_summary": "Discovered via a live `gh pr list` re-check during this session (opened after the manifest's first draft) \u2014 confirms new Wave-S PRs are still landing, exactly as expected. Base is current main tip at capture (ae2209fd, now behind \u2014 see allowed_base_shas). Detector-computed tier T2 (`packages/arkova-py/**` matched by the SDK PATH_RULE at `services/worker/src/(?:ai|agents|...)`? NO \u2014 matched via `docs/api/|docs/guides/API_GUIDE.md|sdks/|packages/(arkova-py|embed|mcp-server|typescript|langchain)` rule: `packages/arkova-py` IS explicitly listed, unlike packages/sdk in #1725). Carries `docs-only` label despite being a real code change (client.py/models.py/errors.py) \u2014 label appears mis-set, do not treat as T0 on that basis; the detector's T2 computation stands. `Tests` check pending/unclear at capture; Staging Soak Evidence Gate red (expected pre-soak).",
+      "rollback_note": "Revert PR; Python SDK reverts to read-only (no anchor()/anchor_bulk()), no backend/runtime impact.",
+      "migration_files": [],
+      "soak_coverage": "NOT STARTED. Part of the planned 72h wave soak; clock has not begun."
+    },
+    {
+      "number": 1730,
+      "head_sha": "d3b40439b8616dc3318ee0e97d8d9c6c0dcb2827",
+      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "risk_tier": "T3",
+      "owner": "L1 (SCRUM-3031 fix, migration 0370, per RTE migration table)",
+      "title": "fix(db): batch_insert_anchors wedge \u2014 implicit-cast index defeat (SCRUM-3031, migration 0370)",
+      "ci_summary": "Discovered via a live `gh pr list` re-check during this session. Base is current main tip at capture (ae2209fd, now behind \u2014 see allowed_base_shas). Detector-computed tier T3 (migration 0370, plus `services/worker/src/jobs/publicRecordAnchor.ts` independently matches no T3 jobs-lifecycle PATH_RULE by exact filename but is adjacent worker-jobs code). This PR's OWN body text explicitly states: 'No 72h soak this sprint per CTO directive \u2014 rides the 72h RC soak (rc-2026-08-launch-72h.json); this PR's gate is expected red until that soak lands' \u2014 i.e. this exact manifest is already cited as the intended coverage mechanism by the PR author, independently confirming the manifest's purpose. `Check supabase/migrations vs prod` and `SonarCloud Code Analysis` both FAILING at capture \u2014 investigate before this PR is soak-eligible. This is the fix for the SCRUM-3031 regression this runbook's EDGE-CASES pillar (docs/release/72h-soak-runbook-2026-08.md Sec5) explicitly requires re-testing.",
+      "rollback_note": "Revert PR; apply 0370's own `-- ROLLBACK:` block (restores the pre-0370 `batch_insert_anchors` definition with the implicit `::text` cast that defeats the dedup-lookup index \u2014 i.e. rollback deliberately restores the wedge bug, matching forward-fix-preferred guidance in release-management-runbook.md Sec7; only roll back if the fix itself is found unsafe, not as a routine action).",
+      "migration_files": [
+        "supabase/migrations/0370_scrum3031_batch_insert_anchors_fix.sql"
+      ],
+      "soak_coverage": "NOT STARTED. This is the specific SCRUM-3031 regression check the runbook's EDGE-CASES pillar requires (docs/release/72h-soak-runbook-2026-08.md Sec5) \u2014 do not treat generic rig health as sufficient coverage for this PR; the soak must specifically force a repeat-submission scenario and confirm the wedge does not reproduce."
+    }
+  ],
+  "excluded_prs": [
+    {
+      "number": 1722,
+      "reason": "MERGED 2026-07-28 as Wave G1 (commit 8e94f705) \u2014 ci(gates): re-fireable migration-drift on body edits + stale-check-run runbook (SCRUM-3029/3030). T0, no soak required, landed via the normal Mergify T0 path per CTO ruling R1 ('nothing soaks' != 'nothing merges'). No longer part of the pending wave; removed from included_prs per this manifest's _append_procedure item 5."
+    }
+  ],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "profile": "chain",
+    "staging_api_base": "TBD \u2014 isolated rig not yet provisioned. Will be `https://arkova-worker-<candidate-name>-staging-<project-suffix>.us-central1.run.app` per scripts/staging/provision-isolated-rig.sh output. Do NOT point this at the shared arkova-worker-staging URL (validator rejects that pattern).",
+    "staging_url": "TBD \u2014 see staging_api_base",
+    "cloud_run_service": "TBD \u2014 e.g. arkova-worker-2026-08-launch-72h-staging (exact name set at provisioning time)",
+    "revision": "TBD \u2014 filled after gcloud run deploy",
+    "deploy_tag": "none (dedicated isolated service per docs/release/staging-parity-path.md \u00a73, not a tag-routed revision on shared staging)",
+    "image_ref": "TBD \u2014 us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:<frozen-head-sha-tag>, built AT the frozen integrated head per CLAUDE.md \u00a71.11A / memory/feedback_soak_merge_grade_procedure.md (a stale rig image invalidates the soak)",
+    "image_digest": "TBD \u2014 captured from `gcloud builds submit` / `gcloud container images describe` output at provision time",
+    "cloud_build_id": "TBD",
+    "build_sha_baked": "TBD \u2014 must equal the frozen integrated head SHA recorded in train_launch_sha at freeze time, not train_launch_sha's current (still-moving) value",
+    "supabase_project_ref": "TBD \u2014 new isolated Supabase project per scripts/staging/provision-isolated-rig.sh --profile chain (region us-east-2, PG 17.x, standalone project, NOT a preview branch)",
+    "supabase_project_name": "TBD \u2014 e.g. arkova-2026-08-launch-72h",
+    "supabase_region": "us-east-2",
+    "min_instances": 1,
+    "deploy_log_id": "TBD \u2014 public.staging_deploy_log row id, or the documented gcloud-run-deploy-direct deviation note if provision-isolated-rig.sh's --apply path isn't used verbatim (see docs/release/72h-soak-runbook-2026-08.md deviations section)",
+    "preflight_result": "NOT YET RUN \u2014 must report `environment_type=clean_mirror` before the soak clock starts. Run: npx tsx scripts/ci/staging-honesty-preflight.ts --project-ref <SOAK_PROJECT_REF> --prod-project-ref vzwyaatejekddvltxyye --format json",
+    "profile_note": "profile=chain (NOT mock): CTO ruling R17 requires ENABLE_ORG_CREDIT_ENFORCEMENT=ON and ENABLE_OUTBOUND_WEBHOOKS=ON as a deliberate, documented divergence from prod's current flag state, and the wave's surfaces (mixed-format bulk anchoring, 22-format extraction, credits/queue, DocuSign webhooks) need the real GetBlock RPC + WIF signer path exercised, not mocked chain. See docs/release/72h-soak-runbook-2026-08.md flag matrix."
+  },
+  "soak": {
+    "start": "",
+    "end": "",
+    "duration_hours": 72,
+    "clock_anchor": "TBD \u2014 Cloud Run worker revision uptime (min-instances=1), per memory/feedback_soak_clock_is_worker_uptime.md. NOT a probe-loop timestamp. Record the exact revision id once deployed.",
+    "harness_version": "TBD",
+    "result": "NOT STARTED",
+    "evidence_links": [],
+    "expires_at": ""
+  },
+  "lifecycle_evidence": {
+    "note": "NOT STARTED. Populate at soak maturity per the 4-pillar standard (VOLUME/CONCURRENCY/EDGE-CASES/ISOLATION) \u2014 see docs/release/72h-soak-runbook-2026-08.md section 5 for this wave's per-pillar exercises (DocuSign E2E, folders UI, mixed-format bulk anchoring, 22-format extraction matrix, credits/queue, webhooks, proof-materializer DRY-RUN, SCRUM-3031 batch_insert_anchors regression check)."
+  },
+  "schedulers_enabled": [
+    "TBD \u2014 provisioned per docs/release/72h-soak-runbook-2026-08.md (batch-anchors */5, check-confirmations */5, recover-broadcasts */10, org-queue-scheduler */5, populate-confirmation-proofs */5); node-cron does NOT fire on throttled Cloud Run, Cloud Scheduler is mandatory, not optional, for this soak (memory/project_cloudrun_inprocess_cron_gotcha.md)"
+  ],
+  "scheduler_auth_proof": "TBD",
+  "migration_plan": {
+    "order": [
+      "0359_scrum2917_materialize_run_id.sql",
+      "0360_scrum2917_secured_proof_predicate_hardening.sql",
+      "0362_scrum2913_public_anchor_registry_url_allowlist.sql",
+      "0364_scrum2905_security_advisor_revokes.sql",
+      "0368_scrum2971_billing_events_idempotency.sql",
+      "0370_scrum3031_batch_insert_anchors_fix.sql"
+    ],
+    "order_note": "Ascending numeric order per RTE table (docs: ratified sprint plan). Append 0361 (SCRUM-2916, if claimed by #1615's builder) and 0367/0369-0374 as their PRs open, per _append_procedure item 3. 0361 and 0375-0378 are reservation/spare rows in the RTE table, not yet PR-attached as of this draft \u2014 do not add to `order` until a real PR carries the file. UPDATED: 0370 (SCRUM-3031 fix, PR #1730) appended live during this session as a real example of the append procedure firing \u2014 discovered via a fresh `gh pr list` re-check, not anticipated in the manifest's first draft.",
+    "rollback_proof": "PENDING \u2014 not yet rehearsed. Runbook requires, for EACH migration above, on the isolated rig: apply -> confirm schema/worker health -> apply the file's own `-- ROLLBACK:` block -> confirm schema reverts + worker stays healthy -> re-apply -> confirm idempotent forward path. All four migration files above were verified in this session to carry a `-- ROLLBACK:` comment (0359, 0360, 0362, 0364, 0368) \u2014 rehearsal itself has not run.",
+    "reapply_proof": "PENDING \u2014 see rollback_proof.",
+    "stop_conditions": [
+      "worker uptime < 72h at merge time (soak not matured)",
+      "any /health regression during the soak window",
+      "staging-honesty-preflight.ts reports anything other than environment_type=clean_mirror",
+      "PR base SHA drifts out of allowed_base_shas/covered_main_shas mid-soak (base drift)",
+      "a new commit lands on any included PR after its recorded head_sha (head drift for that PR)",
+      "contamination: unexpected ledger rows, cross-PR writes, or any write to this rig from outside this soak session",
+      "release-owner (Carson) approval not granted"
+    ]
+  },
+  "deviations": [
+    "DRAFT MANIFEST: written ahead of the soak per SCRUM-2980 to have the RC-manifest infrastructure ready the moment the sprint's PRs are soak-eligible. No rig has been provisioned, no soak has started, and no PR should currently cite this manifest's path in its body \u2014 doing so would correctly fail the gate closed (approval_status != \"approved\").",
+    "included_prs risk_tier values were computed by directly invoking requiredTierFor() from scripts/ci/check-staging-evidence.ts against each PR's live `gh pr diff --name-only` file list (not hand-estimated, not copied from PR labels) \u2014 see per-PR ci_summary for the matched PATH_RULE reason where applicable.",
+    "Several included PRs are NOT currently soak-ready even before the rig exists: #1618 carries `do-not-merge`, #1654 is CONFLICTING/DIRTY and needs a rebase, #1716/#1721 have bases behind current main and need a rebase/merge, and #1615/#1724/#1727/#1728 have at least one currently-red required CI check (see each PR's ci_summary). These are pre-soak blockers, not soak-evidence gaps.",
+    "LIVE UPDATE during authoring session (same day, 2026-07-28): a re-run of `gh pr list` after the initial draft showed main had advanced (PR #1722 / Wave G1 merged) and two new PRs had opened (#1729 Python SDK, #1730 SCRUM-3031 fix). This manifest was updated in place per its own _append_procedure (moved #1722 to excluded_prs, appended #1729/#1730 to included_prs, appended migration 0370 to migration_plan.order, extended covered_main_shas/allowed_base_shas) as a live demonstration that the append procedure works, not just a documented intent. Re-run `gh pr list --state open --limit 60 --json number,title,headRefOid,baseRefName,isDraft` again before relying on this manifest \u2014 the wave was still actively changing as of this update."
+  ],
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": "",
+    "residual_note": "Not applicable until the wave merges. See docs/release/release-management-runbook.md \u00a73 (migrate-before-merge) and \u00a79 (Release Done checklist) for the prod-apply + reconciliation sequence each migration in migration_plan.order must go through before its PR merges."
+  },
+  "exceptions": []
+}
