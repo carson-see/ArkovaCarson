@@ -1,0 +1,46 @@
+{
+  "rig": "legacy-soak-2026-08",
+  "generated_at": "2026-07-28T22:10:00Z",
+  "generated_by": "RTE session (SCRUM-2980 continuation) \u2014 load-generation gap closure",
+  "loadgen_source": "scripts/soak/loadgen.ts + scripts/soak/loadgen-server.ts (standalone, no dependency on services/worker's build)",
+  "deployment": {
+    "type": "Cloud Run service, always-on",
+    "service": "arkova-soak-loadgen-legacy-soak-2026-08",
+    "region": "us-central1",
+    "project": "arkova1",
+    "image": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/soak-loadgen:v2",
+    "sizing": {
+      "cpu": 1,
+      "memory": "512Mi",
+      "min_instances": 1,
+      "max_instances": 1,
+      "concurrency": 10
+    },
+    "cpu_throttling": "disabled (--no-cpu-throttling) -- REQUIRED. Default Cloud Run CPU allocation only runs during request processing; with throttling on, the background setInterval loop that generates load stalled completely (observed live: 0 requests/69s window before the fix, same class of bug as memory/project_cloudrun_inprocess_cron_gotcha.md but for an in-process timer loop rather than node-cron specifically). Verified fixed live: achieved_rps went from 0.00 to ~9.9 immediately after redeploying with this flag.",
+    "service_account": "270018525501-compute@developer.gserviceaccount.com (already held run.invoker on the target rig from Cloud Scheduler provisioning; confirmed live via a manual identity-token curl before deploying)",
+    "durability_rationale": "Survives laptop sleep/session end -- runs as a standing Cloud Run service in the same GCP project as the rigs, independent of this session. min-instances=1 keeps one instance warm continuously for the 72h window."
+  },
+  "auth": {
+    "cloud_run_ingress": "private (--no-allow-unauthenticated), same as the rig itself -- the loadgen mints its own GCP identity token per target audience via the metadata server (http://metadata.google.internal/.../identity?audience=...), cached ~50min, matching the pattern Cloud Scheduler already uses for this rig's cron jobs.",
+    "app_level": "seeded API key, HMAC-SHA256 hashed with the rig's own API_KEY_HMAC_SECRET (secret 'api-key-hmac-secret-staging', shared across both soak rigs), inserted directly into api_keys for the seeded org 5eed0000-0000-0000-0000-0000000000b1 (the same org the baseline fixture anchors belong to). Raw key never committed to the repo or logged; scopes granted: write:anchors, read:records, read:orgs, read:search, anchor:write, anchor:read, verify, verify:batch, usage:read. key_prefix=ak_test_45a5."
+  },
+  "org_fixture_adjustments_made_this_session": {
+    "org_credits_balance": "seeded at 200000 (org_credits.balance/monthly_allocation), org_id 5eed0000-0000-0000-0000-0000000000b1 -- was previously 0/unset, which caused the very first live create attempt to return 402 insufficient_credits (a real, correct app-level response, not a bug -- exercised for one call before the top-up).",
+    "anchor_quota_gate_finding": "SEPARATE from org_credits.balance -- services/worker/src/utils/anchorQuotaGate.ts enforces a hardcoded sandbox anchor_quota (was 10 on this org, inherited from the baseline-fixture seed script) independent of credit balance. Hit live: 402 quota_exhausted at count=10/quota=10 even with a full credit balance. Raised to anchor_quota=50000 for this org on this rig so the VOLUME pillar isn't artificially capped by a partner-sandbox business rule that doesn't apply to a synthetic-load org. This is a genuine finding worth carrying forward: two independent write-limiting gates exist (credits AND a separate hardcoded quota), and a soak/load exercise that only checks credit balance would still hit a wall."
+  },
+  "load_model": {
+    "target_per_runbook_S0.6": "~28 RPS sustained / ~83 RPS burst / ~250 peak concurrent sessions, combined across ALL traffic to a rig",
+    "actual_configured": "SUSTAINED_RPS=3, BURST_RPS=9, burst every 30 min for 5 min, tickMs=500, maxInFlight=60 -- roughly 1/9th to 1/3rd of the full runbook target, scaled down deliberately for this single loadgen instance",
+    "why_scaled_down_honestly": "This is a single min-instances=1 / concurrency=10 Cloud Run instance issuing outbound calls; running it at the full 28-83 RPS target risks starving its own single instance's outbound connection pool and produces load that is an artifact of the LOADGEN's sizing rather than a meaningful signal about the RIG's capacity. The rig itself (min-instances=1/max-instances=10, cpu=2/mem=2Gi, matching prod's own tier) can absorb far more than what a 1-cpu/512Mi loadgen instance can realistically originate. Scaling the loadgen's own sizing up (more CPU/instances, or multiple loadgen replicas) is the honest next step to close the gap to the full 250-concurrent-session / 83-RPS-burst target -- not done this session; flagged here rather than silently claimed.",
+    "achieved_live": "~9.9 RPS sustained during the initial post-deploy burst window (verified via the loadgen's own 60s summary logs, cross-checked against real 429/402/200 responses landing on the rig -- see below), settling toward the configured 3 RPS sustained rate once the first burst window elapses. This is REAL traffic against the live rig, not simulated -- confirmed via gcloud logging read against the WORKER's own Cloud Run request logs (not just the loadgen's self-reported counters), which show real request URLs and status codes (200/402/429) landing on arkova-worker-launch-72h-2026-08-staging.",
+    "not_yet_achieved": "The full 28/83 RPS and 250-concurrent-session targets from the runbook are NOT reached by this single loadgen instance. Stated plainly per task instructions -- do not claim 10k-DAU-equivalent load was reached when the honest number is lower."
+  },
+  "action_mix": "45% lifecycle read, 20% verify/proof read, 15% usage read, 8% health read, 5% single anchor create, 3% bulk anchor create (5-15 rows/call), 2% malformed-fingerprint edge case, 1% over-cap-bulk edge case (1001 rows, expects 400), 1% no-API-key edge case (expects 401/403), plus a separate low-frequency (every 2 min) duplicate-fingerprint idempotency check via the bulk endpoint's own dedup path.",
+  "treasury_impact": "NONE by design. The loadgen never calls a force-broadcast endpoint and never posts directly to the treasury-spending batch-anchor job. Anchor creates land as PENDING rows; the rig's own pre-existing Cloud Scheduler batch-anchors job (*/5 min) decides when to actually batch+broadcast per its existing Trigger A/B/D logic, which was already deployed and unmodified by this session. Real broadcast frequency over the 72h window is therefore bounded by that cron's own cadence (a handful of forced/threshold-triggered batches per day), not by loadgen request volume -- this keeps the ~77k-sat launch treasury and ~757k-sat legacy treasury comfortably sufficient without needing a top-up, at current signet fee rates (~1 sat/vByte, ~150-200 sats/simple broadcast per mempool.space/signet/api/v1/fees/recommended, checked live this session).",
+  "verification_method": "gcloud logging read against BOTH the loadgen service's own jsonPayload summary logs AND the target worker service's httpRequest logs (independent cross-check, not trusting the loadgen's self-report alone).",
+  "known_gaps": [
+    "Webhook-delivery load (DocuSign duplicate-delivery idempotency) is NOT exercised by this loadgen -- building a correctly HMAC-signed DocuSign webhook payload was out of scope for this pass; flagged rather than silently omitted.",
+    "Does not reach the runbook's full 28/83 RPS / 250-concurrent-session targets (see load_model.not_yet_achieved above).",
+    "Single loadgen instance = single origin IP; the rig's keyed (per-API-key) rate limiter (1000 req/min, confirmed live via X-RateLimit-Limit header) is exercised but the IP-based anonymous limiter (100 req/min) is only lightly touched by the deliberate no-API-key edge-case slice."
+  ]
+}
