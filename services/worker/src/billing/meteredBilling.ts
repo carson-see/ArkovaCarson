@@ -15,6 +15,7 @@
  *   - 1.7: No real Stripe calls in tests — mock everything
  */
 
+import crypto from 'node:crypto';
 import { db } from '../utils/db.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
@@ -25,6 +26,23 @@ export interface MeteredUsageRecord {
   endpoint: string;
   quantity: number;
   timestamp: string;
+  /**
+   * SCRUM-2971: request-scoped stable identifier for this specific unit of
+   * usage — e.g. the inbound API request's correlation ID (see
+   * `utils/correlationId.ts`), a queue job ID, or any caller-generated
+   * token that stays IDENTICAL across retries of the same logical call.
+   *
+   * `recordMeteredUsage` is per-request/per-call metering — one row per
+   * unit of usage, aggregated later by `getMeteredUsage` /
+   * `reportMeteredUsageToStripe` — NOT a period aggregate written once per
+   * billing cycle. That means a billing-period bucket alone is NOT a safe
+   * idempotency key: two legitimate calls in the same period (even the
+   * same millisecond) must both land as distinct rows. `requestId` is
+   * what tells "a retry of call A" apart from "a brand-new call B" — reuse
+   * the SAME `requestId` when retrying an uncertain/failed call, mint a
+   * fresh one for every genuinely new unit of usage.
+   */
+  requestId: string;
 }
 
 export interface UsageReportResult {
@@ -60,14 +78,38 @@ function orgCreditsForMetering(): OrgCreditMeteringQuery {
 }
 
 /**
+ * SCRUM-2971: deterministic idempotency key for a metered usage row.
+ *
+ * Deliberately built from (org_id, endpoint, requestId) only — NOT
+ * quantity/timestamp — so:
+ *   - a retry with the SAME requestId always hashes to the SAME key and
+ *     collapses to the one row already inserted (the `billing_events`
+ *     UNIQUE(idempotency_key) constraint rejects the second insert), and
+ *   - a genuinely new unit of usage (fresh requestId) always gets its own
+ *     row, even if it lands in the same org/endpoint/period/millisecond.
+ */
+export function meteredUsageIdempotencyKey(
+  record: Pick<MeteredUsageRecord, 'org_id' | 'endpoint' | 'requestId'>,
+): string {
+  const material = `metered_api_usage:${record.org_id}:${record.endpoint}:${record.requestId}`;
+  return crypto.createHash('sha256').update(material).digest('hex');
+}
+
+/**
  * Record metered API usage for an organization.
  * Stores in billing_events for aggregation + Stripe reporting.
+ *
+ * Idempotent: a retry carrying the same `record.requestId` collapses onto
+ * the row from the first attempt instead of inserting a duplicate (which
+ * would double-count usage reported to Stripe — see
+ * `reportMeteredUsageToStripe`).
  */
 export async function recordMeteredUsage(record: MeteredUsageRecord): Promise<void> {
   const { error } = await db.from('billing_events').insert({
     org_id: record.org_id,
     user_id: record.user_id,
     event_type: 'metered_api_usage',
+    idempotency_key: meteredUsageIdempotencyKey(record),
     payload: {
       endpoint: record.endpoint,
       quantity: record.quantity,
@@ -76,6 +118,18 @@ export async function recordMeteredUsage(record: MeteredUsageRecord): Promise<vo
   });
 
   if (error) {
+    // 23505 = unique_violation on idempotency_key: this exact usage event
+    // (same org/endpoint/requestId) was already recorded by a prior
+    // attempt. That's an idempotent retry, not a failure — return quietly
+    // rather than throwing (throwing here would make a caller's retry
+    // loop treat "already recorded" as "still needs recording").
+    if ((error as { code?: string }).code === '23505') {
+      logger.debug(
+        { org_id: record.org_id, endpoint: record.endpoint, requestId: record.requestId },
+        'metered_usage_already_recorded',
+      );
+      return;
+    }
     logger.error({ error, org_id: record.org_id }, 'Failed to record metered usage');
     throw error;
   }

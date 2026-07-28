@@ -47,8 +47,13 @@ describe('P7-S3: Billing Event Idempotency', () => {
 
     // First insert should succeed
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // SCRUM-2971: billing_events.idempotency_key is NOT NULL for new rows
+    // (migration 0368). Mirrors stripe/handlers.ts::recordBillingAudit,
+    // which sets idempotency_key := eventId for stripe_event_id-keyed
+    // writes — the stripe event id already IS the idempotency signal here.
     const { error: firstError } = await (serviceClient as any).from('billing_events').insert({
       stripe_event_id: stripeEventId,
+      idempotency_key: stripeEventId,
       event_type: 'checkout.session.completed',
       payload: { test: true },
     });
@@ -59,6 +64,7 @@ describe('P7-S3: Billing Event Idempotency', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: duplicateError } = await (serviceClient as any).from('billing_events').insert({
       stripe_event_id: stripeEventId,
+      idempotency_key: stripeEventId,
       event_type: 'checkout.session.completed',
       payload: { test: true, duplicate: true },
     });
@@ -109,6 +115,7 @@ describe('P7-S3: Billing Event Idempotency', () => {
       .from('billing_events')
       .insert({
         stripe_event_id: eventId,
+        idempotency_key: eventId,
         event_type: 'test.event',
         payload: { original: true },
       })

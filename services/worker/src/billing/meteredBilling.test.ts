@@ -28,7 +28,12 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 import { db } from '../utils/db.js';
-import { recordMeteredUsage, getMeteredUsage, reportMeteredUsageToStripe } from './meteredBilling.js';
+import {
+  recordMeteredUsage,
+  getMeteredUsage,
+  reportMeteredUsageToStripe,
+  meteredUsageIdempotencyKey,
+} from './meteredBilling.js';
 
 const dbFromMock = () => vi.mocked(db.from as unknown as ReturnType<typeof vi.fn>);
 
@@ -78,7 +83,7 @@ beforeEach(() => {
 });
 
 describe('recordMeteredUsage', () => {
-  it('inserts usage record into billing_events', async () => {
+  it('inserts usage record into billing_events with a deterministic idempotency_key', async () => {
     const mockInsert = vi.fn().mockResolvedValue({ error: null });
     (db.from as ReturnType<typeof vi.fn>).mockReturnValue({ insert: mockInsert });
 
@@ -88,12 +93,18 @@ describe('recordMeteredUsage', () => {
       endpoint: '/api/v1/verify',
       quantity: 1,
       timestamp: '2026-04-05T00:00:00Z',
+      requestId: 'req-1',
     });
 
     expect(db.from).toHaveBeenCalledWith('billing_events');
     expect(mockInsert).toHaveBeenCalledWith(expect.objectContaining({
       org_id: 'org-1',
       event_type: 'metered_api_usage',
+      idempotency_key: meteredUsageIdempotencyKey({
+        org_id: 'org-1',
+        endpoint: '/api/v1/verify',
+        requestId: 'req-1',
+      }),
     }));
   });
 
@@ -108,7 +119,68 @@ describe('recordMeteredUsage', () => {
       endpoint: '/api/v1/verify',
       quantity: 1,
       timestamp: '2026-04-05T00:00:00Z',
+      requestId: 'req-1',
     })).rejects.toThrow();
+  });
+
+  // SCRUM-2971 — billing_events idempotency
+  describe('SCRUM-2971: idempotency', () => {
+    it('retry of the same metered call (same requestId) is a no-op, not a thrown error', async () => {
+      const mockInsert = vi.fn().mockResolvedValue({ error: { code: '23505', message: 'duplicate key value violates unique constraint "billing_events_idempotency_key_key"' } });
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({ insert: mockInsert });
+
+      const record = {
+        org_id: 'org-1',
+        user_id: 'user-1',
+        endpoint: '/api/v1/verify',
+        quantity: 1,
+        timestamp: '2026-04-05T00:00:00Z',
+        requestId: 'req-retry-1',
+      };
+
+      // First attempt "succeeded" upstream (row already exists); this call
+      // simulates the retry hitting the same idempotency_key.
+      await expect(recordMeteredUsage(record)).resolves.toBeUndefined();
+
+      // Exactly one distinct idempotency_key was ever attempted for this
+      // requestId — the retry reused it verbatim, it did not mint a new row.
+      expect(mockInsert).toHaveBeenCalledTimes(1);
+      expect(mockInsert).toHaveBeenCalledWith(expect.objectContaining({
+        idempotency_key: meteredUsageIdempotencyKey({
+          org_id: 'org-1',
+          endpoint: '/api/v1/verify',
+          requestId: 'req-retry-1',
+        }),
+      }));
+    });
+
+    it('distinct usage events (different requestId) get distinct idempotency_key values — not collapsed', () => {
+      const base = { org_id: 'org-1', endpoint: '/api/v1/verify' };
+      const keyA = meteredUsageIdempotencyKey({ ...base, requestId: 'req-A' });
+      const keyB = meteredUsageIdempotencyKey({ ...base, requestId: 'req-B' });
+
+      expect(keyA).not.toBe(keyB);
+    });
+
+    it('two legitimate calls in the same period (same org/endpoint/timestamp, different requestId) both insert', async () => {
+      const mockInsert = vi.fn().mockResolvedValue({ error: null });
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({ insert: mockInsert });
+
+      const shared = {
+        org_id: 'org-1',
+        user_id: 'user-1',
+        endpoint: '/api/v1/verify',
+        quantity: 1,
+        timestamp: '2026-04-05T00:00:00.000Z',
+      };
+
+      await recordMeteredUsage({ ...shared, requestId: 'req-unit-1' });
+      await recordMeteredUsage({ ...shared, requestId: 'req-unit-2' });
+
+      expect(mockInsert).toHaveBeenCalledTimes(2);
+      const keys = mockInsert.mock.calls.map((call) => (call[0] as { idempotency_key: string }).idempotency_key);
+      expect(new Set(keys).size).toBe(2); // distinct rows, not collapsed
+    });
   });
 });
 

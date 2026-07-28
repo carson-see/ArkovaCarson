@@ -210,6 +210,12 @@ async function recordBillingAudit(
 ): Promise<void> {
   const { error } = await db.from('billing_events').insert({
     stripe_event_id: eventId,
+    // SCRUM-2971: billing_events now enforces idempotency_key IS NOT NULL
+    // on every new row (0368). Stripe's event id is already globally
+    // unique — and it's what the claim-first webhook_event_claims dedup
+    // above actually serializes on — so it doubles as the idempotency_key
+    // value here rather than deriving a separate one.
+    idempotency_key: eventId,
     event_type: eventType,
     user_id: userId,
     payload: payload as unknown as import('../types/database.types.js').Json,

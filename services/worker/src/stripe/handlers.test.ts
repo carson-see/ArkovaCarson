@@ -483,6 +483,16 @@ describe('handleStripeWebhook', () => {
     );
   });
 
+  // SCRUM-2971: billing_events now enforces idempotency_key IS NOT NULL
+  // on every new row (migration 0368). Stripe's event id is already
+  // globally unique, so it doubles as idempotency_key here.
+  it('SCRUM-2971: populates idempotency_key (= stripe event id) on the billing_events audit row', async () => {
+    await handleStripeWebhook(CHECKOUT_EVENT);
+    expect(billingEventsInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotency_key: 'evt_test_001' }),
+    );
+  });
+
   it('extracts user_id from event metadata for the billing_events audit row', async () => {
     const noMetaEvent = makeStripeEvent('unknown.event.type', { some: 'data' }, 'evt_no_meta');
     await handleStripeWebhook(noMetaEvent);
