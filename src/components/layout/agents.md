@@ -6,7 +6,7 @@ App-level layout components: shell, sidebar, header, breadcrumbs, error boundari
 
 ## Key Files
 - `AppShell.tsx` — Main layout wrapper for authenticated pages: sidebar + header + content area, responsive hamburger on mobile
-- `Sidebar.tsx` — Navigation sidebar: max 5 primary items (Dashboard, Documents, Organization, Search, Settings), admin section behind collapsible toggle
+- `Sidebar.tsx` — Navigation sidebar: max 5 primary items (Dashboard, Documents, Organization, Search, Settings), an Account section (My Credentials, Billing, API Keys — personal/user-scoped destinations visible to all authenticated users incl. INDIVIDUAL), and an admin section behind a collapsible toggle. SCRUM-2915 ([PI05-CE06]): `My Credentials` (`/my-credentials`, the SCRUM-1598 recipient inbox) was route-only/unreachable and is now surfaced in the Account section; it is EXCLUDED from the Documents active-state block so only its own entry highlights. _(Bullet restored/corrected 2026-07-28 — the prior short description was stale, dropped by the union-merge-driver incident; see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`.)_
 - `Header.tsx` — Top header bar with user menu
 - `Breadcrumbs.tsx` — Route-aware breadcrumb navigation
 - `ArkovaLogo.tsx` — Arkova logo and icon components
