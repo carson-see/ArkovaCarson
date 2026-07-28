@@ -1,0 +1,20 @@
+{
+  "_comment": "Manually-curated, hand-verified entries for the /legal/third-party-notices page (src/pages/ThirdPartyNoticesPage.tsx). generate-third-party-notices.ts merges these into the auto-generated list so a dependency can be disclosed BEFORE it is actually installed (e.g. one that ships via an in-flight, not-yet-merged PR) and so its notice text can carry counsel-verified detail that license-checker cannot infer from package metadata alone (unmodified-source links, LGPL/GPL text links, chunk-isolation notes). Remove an entry once the real dependency lands and the generator's auto-detected metadata is enough on its own to replace it, OR promote its detail into the generator once stable. See scripts/security/agents.md.",
+  "pending": [
+    {
+      "name": "libheif-js",
+      "version": "1.19.8",
+      "license": "LGPL-3.0",
+      "repository": "https://github.com/catdad-experiments/libheif-js",
+      "sourceUrl": "https://registry.npmjs.org/libheif-js/-/libheif-js-1.19.8.tgz",
+      "status": "pending",
+      "statusNote": "Ships via the in-development client-side HEIC/HEIF image decode path (founder 22-format KPI, PR #1740, not yet merged to main). Pre-cleared here so the notice obligation is discharged the moment it lands. See scripts/security/license-denylist.allowlist.json for the compliance rationale (unmodified, browser-only, isolated in the lazy 'vendor-heic' chunk) and the counsel x265/encoder verification result.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://www.gnu.org/licenses/lgpl-3.0.txt",
+        "https://www.gnu.org/licenses/gpl-3.0.txt"
+      ],
+      "licenseTextNote": "LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked."
+    }
+  ]
+}

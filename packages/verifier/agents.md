@@ -57,3 +57,6 @@ timestamp (§1.5 — measured vs asserted).
 ## Esplora endpoints used (read-only)
 `GET /tx/:txid` · `GET /tx/:txid/merkle-proof` · `GET /block/:hash/header` ·
 `GET /block-height/:height`
+
+## Licensing
+- **`LICENSE`** (2026-07-28, engineering-counsel review): MIT text copied verbatim from `packages/verifier-cli/LICENSE`. Listed in `package.json` `files` so it actually ships in the published tarball. See `scripts/security/package-license-files.test.ts`.

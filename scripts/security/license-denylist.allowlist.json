@@ -49,6 +49,11 @@
       "name": "jszip",
       "version": "3.10.1",
       "reason": "Dual-licensed (MIT OR GPL-3.0-or-later); used under MIT. Transitive dependency of mammoth.js for .docx extraction."
+    },
+    {
+      "name": "libheif-js",
+      "version": "1.19.8",
+      "reason": "LGPL-3.0, browser-only. Transitive dependency of heic-decode (client-side HEIC/HEIF image decoding, F4 founder 22-format KPI). Used unmodified from the published npm tarball (wraps upstream libheif/libde265 as a self-contained wasm bundle — no fork, no patch). Isolated to the lazy 'vendor-heic' Vite chunk (see vite.config.ts manualChunks) and never inlined into the initial/main bundle, so the LGPL-3.0 relinking/swap obligation is satisfiable without shipping a static-linked main bundle. Third-party notices (LGPL-3.0 + GPLv3 texts, unmodified-source link) published at /legal/third-party-notices, linked from the public footer. Decode-only usage confirmed — no x265 (GPL-2.0) encoder evidence found in the wasm binary. See scripts/security/agents.md and PR remediating SCRUM license-denylist LGPL blind spot."
     }
   ]
 }

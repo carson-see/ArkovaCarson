@@ -30,6 +30,23 @@ export default defineConfig({
         // Vite 8 / rolldown requires manualChunks to be a function.
         manualChunks: (id) => {
           if (!id.includes('node_modules')) return undefined;
+          // ENGINEERING RULE (counsel LGPL review, 2026-07-28) — do not remove
+          // or merge this branch without re-reading scripts/security/agents.md:
+          // any module from `heic-decode` or its dependency `libheif-js`
+          // (LGPL-3.0) MUST resolve to its OWN isolated, lazily-loaded chunk
+          // (conventionally named 'vendor-heic') — never folded into
+          // 'vendor-ai-ner', 'vendor-ui', or any chunk that also ships in the
+          // initial bundle. The LGPL-3.0 compliance position recorded in
+          // scripts/security/license-denylist.allowlist.json and disclosed at
+          // /legal/third-party-notices depends on this isolation holding: it
+          // is what lets us ship an unmodified, statically-linked-only-within-
+          // its-own-chunk wasm bundle without triggering LGPL's main-program
+          // relinking obligation. If you're adding the real HEIC/HEIF decode
+          // path (see PR #1740 / SCRUM founder 22-format KPI), add:
+          //   if (id.includes('heic-decode') || id.includes('libheif-js')) return 'vendor-heic';
+          // See scripts/security/vendor-heic-chunk-isolation.test.ts, which
+          // statically asserts this file honors the rule once that branch
+          // exists.
           if (id.includes('@huggingface/transformers')) return 'vendor-ai-ner';
           if (id.includes('pdfjs-dist')) return 'vendor-pdf';
           if (id.includes('/jszip/')) return 'vendor-zip';
