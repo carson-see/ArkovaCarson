@@ -61,6 +61,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # ciContext.fetchLiveLabels() reads labels from the API so a label-gated
+      # override still works on a plain re-run, where the frozen pull_request
+      # payload would not carry it (PR #1336). Degrades to env-only without this.
+      pull-requests: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -143,6 +147,20 @@ jobs:
       # (CLAUDE.md §6); each block must carry a (PR #NNNN) discriminator.
       - name: Block migration agents.md collisions (S0-E4)
         run: node_modules/.bin/tsx scripts/ci/check-agents-md-migration-collision.ts
+
+      # Backstop for the 2026-07-28 union-driver incident: a local
+      # `merge.union.driver = true` shadowed git's built-in union algorithm with
+      # a no-op, so merges silently kept "ours" and discarded "theirs" (86 lines
+      # lost off main across 19 commits). agents.md is append-only, so a line in
+      # the merge base but not at head is content this branch deletes from main
+      # on merge. Cause-agnostic by design. Needs the job's `fetch-depth: 0` to
+      # resolve merge-base; on push events (no PR payload) the script skips.
+      - name: Block dropped agents.md content (append-only)
+        env:
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node_modules/.bin/tsx scripts/ci/check-agents-md-append-only.ts
 
       - name: Require justification for new anchors indexes (SCRUM-1286)
         run: npm run ci:anchor-index-justification
