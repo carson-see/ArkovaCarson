@@ -1,0 +1,19 @@
+{
+  "name": "arkova-soak-loadgen",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone durable load generator for the 2026-08 72h soak pair (SCRUM-2980). Not part of services/worker's build or dependency graph.",
+  "type": "module",
+  "main": "dist/loadgen-server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/loadgen-server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "@types/node": "^20.14.0"
+  }
+}
