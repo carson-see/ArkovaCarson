@@ -61,6 +61,10 @@ vi.mock('../../utils/logger.js', () => ({
 
 vi.mock('../../utils/db.js', () => ({
   db: {},
+  // SCRUM-3031: passthrough by default so existing tests are unaffected;
+  // the dedicated retry/backoff tests live in
+  // publicRecordAnchor-rpc-hardening.test.ts, which mocks this directly.
+  withDbTimeout: vi.fn((operation: () => Promise<unknown>) => operation()),
 }));
 
 vi.mock('../../chain/client.js', () => ({

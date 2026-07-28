@@ -21,7 +21,7 @@
  *   - 1.9: ENABLE_PROD_NETWORK_ANCHORING gates real Bitcoin chain calls
  */
 
-import { db } from '../utils/db.js';
+import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getChainClientAsync } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
@@ -533,15 +533,83 @@ async function insertAnchorSerialFallback(
   return created;
 }
 
+// SCRUM-3031: hard client-side ceiling on the batch_insert_anchors RPC call.
+// Well below the RPC's own 120s statement_timeout (see migration 0370) so
+// the worker fails fast and falls back to serial inserts instead of
+// blocking indefinitely on a wedged call — the root-cause fix (0370) makes
+// this call cheap even at prod scale, but this is defense-in-depth against
+// any future regression re-wedging the same table.
+export const BATCH_INSERT_RPC_TIMEOUT_MS = 20_000;
+/** Only timeout-classified failures are retried (see isRpcTimeoutError); a
+ *  real Postgrest error falls straight through to the serial fallback, same
+ *  as before this change. */
+export const BATCH_INSERT_RPC_MAX_ATTEMPTS = 3;
+export const BATCH_INSERT_RPC_BASE_BACKOFF_MS = 1_000;
+
+function isRpcTimeoutError(err: unknown): boolean {
+  return err instanceof Error && err.message.includes('timed out');
+}
+
+/**
+ * Calls batch_insert_anchors with a hard client-side timeout and jittered
+ * exponential backoff on timeout (SCRUM-3031). A wedged RPC must never be
+ * hammered by an instant tight retry loop — that back-to-back-locking
+ * pattern is exactly the "near-continuous RowExclusiveLock" symptom the
+ * ticket describes, and public-record anchoring runs on a cron that would
+ * otherwise re-trigger the same expensive call every cycle with no gap.
+ *
+ * Non-timeout RPC errors (a real Postgrest-level error object, not a
+ * thrown/rejected timeout) are NOT retried here — they fall straight
+ * through to the caller's serial-insert fallback, preserving prior
+ * behavior for genuine RPC failures (bad payload, permission error, etc).
+ *
+ * Exported for direct unit testing (mirrors buildAnchorFilename /
+ * mapCredentialType already being exported for the same reason).
+ */
+export async function callBatchInsertAnchorsWithRetry(
+  client: SupabaseClient,
+  chunk: PipelineAnchorInsert[],
+  chunkStart: number,
+): Promise<{ data: Array<{ id: string; fingerprint: string }> | null; error: unknown }> {
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < BATCH_INSERT_RPC_MAX_ATTEMPTS; attempt++) {
+    try {
+      const { data, error } = await withDbTimeout(
+        // Wrapped in an async arrow so this is a real Promise<T> — the
+        // PostgrestFilterBuilder client.rpc() returns is PromiseLike but
+        // doesn't structurally match Promise<T> for withDbTimeout's generic.
+        async () => client.rpc('batch_insert_anchors', { p_anchors: chunk }),
+        BATCH_INSERT_RPC_TIMEOUT_MS,
+      );
+      // A returned (not thrown) Postgrest error is a real failure, not a
+      // timeout — surface it immediately, same as pre-SCRUM-3031 behavior.
+      return { data: (data ?? null) as Array<{ id: string; fingerprint: string }> | null, error: error ?? null };
+    } catch (err) {
+      lastError = err;
+      if (!isRpcTimeoutError(err) || attempt === BATCH_INSERT_RPC_MAX_ATTEMPTS - 1) {
+        break;
+      }
+      // Exponential backoff with jitter: ~1s, ~2s (+ up to 500ms jitter).
+      const backoffMs = BATCH_INSERT_RPC_BASE_BACKOFF_MS * 2 ** attempt + Math.floor(Math.random() * 500);
+      logger.warn(
+        { chunkIndex: chunkStart, chunkSize: chunk.length, attempt: attempt + 1, backoffMs },
+        'batch_insert_anchors RPC timed out — retrying with jittered backoff',
+      );
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+
+  return { data: null, error: lastError };
+}
+
 async function insertAnchorChunk(
   client: SupabaseClient,
   chunk: PipelineAnchorInsert[],
   chunkStart: number,
   ownerId: string,
 ): Promise<Array<{ id: string; fingerprint: string }>> {
-  const { data: result, error: rpcError } = await client.rpc('batch_insert_anchors', {
-    p_anchors: chunk,
-  });
+  const { data: result, error: rpcError } = await callBatchInsertAnchorsWithRetry(client, chunk, chunkStart);
 
   if (rpcError) {
     logger.error({ error: rpcError, chunkIndex: chunkStart, chunkSize: chunk.length }, 'Batch insert RPC failed — falling back to serial inserts');
