@@ -89,7 +89,7 @@ export const TESSERACT_VENDOR_PATHS = {
 export interface OCRResult {
   text: string;
   pageCount: number;
-  method: 'pdfjs' | 'tesseract' | 'mammoth' | 'text';
+  method: 'pdfjs' | 'tesseract' | 'mammoth' | 'text' | 'spreadsheet';
   durationMs: number;
 }
 
@@ -262,6 +262,47 @@ async function extractTextFromDocx(
 }
 
 /**
+ * Extract text from a spreadsheet file (.xlsx/.xls/.ods) using SheetJS.
+ * Runs entirely in the browser — no network calls.
+ *
+ * F1 (founder amendment 2026-07-28, spreadsheet dual-mode): this powers the
+ * "secure this file as one document" mode for non-credential spreadsheets.
+ * It is deliberately separate from the pre-existing ROW-mode bulk-import
+ * parser (src/lib/xlsxParser.ts, backed by read-excel-file) — row mode stays
+ * the original per-record credential-issuance path and is untouched by this
+ * change. Every sheet in the workbook is rendered to a text block so nothing
+ * is silently dropped for multi-sheet files.
+ */
+async function extractTextFromSpreadsheet(
+  file: File,
+  onProgress?: (progress: OCRProgress) => void,
+): Promise<OCRResult> {
+  const start = Date.now();
+  onProgress?.({ stage: 'loading', progress: 10 });
+
+  const XLSX = await import('xlsx');
+  const arrayBuffer = await file.arrayBuffer();
+  const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+
+  onProgress?.({ stage: 'processing', progress: 50, totalPages: workbook.SheetNames.length });
+
+  const sheetTexts = workbook.SheetNames.map((sheetName) => {
+    const sheet = workbook.Sheets[sheetName];
+    const csv = sheet ? XLSX.utils.sheet_to_csv(sheet) : '';
+    return `# ${sheetName}\n${csv}`.trimEnd();
+  });
+
+  onProgress?.({ stage: 'complete', progress: 100 });
+
+  return {
+    text: sheetTexts.join('\n\n'),
+    pageCount: workbook.SheetNames.length,
+    method: 'spreadsheet',
+    durationMs: Date.now() - start,
+  };
+}
+
+/**
  * Extract text from a plain text file by reading it directly.
  * No OCR needed — just read the file contents.
  */
@@ -300,6 +341,18 @@ const DOCX_TYPES = new Set([
 const DOCX_EXTENSIONS = new Set(['.docx']);
 
 /**
+ * Spreadsheet MIME types routed to SheetJS document-mode extraction
+ * (F1: .xls/.xlsx/.ods). `.csv` is intentionally excluded here — it is
+ * already plain text and is handled by TEXT_TYPES/TEXT_EXTENSIONS below.
+ */
+const SPREADSHEET_TYPES = new Set([
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+  'application/vnd.ms-excel', // .xls
+  'application/vnd.oasis.opendocument.spreadsheet', // .ods
+]);
+const SPREADSHEET_EXTENSIONS = new Set(['.xlsx', '.xls', '.ods']);
+
+/**
  * Auto-detect file type and run appropriate text extraction.
  * Supports PDFs (PDF.js), Word documents (mammoth.js), images (Tesseract OCR), and text files (direct read).
  */
@@ -315,6 +368,13 @@ export async function extractText(
   const ext = '.' + file.name.split('.').pop()?.toLowerCase();
   if (DOCX_TYPES.has(file.type) || DOCX_EXTENSIONS.has(ext)) {
     return extractTextFromDocx(file, onProgress);
+  }
+
+  // Spreadsheets — extract via SheetJS (F1: document-mode anchoring of
+  // non-credential spreadsheets; must check before the generic unsupported
+  // fallback so .xlsx/.xls/.ods no longer soft-fail).
+  if (SPREADSHEET_TYPES.has(file.type) || SPREADSHEET_EXTENSIONS.has(ext)) {
+    return extractTextFromSpreadsheet(file, onProgress);
   }
 
   // SCRUM-2911: browser-undecodable image formats (HEIC/TIFF) must SOFT-FAIL

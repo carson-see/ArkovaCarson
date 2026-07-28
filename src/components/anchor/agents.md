@@ -1,6 +1,6 @@
 # agents.md — components/anchor
 
-_Last updated: 2026-05-26 (SCRUM-2013 credential type drift fix)_
+_Last updated: 2026-07-28 (W2 / F1 spreadsheet dual-mode)_
 
 ## What This Folder Contains
 
@@ -9,7 +9,7 @@ Core anchor (document-securing) UI components: upload, confirm, AI extraction, l
 ## Key Files
 
 - `SecureDocumentDialog.tsx` — Main modal for securing a document: upload -> AI extraction -> template -> confirm -> anchor. Has a **§1.6 fail-closed `privacy-blocked` step** (WEBEXT-03): when `runExtraction` reports `progress.failClosed` (on-device PII model / OCR engine could not run), the dialog routes to a LOUD failure (`PRIVACY_FAIL_CLOSED_LABELS`) stating nothing was sent — distinct from the soft `extraction-failed` recovery. The fail-closed signal is latched in a local (React state is async) inside the progress callback.
-- `FileUpload.tsx` — Drag-and-drop file upload with client-side fingerprint generation (never uploaded to server)
+- `FileUpload.tsx` — Drag-and-drop file upload with client-side fingerprint generation (never uploaded to server). **W2 / F1 (2026-07-28)**: a single dropped spreadsheet (`.csv`/`.xlsx`/`.xls`/`.tsv`) no longer routes straight to `onBulkDetected` — it pauses on an explicit mode-choice step (`data-testid="spreadsheet-mode-choice"`: "Import as a list of records" vs "Secure this file as a document") via internal `pendingModeFile` state. A multi-file drop is untouched (still routes straight to bulk, regardless of format — mixed-batch handling is W1's surface, not touched here).
 - `ConfirmAnchorModal.tsx` — Confirmation step before anchoring a document
 - `AIFieldSuggestions.tsx` — Displays AI-extracted credential fields with accept/reject/edit controls (no confidence UI, SCRUM-2914)
 - `ExtractionQualityBanner.tsx` — Shows the PII-stripped/invalid-fields notice (no confidence UI, SCRUM-2914)
@@ -36,6 +36,7 @@ Core anchor (document-securing) UI components: upload, confirm, AI extraction, l
 
 ## Recent Changes
 
+- 2026-07-28 W2 / F1 (founder ruling — spreadsheet dual-mode, PR TBD): FOUND + FIXED BUG — `isBulkUploadFile()` intercepted every `.csv`/`.xlsx`/`.xls`/`.tsv` file BEFORE `generateFingerprint` was ever called, so a spreadsheet could never be anchored as a single document (only ever as row-mode bulk import). Founder ruling: row-mode IS the original intent for credential issuance and stays the default surface (kept exactly as-is via the new "Import as a list of records" choice), but it can no longer be the ONLY path. `FileUpload.tsx` now shows an explicit mode-choice step for a lone spreadsheet file (`pendingModeFile` state, `dispatchFiles()` helper); a multi-file drop is unaffected. "Secure this file as a document" routes through the completely normal single-doc `processFile` → `generateFingerprint` → `onFileSelect` path — no special-casing downstream. New copy: `SPREADSHEET_MODE_LABELS` in `copy.ts`. Extraction for the document-mode path is powered by a new SheetJS-based `extractTextFromSpreadsheet()` in `src/lib/ocrWorker.ts` (see `src/lib/agents.md`).
 - 2026-07-22 SCRUM-2914 (Founder UI findings, follow-up): `AssetDetailView.tsx` "awaiting confirmation" notice had its own hardcoded "~10 minutes" liability string (separate from the `SecureDocumentDialog` one). Moved to `CONFIRMATION_PROGRESS_LABELS.AWAITING_CONFIRMATION` in `copy.ts` (§1.3 — copy belongs in copy.ts), made timing-neutral.
 - 2026-07-22 SCRUM-2914 (Founder UI findings): killed extraction-confidence UI across the flow. `ExtractionQualityBanner.tsx` no longer takes/renders a `confidence` prop — it's the PII-stripped/invalid-fields notice only. `AIFieldSuggestions.tsx` dropped `overallConfidence` and per-field confidence % (accept/reject/edit unaffected). `SecureDocumentDialog.tsx` removed the `reviewComplete` state and the `disabled`/`aria-disabled` wiring on the extraction-review Continue button — the AI-03 confidence-driven block is gone (`TemplateReviewPanel` still renders for field review/edit, its `onReviewStateChange` is now a no-op). `src/components/organization/IssueCredentialForm.tsx` updated to match the `AIFieldSuggestions` prop change.
 - 2026-07-17 SCRUM-2910 (BUG-2026-07-17-009/-010, P0): `ExtractionQualityBanner.tsx` no longer renders fraud-signal UI (the `fraudSignals` prop was removed — it rendered Gemini extraction output ungated by ENABLE_FRAUD_DETECTION); `SecureDocumentDialog.tsx` no longer passes fraud data to it. `AssetDetailView.tsx` metadata filter now also hides any `fraud*` key via `isFraudMetadataKey` from `@/lib/fraudDetection`.
