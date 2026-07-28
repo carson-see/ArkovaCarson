@@ -222,7 +222,6 @@ echo "─── real run (stubbed) ───────────────
 reset_state
 out=$(run_sut --pr 123 2>&1); rc=$?
 assert_exit  "plain run succeeds" 0 "$rc"
-assert_match "plain run creates empty commit" "" "$([[ -f "${TMP_DIR}/git-commit-called" ]] && echo present)"
 if [[ -f "${TMP_DIR}/git-commit-called" ]]; then
   echo "  PASS  plain run calls git commit"
   PASS=$((PASS + 1))

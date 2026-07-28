@@ -91,6 +91,46 @@ function assertWorkflowContract(workflow: string): void {
   expect(livePrStep).toMatch(/base_sha=/u);
   expect(livePrStep).toMatch(/body<</u);
 
+  // ── PR-body heredoc delimiter must be randomized per run, not a fixed
+  // literal (adversarial review, 2026-07-28) ──
+  // The PR body interpolated into this heredoc is fully author-controlled. A
+  // FIXED delimiter lets a PR author place that exact string on its own line
+  // in their PR body to terminate the heredoc early, then have the rest of
+  // their body parsed as literal `key=value` lines appended to
+  // $GITHUB_OUTPUT — including overwriting head_sha/base_sha/checkout_sha
+  // written earlier in this same step, since GitHub Actions resolves a
+  // duplicate output name to its LAST occurrence. A per-run random delimiter
+  // (GitHub's own documented remedy) closes this off: the attacker cannot
+  // know it in advance.
+  const bodyHeredocStarts = [
+    ...livePrStep.matchAll(/body<<(\S+)\s*$/gmu),
+  ].map((match) => match[1].replace(/^["']|["']$/gu, ""));
+  expect(
+    bodyHeredocStarts,
+    "the PR-body heredoc must appear exactly once in the live_pr step",
+  ).toHaveLength(1);
+  const [bodyDelimiterToken] = bodyHeredocStarts;
+  expect(
+    bodyDelimiterToken,
+    "the PR-body heredoc delimiter must be a shell-variable expansion (derived at runtime), never a fixed literal string an attacker could pre-empt by embedding it in the PR body",
+  ).toMatch(/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/u);
+  const bodyDelimiterVarName = bodyDelimiterToken.slice(2, -1);
+  const bodyDelimiterAssignment = new RegExp(
+    `\\b${bodyDelimiterVarName}=.*\\$\\(`,
+    "u",
+  );
+  expect(
+    livePrStep,
+    "the delimiter variable must be assigned from a command substitution (a runtime-random source), not a static string",
+  ).toMatch(bodyDelimiterAssignment);
+  const closingDelimiterLines = [
+    ...livePrStep.matchAll(/^\s+echo "\$\{([A-Za-z_][A-Za-z0-9_]*)\}"\s*$/gmu),
+  ].map((match) => match[1]);
+  expect(
+    closingDelimiterLines,
+    "the heredoc's closing line must reuse the exact same delimiter variable that opened it",
+  ).toContain(bodyDelimiterVarName);
+
   const livePrIndex = workflow.indexOf(livePrStep);
   const checkoutIndex = workflow.indexOf(
     "uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
@@ -317,5 +357,35 @@ describe("staging-evidence workflow live-state contract (SCRUM-3026)", () => {
     expect(withoutLiveStep).not.toBe(workflow);
 
     expect(() => assertWorkflowContract(withoutLiveStep)).toThrow();
+  });
+
+  it("rejects reverting the PR-body heredoc to a fixed, predictable delimiter", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const fixedDelimiterHeredoc =
+      /echo "body<<\$\{[A-Za-z_][A-Za-z0-9_]*\}"\n(?:.*\n)*?\s+echo "\$\{[A-Za-z_][A-Za-z0-9_]*\}"\n/mu;
+    expect(workflow).toMatch(fixedDelimiterHeredoc);
+    const mutated = workflow.replace(
+      fixedDelimiterHeredoc,
+      [
+        'echo "body<<STAGING_EVIDENCE_PR_BODY_EOF"',
+        '            jq -r \'.body // ""\' <<<"${DATA}"',
+        '            echo "STAGING_EVIDENCE_PR_BODY_EOF"',
+        "",
+      ].join("\n"),
+    );
+    expect(mutated).not.toBe(workflow);
+
+    expect(() => assertWorkflowContract(mutated)).toThrow();
+  });
+
+  it("rejects a delimiter variable assigned from a static string instead of a runtime-random source", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = workflow.replace(
+      /BODY_DELIM="ghadelim_\$\(openssl rand -hex 16\)"/u,
+      'BODY_DELIM="ghadelim_static_value"',
+    );
+    expect(mutated).not.toBe(workflow);
+
+    expect(() => assertWorkflowContract(mutated)).toThrow();
   });
 });
