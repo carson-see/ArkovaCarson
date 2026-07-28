@@ -1,4 +1,4 @@
-# T+0–2h Smoke Gate — legacy-soak-2026-08 — PASS (infra), OPEN ITEM (SS4.3 journey assignment)
+# T+0–2h Smoke Gate — legacy-soak-2026-08 — PASS (infra) — CLOSED 2026-07-28T22:2x (first-anchor-SECURED confirmed)
 
 Soak: `legacy-soak-2026-08` · Clock start: `2026-07-28T21:32:17.475418Z` · Revision `arkova-worker-legacy-soak-2026-08-staging-00002-4sr` · Head `42ad98c9c48cacdddd078a73cdae2fcaf59f1ac2` · Supabase `ryasykzdduzymschbucr`
 
@@ -42,6 +42,16 @@ Re-checked the open items logged above, live:
 3. **Load generation — STARTED.** `scripts/soak/loadgen.ts`, deployed as an always-on Cloud Run service (`arkova-soak-loadgen-legacy-soak-2026-08`, `min-instances=1`, `--no-cpu-throttling`) against this rig. See `loadgen-legacy-soak-2026-08.json` for full config, achieved rate, and honest gaps vs the runbook's full 28/83 RPS target. Real traffic confirmed landing via the worker's own Cloud Run request logs (not just the loadgen's self-report).
 4. **SS4.3 journey-table assignment — DONE, with most rows flagged NOT COVERED.** See `journey-coverage.md`: 2 of 8 subsystem rows have any real exercise (1 partial, 1 incidental), 6 are explicitly NOT COVERED by anything running this session. This closes the "was the assignment even attempted" gap but does not close the underlying coverage gap — treat the 6 NOT COVERED rows as a punch list for the rest of the window.
 5. **JWT/secret expiry — VERIFIED, no fix needed.** `supabase-service-role-key-legacy-soak-2026-08-staging` decodes to `exp=2100849655` (2036-07-28), far past the 72h window. Cloud Scheduler's OIDC tokens are minted fresh per invocation by Google (not a static credential with its own expiry) — confirmed via `gcloud scheduler jobs describe ...check-confirmations --format="yaml(httpTarget.oidcToken)"`, which shows `serviceAccountEmail` only, no stored token. Supabase Auth `jwt_exp=3600` is the standard end-user access-token lifetime (auto-refreshed via refresh tokens), not a soak-relevant credential. No action needed on this rig.
+
+## 2026-07-28T22:2x follow-up (RTE session — two-follow-up continuation)
+
+**Legacy smoke gate: first-anchor-SECURED item — NOW CLOSED.** Re-checked live:
+
+- `mempool.space/signet/api/tx/60b0b57486f13977f3c3e1a6671f28e01567d32bf8b418ce0dc6fe84af7f5cc0/status` → `{"confirmed":true,"block_height":315206,"block_hash":"0000000da9c7a8a5481782945074c4513eb7883f01e3e1958c7df1a3583f4cf5","block_time":1785275409}`.
+- Cross-checked directly against the app DB (MCP `execute_sql`, project `ryasykzdduzymschbucr`): `select id, status, chain_tx_id, updated_at from anchors where chain_tx_id = '60b0b57486f13977f3c3e1a6671f28e01567d32bf8b418ce0dc6fe84af7f5cc0'` → `status: SECURED`, `updated_at: 2026-07-28 21:52:49.255997+00`.
+- Item 2 from the prior follow-up (`still NOT reached`) is superseded by this check — the `check-confirmations`/`populate-confirmation-proofs` cron cycle picked up the confirmation between that check and this one. **Item 2 is CLOSED.**
+
+This closes the last open row in the original smoke-gate table (row "First anchor SECURED end-to-end") — that row should now be read as **PASS**, not "NOT REACHED", as of this timestamp.
 
 ## gcloud environment finding (non-rig-specific)
 
