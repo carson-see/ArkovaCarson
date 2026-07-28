@@ -34,30 +34,38 @@ interface FakeDb extends DriveProcessorDb {
   ledgerInserts: Array<{ file_id: string; revision_id: string; outcome: string; parent_ids: string[]; actor_email: string | null }>;
   ledgerDeletes: Array<{ file_id: string; revision_id: string }>;
   enqueueCalls: Array<{ file_id: string; parent_ids: string[]; actor_email: string | null; revision_id: string }>;
+  fileChangedJobCalls: Array<{ file_id: string; revision_id: string | null; mime_type: string | null; modified_time: string | null; rule_event_id: string }>;
   advancedPageTokens: string[];
   duplicateKeys: Set<string>;
   enqueueResult: string | null;
+  fileChangedJobResult: string | null;
 }
 
 function makeFakeDb(opts: {
   duplicateKeys?: string[];
   enqueueResult?: string | null;
   enqueueImpl?: (payload: { file_id: string; revision_id: string }) => Promise<string | null>;
+  fileChangedJobResult?: string | null;
+  fileChangedJobImpl?: (payload: { file_id: string; rule_event_id: string }) => Promise<string | null>;
 } = {}): FakeDb {
   const ledgerInserts: FakeDb['ledgerInserts'] = [];
   const ledgerDeletes: FakeDb['ledgerDeletes'] = [];
   const enqueueCalls: FakeDb['enqueueCalls'] = [];
+  const fileChangedJobCalls: FakeDb['fileChangedJobCalls'] = [];
   const advancedPageTokens: string[] = [];
   const duplicateKeys = new Set(opts.duplicateKeys ?? []);
   const enqueueResult = opts.enqueueResult === undefined ? 'evt-out' : opts.enqueueResult;
+  const fileChangedJobResult = opts.fileChangedJobResult === undefined ? 'job-out' : opts.fileChangedJobResult;
 
   return {
     ledgerInserts,
     ledgerDeletes,
     enqueueCalls,
+    fileChangedJobCalls,
     advancedPageTokens,
     duplicateKeys,
     enqueueResult,
+    fileChangedJobResult,
     insertRevisionLedger: vi.fn(async (row) => {
       const key = `${row.file_id}::${row.revision_id}`;
       if (duplicateKeys.has(key)) {
@@ -92,6 +100,21 @@ function makeFakeDb(opts: {
       });
       if (opts.enqueueImpl) return opts.enqueueImpl(payload);
       return enqueueResult;
+    }),
+    // SCRUM-2903 (GD-PROD): default fake mirrors production's happy path —
+    // every enqueueRuleEvent success is immediately followed by a file-changed
+    // job enqueue. Tests that want to exercise the failure/rollback path pass
+    // fileChangedJobResult: null or fileChangedJobImpl.
+    enqueueFileChangedJob: vi.fn(async (payload) => {
+      fileChangedJobCalls.push({
+        file_id: payload.file_id,
+        revision_id: payload.revision_id,
+        mime_type: payload.mime_type,
+        modified_time: payload.modified_time,
+        rule_event_id: payload.rule_event_id,
+      });
+      if (opts.fileChangedJobImpl) return opts.fileChangedJobImpl(payload);
+      return fileChangedJobResult;
     }),
   };
 }
@@ -444,6 +467,120 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
     expect(db.enqueueCalls).toHaveLength(0);
     expect(db.ledgerInserts.find((r) => r.file_id === 'no-parents')!.outcome).toBe('unrelated_change');
     expect(db.ledgerInserts.find((r) => r.file_id === 'wrong-folder')!.outcome).toBe('parent_mismatch');
+  });
+
+  describe('SCRUM-2903 (GD-PROD): file-changed job wiring', () => {
+    it('a queued change enqueues the file-changed job right after the rule event, carrying mime/revision/timestamp/rule-event-id', async () => {
+      const db = makeFakeDb({ enqueueResult: 'evt-123', fileChangedJobResult: 'job-456' });
+      const listMock = vi.fn().mockResolvedValueOnce(
+        pageOf([
+          {
+            file: {
+              id: 'file-1',
+              name: 'msa.pdf',
+              parents: [WATCHED_FOLDER_A],
+              modifiedTime: '2026-05-04T01:00:00Z',
+              headRevisionId: 'rev-1',
+              mimeType: 'application/pdf',
+            },
+          },
+        ], { newStartPageToken: 'token-2' }),
+      );
+
+      const result = await processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'access-token',
+        db,
+        deps: { listChanges: listMock },
+      });
+
+      expect(result.queued).toBe(1);
+      expect(db.fileChangedJobCalls).toHaveLength(1);
+      expect(db.fileChangedJobCalls[0]).toEqual({
+        file_id: 'file-1',
+        revision_id: 'rev-1',
+        mime_type: 'application/pdf',
+        modified_time: '2026-05-04T01:00:00Z',
+        rule_event_id: 'evt-123',
+      });
+    });
+
+    it('enqueueFileChangedJob returning null rolls back the ledger reservation and aborts the page', async () => {
+      const db = makeFakeDb({ enqueueResult: 'evt-ok', fileChangedJobResult: null });
+      const listMock = vi.fn().mockResolvedValueOnce(
+        pageOf(
+          [{ file: { id: 'file-fcj-fail', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-fcj-fail' } }],
+          { newStartPageToken: 'token-2' },
+        ),
+      );
+
+      await expect(
+        processDriveChanges({
+          integration: makeIntegration(),
+          accessToken: 'tok',
+          db,
+          deps: { listChanges: listMock },
+        }),
+      ).rejects.toThrow(/enqueueFileChangedJob returned null/);
+
+      // Same no-drop compensation as the enqueueRuleEvent-null path: the rule
+      // event already fired, but without a file-changed job the change has no
+      // path to anchoring, so the ledger slot must be freed for retry.
+      expect(db.ledgerDeletes).toEqual([{ file_id: 'file-fcj-fail', revision_id: 'rev-fcj-fail' }]);
+      expect(db.duplicateKeys.has('file-fcj-fail::rev-fcj-fail')).toBe(false);
+      expect(db.advancedPageTokens).toEqual([]);
+    });
+
+    it('enqueueFileChangedJob throwing rolls back the ledger reservation and re-throws', async () => {
+      const db = makeFakeDb({
+        enqueueResult: 'evt-ok',
+        fileChangedJobImpl: async () => {
+          throw new Error('job_queue offline');
+        },
+      });
+      const listMock = vi.fn().mockResolvedValueOnce(
+        pageOf(
+          [{ file: { id: 'file-fcj-throw', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-fcj-throw' } }],
+          { newStartPageToken: 'token-2' },
+        ),
+      );
+
+      await expect(
+        processDriveChanges({
+          integration: makeIntegration(),
+          accessToken: 'tok',
+          db,
+          deps: { listChanges: listMock },
+        }),
+      ).rejects.toThrow(/job_queue offline/);
+
+      expect(db.ledgerDeletes).toEqual([{ file_id: 'file-fcj-throw', revision_id: 'rev-fcj-throw' }]);
+      expect(db.duplicateKeys.has('file-fcj-throw::rev-fcj-throw')).toBe(false);
+    });
+
+    it('falls back to modifiedTime-derived ledger revision_id but passes the raw headRevisionId (null when absent) to the file-changed job', async () => {
+      // Docs/Sheets have no headRevisionId — the ledger dedupes on
+      // `mtime:<modifiedTime>`, but the job payload should carry the RAW
+      // Drive-native headRevisionId (null here), not the synthesized ledger key,
+      // so connector_artifact.external_revision never gets a "mtime:" prefix.
+      const db = makeFakeDb();
+      const listMock = vi.fn().mockResolvedValueOnce(
+        pageOf(
+          [{ file: { id: 'doc-1', parents: [WATCHED_FOLDER_A], modifiedTime: '2026-05-04T01:23:00Z' } }],
+          { newStartPageToken: 'token-2' },
+        ),
+      );
+
+      await processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock },
+      });
+
+      expect(db.ledgerInserts[0].revision_id).toBe('mtime:2026-05-04T01:23:00Z');
+      expect(db.fileChangedJobCalls[0].revision_id).toBeNull();
+    });
   });
 
   it('throws when integration has no last_page_token (misconfiguration, fail loud)', async () => {

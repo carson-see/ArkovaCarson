@@ -66,6 +66,24 @@ export interface DriveProcessorDb {
     integration_id: string;
     filename: string | null;
   }): Promise<string | null>;
+  /**
+   * SCRUM-2903 (GD-PROD): enqueue the `google_drive.file_changed` job — the
+   * durable hand-off that lets `jobs/drive-file-changed.ts` fetch the
+   * document, SHA-256 it (§1.6A), and write a `connector_artifact` for the
+   * existing drain to anchor. Drive twin of the DocuSign webhook's
+   * `enqueueFetchJob` (called right after `enqueueRuleEvent`, same
+   * fire-both-or-roll-back-the-ledger shape). Returns the new job id, null
+   * on failure.
+   */
+  enqueueFileChangedJob(payload: {
+    org_id: string;
+    integration_id: string;
+    file_id: string;
+    revision_id: string | null;
+    mime_type: string | null;
+    modified_time: string | null;
+    rule_event_id: string;
+  }): Promise<string | null>;
 }
 
 export interface DriveProcessorIntegration {
@@ -236,7 +254,17 @@ export async function processDriveChanges(args: {
 
       // GD-04 + GD-05 + GD-06: matching change → enqueue exactly one rule
       // event, attribution preserved where Google permits.
+      //
+      // SCRUM-2903 (GD-PROD): immediately followed by enqueueing the
+      // `google_drive.file_changed` job — the Drive twin of the DocuSign
+      // webhook's enqueueRuleEvent + enqueueFetchJob pair. Without this
+      // second enqueue the rule event fires but nothing ever fetches +
+      // fingerprints the document, so the change has no path to anchoring.
+      // Both enqueues share one compensation: any failure rolls back the
+      // ledger reservation so the next pass retries the whole change.
+      const mimeType = change.file?.mimeType ?? null;
       let ruleEventId: string | null;
+      let fileChangedJobId: string | null;
       try {
         ruleEventId = await args.db.enqueueRuleEvent({
           org_id: args.integration.org_id,
@@ -247,6 +275,17 @@ export async function processDriveChanges(args: {
           integration_id: args.integration.id,
           filename,
         });
+        fileChangedJobId = ruleEventId === null
+          ? null
+          : await args.db.enqueueFileChangedJob({
+            org_id: args.integration.org_id,
+            integration_id: args.integration.id,
+            file_id: fileId,
+            revision_id: change.file?.headRevisionId ?? null,
+            mime_type: mimeType,
+            modified_time: modifiedTime,
+            rule_event_id: ruleEventId,
+          });
       } catch (err) {
         // Compensate: roll back the ledger reservation so retry isn't blocked.
         await args.db.deleteRevisionLedgerEntry({
@@ -254,7 +293,7 @@ export async function processDriveChanges(args: {
           file_id: fileId,
           revision_id: revisionId,
         });
-        log?.error?.({ err, integrationId: args.integration.id, fileId, revisionId }, 'drive enqueueRuleEvent threw — ledger rolled back, page abort');
+        log?.error?.({ err, integrationId: args.integration.id, fileId, revisionId }, 'drive enqueueRuleEvent/enqueueFileChangedJob threw — ledger rolled back, page abort');
         throw err;
       }
       if (ruleEventId === null) {
@@ -266,6 +305,15 @@ export async function processDriveChanges(args: {
         });
         log?.warn?.({ integrationId: args.integration.id, fileId, revisionId }, 'drive enqueueRuleEvent returned null — ledger rolled back, page abort');
         throw new Error('drive enqueueRuleEvent returned null');
+      }
+      if (fileChangedJobId === null) {
+        await args.db.deleteRevisionLedgerEntry({
+          integration_id: args.integration.id,
+          file_id: fileId,
+          revision_id: revisionId,
+        });
+        log?.warn?.({ integrationId: args.integration.id, fileId, revisionId, ruleEventId }, 'drive enqueueFileChangedJob returned null — ledger rolled back, page abort');
+        throw new Error('drive enqueueFileChangedJob returned null');
       }
       result.queued += 1;
     }
