@@ -7,6 +7,7 @@ React hooks for data fetching and mutations against Supabase. Each hook encapsul
 
 ## Recent Changes
 
+- 2026-07-28 R19 (advances SCRUM-2481): `useBulkAnchors.ts` `createBulkAnchors(records, options?)` gained a second `{ attested?: boolean }` param. Any batch containing a record whose `fingerprintProvided === false` (row-mode CSV import, no fingerprint column mapped — `src/lib/csvParser.ts`) requires `options.attested === true` or the hook rejects BEFORE calling the `bulk_create_anchors` RPC (sets `error`, returns `null`, never a partial submission). The RPC payload now carries `fingerprintProvided: r.fingerprintProvided ?? false` per row (fails closed to "record-derived, attestation required" when the flag is missing — never silently assumed `document_bytes`); the SQL function computes `fingerprint_source` server-side from this boolean (migration `0376`). Caller: `BulkUploadWizard.tsx`.
 - 2026-07-27 SCRUM-2940 (Folders UI): `useAnchors.ts` — the `AnchorPartial`
   select/Pick gained `folder_id`, mapped to `Record.folderId` (`null` =
   Unfiled, distinct from `undefined`/not-fetched). This is the minimal select

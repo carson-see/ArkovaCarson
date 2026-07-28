@@ -10,6 +10,7 @@ import {
   autoDetectMapping,
   validateCsvRows,
   extractAnchorRecords,
+  extractAnchorRecordsAsync,
 } from './csvParser';
 
 describe('csvParser', () => {
@@ -535,6 +536,104 @@ def456,other.doc`;
       expect(records).toHaveLength(1);
       expect(records[0].credentialType).toBe('DEGREE');
       expect(records[0].metadata).toEqual({ issuer: 'MIT', program: 'CS' });
+    });
+
+    // R19 (CTO ruling 2026-07-28): fingerprintProvided is the structural
+    // signal bulk_create_anchors uses to compute fingerprint_source
+    // server-side — must be set correctly for both branches.
+    it('should set fingerprintProvided=true when a fingerprint column is mapped', () => {
+      const columns = [
+        { index: 0, name: 'fingerprint', sample: '' },
+        { index: 1, name: 'filename', sample: '' },
+      ];
+      const mapping = {
+        fingerprint: 0,
+        filename: 1,
+        fileSize: null,
+        email: null,
+        credentialType: null,
+        metadata: null,
+      };
+      const rows = [
+        { rowNumber: 2, data: { fingerprint: 'A'.repeat(64), filename: 'doc.pdf' } },
+      ];
+
+      const records = extractAnchorRecords(rows, columns, mapping);
+
+      expect(records[0].fingerprintProvided).toBe(true);
+    });
+
+    it('should set fingerprintProvided=false when no fingerprint column is mapped', () => {
+      const columns = [
+        { index: 0, name: 'name', sample: '' },
+        { index: 1, name: 'course', sample: '' },
+      ];
+      const mapping = {
+        fingerprint: null,
+        filename: null,
+        fileSize: null,
+        email: null,
+        credentialType: null,
+        metadata: null,
+      };
+      const rows = [
+        { rowNumber: 2, data: { name: 'Jane Doe', course: 'CPR Certification' } },
+      ];
+
+      const records = extractAnchorRecords(rows, columns, mapping);
+
+      expect(records[0].fingerprintProvided).toBe(false);
+    });
+  });
+
+  describe('extractAnchorRecordsAsync — R19 fingerprintProvided consistency', () => {
+    it('keeps fingerprintProvided=true and preserves the supplied hash when a fingerprint column is mapped', async () => {
+      const columns = [
+        { index: 0, name: 'fingerprint', sample: '' },
+        { index: 1, name: 'filename', sample: '' },
+      ];
+      const mapping = {
+        fingerprint: 0,
+        filename: 1,
+        fileSize: null,
+        email: null,
+        credentialType: null,
+        metadata: null,
+      };
+      const suppliedHash = 'b'.repeat(64);
+      const rows = [
+        { rowNumber: 2, data: { fingerprint: suppliedHash, filename: 'transcript.pdf' } },
+      ];
+
+      const records = await extractAnchorRecordsAsync(rows, columns, mapping);
+
+      expect(records[0].fingerprintProvided).toBe(true);
+      expect(records[0].fingerprint).toBe(suppliedHash);
+    });
+
+    it('sets fingerprintProvided=false and synthesizes a row-text hash when no fingerprint column is mapped', async () => {
+      const columns = [
+        { index: 0, name: 'name', sample: '' },
+        { index: 1, name: 'course', sample: '' },
+      ];
+      const mapping = {
+        fingerprint: null,
+        filename: null,
+        fileSize: null,
+        email: null,
+        credentialType: null,
+        metadata: null,
+      };
+      const rows = [
+        { rowNumber: 2, data: { name: 'Jane Doe', course: 'CPR Certification' } },
+      ];
+
+      const records = await extractAnchorRecordsAsync(rows, columns, mapping);
+
+      expect(records[0].fingerprintProvided).toBe(false);
+      // Row-text hash is auto-generated — a valid SHA-256 hex string distinct
+      // from any real document hash the row does not carry.
+      expect(records[0].fingerprint).toMatch(/^[a-f0-9]{64}$/);
     });
   });
 });

@@ -125,10 +125,96 @@ describe('useBulkAnchors', () => {
           fileSize: null,
           credentialType: null,
           metadata: null,
+          // R19: mockRecords don't set fingerprintProvided, so it defaults
+          // to false (fail-closed to "unclassified/row-derived" rather than
+          // guessing document_bytes).
+          fingerprintProvided: false,
           orgId: 'viewed-org-id',
         })),
       }
     );
+  });
+
+  // R19 (CTO ruling 2026-07-28): issuer-attestation acknowledgement gate.
+  describe('R19 fingerprintProvided / attestation gate', () => {
+    it('sends fingerprintProvided=true through to the RPC when a record carries it', async () => {
+      mockRpc.mockResolvedValue({
+        data: { total: 1, created: 1, skipped: 0, failed: 0, results: [] },
+        error: null,
+      });
+
+      const { result } = renderHook(() => useBulkAnchors());
+      const documentRecord = [{ fingerprint: 'a'.repeat(64), filename: 'doc.pdf', fingerprintProvided: true }];
+
+      await act(async () => {
+        await result.current.createBulkAnchors(documentRecord);
+      });
+
+      expect(mockRpc).toHaveBeenCalledWith(
+        'bulk_create_anchors',
+        {
+          anchors_data: [
+            expect.objectContaining({ fingerprint: 'a'.repeat(64), fingerprintProvided: true }),
+          ],
+        }
+      );
+    });
+
+    it('blocks the RPC call and sets an error when a record-derived batch is not attested', async () => {
+      const { result } = renderHook(() => useBulkAnchors());
+      const recordDerivedRecords = [
+        { fingerprint: 'd'.repeat(64), filename: 'row_1.credential', fingerprintProvided: false },
+      ];
+
+      let finalResult: Awaited<ReturnType<typeof result.current.createBulkAnchors>> = null;
+      await act(async () => {
+        finalResult = await result.current.createBulkAnchors(recordDerivedRecords);
+      });
+
+      expect(finalResult).toBeNull();
+      expect(mockRpc).not.toHaveBeenCalled();
+      expect(result.current.error).toBeTruthy();
+    });
+
+    it('allows the RPC call when a record-derived batch IS attested', async () => {
+      mockRpc.mockResolvedValue({
+        data: { total: 1, created: 1, skipped: 0, failed: 0, results: [] },
+        error: null,
+      });
+
+      const { result } = renderHook(() => useBulkAnchors());
+      const recordDerivedRecords = [
+        { fingerprint: 'd'.repeat(64), filename: 'row_1.credential', fingerprintProvided: false },
+      ];
+
+      let finalResult: Awaited<ReturnType<typeof result.current.createBulkAnchors>> = null;
+      await act(async () => {
+        finalResult = await result.current.createBulkAnchors(recordDerivedRecords, { attested: true });
+      });
+
+      expect(finalResult).not.toBeNull();
+      expect(mockRpc).toHaveBeenCalled();
+    });
+
+    it('never requires attestation for an all-document-derived batch', async () => {
+      mockRpc.mockResolvedValue({
+        data: { total: 1, created: 1, skipped: 0, failed: 0, results: [] },
+        error: null,
+      });
+
+      const { result } = renderHook(() => useBulkAnchors());
+      const documentRecords = [
+        { fingerprint: 'a'.repeat(64), filename: 'doc.pdf', fingerprintProvided: true },
+      ];
+
+      let finalResult: Awaited<ReturnType<typeof result.current.createBulkAnchors>> = null;
+      await act(async () => {
+        finalResult = await result.current.createBulkAnchors(documentRecords); // no attested flag
+      });
+
+      expect(finalResult).not.toBeNull();
+      expect(mockRpc).toHaveBeenCalled();
+    });
   });
 
   it('should handle idempotent duplicate skipping', async () => {

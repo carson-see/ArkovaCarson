@@ -2,6 +2,17 @@
 
 _Last updated: 2026-07-28_
 
+## 2026-07-28 R19 — fingerprint_source evidence class (advances SCRUM-2481)
+
+New `fingerprintSource.ts` (mirrors `sourceProvenance.ts`) parses the `fingerprint_source` anchor field: `document_bytes` (a real file's bytes were fingerprinted client-side, §1.6) vs `issuer_record_attestation` (no source document was supplied — the CSV bulk-import row-mode path in `csvParser.ts` synthesizes the fingerprint from row text via `buildRowCanonical`/`sha256Hex` when no fingerprint column is mapped). This is an axis ORTHOGONAL to `verification_level`/`EvidenceLevel` in `sourceProvenance.ts` (that classifies credential-SOURCE-IMPORT authentication tiers, e.g. Credly/Accredible/URL-capture) — do not conflate the two or add `fingerprint_source` values to the `EvidenceLevel` union.
+
+`csvParser.ts`: `BulkAnchorRecord` gained `fingerprintProvided: boolean` — the structural signal (was a fingerprint CSV column mapped) set by `extractAnchorRecords`/`extractAnchorRecordsAsync` at the SAME moment the row-text-hash-vs-supplied-hash branch decision is made. This is sent to `bulk_create_anchors` (migration `0376`), which computes `fingerprint_source` SERVER-SIDE from this boolean — never trust a client-supplied evidence-class label (that pattern is the exact SCRUM-2481 P0 gap this closes for this one field).
+
+`validators.ts` `AnchorCreateSchema` gained `fingerprint_source: z.enum(['document_bytes','issuer_record_attestation']).optional().nullable()` — set to `'document_bytes'` by `SecureDocumentDialog.tsx` (the single-document Secure Document flow always hashes real file bytes).
+
+New `copy.ts` block: `FingerprintSource` type, `FINGERPRINT_SOURCE_LABELS`/`_DESCRIPTIONS`/`_TRIAD` (measured/asserted/NOT-asserted per §1.5), `RECORD_ATTESTATION_LABELS` (the row-import issuer-attestation checkbox copy in `BulkUploadWizard.tsx`). Purely additive — does not touch `EVIDENCE_LEVEL_*`.
+
+**R-7 claims gate invariant:** `issuer_record_attestation` copy must never state or imply Arkova received, reviewed, or verified a source document. Enforced by `fingerprintSource.test.ts` + `FingerprintSourceDisplay.test.tsx`.
 ## 2026-07-28 W2 / F1 spreadsheet dual-mode document extraction (founder ruling, PR TBD)
 
 `ocrWorker.ts` gained a new `extractTextFromSpreadsheet()` handler (dynamic `import('xlsx')`, the SheetJS package, added as a new pinned dependency `xlsx@0.18.5`) routed for `.xlsx`/`.xls`/`.ods` (by MIME OR extension, same dispatch pattern as the existing PDF/DOCX branches). Each sheet in the workbook is rendered via `XLSX.utils.sheet_to_csv` and joined into one text block; `OCRResult.method` gained a `'spreadsheet'` member. `.csv` is deliberately left on the pre-existing `TEXT_TYPES`/`TEXT_EXTENSIONS` plain-text path — it was never broken. Before this change, `.xlsx`/`.xls`/`.ods` fell through every branch in `extractText` and hit the generic `UNSUPPORTED_FILE_TYPE` throw — a silent soft-fail (the F1 sprint amendment specifically bans soft-fail-to-manual-entry for the 22 launch formats). New fixtures `src/lib/fixtures/spreadsheets/sample-roster.{xlsx,xls,ods,csv}` are REAL binary files generated with the `xlsx` package's own writer (see that folder's `agents.md`), consumed by `ocrWorker.test.ts` and `xlsxParser.test.ts` for genuine (non-mocked) round-trip extraction tests. Row-mode (`xlsxParser.ts`, backed by `read-excel-file`, powering per-record bulk/credential-issuance import) is completely untouched — this is a NEW, separate document-mode path, not a replacement.

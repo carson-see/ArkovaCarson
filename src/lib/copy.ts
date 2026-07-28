@@ -3330,6 +3330,55 @@ export const EVIDENCE_LEVEL_DESCRIPTIONS = {
 } as const satisfies Record<EvidenceLevel, string>;
 
 // =============================================================================
+// FINGERPRINT SOURCE (R19, CTO ruling 2026-07-28, advances SCRUM-2481)
+// =============================================================================
+// Distinguishes DOCUMENT-derived fingerprints (a real file's bytes, hashed
+// client-side per §1.6) from RECORD-derived fingerprints (an issuing
+// organization's asserted row content, hashed with no source document
+// supplied — src/lib/csvParser.ts buildRowCanonical). Orthogonal to
+// EvidenceLevel above (that axis is about credential SOURCE IMPORT
+// authentication; this axis is about what was hashed to make `fingerprint`).
+// R-7 claims gate: `issuer_record_attestation` copy must NEVER imply document
+// custody or document verification — it states only that the issuer's
+// asserted record content was fingerprinted.
+
+export type FingerprintSource = 'document_bytes' | 'issuer_record_attestation';
+
+export const FINGERPRINT_SOURCE_LABEL_HEADING = 'Fingerprint Source';
+
+export const FINGERPRINT_SOURCE_LABELS = {
+  document_bytes: 'Document Fingerprint',
+  issuer_record_attestation: 'Issuer-Attested Record',
+} as const satisfies Record<FingerprintSource, string>;
+
+export const FINGERPRINT_SOURCE_DESCRIPTIONS = {
+  document_bytes: "A source document's fingerprint was generated on your device and secured. Arkova never received the document itself.",
+  issuer_record_attestation: 'No source document was supplied. The issuing organization asserted this record’s content directly, and that content — not a document — was fingerprinted and secured.',
+} as const satisfies Record<FingerprintSource, string>;
+
+/** Measured / asserted / NOT-asserted triad per §1.5, for the public verify page. */
+export const FINGERPRINT_SOURCE_TRIAD = {
+  document_bytes: {
+    measured: 'The fingerprint of the document bytes provided on your device.',
+    asserted: 'That this exact document existed, unmodified, at the time it was secured.',
+    notAsserted: 'Who authored the document or whether its contents are accurate.',
+  },
+  issuer_record_attestation: {
+    measured: 'The fingerprint of the record content the issuing organization submitted.',
+    asserted: 'That the issuing organization submitted this exact record content — no source document was provided to Arkova.',
+    notAsserted: 'That a source document exists, was reviewed, or was fingerprinted. This record was never in document form.',
+  },
+} as const satisfies Record<FingerprintSource, { measured: string; asserted: string; notAsserted: string }>;
+
+/** Row-import (CSV bulk upload) issuer-attestation acknowledgement step. */
+export const RECORD_ATTESTATION_LABELS = {
+  SECTION_TITLE: 'Issuer Attestation Required',
+  BODY: 'Some rows in this file have no fingerprint column mapped, so Arkova will fingerprint the row content you provide instead of a source document. This creates an issuer-attested record, not a document fingerprint.',
+  CHECKBOX_LABEL: 'I am the issuing authority for these records and confirm the information above is accurate.',
+  ACKNOWLEDGEMENT_REQUIRED_ERROR: 'Please confirm the issuer attestation before processing records without a mapped fingerprint column.',
+} as const;
+
+// =============================================================================
 // VERSION RESOLUTION (SCRUM-1126)
 // =============================================================================
 

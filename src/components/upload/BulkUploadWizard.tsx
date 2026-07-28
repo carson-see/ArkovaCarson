@@ -40,7 +40,8 @@ import {
 import { CsvUploader } from './CsvUploader';
 import { AIExtractionStep, type BatchExtractionResult } from './AIExtractionStep';
 import { toast } from 'sonner';
-import { TOAST } from '@/lib/copy';
+import { TOAST, RECORD_ATTESTATION_LABELS } from '@/lib/copy';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useBulkAnchors } from '@/hooks/useBulkAnchors';
 import {
   type ParsedCsv,
@@ -92,6 +93,9 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
   const [mapping, setMapping] = useState<ColumnMapping | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [result, setResult] = useState<ProcessingResult | null>(null);
+  // R19 (CTO ruling 2026-07-28): issuer-attestation acknowledgement, required
+  // whenever no fingerprint column is mapped (record-derived rows).
+  const [attested, setAttested] = useState(false);
   const [_extractionResults, setExtractionResults] = useState<BatchExtractionResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [queuedInitialFile, setQueuedInitialFile] = useState<File | null>(
@@ -140,7 +144,7 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
       // Uses async version to auto-generate fingerprints when not in CSV
       const records = await extractAnchorRecordsAsync(validation.valid, columns, mapping);
 
-      const bulkResult = await createBulkAnchors(records);
+      const bulkResult = await createBulkAnchors(records, { attested });
 
       if (bulkResult) {
         const processingResult: ProcessingResult = {
@@ -164,7 +168,7 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
       setError(message);
       setStep('review');
     }
-  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, onComplete]);
+  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, onComplete, attested]);
 
   const handleExtractionComplete = useCallback((results: BatchExtractionResult[]) => {
     setExtractionResults(results);
@@ -174,7 +178,7 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
     // Trigger processing via the already-defined handler
     if (parsedCsv && mapping && validation) {
       extractAnchorRecordsAsync(validation.valid, columns, mapping)
-        .then((records) => createBulkAnchors(records))
+        .then((records) => createBulkAnchors(records, { attested }))
         .then((bulkResult) => {
           if (bulkResult) {
             const processingResult: ProcessingResult = {
@@ -198,7 +202,7 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
           setStep('review');
         });
     }
-  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, onComplete]);
+  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, onComplete, attested]);
 
   const handleSkipExtraction = useCallback(() => {
     setExtractionResults(null);
@@ -215,6 +219,7 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
     setExtractionResults(null);
     setError(null);
     setQueuedInitialFile(null);
+    setAttested(false);
   }, []);
 
   const handleUpdateMapping = useCallback(
@@ -322,6 +327,8 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgI
             onMappingChange={handleUpdateMapping}
             onBack={handleReset}
             onProcess={handleGoToExtraction}
+            attested={attested}
+            onAttestedChange={setAttested}
           />
         )}
 
@@ -364,6 +371,8 @@ function ReviewStep({
   onMappingChange,
   onBack,
   onProcess,
+  attested,
+  onAttestedChange,
 }: Readonly<{
   validation: ValidationResult;
   columns: CsvColumn[];
@@ -371,7 +380,13 @@ function ReviewStep({
   onMappingChange: (mapping: ColumnMapping) => void;
   onBack: () => void;
   onProcess: () => void;
+  attested: boolean;
+  onAttestedChange: (attested: boolean) => void;
 }>) {
+  // R19 (CTO ruling 2026-07-28): no fingerprint column mapped → every valid
+  // row will be record-derived (issuer attestation), never document-derived.
+  const requiresAttestation = mapping.fingerprint === null;
+  const canProcess = validation.valid.length > 0 && (!requiresAttestation || attested);
   const renderSelect = (
     label: string,
     value: number | null,
@@ -506,12 +521,36 @@ function ReviewStep({
         </div>
       )}
 
+      {/* R19: issuer-attestation acknowledgement, required when no fingerprint
+          column is mapped — every valid row becomes a record-derived
+          (issuer-attested) anchor, never a document fingerprint. */}
+      {requiresAttestation && (
+        <div
+          className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 space-y-2"
+          data-testid="record-attestation-notice"
+        >
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            <span className="text-sm font-medium">{RECORD_ATTESTATION_LABELS.SECTION_TITLE}</span>
+          </div>
+          <p className="text-xs text-muted-foreground">{RECORD_ATTESTATION_LABELS.BODY}</p>
+          <label className="flex items-start gap-2 text-sm cursor-pointer">
+            <Checkbox
+              checked={attested}
+              onCheckedChange={(checked) => onAttestedChange(checked === true)}
+              data-testid="record-attestation-checkbox"
+            />
+            <span>{RECORD_ATTESTATION_LABELS.CHECKBOX_LABEL}</span>
+          </label>
+        </div>
+      )}
+
       <div className="flex justify-between pt-4">
         <Button variant="outline" onClick={onBack}>
           <ArrowLeft className="mr-2 h-4 w-4" />
           Back
         </Button>
-        <Button onClick={onProcess} disabled={validation.valid.length === 0}>
+        <Button onClick={onProcess} disabled={!canProcess}>
           Process {validation.valid.length} Records
           <ArrowRight className="ml-2 h-4 w-4" />
         </Button>

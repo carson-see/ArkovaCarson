@@ -124,6 +124,64 @@ ${fingerprint},degree.pdf,DEGREE,"{""issuer"": ""MIT""}"`;
     expect(screen.getByText('Metadata (JSON)')).toBeInTheDocument();
   });
 
+  // R19 (CTO ruling 2026-07-28): issuer-attestation acknowledgement, required
+  // when no fingerprint column is mapped (every row becomes record-derived).
+  describe('R19: issuer-attestation acknowledgement', () => {
+    it('shows the attestation notice and disables Process when no fingerprint column is mapped', async () => {
+      render(<BulkUploadWizard />);
+
+      const csvContent = `name,course\nJane Doe,CPR Certification`;
+      const file = new File([csvContent], 'roster.csv', { type: 'text/csv' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+      fireEvent.change(input, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('record-attestation-notice')).toBeInTheDocument();
+      });
+
+      const processButton = screen.getByRole('button', { name: /^Process 1 Records$/i });
+      expect(processButton).toBeDisabled();
+    });
+
+    it('enables Process once the attestation checkbox is checked', async () => {
+      render(<BulkUploadWizard />);
+
+      const csvContent = `name,course\nJane Doe,CPR Certification`;
+      const file = new File([csvContent], 'roster.csv', { type: 'text/csv' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+      fireEvent.change(input, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('record-attestation-checkbox')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTestId('record-attestation-checkbox'));
+
+      const processButton = screen.getByRole('button', { name: /^Process 1 Records$/i });
+      expect(processButton).not.toBeDisabled();
+    });
+
+    it('does NOT show the attestation notice when a fingerprint column is mapped', async () => {
+      render(<BulkUploadWizard />);
+
+      const fingerprint = 'a'.repeat(64);
+      const csvContent = `fingerprint,filename\n${fingerprint},test.pdf`;
+      const file = new File([csvContent], 'test.csv', { type: 'text/csv' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+      fireEvent.change(input, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(screen.getByText('Valid records')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('record-attestation-notice')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Process 1 Records$/i })).not.toBeDisabled();
+    });
+  });
+
   it('should show validation errors for invalid rows', async () => {
     render(<BulkUploadWizard />);
 

@@ -49,6 +49,7 @@ function createRow(overrides: Partial<AnchorSelectRow> = {}): AnchorSelectRow {
     file_mime: null,
     file_size: null,
     org_id: 'org-test-1',
+    fingerprint_source: null,
     metadata: null,
     organization: { display_name: 'University of Michigan' },
     parent: null,
@@ -89,6 +90,8 @@ function createAnchor(overrides: Partial<AnchorByPublicId> = {}): AnchorByPublic
     // API-RICH-02 (SCRUM-895)
     confidence_scores: null,
     sub_type: null,
+    // R19 (advances SCRUM-2481)
+    fingerprint_source: null,
     ...overrides,
   };
 }
@@ -496,6 +499,39 @@ describe('buildVerificationResult', () => {
       }));
       expect(result).not.toHaveProperty('fraudSignals');
       expect(result).not.toHaveProperty('fraud_signals');
+    });
+  });
+
+  // R19 (CTO ruling 2026-07-28, advances SCRUM-2481): fingerprint_source
+  // evidence class — additive nullable, §1.8.
+  describe('R19: fingerprint_source', () => {
+    it('surfaces fingerprint_source=document_bytes', () => {
+      const result = buildVerificationResult(createAnchor({ fingerprint_source: 'document_bytes' }));
+      expect(result.fingerprint_source).toBe('document_bytes');
+    });
+
+    it('surfaces fingerprint_source=issuer_record_attestation', () => {
+      const result = buildVerificationResult(createAnchor({ fingerprint_source: 'issuer_record_attestation' }));
+      expect(result.fingerprint_source).toBe('issuer_record_attestation');
+    });
+
+    it('omits fingerprint_source when null (unclassified/pre-R19 anchor) — never guessed', () => {
+      const result = buildVerificationResult(createAnchor({ fingerprint_source: null }));
+      expect(result).not.toHaveProperty('fingerprint_source');
+    });
+  });
+
+  describe('R19: mapAnchorRow surfaces fingerprint_source from the select row', () => {
+    it('maps fingerprint_source through from AnchorSelectRow', () => {
+      const row = createRow({ fingerprint_source: 'issuer_record_attestation' });
+      const mapped = mapAnchorRow(row);
+      expect(mapped.fingerprint_source).toBe('issuer_record_attestation');
+    });
+
+    it('defaults to null when the row has no fingerprint_source', () => {
+      const row = createRow({});
+      const mapped = mapAnchorRow(row);
+      expect(mapped.fingerprint_source).toBeNull();
     });
   });
 });

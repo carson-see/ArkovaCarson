@@ -48,6 +48,8 @@ function createAnchor(publicId: string, status = 'SECURED'): AnchorByPublicId {
     // API-RICH-02 (SCRUM-895)
     confidence_scores: null,
     sub_type: null,
+    // R19 (advances SCRUM-2481)
+    fingerprint_source: null,
   };
 }
 

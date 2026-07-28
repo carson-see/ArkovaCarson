@@ -32,7 +32,7 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 import { db } from '../utils/db.js';
-import { paymentTierRouter, PaymentResolution } from './paymentTierRouter.js';
+import { paymentTierRouter, PaymentResolution, stripeMeteredIdempotencyKey } from './paymentTierRouter.js';
 
 type PayReq = Request & { userId?: string; orgId?: string; paymentResolution?: PaymentResolution };
 
@@ -144,6 +144,120 @@ describe('paymentTierRouter', () => {
       expect(res.status).toBe(200);
       expect(res.body.tier).toBe('credits');
       expect(res.headers['x-credits-remaining']).toBe('99');
+    });
+  });
+
+  describe('tier 2: stripe metered billing — SCRUM-2971 idempotency', () => {
+    function mockDbForStripeMetered(billingEventsInsert: ReturnType<typeof vi.fn>) {
+      (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+        if (table === 'profiles') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: { is_platform_admin: false }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'subscriptions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                in: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { id: 's-1', stripe_subscription_id: 'sub_1', status: 'active', plan_id: 'plan-metered' },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'billing_events') {
+          return { insert: billingEventsInsert };
+        }
+        throw new Error(`unexpected table query in test: ${table}`);
+      });
+    }
+
+    /** Not beta unlimited, zero credits — falls through to tier 2. */
+    function mockNotBetaNoCredits() {
+      (db.rpc as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ data: 50, error: null }) // check_anchor_quota → not beta
+        .mockResolvedValueOnce({ data: { remaining: 0 }, error: null }); // check_unified_credits → none
+    }
+
+    it('records a stripe-metered billing_events row keyed off the Idempotency-Key header', async () => {
+      const billingEventsInsert = vi.fn().mockResolvedValue({ error: null });
+      mockDbForStripeMetered(billingEventsInsert);
+      mockNotBetaNoCredits();
+
+      const app = createApp('user-1', 'org-1');
+      const res = await request(app)
+        .get('/api/v1/verify/test')
+        .set('Idempotency-Key', 'client-req-1');
+
+      expect(res.status).toBe(200);
+      expect(res.body.tier).toBe('stripe_metered');
+      expect(billingEventsInsert).toHaveBeenCalledTimes(1);
+      expect(billingEventsInsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          org_id: 'org-1',
+          user_id: 'user-1',
+          event_type: 'api_metered_usage',
+          idempotency_key: stripeMeteredIdempotencyKey('org-1', 'user-1', 'client-req-1'),
+        }),
+      );
+    });
+
+    it('retry of the same call (same Idempotency-Key) does not fail the request even when the DB rejects the duplicate insert (23505)', async () => {
+      const billingEventsInsert = vi.fn().mockResolvedValue({
+        error: { code: '23505', message: 'duplicate key value violates unique constraint' },
+      });
+      mockDbForStripeMetered(billingEventsInsert);
+      mockNotBetaNoCredits();
+
+      const app = createApp('user-1', 'org-1');
+      const res = await request(app)
+        .get('/api/v1/verify/test')
+        .set('Idempotency-Key', 'client-req-retry');
+
+      // Billing dedup must never block usage — the request still authorizes.
+      expect(res.status).toBe(200);
+      expect(res.body.tier).toBe('stripe_metered');
+    });
+
+    it('two distinct calls (different Idempotency-Key) produce distinct idempotency_key values — not collapsed', async () => {
+      const billingEventsInsert = vi.fn().mockResolvedValue({ error: null });
+      mockDbForStripeMetered(billingEventsInsert);
+      const app = createApp('user-1', 'org-1');
+
+      mockNotBetaNoCredits();
+      await request(app).get('/api/v1/verify/test').set('Idempotency-Key', 'req-A');
+
+      mockNotBetaNoCredits();
+      await request(app).get('/api/v1/verify/test').set('Idempotency-Key', 'req-B');
+
+      expect(billingEventsInsert).toHaveBeenCalledTimes(2);
+      const keys = billingEventsInsert.mock.calls.map(
+        (call) => (call[0] as { idempotency_key: string }).idempotency_key,
+      );
+      expect(new Set(keys).size).toBe(2);
+    });
+
+    it('falls back to a generated request id (no Idempotency-Key header) without throwing', async () => {
+      const billingEventsInsert = vi.fn().mockResolvedValue({ error: null });
+      mockDbForStripeMetered(billingEventsInsert);
+      mockNotBetaNoCredits();
+
+      const app = createApp('user-1', 'org-1');
+      const res = await request(app).get('/api/v1/verify/test');
+
+      expect(res.status).toBe(200);
+      expect(res.body.tier).toBe('stripe_metered');
+      expect(billingEventsInsert).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotency_key: expect.any(String) }),
+      );
     });
   });
 
