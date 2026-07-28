@@ -111,11 +111,33 @@ export async function handleAnchorLineage(
  * POST /api/anchor/:id/supersede
  * Org admin atomically revokes :id (→ SUPERSEDED) and creates a child anchor
  * with `new_fingerprint` (→ PENDING). RPC is idempotent on (parent, fingerprint).
+ *
+ * `callerUserId` is the SCRUM-2213 fix (see services/worker/src/api/agents.md,
+ * "RPCs that read auth.uid() fail when called from the worker"): the
+ * `supersede_anchor` RPC resolves the caller via
+ * `SELECT … FROM profiles WHERE id = auth.uid()`, but the worker invokes it
+ * through the service_role client, where `auth.uid()` is always NULL — the
+ * RPC raised 'Profile not found' on every call, 403ing every caller including
+ * legitimate org admins. `callerUserId` is the JWT-verified id the route
+ * already resolved via `extractAuthUserId()` (services/worker/src/routes/admin.ts)
+ * BEFORE this handler runs — it is passed to a NEW service_role-only RPC
+ * overload (migration 0367) that takes an explicit `p_caller_user_id`
+ * instead of reading `auth.uid()`. Every existing authorization check inside
+ * the RPC (profile must exist, role must be ORG_ADMIN, caller's org must
+ * match the target anchor's org) is unchanged — this only fixes WHO the RPC
+ * thinks is calling, not what it lets them do.
  */
 export async function handleSupersedeAnchor(
   req: Request,
   res: Response,
+  callerUserId?: string,
 ): Promise<void> {
+  if (!callerUserId) {
+    res.status(401).json({
+      error: { code: 'authentication_required', message: 'Authentication required' },
+    });
+    return;
+  }
   const idParsed = UuidSchema.safeParse(req.params.id);
   if (!idParsed.success) {
     res.status(400).json({
@@ -140,6 +162,7 @@ export async function handleSupersedeAnchor(
       old_anchor_id: idParsed.data,
       new_fingerprint: bodyParsed.data.new_fingerprint,
       reason: bodyParsed.data.reason ?? null,
+      p_caller_user_id: callerUserId,
     });
 
     if (error) {

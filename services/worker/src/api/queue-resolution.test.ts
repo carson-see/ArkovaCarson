@@ -152,6 +152,40 @@ describe('handleResolveQueue', () => {
     expect(status).toHaveBeenCalledWith(400);
   });
 
+  // ─── Endpoint-reachability regression (SCRUM-2213 bug class) ───
+  // Before the fix, `resolve_anchor_queue_by_public_id` resolved the caller
+  // via `auth.uid()`, which is always NULL under the worker's service_role
+  // client, so it raised 'Profile not found' → 403 for EVERY caller, even
+  // though `actorUserId` was already available on this handler (used only
+  // for the post-success notification lookup, never passed into the RPC).
+  it('401s when no actorUserId is supplied (structural reachability guard)', async () => {
+    const { res, status } = mockRes();
+    await handleResolveQueue(
+      mockReq({
+        body: { external_file_id: 'drive-123', selected_public_id: 'pid_acmemsa1' },
+      }),
+      res,
+    );
+    expect(status).toHaveBeenCalledWith(401);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('passes actorUserId to the RPC as p_caller_user_id (the SCRUM-2213 fix)', async () => {
+    rpcMock.mockResolvedValue({ data: 'res-1', error: null });
+    const { res } = mockRes();
+    await handleResolveQueue(
+      mockReq({
+        body: { external_file_id: 'drive-123', selected_public_id: 'pid_acmemsa1' },
+      }),
+      res,
+      'user-1',
+    );
+    expect(rpcMock).toHaveBeenCalledWith(
+      'resolve_anchor_queue_by_public_id',
+      expect.objectContaining({ p_caller_user_id: 'user-1' }),
+    );
+  });
+
   it('returns resolution_id on success', async () => {
     rpcMock.mockResolvedValue({ data: 'res-1', error: null });
     const { res, json } = mockRes();
@@ -163,6 +197,7 @@ describe('handleResolveQueue', () => {
         },
       }),
       res,
+      'user-1',
     );
     expect(json).toHaveBeenCalledWith({ resolution_id: 'res-1' });
   });
@@ -214,6 +249,7 @@ describe('handleResolveQueue', () => {
         },
       }),
       res,
+      'user-1',
     );
     expect(status).toHaveBeenCalledWith(403);
     expect(json).toHaveBeenCalledWith({
@@ -235,6 +271,7 @@ describe('handleResolveQueue', () => {
         },
       }),
       res,
+      'user-1',
     );
     expect(status).toHaveBeenCalledWith(409);
     expect(json).toHaveBeenCalledWith({
@@ -256,6 +293,7 @@ describe('handleResolveQueue', () => {
         },
       }),
       res,
+      'user-1',
     );
     expect(status).toHaveBeenCalledWith(404);
     expect(json).toHaveBeenCalledWith({
