@@ -2,6 +2,14 @@
 
 Running log of findings from both 72h signet soaks. Severity-ordered. Full detail for security items lives in the Confluence bug tracker, not here.
 
+## Soak-integrity disclosure — migration 0378 applied to legacy rig mid-soak (residual-risk note, no resoak)
+
+Per §1.11A, verified via direct MCP query against both rig DBs (`supabase_migrations.schema_migrations`) and `gcloud run revisions list` on both services:
+
+- **Worker containers: unmodified.** Both rigs remain on their original clock-start revisions with zero redeploys — `arkova-worker-launch-72h-2026-08-staging-00004-qgj` (created 2026-07-28T19:43:55.770557Z, exact clock start) and `arkova-worker-legacy-soak-2026-08-staging-00002-4sr` (created 2026-07-28T21:32:17.475418Z, exact clock start). Neither the F-1 fix (#1767) nor the F-2 fix (#1768) has been deployed to either rig.
+- **Migration `0378` (SEC-RECON grant revokes) was applied to the LEGACY rig's database at 2026-07-28T22:50:39Z** — ~78 minutes into that soak's clock, as the pre-prod rig-test step described in F-... (SEC-RECON remediation). The launch rig never received it; its ledger stops at `0377`.
+- **CTO determination: does NOT require a resoak.** It is a pure `REVOKE`-only security narrowing (no functional code path or RLS policy changed), the worker container never restarted, and the cross-tenant/RLS journey probes that ran afterward on the legacy rig already reflect the post-0378 state — so the soak's substantive evidence (auth boundaries hold under sustained load) remains valid. This is recorded as a disclosed residual-risk note rather than treated as if the run were untouched from T+0, per the standing rule that "verifying the attacker is denied" is the easy half — the honest half is stating exactly what changed and when.
+
 ## F-1 — `org-queue-scheduler` intermittently returns 500 (HIGH, ROOT-CAUSED, fix in draft PR #1767)
 
 Observed on **both** rigs, worsening over the first few hours (launch ~27–30%, legacy climbed to ~57% before the fix):
@@ -19,9 +27,11 @@ Observed on **both** rigs, worsening over the first few hours (launch ~27–30%,
 
 **Secondary finding surfaced while diagnosing this:** the logger's error serializer (`services/worker/src/utils/logger.ts:28`) appears to silently drop `error.message`/`stack` at runtime — `logger.error({ error: err }, ...)` logged `"error": {}` during this incident, which is why root-cause required DB-state archaeology instead of just reading the error log. Touches every `logger.error`/`warn` call sitewide; needs its own investigation, not folded into #1767.
 
-## F-2 — Per-IP rate limiter shadows the per-API-key limiter (HIGH, open)
+## F-2 — Per-IP rate limiter shadows the per-API-key limiter (HIGH, fix ready in draft PR #1768, NOT deployed)
 
-`services/worker/src/index.ts:377` mounts a 60 req/min **per-source-IP** limiter on a broad `/api` prefix, ahead of the real 1,000/min-per-API-key limiter. All `/api/v1/*` traffic is capped at 60/min regardless of key tier. This is why soak load plateaued at ~2.6 RPS against a 28 RPS target — a product defect, not a capacity limit. Would throttle every paying customer at launch and contradicts the documented rate limits (§1.10).
+`services/worker/src/index.ts:377` mounts a 60 req/min **per-source-IP** limiter on a broad `/api` prefix, ahead of the real 1,000/min-per-API-key limiter. All `/api/v1/*` traffic is capped at 60/min regardless of key tier. This is why soak load plateaued at ~2.6 RPS against a 28 RPS target — a product defect, not a capacity limit. Would throttle every paying customer at launch and contradicts the documented rate limits (§1.10). **Escalated during the soak to 100% 429 on anchor-create** once loadgen saturated the shared 60/min budget.
+
+**Fix ready:** [PR #1768](https://github.com/carson-see/ArkovaCarson/pull/1768) (draft, T2). Adds a `skip` predicate so the per-IP limiter bypasses `/api/v1/*` requests carrying a syntactically valid API key — those stay fully governed by `apiV1Router`'s own 1,000/min-per-key limiter. Anon traffic and everything outside `/api/v1` is unchanged. Integration test proves both directions; full worker suite (8,921 tests) green. **Not deployed to either soak rig** — needs a T2 soak (12h + rollback rehearsal) and explicit CTO go-ahead before touching the frozen evidence.
 
 ## F-3 — `SUBMITTED` with NULL `chain_tx_id` has no recovery path (MEDIUM, open)
 
