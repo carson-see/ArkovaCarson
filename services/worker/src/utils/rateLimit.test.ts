@@ -242,6 +242,77 @@ describe('rateLimit', () => {
     });
   });
 
+  describe('skip predicate (F-2)', () => {
+    it('bypasses the limiter entirely when skip returns true', () => {
+      const limiter = rateLimit({ windowMs: 60000, maxRequests: 1, skip: () => true });
+      const ip = '10.5.0.1';
+      const path = '/skip-test';
+
+      // Would normally block on the 2nd request (maxRequests: 1) — skip
+      // means neither request is ever counted.
+      for (let i = 0; i < 5; i++) {
+        const { req, res, next } = createMockReqResWithKey(ip, path);
+        limiter(req, res, next);
+        expect(next).toHaveBeenCalled();
+        expect(res.status).not.toHaveBeenCalled();
+        expect(res.setHeader).not.toHaveBeenCalled();
+      }
+    });
+
+    it('enforces the limiter normally when skip returns false', () => {
+      const limiter = rateLimit({ windowMs: 60000, maxRequests: 1, skip: () => false });
+      const ip = '10.5.0.2';
+      const path = '/no-skip-test';
+
+      const first = createMockReqResWithKey(ip, path);
+      limiter(first.req, first.res, first.next);
+      expect(first.next).toHaveBeenCalled();
+
+      const second = createMockReqResWithKey(ip, path);
+      limiter(second.req, second.res, second.next);
+      expect(second.res.status).toHaveBeenCalledWith(429);
+    });
+
+    it('evaluates skip per-request based on req contents (keyed vs anon)', () => {
+      // Mirrors the F-2 fix: skip for requests carrying an API key credential.
+      const hasApiKey = (req: import('express').Request) =>
+        typeof req.headers.authorization === 'string' &&
+        req.headers.authorization.startsWith('Bearer ak_');
+      const limiter = rateLimit({ windowMs: 60000, maxRequests: 1, skip: hasApiKey });
+      const ip = '10.5.0.3';
+      const path = '/keyed-vs-anon';
+
+      // Keyed requests: unlimited by THIS limiter, however many we send.
+      for (let i = 0; i < 5; i++) {
+        const req = {
+          ip,
+          path,
+          headers: { authorization: 'Bearer ak_live_testkey' },
+        } as unknown as import('express').Request;
+        const res = {
+          statusCode: 200,
+          setHeader: vi.fn(),
+          status: vi.fn().mockReturnThis(),
+          json: vi.fn().mockReturnThis(),
+          send: vi.fn().mockReturnThis(),
+        } as unknown as import('express').Response;
+        const next = vi.fn();
+        limiter(req, res, next);
+        expect(next).toHaveBeenCalled();
+        expect(res.status).not.toHaveBeenCalled();
+      }
+
+      // Anon request on the same IP+path: still gated at maxRequests: 1.
+      const anon1 = createMockReqResWithKey(ip, path);
+      limiter(anon1.req, anon1.res, anon1.next);
+      expect(anon1.next).toHaveBeenCalled();
+
+      const anon2 = createMockReqResWithKey(ip, path);
+      limiter(anon2.req, anon2.res, anon2.next);
+      expect(anon2.res.status).toHaveBeenCalledWith(429);
+    });
+  });
+
   describe('skipFailedRequests', () => {
     it('decrements count for 4xx/5xx responses when enabled', () => {
       const limiter = rateLimit({

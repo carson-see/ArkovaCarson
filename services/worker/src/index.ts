@@ -21,7 +21,7 @@ import { callRpc } from './utils/rpc.js';
 import { initChainClient } from './chain/client.js';
 import { handleStripeWebhook } from './stripe/handlers.js';
 import { verifyWebhookSignature } from './stripe/client.js';
-import { rateLimiters } from './utils/rateLimit.js';
+import { rateLimiters, rateLimit } from './utils/rateLimit.js';
 import { apiV1Router } from './api/v1/router.js';
 import { v1DeprecationHeaders } from './api/v1/deprecation.js';
 import { docsRouter } from './api/v1/docs.js';
@@ -374,7 +374,32 @@ app.use(
   identityRouter,
 );
 
-app.use('/api', rateLimiters.api, badgeRouter); // /api/badge/:publicId
+// F-2 (2026-08 soak) — this 60/min-per-IP limiter was catching EVERY `/api/*`
+// request, including `/api/v1/*` traffic already carrying a valid API key.
+// apiV1Router (mounted below) applies its own 1,000/min-per-key limiter, but
+// requests never got there — this bucket exhausted at 60/min per source IP
+// first, capping every keyed customer regardless of tier (Constitution 1.10).
+// Fix: skip this specific limiter for `/api/v1/*` requests that present a
+// syntactically-formed API key credential (Bearer ak_… or X-API-Key: ak_…).
+// Those requests are still fully rate-limited downstream — either by
+// apiV1Router's keyedRateLimiter (1,000/min/key) or, for the handful of
+// /api/v1/* mounts registered outside apiV1Router (org, integrations,
+// rules/templates, versions, anchor, audit, partner-provisioning), by their
+// own explicit `rateLimiters.api` instance. Anonymous /api/v1 traffic and
+// everything outside /api/v1 (badge, checkout, verify-anchor, treasury,
+// admin) is unaffected and still capped here at 60/min per IP.
+const hasApiKeyCredential = (req: Request): boolean => {
+  const auth = req.headers.authorization;
+  if (typeof auth === 'string' && auth.startsWith('Bearer ak_')) return true;
+  const xApiKey = req.headers['x-api-key'];
+  return typeof xApiKey === 'string' && xApiKey.startsWith('ak_');
+};
+const apiIpShadowGuard = rateLimit({
+  windowMs: 60000,
+  maxRequests: 60,
+  skip: (req) => req.originalUrl.startsWith('/api/v1/') && hasApiKeyCredential(req),
+});
+app.use('/api', apiIpShadowGuard, badgeRouter); // /api/badge/:publicId
 app.use('/api', billingRouter);    // /api/checkout/session, /api/billing/portal
 app.use('/api', anchorRouter);     // /api/verify-anchor, /api/recipients, /api/account
 app.use('/api', adminRouter);      // /api/treasury/*, /api/admin/*
