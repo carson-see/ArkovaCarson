@@ -81,3 +81,25 @@ Loadgen anchor-creation appearing to stop around the same time is a **separate, 
 _Last refreshed: 2026-07-29T01:xx by CTO monitoring session — F-1 root cause + F-6 fix confirmed via live MCP queries against both rig DBs (anchor status counts, `organization_queue_run_state`/`organization_queue_runs`) and `gcloud scheduler jobs` state; PR #1767 not yet merged or soaked._
 
 _Last refreshed: 2026-07-29T19:1x by Claude (CTO-ruled F-2 redeploy session) — claims verified against: `gcloud builds describe beb99396-…` (SUCCESS); `gcloud run services describe` before/after `--format=export` diff on `arkova-worker-legacy-soak-2026-08-staging`; `gcloud scheduler jobs list` (6/6 ENABLED); `gcloud logging read` status-code census on the new revision (0 5xx / ~2,000 requests); direct authenticated probe against the legacy rig URL (IAM identity token + `X-API-Key`) showing the F-2 shadow-guard skip predicate works; Supabase MCP `execute_sql` on `ryasykzdduzymschbucr` (anchors status counts unchanged; `api_keys`/`organizations` join identifying the quota-blocked fixture org). Launch rig (`arkova-worker-launch-72h-2026-08-staging`, Supabase `nykacscfufdleghzbzhi`) was NOT queried or deployed this session and remains exactly as last documented._
+
+## F-2 resolution — deployed to both live rigs, disclosed mid-soak runtime change
+
+**No resoak.** Both clocks continue unbroken: launch clears 2026-07-31T19:43Z, legacy clears 2026-07-31T21:32Z. This is a disclosed residual-risk runtime change under §1.11A, same class as the earlier migration-0378-on-legacy-rig disclosure. Pre-change evidence (smoke gates, chain broadcast, RLS/cross-tenant probes, migration rollback rehearsal, F-1 clean streak) remains valid and is not re-required.
+
+**What actually shipped, in order:**
+1. `925f68a5d` (#1768, merged) — `apiIpShadowGuard` added at the `badgeRouter` mount, exempting `/api/v1/*` requests carrying a valid API key from the 60/min-per-IP bucket.
+2. `6f844d484` — **follow-up bug found live during deploy verification**: `app.use(rateLimiters.api, didWebRouter)` at index.ts:422 has no path prefix, so its 60/min-per-IP bucket ran on every request including `/api/v1/*`, re-shadowing the same traffic downstream of fix #1. Confirmed via live rig testing: keyed anchor-creates still 429'd (16/23) after #1768 alone was deployed. Fixed by reusing the same `apiIpShadowGuard` instance on this mount.
+3. **`organizations.tier` fixture fix (data change, not code)** — with both shadow-limiter bugs fixed, live testing surfaced the actual remaining blocker: both soak orgs were on `FREE` tier (100 anchors/day quota per `perOrgRateLimit.ts`), with a usage counter already at 104,668 — every create request was correctly being rejected with `ORG_QUOTA_EXCEEDED` (HTTP 429), a legitimate quota gate, not a bug. Bumped both fixture orgs (`ryasykzdduzymschbucr` org `5eed0000-...-b1`, `nykacscfufdleghzbzhi` org `5eed0000-...-b1`) to `ENTERPRISE` tier (1,000,000/day) — appropriate for a soak fixture simulating a high-volume customer, not a change to any real customer-facing default.
+
+**Deploy record:**
+
+| Rig | Old revision | New revision | Image SHA | Deploy time (UTC) |
+|---|---|---|---|---|
+| legacy-soak-2026-08 | `-00002-4sr` | `-00005-n7k` | `6f844d48433bc3b2be9bafae34a24180394cdf75` | 2026-07-29T19:16:34Z |
+| launch-72h-2026-08 | `-00004-qgj` | `-00005-xql` | `6f844d48433bc3b2be9bafae34a24180394cdf75` | 2026-07-29T19:26:21Z |
+
+Both deploys used `gcloud run services update --image` (preserves existing config) with a full before/after env+secret diff confirming zero config drift beyond the image itself.
+
+**Verified end-to-end, not asserted:** direct authenticated `POST /api/v1/anchor` returned `201 Created` on both rigs post-deploy. Real loadgen traffic confirmed transitioning from 429/blocked to succeeding: legacy went from 100% 429 to 0/23 429 with 13/23 2xx in the first post-fix sample window; both rigs' anchor tables show new PENDING rows with `created_at` timestamps seconds old at verification time (legacy: 29 new rows; launch: 52 new rows), versus a multi-hour-frozen baseline beforehand.
+
+**VOLUME pillar now has real data accruing from these timestamps forward** — this was the entire point of the disclosed change. A residual minority of requests still return `400` (payload validation on some loadgen request variants) — a separate, lower-priority loadgen-script issue, not a worker defect, does not block real customer traffic.
