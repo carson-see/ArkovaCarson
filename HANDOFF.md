@@ -552,3 +552,21 @@ _Last refreshed: 2026-07-28 by Claude (CTO/RTE soak-execution session) — claim
 Full detail + updated F-1 failure-rate table: [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md).
 
 _Last refreshed: 2026-07-29 by Claude (CTO overnight monitoring session) — claims verified against MCP `execute_sql` anchor-status counts and `organization_queue_run_state`/`organization_queue_runs` reads on both rig DBs, plus `gcloud scheduler jobs list` confirming the new forced-flush jobs; artifacts cited in this commit body._
+
+---
+
+## 2026-07-29 (day) — F-2 fix deployed to LEGACY rig only; launch rig withheld after new quota blocker found (F-7)
+
+**CTO-ruled disclosed mid-soak redeploy, §1.11A residual-risk provision, same precedent as the migration-0378 disclosure above. Clock NOT reset.** Built `925f68a5d` (PR #1768, F-2 per-IP-limiter-shadows-per-key-limiter fix) via Cloud Build — build `beb99396-d5b4-458f-a822-324bd9991954`, SUCCESS 4m9s, image digest `sha256:be3945b294697807adb6b788372bad5c7de797ee4f0b3e498ab34db02bcf9581`.
+
+**Legacy rig (`arkova-worker-legacy-soak-2026-08-staging`) deployed:** revision `-00002-4sr` → `-00004-9jl` (created `2026-07-29T19:03:41Z`), via `gcloud run services update --image` (config-preserving). Before/after export diff: only the Cloud Run nonce + image changed, zero env/secret drift. Verified: `BITCOIN_NETWORK=signet`, `MEMPOOL_API_URL` absent, `ENABLE_ORG_CREDIT_ENFORCEMENT=true`, 6/6 scheduler jobs `ENABLED`. 0 5xx across ~2,000 requests in the 9-minute post-deploy window.
+
+**F-2 mechanism confirmed fixed** via a direct authenticated probe (bypassing the loadgen for a clean signal): a keyed request now reaches downstream logic (400 payload-validation, then 429-with-quota-body) instead of being shadow-limited at the IP layer.
+
+**But VOLUME evidence still isn't accruing** — a **new** finding, F-7: the legacy loadgen's org (`Seed Fixture Org`, FREE tier) is quota-blocked (`ORG_QUOTA_EXCEEDED`, reported `current=102205` vs `limit=100` — inconsistent with the real 32-row anchor count for that org, likely a stale/uncapped usage counter, not diagnosed further this session). `SELECT status, count(*) FROM anchors` on `ryasykzdduzymschbucr` is unchanged: still `PENDING=1, SECURED=32, SUBMITTED=1`, the exact frozen baseline.
+
+**Launch rig deliberately NOT touched** — not built for, not deployed to, not queried. It remains on its original clock-start revision `-00004-qgj`, Supabase `nykacscfufdleghzbzhi` untouched, exactly as documented above. Per the runbook's own stop condition ("if anchors don't start flowing, stop and do not touch the launch rig"), deploying there now would risk repeating the same non-outcome (or a different one) without first knowing whether launch's fixture org has the same quota-tier gap. **Open decision for CTO/operator:** bump the fixture org's quota (or swap loadgen keys) before either rig's VOLUME pillar can actually move; then re-evaluate the launch-rig deploy separately.
+
+Full detail: [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md) (new "F-2 redeploy disclosure" + "F-7" sections).
+
+_Last refreshed: 2026-07-29 by Claude (CTO-ruled F-2 redeploy session) — claims verified against `gcloud builds describe`, `gcloud run services describe` before/after export diff, `gcloud scheduler jobs list`, `gcloud logging read` status census, a direct authenticated HTTP probe against the legacy rig, and Supabase MCP `execute_sql` on `ryasykzdduzymschbucr`; artifacts cited in this commit body. Launch rig not queried or modified this session._
