@@ -678,10 +678,17 @@ describe('extractText dispatch — F2 ZIP-XML family + F3 RTF/SVG (real parsers)
 
   it('does not route .ods here — reserved for the F1 SheetJS spreadsheet path', async () => {
     const file = fakeFile('data.ods', 'application/vnd.oasis.opendocument.spreadsheet', 'not-parsed-here');
-    // Not a zip-xml kind and not a recognized text/image type either —
-    // must fall through to the generic unsupported-type error, NOT silently
-    // succeed via this module (that would collide with F1's SheetJS path).
-    await expect(extractText(file)).rejects.toThrow(/Unsupported file type/);
+    // .ods shares its ZIP-XML container format with .odt/.odp, but
+    // ZIP_XML_KIND_BY_EXTENSION/ZIP_XML_KIND_BY_MIME deliberately omit it
+    // (see ocrWorker.ts comment above those maps) so this module never
+    // claims it. Since PR #1736 (F1 spreadsheet dual-mode), extractText's
+    // SPREADSHEET_TYPES/SPREADSHEET_EXTENSIONS branch legitimately owns
+    // .ods and resolves it via SheetJS — it must NOT come back tagged
+    // "zip-xml" (that would mean this branch raced the spreadsheet check)
+    // and must NOT reject (that would be the pre-#1736 fallthrough regressing).
+    const result = await extractText(file);
+    expect(result.method).toBe('spreadsheet');
+    expect(result.method).not.toBe('zip-xml');
   });
 
   it('a corrupt file with a zip-xml extension fails gracefully (not a hang/crash)', async () => {
