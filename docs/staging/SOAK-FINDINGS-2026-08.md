@@ -19,9 +19,11 @@ Observed on **both** rigs, worsening over the first few hours (launch ~27–30%,
 
 **Secondary finding surfaced while diagnosing this:** the logger's error serializer (`services/worker/src/utils/logger.ts:28`) appears to silently drop `error.message`/`stack` at runtime — `logger.error({ error: err }, ...)` logged `"error": {}` during this incident, which is why root-cause required DB-state archaeology instead of just reading the error log. Touches every `logger.error`/`warn` call sitewide; needs its own investigation, not folded into #1767.
 
-## F-2 — Per-IP rate limiter shadows the per-API-key limiter (HIGH, open)
+## F-2 — Per-IP rate limiter shadows the per-API-key limiter (HIGH, fix ready in draft PR #1768, NOT deployed)
 
-`services/worker/src/index.ts:377` mounts a 60 req/min **per-source-IP** limiter on a broad `/api` prefix, ahead of the real 1,000/min-per-API-key limiter. All `/api/v1/*` traffic is capped at 60/min regardless of key tier. This is why soak load plateaued at ~2.6 RPS against a 28 RPS target — a product defect, not a capacity limit. Would throttle every paying customer at launch and contradicts the documented rate limits (§1.10).
+`services/worker/src/index.ts:377` mounts a 60 req/min **per-source-IP** limiter on a broad `/api` prefix, ahead of the real 1,000/min-per-API-key limiter. All `/api/v1/*` traffic is capped at 60/min regardless of key tier. This is why soak load plateaued at ~2.6 RPS against a 28 RPS target — a product defect, not a capacity limit. Would throttle every paying customer at launch and contradicts the documented rate limits (§1.10). **Escalated during the soak to 100% 429 on anchor-create** once loadgen saturated the shared 60/min budget.
+
+**Fix ready:** [PR #1768](https://github.com/carson-see/ArkovaCarson/pull/1768) (draft, T2). Adds a `skip` predicate so the per-IP limiter bypasses `/api/v1/*` requests carrying a syntactically valid API key — those stay fully governed by `apiV1Router`'s own 1,000/min-per-key limiter. Anon traffic and everything outside `/api/v1` is unchanged. Integration test proves both directions; full worker suite (8,921 tests) green. **Not deployed to either soak rig** — needs a T2 soak (12h + rollback rehearsal) and explicit CTO go-ahead before touching the frozen evidence.
 
 ## F-3 — `SUBMITTED` with NULL `chain_tx_id` has no recovery path (MEDIUM, open)
 
