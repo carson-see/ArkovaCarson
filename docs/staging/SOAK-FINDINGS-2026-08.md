@@ -2,6 +2,14 @@
 
 Running log of findings from both 72h signet soaks. Severity-ordered. Full detail for security items lives in the Confluence bug tracker, not here.
 
+## Soak-integrity disclosure — migration 0378 applied to legacy rig mid-soak (residual-risk note, no resoak)
+
+Per §1.11A, verified via direct MCP query against both rig DBs (`supabase_migrations.schema_migrations`) and `gcloud run revisions list` on both services:
+
+- **Worker containers: unmodified.** Both rigs remain on their original clock-start revisions with zero redeploys — `arkova-worker-launch-72h-2026-08-staging-00004-qgj` (created 2026-07-28T19:43:55.770557Z, exact clock start) and `arkova-worker-legacy-soak-2026-08-staging-00002-4sr` (created 2026-07-28T21:32:17.475418Z, exact clock start). Neither the F-1 fix (#1767) nor the F-2 fix (#1768) has been deployed to either rig.
+- **Migration `0378` (SEC-RECON grant revokes) was applied to the LEGACY rig's database at 2026-07-28T22:50:39Z** — ~78 minutes into that soak's clock, as the pre-prod rig-test step described in F-... (SEC-RECON remediation). The launch rig never received it; its ledger stops at `0377`.
+- **CTO determination: does NOT require a resoak.** It is a pure `REVOKE`-only security narrowing (no functional code path or RLS policy changed), the worker container never restarted, and the cross-tenant/RLS journey probes that ran afterward on the legacy rig already reflect the post-0378 state — so the soak's substantive evidence (auth boundaries hold under sustained load) remains valid. This is recorded as a disclosed residual-risk note rather than treated as if the run were untouched from T+0, per the standing rule that "verifying the attacker is denied" is the easy half — the honest half is stating exactly what changed and when.
+
 ## F-1 — `org-queue-scheduler` intermittently returns 500 (HIGH, ROOT-CAUSED, fix in draft PR #1767)
 
 Observed on **both** rigs, worsening over the first few hours (launch ~27–30%, legacy climbed to ~57% before the fix):
