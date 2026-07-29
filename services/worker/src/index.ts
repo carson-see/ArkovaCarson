@@ -417,9 +417,17 @@ app.get('/.well-known/openapi.json', (_req, res) => {
 // Org sub-DIDs (path-segment did:web) serve a plain did.json per the W3C spec;
 // only the bare-host DID lives under /.well-known/. OPS: the edge must route
 // app.arkova.ai (+ /orgs/*) to this worker for the DIDs to resolve; the routes
-// themselves are served here. Public DB-backed reads → behind rateLimiters.api
-// (429/Retry-After), same as badgeRouter.
-app.use(rateLimiters.api, didWebRouter);
+// themselves are served here. Public DB-backed reads → behind a 60/min-per-IP
+// bucket (429/Retry-After), same as badgeRouter.
+//
+// F-2 follow-up: this mount has NO path prefix, so its middleware runs for
+// EVERY request reaching the worker — including /api/v1/*. Using the bare
+// `rateLimiters.api` here re-imposed the 60/min-per-IP cap on keyed API
+// traffic downstream of the apiIpShadowGuard fix above, which is why keyed
+// anchor-creates still returned 429 after that fix deployed. It must carry
+// the same skip predicate, or it silently re-shadows apiV1Router's
+// 1,000/min-per-key limiter (Constitution §1.10).
+app.use(apiIpShadowGuard, didWebRouter);
 
 // 2026-04-26 — bug-bounty F4. Spec was already publicly inlined in
 // `/api/docs/swagger-ui-init.js`, but `/api/v1/openapi.json` returned 401
