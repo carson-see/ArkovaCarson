@@ -81,6 +81,15 @@ interface RateLimitOptions {
    * the bucket scope — that re-introduces the F5 bug below.
    */
   scope?: string;
+  /**
+   * F-2 fix: optional predicate to bypass this limiter entirely for a given
+   * request (e.g. traffic that a more specific, correctly-scoped limiter
+   * further down the middleware chain will already enforce). Returning true
+   * skips both the count and the 429 check — the request proceeds to
+   * `next()` untouched, no headers set, nothing recorded in this limiter's
+   * bucket. Use sparingly and document the downstream limiter it defers to.
+   */
+  skip?: (req: Request) => boolean;
 }
 
 /**
@@ -101,9 +110,15 @@ export function rateLimit(options: RateLimitOptions) {
     keyGenerator = (req) => req.ip || 'unknown',
     skipFailedRequests = false,
     scope = '',
+    skip,
   } = options;
 
   return (req: Request, res: Response, next: NextFunction): void => {
+    if (skip?.(req)) {
+      next();
+      return;
+    }
+
     const key = scope ? `${scope}:${keyGenerator(req)}` : keyGenerator(req);
     const now = Date.now();
 
