@@ -2,20 +2,22 @@
 
 Running log of findings from both 72h signet soaks. Severity-ordered. Full detail for security items lives in the Confluence bug tracker, not here.
 
-## F-1 — `org-queue-scheduler` intermittently returns 500 (HIGH, open)
+## F-1 — `org-queue-scheduler` intermittently returns 500 (HIGH, ROOT-CAUSED, fix in draft PR #1767)
 
-Observed on **both** rigs, so not caused by any single change:
+Observed on **both** rigs, worsening over the first few hours (launch ~27–30%, legacy climbed to ~57% before the fix):
 
 | Rig | Sampled invocations | 500s | Failure rate |
 |---|---|---|---|
-| launch-72h-2026-08 | 40 | 11 | **27.5%** |
-| legacy-soak-2026-08 | 18 | 6 | **33.3%** |
+| launch-72h-2026-08 | 40 | 11 | 27.5% |
+| launch-72h-2026-08 (later sample) | 30 | 8 | 26.7% |
+| legacy-soak-2026-08 | 18 | 6 | 33.3% |
+| legacy-soak-2026-08 (later sample) | 30 | 17 | 56.7% |
 
-The job runs on a 5-minute cron and succeeds on subsequent cycles (most recent sampled run: 200), so it is flapping rather than hard-down — but roughly one invocation in three failing is far outside the gate matrix's 0.5% 5xx threshold for a scheduled job.
+**Root cause (confirmed, not guessed):** `claim_due_org_queue_runs` is a PostgREST RPC that commits its row lock in Postgres, but a rotten-socket transport error (`fetch failed`/ECONNRESET under loadgen connection pressure) can throw *after* that commit and *before* the per-org try/catch that clears `locked_at` / records the run — because the fetch wrapper in `db.ts` deliberately never retries POST/RPC calls (a SCRUM-2899 double-apply guard). Confirmed via DB state: `organization_queue_run_state` showed orgs stuck `status='running'`/locked while `organization_queue_runs` (completion history) was **completely empty** on legacy despite dozens of scheduler ticks.
 
-Confirmed **not** caused by migration `0378` (grant revokes): the launch rig never received `0378` and shows the same rate. Timeline places it from soak start.
+**Fix:** `claim_due_org_queue_runs` uses `FOR UPDATE SKIP LOCKED`, which makes it uniquely safe to retry — it cannot double-claim. Added one bounded retry on transient transport errors in `services/worker/src/jobs/org-queue-scheduler.ts`. TDD, 3 new tests, 8/8 passing, typecheck/lint clean. **Draft PR #1767** (`fix/org-queue-scheduler-claim-rpc-transport-retry`), tier T2 (worker queue behavior) — needs a 12h soak + CTO pre-mortem before merge, not yet deployed to either frozen soak rig.
 
-Needs root-cause: likely contention or a partial-failure path in the org-queue claim/scheduling logic under concurrent load. `claim_due_org_queue_runs` is the natural first read.
+**Secondary finding surfaced while diagnosing this:** the logger's error serializer (`services/worker/src/utils/logger.ts:28`) appears to silently drop `error.message`/`stack` at runtime — `logger.error({ error: err }, ...)` logged `"error": {}` during this incident, which is why root-cause required DB-state archaeology instead of just reading the error log. Touches every `logger.error`/`warn` call sitewide; needs its own investigation, not folded into #1767.
 
 ## F-2 — Per-IP rate limiter shadows the per-API-key limiter (HIGH, open)
 
@@ -35,6 +37,14 @@ Related defect: `GetBlockHybridProvider.broadcastTx` has **no** mempool fallback
 
 Both take a caller-supplied id (`p_org_id` / `p_user_id`) without visibly gating it against `auth.uid()`. Retained as `authenticated` in `0378` because the live dashboard (`src/lib/dashboardStats.ts`) calls them and an emergency grant change was the wrong vehicle for a body fix. Needs an ownership check plus its own soak.
 
+## F-6 — Both soak rigs were provisioned without the `batch-anchors-forced-flush` Cloud Scheduler job (HIGH, FIXED live on both rigs)
+
+`processBatchAnchors` only drains on Trigger A (≥10,000 claimed) or Trigger B (≥3,000 pending AND ≥3h old) — otherwise it waits for the daily 3am EST forced flush (`?force=true`). Every prior isolated soak rig (t3-migration-soak, s33-rig-b1, folders-1657-soak) had a `*-batch-anchors-forced-flush` scheduler job wired at standup; **this rig-provisioning step was missed for both launch-72h-2026-08 and legacy-soak-2026-08.** Anchors accumulated correctly per the design (52 PENDING launch, 32 PENDING legacy) but had no path to drain within the 72h window at soak-scale volume. Not a code bug — a standup gap.
+
+**Fixed live:** added `arkova-worker-{launch-72h,legacy-soak}-2026-08-staging-batch-anchors-forced-flush` (`*/10 * * * *`, `?force=true`) on both rigs, mirroring the existing pattern/secret/service-account. Verified directly via MCP: launch 52→0 PENDING (all SUBMITTED), legacy 32→0 PENDING (31 SUBMITTED, 1 still PENDING — draining), both now progressing toward SECURED via the confirmation-check job.
+
+Loadgen anchor-creation appearing to stop around the same time is a **separate, already-known** issue (F-2 — the shadow rate limiter starves the single-IP loadgen's create calls once read traffic eats the shared 60/min budget), not related to this gap.
+
 ## Passing pillars (recorded so the negatives above are read in context)
 
 - Cross-tenant isolation sweep: **PASS**, both rigs.
@@ -43,4 +53,4 @@ Both take a caller-supplied id (`p_org_id` / `p_user_id`) without visibly gating
 - Smoke gates T+0–2h: **CLOSED/PASS** both rigs, each with a first anchor SECURED end-to-end and a real txid confirmed on the public signet explorer.
 - Migration rollback rehearsal (0359/0360/0368/0370/0377): **PASS**, apply→rollback→verify→re-apply.
 
-_Last refreshed: 2026-07-28 by CTO session — rates computed from live `gcloud logging read` output; grant states verified via MCP against prod._
+_Last refreshed: 2026-07-29T01:xx by CTO monitoring session — F-1 root cause + F-6 fix confirmed via live MCP queries against both rig DBs (anchor status counts, `organization_queue_run_state`/`organization_queue_runs`) and `gcloud scheduler jobs` state; PR #1767 not yet merged or soaked._

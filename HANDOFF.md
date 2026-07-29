@@ -538,3 +538,17 @@ Both frozen at head `3afb79ba6` / `42ad98c9c` respectively. Both T+0–2h smoke 
 **Environment gotcha:** gcloud on the dev Mac needs `CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14`; the bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
 
 _Last refreshed: 2026-07-28 by Claude (CTO/RTE soak-execution session) — claims verified against Supabase MCP `has_function_privilege()`/`list_migrations` reads on `vzwyaatejekddvltxyye`, live `gcloud logging read` request-status counts on both soak workers, and mempool.space/signet explorer confirmation of the SECURED anchor txids; artifacts cited in this commit body._
+
+---
+
+## 2026-07-29 (overnight) — F-1 root-caused + fixed (draft PR), F-6 (missing flush job) found and fixed live on both rigs
+
+**F-1 root cause found:** `claim_due_org_queue_runs` (PostgREST RPC) commits its row lock in Postgres, but a transport error under load (`fetch failed`/ECONNRESET) can throw *after* commit and *before* the code that clears the lock, because `db.ts`'s fetch wrapper deliberately never retries POST/RPC calls (a SCRUM-2899 double-apply guard). Confirmed via DB state, not guessed: `organization_queue_run_state` showed orgs stuck locked while `organization_queue_runs` (completion history) was empty despite dozens of ticks. Fix: one bounded retry, safe because the RPC uses `FOR UPDATE SKIP LOCKED` and cannot double-claim. TDD, 8/8 passing. **Draft PR #1767** (`fix/org-queue-scheduler-claim-rpc-transport-retry`), T2, needs 12h soak + CTO pre-mortem — not deployed to either frozen soak rig yet.
+
+**F-6 (new) — both soak rigs were provisioned missing the `batch-anchors-forced-flush` Cloud Scheduler job.** Every prior isolated soak rig had one; this standup skipped it on both `launch-72h-2026-08` and `legacy-soak-2026-08`. Anchors accumulated correctly per the documented single-nightly-drain design (52 PENDING launch, 32 PENDING legacy — the design working as intended, just with no path to drain inside 72h at soak volume) — not a code bug. **Fixed live**, both rigs, verified via MCP: launch 52→0 PENDING (all SUBMITTED), legacy 32→0 (31 SUBMITTED, draining), both progressing toward SECURED.
+
+**Secondary finding, not yet actioned:** `services/worker/src/utils/logger.ts:28`'s error serializer appears to silently drop `error.message`/`stack` at runtime — this incident had to be root-caused from DB state instead of the error log because of it. Sitewide impact (every `logger.error`/`warn` call); needs its own investigation.
+
+Full detail + updated F-1 failure-rate table: [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md).
+
+_Last refreshed: 2026-07-29 by Claude (CTO overnight monitoring session) — claims verified against MCP `execute_sql` anchor-status counts and `organization_queue_run_state`/`organization_queue_runs` reads on both rig DBs, plus `gcloud scheduler jobs list` confirming the new forced-flush jobs; artifacts cited in this commit body._
