@@ -138,6 +138,6 @@
     { "source": "/jobs/:path*", "destination": "https://arkova-worker-270018525501.us-central1.run.app/jobs/:path*" },
     { "source": "/.well-known/did.json", "destination": "https://arkova-worker-270018525501.us-central1.run.app/.well-known/did.json" },
     { "source": "/orgs/:orgPublicId/did.json", "destination": "https://arkova-worker-270018525501.us-central1.run.app/orgs/:orgPublicId/did.json" },
-    { "source": "/((?!api|assets|favicon|robots|sitemap|llms|og-image).*)", "destination": "/index.html" }
+    { "source": "/((?!api|assets|favicon|robots|sitemap|llms|og-image|index\\.md|openapi\\.json|\\.well-known).*)", "destination": "/index.html" }
   ]
 }
