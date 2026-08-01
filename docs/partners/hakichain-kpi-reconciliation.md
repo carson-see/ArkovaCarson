@@ -180,15 +180,18 @@ Until one exists:
   question, different data source (public Bitcoin explorer, not Arkova's own
   tables). Do not conflate KPI #2's log-based "verification" signal with
   KPI #3's stronger independent-verification proof.
-- `scripts/kpi3/haki-provision-plan.mjs` — the KPI #1 (pilot delivery, 15
-  anchors) provisioning planner. As of the live prod check on 2026-07-28
+- `scripts/kpi3/haki-provision-plan.mjs` — the KPI #1 (pilot delivery)
+  provisioning planner. As of the live prod check on 2026-07-28
   (`vzwyaatejekddvltxyye`, read-only `execute_sql`), the production HakiChain
   org (`f52cd07a-6d8a-4387-9346-23babec84e5c`) holds **4** `SECURED` anchors
-  against an `org_credits.anchor_quota` of **15** — a shortfall of 11,
-  unchanged since the 2026-07-21 check recorded in that planner's own header
-  comment. None of the 4 anchors has a materialized `anchor_proofs` row
-  (0 of 4) — consistent with the known repo-wide proof-materialization gap
-  (see `memory/project_proof_materialization_gap.md`). This is a KPI-1 risk,
-  not a KPI-2 one, but it directly bounds what KPI-2 can report: with only 4
-  anchors issued, the weekly reconciliation window will show a very small
-  `totalIssued` until KPI-1 provisioning closes the gap.
+  and a separately **allocated** `org_credits.anchor_quota` of **15** for
+  HakiChain to draw on as needed. These are two unrelated numbers, not a
+  delivery target with anchors outstanding — do not report this as "4 of 15"
+  or as a gap/shortfall anywhere (PR body, Jira, Confluence, bug tracker); see
+  `memory/project_hakichain_account_state.md`. None of the 4 anchors has a
+  materialized `anchor_proofs` row (0 of 4) — that IS a real, separately
+  tracked finding, consistent with the known repo-wide proof-materialization
+  gap (see `memory/project_proof_materialization_gap.md`), and unaffected by
+  the correction above. With only 4 anchors issued so far, the weekly
+  reconciliation window will show a small `totalIssued` until more of the
+  allocated quota is drawn on.
