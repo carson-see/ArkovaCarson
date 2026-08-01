@@ -233,6 +233,44 @@ describe('parseCliArgs', () => {
     }
   });
 
+  // SonarCloud tssecurity:S8707 regression: --haki-issued-count-file must be
+  // validated (resolved + confirmed to be an existing regular file) BEFORE
+  // any filesystem read is attempted — a faulty/malicious value must fail
+  // closed with a clear error, not silently read an arbitrary path.
+  it('rejects a --haki-issued-count-file path that does not exist', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'haki-kpi-'));
+    const missing = join(dir, 'does-not-exist.json');
+    try {
+      expect(() => parseCliArgs([...argv(), `--haki-issued-count-file=${missing}`])).toThrow(
+        /does not resolve to an existing regular file/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a --haki-issued-count-file path that is a directory, not a file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'haki-kpi-'));
+    try {
+      expect(() => parseCliArgs([...argv(), `--haki-issued-count-file=${dir}`])).toThrow(
+        /does not resolve to an existing regular file/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws a TypeError when --haki-issued-count-file contains neither a number nor {issuedCount}', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'haki-kpi-'));
+    const file = join(dir, 'count.json');
+    writeFileSync(file, JSON.stringify({ notIssuedCount: 22 }));
+    try {
+      expect(() => parseCliArgs([...argv(), `--haki-issued-count-file=${file}`])).toThrow(TypeError);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('--fail-below-target and --json default to false', () => {
     const args = parseCliArgs(argv());
     expect(args.failBelowTarget).toBe(false);

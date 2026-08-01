@@ -63,7 +63,8 @@
  * runbook + how to read the output).
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
@@ -95,6 +96,24 @@ const ReconciliationArgsSchema = z
 
 export type ReconciliationArgs = z.infer<typeof ReconciliationArgsSchema>;
 
+/**
+ * Resolves and validates a caller-supplied file path BEFORE it is ever
+ * passed to a filesystem read (SonarCloud tssecurity:S8707 — an
+ * automated/LLM-driven invocation could pass a malicious
+ * `--haki-issued-count-file` value). Normalizes to an absolute path under
+ * the current working directory, then requires the resolved target to
+ * exist and be a regular file — rejects directories, missing paths, and
+ * special files (devices, FIFOs, etc. via `statSync().isFile()`) — before
+ * any read is attempted.
+ */
+function resolveIssuedCountFilePath(rawPath: string): string {
+  const resolved = resolvePath(process.cwd(), rawPath);
+  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+    throw new Error(`--haki-issued-count-file does not resolve to an existing regular file: ${rawPath}`);
+  }
+  return resolved;
+}
+
 export function parseCliArgs(argv: string[]): ReconciliationArgs {
   const { values } = parseArgs({
     args: argv.slice(2),
@@ -111,11 +130,12 @@ export function parseCliArgs(argv: string[]): ReconciliationArgs {
 
   let hakiIssuedCount: number | undefined;
   if (values['haki-issued-count-file']) {
-    const raw = JSON.parse(readFileSync(values['haki-issued-count-file'], 'utf8'));
+    const safePath = resolveIssuedCountFilePath(values['haki-issued-count-file']);
+    const raw: unknown = JSON.parse(readFileSync(safePath, 'utf8'));
     // Accept either a bare number or { "issuedCount": N } for a friendlier file shape.
-    const n = typeof raw === 'number' ? raw : raw?.issuedCount;
+    const n = typeof raw === 'number' ? raw : (raw as { issuedCount?: unknown } | null)?.issuedCount;
     if (typeof n !== 'number' || !Number.isFinite(n)) {
-      throw new Error(`--haki-issued-count-file must contain a number or {"issuedCount": N}`);
+      throw new TypeError(`--haki-issued-count-file must contain a number or {"issuedCount": N}`);
     }
     hakiIssuedCount = n;
   } else if (values['haki-issued-count'] !== undefined) {
@@ -301,6 +321,75 @@ function isFingerprinted(row: AnchorRow): boolean {
   return typeof row.fingerprint === 'string' && FINGERPRINT_RE.test(row.fingerprint.trim());
 }
 
+/** First pipeline stage an incomplete anchor has NOT cleared; null when complete. */
+function determineStoppedAtStage(
+  complete: boolean,
+  fingerprinted: boolean,
+  anchored: boolean,
+): PipelineStage | null {
+  if (complete) return null;
+  if (!fingerprinted) return 'fingerprint';
+  if (!anchored) return 'anchor';
+  return 'verification';
+}
+
+function buildAnchorReconciliationRow(
+  anchor: AnchorRow,
+  verifiedAnchorIds: ReadonlySet<string>,
+  verifiedPublicIds: ReadonlySet<string>,
+): AnchorReconciliationRow {
+  const fingerprinted = isFingerprinted(anchor);
+  const anchored = anchor.status === ANCHORED_STATUS;
+  const verified =
+    verifiedAnchorIds.has(anchor.id) || (anchor.public_id !== null && verifiedPublicIds.has(anchor.public_id));
+  const complete = fingerprinted && anchored && verified;
+
+  return {
+    anchor_id: anchor.id,
+    public_id: anchor.public_id,
+    status: anchor.status,
+    created_at: anchor.created_at,
+    fingerprinted,
+    anchored,
+    verified,
+    complete,
+    stoppedAt: determineStoppedAtStage(complete, fingerprinted, anchored),
+  };
+}
+
+/** Formats a signed delta count, e.g. `+3` or `-2` (never a bare unsigned positive). */
+function formatSignedDelta(delta: number): string {
+  return delta >= 0 ? `+${delta}` : `${delta}`;
+}
+
+function buildHakiChainComparison(totalIssued: number, hakiReportedIssuedCount?: number): HakiChainComparison {
+  const reportedIssuedCount = hakiReportedIssuedCount ?? null;
+
+  if (reportedIssuedCount === null) {
+    return {
+      reportedIssuedCount,
+      arkovaIssuedCount: totalIssued,
+      delta: null,
+      note:
+        "HakiChain's issued count was not supplied this run (--haki-issued-count / " +
+        '--haki-issued-count-file). Arkova cannot observe it directly; delta is unavailable ' +
+        'until HakiChain supplies it for this window.',
+    };
+  }
+
+  const delta = totalIssued - reportedIssuedCount;
+  return {
+    reportedIssuedCount,
+    arkovaIssuedCount: totalIssued,
+    delta,
+    note:
+      `HakiChain self-reported ${reportedIssuedCount} issued; Arkova observed ${totalIssued} ` +
+      `anchor(s) for this org in the window (delta ${formatSignedDelta(delta)}). ` +
+      "This is HakiChain's self-report reconciled against Arkova's own count, not an " +
+      'independent check of HakiChain-side data.',
+  };
+}
+
 /**
  * Pure function: given already-fetched rows, compute the full KPI-2
  * reconciliation. No I/O — this is the fully unit-testable surface.
@@ -322,29 +411,7 @@ export function buildReconciliation(input: BuildReconciliationInput): Reconcilia
 
   for (const a of anchors) {
     byStatus[a.status] = (byStatus[a.status] ?? 0) + 1;
-
-    const fingerprinted = isFingerprinted(a);
-    const anchored = a.status === ANCHORED_STATUS;
-    const verified =
-      verifiedAnchorIds.has(a.id) || (a.public_id !== null && verifiedPublicIds.has(a.public_id));
-    const complete = fingerprinted && anchored && verified;
-
-    let stoppedAt: PipelineStage | null = null;
-    if (!complete) {
-      stoppedAt = !fingerprinted ? 'fingerprint' : !anchored ? 'anchor' : 'verification';
-    }
-
-    rows.push({
-      anchor_id: a.id,
-      public_id: a.public_id,
-      status: a.status,
-      created_at: a.created_at,
-      fingerprinted,
-      anchored,
-      verified,
-      complete,
-      stoppedAt,
-    });
+    rows.push(buildAnchorReconciliationRow(a, verifiedAnchorIds, verifiedPublicIds));
   }
 
   const totalIssued = anchors.length;
@@ -352,23 +419,6 @@ export function buildReconciliation(input: BuildReconciliationInput): Reconcilia
   const completionPct = totalIssued === 0 ? 0 : Math.round((completedFullCycle / totalIssued) * 10_000) / 100;
   const meetsTarget = totalIssued > 0 && completionPct >= KPI2_TARGET_PCT;
   const completionNote = totalIssued === 0 ? 'no anchors issued in this window; completion % is not meaningful' : null;
-
-  const reportedIssuedCount = input.hakiReportedIssuedCount ?? null;
-  const delta = reportedIssuedCount === null ? null : totalIssued - reportedIssuedCount;
-  const hakiChain: HakiChainComparison = {
-    reportedIssuedCount,
-    arkovaIssuedCount: totalIssued,
-    delta,
-    note:
-      reportedIssuedCount === null
-        ? "HakiChain's issued count was not supplied this run (--haki-issued-count / " +
-          '--haki-issued-count-file). Arkova cannot observe it directly; delta is unavailable ' +
-          'until HakiChain supplies it for this window.'
-        : `HakiChain self-reported ${reportedIssuedCount} issued; Arkova observed ${totalIssued} ` +
-          `anchor(s) for this org in the window (delta ${delta! >= 0 ? '+' : ''}${delta}). ` +
-          "This is HakiChain's self-report reconciled against Arkova's own count, not an " +
-          'independent check of HakiChain-side data.',
-  };
 
   return {
     orgId,
@@ -382,7 +432,7 @@ export function buildReconciliation(input: BuildReconciliationInput): Reconcilia
     meetsTarget,
     completionNote,
     incomplete: rows.filter((r) => !r.complete),
-    hakiChain,
+    hakiChain: buildHakiChainComparison(totalIssued, input.hakiReportedIssuedCount),
     measurementNote: MEASUREMENT_NOTE,
   };
 }
@@ -391,15 +441,20 @@ export function buildReconciliation(input: BuildReconciliationInput): Reconcilia
 
 export function formatSummary(result: ReconciliationResult): string {
   const lines: string[] = [];
-  lines.push(`HakiChain KPI-2 weekly reconciliation — org ${result.orgId}`);
-  lines.push(`  window          : ${result.window.start} .. ${result.window.end}`);
-  lines.push(`  generated at    : ${result.generatedAt}`);
-  lines.push(`  anchors issued  : ${result.totalIssued}`);
-  for (const [status, count] of Object.entries(result.byStatus).sort()) {
+  lines.push(
+    `HakiChain KPI-2 weekly reconciliation — org ${result.orgId}`,
+    `  window          : ${result.window.start} .. ${result.window.end}`,
+    `  generated at    : ${result.generatedAt}`,
+    `  anchors issued  : ${result.totalIssued}`,
+  );
+  // Explicit compare function: sort by status name — Array#sort()'s default
+  // coerces each [status, count] entry to a string, which happens to sort by
+  // status first but relies on undocumented, type-unsafe coercion behavior.
+  for (const [status, count] of Object.entries(result.byStatus).sort((a, b) => a[0].localeCompare(b[0]))) {
     lines.push(`    - ${status}: ${count}`);
   }
-  lines.push(`  full-cycle done : ${result.completedFullCycle} / ${result.totalIssued}`);
   lines.push(
+    `  full-cycle done : ${result.completedFullCycle} / ${result.totalIssued}`,
     `  completion      : ${result.completionPct}% (target >= ${result.targetPct}%) — ` +
       `${result.meetsTarget ? 'MEETS TARGET' : 'BELOW TARGET'}`,
   );
@@ -411,8 +466,7 @@ export function formatSummary(result: ReconciliationResult): string {
       lines.push(`    - ${r.public_id ?? r.anchor_id} [${r.status}] stopped at: ${r.stoppedAt}`);
     }
   }
-  lines.push('');
-  lines.push(`  ${result.measurementNote}`);
+  lines.push('', `  ${result.measurementNote}`);
   return lines.join('\n');
 }
 

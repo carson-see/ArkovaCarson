@@ -39,6 +39,23 @@ and a different question.
     combination is what matches the `idx_anchors_org_deleted_created` partial
     index. An `org_id`-only filter on this 2.97M-row table seq-scans and can
     time out the query connector (observed live 2026-07-28 verifying KPI-1).
+  - **2026-07-31 SonarCloud Quality Gate fix (11 findings, all in this file):**
+    `--haki-issued-count-file` is now validated (`resolveIssuedCountFilePath`
+    — resolved to an absolute path, confirmed to exist and be a regular
+    file) BEFORE the read (`tssecurity:S8707` — an automated/LLM-driven
+    invocation could otherwise pass a malicious path). `buildReconciliation`
+    was split into `buildAnchorReconciliationRow` /
+    `determineStoppedAtStage` / `buildHakiChainComparison` /
+    `formatSignedDelta` to bring cognitive complexity from 26 back under the
+    15 threshold and eliminate two nested-ternary code smells (`S3776`,
+    `S3358` x2) — pure refactor, `buildReconciliation`'s output is unchanged
+    (all 24 pre-existing tests plus 3 new path-validation regression tests
+    pass). `formatSummary`'s `.sort()` on `Object.entries()` now takes an
+    explicit compare function (`S2871` — relying on default coercion-based
+    sort for a non-string array is a latent-bug pattern even though it
+    happened to sort correctly here), and its consecutive `lines.push()`
+    calls were combined (`S7778`). The file-shape validation error is now a
+    `TypeError` (`S7786`).
 
 ## Conventions
 
