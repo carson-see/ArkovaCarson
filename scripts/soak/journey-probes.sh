@@ -26,7 +26,10 @@ LAUNCH_URL="https://arkova-worker-launch-72h-2026-08-staging-kvojbeutfa-uc.a.run
 LEGACY_URL="https://arkova-worker-legacy-soak-2026-08-staging-270018525501.us-central1.run.app"
 SA="270018525501-compute@developer.gserviceaccount.com"
 
-id_token() { gcloud auth print-identity-token --audiences="$1" --impersonate-service-account="$SA" 2>/dev/null; }
+id_token() {
+  local audience="$1"
+  gcloud auth print-identity-token --audiences="$audience" --impersonate-service-account="$SA" 2>/dev/null
+}
 
 # ── Probe 1: auth/tenant sweep (cross-tenant deny) ─────────────────────────
 # Prereq (SQL, run once per rig via MCP execute_sql — NOT executed by this

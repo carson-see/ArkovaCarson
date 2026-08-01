@@ -51,10 +51,22 @@ function requireEnv(name: string): string {
   return v;
 }
 
+/** Strips trailing slashes without a regex — SonarCloud typescript:S8786
+ *  flagged `/\/+$/` as super-linear (a single quantifier immediately before
+ *  an anchor is a shape its regex-complexity heuristic treats as risky,
+ *  though this particular pattern is provably linear: no alternation or
+ *  nested quantifiers to create backtracking ambiguity). A loop sidesteps
+ *  the question entirely and is exactly as correct. */
+function stripTrailingSlashes(url: string): string {
+  let result = url;
+  while (result.endsWith('/')) result = result.slice(0, -1);
+  return result;
+}
+
 function loadConfig(): Config {
   return {
     label: requireEnv('RIG_LABEL'),
-    baseUrl: requireEnv('RIG_BASE_URL').replace(/\/+$/, ''),
+    baseUrl: stripTrailingSlashes(requireEnv('RIG_BASE_URL')),
     apiKey: requireEnv('RIG_API_KEY'),
     seedPublicIds: (process.env.RIG_SEED_PUBLIC_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
     sustainedRps: Number(process.env.SUSTAINED_RPS ?? '3'),
@@ -90,6 +102,17 @@ function randomHex(bytes: number): string {
 
 function randomFingerprint(): string {
   return randomHex(32); // 64 hex chars
+}
+
+/** Crypto-backed drop-in for Math.random() — same [0, 1) contract, built on
+ *  the `randomBytes` already imported for fingerprint generation above.
+ *  None of this file's random picks (which target to hit, how big a batch,
+ *  which weighted action to fire) are security-sensitive on their own, but
+ *  SonarCloud typescript:S2245 flags Math.random() categorically, and since
+ *  a real CSPRNG is already one call away here, there's no reason to keep
+ *  Math.random() around to litigate case by case. */
+function secureRandomFloat(): number {
+  return randomBytes(6).readUIntBE(0, 6) / 2 ** 48;
 }
 
 // ─── metrics ───
@@ -161,7 +184,7 @@ type Action = (cfg: Config) => Promise<void>;
 
 function pickPublicId(): string | null {
   if (knownPublicIds.length === 0) return null;
-  return knownPublicIds[Math.floor(Math.random() * knownPublicIds.length)];
+  return knownPublicIds[Math.floor(secureRandomFloat() * knownPublicIds.length)];
 }
 
 async function actLifecycleRead(cfg: Config) {
@@ -228,7 +251,7 @@ async function actSingleCreate(cfg: Config) {
 }
 
 async function actBulkCreate(cfg: Config) {
-  const rows = Array.from({ length: 5 + Math.floor(Math.random() * 10) }, () => ({
+  const rows = Array.from({ length: 5 + Math.floor(secureRandomFloat() * 10) }, () => ({
     fingerprint: randomFingerprint(),
     credential_type: 'OTHER' as const,
     description: `soak-loadgen ${cfg.label} bulk-create`,
@@ -311,7 +334,7 @@ const WEIGHTED_ACTIONS: Array<{ weight: number; run: Action }> = [
 const TOTAL_WEIGHT = WEIGHTED_ACTIONS.reduce((s, a) => s + a.weight, 0);
 
 function pickAction() {
-  let r = Math.random() * TOTAL_WEIGHT;
+  let r = secureRandomFloat() * TOTAL_WEIGHT;
   for (const a of WEIGHTED_ACTIONS) {
     r -= a.weight;
     if (r <= 0) return a.run;
@@ -366,8 +389,15 @@ async function main() {
   }, cfg.tickMs);
 }
 
-main().catch((e) => {
+// Top-level await (not `main().catch(...)`) — SonarCloud typescript:S7785.
+// Node 20+ ESM (this file's package.json is `"type": "module"`, tsconfig
+// targets ES2022/NodeNext) supports this natively; it's equivalent to the
+// promise-chain form but keeps a real stack/control-flow shape instead of a
+// detached, unreturned promise floating at module scope.
+try {
+  await main();
+} catch (e) {
   // eslint-disable-next-line no-console
   console.error(JSON.stringify({ ts: new Date().toISOString(), event: 'loadgen_fatal', error: String(e) }));
   process.exit(1);
-});
+}
