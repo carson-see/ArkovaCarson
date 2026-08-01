@@ -1765,9 +1765,9 @@ export const openApiSpec: Record<string, any> = {
           },
           compliance_controls_note: {
             type: 'string',
-            nullable: true,
             description:
-              'SCRUM-2227. Present whenever compliance_controls is present, absent '
+              'SCRUM-2227. Omitted when not applicable, never returned as null. '
+              + 'Present whenever compliance_controls is present, absent '
               + 'otherwise. States that control identifiers are a credential-type '
               + 'mapping and NOT an audit, certification, conformity assessment, or '
               + 'attestation — in particular that no identifier asserts qualified '

@@ -388,8 +388,13 @@ function generateAnchorCsv(anchors: AnchorRow[]): string {
     'verification_id', 'filename', 'credential_type', 'status',
     'fingerprint', 'network_receipt', 'block_height', 'network_observed_time',
     'confirmations', 'compliance_controls', 'compliance_frameworks',
-    'compliance_controls_note',
     'created_at', 'issued_at', 'expires_at', 'revoked_at',
+    // SCRUM-2227: APPENDED, not inserted next to compliance_controls. Auditor
+    // tooling that ingests this export by column INDEX would silently shift
+    // created_at/issued_at/expires_at/revoked_at by one if this landed
+    // mid-row. Appending keeps the addition non-breaking for positional
+    // consumers and identical for header-keyed ones.
+    'compliance_controls_note',
   ];
 
   const rows = anchors.map(a => {
@@ -407,12 +412,13 @@ function generateAnchorCsv(anchors: AnchorRow[]): string {
       a.chain_confirmations != null ? String(a.chain_confirmations) : '',
       csvEscape(controlIds.join('; ')),
       csvEscape(frameworks.join('; ')),
-      // SCRUM-2227: present exactly when controls are.
-      csvEscape(controlIds.length > 0 ? COMPLIANCE_CONTROLS_NOTE : ''),
       a.created_at,
       a.issued_at ?? '',
       a.expires_at ?? '',
       a.revoked_at ?? '',
+      // SCRUM-2227: present exactly when controls are. Appended last to match
+      // the header — see the note there on positional consumers.
+      csvEscape(controlIds.length > 0 ? COMPLIANCE_CONTROLS_NOTE : ''),
     ].join(',');
   });
 

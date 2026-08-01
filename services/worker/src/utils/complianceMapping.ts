@@ -58,8 +58,10 @@ export const RETIRED_CONTROL_IDS: readonly string[] = [
  * §1.5 and the R-7 claims gate, the surface must state what is measured, what is
  * asserted, and what is NOT asserted.
  *
- * Rendered VERBATIM wherever `compliance_controls` appears: `/api/v1/verify`,
- * the AI accountability report, and the audit export (PDF + CSV). Wording follows
+ * Rendered VERBATIM wherever `compliance_controls` is actually surfaced:
+ * `/api/v1/verify`, the AI accountability report JSON (its PDF branch renders
+ * no controls), the audit export (PDF + CSV), and the GRC evidence push to
+ * Vanta / Drata / Anecdotes. Wording follows
  * the shape of `JURISDICTION_INFORMATIONAL_DISCLAIMER`
  * (`services/worker/src/exports/cle-log-export.ts`) and deliberately avoids any
  * sufficiency or adequacy claim.
