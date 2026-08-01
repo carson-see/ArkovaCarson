@@ -12,9 +12,15 @@ import { logger } from './logger.js';
 
 const CACHE_TTL_SECONDS = 300; // 5 minutes
 // Bumped v1 → v2 when API-RICH-01 landed 8 additive response fields (2026-04-16).
+// Bumped v2 → v3 for SCRUM-2227: the verify response now carries
+// `compliance_controls_note` and strips the retired EU-US DPF control IDs from
+// stored values on read. A v2 hit is served verbatim without re-running
+// buildVerificationResult, so without this bump every anchor cached before the
+// deploy would keep serving the retired identifiers with no note for the whole
+// TTL — the exact claim this change exists to stop making.
 // Bump again on any response-shape change so post-deploy cache hits don't serve stale
 // thin responses. Old keys age out naturally via TTL.
-const KEY_PREFIX = 'verify:v2:';
+const KEY_PREFIX = 'verify:v3:';
 
 /** Module-level config cache — avoids process.env reads on every request */
 let _redisConfig: { url: string; token: string } | null | undefined;

@@ -444,6 +444,48 @@ describe('verify', () => {
     expect(result.confidenceScores).toEqual({ overall: 0.93, fields: { issuerName: 0.97 } });
     expect(result.subType).toBe('official_undergraduate');
   });
+
+  // SCRUM-2227: the API emits compliance_controls as an ARRAY. The SDK mapped
+  // it through a helper that returns null for arrays, so this field was
+  // silently null for every real anchor and the new note was dropped entirely.
+  it('surfaces array-shaped compliance controls and the accompanying note', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    const note =
+      'Compliance control identifiers are informational metadata only. They are not an '
+      + 'audit, certification, conformity assessment, or attestation.';
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        verified: true,
+        status: 'ACTIVE',
+        record_uri: 'https://app.arkova.ai/verify/ARK-2026-002',
+        compliance_controls: ['SOC2-CC6.1', 'GDPR-5.1f', 'eIDAS-35'],
+        compliance_controls_note: note,
+      }),
+    });
+
+    const result = await client.verify('ARK-2026-002');
+    expect(result.complianceControls).toEqual(['SOC2-CC6.1', 'GDPR-5.1f', 'eIDAS-35']);
+    expect(result.complianceControlsNote).toBe(note);
+  });
+
+  it('leaves the compliance note null when the response carries no controls', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        verified: true,
+        status: 'ACTIVE',
+        record_uri: 'https://app.arkova.ai/verify/ARK-2026-003',
+      }),
+    });
+
+    const result = await client.verify('ARK-2026-003');
+    expect(result.complianceControls).toBeNull();
+    expect(result.complianceControlsNote).toBeNull();
+  });
 });
 
 describe('query', () => {

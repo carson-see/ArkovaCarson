@@ -73,9 +73,14 @@ export interface VerificationResult {
    * SCRUM-2227: the informational-not-attestation note for `compliance_controls`.
    * Present whenever `compliance_controls` is present, absent otherwise — a
    * control list must never travel without the statement of what it does NOT
-   * assert (§1.5 / R-7 claims gate). Additive nullable — Constitution 1.8.
+   * assert (§1.5 / R-7 claims gate). Additive — Constitution 1.8.
+   *
+   * Typed `string | undefined` (NOT `| null`): like `jurisdiction`, this field
+   * is OMITTED when it does not apply and is never serialised as `null`
+   * (CLAUDE.md §6). Declaring it nullable would tell clients to handle a value
+   * the endpoint cannot emit.
    */
-  compliance_controls_note?: string | null;
+  compliance_controls_note?: string;
   /** Bitcoin block confirmations at anchor time. */
   chain_confirmations?: number | null;
   /** Public ID of the parent anchor (credential lineage). Resolved from internal UUID — Constitution 1.4. */
