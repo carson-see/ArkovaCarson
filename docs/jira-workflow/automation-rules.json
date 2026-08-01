@@ -76,7 +76,8 @@
       "name": "Block Bug-issue Done unless bug-tracker row linked",
       "trigger": "Issue Transitioned to Done",
       "scope": "project = SCRUM AND issuetype = Bug",
-      "condition": "NONE of issue.comments CONTAINS 'docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4'",
+      "condition": "NONE of issue.comments CONTAINS 'arkova.atlassian.net/wiki/spaces/A/pages/88768514'",
+      "corrected_2026_08_01": "Condition previously matched the Google Sheets tracker URL. Per CLAUDE.md §0 rule 5 the canonical tracker has been Confluence page 88768514 since 2026-06-24; the Sheet is historical archive only. As written the rule enforced the deprecated tracker — a correctly-logged bug could be blocked and a Sheet-only bug could pass. Re-apply this condition in the Jira UI; editing this file alone does not change the live rule.",
       "action": [
         "Reject transition",
         "Add comment: 'R0-5 / SCRUM-1251: Done blocked on Bug — paste the master bug-tracker row link in a comment first. Per CLAUDE.md §0.5.'"
