@@ -168,9 +168,9 @@ describe('F-5: get_user_anchor_stats(uuid) — fixed body', () => {
     expect(block).toMatch(/SET\s+"search_path"\s+TO\s+'public'/);
   });
 
-  it('gates p_user_id against auth.uid() (same convention as get_user_monthly_anchor_count)', () => {
+  it('gates p_user_id against (SELECT auth.uid()) — wrapped per SCRUM-1278 (same convention as get_user_monthly_anchor_count, plus the initplan wrap)', () => {
     const block = extractFunctionBlock(executableSql(migration()), 'get_user_anchor_stats');
-    expect(block).toMatch(/p_user_id\s+IS\s+DISTINCT\s+FROM\s+auth\.uid\(\)/);
+    expect(block).toMatch(/p_user_id\s+IS\s+DISTINCT\s+FROM\s+\(SELECT\s+auth\.uid\(\)\)/);
   });
 
   it('raises 42501 (insufficient_privilege) on mismatch, not a silent empty result', () => {

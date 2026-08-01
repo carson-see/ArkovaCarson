@@ -142,8 +142,8 @@ CREATE OR REPLACE FUNCTION "public"."get_user_anchor_stats"("p_user_id" "uuid") 
     AS $$
 BEGIN
   IF get_caller_role() IS DISTINCT FROM 'service_role'
-     AND p_user_id IS DISTINCT FROM auth.uid() THEN
-    RAISE EXCEPTION 'unauthorized: p_user_id must match auth.uid()'
+     AND p_user_id IS DISTINCT FROM (SELECT auth.uid()) THEN
+    RAISE EXCEPTION 'unauthorized: p_user_id must match the caller''s own auth id'
       USING ERRCODE = '42501';
   END IF;
 
@@ -164,7 +164,7 @@ $$;
 ALTER FUNCTION "public"."get_user_anchor_stats"("p_user_id" "uuid") OWNER TO "postgres";
 
 COMMENT ON FUNCTION "public"."get_user_anchor_stats"("p_user_id" "uuid") IS
-  'F-5 (SOAK-FINDINGS-2026-08.md): anchor counts for the calling user''s own anchors. SECURITY DEFINER bypasses RLS. RAISES 42501 if p_user_id != auth.uid() (service_role exempt).';
+  'F-5 (SOAK-FINDINGS-2026-08.md): anchor counts for the calling user''s own anchors. SECURITY DEFINER bypasses RLS. RAISES 42501 if p_user_id does not match the caller''s own auth id (service_role exempt).';
 
 -- Reload PostgREST schema cache so the new function bodies take effect on
 -- the API surface immediately (function catalog is cached by PostgREST).
