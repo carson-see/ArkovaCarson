@@ -1,5 +1,5 @@
 # agents.md — tests
-_Last updated: 2026-05-16_
+_Last updated: 2026-08-01_
 
 ## What This Folder Contains
 
@@ -12,6 +12,8 @@ Integration and infrastructure test suites that cross-cut the codebase: migratio
 - `migration-drift-logic.test.ts` — unit-tests the diff algorithm used by the migration-drift CI workflow (SCRUM-908)
 - `rls-performance.test.ts` — checks RLS performance indexes exist in the baseline schema (SCRUM-348..352)
 - `0363-enable-org-credit-enforcement-flag.test.ts` — pins migration 0363 + seed.sql: `ENABLE_ORG_CREDIT_ENFORCEMENT` switchboard row seeds `enabled=false` with idempotent `ON CONFLICT (flag_key) DO NOTHING` (G4; worker behavior pinned in `services/worker/src/utils/orgCreditEnforcementFlag.test.ts`)
+- `sec-recon-unguarded-rpc-family-revokes.test.ts` — content-guard (always-run) + opt-in live-RLS (`RUN_LIVE_RLS=1`) proof for migration 0377's anon/authenticated REVOKEs on the unguarded SECURITY DEFINER RPC family + the dropped `invite_member` 4-arg overload
+- `f5-stats-fn-ownership-guard.test.ts` — F-5 (`docs/staging/SOAK-FINDINGS-2026-08.md`): TDD content-guard (always-run, RED-before/GREEN-after migration 0380 existed) + opt-in live-RLS (`RUN_LIVE_RLS=1`) proof that `get_org_anchor_stats`/`get_user_anchor_stats` now reject a caller-supplied org/user id that doesn't match the caller's own identity (service_role exempt); also pins that the only real caller (`DashboardPage.tsx` via `dashboardStats.ts`) always passes the caller's own id, so the fix is non-breaking for the live dashboard
 
 ## Subdirectories
 - `edge/` — Cloudflare edge worker security tests (JWT verify, HMAC, rate-limit)
