@@ -2,6 +2,14 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-01 — SCRUM-3050: silent-failure hardening (`pipelineThroughputMonitor.ts`, `monthly-allocation-rollover.ts`)
+
+Three independent silent failures were found in one day; all three reported success at every layer a human watches. The two changes here address the parts that live in this folder.
+
+- **Dead-man escalation (`pipelineThroughputMonitor.ts`).** This monitor WORKED — it detected the 70h anchoring outage and fired every ~30 min for 70+ hours with an accurate diagnosis, and nobody saw it. One stable Sentry fingerprint meant every re-fire collapsed into a single issue created on hour zero, so the alarm got *quieter* as the incident got worse. The decision now carries `sustained_hours` + `sustained_bucket` (`t0`/`t24h`/`t48h`/`t72h`/`t168h`), derived purely from values already measured — `last_secured_age_hours` for condition A, `oldest_unlinked_age_hours` for condition B — so there is still no state table and no migration. The bucket is appended to the fingerprint (crossing a boundary opens a NEW issue and re-triggers `FirstSeenEventCondition`) and the level escalates `error` → `fatal` past 72h. **`sustainedBucketFor(null)` returns the TOP bucket, not `t0`**: an unbounded duration ("nothing has ever secured") is the worst case, and resolving it to the mildest bucket would be the classic no-data-means-healthy bug. Do not "simplify" that branch.
+- **Postcondition assertion (`monthly-allocation-rollover.ts`).** The narrow, highest-risk application of `utils/jobPostcondition.ts`: billing + monthly cadence = the worst detection latency in the fleet. Two behaviour changes, both intentional and both previously HTTP 200: a failed enumeration of open periods now throws, and a run where every org errored now throws. A fully *skipped* run is still success (no open period to roll is completed work, not a failure), and partial failure stays 200 + a `DEGRADED` warn because retrying would redo the orgs that already rolled.
+- Alert routing for both lives in `infra/sentry/alert-rules.json` + `scripts/gcp-setup/`, pinned by `scripts/ci/check-pipeline-throughput-alert-contract.test.ts` and `check-scheduler-failure-alert-contract.test.ts`. **A rule in a JSON file is not a working alarm** — as of 2026-08-01 project `arkova1` had ZERO alert policies, ZERO notification channels and ZERO log-based metrics, so delivery is still a founder-side dashboard action.
+
 ## 2026-07-28 SOAK FINDINGS — F-1 (org-queue-scheduler 500s) + F-3 (SUBMITTED/NULL-txid recovery gap)
 
 Both open, from the 2026-08 72h signet soak pair. Canonical writeup: `docs/staging/SOAK-FINDINGS-2026-08.md`.

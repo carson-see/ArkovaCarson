@@ -17,6 +17,7 @@
  */
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { assertJobPostcondition } from '../utils/jobPostcondition.js';
 
 export const MONTHLY_ALLOCATION_ROLLOVER_CRON = '0 0 1 * *' as const;
 
@@ -45,7 +46,14 @@ export async function runAllocationRollover(): Promise<RolloverRunSummary> {
 
   if (listErr) {
     logger.error({ listErr }, 'monthly-allocation-rollover: list query failed');
-    return { total_orgs: 0, rolled: 0, skipped: 0, errors: 1 };
+    // SCRUM-3050: previously returned a summary with errors:1 — which the route
+    // answered with HTTP 200. A rollover that could not even ENUMERATE the open
+    // periods has done nothing; on a monthly cadence that silence would persist
+    // until customers noticed missing credits. Throw so the route 500s and the
+    // failure lands in the Cloud Scheduler log stream the alert policy watches.
+    throw new Error(
+      'monthly-allocation-rollover: could not enumerate open allocation periods — no org was rolled over',
+    );
   }
 
   const orgIds = Array.from(new Set((openPeriods ?? []).map((r: { org_id: string }) => r.org_id)));
@@ -78,5 +86,25 @@ export async function runAllocationRollover(): Promise<RolloverRunSummary> {
   }
 
   logger.info(summary, 'monthly-allocation-rollover complete');
+
+  // SCRUM-3050 postcondition. A "skipped" org is a legitimate no-op (there was
+  // no open period to roll), so it counts as completed work; only `errors` are
+  // failures. If every org errored, this run produced nothing and MUST NOT
+  // report success — it throws, the route 500s, Cloud Scheduler records a
+  // failed attempt, and the GCP alert policy pages. Partial failure stays a
+  // 200 (retrying would redo the orgs that already rolled) but is logged loudly.
+  const verdict = assertJobPostcondition({
+    jobName: 'monthly-allocation-rollover',
+    attempted: summary.total_orgs,
+    succeeded: summary.rolled + summary.skipped,
+    failed: summary.errors,
+  });
+  if (verdict.degraded) {
+    logger.warn(
+      { ...summary, postcondition: verdict.reason },
+      'monthly-allocation-rollover DEGRADED — some orgs did not roll over',
+    );
+  }
+
   return summary;
 }

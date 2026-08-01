@@ -102,6 +102,32 @@ bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
 Newest first, one entry per session. Each entry's own `_Last refreshed:_` footer is that entry's
 record at the time it was written — it is not a claim about the current state of this file.
 
+### 2026-08-01 (Observability) — SCRUM-3050 silent-failure hardening: prod has NO GCP alerting at all; scheduler-failure alarm + dead-man escalation + pino error-serializer fix
+
+**The finding that dominates everything else here.** Queried live on 2026-08-01 via the Monitoring/Logging REST APIs with `gcloud auth print-access-token` against project `arkova1`:
+
+| Resource | Live count |
+|---|---|
+| `v3/projects/arkova1/alertPolicies` | **0** (`{}`) |
+| `v3/projects/arkova1/notificationChannels` | **0** (`{}`) |
+| `v2/projects/arkova1/metrics` (log-based) | **0** (`{}`) |
+| `v3/projects/arkova1/services` (SLO) + `v1/.../dashboards` | **0** (`{}`) |
+
+Everything under `scripts/gcp-setup/` — the SCRUM-1064 SLO burn policies, the SLOs, the ops dashboard — is **declared-only and has never been applied**. There is no channel for an alert to reach a human through, so no GCP-side alarm can fire today regardless of what any JSON file says.
+
+Same-day measurement of what that costs: over 24h the Cloud Scheduler log stream carried **464 failed attempts across 11 jobs**, none of which alerted anyone — `fetch-dapip` x150, `fetch-courtlistener` x101, `org-queue-scheduler` x82 on each soak rig (that is F-1), and **`generate-reports` / `NOT_FOUND` x22** (the ~4.5-month, ~3,300-run outage). Filter and log shape verified against real entries (`resource.type="cloud_scheduler_job"`, `jsonPayload."@type"=…AttemptFinished`, `severity>=ERROR`), not inferred from docs.
+
+**Shipped (PR — code, not prod state):**
+
+- **Cloud Scheduler failure alarm as code.** New `scripts/gcp-setup/log-metrics/cloud-scheduler-job-failure.json` + `alert-policies/cloud-scheduler-job-failure-page.json`, applied by a new `ensure_log_based_metrics` step in `apply-monitoring.sh` (Logging API, distinct from the Monitoring `metricDescriptors` path). Two OR'd conditions grouped per `job_id`: failures in every hourly bucket for 3h, and >2 failures in 24h (a 6-hourly job never fills 3 consecutive hourly buckets). **Replayed against the real 24h of log data it fires on 10 jobs including `generate-reports` and correctly ignores the single-blip jobs** — `generate-reports` would have paged within 3 hours of 2026-03-16 instead of 4.5 months later.
+- **Dead-man escalation.** `pipelineThroughputMonitor.ts` detected the 70h anchoring outage correctly and fired every ~30 min for 70+ hours — and got quieter as it worsened, because one stable fingerprint collapsed every re-fire into a single issue created on hour zero. Decisions now carry `sustained_hours` + `sustained_bucket` (t0/t24h/t48h/t72h/t168h) derived purely from values already measured (no state table, no migration); the bucket joins the fingerprint so each boundary opens a NEW issue, and level escalates error→fatal past 72h. Separately: `capturePipelineThroughputAlert` was putting `source`/`story` in `extra`, never in **tags** — so a `TaggedEventFilter` rule could never have matched it even if one existed. Two rules added to `infra/sentry/alert-rules.json` (baseline + `level>=fatal` sustained), pinned by a new CI contract test on the SCRUM-2902 pattern.
+- **pino error serializer.** Reproduced, then fixed: the SCRUM-2492 binary-redaction `formatters.log` hook rebuilt every logged object with `Object.keys()` and runs BEFORE the `error`/`err` serializers, so an `Error` (non-enumerable `message`/`stack`) became `{}` before any serializer saw it. Verified emitted lines: `logger.error({error: new Error('boom')})` → `"error":{}`; a PostgREST object → `{"type":"Object","message":"Bad Request","stack":""}` with `code`/`details`/`hint` dropped — the exact shape from the anchoring incident, and why root-causing it needed database archaeology. This affected **every** `logger.error`/`warn` in the worker. 9 new tests build a real pino over an in-memory destination and assert the JSON line (the existing `logger.test.ts` mocks pino wholesale and was structurally blind to this).
+- **Postcondition pattern.** New `utils/jobPostcondition.ts`: a handler that claimed N units and completed 0 must not answer 200. Throwing converts the silence into a Cloud Scheduler ERROR attempt — the same signal the new alert policy watches, so the two halves are one system. Applied narrowly to `monthly-allocation-rollover.ts` only (billing + monthly cadence = worst detection latency). `attempted === 0` stays healthy; partial failure stays 200+degraded. Remaining log-and-continue sites are documented follow-ups, not a sweeping refactor.
+
+**NOT DONE — founder-side, cannot be done from a coding session:** create a GCP notification channel (Slack/PagerDuty/email), run `apply-monitoring.sh` with `SLACK_OPS_ALERTS_CHANNEL` set, create the 2 new Sentry issue-alert rules in the UI (Sentry MCP cannot create issue alert rules), and capture live delivery proof for each. Until then all four items above are **declared-only**; only the pino fix and the postcondition change alter runtime behaviour on deploy.
+
+_Last refreshed: 2026-08-01 by Observability lane — GCP counts verified by live REST calls to monitoring.googleapis.com/logging.googleapis.com against `arkova1` (see PR body for the commands + verbatim `{}` responses and the 464-failure breakdown); test counts from local `npm run test` (worker 8950 passed, root 5081 passed)._
+
 ### 2026-08-01 (CTO) — 72h SOAK PAIR PASSED + RELEASE CLOSEOUT: prod un-paused and current at main tip, queue cleared to Ready, founder no-interim-soak ruling recorded
 
 **Both 72h signet soaks PASSED** (launch cleared 2026-07-31T19:43Z, legacy 21:32Z). Final verified post-expiry (MCP `execute_sql` 2026-08-01T13:07Z): launch 92,844 SECURED / 1,633 PENDING / 1 SUBMITTED (known F-3 fixture); legacy 92,931 / 1,536 / 1. Zero non-F-1 5xx across both full windows (gcloud logging, URL-verified). Treasury floor 70,471 sats. RC manifest **RC-2026-08-launch-72h finalized and approved** (deferred_consolidated_soak exited per its own sequence) — merged via PR #1770 (`c56ceee03`).
