@@ -187,6 +187,39 @@ describe('AdminOrganizationsPage — credit adjust (L2-A5)', () => {
     expect(mockWorkerFetch).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the empty state on a no-match search and Clear filters restores the full list', async () => {
+    const user = userEvent.setup();
+    mockWorkerFetch.mockImplementation(async (endpoint: string) => {
+      if (endpoint.includes('search=zzz')) {
+        return jsonResponse({ organizations: [], total: 0, page: 1, limit: 25 });
+      }
+      return jsonResponse({ organizations: [ORG], total: 1, page: 1, limit: 25 });
+    });
+
+    renderPage();
+    await waitFor(() => expect(screen.getAllByText('100').length).toBeGreaterThan(0));
+
+    await user.type(screen.getByPlaceholderText('Search by name or domain...'), 'zzz');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(await screen.findByText('No organizations found.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+
+    await waitFor(() => expect(screen.getAllByText('100').length).toBeGreaterThan(0));
+    const lastListCall = mockWorkerFetch.mock.calls
+      .filter(([endpoint]) => (endpoint as string).startsWith('/api/admin/organizations?'))
+      .pop()!;
+    expect(lastListCall[0]).not.toContain('search=');
+  });
+
+  it('shows Access Restricted (and never fetches) for non-platform-admin users', async () => {
+    mockProfile.is_platform_admin = false;
+    renderPage();
+    expect(await screen.findByText('Access Restricted')).toBeInTheDocument();
+    expect(mockWorkerFetch).not.toHaveBeenCalled();
+  });
+
   it('surfaces a friendly error and does not close the dialog on insufficient_balance', async () => {
     const user = userEvent.setup();
     mockWorkerFetch.mockImplementation(async (endpoint: string) => {
