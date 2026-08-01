@@ -202,6 +202,58 @@ describe('GET /credentials/:publicId/ctdl', () => {
     });
   });
 
+  // SCRUM-2293 REGRESSION — verified live in prod 2026-08-01 (git_sha
+  // 8e6a804e2): this exact shape served a person's full name in ceterms:name
+  // and ceterms:description from the PUBLIC, UNAUTHENTICATED endpoint. The old
+  // gate keyed on DEGREE/CERTIFICATE only (TRANSCRIPT was uncovered) and also
+  // required a literal transcript keyword, which this label does not contain.
+  it('fails closed for a bare learner name on a TRANSCRIPT credential with no transcript keyword', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+        credentialType: 'TRANSCRIPT',
+        subType: null,
+        label: 'Summary of discussion with Graham Bell',
+        description: 'Summary of discussion with Graham Bell',
+        metadata: {},
+      })),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'not_found' });
+    expect(JSON.stringify(res.body)).not.toContain('Graham Bell');
+    const auditPayload = insertAudit.mock.calls[0][0];
+    expect(JSON.parse(auditPayload.details)).toMatchObject({
+      outcome: 'safety_blocked',
+      http_status: 404,
+      credential_type: 'TRANSCRIPT',
+    });
+  });
+
+  // SCRUM-2299 — the assembled-body scan is the backstop for values that never
+  // route through cleanPublicFreeText. A URL is hygiene-cleaned only, so an
+  // email in its query string used to ship on the public body verbatim.
+  it('fails closed when PII rides in on the issuer website query string', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+        credentialType: 'LICENSE',
+        issuer: {
+          name: 'Arkova University',
+          publicId: 'ORG-ARKOVA-U',
+          websiteUrl: 'https://example.edu/lookup?student=jane.student@example.edu',
+        },
+      })),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(res.body)).not.toContain('jane.student@example.edu');
+    const auditPayload = insertAudit.mock.calls[0][0];
+    expect(JSON.parse(auditPayload.details)).toMatchObject({ outcome: 'safety_blocked' });
+  });
+
   it('fails closed (no published body) when a credential carries a fabricated CTID (CE-02)', async () => {
     const lookup: CredentialsCtdlLookup = {
       lookupByPublicId: vi.fn().mockResolvedValue(
