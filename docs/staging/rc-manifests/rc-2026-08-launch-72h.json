@@ -22,7 +22,11 @@
     "746486a5b28a52354592a354b6da1ffc97aec14a",
     "400d005748ccca33db55dc119ce4db654fcf4b48",
     "7bca4218360d9bed3c684617e0bc13c282d390d5",
-    "edee3004cc28556b57fae4a3ba353193574e8301"
+    "edee3004cc28556b57fae4a3ba353193574e8301",
+    "5168c7f24acdfede915c7e61337b1a09a071e124",
+    "055cddb7cd6c284147239215c5d05cd0b32496e2",
+    "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+    "ea7e01bf3a9f5397f3518b90be4be8963ea523cf"
   ],
   "covered_main_shas": [
     "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
@@ -36,7 +40,11 @@
     "746486a5b28a52354592a354b6da1ffc97aec14a",
     "400d005748ccca33db55dc119ce4db654fcf4b48",
     "7bca4218360d9bed3c684617e0bc13c282d390d5",
-    "edee3004cc28556b57fae4a3ba353193574e8301"
+    "edee3004cc28556b57fae4a3ba353193574e8301",
+    "5168c7f24acdfede915c7e61337b1a09a071e124",
+    "055cddb7cd6c284147239215c5d05cd0b32496e2",
+    "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+    "ea7e01bf3a9f5397f3518b90be4be8963ea523cf"
   ],
   "_append_procedure": [
     "PURPOSE: this manifest is a living document from now (2026-07-28, PR wave still being opened) through 72h-soak completion. Follow this procedure every time a new sprint PR opens or a Mergify batch lands, per docs/release/wave-merge-choreography-2026-08.md.",
@@ -272,17 +280,22 @@
     },
     {
       "number": 1739,
-      "head_sha": "f4a118a6e05a9cabd09b3787937467ba79332a0d",
-      "base_sha": "4f716b73cd63b3dee5e0a189a1865a4300d52755",
+      "head_sha": "639aacbd79ade6ca6e45edf2d2b5a25de3a0fad2",
+      "base_sha": "055cddb7cd6c284147239215c5d05cd0b32496e2",
       "risk_tier": "T3",
       "owner": "founder admin-controls lane",
       "title": "feat(admin): platform-admin org credit adjust — audited RPC + UI (founder admin-controls)",
-      "ci_summary": "NEW PR discovered 2026-07-28T16:20:00Z via live gh pr list re-check. Base 4f716b73, draft=True, mergeable=MERGEABLE/BLOCKED. Detector-computed tier T3 (migration 0375 touches schema/data integrity (detector-computed T3)). Currently-failing checks: [Check supabase/migrations vs prod, SonarCloud Code Analysis, Staging Soak Evidence Gate, Supabase Preview]. `Check supabase/migrations vs prod` and `SonarCloud Code Analysis` both failing — investigate before this PR is soak-eligible.",
+      "ci_summary": "Captured 2026-07-28 during wave discovery; tier T3 (migration 0375, detector-computed). State at current head (2026-08-01): out of draft; SonarCloud quality gate OK (S3776/S6759 resolved); Check supabase/migrations vs prod green; typecheck/lint/test/lint:copy green, 7/7 page tests; Supabase Preview skipping (no preview-branch run for this PR); Staging Soak Evidence Gate pending this manifest refresh.",
       "rollback_note": "Revert PR; apply 0375's own -- ROLLBACK: block (verify the block exists and is correct before relying on this note; not independently re-verified this pass).",
       "migration_files": [
         "supabase/migrations/0375_admin_org_credit_adjust.sql"
       ],
-      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak."
+      "soak_coverage": "Wave 72h rig-pair soak completed (PASS) at RC baseline. This PR's changed path (admin credit-adjust RPC + UI) was NOT exercised by the rig, and migration 0375 was NOT applied to the rig and is NOT covered by rollback-rehearsal-0370-0377.json (that artifact rehearsed 0359/0360/0368/0370/0377 only). 0375 rollback relies on its own file-header -- ROLLBACK: block, un-rehearsed (rollback_note: not independently re-verified). Merge authorization rests on exceptions[] id founder-ruling-2026-08-01-no-interim-soaks; residual risk rides the scheduled post-pentest consolidated soak.",
+      "allowed_base_shas": [
+        "055cddb7cd6c284147239215c5d05cd0b32496e2",
+        "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+        "ea7e01bf3a9f5397f3518b90be4be8963ea523cf"
+      ]
     },
     {
       "number": 1740,
@@ -445,8 +458,8 @@
     "profile_note": "profile=chain (NOT mock): CTO ruling R17 requires ENABLE_ORG_CREDIT_ENFORCEMENT=ON and ENABLE_OUTBOUND_WEBHOOKS=ON as a deliberate, documented divergence from prod's current flag state, and the wave's surfaces (mixed-format bulk anchoring, 22-format extraction, credits/queue, DocuSign webhooks) need the real GetBlock RPC + WIF signer path exercised, not mocked chain. See docs/release/72h-soak-runbook-2026-08.md flag matrix."
   },
   "soak": {
-    "start": "2026-07-28T19:43:55.770557Z (revision arkova-worker-launch-72h-2026-08-staging-00004-qgj created ~19:44-19:45Z after the BITCOIN_UTXO_PROVIDER=mempool fix; exact creationTimestamp captured in provenance JSON revision_history)",
-    "end": "2026-07-31T19:43:55Z (72h after clock start; revision uptime verified past required_end_timestamp via gcloud + live monitoring loop through expiry)",
+    "start": "2026-07-28T19:43:55.770557Z",
+    "end": "2026-07-31T19:43:55.770557Z",
     "duration_hours": 72,
     "clock_anchor": "Cloud Run worker revision uptime, revision arkova-worker-launch-72h-2026-08-staging-00004-qgj (min-instances=1). NOT revision 00003-dw8 -- that revision's BITCOIN_UTXO_PROVIDER=getblock config could broadcast-fail-silent (see blocker-1 root cause); 00004-qgj is the correct frozen base because it is the first revision with a working broadcast path. This DOES reset the uptime clock relative to 00003's creation time -- correct and intentional per feedback_soak_clock_is_worker_uptime.md (a config fix that changes broadcast behavior is exactly the kind of change that should restart the clock, not be smuggled in in the middle of a running soak).",
     "harness_version": "arkova-soak-loadgen-* Cloud Run services, code on PR #1765 (T0)",
@@ -456,7 +469,7 @@
       "docs/staging/launch-72h-2026-08/rollback-rehearsal-0370-0377.json",
       "docs/staging/launch-72h-2026-08/preflight-launch-72h-2026-08.json"
     ],
-    "expires_at": "2026-08-15T19:43:55Z (evidence valid 14 days per staging-evidence gate freshness window; any tested-code commit after frozen lineage invalidates exact-head coverage earlier)",
+    "expires_at": "2026-08-14T19:43:55Z",
     "smoke_gate_t0_2h": {
       "health_200_signet": "PASS -- /health returns 200, network=signet (label), config cross-check also signet (BITCOIN_NETWORK=signet on live revision env). git_sha field reports 'unknown' (not populated by this build) -- cross-checked via image digest match instead (see provenance JSON), not a hard fail but a build-metadata gap worth fixing.",
       "migrations_applied": "PASS -- schema_migrations train tail matches expected (...,0367,0368,0370,0376,0377); 0362/0364 correctly absent (unmerged PRs, now excluded from manifest).",
@@ -466,7 +479,10 @@
       "zero_5xx": "PASS — full-window monitoring at 30-60min cadence found zero non-org-queue-scheduler 5xx on both rigs; F-1 (org-queue-scheduler) tracked separately as a pre-existing finding, not a smoke failure.",
       "preflight_clean_mirror_rerun": "Provisioning-time clean_mirror result stands (2026-07-28T19:10:00Z); rig was exclusive to this soak for the whole window (isolated project, no cross-PR writes).",
       "abort_trigger_status": "CLOSED PASS — SECURED confirmed 2026-07-28T20:00:59Z; no abort trigger fired for the remainder of the 72h window."
-    }
+    },
+    "start_note": "revision arkova-worker-launch-72h-2026-08-staging-00004-qgj created ~19:44-19:45Z after the BITCOIN_UTXO_PROVIDER=mempool fix; exact creationTimestamp captured in provenance JSON revision_history",
+    "end_note": "Nominal end = soak.start + exactly 72h (the required_end_timestamp; fractional seconds carried from start so the recorded window is the full 72h, not 0.77s short). Revision uptime was verified PAST this timestamp via gcloud + live monitoring through expiry; post-expiry state verification 2026-08-01T13:07Z is recorded in soak.result.",
+    "expires_at_note": "evidence valid 14 days per staging-evidence gate freshness window; any tested-code commit after frozen lineage invalidates exact-head coverage earlier"
   },
   "lifecycle_evidence": {
     "volume": "92,844 (launch) / 92,931 (legacy) anchors SECURED end-to-end over 72h; post-F-2/F-8 fixes, sustained keyed API load with real per-key limiter behavior; single-tx merkle batches reached 4,000-10,000 anchors (production BATCH_ANCHOR_MAX_SIZE=10000 scale).",
@@ -524,7 +540,18 @@
     "timestamp": "",
     "residual_note": "Not applicable until the wave merges. See docs/release/release-management-runbook.md §3 (migrate-before-merge) and §9 (Release Done checklist) for the prod-apply + reconciliation sequence each migration in migration_plan.order must go through before its PR merges."
   },
-  "exceptions": [],
+  "exceptions": [
+    {
+      "id": "founder-ruling-2026-08-01-no-interim-soaks",
+      "date": "2026-08-01",
+      "approver": "Carson (founder)",
+      "ruling": "No interim soaks for the open PR queue: pen-testing next, then a week-long consolidated soak of everything; green-CI PRs merge and deploy now.",
+      "scope": "Open queue PRs with included_prs[] entries in this manifest: 1726, 1728, 1737, 1738, 1739, 1742. The ruling also covers 1753/1760/1764/1765/1767, but those have NO included_prs[] entry yet — append one per _append_procedure step 1 before citing this manifest in their evidence blocks, or their gate fails with \"does not include the current PR head SHA\".",
+      "recorded_by": "RTE repair session 2026-08-01; ruling first captured in HANDOFF.md (commit 391fc64).",
+      "residual_risk_note": "Changed paths not exercised by the completed 72h rig pair rely on per-PR CI/E2E evidence plus the scheduled post-pentest consolidated soak.",
+      "enforcement_note": "Documentation only: scripts/ci/check-staging-evidence.ts does not read exceptions[]. The gate passes included PRs on the manifest soak/environment/entry fields; this entry records the human authorization for auditors, it is not machine-enforced."
+    }
+  ],
   "included_prs_live_refresh": {
     "refreshed_at": "2026-07-28T19:55:00Z",
     "method": "gh pr list --state open --json number,title,headRefOid,baseRefName,isDraft,labels (live re-run, not trusted from prior session)",
