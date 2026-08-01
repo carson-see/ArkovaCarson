@@ -69,6 +69,16 @@ JOBS=(
   # ENABLE_CONNECTOR_ARTIFACT_DRAIN=true. Idempotent (compare-and-set claim), so
   # retries never double-anchor; a non-200 (e.g. cycle select failure) retries.
   "drain-connector-artifacts|*/5 * * * *|/jobs/drain-connector-artifacts|30s,120s,2"
+  # SCRUM-2234: stuck-anchor monitor, hourly. Reads the oldest non-deleted
+  # PENDING anchor's created_at and pages via Sentry past
+  # STUCK_ANCHOR_ALERT_HOURS (default 24h). This is the dead-man for the exact
+  # 2026-06-01 shape, where the daily-anchor-flush 401 blackout ran ~6 weeks
+  # undetected because nothing alerted on the queue failing to drain. The route
+  # shipped in services/worker/src/routes/cron.ts but the Scheduler binding was
+  # never created in prod — added here 2026-08-01 after a three-way scheduler
+  # reconciliation found it missing. A DETECTED stall returns 200 (a correct
+  # finding must not be retried); only a broken DB probe 500s, hence the retry.
+  "check-stuck-anchors|0 * * * *|/jobs/check-stuck-anchors|30s,120s,2"
 )
 # SCRUM-1727 (one-shot historical backfill) is INTENTIONALLY NOT in JOBS.
 # It's a manual operator endpoint at /jobs/bq-export-backfill?table=<name>.
