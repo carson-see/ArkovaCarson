@@ -25,6 +25,7 @@ import {
   type AnchorByPublicId,
   type AnchorSelectRow,
 } from './verify.js';
+import { PROOF_AVAILABILITY_NOTE } from '../../constants/proofAvailability.js';
 
 function createRow(overrides: Partial<AnchorSelectRow> = {}): AnchorSelectRow {
   return {
@@ -607,5 +608,95 @@ describe('mapAnchorRow — DB row → AnchorByPublicId (verify lookup)', () => {
       createRow({ metadata: { jurisdiction: { nested: 'oops' } } }),
     );
     expect(anchor.jurisdiction).toBeNull();
+  });
+});
+
+// ─── SCRUM-2575 / 2576: back-catalogue proof honesty ────────────────────────
+//
+// Only ~6,110 anchors carry a STORED per-document proof; the other ~2.97M
+// SECURED anchors are direct-anchored with no stored inclusion branch. The
+// verify response previously said NOTHING about that, so a consumer reading
+// `verified: true` had no way to know whether a per-document offline proof
+// exists — it had to infer it from a 404 on a second endpoint. Constitution 1.5
+// requires the surface to state what is measured, asserted, and NOT asserted.
+describe('SCRUM-2575: proof availability is stated honestly', () => {
+  it('reports per_document when a stored inclusion branch exists', () => {
+    const anchor = mapAnchorRow(createRow({
+      anchor_proofs: {
+        merkle_root: 'ab'.repeat(32),
+        proof_path: [{ hash: 'cd'.repeat(32), position: 'left' }],
+      },
+    }));
+    const result = buildVerificationResult(anchor);
+    expect(result.proof_availability).toBe('per_document');
+    expect(result.proof_availability_note).toBe(PROOF_AVAILABILITY_NOTE.per_document);
+  });
+
+  it('reports root_only for a back-catalogue anchor with no stored proof row', () => {
+    const anchor = mapAnchorRow(createRow({ anchor_proofs: null }));
+    const result = buildVerificationResult(anchor);
+    expect(result.proof_availability).toBe('root_only');
+    expect(result.proof_availability_note).toBe(PROOF_AVAILABILITY_NOTE.root_only);
+  });
+
+  it('reports root_only when a proof row exists but carries no branch', () => {
+    // The batch-root case: the root is on record, the per-document branch is not.
+    const anchor = mapAnchorRow(createRow({
+      anchor_proofs: { merkle_root: 'ab'.repeat(32), proof_path: [] },
+    }));
+    const result = buildVerificationResult(anchor);
+    expect(result.proof_availability).toBe('root_only');
+  });
+
+  it('treats a non-array proof_path as root_only (never guesses a branch)', () => {
+    const anchor = mapAnchorRow(createRow({
+      anchor_proofs: {
+        merkle_root: 'ab'.repeat(32),
+        proof_path: { bogus: true } as unknown as null,
+      },
+    }));
+    const result = buildVerificationResult(anchor);
+    expect(result.proof_availability).toBe('root_only');
+  });
+
+  it('the root_only note does NOT claim per-document offline verification', () => {
+    const note = PROOF_AVAILABILITY_NOTE.root_only;
+    expect(note).toMatch(/not asserted/i);
+    expect(note).toMatch(/self-contained per-document proof/i);
+    // Absence of a stored proof must not read as invalidity.
+    expect(note).toMatch(/not evidence that the record is invalid/i);
+  });
+
+  it('both notes state what is measured and what is NOT asserted', () => {
+    for (const note of Object.values(PROOF_AVAILABILITY_NOTE)) {
+      expect(note).toMatch(/measured:/i);
+      expect(note).toMatch(/not asserted:/i);
+    }
+  });
+
+  it('omits both fields for a not-yet-secured anchor rather than guessing', () => {
+    // A PENDING anchor has no settled proof state; asserting root_only would
+    // describe a record that has not finished anchoring.
+    const anchor = mapAnchorRow(createRow({
+      status: 'PENDING',
+      chain_tx_id: null,
+      chain_block_height: null,
+      anchor_proofs: null,
+    }));
+    const result = buildVerificationResult(anchor);
+    expect(result.proof_availability).toBeUndefined();
+    expect(result.proof_availability_note).toBeUndefined();
+  });
+
+  it('still classifies a REVOKED anchor — it was anchored, and still is', () => {
+    const anchor = mapAnchorRow(createRow({ status: 'REVOKED', anchor_proofs: null }));
+    const result = buildVerificationResult(anchor);
+    expect(result.proof_availability).toBe('root_only');
+  });
+
+  it('never emits either field as null (frozen schema — omit, never null)', () => {
+    const anchor = mapAnchorRow(createRow({ status: 'PENDING', anchor_proofs: null }));
+    const serialized = JSON.stringify(buildVerificationResult(anchor));
+    expect(serialized).not.toContain('proof_availability');
   });
 });

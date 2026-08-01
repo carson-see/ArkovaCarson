@@ -14,6 +14,11 @@ import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { FERPA_EDUCATION_TYPES, FERPA_REDISCLOSURE_NOTICE } from '../../constants/ferpa.js';
+import {
+  PROOF_AVAILABILITY_NOTE,
+  classifyProofAvailability,
+  type ProofAvailability,
+} from '../../constants/proofAvailability.js';
 import { getCachedVerification, setCachedVerification } from '../../utils/verifyCache.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 
@@ -75,8 +80,36 @@ export interface VerificationResult {
    * never guessed, Constitution 1.5). Additive nullable — Constitution 1.8.
    */
   fingerprint_source?: 'document_bytes' | 'issuer_record_attestation' | null;
+  /**
+   * SCRUM-2575: whether a per-document proof can actually be retrieved for this
+   * record, or only the on-chain commitment exists. Measured from stored proof
+   * data, never guessed and never derived from `status`.
+   *
+   * Omitted (never null) when the anchor has not reached a state where a proof
+   * answer is meaningful — see buildVerificationResult. Additive —
+   * Constitution 1.8, no version bump.
+   */
+  proof_availability?: ProofAvailability;
+  /**
+   * SCRUM-2575: the measured / asserted / NOT-asserted statement for
+   * `proof_availability` (Constitution 1.5). Present exactly when
+   * `proof_availability` is, so a class never travels without its meaning.
+   */
+  proof_availability_note?: string;
   error?: string;
 }
+
+/**
+ * Public statuses for which a proof-availability answer is a measurement rather
+ * than a guess. PENDING / SUBMITTED are excluded: those records have not
+ * finished anchoring, so the absence of a stored branch says nothing yet.
+ */
+const SETTLED_PROOF_STATUSES = new Set<string>([
+  'ACTIVE',
+  'REVOKED',
+  'EXPIRED',
+  'SUPERSEDED',
+]);
 
 function mapStatus(status: string): VerificationResult['status'] {
   switch (status) {
@@ -157,6 +190,14 @@ export interface AnchorByPublicId {
   sub_type: string | null;
   /** R19: fingerprint evidence class from anchors.fingerprint_source (migration 0376). */
   fingerprint_source: string | null;
+  /**
+   * SCRUM-2575: does a STORED per-document inclusion branch exist for this
+   * anchor? Measured from `anchor_proofs.proof_path` being a non-empty array —
+   * the same thing `/proof` needs in order to return a branch. Optional so the
+   * ~30 existing fixtures do not all need updating; absent is treated as false
+   * (fail closed — no branch we can see means no branch we can promise).
+   */
+  has_stored_proof_branch?: boolean;
 }
 
 /**
@@ -257,6 +298,21 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     result.version_number = anchor.version_number;
   }
 
+  // SCRUM-2575: state whether a per-document proof can actually be retrieved.
+  //
+  // Only for anchors that have reached a settled on-chain state. A PENDING /
+  // SUBMITTED record has not finished anchoring, so "root_only" would not be a
+  // measurement — it would be a description of an unfinished process, and a
+  // caller would reasonably read it as "this record will never have a proof."
+  // REVOKED / EXPIRED / SUPERSEDED anchors DO get a class: they were anchored,
+  // the commitment is still on-chain, and the proof question is still
+  // answerable. Omitted (never null) otherwise — frozen schema, CLAUDE.md 6.
+  if (SETTLED_PROOF_STATUSES.has(publicStatus as string)) {
+    const availability = classifyProofAvailability(anchor.has_stored_proof_branch === true);
+    result.proof_availability = availability;
+    result.proof_availability_note = PROOF_AVAILABILITY_NOTE[availability];
+  }
+
   return result;
 }
 
@@ -320,6 +376,11 @@ function logVerificationAudit(
 /** Single embedded `anchor_proofs` row (merkle_root lives here, not on anchors). */
 interface AnchorProofEmbed {
   merkle_root: string | null;
+  /**
+   * SCRUM-2575: the per-document Merkle inclusion branch, when one is stored.
+   * JSONB, so untyped on the wire — only a non-empty ARRAY counts as a branch.
+   */
+  proof_path?: unknown;
 }
 
 /**
@@ -384,6 +445,29 @@ function resolveMerkleRoot(row: AnchorSelectRow): string | null {
   return typeof legacy === 'string' && legacy.length > 0 ? legacy : null;
 }
 
+/**
+ * SCRUM-2575: does this row carry a STORED per-document inclusion branch?
+ *
+ * Only a non-empty array counts. No proof row, a receipt-only row, an empty
+ * branch (the honest empty-branch shape a single-leaf/direct anchor gets), or a
+ * malformed non-array value all mean the same thing to a caller: there is no
+ * branch to hand out. Fail closed — we only claim a proof we can see.
+ *
+ * Deliberately does NOT consult `anchor_proofs.proof_completeness_class` (mig
+ * 0354). That column is populated by a Carson-gated classifier that has not been
+ * run in write mode over prod, so it is NULL for essentially the whole
+ * catalogue; keying the public answer off it would report `root_only` for
+ * everything regardless of what is actually stored. The branch itself is the
+ * measurement.
+ */
+function resolveHasStoredProofBranch(row: AnchorSelectRow): boolean {
+  const proofs = row.anchor_proofs;
+  const proofRows = Array.isArray(proofs) ? proofs : proofs ? [proofs] : [];
+  return proofRows.some(
+    (proof) => Array.isArray(proof?.proof_path) && proof.proof_path.length > 0,
+  );
+}
+
 /** Reads `jurisdiction` from anchors.metadata JSONB (informational tag,
  *  Constitution 1.5). Returns null for missing or non-string values. */
 function resolveJurisdiction(row: AnchorSelectRow): string | null {
@@ -434,6 +518,7 @@ export function mapAnchorRow(row: AnchorSelectRow): AnchorByPublicId {
     confidence_scores: latestManifest?.confidence_scores ?? null,
     sub_type: row.sub_type ?? null,
     fingerprint_source: row.fingerprint_source ?? null,
+    has_stored_proof_branch: resolveHasStoredProofBranch(row),
   };
 }
 
@@ -449,7 +534,7 @@ const defaultLookup: PublicIdLookup = {
           'revocation_tx_id, revocation_block_height, file_mime, file_size, ' +
           'org_id, fingerprint_source, metadata, ' +
           'organization:org_id(display_name), parent:parent_anchor_id(public_id), ' +
-          'anchor_proofs(merkle_root), ' +
+          'anchor_proofs(merkle_root, proof_path), ' +
           'extraction_manifests(confidence_scores, extraction_timestamp)',
       )
       .eq('public_id', publicId)
