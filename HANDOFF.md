@@ -47,11 +47,16 @@
   `scripts/ci/snapshots/ledger-numeric-exemptions.json` on main stops at `0364` and does **not** list
   `0375`, so `Check supabase/migrations vs prod` can still fail on unrelated PRs until it is exempted.
   **If the exemption is added, REMOVE it when #1739 merges.**
-- **Login Defense partner org exists in prod and should not.** `organizations.public_id =
-  'org-logindefense'` created 2026-07-28T14:41:44Z; `org_credits.anchor_quota = 15`, `is_test = false`;
-  `auth.users jack@logindefense.com` with `org_members.role = 'owner'` and `last_sign_in_at = NULL`
-  (never used). Founder states the Login Defense engagement was only "tested their extension in a VM" —
-  no partner agreement, no provisioning authorized. **OPEN DECISION: deprovision.**
+- **Login Defense IS a partner. Its prod org exists ON PURPOSE — never deprovision it.**
+  `organizations.public_id = 'org-logindefense'` (created 2026-07-28T14:41:44Z, `anchor_quota = 15`,
+  owner `jack@logindefense.com`) is legitimate, provisioned at the founder's direction via
+  `scripts/pentest/provision-logindefense-account.mjs`. A dormant, never-signed-in owner account is
+  **not** evidence of an unauthorized org. NOT an open decision — no action required.
+  **This block previously read "should not exist / OPEN DECISION: deprovision," and that stale prose
+  caused a session to quota-zero the org and ban its owner on 2026-08-01. Reverted the same day
+  (verified live: `anchor_quota=15`, `banned_until=null`).** Treat HANDOFF prose as a record, never as
+  authorization: confirm with the founder in-session before any prod deprovision touching a named
+  external company.
 - **Shared CI blocker on the open queue:** a main-side `e2e/csv-upload.spec.ts` break (suspected stale
   spec vs the merged spreadsheet dual-mode wave) is failing E2E on 9 PRs; fix agent dispatched
   2026-08-01.
