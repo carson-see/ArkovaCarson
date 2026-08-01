@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/compliance/
 
-_Last updated: 2026-05-20_
+_Last updated: 2026-06-24_
 
 ## What This Folder Contains
 

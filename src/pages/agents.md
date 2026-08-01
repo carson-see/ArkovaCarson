@@ -1,5 +1,5 @@
 # agents.md — pages
-_Last updated: 2026-07-27_
+_Last updated: 2026-07-28_
 
 ## SCRUM-2940 — Folders UI (founder escalation, PR #1657 follow-up)
 

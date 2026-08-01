@@ -1,5 +1,5 @@
 # agents.md — components/onboarding
-_Last updated: 2026-05-16_
+_Last updated: 2026-07-21_
 
 ## What This Folder Contains
 User onboarding flow components: stepper, org setup, plan selection, role selection, checklist, and disclaimers.

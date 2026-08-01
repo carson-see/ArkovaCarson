@@ -1,5 +1,5 @@
 # agents.md — components
-_Last updated: 2026-07-06_
+_Last updated: 2026-07-22_
 
 ## 2026-07-22 SCRUM-2914 (Founder UI findings): AI-03 confidence gate removed
 
