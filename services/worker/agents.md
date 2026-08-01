@@ -99,8 +99,6 @@ regression-prevention + closing latent error-path leaks. Six cohesive pieces:
 
 ## Train D proof-integrity foundation (2026-06-15, branch `feat/train-d-proof-foundation`)
 
-## Train D proof-integrity foundation (2026-06-15, branch `feat/train-d-proof-foundation`)
-
 The #1 MVP launch-blocker: make proof `verified` cryptographic and persist the
 branches that make it possible. Three coupled stories on one branch.
 
