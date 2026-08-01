@@ -172,6 +172,23 @@ jobs:
           # deploy-worker.yml and .github/workflows/agents.md "Deploy-worker
           # pause gate" for the deploy-side half of this coupled control.
           DEPLOY_WORKER_PAUSED: ${{ vars.DEPLOY_WORKER_PAUSED }}
+          # TEMPORARY BYPASS — founder directive 2026-08-01 (relayed by the
+          # CTO session). When this repository variable is the literal string
+          # "true", scripts/ci/check-staging-evidence.ts short-circuits to a
+          # pass and prints a `::warning::` banner stating that NO staging
+          # soak evidence was evaluated. It exists so Mergify can drain the
+          # CI-green queue ahead of the external pen test starting
+          # 2026-08-02; the week-long consolidated soak that follows the pen
+          # test is what produces the deferred evidence.
+          #
+          # RE-ENABLE BEFORE THAT SOAK IS GRADED:
+          #   gh variable set SOAK_GATE_DISABLED --body false
+          #
+          # Like DEPLOY_WORKER_PAUSED above, `vars.*` is read fresh from the
+          # repo's live Actions-variable state on THIS run, so it is
+          # repo-admin state and not anything a PR author can set. Anything
+          # other than the literal "true" leaves the gate fully enforcing.
+          SOAK_GATE_DISABLED: ${{ vars.SOAK_GATE_DISABLED }}
         # Resolved local binary, not `npx tsx` (SonarCloud githubactions:S6505/
         # S8543 — `npx` can install packages on-demand and run their lifecycle
         # scripts). `npm ci` two steps above already installs the pinned

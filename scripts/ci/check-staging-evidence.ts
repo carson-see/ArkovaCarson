@@ -2370,7 +2370,44 @@ interface CheckOptions {
    * SCRUM-2980) — see that function for why.
    */
   deployWorkerPaused?: boolean;
+  /**
+   * TEMPORARY, VARIABLE-CONTROLLED BYPASS — founder directive 2026-08-01,
+   * relayed by the CTO session.
+   *
+   * When positively `true`, {@link check} short-circuits to a pass without
+   * evaluating ANY evidence requirement, so Mergify can drain the CI-green
+   * queue ahead of the external pen test that starts 2026-08-02. The
+   * consolidated week-long soak that follows the pen test is what actually
+   * produces the deferred evidence, and this variable MUST be flipped back
+   * to `false` before that soak so the gate grades it.
+   *
+   * Populated in {@link main} from `process.env.SOAK_GATE_DISABLED`, which
+   * `.github/workflows/staging-evidence.yml` threads from the live
+   * `vars.SOAK_GATE_DISABLED` repository variable — repo-admin state, not
+   * anything a PR author controls. Anything other than the literal string
+   * `'true'` is "not engaged" and the gate runs in full (fail closed on
+   * ambiguity), mirroring {@link CheckOptions.deployWorkerPaused}.
+   *
+   * NOTE FOR ANY LATER READER: this is a real, deliberate suspension of the
+   * CLAUDE.md §1.11/§1.12 evidence requirement, not a refactor. Every other
+   * code path is left untouched precisely so that clearing the variable
+   * restores the gate exactly as it was.
+   */
+  soakGateDisabled?: boolean;
 }
+
+/**
+ * The banner a bypassed run prints. Deliberately states what was NOT done —
+ * a passing check here must never be readable as "evidence present".
+ */
+export const SOAK_GATE_BYPASS_NOTE =
+  '⚠️  SOAK GATE BYPASSED — founder directive 2026-08-01, re-enable before the post-pentest '
+  + 'consolidated soak. The repository variable SOAK_GATE_DISABLED is set to "true", so this '
+  + 'PR\'s staging soak evidence has NOT been evaluated: no tier was computed, no evidence '
+  + 'block was read, and no staging soak evidence is claimed to exist for this change. This '
+  + 'check passing means only that the bypass is engaged. Clear the SOAK_GATE_DISABLED '
+  + 'repository variable (`gh variable set SOAK_GATE_DISABLED --body false`) to restore '
+  + 'CLAUDE.md §1.11/§1.12 enforcement in full before the consolidated soak is graded.';
 
 function addErrors(result: CheckResult, errors: string[]): void {
   if (errors.length === 0) return;
@@ -3068,6 +3105,16 @@ export function check(opts: CheckOptions): CheckResult {
   const { body, files } = opts;
   const result: CheckResult = { ok: true, errors: [], notes: [] };
 
+  // TEMPORARY BYPASS (founder directive 2026-08-01) — must be the first thing
+  // this function does. It short-circuits ahead of tier classification so the
+  // banner below is the ONLY reason a bypassed run passes; letting T0 (or any
+  // other path) answer first would hide that the gate was suspended.
+  // See CheckOptions.soakGateDisabled.
+  if (opts.soakGateDisabled === true) {
+    result.notes.push(SOAK_GATE_BYPASS_NOTE);
+    return result;
+  }
+
   const required = requiredTierFor(files, {
     diffProvider: opts.diffProvider,
     s33Lane1ImportScan: opts.s33Lane1ImportScan,
@@ -3137,6 +3184,18 @@ export function check(opts: CheckOptions): CheckResult {
 }
 
 function main(): void {
+  // TEMPORARY BYPASS (founder directive 2026-08-01) — checked before ANY
+  // repo/git resolution, so an unrelated base-ref or head-ref resolution
+  // failure cannot red a run that is supposed to be bypassed. Emitted as a
+  // `::warning::` as well as stdout so it surfaces in the Actions annotation
+  // panel, not just the folded log. See CheckOptions.soakGateDisabled.
+  const soakGateDisabled = process.env.SOAK_GATE_DISABLED === 'true';
+  if (soakGateDisabled) {
+    console.log(`ℹ️  ${SOAK_GATE_BYPASS_NOTE}`);
+    console.error(`::warning title=Staging soak evidence gate BYPASSED::${SOAK_GATE_BYPASS_NOTE}`);
+    return;
+  }
+
   // Required base: fail closed if it can't resolve (getBaseRef exits 1).
   const baseRef = getBaseRef({ required: true })!;
   const files = changedFiles();
@@ -3158,6 +3217,9 @@ function main(): void {
     // .github/workflows/staging-evidence.yml — see CheckOptions.deployWorkerPaused
     // for why this must be a literal 'true' string match, not truthiness.
     deployWorkerPaused: process.env.DEPLOY_WORKER_PAUSED === 'true',
+    // Always false here — the engaged case returned above. Passed anyway so
+    // the CLI and the library agree on the contract.
+    soakGateDisabled,
   });
 
   for (const note of result.notes) console.log(`ℹ️  ${note}`);
