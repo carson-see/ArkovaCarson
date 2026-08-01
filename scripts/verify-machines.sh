@@ -23,11 +23,36 @@ MACHINES_DIR="$REPO_ROOT/machines"
 BIN="$REPO_ROOT/node_modules/.bin/tla-precheck"
 
 # Split args into name filters and flags forwarded to tla-precheck.
+#
+# Value-taking flags are listed explicitly. Do NOT infer "next non-dash token
+# is the value" — that swallows a name filter written after a value-less flag
+# (`--all-tiers bitcoinAnchor` would forward `bitcoinAnchor` as a flag, and
+# tla-precheck hard-errors on any token it does not recognise).
 FILTERS=()
 FORWARD=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -*) FORWARD+=("$1"); [[ $# -gt 1 && "$2" != -* ]] && { FORWARD+=("$2"); shift; } ;;
+    --tier|--output-root|--tsconfig)
+      if [[ $# -lt 2 ]]; then
+        echo "error: $1 requires a value" >&2
+        exit 1
+      fi
+      FORWARD+=("$1" "$2")
+      shift
+      ;;
+    --all-tiers)
+      # tla-precheck parses this flag but `check` never applies it
+      # (dist/cli/machine.js: runCheck receives args.tier only), so it would
+      # exit 0 having model-checked the default tier alone. Refuse it rather
+      # than hand back a green result that verified less than it claims.
+      echo "error: --all-tiers is silently ignored by 'tla-precheck check'." >&2
+      echo "       Run one tier at a time: --tier pr / --tier nightly" >&2
+      exit 1
+      ;;
+    -*)
+      echo "error: unknown flag $1" >&2
+      exit 1
+      ;;
     *)  FILTERS+=("$1") ;;
   esac
   shift
