@@ -1,0 +1,100 @@
+{
+  "status": "clock_started_smoke_gate_in_progress",
+  "blockers_closed": {
+    "blocker_1_getblock": "Root-caused (see getblock_rpc_finding below) -- no valid signet GetBlock credential exists; proceeding on the pre-approved disclosed-exception wording (getblock_disclosed_residual_risk_exception below), not a silent fallback.",
+    "blocker_2_rollback_rehearsal": "0377 and 0370 apply->rollback->confirm->re-apply->confirm rehearsed live against nykacscfufdleghzbzhi, evidence in docs/staging/launch-72h-2026-08/rollback-rehearsal-0370-0377.json"
+  },
+  "note": "Script's automated Steps 1-6 blocked at Step 2 on a transient Supabase COMING_UP race (project not yet DNS-resolvable). Steps 2-6 completed MANUALLY against the SAME already-created project ref (nykacscfufdleghzbzhi) to avoid orphaning a duplicate paid project, mirroring the script's exact command sequence. Cloud Run sizing and two post-deploy fixes (see notes) were applied after the manual steps. Soak clock has NOT been started.",
+  "generated_at": "2026-07-28T19:30:00Z",
+  "rig_name": "launch-72h-2026-08",
+  "profile": "chain",
+  "cloud_run_service": "arkova-worker-launch-72h-2026-08-staging",
+  "cloud_run_region": "us-central1",
+  "cloud_run_url": "https://arkova-worker-launch-72h-2026-08-staging-kvojbeutfa-uc.a.run.app",
+  "cloud_run_sizing": {
+    "cpu": 2,
+    "memory": "2Gi",
+    "concurrency": 80,
+    "min_instances": 1,
+    "max_instances": 10,
+    "rationale": "Founder directive 2026-07-28: size to Medium, not the script's default (min=0/max=2/mem=1Gi/cpu=1). Matches prod's own tier (deploy-worker.yml canary: --cpu 2 --memory 2Gi --min-instances 2 --max-instances 10) so latency/throughput evidence isn't an artifact of an undersized rig. min-instances=1 (vs prod's 2) chosen to avoid cold-start-induced false p99 breaches while still holding the tier down from prod's HA posture; theoretical ceiling ~800 concurrent requests (10 x 80) against the runbook's 250-peak-concurrent-session / ~83-RPS-burst target.",
+    "cost_note": "~$0.0822/hr Supabase Medium compute (~$60/mo) + Cloud Run pay-per-use at min-instances=1 (roughly $35-50/mo idle floor at this cpu/mem, more under 72h load) \u2014 trivial against the cost of a re-soak from undersizing."
+  },
+  "gcp_project": "arkova1",
+  "supabase_org_id": "byhkazrpmivhcsuqjtva",
+  "supabase_project_name": "arkova-soak-launch-72h-2026-08",
+  "supabase_project_ref": "nykacscfufdleghzbzhi",
+  "supabase_compute_addon": {
+    "resized_to": "ci_medium",
+    "resized_via": "PATCH /v1/projects/{ref}/billing/addons (Management API; no CLI/MCP resize path exists post-creation)",
+    "spec": {
+      "cpu_cores": 2,
+      "memory_gb": 4,
+      "connections_direct": 120,
+      "connections_pooler": 600
+    },
+    "price": "$0.0822/hour (~$60/month)",
+    "connection_ceiling_resolved": "Worker uses @supabase/supabase-js (PostgREST/Supavisor pooler), not raw pg.Pool -- confirmed via grep, no direct connection pool in services/worker/src. Effective ceiling for the hot request path is connections_pooler=600, not connections_direct=120. Cloud Run ceiling (10 max-instances x 80 concurrency = 800 theoretical concurrent requests) exceeds the 600 pooler ceiling in the extreme case, but the runbook's A5 target (250 peak concurrent sessions) and A4 RPS figures (28 sustained / 83 burst) sit comfortably under 600. This closes the runbook's SS0.6 bottleneck #3 (previously 'must be pulled live, listed as a named open verification') with a real number: max_connections=120 direct / 600 pooler at Medium, vs an un-exceeded product of realistic concurrent load."
+  },
+  "secrets": {
+    "supabase_url": "supabase-url-launch-72h-2026-08-staging",
+    "supabase_service_role_key": "supabase-service-role-key-launch-72h-2026-08-staging",
+    "bitcoin_rpc_url": "arkova-s33-rig-b1-bitcoin-core-signet-rpc-url (override -- script default 'bitcoin-rpc-url-staging' does not exist)",
+    "bitcoin_rpc_auth": "arkova-s33-rig-b1-bitcoin-core-signet-rpc-auth (override -- script default 'bitcoin-rpc-auth-staging' does not exist AT ALL, bare or suffixed)",
+    "bitcoin_treasury_wif": "arkova-s33-rig-b1-treasury-wif-signet (override -- only pre-existing signet-scoped treasury WIF secret; confirmed non-empty this session, 77379 sats / 22 UTXOs at tb1qxca7ke7hgguarqxkwwydrfenn8ymnspxq765eq)"
+  },
+  "image": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:63cbdbf82738c297b103a6e6d15d69f0cde93401cafc7bee8c9f1d512f8913ec",
+  "declared_source_head": "3afb79ba6fe63604df6b11bf6541ee44a0f6f8c0",
+  "source_head_note": "main advanced twice under this same shared checkout during provisioning (595b1b73 -> 3afb79ba -> 74289e7a, other concurrent session activity, not this session). Re-froze and rebuilt at 3afb79ba (git checkout --detach) to stop chasing a moving target before starting the live --apply. main was NOT reset or forced; local branch was restored to track origin/main after provisioning completed.",
+  "deployed_revision": "arkova-worker-launch-72h-2026-08-staging-00003-dw8",
+  "deployed_image_digest": "sha256:63cbdbf82738c297b103a6e6d15d69f0cde93401cafc7bee8c9f1d512f8913ec",
+  "deployed_source_head": "3afb79ba6fe63604df6b11bf6541ee44a0f6f8c0",
+  "revision_history": [
+    "00001-x6k: initial deploy (medium sizing, signet, R17-secrets), flagRegistry cached pre-mirror flags at boot",
+    "00002-cfj: forced restart (env-var bump) to re-init flagRegistry AFTER switchboard_flags mirror -- ENABLE_BATCH_ANCHORING flipped db/true",
+    "00003-dw8: added explicit ENABLE_ORG_CREDIT_ENFORCEMENT=true env var -- this flag is env-only in flagRegistry.ts (hardcoded `() => config.enableOrgCreditEnforcement`), NOT DB-backed like ENABLE_OUTBOUND_WEBHOOKS -- mirroring it into switchboard_flags alone was a no-op for this specific flag. Confirmed both R17 flags resolve correctly only as of this revision."
+  ],
+  "scheduler_state": "enabled_pre_clock",
+  "scheduler_jobs": [
+    "arkova-worker-launch-72h-2026-08-staging-batch-anchors (*/5 * * * *)",
+    "arkova-worker-launch-72h-2026-08-staging-check-confirmations (*/5 * * * *)",
+    "arkova-worker-launch-72h-2026-08-staging-populate-confirmation-proofs (*/5 * * * *)",
+    "arkova-worker-launch-72h-2026-08-staging-org-queue-scheduler (*/5 * * * *)",
+    "arkova-worker-launch-72h-2026-08-staging-recover-broadcasts (*/10 * * * *)"
+  ],
+  "scheduler_jobs_note": "5th job (recover-broadcasts) added manually -- the script only auto-adds it when rig_id=='RIG-B1' exactly; this runbook's SS3 table requires all 5 for any rig running this soak.",
+  "clean_mirror": {
+    "artifact": "docs/staging/launch-72h-2026-08/preflight-launch-72h-2026-08.json",
+    "result": "environment_type=clean_mirror",
+    "verified_at": "2026-07-28T19:10:00.545Z",
+    "missing_from_staging_informational": [
+      "0362",
+      "0364"
+    ]
+  },
+  "anti_hollow_verification": {
+    "cloud_scheduler": "5/5 jobs ENABLED, all show a real lastAttemptTime (fired at least once each).",
+    "batch_anchor_forced_run": "POST /jobs/batch-anchors (no force) on a fresh single PENDING anchor returned processed=0 -- CORRECT behavior, not hollow: batch-anchor.ts's Trigger A/B smart-skip logic defers below MIN_BATCH_THRESHOLD / min-age. POST /jobs/batch-anchors?force=true (Trigger D / daily-flush semantics) on the same anchor returned batchId, a real merkleRoot matching the seeded fingerprint, and chain_tx_id=294c4318be0370db5b8545e7c5055d3e153ec6e2ad043d7ad00d0b8ecb7a8e4b; DB row transitioned PENDING -> BROADCASTING.",
+    "treasury_funded": "Treasury pre-flight check passed live in worker logs: address tb1qxca7ke7hgguarqxkwwydrfenn8ymnspxq765eq, totalSats=77379, utxoCount=22 (independently corroborated via mempool.space/signet/api before deploy).",
+    "getblock_rpc_finding": "ROOT-CAUSED 2026-07-28 (go/no-go blocker #1). Two candidate GetBlock-labeled secrets exist and BOTH are dead ends, not a simple wiring fix: (1) the rig's actual BITCOIN_RPC_URL secret (arkova-s33-rig-b1-bitcoin-core-signet-rpc-url) resolves to http://10.33.10.10:38332 -- a PRIVATE-IP self-hosted Bitcoin Core node from an unrelated prior rig (S3.3 rig-b1), reachable only via VPC connector `arkova-s33-b1-signet-vpc` (confirmed READY via `gcloud compute networks vpc-access connectors list`), which is NOT attached to this soak's Cloud Run service (no vpc-access annotation on arkova-worker-launch-72h-2026-08-staging) -- explains the Node `fetch failed` (no route to a private RFC1918 host from this service's network). This is not actually GetBlock at all, just mislabeled as an 'override' during provisioning. (2) The literal `GetBlock` secret in Secret Manager (https://go.getblock.io/<token>, same URL shape as prod's working bitcoin-rpc-url) was tested directly via curl against the live GetBlock endpoint and returned HTTP 200 body {\"error\":\"Unknown token\"} -- the credential itself is invalid/expired/wrong-plan, independent of network reachability. Prod's own bitcoin-rpc-url secret (https://go.getblock.io/<different-token>) was NOT tested against (never touch prod's mainnet-scoped token from a rig context) but is architecturally the same shape, confirming GetBlock's hosted-endpoint pattern is right -- this rig simply has no valid signet-scoped token provisioned. CONCLUSION: GetBlock genuinely cannot be made to work on signet with currently available credentials in this session (no valid signet GetBlock token exists in Secret Manager; the only non-mempool alternative is a differently-scoped private node with no network path to this rig). Per the runbook's own pre-approved fallback wording (docs/lane1/s33-multiorg-harness-design.md line 70), proceeding on the disclosed exception below rather than blocking the soak indefinitely.",
+    "getblock_disclosed_residual_risk_exception": "DISCLOSED EXCEPTION (pre-approved wording, docs/lane1/s33-multiorg-harness-design.md): UTXO listing/broadcast via public mempool.space-signet (fallback); GetBlock-sovereign path NOT exercised -- broadcast/UTXO parity with prod is asserted, not measured; confirmation-proof fetch (getTxOutProof) unavailable on this provider, proofs report 'pending' by design. GetBlock broadcast parity with prod MUST be verified separately before launch (either by provisioning a valid signet-scoped GetBlock token before 2026-08-10, or by an explicit Carson-approved residual-risk note carried into the launch go/no-go). This does not invalidate the rest of the soak -- broadcast itself succeeded via the fallback path (see anti_hollow_verification.batch_anchor_forced_run) -- it narrows what this soak's evidence covers.",
+    "public_explorer_confirmation": "chain_tx_id not yet visible on https://mempool.space/signet/api/tx/... as of 3 checks over ~45s post-broadcast -- expected propagation delay, not necessarily a failure; re-check at T+0-2h gate before relying on it as SECURED evidence.",
+    "feature_flags_boot_order_bug_found": "flagRegistry.init() runs ONCE at worker boot with no refresh/poll loop. The initial deploy (00001-x6k) cached switchboard_flags BEFORE this session mirrored prod's flags onto the rig, so ENABLE_BATCH_ANCHORING read false at boot (00001) despite the DB row already being true by the time of the first forced-run test. Required a service restart (00002) to pick up the mirrored DB flags. Any future rig standup must mirror switchboard_flags and set env-only flags BEFORE the first Cloud Run deploy, or must force a restart after -- this is a repeatable trap, not a one-off.",
+    "org_credit_enforcement_env_only_bug_found": "ENABLE_ORG_CREDIT_ENFORCEMENT is hardcoded env-source-only in services/worker/src/middleware/flagRegistry.ts:30 (`() => config.enableOrgCreditEnforcement`), unlike every other switchboard-mirrored flag. Mirroring it into switchboard_flags as true had ZERO effect on worker behavior until an explicit Cloud Run --update-env-vars=ENABLE_ORG_CREDIT_ENFORCEMENT=true was applied (revision 00003-dw8). A soak relying on the DB mirror alone for this flag would have silently run with credit enforcement OFF -- exactly the R17-divergence-silently-reverts hollow-soak risk the pre-mortem SS1 named, but via a different mechanism (env-only flag wiring, not a skipped mirror step)."
+  },
+  "deploy_worker_paused_check": "vars.DEPLOY_WORKER_PAUSED=true confirmed via `gh variable list` at session start (set 2026-07-28T17:15:14Z) -- re-check required at every future gate per runbook SS0.8/SS0.9.",
+  "prod_isolation_baseline": "vzwyaatejekddvltxyye anchors count = 2,974,776 at 2026-07-28T19:2x Z (session baseline for future spot-checks; consistent with organic growth from the 2026-07-02 figure of 2,972,264, no anomaly).",
+  "created_cloud_run_service": 1,
+  "created_supabase_secrets": 2,
+  "state_path": "docs/staging/launch-72h-2026-08/isolated-rig-provision-launch-72h-2026-08.json",
+  "soak_clock": {
+    "started": true,
+    "start_timestamp": "2026-07-28T19:43:55.770557Z",
+    "clock_anchor_revision": "arkova-worker-launch-72h-2026-08-staging-00004-qgj",
+    "clock_anchor_note": "NOT the 00003-dw8 revision recorded elsewhere in this file as deployed_revision -- 00004-qgj superseded it this session (BITCOIN_UTXO_PROVIDER getblock->mempool fix, blocker 1). Treat 00004-qgj as authoritative for uptime/clock purposes from this point forward.",
+    "frozen_head_sha": "3afb79ba6fe63604df6b11bf6541ee44a0f6f8c0",
+    "image_digest": "sha256:63cbdbf82738c297b103a6e6d15d69f0cde93401cafc7bee8c9f1d512f8913ec",
+    "image_digest_note": "unchanged from the original build -- 00004-qgj is an env-var-only revision update on the SAME image (--update-env-vars), not a rebuild. Source head / code is still exactly 3afb79ba; only the BITCOIN_UTXO_PROVIDER runtime config changed.",
+    "required_end_timestamp": "2026-07-31T19:43:55Z (start + 72h)"
+  }
+}
