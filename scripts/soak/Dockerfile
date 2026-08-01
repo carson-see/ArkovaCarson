@@ -4,7 +4,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package.json tsconfig.json ./
-RUN npm install --no-audit --no-fund
+RUN npm install --no-audit --no-fund --ignore-scripts
 COPY loadgen.ts loadgen-server.ts ./
 RUN npm run build
 
