@@ -111,6 +111,25 @@ function buildCreditsSuccessMessage(action: 'add' | 'remove', amountLabel: strin
     : CREDIT.SUCCESS_REMOVE(amountLabel, displayName);
 }
 
+interface CreditsPreview {
+  amountValid: boolean;
+  signedAmount: number;
+  newBalance: number;
+}
+
+/** Derives the add/remove preview shown in the confirm step: the signed
+ *  delta and the resulting balance. Pulled out alongside the other helpers
+ *  above for the same S3776 reason — these were plain top-level `const`s in
+ *  the component body (not inside any handler), so every `&&`/`?:` in them
+ *  counted directly against the component's own complexity budget. */
+function computeCreditsPreview(action: 'add' | 'remove', amountInput: string, currentBalance: number): CreditsPreview {
+  const amountNum = Number.parseInt(amountInput, 10);
+  const amountValid = Number.isInteger(amountNum) && amountNum > 0;
+  const signedAmount = action === 'add' ? amountNum : -amountNum;
+  const newBalance = amountValid ? currentBalance + signedAmount : currentBalance;
+  return { amountValid, signedAmount, newBalance };
+}
+
 export function AdminOrganizationsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -211,12 +230,13 @@ export function AdminOrganizationsPage() {
     setCreditsIdempotencyKey(null);
   };
 
-  const creditsAmountNum = Number.parseInt(creditsAmountInput, 10);
-  const creditsAmountValid = Number.isInteger(creditsAmountNum) && creditsAmountNum > 0;
   const creditsReasonValid = creditsReasonInput.trim().length > 0;
   const creditsCurrentBalance = creditsOrg?.credit_balance ?? 0;
-  const creditsSignedAmount = creditsAction === 'add' ? creditsAmountNum : -creditsAmountNum;
-  const creditsNewBalance = creditsAmountValid ? creditsCurrentBalance + creditsSignedAmount : creditsCurrentBalance;
+  const {
+    amountValid: creditsAmountValid,
+    signedAmount: creditsSignedAmount,
+    newBalance: creditsNewBalance,
+  } = computeCreditsPreview(creditsAction, creditsAmountInput, creditsCurrentBalance);
 
   const reviewCredits = () => {
     if (!creditsAmountValid) {
