@@ -11,6 +11,7 @@ import {
   parseDriveFileChangedJobPayload,
   DriveFileChangedJobPayload,
   DRIVE_ARTIFACT_SOURCE,
+  CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_ID,
   type DriveArtifactProducerDeps,
 } from './drive-artifact-producer.js';
 
@@ -68,6 +69,44 @@ describe('processDriveFileChangedJob', () => {
     expect(Buffer.isBuffer(sinkArg.documentBytes)).toBe(true);
     expect(sinkArg.sourceTimestamp).toBe('2026-07-22T10:00:00.000Z');
     expect(result).toEqual({ artifactId: 'artifact-abc' });
+  });
+
+  it('short-circuits BEFORE token resolve and byte fetch when the enqueue flag is off', async () => {
+    // The sink also guards the flag, but guarding ONLY there meant a disabled
+    // connector still decrypted a KMS-wrapped token, called the Drive API, and
+    // buffered the whole document into a 2 GiB container every 5 minutes — all
+    // to throw the bytes away.
+    const { deps, resolveAccessToken, fetchDocument, enqueueArtifact } = makeDeps({
+      isEnqueueEnabled: () => false,
+    });
+
+    const result = await processDriveFileChangedJob(
+      { org_id: ORG, integration_id: INT, file_id: 'file-9', revision_id: 'rev-3' },
+      deps,
+    );
+
+    expect(resolveAccessToken).not.toHaveBeenCalled();
+    expect(fetchDocument).not.toHaveBeenCalled();
+    expect(enqueueArtifact).not.toHaveBeenCalled();
+    expect(result.artifactId).toBe(CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_ID);
+  });
+
+  it('runs the full path when the flag is on', async () => {
+    const { deps, resolveAccessToken, fetchDocument, enqueueArtifact } = makeDeps({
+      isEnqueueEnabled: () => true,
+    });
+
+    await processDriveFileChangedJob({ org_id: ORG, integration_id: INT, file_id: 'f' }, deps);
+
+    expect(resolveAccessToken).toHaveBeenCalled();
+    expect(fetchDocument).toHaveBeenCalled();
+    expect(enqueueArtifact).toHaveBeenCalled();
+  });
+
+  it('runs the full path when no flag probe is supplied (sink keeps its own guard)', async () => {
+    const { deps, fetchDocument } = makeDeps();
+    await processDriveFileChangedJob({ org_id: ORG, integration_id: INT, file_id: 'f' }, deps);
+    expect(fetchDocument).toHaveBeenCalled();
   });
 
   it('defaults optional fields (revision/mime/timestamp/rule_event) to null', async () => {

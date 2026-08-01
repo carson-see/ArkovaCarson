@@ -351,6 +351,41 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
     });
 
     expect(db.ledgerInserts[0].revision_id).toBe('mtime:2026-05-04T01:23:00Z');
+    // The ledger assertion alone is not enough — it passed while the JOB payload
+    // was still sending the raw (null) headRevisionId. The two keys MUST agree,
+    // or connector_artifact dedupes every revision after the first onto the same
+    // COALESCE(external_revision,'') = '' key and silently anchors nothing.
+    expect(db.fileChangedJobCalls[0].revision_id).toBe('mtime:2026-05-04T01:23:00Z');
+  });
+
+  it('ledger and job payload always agree on the revision key (Docs AND binaries)', async () => {
+    const db = makeFakeDb();
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf(
+        [
+          // Google-native: no headRevisionId, resolves via the mtime fallback.
+          { file: { id: 'doc-1', parents: [WATCHED_FOLDER_A], modifiedTime: '2026-05-04T01:23:00Z' } },
+          // Binary upload: real headRevisionId.
+          { file: { id: 'pdf-1', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-pdf-1' } },
+        ],
+        { newStartPageToken: 'token-2' },
+      ),
+    );
+
+    await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'tok',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    expect(db.ledgerInserts).toHaveLength(2);
+    expect(db.fileChangedJobCalls).toHaveLength(2);
+    for (let i = 0; i < db.ledgerInserts.length; i += 1) {
+      expect(db.fileChangedJobCalls[i].revision_id).toBe(db.ledgerInserts[i].revision_id);
+      // A null/empty revision key is what collapses the artifact unique index.
+      expect(db.fileChangedJobCalls[i].revision_id).toBeTruthy();
+    }
   });
 
   it('Codex P1 (no-drop): enqueue returning null rolls back the ledger reservation and aborts the page', async () => {
@@ -558,11 +593,22 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
       expect(db.duplicateKeys.has('file-fcj-throw::rev-fcj-throw')).toBe(false);
     });
 
-    it('falls back to modifiedTime-derived ledger revision_id but passes the raw headRevisionId (null when absent) to the file-changed job', async () => {
-      // Docs/Sheets have no headRevisionId — the ledger dedupes on
-      // `mtime:<modifiedTime>`, but the job payload should carry the RAW
-      // Drive-native headRevisionId (null here), not the synthesized ledger key,
-      // so connector_artifact.external_revision never gets a "mtime:" prefix.
+    it('passes the SYNTHESIZED ledger revision key to the file-changed job for Docs/Sheets', async () => {
+      // This test previously asserted the opposite — that the job payload should
+      // carry the raw Drive-native headRevisionId (null for Docs/Sheets) "so
+      // connector_artifact.external_revision never gets a 'mtime:' prefix".
+      // That preference for a cosmetically-clean column produced a silent
+      // data-loss bug: connector_artifact's unique index keys on
+      // COALESCE(external_revision, '') (migration 0343), so a null revision
+      // makes EVERY revision of a Google Doc collide on the same '' key. The
+      // first edit created an artifact; every edit after it hit ON CONFLICT DO
+      // NOTHING and was logged as a `success` integration_event that anchored
+      // nothing.
+      //
+      // `mtime:<modifiedTime>` is the ONLY revision discriminator Google exposes
+      // for Workspace-native files, so it is the correct external_revision — a
+      // synthetic-but-real revision key beats a null one. The ledger and the job
+      // payload must use the same key or dedupe is incoherent between them.
       const db = makeFakeDb();
       const listMock = vi.fn().mockResolvedValueOnce(
         pageOf(
@@ -579,7 +625,7 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
       });
 
       expect(db.ledgerInserts[0].revision_id).toBe('mtime:2026-05-04T01:23:00Z');
-      expect(db.fileChangedJobCalls[0].revision_id).toBeNull();
+      expect(db.fileChangedJobCalls[0].revision_id).toBe('mtime:2026-05-04T01:23:00Z');
     });
   });
 

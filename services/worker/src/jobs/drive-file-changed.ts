@@ -21,6 +21,7 @@ import {
   processDriveFileChangedJob,
   DRIVE_ARTIFACT_SOURCE,
   DRIVE_FILE_CHANGED_JOB_TYPE,
+  CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_ID,
   type DriveArtifactProducerDeps,
   type DriveArtifactSinkResult,
 } from '../integrations/connectors/drive-artifact-producer.js';
@@ -38,9 +39,9 @@ import { createDefaultKmsClient } from '../integrations/oauth/crypto.js';
 export { DRIVE_FILE_CHANGED_JOB_TYPE };
 const DEFAULT_DRIVE_FILE_JOB_LIMIT = 10;
 const MAX_DRIVE_FILE_JOB_LIMIT = 100;
-// Sentinel returned when the connector-artifact enqueue is gated off — mirrors
-// the DocuSign path. No consumer reads artifactId on the disabled branch.
-const CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_ID = 'connector_artifact_enqueue_disabled';
+// CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_ID is imported from the producer module —
+// both the pre-fetch short-circuit and the sink guard return it, so it has one
+// definition. No consumer reads artifactId on the disabled branch.
 
 const QUEUE_STATUS_COUNTERS = {
   completed: 'completed',
@@ -120,7 +121,22 @@ export function makeDriveFileChangedJobDeps(
     deps.enableConnectorArtifactEnqueue ?? env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE === 'true';
   const driveDeps = { fetchImpl: deps.fetchImpl, env };
 
+  // ONE KMS client per deps instance, not one per job. `createDefaultKmsClient`
+  // constructs a KeyManagementServiceClient, which opens a gRPC channel that is
+  // never closed. resolveAccessToken runs inside the drain loop (up to
+  // MAX_DRIVE_FILE_JOB_LIMIT = 100 iterations per cron pass), so building it
+  // per job leaked up to 100 channels every 5 minutes. Every other caller in the
+  // repo is one-shot per HTTP request; this is the first in a tight loop.
+  // Memoized on the promise so concurrent callers share one construction.
+  let kmsClientPromise: Promise<Awaited<ReturnType<typeof createDefaultKmsClient>>> | null = null;
+  const getKmsClient = () => {
+    kmsClientPromise ??= deps.kmsFactory ? deps.kmsFactory() : createDefaultKmsClient();
+    return kmsClientPromise;
+  };
+
   return {
+    isEnqueueEnabled: () => connectorArtifactEnqueueEnabled,
+
     async resolveAccessToken({ orgId, integrationId }) {
       // Load the Drive integration row (encrypted tokens + KMS key + page token)
       // so loadDriveAccessToken can decrypt → refresh → persist. Scoped by BOTH
@@ -147,9 +163,7 @@ export function makeDriveFileChangedJobDeps(
         token_kms_key_id: data.token_kms_key_id,
         last_page_token: data.last_page_token,
       };
-      const kms = deps.kmsFactory
-        ? await deps.kmsFactory()
-        : await createDefaultKmsClient();
+      const kms = await getKmsClient();
       const { accessToken } = await loadDriveAccessToken(integrationRow, {
         db,
         kms,
