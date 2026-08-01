@@ -172,16 +172,24 @@ describe('revertClaimedAnchors failure reporting', () => {
     expect(result.strandedAnchorIds).toBe(ids.length);
   });
 
-  it('escalates a total revert failure to error level naming the stranded count', async () => {
+  // The aggregate escalation belongs to the caller (it is the only one that
+  // knows the merkle root and claim size). What this function owes is a
+  // per-chunk error that identifies WHICH ids failed, so a partial failure is
+  // diagnosable rather than a bare count.
+  it('logs every failed chunk at error level with its position and size', async () => {
     const { client } = recordingClient({ inError: { message: 'Bad Request' } });
 
-    await revertClaimedAnchors(client, uuids(500));
+    const result = await revertClaimedAnchors(client, uuids(500));
 
-    const escalation = mockLogger.error.mock.calls.find(
-      ([, msg]) => typeof msg === 'string' && msg.includes('left BROADCASTING'),
+    const chunkErrors = mockLogger.error.mock.calls.filter(
+      ([, msg]) => typeof msg === 'string' && msg.includes('Failed to revert claimed pipeline anchors'),
     );
-    expect(escalation).toBeDefined();
-    expect((escalation?.[0] as { strandedAnchorIds?: number })?.strandedAnchorIds).toBe(500);
+    expect(chunkErrors).toHaveLength(result.attemptedChunks);
+    for (const [context] of chunkErrors) {
+      const ctx = context as { chunkStart?: number; chunkSize?: number };
+      expect(typeof ctx.chunkStart).toBe('number');
+      expect(ctx.chunkSize).toBeGreaterThan(0);
+    }
   });
 
   it('reports a clean revert when every chunk succeeds', async () => {

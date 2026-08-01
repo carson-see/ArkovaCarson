@@ -342,13 +342,9 @@ export async function revertClaimedAnchors(
     }
   }
 
-  if (failedChunks > 0) {
-    logger.error(
-      { attemptedChunks, failedChunks, strandedAnchorIds },
-      'Pipeline anchor revert incomplete — anchors left BROADCASTING; recover-broadcasts will reset those with a NULL chain_tx_id',
-    );
-  }
-
+  // The aggregate escalation is the CALLER's — it is the only one that knows
+  // the merkle root and the claim size, and one failure should not produce
+  // three stacked error lines saying the same thing.
   return { attemptedChunks, failedChunks, strandedAnchorIds };
 }
 
@@ -880,7 +876,7 @@ async function processPublicRecordAnchoringInner(
     if (revert.strandedAnchorIds > 0) {
       logger.error(
         { merkleRoot: tree.root, claimed: uniqueClaimedAnchors.length, ...revert },
-        'Public record batch failed AND its claim could not be fully released',
+        'Public record batch failed AND its claim could not be fully released — anchors left BROADCASTING; recover-broadcasts will reset those with a NULL chain_tx_id',
       );
     }
     return {
