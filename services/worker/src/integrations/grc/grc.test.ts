@@ -16,6 +16,8 @@ vi.mock('../../config.js', () => ({
 }));
 
 import { VantaAdapter, DrataAdapter, AnecdotesAdapter, createGrcAdapter, loadGrcCredentials } from './adapters.js';
+import { resolveEvidenceControlIds } from './syncService.js';
+import { COMPLIANCE_CONTROLS_NOTE } from '../../utils/complianceMapping.js';
 import type { GrcEvidencePayload } from './types.js';
 import type { GrcPlatformCredentials } from './adapters.js';
 
@@ -331,5 +333,108 @@ describe('Evidence Payload Construction', () => {
     const frameworks = [...new Set(mockEvidence.compliance_controls.map(c => c.split('-')[0]))];
     expect(frameworks).toContain('SOC2');
     expect(frameworks).toContain('GDPR');
+  });
+});
+
+// ─── SCRUM-2227/2283: control honesty on the GRC evidence surface ──────────
+//
+// GRC platforms feed auditor workflows, so this is the surface where an
+// unqualified control identifier is most likely to be read as an assessment.
+// Two requirements: retired IDs never leave, and the informational-not-
+// attestation note rides along with any controls that do.
+
+describe('GRC evidence control honesty (SCRUM-2227/2283)', () => {
+  it('strips retired DPF control IDs from stored controls', () => {
+    const ids = resolveEvidenceControlIds(
+      ['SOC2-CC6.1', 'DPF-NOTICE', 'GDPR-5.1f', 'DPF-ACCOUNTABILITY'],
+      'DIPLOMA',
+    );
+    expect(ids).toEqual(['SOC2-CC6.1', 'GDPR-5.1f']);
+    expect(ids).not.toContain('DPF-NOTICE');
+    expect(ids).not.toContain('DPF-ACCOUNTABILITY');
+  });
+
+  it('falls back to the computed mapping when every stored ID was retired', () => {
+    const ids = resolveEvidenceControlIds(['DPF-NOTICE', 'DPF-ACCOUNTABILITY'], 'DIPLOMA');
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids).not.toContain('DPF-NOTICE');
+    expect(ids).not.toContain('DPF-ACCOUNTABILITY');
+  });
+
+  it('falls back to the computed mapping when nothing is stored', () => {
+    const ids = resolveEvidenceControlIds(null, 'DIPLOMA');
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids).not.toContain('DPF-NOTICE');
+  });
+
+  it('never emits a retired ID for any credential type via the fallback', () => {
+    for (const type of [null, 'DIPLOMA', 'TRANSCRIPT', 'MEDICAL_RECORD', 'CONTRACT']) {
+      const ids = resolveEvidenceControlIds(null, type);
+      expect(ids).not.toContain('DPF-NOTICE');
+      expect(ids).not.toContain('DPF-ACCOUNTABILITY');
+    }
+  });
+
+  it('the note states it is not an attestation and disclaims eIDAS qualified status', () => {
+    expect(COMPLIANCE_CONTROLS_NOTE).toMatch(/informational/i);
+    expect(COMPLIANCE_CONTROLS_NOTE).toMatch(/not an audit, certification/i);
+    expect(COMPLIANCE_CONTROLS_NOTE).toMatch(/eIDAS/);
+  });
+});
+
+describe('GRC adapters carry the compliance note (SCRUM-2227)', () => {
+  const evidenceWithNote: GrcEvidencePayload = {
+    ...mockEvidence,
+    compliance_controls_note: COMPLIANCE_CONTROLS_NOTE,
+  };
+
+  function pushedBody(fetchMock: ReturnType<typeof vi.fn>): Record<string, unknown> {
+    return JSON.parse(fetchMock.mock.calls[0][1].body as string) as Record<string, unknown>;
+  }
+
+  beforeEach(() => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'ext-1' }),
+      text: async () => '',
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('Vanta carries the note in resource metadata', async () => {
+    await new VantaAdapter('test-id', 'test-secret').pushEvidence('tok', evidenceWithNote);
+    const body = pushedBody(global.fetch as ReturnType<typeof vi.fn>);
+    const metadata = body.metadata as Record<string, unknown>;
+    expect(metadata.compliance_controls_note).toBe(COMPLIANCE_CONTROLS_NOTE);
+  });
+
+  it('Drata carries the note in evidence metadata', async () => {
+    await new DrataAdapter('test-id', 'test-secret').pushEvidence('tok', evidenceWithNote);
+    const body = pushedBody(global.fetch as ReturnType<typeof vi.fn>);
+    const metadata = body.metadata as Record<string, unknown>;
+    expect(metadata.compliance_controls_note).toBe(COMPLIANCE_CONTROLS_NOTE);
+  });
+
+  it('Anecdotes carries the note in evidence properties', async () => {
+    await new AnecdotesAdapter('test-id', 'test-secret').pushEvidence('tok', evidenceWithNote);
+    const body = pushedBody(global.fetch as ReturnType<typeof vi.fn>);
+    const properties = body.properties as Record<string, unknown>;
+    expect(properties.compliance_controls_note).toBe(COMPLIANCE_CONTROLS_NOTE);
+  });
+
+  it('omits the note key entirely when no controls are carried', async () => {
+    await new VantaAdapter('test-id', 'test-secret').pushEvidence('tok', {
+      ...mockEvidence,
+      compliance_controls: [],
+      frameworks: [],
+      compliance_controls_note: null,
+    });
+    const body = pushedBody(global.fetch as ReturnType<typeof vi.fn>);
+    const metadata = body.metadata as Record<string, unknown>;
+    expect(metadata.compliance_controls_note).toBeUndefined();
   });
 });
