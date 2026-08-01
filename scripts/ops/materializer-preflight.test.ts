@@ -576,7 +576,7 @@ describe('queryReadOnly', () => {
   it('hits the read-only Management API endpoint, uses a timeout, and filters to object rows', async () => {
     const timeoutSpy = vi.spyOn(globalThis.AbortSignal, 'timeout');
     const fetchMock = vi.fn(
-      async () =>
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
         new Response(JSON.stringify([{ anchors_estimate: 100 }, null, ['ignored']]), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
