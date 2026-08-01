@@ -16,10 +16,12 @@ import { assertNoProhibitedClaimInJsonLd, containsProhibitedClaim } from './ctdl
 // truth for every PII detector used on this projection.
 import {
   CtdlPiiSafetyError,
+  academicRecordName,
   assertNoPiiInJsonLd,
   containsHighConfidencePii,
-  containsLearnerIdentityPii,
+  containsLearnerNamePii,
   isEducationCredentialType,
+  stripUrlQueryAndFragment,
 } from './ctdl-pii-guard.js';
 // SCRUM-1922 R-CTDL-FR9 — keep the issuer DID format in lockstep with the
 // did:web resolver so the CTDL `sameAs` link resolves to the org's DID doc.
@@ -189,11 +191,13 @@ function cleanPublicString(value: unknown, maxLength = 240): string | null {
 // free text asserting a Registry listing we do not hold is honestly omitted,
 // same treatment as PII. Detectors live in `ctdl-pii-guard.ts` (SCRUM-2293).
 //
-// This per-field suppression applies to EVERY credential type. The additional
-// fail-closed gate below applies only to academic-record types.
+// This per-field suppression applies to EVERY credential type. Academic-record
+// types additionally never emit free text AT ALL (see `isEducationCredentialType`
+// and the design note in `ctdl-pii-guard.ts`), so for those this is a second
+// line behind a structural one, not the only defence.
 function cleanPublicFreeText(value: unknown, maxLength = 240): string | null {
   const clean = cleanPublicString(value, maxLength);
-  if (!clean || containsHighConfidencePii(clean) || containsLearnerIdentityPii(clean)) return null;
+  if (!clean || containsHighConfidencePii(clean) || containsLearnerNamePii(clean)) return null;
   if (containsProhibitedClaim(clean)) return null;
   return clean;
 }
@@ -206,13 +210,18 @@ function pickMetadataString(metadata: Record<string, unknown>, keys: readonly st
   return null;
 }
 
+// SCRUM-2293: the query string and fragment are dropped. `ceterms:subjectWebpage`
+// is hygiene-cleaned only, so a query parameter is exactly where an identifier
+// rides into an otherwise innocuous field (`?student=jane@example.edu`).
+// Removing the carrier is structural; it does not depend on recognising the
+// payload, and an issuer's public homepage never needs a query string.
 function isPublicHttpUrl(value: unknown): string | null {
   const clean = cleanPublicString(value, 500);
   if (!clean) return null;
   try {
     const url = new URL(clean);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
-    return url.toString();
+    return stripUrlQueryAndFragment(url);
   } catch {
     return null;
   }
@@ -299,45 +308,6 @@ function buildContactHourValueProfile(contactHours: number): CtdlContactHourValu
   };
 }
 
-function metadataTextValues(value: unknown): string[] {
-  if (typeof value === 'string') return [value];
-  if (Array.isArray(value)) return value.flatMap(metadataTextValues);
-  if (!value || typeof value !== 'object') return [];
-  return Object.values(value as Record<string, unknown>).flatMap(metadataTextValues);
-}
-
-/**
- * Fail-closed gate for ACADEMIC-RECORD credentials (SCRUM-2293). Per-field
- * suppression (cleanPublicFreeText) already strips learner-identity and contact
- * PII field by field, but an academic record whose free text still carries a
- * learner identity anywhere is too risky to publish at all — the serializer
- * throws and the route 404s (audit outcome `safety_blocked`).
- *
- * TWO HOLES CLOSED HERE, both verified live in prod 2026-08-01:
- *  1. The gate used to key on `DEGREE`/`CERTIFICATE` only, so a
- *     `credential_type = 'TRANSCRIPT'` anchor — the single most PII-dense type
- *     we carry — was never gated at all.
- *  2. It additionally required a literal transcript/record KEYWORD in the free
- *     text, so an academic record that simply never says "transcript" walked
- *     straight through. The credential TYPE is the signal; no keyword
- *     precondition remains.
- */
-function assertCtdlPiiSafe(anchor: CtdlAnchor, metadata: Record<string, unknown>): void {
-  if (!isEducationCredentialType(anchor.credentialType)) return;
-
-  const freeTextValues = [
-    anchor.subType,
-    anchor.label,
-    anchor.description,
-    anchor.revocationReason,
-    ...metadataTextValues(metadata),
-  ].filter((value): value is string => typeof value === 'string');
-
-  if (freeTextValues.some((value) => containsLearnerIdentityPii(value))) {
-    throw new CtdlPiiSafetyError();
-  }
-}
-
 export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): CtdlJsonLd {
   const statusType = toCtdlCredentialStatusType(anchor.status);
   if (!statusType) {
@@ -345,7 +315,14 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
   }
 
   const metadata = asRecord(anchor.metadata);
-  assertCtdlPiiSafe(anchor, metadata);
+  // SCRUM-2293 — the structural learner-PII protection. An ACADEMIC RECORD
+  // (DEGREE / CERTIFICATE / TRANSCRIPT) emits NO issuer- or extraction-authored
+  // free text: its name comes from controlled vocabulary and its description /
+  // revocation reason are omitted. See the design note in `ctdl-pii-guard.ts`
+  // for why this replaced a name-detection heuristic — in short, a heuristic
+  // could not be made both safe and precise, while this cannot leak a learner
+  // name of ANY shape and cannot take a legitimate credential offline.
+  const isAcademicRecord = isEducationCredentialType(anchor.credentialType);
   const offeredBy: CtdlJsonLd['ceterms:offeredBy'] = {
     '@type': 'ceterms:Organization',
     'ceterms:name': issuerName(anchor, metadata),
@@ -370,10 +347,13 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
     offeredBy['ceterms:subjectWebpage'] = subjectWebpage;
   }
 
+  const ctdlType = resolveCtdlType(anchor.credentialType, anchor.subType);
   const jsonLd: CtdlJsonLd = {
     '@context': CTDL_CONTEXT,
-    '@type': resolveCtdlType(anchor.credentialType, anchor.subType),
-    'ceterms:name': credentialName(anchor, metadata),
+    '@type': ctdlType,
+    'ceterms:name': isAcademicRecord
+      ? academicRecordName(ctdlType, anchor.credentialType)
+      : credentialName(anchor, metadata),
     'ceterms:offeredBy': offeredBy,
     'ceterms:credentialStatusType': statusType,
     'ceterms:dateEffective': effectiveDate(anchor),
@@ -392,7 +372,9 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
   const credentialCtid = assertRealCtidOrAbsent(anchor.ctid, 'credential');
   if (credentialCtid) jsonLd['ceterms:ctid'] = credentialCtid;
 
-  const description = cleanPublicFreeText(anchor.description, 500);
+  // Academic records omit the description entirely — it is the single largest
+  // free-text surface and the one the live prod leak shipped through.
+  const description = isAcademicRecord ? null : cleanPublicFreeText(anchor.description, 500);
   if (description) jsonLd['ceterms:description'] = description;
   // SCRUM-2374 (CE-03): `ceterms:expirationDate` carries RESOURCE-AVAILABILITY
   // (offering) expiry ONLY — per Jeanne Kitchens (Credential Engine, SCRUM-2294):
@@ -429,22 +411,23 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
     // now routes through cleanPublicFreeText — PII / learner-name / overclaim
     // reasons are honestly OMITTED (410 + revocationDate stay; the final
     // assertNoProhibitedClaimInJsonLd below remains the backstop).
-    const reason = cleanPublicFreeText(anchor.revocationReason, 500);
+    // SCRUM-2293: academic records omit the reason outright — a revocation
+    // reason on a student record is one of the likeliest places to find a name.
+    const reason = isAcademicRecord ? null : cleanPublicFreeText(anchor.revocationReason, 500);
     if (reason) jsonLd['ceterms:revocationReason'] = reason;
   }
 
   // CE-02 defense-in-depth: belt-and-suspenders scan of the assembled body so no
   // ceterms:ctid key (now or in a future code path) can carry a fabricated value.
   assertNoFabricatedCtidInJsonLd(jsonLd);
-  // SCRUM-2293 defense-in-depth: recursive PII scan of the ASSEMBLED body. Field
-  // suppression above is per-field and only covers values routed through
+  // SCRUM-2293 defense-in-depth: recursive high-confidence PII scan of the
+  // ASSEMBLED body. Field suppression above only covers values routed through
   // cleanPublicFreeText; this catches anything that reached the body another way
-  // — a URL query string on ceterms:subjectWebpage, a field added later, or any
-  // future code path. High-confidence PII fails closed for every credential
-  // type; learner identities additionally fail closed for academic records.
-  assertNoPiiInJsonLd(jsonLd, {
-    educationRecord: isEducationCredentialType(anchor.credentialType),
-  });
+  // — a field added later, or any future code path. Only the format- and
+  // keyword-anchored detectors run here, because this scan fails CLOSED for
+  // every credential type and a heuristic false positive would take a
+  // legitimate credential offline.
+  assertNoPiiInJsonLd(jsonLd);
   // CE-06a (SCRUM-2377, R-7): final claims-review pass — any string that still
   // carries a Registry-listing / legal-sufficiency overclaim (e.g. a non-free-
   // text field like publicId, or a future code path that bypasses

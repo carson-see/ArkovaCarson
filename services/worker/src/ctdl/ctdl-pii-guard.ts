@@ -11,29 +11,56 @@
  * VERIFIED LIVE 2026-08-01 (prod `git_sha 8e6a804e2`, `GET
  * https://api.arkova.ai/v1/credentials/<id>/ctdl`): a `credential_type =
  * 'TRANSCRIPT'` anchor served a person's full name in `ceterms:name` and
- * `ceterms:description`. Two independent holes let it through:
- *   1. The fail-closed gate keyed on `DEGREE`/`CERTIFICATE` ONLY — the
- *      `TRANSCRIPT` credential type was never covered.
- *   2. It additionally required a literal transcript/record keyword in the free
- *      text, so an academic record that never says "transcript" evaded it.
- * Both are closed here: the gate keys on the ACADEMIC-RECORD credential type
- * set, with no keyword precondition.
+ * `ceterms:description`.
  *
- * This module is the SINGLE SOURCE OF TRUTH for outbound PII detection and
+ * ── THE DESIGN DECISION THAT MATTERS ──────────────────────────────────────
+ *
+ * You cannot reliably detect a bare personal name in free text with regex
+ * heuristics, and attempting it is actively harmful. A first cut of this module
+ * tried: "a capitalised pair counts as a person when introduced by a relational
+ * trigger (for/to/by/with) and not vetoed by an institutional word list."
+ * Measured against real inputs, that design failed in BOTH directions at once:
+ *
+ *   - It 404'd 28 of 32 real institution names ("Issued by Johns Hopkins",
+ *     "Issued by Red Hat") and 13 of 18 ordinary credential titles
+ *     ("Introduction to Machine Learning"), because a finite word list cannot
+ *     veto an open class (proper nouns).
+ *   - It STILL missed the common leak shapes: a bare name as the whole field
+ *     ("Jane Doe"), record-noun-first order ("Transcript: Jane Doe"), all-caps
+ *     names ("MARIA GONZALEZ"), and any non-ASCII name ("José García"), because
+ *     `[A-Z][a-z]+` cannot express them.
+ *
+ * So this module does NOT try to find names. For ACADEMIC-RECORD credential
+ * types it takes the only decision that is sound without an NER model — the one
+ * SCRUM-2293's own acceptance criterion states ("if NER unavailable /
+ * low-confidence, SUPPRESS THE FIELD rather than emit it"):
+ *
+ *   **An academic record never emits issuer- or extraction-authored free text.**
+ *
+ * `ceterms:name` comes from CONTROLLED VOCABULARY (derived from the resolved
+ * CTDL `@type`), and `ceterms:description` / `ceterms:revocationReason` are
+ * omitted. That is precision-independent: no heuristic decides whether a real
+ * credential publishes, and no name shape — capitalisation, alphabet,
+ * punctuation, or position — can leak, because the text is never in the body.
+ * It also cannot take a credential offline: academic records still publish,
+ * with a truthful structural name.
+ *
+ * What remains detector-based is only what regex is genuinely good at:
+ * FORMAT-ANCHORED and KEYWORD-ANCHORED values (email, phone, SSN, date of
+ * birth, student ID). Those run on every credential type.
+ *
+ * This module is the single source of truth for outbound PII detection and
  * EXTENDS the existing fail-closed serializer chain (CE-01 publishability →
- * CE-02 CTID guard → THIS PII gate → CE-06a claims gate → validator); it is not
- * a parallel gate. Structure deliberately mirrors `ctdl-claims-guard.ts`:
- * value-free errors, a recursive assembled-body scan, and a depth budget that
- * fails CLOSED.
+ * CE-02 CTID guard → THIS PII gate → CE-06a claims gate → validator).
  *
  * Keep this module dependency-free so any future Registry publish path — and
  * the frontend test runner — can import it without dragging in the serializer.
  */
 
 /**
- * Thrown when learner PII would reach serialized public output. Fail-closed:
- * callers must surface this as "no body" (the CTDL route returns 404 with audit
- * outcome `safety_blocked`), never as a published body carrying the value.
+ * Thrown when PII would reach serialized public output. Fail-closed: callers
+ * must surface this as "no body" (the CTDL route returns 404 with audit outcome
+ * `safety_blocked`), never as a published body carrying the value.
  *
  * Defined here rather than in `ctdl-serializer.ts` so the guard has no import
  * back-edge; the serializer re-exports it, so existing `instanceof` checks and
@@ -50,16 +77,20 @@ export class CtdlPiiSafetyError extends Error {
 
 /**
  * Credential types that are ACADEMIC RECORDS about an identified learner. These
- * fail CLOSED (no public body at all) when any learner-identity signal survives
- * field-level suppression — the SCRUM-2293 acceptance criterion.
+ * never emit issuer/extraction free text on the public projection (see the
+ * design note above).
  *
  * `CPE`/`CLE` are deliberately EXCLUDED: continuing professional education is a
- * practitioner record, not a FERPA academic record, and the CE ContactHour
- * projection is the main partner-facing value of those types. They still get
- * (a) field-level suppression via `cleanPublicFreeText` and (b) the
- * high-confidence half of the assembled-body scan below. Widen this set only
- * with a documented privacy reason, never casually — every addition converts
- * published credentials into 404s.
+ * practitioner record, not a FERPA academic record, and the descriptive title
+ * plus the CE ContactHour projection are the partner-facing value of those
+ * types. They keep field-level suppression and the assembled-body scan.
+ *
+ * CE Registry snapshot anchors (`credentials-ctdl-registry-anchor.ts`) are
+ * created as `OTHER`, so they are outside this set by construction — correct,
+ * since their content is already-public CE Registry data, not a learner record.
+ *
+ * Every ADDITION to this set silently replaces real credential titles with
+ * generic ones — widen only with a documented privacy reason.
  */
 export const EDUCATION_CREDENTIAL_TYPES: ReadonlySet<string> = new Set([
   'DEGREE',
@@ -72,47 +103,105 @@ export function isEducationCredentialType(credentialType: string | null | undefi
     && EDUCATION_CREDENTIAL_TYPES.has(credentialType.toUpperCase());
 }
 
+/**
+ * Upper bound on the characters any detector will scan.
+ *
+ * Detectors run on RAW database text at some call sites (e.g.
+ * `canonicalizeResourceAvailableUntil` passes an untruncated metadata value),
+ * and this endpoint is public and unauthenticated on a single-threaded runtime.
+ * A hard cap keeps every scan bounded in the size of attacker-influenced input.
+ * Anything a legitimate credential asserts publicly is far inside this bound —
+ * the emitted fields themselves cap at 240/500 characters.
+ */
+export const MAX_SCAN_CHARS = 4000;
+
+function normalizeForScan(value: string): string {
+  const bounded = value.length > MAX_SCAN_CHARS ? value.slice(0, MAX_SCAN_CHARS) : value;
+  // Strip control characters so a NUL or similar cannot split a value out from
+  // under a detector, and collapse whitespace so no pattern meets a long run.
+  return Array.from(bounded)
+    .filter((ch) => {
+      const code = ch.charCodeAt(0);
+      return code >= 32 && code !== 127;
+    })
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // ---------------------------------------------------------------------------
-// High-confidence detectors — unambiguous PII, suppressed for EVERY credential
-// type. A false positive here costs one omitted free-text field, not a 404.
+// High-confidence detectors — format- or keyword-anchored, so they are precise
+// enough to gate on. These run for EVERY credential type.
+//
+// Every pattern below uses BOUNDED separator classes (`[\s:#-]{0,4}`) rather
+// than the `\s*X?\s*` shape, which enumerates O(n²) splits of a whitespace run
+// before failing.
 // ---------------------------------------------------------------------------
 
 const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
-const SSN_PATTERN = /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/;
-const PHONE_PATTERN =
-  /(?:\+1\d{10}|\(\d{3}\)\s?\d{3}[-.]?\d{4}|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b|\+(?:[2-9]\d)\d{7,11})/;
-
-const MONTH_NAME = String.raw`(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*`;
-/**
- * A date in any of the shapes an extractor realistically emits, plus a bare
- * 4-digit year. Only ever used KEYWORD-ADJACENT (see {@link DOB_PATTERN}) — a
- * bare date is far too common in credential copy ("Academic year 2024-2025",
- * "Issued 2026-03-27") to treat as PII on its own.
- */
-const ANY_DATE = String.raw`(?:\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}|${MONTH_NAME}\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+${MONTH_NAME}\s+\d{4}|\d{4})`;
 
 /**
- * SCRUM-2299 — date of birth. Keyword-anchored on both the abbreviated
- * (`DOB`, `D.O.B.`) and spelled-out (`date of birth`, `birth date`, `born`,
- * `born on`) forms, with tolerant separators.
+ * SSN requires REAL SEPARATORS, or an explicit keyword.
+ *
+ * The bare-9-digit form (optional separators) matches any bounded 9-digit run —
+ * a campaign id, an order number, a numeric path segment in an issuer's website
+ * URL. On a fail-closed gate that turns an ordinary tracking parameter into a
+ * 404 for every credential the org owns, so the separators are mandatory here
+ * and the keyword form covers the unseparated case.
  */
-const DOB_KEYWORD = String.raw`(?:\bd\.?\s?o\.?\s?b\.?|\bdate\s+of\s+birth\b|\bbirth\s?date\b|\bbirthdate\b|\bborn(?:\s+on)?\b)`;
-const DOB_PATTERN = new RegExp(String.raw`${DOB_KEYWORD}\s*[:\-–—]?\s*${ANY_DATE}`, 'i');
+const SSN_SEPARATED_PATTERN = /\b\d{3}[-\s]\d{2}[-\s]\d{4}\b/;
+const SSN_KEYWORD_PATTERN =
+  /\b(?:ssn|social\ssecurity(?:\s(?:no|number|#))?)\b[\s:#-]{0,4}\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/i;
+
+const US_PHONE_PATTERN =
+  /(?:\+1\d{10}|\(\d{3}\)\s?\d{3}[-.]?\d{4}|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b)/;
+
+/**
+ * International numbers as humans actually write them ("+44 20 7946 0958").
+ * The regex only proposes a candidate; the digit count is checked in code, so a
+ * short false match like "+1 2026-03-27" (9 digits) is rejected without an
+ * unreadable pattern.
+ */
+const INTL_PHONE_CANDIDATE = /\+\d{1,3}(?:[\s.-]\d{1,5}){2,5}/g;
+const MIN_E164_DIGITS = 10;
+const MAX_E164_DIGITS = 15;
+
+function containsInternationalPhone(value: string): boolean {
+  for (const match of value.matchAll(INTL_PHONE_CANDIDATE)) {
+    const digits = match[0].replace(/\D/g, '').length;
+    if (digits >= MIN_E164_DIGITS && digits <= MAX_E164_DIGITS) return true;
+  }
+  return false;
+}
+
+const MONTH_NAME = String.raw`(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]{0,9}`;
+/**
+ * A date in any shape an extractor realistically emits, plus a bare 4-digit
+ * year. Only ever used KEYWORD-ADJACENT — a bare date is far too common in
+ * credential copy ("Academic year 2024-2025", "Issued 2026-03-27") to treat as
+ * PII on its own.
+ */
+const ANY_DATE = String.raw`(?:\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}|${MONTH_NAME}\s\d{1,2},?\s\d{4}|\d{1,2}\s${MONTH_NAME}\s\d{4}|\d{4})`;
+
+/** SCRUM-2299 — date of birth, abbreviated or spelled out. */
+const DOB_PATTERN = new RegExp(
+  String.raw`(?:\bd\.?\s?o\.?\s?b\.?|\bdate\sof\sbirth\b|\bbirth\s?date\b|\bbirthdate\b|\bborn(?:\son)?\b)[\s:–—-]{0,4}${ANY_DATE}`,
+  'i',
+);
 
 /**
  * SCRUM-2299 — student / learner / enrollment identifiers. Keyword-anchored and
  * digit-bearing (>= 4 digits) so a bare word like "Student" or a course code
  * ("PHIL 2020") can never trip it.
  */
-const STUDENT_ID_PATTERN = new RegExp(
-  String.raw`\b(?:(?:student|learner|enroll?ment|matriculation|candidate|registrant|pupil)\s*(?:id|i\.d\.|no\.?|number|#)|s\.?i\.?d\.?)\b\s*[:#\-–—]?\s*[A-Za-z]{0,4}[-]?\d{4,}`,
-  'i',
-);
+const STUDENT_ID_PATTERN =
+  /\b(?:(?:student|learner|enroll?ment|matriculation|candidate|registrant|pupil)\s?(?:id|i\.d\.|no\.?|number|#)|s\.?i\.?d\.?)\b[\s:#–—-]{0,4}[A-Za-z]{0,4}-?\d{4,}/i;
 
 const HIGH_CONFIDENCE_PATTERNS: readonly RegExp[] = [
   EMAIL_PATTERN,
-  SSN_PATTERN,
-  PHONE_PATTERN,
+  SSN_SEPARATED_PATTERN,
+  SSN_KEYWORD_PATTERN,
+  US_PHONE_PATTERN,
   DOB_PATTERN,
   STUDENT_ID_PATTERN,
 ];
@@ -122,178 +211,47 @@ const HIGH_CONFIDENCE_PATTERNS: readonly RegExp[] = [
  * keyword-anchored date of birth, or a keyword-anchored student/learner ID.
  */
 export function containsHighConfidencePii(value: string): boolean {
-  return HIGH_CONFIDENCE_PATTERNS.some((pattern) => pattern.test(value));
+  const text = normalizeForScan(value);
+  if (!text) return false;
+  return HIGH_CONFIDENCE_PATTERNS.some((pattern) => pattern.test(text))
+    || containsInternationalPhone(text);
 }
 
 // ---------------------------------------------------------------------------
-// Learner-identity (person-name) detection.
+// Learner-name heuristics — SUPPRESSION ONLY, never a gate.
 //
-// Detecting a bare personal name in free text is inherently a precision problem:
-// the naive "two capitalised words" heuristic matches "Fine Arts", "Southern
-// California", "Nurses Association" and would 404 most of the legitimate
-// corpus. The approach here is deliberately two-sided:
-//   1. A name candidate must sit next to a RELATIONAL trigger ("for/to/by/with/
-//      attn/regarding …") or be followed by an academic-record noun
-//      ("… 's transcript", "… certificate") — i.e. the text must be talking
-//      ABOUT a person, not naming a thing.
-//   2. Any candidate whose own tokens come from the institutional / subject /
-//      credential vocabulary is VETOED — that is a programme or organisation
-//      name, not a learner.
-// Matching is case-SENSITIVE for the name itself (a case-insensitive
-// `[A-Z][a-z]+` degenerates into "any word" and destroys precision); only the
-// surrounding trigger words are compared case-insensitively, by lowercasing the
-// extracted token rather than by relaxing the pattern.
+// These are the two narrow patterns that shipped before this module existed.
+// They are kept VERBATIM and used ONLY to drop a free-text field (an honest
+// omission), never to fail a build or 404 a credential. They are best-effort by
+// construction — see the design note at the top for why a broader heuristic was
+// tried, measured, and rejected. The real protection for learner names is the
+// structural one: academic records emit no free text at all.
+//
+// Do not widen these into a gate. Do not add bare prepositions as triggers.
 // ---------------------------------------------------------------------------
 
 const NAME_TOKEN = String.raw`[A-Z][a-z]{1,}`;
-const OPTIONAL_MIDDLE = String.raw`(?:\s+(?:[A-Z]\.?|${NAME_TOKEN}))?`;
-const FULL_NAME = String.raw`${NAME_TOKEN}${OPTIONAL_MIDDLE}\s+${NAME_TOKEN}`;
-const FULL_NAME_SCAN = new RegExp(String.raw`\b${FULL_NAME}\b`, 'g');
+const OPTIONAL_MIDDLE = String.raw`(?:\s(?:[A-Z]\.?|${NAME_TOKEN}))?`;
+const FULL_NAME = String.raw`${NAME_TOKEN}${OPTIONAL_MIDDLE}\s${NAME_TOKEN}`;
+const CONTEXTUAL_LEARNER_NAME_PATTERN = new RegExp(
+  String.raw`\b(?:for|learner|student|recipient|issued to|awarded to|completed by|earned by|held by)\s${FULL_NAME}\b`,
+);
+const NAME_FIRST_LEARNER_PATTERN = new RegExp(
+  String.raw`\b${FULL_NAME}(?:'s)?\s(?:transcript|student record|learner record|certificate|credential|degree|completion)\b`,
+);
 
 /**
- * Words that, immediately before a name candidate, mean the text is referring to
- * a PERSON. Two-word forms ("issued to", "awarded to", "completed by", "held
- * by") are covered by their trailing preposition, which is already listed.
+ * Best-effort learner-name signal for FIELD SUPPRESSION on non-academic
+ * credential types. Never call this to decide whether a credential publishes.
  */
-const RELATIONAL_TRIGGERS: ReadonlySet<string> = new Set([
-  'for', 'to', 'by', 'with', 'from',
-  'learner', 'student', 'recipient', 'candidate', 'graduate', 'honoree', 'holder', 'named',
-  'attn', 'attention', 're', 'regarding', 'concerning', 'between', 'presented', 'congratulations',
-]);
-
-/**
- * Nouns that, immediately AFTER a name candidate, mean the preceding words were
- * a person ("Jane Q Student's transcript", "Robert Smith certificate").
- */
-const TRAILING_RECORD_NOUNS: ReadonlySet<string> = new Set([
-  'transcript', 'transcripts', 'record', 'records', 'certificate', 'credential',
-  'degree', 'diploma', 'completion', 'gpa', 'grades', 'coursework', 'enrollment',
-]);
-
-/**
- * Institutional / subject / credential vocabulary. A name candidate containing
- * ANY of these tokens is an organisation, programme, or subject — never a
- * learner — so it is vetoed before the trigger test runs.
- *
- * Deliberately does NOT contain `student` / `learner` / `candidate`: those are
- * the very words a learner-name placeholder uses, and vetoing them would
- * reopen the hole this module exists to close.
- */
-const INSTITUTIONAL_VOCABULARY: ReadonlySet<string> = new Set([
-  // Organisation shapes
-  'university', 'universities', 'college', 'institute', 'institution', 'school', 'academy',
-  'seminary', 'conservatory', 'polytechnic', 'faculty', 'department', 'division', 'center',
-  'centre', 'campus', 'board', 'association', 'society', 'council', 'commission', 'authority',
-  'bureau', 'agency', 'ministry', 'foundation', 'trust', 'alliance', 'network', 'consortium',
-  'chapter', 'guild', 'union', 'federation', 'committee', 'company', 'corporation', 'holdings',
-  'partners', 'consulting', 'group', 'services', 'solutions', 'systems', 'labs', 'laboratory',
-  // Credential / programme shapes
-  'certificate', 'certification', 'certified', 'diploma', 'degree', 'bachelor', 'bachelors',
-  'master', 'masters', 'doctor', 'doctoral', 'doctorate', 'associate', 'honors', 'honours',
-  'credential', 'license', 'licence', 'licensed', 'registered', 'professional', 'specialist',
-  'technician', 'technologist', 'program', 'programme', 'course', 'curriculum', 'training',
-  'workshop', 'seminar', 'symposium', 'conference', 'module', 'unit', 'level', 'award',
-  'achievement', 'proficiency', 'competency', 'apprenticeship', 'fellowship', 'residency',
-  // Subject / discipline vocabulary
-  'science', 'sciences', 'arts', 'studies', 'education', 'health', 'healthcare', 'nursing',
-  'medicine', 'medical', 'dental', 'veterinary', 'pharmacy', 'law', 'legal', 'justice',
-  'business', 'management', 'administration', 'accounting', 'finance', 'economics',
-  'marketing', 'technology', 'technologies', 'information', 'computer', 'computing',
-  'software', 'data', 'security', 'cyber', 'cybersecurity', 'engineering', 'architecture',
-  'construction', 'manufacturing', 'logistics', 'aviation', 'automotive', 'welding',
-  'mathematics', 'statistics', 'physics', 'chemistry', 'biology', 'psychology', 'sociology',
-  'anthropology', 'history', 'philosophy', 'theology', 'literature', 'linguistics',
-  'communication', 'communications', 'journalism', 'design', 'media', 'music', 'theatre',
-  'theater', 'dance', 'culinary', 'hospitality', 'tourism', 'agriculture', 'environmental',
-  'sustainability', 'ethics', 'safety', 'quality', 'leadership', 'resources', 'workforce',
-  'development', 'research', 'analytics', 'operations', 'supply', 'project', 'product',
-  // Qualifiers commonly adjacent to the above
-  'american', 'national', 'international', 'global', 'state', 'county', 'city', 'regional',
-  'district', 'public', 'community', 'general', 'advanced', 'applied', 'continuing',
-  'introductory', 'intermediate', 'fundamentals', 'principles', 'practice', 'clinical',
-  'northern', 'southern', 'eastern', 'western', 'central', 'metropolitan', 'valley',
-]);
-
-function normalizeToken(token: string): string {
-  return token.replace(/[^A-Za-z]/g, '').toLowerCase();
-}
-
-function isInstitutionalPhrase(candidate: string): boolean {
-  return candidate
-    .split(/\s+/)
-    .some((token) => INSTITUTIONAL_VOCABULARY.has(normalizeToken(token)));
-}
-
-/** All lowercased alphabetic words before `index`, in order. */
-function precedingTokens(text: string, index: number): string[] {
-  return text.slice(0, index).split(/[^A-Za-z]+/).filter(Boolean).map((t) => t.toLowerCase());
-}
-
-/** The lowercased word immediately following a match, ignoring a possessive. */
-function followingToken(text: string, endIndex: number): string | null {
-  const match = /^(?:['’]s)?[\s:,;—–-]+([A-Za-z]+)/.exec(text.slice(endIndex));
-  return match ? normalizeToken(match[1]) || null : null;
-}
-
-/**
- * Is the name candidate at `start` introduced by a person-referring word?
- *
- * A bare "of" is deliberately NOT a standing trigger — it would make
- * "University of North Texas" a learner name. It counts only directly after a
- * record noun ("transcript of Jane Doe", "record of Jane Doe").
- */
-function hasRelationalTrigger(text: string, start: number): boolean {
-  const tokens = precedingTokens(text, start);
-  const previous = tokens.at(-1);
-  if (!previous) return false;
-  if (RELATIONAL_TRIGGERS.has(previous)) return true;
-  return previous === 'of' && TRAILING_RECORD_NOUNS.has(tokens.at(-2) ?? '');
-}
-
-/**
- * Decide whether one `FULL_NAME`-shaped candidate is a person reference.
- *
- * The `FULL_NAME` scan is greedy, so a capitalised leading trigger can be
- * swallowed into the match ("Regarding Priya Raman" matches whole). Peel that
- * leading trigger off and judge the remainder, otherwise the trigger hides the
- * very name it introduces.
- */
-function isPersonReference(text: string, candidate: string, start: number): boolean {
-  const tokens = candidate.split(/\s+/);
-  if (tokens.length >= 3 && RELATIONAL_TRIGGERS.has(normalizeToken(tokens[0]))) {
-    return !isInstitutionalPhrase(tokens.slice(1).join(' '));
-  }
-  if (isInstitutionalPhrase(candidate)) return false;
-  if (hasRelationalTrigger(text, start)) return true;
-  const after = followingToken(text, start + candidate.length);
-  return after !== null && TRAILING_RECORD_NOUNS.has(after);
-}
-
-/**
- * True when the text names an identifiable PERSON (a learner, recipient, or
- * other individual) rather than an organisation, programme, or subject.
- */
-export function containsLearnerIdentityPii(value: string): boolean {
-  const text = value.replace(/\s+/g, ' ').trim();
-  FULL_NAME_SCAN.lastIndex = 0;
-  for (const match of text.matchAll(FULL_NAME_SCAN)) {
-    if (isPersonReference(text, match[0], match.index ?? 0)) return true;
-  }
-  return false;
+export function containsLearnerNamePii(value: string): boolean {
+  const text = normalizeForScan(value);
+  return CONTEXTUAL_LEARNER_NAME_PATTERN.test(text) || NAME_FIRST_LEARNER_PATTERN.test(text);
 }
 
 // ---------------------------------------------------------------------------
 // Assembled-body scan (defense in depth).
 // ---------------------------------------------------------------------------
-
-export interface CtdlPiiScanOptions {
-  /**
-   * True for the ACADEMIC-RECORD credential types (see
-   * {@link EDUCATION_CREDENTIAL_TYPES}). When true the scan ALSO fails closed on
-   * learner-identity signals, not just high-confidence PII.
-   */
-  educationRecord: boolean;
-}
 
 /**
  * Recursion budget, matching `ctdl-claims-guard.ts`. Real CTDL bodies are ~4
@@ -303,21 +261,22 @@ const MAX_JSONLD_SCAN_DEPTH = 12;
 
 /**
  * Recursively scan an ALREADY-BUILT JSON-LD body and throw
- * {@link CtdlPiiSafetyError} if any string value carries PII. Field-level
- * suppression (`cleanPublicFreeText`) is the first line of defence; this is the
+ * {@link CtdlPiiSafetyError} if any string value carries high-confidence PII.
+ *
+ * Field-level suppression is the first line of defence; this is the
  * belt-and-suspenders check on the final object, so a value reaching the body
- * by ANY other route — a URL query string on `ceterms:subjectWebpage`, a field
- * that never routed through the free-text cleaner, or a future code path — can
- * never ship.
+ * by ANY other route — a field that never routed through the free-text cleaner,
+ * or a future code path — can never ship.
+ *
+ * ONLY the high-confidence (format/keyword-anchored) detectors run here. The
+ * name heuristics deliberately do NOT, because this scan fails CLOSED for every
+ * credential type: a heuristic false positive here would take a legitimate
+ * credential offline with no operator recourse.
  *
  * FAILS CLOSED on depth, mirroring the CE-02 CTID scan and the CE-06a claims
  * scan: a body too deep to scan is refused, never published unscanned.
  */
-export function assertNoPiiInJsonLd(
-  value: unknown,
-  options: CtdlPiiScanOptions,
-  depth = 0,
-): void {
+export function assertNoPiiInJsonLd(value: unknown, depth = 0): void {
   if (value === null || value === undefined) return;
   if (depth > MAX_JSONLD_SCAN_DEPTH) {
     // Value-free by construction: reports the budget, never the content.
@@ -328,15 +287,58 @@ export function assertNoPiiInJsonLd(
   }
   if (typeof value === 'string') {
     if (containsHighConfidencePii(value)) throw new CtdlPiiSafetyError();
-    if (options.educationRecord && containsLearnerIdentityPii(value)) throw new CtdlPiiSafetyError();
     return;
   }
   if (typeof value !== 'object') return;
   if (Array.isArray(value)) {
-    for (const item of value) assertNoPiiInJsonLd(item, options, depth + 1);
+    for (const item of value) assertNoPiiInJsonLd(item, depth + 1);
     return;
   }
   for (const child of Object.values(value as Record<string, unknown>)) {
-    assertNoPiiInJsonLd(child, options, depth + 1);
+    assertNoPiiInJsonLd(child, depth + 1);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Controlled-vocabulary naming for academic records.
+// ---------------------------------------------------------------------------
+
+/**
+ * `ceterms:Credential` is what `TRANSCRIPT` resolves to, which reads as nothing
+ * at all. Name it for what it is instead.
+ */
+const TRANSCRIPT_LABEL = 'Academic Transcript';
+
+/**
+ * A public, PII-free name for an academic record, derived ONLY from controlled
+ * vocabulary: the resolved CTDL `@type` (itself computed from the
+ * `credential_type` enum plus a fixed set of degree levels). No issuer text, no
+ * extraction output, no metadata — so there is nothing for a learner identity
+ * to ride in on.
+ *
+ * `ceterms:MasterDegree` → "Master Degree"; `ceterms:Certificate` →
+ * "Certificate".
+ */
+export function academicRecordName(
+  ctdlType: string,
+  credentialType: string | null | undefined,
+): string {
+  if (credentialType?.toUpperCase() === 'TRANSCRIPT') return TRANSCRIPT_LABEL;
+  return ctdlType.replace(/^ceterms:/, '').replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+/**
+ * Reduce a public URL to scheme + host + path, dropping the query string and
+ * fragment.
+ *
+ * Structural, not heuristic: query parameters are where identifiers ride into
+ * an otherwise innocuous field (`?student=jane@example.edu`), and
+ * `ceterms:subjectWebpage` is hygiene-cleaned only. Dropping them removes the
+ * carrier instead of trying to recognise every payload, and an issuer's public
+ * homepage never needs a query string to resolve.
+ */
+export function stripUrlQueryAndFragment(url: URL): string {
+  url.search = '';
+  url.hash = '';
+  return url.toString();
 }

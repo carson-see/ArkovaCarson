@@ -154,7 +154,12 @@ describe('GET /credentials/:publicId/ctdl', () => {
     });
   });
 
-  it('fails closed without CTDL output when transcript-like free text has low-confidence learner PII', async () => {
+  // SCRUM-2293 — an academic record publishes, but with NO issuer free text, so
+  // the learner name cannot appear whatever its shape. These previously
+  // asserted a 404 from the learner-name heuristic gate; that heuristic was
+  // removed because it 404'd real institution names while still missing
+  // all-caps and non-ASCII learner names (see ctdl-pii-guard.ts design note).
+  it('emits no learner PII for a transcript-like education record', async () => {
     const lookup: CredentialsCtdlLookup = {
       lookupByPublicId: vi.fn().mockResolvedValue(anchor({
         credentialType: 'DEGREE',
@@ -167,19 +172,13 @@ describe('GET /credentials/:publicId/ctdl', () => {
 
     const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
 
-    expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'not_found' });
+    expect(res.status).toBe(200);
     expect(JSON.stringify(res.body)).not.toContain('Jane Q Student');
-    const auditPayload = insertAudit.mock.calls[0][0];
-    expect(JSON.parse(auditPayload.details)).toMatchObject({
-      outcome: 'safety_blocked',
-      http_status: 404,
-      credential_status: 'SECURED',
-      credential_type: 'DEGREE',
-    });
+    expect(res.body).not.toHaveProperty('ceterms:description');
+    expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
   });
 
-  it('fails closed for name-first learner PII in transcript-like output', async () => {
+  it('emits no learner PII for a name-first transcript label', async () => {
     const lookup: CredentialsCtdlLookup = {
       lookupByPublicId: vi.fn().mockResolvedValue(anchor({
         credentialType: 'DEGREE',
@@ -192,22 +191,17 @@ describe('GET /credentials/:publicId/ctdl', () => {
 
     const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
 
-    expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'not_found' });
+    expect(res.status).toBe(200);
     expect(JSON.stringify(res.body)).not.toContain('Jane Q Student');
-    const auditPayload = insertAudit.mock.calls[0][0];
-    expect(JSON.parse(auditPayload.details)).toMatchObject({
-      outcome: 'safety_blocked',
-      http_status: 404,
-    });
+    expect(res.body).not.toHaveProperty('ceterms:description');
   });
 
   // SCRUM-2293 REGRESSION — verified live in prod 2026-08-01 (git_sha
   // 8e6a804e2): this exact shape served a person's full name in ceterms:name
-  // and ceterms:description from the PUBLIC, UNAUTHENTICATED endpoint. The old
-  // gate keyed on DEGREE/CERTIFICATE only (TRANSCRIPT was uncovered) and also
-  // required a literal transcript keyword, which this label does not contain.
-  it('fails closed for a bare learner name on a TRANSCRIPT credential with no transcript keyword', async () => {
+  // and ceterms:description from the PUBLIC, UNAUTHENTICATED endpoint, because
+  // the gate keyed on DEGREE/CERTIFICATE only (TRANSCRIPT was uncovered) and
+  // also required a literal transcript keyword, which this label lacks.
+  it('emits no learner name for a TRANSCRIPT credential with no transcript keyword', async () => {
     const lookup: CredentialsCtdlLookup = {
       lookupByPublicId: vi.fn().mockResolvedValue(anchor({
         credentialType: 'TRANSCRIPT',
@@ -220,21 +214,17 @@ describe('GET /credentials/:publicId/ctdl', () => {
 
     const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
 
-    expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'not_found' });
+    expect(res.status).toBe(200);
     expect(JSON.stringify(res.body)).not.toContain('Graham Bell');
-    const auditPayload = insertAudit.mock.calls[0][0];
-    expect(JSON.parse(auditPayload.details)).toMatchObject({
-      outcome: 'safety_blocked',
-      http_status: 404,
-      credential_type: 'TRANSCRIPT',
-    });
+    expect(res.body['ceterms:name']).toBe('Academic Transcript');
+    expect(res.body).not.toHaveProperty('ceterms:description');
   });
 
-  // SCRUM-2299 — the assembled-body scan is the backstop for values that never
-  // route through cleanPublicFreeText. A URL is hygiene-cleaned only, so an
-  // email in its query string used to ship on the public body verbatim.
-  it('fails closed when PII rides in on the issuer website query string', async () => {
+  // SCRUM-2299 — a URL is hygiene-cleaned only, so an email in its query string
+  // used to ship on the public body verbatim. The carrier is now removed
+  // structurally (query + fragment dropped) rather than detected, so the
+  // credential still publishes.
+  it('drops the issuer website query string rather than leaking or 404-ing', async () => {
     const lookup: CredentialsCtdlLookup = {
       lookupByPublicId: vi.fn().mockResolvedValue(anchor({
         credentialType: 'LICENSE',
@@ -242,6 +232,27 @@ describe('GET /credentials/:publicId/ctdl', () => {
           name: 'Arkova University',
           publicId: 'ORG-ARKOVA-U',
           websiteUrl: 'https://example.edu/lookup?student=jane.student@example.edu',
+        },
+      })),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(res.body)).not.toContain('jane.student@example.edu');
+    expect(res.body['ceterms:offeredBy']['ceterms:subjectWebpage']).toBe('https://example.edu/lookup');
+  });
+
+  // The assembled-body scan still fails closed when unambiguous PII reaches the
+  // body by a route field suppression cannot see.
+  it('fails closed when high-confidence PII reaches the assembled body', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+        credentialType: 'LICENSE',
+        issuer: {
+          name: 'Arkova University',
+          publicId: 'ORG-ARKOVA-U',
+          websiteUrl: 'https://jane.student@example.edu/lookup',
         },
       })),
     };
