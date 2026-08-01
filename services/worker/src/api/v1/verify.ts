@@ -24,13 +24,6 @@ import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 const router = Router();
 
 /** Full frozen schema result per CLAUDE.md Section 10 */
-/**
- * Shape of `anchors.compliance_controls`. In practice always `string[]` (see
- * `getComplianceControlIds`); the object arm is retained because the public
- * type declared it.
- */
-export type ComplianceControls = Record<string, unknown> | string[];
-
 export interface VerificationResult {
   verified: boolean;
   status?: 'ACTIVE' | 'REVOKED' | 'SUPERSEDED' | 'EXPIRED' | 'PENDING' | 'SUBMITTED';
@@ -63,12 +56,13 @@ export interface VerificationResult {
    * SCRUM-2227: the declared type was `Record<string, unknown>`, but the column
    * has always held a JSON **array** of control-ID strings (see the `anchors.
    * compliance_controls` column comment and `getComplianceControlIds`). The
-   * array form is what every real anchor has emitted since CML-02; the object
-   * form is kept in the union only because the type has advertised it publicly.
-   * This corrects the declaration to match what the endpoint actually returns —
-   * the wire format is unchanged.
+   * object form was never emitted by anything — it had no working consumer, as
+   * both first-party SDKs proved by silently dropping the field. Declaring the
+   * array alone matches what the endpoint actually returns; the wire format is
+   * unchanged, and a non-array stored value now fails closed to omitted rather
+   * than travelling unfiltered (see sanitizeStoredComplianceControls).
    */
-  compliance_controls?: ComplianceControls | null;
+  compliance_controls?: string[] | null;
   /**
    * SCRUM-2227: the informational-not-attestation note for `compliance_controls`.
    * Present whenever `compliance_controls` is present, absent otherwise — a
@@ -170,7 +164,7 @@ export interface AnchorByPublicId {
   /** REG-02: FERPA Section 99.37 directory info opt-out */
   directory_info_opt_out: boolean;
   /** API-RICH-01: Regulatory control IDs (SOC 2 / FERPA / HIPAA / GDPR / ISO) */
-  compliance_controls: ComplianceControls | null;
+  compliance_controls: string[] | null;
   /** API-RICH-01: Bitcoin block confirmations at anchor time */
   chain_confirmations: number | null;
   /** API-RICH-01: Parent anchor PUBLIC ID (resolved from internal UUID — never expose UUID) */
@@ -392,7 +386,7 @@ export interface AnchorSelectRow {
   expires_at: string | null;
   description: string | null;
   directory_info_opt_out: boolean;
-  compliance_controls: ComplianceControls | null;
+  compliance_controls: string[] | null;
   chain_confirmations: number | null;
   version_number: number | null;
   revocation_tx_id: string | null;
@@ -471,9 +465,7 @@ export function mapAnchorRow(row: AnchorSelectRow): AnchorByPublicId {
     // SCRUM-2227/2283: historical rows still carry the retired EU-US DPF IDs.
     // Filter on read — there is no migration that can un-say a claim already
     // written to 2.9M rows, and the read path is the only place it is asserted.
-    compliance_controls: sanitizeStoredComplianceControls(
-      row.compliance_controls,
-    ) as ComplianceControls | null,
+    compliance_controls: sanitizeStoredComplianceControls(row.compliance_controls),
     chain_confirmations: row.chain_confirmations ?? null,
     parent_public_id: row.parent?.public_id ?? null,
     version_number: row.version_number ?? null,

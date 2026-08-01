@@ -397,14 +397,26 @@ describe('buildVerificationResult', () => {
       expect(result.compliance_controls_note).toBeUndefined();
     });
 
-    it('surfaces compliance_controls JSON when present', () => {
+    it('surfaces compliance_controls when present', () => {
       const result = buildVerificationResult(createAnchor({
-        compliance_controls: { soc2: ['CC6.1', 'CC6.2'], ferpa: ['99.31'] },
+        compliance_controls: ['SOC2-CC6.1', 'FERPA-99.31'],
       }));
-      expect(result.compliance_controls).toEqual({
-        soc2: ['CC6.1', 'CC6.2'],
-        ferpa: ['99.31'],
-      });
+      expect(result.compliance_controls).toEqual(['SOC2-CC6.1', 'FERPA-99.31']);
+    });
+
+    // SCRUM-2227: this test previously asserted an OBJECT-shaped value round-
+    // tripped through the response. The column has only ever held an array, and
+    // an object cannot be filtered ID-by-ID — so surfacing one would emit
+    // exactly the claims sanitizeStoredComplianceControls exists to strip,
+    // carrying the informational note as if something had vouched for it.
+    // The guard lives in mapAnchorRow, which is where the DB row enters.
+    it('omits a non-array stored compliance_controls value (fail closed)', () => {
+      const anchor = mapAnchorRow(createRow({
+        compliance_controls: { soc2: ['CC6.1'] } as unknown as string[],
+      }));
+      const result = buildVerificationResult(anchor);
+      expect(result.compliance_controls).toBeUndefined();
+      expect(result.compliance_controls_note).toBeUndefined();
     });
   });
 

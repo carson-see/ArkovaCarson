@@ -1749,13 +1749,11 @@ export const openApiSpec: Record<string, any> = {
           description: { type: 'string', description: 'Immutable credential description, omitted when not present' },
           compliance_controls: {
             // SCRUM-2227: this was declared `type: object`, but the field has
-            // always been emitted as a JSON array of control-ID strings. Both
-            // arms are documented so the spec matches the wire format without
-            // withdrawing the shape previously advertised.
-            oneOf: [
-              { type: 'array', items: { type: 'string' } },
-              { type: 'object', additionalProperties: true },
-            ],
+            // always been emitted as a JSON array of control-ID strings. The
+            // object form had no working consumer (both first-party SDKs
+            // dropped it), so the spec now describes only what is emitted.
+            type: 'array',
+            items: { type: 'string' },
             nullable: true,
             example: ['SOC2-CC6.1', 'GDPR-5.1f', 'FERPA-99.31'],
             description:

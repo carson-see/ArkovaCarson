@@ -416,7 +416,7 @@ describe('verify', () => {
         network_receipt_id: 'tx-abc',
         record_uri: 'https://app.arkova.ai/verify/ARK-2026-001',
         description: 'Bachelor of Science transcript',
-        compliance_controls: { 'FERPA-99.31': true },
+        compliance_controls: ['FERPA-99.31'],
         chain_confirmations: 6,
         parent_public_id: 'ARK-2025-001',
         version_number: 2,
@@ -435,7 +435,7 @@ describe('verify', () => {
     expect(result.issuerName).toBe('University of Michigan');
     expect(result.networkReceiptId).toBe('tx-abc');
     expect(result.description).toBe('Bachelor of Science transcript');
-    expect(result.complianceControls).toEqual({ 'FERPA-99.31': true });
+    expect(result.complianceControls).toEqual(['FERPA-99.31']);
     expect(result.chainConfirmations).toBe(6);
     expect(result.parentPublicId).toBe('ARK-2025-001');
     expect(result.versionNumber).toBe(2);

@@ -126,9 +126,10 @@ export interface RichVerificationFields {
    * SCRUM-2227: the API emits this as an ARRAY of control-ID strings. The SDK
    * previously declared it object-only and mapped it through a helper that
    * returns `null` for arrays, so this field was silently `null` for every real
-   * anchor. The object arm is retained because the type advertised it.
+   * anchor — proof the object form had no working consumer. Now array-only,
+   * matching the published spec.
    */
-  complianceControls?: string[] | Record<string, unknown> | null;
+  complianceControls?: string[] | null;
   /**
    * SCRUM-2227: the informational-not-attestation note that accompanies
    * `complianceControls`. Present whenever controls are present, `null`

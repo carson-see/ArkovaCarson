@@ -16,8 +16,10 @@ vi.mock('../../config.js', () => ({
 }));
 
 import { VantaAdapter, DrataAdapter, AnecdotesAdapter, createGrcAdapter, loadGrcCredentials } from './adapters.js';
-import { resolveEvidenceControlIds } from './syncService.js';
-import { COMPLIANCE_CONTROLS_NOTE } from '../../utils/complianceMapping.js';
+import {
+  COMPLIANCE_CONTROLS_NOTE,
+  resolveComplianceControlIds,
+} from '../../utils/complianceMapping.js';
 import type { GrcEvidencePayload } from './types.js';
 import type { GrcPlatformCredentials } from './adapters.js';
 
@@ -345,31 +347,28 @@ describe('Evidence Payload Construction', () => {
 
 describe('GRC evidence control honesty (SCRUM-2227/2283)', () => {
   it('strips retired DPF control IDs from stored controls', () => {
-    const ids = resolveEvidenceControlIds(
-      ['SOC2-CC6.1', 'DPF-NOTICE', 'GDPR-5.1f', 'DPF-ACCOUNTABILITY'],
-      'DIPLOMA',
-    );
+    const ids = resolveComplianceControlIds(['SOC2-CC6.1', 'DPF-NOTICE', 'GDPR-5.1f', 'DPF-ACCOUNTABILITY'], { fallbackCredentialType: 'DIPLOMA' }) ?? [];
     expect(ids).toEqual(['SOC2-CC6.1', 'GDPR-5.1f']);
     expect(ids).not.toContain('DPF-NOTICE');
     expect(ids).not.toContain('DPF-ACCOUNTABILITY');
   });
 
   it('falls back to the computed mapping when every stored ID was retired', () => {
-    const ids = resolveEvidenceControlIds(['DPF-NOTICE', 'DPF-ACCOUNTABILITY'], 'DIPLOMA');
+    const ids = resolveComplianceControlIds(['DPF-NOTICE', 'DPF-ACCOUNTABILITY'], { fallbackCredentialType: 'DIPLOMA' }) ?? [];
     expect(ids.length).toBeGreaterThan(0);
     expect(ids).not.toContain('DPF-NOTICE');
     expect(ids).not.toContain('DPF-ACCOUNTABILITY');
   });
 
   it('falls back to the computed mapping when nothing is stored', () => {
-    const ids = resolveEvidenceControlIds(null, 'DIPLOMA');
+    const ids = resolveComplianceControlIds(null, { fallbackCredentialType: 'DIPLOMA' }) ?? [];
     expect(ids.length).toBeGreaterThan(0);
     expect(ids).not.toContain('DPF-NOTICE');
   });
 
   it('never emits a retired ID for any credential type via the fallback', () => {
     for (const type of [null, 'DIPLOMA', 'TRANSCRIPT', 'MEDICAL_RECORD', 'CONTRACT']) {
-      const ids = resolveEvidenceControlIds(null, type);
+      const ids = resolveComplianceControlIds(null, { fallbackCredentialType: type }) ?? [];
       expect(ids).not.toContain('DPF-NOTICE');
       expect(ids).not.toContain('DPF-ACCOUNTABILITY');
     }
