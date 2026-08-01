@@ -27,7 +27,8 @@
     "c56ceee03ce25efbf425f0245ec419e451b2674d",
     "8818d3af3b7568ee65a525b95f6f969763d15d25",
     "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
-    "87063b5e5e8049e3893cd2d62ba7f9987fd0275e"
+    "87063b5e5e8049e3893cd2d62ba7f9987fd0275e",
+    "4764deda83f888a73c8ddc2e04a21f9af6c6ab47"
   ],
   "covered_main_shas": [
     "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
@@ -46,7 +47,8 @@
     "c56ceee03ce25efbf425f0245ec419e451b2674d",
     "8818d3af3b7568ee65a525b95f6f969763d15d25",
     "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
-    "87063b5e5e8049e3893cd2d62ba7f9987fd0275e"
+    "87063b5e5e8049e3893cd2d62ba7f9987fd0275e",
+    "4764deda83f888a73c8ddc2e04a21f9af6c6ab47"
   ],
   "_append_procedure": [
     "PURPOSE: this manifest is a living document from now (2026-07-28, PR wave still being opened) through 72h-soak completion. Follow this procedure every time a new sprint PR opens or a Mergify batch lands, per docs/release/wave-merge-choreography-2026-08.md.",
@@ -135,7 +137,7 @@
     {
       "number": 1726,
       "head_sha": "ce396468f211af7dabde3db67df6f71d115f9e06",
-      "base_sha": "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T1",
       "owner": "L2 (A6 MCP manifest parity, per ratified sprint plan)",
       "title": "fix(mcp): discovery manifest parity — advertise the real 16-tool surface + drift guard",
@@ -161,7 +163,7 @@
     {
       "number": 1728,
       "head_sha": "6e9679fcd6bcec3384ac689945b0144f7895bd27",
-      "base_sha": "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T1",
       "owner": "L1 (Wave 1, materializer-EXECUTE runbook + preflight)",
       "title": "ops(runbook): proof-materializer prod-execute runbook + read-only preflight (SCRUM-2983/2984)",
@@ -259,7 +261,7 @@
     {
       "number": 1737,
       "head_sha": "7bdf7772da3cdcbf8ed5c4d36bc71f208e993cc1",
-      "base_sha": "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T2",
       "owner": "founder P0 (SCRUM-2894 consumer queue)",
       "title": "feat(queue): Add to Queue / Secure Now selector + consumer queue page (founder P0, SCRUM-2894)",
@@ -271,7 +273,7 @@
     {
       "number": 1738,
       "head_sha": "d6a86db57c02ef0eb45004667b782ec5a8494cb9",
-      "base_sha": "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T2",
       "owner": "founder P0 (mixed-format batch anchoring)",
       "title": "feat(upload): mixed-format batch anchoring in dashboard — wire the unused /api/v1/anchor/bulk route (founder P0)",
@@ -283,7 +285,7 @@
     {
       "number": 1739,
       "head_sha": "d94bfcf934618aede541bd4512cd1c984f892589",
-      "base_sha": "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T3",
       "owner": "founder admin-controls lane",
       "title": "feat(admin): platform-admin org credit adjust — audited RPC + UI (founder admin-controls)",
@@ -323,7 +325,7 @@
     {
       "number": 1742,
       "head_sha": "7455212e0e7aef7c0c3d86c6115f318256c43c17",
-      "base_sha": "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T2",
       "owner": "SCRUM-3012 (org invite flow)",
       "title": "fix(orgs): invite flow end-to-end — token link, real email, accept provisions account + UI (SCRUM-3012)",
@@ -383,7 +385,7 @@
     {
       "number": 1753,
       "head_sha": "8207d4b627e5c4cd63884ca7ab911600a56fd59d",
-      "base_sha": "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T1",
       "owner": "release closeout 2026-08-01",
       "title": "feat(kpi): HakiChain weekly reconciliation tooling + live KPI-1 anchor verification",
@@ -407,7 +409,7 @@
     {
       "number": 1760,
       "head_sha": "773145ce0c3ac0f805208f6f0969fd19aeaf1a22",
-      "base_sha": "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T2",
       "owner": "release closeout 2026-08-01",
       "title": "fix(api): path-guard root-mounted requireAuth on compliance/key-inventory mounts",
@@ -419,7 +421,7 @@
     {
       "number": 1764,
       "head_sha": "52dd8eb325c2902f29d5bffbe141cdb82a2acca8",
-      "base_sha": "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T3",
       "owner": "release closeout 2026-08-01",
       "title": "fix(observability): alert on silent credit/billing RPC failures",
@@ -431,7 +433,7 @@
     {
       "number": 1765,
       "head_sha": "88d937e02b9f513dd6512ab604ea750c5c8c90f5",
-      "base_sha": "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T1",
       "owner": "release closeout 2026-08-01",
       "title": "soak(SCRUM-2980): durable load generator for the 72h soak pair",
@@ -443,7 +445,7 @@
     {
       "number": 1767,
       "head_sha": "6864bfbbad2a87325bd3618d27a0b5af54488754",
-      "base_sha": "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T3",
       "owner": "release closeout 2026-08-01",
       "title": "fix(worker): retry claim_due_org_queue_runs once on transient transport error (F-1)",
@@ -467,7 +469,7 @@
     {
       "number": 1776,
       "head_sha": "860273f4789838aa7fe5f949e9e4ab5069bb82cd",
-      "base_sha": "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T1",
       "owner": "release closeout 2026-08-01",
       "title": "fix(mcp): server.json registry schema + gitignore guard",
