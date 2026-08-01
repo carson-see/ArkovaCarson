@@ -20,6 +20,7 @@ vi.mock('../../config.js', () => ({
 }));
 
 import {
+  EMPTY_API_RICH_FIELDS,
   buildVerificationResult,
   mapAnchorRow,
   type AnchorByPublicId,
@@ -639,13 +640,66 @@ describe('SCRUM-2575: proof availability is stated honestly', () => {
     expect(result.proof_availability_note).toBe(PROOF_AVAILABILITY_NOTE.root_only);
   });
 
-  it('reports root_only when a proof row exists but carries no branch', () => {
-    // The batch-root case: the root is on record, the per-document branch is not.
+  it('reports per_document for a single-leaf anchor whose honest branch is []', () => {
+    // An EMPTY branch is a real proof, not a missing one: for a single-leaf tree
+    // the root IS the leaf, so there are no siblings to walk. /proof serves this
+    // record a 200, so /verify must not call it root_only — that divergence is
+    // the exact bug this field exists to prevent.
     const anchor = mapAnchorRow(createRow({
       anchor_proofs: { merkle_root: 'ab'.repeat(32), proof_path: [] },
     }));
     const result = buildVerificationResult(anchor);
+    expect(result.proof_availability).toBe('per_document');
+  });
+
+  it('reports root_only when a proof row has a root but NO branch column', () => {
+    // The batch-root case: the root is on record, the per-document branch is
+    // not. /proof cannot serve this, so neither may we advertise it.
+    const anchor = mapAnchorRow(createRow({
+      anchor_proofs: { merkle_root: 'ab'.repeat(32), proof_path: null },
+    }));
+    const result = buildVerificationResult(anchor);
     expect(result.proof_availability).toBe('root_only');
+  });
+
+  it('reports root_only when a branch is stored without a root (unservable)', () => {
+    // /proof's extractStoredProof requires BOTH; a branch with no root falls
+    // through to the metadata arm and then 404s.
+    const anchor = mapAnchorRow(createRow({
+      anchor_proofs: {
+        merkle_root: null,
+        proof_path: [{ hash: 'cd'.repeat(32), position: 'left' }],
+      },
+    }));
+    const result = buildVerificationResult(anchor);
+    expect(result.proof_availability).toBe('root_only');
+  });
+
+  it('reports root_only for a malformed branch array (/proof would 500, not serve)', () => {
+    const anchor = mapAnchorRow(createRow({
+      anchor_proofs: {
+        merkle_root: 'ab'.repeat(32),
+        proof_path: [1, 2, 3] as unknown as null,
+      },
+    }));
+    const result = buildVerificationResult(anchor);
+    expect(result.proof_availability).toBe('root_only');
+  });
+
+  it('reports per_document for a LEGACY metadata-stored proof', () => {
+    // /proof falls back to anchors.metadata when there is no anchor_proofs row,
+    // and will serve this record. Reading only the embed would make /verify say
+    // "no self-contained per-document proof is available" about a record /proof
+    // hands over on request.
+    const anchor = mapAnchorRow(createRow({
+      anchor_proofs: null,
+      metadata: {
+        merkle_root: 'ab'.repeat(32),
+        merkle_proof: [{ hash: 'cd'.repeat(32), position: 'right' }],
+      },
+    }));
+    const result = buildVerificationResult(anchor);
+    expect(result.proof_availability).toBe('per_document');
   });
 
   it('treats a non-array proof_path as root_only (never guesses a branch)', () => {
@@ -688,10 +742,55 @@ describe('SCRUM-2575: proof availability is stated honestly', () => {
     expect(result.proof_availability_note).toBeUndefined();
   });
 
-  it('still classifies a REVOKED anchor — it was anchored, and still is', () => {
+  it('still classifies a REVOKED anchor that WAS broadcast', () => {
     const anchor = mapAnchorRow(createRow({ status: 'REVOKED', anchor_proofs: null }));
     const result = buildVerificationResult(anchor);
     expect(result.proof_availability).toBe('root_only');
+  });
+
+  // The note asserts the fingerprint "was committed to the Bitcoin network in
+  // the referenced anchor receipt". revoke_anchor() accepts a PENDING,
+  // never-broadcast anchor, and a SUPERSEDED parent may never have been
+  // SECURED — for those there is no receipt and no commitment, so emitting the
+  // note would assert external chain state we do not hold (§1.5 / R-7).
+  it('omits both fields for a REVOKED anchor that was never broadcast', () => {
+    const anchor = mapAnchorRow(createRow({
+      status: 'REVOKED',
+      chain_tx_id: null,
+      chain_block_height: null,
+      anchor_proofs: null,
+    }));
+    const result = buildVerificationResult(anchor);
+    expect(result.proof_availability).toBeUndefined();
+    expect(result.proof_availability_note).toBeUndefined();
+  });
+
+  it('omits both fields for a SUPERSEDED anchor with no receipt', () => {
+    const anchor = mapAnchorRow(createRow({
+      status: 'SUPERSEDED',
+      chain_tx_id: null,
+      anchor_proofs: null,
+    }));
+    const result = buildVerificationResult(anchor);
+    expect(result.proof_availability).toBeUndefined();
+  });
+
+  // A surface that never loaded proof data must stay SILENT, not report
+  // root_only — the note opens "Measured:", and those paths measured nothing.
+  // This is what /verify/batch and the oracle get via EMPTY_API_RICH_FIELDS.
+  it('omits both fields when the branch was never measured (batch / oracle)', () => {
+    const result = buildVerificationResult(createAnchor({
+      ...EMPTY_API_RICH_FIELDS,
+      status: 'SECURED',
+    }));
+    expect(result.proof_availability).toBeUndefined();
+    expect(result.proof_availability_note).toBeUndefined();
+  });
+
+  it('EMPTY_API_RICH_FIELDS marks the branch as unmeasured, not as absent', () => {
+    // A plain `false` here would make /verify/batch assert the OPPOSITE of
+    // /verify/:publicId for an anchor that does have a stored branch.
+    expect(EMPTY_API_RICH_FIELDS.has_stored_proof_branch).toBeNull();
   });
 
   it('never emits either field as null (frozen schema — omit, never null)', () => {

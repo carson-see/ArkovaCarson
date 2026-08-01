@@ -91,16 +91,33 @@ export const PROOF_AVAILABILITY_NOTE: Record<ProofAvailability, string> = {
     + 'underlying document.',
 };
 
+/** The public field pair. Always produced together — see below. */
+export interface ProofAvailabilityFields {
+  proof_availability: ProofAvailability;
+  proof_availability_note: string;
+}
+
 /**
- * Classify from the stored proof branch alone.
+ * Produce the class AND its note as one indivisible value.
  *
- * `hasStoredBranch` must be the result of actually looking at a stored
- * `anchor_proofs.proof_path` — a non-empty array. Anything else (no proof row,
- * a receipt-only row, an empty branch, a malformed non-array value) is
- * `root_only`, because in every one of those cases there is no branch to hand
- * out. Fail-closed by construction: the honest answer to "can I get a proof?"
- * is "no" unless we can see one.
+ * This returns a pair rather than just the class so the "a class never travels
+ * without its meaning" invariant holds BY CONSTRUCTION instead of by convention.
+ * With a bare classifier, every emission site had to remember a second
+ * `PROOF_AVAILABILITY_NOTE[...]` lookup, and a site that forgot would ship a
+ * bare `root_only` — a claim about a record with no statement of what it does
+ * and does not assert, which is the exact §1.5 failure this module exists to
+ * prevent. A caller now has to visibly discard a field to get that wrong.
+ *
+ * `hasServableBranch` must come from `hasServableProofBranch` (utils/merkle.ts)
+ * — the same predicate `/proof` uses. Callers that did not measure it must not
+ * call this at all; see the tri-state note on `has_stored_proof_branch`.
  */
-export function classifyProofAvailability(hasStoredBranch: boolean): ProofAvailability {
-  return hasStoredBranch ? PROOF_AVAILABILITY.PER_DOCUMENT : PROOF_AVAILABILITY.ROOT_ONLY;
+export function proofAvailabilityFields(hasServableBranch: boolean): ProofAvailabilityFields {
+  const availability = hasServableBranch
+    ? PROOF_AVAILABILITY.PER_DOCUMENT
+    : PROOF_AVAILABILITY.ROOT_ONLY;
+  return {
+    proof_availability: availability,
+    proof_availability_note: PROOF_AVAILABILITY_NOTE[availability],
+  };
 }

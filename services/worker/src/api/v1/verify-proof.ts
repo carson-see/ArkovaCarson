@@ -15,9 +15,9 @@
 
 import { Router, Request, Response } from 'express';
 import { verifyMerkleInclusion } from '../../utils/merkle-verify.js';
+import { isValidProofArray } from '../../utils/merkle.js';
 import {
-  PROOF_AVAILABILITY,
-  PROOF_AVAILABILITY_NOTE,
+  proofAvailabilityFields,
   type ProofAvailability,
 } from '../../constants/proofAvailability.js';
 import { fromByteaHex } from '../../utils/anchorProofs.js';
@@ -273,8 +273,10 @@ export function noBatchProofBody(): ProofErrorResponse {
   return {
     error: 'No Merkle proof available for this record. It may not have been batch-anchored.',
     proof_error_code: PROOF_ERROR_CODE.NO_BATCH_PROOF,
-    proof_availability: PROOF_AVAILABILITY.ROOT_ONLY,
-    proof_availability_note: PROOF_AVAILABILITY_NOTE[PROOF_AVAILABILITY.ROOT_ONLY],
+    // Reaching this body means the route already failed to resolve a branch
+    // from BOTH the stored row and the legacy metadata, so root_only is a
+    // measurement here, not an assumption.
+    ...proofAvailabilityFields(false),
   };
 }
 
@@ -365,18 +367,16 @@ function readMerkleIndex(value: unknown): number | null {
 }
 
 /**
- * Validate that a merkle_proof array from metadata has the correct shape.
+ * Validate that a merkle_proof array has the correct shape.
+ *
+ * SCRUM-2575: the implementation moved to `utils/merkle.ts`, beside
+ * `MerkleProofEntry`, so `/api/v1/verify` can apply the IDENTICAL test when it
+ * decides whether to advertise `proof_availability: per_document`. Two surfaces
+ * answering "is a proof available?" with two predicates is how the API ends up
+ * contradicting itself about one record. Re-exported here to keep this module's
+ * public surface unchanged.
  */
-export function isValidProofArray(arr: unknown): arr is MerkleProofEntry[] {
-  if (!Array.isArray(arr)) return false;
-  return arr.every(
-    (entry) =>
-      typeof entry === 'object' &&
-      entry !== null &&
-      typeof entry.hash === 'string' &&
-      (entry.position === 'left' || entry.position === 'right'),
-  );
-}
+export { isValidProofArray } from '../../utils/merkle.js';
 
 function extractStoredProof(
   proof: ProofRecordData | null,
