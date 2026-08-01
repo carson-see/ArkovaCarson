@@ -2,6 +2,26 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-01 — Queues lane (PR #1812): pipeline claim-revert emitted an over-wide id filter (`publicRecordAnchor.ts`)
+
+`revertClaimedAnchors` — the post-failed-submission release of claimed pipeline anchors from
+BROADCASTING back to PENDING — still chunked its `.in('id', …)` by `POSTGREST_ROW_LIMIT` (1,000).
+That is the exact defect PR #1795 fixed in `fetchAnchorRows` and `claimPendingPipelineAnchors` and
+did NOT fix here, so this path emitted ~38 KB request lines, took 400 Bad Request on every chunk,
+and released nothing — a failed submission stranded up to a full 10k batch in BROADCASTING while
+the job logged only the original chain error.
+
+- Chunks by `POSTGREST_IN_FILTER_CHUNK` now, and returns
+  `{attemptedChunks, failedChunks, strandedAnchorIds}` so a partial/total revert failure is
+  escalated at error level naming the stranded count and the recovering job. It deliberately does
+  NOT throw — it runs inside the chain-submission failure path, and throwing would replace the
+  caller's real chain error. `recover_stuck_broadcasts` (verified ENABLED in prod, `*/15`, and
+  confirmed to cover BROADCASTING rows with NULL `chain_tx_id`) stays the backstop.
+- `fetchAnchorRows` / `claimPendingPipelineAnchors` / `revertClaimedAnchors` are exported so the
+  width invariant is asserted at the CALL SITE (`__tests__/publicRecordAnchor-in-filter-width.test.ts`,
+  6 tests) rather than only on the constants — the class recurred precisely because a
+  constant-level test passed while one call site still used the wrong one.
+
 ## 2026-07-28 SOAK FINDINGS — F-1 (org-queue-scheduler 500s) + F-3 (SUBMITTED/NULL-txid recovery gap)
 
 Both open, from the 2026-08 72h signet soak pair. Canonical writeup: `docs/staging/SOAK-FINDINGS-2026-08.md`.
