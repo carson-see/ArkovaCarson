@@ -701,6 +701,6 @@ _Last refreshed: 2026-07-29 by Claude (CTO overnight monitoring session) — cla
 
 Full detail: [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md) (new "F-2 redeploy disclosure" + "F-7" sections).
 
-_Last refreshed: 2026-08-01 by Claude (envelope-reconciliation statement-timeout fix) — claims in the top entry verified against the Sentry issue + worker logs supplied in the session brief, the checked-in worker source at `services/worker/src/jobs/docusign-anchor-reconciliation.ts`, and a local scratch-Postgres `EXPLAIN (ANALYZE, BUFFERS)` reproduction (2,974,734 rows) whose plans are quoted inline; NO prod or staging write was performed and no soak is claimed. Prior footer follows._
-
 _Last refreshed: 2026-07-29 by Claude (CTO-ruled F-2 redeploy session) — claims verified against `gcloud builds describe`, `gcloud run services describe` before/after export diff, `gcloud scheduler jobs list`, `gcloud logging read` status census, a direct authenticated HTTP probe against the legacy rig, and Supabase MCP `execute_sql` on `ryasykzdduzymschbucr`; artifacts cited in this commit body. Launch rig not queried or modified this session._
+
+_Last refreshed: 2026-08-01 by Claude — claims verified against gcloud/MCP/CI output (this session added the envelope-reconciliation entry at the top only; its claims are verified against the Sentry issue ARKOVA-WORKER-2B and worker logs supplied in the session brief, the checked-in worker source, and a local scratch-Postgres EXPLAIN ANALYZE reproduction of 2,974,734 rows whose plans are quoted in PR #1780. No prod or staging write was performed this session and no soak is claimed; migration 0379 is file-only and NOT applied to prod)._
