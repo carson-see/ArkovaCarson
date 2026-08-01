@@ -43,7 +43,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { workerFetch } from '@/lib/workerClient';
-import { ROUTES } from '@/lib/routes';
+import { ROUTES, orgProfilePath } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
 import { ADMIN_CREDIT_ADJUST_LABELS as CREDIT } from '@/lib/copy';
 
@@ -676,7 +676,7 @@ export function AdminOrganizationsPage() {
             items={items}
             searchInput={searchInput}
             onClearFilters={clearFilters}
-            onOpenOrg={(orgId) => navigate(`/organizations/${orgId}`)}
+            onOpenOrg={(orgId) => navigate(orgProfilePath(orgId))}
             onOpenCap={openCap}
             onOpenCredits={openCredits}
           />
