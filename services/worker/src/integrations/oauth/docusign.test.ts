@@ -448,32 +448,22 @@ describe('provisionConnectListener', () => {
     expect(body).not.toHaveProperty('hmacSecret');
   });
 
-  it('sends integratorManaged only when DOCUSIGN_CONNECT_INTEGRATOR_MANAGED is enabled', async () => {
-    let postBody: unknown = null;
-    const fetchImpl = async (_input: FetchInput, init?: RequestInit) => {
-      if (init?.method !== 'POST') {
-        return new Response(JSON.stringify({ configurations: [] }), { status: 200 });
-      }
-      postBody = JSON.parse(String(init.body));
-      return new Response(JSON.stringify({ connectId: '99002' }), { status: 201 });
-    };
+  it('fails closed when DOCUSIGN_CONNECT_HMAC_SECRET is whitespace-only', async () => {
+    // A blank secret would provision a listener that reports success while every
+    // delivery 401s at /webhooks/docusign.
+    const fetchImpl = async () => new Response('{}', { status: 200 });
 
-    await provisionConnectListener({
-      accessToken: 'at-test',
-      baseUri: 'https://demo.docusign.net',
-      accountId: 'acct-1',
-      deps: {
-        env: { ...PROVISION_ENV, DOCUSIGN_CONNECT_INTEGRATOR_MANAGED: 'true' },
-        fetchImpl: fetchImpl as unknown as typeof fetch,
-      },
-    });
-
-    const body = postBody as Record<string, unknown>;
-    // DocuSign "HMAC for Partners": deliveries to the customer account are
-    // signed with the HMAC key registered on the account that owns Arkova's
-    // integration key, which is the only key the worker actually holds.
-    expect(body.integratorManaged).toBe('true');
-    expect(body).not.toHaveProperty('hmacSecret');
+    await expect(
+      provisionConnectListener({
+        accessToken: 'at-test',
+        baseUri: 'https://demo.docusign.net',
+        accountId: 'acct-1',
+        deps: {
+          env: { ...PROVISION_ENV, DOCUSIGN_CONNECT_HMAC_SECRET: '   ' },
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        },
+      }),
+    ).rejects.toThrow(DocusignConfigError);
   });
 
   it('throws DocusignApiError when the Connect API returns an error', async () => {

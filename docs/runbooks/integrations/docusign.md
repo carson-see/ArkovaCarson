@@ -217,16 +217,28 @@ account state, so one of these must be true before deliveries verify:
    value is stored in Secret Manager `docusign_connect_hmac_secret_prod`. Works, but
    does not scale past one customer — every new org needs a manual key copy, and a
    mismatch is silent (listener healthy, deliveries 401).
-2. **Partner-managed (`integratorManaged`, opt-in).** Register an HMAC key on the
-   DocuSign account that owns `DOCUSIGN_INTEGRATION_KEY`, then set
-   `DOCUSIGN_CONNECT_INTEGRATOR_MANAGED=true`. Provisioning then sends
-   `integratorManaged: "true"` and DocuSign signs every customer account's
-   deliveries with Arkova's own key — the one the worker already holds.
-   API-only feature; it cannot be set from the DocuSign admin console.
+2. **Partner-managed (`integratorManaged`) — the multi-tenant answer, NOT YET BUILT.**
+   DocuSign's "HMAC for Partners" flag makes Connect sign every customer account's
+   deliveries with the HMAC key registered on the account that owns
+   `DOCUSIGN_INTEGRATION_KEY` — i.e. the key the worker already holds. API-only;
+   it cannot be set from the DocuSign admin console.
 
-Default is off. Do not enable it before confirming the key exists on the
-integration-key account, or provisioning will flip deliveries onto a key that is not
-configured and every webhook will 401.
+   Deliberately not shipped yet, because turning it on safely needs more than a
+   payload field:
+   - an HMAC key must first exist on the integration-key account, or deliveries
+     flip onto a key nobody configured and every webhook 401s;
+   - it is a **one-way door** as the payload is currently shaped — a PUT that
+     omits the field cannot turn it back off, so rollback would be a DocuSign
+     admin action;
+   - `provisionConnectListener()` only runs on OAuth connect and the reprovision
+     endpoint, so enabling it does nothing for already-connected orgs, leaving a
+     split where some orgs sign with Arkova's key and some do not;
+   - the listener-drift checker (`jobs/docusign-listener-drift.ts`) has no notion
+     of `integratorManaged`, so it would report **in sync** for every mismatched
+     listener — exactly the silent-failure shape this section exists to prevent.
+
+   A story that adds it must cover all four, plus reprovisioning existing
+   listeners.
 
 ## Verification
 
