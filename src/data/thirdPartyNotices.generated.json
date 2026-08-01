@@ -1275,14 +1275,28 @@
       "license": "LGPL-3.0",
       "repository": "https://github.com/catdad-experiments/libheif-js",
       "sourceUrl": "https://registry.npmjs.org/libheif-js/-/libheif-js-1.19.8.tgz",
-      "status": "pending",
-      "statusNote": "Ships via the in-development client-side HEIC/HEIF image decode path (founder 22-format KPI, PR #1740, not yet merged to main). Pre-cleared here so the notice obligation is discharged the moment it lands. See scripts/security/license-denylist.allowlist.json for the compliance rationale (unmodified, browser-only, isolated in the lazy 'vendor-heic' chunk) and the counsel x265/encoder verification result.",
+      "status": "active",
+      "statusNote": "Ships today in the client-side HEIC/HEIF image decode path, via the `heic-decode` wrapper (a production dependency in package.json, dynamically imported at src/lib/ocrWorker.ts). Corrected 2026-08-01: this entry previously read status 'pending' with a note saying the decode path was 'not yet merged to main'. That was written when the path was in flight and was already false — heic-decode 2.1.0 is a production dependency and this package is in main's lockfile — so the public notices page would have rendered 'In development — not yet shipped' for a component we actually distribute, disclaiming a live attribution obligation. See scripts/security/license-denylist.allowlist.json for the compliance rationale (unmodified, browser-only, isolated in the lazy 'vendor-heic' chunk, which vite.config.ts now really implements) and the counsel x265/encoder verification result.",
       "unmodified": true,
       "licenseTextUrls": [
         "https://www.gnu.org/licenses/lgpl-3.0.txt",
         "https://www.gnu.org/licenses/gpl-3.0.txt"
       ],
       "licenseTextNote": "LGPL-3.0 incorporates the GNU General Public License v3 by reference (LGPL-3.0 §2); both texts are linked."
+    },
+    {
+      "name": "jszip",
+      "version": "3.10.1",
+      "license": "MIT OR GPL-3.0-or-later",
+      "repository": "https://github.com/Stuk/jszip",
+      "sourceUrl": "https://registry.npmjs.org/jszip/-/jszip-3.10.1.tgz",
+      "status": "active",
+      "statusNote": "Ships today in the lazy 'vendor-zip' Vite chunk, as a transitive dependency of mammoth.js (.docx text extraction on the client-side OCR path). Dual-licensed; Arkova USES IT UNDER MIT, per scripts/security/license-denylist.allowlist.json. Added 2026-08-01: because jszip is allowlist-cleared copyleft, the generator excluded it from the general list on the assumption its notice lived here — and it did not, so it received NO attribution anywhere on this page. That is the one case where the omission matters most: electing MIT is exactly what makes the MIT attribution requirement load-bearing. The generator now fails when an allowlisted copyleft dependency has no pinned notice.",
+      "unmodified": true,
+      "licenseTextUrls": [
+        "https://raw.githubusercontent.com/Stuk/jszip/main/LICENSE.markdown"
+      ],
+      "licenseTextNote": "Used under the MIT option of the MIT-or-GPLv3 dual license. The linked file contains both license texts as published by the project."
     }
   ]
 }

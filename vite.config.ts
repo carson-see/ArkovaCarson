@@ -41,12 +41,16 @@ export default defineConfig({
           // /legal/third-party-notices depends on this isolation holding: it
           // is what lets us ship an unmodified, statically-linked-only-within-
           // its-own-chunk wasm bundle without triggering LGPL's main-program
-          // relinking obligation. If you're adding the real HEIC/HEIF decode
-          // path (see PR #1740 / SCRUM founder 22-format KPI), add:
-          //   if (id.includes('heic-decode') || id.includes('libheif-js')) return 'vendor-heic';
-          // See scripts/security/vendor-heic-chunk-isolation.test.ts, which
-          // statically asserts this file honors the rule once that branch
-          // exists.
+          // relinking obligation.
+          //
+          // This branch is LIVE, not aspirational: `heic-decode@2.1.0` is a
+          // production dependency in package.json and `libheif-js@1.19.8` is in
+          // package-lock.json, dynamically imported at src/lib/ocrWorker.ts
+          // (`loadHeicDecode`). It ships today. The branch MUST come before the
+          // broader vendor branches below so a heic module can never be
+          // captured by one of them first.
+          // See scripts/security/vendor-heic-chunk-isolation.test.ts.
+          if (id.includes('heic-decode') || id.includes('libheif-js')) return 'vendor-heic';
           if (id.includes('@huggingface/transformers')) return 'vendor-ai-ner';
           if (id.includes('pdfjs-dist')) return 'vendor-pdf';
           if (id.includes('/jszip/')) return 'vendor-zip';

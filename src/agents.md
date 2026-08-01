@@ -36,7 +36,7 @@ React 19 frontend application — TypeScript + Tailwind CSS 4 + shadcn/ui + Vite
 
 ## Recent Changes
 
-- **Third-Party Notices page (engineering-counsel LGPL review)** (2026-07-28): `src/pages/ThirdPartyNoticesPage.tsx` at `/legal/third-party-notices` (`ROUTES.THIRD_PARTY_NOTICES`), linked from `PublicFooter.tsx`. Renders `src/data/thirdPartyNotices.generated.json` (regenerate via `npm run license:notices:generate`, `scripts/security/generate-third-party-notices.ts`) — do not hand-edit the generated file. Discharges the LGPL-3.0 NOTICE obligation for `libheif-js` (pre-cleared pending PR #1740, the client-side HEIC/HEIF decode work). See `scripts/security/agents.md` for the compliance rationale.
+- **Third-Party Notices page (engineering-counsel LGPL review)** (2026-07-28): `src/pages/ThirdPartyNoticesPage.tsx` at `/legal/third-party-notices` (`ROUTES.THIRD_PARTY_NOTICES`), linked from `PublicFooter.tsx`. Renders `src/data/thirdPartyNotices.generated.json` (regenerate via `npm run license:notices:generate`, `scripts/security/generate-third-party-notices.ts`) — do not hand-edit the generated file. Carries the LGPL-3.0 notice for `libheif-js`, which **ships today** via `heic-decode` (production dependency, dynamically imported from `src/lib/ocrWorker.ts`) — corrected 2026-08-01 from "pre-cleared pending PR #1740", which caused the page to badge a shipped component "In development — not yet shipped". See `scripts/security/agents.md` for the compliance rationale and the chunk-isolation rule.
 - **Agent discovery / WebMCP** (2026-07-15): `webmcp.ts` progressively registers
   the read-only `search_arkova` and `verify_arkova_record` browser tools through
   `navigator.modelContext.registerTool()` with a `document.modelContext`

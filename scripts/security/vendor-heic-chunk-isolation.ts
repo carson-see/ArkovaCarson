@@ -48,13 +48,41 @@ export interface HeicChunkIsolationResult {
  * returns a distinct chunk name that no OTHER branch also returns (i.e. it
  * is not silently folded into an existing shared vendor chunk).
  */
-export function assertHeicChunkIsolated(viteConfigSource: string): HeicChunkIsolationResult {
+export function assertHeicChunkIsolated(
+  viteConfigSource: string,
+  /**
+   * Whether heic-decode/libheif-js is actually in the dependency tree.
+   *
+   * THIS PARAMETER EXISTS BECAUSE THE GUARD USED TO BE UNFALSIFIABLE. It only
+   * ever parsed vite.config.ts, so "no heic branch in manualChunks" was read as
+   * "the dependency isn't in the tree yet — vacuously satisfied" and returned
+   * GREEN. That is precisely the violating state: `heic-decode@2.1.0` has been
+   * a production dependency, and `libheif-js@1.19.8` in the lockfile, the whole
+   * time — dynamically imported at src/lib/ocrWorker.ts. The guard reported
+   * compliance at the exact moment the rule was broken.
+   *
+   * Callers should pass `isHeicDependencyInstalled()`. Defaults to false to
+   * preserve the old signature for the pure source-parsing unit tests.
+   */
+  dependencyInstalled = false,
+): HeicChunkIsolationResult {
   const manualChunksMatch = viteConfigSource.match(/manualChunks:\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n\s{8}\},/);
   const body = stripLineComments(manualChunksMatch?.[1] ?? viteConfigSource);
 
   if (!HEIC_MODULE_PATTERN.test(body)) {
-    // Nothing to isolate yet — the dependency isn't in the tree. Vacuously
-    // satisfied; this branch is what keeps the test green on `main` today.
+    if (dependencyInstalled) {
+      return {
+        referencesHeicModules: false,
+        isolated: false,
+        violation:
+          'heic-decode/libheif-js IS in the dependency tree, but vite.config.ts manualChunks has no ' +
+          "branch routing it to an isolated chunk. It will be folded into a shared vendor chunk, " +
+          'which defeats the LGPL-3.0 relinking position recorded in ' +
+          'scripts/security/license-denylist.allowlist.json. Add: ' +
+          "if (id.includes('heic-decode') || id.includes('libheif-js')) return 'vendor-heic';",
+      };
+    }
+    // Genuinely nothing to isolate — the dependency is absent AND unreferenced.
     return { referencesHeicModules: false, isolated: true };
   }
 
@@ -100,4 +128,27 @@ export function assertHeicChunkIsolated(viteConfigSource: string): HeicChunkIsol
   }
 
   return { referencesHeicModules: true, isolated: true };
+}
+
+/**
+ * Is heic-decode / libheif-js actually in the dependency tree?
+ *
+ * Checks the root package.json dependency maps AND the lockfile, because the
+ * LGPL obligation attaches to what we SHIP, not to what a config file mentions.
+ * Pure over its inputs so it is trivially testable; `loadHeicDependencyState`
+ * does the file I/O.
+ */
+export function isHeicDependencyInstalled(args: {
+  packageJson: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+  packageLockJson: { packages?: Record<string, unknown> };
+}): boolean {
+  const declared = {
+    ...(args.packageJson.dependencies ?? {}),
+    ...(args.packageJson.devDependencies ?? {}),
+  };
+  if ('heic-decode' in declared || 'libheif-js' in declared) return true;
+
+  return Object.keys(args.packageLockJson.packages ?? {}).some(
+    (p) => p.endsWith('node_modules/heic-decode') || p.endsWith('node_modules/libheif-js'),
+  );
 }

@@ -114,10 +114,25 @@ function normalizeLicenses(licenses: string | string[] | undefined): string {
 export function classifyEntries(
   raw: ModuleInfos,
   allowlist: AllowlistEntry[],
-): { general: NoticeEntry[]; unresolvedCopyleft: NoticeEntry[] } {
+): {
+  general: NoticeEntry[];
+  unresolvedCopyleft: NoticeEntry[];
+  allowlistedCopyleft: NoticeEntry[];
+} {
   const allowed = new Set(allowlist.map((entry) => `${entry.name}@${entry.version}`));
   const general: NoticeEntry[] = [];
   const unresolvedCopyleft: NoticeEntry[] = [];
+  /**
+   * Copyleft deps that ARE allowlist-cleared. They are excluded from `general`
+   * because their notice text is supposed to live in third-party-notices.pinned.json
+   * — but nothing used to verify that it actually did, so an allowlisted package
+   * with no pinned entry fell into NO bucket and got zero attribution on the
+   * published page. `jszip` (MIT OR GPL-3.0-or-later, elected MIT) was exactly
+   * that case: the one dependency where the allowlist records a license ELECTION,
+   * i.e. where MIT attribution is load-bearing, and it appeared nowhere.
+   * main() now reconciles this list against the pinned file.
+   */
+  const allowlistedCopyleft: NoticeEntry[] = [];
 
   for (const [key, row] of Object.entries(raw)) {
     const { name, version } = parseNameVersion(key);
@@ -133,7 +148,9 @@ export function classifyEntries(
       // one source of truth for "this copyleft dependency is cleared."
       // The pinned file (loaded separately by main()) is where its full
       // notice text lives; this generator does not fabricate one.
-      if (!allowed.has(`${name}@${version}`)) {
+      if (allowed.has(`${name}@${version}`)) {
+        allowlistedCopyleft.push(entry);
+      } else {
         unresolvedCopyleft.push(entry);
       }
       continue;
@@ -143,7 +160,8 @@ export function classifyEntries(
   }
 
   general.sort((a, b) => a.name.localeCompare(b.name));
-  return { general, unresolvedCopyleft };
+  allowlistedCopyleft.sort((a, b) => a.name.localeCompare(b.name));
+  return { general, unresolvedCopyleft, allowlistedCopyleft };
 }
 
 async function main() {
@@ -151,7 +169,28 @@ async function main() {
   const allowlist = loadAllowlist();
   const pinned = loadPinned();
 
-  const { general, unresolvedCopyleft } = classifyEntries(raw, allowlist);
+  const { general, unresolvedCopyleft, allowlistedCopyleft } = classifyEntries(raw, allowlist);
+
+  // An allowlist-cleared copyleft dep is excluded from `general` on the
+  // assumption its notice lives in the pinned file. Verify that, or it silently
+  // gets NO attribution anywhere on the published page — the failure mode that
+  // dropped `jszip` (elected MIT, so attribution is required) entirely.
+  const pinnedNames = new Set(pinned.map((entry) => `${entry.name}@${entry.version}`));
+  const missingNotice = allowlistedCopyleft.filter(
+    (entry) => !pinnedNames.has(`${entry.name}@${entry.version}`),
+  );
+  if (missingNotice.length > 0) {
+    console.error(
+      '[generate-third-party-notices] FATAL: allowlist-cleared copyleft dependencies have no entry in ' +
+      'third-party-notices.pinned.json, so they would receive NO attribution on /legal/third-party-notices. ' +
+      'Add a pinned notice for each (name + version must match exactly):',
+    );
+    for (const entry of missingNotice) {
+      console.error(`  - ${entry.name}@${entry.version} (${entry.license})`);
+    }
+    process.exitCode = 1;
+    return;
+  }
 
   if (unresolvedCopyleft.length > 0) {
     console.warn(
