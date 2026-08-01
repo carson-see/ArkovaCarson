@@ -1070,16 +1070,22 @@ jobs:
         # TLA+ verification is mandatory on the bitcoinAnchor machine. The
         # job is conditional on machine/anchor/chain code actually changing.
         if: steps.tla-changed.outputs.changed == 'true'
-        working-directory: machines
-        # Invoke the RESOLVED LOCAL binary, not `npx tla-precheck` (SonarCloud
+        # scripts/verify-machines.sh cds into machines/ (tla-precheck resolves
+        # its tsconfig from cwd, and the root tsconfig's
+        # allowImportingTsExtensions breaks the emit `check` performs) and
+        # invokes the RESOLVED LOCAL binary, not `npx tla-precheck` (SonarCloud
         # githubactions:S6505/S8543): `tla-precheck` is a pinned root
         # devDependency (package.json: exact "0.1.7", no caret) installed by the
-        # `npm ci --ignore-scripts` step above, so `../node_modules/.bin/…` is
+        # `npm ci --ignore-scripts` step above, so `node_modules/.bin/…` is
         # deterministic and uses the locked version — no on-demand install and
         # no lifecycle-script execution the way `npx` can do for a missing pkg.
-        run: |
-          ../node_modules/.bin/tla-precheck check bitcoinAnchor.machine.ts
-          ../node_modules/.bin/tla-precheck check partnerProvisioning.machine.ts
+        #
+        # The script globs machines/*.machine.ts rather than listing files, so a
+        # newly added machine is verified automatically. Previously only
+        # bitcoinAnchor + partnerProvisioning were listed, which let
+        # drainRunAccounting.machine.ts sit unverifiable from 2026-07-26 to
+        # 2026-08-01 without CI noticing.
+        run: npm run verify:machines
 
   # Migration safety gate (SCALE-20) — verify migrations are additive-only
   migration-check:

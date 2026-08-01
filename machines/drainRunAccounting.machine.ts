@@ -50,17 +50,27 @@ const processedReflected = variable("processedReflected");
  * single adapter-owned table. Kept runnable under `tla-precheck check` so a
  * refactor that reintroduces the failed/0 path is caught.
  *
- * ⚠ TOOLCHAIN FINDING (Lane 1, 2026-07-20, for RTE/tooling owner): this spec is
- * type-clean but `tla-precheck check` cannot run TLC in the current repo
- * toolchain — `tla-precheck@0.1.7` injects compiler flags that the repo's
- * pinned `typescript@6.0.3` rejects (TS5096 `allowImportingTsExtensions`
- * requires noEmit; TS5103 invalid `--ignoreDeprecations`). This aborts `check`
- * at the typecheck phase for EVERY machine (reproduced on the pre-existing
- * `calibrationWorkflow.machine.ts`), so the §1.7 formal-verification gate is
- * currently non-functional against TS 6.x. Fix = bump tla-precheck to a
- * TS-6-compatible release (or run `check` under a compatible TS). Once fixed,
- * this machine checks green (verified by construction: the only action setting
- * accounting=FAILED is guarded by NOT committedWork).
+ * VERIFICATION STATUS (2026-08-01): `tla-precheck check
+ * drainRunAccounting.machine.ts` PASSES. Certificate (tier `pr`):
+ * proofPassed: true; all 3 invariants checked (committedNeverFailed,
+ * committedAlwaysReflected, committedRecordedTerminal); 1,537 states
+ * generated / 512 distinct; TLC "Model checking completed. No error has
+ * been found."
+ *
+ * The 2026-07-20 note previously here — claiming `tla-precheck@0.1.7`
+ * injects flags that `typescript@6.0.3` rejects, so `check` could not run
+ * for ANY machine — was WRONG, and matched the wrong note already
+ * corrected in partnerProvisioning.machine.ts on 2026-07-21. `check` is
+ * invocation-sensitive, not TS-6-incompatible: it reads `tsconfig.json`
+ * from the CURRENT WORKING DIRECTORY, so it must be run from `machines/`
+ * (which is what CI does, and why CI was green the whole time). Running it
+ * from the repo root picks up the root tsconfig, whose
+ * `allowImportingTsExtensions` collides with the emit that `check`
+ * performs → TS5096. TS5103 was a second, unrelated artifact of `npx`
+ * pulling its own `typescript@5.9.3` in a worktree with no node_modules.
+ * Use `npm run verify:machines` (cwd-independent). This machine's own real
+ * blockers were an over-cap nightly budget and TLC deadlock-flagging the
+ * by-design terminal states — both fixed in the proof tiers below.
  */
 export const drainRunAccountingMachine = defineMachine({
   version: 2,
@@ -241,17 +251,35 @@ export const drainRunAccountingMachine = defineMachine({
         domains: {
           Runs: ids({ prefix: "run", size: 3 }),
         },
+        // 64 raw per-run combinations (phase 4 × committedWork 2 ×
+        // accounting 4 × processedReflected 2); size=3 gives 64^3 =
+        // 262,144 raw states — above the 100k graph-equivalence cap, so
+        // equivalence is off here and the budget is set against the raw
+        // product. (Reachable states are far fewer; the estimator budgets
+        // the raw product, not the reachable set.)
+        graphEquivalence: false,
         budgets: {
-          maxEstimatedStates: 50_000,
+          maxEstimatedStates: 300_000,
         },
+        // RECORDED is terminal BY DESIGN — a world where every run has been
+        // recorded is a valid end state, not a liveness bug — so TLC's
+        // deadlock check is off (same as partnerProvisioning).
+        checks: { deadlock: false },
       },
       nightly: {
         domains: {
           Runs: ids({ prefix: "run", size: 4 }),
         },
+        // 64 raw per-run combinations (phase 4 × committedWork 2 ×
+        // accounting 4 × processedReflected 2); size=4 gives 64^4 =
+        // 16,777,216 raw states. Graph equivalence is capped at 100k
+        // declared states, so this tier disables it (same pattern as
+        // bitcoinAnchor's tiers) and budgets against the raw product.
+        graphEquivalence: false,
         budgets: {
-          maxEstimatedStates: 200_000,
+          maxEstimatedStates: 20_000_000,
         },
+        checks: { deadlock: false },
       },
     },
   },
