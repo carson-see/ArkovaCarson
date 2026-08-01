@@ -294,6 +294,14 @@ const DOCS_ONLY_RE = /^(?:docs\/|README\.md|ARKOVA_WORKSPACE_README\.md|WORKSPAC
  */
 export type DiffProvider = (file: string) => string | null;
 
+/**
+ * Answers "is `ancestorSha` an ancestor of `descendantSha`?".
+ * `true` / `false` are definitive; `null` means the question could not be
+ * answered (missing object, shallow clone, git unavailable) and every caller
+ * must treat it as "not covered" — never as an implicit yes.
+ */
+export type AncestryProvider = (ancestorSha: string, descendantSha: string) => boolean | null;
+
 export interface TierClassifyOpts {
   diffProvider?: DiffProvider;
   s33RuntimeImporterProvider?: () => readonly string[];
@@ -1970,6 +1978,27 @@ function gitFileDiffProvider(baseSha: string): DiffProvider {
   };
 }
 
+/**
+ * Default {@link AncestryProvider}: `git merge-base --is-ancestor`.
+ * Exit 0 → ancestor, exit 1 → definitively not an ancestor, anything else
+ * (128 = bad/unknown object, spawn failure) → `null` so callers fail closed.
+ */
+function gitAncestryProvider(): AncestryProvider {
+  return (ancestorSha: string, descendantSha: string): boolean | null => {
+    if (ancestorSha === descendantSha) return true;
+    try {
+      execFileSync(
+        GIT_BIN,
+        ['merge-base', '--is-ancestor', ancestorSha, descendantSha],
+        { cwd: REPO, stdio: ['ignore', 'ignore', 'ignore'] },
+      );
+      return true;
+    } catch (err) {
+      return (err as { status?: number }).status === 1 ? false : null;
+    }
+  };
+}
+
 function hasNamedApprover(value: string): boolean {
   const match = /\bapproved by:\s*([^.;\n]+)/i.exec(value);
   return match !== null && isFilledValue(match[1] ?? null);
@@ -2316,6 +2345,14 @@ interface CheckOptions {
    */
   diffProvider?: DiffProvider;
   /**
+   * Git ancestry oracle for RC-manifest base coverage. Defaults to a
+   * git-backed provider in {@link main} (staging-evidence.yml checks out
+   * with `fetch-depth: 0`, so full history is present). Absent or
+   * `null`-answering → base coverage falls back to exact SHA enumeration,
+   * i.e. fails closed. See {@link rcCurrentBaseCovered}.
+   */
+  ancestryProvider?: AncestryProvider;
+  /**
    * Complete production-source import scan required by CTO ruling 102498305.
    * Missing/incomplete data or any importer voids the offline-T0 carve-out.
    */
@@ -2613,9 +2650,47 @@ function rcSoakDurationErrors(
   return errors;
 }
 
+/**
+ * Base-SHA coverage, exact-enumeration first and git ancestry second.
+ *
+ * SCRUM-3026 follow-up (2026-08-01) — why ancestry exists at all: an RC
+ * manifest is a COMMITTED file. Exact enumeration therefore requires it to
+ * list a SHA that will not exist until after it is written, because every
+ * merge into `main` (including the merge of the manifest refresh itself)
+ * mints a new base SHA for every other open PR in the queue. With a
+ * multi-PR train that is not a stale-data problem, it is a live-lock: the
+ * act of curing the staleness re-creates it for everyone else.
+ *
+ * The invariant the enumeration was a proxy for is "the RC's soaked
+ * baseline is contained in the history of the base this PR merges into" —
+ * i.e. `main` only moved FORWARD from the soaked baseline. That is exactly
+ * `git merge-base --is-ancestor <covered> <current-base>`, and it is
+ * satisfiable without predicting the future.
+ *
+ * This does not loosen the gate:
+ *   - `currentBaseSha` is the PR's `base.sha` resolved from the GitHub API
+ *     by staging-evidence.yml, on a workflow restricted to
+ *     `branches: [main, staging, develop]`. It is a protected-branch commit,
+ *     never a PR-author-controlled ref.
+ *   - A base that does NOT contain the soaked baseline (divergent line, or
+ *     a commit older than the RC launch) still fails, exactly as before.
+ *   - An unresolvable ancestry answer (`null` — shallow clone, missing
+ *     object, git unavailable) fails CLOSED to exact-enumeration behavior.
+ */
+function shaCoveredByListOrAncestry(
+  candidate: string,
+  covered: string[],
+  ancestry?: AncestryProvider,
+): boolean {
+  if (covered.includes(candidate)) return true;
+  if (!ancestry) return false;
+  return covered.some((sha) => ancestry(sha, candidate) === true);
+}
+
 function rcCurrentBaseCovered(
   manifest: Record<string, unknown>,
   currentBaseSha?: string,
+  ancestry?: AncestryProvider,
 ): boolean {
   const current = normalizeSha(currentBaseSha);
   if (current === null) return true;
@@ -2627,13 +2702,14 @@ function rcCurrentBaseCovered(
     ...stringArrayAt(manifest, 'covered_main_shas'),
   ].map((value) => normalizeSha(value ?? undefined)).filter((value): value is string => value !== null);
 
-  return allowed.includes(current);
+  return shaCoveredByListOrAncestry(current, allowed, ancestry);
 }
 
 function rcPrBaseCovered(
   manifest: Record<string, unknown>,
   pr: Record<string, unknown>,
   currentBaseSha?: string,
+  ancestry?: AncestryProvider,
 ): boolean {
   const prBase = normalizeSha(stringAt(pr, 'base_sha') ?? undefined);
   if (prBase === null) return false;
@@ -2645,7 +2721,162 @@ function rcPrBaseCovered(
     ...stringArrayAt(pr, 'allowed_base_shas'),
   ].map((value) => normalizeSha(value ?? undefined)).filter((value): value is string => value !== null);
 
-  return allowed.includes(prBase);
+  if (allowed.includes(prBase)) return true;
+
+  // The entry recorded the main tip it was soaked against; `main` has since
+  // moved on. Forward-only drift is covered; a divergent recorded base is not.
+  const current = normalizeSha(currentBaseSha);
+  if (current === null || !ancestry) return false;
+  return ancestry(prBase, current) === true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// head_binding: how an included_prs[] entry is bound to the artifact
+// ─────────────────────────────────────────────────────────────────────────
+//
+// DEFAULT — and the only mode that reads as "this evidence covers this
+// code" — is `exact`: the entry's `head_sha` must equal the live PR head.
+// That is the whole point of the RC manifest when it asserts SOAK COVERAGE,
+// and `memory/feedback_pr_head_sha_in_evidence_block.md` exists because it
+// was once possible to slip a new commit past completed evidence. Absent
+// `head_binding`, nothing about that changes.
+//
+// `roster` mode covers the case where the manifest is NOT asserting soak
+// coverage of this head — where the recorded merge authority is an explicit,
+// named, time-boxed human exception (CLAUDE.md §1.12 "Carson-approved
+// residual-risk exception") and the real soak is scheduled AFTER the merge.
+// In that situation exact-head binding proves nothing about safety (there is
+// no artifact-bound evidence to protect) while costing a manifest re-commit
+// per push — the same live-lock as the base problem. So roster mode swaps
+// artifact binding for something that IS meaningful and is not forgeable by
+// the PR author acting alone:
+//   - the exception lives in the MANIFEST (its own PR, its own review),
+//   - it names a human `approver`,
+//   - it carries an `expires_at` that is enforced, so the relaxation cannot
+//     silently become permanent,
+//   - it must list this PR number in `applies_to[]`, so it cannot be a
+//     blanket amnesty, and
+//   - the check summary always says plainly that merge authority here is a
+//     RECORDED HUMAN EXCEPTION, not soak coverage.
+// Everything else — approval_status, tier floor, environment, soak window,
+// soak freshness, migration_plan — is enforced unchanged.
+const HEAD_BINDING_EXACT = 'exact';
+const HEAD_BINDING_ROSTER = 'roster';
+
+interface HeadBindingPolicy {
+  mode: typeof HEAD_BINDING_EXACT | typeof HEAD_BINDING_ROSTER;
+  exceptionId: string | null;
+}
+
+const EXACT_HEAD_BINDING: HeadBindingPolicy = { mode: HEAD_BINDING_EXACT, exceptionId: null };
+
+function resolveHeadBindingPolicy(
+  manifest: Record<string, unknown>,
+  errors: string[],
+): HeadBindingPolicy {
+  const binding = objectAt(manifest, 'head_binding');
+  if (binding === null) return EXACT_HEAD_BINDING;
+
+  const raw = stringAt(binding, 'mode');
+  const mode = (raw ?? '').trim().toLowerCase();
+  if (mode === HEAD_BINDING_EXACT) return EXACT_HEAD_BINDING;
+  if (mode === HEAD_BINDING_ROSTER) {
+    return { mode: HEAD_BINDING_ROSTER, exceptionId: stringAt(binding, 'exception_id') };
+  }
+  errors.push(
+    `RC manifest head_binding.mode \`${raw ?? ''}\` is not a recognized value. Supported: `
+    + `"${HEAD_BINDING_EXACT}" (default — the entry's head_sha must equal the live PR head) or `
+    + `"${HEAD_BINDING_ROSTER}" (entry matched by PR number; merge authority is a named, `
+    + 'time-boxed exceptions[] entry rather than soak coverage of this head). Omit '
+    + 'head_binding entirely for exact binding.',
+  );
+  return EXACT_HEAD_BINDING;
+}
+
+function numberArrayAt(value: Record<string, unknown>, key: string): number[] {
+  const raw = arrayAt(value, key);
+  if (raw === null) return [];
+  return raw
+    .map((entry) => (typeof entry === 'number' ? entry : Number.parseInt(String(entry), 10)))
+    .filter((entry) => Number.isFinite(entry));
+}
+
+function findManifestException(
+  manifest: Record<string, unknown>,
+  exceptionId: string,
+): Record<string, unknown> | null {
+  const wanted = exceptionId.trim();
+  for (const entry of arrayAt(manifest, 'exceptions') ?? []) {
+    if (!isRecord(entry)) continue;
+    if ((stringAt(entry, 'id') ?? '').trim() === wanted) return entry;
+  }
+  return null;
+}
+
+function rosterHeadBindingErrors(
+  manifest: Record<string, unknown>,
+  policy: HeadBindingPolicy,
+  entryHead: string | null,
+  currentHead: string,
+  opts: CheckOptions,
+  notes: string[],
+): string[] {
+  const errors: string[] = [];
+  const exceptionId = policy.exceptionId;
+  if (!isFilledValue(exceptionId)) {
+    return [
+      'RC manifest head_binding.mode="roster" requires head_binding.exception_id naming an '
+      + 'entry in exceptions[]. Roster mode is only valid as the mechanical expression of a '
+      + 'recorded, named, time-boxed merge-authority exception.',
+    ];
+  }
+
+  const exception = findManifestException(manifest, exceptionId!);
+  if (exception === null) {
+    return [
+      `RC manifest head_binding.exception_id \`${exceptionId}\` matches no exceptions[] entry `
+      + '(compared against exceptions[].id).',
+    ];
+  }
+
+  const label = `exceptions[${exceptionId}]`;
+  const approver = requireRcString(errors, exception, 'approver', `${label}.approver`);
+  requireRcString(errors, exception, 'text', `${label}.text`);
+  requireRcTimestamp(errors, exception, 'recorded_at', `${label}.recorded_at`);
+  const expiresAt = requireRcTimestamp(errors, exception, 'expires_at', `${label}.expires_at`);
+
+  const nowMs = opts.nowMs ?? Date.now();
+  if (expiresAt !== null && expiresAt <= nowMs) {
+    errors.push(
+      `RC manifest ${label}.expires_at has expired; a merge-authority exception cannot be `
+      + 'renewed by the passage of time. Re-record it with a new expiry, or produce real soak '
+      + 'evidence and return this manifest to exact head binding.',
+    );
+  }
+
+  const appliesTo = numberArrayAt(exception, 'applies_to');
+  if (appliesTo.length === 0) {
+    errors.push(
+      `RC manifest ${label}.applies_to must list the PR numbers the exception covers — a `
+      + 'blanket exception is not accepted.',
+    );
+  } else if (opts.prNumber === undefined || !appliesTo.includes(opts.prNumber)) {
+    errors.push(
+      `RC manifest ${label}.applies_to does not list PR #${opts.prNumber ?? 'unknown'}; roster `
+      + 'head binding only applies to the PRs the exception names.',
+    );
+  }
+
+  if (errors.length > 0) return errors;
+
+  notes.push(
+    `⚠️  RECORDED HUMAN EXCEPTION (${exceptionId}): the RC manifest entry records head `
+    + `\`${entryHead ?? 'missing'}\` but this PR's live head is \`${currentHead}\`. Merge `
+    + `authority for this head is NOT soak coverage — it is the exception recorded in the `
+    + `manifest, approved by ${approver}, expiring ${stringAt(exception, 'expires_at')}. Real `
+    + 'evidence for this head is still owed by the scheduled consolidated soak.',
+  );
+  return [];
 }
 
 function findCoveredRcPr(
@@ -2703,8 +2934,13 @@ function requireRcCoreIdentityFields(
   requireRcString(errors, manifest, 'release_owner', 'release_owner');
   requireRcString(errors, manifest, 'train_launch_sha', 'train_launch_sha');
 
-  if (!rcCurrentBaseCovered(manifest, opts.baseSha)) {
-    errors.push('RC manifest does not cover the current base SHA; update the manifest or re-check main drift.');
+  if (!rcCurrentBaseCovered(manifest, opts.baseSha, opts.ancestryProvider)) {
+    errors.push(
+      'RC manifest does not cover the current base SHA; update the manifest or re-check main '
+      + 'drift. (The base is covered when it is listed in train_launch_sha / target_main_sha / '
+      + 'allowed_base_shas / covered_main_shas, OR when git ancestry shows it descends from one '
+      + 'of those — an unresolvable ancestry answer fails closed to the listed set.)',
+    );
   }
 }
 
@@ -2731,10 +2967,15 @@ function validateCoveredRcPr(
   files: string[],
   opts: CheckOptions,
   errors: string[],
+  notes: string[],
 ): Record<string, unknown> | null {
   if (includedPrs.length === 0) {
     errors.push('RC manifest included_prs must list at least one PR.');
   }
+
+  // Resolved unconditionally so an unrecognized mode fails closed even on a
+  // manifest whose recorded head happens to still match.
+  const headBinding = resolveHeadBindingPolicy(manifest, errors);
 
   const coveredPr = findCoveredRcPr(includedPrs, opts);
   if (coveredPr === null) {
@@ -2745,10 +2986,16 @@ function validateCoveredRcPr(
   const entryHead = normalizeSha(stringAt(coveredPr, 'head_sha') ?? undefined);
   const currentHead = normalizeSha(opts.headSha);
   if (currentHead !== null && entryHead !== currentHead) {
-    errors.push(`RC manifest current PR entry head SHA \`${entryHead ?? 'missing'}\` does not match current PR head \`${currentHead}\`.`);
+    if (headBinding.mode === HEAD_BINDING_ROSTER) {
+      errors.push(
+        ...rosterHeadBindingErrors(manifest, headBinding, entryHead, currentHead, opts, notes),
+      );
+    } else {
+      errors.push(`RC manifest current PR entry head SHA \`${entryHead ?? 'missing'}\` does not match current PR head \`${currentHead}\`.`);
+    }
   }
-  if (!rcPrBaseCovered(manifest, coveredPr, opts.baseSha)) {
-    errors.push('RC manifest current PR entry base SHA does not match the current base, train launch SHA, target main SHA, or an allowed base SHA.');
+  if (!rcPrBaseCovered(manifest, coveredPr, opts.baseSha, opts.ancestryProvider)) {
+    errors.push('RC manifest current PR entry base SHA does not match the current base, train launch SHA, target main SHA, an allowed base SHA, or an ancestor of the current base.');
   }
 
   const manifestTier = rcTier(stringAt(coveredPr, 'risk_tier'));
@@ -2947,7 +3194,7 @@ function deferredConsolidatedSoakCoverage(
   deferredConsolidatedSoakMetadataErrors(parsed, opts, errors);
 
   const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
-  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors);
+  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors, notes);
   if (coveredPr === null) return { errors, notes };
 
   if (errors.length === 0) {
@@ -3014,7 +3261,7 @@ function rcManifestCoverage(
 
   validateRcManifestMetadata(parsed, opts, errors);
   const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
-  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors);
+  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors, notes);
   const effectiveTier = rcEffectiveTier(coveredPr, declared);
   validateRcEnvironment(parsed, errors);
   validateRcSoak(parsed, effectiveTier, opts, errors);
@@ -3116,6 +3363,7 @@ function main(): void {
     baseSha: baseRef,
     prNumber,
     diffProvider: gitFileDiffProvider(baseRef),
+    ancestryProvider: gitAncestryProvider(),
     s33Lane1ImportScan: gitS33Lane1ImportScan(),
     // Live-threaded from `vars.DEPLOY_WORKER_PAUSED` by
     // .github/workflows/staging-evidence.yml — see CheckOptions.deployWorkerPaused
