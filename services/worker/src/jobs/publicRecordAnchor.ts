@@ -280,12 +280,25 @@ async function claimPendingPipelineAnchors(
   return claimed;
 }
 
+/**
+ * Compensating write for a failed chain submission: returns claimed anchors
+ * from BROADCASTING to PENDING so the next run can pick them up again.
+ *
+ * Chunk by POSTGREST_IN_FILTER_CHUNK, never POSTGREST_ROW_LIMIT — see the
+ * 2026-07-29 incident note in `services/worker/src/jobs/agents.md`. A revert
+ * that 400s is worse than a read that 400s: the anchors stay pinned in
+ * BROADCASTING, the PENDING scan can never see them again, and one failed
+ * broadcast strands a whole batch permanently.
+ */
 async function revertClaimedAnchors(
   client: SupabaseClient,
   anchorIds: string[],
-): Promise<void> {
-  for (let i = 0; i < anchorIds.length; i += POSTGREST_ROW_LIMIT) {
-    const chunk = anchorIds.slice(i, i + POSTGREST_ROW_LIMIT);
+): Promise<{ reverted: number; stranded: number }> {
+  let reverted = 0;
+  let stranded = 0;
+
+  for (let i = 0; i < anchorIds.length; i += POSTGREST_IN_FILTER_CHUNK) {
+    const chunk = anchorIds.slice(i, i + POSTGREST_IN_FILTER_CHUNK);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (client as any)
       .from('anchors')
@@ -294,9 +307,28 @@ async function revertClaimedAnchors(
       .eq('status', 'BROADCASTING');
 
     if (error) {
-      logger.error({ error, chunkStart: i, chunkSize: chunk.length }, 'Failed to revert claimed pipeline anchors');
+      stranded += chunk.length;
+      logger.error(
+        { error, errorMessage: (error as { message?: string })?.message, chunkStart: i, chunkSize: chunk.length },
+        'Failed to revert claimed pipeline anchors',
+      );
+      continue;
     }
+
+    reverted += chunk.length;
   }
+
+  // A stranded anchor is stuck in BROADCASTING with no recovery path — it is
+  // invisible to every PENDING scan from here on. Surface the count as its own
+  // alertable event rather than leaving it implicit in the per-chunk errors.
+  if (stranded > 0) {
+    logger.error(
+      { stranded, reverted, total: anchorIds.length },
+      'Pipeline anchors stranded in BROADCASTING after failed revert — manual recovery required',
+    );
+  }
+
+  return { reverted, stranded };
 }
 
 async function linkExistingPublicRecordAnchors(
