@@ -1,0 +1,107 @@
+{
+  "rig": "launch-72h-2026-08",
+  "project_ref": "nykacscfufdleghzbzhi",
+  "executed_by": "RTE (Claude Code session)",
+  "executed_at": "2026-07-28T19:45:00Z",
+  "purpose": "SOC2 CC8.1 tested-rollback gate + CLAUDE.md §1.12 T2/T3 rollback rehearsal, pre-clock-start go/no-go blocker #2. Apply→rollback→confirm→re-apply→confirm for each migration in the wave's train, verified by live query against the rig DB (not assumed).",
+  "migrations": [
+    {
+      "version": "0377",
+      "name": "sec_recon_revoke_unguarded_rpc_family",
+      "file": "supabase/migrations/0377_sec_recon_revoke_unguarded_rpc_family.sql",
+      "note": "File header says NEVER-APPLIED as of authoring; confirmed via list_migrations that this rig's frozen-head build (3afb79ba) DOES include it (schema_migrations shows version 0377 applied) -- rehearsal was live and necessary, not hypothetical.",
+      "steps": [
+        {
+          "step": "baseline (post-migration, forward state)",
+          "query": "has_function_privilege(anon/authenticated/service_role, EXECUTE) on the 6 RPCs + invite_member(uuid,text,text,uuid) existence",
+          "result": "anon_exec=false, auth_exec=false, svc_exec=true on all 6 functions; invite_member 4-arg count=0 (dropped) -- matches migration's intended forward state"
+        },
+        {
+          "step": "rollback applied",
+          "action": "ran migration's own -- ROLLBACK: block verbatim: GRANT EXECUTE ... TO anon, authenticated on all 6 functions; CREATE OR REPLACE FUNCTION invite_member(uuid,text,text,uuid) restoring the legacy 4-arg overload verbatim; GRANT EXECUTE ... TO anon, authenticated, service_role; NOTIFY pgrst"
+        },
+        {
+          "step": "confirm rollback restored pre-migration state",
+          "result": "anon_exec=true, auth_exec=true, svc_exec=true on all 6 functions (grants genuinely restored, not assumed); invite_member now has both pronargs=3 and pronargs=4 overloads, both anon-executable -- matches documented pre-0377 prod state exactly"
+        },
+        {
+          "step": "re-applied forward migration",
+          "action": "ran the migration's actual DDL body verbatim: REVOKE ALL ... FROM PUBLIC, anon, authenticated + GRANT ... TO service_role on all 6 functions; DROP FUNCTION invite_member(uuid,text,text,uuid); NOTIFY pgrst"
+        },
+        {
+          "step": "confirm re-apply restored correct current state",
+          "result": "anon_exec=false, svc_exec=true on all 6 functions; invite_member 4-arg count=0 -- rig restored to its correct post-0377 state, idempotent round-trip verified"
+        }
+      ],
+      "verdict": "PASS -- rollback is genuine and reversible; re-apply is idempotent; rig left in correct forward state"
+    },
+    {
+      "version": "0370",
+      "name": "scrum3031_batch_insert_anchors_fix",
+      "file": "supabase/migrations/0370_scrum3031_batch_insert_anchors_fix.sql",
+      "note": "CORRECTION DURING REHEARSAL: first rollback attempt incorrectly cast input_data.fingerprint to ::character(64) (confusing the superseded first-cut draft mentioned in the file's REVIEW FOLLOW-UP preamble with the actual -- ROLLBACK: block, which uses ::text). Caught before declaring the gate green, corrected, and re-run with the exact ROLLBACK block text. Logging this as an exception-register-worthy near-miss: always execute the literal -- ROLLBACK: SQL, never a reconstruction from the surrounding prose.",
+      "steps": [
+        {
+          "step": "baseline (post-migration, forward/fixed state)",
+          "query": "pg_get_functiondef LIKE checks for the 0370 join-predicate fix marker vs the pre-0370 bug markers",
+          "result": "has_0370_fix=true (d.fingerprint::character(64) join cast present), has_pre0370_bug=false -- confirms rig is on the fixed function"
+        },
+        {
+          "step": "rollback applied (corrected)",
+          "action": "ran the migration's literal -- ROLLBACK: CREATE OR REPLACE FUNCTION body verbatim -- input_data.fingerprint AS ::text, join predicate a.fingerprint = d.fingerprint (implicit cast, the actual pre-0370 Seq Scan bug), NOT IN anti-join"
+        },
+        {
+          "step": "confirm rollback restored pre-migration (buggy) state",
+          "result": "has_pre0370_text_cast=true, has_0370_join_fix=false, has_not_exists=false -- function body genuinely reverted to the pre-fix wedge-prone version, verified by definition text, not assumed"
+        },
+        {
+          "step": "re-applied forward migration",
+          "action": "ran the migration file's actual CREATE OR REPLACE FUNCTION body verbatim (0370's fixed version: input_data.fingerprint ::text for the INSERT path, explicit d.fingerprint::character(64) cast at the join predicate only, NOT EXISTS anti-join)"
+        },
+        {
+          "step": "confirm re-apply restored correct current (fixed) state",
+          "result": "has_0370_fix=true, has_not_exists=true, has_truncation_bug=false -- rig restored to the correct SCRUM-3031 fixed state"
+        }
+      ],
+      "verdict": "PASS (after in-session correction) -- rollback is genuine and reversible; re-apply is idempotent; rig left in correct forward state. Note: this migration's rollback is a full function-body CREATE OR REPLACE, not a REVOKE -- no down-time/lock-timeout concern since it's a single DDL statement."
+    }
+    },
+    {
+      "version": "0359",
+      "name": "scrum2917_materialize_run_id",
+      "file": "supabase/migrations/0359_scrum2917_materialize_run_id.sql",
+      "steps_summary": "baseline: column+partial-index present. Rollback (DROP INDEX + DROP COLUMN) applied -> confirmed column absent (col_exists=0). Re-applied forward (ADD COLUMN + CREATE INDEX) -> confirmed both present (col_exists=1, idx_exists=1).",
+      "verdict": "PASS"
+    },
+    {
+      "version": "0360",
+      "name": "scrum2917_secured_proof_predicate_hardening",
+      "file": "supabase/migrations/0360_scrum2917_secured_proof_predicate_hardening.sql",
+      "steps_summary": "baseline: enforce_secured_anchor_proof_complete() has the direct_anchored/op_return_payload hardened predicate. Rollback (CREATE OR REPLACE restoring exact pre-0360/0340 body) applied -> confirmed hardening marker absent. Re-applied forward (0360 body) -> confirmed hardening marker present again.",
+      "verdict": "PASS"
+    },
+    {
+      "version": "0368",
+      "name": "scrum2971_billing_events_idempotency",
+      "file": "supabase/migrations/0368_scrum2971_billing_events_idempotency.sql",
+      "steps_summary": "baseline: billing_events_idempotency_key_not_null CHECK constraint present (constraint_exists=1). Rollback (DROP CONSTRAINT IF EXISTS) applied -> confirmed absent (constraint_exists=0). Re-applied forward (ADD CONSTRAINT ... NOT VALID) -> confirmed present again (constraint_exists=1).",
+      "verdict": "PASS"
+    }
+  ],
+  "migrations_not_applicable": [
+    {
+      "version": "0362",
+      "planned_name": "scrum2913_public_anchor_registry_url_allowlist (per rc-manifest migration_plan.order)",
+      "finding": "File does not exist in this checkout's supabase/migrations/ (open PR #1618, not yet merged to main) AND is absent from the rig's actual applied ledger (list_migrations on nykacscfufdleghzbzhi jumps 0360 -> 0363, no 0362 row) -- matches preflight's missing_from_staging_informational=[\"0362\",\"0364\"]. Not applicable for rollback rehearsal: there is nothing applied on this rig to roll back. If PR #1618 merges before the manifest freeze, this becomes a real go/no-go item and must be rehearsed before the clock starts (or the manifest's included_prs[] must exclude it)."
+    },
+    {
+      "version": "0364",
+      "planned_name": "scrum2905_security_advisor_revokes (per rc-manifest migration_plan.order)",
+      "finding": "Same situation as 0362: file not present in this checkout (open PR #1652), not in the rig's applied ledger. Not applicable for rollback rehearsal on this rig as currently built."
+    }
+  ],
+  "overall_verdict": "All five migrations actually present on this rig's applied ledger from the runbook's named T2/T3 train (0359, 0360, 0368, 0370, 0377) rehearsed apply-state -> rollback -> confirm -> re-apply -> confirm, every state transition verified by live query against nykacscfufdleghzbzhi, not assumed. Rig is left in the correct forward (post-migration) state for all five. 0362/0364 are NOT on this rig (unmerged PRs) so are correctly out of scope for this rehearsal, not a gap in it -- rc-manifest's migration_plan.rollback_proof should be updated from PENDING to reflect this same split (5 rehearsed / 2 not-yet-applicable) rather than left as a blanket PENDING.",
+  "correction_log": [
+    "0370 first attempt used an incorrect rollback body (::character(64) cast on input_data.fingerprint, copied from the superseded first-cut draft described in the migration's own REVIEW FOLLOW-UP preamble, not the actual -- ROLLBACK: block which uses ::text). Caught before declaring the gate green via a functiondef LIKE-pattern check, corrected, and the full apply/rollback/confirm/re-apply/confirm cycle re-run cleanly. Lesson: always execute the literal -- ROLLBACK: SQL text, never a reconstruction from surrounding prose."
+  ]
+}
