@@ -102,10 +102,25 @@ HEALTH_DETAIL_TOKEN=                # min 16 chars, optional
 
 Gates the `?detailed=true` view of `/health` and `/api/health`, sent by the
 caller as the `X-Health-Token` header. **Plain `/health` stays public and
-unauthenticated** (CLAUDE.md §1.9) — only the detailed enrichment is gated,
-because it discloses `git_sha`, the live signing provider, the Bitcoin network,
-every `info.*` feature flag, the anchoring backlog depth, and the Supabase
-connection URL.
+unauthenticated** (CLAUDE.md §1.9) — only the detailed enrichment is gated.
+
+**Exactly what is and is not gated** (stated precisely per CLAUDE.md §1.13's
+claims-review rule — measured vs asserted vs NOT asserted):
+
+| Field | Gated by `HEALTH_DETAIL_TOKEN`? |
+|---|---|
+| `checks.*.status` sub-objects (DB latency + error message, anchoring backlog `pendingCount` / `drainStalled` / `lastBatchAt`, `kms.provider`) | **Yes** — compact renders each check as a bare status string |
+| `info.*` (stripe / sentry / ai / prodAnchoring flags) | **Yes** — omitted entirely |
+| `connection` (`mode` + Supabase URL / project ref) | **Yes** — omitted entirely |
+| `status`, `version`, `git_sha`, `uptime`, `network` | **NO — still public on plain `/health`** |
+
+`git_sha` and `network` remain readable by any anonymous caller. That is a
+**deliberate, pre-existing** carve-out, not an oversight: `revision-drift.yml`
+(10-minute cron), `verify-worker-runtime.yml`, `deploy-staging.yml` and
+`scripts/ci/check-handoff-claims.ts` all read `git_sha` from an unauthenticated
+`/health`, and CLAUDE.md §0.1 requires HANDOFF prod-state claims to cite it.
+Gating it is a separate product decision with real operational cost — raise it
+with Carson rather than assuming this variable covers it.
 
 Behavior when the variable is **unset**:
 

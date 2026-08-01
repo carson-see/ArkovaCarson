@@ -21,12 +21,20 @@ import { evaluateBatchDrainHealth, type BatchDrainReason } from './batch-drain-d
  * SCRUM-2653 — authorization for the `?detailed=true` health view.
  *
  * Plain `/health` and `/api/health` stay public and unauthenticated forever
- * (Constitution 1.9). Only the detailed enrichment is gated, because it
- * discloses deployment and infrastructure facts an anonymous caller has no
- * business reading: `git_sha`, the live signing provider, the Bitcoin network,
- * every feature flag, the anchoring backlog, and the Supabase connection URL.
- * Verified live against production on 2026-08-01 with an unauthenticated
- * `curl` before this gate existed.
+ * (Constitution 1.9). Only the detailed enrichment is gated: the per-check
+ * sub-objects (DB latency + error text, anchoring backlog depth and drain
+ * state, `kms.provider` — i.e. which signing backend is live), the `info.*`
+ * feature flags, and `connection` (the Supabase project ref). All of those were
+ * verified readable by an unauthenticated `curl` against production on
+ * 2026-08-01, before this gate existed.
+ *
+ * NOT gated, deliberately: `status`, `version`, `git_sha`, `uptime`, `network`.
+ * These are top-level and stay public. `revision-drift.yml` (10-min cron),
+ * `verify-worker-runtime.yml`, `deploy-staging.yml` and
+ * `scripts/ci/check-handoff-claims.ts` all read `git_sha` from an
+ * unauthenticated `/health`, and CLAUDE.md §0.1 requires HANDOFF prod-state
+ * claims to cite it. Gating those is a separate product decision with real
+ * operational cost — do not assume this function covers them.
  *
  * Auth is a shared secret (`HEALTH_DETAIL_TOKEN`, sent as `X-Health-Token`)
  * rather than a Supabase JWT or an RLS-backed platform-admin check, and that is
