@@ -48,9 +48,11 @@ Observed on **both** rigs, worsening over the first few hours (launch ~27–30%,
 
 **Fix ready:** [PR #1768](https://github.com/carson-see/ArkovaCarson/pull/1768) (draft, T2). Adds a `skip` predicate so the per-IP limiter bypasses `/api/v1/*` requests carrying a syntactically valid API key — those stay fully governed by `apiV1Router`'s own 1,000/min-per-key limiter. Anon traffic and everything outside `/api/v1` is unchanged. Integration test proves both directions; full worker suite (8,921 tests) green. **Not deployed to either soak rig** — needs a T2 soak (12h + rollback rehearsal) and explicit CTO go-ahead before touching the frozen evidence.
 
-## F-3 — `SUBMITTED` with NULL `chain_tx_id` has no recovery path (MEDIUM, open)
+## F-3 — `SUBMITTED` with NULL `chain_tx_id` has no recovery path (MEDIUM, ROOT-CAUSED, fix in draft PR #1784)
 
 `recover_stuck_broadcasts` queries only `BROADCASTING`-state anchors. An anchor left `SUBMITTED` with no txid — the state a broadcast attempt produces if it fails between the status write and the txid write — is structurally outside every scheduled job's scope. Verified by live fault injection that the job *does* correctly recover its in-scope `BROADCASTING` state, which isolates the gap precisely.
+
+**Fix:** `recover_stuck_broadcasts()` widened to `status IN ('BROADCASTING', 'SUBMITTED')`, keeping every existing guard identical for both branches (`chain_tx_id IS NULL`, `deleted_at IS NULL`, the SCRUM-2692 `anchor_txid_journal` PENDING/HELD protection, `FOR UPDATE SKIP LOCKED`). Migration `0379_f3_recover_submitted_null_txid.sql`, worker-side `broadcast-recovery.ts` extended in parallel. TDD, forward→rollback→verify→re-apply rehearsed against a local Postgres stack, new dedicated unit suite (job previously had none) + env-gated real-Postgres RPC test + structural migration test. **Draft PR #1784** (`fix/f3-submitted-null-txid-recovery`), tier T3 (anchor lifecycle recovery path) — rides the founder's 2026-08-01 no-interim-soaks exception (green-CI merge authorized after the consolidated post-pentest soak), not yet deployed to either frozen soak rig.
 
 ## F-4 — GetBlock broadcast parity NOT covered by either soak (disclosed exception)
 
