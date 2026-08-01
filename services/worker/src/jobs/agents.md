@@ -9,7 +9,7 @@ Both open, from the 2026-08 72h signet soak pair. Canonical writeup: `docs/stagi
 - **F-1 (HIGH, open):** `org-queue-scheduler` returns 500 on ~28-33% of invocations across both rigs (flapping, recovers on later 5-min cycles; ~60x the gate matrix's 0.5% threshold). Confirmed NOT caused by migration `0378`. Root-cause not found yet — start at `claim_due_org_queue_runs` (likely contention or a partial-failure path under concurrent load).
 - **F-3 (MEDIUM, open):** an anchor left `SUBMITTED` with NULL `chain_tx_id` — the state a broadcast attempt produces if it fails between the status write and the txid write — has NO recovery path. `recover_stuck_broadcasts` queries only `BROADCASTING`-state anchors, so this state is structurally outside every scheduled job's scope. Verified by live fault injection that the job correctly recovers its in-scope `BROADCASTING` state, isolating the gap precisely.
 
-## 2026-08-01 — Queues lane: the SCRUM-3031 wedge has a SECOND, live mechanism — cross-instance overlap (`publicRecordAnchor.ts`)
+## 2026-08-01 — Queues lane (PR #1813): the SCRUM-3031 wedge has a SECOND, live mechanism — cross-instance overlap (`publicRecordAnchor.ts`)
 
 Migration 0370 (below) killed the original mechanism: verified in prod 2026-08-01, the live
 `batch_insert_anchors` body matches 0370 and prod logs show ten 1,000-row chunks completing in
@@ -25,7 +25,11 @@ Migration 0370 (below) killed the original mechanism: verified in prod 2026-08-0
   `batch_insert_anchors` on the same fingerprints; the row-lock contention pushes every chunk past
   the 20 s client deadline (`AbortError`, chunkIndex 0/1000/2000/3000) into
   `insertAnchorSerialFallback` (1,000 round-trips/chunk), which makes the run slower and guarantees
-  the next overlap. Unlinked `public_records` did not move (405,376) across three consecutive runs.
+  the next overlap. Measured outcome: 19:25:12Z inst `…72908` `alreadyAnchored=0 total=10000` vs
+  19:25:49Z inst `…72963` `linked=10000` — one run links the batch, the loser spends ~13 min to link
+  ZERO. The overlap does NOT halt the drain (backlog moved 405,376 → 395,376); it burns a duplicate
+  copy of every run, and leaves Cloud Scheduler reporting permanent DEADLINE_EXCEEDED so a scheduler
+  dead-man cannot tell this from a genuinely dead job.
 - **Why the 72h rigs never reproduced it:** the rigs drive the org/batch path, hold ~95k anchors and
   have no 400k-record unlinked backlog, so their runs finish in seconds — they never exceed a
   scheduler attempt deadline, and a single-instance rig has no second instance to overlap with.
@@ -40,13 +44,12 @@ Migration 0370 (below) killed the original mechanism: verified in prod 2026-08-0
   A `try_advisory_lock` session lock was rejected: it is reached through PostgREST's 23-backend pool,
   so a release can land on a different backend and no-op, and a stuck lock on a 10-minute cron is a
   worse outage than the overlap.
-- **Also fixed:** `revertClaimedAnchors` still chunked its `.in('id', …)` by `POSTGREST_ROW_LIMIT`
-  — the exact defect #1795 fixed in the other two call sites — so a failed chain submission 400'd on
-  every chunk and released nothing, stranding up to a full 10k batch in BROADCASTING. Now chunks by
-  `POSTGREST_IN_FILTER_CHUNK` and reports `{attemptedChunks, failedChunks, strandedAnchorIds}`.
-  Tests assert the width invariant at EVERY id-filter call site, not on the constants.
-- Tests: `__tests__/publicRecordAnchor-lease.test.ts` (7), `__tests__/publicRecordAnchor-in-filter-width.test.ts` (6).
-  `grantedRunLeaseTable()` in `__testHelpers.ts` lets pipeline-focused suites grant the lease.
+- **Flag check runs BEFORE the lease.** `ENABLE_PUBLIC_RECORD_ANCHORING` is resolved in the outer
+  entrypoint now, so a disabled pipeline does not write three `job_queue` rows per cron tick just to
+  discover it has nothing to do.
+- Tests: `__tests__/publicRecordAnchor-lease.test.ts` (7). `grantedRunLeaseTable()` in
+  `__testHelpers.ts` lets pipeline-focused suites grant the lease. The sibling id-filter-width fix
+  is PR #1812, documented in its own block below.
 
 ## 2026-07-28 — Lane 1: batch_insert_anchors wedge fix + RPC hardening (SCRUM-3031, `publicRecordAnchor.ts`, migration 0370)
 

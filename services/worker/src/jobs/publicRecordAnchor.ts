@@ -861,6 +861,13 @@ export async function processPublicRecordAnchoring(
   }
 
   const client = supabase ?? db;
+
+  // Resolved BEFORE the lease: a disabled pipeline should not write three
+  // job_queue rows on every cron tick just to discover it has nothing to do.
+  if (!(await publicRecordAnchoringEnabled(client))) {
+    return empty;
+  }
+
   const holder = publicRecordAnchorLeaseHolder();
   if (!(await acquirePublicRecordAnchorLease(client, holder))) {
     logger.info({ holder }, 'Public record anchoring skipped — another instance holds the run lease');
@@ -881,10 +888,8 @@ async function processPublicRecordAnchoringInner(
 ): Promise<PublicRecordAnchorResult> {
   const client = supabase ?? db;
 
-  if (!(await publicRecordAnchoringEnabled(client))) {
-    return { processed: 0, anchorsCreated: 0, batchId: null, merkleRoot: null, txId: null };
-  }
-
+  // `publicRecordAnchoringEnabled` is checked by the caller, before the run
+  // lease is claimed — see processPublicRecordAnchoring.
   const owner = await fetchPipelineOwner(client);
   if (!owner) {
     return { processed: 0, anchorsCreated: 0, batchId: null, merkleRoot: null, txId: null };
