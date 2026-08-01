@@ -1,0 +1,136 @@
+-- =============================================================================
+-- 0381 — anchors DocuSign envelope-metadata lookup indexes (SCRUM-2904-perf)
+-- CONCURRENTLY, NO TXN. MUST STAY IN ITS OWN FILE WITH NO BEGIN/COMMIT — same
+-- convention as 0366 (split out of 0365 for the identical reason): CREATE INDEX
+-- CONCURRENTLY cannot run inside a transaction block, and `supabase db push`
+-- wraps a file that contains BEGIN/COMMIT (or that it decides needs wrapping)
+-- in one transaction. A bare file with only CONCURRENTLY statements and no
+-- explicit transaction applies OUTSIDE a transaction (0313 convention).
+--
+-- WHY (prod incident, proven twice).
+-- ----------------------------------
+-- `findExistingEnvelopeAnchor` (services/worker/src/jobs/
+-- docusign-anchor-reconciliation.ts) is the SCRUM-2904 belt-and-suspenders
+-- guard both DocuSign anchor-creation paths call before inserting an anchor:
+-- it looks up whether ANY anchor already exists for `(org_id, envelope_id)`
+-- across THREE possible metadata keys —
+--   - `metadata->>'source_envelope_id'` (declared-hash rules path)
+--   - `metadata->>'envelope_id'`        (server-fetched connector path)
+--   - `metadata->>'external_ref'`       (server-fetched connector path)
+-- — so a duplicate anchor / double-credit-debit is never created regardless of
+-- which path ran first.
+--
+-- Before this migration NONE of those three JSONB text-extraction expressions
+-- had a supporting index. The lookup was a single query OR-ing all three
+-- (`.or('metadata->>source_envelope_id.eq.X,metadata->>envelope_id.eq.X,
+-- metadata->>external_ref.eq.X')`), which has no pushable access path without
+-- per-expression indexes — Postgres falls back to scanning every row in the
+-- calling org's `anchors` set.
+--
+-- PROD EVIDENCE. Org `40383eb2-…` (the org running the live DocuSign connector
+-- pipeline — also the public-records holding org) owns ~2,974,731 of prod's
+-- ~2.97M total `anchors` rows. Every call into this org's lookup is therefore
+-- a near-full-table scan, which deterministically exceeds `statement_timeout`.
+-- This has now happened twice in prod:
+--   1. 2026-07-27 — rule-dispatcher execution `3e947424` (declared-hash path,
+--      `rule-action-dispatcher.ts:591-602` calling into the guard) timed out
+--      and DLQ'd.
+--   2. 2026-08-01 — connector_artifact `921347cc-…` (server-fetched connector
+--      path, `connector-artifact-drain.ts:367` calling into the guard) timed
+--      out mid-`materialize` and was left `status='failed'`.
+-- Both are the SAME query on the SAME unindexed predicate; only the caller
+-- differs. This is the last blocker on the connector pipeline (flags +
+-- schedulers are otherwise live in prod).
+--
+-- FIX (two parts — this file is part 1).
+-- ---------------------------------------
+-- Part 1 (this migration): three targeted PARTIAL btree expression indexes,
+-- one per metadata key, so each key becomes a fast, provably-indexed point
+-- lookup (envelope ids are unique per org — at most one row matches). The
+-- `IS NOT NULL` partial predicate matches the existing precedent
+-- (`idx_anchors_org_nopipeline_created`, `idx_anchors_backfill_desc` — see
+-- baseline) of keeping JSONB-key partial indexes tiny: the overwhelming
+-- majority of `anchors` rows carry NONE of these three keys (they are
+-- upload/public-records rows, not DocuSign-sourced), so each index stores only
+-- the (comparatively few) DocuSign-tagged rows.
+--
+-- Part 2 (application code, same PR): `findExistingEnvelopeAnchor` no longer
+-- issues one `.or()`-across-three-keys query. It issues one
+-- `.eq('metadata->>KEY', envelopeId)` lookup PER key (three total), each of
+-- which binds directly to one of these three indexes as a plain equality
+-- predicate — a single Index Scan, not a planner-dependent `BitmapOr` across
+-- three separate indexes glued together by PostgREST-compiled SQL. Doing the
+-- union in application code (comparing `created_at` across the up-to-three
+-- matches to keep the original "earliest anchor wins" tie-break) removes any
+-- dependency on the planner choosing to combine these three indexes for an
+-- OR'd JSON-path filter — a real fix either way, but a STRUCTURALLY guaranteed
+-- one instead of a cost-estimate-dependent one. See the query-shape comment on
+-- `findExistingEnvelopeAnchor` for the full reasoning.
+--
+-- Selectivity / EXPLAIN reasoning (analytical — not measured against prod;
+-- this session is prohibited from touching prod, and staging does not carry
+-- prod's row count/skew to make a measured EXPLAIN meaningful). Each of these
+-- three indexes is a btree on a single JSONB text-extraction expression,
+-- restricted by a partial predicate to only the rows where that key is
+-- present. A lookup `WHERE (metadata->>'envelope_id') = $1` against this index
+-- is a single Index Scan: the btree locates the (at most one, since envelope
+-- ids are unique per org) matching leaf entry directly, then the org_id /
+-- deleted_at / status filters apply to that single fetched row as a cheap
+-- recheck — no scan of the org's other 2.97M rows is ever touched. This is the
+-- same reasoning already captured empirically for a same-table partial
+-- expression index in this migration set (0342: "Postgres must still scan the
+-- ENTIRE heap to evaluate `X IS NOT NULL`" during BUILD, but that cost is paid
+-- once at CONCURRENTLY build time — not on every subsequent lookup, which is
+-- what actually times out today).
+--
+-- ANALYZE. `CREATE INDEX CONCURRENTLY` does not itself refresh planner
+-- statistics for the new expression. Run `ANALYZE public.anchors;` after all
+-- three indexes report `indisvalid = true` (see operator note below) so the
+-- planner has accurate distinct-value estimates for the new expressions
+-- immediately, rather than waiting on the next autovacuum ANALYZE cycle.
+--
+-- This migration is ADDITIVE and read-path only: three indexes, no table,
+-- column, RPC, or RLS change. `database.types.ts` is unaffected by index DDL,
+-- so no type regeneration and no `NOTIFY pgrst, 'reload schema'` is needed (no
+-- function/column surface change).
+--
+-- OPERATOR NOTE (prod apply).
+--   Apply each CREATE INDEX CONCURRENTLY statement standalone (this file has
+--   no BEGIN/COMMIT — do not wrap one around it). CONCURRENTLY can leave an
+--   INVALID index if the build fails/is interrupted midway; after applying,
+--   verify all three:
+--     SELECT indexrelid::regclass, indisvalid FROM pg_index
+--       WHERE indexrelid IN (
+--         'public.idx_anchors_metadata_source_envelope_id'::regclass,
+--         'public.idx_anchors_metadata_envelope_id'::regclass,
+--         'public.idx_anchors_metadata_external_ref'::regclass
+--       );  -- expect indisvalid = t for all three
+--   If any is invalid: DROP INDEX CONCURRENTLY public.<name>; re-run that
+--   statement alone (IF NOT EXISTS makes re-running the others a no-op).
+--   Then: ANALYZE public.anchors;
+--
+-- ROLLBACK (standalone, outside a transaction):
+--   DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_metadata_source_envelope_id;
+--   DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_metadata_envelope_id;
+--   DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_metadata_external_ref;
+-- (No data migration is involved; dropping the indexes restores the prior
+-- plan — the org-scoped scan — exactly. The application-code query-shape
+-- change (part 2) is independent of these indexes' existence: without them,
+-- the three per-key lookups still return correct results, just slowly, same
+-- as before this migration.)
+-- =============================================================================
+
+-- anchor-index-justification: findExistingEnvelopeAnchor (docusign-anchor-reconciliation.ts) issues WHERE org_id=$1 AND (metadata->>'source_envelope_id')=$2 per key for the SCRUM-2904 envelope-level dedup guard called from BOTH DocuSign anchor-creation paths (rule-action-dispatcher.ts + connector-artifact-drain.ts); without a per-key index this is a full scan of the calling org's anchors set, and the org running the live DocuSign connector pipeline owns ~2.97M of prod's ~2.97M anchors — proven to exceed statement_timeout twice in prod (DLQ'd execution 3e947424, stuck connector_artifact 921347cc).
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_metadata_source_envelope_id
+  ON public.anchors ((metadata ->> 'source_envelope_id'))
+  WHERE (metadata ->> 'source_envelope_id') IS NOT NULL;
+
+-- anchor-index-justification: same guard, second metadata key — set by the server-fetched connector path (connector-artifact-drain.ts materialize) alongside external_ref.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_metadata_envelope_id
+  ON public.anchors ((metadata ->> 'envelope_id'))
+  WHERE (metadata ->> 'envelope_id') IS NOT NULL;
+
+-- anchor-index-justification: same guard, third metadata key — the connector path's external_ref backlink (also used as the general connector dedup key beyond DocuSign).
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_metadata_external_ref
+  ON public.anchors ((metadata ->> 'external_ref'))
+  WHERE (metadata ->> 'external_ref') IS NOT NULL;

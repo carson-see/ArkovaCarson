@@ -2,6 +2,16 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-01 — SCRUM-2904-perf: `findExistingEnvelopeAnchor` statement-timeout fix (migration 0381, P0 demo blocker)
+
+`findExistingEnvelopeAnchor` (`docusign-anchor-reconciliation.ts`, see the SCRUM-2904 entry below for what it does) was the last remaining break on the DocuSign connector pipeline. Its single query OR'd three `metadata->>key` JSONB text comparisons (`source_envelope_id`/`envelope_id`/`external_ref`) with **no supporting index on any of the three** — on prod, the org running the live connector pipeline (also the public-records holding org) owns ~2,974,731 of ~2.97M total `anchors` rows, so every call from that org was a near-full-table scan that deterministically exceeds `statement_timeout`. Proven twice in prod: a DLQ'd `rule-action-dispatcher.ts` execution (2026-07-27) and a `connector_artifact` row stuck `status='failed'` at materialize in `connector-artifact-drain.ts` (2026-08-01).
+
+- **Migration 0381** (`supabase/migrations/0381_docusign_envelope_metadata_lookup_indexes.sql`, bare `CREATE INDEX CONCURRENTLY` file, no txn — 0366 convention): three partial btree expression indexes, one per metadata key, each `WHERE (metadata ->> 'KEY') IS NOT NULL`.
+- **Query restructure (same PR):** the function no longer issues one `.or()` query across all three keys. It issues one `.eq('metadata->>KEY', envelopeId)` lookup PER key (three total, each a guaranteed single-Index-Scan point read — envelope ids are unique per org, so at most one row matches per key), then compares `created_at` across the up-to-three matches in application code to pick the earliest — preserving the original single-query `order by created_at asc limit 1` "earliest anchor wins" tie-break exactly. This removes any dependency on the Postgres planner choosing to combine three per-key indexes via `BitmapOr` for a PostgREST-compiled OR'd JSON-path filter — a real fix either way, but the per-key-lookup shape is structurally guaranteed rather than cost-estimate-dependent.
+- Both call sites (`rule-action-dispatcher.ts:591-602`'s `findEnvelopeAnchorMaterialization`, `connector-artifact-drain.ts:367`'s `defaultMaterializeAnchor`) are unchanged — the fix is entirely inside `findExistingEnvelopeAnchor`'s query shape; its signature, return type, error semantics (fail-closed throw on lookup error), and unsafe-envelope-id bail behavior are all preserved.
+- Tests: `docusign-anchor-reconciliation.test.ts` rewritten for the new per-key-lookup query shape (20 tests, incl. a dedicated cross-key tie-break test and a first-error-stops-the-loop fail-closed test). `rule-action-dispatcher.test.ts`'s `buildAnchorsBuilder` stub and its one envelope-guard-reuse fixture updated to carry `created_at` (now selected/compared by the guard).
+- T3 (touches `supabase/migrations/`). File-only / pre-soak at authoring time — see PR body for the founder-ruling-2026-08-01-no-interim-soaks exception this PR cites instead of a fresh 48h soak.
+
 ## 2026-07-28 SOAK FINDINGS — F-1 (org-queue-scheduler 500s) + F-3 (SUBMITTED/NULL-txid recovery gap)
 
 Both open, from the 2026-08 72h signet soak pair. Canonical writeup: `docs/staging/SOAK-FINDINGS-2026-08.md`.

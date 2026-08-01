@@ -158,6 +158,38 @@ export interface EnvelopeAnchorLookupDb {
  * id (nothing to reconcile on) or no match, so the caller falls back to its
  * normal insert (still protected by the fingerprint unique index). Never throws
  * document bytes/fingerprints into logs — it reads coarse ids only (§1.6A).
+ *
+ * QUERY SHAPE (SCRUM-2904-perf, migration 0381 — read before touching this):
+ * this used to be a SINGLE query with a PostgREST `.or()` across all three
+ * `metadata->>key` JSONB text comparisons. That shape has NO supporting index —
+ * a JSONB `->>` text-extraction OR'd across three different keys is not a
+ * pushable predicate for any single btree — so on prod it fell back to a full
+ * scan of the calling org's `anchors` rows. The org that owns the DocuSign
+ * connector pipeline (the same org that holds the public-records import) owns
+ * ~2.974M of prod's ~2.97M total anchors, so that scan deterministically blows
+ * `statement_timeout` — proven twice in prod (a DLQ'd rule-dispatcher execution
+ * and a connector_artifact stuck `failed` at materialize).
+ *
+ * FIX: issue ONE targeted `.eq('metadata->>KEY', envelopeId)` lookup PER key in
+ * `ENVELOPE_ID_METADATA_KEYS`, instead of one query OR-ing all three. Migration
+ * 0381 adds a partial btree expression index per key
+ * (`(metadata->>'source_envelope_id') WHERE ... IS NOT NULL`, etc.), so each of
+ * these three lookups is a single, provably-indexed point read — an Index Scan
+ * returning at most one row (envelope ids are unique per org) regardless of how
+ * many total rows the org owns. Three fast indexed point-reads beat one
+ * plan-dependent multi-index OR: Postgres COULD choose a `BitmapOr` across all
+ * three per-key indexes for the original `.or()` shape once 0381 lands, but
+ * that requires the planner to pick it (cost-estimate dependent, no structural
+ * guarantee, and PostgREST's compiled SQL for a JSON-path OR list is opaque to
+ * static reasoning) — doing the union in application code removes that
+ * uncertainty entirely and is what fixes the demonstrated prod incidents.
+ *
+ * The original single query used `order('created_at', asc).limit(1)` so the
+ * EARLIEST anchor across all three keys won ties (reuse the original, not a
+ * later duplicate created by the other path during the race). Splitting into
+ * three queries preserves that exact tie-break: every key is looked up (not
+ * short-circuited on the first hit) and the candidate with the smallest
+ * `created_at` is returned — see the loop below.
  */
 export async function findExistingEnvelopeAnchor(args: {
   db: EnvelopeAnchorLookupDb;
@@ -167,43 +199,48 @@ export async function findExistingEnvelopeAnchor(args: {
   const envelopeId = typeof args.envelopeId === 'string' ? args.envelopeId.trim() : '';
   if (envelopeId.length === 0) return null;
 
-  // Defensive: the envelope id is interpolated into a PostgREST `.or()` filter,
-  // whose grammar is comma/parenthesis-delimited. A value containing `,` `(` `)`
-  // would corrupt the filter (split it into bogus conditions) or worse. DocuSign
-  // envelope ids are GUIDs and legitimate external_refs are token-shaped, so
-  // restrict to a safe charset and BAIL (return null) on anything else — the
-  // caller then falls back to the `(user_id, fingerprint)` unique index alone.
-  // Fail-safe, not fail-open: a skipped guard never creates a duplicate, it just
-  // forgoes the extra cross-hash protection for an unusual id.
+  // Defensive: DocuSign envelope ids are GUIDs and legitimate external_refs are
+  // token-shaped. Restrict to a safe charset and BAIL (return null) on anything
+  // else — the caller then falls back to the `(user_id, fingerprint)` unique
+  // index alone. Fail-safe, not fail-open: a skipped guard never creates a
+  // duplicate, it just forgoes the extra cross-hash protection for an unusual
+  // id. (No longer load-bearing for filter-injection — each lookup below binds
+  // `envelopeId` as a single `.eq()` value, not an interpolated filter string —
+  // but kept as a fail-fast input guard and to preserve existing behavior.)
   if (!/^[A-Za-z0-9_.:-]+$/.test(envelopeId)) return null;
 
-  // Build an OR across every metadata key the two paths may have used. Values
-  // are JSON-encoded envelope ids (bounded, non-PII connector identifiers).
-  const orFilter = ENVELOPE_ID_METADATA_KEYS.map(
-    (key) => `metadata->>${key}.eq.${envelopeId}`,
-  ).join(',');
+  let best: { id: string; publicId: string | null; createdAtMs: number } | null = null;
 
-  const { data, error } = await args.db
-    .from('anchors')
-    .select('id, public_id')
-    .eq('org_id', args.orgId)
-    .is('deleted_at', null)
-    .neq('status', 'REVOKED')
-    .or(orFilter)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  for (const key of ENVELOPE_ID_METADATA_KEYS) {
+    const { data, error } = await args.db
+      .from('anchors')
+      .select('id, public_id, created_at')
+      .eq('org_id', args.orgId)
+      .eq(`metadata->>${key}`, envelopeId)
+      .is('deleted_at', null)
+      .neq('status', 'REVOKED')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
-  if (error) {
-    throw new Error(
-      `envelope anchor lookup failed: ${(error as { message?: string }).message ?? 'unknown'}`,
-    );
+    if (error) {
+      throw new Error(
+        `envelope anchor lookup failed (metadata key=${key}): ${(error as { message?: string }).message ?? 'unknown'}`,
+      );
+    }
+    if (!data) continue;
+    const row = data as { id?: unknown; public_id?: unknown; created_at?: unknown };
+    if (typeof row.id !== 'string' || typeof row.created_at !== 'string') continue;
+    const createdAtMs = new Date(row.created_at).getTime();
+    if (Number.isNaN(createdAtMs)) continue;
+    if (best === null || createdAtMs < best.createdAtMs) {
+      best = {
+        id: row.id,
+        publicId: typeof row.public_id === 'string' ? row.public_id : null,
+        createdAtMs,
+      };
+    }
   }
-  if (!data) return null;
-  const row = data as { id?: unknown; public_id?: unknown };
-  if (typeof row.id !== 'string') return null;
-  return {
-    id: row.id,
-    publicId: typeof row.public_id === 'string' ? row.public_id : null,
-  };
+
+  return best ? { id: best.id, publicId: best.publicId } : null;
 }
