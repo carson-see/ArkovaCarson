@@ -78,12 +78,39 @@ if command -v git >/dev/null 2>&1; then
 fi
 
 # --- 4. prod deploy freeze --------------------------------------------------
-# Read the asserted flag from the deploy workflow. This is the committed
-# assertion, NOT live prod — assert prod state directly before relying on it.
-if [[ -f .github/workflows/deploy-worker.yml ]] \
-   && grep -qE '^\s*DEPLOY_WORKER_PAUSED:\s*.?true' .github/workflows/deploy-worker.yml 2>/dev/null; then
-  add "- **Worker deploy is PAUSED** (\`DEPLOY_WORKER_PAUSED=true\` in deploy-worker.yml). Merging does not deploy. Prod runs an older SHA than main — verify with \`/health\` before any claim about what is live."
+# DEPLOY_WORKER_PAUSED is a repository Actions VARIABLE, not a literal in
+# deploy-worker.yml — the workflow only reads `vars.DEPLOY_WORKER_PAUSED`.
+# Grepping the YAML for a value therefore always misses, which is exactly the
+# error this hook shipped with on 2026-08-01: it would have reported "not
+# paused" no matter what the real setting was. Read the variable itself.
+#
+# This flag is load-bearing beyond deploy timing: the Staging Soak Evidence
+# Gate's `deferred_consolidated_soak` mode fails closed unless it is true, so
+# merge semantics change with it.
+paused="unknown"
+if command -v gh >/dev/null 2>&1; then
+  # `timeout` is GNU coreutils and is NOT present on a stock macOS; invoking it
+  # unconditionally made every lookup fail and report "unknown" (caught in
+  # testing). Use it only when available, and fall back to a bare call.
+  if command -v timeout >/dev/null 2>&1; then TO=(timeout 8)
+  elif command -v gtimeout >/dev/null 2>&1; then TO=(gtimeout 8)
+  else TO=(); fi
+  # ${TO[@]+"${TO[@]}"} — expanding an EMPTY array as "${TO[@]}" trips `set -u`
+  # on bash 3.2 (the macOS default). Guarded form is required here.
+  v=$(${TO[@]+"${TO[@]}"} gh variable get DEPLOY_WORKER_PAUSED 2>/dev/null \
+      || ${TO[@]+"${TO[@]}"} gh api repos/{owner}/{repo}/actions/variables/DEPLOY_WORKER_PAUSED --jq .value 2>/dev/null \
+      || true)
+  v=$(printf '%s' "$v" | tr -d '[:space:]')
+  [[ -n "$v" ]] && paused="$v"
 fi
+case "$paused" in
+  true|True|TRUE)
+    add "- **Worker deploy is PAUSED** (\`DEPLOY_WORKER_PAUSED=true\`). Merging does NOT reach prod, and the RC-manifest \`deferred_consolidated_soak\` path is available. Prod runs an older SHA than main — confirm with \`/health\` before any claim about what is live." ;;
+  false|False|FALSE)
+    add "- **Worker deploy is LIVE** (\`DEPLOY_WORKER_PAUSED=false\`). **Merging ships to prod.** Treat every merge as a deploy, and note the \`deferred_consolidated_soak\` evidence path is unavailable while this is false (it fails closed by design)." ;;
+  *)
+    add "- Worker deploy state: **unknown** (could not read \`DEPLOY_WORKER_PAUSED\`). Do not assume either way — check \`gh variable get DEPLOY_WORKER_PAUSED\` and \`/health\` before merging or claiming prod state." ;;
+esac
 
 # --- 5. active soaks --------------------------------------------------------
 # HANDOFF is the register of record for soaks. Surface the pointer, not a parse
