@@ -44,6 +44,11 @@ function migration(): string {
   return migrationCache;
 }
 
+/** Escape a string for literal use inside a RegExp. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /** Strip SQL comment lines so grants in the header/ROLLBACK prose don't match. */
 function executableSql(sql: string): string {
   return sql
@@ -87,14 +92,31 @@ describe('SCRUM-2905: migration 0364 revokes anon/authenticated on credit mutato
       });
 
       it('does NOT re-grant EXECUTE to anon or authenticated', () => {
-        // No executable GRANT ... TO ... {anon|authenticated} for this fn.
-        const grantLines = sql
-          .split('\n')
-          .filter((l) => l.includes('GRANT EXECUTE ON FUNCTION') && l.includes(fn));
-        for (const line of grantLines) {
-          expect(line).not.toMatch(/\banon\b/);
-          expect(line).not.toMatch(/\bauthenticated\b/);
-        }
+        // FAIL-OPEN GUARD. This assertion used to filter on the literal
+        // 'GRANT EXECUTE ON FUNCTION' and loop over the results — so an EMPTY
+        // result set passed vacuously. It was empty for any re-grant written as
+        // `GRANT ALL ON FUNCTION ...` (the form the baseline itself uses at
+        // 00000000000000_baseline_at_main_HEAD.sql:13708), with different
+        // inter-argument whitespace, or split across lines. The test would have
+        // gone green while the hole was reopened.
+        //
+        // Now: normalize whitespace, match GRANT EXECUTE *or* GRANT ALL, and
+        // assert the expected number of grants actually exists before checking
+        // what they say.
+        const normalized = sql.replace(/\s+/g, ' ');
+        const fnNormalized = fn.replace(/\s+/g, ' ');
+        const grantRe = new RegExp(
+          `GRANT (?:EXECUTE|ALL) ON FUNCTION ${escapeRegExp(fnNormalized)} TO ([^;]+);`,
+          'g',
+        );
+        const grants = [...normalized.matchAll(grantRe)].map((m) => m[1]);
+
+        // The migration must grant to service_role exactly once — if this is 0,
+        // the assertions below would be vacuous.
+        expect(grants).toHaveLength(1);
+        expect(grants[0]).toContain('service_role');
+        expect(grants[0]).not.toMatch(/\banon\b/);
+        expect(grants[0]).not.toMatch(/\bauthenticated\b/);
       });
     });
   }

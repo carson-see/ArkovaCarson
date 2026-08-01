@@ -50,8 +50,17 @@
 --   * public.get_public_anchor_by_fingerprint(text) — public verification RPC
 --     (anon + authenticated). Intentionally anon-callable; it returns only
 --     public projection fields. Per memory feedback_public_endpoints_are_by_design.
---   * public.get_public_records_page(integer, integer, text, text, text, text) —
---     public-records browse (authenticated + service_role, read-only). Intended.
+--   * public.get_public_records_page(...) — public-records browse, read-only.
+--     CORRECTED 2026-08-01: this line previously read "(authenticated +
+--     service_role, read-only)". That understated the real grant state. There
+--     are TWO overloads (a 5-arg and a 6-arg `p_search` variant) and BOTH are
+--     granted to `anon` as well — 0305 only ADDED `authenticated, service_role`,
+--     and a GRANT does not revoke a pre-existing anon grant. Verified live on
+--     prod 2026-08-01 via has_function_privilege: anon=true, authenticated=true
+--     on both. Still intended (it is the public browse surface, per
+--     memory/feedback_public_endpoints_are_by_design) and still NOT revoked —
+--     but the file should not assert a "verified" grant state that isn't the
+--     real one (§1.5).
 --   * suspend_suborg(uuid, uuid, text) / unsuspend_suborg(uuid, uuid) —
 --     granted to `authenticated` but SELF-AUTHORIZE inside the body
 --     (auth.uid() + org_members owner/admin role gate + platform-admin check,
