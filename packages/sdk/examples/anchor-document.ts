@@ -1,15 +1,26 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { Arkova } from '@carsonarkova/sdk';
 
-const [, , filePath] = process.argv;
+const [, , filePathArg] = process.argv;
 
-if (!filePath) {
+if (!filePathArg) {
   throw new Error('Usage: ARKOVA_API_KEY=ak_live_... tsx anchor-document.ts ./document.pdf');
 }
 
 const apiKey = process.env.ARKOVA_API_KEY;
 if (!apiKey) {
   throw new Error('ARKOVA_API_KEY is required');
+}
+
+// Resolve the CLI-supplied path to an absolute path and confirm it's a real,
+// regular file before touching the filesystem — guards against a mistyped or
+// crafted argument (directory, device file, or unintended location) rather
+// than trusting process.argv directly.
+const filePath = resolve(process.cwd(), filePathArg);
+const fileStat = await stat(filePath);
+if (!fileStat.isFile()) {
+  throw new Error(`Not a regular file: ${filePath}`);
 }
 
 const arkova = new Arkova({ apiKey });

@@ -276,6 +276,7 @@ export function DevelopersPage() {
                   <div className="w-2.5 h-2.5 rounded-full bg-green-500/20" />
                 </div>
                 <button
+                  type="button"
                   onClick={handleCopy}
                   className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-[#bbc9cf] hover:text-[#00d4ff] transition-colors"
                 >
@@ -457,6 +458,7 @@ export function DevelopersPage() {
                 <div className="flex gap-1">
                   {(['curl', 'typescript', 'python'] as const).map((tab) => (
                     <button
+                      type="button"
                       key={tab}
                       onClick={() => setSdkTab(tab)}
                       className={`px-4 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition-all ${
@@ -470,6 +472,7 @@ export function DevelopersPage() {
                   ))}
                 </div>
                 <button
+                  type="button"
                   onClick={handleSdkCopy}
                   className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-[#bbc9cf] hover:text-[#00d4ff] transition-colors"
                 >
