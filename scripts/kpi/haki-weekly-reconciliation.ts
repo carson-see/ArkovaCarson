@@ -64,7 +64,8 @@
  */
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { resolve as resolvePath } from 'node:path';
+import { tmpdir } from 'node:os';
+import { isAbsolute as isAbsolutePath, relative as relativePath, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
@@ -96,18 +97,58 @@ const ReconciliationArgsSchema = z
 
 export type ReconciliationArgs = z.infer<typeof ReconciliationArgsSchema>;
 
+/** Only a `.json` extension is accepted for `--haki-issued-count-file` — this file
+ *  holds nothing but a count, so anything else (an SSH key, `/etc/passwd`,
+ *  a `.env`) is out of shape for the job before any path resolution happens. */
+const ISSUED_COUNT_FILE_RE = /\.json$/i;
+
+/** `--haki-issued-count-file` must resolve inside one of these roots: the repo
+ *  checkout (where an operator would stage a checked-in fixture) or the OS
+ *  temp dir (where a script staging HakiChain's report, or a test, would drop
+ *  one). Deliberately NOT unbounded — this is the actual traversal guard. */
+function allowedIssuedCountFileRoots(): string[] {
+  return [process.cwd(), tmpdir()].map((root) => resolvePath(root));
+}
+
+/** True if `target` is `root` itself or a path nested under it, per
+ *  `path.relative` (rejects escapes via `..` and cross-root absolute
+ *  results — the standard, well-known-safe containment check; a plain
+ *  `target.startsWith(root)` string check is not, since it would also
+ *  accept a sibling like `/tmp-evil` against a `/tmp` root). */
+function isContainedIn(root: string, target: string): boolean {
+  const rel = relativePath(root, target);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolutePath(rel));
+}
+
 /**
  * Resolves and validates a caller-supplied file path BEFORE it is ever
  * passed to a filesystem read (SonarCloud tssecurity:S8707 — an
  * automated/LLM-driven invocation could pass a malicious
- * `--haki-issued-count-file` value). Normalizes to an absolute path under
- * the current working directory, then requires the resolved target to
- * exist and be a regular file — rejects directories, missing paths, and
- * special files (devices, FIFOs, etc. via `statSync().isFile()`) — before
- * any read is attempted.
+ * `--haki-issued-count-file` value, e.g. pointing at `/etc/passwd` or an SSH
+ * key, expecting the LLM to unknowingly read + potentially echo it back).
+ *   1. Extension allow-list — the raw, caller-supplied string must end in
+ *      `.json`, checked before any path resolution or filesystem call.
+ *   2. Containment — the resolved absolute path must land inside the repo
+ *      checkout or the OS temp dir (`allowedIssuedCountFileRoots`), not
+ *      anywhere else on disk a `../../..` sequence (or a bare absolute path)
+ *      could reach.
+ *   3. Existence + regular-file check — rejects directories, missing paths,
+ *      and special files (devices, FIFOs, etc.) via `statSync().isFile()`.
+ * Only a path that passes all three is ever handed to `readFileSync`, and
+ * even then the very next step (`JSON.parse`) still has to succeed on real
+ * JSON content before any value from the file is used.
  */
 function resolveIssuedCountFilePath(rawPath: string): string {
+  if (!ISSUED_COUNT_FILE_RE.test(rawPath)) {
+    throw new Error(`--haki-issued-count-file must be a .json file: ${rawPath}`);
+  }
   const resolved = resolvePath(process.cwd(), rawPath);
+  const roots = allowedIssuedCountFileRoots();
+  if (!roots.some((root) => isContainedIn(root, resolved))) {
+    throw new Error(
+      `--haki-issued-count-file must resolve inside the repo checkout or the OS temp dir: ${rawPath}`,
+    );
+  }
   if (!existsSync(resolved) || !statSync(resolved).isFile()) {
     throw new Error(`--haki-issued-count-file does not resolve to an existing regular file: ${rawPath}`);
   }
@@ -362,9 +403,10 @@ function formatSignedDelta(delta: number): string {
   return delta >= 0 ? `+${delta}` : `${delta}`;
 }
 
-function buildHakiChainComparison(totalIssued: number, hakiReportedIssuedCount?: number): HakiChainComparison {
-  const reportedIssuedCount = hakiReportedIssuedCount ?? null;
-
+function buildHakiChainComparison(
+  totalIssued: number,
+  reportedIssuedCount: number | null = null,
+): HakiChainComparison {
   if (reportedIssuedCount === null) {
     return {
       reportedIssuedCount,

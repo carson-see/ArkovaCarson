@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -251,13 +251,39 @@ describe('parseCliArgs', () => {
 
   it('rejects a --haki-issued-count-file path that is a directory, not a file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'haki-kpi-'));
+    // Named `*.json` so this exercises the "exists but isn't a regular file"
+    // check specifically, not the (separately tested) extension allow-list.
+    const dirLooksLikeJson = join(dir, 'looks-like-a-file.json');
+    mkdirSync(dirLooksLikeJson);
     try {
-      expect(() => parseCliArgs([...argv(), `--haki-issued-count-file=${dir}`])).toThrow(
+      expect(() => parseCliArgs([...argv(), `--haki-issued-count-file=${dirLooksLikeJson}`])).toThrow(
         /does not resolve to an existing regular file/,
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('rejects a --haki-issued-count-file path that does not end in .json', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'haki-kpi-'));
+    const file = join(dir, 'count.txt');
+    writeFileSync(file, '15');
+    try {
+      expect(() => parseCliArgs([...argv(), `--haki-issued-count-file=${file}`])).toThrow(
+        /must be a \.json file/,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // SonarCloud tssecurity:S8707 — a traversal/absolute-path escape out of the
+  // repo checkout and the OS temp dir must be rejected before any filesystem
+  // call, even when it happens to end in `.json`.
+  it('rejects a --haki-issued-count-file path that resolves outside the repo checkout and the OS temp dir', () => {
+    expect(() => parseCliArgs([...argv(), '--haki-issued-count-file=/etc/passwd.json'])).toThrow(
+      /must resolve inside the repo checkout or the OS temp dir/,
+    );
   });
 
   it('throws a TypeError when --haki-issued-count-file contains neither a number nor {issuedCount}', () => {
