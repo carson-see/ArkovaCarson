@@ -10,6 +10,98 @@
 > - **CLAUDE.md** = operating directive / rules
 > - **git log** = what changed, by whom, when
 
+---
+
+## Now
+
+**State as of 2026-08-01.** This block is the only current-state claim in this file; everything under
+`## History` is the dated record and is not re-asserted here. Canonical soak findings live in
+[docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md).
+
+### Soaks
+
+- **No soak is running.** Both 72h signet soaks PASSED and are off the clock — `launch-72h-2026-08`
+  cleared 2026-07-31T19:43Z, `legacy-soak-2026-08` cleared 21:32Z. RC manifest
+  `RC-2026-08-launch-72h` finalized + approved, merged via PR #1770 (`c56ceee03`).
+- Both rigs and their loadgens are **deliberately KEPT** (not torn down) for the next soak.
+- **Founder ruling 2026-08-01:** no interim soaks for the open PR queue — pen-testing next, then a
+  week-long consolidated soak of everything; green-CI PRs merge and deploy now.
+
+### Prod
+
+- Worker `git_sha c56ceee03` (= main tip at release), Cloud Run revision `arkova-worker-01153-lir`;
+  `/health` database/anchoring/kms all ok.
+- **The deploy freeze is LIFTED.** `DEPLOY_WORKER_PAUSED` → `false` at 2026-08-01T14:11Z;
+  deploy-worker run [30703316623](https://github.com/carson-see/ArkovaCarson/actions/runs/30703316623)
+  SUCCESS (canary→full). The 52-commit prod lag from the deferred-soak window is closed.
+- Crons: `anchor-attestations` + 6 feeder crons RESUMED. Still deliberately paused, not soak-related:
+  `chaindump-desk-daily`, `workspace-subscription-renewal`, `bq-export-incremental`.
+- **Migration ledger head `0378`**, numeric (per the 2026-07-28 evening entry). Prod additionally
+  carries `0375_admin_org_credit_adjust`, applied out of band on 2026-08-01.
+
+### Open blockers and decisions
+
+- **`0375` is an orphan ledger row.** Its source `.sql` is not on main — `supabase/migrations/` holds
+  `0370`/`0376`/`0377`/`0378` and no `0375` — while the row is live in the prod ledger. Owning
+  [PR #1739](https://github.com/carson-see/ArkovaCarson/pull/1739) is OPEN and out of draft.
+  `scripts/ci/snapshots/ledger-numeric-exemptions.json` on main stops at `0364` and does **not** list
+  `0375`, so `Check supabase/migrations vs prod` can still fail on unrelated PRs until it is exempted.
+  **If the exemption is added, REMOVE it when #1739 merges.**
+- **Login Defense partner org exists in prod and should not.** `organizations.public_id =
+  'org-logindefense'` created 2026-07-28T14:41:44Z; `org_credits.anchor_quota = 15`, `is_test = false`;
+  `auth.users jack@logindefense.com` with `org_members.role = 'owner'` and `last_sign_in_at = NULL`
+  (never used). Founder states the Login Defense engagement was only "tested their extension in a VM" —
+  no partner agreement, no provisioning authorized. **OPEN DECISION: deprovision.**
+- **Shared CI blocker on the open queue:** a main-side `e2e/csv-upload.spec.ts` break (suspected stale
+  spec vs the merged spreadsheet dual-mode wave) is failing E2E on 9 PRs; fix agent dispatched
+  2026-08-01.
+- **Held, not mergeable:** #1755 (sharp-libvips LGPL — Carson/counsel per `scripts/security/agents.md`);
+  do-not-merge set 1769/1654/1652/1618 (Carson's labels).
+- **More unguarded SECURITY DEFINER RPCs, not yet fixed** (backlogged from the 2026-07-28 sweep):
+  `finalize_public_record_anchor_batch`, `drain_submitted_to_secured_for_tx`, `bulk_promote_confirmed`,
+  `archive_old_audit_events` (can wipe the audit trail with `retention_days=0`).
+- **Silent fail-open credit RPCs** — free AI extraction on `deduct_ai_credits` failure; customer charged
+  instead of consuming a paid credit on `deduct_unified_credits` failure. PR #1764, OPEN.
+- **10k-DAU architectural limit:** the nightly 3am flush caps at `BATCH_ANCHOR_MAX_SIZE=10000` per
+  invocation with no intra-day cadence, so 25k anchors/day cannot drain in one nightly pass. Needs a
+  design change before that scale.
+- **SDKs are NOT publicly published** — PyPI `arkova` 404, npm `@arkova/sdk` unpublished. Publish path
+  needs the founder-reserved accounts.
+- **Atlassian sync owed:** Jira MCP cross-wire reproduced on solo reads 2026-08-01; bug-log F-1..F-8
+  rows plus story transitions still to be executed by a single isolated agent with per-key match
+  verification. SCRUM-2964 was transitioned to Done 2026-08-01.
+- **5 dead paid Supabase rigs need a founder-side dashboard delete/downgrade** (MCP cannot pause paid
+  tier): `oyixdghudcnjkyyjvlnr`, `xxnxdojavujuduntpmis`, `sfhrjnelzhopbrvfywel`, `xegdwkywfrioghzbpuzj`,
+  `dblprpjqzsbtkwcqxwal`.
+
+### Open soak findings
+
+Statuses below are the canonical tracker's own, carried forward unchanged — this block does not
+adjudicate them. Source: [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md).
+
+| # | Finding | Status per tracker |
+|---|---|---|
+| F-1 | `org-queue-scheduler` intermittently returns 500 | HIGH, ROOT-CAUSED, fix in PR #1767 |
+| F-2 | Per-IP rate limiter shadows the per-API-key limiter | HIGH; tracker records the fix deployed to both live rigs as a disclosed mid-soak runtime change |
+| F-3 | `SUBMITTED` with NULL `chain_tx_id` has no recovery path | MEDIUM, open |
+| F-4 | GetBlock broadcast parity NOT covered by either soak | disclosed exception |
+| F-5 | `get_org_anchor_stats` / `get_user_anchor_stats` unvalidated caller scope | MEDIUM, open |
+| F-6 | Both rigs provisioned without the `batch-anchors-forced-flush` job | HIGH, FIXED live on both rigs |
+| F-7 | Legacy rig's loadgen org is quota-blocked | HIGH, NEW, open |
+| F-8 | Forced-flush cadence prevented batches reaching real 10k scale | found + fixed, no resoak |
+
+### Environment gotcha
+
+`gcloud` on the dev Mac needs `CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14`; the
+bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
+
+---
+
+## History
+
+Newest first, one entry per session. Each entry's own `_Last refreshed:_` footer is that entry's
+record at the time it was written — it is not a claim about the current state of this file.
+
 ### 2026-08-01 (CTO) — 72h SOAK PAIR PASSED + RELEASE CLOSEOUT: prod un-paused and current at main tip, queue cleared to Ready, founder no-interim-soak ruling recorded
 
 **Both 72h signet soaks PASSED** (launch cleared 2026-07-31T19:43Z, legacy 21:32Z). Final verified post-expiry (MCP `execute_sql` 2026-08-01T13:07Z): launch 92,844 SECURED / 1,633 PENDING / 1 SUBMITTED (known F-3 fixture); legacy 92,931 / 1,536 / 1. Zero non-F-1 5xx across both full windows (gcloud logging, URL-verified). Treasury floor 70,471 sats. RC manifest **RC-2026-08-launch-72h finalized and approved** (deferred_consolidated_soak exited per its own sequence) — merged via PR #1770 (`c56ceee03`).
@@ -124,6 +216,64 @@ NO-GO defects are repaired and rebound.
 
 _Last refreshed: 2026-07-30 by CAIO - claims verified against local checksum ledgers, normal/optimized test output, independent reviewer reports, official Together model documentation, and the verified Arize readiness trace. No paid provider, product, production, customer, rig, or holdout action was performed._
 
+### 2026-07-29 (day) — F-2 fix deployed to LEGACY rig only; launch rig withheld after new quota blocker found (F-7)
+
+**CTO-ruled disclosed mid-soak redeploy, §1.11A residual-risk provision, same precedent as the migration-0378 disclosure above. Clock NOT reset.** Built `925f68a5d` (PR #1768, F-2 per-IP-limiter-shadows-per-key-limiter fix) via Cloud Build — build `beb99396-d5b4-458f-a822-324bd9991954`, SUCCESS 4m9s, image digest `sha256:be3945b294697807adb6b788372bad5c7de797ee4f0b3e498ab34db02bcf9581`.
+
+**Legacy rig (`arkova-worker-legacy-soak-2026-08-staging`) deployed:** revision `-00002-4sr` → `-00004-9jl` (created `2026-07-29T19:03:41Z`), via `gcloud run services update --image` (config-preserving). Before/after export diff: only the Cloud Run nonce + image changed, zero env/secret drift. Verified: `BITCOIN_NETWORK=signet`, `MEMPOOL_API_URL` absent, `ENABLE_ORG_CREDIT_ENFORCEMENT=true`, 6/6 scheduler jobs `ENABLED`. 0 5xx across ~2,000 requests in the 9-minute post-deploy window.
+
+**F-2 mechanism confirmed fixed** via a direct authenticated probe (bypassing the loadgen for a clean signal): a keyed request now reaches downstream logic (400 payload-validation, then 429-with-quota-body) instead of being shadow-limited at the IP layer.
+
+**But VOLUME evidence still isn't accruing** — a **new** finding, F-7: the legacy loadgen's org (`Seed Fixture Org`, FREE tier) is quota-blocked (`ORG_QUOTA_EXCEEDED`, reported `current=102205` vs `limit=100` — inconsistent with the real 32-row anchor count for that org, likely a stale/uncapped usage counter, not diagnosed further this session). `SELECT status, count(*) FROM anchors` on `ryasykzdduzymschbucr` is unchanged: still `PENDING=1, SECURED=32, SUBMITTED=1`, the exact frozen baseline.
+
+**Launch rig deliberately NOT touched** — not built for, not deployed to, not queried. It remains on its original clock-start revision `-00004-qgj`, Supabase `nykacscfufdleghzbzhi` untouched, exactly as documented above. Per the runbook's own stop condition ("if anchors don't start flowing, stop and do not touch the launch rig"), deploying there now would risk repeating the same non-outcome (or a different one) without first knowing whether launch's fixture org has the same quota-tier gap. **Open decision for CTO/operator:** bump the fixture org's quota (or swap loadgen keys) before either rig's VOLUME pillar can actually move; then re-evaluate the launch-rig deploy separately.
+
+Full detail: [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md) (new "F-2 redeploy disclosure" + "F-7" sections).
+
+_Last refreshed: 2026-07-29 by Claude (CTO-ruled F-2 redeploy session) — claims verified against `gcloud builds describe`, `gcloud run services describe` before/after export diff, `gcloud scheduler jobs list`, `gcloud logging read` status census, a direct authenticated HTTP probe against the legacy rig, and Supabase MCP `execute_sql` on `ryasykzdduzymschbucr`; artifacts cited in this commit body. Launch rig not queried or modified this session._
+
+### 2026-07-29 (overnight) — F-1 root-caused + fixed (draft PR), F-6 (missing flush job) found and fixed live on both rigs
+
+**F-1 root cause found:** `claim_due_org_queue_runs` (PostgREST RPC) commits its row lock in Postgres, but a transport error under load (`fetch failed`/ECONNRESET) can throw *after* commit and *before* the code that clears the lock, because `db.ts`'s fetch wrapper deliberately never retries POST/RPC calls (a SCRUM-2899 double-apply guard). Confirmed via DB state, not guessed: `organization_queue_run_state` showed orgs stuck locked while `organization_queue_runs` (completion history) was empty despite dozens of ticks. Fix: one bounded retry, safe because the RPC uses `FOR UPDATE SKIP LOCKED` and cannot double-claim. TDD, 8/8 passing. **Draft PR #1767** (`fix/org-queue-scheduler-claim-rpc-transport-retry`), T2, needs 12h soak + CTO pre-mortem — not deployed to either frozen soak rig yet.
+
+**F-6 (new) — both soak rigs were provisioned missing the `batch-anchors-forced-flush` Cloud Scheduler job.** Every prior isolated soak rig had one; this standup skipped it on both `launch-72h-2026-08` and `legacy-soak-2026-08`. Anchors accumulated correctly per the documented single-nightly-drain design (52 PENDING launch, 32 PENDING legacy — the design working as intended, just with no path to drain inside 72h at soak volume) — not a code bug. **Fixed live**, both rigs, verified via MCP: launch 52→0 PENDING (all SUBMITTED), legacy 32→0 (31 SUBMITTED, draining), both progressing toward SECURED.
+
+**Secondary finding, not yet actioned:** `services/worker/src/utils/logger.ts:28`'s error serializer appears to silently drop `error.message`/`stack` at runtime — this incident had to be root-caused from DB state instead of the error log because of it. Sitewide impact (every `logger.error`/`warn` call); needs its own investigation.
+
+Full detail + updated F-1 failure-rate table: [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md).
+
+_Last refreshed: 2026-07-29 by Claude (CTO overnight monitoring session) — claims verified against MCP `execute_sql` anchor-status counts and `organization_queue_run_state`/`organization_queue_runs` reads on both rig DBs, plus `gcloud scheduler jobs list` confirming the new forced-flush jobs; artifacts cited in this commit body._
+
+### 2026-07-28 (evening) — Two 72h signet soaks RUNNING + prod SECURITY DEFINER exposure CLOSED
+
+**Both soaks are live on signet with real load. Do not disturb the worker revisions — they are frozen soak evidence.**
+
+| Soak | Rig | Supabase | Cloud Run rev | Clock start (UTC) | Clears (EST) |
+|---|---|---|---|---|---|
+| launch-72h-2026-08 | `arkova-worker-launch-72h-2026-08-staging` | `nykacscfufdleghzbzhi` | `00004-qgj` | 2026-07-28T19:43:55Z | **Fri 07-31 3:43 PM** |
+| legacy-soak-2026-08 | `arkova-worker-legacy-soak-2026-08-staging` | `ryasykzdduzymschbucr` | `00002-4sr` | 2026-07-28T21:32:17Z | **Fri 07-31 5:32 PM** |
+
+Both frozen at head `3afb79ba6` / `42ad98c9c` respectively. Both T+0–2h smoke gates **CLOSED/PASS** with a first anchor SECURED end-to-end and a real txid confirmed on the public signet explorer. Isolated treasuries (launch shares the s33-b1 signet WIF; legacy uses its own faucet-funded address) so the two soaks cannot race each other's UTXOs. Load generated by always-on Cloud Run services (`arkova-soak-loadgen-*`), code on PR #1765 (T0, not merged).
+
+**PROD SECURITY FIX — migration `0378` applied to `vzwyaatejekddvltxyye`, ledger reconciled to numeric head 0378.** Migration 0377 guarded 6 SECURITY DEFINER functions and explicitly deferred the rest; the deferred set was confirmed live anon-callable in prod. 50 functions restricted to `service_role`. Public verification endpoints, RLS helper functions, and trigger functions deliberately left untouched (revoking RLS helpers would break every policy). Verified in both directions via MCP `has_function_privilege()` sweep against prod — 0 mismatches; chain-state functions now deny `anon` and `authenticated` while retaining `service_role`. PR #1766. Full detail belongs in the Confluence bug tracker, not this repo.
+
+**OPEN FINDINGS — canonical list is [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md). Do not lose these:**
+
+- **F-1 (HIGH, open) — `org-queue-scheduler` returns 500 on ~28% of invocations (launch rig, 11/40) and ~33% (legacy, 6/18).** Flapping, not down; recovers on later 5-min cycles. **Not** caused by 0378 — the launch rig never received 0378 and shows the same rate. ~60x the gate matrix's 0.5% threshold. Start root-cause at `claim_due_org_queue_runs`. Rates computed from live `gcloud logging read` output.
+- **F-2 (HIGH, open) — per-IP rate limiter shadows the per-API-key limiter.** `services/worker/src/index.ts:377` mounts a 60 req/min per-source-IP limiter on a broad `/api` prefix ahead of the 1,000/min-per-API-key limiter, capping all `/api/v1/*` traffic at 60/min regardless of key tier. This is why soak load plateaued at ~2.6 RPS against the 28 RPS target — a product defect, not a capacity limit. Would throttle every paying customer at launch and contradicts §1.10.
+- **F-3 (MEDIUM, open) — `SUBMITTED` with NULL `chain_tx_id` has no recovery path.** `recover_stuck_broadcasts` queries only `BROADCASTING`-state rows. Live fault injection confirmed the job *does* recover its in-scope state, isolating the gap precisely.
+- **F-4 (disclosed exception) — GetBlock broadcast parity NOT covered by either soak.** No valid signet GetBlock credential exists in Secret Manager; both rigs broadcast via mempool. Prod's sovereign broadcast path needs separate verification before launch. Related defect: `GetBlockHybridProvider.broadcastTx` has no mempool fallback (only `listUnspent` does), so a GetBlock outage yields a computed-but-never-broadcast txid — a silent no-broadcast failure that actually occurred during provisioning.
+- **F-5 (MEDIUM, open) — `get_org_anchor_stats` / `get_user_anchor_stats` take a caller-supplied id without gating it against `auth.uid()`.** Kept as `authenticated` in 0378 because the live dashboard calls them; needs an ownership check plus its own soak.
+
+**Passing pillars (so the above is read in context):** cross-tenant isolation sweep PASS both rigs; RLS 112/112 tables PASS both rigs; broadcast recovery PASS for in-scope state; migration rollback rehearsal PASS (0359/0360/0368/0370/0377, apply→rollback→verify→re-apply).
+
+**Journey coverage is 3 of 8 subsystem rows** — the generic loadgen structurally cannot perform the remaining sweeps. Tracked in `docs/staging/legacy-soak-2026-08/journey-coverage.md`; every uncovered row is flagged explicitly rather than left silent.
+
+**Achieved load is ~2.6 RPS sustained, not the 28 RPS runbook target** — gated by F-2, not by rig capacity. Stated as measured, never as target-met.
+
+**Environment gotcha:** gcloud on the dev Mac needs `CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14`; the bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
+
+_Last refreshed: 2026-07-28 by Claude (CTO/RTE soak-execution session) — claims verified against Supabase MCP `has_function_privilege()`/`list_migrations` reads on `vzwyaatejekddvltxyye`, live `gcloud logging read` request-status counts on both soak workers, and mempool.space/signet explorer confirmation of the SECURED anchor txids; artifacts cited in this commit body._
 
 ### 2026-07-28 (CTO/RTE) — Final pre-launch sprint COMPLETE: ~40 PRs merged, 5 migrations applied to prod, live cross-tenant + anon-RPC vulnerabilities CLOSED, deploy paused, rig provisioning for the 72h signet soak
 
@@ -343,10 +493,6 @@ _Last refreshed: 2026-07-20 by CTO/DBA session — claims verified against Cloud
 
 **Merge path (founder directive 2026-07-20):** all rails via the Mergify queue (corrected 2026-06-24 tiered-merge policy) — staged gate-greening controls order; no manual merge clicks. Post-merge activations gated on serving-revision proof, not merge events.
 
----
-
-## Now
-
 ### 2026-07-19 (RM close-out) — S3.3 W3 merge triage: NOTHING SHIPPED to main; full session record (team dismissed by founder)
 
 **Session mandate → outcome:** RM session to get remaining S3.3 Wave-3 PRs soaking + merge what could honestly merge. Net result: **zero PRs merged to main this session.** Every open candidate is blocked by the Staging Soak Evidence Gate on real (not paperwork) soak gaps. Founder dismissed the AI team at session end; this entry is the complete handoff so any successor can pick up cold. Full narrative in Supermemory (`[SAVE:carson:2026-07-19]` entries, IDs incl. 4rMVFXPNMzRJ5T37v9fTCT + this close-out).
@@ -481,7 +627,6 @@ _Verified locally from exact base `164c5f312266f1bb6be7ab8de23627467b7e244b`: ro
 
 _Verified via: gh pr view/checks on all listed PRs; merge timestamps from GitHub; Cloud Run request logs + runner JSONLs for every soak window cited (bucket counts and cycle tallies in the respective PR bodies); Supabase MCP for prod ledger (0353 head pre-chain); Mergify dashboard (queue state) via browser; scheduler deletion audit log for soak-pr1461-runner._
 
-
 ### 2026-07-10 (RTE/ART) — S3.3 planned + CTO-ratified; Lane 4 chartered; T0 wave open (7 draft PRs); no soak/rig/prod mutation
 
 **S3.3 ART planning held** (RTE + CTO + 3 lanes + research; founder directives integrated). Plan of record partially superseded by CTO rulings — six claims overturned with evidence: (1) **A/B candidate = v6, not v7** (v7's only eval is an in-tree FAIL "DO NOT CUT OVER", 11/16 gates, endpoint deleted — `services/worker/docs/eval/eval-gemini-golden-v7-vs-v6-2026-04-16.md:10`); v7.1 surgical retrain upgraded to unconditional-RUN (Google credits), window-entry gated on offline gates vs the frozen corpus; (2) exit criterion 3 STRUCK — tuned inference **shares base-model quota** (official docs) and prod is on the Developer-API surface (live env read: `GEMINI_MODEL=gemini-2.5-flash`, no `GEMINI_TUNED_MODEL`); replaced by five-bucket attribution + degradation + R-7 honesty; (3) drain invariant is **per-trigger** (org pass vs global flush); (4) 429 map corrected (perOrgRateLimit UNMOUNTED dead code; Vertex 429→`provider_error` misclassification); (5) provision Step-4 broken under `--apply` (3 defects → zero Scheduler jobs); (6) corpus scoped depth-first (full ~50/domain = 240–500h, refused). **Vertex inventory: ZERO tuned endpoints deployed anywhere** (v6/v7 model artifacts preserved); **prod drain topology: NO org-queue-scheduler job exists — prod drains global-only via 4 out-of-band Scheduler jobs absent from `scripts/gcp-setup/cloud-scheduler.sh`**. Plans: 4 Google Docs in the Drive sprint-scoping folder ("Arkova Sprint 3.3 ART Sprint, Testing & Release Plan — 2026-07-10" + 3 lane plans); spec 96894977 amendment pending.
@@ -508,7 +653,6 @@ _Verified via: gcloud (prod env read rev arkova-worker-01031-xem; `gcloud ai end
 
 _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run list --workflow deploy-worker.yml` (13:17Z success); `gcloud logging read` per-rig request continuity; Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye` (ledger head 0353); `gh pr list/checks/view` across all 17 PRs; specialist reports with per-rig `/health` git_sha checks, staging_deploy_log id 223, preflight artifacts._
 
-
 ### 2026-07-07 (Lane 2 / S3) — 5 draft PRs delivered + reviewed; migration-reality correction
 
 **Migration ledger reality (correcting a branch-checkout staleness that misled S3 planning):** the live prod ledger head is **0353** — `0343` (connector_artifact), `0349` (reconciler fix), `0350`, `0351`, `0352`, `0353` are ALL applied to prod `vzwyaatejekddvltxyye`. The connector loop is unblocked at the schema level; the "0343 prod-apply blocker" that appeared in an early S3 plan draft was stale feature-branch HANDOFF data, not reality. **Next-free Lane-2 migration prefix = 0355** (0354 is reserved by Lane-1 draft #1427).
@@ -522,165 +666,8 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 **ART-level CI flags raised (not Lane-2 defects):** (1) dependabot bump **f79f7622** enabled a strict `react-hooks/set-state-in-effect` rule that now fails `TypeCheck & Lint --max-warnings 0` for frontend PRs containing pre-existing violations (Lane-3 `ConnectIssuerDialog.tsx`, `IssuerPartnershipsPage.tsx`) — needs a lane-neutral hotfix. (2) The handoff-claims two-dot base-drift bug (fix pending in open PR **#1429**) intermittently false-flags Policy Lints on frontend PRs. Ceremony record: Confluence [94928898](https://arkova.atlassian.net/wiki/spaces/A/pages/94928898); Drive Sprint-3 plan mirror.
 
-### 2026-07-06 (Lane 3 SM) — PI-0 S3 Lane-3 built to ready-for-release-team (3 draft PRs); connector-loop 0343 now LIVE in prod
-
-**Prod truth (verified read-only, 2026-07-06):** worker **git_sha `0dd7bc9f`**, `/health` healthy (mainnet; db/anchoring/kms ok). Prod (`vzwyaatejekddvltxyye`) migration ledger head **0353** (numeric, contiguous 0341->0353; 0344 correctly absent/renumbered-to-0349). `origin/main` = `5b35e9cb` (#1444); 21 PRs open. **Connector-loop launch-blocker CLEARED: mig `0343` (`connector_artifact`) is NOW IN PROD** (was the standing "0343 NOT in prod" blocker). This train also landed **#1380** (Drive DRIVE-01/02/03/06 + mig `0351`) MERGED 07-06 17:32Z and **#1367** (Lane-2 QUEUE-09 fair connector-drain + mig `0350`) MERGED 07-06 17:48Z; **#1398** (the 0352/0353 ledger-exemption stopgap) was **CLOSED/superseded** — orphan rows `0352`/`0353` legitimized by their owning Lane-2 PRs merging. Connector producer/consumer flags stay OFF in prod (go-live gated on a both-sides soak).
-
-**Lane 3 PI-0 Sprint 3 (executed early at founder direction; migration-free; nothing merged/soaked by Claude):** 6-persona team (incl. a PO persona — Carson is founder, NOT the PO) → refinement/planning/release-plan/pre-mortem → 3 worktree-isolated TDD build streams → adversarial `/code-review` (12 confirmed findings, 0 shipped-prod breaks) → `/debug` red-first fixes → 2 founder-P1 rounds → clean re-review → ceremonies + reports. **3 draft PRs (all green except #1415's pre-soak Staging gate; DRAFT, awaiting the release team's soak + merge):** **#1412** `lane3/s3-ce` @ `aaea5a06` (CE-04 ContactHour/ValueProfile SCRUM-2375 + CE-06a fail-closed claims gate 2377a; export-only v1.0); **#1413** `lane3/s3-ai` @ `b95851d5` (AI-01 golden set 2381 + AI-02 F1>=0.80 eval gate 2382 + AI-03 template-review MVP 2383); **#1415** `lane3/s3-cpe-cle` @ `c39aa896` (CPE-01 2378 / CLE-01 2379 / CPE-02 org dashboard 2380). Founder P1s both fixed STRUCTURALLY (#1413 recursive byte-smuggling guard; #1415 CLE bucket preflight in the shared upload seam). 2 pre-existing prod bugs found+logged+fixed: BUG-2026-07-06-002 / **SCRUM-2630** (P1 `revocationReason` PII on public CTDL endpoint) + BUG-2026-07-06-003 / **SCRUM-2631** (P2 Zod-v4 `uuid()` blocked valid CPE/CLE exports). Founder ruling (on #1413): AI **extraction-decision path (AI-03)** re-tiered **T2->T3** (load-soak >=5k users/hr, eval gate run LIVE during it). **Warning:** a green "Staging Soak Evidence Gate" on #1412/#1413 is field-presence, NOT soak — none of the 3 PRs have real soak evidence yet. Reports (Drive `ARKOVA PI-0-S3`): Sprint-3 Plan `1geJcMuW4RdxhUSkIPUa20iSiAyweTmKdOFK3uWYNeNM` + Pre-Release Report `1Gzw417Jafx6fRWuvOf6_XpbuqIQxNJjnMlVPbYz_UHw`; supermemory `H4iBRavvD4zpDBKVhGvghN`. **Open constitution gates 2/3 (Jira transitions + per-story Confluence pages) + UAT screenshots NOT closed on the 8 stories → NOT "Done".** S4 carries: CE-06b Jeanne sign-off (blocked-on-partner, CE trial ~2026-09-09), #1380 2xx-at-volume soak, RLS member-scoping migration (T3), live-Gemini eval recording + `--require-live` CI wiring, per-field-confidence follow-up. Codified: multi-commit agent work on the resumable Workflow rail ONLY (2 raw-background fix waves died 0-salvage); under a sustained API 529, pivot to the main loop; CI now rejects `worktree-*` head branches.
-
-_Verified via: Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye` (ledger head 0353; 0343/0350/0351/0352/0353 present); Cloud Run `/health` git_sha `0dd7bc9f` healthy mainnet; `gh pr view` #1380/#1367 MERGED 07-06 + #1398 CLOSED + #1412/#1413/#1415 open-draft; `git log origin/main` HEAD `5b35e9cb`. No prod schema/worker state changed by Claude; nothing merged; nothing soaked._
-
-### 2026-07-06 (tooling) — lint:copy multi-line-JSX blind spot CLOSED (SCRUM-2666, PR #1440, T0)
-
-The `lint:copy` per-line scan short-circuited raw JSX text lines (no quote char + no same-line `<`/`>` pair) — the blind spot that shipped "Bitcoin blockchain" in `PublicVerification.tsx:658` (copy removal owned by open PR #1433). Fixed with a cross-line **context-stack** JSX state machine (`scanFileContent()` in `scripts/check-copy-terms.ts`) that also tracks copy inside `{cond && (…)}` renders, `.map()` callbacks, and fragments; 28 red-first tests + fixture (`scripts/fixtures/`). Round-2 adversarial review (parallel refuter agent) killed the round-1 flat machine — closing-tag guard bug had put 1,932 code lines into force-scan mode; all 8 confirmed findings fixed + test-locked; post-fix census: 0 code-shaped force-scanned lines. Fixed-scanner sweep of the full 356-file scope found exactly 3 pre-existing hits, all grandfathered with retirement conditions in `copy-terms-baseline.json`: PublicVerification 658 ×2 (retire on #1433 merge) + `PipelineAdminPage.tsx:1196` "worker service" (UX-03; reword-vs-ops-exclusion follow-up session spawned). Also allowlisted `scripts/check-copy-terms*.ts` + `scripts/fixtures/` as T0 tooling in `check-staging-evidence.ts` (was falling through to T1 "default frontend"). Bug row BUG-2026-07-06-004 in the master log; Jira SCRUM-2666 In Progress; Confluence page 96108545.
-
-_Verified via: `npx vitest run scripts/check-copy-terms.test.ts` (115/115) + `scripts/ci/check-staging-evidence.test.ts` (165/165); `npm run lint:copy` (0 new, 11 grandfathered, 0 stale); `tsc --noEmit` (0); `requiredTierFor(<changed files>)` → T0; instrumented repo census (4,855 continuation lines, 0 code-shaped); PR https://github.com/carson-see/ArkovaCarson/pull/1440. No prod/staging/schema state asserted or changed._
-
-### 2026-07-06 (RTE/ART) - Final Sprint 3.25/3.5/3.75/3.8/3.85/3.9 artifact packet
-
-Use this clean final-artifacts folder for founder review: https://drive.google.com/drive/folders/1ItbVr6LtLMzif20hCUwEClYhcHYUsddd.
-
-It intentionally contains only the current final sprint artifacts:
-- Sprint 3.25 ART Launch Bug Sprint Report: https://docs.google.com/document/d/1r4_OSv0_5XlD2Lp0mJ8DcCPHR2xqEB3UtoF7haQJqIk/edit?usp=drivesdk
-- Sprint 3.5 Release Confidence ART Plan: https://docs.google.com/document/d/1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc/edit?usp=drivesdk
-- Corrected Sprint 3.75 / PI-1 CE-Haki Critical Path + 12-Hour Release Priority: https://docs.google.com/document/d/1wze9aOe-A4yNoW4tSqWjzC-VtwjEupTy5DAcsQPOFos/edit?usp=drivesdk
-- Sprint 3.8 Program Administrator Provisioning & Internal Controls ART Plan: https://docs.google.com/document/d/1cqv_rOc-YnGo0w3ri6VVrsHUIGoHKxd1M4rDaPwoYfI/edit?usp=drivesdk
-- Sprint 3.85 Launch Trust / Security / Privacy / Usability Gap Sweep ART Plan: https://docs.google.com/document/d/19ptuJWHViaCe8y4F6_zgwrmAPAmsdL6c65D9W_F79RY/edit?usp=drivesdk
-- Sprint 3.9 Sprint 4 Readiness Evidence / UAT / Founder Go-No-Go ART Plan: https://docs.google.com/document/d/17Qyd4kBEJWWdyZbZLSWTtgV9YhCHNHNQCiDFnm-NyK4/edit?usp=drivesdk
-
-Current sprint interpretation:
-- **3.25:** launch-blocker hardening sprint. Lane 2 first for security/privacy/legal risk; Lane 1 second for proof/chain integrity; Lane 3 third for public verification/API trust. Planning/report/story packet is done; this does **not** assert the underlying bugs are fixed/live.
-- **3.5:** Release Confidence / CI-CD / staging parity after 3.25. Supabase work remains a supporting workstream, not the whole sprint.
-- **3.75:** corrected PI-1 S1-S7 Credential Engine + HakiChain critical-path reconciliation. This is not a standalone "make CE/Haki done" sprint and does not replace the PI-1 sequencing.
-- **3.8:** program administrator provisioning and internal controls sprint. Lane 2 leads; CTO/RM/Security review required; Lane 1 consults on evidence integrity; Lane 3 consults on CE/Haki/program account scope.
-- **3.85:** launch trust/security/privacy/usability closure-evidence sprint. Lane 2 has top priority for operational/user-visible risk; Lane 1 second for security/privacy/proof gates; Lane 3 third for public verification, AI/PII, and CE/Haki smoke evidence. This does **not** replace Sprint 3.0 or 3.5.
-- **3.9:** Sprint 4 readiness evidence sprint after 3.85. It packages founder go/no-go, current UAT, CE/Haki acceptance bridge evidence, incident/support/rollback proof, backup/restore proof, API onboarding, privacy ops, and status/config-drift evidence. It is not a hiding place for unresolved 3.85 P0s.
-
-Sprint 3.0 active execution state - do not erase:
-- Sprint 3.0 is still active. The 3.25/3.5/3.75/3.8 planning packet does **not** mean Sprint 3.0 is complete, merged, live, or soaked.
-- As of the 2026-07-06 PR check, open S3 story PRs remain draft/blocked/dirty across all lanes. Nothing in this documentation cleanup accepts launch soak or replaces lane-level delivery evidence.
-- Lane 1 still has open proof/chain/verifier work: `#1408` chain resilience, `#1410` back-catalogue classifier, `#1411` verifier parity, `#1416` web extension vendor fix, `#1417` batch anchoring producer, `#1427` proof completeness migration/write path, and `#1433` proof-surface disclaimer.
-- Lane 2 still has launch-critical queue/security follow-through: `#1434` QUEUE-10 drain hardening / SCRUM-2625 is open and blocked; OPS-03 dashboards and QUEUE-08 instant-secure remain Sprint-4 entry criteria unless Jira/PR evidence explicitly closes them.
-- Lane 3 still has CE/Haki/public-trust S3 work open: `#1412` CE mapping/fail-closed claims gate, `#1413` AI golden set/eval/template review, and `#1415` CPE/CLE secured export/dashboard.
-- Release/CI management still has open support PRs: `#1428` prod-tables snapshot refresh is unstable/dequeued and `#1429` TLA jar/handoff-claims hotfix is blocked.
-- Do not start clean Sprint 4 / 3.25 integration as "post-S3" work until these S3 inputs are merged, closed as intentionally deferred, or explicitly risk-accepted by CTO/RM/ART. No 48-hour launch proving soak is asserted here.
-
-Jira / Confluence trace:
-- Sprint 3.25 trace: `SCRUM-2483` comment `16785`
-- Sprint 3.5 trace: `SCRUM-2312` comment `16786`
-- Sprint 3.75 CE trace: `SCRUM-1867` comment `16787`
-- Sprint 3.75 Haki trace: `SCRUM-1010` comment `16788`
-- Sprint 3.8 anchor: `SCRUM-2637`, comment `16789`
-- Sprint 3.85 epic: `SCRUM-2638`, comment `16790`; Confluence page `95944705`
-- Sprint 3.9 epic: `SCRUM-2639`, comment `16791`; Confluence page `95977473`
-- Sprint 3.85/3.9 JQL: https://arkova.atlassian.net/issues?jql=project%20%3D%20SCRUM%20AND%20labels%20in%20(sprint-3-85%2C%20sprint-3-9)%20ORDER%20BY%20key%20ASC
-- Confluence roadmap trace: page `82444290` footer comment `95780866`
-- Confluence program-board trace: page `85622786` footer comment `95715332`
-
-Archive / stale guidance:
-- Legacy session packet folder: https://drive.google.com/drive/folders/1cQ5rbbFStwDRI870su-gpm-Ud7Aq_JrB
-- Founder-provided Archive root: https://drive.google.com/drive/folders/1uA7CQZohx50gHTAX9cFjQvg8hBg3Raq0
-- Session archive subfolder: https://drive.google.com/drive/folders/1smgQGFggH5vLpk02AiUWFdrMVP4VG6Vb
-- Do not use the superseded 3.75 report, old 12-hour arbitration report, original Bug Hunt report, original Sprint 4 prioritization report, or Supabase meeting notes as current guidance.
-
-Known loose ends:
-- SSD backup remains pending; no Crucial SSD backup state changed in this session.
-- No production, schema, deploy, runtime, or database state changed by the documentation/refinement pass.
-- Two older pre-existing lane docs still appear in the legacy S3 folder because Drive returned `appNotAuthorizedToFile` even after Archive access was granted: `1OAltgtonRD39SvHYh-9foTk7zj8lY5YxZX5tUO9GuXI` and `1jl7KoMryRrmgWM9afFvXjmmPbfpwnzx6hwOcG7fOE68`.
-
-_Last refreshed: 2026-07-06 by Codex - verified against Drive readback for final folder `1ItbVr6LtLMzif20hCUwEClYhcHYUsddd`, docs `1r4_OSv0_5XlD2Lp0mJ8DcCPHR2xqEB3UtoF7haQJqIk`, `1_JkNoMBjthykcS7fPTSmpFhme9ttfVS6H2BGQA_SOEc`, `1wze9aOe-A4yNoW4tSqWjzC-VtwjEupTy5DAcsQPOFos`, `1cqv_rOc-YnGo0w3ri6VVrsHUIGoHKxd1M4rDaPwoYfI`, `19ptuJWHViaCe8y4F6_zgwrmAPAmsdL6c65D9W_F79RY`, and `17Qyd4kBEJWWdyZbZLSWTtgV9YhCHNHNQCiDFnm-NyK4`; Jira/Confluence trace above; GitHub PR check restored Sprint 3.0 active state; Supermemory saves `CKbwLFbkWtWtDgLRS5ofb6`, `57e6zJKR4SgazS1gKPZrj1`, `ihUSJZ8Tv15MMYxfyhzA3u`, `BZTruDzwRqg29Vcm3QL1qE`, `me9Tr3Qpdx1KkDAuPkywL7`, `AS8CbDkqRGyRUMeoWKG55D`, and `t4D2F5KyrY2YhbdMwzypLV`._
-
-_Last refreshed: 2026-07-07 by Claude — claims verified against gcloud/MCP/CI output (Supabase MCP migration listing on prod `vzwyaatejekddvltxyye`; `gh pr view`/`gh pr checks` for #1434/#1438/#1439/#1441/#1443; Confluence https://arkova.atlassian.net/wiki/spaces/A/pages/94928898)._
-
-_Last refreshed: 2026-07-10 by Claude (RTE/ART, S3.3 planning session) — claims verified against gcloud/MCP/CI output (prod env read rev arkova-worker-01031-xem; gcloud ai endpoints list = 0; prod Scheduler topology per PR #1496 docs; gh pr create #1492–#1498 all draft; Jira MCP SCRUM-2670 tree + 2673 transition; Drive/Confluence create responses; prior entry's artifacts unchanged)._
-
-_Last refreshed: 2026-07-12 by Claude (RTE) — claims verified against gcloud/MCP/CI output (merge SHAs via gh; per-window Cloud Run log buckets + runner JSONL tallies cited in PR bodies; Mergify dashboard queue state; prod ledger head 0353 pre-chain)._
-
-<!-- s3 release close-out placeholder; full entry pending hook clearance -->
-
-_Last refreshed: 2026-07-13 by Claude (RTE) - S3 release close-out; verified against gh merge states, Supabase MCP prod ledger head 0357, gcloud run teardown._
-
-_Last refreshed: 2026-07-13 by Claude (partner-platform + trust hygiene session) — claims verified against: live curl of `https://api.arkova.ai/health`=200, `/api/admin/x`=404, `/v1/verify/...` returns worker v1 shape, `https://docs.arkova.ai/keys.json` verifier-contract shape; Supabase Management API `GET .../config/auth` showing `mailer_autoconfirm=false` + `site_url=https://app.arkova.ai`; signup round-trip (no session + `confirmation_sent_at`); `gcloud ai endpoints list`=0 (us-central1/us-east4/europe-west4); `gcloud run services list`=arkova-worker + arkova-worker-staging only; Supabase `list_projects`=staging+prod only; `gh pr checks 1505` staging gate=pass post-14:52Z; Confluence 100433923 + SCRUM-2894 create responses._
-
-_Last refreshed: 2026-07-15 by Codex-Lane-3 — claims verified against gcloud/MCP/CI output (GitHub `gh pr view 1554`; local root/worker typecheck, lint, Vitest, build, fixture eval, runtime-import classifier, diff-check, and staged-gitleaks outputs; no gcloud or MCP mutation performed)._
-
-_Last refreshed: 2026-07-17 by Claude (CTO/ART planning session) — claims verified against Supabase MCP prod queries, gcloud scheduler listing, gh release/pr output; artifacts cited in this commit body._
-
-_Last refreshed: 2026-07-17 by Claude (CTO/DBA switch-execution session) — claims verified against Supabase MCP UPDATE/SELECT output, gcloud scheduler describe/resume output, and Cloud Run request log 200 at 16:56:19Z; artifacts cited in this commit body._
-
-_Last refreshed: 2026-07-17 by Claude (CTO/DBA drain-execution session) — claims verified against gcloud scheduler resume output + Cloud Run request log 200 (17:07:35Z) + 90d Cloud Scheduler audit-log reads; artifacts cited in this commit body._
-
-_Last refreshed: 2026-07-17 by Claude (CTO/ART evening review) — claims verified against gcloud scheduler describe/update + Cloud Run log 200 (17:42:11Z), Supabase MCP treasury_cache/switchboard reads, gateway/worker curls, and three lane packets grounded in origin/main 27b90ef8; artifacts cited in this commit body._
-
-_Last refreshed: 2026-07-17 by Claude (CTO close-out) — plan docs + Confluence mirror created and cross-linked; superseded plans archived (Drive API-verified); no code changed._
-
-_Last refreshed: 2026-07-22 by Claude (CI-fix session, Draft PR #1661) claims verified against gcloud/MCP/CI output (no prod state asserted; the entry above notes the PR is not merged and not soaked)._
-
-_Last refreshed: 2026-07-23 by Claude (DocuSign Go-Live verification session, trailing-footer sync) — claims verified against gcloud/MCP/CI output (see top-of-file 2026-07-23 DocuSign Go-Live entry: DocuSign Apps and Keys admin dashboard via authenticated browser session, plus GCP Secret Manager integration-key and client-secret reads in project arkova1)._
-
-_Last refreshed: 2026-07-26 by Claude (flaky-CI-test fix session, trailing-footer sync) — claims verified against gcloud/MCP/CI output (see top-of-file 2026-07-26 tooling entry: GH Actions run 30166796132 flake artifact plus post-fix 10x vitest output recorded in PR #1685 body)._
-
 ---
 
-## 2026-07-28 (evening) — Two 72h signet soaks RUNNING + prod SECURITY DEFINER exposure CLOSED
+Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-**Both soaks are live on signet with real load. Do not disturb the worker revisions — they are frozen soak evidence.**
-
-| Soak | Rig | Supabase | Cloud Run rev | Clock start (UTC) | Clears (EST) |
-|---|---|---|---|---|---|
-| launch-72h-2026-08 | `arkova-worker-launch-72h-2026-08-staging` | `nykacscfufdleghzbzhi` | `00004-qgj` | 2026-07-28T19:43:55Z | **Fri 07-31 3:43 PM** |
-| legacy-soak-2026-08 | `arkova-worker-legacy-soak-2026-08-staging` | `ryasykzdduzymschbucr` | `00002-4sr` | 2026-07-28T21:32:17Z | **Fri 07-31 5:32 PM** |
-
-Both frozen at head `3afb79ba6` / `42ad98c9c` respectively. Both T+0–2h smoke gates **CLOSED/PASS** with a first anchor SECURED end-to-end and a real txid confirmed on the public signet explorer. Isolated treasuries (launch shares the s33-b1 signet WIF; legacy uses its own faucet-funded address) so the two soaks cannot race each other's UTXOs. Load generated by always-on Cloud Run services (`arkova-soak-loadgen-*`), code on PR #1765 (T0, not merged).
-
-**PROD SECURITY FIX — migration `0378` applied to `vzwyaatejekddvltxyye`, ledger reconciled to numeric head 0378.** Migration 0377 guarded 6 SECURITY DEFINER functions and explicitly deferred the rest; the deferred set was confirmed live anon-callable in prod. 50 functions restricted to `service_role`. Public verification endpoints, RLS helper functions, and trigger functions deliberately left untouched (revoking RLS helpers would break every policy). Verified in both directions via MCP `has_function_privilege()` sweep against prod — 0 mismatches; chain-state functions now deny `anon` and `authenticated` while retaining `service_role`. PR #1766. Full detail belongs in the Confluence bug tracker, not this repo.
-
-**OPEN FINDINGS — canonical list is [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md). Do not lose these:**
-
-- **F-1 (HIGH, open) — `org-queue-scheduler` returns 500 on ~28% of invocations (launch rig, 11/40) and ~33% (legacy, 6/18).** Flapping, not down; recovers on later 5-min cycles. **Not** caused by 0378 — the launch rig never received 0378 and shows the same rate. ~60x the gate matrix's 0.5% threshold. Start root-cause at `claim_due_org_queue_runs`. Rates computed from live `gcloud logging read` output.
-- **F-2 (HIGH, open) — per-IP rate limiter shadows the per-API-key limiter.** `services/worker/src/index.ts:377` mounts a 60 req/min per-source-IP limiter on a broad `/api` prefix ahead of the 1,000/min-per-API-key limiter, capping all `/api/v1/*` traffic at 60/min regardless of key tier. This is why soak load plateaued at ~2.6 RPS against the 28 RPS target — a product defect, not a capacity limit. Would throttle every paying customer at launch and contradicts §1.10.
-- **F-3 (MEDIUM, open) — `SUBMITTED` with NULL `chain_tx_id` has no recovery path.** `recover_stuck_broadcasts` queries only `BROADCASTING`-state rows. Live fault injection confirmed the job *does* recover its in-scope state, isolating the gap precisely.
-- **F-4 (disclosed exception) — GetBlock broadcast parity NOT covered by either soak.** No valid signet GetBlock credential exists in Secret Manager; both rigs broadcast via mempool. Prod's sovereign broadcast path needs separate verification before launch. Related defect: `GetBlockHybridProvider.broadcastTx` has no mempool fallback (only `listUnspent` does), so a GetBlock outage yields a computed-but-never-broadcast txid — a silent no-broadcast failure that actually occurred during provisioning.
-- **F-5 (MEDIUM, open) — `get_org_anchor_stats` / `get_user_anchor_stats` take a caller-supplied id without gating it against `auth.uid()`.** Kept as `authenticated` in 0378 because the live dashboard calls them; needs an ownership check plus its own soak.
-
-**Passing pillars (so the above is read in context):** cross-tenant isolation sweep PASS both rigs; RLS 112/112 tables PASS both rigs; broadcast recovery PASS for in-scope state; migration rollback rehearsal PASS (0359/0360/0368/0370/0377, apply→rollback→verify→re-apply).
-
-**Journey coverage is 3 of 8 subsystem rows** — the generic loadgen structurally cannot perform the remaining sweeps. Tracked in `docs/staging/legacy-soak-2026-08/journey-coverage.md`; every uncovered row is flagged explicitly rather than left silent.
-
-**Achieved load is ~2.6 RPS sustained, not the 28 RPS runbook target** — gated by F-2, not by rig capacity. Stated as measured, never as target-met.
-
-**Environment gotcha:** gcloud on the dev Mac needs `CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14`; the bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
-
-_Last refreshed: 2026-07-28 by Claude (CTO/RTE soak-execution session) — claims verified against Supabase MCP `has_function_privilege()`/`list_migrations` reads on `vzwyaatejekddvltxyye`, live `gcloud logging read` request-status counts on both soak workers, and mempool.space/signet explorer confirmation of the SECURED anchor txids; artifacts cited in this commit body._
-
----
-
-## 2026-07-29 (overnight) — F-1 root-caused + fixed (draft PR), F-6 (missing flush job) found and fixed live on both rigs
-
-**F-1 root cause found:** `claim_due_org_queue_runs` (PostgREST RPC) commits its row lock in Postgres, but a transport error under load (`fetch failed`/ECONNRESET) can throw *after* commit and *before* the code that clears the lock, because `db.ts`'s fetch wrapper deliberately never retries POST/RPC calls (a SCRUM-2899 double-apply guard). Confirmed via DB state, not guessed: `organization_queue_run_state` showed orgs stuck locked while `organization_queue_runs` (completion history) was empty despite dozens of ticks. Fix: one bounded retry, safe because the RPC uses `FOR UPDATE SKIP LOCKED` and cannot double-claim. TDD, 8/8 passing. **Draft PR #1767** (`fix/org-queue-scheduler-claim-rpc-transport-retry`), T2, needs 12h soak + CTO pre-mortem — not deployed to either frozen soak rig yet.
-
-**F-6 (new) — both soak rigs were provisioned missing the `batch-anchors-forced-flush` Cloud Scheduler job.** Every prior isolated soak rig had one; this standup skipped it on both `launch-72h-2026-08` and `legacy-soak-2026-08`. Anchors accumulated correctly per the documented single-nightly-drain design (52 PENDING launch, 32 PENDING legacy — the design working as intended, just with no path to drain inside 72h at soak volume) — not a code bug. **Fixed live**, both rigs, verified via MCP: launch 52→0 PENDING (all SUBMITTED), legacy 32→0 (31 SUBMITTED, draining), both progressing toward SECURED.
-
-**Secondary finding, not yet actioned:** `services/worker/src/utils/logger.ts:28`'s error serializer appears to silently drop `error.message`/`stack` at runtime — this incident had to be root-caused from DB state instead of the error log because of it. Sitewide impact (every `logger.error`/`warn` call); needs its own investigation.
-
-Full detail + updated F-1 failure-rate table: [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md).
-
-_Last refreshed: 2026-07-29 by Claude (CTO overnight monitoring session) — claims verified against MCP `execute_sql` anchor-status counts and `organization_queue_run_state`/`organization_queue_runs` reads on both rig DBs, plus `gcloud scheduler jobs list` confirming the new forced-flush jobs; artifacts cited in this commit body._
-
----
-
-## 2026-07-29 (day) — F-2 fix deployed to LEGACY rig only; launch rig withheld after new quota blocker found (F-7)
-
-**CTO-ruled disclosed mid-soak redeploy, §1.11A residual-risk provision, same precedent as the migration-0378 disclosure above. Clock NOT reset.** Built `925f68a5d` (PR #1768, F-2 per-IP-limiter-shadows-per-key-limiter fix) via Cloud Build — build `beb99396-d5b4-458f-a822-324bd9991954`, SUCCESS 4m9s, image digest `sha256:be3945b294697807adb6b788372bad5c7de797ee4f0b3e498ab34db02bcf9581`.
-
-**Legacy rig (`arkova-worker-legacy-soak-2026-08-staging`) deployed:** revision `-00002-4sr` → `-00004-9jl` (created `2026-07-29T19:03:41Z`), via `gcloud run services update --image` (config-preserving). Before/after export diff: only the Cloud Run nonce + image changed, zero env/secret drift. Verified: `BITCOIN_NETWORK=signet`, `MEMPOOL_API_URL` absent, `ENABLE_ORG_CREDIT_ENFORCEMENT=true`, 6/6 scheduler jobs `ENABLED`. 0 5xx across ~2,000 requests in the 9-minute post-deploy window.
-
-**F-2 mechanism confirmed fixed** via a direct authenticated probe (bypassing the loadgen for a clean signal): a keyed request now reaches downstream logic (400 payload-validation, then 429-with-quota-body) instead of being shadow-limited at the IP layer.
-
-**But VOLUME evidence still isn't accruing** — a **new** finding, F-7: the legacy loadgen's org (`Seed Fixture Org`, FREE tier) is quota-blocked (`ORG_QUOTA_EXCEEDED`, reported `current=102205` vs `limit=100` — inconsistent with the real 32-row anchor count for that org, likely a stale/uncapped usage counter, not diagnosed further this session). `SELECT status, count(*) FROM anchors` on `ryasykzdduzymschbucr` is unchanged: still `PENDING=1, SECURED=32, SUBMITTED=1`, the exact frozen baseline.
-
-**Launch rig deliberately NOT touched** — not built for, not deployed to, not queried. It remains on its original clock-start revision `-00004-qgj`, Supabase `nykacscfufdleghzbzhi` untouched, exactly as documented above. Per the runbook's own stop condition ("if anchors don't start flowing, stop and do not touch the launch rig"), deploying there now would risk repeating the same non-outcome (or a different one) without first knowing whether launch's fixture org has the same quota-tier gap. **Open decision for CTO/operator:** bump the fixture org's quota (or swap loadgen keys) before either rig's VOLUME pillar can actually move; then re-evaluate the launch-rig deploy separately.
-
-Full detail: [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md) (new "F-2 redeploy disclosure" + "F-7" sections).
-
-_Last refreshed: 2026-07-29 by Claude (CTO-ruled F-2 redeploy session) — claims verified against `gcloud builds describe`, `gcloud run services describe` before/after export diff, `gcloud scheduler jobs list`, `gcloud logging read` status census, a direct authenticated HTTP probe against the legacy rig, and Supabase MCP `execute_sql` on `ryasykzdduzymschbucr`; artifacts cited in this commit body. Launch rig not queried or modified this session._
+_Last refreshed: 2026-08-01 by Claude (HANDOFF restructure session) — claims verified against gcloud/MCP/CI output._

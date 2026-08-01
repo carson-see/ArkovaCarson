@@ -2,12 +2,28 @@
 
 ## Files
 
-| File | Purpose | Jira |
-|------|---------|------|
-| `ci.yml` | Secret scan, dependency audit, TDD enforcement, typecheck, lint, coverage-monotonic, handoff-claims, feedback-rules, count:'exact'-baseline | SCRUM-1248/1249/1252/1253/1254 |
-| `deploy-worker.yml` | Cloud Run worker deployment. Worker lint uses `npm run lint` (matches CI). | SCRUM-1250 |
-| `migration-drift.yml` | Read-only diff: local migrations vs prod applied set. Prevents the scorecard-outage class of bug. | SCRUM-908 |
-| `revision-drift.yml` | 10-min cron — fetch worker `/health.git_sha`, compare to `git rev-parse origin/main`, fire Sentry on drift > 1h or `missing-sha`. | SCRUM-1247 |
+All 16 workflows, with their real triggers. **Not everything here is PR-driven** —
+four workflows can fire with no PR and no push to `main` (cron, tag push, or an
+issue comment), so a change to one of those can take effect outside the PR cycle.
+
+| File | Trigger | Purpose |
+|------|---------|---------|
+| `ci.yml` | `push` (main/staging/develop) + `pull_request` | The main gate. 23 jobs: secret-scan, dependency-scan (also hosts the agents.md append-only gate), sonatype-sca, policy-lints, orphaned-export-lint, tdd-enforcement, typecheck-lint, test, ai-eval-gate, tla-verify, migration-check, e2e, lighthouse, sbom-generation, worker-build-parity, verifier-build, evidence-identity-report, anti-hollow-soak-report. |
+| `staging-evidence.yml` | `pull_request` incl. **`edited`**/`labeled`/`unlabeled` | The `Staging Soak Evidence Gate` required check (CLAUDE.md §1.11/§1.12). `edited` matters: a body-only evidence update fires no `synchronize`. |
+| `migration-drift.yml` | `push` main + `pull_request` incl. **`edited`** | Read-only diff of local migrations vs the prod applied set. Prevents the scorecard-outage class of bug. Also runs the full-ledger numeric-integrity audit (SCRUM-2500). |
+| `merge-authority.yml` | `pull_request` (`opened`/`synchronize`/`reopened`/`ready_for_review`) | Single `compute` job — reuses `requiredTierFor` to emit the tier/merge-council marker. Fails closed. |
+| `gitleaks.yml` | `pull_request` main + `push` main | Single `scan` job — secret scanning. |
+| `deploy-worker.yml` | **`push` to `main`** filtered to `services/worker/**` + `workflow_dispatch` | Cloud Run worker deploy: `pre-deploy-checks` → `deploy-gate` (the `vars.DEPLOY_WORKER_PAUSED` pause) → `deploy`. Worker lint uses `npm run lint` (matches CI). |
+| `deploy-staging.yml` | **`workflow_dispatch` only** | Manual staging deploy. Inputs: `pr_number`, `source_ref`, `service` (default `arkova-worker-staging`), `force_reason` (must start `SCRUM-NNNN:` to bypass the lease check). |
+| `verify-worker-runtime.yml` | **`workflow_dispatch` only** | Single `verify` job — optional `pr_number` input for authenticated staging-tag health. |
+| `revision-drift.yml` | **`schedule` — cron `*/10 * * * *`** + `workflow_dispatch` | Every 10 min: fetch worker `/health.git_sha`, compare to `origin/main`, fire Sentry on drift > 1h or `missing-sha`. Runs with no PR involved. |
+| `sonatype-scan.yml` | `pull_request` main (path-filtered to `**/package.json`, `**/package-lock.json`) + **`schedule` — cron `0 12 * * 1` (weekly, Mondays)** | `sonatype-oss-index` dependency scan. The weekly run fires with no PR. |
+| `publish-sdk.yml` | **`push` of tags `sdk-v*`** + `workflow_dispatch` | Publishes the TypeScript SDK. Tag push only — never on a normal branch push. |
+| `publish-python-sdk.yml` | **`push` of tags `arkova-py-v*`** + `workflow_dispatch` | Publishes `arkova-py`. Tag push only. |
+| `pe-eval.yml` | **`workflow_dispatch` only** | Professional-education eval harness. Required inputs: `gates` (comma-separated gate IDs) + `endpoint` (Vertex tuned-model resource for `GEMINI_TUNED_MODEL`). |
+| `s33-wave1-prerequisites.yml` | **`workflow_dispatch` only** | `build-prerequisites` — S3.3 Wave-1 corpus prerequisites. |
+| `s33-wave1-acceptance.yml` | `pull_request` (path-filtered to the Wave-1 authorities/evidence files) + `workflow_dispatch` | `premerge-api-preflight` + `authenticate-wave1`. |
+| `s33-wave2-batch-acceptance.yml` | **`pull_request_target`** + `pull_request_review` + **`issue_comment`** + `pull_request` (`closed`) | S3.3 Wave-2 trusted-main corpus acceptance. Privileged: `pull_request_target` and `issue_comment` run with repo-write context against **untrusted PR content** — see the hardening notes below before editing. Jobs: `candidate-preflight`, `exact-head-acceptance`, `consume-trusted-main`. |
 
 `staging-evidence.yml` passes both `BASE_REF_SHA` and `HEAD_REF_SHA` into `scripts/ci/check-staging-evidence.ts`; the gate compares those SHAs against the PR-body evidence. Exact PR head SHA must always match. Base SHA movement is impact-assessed: T0 docs/tests/CI/tooling-only drift can preserve soak evidence with an approved `Base drift impact:` note, while runtime/schema/staging/deploy drift still fails closed.
 

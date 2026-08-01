@@ -1,5 +1,5 @@
 # agents.md — components/attestation
-_Last updated: 2026-05-27_
+_Last updated: 2026-07-21_
 
 ## What This Folder Contains
 Attestation (credential issuance) components: status display, verification result, notarization badge, bulk issuance wizard, and template-driven verification forms.

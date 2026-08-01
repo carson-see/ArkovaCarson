@@ -1,5 +1,5 @@
 # agents.md — components/org
-_Last updated: 2026-05-30_
+_Last updated: 2026-07-21_
 
 ## What This Folder Contains
 Organization management components: sub-org hierarchy, org verification, and affiliation requests.

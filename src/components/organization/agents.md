@@ -1,5 +1,5 @@
 # agents.md — components/organization
-_Last updated: 2026-05-30_
+_Last updated: 2026-07-21_
 
 ## What This Folder Contains
 Organization-level admin components: credential issuance, member management, review queue, and public registry.

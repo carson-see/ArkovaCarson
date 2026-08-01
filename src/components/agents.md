@@ -1,5 +1,5 @@
 # agents.md — components
-_Last updated: 2026-07-06_
+_Last updated: 2026-07-22_
 
 ## 2026-07-22 SCRUM-2914 (Founder UI findings): AI-03 confidence gate removed
 
@@ -56,12 +56,6 @@ Domain-specific React components organized by feature area. Each subfolder has a
 - DON'T: Edit files in `ui/` — they are managed by shadcn
 - DON'T: Use banned terminology in user-visible strings (see Constitution 1.3)
 - DON'T: Hardcode routes — use `@/lib/routes.ts` constants
-
-## MVP Launch Gap Context
-- **MVP-02 (Toast System):** Install Sonner, add `<Toaster />` to AppShell. Replace all `console.log`/`alert` feedback with `toast()` calls across components (BUG-AUDIT-01).
-- **MVP-05 (Error Boundary):** Create `ErrorBoundary` component wrapping App in `App.tsx`. Create `NotFoundPage` at catch-all `*` route.
-- **MVP-07 (Mobile Responsive):** Audit all layout components for mobile breakpoints. Sidebar needs collapsible mobile drawer.
-- **MVP-08 (Onboarding Stepper):** Visual progress indicator for `onboarding/` components.
 
 ## Dependencies
 - `@/hooks/*` — all data fetching hooks
