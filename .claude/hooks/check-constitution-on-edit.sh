@@ -102,6 +102,51 @@ if [[ "$file_path" == *"services/worker/"* ]] \
 fi
 
 # ---------------------------------------------------------------------------
+# Rule 4 (§0 rule 10 / migration hygiene): NNNN collision + rollback — BLOCK/WARN
+# ---------------------------------------------------------------------------
+# Two PRs picking the same NNNN is the most common migration collision, and it
+# is only discovered at merge time when Mergify dequeues the loser. The correct
+# next number is max(main head, agents.md reservations) + 1 — checking only the
+# local branch is what produces the collision.
+if [[ "$file_path" =~ supabase/migrations/([0-9]{4})_[^/]*\.sql$ ]]; then
+  prefix="${BASH_REMATCH[1]}"
+  repo_root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)}"
+  abs_path="$file_path"
+  [[ "$abs_path" != /* ]] && abs_path="${repo_root}/${file_path}"
+
+  # Never modify an existing migration — it has already run wherever it was
+  # applied, so editing it silently diverges environments. This must be checked
+  # FIRST: an Edit's new_string is a fragment that will not carry the file's
+  # `-- ROLLBACK:` header, so the rollback check below would otherwise fire and
+  # report a misleading reason for what is really a never-modify violation.
+  if [[ -f "$abs_path" ]]; then
+    deny "Never modify an existing migration (${file_path}) — it has already run wherever it was applied, so editing it silently diverges environments. Write a compensating migration with the next free NNNN instead (CLAUDE.md §1.2 / §4)."
+  fi
+
+  # Everything below applies only to a NEW migration file.
+  if true; then
+    taken=""
+    # (a) any migration with this prefix already on origin/main
+    if git -C "$repo_root" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+      taken=$(git -C "$repo_root" ls-tree --name-only origin/main supabase/migrations/ 2>/dev/null \
+                | grep -E "^supabase/migrations/${prefix}_" | head -1)
+    fi
+    # (b) any migration with this prefix already in the working tree
+    if [[ -z "$taken" ]]; then
+      taken=$(ls "${repo_root}/supabase/migrations/${prefix}_"*.sql 2>/dev/null | head -1)
+    fi
+    if [[ -n "$taken" ]]; then
+      deny "Migration number ${prefix} is already taken by: ${taken}. Pick the next free NNNN — it is max(origin/main head, reservations in supabase/migrations/agents.md) + 1, NOT just the highest file on your branch. Reserve your number in supabase/migrations/agents.md in the same commit. (CLAUDE.md §6 / memory/feedback_migration_number_vs_reservations.md; load the migration-procedure skill.)"
+    fi
+
+    # Every migration records a runnable inverse up front.
+    if ! printf '%s' "$new_text" | grep -qiE '^[[:space:]]*--[[:space:]]*ROLLBACK:'; then
+      deny "Migration ${file_path} has no \`-- ROLLBACK:\` comment. Every migration records its inverse DDL, runnable as written (CLAUDE.md §4). Migrations are T3: 48h soak, multiple trigger cycles, clean-mirror or isolated staging — load the migration-procedure and soak-evidence skills before continuing."
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Rule 3 (§1.3): banned UI terminology — WARN
 # ---------------------------------------------------------------------------
 # Component files only, and only on lines that look like user-visible copy
