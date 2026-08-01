@@ -144,7 +144,7 @@ interface OrganizationsListBodyProps {
  *  the page component for the same S3776 reason as the helpers above — the
  *  three-way render branch scores against this component's own budget, not the
  *  page's. Purely presentational: all state and handlers stay in the page. */
-function OrganizationsListBody({ loading, items, searchInput, onClearFilters, onOpenOrg, onOpenCap, onOpenCredits }: OrganizationsListBodyProps) {
+function OrganizationsListBody({ loading, items, searchInput, onClearFilters, onOpenOrg, onOpenCap, onOpenCredits }: Readonly<OrganizationsListBodyProps>) {
   if (loading) {
     return (
       <div className="space-y-3">
@@ -350,7 +350,7 @@ function CreditsAdjustDialog({
   onBack,
   onConfirm,
   onClose,
-}: CreditsAdjustDialogProps) {
+}: Readonly<CreditsAdjustDialogProps>) {
   return (
     <Dialog open={!!org} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent>
