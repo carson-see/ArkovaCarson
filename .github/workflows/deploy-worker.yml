@@ -3,9 +3,22 @@ name: Deploy Worker
 on:
   push:
     branches: [main]
+    # Markdown under services/worker/ is documentation, never shipped code
+    # (agents.md, agents-changelog.md, READMEs). Without the exclusion below, a
+    # docs-only commit triggers a full production deploy — exactly what happened
+    # on 2026-08-01: the agents.md remediation commit 0646efd5a fired deploy run
+    # 30707053737 while DEPLOY_WORKER_PAUSED=false.
+    #
+    # This MUST be a `!` negation inside `paths`, not a separate `paths-ignore`
+    # key: GitHub does not support both filters on the same event, and defining
+    # them together makes the trigger behave unpredictably rather than failing
+    # loudly. Negations are evaluated in order, last match wins — so a push
+    # touching any non-.md file under services/worker/ still deploys, including
+    # a mixed push that also edits .md.
     paths:
       - 'services/worker/**'
       - '.github/workflows/deploy-worker.yml'
+      - '!**/*.md'
   workflow_dispatch:
     inputs:
       # BREAK-GLASS (operator-only): skip ONLY the Trivy image-scan step when a
