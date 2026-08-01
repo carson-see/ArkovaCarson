@@ -1,5 +1,5 @@
 # agents.md — components/webhooks
-_Last updated: 2026-07-06_
+_Last updated: 2026-07-21_
 
 ## What This Folder Contains
 Webhook configuration UI for ORG_ADMIN users: endpoint CRUD, event catalog, signed test ping, delivery history + failed deliveries (DLQ).

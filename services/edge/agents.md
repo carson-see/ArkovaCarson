@@ -59,7 +59,6 @@ meaningless neighbours, so the tool silently degraded to `text_fallback`/total=0
 - **§1.6 / §1.10:** read-only RAG over already-public records (no document
   processing); per-caller rate limiting enforced by the worker's global
   `keyedRateLimiter` on the forwarded caller key (see AUTH note above).
-_Last updated: 2026-06-05 (Edge MCP Truthfulness PR-2)._
 
 ## Edge MCP Truthfulness PR-1 — anchor mapping + nessie casing + test harness (2026-06-05)
 

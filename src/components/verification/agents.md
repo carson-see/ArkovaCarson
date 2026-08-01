@@ -180,7 +180,8 @@ regex as a second line of defense against that exact scanner blind spot.
   SUBMITTED / SECURED / REVOKED / EXPIRED, including the "no green-check on
   SUBMITTED" rule, `ACTIVE` alias normalization, the gating of proof
   sections behind terminal proof states, and the "no compliance controls
-  unless SECURED" rule (BUG-2026-06-24-007).
+  unless SECURED" rule (BUG-2026-06-24-007), and the does-not-assert
+  disclaimer's unconditional presence (SCRUM-2495).
 - `EvidenceLevelBadge.test.tsx` — per-tier `data-evidence-tier` + distinct
   `aria-label` + distinct icon, green ONLY for issuer tiers, no issuer-family
   wording on non-issuer alt text, and the copy.ts-canon parity guard for the
@@ -191,9 +192,6 @@ regex as a second line of defense against that exact scanner blind spot.
 - `src/lib/sourceProvenance.test.ts` — the issuer-auth gate (`isIssuerAuthenticated`
   ⊆ strong) plus the non-issuer DESCRIPTION honesty guard (no "Verified" /
   "Issuer" / "Authenticated" in the public tooltip body).
-  sections behind terminal proof states, the "no compliance controls
-  unless SECURED" rule (BUG-2026-06-24-007), and the does-not-assert
-  disclaimer's unconditional presence (SCRUM-2495).
 - `DoesNotAssertDisclaimer.test.tsx` — pins the MEASURED/ASSERTED/NOT-ASSERTED
   substance, the "always visible, no reveal needed" contract, a banned-terms
   regression guard, and basic rendering at 1280px/375px container widths.

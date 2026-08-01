@@ -1,5 +1,5 @@
 # agents.md — components/portfolio
-_Last updated: 2026-05-16_
+_Last updated: 2026-07-21_
 
 ## What This Folder Contains
 Credential portfolio creation for shareable collections of attestations and anchored records.
