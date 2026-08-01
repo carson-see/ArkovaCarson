@@ -95,6 +95,30 @@ CRON_SECRET=                        # min 16 chars
 CRON_OIDC_AUDIENCE=
 ```
 
+## Health endpoint (SCRUM-2653)
+```bash
+HEALTH_DETAIL_TOKEN=                # min 16 chars, optional
+```
+
+Gates the `?detailed=true` view of `/health` and `/api/health`, sent by the
+caller as the `X-Health-Token` header. **Plain `/health` stays public and
+unauthenticated** (CLAUDE.md §1.9) — only the detailed enrichment is gated,
+because it discloses `git_sha`, the live signing provider, the Bitcoin network,
+every `info.*` feature flag, the anchoring backlog depth, and the Supabase
+connection URL.
+
+Behavior when the variable is **unset**:
+
+| Environment | Detailed view |
+|---|---|
+| `NODE_ENV=production` | **DENIED** (fails closed) — response degrades to the compact body with `"detail": "unauthorized"`, HTTP 200 |
+| anything else (local dev, preview, rigs) | allowed, no token needed |
+
+Deliberately optional and deliberately **not** in the production required-vars
+check: a missing secret must not crash-loop the worker. An unauthorized request
+degrades to compact rather than returning 401, so Cloud Run probes, uptime
+monitors, and the deploy-verification workflows never break on this gate.
+
 ## Cloudflare (edge workers)
 ```bash
 CLOUDFLARE_ACCOUNT_ID=

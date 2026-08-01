@@ -12,8 +12,67 @@
  * exports pure functions for testability.
  */
 
+import { timingSafeEqual } from 'node:crypto';
+
 import { getBuildSha } from '../utils/buildInfo.js';
 import { evaluateBatchDrainHealth, type BatchDrainReason } from './batch-drain-deadman.js';
+
+/**
+ * SCRUM-2653 — authorization for the `?detailed=true` health view.
+ *
+ * Plain `/health` and `/api/health` stay public and unauthenticated forever
+ * (Constitution 1.9). Only the detailed enrichment is gated, because it
+ * discloses deployment and infrastructure facts an anonymous caller has no
+ * business reading: `git_sha`, the live signing provider, the Bitcoin network,
+ * every feature flag, the anchoring backlog, and the Supabase connection URL.
+ * Verified live against production on 2026-08-01 with an unauthenticated
+ * `curl` before this gate existed.
+ *
+ * Auth is a shared secret (`HEALTH_DETAIL_TOKEN`, sent as `X-Health-Token`)
+ * rather than a Supabase JWT or an RLS-backed platform-admin check, and that is
+ * deliberate: detailed health is exactly what an operator needs when the
+ * database is unreachable and the DB circuit breaker is open. An auth path that
+ * itself depends on the database would go dark precisely when it matters most.
+ *
+ * Fails CLOSED in production when no token is configured, so a deploy that
+ * never received the secret serves compact health rather than silently
+ * reverting to the pre-SCRUM-2653 anonymous-disclosure behavior.
+ */
+export interface DetailedHealthAuthInput {
+  /** Caller-supplied token (the `X-Health-Token` request header). */
+  providedToken: string | undefined;
+  /** Configured expected token (`config.healthDetailToken`). */
+  expectedToken: string | undefined;
+  /** True when running with NODE_ENV=production. */
+  isProduction: boolean;
+}
+
+export function isDetailedHealthAuthorized(input: DetailedHealthAuthInput): boolean {
+  const expected = input.expectedToken?.trim();
+
+  // No token configured: fail closed in production, allow off-prod so local
+  // dev and preview environments keep their diagnostics without ceremony.
+  if (!expected) {
+    return !input.isProduction;
+  }
+
+  const provided = input.providedToken;
+  if (typeof provided !== 'string' || provided.length === 0) {
+    return false;
+  }
+
+  const providedBuf = Buffer.from(provided, 'utf8');
+  const expectedBuf = Buffer.from(expected, 'utf8');
+
+  // timingSafeEqual throws on length mismatch, which would itself leak length
+  // through an exception path — compare lengths first and always run the
+  // constant-time compare on equal-length buffers.
+  if (providedBuf.length !== expectedBuf.length) {
+    return false;
+  }
+
+  return timingSafeEqual(providedBuf, expectedBuf);
+}
 
 /**
  * Dependency injection interface for health checks.
@@ -64,6 +123,15 @@ interface HealthResponse {
     checks: Record<string, unknown>;
     info?: Record<string, unknown>;
     connection?: { mode: string; url?: string };
+    /**
+     * SCRUM-2653: present only when `?detailed=true` was requested but the
+     * caller was not authorized. The response degrades to the compact body
+     * (still HTTP 200) rather than 401 so liveness probes and deploy
+     * verification never break on an auth change; this marker tells an
+     * operator why the detail they asked for is absent instead of leaving
+     * them to guess.
+     */
+    detail?: 'unauthorized';
   };
 }
 
@@ -74,6 +142,7 @@ interface HealthResponse {
 export async function buildHealthResponse(
   deps: HealthCheckDeps,
   detailed: boolean,
+  opts?: { detailDenied?: boolean },
 ): Promise<HealthResponse> {
   // ─── Database check ───
   type DbCheck = { status: 'ok' | 'error'; latencyMs?: number; message?: string };
@@ -254,6 +323,7 @@ export async function buildHealthResponse(
       network: cfg.bitcoinNetwork,
       checks: detailed ? detailedChecks : compactChecks,
       ...(detailed ? { info, connection: deps.getConnectionInfo() } : {}),
+      ...(!detailed && opts?.detailDenied ? { detail: 'unauthorized' as const } : {}),
     },
   };
 }
