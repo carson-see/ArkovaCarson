@@ -318,7 +318,18 @@ export interface ArkovaConnectConfig {
   allUsers: 'true';
   includeHMAC: 'true';
   hmacEnabled: true;
-  hmacSecret: string;
+  /**
+   * DocuSign "HMAC for Partners". When `'true'`, Connect signs deliveries to the
+   * customer account with the HMAC key registered on the DocuSign account that
+   * owns Arkova's integration key — i.e. the key the worker actually holds in
+   * `DOCUSIGN_CONNECT_HMAC_SECRET`. Undefined (field omitted) leaves DocuSign on
+   * the customer account's own keys, which the worker cannot know.
+   *
+   * Opt-in via `DOCUSIGN_CONNECT_INTEGRATOR_MANAGED=true`, because it is inert —
+   * or worse, changes which key signs — until a matching HMAC key exists on the
+   * integration-key account. See `docs/runbooks/integrations/docusign.md`.
+   */
+  integratorManaged?: 'true';
   includeDocumentFields: 'true';
   requiresAcknowledgement: 'true';
   envelopeEvents: string[];
@@ -357,10 +368,15 @@ function trimTrailingSlashes(value: string): string {
   return trimmed;
 }
 
-function requireConnectConfig(env: NodeJS.ProcessEnv): {
-  connectHmacSecret: string;
-  workerPublicUrl: string;
-} {
+/**
+ * Validate the provisioning preconditions and return the worker's public URL.
+ *
+ * `DOCUSIGN_CONNECT_HMAC_SECRET` is asserted but deliberately NOT returned:
+ * enabling `includeHMAC` without a secret for `/webhooks/docusign` to verify
+ * against would 401 every delivery, so a missing secret must still fail closed —
+ * but the secret itself never belongs on the Connect payload (see below).
+ */
+function requireConnectConfig(env: NodeJS.ProcessEnv): { workerPublicUrl: string } {
   const workerPublicUrl = env.WORKER_PUBLIC_URL;
   if (!workerPublicUrl) {
     throw new DocusignConfigError(
@@ -368,19 +384,19 @@ function requireConnectConfig(env: NodeJS.ProcessEnv): {
     );
   }
 
-  const connectHmacSecret = env.DOCUSIGN_CONNECT_HMAC_SECRET ?? '';
-  if (!connectHmacSecret) {
+  if (!env.DOCUSIGN_CONNECT_HMAC_SECRET) {
     throw new DocusignConfigError(
       'DOCUSIGN_CONNECT_HMAC_SECRET is required to provision a secure Connect listener',
     );
   }
 
-  return { connectHmacSecret, workerPublicUrl };
+  return { workerPublicUrl };
 }
 
 export function buildArkovaConnectConfig(env: NodeJS.ProcessEnv = process.env): ArkovaConnectConfig {
-  const { connectHmacSecret, workerPublicUrl } = requireConnectConfig(env);
+  const { workerPublicUrl } = requireConnectConfig(env);
   const webhookUrl = `${trimTrailingSlashes(workerPublicUrl)}/webhooks/docusign`;
+  const integratorManaged = env.DOCUSIGN_CONNECT_INTEGRATOR_MANAGED === 'true';
 
   return {
     urlToPublishTo: webhookUrl,
@@ -391,7 +407,7 @@ export function buildArkovaConnectConfig(env: NodeJS.ProcessEnv = process.env): 
     allUsers: 'true',
     includeHMAC: 'true',
     hmacEnabled: true,
-    hmacSecret: connectHmacSecret,
+    ...(integratorManaged ? { integratorManaged: 'true' as const } : {}),
     includeDocumentFields: 'true',
     requiresAcknowledgement: 'true',
     envelopeEvents: ['Completed'],
@@ -455,9 +471,16 @@ function buildConnectPayload(args: {
     enableLog: args.config.enableLog,
     allUsers: args.config.allUsers,
     includeHMAC: args.config.includeHMAC,
-    // DocuSign must sign deliveries with the same key the webhook verifier uses.
-    // Never log this Connect payload.
-    hmacSecret: args.config.hmacSecret, // NOSONAR
+    // NOTE: there is deliberately no `hmacSecret` here. It is NOT a field on
+    // DocuSign's ConnectCustomConfiguration resource — DocuSign accepted the
+    // request and silently dropped it, so sending it never installed Arkova's
+    // signing key while making the code read as though it had. `includeHMAC`
+    // makes DocuSign sign with a key held ACCOUNT-SIDE; aligning that key with
+    // `DOCUSIGN_CONNECT_HMAC_SECRET` is either an admin step on the customer
+    // account or, at scale, `integratorManaged` below.
+    ...(args.config.integratorManaged
+      ? { integratorManaged: args.config.integratorManaged }
+      : {}),
     includeDocumentFields: args.config.includeDocumentFields,
     requiresAcknowledgement: args.config.requiresAcknowledgement,
     envelopeEvents: args.config.envelopeEvents,

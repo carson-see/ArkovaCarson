@@ -191,6 +191,43 @@ by API, fall back to the manual Connect configuration in step 3 above; the conne
 stays degraded until a reprovision succeeds
 (`POST /api/v1/integrations/docusign/connect/reprovision`).
 
+### Known failure signatures
+
+| `docusign_status` / `docusign_detail` | Cause | Fix |
+|---|---|---|
+| `400` — `INVALID_REQUEST_PARAMETER`, `Unsupported 'events' field. "deliveryMode": "SIM" and "eventData": {"version": "restv2.1"} are required for the 'events' field` | The provisioning payload sent the modern `events` field without the `deliveryMode`/`eventData` pair DocuSign requires alongside it. Every org connect failed; no Connect listener was ever created by API in production. | **Fixed in code** (PR #1690, `bffde484c`, live in prod). Nothing account-side to change — just re-run the connect flow. |
+| No `docusign_status` / `docusign_detail` at all, only `{"error":"DocuSign Connect create failed"}` | The worker revision predates the SCRUM-3014 diagnostics. | Redeploy; retry. The status/detail then appear on the row. |
+| Listener created, but every delivery returns `401 invalid_signature` | HMAC key mismatch — see below. | Align the account-side key, or enable `integratorManaged`. |
+
+### The HMAC key is ACCOUNT-SIDE, not something provisioning installs
+
+`DOCUSIGN_CONNECT_HMAC_SECRET` is what `/webhooks/docusign` verifies
+`X-DocuSign-Signature-1` against. It is **not** pushed to DocuSign by
+`provisionConnectListener()`: DocuSign's `ConnectCustomConfiguration` resource has
+no `hmacSecret` field, so a payload carrying one is accepted and the field silently
+dropped. (The worker sent exactly that until this was corrected — the code read as
+though provisioning configured the signing key while DocuSign was signing with a
+completely different one.)
+
+`includeHMAC: "true"` only tells DocuSign *to* sign. **Which** key it signs with is
+account state, so one of these must be true before deliveries verify:
+
+1. **Per-account (current model, manual).** A DocuSign admin on the *customer's*
+   account creates a Connect HMAC key (DocuSign Admin → Connect → Keys) and its
+   value is stored in Secret Manager `docusign_connect_hmac_secret_prod`. Works, but
+   does not scale past one customer — every new org needs a manual key copy, and a
+   mismatch is silent (listener healthy, deliveries 401).
+2. **Partner-managed (`integratorManaged`, opt-in).** Register an HMAC key on the
+   DocuSign account that owns `DOCUSIGN_INTEGRATION_KEY`, then set
+   `DOCUSIGN_CONNECT_INTEGRATOR_MANAGED=true`. Provisioning then sends
+   `integratorManaged: "true"` and DocuSign signs every customer account's
+   deliveries with Arkova's own key — the one the worker already holds.
+   API-only feature; it cannot be set from the DocuSign admin console.
+
+Default is off. Do not enable it before confirming the key exists on the
+integration-key account, or provisioning will flip deliveries onto a key that is not
+configured and every webhook will 401.
+
 ## Verification
 
 1. Run the safe production route smoke. This verifies invalid HMAC rejection and signed unknown-account acknowledgement without creating integration rows, rule events, or jobs.
