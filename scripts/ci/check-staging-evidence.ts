@@ -843,7 +843,19 @@ function isDeployWorkerUsesOnlyExempt(file: string, opts?: TierClassifyOpts): bo
 
 function isT0OnlyFile(file: string, opts?: TierClassifyOpts): boolean {
   if (PUBLIC_CONTRACT_DOC_RE.test(file)) return false;
-  if (TEST_FILE_RE.test(file) || file.endsWith('agents.md')) return true;
+  // `agents-changelog.md` rides the same early return as `agents.md`: cf3917ad2
+  // ("split changelog sediment out of four guide files", 2026-08-01) moved the
+  // dated narrative into sibling changelog files without extending this
+  // carve-out, which silently made every one of them a soak-tier file — e.g.
+  // `services/worker/agents-changelog.md` matches the `services/worker/`
+  // PATH_RULE and would demand T3 evidence for a pure doc edit. The check must
+  // stay HERE, above the PATH_RULES short-circuit, for that reason; the
+  // STAGING_TOOLING_ALLOW list below is reached too late for worker paths.
+  if (
+    TEST_FILE_RE.test(file)
+    || file.endsWith('agents.md')
+    || file.endsWith('agents-changelog.md')
+  ) return true;
   // Binding CTO ruling 102498305: these exact non-test modules are T0 only
   // while a complete production-source scan proves no runtime imports anything
   // from scripts/staging. Missing scan data or any importer voids the carve-out.

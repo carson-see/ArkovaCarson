@@ -1445,6 +1445,37 @@ describe('check-staging-evidence', () => {
       expect(isStagingToolingOnly(['sonar-project.properties.ts']).pass).toBe(false);
     });
 
+    // cf3917ad2 ("split changelog sediment out of four guide files") moved the
+    // dated narrative out of agents.md into sibling agents-changelog.md files
+    // but never extended the T0 carve-out to the new name, so every one of them
+    // silently became a soak-tier file. They are the changelog half of a doc
+    // that is already T0 — treat them identically.
+    it('passes for agents-changelog.md siblings in every location', () => {
+      expect(
+        isStagingToolingOnly([
+          'scripts/ci/agents-changelog.md',
+          'e2e/agents-changelog.md',
+          'services/worker/agents-changelog.md',
+        ]).pass,
+      ).toBe(true);
+    });
+
+    it('classifies agents-changelog.md as T0 even under a T2/T3 path rule', () => {
+      // services/worker/ matches a PATH_RULE that fires BEFORE the allowlist,
+      // so this only passes via the same early return agents.md uses.
+      expect(requiredTierFor(['services/worker/agents-changelog.md']).tier).toBe('T0');
+      expect(requiredTierFor(['scripts/ci/agents-changelog.md']).tier).toBe('T0');
+    });
+
+    it('does not let the changelog carve-out rescue real worker code', () => {
+      expect(
+        requiredTierFor([
+          'services/worker/agents-changelog.md',
+          'services/worker/src/chain/client.ts',
+        ]).tier,
+      ).toBe('T3');
+    });
+
     // Same class as check-staging-gcloud-policy / check-handoff-claims /
     // check-ledger-numeric-integrity above: a CI-only gate script that reads a
     // remote API and never ships to prod runtime.
