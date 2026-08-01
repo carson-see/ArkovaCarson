@@ -2200,6 +2200,15 @@ const STAGING_TOOLING_ALLOW = [
   // same class as the other scripts/ci/check-*.ts gates above.
   /^scripts\/ci\/check-orphaned-exports(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
+  // SCRUM-1253 (R0-7): memory feedback-rules CI gates. Per-rule scripts under
+  // scripts/ci/feedback-rules/ + the check-feedback-rules.ts orchestrator run
+  // only in CI (ci.yml "Feedback rules" step); never imported by src/ or
+  // services/worker/src/ → no prod runtime to soak, same class as the other
+  // scripts/ci/check-*.ts gates above. Their shared scripts/ci/lib/ciContext.ts
+  // helper was already covered by the scripts/ci/lib/ entry; this directory
+  // was the missing half, which under-classified PR #1775 to T1.
+  /^scripts\/ci\/feedback-rules\//,
+  /^scripts\/ci\/check-feedback-rules(\.test)?\.ts$/,
   // SCRUM-2977: anti-hollow-soak pre-clock guard set. A pure guard module + CLI
   // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
   // CI (and locally over a soak-preflight JSON); never ships to prod runtime →

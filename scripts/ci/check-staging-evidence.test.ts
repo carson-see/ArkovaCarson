@@ -254,6 +254,26 @@ describe('check-staging-evidence', () => {
       ).toBe('T0'); // scripts/ci/lib/ is already an allowlisted directory
     });
 
+    it('returns T0 for the SCRUM-1253 (R0-7) feedback-rules CI gate scripts', () => {
+      // scripts/ci/feedback-rules/*.ts + the orchestrator run only in CI
+      // (via check-feedback-rules.ts, wired into ci.yml's "Feedback rules"
+      // step) and are never imported by src/ or services/worker/src/ — no
+      // prod runtime to soak. scripts/ci/lib/ (their shared ciContext.ts
+      // helper) is already T0-allowlisted; the feedback-rules/ directory
+      // itself was missing, which under-classified PR #1775 (label-override
+      // fix for no-worktree-isolation.ts) to T1 despite touching only CI
+      // tooling + a memory/README.md doc update.
+      expect(
+        requiredTierFor([
+          'scripts/ci/feedback-rules/no-worktree-isolation.ts',
+          'scripts/ci/feedback-rules/no-aws.ts',
+          'scripts/ci/lib/ciContext.ts',
+          'scripts/ci/check-feedback-rules.ts',
+          'memory/README.md',
+        ]).tier,
+      ).toBe('T0');
+    });
+
     // --- G1 (PI-0.5): KPI-3 rehearsal + clean-room .mjs tooling classify T0 ---
     it('returns T0 for the KPI-3 rehearsal tooling bundle', () => {
       expect(
