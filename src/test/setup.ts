@@ -3,6 +3,7 @@
  */
 
 import '@testing-library/jest-dom';
+import { randomUUID as nodeRandomUUID } from 'node:crypto';
 
 // Polyfill File.arrayBuffer for jsdom
 if (!File.prototype.arrayBuffer) {
@@ -49,11 +50,11 @@ Object.defineProperty(globalThis, 'crypto', {
     // jsdom does not implement crypto.randomUUID(); code that mints
     // client-side idempotency keys (e.g. AdminOrganizationsPage credit
     // adjust, L2-A5) needs a real-shaped UUID for its format assertions.
-    randomUUID: (): `${string}-${string}-${string}-${string}-${string}` => {
-      const hex = () => Math.floor(Math.random() * 16).toString(16);
-      const block = (n: number) => Array.from({ length: n }, hex).join('');
-      return `${block(8)}-${block(4)}-4${block(3)}-a${block(3)}-${block(12)}`;
-    },
+    // Delegates to Node's real `node:crypto` randomUUID (available in the
+    // Vitest process regardless of jsdom) rather than a hand-rolled
+    // Math.random()-based generator — Math.random() is not a
+    // cryptographically secure PRNG (SonarCloud typescript:S2245).
+    randomUUID: nodeRandomUUID,
   },
   writable: true,
 });

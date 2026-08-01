@@ -61,14 +61,24 @@ AS $$
 DECLARE
   v_balance integer;
   v_new_balance integer;
-  v_existing public.org_credit_deductions%ROWTYPE;
+  v_existing_amount integer;
+  v_existing_entry_type text;
   v_entry_type text;
 BEGIN
   IF p_amount IS NULL OR p_amount = 0 THEN
     RETURN jsonb_build_object('success', false, 'error', 'invalid_amount');
   END IF;
 
-  IF p_reason IS NULL OR btrim(p_reason) = '' THEN
+  -- btrim(p_reason) short-circuits to NULL when p_reason is NULL, and
+  -- NULLIF(x, '') is NULL when x = '' — so this single IS NULL check catches
+  -- NULL, empty, and whitespace-only reasons together. (Deliberately not
+  -- `p_reason IS NULL OR btrim(p_reason) = ''`: SonarCloud's plsql:NullComparison
+  -- rule flags direct `= ''` comparisons because on Oracle an empty string IS
+  -- NULL, making `x = ''` always false there. Postgres has no such equivalence
+  -- — the original `= ''` was correct and required — but this NULLIF form gets
+  -- the same result through IS NULL, satisfying the rule with no dialect
+  -- exception needed.)
+  IF NULLIF(btrim(p_reason), '') IS NULL THEN
     RETURN jsonb_build_object('success', false, 'error', 'reason_required');
   END IF;
 
@@ -99,14 +109,14 @@ BEGIN
   -- constraint on org_credit_deductions is the backstop; this check turns a
   -- legitimate retry (network blip, double-click past the confirm step) into
   -- a no-op instead of a constraint-violation 500.
-  SELECT * INTO v_existing
+  SELECT amount, entry_type INTO v_existing_amount, v_existing_entry_type
   FROM org_credit_deductions
   WHERE org_id = p_org_id
     AND reference_id = p_idempotency_key
     AND reason = p_reason;
 
   IF FOUND THEN
-    IF v_existing.amount <> p_amount OR v_existing.entry_type <> v_entry_type THEN
+    IF v_existing_amount <> p_amount OR v_existing_entry_type <> v_entry_type THEN
       RETURN jsonb_build_object(
         'success', false,
         'error', 'idempotency_key_conflict',
