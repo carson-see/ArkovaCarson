@@ -1,5 +1,5 @@
 # agents.md — components/compliance
-_Last updated: 2026-05-16_
+_Last updated: 2026-07-22_
 
 ## What This Folder Contains
 Compliance monitoring and audit UI: score cards, audit gap analysis, jurisdiction privacy notices, and session timeout handling.

@@ -5,6 +5,18 @@
  * validation errors, record counts, and reset behavior.
  *
  * @created 2026-03-10 11:30 PM EST
+ * @updated 2026-08-01 — a single spreadsheet drop (CSV/XLSX/XLS/TSV) no
+ * longer routes straight to bulk mode. W2/F1 (founder ruling 2026-07-28,
+ * `src/components/anchor/FileUpload.tsx` `dispatchFiles`) pauses a LONE
+ * spreadsheet file on an explicit mode-choice step
+ * (`data-testid="spreadsheet-mode-choice"`) so the user can pick "Import as
+ * a list of records" vs "Secure this file as a document" — a mixed/multi-file
+ * drop is untouched and still goes straight to bulk mode (see
+ * `openBulkUploadDialog`, which uploads two files). This spec's single-CSV
+ * helper now clicks through that choice before asserting the review step.
+ * See docs/release/wave-merge-choreography-2026-08.md "Collision 2" for the
+ * ratified behavior and precedent fix commit 0001a0f39 (same class of
+ * stale-dispatch-expectation fix from the same merge wave).
  */
 
 import type { Locator, Page } from '@playwright/test';
@@ -67,6 +79,12 @@ async function openBulkUploadReview(
     mimeType: 'text/csv',
     buffer: Buffer.from(rows.join('\n')),
   });
+
+  // W2/F1: a lone spreadsheet file pauses on the mode-choice step instead of
+  // routing straight to bulk mode — pick "Import as a list of records" to
+  // continue down the bulk-upload path this spec exercises.
+  await expect(dialog.getByTestId('spreadsheet-mode-choice')).toBeVisible();
+  await dialog.getByTestId('spreadsheet-mode-records').click();
 
   await expect(dialog.getByRole('heading', { name: 'Bulk Upload Records' })).toBeVisible();
   await expectReviewStep(dialog, validCount, invalidCount);

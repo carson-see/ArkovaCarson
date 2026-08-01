@@ -1,5 +1,5 @@
 # agents.md — hooks
-_Last updated: 2026-07-27_
+_Last updated: 2026-07-28_
 
 ## What This Folder Contains
 

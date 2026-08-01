@@ -1,5 +1,5 @@
 # agents.md — components/reports
-_Last updated: 2026-05-30_
+_Last updated: 2026-07-21_
 
 ## What This Folder Contains
 AI-generated report components: generation triggers, status tracking, and download/viewing.

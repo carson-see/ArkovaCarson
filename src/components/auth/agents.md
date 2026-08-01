@@ -1,5 +1,5 @@
 # agents.md — components/auth
-_Last updated: 2026-05-16_
+_Last updated: 2026-07-22_
 
 ## What This Folder Contains
 Authentication and identity components: login, signup, route guards, identity verification, 2FA, data rights (export/delete/correction).

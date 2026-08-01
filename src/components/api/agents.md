@@ -1,5 +1,5 @@
 # agents.md — components/api
-_Last updated: 2026-05-16_
+_Last updated: 2026-07-21_
 
 ## What This Folder Contains
 Developer-facing API management components: key CRUD, usage dashboard, scope display, and interactive sandbox.
