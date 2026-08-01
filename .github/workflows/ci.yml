@@ -1035,20 +1035,27 @@ jobs:
         # pin unless the official tlaplus/tlaplus release body also changed.
         if: steps.tla-changed.outputs.changed == 'true'
         env:
-          # Pin updated 2026-07-21 - upstream RE-CUT the mutable v1.8.0
-          # pre-release assets on 2026-07-18T14:54:57Z (jar bytes changed;
-          # size 4357904 -> 4485995), which is why the prior pin failed the
-          # supply-chain check. Verified per the protocol above against all
-          # THREE independent anchors: (1) release-body SHA1 checksum table
-          # now reads ae09269f0f74b9a7f69ac8b1e79f1514328082c6|tla2tools.jar
-          # and matches the new jar's SHA1, (2) GitHub release API asset
+          # Pin updated 2026-08-01 - upstream RE-CUT the mutable v1.8.0
+          # pre-release assets AGAIN on 2026-07-31T18:54:20Z (jar bytes changed;
+          # size 4485995 -> 4486015), which is why the prior pin started failing
+          # the supply-chain check and turned this job red on every PR touching
+          # machines/ (observed on PR #1784: the "Pin TLA2TOOLS_JAR" step failed
+          # and "Run TLA+ PreCheck verification" never ran). This is the THIRD
+          # re-cut of the same tag; the mismatch is upstream tag mutability, not
+          # a compromised artifact.
+          #
+          # Verified per the protocol above against all THREE independent
+          # anchors on 2026-08-01: (1) release-body SHA1 checksum table now
+          # reads feffd16994db963ad945628cfd03d154c195a468|tla2tools.jar and
+          # matches the downloaded jar's SHA1, (2) GitHub release API asset
           # digest is
-          # sha256:cc4803dce2a8ffaf0f5920a9dc39df4b5ee34ab4cb53fb58ac557277a7e516b3,
-          # (3) direct `curl | shasum -a 256` of the official release URL
-          # matches (size 4485995). Previous pin (2026-07-09, now stale after
-          # the 07-18 re-cut):
-          # 33de7da9ce1b7fffb9d1c184021178dbb051747be48504e65c584c423721a32e
-          TLA2TOOLS_SHA256: cc4803dce2a8ffaf0f5920a9dc39df4b5ee34ab4cb53fb58ac557277a7e516b3
+          # sha256:e22f8ffb4bacdea0a871f444dd94fe5fb0d8013b3388ae39e82e26f852c735d5
+          # (asset updated_at 2026-07-31T18:54:20Z, size 4486015), (3) direct
+          # `curl --proto '=https' | shasum -a 256` of the official release URL
+          # matches, size 4486015. Previous pins, now stale:
+          #   2026-07-21 (07-18 re-cut): cc4803dce2a8ffaf0f5920a9dc39df4b5ee34ab4cb53fb58ac557277a7e516b3
+          #   2026-07-09:                33de7da9ce1b7fffb9d1c184021178dbb051747be48504e65c584c423721a32e
+          TLA2TOOLS_SHA256: e22f8ffb4bacdea0a871f444dd94fe5fb0d8013b3388ae39e82e26f852c735d5
         run: |
           mkdir -p "$HOME/.tla"
           # SCRUM-3018 / Sonar S6506: enforce HTTPS on the fetch and on any
