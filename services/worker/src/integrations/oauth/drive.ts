@@ -79,6 +79,35 @@ export class DriveApiError extends Error {
   }
 }
 
+/**
+ * Hard ceiling on a single connector-fetched Drive document.
+ *
+ * 64 MiB is ~13x the repo's 5 MiB `safe-fetch` default, chosen to comfortably
+ * clear real credential documents (scanned multi-page PDFs, Docs exported to
+ * DOCX) while staying an order of magnitude below the worker's 2 GiB container
+ * so a handful of concurrent jobs cannot collectively exhaust it.
+ */
+export const MAX_DRIVE_DOCUMENT_BYTES = 64 * 1024 * 1024;
+
+/**
+ * A watched-folder document exceeded MAX_DRIVE_DOCUMENT_BYTES.
+ *
+ * Carries ONLY a byte count — never a body, a buffer, or a filename (§1.6A).
+ * Distinct from DriveApiError so the job layer can dead-letter it as a
+ * permanent, non-retryable outcome: retrying cannot make the file smaller.
+ */
+export class DriveDocumentTooLargeError extends Error {
+  readonly byteLength: number;
+  readonly limit = MAX_DRIVE_DOCUMENT_BYTES;
+  constructor(byteLength: number) {
+    super(
+      `Drive document exceeds the ${MAX_DRIVE_DOCUMENT_BYTES}-byte connector limit`,
+    );
+    this.name = 'DriveDocumentTooLargeError';
+    this.byteLength = byteLength;
+  }
+}
+
 function requireClient(env: NodeJS.ProcessEnv): { clientId: string; clientSecret: string } {
   const clientId = env.GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = env.GOOGLE_OAUTH_CLIENT_SECRET;
@@ -480,8 +509,57 @@ export async function fetchDriveFileBytes(args: {
     // and deliberately NO bounded `detail` (see DriveApiError doc comment).
     throw new DriveApiError('Drive file bytes fetch failed', res.status);
   }
-  const bytes = Buffer.from(await res.arrayBuffer());
+
+  // Size cap. The trigger for this fetch is "any file changed in a watched
+  // folder", so the byte count is chosen by whoever can write to that folder,
+  // while the worker runs in a 2 GiB Cloud Run container shared with anchoring,
+  // confirmation and billing crons. An uncapped Buffer here lets one large
+  // upload OOM-kill every in-flight job. Drive files go to 5 TB.
+  const declared = Number(res.headers.get('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > MAX_DRIVE_DOCUMENT_BYTES) {
+    // Cheap path: reject before reading a single byte.
+    throw new DriveDocumentTooLargeError(declared);
+  }
+
+  const bytes = await readCappedBody(res);
   return { bytes, contentType: res.headers.get('content-type'), exportMimeType };
+}
+
+/**
+ * Read a response body, aborting as soon as it exceeds MAX_DRIVE_DOCUMENT_BYTES.
+ *
+ * Streams when the runtime gives us a body stream (real `fetch`), so an
+ * oversized file is abandoned mid-flight and never fully materializes. Falls
+ * back to `arrayBuffer()` for injected test doubles, which return small fixtures
+ * and have no `body`. Either way the returned Buffer is <= the cap.
+ */
+async function readCappedBody(res: {
+  body?: unknown;
+  arrayBuffer: () => Promise<ArrayBuffer>;
+}): Promise<Buffer> {
+  const body = res.body as AsyncIterable<Uint8Array> | undefined;
+  if (!body || typeof body[Symbol.asyncIterator] !== 'function') {
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength > MAX_DRIVE_DOCUMENT_BYTES) {
+      throw new DriveDocumentTooLargeError(buf.byteLength);
+    }
+    return buf;
+  }
+
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for await (const chunk of body) {
+    total += chunk.byteLength;
+    if (total > MAX_DRIVE_DOCUMENT_BYTES) {
+      // Stop pulling. Drop what we already hold so the oversized document is not
+      // sitting in memory while the error propagates (§1.6A: bytes are
+      // discarded, and the error below carries only a length).
+      chunks.length = 0;
+      throw new DriveDocumentTooLargeError(total);
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, total);
 }
 
 /** Get a shared drive's display name. Falls back to the ID on failure. */

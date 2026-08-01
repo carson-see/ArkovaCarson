@@ -130,12 +130,25 @@ export interface DriveArtifactProducerDeps {
     sourceTimestamp: string | null;
     ruleEventId: string | null;
   }) => Promise<DriveArtifactSinkResult>;
+  /**
+   * Whether the connector-artifact enqueue is enabled
+   * (`ENABLE_CONNECTOR_ARTIFACT_ENQUEUE`). Optional so existing test doubles
+   * keep working — when absent the sink's own guard still applies. Supplying it
+   * lets the producer skip the token resolve + byte fetch entirely.
+   */
+  isEnqueueEnabled?: () => boolean;
   logger?: {
     info: (...a: unknown[]) => void;
     warn: (...a: unknown[]) => void;
     error: (...a: unknown[]) => void;
   };
 }
+
+/**
+ * Sentinel artifact id returned when the enqueue is flag-disabled. Lives here
+ * (the lower-level module) so the producer and the job wiring cannot drift.
+ */
+export const CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_ID = 'connector_artifact_enqueue_disabled';
 
 /**
  * Process one Drive file-changed job: resolve token → fetch bytes → hand to the
@@ -149,6 +162,26 @@ export async function processDriveFileChangedJob(
   deps: DriveArtifactProducerDeps,
 ): Promise<DriveArtifactSinkResult> {
   const parsed = parseDriveFileChangedJobPayload(payload);
+
+  // Flag check BEFORE any token resolve or byte fetch. The sink also checks it
+  // (it owns the write), but checking only there meant a disabled connector
+  // still: decrypted a KMS-wrapped token, called the Drive API, and buffered the
+  // whole document into a 2 GiB container — every 5 minutes, for every changed
+  // file — purely to throw the bytes away. Short-circuiting here spends nothing.
+  //
+  // KNOWN LIMITATION (unchanged by this fix, flagged for a product decision):
+  // the job is still marked complete and the drive_revision_ledger row still
+  // stands, so a change skipped while the flag is off is NOT replayed when the
+  // flag is turned on — there is no backlog to drain. If the intent is
+  // "accumulate while disabled, drain on enable", the job must be left pending
+  // (or re-scheduled) rather than completed.
+  if (deps.isEnqueueEnabled?.() === false) {
+    deps.logger?.info?.(
+      { integrationId: parsed.integration_id },
+      'Drive file-changed skipped before fetch — ENABLE_CONNECTOR_ARTIFACT_ENQUEUE disabled',
+    );
+    return { artifactId: CONNECTOR_ARTIFACT_ENQUEUE_DISABLED_ID };
+  }
 
   const { accessToken } = await deps.resolveAccessToken({
     orgId: parsed.org_id,

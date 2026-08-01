@@ -281,7 +281,17 @@ export async function processDriveChanges(args: {
             org_id: args.integration.org_id,
             integration_id: args.integration.id,
             file_id: fileId,
-            revision_id: change.file?.headRevisionId ?? null,
+            // MUST be the RESOLVED revisionId, not the raw headRevisionId.
+            // Google Workspace-native files (Docs/Sheets/Slides) have no
+            // headRevisionId at all — that is why resolveRevisionId() falls back
+            // to `mtime:<modifiedTime>`. Passing the raw field here sent null for
+            // every Doc, and `connector_artifact`'s unique index keys on
+            // COALESCE(external_revision,'') (migration 0343), so every revision
+            // after the first collided with the same '' key, hit ON CONFLICT DO
+            // NOTHING, and was recorded as a `success` integration_event that
+            // anchored nothing. The ledger row (which uses the resolved id)
+            // still advanced, so the failure was completely silent.
+            revision_id: revisionId,
             mime_type: mimeType,
             modified_time: modifiedTime,
             rule_event_id: ruleEventId,

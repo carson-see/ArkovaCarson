@@ -3,12 +3,11 @@
  * documents-secured-via-Drive additions).
  *
  * Unit tests covering all states: loading, disconnected, connected, error,
- * connect action, disconnect action, plus the SCRUM-2903 additions — a
- * "Last synced" line sourced from org_integrations.last_token_advanced_at
- * and a "N documents secured via Drive" count sourced from a HEAD/count-only
- * query against anchors filtered on metadata->>connector_source='google_drive'
- * (the field connector-artifact-drain.ts stamps on every Drive-materialized
- * anchor).
+ * connect action, disconnect action, plus the SCRUM-2903 addition — a
+ * "Last synced" line sourced from org_integrations.last_token_advanced_at.
+ *
+ * A "N documents secured via Drive" counter was also proposed and CUT; see the
+ * removal-pinning test below and the NOTE in DriveConnectorCard.tsx.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -118,9 +117,8 @@ describe('DriveConnectorCard', () => {
     expect(screen.queryByText(/secured via drive/i)).not.toBeInTheDocument();
   });
 
-  it('renders Disconnect + account label + last-synced + documents-secured count when connected', async () => {
+  it('renders Disconnect + account label + last-synced when connected', async () => {
     orgIntegrationsQuery.maybeSingle.mockResolvedValue({ data: CONNECTED_ROW, error: null });
-    anchorsCountQuery.is.mockResolvedValue({ count: 7, error: null });
 
     render(<DriveConnectorCard orgId={ORG_ID} />);
 
@@ -134,29 +132,24 @@ describe('DriveConnectorCard', () => {
     await waitFor(() => {
       expect(screen.getByText(/last synced/i)).toBeInTheDocument();
     });
-
-    // SCRUM-2903: anchors query is scoped by org + the connector_source jsonb
-    // filter that connector-artifact-drain.ts stamps, and excludes deleted rows.
-    expect(fromMock).toHaveBeenCalledWith('anchors');
-    expect(anchorsCountQuery.eq).toHaveBeenCalledWith('org_id', ORG_ID);
-    expect(anchorsCountQuery.eq).toHaveBeenCalledWith('metadata->>connector_source', 'google_drive');
-    expect(anchorsCountQuery.is).toHaveBeenCalledWith('deleted_at', null);
-
-    await waitFor(() => {
-      expect(screen.getByText(/7 documents secured via drive/i)).toBeInTheDocument();
-    });
   });
 
-  it('uses singular "document" copy when the count is exactly 1', async () => {
+  // The documents-secured counter was cut from this card (see the NOTE in
+  // DriveConnectorCard.tsx): it used an exact PostgREST row count over the
+  // ~2.97M-row anchors table with no supporting index, which both raises the
+  // R0-8 exact-count baseline and sequential-scans on every Settings render.
+  // This pins the removal so it is not silently reintroduced without the index
+  // migration + `count-exact-allowed` label.
+  it('does not query anchors at all — no unindexed count on a 2.97M-row table', async () => {
     orgIntegrationsQuery.maybeSingle.mockResolvedValue({ data: CONNECTED_ROW, error: null });
-    anchorsCountQuery.is.mockResolvedValue({ count: 1, error: null });
 
     render(<DriveConnectorCard orgId={ORG_ID} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/1 document secured via drive/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
     });
-    expect(screen.queryByText(/1 documents secured/i)).not.toBeInTheDocument();
+    expect(fromMock).not.toHaveBeenCalledWith('anchors');
+    expect(screen.queryByText(/secured via drive/i)).not.toBeInTheDocument();
   });
 
   it('shows "Not yet synced" when the connection has no last_token_advanced_at (never run a changes pass)', async () => {
@@ -220,15 +213,14 @@ describe('DriveConnectorCard', () => {
     });
   });
 
-  it('disconnect calls the worker endpoint, clears the connection, and clears the documents-secured count', async () => {
+  it('disconnect calls the worker endpoint and clears the connection', async () => {
     orgIntegrationsQuery.maybeSingle.mockResolvedValue({ data: CONNECTED_ROW, error: null });
-    anchorsCountQuery.is.mockResolvedValue({ count: 12, error: null });
     workerFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
 
     render(<DriveConnectorCard orgId={ORG_ID} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/12 documents secured via drive/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
     });
 
     const disconnectButton = screen.getByRole('button', { name: /disconnect/i });

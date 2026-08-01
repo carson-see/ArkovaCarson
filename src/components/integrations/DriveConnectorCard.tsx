@@ -35,11 +35,6 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
   const [statusLoading, setStatusLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // SCRUM-2903 (GD-PROD): count of this org's anchors materialized from the
-  // Drive connector (connector-artifact-drain.ts stamps
-  // anchors.metadata.connector_source='google_drive' on every Drive-sourced
-  // anchor it creates). null while loading / not yet fetched; 0 is a real count.
-  const [documentsSecured, setDocumentsSecured] = useState<number | null>(null);
 
   const refreshConnection = useCallback(async () => {
     setStatusLoading(true);
@@ -65,21 +60,17 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
 
       setConnection(data ?? null);
 
-      // Only worth a second round-trip once we know the org has a live
-      // connection — an unconnected org has zero Drive-sourced anchors by
-      // definition, and this avoids a wasted query on first paint.
-      if (data) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- anchors.metadata is jsonb, filtered via PostgREST's ->> operator
-        const { count, error: countError } = await (supabase as any)
-          .from('anchors')
-          .select('id', { count: 'exact', head: true })
-          .eq('org_id', orgId)
-          .eq('metadata->>connector_source', 'google_drive')
-          .is('deleted_at', null);
-        setDocumentsSecured(countError ? null : (count ?? 0));
-      } else {
-        setDocumentsSecured(null);
-      }
+      // NOTE: a "N documents secured via Drive" counter was deliberately cut
+      // from this card. It used an exact PostgREST row count on `anchors`
+      // filtered by `metadata->>connector_source`, which (a) increases the R0-8 /
+      // SCRUM-1254 exact-count baseline that `scripts/ci/check-count-exact-baseline.ts`
+      // fails the build on, and (b) has no supporting index — on the ~2.97M-row
+      // anchors table that is a sequential scan on every render of the Settings
+      // tab, the exact shape that trips the 60s PostgREST timeout.
+      // Reinstating it needs a `CREATE INDEX CONCURRENTLY` migration on
+      // `(org_id, (metadata->>'connector_source')) WHERE deleted_at IS NULL`
+      // plus the `count-exact-allowed` label — out of scope for the producer
+      // bridge, and not worth blocking it on.
     } catch {
       setError('Unable to load Drive connection status.');
       setConnection(null);
@@ -145,7 +136,6 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
       }
 
       setConnection(null);
-      setDocumentsSecured(null);
       toast.success('Google Drive disconnected.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to disconnect Google Drive.');
@@ -204,9 +194,6 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
               {connected && (
                 <p className="mt-1 text-xs text-muted-foreground">
                   {lastSyncedDate ? `Last synced ${lastSyncedDate}` : 'Not yet synced'}
-                  {documentsSecured !== null && (
-                    <> &middot; {documentsSecured} document{documentsSecured === 1 ? '' : 's'} secured via Drive</>
-                  )}
                 </p>
               )}
             </div>
