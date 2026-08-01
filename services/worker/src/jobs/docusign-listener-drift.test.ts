@@ -57,6 +57,98 @@ describe('detectDrift', () => {
     expect(detectDrift([inSyncListener()], EXPECTED)).toEqual([]);
   });
 
+  // Regression — PROD 2026-08-01T19:55:40Z, integration a900d40f, correlationId
+  // req_4ce0578aa0c1b566af557534. The live production listener is a SIM-mode
+  // listener: it carries the modern `events: ["envelope-completed"]` and no
+  // legacy `envelopeEvents`, and DocuSign's GET /connect response omits
+  // `eventData.format` (JSON is the default for restv2.1). The detector
+  // demanded BOTH event vocabularies and an explicit format, so it reported
+  // drift on a listener that is demonstrably delivering: envelope
+  // 624c1d84-9989-81d3-8218-bcab4aa705ed was HMAC-verified and produced rule
+  // event 7797d755. Firing hourly, that false positive would bury real drift.
+  describe('SIM-mode listeners (prod shape)', () => {
+    function prodSimListener(): ActualConnectListener {
+      return {
+        connectId: '22152148',
+        name: 'Arkova Connect',
+        urlToPublishTo: 'https://arkova-worker.example.com/webhooks/docusign',
+        allowEnvelopePublish: 'true',
+        includeHMAC: 'true',
+        // No `envelopeEvents` — SIM mode uses `events`.
+        events: ['envelope-completed'],
+        // No `format` — DocuSign omits it; restv2.1 defaults to JSON.
+        eventData: { version: 'restv2.1' },
+      };
+    }
+
+    it('reports no drift for the exact live production listener shape', () => {
+      expect(detectDrift([prodSimListener()], EXPECTED)).toEqual([]);
+    });
+
+    it('accepts the legacy vocabulary alone (envelopeEvents, no events)', () => {
+      const legacy: ActualConnectListener = {
+        ...prodSimListener(),
+        envelopeEvents: ['Completed'],
+        events: undefined,
+        eventData: { format: 'json', version: 'restv2.1' },
+      };
+      expect(detectDrift([legacy], EXPECTED)).toEqual([]);
+    });
+
+    it('still flags a listener carrying NEITHER event vocabulary', () => {
+      const none: ActualConnectListener = {
+        ...prodSimListener(),
+        envelopeEvents: [],
+        events: [],
+      };
+      const reasons = detectDrift([none], EXPECTED);
+      expect(reasons).toHaveLength(1);
+      expect(reasons[0]).toMatch(/completed-envelope/i);
+    });
+
+    it('still flags a listener subscribed only to unrelated events', () => {
+      const wrong: ActualConnectListener = {
+        ...prodSimListener(),
+        events: ['envelope-sent', 'recipient-completed'],
+      };
+      expect(detectDrift([wrong], EXPECTED)).not.toEqual([]);
+    });
+
+    it('flags an explicitly WRONG payload format but not an absent one', () => {
+      const xml: ActualConnectListener = {
+        ...prodSimListener(),
+        eventData: { format: 'xml', version: 'restv2.1' },
+      };
+      expect(detectDrift([xml], EXPECTED)).toEqual([
+        'Wrong payload format (eventData.format=xml, expected "json").',
+      ]);
+    });
+
+    it('still flags a wrong payload VERSION — never inferred from a default', () => {
+      const oldVersion: ActualConnectListener = {
+        ...prodSimListener(),
+        eventData: { version: 'restv2' },
+      };
+      expect(detectDrift([oldVersion], EXPECTED)).toEqual([
+        'Wrong payload version (eventData.version=restv2, expected "restv2.1").',
+      ]);
+    });
+
+    it('still flags a missing eventData block entirely', () => {
+      const noEventData: ActualConnectListener = { ...prodSimListener(), eventData: undefined };
+      expect(detectDrift([noEventData], EXPECTED)).toEqual([
+        'Wrong payload version (eventData.version=undefined, expected "restv2.1").',
+      ]);
+    });
+
+    it('still flags a disabled SIM listener and one with HMAC off', () => {
+      expect(detectDrift([{ ...prodSimListener(), allowEnvelopePublish: 'false' }], EXPECTED))
+        .toContain('Connect listener is disabled (allowEnvelopePublish=false, expected "true").');
+      expect(detectDrift([{ ...prodSimListener(), includeHMAC: 'false' }], EXPECTED))
+        .toContain('HMAC signing is not enabled (includeHMAC=false, expected "true").');
+    });
+  });
+
   it('flags a missing listener for the expected Arkova webhook URL', () => {
     const other = { ...inSyncListener(), urlToPublishTo: 'https://other.example.com/hook' };
 

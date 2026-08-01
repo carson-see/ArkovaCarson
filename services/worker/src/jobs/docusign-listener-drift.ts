@@ -92,23 +92,39 @@ export function detectDrift(
     );
   }
 
-  const envelopeEvents = match.envelopeEvents ?? [];
-  for (const required of expected.requiredEnvelopeEvents) {
-    if (!envelopeEvents.includes(required)) {
-      reasons.push(`Missing required envelope event "${required}".`);
-    }
-  }
-
-  const events = match.events ?? [];
-  for (const required of expected.requiredEvents) {
-    if (!events.includes(required)) {
-      reasons.push(`Missing required Connect event "${required}".`);
-    }
-  }
-
-  if (match.eventData?.format !== expected.payloadFormat) {
+  // DocuSign has TWO event vocabularies and a listener uses ONE of them:
+  //   - SIM (deliveryMode "SIM")  -> `events: ["envelope-completed"]`
+  //   - legacy/aggregate          -> `envelopeEvents: ["Completed"]`
+  // Requiring BOTH reported permanent drift on the live production listener,
+  // which is SIM-mode and carries no `envelopeEvents` at all (prod
+  // 2026-08-01T19:55:40Z, integration a900d40f) — while that same listener was
+  // demonstrably delivering completed envelopes. An hourly false positive
+  // buries the real signal, so coverage is satisfied by EITHER vocabulary and
+  // only a listener subscribed to neither is drifted.
+  const coveredBySim = expected.requiredEvents.every(
+    (required) => (match.events ?? []).includes(required),
+  );
+  const coveredByLegacy = expected.requiredEnvelopeEvents.every(
+    (required) => (match.envelopeEvents ?? []).includes(required),
+  );
+  if (!coveredBySim && !coveredByLegacy) {
     reasons.push(
-      `Wrong payload format (eventData.format=${String(match.eventData?.format)}, expected "${expected.payloadFormat}").`,
+      'Listener is not subscribed to completed-envelope notifications '
+      + `(events=${JSON.stringify(match.events ?? [])}, `
+      + `envelopeEvents=${JSON.stringify(match.envelopeEvents ?? [])}; expected `
+      + `${JSON.stringify(expected.requiredEvents)} or `
+      + `${JSON.stringify(expected.requiredEnvelopeEvents)}).`,
+    );
+  }
+
+  // DocuSign omits `eventData.format` when it is the default (JSON for
+  // restv2.1), so an ABSENT format is not drift — only an explicitly different
+  // one is. The VERSION check below is deliberately NOT relaxed the same way:
+  // an absent version really does mean the listener is not pinned to
+  // restv2.1, which changes the payload shape the webhook parser expects.
+  if (match.eventData?.format !== undefined && match.eventData.format !== expected.payloadFormat) {
+    reasons.push(
+      `Wrong payload format (eventData.format=${String(match.eventData.format)}, expected "${expected.payloadFormat}").`,
     );
   }
 
