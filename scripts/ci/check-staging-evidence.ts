@@ -2159,6 +2159,11 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/mint-fresh-event(\.test)?\.sh$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
+  // SCRUM-1304 / SCRUM-1681: the SonarCloud quality-gate + New Code Definition
+  // drift guard. Runs only in the `sonar-quality-gate-config` CI job, reads the
+  // SonarCloud REST API, and never ships to prod runtime → T0 tooling. Same
+  // class as the staging-gcloud-policy / handoff-claims gates around it.
+  /^scripts\/ci\/check-sonar-quality-gate(\.test)?\.ts$/,
   // SCRUM-2897: evidence-identity gate — a pure body/head-SHA identity checker
   // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
   // CI (reads PR body/head/draft from the event context); never ships to prod
@@ -2279,6 +2284,17 @@ const STAGING_TOOLING_ALLOW = [
   /agents\.md$/,
   /^eslint-rules\//,
   /(^|\/)eslint\.config\.(js|cjs|mjs)$/,
+  // SonarCloud analyzer configuration — same class as the eslint config above
+  // (PR #798: "lint config is dev-time tooling with no runtime impact"). These
+  // files are read only by SonarCloud's analyzer; nothing imports them, no
+  // bundle includes them, and no deploy ships them, so a soak has no surface to
+  // exercise. Anchored to the repo root because that is the only location
+  // SonarCloud reads: `.sonarcloud.properties` is the file Automatic Analysis
+  // actually consumes, and `sonar-project.properties` is the CI-scanner
+  // filename (deleted 2026-08-01 as inert — kept here so its removal, and any
+  // future re-add under a CI-based scanner, classify as T0 tooling).
+  /^\.sonarcloud\.properties$/,
+  /^sonar-project\.properties$/,
   /^e2e\//,
 ];
 

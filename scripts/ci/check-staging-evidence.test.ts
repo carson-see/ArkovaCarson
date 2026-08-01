@@ -1427,6 +1427,42 @@ describe('check-staging-evidence', () => {
       ).toBe(false);
     });
 
+    // SonarCloud analyzer config is the same class as the eslint config above:
+    // read only by the static analyzer, never imported, never bundled, never
+    // deployed. A soak cannot exercise it because it has no runtime surface.
+    it('passes for SonarCloud analyzer config', () => {
+      expect(
+        isStagingToolingOnly([
+          '.sonarcloud.properties',
+          'sonar-project.properties',
+        ]).pass,
+      ).toBe(true);
+    });
+
+    it('rejects sonar-config lookalike filenames', () => {
+      expect(isStagingToolingOnly(['src/lib/sonar-project.properties']).pass).toBe(false);
+      expect(isStagingToolingOnly(['services/worker/.sonarcloud.properties']).pass).toBe(false);
+      expect(isStagingToolingOnly(['sonar-project.properties.ts']).pass).toBe(false);
+    });
+
+    // Same class as check-staging-gcloud-policy / check-handoff-claims /
+    // check-ledger-numeric-integrity above: a CI-only gate script that reads a
+    // remote API and never ships to prod runtime.
+    it('passes for the SonarCloud quality-gate CI script', () => {
+      expect(
+        isStagingToolingOnly([
+          'scripts/ci/check-sonar-quality-gate.ts',
+          'scripts/ci/check-sonar-quality-gate.test.ts',
+        ]).pass,
+      ).toBe(true);
+    });
+
+    // The sonar carve-outs must never rescue a PR that also touches runtime.
+    it('does not let sonar config downgrade a worker or migration PR', () => {
+      expect(requiredTierFor(['.sonarcloud.properties', 'services/worker/src/chain/client.ts']).tier).toBe('T3');
+      expect(requiredTierFor(['.sonarcloud.properties', 'supabase/migrations/0999_x.sql']).tier).toBe('T3');
+    });
+
     it('passes for nested package lockfiles (Dependabot sub-package bumps)', () => {
       expect(
         isStagingToolingOnly([

@@ -106,6 +106,18 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
   simply not submitted, so all main issue counts and `alert_status` are a stale
   snapshot), and **the SonarCloud project is `public` while the GitHub repo is
   private**, leaving project source anonymously readable.
+  Same PR adds three entries to `STAGING_TOOLING_ALLOW` (T0 tooling): root-
+  anchored `.sonarcloud.properties` + `sonar-project.properties`, and
+  `check-sonar-quality-gate(.test).ts`. The properties files are the exact class
+  as the existing `eslint-rules/` + `eslint.config.*` entries (PR #798, "lint
+  config is dev-time tooling with no runtime impact") — read only by the static
+  analyzer, never imported, bundled, or deployed, so a soak has no surface to
+  exercise; the gate script is the same class as the
+  `check-staging-gcloud-policy` / `check-handoff-claims` entries beside it.
+  Regexes are root-anchored so `src/lib/sonar-project.properties`,
+  `services/worker/.sonarcloud.properties`, and `sonar-project.properties.ts`
+  still fail, and a pinned test asserts the carve-out cannot downgrade a PR
+  that also touches worker or migration surfaces (both still classify T3).
 - 2026-07-28 SCRUM-3026 (Wave G gate fix, RTE lane): fixed the Staging Soak
   Evidence Gate's stale-checkout bug. `github.sha` and
   `github.event.pull_request.*` are frozen at the triggering webhook
