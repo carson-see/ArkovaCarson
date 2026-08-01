@@ -1,5 +1,10 @@
 # NPH: Nessie Production Hardening — Story Group
 
+> **2026-07-30 status:** Historical backlog snapshot. The active Nessie role is
+> conversational compliance intelligence; Gemini Golden owns extraction.
+> Current state:
+> [Nessie CAIO Audit Handoff](../plans/nessie-caio-audit-handoff-2026-07-30.md).
+
 > Epic: SCRUM-697 | Release: R-NPH-01
 > Priority: HIGHEST | Status: 12/19 complete (3 in progress, 1 blocked, 3 to do)
 

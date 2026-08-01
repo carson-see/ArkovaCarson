@@ -1,5 +1,10 @@
 # NSS: Nessie State Specialization (v29-v40) -- Story Group
 
+> **2026-07-30 status:** Historical specialization plan. Micro-model and
+> jurisdiction-router ideas remain architecture options, not the current
+> implementation or training authorization. Current state:
+> [Nessie CAIO Audit Handoff](../plans/nessie-caio-audit-handoff-2026-07-30.md).
+
 > Epic: SCRUM-771 | Release: R-NSS-01
 > Priority: HIGH | Status: 0/7 complete
 > Depends on: NTF (v6-v16 training foundation), NDD (v17-v28 domain depth), NPH (pipeline data)

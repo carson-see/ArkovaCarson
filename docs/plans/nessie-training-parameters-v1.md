@@ -1,5 +1,12 @@
 # Nessie Training Parameters v1 — 2026-04-15
 
+> **2026-07-30 status:** Superseded and not an active model contract. The claim
+> below that Nessie is a structured-extraction model describes the deferred
+> extraction lane/Gemini Golden role, not Nessie Intelligence. Nessie is the
+> conversational compliance-intelligence system. Do not use this file to start
+> training or choose a base model. See
+> [nessie-caio-audit-handoff-2026-07-30.md](nessie-caio-audit-handoff-2026-07-30.md).
+
 > **Status:** authoritative parameters for all Nessie training going forward.
 > **Supersedes:** the v6–v26 generalist sprawl. No training run starts unless it conforms to this doc.
 > **Companion:** `gemini-training-parameters-v1.md` (separate model, separate purpose, no overlap).

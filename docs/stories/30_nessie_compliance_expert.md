@@ -1,5 +1,10 @@
 # NCX: Nessie Compliance Expert — Story Group
 
+> **2026-07-30 status:** Historical backlog snapshot. Jira remains the status
+> source of truth; this file does not authorize ingestion, training, citations,
+> or legal activation. Current state:
+> [Nessie CAIO Audit Handoff](../plans/nessie-caio-audit-handoff-2026-07-30.md).
+
 > Epic: SCRUM-732 | Release: R-NCX-01
 > Priority: HIGHEST | Status: 0/7 complete
 

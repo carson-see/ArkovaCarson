@@ -1,5 +1,9 @@
 # Story Group 21: Nessie Model Training & Evaluation Pipeline
 
+> **2026-07-30 status:** Historical story snapshot. Do not use its extraction
+> scores or model labels as the current Nessie Intelligence contract. Current
+> state: [Nessie CAIO Audit Handoff](../plans/nessie-caio-audit-handoff-2026-07-30.md).
+
 > **Created:** 2026-03-30 | **Epic:** AI Model Training | **Priority:** HIGH
 > **Jira Epic:** SCRUM-312 | **Stories:** SCRUM-334–339, SCRUM-672–679
 > **Depends on:** AI-EVAL-01, AI-EVAL-02, P8 AI Intelligence (all complete)

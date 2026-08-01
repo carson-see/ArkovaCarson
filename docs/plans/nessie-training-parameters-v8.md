@@ -1,5 +1,10 @@
 # Nessie v8 Retrain — Training Parameters (SKELETON, NVI-gated)
 
+> **2026-07-30 status:** Historical skeleton. It does not authorize training,
+> provider spend, deployment, or legal activation. See the current CAIO
+> handoff:
+> [nessie-caio-audit-handoff-2026-07-30.md](nessie-caio-audit-handoff-2026-07-30.md).
+
 **Confluence mirror:** [Top-10 Sprint Batch 3 — 2026-04-17 §10](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) — "Nessie v8 Training Parameters Skeleton — NPH-14 (SCRUM-711)"
 **Jira:** [SCRUM-711 / NPH-14](https://arkova.atlassian.net/browse/SCRUM-711)
 **Last updated:** 2026-04-17

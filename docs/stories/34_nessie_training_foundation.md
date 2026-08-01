@@ -1,5 +1,9 @@
 # NTF: Nessie Training Foundation (v6-v16) -- Story Group
 
+> **2026-07-30 status:** Historical version plan, not a current training
+> sequence or provider-spend authorization. Current verified state:
+> [Nessie CAIO Audit Handoff](../plans/nessie-caio-audit-handoff-2026-07-30.md).
+
 > Epic: SCRUM-769 | Release: R-NTF-01
 > Priority: HIGHEST | Status: 2/7 complete (1 training, 4 queued)
 > Depends on: NMT (14/14 complete), NPH (golden dataset expansion), GRE (reasoning engine)

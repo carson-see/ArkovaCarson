@@ -1,5 +1,11 @@
 # Nessie FCRA Single-Domain Mastery Gate (NVI-14 / SCRUM-818)
 
+> **2026-07-30 status:** Superseded as the controlling first-wedge gate. The
+> current first wedge is Legal Record Proof-Packet Readiness in the United
+> States and Kenya. This FCRA gate remains historical input, not authorization
+> to pause Kenya work or start a model run. See
+> [nessie-caio-audit-handoff-2026-07-30.md](nessie-caio-audit-handoff-2026-07-30.md).
+
 _Last updated: 2026-04-17_
 
 ## Why this gate exists

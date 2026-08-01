@@ -1,5 +1,9 @@
 # Story Group 27: Nessie Compliance Engine — From Intelligence Model to "Compliance Copilot"
 
+> **2026-07-30 status:** Historical implementation snapshot, not proof of
+> current model readiness or legal activation. Current verified state:
+> [Nessie CAIO Audit Handoff](../plans/nessie-caio-audit-handoff-2026-07-30.md).
+
 > **Created:** 2026-04-09 | **Updated:** 2026-04-12 — **ALL 20 STORIES COMPLETE**
 > **Epic:** Nessie Compliance Engine (NCE) — **DONE**
 > **Jira Epic:** SCRUM-590 | **Stories:** SCRUM-591–611 | **Priority:** P0 — Strategic

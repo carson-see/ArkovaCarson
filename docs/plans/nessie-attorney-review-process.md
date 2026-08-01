@@ -1,5 +1,10 @@
 # Nessie Attorney-Review Process (NVI-05 / SCRUM-809)
 
+> **2026-07-30 status:** Historical review design, not current activation
+> authority. Use the current CAIO handoff for the active Legal Record
+> Proof-Packet Readiness wedge and Kenya qualified-review boundary:
+> [nessie-caio-audit-handoff-2026-07-30.md](nessie-caio-audit-handoff-2026-07-30.md).
+
 _Last updated: 2026-04-17_
 
 ## Purpose

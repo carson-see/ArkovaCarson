@@ -1,5 +1,10 @@
 # NDD: Nessie Domain Depth (v17-v28) -- Story Group
 
+> **2026-07-30 status:** Historical jurisdiction-expansion plan. The active
+> first wedge is Legal Record Proof-Packet Readiness in the United States and
+> Kenya, and expansion is evaluation-gated. Current state:
+> [Nessie CAIO Audit Handoff](../plans/nessie-caio-audit-handoff-2026-07-30.md).
+
 > Epic: SCRUM-770 | Release: R-NDD-01
 > Priority: HIGH | Status: 0/12 complete
 > Depends on: NTF (v6-v16 training foundation), NCX (compliance data), KAU (Kenya/AU data)

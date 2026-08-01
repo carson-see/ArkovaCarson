@@ -1,5 +1,11 @@
 # Nessie Intelligence Training Plan
 
+> **2026-07-30 status:** Historical architecture input. The role split remains
+> correct - Gemini Golden performs extraction and Nessie provides
+> conversational compliance intelligence - but this document is not the
+> current training authorization or provider gate. See
+> [nessie-caio-audit-handoff-2026-07-30.md](nessie-caio-audit-handoff-2026-07-30.md).
+
 > **Date:** 2026-04-03 | **Author:** Session 24
 > **Status:** Active | **Priority:** P0
 > **Strategy docs:** Arkova-Verified-Intelligence-SLM-Analysis, Arkova Strategic Blueprint, Nessie-Training-Best-Practices

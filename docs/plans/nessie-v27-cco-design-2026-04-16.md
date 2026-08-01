@@ -1,5 +1,10 @@
 # Nessie v27 — Chief Compliance Officer Design
 
+> **2026-07-30 status:** Historical design input. The current first wedge is
+> Legal Record Proof-Packet Readiness for the United States and Kenya, and no
+> training/deployment is authorized by this file. See
+> [nessie-caio-audit-handoff-2026-07-30.md](nessie-caio-audit-handoff-2026-07-30.md).
+
 > **Status:** Authoritative design. Supersedes the v6–v26 generalist sprawl.
 > **Date:** 2026-04-16
 > **Goal:** Build the world's best AI Chief Compliance Officer and auditor. Domain-by-domain mastery, never breadth-without-depth.

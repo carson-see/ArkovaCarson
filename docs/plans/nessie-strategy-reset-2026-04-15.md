@@ -1,5 +1,10 @@
 # Nessie Strategy Reset — 2026-04-15
 
+> **2026-07-30 status:** Historical reset and failure analysis. Current
+> technical gates, source recovery, preflight hashes, and safe restart point
+> are in
+> [nessie-caio-audit-handoff-2026-07-30.md](nessie-caio-audit-handoff-2026-07-30.md).
+
 > **Status:** Diagnosis + plan. No code training resumes until infrastructure passes the smoke test in §6.
 > **Author:** generated during the v26 deploy attempt that surfaced the cascade of latent failures below.
 > **Supersedes:** the implicit "train more, eval later" loop that produced v6–v26.

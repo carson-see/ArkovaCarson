@@ -1,5 +1,10 @@
 # Nessie Distillation Methodology (NVI-07 / SCRUM-811)
 
+> **2026-07-30 status:** Historical methodology. It does not authorize a
+> training or distillation run. The current first wedge, validator state, and
+> provider gate are recorded in
+> [nessie-caio-audit-handoff-2026-07-30.md](nessie-caio-audit-handoff-2026-07-30.md).
+
 _Last updated: 2026-04-17_
 
 ## Purpose

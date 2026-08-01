@@ -10,6 +10,57 @@
 > - **CLAUDE.md** = operating directive / rules
 > - **git log** = what changed, by whom, when
 
+### 2026-07-30 (CAIO) - Nessie v3.6.2 technical gate passed; paid KE-027 call held at authorization/trace-evidence boundary
+
+**Scope correction:** Nessie is the conversational compliance-intelligence
+system. Gemini Golden is the extraction system. The first active Nessie wedge
+is **Legal Record Proof-Packet Readiness** for the United States and Kenya, not
+credential extraction and not general jurisdiction sprawl.
+
+**Completed locally, isolated from Arkova systems:** v3.6.1 was rejected for
+semantic-closure and malformed-type failures. The v3.6.2 validator then passed
+30/30 tests in normal and optimized modes, the 300-vector malformed matrix,
+5,000 deterministic invalid mutations, and 1,134 cross-case substitutions
+(`SHA256SUMS` `54638916...`). The exact current Kenya regulations PDF was
+recovered (`8bbf3cf6...`), all 18 required locators were recovered, and the
+corrected current-source span package passed 8/8 tests plus 22/22 mutation
+rejections (`SHA256SUMS` `3dff193c...`). These are technical GO results only;
+Kenyan legal/privacy activation remains NO-GO pending qualified review.
+
+**KE-027 preflight:** frozen package ledger `6f46a2dc...`; exact SDK body
+`673ac786...`; 23/23 tests normal + 23/23 under `python -O`; 31/31 checksums;
+14,534 Qwen prompt tokens against a 65,536 cap; exact witness 1,766 tokens
+against a 4,096 cap; maximum estimated cost $0.01216512 under the $0.02
+ceiling. Authority, citations, automatic admission, customer data, production,
+and holdout access remain disabled.
+
+**Final disposition: NO-GO for the paid call.** No provider call was made and
+the one-attempt lock remains absent. The strict independent review found that
+the external GO receipt binds the validator ledger but not the final preflight
+ledger, and that Arize initialization/flush failures are not yet guaranteed to
+produce a fail-closed execution receipt. Another reviewer issued a limited GO
+but explicitly acknowledged the Arize initialization limitation. The stricter
+gate controls.
+
+**Exact continuation:** copy the frozen package to a new version; bind both the
+validator and corrected preflight ledgers in the final admission receipt; move
+Arize initialization before attempt reservation; make initialization,
+provider transport, validation, force-flush, and shutdown one receipt-producing
+evidence path; force overall FAIL on trace-export failure; reseal and
+independently review; then permit exactly one English KE-027
+`Qwen/Qwen3.5-9B` request with zero retries.
+
+Full hashes, evidence paths, Drive upload queue, Arize identifiers, and restart
+instructions:
+[docs/plans/nessie-caio-audit-handoff-2026-07-30.md](docs/plans/nessie-caio-audit-handoff-2026-07-30.md).
+Terminal Supermemory checkpoint: `qEQaFYkHWFt8UxyGbKYifH`. The
+`nessie-30-minute-evidence-checkpoint` heartbeat still showed ACTIVE because
+the app automation interface had no registered pause handler; any later
+heartbeat is documentation-only and must not resume paid work before the two
+NO-GO defects are repaired and rebound.
+
+_Last refreshed: 2026-07-30 by CAIO - claims verified against local checksum ledgers, normal/optimized test output, independent reviewer reports, official Together model documentation, and the verified Arize readiness trace. No paid provider, product, production, customer, rig, or holdout action was performed._
+
 
 ### 2026-07-28 (CTO/RTE) — Final pre-launch sprint COMPLETE: ~40 PRs merged, 5 migrations applied to prod, live cross-tenant + anon-RPC vulnerabilities CLOSED, deploy paused, rig provisioning for the 72h signet soak
 
