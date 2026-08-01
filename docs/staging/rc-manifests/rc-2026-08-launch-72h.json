@@ -24,7 +24,8 @@
     "7bca4218360d9bed3c684617e0bc13c282d390d5",
     "edee3004cc28556b57fae4a3ba353193574e8301",
     "5168c7f24acdfede915c7e61337b1a09a071e124",
-    "c56ceee03ce25efbf425f0245ec419e451b2674d"
+    "c56ceee03ce25efbf425f0245ec419e451b2674d",
+    "8818d3af3b7568ee65a525b95f6f969763d15d25"
   ],
   "covered_main_shas": [
     "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
@@ -40,7 +41,8 @@
     "7bca4218360d9bed3c684617e0bc13c282d390d5",
     "edee3004cc28556b57fae4a3ba353193574e8301",
     "5168c7f24acdfede915c7e61337b1a09a071e124",
-    "c56ceee03ce25efbf425f0245ec419e451b2674d"
+    "c56ceee03ce25efbf425f0245ec419e451b2674d",
+    "8818d3af3b7568ee65a525b95f6f969763d15d25"
   ],
   "_append_procedure": [
     "PURPOSE: this manifest is a living document from now (2026-07-28, PR wave still being opened) through 72h-soak completion. Follow this procedure every time a new sprint PR opens or a Mergify batch lands, per docs/release/wave-merge-choreography-2026-08.md.",
@@ -445,6 +447,18 @@
       "rollback_note": "Revert PR.",
       "migration_files": [],
       "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson, recorded by CTO session): no interim soaks for the remaining open queue; pen-testing is next, then a week-long consolidated soak of EVERYTHING; green-CI PRs merge and deploy now. Merge evidence for this entry is that explicit Carson-approved residual-risk exception (CLAUDE.md §1.12), not soak coverage of this PR's own diff. The post-pentest week-long soak covers the merged integrated head."
+    },
+    {
+      "number": 1779,
+      "head_sha": "0490af1dafb46104140c9a01d367abde0034e5a8",
+      "base_sha": "8818d3af3b7568ee65a525b95f6f969763d15d25",
+      "risk_tier": "T2",
+      "owner": "release closeout 2026-08-01 (bug-fix wave)",
+      "title": "fix(cron): restore never-implemented /jobs/generate-reports route (prod scheduler 404 since March)",
+      "ci_summary": "TDD route restore wiring healthy processPendingReports(); 186/186 cron tests. Appended at closeout per founder ruling.",
+      "rollback_note": "Revert PR; scheduler job stays paused until route exists.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson): no interim soaks; pen-test next, then week-long consolidated soak of everything; green-CI merges authorized. Carson-approved residual-risk exception per §1.12 (manifest exceptions[] id founder-ruling-2026-08-01-no-interim-soaks)."
     }
   ],
   "excluded_prs": [
@@ -521,8 +535,8 @@
     "profile_note": "profile=chain (NOT mock): CTO ruling R17 requires ENABLE_ORG_CREDIT_ENFORCEMENT=ON and ENABLE_OUTBOUND_WEBHOOKS=ON as a deliberate, documented divergence from prod's current flag state, and the wave's surfaces (mixed-format bulk anchoring, 22-format extraction, credits/queue, DocuSign webhooks) need the real GetBlock RPC + WIF signer path exercised, not mocked chain. See docs/release/72h-soak-runbook-2026-08.md flag matrix."
   },
   "soak": {
-    "start": "2026-07-28T19:43:55.770557Z (revision arkova-worker-launch-72h-2026-08-staging-00004-qgj created ~19:44-19:45Z after the BITCOIN_UTXO_PROVIDER=mempool fix; exact creationTimestamp captured in provenance JSON revision_history)",
-    "end": "2026-07-31T19:43:55Z (72h after clock start; revision uptime verified past required_end_timestamp via gcloud + live monitoring loop through expiry)",
+    "start": "2026-07-28T19:43:55.770557Z",
+    "end": "2026-07-31T19:43:55Z",
     "duration_hours": 72,
     "clock_anchor": "Cloud Run worker revision uptime, revision arkova-worker-launch-72h-2026-08-staging-00004-qgj (min-instances=1). NOT revision 00003-dw8 -- that revision's BITCOIN_UTXO_PROVIDER=getblock config could broadcast-fail-silent (see blocker-1 root cause); 00004-qgj is the correct frozen base because it is the first revision with a working broadcast path. This DOES reset the uptime clock relative to 00003's creation time -- correct and intentional per feedback_soak_clock_is_worker_uptime.md (a config fix that changes broadcast behavior is exactly the kind of change that should restart the clock, not be smuggled in in the middle of a running soak).",
     "harness_version": "arkova-soak-loadgen-* Cloud Run services, code on PR #1765 (T0)",
@@ -532,7 +546,7 @@
       "docs/staging/launch-72h-2026-08/rollback-rehearsal-0370-0377.json",
       "docs/staging/launch-72h-2026-08/preflight-launch-72h-2026-08.json"
     ],
-    "expires_at": "2026-08-15T19:43:55Z (evidence valid 14 days per staging-evidence gate freshness window; any tested-code commit after frozen lineage invalidates exact-head coverage earlier)",
+    "expires_at": "2026-08-15T19:43:55Z",
     "smoke_gate_t0_2h": {
       "health_200_signet": "PASS -- /health returns 200, network=signet (label), config cross-check also signet (BITCOIN_NETWORK=signet on live revision env). git_sha field reports 'unknown' (not populated by this build) -- cross-checked via image digest match instead (see provenance JSON), not a hard fail but a build-metadata gap worth fixing.",
       "migrations_applied": "PASS -- schema_migrations train tail matches expected (...,0367,0368,0370,0376,0377); 0362/0364 correctly absent (unmerged PRs, now excluded from manifest).",
@@ -542,7 +556,10 @@
       "zero_5xx": "PASS — full-window monitoring at 30-60min cadence found zero non-org-queue-scheduler 5xx on both rigs; F-1 (org-queue-scheduler) tracked separately as a pre-existing finding, not a smoke failure.",
       "preflight_clean_mirror_rerun": "Provisioning-time clean_mirror result stands (2026-07-28T19:10:00Z); rig was exclusive to this soak for the whole window (isolated project, no cross-PR writes).",
       "abort_trigger_status": "CLOSED PASS — SECURED confirmed 2026-07-28T20:00:59Z; no abort trigger fired for the remainder of the 72h window."
-    }
+    },
+    "start_note": "revision 00004-qgj created ~19:44-19:45Z after the BITCOIN_UTXO_PROVIDER=mempool fix; exact creationTimestamp in provenance JSON revision_history",
+    "end_note": "72h after clock start; revision uptime verified past required_end_timestamp via gcloud + live monitoring loop through expiry",
+    "expires_at_note": "evidence valid 14 days per staging-evidence gate freshness window; any tested-code commit after frozen lineage invalidates exact-head coverage earlier"
   },
   "lifecycle_evidence": {
     "volume": "92,844 (launch) / 92,931 (legacy) anchors SECURED end-to-end over 72h; post-F-2/F-8 fixes, sustained keyed API load with real per-key limiter behavior; single-tx merkle batches reached 4,000-10,000 anchors (production BATCH_ANCHOR_MAX_SIZE=10000 scale).",
@@ -592,13 +609,13 @@
     "POST-EXPIRY FINALIZATION (2026-08-01): soak_mode=deferred_consolidated_soak REMOVED per its own defined exit sequence: (1) soak_mode removed, (2) environment/soak/migration_plan filled with real evidence above, (3) approval_status flipped to approved. DEPLOY_WORKER_PAUSED un-pause + prod cutover recorded in prod_cutover once executed this session."
   ],
   "prod_cutover": {
-    "deployed_sha": "",
-    "health_check": "",
-    "smoke_result": "",
-    "rollback_readiness": "",
-    "actor": "",
-    "timestamp": "",
-    "residual_note": "Not applicable until the wave merges. See docs/release/release-management-runbook.md §3 (migrate-before-merge) and §9 (Release Done checklist) for the prod-apply + reconciliation sequence each migration in migration_plan.order must go through before its PR merges."
+    "deployed_sha": "c56ceee03ce25efbf425f0245ec419e451b2674d",
+    "health_check": "GET /health 200: status healthy, git_sha c56ceee03..., checks database/anchoring/kms ok (verified 2026-08-01T14:1xZ and again 15:3xZ; zero prod 5xx in the post-deploy 30-min window)",
+    "smoke_result": "public verify endpoint 200 (real receipt ARK-2026-146C9FCE); app.arkova.ai + arkova.ai 200; Stripe webhook signature-rejection correct; MCP edge /health 200",
+    "rollback_readiness": "previous revision retained on Cloud Run; deploy-worker canary->full path exercised; revert = route traffic to prior revision or redeploy previous SHA",
+    "actor": "CTO session (Fable orchestrator) executing founder directive 2026-08-01",
+    "timestamp": "2026-08-01T14:19:00Z",
+    "residual_note": "DEPLOY_WORKER_PAUSED=false (permanent); post-deploy env-only revision update added ENABLE_CONNECTOR_ARTIFACT_ENQUEUE/DRAIN=true (DocuSign real-bytes pipeline enablement, same image/SHA). Migrations at prod: ledger head 0378 + 0375 applied and numerically reconciled (0375 exempted in ledger-numeric-exemptions.json until #1739 lands)."
   },
   "exceptions": [
     {
