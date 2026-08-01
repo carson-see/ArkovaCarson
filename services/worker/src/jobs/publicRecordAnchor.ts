@@ -208,7 +208,17 @@ function uniqueById<T extends { id: string }>(rows: T[]): T[] {
   return Array.from(new Map(rows.map((row) => [row.id, row])).values());
 }
 
-async function fetchAnchorRows(
+/**
+ * Every id-filter call site in this module (this function,
+ * `claimPendingPipelineAnchors`, `revertClaimedAnchors`) chunks by
+ * `POSTGREST_IN_FILTER_CHUNK`, never by `POSTGREST_ROW_LIMIT` — see that
+ * constant's docstring for the 70-hour outage the conflation caused. All three
+ * are exported so the width invariant can be asserted at the CALL SITE
+ * (`__tests__/publicRecordAnchor-in-filter-width.test.ts`) rather than only on
+ * the constants: the class recurred precisely because a constant-level test
+ * passed while one call site still used the wrong one.
+ */
+export async function fetchAnchorRows(
   client: SupabaseClient,
   anchorIds: string[],
 ): Promise<PipelineAnchorRow[]> {
@@ -252,7 +262,7 @@ async function fetchAnchorRows(
   return rows;
 }
 
-async function claimPendingPipelineAnchors(
+export async function claimPendingPipelineAnchors(
   client: SupabaseClient,
   anchors: PipelineAnchorRow[],
 ): Promise<PipelineAnchorRow[]> {
@@ -280,12 +290,44 @@ async function claimPendingPipelineAnchors(
   return claimed;
 }
 
-async function revertClaimedAnchors(
+export interface RevertClaimedAnchorsResult {
+  attemptedChunks: number;
+  failedChunks: number;
+  /** Anchors whose revert chunk failed — still BROADCASTING after this call. */
+  strandedAnchorIds: number;
+}
+
+/**
+ * Releases claimed pipeline anchors from BROADCASTING back to PENDING after a
+ * failed chain submission.
+ *
+ * This ran with a `POSTGREST_ROW_LIMIT`-wide id filter until SCRUM-3031's
+ * follow-up: PR #1795 corrected the same defect in `fetchAnchorRows` and
+ * `claimPendingPipelineAnchors` but not here, so this path emitted 1,000-uuid
+ * `in.(...)` filters, took 400 Bad Request on every chunk, and released
+ * nothing. A failed submission therefore stranded up to a full 10,000-anchor
+ * batch in BROADCASTING while the job logged only the original chain error.
+ *
+ * Silence on the revert is the dangerous part, not the stranding itself: the
+ * `recover-broadcasts` cron eventually resets BROADCASTING rows with a NULL
+ * `chain_tx_id` back to PENDING, so the batch does recover — but with no
+ * signal, a permanently-broken revert is indistinguishable from a healthy one.
+ * A total failure is therefore escalated to error level naming the stranded
+ * count and the recovering job. It deliberately does NOT throw: this runs
+ * inside the chain-submission failure path, and throwing here would replace
+ * the caller's real chain error with a secondary one.
+ */
+export async function revertClaimedAnchors(
   client: SupabaseClient,
   anchorIds: string[],
-): Promise<void> {
-  for (let i = 0; i < anchorIds.length; i += POSTGREST_ROW_LIMIT) {
-    const chunk = anchorIds.slice(i, i + POSTGREST_ROW_LIMIT);
+): Promise<RevertClaimedAnchorsResult> {
+  let attemptedChunks = 0;
+  let failedChunks = 0;
+  let strandedAnchorIds = 0;
+
+  for (let i = 0; i < anchorIds.length; i += POSTGREST_IN_FILTER_CHUNK) {
+    const chunk = anchorIds.slice(i, i + POSTGREST_IN_FILTER_CHUNK);
+    attemptedChunks += 1;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (client as any)
       .from('anchors')
@@ -294,9 +336,20 @@ async function revertClaimedAnchors(
       .eq('status', 'BROADCASTING');
 
     if (error) {
+      failedChunks += 1;
+      strandedAnchorIds += chunk.length;
       logger.error({ error, chunkStart: i, chunkSize: chunk.length }, 'Failed to revert claimed pipeline anchors');
     }
   }
+
+  if (failedChunks > 0) {
+    logger.error(
+      { attemptedChunks, failedChunks, strandedAnchorIds },
+      'Pipeline anchor revert incomplete — anchors left BROADCASTING; recover-broadcasts will reset those with a NULL chain_tx_id',
+    );
+  }
+
+  return { attemptedChunks, failedChunks, strandedAnchorIds };
 }
 
 async function linkExistingPublicRecordAnchors(
@@ -823,7 +876,13 @@ async function processPublicRecordAnchoringInner(
     });
   } catch (error) {
     logger.error({ error, merkleRoot: tree.root }, 'Public record batch chain submission failed');
-    await revertClaimedAnchors(client, uniqueClaimedAnchors.map((a) => a.id));
+    const revert = await revertClaimedAnchors(client, uniqueClaimedAnchors.map((a) => a.id));
+    if (revert.strandedAnchorIds > 0) {
+      logger.error(
+        { merkleRoot: tree.root, claimed: uniqueClaimedAnchors.length, ...revert },
+        'Public record batch failed AND its claim could not be fully released',
+      );
+    }
     return {
       processed: alreadyAnchored,
       anchorsCreated: createdAnchors.length,
