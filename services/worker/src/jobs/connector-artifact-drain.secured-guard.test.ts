@@ -122,9 +122,11 @@ function makeCapturingClient(opts: { actorUserId?: string | null } = {}) {
       }
       // anchors — SCRUM-2904 envelope-level guard reads (`.select()...maybeSingle`)
       // before inserting; return no existing envelope anchor so materialize
-      // proceeds to the insert this test asserts on.
+      // proceeds to the insert this test asserts on. The guard issues one
+      // `.eq()/.not()` query per metadata key (0379 partial indexes) rather than
+      // a single `.or()`, so `not` is part of the chain.
       const selectChain: Record<string, unknown> = {};
-      for (const m of ['select', 'eq', 'is', 'neq', 'or', 'order', 'limit']) {
+      for (const m of ['select', 'eq', 'not', 'is', 'neq', 'order', 'limit']) {
         selectChain[m] = () => selectChain;
       }
       selectChain.maybeSingle = async () => ({ data: null, error: null });

@@ -146,8 +146,10 @@ vi.mock('../utils/db.js', () => {
       eq: () => selectChain,
       is: () => selectChain,
       neq: () => selectChain,
-      // SCRUM-2904 envelope-level guard queries add .or()/.order()/.limit().
-      or: () => selectChain,
+      // SCRUM-2904 envelope-level guard queries add .not()/.order()/.limit().
+      // One query per metadata key (each on its own 0379 partial index) rather
+      // than a single `.or()` — the unindexed OR timed out in prod 2026-08-01.
+      not: () => selectChain,
       order: () => selectChain,
       limit: () => selectChain,
       maybeSingle: async () => ({ data: dbState.existingAnchors[0] ?? null, error: null }),

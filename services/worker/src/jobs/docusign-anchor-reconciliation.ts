@@ -167,29 +167,82 @@ export async function findExistingEnvelopeAnchor(args: {
   const envelopeId = typeof args.envelopeId === 'string' ? args.envelopeId.trim() : '';
   if (envelopeId.length === 0) return null;
 
-  // Defensive: the envelope id is interpolated into a PostgREST `.or()` filter,
-  // whose grammar is comma/parenthesis-delimited. A value containing `,` `(` `)`
-  // would corrupt the filter (split it into bogus conditions) or worse. DocuSign
-  // envelope ids are GUIDs and legitimate external_refs are token-shaped, so
-  // restrict to a safe charset and BAIL (return null) on anything else — the
-  // caller then falls back to the `(user_id, fingerprint)` unique index alone.
-  // Fail-safe, not fail-open: a skipped guard never creates a duplicate, it just
-  // forgoes the extra cross-hash protection for an unusual id.
+  // Bounded-charset guard. This originally protected a raw PostgREST `.or()`
+  // filter string (comma/parenthesis-delimited grammar); the per-key `.eq()`
+  // queries below pass the value as a bound parameter, so it is now
+  // defense-in-depth. Kept because bailing is fail-SAFE — a skipped guard never
+  // creates a duplicate, it just forgoes the extra cross-hash protection — and
+  // an id outside this charset is not a real DocuSign envelope id.
   if (!/^[A-Za-z0-9_.:-]+$/.test(envelopeId)) return null;
 
-  // Build an OR across every metadata key the two paths may have used. Values
-  // are JSON-encoded envelope ids (bounded, non-PII connector identifiers).
-  const orFilter = ENVELOPE_ID_METADATA_KEYS.map(
-    (key) => `metadata->>${key}.eq.${envelopeId}`,
-  ).join(',');
+  // One query PER metadata key, NOT a single `.or()` across all three.
+  //
+  // WHY (2026-08-01 prod incident, Sentry ARKOVA-WORKER-2B). A single
+  // `.or(metadata->>a.eq.X,metadata->>b.eq.X,metadata->>c.eq.X)` has no usable
+  // index: Postgres cannot index-drive an OR of three JSONB text extractions
+  // unless each disjunct has its own index AND the planner picks a BitmapOr. On
+  // the org that also holds the ~2.97M-row public-records anchor corpus it fell
+  // back to scanning the whole table and hit `statement_timeout`, so EVERY real
+  // DocuSign envelope failed to materialize (and the same query had already
+  // DLQ'd an AUTO_ANCHOR rule execution on 2026-07-27 via the other call site).
+  // Split into three single-key equality queries, each of which the planner can
+  // drive off that key's dedicated partial expression index (migration 0379).
+  // Run concurrently — each returns at most one row.
+  const perKey = await Promise.all(
+    ENVELOPE_ID_METADATA_KEYS.map((key) =>
+      findEnvelopeAnchorByMetadataKey(args.db, args.orgId, key, envelopeId),
+    ),
+  );
 
-  const { data, error } = await args.db
+  // Preserve the pre-split ordering semantics (`ORDER BY created_at LIMIT 1`):
+  // the OLDEST live match wins, so a replay always reuses the same anchor.
+  // Tie-break on id so the choice is deterministic when timestamps collide.
+  const oldest = perKey
+    .filter((row): row is EnvelopeAnchorCandidate => row !== null)
+    .reduce((best: EnvelopeAnchorCandidate | null, row) => {
+      if (best === null) return row;
+      if (row.createdAt < best.createdAt) return row;
+      if (row.createdAt === best.createdAt && row.id < best.id) return row;
+      return best;
+    }, null);
+
+  return oldest === null ? null : { id: oldest.id, publicId: oldest.publicId };
+}
+
+/** An existing-anchor match plus the ordering key used to pick the oldest. */
+interface EnvelopeAnchorCandidate extends ExistingEnvelopeAnchor {
+  createdAt: string;
+}
+
+/**
+ * The single-key half of the envelope-level guard: the oldest live anchor in
+ * `orgId` whose `metadata->>key` equals `envelopeId`, or null.
+ *
+ * The redundant `.not(metadata->>key, 'is', null)` restates migration 0379's
+ * PARTIAL index predicate verbatim in the query. It is belt-and-braces, not a
+ * requirement: measured on Postgres 15.8 against a 2.97M-row anchors table,
+ * the planner picks the index either way (it proves `x = c` implies
+ * `x IS NOT NULL` from the equality's strictness). Kept so the query cannot
+ * silently lose the index if that predicate ever gains a term the prover
+ * handles less well. Fail-closed: a query error throws so the caller retries
+ * rather than inserting a duplicate anchor.
+ */
+async function findEnvelopeAnchorByMetadataKey(
+  db: EnvelopeAnchorLookupDb,
+  orgId: string,
+  key: (typeof ENVELOPE_ID_METADATA_KEYS)[number],
+  envelopeId: string,
+): Promise<EnvelopeAnchorCandidate | null> {
+  const column = `metadata->>${key}`;
+
+  const { data, error } = await db
     .from('anchors')
-    .select('id, public_id')
-    .eq('org_id', args.orgId)
+    .select('id, public_id, created_at')
+    .eq('org_id', orgId)
+    .eq(column, envelopeId)
+    .not(column, 'is', null)
     .is('deleted_at', null)
     .neq('status', 'REVOKED')
-    .or(orFilter)
     .order('created_at', { ascending: true })
     .limit(1)
     .maybeSingle();
@@ -200,10 +253,11 @@ export async function findExistingEnvelopeAnchor(args: {
     );
   }
   if (!data) return null;
-  const row = data as { id?: unknown; public_id?: unknown };
+  const row = data as { id?: unknown; public_id?: unknown; created_at?: unknown };
   if (typeof row.id !== 'string') return null;
   return {
     id: row.id,
     publicId: typeof row.public_id === 'string' ? row.public_id : null,
+    createdAt: typeof row.created_at === 'string' ? row.created_at : '',
   };
 }
