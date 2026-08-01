@@ -10,11 +10,12 @@ Tests: `broadcast-recovery.test.ts` (new — 11 cases, dedicated unit coverage t
 
 Producer note: every current write site setting `status = 'SUBMITTED'` (`jobs/anchor.ts`, `jobs/batch-anchor.ts` `submit_batch_anchors`/`bulkMarkSubmittedFallback`, `resolve_anchor_txid_journal`'s ADOPT branch) is a single-statement atomic UPDATE setting `status` + `chain_tx_id` together — none of them can produce the SUBMITTED+NULL-`chain_tx_id` state going forward. The live occurrence (F-3, proven via live fault injection during the 2026-08 72h soak) either pre-dates one of the atomicity hardening passes (RACE-1/RACE-2/S3-P0/SCRUM-2692) or reflects an out-of-band write; root-causing the exact producer is tracked separately from this recovery-path fix. `machines/bitcoinAnchor.machine.ts` INV-1b (`submittedRequiresChainTx`) is annotated with this finding but left semantically unchanged — see `machines/agents.md`'s 2026-08-01 entry.
 
-## 2026-07-28 SOAK FINDINGS — F-1 (org-queue-scheduler 500s)
+## 2026-07-28 SOAK FINDINGS — F-1 (org-queue-scheduler 500s) + F-3 (SUBMITTED/NULL-txid recovery gap)
 
-Open, from the 2026-08 72h signet soak pair. Canonical writeup: `docs/staging/SOAK-FINDINGS-2026-08.md`.
+Both open, from the 2026-08 72h signet soak pair. Canonical writeup: `docs/staging/SOAK-FINDINGS-2026-08.md`. **F-3 FIXED 2026-08-01 — see the entry above; the bullet below is kept verbatim (agents.md is append-only) as the original as-found record.**
 
 - **F-1 (HIGH, open):** `org-queue-scheduler` returns 500 on ~28-33% of invocations across both rigs (flapping, recovers on later 5-min cycles; ~60x the gate matrix's 0.5% threshold). Confirmed NOT caused by migration `0378`. Root-cause not found yet — start at `claim_due_org_queue_runs` (likely contention or a partial-failure path under concurrent load).
+- **F-3 (MEDIUM, open):** an anchor left `SUBMITTED` with NULL `chain_tx_id` — the state a broadcast attempt produces if it fails between the status write and the txid write — has NO recovery path. `recover_stuck_broadcasts` queries only `BROADCASTING`-state anchors, so this state is structurally outside every scheduled job's scope. Verified by live fault injection that the job correctly recovers its in-scope `BROADCASTING` state, isolating the gap precisely.
 
 ## 2026-07-28 — Lane 1: batch_insert_anchors wedge fix + RPC hardening (SCRUM-3031, `publicRecordAnchor.ts`, migration 0370)
 
