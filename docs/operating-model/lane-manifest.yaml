@@ -1,12 +1,19 @@
 # ============================================================================
 # Arkova ART — Lane Manifest & RACI  (machine-readable)
 # ============================================================================
-# Sprint-0 deliverable S0-E1 / Story 1.1.  STATUS: DRAFT — pending CTO + Carson review.
+# Sprint-0 deliverable S0-E1 / Story 1.1.  STATUS: ACTIVE (CTO-approved 2026-08-01).
+#
+# Promoted out of draft 2026-08-01: CLAUDE.md §0.1 has made this file mandatory
+# session reading since 2026-06-17, so "draft" was a label with no operational
+# meaning — sessions were bound by it either way. It is now versioned as active
+# and must be kept true; see merge_council below for the policy correction that
+# landed with this promotion.
 #
 # Operating principle (PI-1 master §4): the 3 lanes are Claude-operated
-# ROLE-PERSONAS under Carson's oversight + SOLE T2/T3 merge gate — NOT human
-# headcount. A working session = ONE lane (Sprint 0 is the train-led exception:
-# the train roles stand up the foundation, lanes support + onboard).
+# ROLE-PERSONAS under Carson's oversight — NOT human headcount. A working
+# session = ONE lane (Sprint 0 is the train-led exception: the train roles stand
+# up the foundation, lanes support + onboard). Merge authority is NOT a lane
+# property: Mergify merges every tier on green CI + merge-grade soak evidence.
 #
 # Sources of truth (do not duplicate — point here):
 #   - PI-1 Program Increment Plan (Master)  — Confluence 83296257
@@ -15,9 +22,9 @@
 # This file is referenced from CLAUDE.md + the session bootstrap read-list
 # (the CLAUDE.md pointer lands via the S0-E3 v-next draft — Carson merges).
 # ============================================================================
-version: 0.1.0-draft
-last_updated: "2026-06-17"
-status: draft
+version: 1.0.0
+last_updated: "2026-08-01"
+status: active
 train_owner: RTE          # facilitator
 sponsor: Carson (CPO)     # oversight + sole merge gate on T2/T3
 
@@ -100,10 +107,20 @@ train_roles:
 # TIERED-MERGE COUNCIL  (PI-1 master §7)
 # ----------------------------------------------------------------------------
 merge_council:
-  delegated_tiers: [T0, T1]
+  # CORRECTED 2026-08-01. This block previously encoded the pre-2026-06-24
+  # policy (`carson_sole_merge_tiers: [T2, T3]`), which CLAUDE.md §1.13
+  # superseded when the S0-4.2d queue gate was removed from .mergify.yml.
+  # Because §0.1 makes this file mandatory session reading, every session was
+  # reading a merge policy the constitution had already replaced.
+  #
+  # Current policy: Mergify auto-merges EVERY tier once CI is green and the
+  # Staging Soak Evidence Gate passes. The real gate is the evidence
+  # requirement, not a human merge step.
+  mergify_auto_merges: [T0, T1, T2, T3]
+  gate: "Staging Soak Evidence Gate (scripts/ci/check-staging-evidence.ts) + green CI"
   members: [Tech Lead, RTE, Release Manager]
-  carson_sole_merge_tiers: [T2, T3]
-  carson_sole_merge_surfaces:
+  tier_marker_label: "needs-carson-merge"   # INFORMATIONAL ONLY — not a Mergify queue gate
+  high_risk_surfaces:                        # drive tier (T2/T3), not merge authority
     - migrations
     - RLS / schema
     - chain / treasury
@@ -112,8 +129,9 @@ merge_council:
     - security
     - public API / contract
     - CLAUDE.md
-  tier_detector: "scripts/ci/check-staging-evidence.ts (path-based); fails CLOSED to 'needs Carson'"
-  hard_rule: "Claude never merges to main. Routine CI-green T0/T1 auto-merge via Mergify; T2/T3 are Carson's."
+  tier_detector: "scripts/ci/check-staging-evidence.ts (path-based); fails CLOSED to the HIGHEST tier (more soak evidence), never to a manual-merge requirement"
+  carson_overrides: [do-not-merge, work-in-progress]   # plus final admin-merge authority at any time
+  hard_rule: "Claude never runs `gh pr merge` (hook-enforced: .claude/hooks/block-pr-merge.sh). Mergify merges all tiers once green + merge-grade soak evidence."
 
 # ----------------------------------------------------------------------------
 # WIP LIMITS  (PI-1 master §4)

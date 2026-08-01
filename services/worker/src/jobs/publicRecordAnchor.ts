@@ -28,7 +28,7 @@ import { buildMerkleTree } from '../utils/merkle.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config.js';
 import { upsertAnchorProofs } from '../utils/anchorProofs.js';
-import { POSTGREST_ROW_LIMIT, resolveAnchorBatchSize } from './anchor-batching.js';
+import { POSTGREST_IN_FILTER_CHUNK, POSTGREST_ROW_LIMIT, resolveAnchorBatchSize } from './anchor-batching.js';
 import type { ChainReceipt } from '../chain/types.js';
 import { captureCreditRpcFailureAlert } from '../utils/sentry.js';
 
@@ -215,9 +215,12 @@ async function fetchAnchorRows(
 ): Promise<PipelineAnchorRow[]> {
   const rows: PipelineAnchorRow[] = [];
   const ids = Array.from(new Set(anchorIds));
+  let attemptedChunks = 0;
+  let failedChunks = 0;
 
-  for (let i = 0; i < ids.length; i += POSTGREST_ROW_LIMIT) {
-    const chunk = ids.slice(i, i + POSTGREST_ROW_LIMIT);
+  for (let i = 0; i < ids.length; i += POSTGREST_IN_FILTER_CHUNK) {
+    const chunk = ids.slice(i, i + POSTGREST_IN_FILTER_CHUNK);
+    attemptedChunks += 1;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (client as any)
       .from('anchors')
@@ -226,11 +229,25 @@ async function fetchAnchorRows(
       .is('deleted_at', null);
 
     if (error) {
-      logger.error({ error, chunkStart: i, chunkSize: chunk.length }, 'Failed to fetch anchor rows after insert');
+      failedChunks += 1;
+      logger.error(
+        { error, errorMessage: (error as { message?: string })?.message, chunkStart: i, chunkSize: chunk.length },
+        'Failed to fetch anchor rows after insert',
+      );
       continue;
     }
 
     rows.push(...((data ?? []) as PipelineAnchorRow[]));
+  }
+
+  // Every chunk failing is indistinguishable from "no anchors exist" downstream:
+  // partitionRecordAnchors yields no pending items, the job logs a benign
+  // "no new pending" and returns 200. That silent-success path is what hid a
+  // 70-hour production outage. Fail loudly instead.
+  if (attemptedChunks > 0 && failedChunks === attemptedChunks) {
+    throw new Error(
+      `fetchAnchorRows: all ${failedChunks} chunk(s) failed for ${ids.length} anchor id(s); refusing to report an empty result set as success`,
+    );
   }
 
   return rows;
@@ -243,8 +260,8 @@ async function claimPendingPipelineAnchors(
   const claimed: PipelineAnchorRow[] = [];
   const uniqueAnchors = uniqueById(anchors);
 
-  for (let i = 0; i < uniqueAnchors.length; i += POSTGREST_ROW_LIMIT) {
-    const chunk = uniqueAnchors.slice(i, i + POSTGREST_ROW_LIMIT);
+  for (let i = 0; i < uniqueAnchors.length; i += POSTGREST_IN_FILTER_CHUNK) {
+    const chunk = uniqueAnchors.slice(i, i + POSTGREST_IN_FILTER_CHUNK);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (client as any)
       .from('anchors')

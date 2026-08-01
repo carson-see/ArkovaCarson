@@ -49,6 +49,19 @@ describe('app.arkova.ai agent discovery', () => {
     expect(read('public/index.md')).toContain('# Arkova');
   });
 
+  it('keeps the Markdown rewrite destination out of the SPA fallback', () => {
+    const spaFallback = config.rewrites.find(rule => rule.destination === '/index.html');
+
+    expect(spaFallback?.source).toContain('index\\.md');
+  });
+
+  it('does not soft-200 unsupported machine-discovery endpoints as HTML', () => {
+    const spaFallback = config.rewrites.find(rule => rule.destination === '/index.html');
+
+    expect(spaFallback?.source).toContain('\\.well-known');
+    expect(spaFallback?.source).toContain('openapi\\.json');
+  });
+
   it('publishes Content Signals alongside the existing crawler rules', () => {
     const robots = read('public/robots.txt');
     expect(robots).toContain('Content-Signal: ai-train=no, search=yes, ai-input=yes');
