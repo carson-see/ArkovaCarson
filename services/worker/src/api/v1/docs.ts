@@ -1748,10 +1748,31 @@ export const openApiSpec: Record<string, any> = {
           jurisdiction: { type: 'string', description: 'Omitted when null, never returned as null' },
           description: { type: 'string', description: 'Immutable credential description, omitted when not present' },
           compliance_controls: {
-            type: 'object',
+            // SCRUM-2227: this was declared `type: object`, but the field has
+            // always been emitted as a JSON array of control-ID strings. Both
+            // arms are documented so the spec matches the wire format without
+            // withdrawing the shape previously advertised.
+            oneOf: [
+              { type: 'array', items: { type: 'string' } },
+              { type: 'object', additionalProperties: true },
+            ],
             nullable: true,
-            additionalProperties: true,
-            description: 'API-RICH-01 regulatory control IDs mapped to this anchor.',
+            example: ['SOC2-CC6.1', 'GDPR-5.1f', 'FERPA-99.31'],
+            description:
+              'API-RICH-01 regulatory control IDs mapped to this anchor. Informational '
+              + 'metadata only — see compliance_controls_note, which is always present '
+              + 'alongside this field and states what these identifiers do NOT assert.',
+          },
+          compliance_controls_note: {
+            type: 'string',
+            nullable: true,
+            description:
+              'SCRUM-2227. Present whenever compliance_controls is present, absent '
+              + 'otherwise. States that control identifiers are a credential-type '
+              + 'mapping and NOT an audit, certification, conformity assessment, or '
+              + 'attestation — in particular that no identifier asserts qualified '
+              + 'status under eIDAS. Additive nullable field (Constitution 1.8); no '
+              + 'API version change.',
           },
           chain_confirmations: {
             type: 'integer',

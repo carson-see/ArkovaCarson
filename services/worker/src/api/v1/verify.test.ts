@@ -25,6 +25,7 @@ import {
   type AnchorByPublicId,
   type AnchorSelectRow,
 } from './verify.js';
+import { COMPLIANCE_CONTROLS_NOTE } from '../../utils/complianceMapping.js';
 
 function createRow(overrides: Partial<AnchorSelectRow> = {}): AnchorSelectRow {
   return {
@@ -393,6 +394,7 @@ describe('buildVerificationResult', () => {
       expect(result.revocation_block_height).toBeUndefined();
       expect(result.file_mime).toBeUndefined();
       expect(result.file_size).toBeUndefined();
+      expect(result.compliance_controls_note).toBeUndefined();
     });
 
     it('surfaces compliance_controls JSON when present', () => {
@@ -403,6 +405,50 @@ describe('buildVerificationResult', () => {
         soc2: ['CC6.1', 'CC6.2'],
         ferpa: ['99.31'],
       });
+    });
+  });
+
+  describe('SCRUM-2227 — compliance_controls_note (claims honesty)', () => {
+    it('accompanies compliance_controls whenever they are present', () => {
+      const result = buildVerificationResult(createAnchor({
+        compliance_controls: ['SOC2-CC6.1', 'eIDAS-35'],
+      }));
+      expect(result.compliance_controls).toEqual(['SOC2-CC6.1', 'eIDAS-35']);
+      expect(result.compliance_controls_note).toBe(COMPLIANCE_CONTROLS_NOTE);
+    });
+
+    it('is absent when compliance_controls are absent — never a bare note', () => {
+      const result = buildVerificationResult(createAnchor({ compliance_controls: null }));
+      expect(result.compliance_controls).toBeUndefined();
+      expect(result.compliance_controls_note).toBeUndefined();
+    });
+
+    it('is absent when the stored controls were entirely retired IDs', () => {
+      // mapAnchorRow strips retired IDs; a row left with nothing must not get a
+      // note attached to a field that is no longer there.
+      const anchor = mapAnchorRow(createRow({
+        compliance_controls: ['DPF-NOTICE', 'DPF-ACCOUNTABILITY'],
+      }));
+      const result = buildVerificationResult(anchor);
+      expect(result.compliance_controls).toBeUndefined();
+      expect(result.compliance_controls_note).toBeUndefined();
+    });
+
+    it('disclaims eIDAS qualified status, the named misread risk', () => {
+      const result = buildVerificationResult(createAnchor({
+        compliance_controls: ['eIDAS-25', 'eIDAS-35'],
+      }));
+      expect(result.compliance_controls_note).toMatch(/eIDAS/);
+      expect(result.compliance_controls_note).toMatch(/qualified/i);
+    });
+
+    it('strips retired EU-US DPF IDs from historical rows (SCRUM-2283)', () => {
+      const anchor = mapAnchorRow(createRow({
+        compliance_controls: ['SOC2-CC6.1', 'DPF-NOTICE', 'GDPR-25', 'DPF-ACCOUNTABILITY'],
+      }));
+      const result = buildVerificationResult(anchor);
+      expect(result.compliance_controls).toEqual(['SOC2-CC6.1', 'GDPR-25']);
+      expect(result.compliance_controls_note).toBe(COMPLIANCE_CONTROLS_NOTE);
     });
 
     it('surfaces chain_confirmations when non-null', () => {

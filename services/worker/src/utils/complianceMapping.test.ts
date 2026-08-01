@@ -3,7 +3,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getComplianceControlIds } from './complianceMapping.js';
+import {
+  COMPLIANCE_CONTROLS_NOTE,
+  RETIRED_CONTROL_IDS,
+  getComplianceControlIds,
+  sanitizeStoredComplianceControls,
+} from './complianceMapping.js';
 
 describe('getComplianceControlIds', () => {
   it('returns universal controls for any credential type', () => {
@@ -15,9 +20,19 @@ describe('getComplianceControlIds', () => {
     expect(ids).toContain('ISO27001-A.10');
     expect(ids).toContain('eIDAS-25');
     expect(ids).toContain('eIDAS-35');
-    expect(ids).toContain('DPF-NOTICE');
-    expect(ids).toContain('DPF-ACCOUNTABILITY');
-    expect(ids).toHaveLength(9);
+    expect(ids).toHaveLength(7);
+  });
+
+  it('never emits the retired EU-US DPF controls (SCRUM-2283)', () => {
+    // Arkova holds no active EU-US Data Privacy Framework certification. These
+    // were removed from the frontend mapping under SCRUM-2283 as a false
+    // external-status claim; the worker mirror kept emitting them, so every
+    // SECURED anchor persisted the claim into `anchors.compliance_controls`.
+    for (const type of [null, 'OTHER', 'DEGREE', 'LEGAL', 'INSURANCE', 'FINANCIAL']) {
+      const ids = getComplianceControlIds(type);
+      expect(ids).not.toContain('DPF-NOTICE');
+      expect(ids).not.toContain('DPF-ACCOUNTABILITY');
+    }
   });
 
   it('adds FERPA for DEGREE', () => {
@@ -25,7 +40,7 @@ describe('getComplianceControlIds', () => {
     expect(ids).toContain('FERPA-99.31');
     expect(ids).toContain('FERPA-99.31-DL');
     expect(ids).toContain('FERPA-99.37');
-    expect(ids).toHaveLength(12);
+    expect(ids).toHaveLength(10);
   });
 
   it('adds FERPA for TRANSCRIPT', () => {
@@ -75,12 +90,12 @@ describe('getComplianceControlIds', () => {
 
   it('handles null credential type', () => {
     const ids = getComplianceControlIds(null);
-    expect(ids.length).toBe(9); // universal only (7 + 2 DPF)
+    expect(ids.length).toBe(7); // universal only
   });
 
   it('handles undefined credential type', () => {
     const ids = getComplianceControlIds(undefined);
-    expect(ids.length).toBe(9);
+    expect(ids.length).toBe(7);
   });
 
   it('returns string array suitable for JSONB storage', () => {
@@ -98,11 +113,49 @@ describe('getComplianceControlIds', () => {
     const knownFrontendIds = [
       'SOC2-CC6.1', 'SOC2-CC6.7', 'GDPR-5.1f', 'GDPR-25',
       'ISO27001-A.10', 'eIDAS-25', 'eIDAS-35',
-      'DPF-NOTICE', 'DPF-ACCOUNTABILITY',
       'FERPA-99.31', 'FERPA-99.31-DL', 'FERPA-99.37',
     ];
-    for (const expected of knownFrontendIds) {
-      expect(ids).toContain(expected);
-    }
+    expect([...ids].sort()).toEqual([...knownFrontendIds].sort());
+  });
+});
+
+describe('sanitizeStoredComplianceControls', () => {
+  it('drops retired control IDs already persisted on historical anchors', () => {
+    const stored = ['SOC2-CC6.1', 'DPF-NOTICE', 'GDPR-25', 'DPF-ACCOUNTABILITY'];
+    expect(sanitizeStoredComplianceControls(stored)).toEqual(['SOC2-CC6.1', 'GDPR-25']);
+  });
+
+  it('returns null when every stored ID is retired', () => {
+    expect(sanitizeStoredComplianceControls([...RETIRED_CONTROL_IDS])).toBeNull();
+  });
+
+  it('returns null for null, undefined, empty, and non-array values', () => {
+    expect(sanitizeStoredComplianceControls(null)).toBeNull();
+    expect(sanitizeStoredComplianceControls(undefined)).toBeNull();
+    expect(sanitizeStoredComplianceControls([])).toBeNull();
+    // Legacy/object-shaped values are passed through untouched rather than
+    // silently reshaped — the API must not invent a shape it did not store.
+    expect(sanitizeStoredComplianceControls({ soc2: ['CC6.1'] })).toEqual({ soc2: ['CC6.1'] });
+  });
+
+  it('drops non-string entries', () => {
+    expect(sanitizeStoredComplianceControls(['SOC2-CC6.1', 42, null])).toEqual(['SOC2-CC6.1']);
+  });
+});
+
+describe('COMPLIANCE_CONTROLS_NOTE', () => {
+  it('states that control IDs are informational and NOT an attestation', () => {
+    expect(COMPLIANCE_CONTROLS_NOTE).toMatch(/informational/i);
+    expect(COMPLIANCE_CONTROLS_NOTE).toMatch(/not an? (audit|attestation)/i);
+  });
+
+  it('explicitly disclaims eIDAS qualified status (the named misread risk)', () => {
+    expect(COMPLIANCE_CONTROLS_NOTE).toMatch(/eIDAS/);
+    expect(COMPLIANCE_CONTROLS_NOTE).toMatch(/qualified/i);
+  });
+
+  it('asserts no certification or conformity assessment', () => {
+    expect(COMPLIANCE_CONTROLS_NOTE).toMatch(/certif/i);
+    expect(COMPLIANCE_CONTROLS_NOTE).toMatch(/conformity assessment/i);
   });
 });
