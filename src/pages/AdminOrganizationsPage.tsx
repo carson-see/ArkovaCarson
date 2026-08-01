@@ -130,6 +130,327 @@ function computeCreditsPreview(action: 'add' | 'remove', amountInput: string, cu
   return { amountValid, signedAmount, newBalance };
 }
 
+interface OrganizationsListBodyProps {
+  loading: boolean;
+  items: AdminOrganization[];
+  searchInput: string;
+  onClearFilters: () => void;
+  onOpenOrg: (orgId: string) => void;
+  onOpenCap: (org: AdminOrganization) => void;
+  onOpenCredits: (org: AdminOrganization) => void;
+}
+
+/** Loading / empty / populated body of the organizations card. Extracted from
+ *  the page component for the same S3776 reason as the helpers above — the
+ *  three-way render branch scores against this component's own budget, not the
+ *  page's. Purely presentational: all state and handlers stay in the page. */
+function OrganizationsListBody({ loading, items, searchInput, onClearFilters, onOpenOrg, onOpenCap, onOpenCredits }: OrganizationsListBodyProps) {
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Skeleton key={`skel-${i}`} className="h-16 w-full" />
+        ))}
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-sm text-muted-foreground">No organizations found.</p>
+        {searchInput && (
+          <Button variant="link" size="sm" className="mt-2" onClick={onClearFilters}>
+            Clear filters
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* Mobile card layout */}
+      <div className="space-y-3 md:hidden">
+        {items.map((org) => (
+          <div
+            key={org.id}
+            className="rounded-lg border p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+            onClick={() => onOpenOrg(org.id)}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium">{org.display_name}</span>
+              {org.org_prefix && (
+                <Badge variant="secondary" className="font-mono text-[10px]">{org.org_prefix}</Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {org.member_count}</span>
+              <span className="flex items-center gap-1"><FileText className="h-3 w-3" /> {org.anchor_count}</span>
+              {org.domain && <span>{org.domain}</span>}
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Free tier:</span>
+                {renderOrgCapBadge(org)}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7"
+                onClick={(e) => { e.stopPropagation(); onOpenCap(org); }}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5 mr-1" /> Set cap
+              </Button>
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">{CREDIT.COLUMN_LABEL}:</span>
+                <Badge variant="secondary" className="text-[10px] font-mono">
+                  {org.credit_balance != null ? org.credit_balance.toLocaleString() : CREDIT.UNKNOWN_BALANCE}
+                </Badge>
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7"
+                onClick={(e) => { e.stopPropagation(); onOpenCredits(org); }}
+              >
+                <Coins className="h-3.5 w-3.5 mr-1" /> {CREDIT.BUTTON_LABEL}
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table */}
+      <div className="overflow-x-auto hidden md:block">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b text-left text-muted-foreground">
+              <th className="pb-2 pr-4">Organization</th>
+              <th className="pb-2 pr-4">Prefix</th>
+              <th className="pb-2 pr-4">Domain</th>
+              <th className="pb-2 pr-4">Members</th>
+              <th className="pb-2 pr-4">Records</th>
+              <th className="pb-2 pr-4">Free tier</th>
+              <th className="pb-2 pr-4">{CREDIT.COLUMN_LABEL}</th>
+              <th className="pb-2">Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((org) => (
+              <tr
+                key={org.id}
+                className="border-b last:border-0 hover:bg-muted/50 cursor-pointer"
+                onClick={() => onOpenOrg(org.id)}
+              >
+                <td className="py-3 pr-4">
+                  <div className="font-medium">{org.display_name}</div>
+                  {org.legal_name && org.legal_name !== org.display_name && (
+                    <div className="text-xs text-muted-foreground">{org.legal_name}</div>
+                  )}
+                </td>
+                <td className="py-3 pr-4">
+                  {org.org_prefix ? (
+                    <Badge variant="secondary" className="font-mono text-[10px]">{org.org_prefix}</Badge>
+                  ) : '—'}
+                </td>
+                <td className="py-3 pr-4 text-muted-foreground">
+                  {org.domain ?? '—'}
+                </td>
+                <td className="py-3 pr-4">
+                  <span className="flex items-center gap-1">
+                    <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                    {org.member_count}
+                  </span>
+                </td>
+                <td className="py-3 pr-4">
+                  <span className="flex items-center gap-1">
+                    <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                    {org.anchor_count}
+                  </span>
+                </td>
+                <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-2">
+                    {renderOrgCapBadge(org)}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title="Set free-tier cap"
+                      onClick={(e) => { e.stopPropagation(); onOpenCap(org); }}
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </td>
+                <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-[10px] font-mono">
+                      {org.credit_balance != null ? org.credit_balance.toLocaleString() : CREDIT.UNKNOWN_BALANCE}
+                    </Badge>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title={CREDIT.BUTTON_TITLE}
+                      onClick={(e) => { e.stopPropagation(); onOpenCredits(org); }}
+                    >
+                      <Coins className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </td>
+                <td className="py-3 text-muted-foreground">
+                  {new Date(org.created_at).toLocaleDateString()}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+interface CreditsAdjustDialogProps {
+  org: AdminOrganization | null;
+  action: 'add' | 'remove';
+  amountInput: string;
+  reasonInput: string;
+  step: 'input' | 'confirm';
+  saving: boolean;
+  currentBalance: number;
+  newBalance: number;
+  onActionChange: (action: 'add' | 'remove') => void;
+  onAmountInputChange: (value: string) => void;
+  onReasonInputChange: (value: string) => void;
+  onReview: () => void;
+  onBack: () => void;
+  onConfirm: () => void;
+  onClose: () => void;
+}
+
+/** L2-A5 credit adjust dialog (input step → confirm step). Extracted from the
+ *  page component for the same S3776 reason as OrganizationsListBody. Purely
+ *  presentational: the page owns all dialog state and the submit flow. */
+function CreditsAdjustDialog({
+  org,
+  action,
+  amountInput,
+  reasonInput,
+  step,
+  saving,
+  currentBalance,
+  newBalance,
+  onActionChange,
+  onAmountInputChange,
+  onReasonInputChange,
+  onReview,
+  onBack,
+  onConfirm,
+  onClose,
+}: CreditsAdjustDialogProps) {
+  return (
+    <Dialog open={!!org} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{CREDIT.DIALOG_TITLE}</DialogTitle>
+          <DialogDescription>
+            {org ? CREDIT.DIALOG_DESCRIPTION(org.display_name) : ''}
+          </DialogDescription>
+        </DialogHeader>
+
+        {step === 'input' ? (
+          <div className="space-y-4 py-2">
+            <div className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2">
+              <span className="text-sm text-muted-foreground">{CREDIT.CURRENT_BALANCE_LABEL}</span>
+              <span className="font-mono text-sm font-medium">{currentBalance.toLocaleString()}</span>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={action === 'add' ? 'default' : 'outline'}
+                size="sm"
+                className="flex-1"
+                onClick={() => onActionChange('add')}
+              >
+                {CREDIT.ACTION_ADD}
+              </Button>
+              <Button
+                type="button"
+                variant={action === 'remove' ? 'default' : 'outline'}
+                size="sm"
+                className="flex-1"
+                onClick={() => onActionChange('remove')}
+              >
+                {CREDIT.ACTION_REMOVE}
+              </Button>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="credits-amount">{CREDIT.AMOUNT_LABEL}</Label>
+              <Input
+                id="credits-amount"
+                type="number"
+                min={1}
+                step={1}
+                value={amountInput}
+                onChange={(e) => onAmountInputChange(e.target.value)}
+                className="w-32"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="credits-reason">{CREDIT.REASON_LABEL}</Label>
+              <Textarea
+                id="credits-reason"
+                value={reasonInput}
+                onChange={(e) => onReasonInputChange(e.target.value)}
+                placeholder={CREDIT.REASON_PLACEHOLDER}
+                rows={3}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4 py-2">
+            <div className="rounded-md border p-3 space-y-2">
+              <p className="text-sm font-medium">
+                {action === 'add'
+                  ? CREDIT.CONFIRM_SUMMARY_ADD(amountInput, org?.display_name ?? '')
+                  : CREDIT.CONFIRM_SUMMARY_REMOVE(amountInput, org?.display_name ?? '')}
+              </p>
+              <p className="text-xs text-muted-foreground">{CREDIT.REASON_LABEL}: {reasonInput}</p>
+              <div className="flex items-center justify-between pt-2 border-t">
+                <span className="text-xs text-muted-foreground">{CREDIT.NEW_BALANCE_LABEL}</span>
+                <span className="font-mono text-sm font-medium">
+                  {currentBalance.toLocaleString()} → {Math.max(newBalance, 0).toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          {step === 'input' ? (
+            <>
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button onClick={onReview}>{CREDIT.REVIEW_BUTTON}</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" onClick={onBack} disabled={saving}>
+                {CREDIT.BACK_BUTTON}
+              </Button>
+              <Button onClick={onConfirm} disabled={saving}>
+                {saving ? CREDIT.CONFIRMING_BUTTON : CREDIT.CONFIRM_BUTTON}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function AdminOrganizationsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -172,6 +493,12 @@ export function AdminOrganizationsPage() {
   const handlePageChange = (newPage: number) => {
     setSearchParams({ search: searchInput, page: String(newPage) });
     doFetch(newPage);
+  };
+
+  const clearFilters = () => {
+    setSearchInput('');
+    setSearchParams({});
+    fetchList({ page: 1, search: '' });
   };
 
   const handleSignOut = async () => {
@@ -344,164 +671,15 @@ export function AdminOrganizationsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {loading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={`skel-${i}`} className="h-16 w-full" />
-              ))}
-            </div>
-          ) : items.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-sm text-muted-foreground">No organizations found.</p>
-              {searchInput && (
-                <Button variant="link" size="sm" className="mt-2" onClick={() => { setSearchInput(''); setSearchParams({}); fetchList({ page: 1, search: '' }); }}>
-                  Clear filters
-                </Button>
-              )}
-            </div>
-          ) : (
-            <>
-              {/* Mobile card layout */}
-              <div className="space-y-3 md:hidden">
-                {items.map((org) => (
-                  <div
-                    key={org.id}
-                    className="rounded-lg border p-4 cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => navigate(`/organizations/${org.id}`)}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium">{org.display_name}</span>
-                      {org.org_prefix && (
-                        <Badge variant="secondary" className="font-mono text-[10px]">{org.org_prefix}</Badge>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {org.member_count}</span>
-                      <span className="flex items-center gap-1"><FileText className="h-3 w-3" /> {org.anchor_count}</span>
-                      {org.domain && <span>{org.domain}</span>}
-                    </div>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">Free tier:</span>
-                        {renderOrgCapBadge(org)}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7"
-                        onClick={(e) => { e.stopPropagation(); openCap(org); }}
-                      >
-                        <SlidersHorizontal className="h-3.5 w-3.5 mr-1" /> Set cap
-                      </Button>
-                    </div>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">{CREDIT.COLUMN_LABEL}:</span>
-                        <Badge variant="secondary" className="text-[10px] font-mono">
-                          {org.credit_balance != null ? org.credit_balance.toLocaleString() : CREDIT.UNKNOWN_BALANCE}
-                        </Badge>
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7"
-                        onClick={(e) => { e.stopPropagation(); openCredits(org); }}
-                      >
-                        <Coins className="h-3.5 w-3.5 mr-1" /> {CREDIT.BUTTON_LABEL}
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Desktop table */}
-              <div className="overflow-x-auto hidden md:block">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-left text-muted-foreground">
-                      <th className="pb-2 pr-4">Organization</th>
-                      <th className="pb-2 pr-4">Prefix</th>
-                      <th className="pb-2 pr-4">Domain</th>
-                      <th className="pb-2 pr-4">Members</th>
-                      <th className="pb-2 pr-4">Records</th>
-                      <th className="pb-2 pr-4">Free tier</th>
-                      <th className="pb-2 pr-4">{CREDIT.COLUMN_LABEL}</th>
-                      <th className="pb-2">Created</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((org) => (
-                      <tr
-                        key={org.id}
-                        className="border-b last:border-0 hover:bg-muted/50 cursor-pointer"
-                        onClick={() => navigate(`/organizations/${org.id}`)}
-                      >
-                        <td className="py-3 pr-4">
-                          <div className="font-medium">{org.display_name}</div>
-                          {org.legal_name && org.legal_name !== org.display_name && (
-                            <div className="text-xs text-muted-foreground">{org.legal_name}</div>
-                          )}
-                        </td>
-                        <td className="py-3 pr-4">
-                          {org.org_prefix ? (
-                            <Badge variant="secondary" className="font-mono text-[10px]">{org.org_prefix}</Badge>
-                          ) : '—'}
-                        </td>
-                        <td className="py-3 pr-4 text-muted-foreground">
-                          {org.domain ?? '—'}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <span className="flex items-center gap-1">
-                            <Users className="h-3.5 w-3.5 text-muted-foreground" />
-                            {org.member_count}
-                          </span>
-                        </td>
-                        <td className="py-3 pr-4">
-                          <span className="flex items-center gap-1">
-                            <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                            {org.anchor_count}
-                          </span>
-                        </td>
-                        <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center gap-2">
-                            {renderOrgCapBadge(org)}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              title="Set free-tier cap"
-                              onClick={(e) => { e.stopPropagation(); openCap(org); }}
-                            >
-                              <SlidersHorizontal className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        </td>
-                        <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="secondary" className="text-[10px] font-mono">
-                              {org.credit_balance != null ? org.credit_balance.toLocaleString() : CREDIT.UNKNOWN_BALANCE}
-                            </Badge>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              title={CREDIT.BUTTON_TITLE}
-                              onClick={(e) => { e.stopPropagation(); openCredits(org); }}
-                            >
-                              <Coins className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        </td>
-                        <td className="py-3 text-muted-foreground">
-                          {new Date(org.created_at).toLocaleDateString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
+          <OrganizationsListBody
+            loading={loading}
+            items={items}
+            searchInput={searchInput}
+            onClearFilters={clearFilters}
+            onOpenOrg={(orgId) => navigate(`/organizations/${orgId}`)}
+            onOpenCap={openCap}
+            onOpenCredits={openCredits}
+          />
 
           {/* Pagination */}
           {totalPages > 1 && (
@@ -562,102 +740,23 @@ export function AdminOrganizationsPage() {
       </Dialog>
 
       {/* L2-A5 — credit adjust dialog (founder admin-controls: add/remove credits) */}
-      <Dialog open={!!creditsOrg} onOpenChange={(open) => { if (!open) closeCredits(); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{CREDIT.DIALOG_TITLE}</DialogTitle>
-            <DialogDescription>
-              {creditsOrg ? CREDIT.DIALOG_DESCRIPTION(creditsOrg.display_name) : ''}
-            </DialogDescription>
-          </DialogHeader>
-
-          {creditsStep === 'input' ? (
-            <div className="space-y-4 py-2">
-              <div className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2">
-                <span className="text-sm text-muted-foreground">{CREDIT.CURRENT_BALANCE_LABEL}</span>
-                <span className="font-mono text-sm font-medium">{creditsCurrentBalance.toLocaleString()}</span>
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant={creditsAction === 'add' ? 'default' : 'outline'}
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => setCreditsAction('add')}
-                >
-                  {CREDIT.ACTION_ADD}
-                </Button>
-                <Button
-                  type="button"
-                  variant={creditsAction === 'remove' ? 'default' : 'outline'}
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => setCreditsAction('remove')}
-                >
-                  {CREDIT.ACTION_REMOVE}
-                </Button>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="credits-amount">{CREDIT.AMOUNT_LABEL}</Label>
-                <Input
-                  id="credits-amount"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={creditsAmountInput}
-                  onChange={(e) => setCreditsAmountInput(e.target.value)}
-                  className="w-32"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="credits-reason">{CREDIT.REASON_LABEL}</Label>
-                <Textarea
-                  id="credits-reason"
-                  value={creditsReasonInput}
-                  onChange={(e) => setCreditsReasonInput(e.target.value)}
-                  placeholder={CREDIT.REASON_PLACEHOLDER}
-                  rows={3}
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-4 py-2">
-              <div className="rounded-md border p-3 space-y-2">
-                <p className="text-sm font-medium">
-                  {creditsAction === 'add'
-                    ? CREDIT.CONFIRM_SUMMARY_ADD(creditsAmountInput, creditsOrg?.display_name ?? '')
-                    : CREDIT.CONFIRM_SUMMARY_REMOVE(creditsAmountInput, creditsOrg?.display_name ?? '')}
-                </p>
-                <p className="text-xs text-muted-foreground">{CREDIT.REASON_LABEL}: {creditsReasonInput}</p>
-                <div className="flex items-center justify-between pt-2 border-t">
-                  <span className="text-xs text-muted-foreground">{CREDIT.NEW_BALANCE_LABEL}</span>
-                  <span className="font-mono text-sm font-medium">
-                    {creditsCurrentBalance.toLocaleString()} → {Math.max(creditsNewBalance, 0).toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <DialogFooter>
-            {creditsStep === 'input' ? (
-              <>
-                <Button variant="outline" onClick={closeCredits}>Cancel</Button>
-                <Button onClick={reviewCredits}>{CREDIT.REVIEW_BUTTON}</Button>
-              </>
-            ) : (
-              <>
-                <Button variant="outline" onClick={() => setCreditsStep('input')} disabled={creditsSaving}>
-                  {CREDIT.BACK_BUTTON}
-                </Button>
-                <Button onClick={confirmCredits} disabled={creditsSaving}>
-                  {creditsSaving ? CREDIT.CONFIRMING_BUTTON : CREDIT.CONFIRM_BUTTON}
-                </Button>
-              </>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <CreditsAdjustDialog
+        org={creditsOrg}
+        action={creditsAction}
+        amountInput={creditsAmountInput}
+        reasonInput={creditsReasonInput}
+        step={creditsStep}
+        saving={creditsSaving}
+        currentBalance={creditsCurrentBalance}
+        newBalance={creditsNewBalance}
+        onActionChange={setCreditsAction}
+        onAmountInputChange={setCreditsAmountInput}
+        onReasonInputChange={setCreditsReasonInput}
+        onReview={reviewCredits}
+        onBack={() => setCreditsStep('input')}
+        onConfirm={confirmCredits}
+        onClose={closeCredits}
+      />
     </AppShell>
   );
 }
