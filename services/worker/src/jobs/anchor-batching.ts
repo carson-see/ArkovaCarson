@@ -23,9 +23,11 @@ export const POSTGREST_URL_FILTER_BUDGET_BYTES = 8_192;
 /**
  * Max ids per `.in('id', chunk)` filter.
  *
- * A UUID costs 37 bytes in the encoded `in.(...)` list (36 + separator), so
- * this stays inside POSTGREST_URL_FILTER_BUDGET_BYTES with headroom for the
- * rest of the request line.
+ * A UUID costs ~39 bytes in the encoded `in.(...)` list — 36 for the uuid plus
+ * a comma separator that `encodeURIComponent` expands to `%2C` (3 bytes).
+ * Measured: 200 ids encode to 7,802 B against the 8,192 B budget. Headroom is
+ * ~5%, so 210 already lands on the ceiling — do not raise this constant without
+ * re-measuring (`anchor-batching.test.ts` pins the arithmetic).
  *
  * Do NOT chunk id filters by POSTGREST_ROW_LIMIT — that conflates two unrelated
  * limits (how many rows come back vs. how wide the URL may be) and is exactly

@@ -33,6 +33,7 @@ import {
   type TxidJournalEntry,
   type TxidJournalRecoveryDecision,
 } from './txid-journal.js';
+import { POSTGREST_IN_FILTER_CHUNK } from './anchor-batching.js';
 
 /**
  * Max anchors per batch transaction (BTC-001).
@@ -542,6 +543,9 @@ export interface ProcessBatchAnchorOptions {
 /**
  * PostgREST row limit per response. Supabase caps RPC results at 1000 rows.
  * We claim in chunks of this size and accumulate up to BATCH_SIZE.
+ *
+ * This governs how many rows come BACK. It is NOT a safe width for an
+ * `.in('id', …)` URL filter — use `POSTGREST_IN_FILTER_CHUNK` for those.
  */
 const POSTGREST_ROW_LIMIT = 1000;
 
@@ -1911,7 +1915,17 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     );
   }
 
-  // CML-02: Populate compliance_controls per credential type (non-fatal post-processing)
+  // CML-02: Populate compliance_controls per credential type (non-fatal post-processing).
+  //
+  // Chunked by POSTGREST_IN_FILTER_CHUNK: `ids` is a per-credential-type group
+  // of `orderedAnchors`, bounded only by BATCH_SIZE (up to 10,000). Batches
+  // concentrate in a few credential types, so an unchunked `.in('id', ids)`
+  // here was a ~390 KB query string — the same 400 Bad Request that killed
+  // public-record anchoring for 70h on 2026-07-29 (see agents.md). It failed
+  // inside this non-fatal try/catch, so large batches silently ended up with
+  // no compliance_controls at all AND the throw skipped every remaining
+  // credential type. Per-chunk error capture keeps one bad chunk from
+  // cancelling the rest.
   try {
     const byType = new Map<string | null, string[]>();
     for (const anchor of orderedAnchors) {
@@ -1919,10 +1933,30 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
       if (!byType.has(ct)) byType.set(ct, []);
       byType.get(ct)!.push(anchor.id);
     }
+    let complianceChunkFailures = 0;
     for (const [credType, ids] of byType) {
       const controls = getComplianceControlIds(credType);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (db as any).from('anchors').update({ compliance_controls: controls }).in('id', ids);
+      for (let i = 0; i < ids.length; i += POSTGREST_IN_FILTER_CHUNK) {
+        const chunk = ids.slice(i, i + POSTGREST_IN_FILTER_CHUNK);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: complianceChunkError } = await (db as any)
+          .from('anchors')
+          .update({ compliance_controls: controls })
+          .in('id', chunk);
+        if (complianceChunkError) {
+          complianceChunkFailures += 1;
+          logger.warn(
+            { error: complianceChunkError, credType, chunkStart: i, chunkSize: chunk.length },
+            'Non-fatal: compliance_controls chunk update failed',
+          );
+        }
+      }
+    }
+    if (complianceChunkFailures > 0) {
+      logger.warn(
+        { batchId, complianceChunkFailures },
+        'Non-fatal: some batch anchors did not receive compliance_controls',
+      );
     }
   } catch (complianceErr) {
     logger.warn({ error: complianceErr }, 'Non-fatal: failed to set compliance_controls on batch anchors');

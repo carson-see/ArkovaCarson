@@ -285,17 +285,31 @@ async function claimPendingPipelineAnchors(
  * from BROADCASTING to PENDING so the next run can pick them up again.
  *
  * Chunk by POSTGREST_IN_FILTER_CHUNK, never POSTGREST_ROW_LIMIT — see the
- * 2026-07-29 incident note in `services/worker/src/jobs/agents.md`. A revert
- * that 400s is worse than a read that 400s: the anchors stay pinned in
- * BROADCASTING, the PENDING scan can never see them again, and one failed
- * broadcast strands a whole batch permanently.
+ * 2026-07-29 incident note in `services/worker/src/jobs/agents.md`. At 1,000
+ * ids the encoded `in.(...)` value is ~38 KB and PostgREST answers 400, so the
+ * whole rollback used to no-op.
+ *
+ * Blast radius when it does no-op is a stall, NOT permanent loss:
+ * `recover_stuck_broadcasts` (migration `0358`) resets any anchor with
+ * `status='BROADCASTING' AND chain_tx_id IS NULL AND deleted_at IS NULL`, no
+ * PENDING/HELD `anchor_txid_journal` row, and `updated_at` older than
+ * `p_stale_minutes` (default 5). Anchors claimed here match every predicate —
+ * this job writes no journal row and never sets `chain_tx_id` on the failure
+ * path — so they self-heal on the next recovery pass. Until then the batch is
+ * head-of-line blocked: `batch_insert_anchors` returns the same oldest-first
+ * records, `partitionRecordAnchors` buckets the BROADCASTING rows nowhere, and
+ * the job reports "no new pending" with HTTP 200.
+ *
+ * Counts are id counts handed to PostgREST, not affected-row counts: the update
+ * carries no `.select()`/`count`, and `.eq('status','BROADCASTING')` means a
+ * successful call can legitimately match fewer rows (e.g. `recover_stuck_broadcasts`
+ * got there first). `failed` is the number worth acting on.
  */
 async function revertClaimedAnchors(
   client: SupabaseClient,
   anchorIds: string[],
-): Promise<{ reverted: number; stranded: number }> {
-  let reverted = 0;
-  let stranded = 0;
+): Promise<{ attempted: number; failed: number }> {
+  let failed = 0;
 
   for (let i = 0; i < anchorIds.length; i += POSTGREST_IN_FILTER_CHUNK) {
     const chunk = anchorIds.slice(i, i + POSTGREST_IN_FILTER_CHUNK);
@@ -307,28 +321,25 @@ async function revertClaimedAnchors(
       .eq('status', 'BROADCASTING');
 
     if (error) {
-      stranded += chunk.length;
+      failed += chunk.length;
       logger.error(
         { error, errorMessage: (error as { message?: string })?.message, chunkStart: i, chunkSize: chunk.length },
         'Failed to revert claimed pipeline anchors',
       );
-      continue;
     }
-
-    reverted += chunk.length;
   }
 
-  // A stranded anchor is stuck in BROADCASTING with no recovery path — it is
-  // invisible to every PENDING scan from here on. Surface the count as its own
-  // alertable event rather than leaving it implicit in the per-chunk errors.
-  if (stranded > 0) {
+  // Aggregate the loss into one line so it is greppable and can be attached to
+  // a log-based metric later. This is a log EVENT, not an alert — nothing pages
+  // on it today (see the SCRUM-2902 "event != alert" note in agents.md).
+  if (failed > 0) {
     logger.error(
-      { stranded, reverted, total: anchorIds.length },
-      'Pipeline anchors stranded in BROADCASTING after failed revert — manual recovery required',
+      { failed, attempted: anchorIds.length },
+      'Pipeline anchors left in BROADCASTING after failed revert — recover_stuck_broadcasts will reset them after its stale window',
     );
   }
 
-  return { reverted, stranded };
+  return { attempted: anchorIds.length, failed };
 }
 
 async function linkExistingPublicRecordAnchors(
@@ -854,8 +865,16 @@ async function processPublicRecordAnchoringInner(
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    logger.error({ error, merkleRoot: tree.root }, 'Public record batch chain submission failed');
-    await revertClaimedAnchors(client, uniqueClaimedAnchors.map((a) => a.id));
+    const revert = await revertClaimedAnchors(client, uniqueClaimedAnchors.map((a) => a.id));
+    logger.error(
+      {
+        error,
+        merkleRoot: tree.root,
+        claimed: uniqueClaimedAnchors.length,
+        revertFailed: revert.failed,
+      },
+      'Public record batch chain submission failed',
+    );
     return {
       processed: alreadyAnchored,
       anchorsCreated: createdAnchors.length,
