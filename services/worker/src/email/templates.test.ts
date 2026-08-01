@@ -147,9 +147,14 @@ describe('buildAccountVerificationEmail', () => {
     expect(result.html).toContain('Example Org');
   });
 
-  it('includes the verification URL', () => {
+  it('includes the verification URL (HTML-escaped, since the template esc()s href/text values and this URL contains query-string &s)', () => {
     const result = buildAccountVerificationEmail(baseData);
-    expect(result.html).toContain(baseData.verificationUrl);
+    const escapedUrl = baseData.verificationUrl.replace(/&/g, '&amp;');
+    expect(result.html).toContain(escapedUrl);
+    // The raw (unescaped) URL should not appear verbatim — every occurrence
+    // must go through esc() so an injected `&` can't break out of the
+    // attribute/text context.
+    expect(result.html).not.toContain(baseData.verificationUrl);
   });
 
   it('does not contain banned terminology', () => {
