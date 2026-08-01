@@ -1447,6 +1447,73 @@ describe('check-staging-evidence', () => {
       ).toBe(false);
     });
 
+    // SonarCloud analyzer config is the same class as the eslint config above:
+    // read only by the static analyzer, never imported, never bundled, never
+    // deployed. A soak cannot exercise it because it has no runtime surface.
+    it('passes for SonarCloud analyzer config', () => {
+      expect(
+        isStagingToolingOnly([
+          '.sonarcloud.properties',
+          'sonar-project.properties',
+        ]).pass,
+      ).toBe(true);
+    });
+
+    it('rejects sonar-config lookalike filenames', () => {
+      expect(isStagingToolingOnly(['src/lib/sonar-project.properties']).pass).toBe(false);
+      expect(isStagingToolingOnly(['services/worker/.sonarcloud.properties']).pass).toBe(false);
+      expect(isStagingToolingOnly(['sonar-project.properties.ts']).pass).toBe(false);
+    });
+
+    // cf3917ad2 ("split changelog sediment out of four guide files") moved the
+    // dated narrative out of agents.md into sibling agents-changelog.md files
+    // but never extended the T0 carve-out to the new name, so every one of them
+    // silently became a soak-tier file. They are the changelog half of a doc
+    // that is already T0 — treat them identically.
+    it('passes for agents-changelog.md siblings in every location', () => {
+      expect(
+        isStagingToolingOnly([
+          'scripts/ci/agents-changelog.md',
+          'e2e/agents-changelog.md',
+          'services/worker/agents-changelog.md',
+        ]).pass,
+      ).toBe(true);
+    });
+
+    it('classifies agents-changelog.md as T0 even under a T2/T3 path rule', () => {
+      // services/worker/ matches a PATH_RULE that fires BEFORE the allowlist,
+      // so this only passes via the same early return agents.md uses.
+      expect(requiredTierFor(['services/worker/agents-changelog.md']).tier).toBe('T0');
+      expect(requiredTierFor(['scripts/ci/agents-changelog.md']).tier).toBe('T0');
+    });
+
+    it('does not let the changelog carve-out rescue real worker code', () => {
+      expect(
+        requiredTierFor([
+          'services/worker/agents-changelog.md',
+          'services/worker/src/chain/client.ts',
+        ]).tier,
+      ).toBe('T3');
+    });
+
+    // Same class as check-staging-gcloud-policy / check-handoff-claims /
+    // check-ledger-numeric-integrity above: a CI-only gate script that reads a
+    // remote API and never ships to prod runtime.
+    it('passes for the SonarCloud quality-gate CI script', () => {
+      expect(
+        isStagingToolingOnly([
+          'scripts/ci/check-sonar-quality-gate.ts',
+          'scripts/ci/check-sonar-quality-gate.test.ts',
+        ]).pass,
+      ).toBe(true);
+    });
+
+    // The sonar carve-outs must never rescue a PR that also touches runtime.
+    it('does not let sonar config downgrade a worker or migration PR', () => {
+      expect(requiredTierFor(['.sonarcloud.properties', 'services/worker/src/chain/client.ts']).tier).toBe('T3');
+      expect(requiredTierFor(['.sonarcloud.properties', 'supabase/migrations/0999_x.sql']).tier).toBe('T3');
+    });
+
     it('passes for nested package lockfiles (Dependabot sub-package bumps)', () => {
       expect(
         isStagingToolingOnly([
