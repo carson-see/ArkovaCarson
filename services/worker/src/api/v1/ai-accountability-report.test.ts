@@ -32,6 +32,7 @@ vi.mock('../../config.js', () => ({
 
 import { aiAccountabilityReportRouter } from './ai-accountability-report.js';
 import { db } from '../../utils/db.js';
+import { COMPLIANCE_CONTROLS_NOTE } from '../../utils/complianceMapping.js';
 
 const TEST_USER_ID = '10000000-1000-4000-8000-000000000001';
 const TEST_ORG_ID = '10000000-1000-4000-8000-000000000099';
@@ -192,6 +193,49 @@ describe('ai-accountability-report endpoint', () => {
     expect(res.body.provenanceChain.blockchainAnchor.networkReceipt).toBe('tx_abc123def');
     expect(res.body.provenanceChain.blockchainAnchor.blockHeight).toBe(887654);
     expect(res.body.complianceControls).toContain('SOC2-CC6.1');
+    // SCRUM-2227: controls never travel without the not-an-attestation note.
+    expect(res.body.complianceControlsNote).toBe(COMPLIANCE_CONTROLS_NOTE);
+  });
+
+  it('omits complianceControlsNote when there are no controls (SCRUM-2227)', async () => {
+    vi.mocked(db.from).mockImplementation((...args: unknown[]) => {
+      const table = (args as unknown as string[])[0];
+      if (table === 'profiles') {
+        return mockChain({ org_id: TEST_ORG_ID }) as unknown as ReturnType<typeof db.from>;
+      }
+      if (table === 'anchors') {
+        return mockChain({ ...MOCK_ANCHOR, compliance_controls: [] }) as unknown as ReturnType<typeof db.from>;
+      }
+      return mockChain([]) as unknown as ReturnType<typeof db.from>;
+    });
+
+    const res = await request(app).post('/').send({ anchorId: 'pub_123', format: 'json' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.complianceControls).toEqual([]);
+    expect(res.body.complianceControlsNote).toBeUndefined();
+  });
+
+  it('strips retired EU-US DPF control IDs (SCRUM-2283)', async () => {
+    vi.mocked(db.from).mockImplementation((...args: unknown[]) => {
+      const table = (args as unknown as string[])[0];
+      if (table === 'profiles') {
+        return mockChain({ org_id: TEST_ORG_ID }) as unknown as ReturnType<typeof db.from>;
+      }
+      if (table === 'anchors') {
+        return mockChain({
+          ...MOCK_ANCHOR,
+          compliance_controls: ['SOC2-CC6.1', 'DPF-NOTICE', 'DPF-ACCOUNTABILITY'],
+        }) as unknown as ReturnType<typeof db.from>;
+      }
+      return mockChain([]) as unknown as ReturnType<typeof db.from>;
+    });
+
+    const res = await request(app).post('/').send({ anchorId: 'pub_123', format: 'json' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.complianceControls).toEqual(['SOC2-CC6.1']);
+    expect(res.body.complianceControlsNote).toBe(COMPLIANCE_CONTROLS_NOTE);
   });
 
   it('includes audit events in report', async () => {

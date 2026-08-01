@@ -18,7 +18,11 @@ import { jsPDF } from 'jspdf';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
-import { getComplianceControlIds } from '../../utils/complianceMapping.js';
+import {
+  COMPLIANCE_CONTROLS_NOTE,
+  getComplianceControlIds,
+  sanitizeStoredComplianceControls,
+} from '../../utils/complianceMapping.js';
 
 const router = Router();
 
@@ -85,9 +89,12 @@ function explorerUrl(txId: string): string {
 }
 
 function getControlIds(anchor: AnchorRow): string[] {
-  // Prefer stored controls (CML-02), fall back to computed
-  if (anchor.compliance_controls && Array.isArray(anchor.compliance_controls) && anchor.compliance_controls.length > 0) {
-    return anchor.compliance_controls;
+  // Prefer stored controls (CML-02), fall back to computed.
+  // SCRUM-2227/2283: retired IDs are filtered out of the stored value first —
+  // historical rows still carry the EU-US DPF claims Arkova cannot make.
+  const stored = sanitizeStoredComplianceControls(anchor.compliance_controls);
+  if (Array.isArray(stored) && stored.length > 0) {
+    return stored as string[];
   }
   return getComplianceControlIds(anchor.credential_type);
 }
@@ -212,6 +219,20 @@ function generateAuditPdf(anchor: AnchorRow, proof: ProofRow | null): Buffer {
         y = margin;
       }
     }
+
+    // SCRUM-2227: the control list never stands alone — state what it does NOT
+    // assert, immediately under it, on the same page-flow.
+    if (y > 250) {
+      doc.addPage();
+      y = margin;
+    }
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'italic');
+    doc.setTextColor(120, 120, 120);
+    doc.text(COMPLIANCE_CONTROLS_NOTE, margin + 4, y, { maxWidth: contentWidth - 8 });
+    y += 14;
+    doc.setTextColor(0, 0, 0);
+    doc.setFont('helvetica', 'normal');
     y += 2;
   }
 
@@ -307,7 +328,15 @@ function generateBatchPdf(anchors: AnchorRow[]): Buffer {
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.text([...frameworkSet].sort().join(' • '), margin + 4, y);
-  y += 8;
+  y += 6;
+  // SCRUM-2227: framework coverage is a mapping, not an assessment.
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'italic');
+  doc.setTextColor(120, 120, 120);
+  doc.text(COMPLIANCE_CONTROLS_NOTE, margin + 4, y, { maxWidth: contentWidth - 8 });
+  y += 16;
+  doc.setTextColor(0, 0, 0);
+  doc.setFont('helvetica', 'normal');
 
   // ── Individual entries (compact) ──
   y = addSection(doc, 'Anchor Details', y, margin);
@@ -359,6 +388,7 @@ function generateAnchorCsv(anchors: AnchorRow[]): string {
     'verification_id', 'filename', 'credential_type', 'status',
     'fingerprint', 'network_receipt', 'block_height', 'network_observed_time',
     'confirmations', 'compliance_controls', 'compliance_frameworks',
+    'compliance_controls_note',
     'created_at', 'issued_at', 'expires_at', 'revoked_at',
   ];
 
@@ -377,6 +407,8 @@ function generateAnchorCsv(anchors: AnchorRow[]): string {
       a.chain_confirmations != null ? String(a.chain_confirmations) : '',
       csvEscape(controlIds.join('; ')),
       csvEscape(frameworks.join('; ')),
+      // SCRUM-2227: present exactly when controls are.
+      csvEscape(controlIds.length > 0 ? COMPLIANCE_CONTROLS_NOTE : ''),
       a.created_at,
       a.issued_at ?? '',
       a.expires_at ?? '',

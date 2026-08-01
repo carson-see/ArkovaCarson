@@ -25,9 +25,76 @@ const UNIVERSAL_CONTROLS = [
   'ISO27001-A.10', // Cryptographic controls
   'eIDAS-25',     // Electronic signatures and seals
   'eIDAS-35',     // Qualified electronic time stamps
-  'DPF-NOTICE',   // EU-US DPF Notice Principle
-  'DPF-ACCOUNTABILITY', // EU-US DPF Accountability for onward transfers
+  // SCRUM-2283: DPF-NOTICE / DPF-ACCOUNTABILITY removed. Arkova holds no active
+  // EU-US Data Privacy Framework certification, so emitting them was a false
+  // external-status claim (R-7 claims gate / §1.5). They were dropped from the
+  // frontend mirror (`src/lib/complianceMapping.ts`) at the time; this worker
+  // copy kept emitting them, which persisted the claim onto every SECURED
+  // anchor and served it from `/api/v1/verify` and the audit export. Do not
+  // re-add without a verifiable, counsel-confirmed certification.
 ];
+
+/**
+ * Control IDs that were once written to `anchors.compliance_controls` but must
+ * no longer be surfaced. Historical rows still carry them (they were persisted
+ * on every SECURED anchor until SCRUM-2227), and there is no migration that can
+ * un-say a claim that already shipped — so read paths filter them instead.
+ *
+ * @see sanitizeStoredComplianceControls
+ */
+export const RETIRED_CONTROL_IDS: readonly string[] = [
+  'DPF-NOTICE',
+  'DPF-ACCOUNTABILITY',
+];
+
+/**
+ * SCRUM-2227 — the informational-not-attestation note that MUST accompany any
+ * surfaced `compliance_controls` value.
+ *
+ * Control IDs are a *mapping* from credential type to control identifier. They
+ * are routinely misread as an assertion that the record, its issuer, or Arkova
+ * has been assessed against the named framework — and for `eIDAS-25` / `eIDAS-35`
+ * that misread ("qualified trust service") carries direct legal exposure. Per
+ * §1.5 and the R-7 claims gate, the surface must state what is measured, what is
+ * asserted, and what is NOT asserted.
+ *
+ * Rendered VERBATIM wherever `compliance_controls` appears: `/api/v1/verify`,
+ * the AI accountability report, and the audit export (PDF + CSV). Wording follows
+ * the shape of `JURISDICTION_INFORMATIONAL_DISCLAIMER`
+ * (`services/worker/src/exports/cle-log-export.ts`) and deliberately avoids any
+ * sufficiency or adequacy claim.
+ *
+ * NOTE FOR COUNSEL: drafted by engineering against the existing approved
+ * disclaimers; not yet reviewed by counsel. See the PR body for SCRUM-2227.
+ */
+export const COMPLIANCE_CONTROLS_NOTE =
+  'Compliance control identifiers are informational metadata only. They indicate '
+  + 'which regulatory controls Arkova maps to this record\'s credential type. They are '
+  + 'not an audit, certification, conformity assessment, or attestation that this '
+  + 'record, its issuer, or Arkova satisfies any listed control, framework, or '
+  + 'regulation. In particular, no identifier listed here asserts a qualified trust '
+  + 'service, qualified electronic signature, or qualified electronic seal under '
+  + 'eIDAS. Compliance determination remains the responsibility of the relying party '
+  + 'and its auditors.';
+
+/**
+ * Filter retired control IDs out of an already-stored `compliance_controls`
+ * value on the way to a consumer.
+ *
+ * Returns `null` when nothing survives, so callers can use the same
+ * present/absent test they already use for a NULL column. Non-array values
+ * (legacy object-shaped rows) are passed through unchanged — this function
+ * removes claims, it does not reshape data it did not write.
+ */
+export function sanitizeStoredComplianceControls(stored: unknown): unknown {
+  if (stored === null || stored === undefined) return null;
+  if (!Array.isArray(stored)) return stored;
+
+  const kept = stored.filter(
+    (id): id is string => typeof id === 'string' && !RETIRED_CONTROL_IDS.includes(id),
+  );
+  return kept.length > 0 ? kept : null;
+}
 
 /**
  * Type-specific controls — additional frameworks beyond universal.
