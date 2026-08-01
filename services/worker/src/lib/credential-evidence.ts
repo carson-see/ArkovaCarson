@@ -55,6 +55,32 @@ export const CREDENTIAL_EVIDENCE_VERIFICATION_LEVELS = [
   'captured_upload_ai',
 ] as const;
 
+/**
+ * Verification levels that assert the ISSUING ORGANIZATION authenticated the
+ * credential — the two tiers the public verification page renders as the green
+ * "issuer authenticated" treatment, and the only two that unlock the shareable
+ * off-platform badge (`isIssuerAuthenticated` in `src/lib/sourceProvenance.ts`,
+ * consumed by `EvidenceLevelBadge` / `PublicVerification`).
+ *
+ * SCRUM-2481 backend half. Nothing in the platform can currently PROVE either
+ * one, and every server-side writer deliberately stops short of claiming it:
+ * the Credly and Accredible adapters cap at `account_linked` even when the
+ * provider returns a `proof` block (see their `agents.md`: "DO NOT promote
+ * verification_level to source_signed from this module"), and URL import
+ * hardcodes `captured_url`. A client-supplied value is therefore the ONLY way
+ * these levels can reach `anchors.metadata` — which `get_public_anchor` serves
+ * to anonymous verifiers. That made the issuer-authenticated badge assertable
+ * by anyone holding an API key.
+ *
+ * Treat both as server-attested-only: a value arriving on a client write path
+ * is dropped before persistence. Promote this list only alongside a real
+ * server-side attestation (v1.1 cryptographic proof verification).
+ */
+export const SERVER_ATTESTED_VERIFICATION_LEVELS = [
+  'issuer_anchored',
+  'source_signed',
+] as const;
+
 export const CREDENTIAL_EVIDENCE_EXTRACTION_METHODS = [
   'issuer_api',
   'open_badge',
@@ -505,4 +531,46 @@ export function parsePublicCredentialEvidenceMetadata(
 ): Record<string, string | number | boolean | null> | null {
   const parsed = parsePublicCredentialEvidenceMetadataResult(metadata);
   return parsed.ok ? parsed.metadata : null;
+}
+
+export function isServerAttestedVerificationLevel(value: unknown): boolean {
+  return (
+    typeof value === 'string' &&
+    (SERVER_ATTESTED_VERIFICATION_LEVELS as readonly string[]).includes(value)
+  );
+}
+
+export interface ClientAssertableEvidenceMetadataResult {
+  metadata: Record<string, PublicMetadataValue>;
+  /** Keys removed because the caller is not permitted to assert them. */
+  stripped: string[];
+}
+
+/**
+ * SCRUM-2481 backend half — server-side evidence-level trust enforcement.
+ *
+ * The public trust badge is derived entirely from `metadata.verification_level`
+ * as served by `get_public_anchor`. Until this gate existed, that value came
+ * straight off a client request body, so any API-key holder could mint an
+ * anchor that renders as issuer-authenticated on the public verification page.
+ *
+ * This drops — rather than rejects — an un-assertable level, for two reasons:
+ * the anchor-submit route already persists only an allowlisted subset of
+ * `metadata` (silently ignoring everything else), so stripping is this route's
+ * established contract; and rejecting would turn a previously-201 request into
+ * a 400, which §1.8 freezes for the published API. The anchor is still created;
+ * it simply carries no evidence-level claim the server cannot stand behind.
+ *
+ * Callers MUST log `stripped` — a non-empty value is a caller asserting issuer
+ * authentication it does not have, which is worth seeing.
+ */
+export function stripClientUnassertableEvidenceClaims(
+  metadata: Record<string, PublicMetadataValue>,
+): ClientAssertableEvidenceMetadataResult {
+  if (!isServerAttestedVerificationLevel(metadata.verification_level)) {
+    return { metadata, stripped: [] };
+  }
+
+  const { verification_level: _dropped, ...rest } = metadata;
+  return { metadata: rest, stripped: ['verification_level'] };
 }
