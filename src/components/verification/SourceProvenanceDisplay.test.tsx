@@ -154,6 +154,29 @@ describe('SourceProvenanceDisplay — CE Registry provenance (registry_url)', ()
     expect(container.firstChild).not.toBeNull();
     expect(screen.getByTestId('source-provenance-display')).toBeInTheDocument();
   });
+
+  // ce_envelope_sha256 was plumbed through the type + extractor but never
+  // reached the DOM — a field that exists everywhere except the screen. It is
+  // an integrity fingerprint of the CE envelope, so it belongs to the evidence
+  // package alongside evidence_package_hash / source_payload_hash.
+  it('counts ce_envelope_sha256 as evidence-package content', () => {
+    render(<SourceProvenanceDisplay data={{ ce_envelope_sha256: 'a'.repeat(64) }} />);
+    expect(screen.getByTestId('source-evidence-package')).toBeInTheDocument();
+  });
+
+  it('never renders the raw ce_envelope_sha256 value on the page', () => {
+    const envelope = 'b'.repeat(64);
+    const { container } = render(
+      <SourceProvenanceDisplay data={{ registry_url: REGISTRY_URL, ce_envelope_sha256: envelope }} />,
+    );
+    expect(screen.getByTestId('source-evidence-package')).toBeInTheDocument();
+    expect(container.textContent).not.toContain(envelope);
+  });
+
+  it('shows no evidence-package row when every hash is absent', () => {
+    render(<SourceProvenanceDisplay data={{ registry_url: REGISTRY_URL }} />);
+    expect(screen.queryByTestId('source-evidence-package')).not.toBeInTheDocument();
+  });
 });
 
 // ─── SCRUM-2481: measured / asserted / NOT-asserted triad ────────────────────

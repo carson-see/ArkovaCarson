@@ -116,7 +116,15 @@ export function SourceProvenanceDisplay({
   const provider = formatProvider(data.source_provider);
   const verificationLevel = parseVerificationLevel(data.verification_level);
   const fetchedAt = data.fetched_at ? formatDate(data.fetched_at) : null;
-  const hasEvidencePackage = Boolean(data.evidence_package_hash || data.source_payload_hash);
+  // SCRUM-2913 (Lane 2 wiring): ce_envelope_sha256 is an integrity fingerprint
+  // of the exact CE Registry envelope consumed, so it counts as evidence-package
+  // content on the same footing as the other two hashes. Presence drives the
+  // row; the hash VALUES are deliberately not rendered here (same as
+  // evidence_package_hash / source_payload_hash) — the full values live in the
+  // downloadable proof package.
+  const hasEvidencePackage = Boolean(
+    data.evidence_package_hash || data.source_payload_hash || data.ce_envelope_sha256,
+  );
   // SCRUM-2913 (Lane 2 wiring): CE Registry provenance link, sanitized the
   // same way as source_url (strip tokens/secrets, http(s)-only) before it is
   // ever rendered as a clickable link.

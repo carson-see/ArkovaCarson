@@ -105,6 +105,22 @@ pinned in `PublicVerification.test.tsx` ("CE Registry provenance round-trip");
 component-level pinned in `SourceProvenanceDisplay.test.tsx` ("CE Registry
 provenance (registry_url)").
 
+`ce_envelope_sha256` counts toward `hasEvidencePackage` alongside
+`evidence_package_hash` / `source_payload_hash`, so a CE-sourced record shows the
+Evidence Package row. Consistent with the other two, only its PRESENCE is
+rendered — the hash value itself is never printed on the page; full values belong
+in the downloadable proof package. (Before 2026-08-01 the field was plumbed
+through the type and the extractor but reached no DOM node at all.)
+
+**The projection this depends on is NOT live in prod yet.** Migration `0376`
+redefined `get_public_anchor` from a body branched off `0355` and silently
+dropped `0362`'s two keys, so `metadata.registry_url` /
+`metadata.ce_envelope_sha256` do not currently come back from the API and this
+UI renders nothing. Compensating migration
+`0383_scrum2913_get_public_anchor_restore_hmac_and_registry_keys.sql` restores
+them; the UI goes live only once the RTE applies it to prod. See
+`supabase/migrations/agents.md`.
+
 ## Badge / provenance honesty (SCRUM-2481, 2026-07-07)
 
 `EvidenceLevelBadge` and `SourceProvenanceDisplay` are structurally honest about

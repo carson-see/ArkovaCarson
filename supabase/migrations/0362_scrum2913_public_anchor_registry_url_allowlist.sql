@@ -64,8 +64,34 @@ BEGIN;
 --   automatically.
 --
 -- TIER: T3 (touches supabase/migrations/ + a security-sensitive anon-GRANTed
---   projection). Prod-apply is RTE/Carson-gated, post-soak, on clean-mirror or
---   isolated staging — NOT applied by this authoring session.
+--   projection).
+--
+-- STATUS (corrected 2026-08-01): PROD-APPLIED 2026-07-27, then SILENTLY
+--   REVERTED. The header below originally read "NOT applied by this authoring
+--   session", which was true at authoring and false from 2026-07-27. The real
+--   history is:
+--     * 2026-07-27 — applied to prod `vzwyaatejekddvltxyye`; ledger carries
+--       numeric version 0362.
+--     * 2026-07-28 — migration 0376 (R19) redefined get_public_anchor with a
+--       body branched from 0355, NOT from the then-current head. Because
+--       CREATE OR REPLACE overwrites the whole function, 0376 discarded this
+--       migration's two allow-list keys (and 0356's keyed-HMAC
+--       recipient_identifier) without any error or ledger signal.
+--     * 2026-08-01 — confirmed by pg_get_functiondef on prod: neither
+--       registry_url nor ce_envelope_sha256 was in the live allow-list.
+--
+--   DO NOT edit the SQL below to "fix" this — 0362 is applied and is the
+--   record of what ran (CLAUDE.md §1.2). The restoration is a separate
+--   compensating migration:
+--       0383_scrum2913_get_public_anchor_restore_hmac_and_registry_keys.sql
+--   which redefines get_public_anchor as the union of 0355 + 0356 + 0362 +
+--   0376 and is the definition that must be applied to prod for the SCRUM-2913
+--   public projection to actually work.
+--
+--   Regression guard: src/tests/get-public-anchor-head-invariants.test.ts
+--   asserts every accumulated invariant against the HIGHEST-numbered migration
+--   that redefines this function, so the next clobber fails CI instead of
+--   reaching prod.
 --
 -- ROLLBACK: restore the 0356 get_public_anchor definition — identical to the
 --   body below but with the base `'metadata'` allow-list WITHOUT the two
