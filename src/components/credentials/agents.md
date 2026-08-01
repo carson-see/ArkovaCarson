@@ -1,5 +1,5 @@
 # agents.md — credentials
-_Last updated: 2026-06-01 (SCRUM-1869 CLE R1, stacked on SCRUM-1847 CPE R1 review fixes)_
+_Last updated: 2026-07-28_
 
 ## What This Folder Contains
 Credential display components. `CredentialRenderer` is the core component that renders a credential using template field schema + anchor metadata. `CredentialTemplatesManager` handles CRUD for credential templates. `CpeMetadataSection` + `NasbaStatusBadge` render CPE (Continuing Professional Education) compliance metadata; `CleMetadataSection` + `CleProviderBadge` render CLE (Continuing Legal Education) compliance metadata.

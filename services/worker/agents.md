@@ -1,292 +1,41 @@
 # agents.md — services/worker
 
-_Last updated: 2026-06-26 (PROOF-03 cron-wiring + adversarial-review fixes; PR #1320)._
-
-## S3.3 Wave 2 L1-A — durable txid journal (2026-07-15, SCRUM-2692)
-
-Batch anchoring now persists an immutable txid/cohort journal after signing and before any network call, then recovers via exact-tx ADOPT, affirmative bounded-absence REVERT, or fail-closed HOLD. Migration 0358 protects PENDING/HELD cohorts inside generic recovery; the worker refuses legacy/manual recovery when journal protection cannot be loaded. The composed Bitcoin and mock clients expose the same pre-broadcast hook, while production signer selection remains unchanged. Generated frontend/worker database types are byte-identical from a clean local reset.
-
-## PROOF-03 (SCRUM-2336) confirmation-proof fetch (2026-06-22, branch `lane1/s1-proof03-confirmation-fetch`, stacked on `feat/train-d-proof-foundation` @ d11deed3)
-
-Builds on the proof-foundation: FIX-1 persists the **app-tree** branch
-(`merkle_root` / `proof_path` / `merkle_index`) at broadcast; PROOF-03 adds the
-**bitcoin-tree** confirmation evidence so a proof bundle carries
-independently-checkable chain-confirmation: `document fingerprint → app_merkle_root
-→ (committed in OP_RETURN of) tx → (this layer) block merkleroot → block header`.
-
-- **`chain/confirmation-proof.ts`** (new): `fetchConfirmationProof(provider, req)` → `ConfirmationProof` ( `confirmed | pending | stale`, with `blockHeader`/`blockHash`/`blockMerkleRoot`/`merkleBranch`/`txIndex`). Pending never fabricates a branch; reorg/missing → `stale`, never throws. `parseTxOutProof()` parses the GetBlock `gettxoutproof` CMerkleBlock and verifies the matched leaf == target txid. Source = GetBlock RPC (DISC-03); OP_RETURN format out of scope.
-- **`chain/utxo-provider.ts`**: OPTIONAL `getBlockHeaderHex` + `getTxOutProof` on `UtxoProvider`; new `ConfirmationProofProvider` slice; implemented on RPC + GetBlockHybrid (sovereign), header-only on Mempool (no fabricated branch).
-- **`utils/anchorProofs.ts`**: `AnchorProofUpsertRow` gains OPTIONAL `blockHeader`/`blockHash`, emitted only when supplied (so the FIX-1 app-tree-only upsert never writes `block_header: null` over a populated header). New `updateAnchorConfirmationProofs()` does a per-anchor UPDATE of ONLY `block_header`/`block_hash` (never clobbers app-tree columns), counting `missing` for rows with no `anchor_proofs` row (skipped, never created header-only). **MED-2 (PR #1320):** the UPDATE now requests the affected rows via `.eq('anchor_id', …).select('anchor_id')` and branches on `data?.length` — the prior code read `count` without `{ count: 'exact' }`, so `count` was always null, `missing` was permanently 0, and the "no anchor_proofs row" warn was unreachable.
-- **`jobs/confirmation-proof-populate.ts`** (new): `populateConfirmationProofs(client, provider, candidates)` groups anchors by shared tx and fetches ONE proof per UNIQUE tx via `runWithConcurrency` (a 10k-anchor / 3-merkle-tx run makes 3 fetches, not 10k), then writes confirmed proofs to every anchor of the tx; pending/stale are not persisted. `populateConfirmationProofsForSecuredAnchors()` is the bounded, resumable cron scan (SECURED + `merkle_root` present + `block_header IS NULL`) — deliberately SEPARATE from the hot `check-confirmations.ts` bulk-drain path so that latency-critical path is not re-opened.
-- **`jobs/confirmation-proof-backfill.ts`** (new): `runConfirmationProofBackfill()` is the production cron entrypoint — resolves the GetBlock-backed `ConfirmationProofProvider` + `db` from config (provider built once per process, never re-logs its token-bearing `rpcUrl`) and drives one bounded pass. No-ops (`skipped:true`) in mock mode / when `ENABLE_PROD_NETWORK_ANCHORING` is off. Needs **no mutex** (idempotent — populated `block_header` is the watermark; last writer writes identical bytes).
-- **CRON WIRING (PR #1320) — now wired, both paths:** in-process `cron.schedule('populate-confirmation-proofs', '*/15 * * * *', …)` in `routes/scheduled.ts` (dev/test backup, on the `ANCHOR_TABLE_IN_PROCESS_JOBS` allowlist + the maintenance-flag skip), AND the **production** trigger `POST /jobs/populate-confirmation-proofs` in `routes/cron.ts` (Cloud Scheduler → HTTP). The real-network soak PROVED in-process node-cron NEVER fires on Cloud Run (dormant under CPU throttling) — prod cron is Cloud Scheduler → HTTP, so the HTTP endpoint is what actually runs the backfill. Both gated on `ENABLE_CONFIRMATION_PROOF_BACKFILL` (`config.enableConfirmationProofBackfill`, default OFF; getter in `middleware/flagRegistry.ts`).
-- **MED-1 (CVE-2012-2459, PR #1320):** `chain/confirmation-proof.ts` now actually enforces the duplicate-node reject in BOTH partial-merkle passes (`walkMerkleTree` + `extractBranchForIndex`): for a GENUINE right child (per `calcWidthAtHeight`), `left.equals(right)` ⇒ the tree is treated as malformed (returns null / propagates failure), matching Bitcoin Core's `fBad`. It was previously only claimed in a comment, not implemented.
-- **0340 columns used:** `block_header` + `block_hash`. NO new migration (the 0340 columns already exist). `merkle_index` (FIX-1) feeds the `txIndex`-style structure; `op_return_payload` + `proof_schema_version` untouched (S2 verifier / format concerns).
-- Tests (NO real Bitcoin API): `chain/confirmation-proof.test.ts` (22, +1 CVE-2012-2459 degenerate-tree reject), `jobs/confirmation-proof-populate.test.ts` (10), `jobs/confirmation-proof-backfill.test.ts` (4), `routes/cron.test.ts` (+2 `populate-confirmation-proofs` endpoint), `utils/anchorProofs.test.ts` (+1 missing-row + .select assertion), `chain/utxo-provider.test.ts` (+6). Full worker suite green except the pre-existing `ai/zk-proof.test.ts` env gate (needs `npm run build:circuit`).
-
-## SCRUM-1791 — entitlement read-side stale-period clamp (2026-06-23)
-
-_Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`); confirmed via `git diff` between merge #1255's parents that this section was byte-for-byte discarded, not superseded by later edits._
-
-Closes the read-side half of the `subscriptions.current_period_*` SEV1. The
-write-side roll-forward already landed (`f5f1e051`: `handlePaymentSucceeded`
-advances the period from `invoice.lines.data[0].period`), but it depends on the
-Stripe webhook landing with a usable period — when BOTH documented fallbacks
-fire (a missed `customer.subscription.updated` AND an invoice with no line
-period) the row stays stale, the original 18-day-stale prod row.
-
-- **`routes/billing.ts`**: new `effectiveUsagePeriodStart(periodStart, periodEnd)`
-  + `currentMonthStartIso()`. `handleBillingStatus` now scopes `countAnchorUsage`
-  by the EFFECTIVE period start: the stored `current_period_start` **only while
-  the window is current** (`current_period_end` in the future), otherwise the
-  current UTC calendar-month boundary — the same bound the already-safe frontend
-  RPC `get_user_monthly_anchor_count` (`created_at >= date_trunc('month', now())`)
-  uses. A stale row can no longer make the usage meter span multiple cycles →
-  no false `percentUsed > 100` → a paid+current user is never gated out. The
-  customer-facing `billing.currentPeriodEnd` still reports the stored value
-  verbatim (we don't fabricate a next-billing date; the clamp is meter-only).
-- **`routes/billing-status.test.ts`**: `chain()`/`routeTables()` gained an
-  `onGte` capture so tests assert the exact `created_at` lower bound. New
-  describe `SCRUM-1791 stale-period read clamp`: clamp on past `period_end`,
-  clamp on null start, trust a fresh window verbatim, and stored stale
-  `currentPeriodEnd` still surfaced.
-- **`stripe/handlers.test.ts`**: new describe `SCRUM-1791 entitlement lifecycle`
-  — lapsed-then-renewed re-grant (active + period advanced + grace cleared in one
-  invoice), cancellation revoke (status→canceled + audit), mid-period upgrade
-  window recompute from `items[0]`.
-
-Code-only, no migration. Read path only; write path unchanged.
-
-## SCRUM-2492 — connector-byte handling hardening (§1.6A enforcement) (2026-06-16)
-
-_Restored 2026-07-28 — same union-merge-driver incident as above. This section documents the CLAUDE.md §1.6A carve-out's enforcement mechanism and remains current._
-
-Closed the §1.6A gap where 0-of-6 controls were enforced. Connector-fetched
-document bytes (DocuSign / Drive) are now blocked from every leak sink — at
-build time AND runtime. The connector happy path was already clean, so this is
-regression-prevention + closing latent error-path leaks. Six cohesive pieces:
-
-- **`eslint-rules/no-connector-bytes-to-sink.cjs`** (new, ERROR on connector
-  files): flags raw bytes (`Buffer`/typed-array/`*.bytes`/`documentBytes`/raw
-  `.toString()`) reaching `logger.*`, `Sentry.capture*`/breadcrumb/context,
-  `Error`/`throw`/template literals, `last_error:`/`failJob(...)`, `fs.write*`,
-  `.insert/.update/.upsert` row values, or `JSON.stringify(...)`. Single-hop
-  alias tracking; range-dedupe. Scoped via `eslint.config.js` to
-  `src/integrations/**` + `docusign-*` job files; PKI/timestamp `arrayBuffer()`
-  readers (`src/signatures/**`) are out of scope. 0 real violations.
-- **`integrations/oauth/docusign.ts` / `drive.ts`**: `DocusignApiError` /
-  `DriveApiError` are byte-safe BY CONSTRUCTION — dropped the `body: unknown`
-  field; now `{ message, status }` only (mirrors `CredentialSourceImportError`).
-  All ~20 construction sites updated; the document-fetch non-2xx path no longer
-  reads the response body.
-- **`utils/logger.ts`**: `formatters.log` recursively strips any binary value
-  (`Buffer`/TypedArray/DataView/ArrayBuffer + `{type:'Buffer',data:[…]}` shape)
-  to `[REDACTED_BYTES]` by TYPE regardless of key; `redact` paths cover known
-  byte field names; the `err`/`error` serializer runs the same sanitizer.
-  Exported `redactBinaryValues`.
-- **`utils/sentry.ts`**: `scrubBinaryValues` runs FIRST in `scrubPiiFromEvent`
-  and `scrubPiiFromBreadcrumb` — type-based binary drop across contexts/extra/
-  tags/exception/arbitrary keys, before the existing key-name PII pass.
-- **`utils/jobQueue.ts`**: `failJob` routes `last_error` through
-  `sanitizeLastError` (detects raw Buffer/typed-array, `{type:'Buffer'}` JSON,
-  control-byte runs, and low-entropy repeated-char runs → token) instead of a
-  bare `substring(0,1000)`. The dead-letter warn log uses the sanitized value.
-- **`jobs/connector-byte-safety.test.ts`** (new): the mandated runtime test —
-  drives a 5 MiB Buffer (`Buffer.alloc(5*1024*1024, 0x25)`) through every sink
-  and asserts the bytes appear in none of: thrown error message/fields,
-  `job_queue.last_error`, captured pino output, or a Sentry event through
-  `scrubPiiFromEvent`.
-
-## Train D proof-integrity foundation (2026-06-15, branch `feat/train-d-proof-foundation`)
-
-## Train D proof-integrity foundation (2026-06-15, branch `feat/train-d-proof-foundation`)
-
-The #1 MVP launch-blocker: make proof `verified` cryptographic and persist the
-branches that make it possible. Three coupled stories on one branch.
-
-- **`utils/merkle-verify.ts`** (new, SCRUM-2490 / PROOF-VERIFY): `verifyMerkleInclusion(leaf, branch, root, { leafIndex?, leafCount? })` recomputes the app-tree root from the branch using the SAME plain double-SHA256 rule as `utils/merkle.ts::buildMerkleTree` (so it matches what is actually anchored on-chain) and returns `{ valid, reason }`. Hardening: 32-byte (64-hex) leaf/sibling length validation (leaf↔internal domain separation for this Bitcoin-style scheme), the **CVE-2012-2459** duplicated-leaf guard (a self-pair `sibling == running hash` is legitimate ONLY at the rightmost node of an odd-sized level — enforced structurally when `leafIndex` + `leafCount` are known), and empty-branch ⇒ root == leaf. Also exports RFC-6962 `hashLeafTagged` / `hashNodeTagged` for a FUTURE `proof_schema_version=2` — NOT wired into the v1 verdict (tagged hashing would change on-chain root bytes; gated behind the PROOF-01 §4 OP_RETURN version-byte decision).
-- **`api/v1/verify-proof.ts`** (SCRUM-2490): `buildProofResponse` now sets `verified` from `verifyMerkleInclusion(...)`, **never** from `anchors.status` (closes the pre-mortem K1 kill-shot). Threads the new `merkle_index` through the stored-proof + metadata extractors and the prod `anchor_proofs` SELECT. NOTE: `api/v1/verify.ts::buildVerificationResult` `verified` is a DIFFERENT, credential-status semantic (active/non-revoked) and is correctly left status-derived — do not confuse the two.
-- **`jobs/batch-anchor.ts` + `jobs/anchor.ts`** (SCRUM-2471 / FIX-1): the customer batch path (`processBatchAnchors`, both the claim path and the legacy fallback) and the single-anchor path (`processAnchor`) now persist each leaf's branch + integer `merkleIndex` into `anchor_proofs` via `utils/anchorProofs.ts::upsertAnchorProofs` (`buildMerkleTree`'s `tree.proofs` was previously discarded; only `publicRecordAnchor.ts` wrote branches). Single-leaf = empty branch, `merkle_root == fingerprint`. Persistence is NON-FATAL (the TX is already broadcast; a miss is recoverable via the backfill — never revert a broadcast over a proof write).
-- **`utils/anchorProofs.ts`**: `AnchorProofUpsertRow` gains `merkleIndex?` → persisted as `anchor_proofs.merkle_index`.
-- **`jobs/proof-branch-backfill.ts`** (new, SCRUM-2471): resumable, self-validating backfill for EXISTING SECURED customer anchors missing a branch. Reconstructs each batch's tree from `created_at,id`-ordered fingerprints, recomputes the root, and persists branches **only if the recomputed root equals the stored `merkle_root`** (never writes a wrong branch; unrecoverable batches are skipped + counted). The data is the durable watermark (a completed batch stops matching the "incomplete" query). **Manual-trigger only — NOT cron-wired, NOT to be run against prod in this change** (T3 data backfill; needs its own soak + operator sign-off).
-- **Migration `0340`** adds the proof-completeness columns + the gated "SECURED ⇒ proof complete" trigger (see `supabase/migrations/agents.md`). `database.types.ts` (worker + root) hand-synced for the 5 new `anchor_proofs` columns (local-only; no cloud `gen:types`).
-
-## Edge MCP Truthfulness PR-1 — test realignment + embedding drift guard (2026-06-05)
-
-- **`src/mcp-tools.test.ts`** now imports the migration-pinned RPC fixture
-  `realPublicAnchorRow` / `pendingPublicAnchorRow` from
-  `../../edge/src/__fixtures__/publicAnchor.ts` instead of hand-authored
-  wrong-key mocks (`org_name`/`chain_tx_id`/`recipient_hash`/`issued_at`/
-  `expires_at`/`created_at`-as-anchor-time). Those wrong keys masked BUG-2
-  in the edge `shapeAnchorRow` mapper; assertions are now value-asserting
-  (issuer_name, network_receipt_id, anchor_timestamp) and fail if it regresses.
-- **`src/nessie-embedding-drift.test.ts`** (new): cross-service guard for
-  BUG-3a — asserts the edge nessie query model (`NESSIE_EMBEDDING_MODEL` =
-  `@cf/baai/bge-base-en-v1.5`) is a DIFFERENT family from the worker index
-  model `GEMINI_EMBEDDING_MODEL` (`gemini-embedding-001`). Added to the
-  worker `tsconfig.json` `exclude` list (alongside the other edge-importing
-  MCP tests) since it pulls edge source outside `rootDir`.
-
-_Last updated: 2026-05-15 (SCRUM-1909 lint warning cleanup)._
-
-## What This Folder Contains
-
-Express-based worker service handling privileged server-side operations: Merkle batch anchoring, Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
-
-## SCRUM-1909 ESLint warning cleanup (2026-05-15)
-
-Driving worker eslint warnings to zero so `--max-warnings 0` can be re-enabled (CLAUDE.md §0 Rule 9 / SCRUM-1250 R4). PRs #789, #791, #792, #793 cover S1+S2 work:
-
-- **PR #789**: 34 quick-win warnings (ban-ts-comment → ts-expect-error, preserve-caught-error, no-useless-assignment). 365 → 331.
-- **PR #791**: 163 warnings — Express type augmentation (`types/express.d.ts`), `require()` → ESM import, `arkova/missing-org-filter` + `no-explicit-any` suppressions. 331 → 119.
-- **PR #792**: Security fix — 12 tenant isolation gaps (org_id on audit inserts, api_keys TOCTOU guard, event_category CHECK constraint fix).
-- **PR #793**: 48 warnings — test file `as any` → proper types, `chain/base.ts` + `hsmBridge.ts` suppressions.
-
-**`types/express.d.ts`** centralizes Request augmentation for `userId`, `orgId`, `paymentResolution`, `rawBody`, `id`. Coexists with per-middleware augmentations in `requireOrgId.ts` and `apiKeyAuth.ts`. TypeScript merges all declarations.
-
-**Suppression policy for `arkova/missing-org-filter`** (updated PR #798): `public_records` removed from monitored tables (no org_id column, cross-tenant by design). Cross-tenant system crons (`*Fetcher.ts`, `attestationAnchor.ts`, `chain-maintenance.ts`, `check-confirmations.ts`, etc.) exempted via eslint.config.js override. Org-scoped jobs (`report.ts`, `rules-engine.ts`, `rule-action-dispatcher.ts`, `queue-reminders.ts`) keep the rule active — inline `eslint-disable` with `-- service-role admin query` for those. Stripe webhooks and public verification endpoints suppress with `-- public verification endpoint`.
-
-## Treasury null-handling fix (2026-05-15, PR #805)
-
-- **`src/api/treasury.ts`** line 187: fixed null handling in `parseX402StatsPayload` — `!== undefined` changed to `!= null` so `recent_payments: null` from SQL RPC no longer triggers 502.
-- **`src/api/treasury.test.ts`**: new `it.each` tests cover null/undefined `recent_payments`, plus `handleTreasuryHealth` DB error handling and `parseThresholdUsd` edge cases.
-
-## Routine dependency consolidation (2026-05-12)
-
-PR replacement branch `codex/deps-routine-20260512` bundles the worker dependency updates from #770 into the root/edge routine dependency batch. Worker bumps: `@sentry/node` and `@sentry/profiling-node` 10.53.0, `@types/node` 25.7.0, `@vitest/coverage-v8` and `vitest` 4.1.6, `typescript-eslint` 8.59.3, and `vite` 8.0.12.
-
-Validation for this batch: `npm run typecheck`, `npm run lint`, `npm run build:circuit`, `npm run test` (398 files / 5,378 tests), and `npm run build`. `src/types/database.types.ts` now includes `org_credits`, matching the existing baseline + 0300/0301 migrations used by billing/quota code.
-
-## SCRUM-1668 anchor batch policy fix (2026-05-06, PR #700)
-
-- **`src/jobs/anchor.ts`**: `processPendingAnchors()` is now a compatibility no-op. It does not call `claim_pending_anchors`, does not move ordinary anchors to `BROADCASTING`, and does not submit one-anchor Bitcoin transactions. Ordinary `PENDING` anchors remain in the Merkle batch queue owned by `jobs/batch-anchor.ts`.
-- **`src/jobs/batch-anchor.ts`**: the smart-skip gate now probes the indexed 3,000th and 10,000th pending rows instead of depending on exact/fast status counts. This pins the operator rule directly: 10,000 fires immediately; 3,000 starts the age clock; stale count probes cannot collapse to `-1` and defer forever.
-- **`src/routes/scheduled.ts`**: removed the in-process one-minute `process-pending-anchors` schedule. The batch policy check remains on `BATCH_ANCHOR_INTERVAL_MINUTES` (default 10 minutes) and only broadcasts when the batch size/age/forced-flush rules fire.
-- **Tests**: `anchor.test.ts`, `anchor-lifecycle.test.ts`, `batch-anchor.test.ts`, `batch-anchor.audit.test.ts`, `scheduled.test.ts`, and `index.test.ts` pin that pending anchors are not individually claimed or broadcast and that batch triggers fire on the 10,000-size / 3,000+age rules.
-
-## SCRUM-1130 — durable 24-hour organization queue scheduler (2026-05-05)
-
-- `src/jobs/org-queue-scheduler.ts` claims due organizations through `claim_due_org_queue_runs`, then runs the existing org-scoped `processBatchAnchors({ force: true, orgId })` path. Keep direct anchoring logic out of the scheduler; `batch-anchor.ts` remains the worker-owned execution path.
-- Manual `/api/queue/run` records into the same `organization_queue_runs` history and updates `organization_queue_run_state`, so admin-triggered runs reset the 24-hour due timer.
-- `POST /cron/org-queue-scheduler` is the scheduled entrypoint. `ENABLE_ORG_QUEUE_SCHEDULER=false` is the fail-closed kill switch for the scheduler pass.
-- Migration `0294_org_queue_scheduler.sql` owns `organization_queue_run_state`, `organization_queue_runs`, and the service-role claim RPC. Do not change older migrations; add compensating migrations.
-
-## SCRUM-1135 R0-R3 closeout (2026-05-05, PR #695)
-
-- **`src/api/v1/webhooks/microsoft-graph.ts`** ([SCRUM-1592](https://arkova.atlassian.net/browse/SCRUM-1592)):
-  Microsoft Graph change-notification receiver. Validation-token handshake is
-  public-safe; delivery is default-off behind `ENABLE_MICROSOFT_GRAPH_WEBHOOK`
-  and validates `clientState` with a constant-time compare. Subscription lookup
-  is by `connector_subscriptions.external_subscription_id`; malformed Graph
-  items are Zod-gated before any nonce/write path. Transient DB lookup failure
-  returns 503 so Graph retries instead of dropping the event.
-- **`0292_microsoft_graph_webhook_nonces.sql`** and
-  **`0293_msgraph_nonce_payload_hash_and_compound_rpc.sql`**: replay protection
-  for Graph notifications. Dedupe key includes `payload_hash`, and
-  `record_msgraph_nonce_and_enqueue(...)` records the nonce plus rule event in
-  one Postgres function so enqueue failure rolls back the nonce.
-- **`src/api/proof-packet.ts`** ([SCRUM-1593](https://arkova.atlassian.net/browse/SCRUM-1593)):
-  proof-packet export walks supersede lineage with a 100-hop cap and cycle
-  guard. Public responses expose public identifiers only and filter
-  soft-deleted anchors with `deleted_at IS NULL`.
-- **SCRUM-1590 / SCRUM-1591 closeout tests**: `rules-engine`,
-  `demo-event-injector`, and `rule-action-dispatcher` coverage pins
-  claim/complete/release behavior, disabled-rule behavior, demo event injection,
-  action dispatch, and explainability traces. SCRUM-1591 engineering evidence is
-  linked from the SCRUM-1137 Confluence page; Jira remains In Progress until an
-  allowed non-reporter verifier closes it.
-
-## SCRUM-792 — Gemini fraud detection seed dataset 100+ (2026-04-27, GME2-01)
-
-`src/ai/eval/fraud-training-seed.ts` expanded from 18 to 100 entries: 22 diploma_mill, 22 license_forgery, 17 document_tampering, 17 identity_mismatch, 11 sophisticated, 11 clean controls. Sources span FTC enforcement actions (Almeda, Belford, WAUC accreditation alert, Rochville, FBI Columbia State 1998), GAO-04-1024T, Oregon ODA unaccredited registry, CMS NPI spec (10-digit + Luhn + prefix), DEA registrant format spec (2 letters + 7 digits + checksum), HHS-OIG LEIE provider exclusion, and state-board enforcement (TX Medical Board, Medical Board of California, NY OCA, NJ BME, NSOPW match, ABIM retraction).
-
-Exported `as const` tuples — `FRAUD_SIGNALS` (13 codes) and `FRAUD_CATEGORIES` (6 categories incl. new `'clean'`) — with derived `FraudSignal` / `FraudCategory` types so the 100 entry literals are compile-time checked. The new `'clean'` category isolates false-positive controls; previously they were lumped into `'sophisticated'` which heterogenized that bucket.
-
-Tests at `src/ai/eval/fraud-training-seed.test.ts` (25 tests) lock per-category counts (20/20/15/15/10/10), signal-vocab membership, calibration band targets (≥10 conf ≥0.9 unambiguous, ≥10 in 0.5–0.75 verification band), and source attribution (≥5 FTC, ≥2 GAO, ≥5 state-board references).
-
-Vertex tuning launched: `tuningJobs/6387124463783116800` against `gemini-2.5-pro`, 5 epochs, dataset `gs://arkova-training-data/gemini-fraud-v1-20260427-155452.jsonl`. F1 ≥ 60% + FP ≤ 5% DoD gated on job completion.
-
-## R2 batch 3 — audit immutability + scope vocabulary + agents privacy (2026-04-27, SCRUM-1246 wave)
-
-- **`api/audit-event.ts`** ([SCRUM-1270](https://arkova.atlassian.net/browse/SCRUM-1270)): new `POST /api/audit/event` endpoint. Browser callers used to insert into `audit_events` directly via the anon Supabase client (RLS allowed `actor_id = auth.uid()` writes — Forensic 7 forgery vector). Migration 0276 drops the authenticated INSERT policy; this route is the only browser-facing write path. JWT verified, `actor_id` pinned to the JWT subject, body Zod-validated with `.strict()` so spoofed `actor_id` keys 400.
-- **`api/apiScopes.ts`** ([SCRUM-1272](https://arkova.atlassian.net/browse/SCRUM-1272)): authoritative scope vocabulary extended with `COMPLIANCE_API_SCOPES` (`compliance:read|write`, `oracle:read|write`, `anchor:read|write`, `attestations:read|write`, `webhooks:manage`, `agents:manage`, `keys:read`). `scopeSatisfies()` treats legacy `verify` as a superset of `anchor:read` / `oracle:read` / `attestations:read` so existing keys keep working when handlers pivot to the new names. **JWT-claims path for FERPA / HIPAA / emergency-access scope guards still TBD** — those routes use `requireAuth` not `apiKeyAuth`, so a `requireScope()` mount falls through. Tracked under SCRUM-1271 sub-tickets.
-- **`api/v1/agents.ts`** ([SCRUM-1271](https://arkova.atlassian.net/browse/SCRUM-1271) sub-A): `toPublicAgent()` strips `org_id` and `registered_by` (a user UUID) from outbound responses. CLAUDE.md §6 privacy fix; the agent's own `id` stays for v1 back-compat per §1.8 — rename to `public_id` is staged in v2 under SCRUM-1444 / 1445.
-
-## R2 batch 1 — P1 customer-facing recovery (2026-04-26, SCRUM-1246 wave)
-
-- **`webhooks/payload-schemas.ts`** ([SCRUM-1268](https://arkova.atlassian.net/browse/SCRUM-1268) + [SCRUM-1743](https://arkova.atlassian.net/browse/SCRUM-1743) + [SCRUM-1794](https://arkova.atlassian.net/browse/SCRUM-1794)): canonical Zod schemas for the anchor-lifecycle family `anchor.submitted` / `anchor.secured` / `anchor.revoked` / `anchor.expired` / `anchor.batch_secured` and the credential-lifecycle family `credential.issued` / `credential.verified` / `credential.status_changed` (SCRUM-1743 Phase 1: contract layer only; emit-points wire in Phase-2 follow-ups). `AnchorExpiredPayloadSchema` + the producer cron landed under [SCRUM-1735](https://arkova.atlassian.net/browse/SCRUM-1735) / [SCRUM-1736](https://arkova.atlassian.net/browse/SCRUM-1736). SCRUM-1794 extended `VALID_WEBHOOK_EVENTS` with `anchor.submitted` + `anchor.batch_secured` AND reworked the CRUD allowlist to derive directly from `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` keys — closes the asymmetric subscribe-vs-emit drift that let the worker emit those events for months while customers couldn't subscribe via `POST /webhooks`. `.strict()` rejects `anchor_id` (UUID), raw `fingerprint`, `user_id`, internal `org_id` per CLAUDE.md §6 + §1.6 — same allowlist for both families. Credential.* events expose `recipient_public_id` (opaque slug) as the only acceptable recipient identifier. `credential.verified` is terminal-only (`SECURED` / `REVOKED` / `EXPIRED`); `credential.status_changed` rejects no-op transitions via `.refine()`. `dispatchWebhookEvent` validates against the schema for known event types and refuses to sign on validation failure. The CRUD allowlist (`api/v1/webhooks-schemas.ts` `VALID_WEBHOOK_EVENTS`) is now derived from this file's `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` keys — adding a schema entry here automatically extends the subscribable set; no drift possible.
-- **`utils/concurrency.ts`** ([SCRUM-1264](https://arkova.atlassian.net/browse/SCRUM-1264)): `runWithConcurrency<T>(tasks, n)` queue-with-cap. Avoids new `p-limit` dep. Used by the bulk-confirm webhook fan-out so 10K-anchor merkle batches don't blast 10K simultaneous fetches at customer endpoints.
-- **`jobs/check-confirmations.ts`** ([SCRUM-1264](https://arkova.atlassian.net/browse/SCRUM-1264)): new `fanOutBulkSecuredWebhooks` runs after the bulk SECURED `UPDATE WHERE chain_tx_id = $1`. Restores the per-anchor `anchor.secured` webhook fan-out that commit a5da008d (2026-03-27) silently dropped — ~10K customer webhooks per merkle root went undelivered for 6 weeks. Concurrency cap: `BULK_WEBHOOK_FAN_OUT_CONCURRENCY` env (default 20).
-- **`stripe/client.ts`** ([SCRUM-1265](https://arkova.atlassian.net/browse/SCRUM-1265)): `createCheckoutSession` now pipes `params.mode` through. The previous hardcoded `mode: 'subscription'` silently overrode `mode: 'payment'` for credit-pack one-time purchases via /api/v1/credits since 2026-04-05. `subscription_data` is now set ONLY for recurring sessions.
-- **`stripe/handlers.ts`** ([SCRUM-1266](https://arkova.atlassian.net/browse/SCRUM-1266) + [SCRUM-1267](https://arkova.atlassian.net/browse/SCRUM-1267)): R2-3 — orphan-row guards in `handleSubscriptionDeleted` / `handlePaymentFailed` / `handlePaymentSucceeded` (mirrors SCRUM-1239 fix on `handleSubscriptionUpdated`). R2-4 — `current_period_start/_end` now read from `subscription.items.data[0]` per Stripe API 2026-03-25.dahlia, throwing explicitly when items[0] is absent rather than the silent `RangeError: Invalid time value`.
-
-## R0 anti-false-done additions (2026-04-25, SCRUM-1246 wave)
-
-- **`Dockerfile`** ([SCRUM-1247](https://arkova.atlassian.net/browse/SCRUM-1247)): `ARG BUILD_SHA=unknown` + `ENV BUILD_SHA` baked at Docker build via `--build-arg BUILD_SHA=$github.sha`. Surfaces in `/health.git_sha`, `/api/admin/system-health.git_sha`, smoke test response, and the new `build-sha-present` smoke check.
-- **`src/utils/buildInfo.ts`** ([SCRUM-1247](https://arkova.atlassian.net/browse/SCRUM-1247)): `getBuildSha()` + `isValidBuildSha(sha)` — single source of truth for the BUILD_SHA env read + 40-char hex validation. Used by `routes/health.ts`, `api/admin-health.ts`, `routes/cron.ts`.
-- **`src/jobs/db-health-monitor.ts`** ([SCRUM-1254](https://arkova.atlassian.net/browse/SCRUM-1254) + [SCRUM-1308](https://arkova.atlassian.net/browse/SCRUM-1308)): cron-driven monitor that emits Sentry events on pg_cron failures, dead-tuple bloat, smoke fail-streaks. Wired to `POST /cron/db-health` (Cloud Scheduler every 5 min — binding shipped in `scripts/gcp-setup/cloud-scheduler.sh`, operator runs the script). Depends on RPCs `get_recent_cron_failures` + `get_table_bloat_stats`. Each Sentry event carries `tags.alert_type` (`pg_cron_failure` / `dead_tuple_ratio` / `smoke_fail_streak` / `smoke_runtime`) so the rules in `infra/sentry/alert-rules.json` route per-class. `classifyAlert()` is exported so the test suite can pin the alert-text → tag mapping; drift would otherwise miscategorize silently.
-- **`scripts/ci/check-confluence-dod.ts`** ([SCRUM-1251](https://arkova.atlassian.net/browse/SCRUM-1251)): helper for Atlassian Automation rule R4 — parses Confluence storage-format body and detects unticked `<ac:task>` markers in the "Definition of Done" section.
-- **`eslint.config.js`** ([SCRUM-1250](https://arkova.atlassian.net/browse/SCRUM-1250)): test-files override block extends the no-unused-vars/_/no-explicit-any/warn rules to `src/**/*.test.ts` + `src/**/*.spec.ts`. Without this 119 errors in test files blocked every deploy. Followup R4 ticket drives all warnings to zero so we can re-add `--max-warnings 0`.
-
-## CIBA hardening closeout (2026-04-23, PRs #479 / #480)
-
-- **`api/treasury.ts`** ([SCRUM-1116](https://arkova.atlassian.net/browse/SCRUM-1116)): `handleTreasuryHealth` now returns HTTP 500 with a `source` field on `cacheResult.error` / `alertResult.error`. New exported `parseThresholdUsd()` rejects NaN/empty/whitespace/non-finite/zero/negative and falls back to `DEFAULT_TREASURY_THRESHOLD_USD`.
-- **`api/rules-crud.ts`** ([SCRUM-1118](https://arkova.atlassian.net/browse/SCRUM-1118)): `handleUpdateRule` drops the manual `updated_at` stamp — the DB trigger `set_organization_rules_updated_at` (migration 0224) is authoritative.
-- **`integrations/connectors/adapters.ts`** ([SCRUM-1118](https://arkova.atlassian.net/browse/SCRUM-1118)): Google Drive adapter now passes `folder_path: null` instead of fabricating `/id1/id2` paths from opaque Drive parent IDs. Admin `folder_path_starts_with` rules silently didn't match Drive events; explicit null is correct until INT-10 resolves names via `files.get`.
-- **`jobs/batch-anchor.ts`** ([SCRUM-1118](https://arkova.atlassian.net/browse/SCRUM-1118)): `triggerC_computeFeeCeiling` clamps inputs to ≥0 and output to `[0, ABSOLUTE_FEE_CAP_SAT_PER_VB]`. `triggerA_shouldFireOnSize` docstring now explicitly marks the function as audit-pinning-only (never called in production; claim loop enforces BATCH_SIZE structurally). Log message in the below-threshold branch rewritten so `pendingCount=0` doesn't claim "oldest anchor is fresh."
-- **`rules/schemas.test.ts`** ([SCRUM-1118](https://arkova.atlassian.net/browse/SCRUM-1118)): misleading "non-HTTPS URL" test renamed to "malformed target_url" — the test pins URL-format, not HTTPS enforcement.
-- **`jobs/batch-anchor.audit.test.ts`** ([SCRUM-1119](https://arkova.atlassian.net/browse/SCRUM-1119)): duplicate boundary test removed; two new triggerC tests cover mid-band (45 min → 100) + below-threshold (29 min → 50).
-
-Migration `0236_ark105_rules_executions_comment_fix.sql` is a compensating `COMMENT ON TABLE` fix — migration 0224's inline wording promised a "24h" idempotency window but the unique index is permanent. Per CLAUDE.md §1.2 we do not modify 0224.
-
-## CIBA v1.0 additions (2026-04-21, PR #474)
-
-New modules this release:
-
-- **`api/queue-resolution.ts`** (ARK-101) — `GET /api/queue/pending`, `POST /api/queue/resolve`. Wraps `list_pending_resolution_anchors` + `resolve_anchor_queue` RPCs; Zod validation; RPC-error → HTTP status mapping in `mapRpcErrorToStatus` (re-used by `anchor-lineage.ts`).
-- **`api/anchor-lineage.ts`** (ARK-104) — `GET /api/anchor/:id/lineage`, `POST /api/anchor/:id/supersede`. Returns [root..head] + `head_public_id` from `is_current` flag.
-- **`api/rules-crud.ts`** (ARK-105/108) — `GET/POST/PATCH/DELETE /api/rules`. Cross-tenant writes guarded by explicit `.eq('org_id', callerOrg)` since the service_role client bypasses RLS. Fire-and-forget `emitRuleAudit` on every lifecycle event.
-- **`api/rules-draft.ts`** (ARK-110) — `buildDraftRule` pure fn + `makeHandleDraftRule` factory. Forces `enabled=false` + caller's `org_id` regardless of provider output. Blocks `FORWARD_TO_URL` outright. `RuleDraftProvider` interface is injectable — Gemini wiring is a follow-up.
-- **`jobs/treasury-alert.ts`** + **`jobs/treasury-alert-dispatcher.ts`** (ARK-103) — pure `decideTreasuryAlert` + Slack (AbortSignal.timeout 5s, redirect:manual) + email. Fail-closed on oracle outage.
-- **`jobs/rules-engine.ts`** (ARK-106) — claims pending rule events, bulk-fetches rules once per tick (`in('org_id', orgIds)` — NOT per-org round-trips), inserts executions with `ON CONFLICT DO NOTHING`.
-- **`jobs/queue-reminders.ts`** (ARK-107) — 15-min cron. `cronMatches` parses 5-field cron with DST-aware `Intl.DateTimeFormat` timezone handling.
-- **`jobs/batch-anchor.audit.test.ts`** (ARK-102) — pins triggerA (size) / triggerB (age) / triggerC (fee ceiling) decision points as pure helpers.
-- **`rules/schemas.ts`, `rules/evaluator.ts`, `rules/sanitizer.ts`** — Zod configs for 7 trigger types + 6 action types; pure evaluator covering all of them; SEC-02 prompt-injection sanitizer with 20-entry adversarial corpus.
-- **`middleware/webhookHmac.ts`** (SEC-01) — uniform webhook HMAC with per-tenant secret, replay window, 1 MB body cap, `redirect: 'manual'` + constant-time compare. Body-size gate runs BEFORE secret fetch.
-- **`middleware/perOrgRateLimit.ts`** (SCALE-01) — `requireOrgQuota({ kind, getOrgId })`. Fail-closed on DB error. Tier table pinned: FREE/PAID/ENTERPRISE.
-- **`integrations/connectors/schemas.ts`** + **`adapters.ts`** (INT-10/12) — Zod webhook payload schemas + pure vendor→canonical adapters for DocuSign, Adobe Sign, Google Drive, SharePoint/OneDrive, Veremark, Checkr.
-- **`ai/ruleMatcher.ts`** (ARK-109) — `matchBySemantics` with parallel cache reads + fire-and-forget cache writes. Reuses project-wide `cosineSimilarity` from `ai/eval/semantic-similarity.ts`. **PII strip is caller's responsibility — this module does no detection.**
-
-### Treasury access policy (updated 2026-04-21)
-
-Both `GET /api/treasury/status` AND `GET /api/treasury/health` are **platform-admin-only**. No carve-out for org admins. The health endpoint returns a narrower shape (USD + threshold + below flag only) but the access policy is identical.
-
-### New env vars (see `docs/reference/ENV.md`)
-
-`ENABLE_WEBHOOK_HMAC`, `ENABLE_RULES_ENGINE`, `ENABLE_QUEUE_REMINDERS`, `ENABLE_TREASURY_ALERTS`, `SLACK_TREASURY_WEBHOOK_URL`, `TREASURY_ALERT_EMAIL`, `TREASURY_LOW_BALANCE_USD`.
-
-### AI observability (SCRUM-1067)
-
-- `src/ai/observability.ts` initializes Arize AX tracing when `ARIZE_TRACING_ENABLED=true` and both `ARIZE_API_KEY` + `ARIZE_SPACE_ID` are present.
-- Provider spans are metadata-only: provider, operation, model/version, token count, latency, confidence, cost/drift/hallucination/failure-mode fields when available. Never attach stripped text, prompts, fingerprints, emails, API keys, or document content.
-- Together.ai, Vertex AI, and Gemini call paths are wrapped with `traceAiProviderCall`; exporter uses Arize's OTLP endpoint (`ARIZE_OTLP_ENDPOINT`, default `https://otlp.arize.com/v1`) and project name `ARIZE_PROJECT_NAME` (default `arkova-ai-providers`).
-
-### Google Drive connector v2 (SCRUM-1099 / SCRUM-1100)
-
-- `integrations/oauth/drive.ts` is the low-level Drive OAuth/watch client. Scope defaults are exactly `drive.file` + `drive.activity.readonly`; do not add broad Drive scopes without Jira/security review.
-- `integrations/connectors/googleDrive.ts` coordinates OAuth completion, Secret Manager token storage, 7-day watch renewal, disconnect cleanup (`channels.stop` + OAuth revoke), and canonical rule-event shaping. Persistence is injected: connection metadata may store `tokenSecretName`, never raw access/refresh tokens.
-- `rules/schemas.ts` + `rules/evaluator.ts` support Google Drive folder-bound rules via either the single AC shape `{ type: "drive_folder", folder_id, watch_channel_id }` or `drive_folders[]` for multiple folders. Evaluator matches Drive events by `payload.parent_ids`, `payload.file_id` / `external_file_id`, or optional resolved `folder_path`.
-
-### DO / DON'T for this folder
-
-- **DO** use `callRpc<T>(db, ...)` from `utils/rpc.ts` instead of `(db.rpc as any)(...)`.
-- **DO** use `extractAuthUserId` + pass `userId` into handlers that need org scoping.
-- **DO** fire-and-forget audit emits (`void emitRuleAudit(...)`) — never gate response latency on audit DB inserts.
-- **DO** use `AbortSignal.timeout(ms)` for outbound `fetch` instead of manual `AbortController` + `setTimeout`.
-- **DO** scope every write by `.eq('org_id', callerOrg)` on tables where the service_role client is used — RLS is bypassed.
-- **DON'T** import `generateFingerprint` here — it's client-side only (CLAUDE.md §1.6).
-- **DON'T** use `(db as any)` when the table is in `database.types.ts`; if you need the cast it means run `gen:types`.
-- **DON'T** touch Cloud Run deployment config — human-only per `feedback_worker_hands_off`.
+_Last updated: 2026-08-01 (agents.md remediation: changelog split out)._
+
+Express-based worker service handling privileged server-side operations: Merkle
+batch anchoring, Stripe webhook verification, outbound webhook delivery, cron
+scheduling, the rules engine, billing, and org tier/quota enforcement. Uses the
+Supabase **service_role** key — never the anon key.
+
+Per-directory detail lives in [`src/agents.md`](./src/agents.md) (key files +
+the full subdirectory table). This file carries the cross-cutting rules.
+
+## Live findings an agent must know before touching this code
+
+- **Bitcoin is HYBRID, not sovereign** (2026-04-25, standing). Broadcast is
+  GetBlock RPC; UTXO listing, fee estimation, and frontend balance enrichment
+  still traverse public `mempool.space`. Read the path-by-path table below
+  before changing chain code or making a sovereignty claim in customer-facing
+  material.
+- **In-process `node-cron` does NOT fire on Cloud Run.** Proven by the
+  real-network soak: schedulers registered in `routes/scheduled.ts` go dormant
+  under CPU throttling. Production cron is **Cloud Scheduler -> HTTP** against
+  `routes/cron.ts`. A job wired only in-process silently never runs. Wire both,
+  and treat the HTTP endpoint as the one that actually executes.
+- **§1.6A connector-byte controls are enforced, not aspirational** (SCRUM-2492,
+  2026-06-16). Six coupled mechanisms keep connector-fetched document bytes out
+  of every leak sink: the `eslint-rules/no-connector-bytes-to-sink.cjs` rule,
+  byte-safe-by-construction connector error types, `utils/logger.ts` type-based
+  binary redaction, the `utils/sentry.ts` binary scrubber running FIRST,
+  `utils/jobQueue.ts` `sanitizeLastError`, and the
+  `jobs/connector-byte-safety.test.ts` runtime proof. Removing any one voids the
+  CLAUDE.md §1.6A carve-out. Details in the changelog.
+- **Never put a raw wallet address in limiter context, limiter state, or logs**
+  (SCRUM-2705). The Nessie payer limiter keys only by an HMAC of the verified
+  on-chain Transfer sender.
+- Organization quota reads for rules/webhooks are authoritative but
+  read-before-insert — they are **not** an atomic cross-instance hard cap. Only
+  daily anchor usage is atomic (`increment_org_usage` RPC).
 
 ## Bitcoin paths — honest state (2026-04-25, SCRUM-1245)
 
@@ -314,62 +63,36 @@ After GetBlock partial restoration (revision `arkova-worker-00398-p77`, env-var-
 5. ~~Observability counter for `listUnspent` fallback~~ — done in R1-8 / SCRUM-1262
 6. **Operator action (R1-8):** run the curl matrix against prod GetBlock token for `getrawtransaction`, `getblockheader`, `getblockchaininfo`, `getblockcount`. Record results in [Forensic 1/8 Confluence page](https://arkova.atlassian.net/wiki/spaces/A/pages/27362208) and update the table above. If either reorg/confirmation method fails, file R3 follow-up for second-source verification.
 
-## Recent Changes
+## Treasury access policy (updated 2026-04-21)
 
-| Date | Sprint | Change |
-|------|--------|--------|
-| 2026-04-27 | SCRUM-1273 (R2-10) + SCRUM-1269 (R2-6) | `POST /api/v1/anchor` now validates request body via Zod schema (frozen-shape per §1.8), with `metadata` keys restricted to `[a-zA-Z0-9_.-]+` so prototype-pollution-adjacent keys cannot ride through. `Retry-After` header added to two manual 429 sites (`usageTracking.ts` free-tier quota — capped at 1h to avoid leaking exact billing-window boundary; `account-export.ts` 24h export rate). New `ENABLE_VISUAL_FRAUD_DETECTION` switchboard flag + `visualFraudDetectionGate()` middleware mounted as a second gate after `aiFraudGate()` on `/ai/fraud/visual` — distinct from the broader AI-fraud flag because the visual path ships document image bytes off-device (CLAUDE.md §1.6 carve-out, requires per-tenant Confluence opt-in before flip). Default false; fails closed on DB read error. |
-| 2026-04-27 | SCRUM-1259 (R1-5) + SCRUM-1262 (R1-8) | Final `count:'exact'` migration on `anchors` hot path: `jobs/batch-anchor.ts` smart-skip pending count now uses `get_anchor_status_counts_fast` RPC (last anchors-table site outside the 5 originally enumerated). `FastCountsRpc` interface extracted to `utils/rpc.ts` (was duplicated 3×). Tests added for `fetchAnchorStats`, `getMigrationStatus`, and the `GetBlockHybridProvider.listUnspent` mempool-fallback observability path (`emitRpcFallback` is invoked on RPC failure and skipped on RPC success). |
-| 2026-04-24 | SCRUM-1101/1102 | DocuSign connector continuation: `integrations/oauth/docusign.ts`, `integrations/connectors/docusign.ts`, and `api/v1/webhooks/docusign.ts` add OAuth helpers, DocuSign Connect HMAC verification, sanitized rules-event enqueue, and retryable `docusign.envelope_completed` job payloads. `api/rules-crud.ts` adds `POST /api/rules/:id/run`, org-admin auth, and 5/min/org in-memory rate limiting for manual rule executions. |
-| 2026-04-24 | API-V2-01/02 | `api/v2/search.ts` now returns typed `id`/`public_id` search results and metadata-aware document filters. `api/v2/rateLimit.ts` applies the existing 1,000 req/min/key policy with RFC 7807 errors. `api/apiScopes.ts` centralizes the v2 scope vocabulary while preserving legacy v1 scope compatibility. |
-| 2026-03-10 ~12 PM | HARDENING-1 | 27 unit tests for `processAnchor()` + `processPendingAnchors()` (100% coverage on `anchor.ts`). Fixed silent audit event failure (BUG-H1-01). Deleted dead `anchorWithClaim.ts` (BUG-H1-02, BUG-H1-03). |
-| 2026-03-10 ~2 PM | HARDENING-2 | 32 new tests: MockChainClient contract (18), getChainClient factory (5), job claim/completion flow (9). Total: 59 worker tests. 100% coverage on `anchor.ts`, `chain/mock.ts`, `chain/client.ts`. |
-| 2026-03-10 ~4 PM | HARDENING-3 | 55 new tests: webhook delivery (30), Stripe client (7), Stripe handlers (18). Total: 114 worker tests. HMAC signature verification confirmed against `crypto.createHmac`. |
-| 2026-03-10 ~5:20 PM | HARDENING-4 | 18 new tests: lifecycle integration (8), webhook dispatch wiring (10). Wired `dispatchWebhookEvent()` into `processAnchor()`. Added `processWebhookRetries` cron. Total: 132 worker tests. P7-TS-10 COMPLETE. |
-| 2026-03-10 ~8 PM | HARDENING-5 | 96 new tests across 7 new test files: config (9), index (17), stripe/mock (9), jobs/report (19), jobs/webhook (12), utils/correlationId (12), utils/rateLimit (18). 80% thresholds on all. Total: 228 worker tests. Sprint COMPLETE. |
-| 2026-03-10 ~11:30 PM | TYPE-FIX | Fixed pre-existing TS errors: `delivery.ts` (Json type cast for payload insert), `logger.ts` (pino CJS/ESM interop), `delivery.test.ts` (mock tuple/undefined casts), `client.test.ts` (missing afterEach import), `index.test.ts` (express importActual type). Synced `database.types.ts` from frontend. Zero TS errors across all source + test files. |
-| 2026-03-11 | SONARQUBE | SonarQube remediation: S2068 credential fixes across test files, S6437 ReDoS regex replacements, S8215 Express disclosure fix, S2004 deeply nested mock flattening in load tests, security hotspot reviews (pseudorandom, CORS, CSRF, regex anchoring). All worker type errors resolved. |
-| 2026-03-11 | P7-TS-11 | Wallet utilities: `chain/wallet.ts` (generateSignetKeypair, addressFromWif, isValidSignetWif), CLI scripts, 13 tests. |
-| 2026-03-12 | P7-TS-12 | UTXO provider abstraction: `chain/utxo-provider.ts` (RpcUtxoProvider + MempoolUtxoProvider + factory), 35 tests. Broadcast tests added to signet.test.ts (3) and utxo-provider.test.ts (3). Integrated into SignetChainClient + getChainClient(). 363 total worker tests. |
-| 2026-03-14 | H3-01 | Deleted dead `src/jobs/webhook.ts` + `src/jobs/webhook.test.ts` (superseded by `webhooks/delivery.ts`). Removed `webhook.ts` coverage entry from `vitest.config.ts`. |
-| 2026-04-12 | NMT-09–16 | **Nessie continuation stories.** Eval regression pipeline (baseline-metrics.ts, 18 tests). Golden dataset phase 14 (120 entries, 14 tests). Domain router expanded with professional + identity groups (11 tests). Scripts: runpod-deploy-v5.ts, nessie-intelligence-distill-v2.ts, nessie-v7-export.ts. npm script: eval:regression. |
-| 2026-03-12 | INFRA-01 | **Zero Trust Docker transformation.** Dockerfile converted to multi-process (Express + cloudflared sidecar). `entrypoint.sh` process manager created. `tunnel-config.yml` reference spec. `config.ts` extended with `cloudflareTunnelToken` + `sentryDsn`. `scripts/deploy-tunnel.sh` deployment script. NO ports exposed — all ingress via Cloudflare Tunnel. ADR-002: `docs/confluence/15_zero_trust_edge_architecture.md`. |
+Both `GET /api/treasury/status` AND `GET /api/treasury/health` are **platform-admin-only**. No carve-out for org admins. The health endpoint returns a narrower shape (USD + threshold + below flag only) but the access policy is identical.
 
-## Test Coverage Status
+## CIBA v1.0 env vars (see `docs/reference/ENV.md`)
 
-**4,682 worker tests across 363 test files (refreshed 2026-04-28).** Per-file
-80%+ thresholds enforced via `services/worker/vitest.config.ts`; coverage
-monotonic enforcement via `scripts/ci/check-coverage-monotonic.ts` blocks any
-PR that lowers a per-file threshold without the `coverage-drop-allowed`
-label + a linked `coverage-restoration` Jira ticket.
+`ENABLE_WEBHOOK_HMAC`, `ENABLE_RULES_ENGINE`, `ENABLE_QUEUE_REMINDERS`, `ENABLE_TREASURY_ALERTS`, `SLACK_TREASURY_WEBHOOK_URL`, `TREASURY_ALERT_EMAIL`, `TREASURY_LOW_BALANCE_USD`.
 
-The HARDENING-5 snapshot below (1,043 tests / 67 files) is the historical
-baseline from 2026-03-10; left in place as a sprint artifact, not as
-current state.
+## AI observability (SCRUM-1067)
 
-### HARDENING-5 historical snapshot (2026-03-10)
+- `src/ai/observability.ts` initializes Arize AX tracing when `ARIZE_TRACING_ENABLED=true` and both `ARIZE_API_KEY` + `ARIZE_SPACE_ID` are present.
+- Provider spans are metadata-only: provider, operation, model/version, token count, latency, confidence, cost/drift/hallucination/failure-mode fields when available. Never attach stripped text, prompts, fingerprints, emails, API keys, or document content.
+- Together.ai, Vertex AI, and Gemini call paths are wrapped with `traceAiProviderCall`; exporter uses Arize's OTLP endpoint (`ARIZE_OTLP_ENDPOINT`, default `https://otlp.arize.com/v1`) and project name `ARIZE_PROJECT_NAME` (default `arkova-ai-providers`).
 
-**1,043 worker tests across 67 test files (HARDENING-5 close-out, since superseded by ongoing test growth).**
+## Google Drive connector v2 (SCRUM-1099 / SCRUM-1100)
 
-| File | Test File | Tests | Coverage | Sprint |
-|------|-----------|-------|----------|--------|
-| `src/jobs/anchor.ts` | `anchor.test.ts` | 46 | 100% | H1+H2+H4 |
-| `src/chain/mock.ts` | `mock.test.ts` | 18 | 100% | H2 |
-| `src/chain/client.ts` | `client.test.ts` | 5 | 100% | H2 |
-| `src/webhooks/delivery.ts` | `delivery.test.ts` | 30 | 99% stmts | H3 |
-| `src/stripe/client.ts` | `client.test.ts` | 7 | 100% | H3 |
-| `src/stripe/handlers.ts` | `handlers.test.ts` | 18 | 98% | H3 |
-| `src/jobs/anchor-lifecycle` | `anchor-lifecycle.test.ts` | 8 | integration | H4 |
-| `src/config.ts` | `config.test.ts` | 9 | 80%+ | H5 |
-| `src/index.ts` | `index.test.ts` | 17 | 80%+ | H5 |
-| `src/stripe/mock.ts` | `mock.test.ts` | 9 | 80%+ | H5 |
-| `src/jobs/report.ts` | `report.test.ts` | 19 | 80%+ | H5 |
-| ~~`src/jobs/webhook.ts`~~ | ~~deleted~~ | — | — | H3-01: dead code, superseded by `webhooks/delivery.ts` |
-| `src/utils/correlationId.ts` | `correlationId.test.ts` | 12 | 80%+ | H5 |
-| `src/utils/rateLimit.ts` | `rateLimit.test.ts` | 18 | 80%+ | H5 |
-| `src/chain/signet.ts` | `signet.test.ts` | 33 | 80%+ | P7-TS-05+12 |
-| `src/chain/utxo-provider.ts` | `utxo-provider.test.ts` | 29 | 80%+ | P7-TS-12 |
-| `src/chain/wallet.ts` | `wallet.test.ts` | 13 | 80%+ | P7-TS-11 |
+- `integrations/oauth/drive.ts` is the low-level Drive OAuth/watch client. Scope defaults are exactly `drive.file` + `drive.activity.readonly`; do not add broad Drive scopes without Jira/security review.
+- `integrations/connectors/googleDrive.ts` coordinates OAuth completion, Secret Manager token storage, 7-day watch renewal, disconnect cleanup (`channels.stop` + OAuth revoke), and canonical rule-event shaping. Persistence is injected: connection metadata may store `tokenSecretName`, never raw access/refresh tokens.
+- `rules/schemas.ts` + `rules/evaluator.ts` support Google Drive folder-bound rules via either the single AC shape `{ type: "drive_folder", folder_id, watch_channel_id }` or `drive_folders[]` for multiple folders. Evaluator matches Drive events by `payload.parent_ids`, `payload.file_id` / `external_file_id`, or optional resolved `folder_path`.
+
+## DO / DON'T for this folder
+
+- **DO** use `callRpc<T>(db, ...)` from `utils/rpc.ts` instead of `(db.rpc as any)(...)`.
+- **DO** use `extractAuthUserId` + pass `userId` into handlers that need org scoping.
+- **DO** fire-and-forget audit emits (`void emitRuleAudit(...)`) — never gate response latency on audit DB inserts.
+- **DO** use `AbortSignal.timeout(ms)` for outbound `fetch` instead of manual `AbortController` + `setTimeout`.
+- **DO** scope every write by `.eq('org_id', callerOrg)` on tables where the service_role client is used — RLS is bypassed.
+- **DON'T** import `generateFingerprint` here — it's client-side only (CLAUDE.md §1.6).
+- **DON'T** use `(db as any)` when the table is in `database.types.ts`; if you need the cast it means run `gen:types`.
+- **DON'T** touch Cloud Run deployment config — human-only per `feedback_worker_hands_off`.
 
 ## Do / Don't Rules
 
@@ -381,6 +104,18 @@ current state.
 - **DON'T** import `generateFingerprint` — fingerprinting is client-side only (Constitution 1.6)
 - **DON'T** add OCR libraries (`pdfjs-dist`, `tesseract.js`) — OCR runs on the user's device (`src/lib/ocrWorker.ts`, Constitution 1.6). Both were removed as orphaned zero-importer `devDependencies`; needing one here means the design routes document content server-side, which 1.6 forbids
 - **DON'T** modify existing migration files — write compensating migrations
+
+## Test coverage gate
+
+Per-file 80%+ coverage thresholds are enforced via
+`services/worker/vitest.config.ts`. `scripts/ci/check-coverage-monotonic.ts`
+blocks any PR that lowers a per-file threshold without the
+`coverage-drop-allowed` label **and** a linked `coverage-restoration` Jira
+ticket.
+
+Test and file counts drift every sprint — read them from a run, not from this
+file. (Last count recorded here: 4,682 tests across 363 test files, 2026-04-28.
+The 2026-03-10 HARDENING-5 baseline table is in the changelog.)
 
 ## Dependencies
 
@@ -412,10 +147,6 @@ The worker container runs **two processes** managed by `entrypoint.sh`:
 - `CLOUDFLARE_TUNNEL_TOKEN` injected via secrets manager, never logged
 - Express health check runs inside container only (HEALTHCHECK directive)
 
-## MVP Launch Gap Context
-- **MVP-01 (Worker Production Deployment):** CRITICAL — deploy this service to GCP Cloud Run. Dockerfile is production-ready (multi-process with cloudflared). Needs: `.github/workflows/deploy-worker.yml`, GCP project config, env var secrets in Secret Manager, Cloud Run service definition. Cloudflare Tunnel token must be provisioned via `scripts/deploy-tunnel.sh`.
-- **MVP-11 (Stripe Plan Change/Downgrade):** `stripe/handlers.ts` needs `customer.subscription.updated` and `customer.subscription.deleted` handlers. `useBilling` hook needs plan change mutations.
-
 ## Key Patterns
 
 **Supabase `{data, error}` pattern:** Supabase never throws on query failures. Always destructure and check `error`:
@@ -435,14 +166,6 @@ vi.mock('../config.js', () => ({
 }));
 ```
 
-## 2026-07-15 S3.3 Wave 3 Lane 2 quotas and verified-payer limits
+---
 
-- SCRUM-2703 mounts trusted-identity organization quotas on the real anchor,
-  persisted-rule, and webhook-create surfaces. Daily anchor usage uses the
-  atomic `increment_org_usage` RPC; rule/webhook capacity reads are
-  authoritative but remain read-before-insert and therefore are not an atomic
-  cross-instance hard cap.
-- SCRUM-2705 keys the bounded, process-local Nessie payer limiter only by an
-  HMAC of the verified on-chain Transfer sender. Never place a raw wallet
-  address in request limiter context, limiter state, or logs.
-- Post-Wave-3 staging smoke is deferred; offline tests are not soak evidence.
+Historical change log: [./agents-changelog.md](./agents-changelog.md)

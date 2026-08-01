@@ -1,5 +1,5 @@
 # agents.md — components/layout
-_Last updated: 2026-05-16_
+_Last updated: 2026-07-21_
 
 ## What This Folder Contains
 App-level layout components: shell, sidebar, header, breadcrumbs, error boundaries, and branding.

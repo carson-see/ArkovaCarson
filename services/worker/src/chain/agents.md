@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/chain/
 
-_Last updated: 2026-07-06_
+_Last updated: 2026-07-28_
 
 ## What This Folder Contains
 
