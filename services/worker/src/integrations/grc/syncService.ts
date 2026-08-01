@@ -19,7 +19,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { GrcConnection, GrcEvidencePayload, GrcPlatform } from './types.js';
 import { createGrcAdapter, loadGrcCredentials, type GrcPlatformCredentials } from './adapters.js';
-import { getComplianceControlIds } from '../../utils/complianceMapping.js';
+import {
+  COMPLIANCE_CONTROLS_NOTE,
+  getComplianceControlIds,
+  sanitizeStoredComplianceControls,
+} from '../../utils/complianceMapping.js';
 import { createDefaultKmsClient, decryptTokens } from '../oauth/crypto.js';
 
 // Note: grc_connections and grc_sync_logs not yet in database.types.ts (migration 0139)
@@ -58,6 +62,29 @@ interface AnchorForSync {
  * @param creds - GRC platform credentials (from env)
  * @returns Array of sync results per platform
  */
+/**
+ * SCRUM-2227/2283 — resolve the control IDs that may leave for a GRC platform.
+ *
+ * Stored controls win over the computed mapping (CML-02), but the stored value
+ * is a historical record: rows written before SCRUM-2227 still carry the
+ * retired EU-US DPF identifiers, which Arkova cannot claim. They are filtered
+ * out here, and if that empties the stored list we fall back to the computed
+ * mapping rather than pushing nothing — the credential type's controls are
+ * still accurate, it is only the persisted claim that was wrong.
+ *
+ * Pure + exported so the honesty guarantee is unit-testable without a DB.
+ */
+export function resolveEvidenceControlIds(
+  storedControls: string[] | null,
+  credentialType: string | null,
+): string[] {
+  const sanitized = sanitizeStoredComplianceControls(storedControls);
+  if (Array.isArray(sanitized) && sanitized.length > 0) {
+    return sanitized as string[];
+  }
+  return getComplianceControlIds(credentialType ?? undefined);
+}
+
 export async function syncAnchorToGrc(
   db: SupabaseClient,
   anchor: AnchorForSync,
@@ -79,7 +106,7 @@ export async function syncAnchorToGrc(
   }
 
   // Build evidence payload
-  const controlIds = anchor.compliance_controls ?? getComplianceControlIds(anchor.credential_type ?? undefined);
+  const controlIds = resolveEvidenceControlIds(anchor.compliance_controls, anchor.credential_type);
   const frameworks = [...new Set(controlIds.map(c => c.split('-')[0]))];
 
   const evidence: GrcEvidencePayload = {
@@ -92,6 +119,8 @@ export async function syncAnchorToGrc(
     block_height: anchor.chain_block_height,
     chain_timestamp: anchor.chain_timestamp,
     compliance_controls: controlIds,
+    // SCRUM-2227: the note rides with the controls, and only with them.
+    compliance_controls_note: controlIds.length > 0 ? COMPLIANCE_CONTROLS_NOTE : null,
     frameworks,
     created_at: anchor.created_at,
     secured_at: anchor.chain_timestamp,
