@@ -16,18 +16,58 @@ TLA+ PreCheck formal verification models for critical state machines.
 - **INV-1c REPLACED**: `broadcastingNoChainTx` ("BROADCASTING ⇒ chainTxId null") → **`broadcastingIntentChainTxCoupling`** ("BROADCASTING ⇒ chainTxId=has_tx ⟺ intentPersisted"). New invariants `intentOnlyWhileBroadcasting` + `intentRequiresWorkerActor`.
 - Budgets raised (6th per-anchor bool): pr 200k → 1M raw estimate, nightly 50M → 500M. `check` (pr tier): proofPassed=true, 11 invariants, deadlockChecked, 757 states generated / 196 distinct, "No error has been found."
 
-## 2026-07-20 TOOLCHAIN FINDING — `tla-precheck check` cannot run TLC in this repo (open)
+## 2026-08-01 — how to invoke `check` (and the real coverage gap)
 
-`tla-precheck@0.1.7` injects compiler flags the repo's pinned `typescript@6.0.3`
-rejects (TS5096 `allowImportingTsExtensions` requires `noEmit`; TS5103 invalid
-`--ignoreDeprecations`), so `check` aborts at the typecheck phase for **every**
-machine — reproduced against the pre-existing `calibrationWorkflow.machine.ts`.
-The §1.7 / CLAUDE.md §4 "re-verify with `check`" gate is therefore currently
-non-functional against TS 6.x. Fix = bump `tla-precheck` to a TS-6-compatible
-release, or run `check` under a compatible TypeScript. Full writeup in
-`drainRunAccounting.machine.ts`'s header comment. Until it is fixed, "ran
-`check`" is not a claim any PR can honestly make — say what you actually
-verified instead.
+**`tla-precheck check` works.** Run it the way CI does: from **inside this
+directory**, with a **bare filename**, using the resolved local binary.
+
+```bash
+cd machines
+../node_modules/.bin/tla-precheck check bitcoinAnchor.machine.ts
+```
+
+Verified 2026-08-01: `Model checking completed. No error has been found.`
+(529 distinct states, depth 15).
+
+Invoking it from the repo root with a path prefix
+(`tla-precheck check machines/foo.machine.ts`) aborts at the typecheck phase
+with TS5096 / TS5103 against the pinned `typescript@6.0.3`. That is an
+**invocation-path artifact, not a broken gate** — a 2026-07-20 note previously
+recorded it as "cannot run for every machine / gate non-functional", which is
+incorrect and has been withdrawn. If you hit those two errors, check your cwd
+before concluding the toolchain is broken.
+
+**The real gap — CI verifies 2 of the 4 machines.** `.github/workflows/ci.yml`
+(TLA+ Verification job) runs `check` on `bitcoinAnchor.machine.ts` and
+`partnerProvisioning.machine.ts` only. `calibrationWorkflow.machine.ts` and
+`drainRunAccounting.machine.ts` are covered by **no gate** — editing either
+passes CI with no formal verification at all.
+
+Actual state of all four, run by hand 2026-08-01:
+
+| Machine | `check` result | In CI? |
+|---|---|---|
+| `bitcoinAnchor` | PASS (529 states, depth 15) | yes |
+| `partnerProvisioning` | PASS | yes |
+| `calibrationWorkflow` | PASS | **no** |
+| `drainRunAccounting` | **INVALID — will not run** | **no** |
+
+`drainRunAccounting` fails validation, not safety:
+
+```
+Invalid machine DrainRunAccounting
+[equivalence-budget-cap-exceeded] proof.tiers.nightly.budgets.maxEstimatedStates:
+Graph-equivalence tiers may not declare maxEstimatedStates above 100000
+```
+
+The `nightly` tier declares `maxEstimatedStates: 200_000` (line ~253) against a
+100,000 cap. So this machine has **never been model-checked** — it is not that
+it fails an invariant, it is that TLC never gets to run. Because CI does not
+check it, nothing surfaced that. Fix the budget (or split the tier), then run
+`check` before trusting anything the spec claims.
+
+Until both machines are added to the CI job, treat CLAUDE.md §4's "re-verify
+with `check`" as a manual step for them.
 
 ## Files
 
