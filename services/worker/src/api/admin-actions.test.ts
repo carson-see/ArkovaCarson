@@ -140,44 +140,20 @@ describe('handleAdjustOrgCredit (L2-A5)', () => {
     expect(mockRpc).not.toHaveBeenCalled();
   });
 
-  it('rejects amount = 0 with 400 and never touches the DB', async () => {
+  // SonarCloud typescript:S5976 — these were 6 near-identical tests differing
+  // only by the invalid request body; consolidated into one parameterized
+  // case so each new invalid-input case is a one-line addition, not a
+  // copy-pasted test body.
+  it.each<{ name: string; body: Record<string, unknown> }>([
+    { name: 'amount = 0', body: { amount: 0, reason: 'promo', idempotency_key: IDEMPOTENCY_KEY } },
+    { name: 'a non-integer amount', body: { amount: 3.5, reason: 'promo', idempotency_key: IDEMPOTENCY_KEY } },
+    { name: 'a missing reason', body: { amount: 50, idempotency_key: IDEMPOTENCY_KEY } },
+    { name: 'a blank (whitespace-only) reason', body: { amount: 50, reason: '   ', idempotency_key: IDEMPOTENCY_KEY } },
+    { name: 'a missing idempotency_key', body: { amount: 50, reason: 'promo' } },
+    { name: 'a malformed (non-UUID) idempotency_key', body: { amount: 50, reason: 'promo', idempotency_key: 'not-a-uuid' } },
+  ])('rejects $name with 400 and never touches the DB', async ({ body }) => {
     const res = mockRes();
-    await handleAdjustOrgCredit(ADMIN, ORG, mockReq({ amount: 0, reason: 'promo', idempotency_key: IDEMPOTENCY_KEY }), res);
-    expect(res.statusCode).toBe(400);
-    expect(mockRpc).not.toHaveBeenCalled();
-  });
-
-  it('rejects a non-integer amount with 400', async () => {
-    const res = mockRes();
-    await handleAdjustOrgCredit(ADMIN, ORG, mockReq({ amount: 3.5, reason: 'promo', idempotency_key: IDEMPOTENCY_KEY }), res);
-    expect(res.statusCode).toBe(400);
-    expect(mockRpc).not.toHaveBeenCalled();
-  });
-
-  it('rejects a missing reason with 400', async () => {
-    const res = mockRes();
-    await handleAdjustOrgCredit(ADMIN, ORG, mockReq({ amount: 50, idempotency_key: IDEMPOTENCY_KEY }), res);
-    expect(res.statusCode).toBe(400);
-    expect(mockRpc).not.toHaveBeenCalled();
-  });
-
-  it('rejects a blank (whitespace-only) reason with 400', async () => {
-    const res = mockRes();
-    await handleAdjustOrgCredit(ADMIN, ORG, mockReq({ amount: 50, reason: '   ', idempotency_key: IDEMPOTENCY_KEY }), res);
-    expect(res.statusCode).toBe(400);
-    expect(mockRpc).not.toHaveBeenCalled();
-  });
-
-  it('rejects a missing idempotency_key with 400', async () => {
-    const res = mockRes();
-    await handleAdjustOrgCredit(ADMIN, ORG, mockReq({ amount: 50, reason: 'promo' }), res);
-    expect(res.statusCode).toBe(400);
-    expect(mockRpc).not.toHaveBeenCalled();
-  });
-
-  it('rejects a malformed (non-UUID) idempotency_key with 400', async () => {
-    const res = mockRes();
-    await handleAdjustOrgCredit(ADMIN, ORG, mockReq({ amount: 50, reason: 'promo', idempotency_key: 'not-a-uuid' }), res);
+    await handleAdjustOrgCredit(ADMIN, ORG, mockReq(body), res);
     expect(res.statusCode).toBe(400);
     expect(mockRpc).not.toHaveBeenCalled();
   });

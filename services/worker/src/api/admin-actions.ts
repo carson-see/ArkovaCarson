@@ -227,6 +227,62 @@ export async function handleSetOrgQuota(
   }
 }
 
+interface AdjustOrgCreditInput {
+  amount: number;
+  reason: string;
+  idempotencyKey: string;
+}
+
+/**
+ * Validates the request body for `handleAdjustOrgCredit`. Extracted so the
+ * handler's own cognitive complexity stays under the linted threshold
+ * (SonarCloud typescript:S3776) — this is pure input validation with no
+ * side effects, so it's safe to unit test and reuse in isolation.
+ */
+function validateAdjustOrgCreditBody(
+  body: unknown,
+): { ok: true; value: AdjustOrgCreditInput } | { ok: false; error: string } {
+  const { amount, reason, idempotency_key: idempotencyKey } = (body ?? {}) as {
+    amount?: unknown;
+    reason?: unknown;
+    idempotency_key?: unknown;
+  };
+
+  if (
+    typeof amount !== 'number' ||
+    !Number.isInteger(amount) ||
+    amount === 0 ||
+    Math.abs(amount) > 2_147_483_647
+  ) {
+    return { ok: false, error: 'amount must be a non-zero integer (positive to add, negative to remove)' };
+  }
+  if (typeof reason !== 'string' || reason.trim().length === 0) {
+    return { ok: false, error: 'reason is required' };
+  }
+  if (reason.length > 500) {
+    return { ok: false, error: 'reason must be 500 characters or fewer' };
+  }
+  if (typeof idempotencyKey !== 'string' || !UUID_RE.test(idempotencyKey)) {
+    return { ok: false, error: 'idempotency_key must be a UUID string' };
+  }
+
+  return { ok: true, value: { amount, reason, idempotencyKey } };
+}
+
+/**
+ * Maps an `admin_adjust_org_credit` RPC error code to an HTTP status.
+ * Extracted from a nested ternary chain (SonarCloud typescript:S3358) into
+ * an explicit, independently testable lookup.
+ */
+function rpcErrorToHttpStatus(rpcError: string): number {
+  const STATUS_BY_RPC_ERROR: Record<string, number> = {
+    insufficient_balance: 409,
+    idempotency_key_conflict: 409,
+    org_not_initialized: 404,
+  };
+  return STATUS_BY_RPC_ERROR[rpcError] ?? 400;
+}
+
 /**
  * POST /api/admin/organizations/:id/credits/adjust
  * Body: { amount: number, reason: string, idempotency_key: string }
@@ -255,29 +311,12 @@ export async function handleAdjustOrgCredit(
     return;
   }
 
-  const { amount, reason, idempotency_key: idempotencyKey } = req.body ?? {};
-
-  if (
-    typeof amount !== 'number' ||
-    !Number.isInteger(amount) ||
-    amount === 0 ||
-    Math.abs(amount) > 2_147_483_647
-  ) {
-    res.status(400).json({ error: 'amount must be a non-zero integer (positive to add, negative to remove)' });
+  const validation = validateAdjustOrgCreditBody(req.body);
+  if (!validation.ok) {
+    res.status(400).json({ error: validation.error });
     return;
   }
-  if (typeof reason !== 'string' || reason.trim().length === 0) {
-    res.status(400).json({ error: 'reason is required' });
-    return;
-  }
-  if (reason.length > 500) {
-    res.status(400).json({ error: 'reason must be 500 characters or fewer' });
-    return;
-  }
-  if (typeof idempotencyKey !== 'string' || !UUID_RE.test(idempotencyKey)) {
-    res.status(400).json({ error: 'idempotency_key must be a UUID string' });
-    return;
-  }
+  const { amount, reason, idempotencyKey } = validation.value;
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -305,13 +344,9 @@ export async function handleAdjustOrgCredit(
       idempotent?: boolean;
     } | null;
 
-    if (!row || row.success !== true) {
+    if (row?.success !== true) {
       const rpcError = row?.error ?? 'unknown_error';
-      const status = rpcError === 'insufficient_balance' ? 409
-        : rpcError === 'idempotency_key_conflict' ? 409
-        : rpcError === 'org_not_initialized' ? 404
-        : 400;
-      res.status(status).json({
+      res.status(rpcErrorToHttpStatus(rpcError)).json({
         error: rpcError,
         balance: row?.balance,
         requested: row?.requested,

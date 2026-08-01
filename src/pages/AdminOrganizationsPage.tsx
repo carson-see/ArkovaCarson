@@ -64,6 +64,53 @@ interface AdminOrganization {
 
 const DEFAULT_FREE_QUOTA = 10;
 
+// The helpers below are pure (no hook/closure dependencies) and are declared
+// at module scope rather than inside the component. Besides being
+// independently testable, this keeps them out of the component function's
+// own lexical body — SonarCloud typescript:S3776 (Cognitive Complexity) was
+// flagging the component at 20 against a limit of 15 because every branch
+// in every inline handler was scored as part of one giant function.
+
+function renderOrgCapBadge(org: AdminOrganization) {
+  if (org.is_test && org.anchor_quota != null) {
+    const over = org.anchor_count >= org.anchor_quota;
+    return (
+      <Badge variant={over ? 'destructive' : 'secondary'} className="text-[10px]">
+        {org.anchor_count}/{org.anchor_quota} free
+      </Badge>
+    );
+  }
+  return <span className="text-xs text-muted-foreground">Uncapped</span>;
+}
+
+function isValidQuotaInput(capEnabled: boolean, quotaNum: number): boolean {
+  return !capEnabled || (Number.isInteger(quotaNum) && quotaNum >= 0);
+}
+
+function buildQuotaPayload(capEnabled: boolean, quotaNum: number): { anchor_quota: number | null; is_test: boolean } {
+  return capEnabled
+    ? { anchor_quota: quotaNum, is_test: true }
+    : { anchor_quota: null, is_test: false };
+}
+
+function buildQuotaSuccessMessage(displayName: string, capEnabled: boolean, quotaNum: number): string {
+  if (!capEnabled) return `${displayName}: uncapped (billable).`;
+  const unit = quotaNum === 1 ? 'action' : 'actions';
+  return `${displayName}: capped at ${quotaNum} free testing ${unit}.`;
+}
+
+/** Maps an adjust-credits API error code to a user-facing toast message. */
+function resolveCreditsErrorMessage(errorCode: string | undefined): string {
+  if (errorCode === 'insufficient_balance') return CREDIT.ERROR_INSUFFICIENT_BALANCE;
+  return errorCode ?? CREDIT.ERROR_GENERIC;
+}
+
+function buildCreditsSuccessMessage(action: 'add' | 'remove', amountLabel: string, displayName: string): string {
+  return action === 'add'
+    ? CREDIT.SUCCESS_ADD(amountLabel, displayName)
+    : CREDIT.SUCCESS_REMOVE(amountLabel, displayName);
+}
+
 export function AdminOrganizationsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -121,8 +168,8 @@ export function AdminOrganizationsPage() {
 
   const saveCap = async () => {
     if (!editingOrg) return;
-    const quotaNum = parseInt(quotaInput, 10);
-    if (capEnabled && (!Number.isInteger(quotaNum) || quotaNum < 0)) {
+    const quotaNum = Number.parseInt(quotaInput, 10);
+    if (!isValidQuotaInput(capEnabled, quotaNum)) {
       toast.error('Enter a whole number of free actions (0 or more).');
       return;
     }
@@ -131,22 +178,14 @@ export function AdminOrganizationsPage() {
       const res = await workerFetch(`/api/admin/organizations/${encodeURIComponent(editingOrg.id)}/quota`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          capEnabled
-            ? { anchor_quota: quotaNum, is_test: true }
-            : { anchor_quota: null, is_test: false },
-        ),
+        body: JSON.stringify(buildQuotaPayload(capEnabled, quotaNum)),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast.error(data.error ?? 'Failed to update cap');
         return;
       }
-      toast.success(
-        capEnabled
-          ? `${editingOrg.display_name}: capped at ${quotaNum} free testing action${quotaNum === 1 ? '' : 's'}.`
-          : `${editingOrg.display_name}: uncapped (billable).`,
-      );
+      toast.success(buildQuotaSuccessMessage(editingOrg.display_name, capEnabled, quotaNum));
       setEditingOrg(null);
       doFetch(page);
     } catch {
@@ -172,7 +211,7 @@ export function AdminOrganizationsPage() {
     setCreditsIdempotencyKey(null);
   };
 
-  const creditsAmountNum = parseInt(creditsAmountInput, 10);
+  const creditsAmountNum = Number.parseInt(creditsAmountInput, 10);
   const creditsAmountValid = Number.isInteger(creditsAmountNum) && creditsAmountNum > 0;
   const creditsReasonValid = creditsReasonInput.trim().length > 0;
   const creditsCurrentBalance = creditsOrg?.credit_balance ?? 0;
@@ -207,19 +246,10 @@ export function AdminOrganizationsPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (data.error === 'insufficient_balance') {
-          toast.error(CREDIT.ERROR_INSUFFICIENT_BALANCE);
-        } else {
-          toast.error(data.error ?? CREDIT.ERROR_GENERIC);
-        }
+        toast.error(resolveCreditsErrorMessage(data.error));
         return;
       }
-      const amountLabel = creditsAmountInput;
-      toast.success(
-        creditsAction === 'add'
-          ? CREDIT.SUCCESS_ADD(amountLabel, creditsOrg.display_name)
-          : CREDIT.SUCCESS_REMOVE(amountLabel, creditsOrg.display_name),
-      );
+      toast.success(buildCreditsSuccessMessage(creditsAction, creditsAmountInput, creditsOrg.display_name));
       closeCredits();
       doFetch(page);
     } catch {
@@ -227,18 +257,6 @@ export function AdminOrganizationsPage() {
     } finally {
       setCreditsSaving(false);
     }
-  };
-
-  const renderCap = (org: AdminOrganization) => {
-    if (org.is_test && org.anchor_quota != null) {
-      const over = org.anchor_count >= org.anchor_quota;
-      return (
-        <Badge variant={over ? 'destructive' : 'secondary'} className="text-[10px]">
-          {org.anchor_count}/{org.anchor_quota} free
-        </Badge>
-      );
-    }
-    return <span className="text-xs text-muted-foreground">Uncapped</span>;
   };
 
   if (!profileLoading && !isAdmin) {
@@ -345,7 +363,7 @@ export function AdminOrganizationsPage() {
                     <div className="flex items-center justify-between mt-2">
                       <span className="flex items-center gap-2">
                         <span className="text-xs text-muted-foreground">Free tier:</span>
-                        {renderCap(org)}
+                        {renderOrgCapBadge(org)}
                       </span>
                       <Button
                         variant="outline"
@@ -426,7 +444,7 @@ export function AdminOrganizationsPage() {
                         </td>
                         <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-2">
-                            {renderCap(org)}
+                            {renderOrgCapBadge(org)}
                             <Button
                               variant="ghost"
                               size="icon"
