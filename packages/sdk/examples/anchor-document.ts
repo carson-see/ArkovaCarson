@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { Arkova } from '@arkova/sdk';
+import { Arkova } from '@carsonarkova/sdk';
 
 const [, , filePath] = process.argv;
 

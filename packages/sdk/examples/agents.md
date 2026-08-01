@@ -1,6 +1,6 @@
 # packages/sdk/examples/agents.md
 
-Usage examples for `@arkova/sdk`.
+Usage examples for `@carsonarkova/sdk`.
 
 ## Files
 - **`anchor-document.ts`** — minimal example: reads a file, computes fingerprint, anchors it, and prints the receipt.
