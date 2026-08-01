@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readMigration } from '../../test-utils/migrations.js';
-import { createMockSupabase as _createMockSupabase } from './__testHelpers.js';
+import { createMockSupabase as _createMockSupabase, grantedRunLeaseTable } from './__testHelpers.js';
 
 // ---- Hoisted mocks ----
 const {
@@ -157,6 +157,11 @@ function makeMock(records: Array<Record<string, unknown>> = []) {
         return {
           upsert: mockAnchorProofsUpsert,
         };
+      }
+      // SCRUM-3031: these tests exercise the anchoring pipeline, not the
+      // cross-instance run lease — grant it and move on.
+      if (table === 'job_queue') {
+        return grantedRunLeaseTable();
       }
       return {
         select: vi.fn(() => mockSelectChain.chain),

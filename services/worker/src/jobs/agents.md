@@ -9,6 +9,45 @@ Both open, from the 2026-08 72h signet soak pair. Canonical writeup: `docs/stagi
 - **F-1 (HIGH, open):** `org-queue-scheduler` returns 500 on ~28-33% of invocations across both rigs (flapping, recovers on later 5-min cycles; ~60x the gate matrix's 0.5% threshold). Confirmed NOT caused by migration `0378`. Root-cause not found yet — start at `claim_due_org_queue_runs` (likely contention or a partial-failure path under concurrent load).
 - **F-3 (MEDIUM, open):** an anchor left `SUBMITTED` with NULL `chain_tx_id` — the state a broadcast attempt produces if it fails between the status write and the txid write — has NO recovery path. `recover_stuck_broadcasts` queries only `BROADCASTING`-state anchors, so this state is structurally outside every scheduled job's scope. Verified by live fault injection that the job correctly recovers its in-scope `BROADCASTING` state, isolating the gap precisely.
 
+## 2026-08-01 — Queues lane: the SCRUM-3031 wedge has a SECOND, live mechanism — cross-instance overlap (`publicRecordAnchor.ts`)
+
+Migration 0370 (below) killed the original mechanism: verified in prod 2026-08-01, the live
+`batch_insert_anchors` body matches 0370 and prod logs show ten 1,000-row chunks completing in
+~2.2–2.5 s each (was ~106 s). The ticket's SYMPTOM is still real, but its cause has moved.
+
+- **New mechanism (observed live, prod revision `arkova-worker-01164-xux`):** `anchor-public-records`
+  is scheduled every 10 min with a Cloud Scheduler `attemptDeadline` of **300 s**, while the Cloud
+  Run request timeout is **3600 s**. Once PR #1795 restored the job's real work (50 id-filter chunks
+  + the link RPCs instead of 10 failing chunks), a run stopped fitting in 300 s. Cloud Scheduler
+  abandons the attempt (`AttemptFinished status=DEADLINE_EXCEEDED`, 19:15:04Z) but Cloud Run keeps
+  executing it, so the next tick starts a SECOND run — on a DIFFERENT instance (19:12:27Z inst
+  `…72908`, 19:22:26Z inst `…72963`, both `recordCount=10000`). Both runs call
+  `batch_insert_anchors` on the same fingerprints; the row-lock contention pushes every chunk past
+  the 20 s client deadline (`AbortError`, chunkIndex 0/1000/2000/3000) into
+  `insertAnchorSerialFallback` (1,000 round-trips/chunk), which makes the run slower and guarantees
+  the next overlap. Unlinked `public_records` did not move (405,376) across three consecutive runs.
+- **Why the 72h rigs never reproduced it:** the rigs drive the org/batch path, hold ~95k anchors and
+  have no 400k-record unlinked backlog, so their runs finish in seconds — they never exceed a
+  scheduler attempt deadline, and a single-instance rig has no second instance to overlap with.
+  Both preconditions are prod-only.
+- **Fix:** `publicRecordAnchoringRunning` is a per-PROCESS boolean and cannot see another instance.
+  The guard is now a TTL **run lease** — `job_queue` row `type='public-record-anchor:lease'` at a
+  fixed PK, claimed by an atomic compare-and-set UPDATE (`status='completed' OR scheduled_for < now`),
+  released only by its own holder, TTL 45 min (above the 10-min cadence so a healthy run is never
+  stolen mid-flight; below Cloud Run's 3600 s ceiling so a crashed holder cannot block the drain
+  longer than one abandoned request). `claim_next_job` is type-scoped so no job runner ever claims
+  the row, and the free state is `completed` so queue-depth monitors ignore it. Acquire fails CLOSED.
+  A `try_advisory_lock` session lock was rejected: it is reached through PostgREST's 23-backend pool,
+  so a release can land on a different backend and no-op, and a stuck lock on a 10-minute cron is a
+  worse outage than the overlap.
+- **Also fixed:** `revertClaimedAnchors` still chunked its `.in('id', …)` by `POSTGREST_ROW_LIMIT`
+  — the exact defect #1795 fixed in the other two call sites — so a failed chain submission 400'd on
+  every chunk and released nothing, stranding up to a full 10k batch in BROADCASTING. Now chunks by
+  `POSTGREST_IN_FILTER_CHUNK` and reports `{attemptedChunks, failedChunks, strandedAnchorIds}`.
+  Tests assert the width invariant at EVERY id-filter call site, not on the constants.
+- Tests: `__tests__/publicRecordAnchor-lease.test.ts` (7), `__tests__/publicRecordAnchor-in-filter-width.test.ts` (6).
+  `grantedRunLeaseTable()` in `__testHelpers.ts` lets pipeline-focused suites grant the lease.
+
 ## 2026-07-28 — Lane 1: batch_insert_anchors wedge fix + RPC hardening (SCRUM-3031, `publicRecordAnchor.ts`, migration 0370)
 
 CTO ruling R15 root-cause investigation into `batch_insert_anchors` burning ~106s/call and inserting ZERO rows on repeat calls, holding `RowExclusiveLock` on `anchors` (~2.97M rows) near-continuously — suspected root cause of the 259k pending-anchoring backlog never draining; blocked the 0365/0366 prod DDL apply for ~15min on 2026-07-27.

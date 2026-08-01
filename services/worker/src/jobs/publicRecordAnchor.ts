@@ -111,6 +111,143 @@ interface RecordAnchorPartition {
 let publicRecordAnchoringRunning = false;
 
 /**
+ * Cross-instance run lease (SCRUM-3031).
+ *
+ * `publicRecordAnchoringRunning` above is a per-PROCESS boolean. Under Cloud
+ * Run it protects nothing that matters: `anchor-public-records` is scheduled
+ * every 10 minutes with a Cloud Scheduler `attemptDeadline` of 300s, while the
+ * service's request timeout is 3600s. A run longer than 300s is ABANDONED by
+ * Cloud Scheduler (it records DEADLINE_EXCEEDED) but keeps executing
+ * server-side, so the next tick starts another run — on a different instance,
+ * where this boolean is `false`.
+ *
+ * Observed in production on 2026-08-01: two instances entered the job ten
+ * minutes apart against the same 10,000 unlinked records; the resulting
+ * row-lock contention on `anchors` pushed every `batch_insert_anchors` chunk
+ * past its 20s client deadline into the 1,000-round-trip serial fallback,
+ * which made the run slower and guaranteed the next overlap. The unlinked
+ * backlog did not move across three consecutive runs.
+ *
+ * The guard therefore has to be state both instances can see. This is a TTL
+ * lease row in `job_queue` claimed with an atomic compare-and-set UPDATE.
+ * `job_queue` is reused deliberately: `claim_next_job` is TYPE-scoped, so a row
+ * of this type is never claimed by a job runner, and the free state is
+ * `completed` — the terminal status the proof jobs already use precisely so
+ * queue-depth monitors do not count it.
+ *
+ * A session advisory lock (`try_advisory_lock`, used by the proof jobs) was
+ * rejected for this path: it is reached through PostgREST's 23-backend pool, so
+ * the release can land on a different backend than the acquire and silently
+ * no-op, leaving a lease stuck until that connection recycles. For a job that
+ * must run every ten minutes, a stuck lock is a worse outage than the overlap
+ * it prevents. A TTL lease cannot stick.
+ */
+export const PUBLIC_RECORD_ANCHOR_LEASE_TYPE = 'public-record-anchor:lease';
+
+/**
+ * Fixed primary key for the singleton lease row. A constant id means the
+ * bootstrap insert is a primary-key upsert, so concurrent first-ever runs
+ * cannot create two lease rows (there is no unique constraint on
+ * `job_queue.type` to lean on, and adding one would be a migration).
+ */
+export const PUBLIC_RECORD_ANCHOR_LEASE_ID = '5f1c0de1-9a3b-4c7e-8d21-70ec0dea1e5e';
+
+/**
+ * Lease lifetime. Sits deliberately ABOVE the job's 10-minute cadence — a TTL
+ * at or below it would let the very next tick steal the lease from a run that
+ * is still working, which is the overlap this exists to prevent — and BELOW
+ * Cloud Run's 3600s request ceiling, so a holder that dies without releasing
+ * can never block the drain longer than one abandoned request could have run.
+ */
+export const PUBLIC_RECORD_ANCHOR_LEASE_TTL_MS = 45 * 60_000;
+
+/** Identifies the holder in logs and in the release predicate. */
+export function publicRecordAnchorLeaseHolder(): string {
+  return `${process.env.K_REVISION ?? 'local'}:${process.pid}`;
+}
+
+/**
+ * Claims the run lease. Returns false when another instance holds an unexpired
+ * one, and fails CLOSED on any store error — a run without the lease is exactly
+ * the concurrent execution this guards against, so an unverifiable lease must
+ * skip the run, not proceed on optimism.
+ */
+export async function acquirePublicRecordAnchorLease(
+  client: SupabaseClient,
+  holder: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const nowIso = now.toISOString();
+  const expiresAt = new Date(now.getTime() + PUBLIC_RECORD_ANCHOR_LEASE_TTL_MS).toISOString();
+
+  // Bootstrap: create the singleton row once. `ignoreDuplicates` on the primary
+  // key makes concurrent first runs safe, and leaves an existing lease alone.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: seedError } = await (client as any)
+    .from('job_queue')
+    .upsert(
+      {
+        id: PUBLIC_RECORD_ANCHOR_LEASE_ID,
+        type: PUBLIC_RECORD_ANCHOR_LEASE_TYPE,
+        status: 'completed',
+        scheduled_for: null,
+        payload: {},
+      },
+      { onConflict: 'id', ignoreDuplicates: true },
+    );
+
+  if (seedError) {
+    logger.error({ error: seedError }, 'Public record anchor lease bootstrap failed — skipping run');
+    return false;
+  }
+
+  // Compare-and-set: take the lease only if it is free or expired. One UPDATE,
+  // so two instances racing it cannot both match.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (client as any)
+    .from('job_queue')
+    .update({
+      status: 'processing',
+      scheduled_for: expiresAt,
+      payload: { holder, acquired_at: nowIso },
+      updated_at: nowIso,
+    })
+    .eq('id', PUBLIC_RECORD_ANCHOR_LEASE_ID)
+    .or(`status.eq.completed,scheduled_for.lt.${nowIso}`)
+    .select('id');
+
+  if (error) {
+    logger.error({ error, holder }, 'Public record anchor lease claim failed — skipping run');
+    return false;
+  }
+
+  return ((data ?? []) as unknown[]).length > 0;
+}
+
+/**
+ * Releases the lease, but only if this holder still owns it. A run whose lease
+ * expired and was stolen must not clear the new holder's claim.
+ */
+export async function releasePublicRecordAnchorLease(
+  client: SupabaseClient,
+  holder: string,
+): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (client as any)
+    .from('job_queue')
+    .update({ status: 'completed', scheduled_for: null, updated_at: new Date().toISOString() })
+    .eq('id', PUBLIC_RECORD_ANCHOR_LEASE_ID)
+    .eq('payload->>holder', holder)
+    .select('id');
+
+  // Best-effort: a failed release must not mask the run's real outcome. The TTL
+  // is the backstop.
+  if (error) {
+    logger.warn({ error, holder }, 'Public record anchor lease release failed — TTL will expire it');
+  }
+}
+
+/**
  * Map public record source/type to a display-friendly filename for the anchor.
  */
 /** Source → display prefix for anchor filenames */
@@ -716,15 +853,26 @@ export async function processPublicRecordAnchoring(
     merkleRoot: null,
     txId: null,
   };
+  // Cheap same-process short-circuit; the lease below is what actually holds
+  // across Cloud Run instances.
   if (publicRecordAnchoringRunning) {
-    logger.info('Public record anchoring skipped — already in progress');
+    logger.info('Public record anchoring skipped — already in progress on this instance');
     return empty;
   }
+
+  const client = supabase ?? db;
+  const holder = publicRecordAnchorLeaseHolder();
+  if (!(await acquirePublicRecordAnchorLease(client, holder))) {
+    logger.info({ holder }, 'Public record anchoring skipped — another instance holds the run lease');
+    return empty;
+  }
+
   publicRecordAnchoringRunning = true;
   try {
     return await processPublicRecordAnchoringInner(supabase);
   } finally {
     publicRecordAnchoringRunning = false;
+    await releasePublicRecordAnchorLease(client, holder);
   }
 }
 
