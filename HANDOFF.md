@@ -10,6 +10,37 @@
 > - **CLAUDE.md** = operating directive / rules
 > - **git log** = what changed, by whom, when
 
+### 2026-08-01 (CTO) — network-scaffolding audit: two dead resources deleted; NAT on appliance landing zone is AUTO_ONLY (no stable egress IP)
+
+Triggered by the Sekura scoping question "should we have an internal network." Answer: no as a
+general posture — the DB is Supabase-managed on AWS us-east-2 reached over HTTPS/PostgREST, so a
+GCP VPC cannot make that path private without Interconnect/VPN. None of findings F-1..F-8 would
+have been prevented by network segmentation; all are application-authorization defects. The one
+real future case is **stable egress IP** (public-record `fetch-*` crons get blocked by source IP;
+enterprise/regulated customers require an allowlistable webhook egress address) — that is a VPC
+connector + Cloud NAT with `MANUAL_ONLY` reserved IPs, to be built **when** a partner asks, not
+preemptively.
+
+**Deleted (verified unused first):**
+- `arkova-s33-b1-signet-vpc` VPC Access connector (us-central1, 10.33.11.0/28, was `READY` with
+  min 2 always-on `e2-micro`). Confirmed zero consumers: all 7 Cloud Run services across **all**
+  regions report `vpcAccess=None`; no Cloud Functions; no App Engine. Standing spend for no benefit.
+- `arkova-bot-router` (northamerica-northeast2). Confirmed `nats=None`, `bgpPeers=None`,
+  `interfaces=None`, and zero VPN tunnels project-wide — dead config.
+
+**Deliberately KEPT:** `arkova-bot-router-uscentral1` + its NAT, which serves `arkova-bot-subnet2`
+— the Sekura appliance landing zone. An appliance VM without an external IP needs it to pull
+`ghcr.io` images. **Caveat recorded:** that NAT is `natIpAllocateOption=AUTO_ONLY` with `natIps=None`,
+so it does **not** yield a stable egress address. Anyone who later routes traffic through it
+expecting a fixed IP will be wrong; switching to `MANUAL_ONLY` + reserved addresses is the fix.
+
+Post-change verification: connector list empty; routers list shows only `arkova-bot-router-uscentral1`;
+NAT intact; signet VM still `RUNNING`; prod `/health` healthy on mainnet (db/anchoring/kms `ok`).
+Prod worker also rolled `f1fb0d66` → `c56ceee03` during this window from the morning release —
+unrelated to this change (prod never consumed a connector).
+
+_Last refreshed: 2026-08-01 by Claude (CTO) — claims verified against `gcloud compute networks vpc-access connectors list/describe/delete`, `gcloud compute routers describe/delete/list`, `gcloud compute routers nats describe`, Cloud Run Admin API `services?locations=-` (all-region `vpcAccess` census), `gcloud functions list`, `gcloud app services list`, `gcloud compute vpn-tunnels list`, `gcloud compute instances list`, and a live prod `/health` probe._
+
 ### 2026-07-30 (CAIO) - Nessie v3.6.2 technical gate passed; paid KE-027 call held at authorization/trace-evidence boundary
 
 **Scope correction:** Nessie is the conversational compliance-intelligence
