@@ -47,9 +47,17 @@ Migration 0370 (below) killed the original mechanism: verified in prod 2026-08-0
 - **Flag check runs BEFORE the lease.** `ENABLE_PUBLIC_RECORD_ANCHORING` is resolved in the outer
   entrypoint now, so a disabled pipeline does not write three `job_queue` rows per cron tick just to
   discover it has nothing to do.
-- Tests: `__tests__/publicRecordAnchor-lease.test.ts` (7). `grantedRunLeaseTable()` in
-  `__testHelpers.ts` lets pipeline-focused suites grant the lease. The sibling id-filter-width fix
-  is PR #1812, documented in its own block below.
+- **Holder ids carry a per-process nonce, and that is load-bearing.** Review caught that the first
+  cut used `${K_REVISION}:${pid}` — `K_REVISION` is the REVISION name (identical on every instance)
+  and the exec-form `CMD ["node", …]` makes node PID 1 everywhere, so every instance computed the
+  SAME holder string and the release predicate would free ANOTHER instance's live lease, making the
+  overlap self-sustaining. A module-load `randomUUID()` is appended.
+- Tests: `__tests__/publicRecordAnchor-lease.test.ts` (10). The store double EVALUATES the emitted
+  `.or(...)` expression instead of restating the predicate — dropping either disjunct from the
+  production CAS fails 4 tests. Mutation-verified: removing the acquire call from the entrypoint, or
+  either half of the `.or()`, turns the suite red. `grantedRunLeaseTable()` in `__testHelpers.ts`
+  lets pipeline-focused suites grant the lease. The sibling id-filter-width fix is PR #1812,
+  documented in its own block below.
 
 ## 2026-07-28 — Lane 1: batch_insert_anchors wedge fix + RPC hardening (SCRUM-3031, `publicRecordAnchor.ts`, migration 0370)
 

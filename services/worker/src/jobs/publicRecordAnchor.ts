@@ -21,6 +21,7 @@
  *   - 1.9: ENABLE_PROD_NETWORK_ANCHORING gates real Bitcoin chain calls
  */
 
+import { randomUUID } from 'node:crypto';
 import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getChainClientAsync } from '../chain/client.js';
@@ -125,8 +126,10 @@ let publicRecordAnchoringRunning = false;
  * minutes apart against the same 10,000 unlinked records; the resulting
  * row-lock contention on `anchors` pushed every `batch_insert_anchors` chunk
  * past its 20s client deadline into the 1,000-round-trip serial fallback,
- * which made the run slower and guaranteed the next overlap. The unlinked
- * backlog did not move across three consecutive runs.
+ * which made the run slower and guaranteed the next overlap. One run linked
+ * the batch (`linked=10000`) while the other spent ~13 minutes to link ZERO
+ * (`alreadyAnchored=0 total=10000`) — the overlap does not halt the drain, it
+ * burns a duplicate copy of every run.
  *
  * The guard therefore has to be state both instances can see. This is a TTL
  * lease row in `job_queue` claimed with an atomic compare-and-set UPDATE.
@@ -161,9 +164,24 @@ export const PUBLIC_RECORD_ANCHOR_LEASE_ID = '5f1c0de1-9a3b-4c7e-8d21-70ec0dea1e
  */
 export const PUBLIC_RECORD_ANCHOR_LEASE_TTL_MS = 45 * 60_000;
 
+/**
+ * Per-PROCESS nonce, minted once at module load.
+ *
+ * This is load-bearing, not decoration. `K_REVISION` is the Cloud Run REVISION
+ * name — identical on every instance of a revision — and the container's
+ * exec-form `CMD ["node", …]` makes node PID 1 in every instance, so
+ * `${K_REVISION}:${pid}` is the SAME string on every instance. With a colliding
+ * holder id the release predicate below would match another instance's lease:
+ * A overruns the TTL, B steals it and writes the identical holder string, A
+ * finishes and releases B's live claim, and the next tick starts a third
+ * overlapping run — the exact failure this lease exists to prevent, made
+ * self-sustaining. The nonce is what makes the holder actually per-holder.
+ */
+const LEASE_PROCESS_NONCE = randomUUID();
+
 /** Identifies the holder in logs and in the release predicate. */
 export function publicRecordAnchorLeaseHolder(): string {
-  return `${process.env.K_REVISION ?? 'local'}:${process.pid}`;
+  return `${process.env.K_REVISION ?? 'local'}:${process.pid}:${LEASE_PROCESS_NONCE}`;
 }
 
 /**

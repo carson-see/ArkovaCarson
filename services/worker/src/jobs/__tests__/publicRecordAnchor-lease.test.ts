@@ -64,6 +64,8 @@ import {
   PUBLIC_RECORD_ANCHOR_LEASE_TTL_MS,
   PUBLIC_RECORD_ANCHOR_LEASE_TYPE,
   acquirePublicRecordAnchorLease,
+  processPublicRecordAnchoring,
+  publicRecordAnchorLeaseHolder,
   releasePublicRecordAnchorLease,
 } from '../publicRecordAnchor.js';
 
@@ -88,19 +90,40 @@ interface LeaseRow {
 function leaseStore(initial?: LeaseRow) {
   let row: LeaseRow | undefined = initial;
 
-  function matches(filters: Record<string, string>, nowIso: string): boolean {
+  /**
+   * Evaluates the `.or(...)` expression the code under test actually emits,
+   * rather than re-stating the predicate here.
+   *
+   * This matters: an earlier version of this double hard-coded
+   * `status === 'completed'` and only regex-extracted the `scheduled_for` half,
+   * so mutating or deleting the `status.eq.completed` disjunct left every test
+   * green — while against real PostgREST the CAS would match zero rows, acquire
+   * would fail closed, and the job would silently stop running forever. Parsing
+   * the emitted expression is what makes that mutation fail here.
+   */
+  function evaluateOr(expression: string | undefined, target: LeaseRow): boolean {
+    if (expression === undefined) return false;
+    return expression.split(',').some((term) => {
+      const [column, operator, ...rest] = term.split('.');
+      const value = rest.join('.');
+      const actual = (target as unknown as Record<string, string | null>)[column];
+      if (operator === 'eq') return actual === value;
+      if (operator === 'lt') return actual !== null && actual !== undefined && actual < value;
+      throw new Error(`lease double: unsupported operator '${operator}' in '${term}'`);
+    });
+  }
+
+  function matches(filters: Record<string, string>, orExpression: string | undefined): boolean {
     if (!row) return false;
     if (filters.id !== row.id) return false;
-    const free = row.status === 'completed';
-    const expired = row.scheduled_for !== null && row.scheduled_for < nowIso;
-    return free || expired;
+    return evaluateOr(orExpression, row);
   }
 
   const client = {
     from() {
       const filters: Record<string, string> = {};
       let pending: Partial<LeaseRow> | undefined;
-      let nowIso = new Date().toISOString();
+      let orExpression: string | undefined;
       let mode: 'upsert' | 'update' | undefined;
       let releaseHolder: string | undefined;
 
@@ -121,9 +144,7 @@ function leaseStore(initial?: LeaseRow) {
         return builder;
       };
       builder.or = (expression: string) => {
-        // `scheduled_for.lt.<iso>` carries the caller's notion of "now".
-        const lt = /scheduled_for\.lt\.([^,)]+)/.exec(expression);
-        if (lt) nowIso = lt[1];
+        orExpression = expression;
         return builder;
       };
       builder.select = () => builder;
@@ -139,7 +160,7 @@ function leaseStore(initial?: LeaseRow) {
           }
           return Promise.resolve(resolve({ data: [], error: null }));
         }
-        if (matches(filters, nowIso)) {
+        if (matches(filters, orExpression)) {
           row = { ...(row as LeaseRow), ...(pending as Partial<LeaseRow>) };
           return Promise.resolve(resolve({ data: [{ id: row.id }], error: null }));
         }
@@ -261,11 +282,103 @@ describe('public-record anchoring cross-instance lease', () => {
     expect(await acquirePublicRecordAnchorLease(erroring, 'instance-a', new Date())).toBe(false);
   });
 
+  /**
+   * The tests above pin the lease PRIMITIVE. This one pins the WIRING — without
+   * it, deleting the `acquirePublicRecordAnchorLease` call from
+   * `processPublicRecordAnchoring` would leave every other test in this file
+   * green while restoring the exact production overlap.
+   */
+  it('does no pipeline work when the lease is held by another instance', async () => {
+    const rpc = vi.fn(async (name: string) =>
+      name === 'get_flag' ? { data: true, error: null } : { data: null, error: null },
+    );
+    const profileSelect = vi.fn(() => ({
+      eq: vi.fn(() => ({ single: vi.fn(async () => ({ data: { id: 'admin', org_id: 'org' }, error: null })) })),
+    }));
+    const publicRecordsSelect = vi.fn(() => {
+      throw new Error('public_records must not be read while another instance holds the lease');
+    });
+
+    // Lease permanently held by someone else: the CAS UPDATE matches no row.
+    const held = leaseStore(heldRow('other-instance', '2099-01-01T00:00:00Z'));
+    const client = {
+      rpc,
+      from: (table: string) => {
+        if (table === 'job_queue') return (held.client as unknown as { from: (t: string) => unknown }).from(table);
+        if (table === 'profiles') return { select: profileSelect };
+        return { select: publicRecordsSelect };
+      },
+    } as unknown as Parameters<typeof processPublicRecordAnchoring>[0];
+
+    const result = await processPublicRecordAnchoring(client);
+
+    expect(result).toEqual({
+      processed: 0,
+      anchorsCreated: 0,
+      batchId: null,
+      merkleRoot: null,
+      txId: null,
+    });
+    expect(publicRecordsSelect).not.toHaveBeenCalled();
+    expect(profileSelect).not.toHaveBeenCalled();
+    expect(held.current()?.payload.holder).toBe('other-instance');
+  });
+
+  it('releases the lease when the run throws', async () => {
+    const store = leaseStore(freeRow());
+    const rpc = vi.fn(async (name: string) =>
+      name === 'get_flag' ? { data: true, error: null } : { data: null, error: null },
+    );
+    const client = {
+      rpc,
+      from: (table: string) => {
+        if (table === 'job_queue') {
+          return (store.client as unknown as { from: (t: string) => unknown }).from(table);
+        }
+        // profiles lookup explodes — the run must still give the lease back.
+        return {
+          select: () => ({
+            eq: () => ({ single: async () => { throw new Error('profiles exploded'); } }),
+          }),
+        };
+      },
+    } as unknown as Parameters<typeof processPublicRecordAnchoring>[0];
+
+    await expect(processPublicRecordAnchoring(client)).rejects.toThrow('profiles exploded');
+    expect(store.current()?.status).toBe('completed');
+    expect(store.current()?.scheduled_for).toBeNull();
+  });
+
+  /**
+   * Regression guard for a bug this PR shipped and then fixed. `K_REVISION` is
+   * the Cloud Run REVISION name — identical on every instance — and the
+   * container's exec-form CMD makes node PID 1 everywhere, so a holder id of
+   * `${K_REVISION}:${pid}` was the SAME string on every instance. The release
+   * predicate would then match another instance's live lease.
+   */
+  it('mints a holder id that cannot collide across instances of one revision', async () => {
+    const original = process.env.K_REVISION;
+    process.env.K_REVISION = 'arkova-worker-01164-xux';
+    try {
+      const holder = publicRecordAnchorLeaseHolder();
+      // Everything a second instance of the same revision would also compute.
+      expect(holder.startsWith(`arkova-worker-01164-xux:${process.pid}:`)).toBe(true);
+      // ...plus something it could not.
+      const nonce = holder.slice(`arkova-worker-01164-xux:${process.pid}:`.length);
+      expect(nonce).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    } finally {
+      if (original === undefined) delete process.env.K_REVISION;
+      else process.env.K_REVISION = original;
+    }
+  });
+
   it('keeps the TTL above a full scheduler cadence so a healthy run is never stolen mid-flight', () => {
-    // anchor-public-records runs */10 (600_000 ms). A TTL at or below the
-    // cadence would let the very next tick steal the lease from a run that is
-    // still working — reproducing the overlap this lease exists to prevent.
-    expect(PUBLIC_RECORD_ANCHOR_LEASE_TTL_MS).toBeGreaterThan(600_000);
+    // `anchor-public-records` fires every 10 min in live Cloud Scheduler, but
+    // scheduler-manifest.ts still records */30 — so the floor is asserted
+    // against the SLOWER of the two. A TTL at or below the cadence would let
+    // the next tick steal the lease from a run that is still working,
+    // reproducing the overlap this lease exists to prevent.
+    expect(PUBLIC_RECORD_ANCHOR_LEASE_TTL_MS).toBeGreaterThan(30 * 60_000);
     // ...and below Cloud Run's 3600s request ceiling, so a crashed holder can
     // never block the drain for longer than one abandoned request could run.
     expect(PUBLIC_RECORD_ANCHOR_LEASE_TTL_MS).toBeLessThan(3_600_000);
