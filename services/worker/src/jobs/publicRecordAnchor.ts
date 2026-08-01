@@ -144,6 +144,15 @@ let publicRecordAnchoringRunning = false;
  * no-op, leaving a lease stuck until that connection recycles. For a job that
  * must run every ten minutes, a stuck lock is a worse outage than the overlap
  * it prevents. A TTL lease cannot stick.
+ *
+ * DELIBERATELY JOB-LOCAL FOR NOW. `batch-anchor.ts` and `check-confirmations.ts`
+ * carry the identical per-process boolean and the identical cross-instance
+ * exposure, and `batch-anchor.ts` is the one that signs and broadcasts — so this
+ * belongs in a shared `withRunLease()` primitive that all three wrap. That
+ * extraction is NOT done here on purpose: it would pull the chain/treasury drain
+ * into a change that is already founder-gated on drain rate, hours before a
+ * scheduled pen test. Extract it when those two jobs are fixed, and delete this
+ * copy — do not hand-copy the nonce/TTL/CAS subtleties a third time.
  */
 export const PUBLIC_RECORD_ANCHOR_LEASE_TYPE = 'public-record-anchor:lease';
 
@@ -251,7 +260,7 @@ export async function releasePublicRecordAnchorLease(
   holder: string,
 ): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (client as any)
+  const { data, error } = await (client as any)
     .from('job_queue')
     .update({ status: 'completed', scheduled_for: null, updated_at: new Date().toISOString() })
     .eq('id', PUBLIC_RECORD_ANCHOR_LEASE_ID)
@@ -262,6 +271,17 @@ export async function releasePublicRecordAnchorLease(
   // is the backstop.
   if (error) {
     logger.warn({ error, holder }, 'Public record anchor lease release failed — TTL will expire it');
+    return;
+  }
+
+  // Zero rows means this run overran the TTL and someone else already took the
+  // lease. Worth saying out loud: it means a run exceeded 45 minutes, which is
+  // the signal that the batch size or the cadence needs revisiting.
+  if (((data ?? []) as unknown[]).length === 0) {
+    logger.warn(
+      { holder },
+      'Public record anchor lease was already reclaimed — this run overran the TTL; nothing released',
+    );
   }
 }
 
@@ -894,7 +914,7 @@ export async function processPublicRecordAnchoring(
 
   publicRecordAnchoringRunning = true;
   try {
-    return await processPublicRecordAnchoringInner(supabase);
+    return await processPublicRecordAnchoringInner(client);
   } finally {
     publicRecordAnchoringRunning = false;
     await releasePublicRecordAnchorLease(client, holder);
@@ -902,10 +922,8 @@ export async function processPublicRecordAnchoring(
 }
 
 async function processPublicRecordAnchoringInner(
-  supabase?: SupabaseClient,
+  client: SupabaseClient,
 ): Promise<PublicRecordAnchorResult> {
-  const client = supabase ?? db;
-
   // `publicRecordAnchoringEnabled` is checked by the caller, before the run
   // lease is claimed — see processPublicRecordAnchoring.
   const owner = await fetchPipelineOwner(client);
