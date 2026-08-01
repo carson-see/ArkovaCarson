@@ -90,11 +90,11 @@ router.post('/', async (req: Request, res: Response) => {
     const metadata = (anchor.metadata ?? {}) as Record<string, unknown>;
     const latestManifest = manifests && manifests.length > 0 ? manifests[0] : null;
 
-    // SCRUM-2227/2283: strip retired control IDs before anything is rendered.
-    // `null` (nothing survived) is the same present/absent test the note uses.
-    const complianceControls = sanitizeStoredComplianceControls(
-      anchor.compliance_controls,
-    ) as string[] | null;
+    // SCRUM-2227/2283: strip control IDs this worker no longer stands behind
+    // before anything is rendered. `null` (nothing survived) is the same
+    // present/absent test the note uses. No fallback to the computed mapping —
+    // this report describes the stored record, not what the type would map to.
+    const complianceControls = sanitizeStoredComplianceControls(anchor.compliance_controls);
 
     // Build report data
     const reportData = {

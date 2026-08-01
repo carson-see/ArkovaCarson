@@ -133,9 +133,13 @@ describe('sanitizeStoredComplianceControls', () => {
     expect(sanitizeStoredComplianceControls(null)).toBeNull();
     expect(sanitizeStoredComplianceControls(undefined)).toBeNull();
     expect(sanitizeStoredComplianceControls([])).toBeNull();
-    // Legacy/object-shaped values are passed through untouched rather than
-    // silently reshaped — the API must not invent a shape it did not store.
-    expect(sanitizeStoredComplianceControls({ soc2: ['CC6.1'] })).toEqual({ soc2: ['CC6.1'] });
+    // SCRUM-2227: object-shaped values FAIL CLOSED. The column has only ever
+    // held an array; an object cannot be filtered ID-by-ID, so passing one
+    // through would surface exactly the claims this function strips — and it
+    // would arrive carrying the informational note, vouching for content
+    // nothing checked.
+    expect(sanitizeStoredComplianceControls({ soc2: ['CC6.1'] })).toBeNull();
+    expect(sanitizeStoredComplianceControls('SOC2-CC6.1')).toBeNull();
   });
 
   it('drops non-string entries', () => {

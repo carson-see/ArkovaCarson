@@ -21,8 +21,7 @@ import type { GrcConnection, GrcEvidencePayload, GrcPlatform } from './types.js'
 import { createGrcAdapter, loadGrcCredentials, type GrcPlatformCredentials } from './adapters.js';
 import {
   COMPLIANCE_CONTROLS_NOTE,
-  getComplianceControlIds,
-  sanitizeStoredComplianceControls,
+  resolveComplianceControlIds,
 } from '../../utils/complianceMapping.js';
 import { createDefaultKmsClient, decryptTokens } from '../oauth/crypto.js';
 
@@ -62,29 +61,6 @@ interface AnchorForSync {
  * @param creds - GRC platform credentials (from env)
  * @returns Array of sync results per platform
  */
-/**
- * SCRUM-2227/2283 — resolve the control IDs that may leave for a GRC platform.
- *
- * Stored controls win over the computed mapping (CML-02), but the stored value
- * is a historical record: rows written before SCRUM-2227 still carry the
- * retired EU-US DPF identifiers, which Arkova cannot claim. They are filtered
- * out here, and if that empties the stored list we fall back to the computed
- * mapping rather than pushing nothing — the credential type's controls are
- * still accurate, it is only the persisted claim that was wrong.
- *
- * Pure + exported so the honesty guarantee is unit-testable without a DB.
- */
-export function resolveEvidenceControlIds(
-  storedControls: string[] | null,
-  credentialType: string | null,
-): string[] {
-  const sanitized = sanitizeStoredComplianceControls(storedControls);
-  if (Array.isArray(sanitized) && sanitized.length > 0) {
-    return sanitized as string[];
-  }
-  return getComplianceControlIds(credentialType ?? undefined);
-}
-
 export async function syncAnchorToGrc(
   db: SupabaseClient,
   anchor: AnchorForSync,
@@ -105,8 +81,11 @@ export async function syncAnchorToGrc(
     return [];
   }
 
-  // Build evidence payload
-  const controlIds = resolveEvidenceControlIds(anchor.compliance_controls, anchor.credential_type);
+  // Build evidence payload. SCRUM-2227/2283: stored controls are filtered to the
+  // IDs this worker still stands behind before they reach an auditor's tooling.
+  const controlIds = resolveComplianceControlIds(anchor.compliance_controls, {
+    fallbackCredentialType: anchor.credential_type,
+  }) ?? [];
   const frameworks = [...new Set(controlIds.map(c => c.split('-')[0]))];
 
   const evidence: GrcEvidencePayload = {

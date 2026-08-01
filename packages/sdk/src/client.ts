@@ -811,21 +811,19 @@ function nullableRecord(value: unknown): Record<string, unknown> | null {
 /**
  * SCRUM-2227: `compliance_controls` is emitted by the API as an ARRAY of
  * control-ID strings. `nullableRecord` explicitly rejects arrays, so routing
- * this field through it nulled it out for every real anchor. Accept the array
- * form (the only one production emits) and keep the object arm for the shape
- * the type has advertised.
+ * this field through it nulled it out for every real anchor. Non-arrays map to
+ * `null` — the API does not emit them, and the worker now fails them closed
+ * rather than surfacing an unfilterable control list.
  */
-function nullableControls(value: unknown): string[] | Record<string, unknown> | null {
-  if (Array.isArray(value)) {
-    return value.filter((entry): entry is string => typeof entry === 'string');
-  }
-  return nullableRecord(value);
+function nullableStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter((entry): entry is string => typeof entry === 'string');
 }
 
 function mapRichVerificationFields(row: Record<string, unknown>): RichVerificationFields {
   return {
     description: nullableString(row.description),
-    complianceControls: nullableControls(row.compliance_controls),
+    complianceControls: nullableStringArray(row.compliance_controls),
     // SCRUM-2227: a control list must never reach a consumer without the
     // statement of what it does NOT assert.
     complianceControlsNote: nullableString(row.compliance_controls_note),
