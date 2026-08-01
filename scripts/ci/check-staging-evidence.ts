@@ -2228,8 +2228,22 @@ const STAGING_TOOLING_ALLOW = [
   /^CLAUDE\.md$/,
   /^HANDOFF\.md$/,
   /^\.gitignore$/,
+  // Claude agent-harness config. These files configure the local agent session
+  // (hooks, on-demand skills, permissions) and have NO prod runtime path — they
+  // are never imported, bundled, or deployed. `.claude/hooks/` and
+  // `.claude/settings.json` were already T0; `skills/`, the retired `hookify.*`
+  // rule files, and `settings.local.json` are the same class and were simply
+  // missing, which forced genuinely tooling-only PRs to T1 (added 2026-08-01).
   /^\.claude\/settings\.json$/,
+  /^\.claude\/settings\.local\.json$/,
   /^\.claude\/hooks\//,
+  /^\.claude\/skills\//,
+  /^\.claude\/hookify\..*\.md$/,
+  // agents.md is documentation wherever it lives — CLAUDE.md §0 rule 8 already
+  // names `**/agents.md` as a doc-only path eligible for direct-to-main. Only
+  // the repo-root and scripts/ci/ copies were listed, so a nested one (e.g.
+  // scripts/ci/feedback-rules/agents.md) forced an otherwise doc-only PR to T1.
+  /(?:^|\/)agents\.md$/,
   // Lockfiles are deterministic re-resolutions of a manifest — T0 at every
   // workspace (root / packages/* / services/* / integrations/*).
   /^package-lock\.json$/,
