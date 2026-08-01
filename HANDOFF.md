@@ -10,6 +10,18 @@
 > - **CLAUDE.md** = operating directive / rules
 > - **git log** = what changed, by whom, when
 
+### 2026-08-01 (CTO) — Full Jira board audit CLOSED OUT: all 500 pending Phase 3 transitions executed and key-verified; 49 total rejects logged to Confluence
+
+**Resumes and completes the 2026-07-27 board audit entry below.** All ~500 outstanding transitions from the To Do backlog audit (172 CLOSE_DONE, 41 REJECT, 179 MOVE_TO_BLOCKED, 61 NEEDS_HUMAN, 47 MOVE_TO_IN_PROGRESS) were applied via mechanical execution agents (no new judgment — applying already Opus-verified dispositions) and confirmed live via key-matched Jira responses plus independent spot-checks. **417/500 applied cleanly on the first pass; 81 CLOSE_DONE items failed on Jira MCP cross-wire under 6-way concurrent agent load (caught cleanly — every failure was a detected key mismatch, zero silent corruption) and were re-applied successfully on an isolated single-agent retry pass with 0 failures.** Final: 172/172 CLOSE_DONE, 41/41 REJECT, 179/179 MOVE_TO_BLOCKED (177 transitioned + 2 already correctly Blocked), 61/61 NEEDS_HUMAN, 47/47 MOVE_TO_IN_PROGRESS — 500/500, plus the 608 KEEP_TODO items correctly left untouched. Combined with the Phase 2 pass, **the entire SCRUM board (219 open issues + 1,108 backlog items) is now audited and dispositioned.**
+
+**Confluence [Board Audit — Rejected Stories Log](https://arkova.atlassian.net/wiki/spaces/A/pages/114786306/Board+Audit+Rejected+Stories+Log+2026-07-27) updated to v2** with the 41 new Phase 3 rejects (grouped: 13 RTE "3.85 fold-in" consolidations into S4.0 successor stories, 9 children of the already-rejected S3.3/v7.1 dataset-surgery chain, 19 individually-reasoned) — 49 rejects total across both phases, all evidence-linked.
+
+**Operational lesson reinforced:** the Jira MCP cross-wire under concurrent load got *worse*, not better, going from 2 to 6 simultaneous agents (81/172 failures vs. 2/152 in the Phase 2 pass) — the fix that worked was dropping to a single isolated agent for the retry, not adding more safety checks. For any future large-batch Jira execution, prefer fewer/serial agents over wide parallelism once past ~2-3 concurrent writers against the same MCP session.
+
+**Outstanding (not done this session, first task for whoever picks up ART launch-readiness planning):** produce the final prioritized (P0_LAUNCH_BLOCKER/P1_LAUNCH_RELEVANT/P2_POST_LAUNCH/P3_LOW_VALUE) backlog deliverable from the audit data for the pre-2026-08-10 sprint. Every kept backlog item already carries its priority tag in its `[BOARD-AUDIT 2026-07-27]` Jira comment — this is a synthesis/reporting task, not further auditing.
+
+_Last refreshed: 2026-08-01 by CTO session — every transition batch verified via in-agent key-match checks (agents explicitly instructed to treat a mismatched response key as a failure, not a success) plus 3 independent post-hoc `getJiraIssue` spot-checks by this author (SCRUM-1183, SCRUM-2408, SCRUM-1730, all confirmed Done)._
+
 ### 2026-08-01 (CTO) — network-scaffolding audit: two dead resources deleted; NAT on appliance landing zone is AUTO_ONLY (no stable egress IP)
 
 Triggered by the Sekura scoping question "should we have an internal network." Answer: no as a
