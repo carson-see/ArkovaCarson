@@ -7,7 +7,7 @@ Per-rule CI enforcement scripts for `memory/feedback_*.md` rules (R0-7 / SCRUM-1
 - **`no-credit-limits-beta.ts`** — enforces credit-limits-beta naming conventions.
 - **`no-worktree-isolation.ts`** — enforces worktree isolation rules.
 - **`pr-target-repo.ts`** — verifies PR targets the correct repository.
-- **`feedback_dont_recommend_do.ts`** — blocks "recommend" language in task output (do, don't hedge).
+- **`feedback_dont_recommend_do.ts`** — flags "recommend" language in task output (do, don't hedge). **Advisory only** — every code path returns `ok: true`, so it reports but never fails the build. Corrected 2026-08-01; this line previously claimed it blocks.
 - **`feedback_jira_user_story_format.ts`** — enforces Jira user story format conventions.
 - **`feedback_local_matches_prod.ts`** — enforces local-vs-prod parity rules.
 
