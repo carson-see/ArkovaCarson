@@ -3,12 +3,29 @@
 --   EXECUTE from internal SECURITY DEFINER billing mutators.
 --
 -- =============================================================================
--- STATUS: FILE-ONLY / PRE-SOAK / NEVER-APPLIED — PI-0.5 T3 deferred work.
---   This migration is authored for review only. It is NOT applied to prod or any
---   rig in this window and does NOT close the ticket — it carries its own T3
---   (48h) soak because it touches privilege grants on billing functions.
---   Numeric prefix 0364 is the next free above main head 0357 and the reserved
---   0358-0363 band; see supabase/migrations/agents.md.
+-- STATUS: PROD-APPLIED 2026-07-27 (~13:26-13:32Z, part of the 0359-0364 batch).
+--   This file is the source-of-record landing on main AFTER the fact; the
+--   executable SQL below is byte-for-byte what was applied. Do NOT edit the
+--   statements — write a compensating migration instead (CLAUDE.md §1.2).
+--   Re-verified live against prod `vzwyaatejekddvltxyye` on 2026-08-01 via
+--   has_function_privilege(): both functions report anon=false,
+--   authenticated=false, service_role=true — i.e. the revokes below are the
+--   grant state currently in production, and re-applying this file is a no-op
+--   (REVOKE/GRANT are idempotent).
+--
+--   NOTE (superseded header): this block previously read "FILE-ONLY / PRE-SOAK /
+--   NEVER-APPLIED". That was true when authored (2026-07-22) and became false at
+--   the 2026-07-27 batch apply. Corrected 2026-08-01 rather than left to mislead
+--   a reviewer into thinking the hole is still open (CLAUDE.md §1.5).
+--
+--   NO OVERLAP with the later SEC-RECON migrations: neither
+--   0377_sec_recon_revoke_unguarded_rpc_family.sql nor
+--   0378_sec_recon_revoke_deferred_security_definer_grants.sql names
+--   deduct_org_credit or deduct_credit, so nothing here is duplicated.
+--
+--   Numeric prefix 0364 is below the current ledger head — it is a historical
+--   prefix being reconciled onto main, NOT a new claim. Next author claims the
+--   next free prefix per supabase/migrations/agents.md, not 0365.
 -- =============================================================================
 --
 -- WHAT IT REVOKES AND WHY:
