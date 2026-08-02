@@ -190,7 +190,11 @@ const LEASE_PROCESS_NONCE = randomUUID();
 
 /** Identifies the holder in logs and in the release predicate. */
 export function publicRecordAnchorLeaseHolder(): string {
-  return `${process.env.K_REVISION ?? 'local'}:${process.pid}:${LEASE_PROCESS_NONCE}`;
+  // SCRUM-1258 (R1-4): read the Cloud Run revision through the Zod-validated
+  // `config` export, never `process.env` directly. `config.kRevision` already
+  // absorbs `K_REVISION`; an ad-hoc read here would bypass that validation and
+  // is rejected by the worker-env gate in `ci.yml`.
+  return `${config.kRevision ?? 'local'}:${process.pid}:${LEASE_PROCESS_NONCE}`;
 }
 
 /**

@@ -36,6 +36,17 @@ const { mockLogger } = vi.hoisted(() => ({
   mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+/**
+ * The Cloud Run revision name reaches the worker through the Zod-validated
+ * `config` export (`config.kRevision` absorbs `K_REVISION`), NOT through an
+ * ad-hoc `process.env` read — `scripts/ci/check-worker-env-adhoc.ts` rejects
+ * the latter. Config is captured once at module load, so the holder-id test
+ * below injects the revision here rather than mutating `process.env` at
+ * runtime, which would have no effect.
+ */
+// `vi.hoisted` because `vi.mock` factories are lifted above ordinary consts.
+const { TEST_K_REVISION } = vi.hoisted(() => ({ TEST_K_REVISION: 'arkova-worker-01164-xux' }));
+
 vi.mock('../../config.js', () => ({
   config: {
     logLevel: 'info',
@@ -44,6 +55,7 @@ vi.mock('../../config.js', () => ({
     enableProdNetworkAnchoring: false,
     bitcoinNetwork: 'signet',
     batchAnchorMaxSize: 10_000,
+    kRevision: TEST_K_REVISION,
   },
 }));
 
@@ -356,20 +368,19 @@ describe('public-record anchoring cross-instance lease', () => {
    * `${K_REVISION}:${pid}` was the SAME string on every instance. The release
    * predicate would then match another instance's live lease.
    */
-  it('mints a holder id that cannot collide across instances of one revision', async () => {
-    const original = process.env.K_REVISION;
-    process.env.K_REVISION = 'arkova-worker-01164-xux';
-    try {
-      const holder = publicRecordAnchorLeaseHolder();
-      // Everything a second instance of the same revision would also compute.
-      expect(holder.startsWith(`arkova-worker-01164-xux:${process.pid}:`)).toBe(true);
-      // ...plus something it could not.
-      const nonce = holder.slice(`arkova-worker-01164-xux:${process.pid}:`.length);
-      expect(nonce).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-    } finally {
-      if (original === undefined) delete process.env.K_REVISION;
-      else process.env.K_REVISION = original;
-    }
+  it('mints a holder id that cannot collide across instances of one revision', () => {
+    const holder = publicRecordAnchorLeaseHolder();
+    // Everything a second instance of the same revision would also compute:
+    // the revision name is identical fleet-wide and the exec-form CMD makes
+    // node PID 1 in every container.
+    const collidingPrefix = `${TEST_K_REVISION}:${process.pid}:`;
+    expect(holder.startsWith(collidingPrefix)).toBe(true);
+    // ...plus something it could not.
+    const nonce = holder.slice(collidingPrefix.length);
+    expect(nonce).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    // Stable within the process — the release predicate matches on it, so a
+    // per-CALL nonce would make a holder unable to release its own lease.
+    expect(publicRecordAnchorLeaseHolder()).toBe(holder);
   });
 
   it('keeps the TTL above a full scheduler cadence so a healthy run is never stolen mid-flight', () => {
