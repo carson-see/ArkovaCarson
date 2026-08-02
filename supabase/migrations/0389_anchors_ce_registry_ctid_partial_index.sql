@@ -186,9 +186,14 @@
 --   `idx_anchors_ce_registry_created_at` with no Filter node. Measuring against a
 --   small or empty org is not evidence — that mistake made the DocuSign path
 --   look fixed twice on 2026-08-02.
---   Note also that #1838's docstring and PR body still name the rejected
---   expression-keyed shape; correcting that text belongs to #1838's lane, but
---   the flag must not be enabled on the strength of it.
+--   #1838 MERGED 2026-08-02T14:12:22Z with a docstring on
+--   `loadAnchoredCeRecords` still prescribing the rejected expression-keyed
+--   shape as "the prerequisite". That lane closed on merge, so this PR corrects
+--   the docstring in place (comment-only) rather than leaving main instructing
+--   the next reader to build an index measured not to work. The flag remains
+--   dark: `ENABLE_CE_REGISTRY_DRIFT_CHECK` is still absent from the
+--   `--set-env-vars` list in `.github/workflows/deploy-worker.yml`, and no
+--   Cloud Scheduler job exists.
 --
 -- SCOPE. ADDITIVE and read-path only: one index. No table, column, RPC, RLS
 -- policy, trigger or row data is touched. `database.types.ts` is unaffected by
