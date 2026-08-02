@@ -8,7 +8,30 @@
 
 export const MAX_ANCHORS_PER_BITCOIN_TX = 10_000;
 export const MIN_ANCHORS_PER_BITCOIN_TX = 100;
+
+/** Max rows PostgREST returns in one response. Governs pagination, NOT filter width. */
 export const POSTGREST_ROW_LIMIT = 1_000;
+
+/**
+ * Byte budget for a single URL-encoded query-string filter value.
+ *
+ * PostgREST sits behind a proxy that rejects oversized request lines with
+ * 400 Bad Request. 8 KiB is comfortably under the usual 16 KiB ceiling.
+ */
+export const POSTGREST_URL_FILTER_BUDGET_BYTES = 8_192;
+
+/**
+ * Max ids per `.in('id', chunk)` filter.
+ *
+ * A UUID costs 37 bytes in the encoded `in.(...)` list (36 + separator), so
+ * this stays inside POSTGREST_URL_FILTER_BUDGET_BYTES with headroom for the
+ * rest of the request line.
+ *
+ * Do NOT chunk id filters by POSTGREST_ROW_LIMIT — that conflates two unrelated
+ * limits (how many rows come back vs. how wide the URL may be) and is exactly
+ * what silently killed public-record anchoring for 70+ hours on 2026-07-29.
+ */
+export const POSTGREST_IN_FILTER_CHUNK = 200;
 
 export function resolveAnchorBatchSize(rawValue?: number | string | null): number {
   const parsed =

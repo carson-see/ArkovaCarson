@@ -851,7 +851,19 @@ function isDeployWorkerUsesOnlyExempt(file: string, opts?: TierClassifyOpts): bo
 
 function isT0OnlyFile(file: string, opts?: TierClassifyOpts): boolean {
   if (PUBLIC_CONTRACT_DOC_RE.test(file)) return false;
-  if (TEST_FILE_RE.test(file) || file.endsWith('agents.md')) return true;
+  // `agents-changelog.md` rides the same early return as `agents.md`: cf3917ad2
+  // ("split changelog sediment out of four guide files", 2026-08-01) moved the
+  // dated narrative into sibling changelog files without extending this
+  // carve-out, which silently made every one of them a soak-tier file — e.g.
+  // `services/worker/agents-changelog.md` matches the `services/worker/`
+  // PATH_RULE and would demand T3 evidence for a pure doc edit. The check must
+  // stay HERE, above the PATH_RULES short-circuit, for that reason; the
+  // STAGING_TOOLING_ALLOW list below is reached too late for worker paths.
+  if (
+    TEST_FILE_RE.test(file)
+    || file.endsWith('agents.md')
+    || file.endsWith('agents-changelog.md')
+  ) return true;
   // Binding CTO ruling 102498305: these exact non-test modules are T0 only
   // while a complete production-source scan proves no runtime imports anything
   // from scripts/staging. Missing scan data or any importer voids the carve-out.
@@ -2188,6 +2200,11 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/mint-fresh-event(\.test)?\.sh$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
+  // SCRUM-1304 / SCRUM-1681: the SonarCloud quality-gate + New Code Definition
+  // drift guard. Runs only in the `sonar-quality-gate-config` CI job, reads the
+  // SonarCloud REST API, and never ships to prod runtime → T0 tooling. Same
+  // class as the staging-gcloud-policy / handoff-claims gates around it.
+  /^scripts\/ci\/check-sonar-quality-gate(\.test)?\.ts$/,
   // SCRUM-2897: evidence-identity gate — a pure body/head-SHA identity checker
   // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
   // CI (reads PR body/head/draft from the event context); never ships to prod
@@ -2229,6 +2246,15 @@ const STAGING_TOOLING_ALLOW = [
   // same class as the other scripts/ci/check-*.ts gates above.
   /^scripts\/ci\/check-orphaned-exports(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
+  // SCRUM-1253 (R0-7): memory feedback-rules CI gates. Per-rule scripts under
+  // scripts/ci/feedback-rules/ + the check-feedback-rules.ts orchestrator run
+  // only in CI (ci.yml "Feedback rules" step); never imported by src/ or
+  // services/worker/src/ → no prod runtime to soak, same class as the other
+  // scripts/ci/check-*.ts gates above. Their shared scripts/ci/lib/ciContext.ts
+  // helper was already covered by the scripts/ci/lib/ entry; this directory
+  // was the missing half, which under-classified PR #1775 to T1.
+  /^scripts\/ci\/feedback-rules\//,
+  /^scripts\/ci\/check-feedback-rules(\.test)?\.ts$/,
   // SCRUM-2977: anti-hollow-soak pre-clock guard set. A pure guard module + CLI
   // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
   // CI (and locally over a soak-preflight JSON); never ships to prod runtime →
@@ -2308,6 +2334,17 @@ const STAGING_TOOLING_ALLOW = [
   /agents\.md$/,
   /^eslint-rules\//,
   /(^|\/)eslint\.config\.(js|cjs|mjs)$/,
+  // SonarCloud analyzer configuration — same class as the eslint config above
+  // (PR #798: "lint config is dev-time tooling with no runtime impact"). These
+  // files are read only by SonarCloud's analyzer; nothing imports them, no
+  // bundle includes them, and no deploy ships them, so a soak has no surface to
+  // exercise. Anchored to the repo root because that is the only location
+  // SonarCloud reads: `.sonarcloud.properties` is the file Automatic Analysis
+  // actually consumes, and `sonar-project.properties` is the CI-scanner
+  // filename (deleted 2026-08-01 as inert — kept here so its removal, and any
+  // future re-add under a CI-based scanner, classify as T0 tooling).
+  /^\.sonarcloud\.properties$/,
+  /^sonar-project\.properties$/,
   /^e2e\//,
 ];
 
@@ -2370,7 +2407,82 @@ interface CheckOptions {
    * SCRUM-2980) — see that function for why.
    */
   deployWorkerPaused?: boolean;
+  /**
+   * TEMPORARY, VARIABLE-CONTROLLED BYPASS — founder directive 2026-08-01,
+   * relayed by the CTO session.
+   *
+   * When positively `true`, {@link check} short-circuits to a pass without
+   * evaluating ANY evidence requirement, so Mergify can drain the CI-green
+   * queue ahead of the external pen test that starts 2026-08-02. The
+   * consolidated week-long soak that follows the pen test is what actually
+   * produces the deferred evidence, and this variable MUST be flipped back
+   * to `false` before that soak so the gate grades it.
+   *
+   * Populated in {@link main} from `process.env.SOAK_GATE_DISABLED`, which
+   * `.github/workflows/staging-evidence.yml` threads from the live
+   * `vars.SOAK_GATE_DISABLED` repository variable — repo-admin state, not
+   * anything a PR author controls. Anything other than the literal string
+   * `'true'` is "not engaged" and the gate runs in full (fail closed on
+   * ambiguity), mirroring {@link CheckOptions.deployWorkerPaused}.
+   *
+   * NOTE FOR ANY LATER READER: this is a real, deliberate suspension of the
+   * CLAUDE.md §1.11/§1.12 evidence requirement, not a refactor. Every other
+   * code path is left untouched precisely so that clearing the variable
+   * restores the gate exactly as it was.
+   */
+  soakGateDisabled?: boolean;
 }
+
+/**
+ * Hard stop for the bypass window. A suspension of the evidence requirement
+ * that can only be ended by someone REMEMBERING to end it is a suspension
+ * that becomes permanent; every prior override in this repo's history had to
+ * be destroyed by hand (the `staging-soak-skip` label, 2026-05-07) rather
+ * than lapsing on its own.
+ *
+ * Past this instant the variable stops being honored and the gate enforces
+ * in full again — the fail-closed direction. Two weeks is deliberately
+ * generous against the stated plan (pen test from 2026-08-02, then a
+ * week-long consolidated soak). If the window genuinely needs to run longer,
+ * extending this constant is a one-line PR that is visible in review, which
+ * is the entire point: the extension gets seen, the neglect does not.
+ */
+const SOAK_GATE_BYPASS_EXPIRES_AT = Date.parse('2026-08-16T00:00:00Z');
+
+/**
+ * The banner a bypassed run prints. Deliberately states what was NOT done —
+ * a passing check here must never be readable as "evidence present".
+ */
+const SOAK_GATE_BYPASS_NOTE =
+  '⚠️  SOAK GATE BYPASSED — founder directive 2026-08-01, re-enable before the post-pentest '
+  + 'consolidated soak. The repository variable SOAK_GATE_DISABLED is set to "true", so this '
+  + 'PR\'s staging soak evidence has NOT been evaluated: no tier was computed, no evidence '
+  + 'block was read, and no staging soak evidence is claimed to exist for this change. This '
+  + 'check passing means only that the bypass is engaged. Clear the SOAK_GATE_DISABLED '
+  + 'repository variable (`gh variable set SOAK_GATE_DISABLED --body false`) to restore '
+  + 'CLAUDE.md §1.11/§1.12 enforcement in full before the consolidated soak is graded. '
+  + 'This bypass stops being honored after 2026-08-16T00:00:00Z regardless of the variable.';
+
+/**
+ * `true` only while the bypass is both switched on AND inside its window.
+ * Expiry is evaluated against `nowMs` so it is testable; `main()` passes the
+ * real clock.
+ */
+function soakGateBypassEngaged(opts: Pick<CheckOptions, 'soakGateDisabled' | 'nowMs'>): boolean {
+  if (opts.soakGateDisabled !== true) return false;
+  return (opts.nowMs ?? Date.now()) < SOAK_GATE_BYPASS_EXPIRES_AT;
+}
+
+/** Printed when the variable is still set but the window has closed. */
+const SOAK_GATE_BYPASS_EXPIRED_NOTE =
+  'SOAK_GATE_DISABLED is still set to "true", but the bypass window closed at '
+  + '2026-08-16T00:00:00Z — the staging soak evidence gate is enforcing normally again. '
+  + 'This is the intended end of the founder directive of 2026-08-01, not a fault. Clear '
+  + 'the variable (`gh variable set SOAK_GATE_DISABLED --body false`) so the repo state '
+  + 'stops advertising a bypass that no longer applies. If the window genuinely needs to '
+  + 'be extended, that is a reviewed one-line change to SOAK_GATE_BYPASS_EXPIRES_AT in '
+  + 'scripts/ci/check-staging-evidence.ts — deliberately not something a variable alone '
+  + 'can do.';
 
 function addErrors(result: CheckResult, errors: string[]): void {
   if (errors.length === 0) return;
@@ -3278,6 +3390,21 @@ export function check(opts: CheckOptions): CheckResult {
   const { body, files } = opts;
   const result: CheckResult = { ok: true, errors: [], notes: [] };
 
+  // TEMPORARY BYPASS (founder directive 2026-08-01) — must be the first thing
+  // this function does. It short-circuits ahead of tier classification so the
+  // banner below is the ONLY reason a bypassed run passes; letting T0 (or any
+  // other path) answer first would hide that the gate was suspended.
+  // See CheckOptions.soakGateDisabled.
+  if (soakGateBypassEngaged(opts)) {
+    result.notes.push(SOAK_GATE_BYPASS_NOTE);
+    return result;
+  }
+  if (opts.soakGateDisabled === true) {
+    // Set but expired: fall through into the full gate, and say why so the
+    // sudden return of red checks is self-explaining rather than a mystery.
+    result.notes.push(SOAK_GATE_BYPASS_EXPIRED_NOTE);
+  }
+
   const required = requiredTierFor(files, {
     diffProvider: opts.diffProvider,
     s33Lane1ImportScan: opts.s33Lane1ImportScan,
@@ -3289,14 +3416,15 @@ export function check(opts: CheckOptions): CheckResult {
 
   const declared = extractDeclaredTier(body);
   if (!declared) {
-    return {
-      ok: false,
-      errors: [
-        `PR body is missing a tier declaration. Add a line \`Tier: ${required.tier}\` under a `
-        + `\`## Staging Soak Evidence\` section. Required tier: ${required.tier} (${required.reason}).`,
-      ],
-      notes: [],
-    };
+    // Accumulate onto `result` rather than returning a fresh object: notes
+    // pushed before this point (e.g. the expired-bypass explanation) are the
+    // context that makes this failure legible, and a literal `notes: []`
+    // silently threw them away.
+    addErrors(result, [
+      `PR body is missing a tier declaration. Add a line \`Tier: ${required.tier}\` under a `
+      + `\`## Staging Soak Evidence\` section. Required tier: ${required.tier} (${required.reason}).`,
+    ]);
+    return result;
   }
 
   addErrors(result, tierDeclarationErrors(declared, required));
@@ -3347,6 +3475,21 @@ export function check(opts: CheckOptions): CheckResult {
 }
 
 function main(): void {
+  // TEMPORARY BYPASS (founder directive 2026-08-01) — checked before ANY
+  // repo/git resolution, so an unrelated base-ref or head-ref resolution
+  // failure cannot red a run that is supposed to be bypassed. Emitted as a
+  // `::warning::` as well as stdout so it surfaces in the Actions annotation
+  // panel, not just the folded log. See CheckOptions.soakGateDisabled.
+  const soakGateDisabled = process.env.SOAK_GATE_DISABLED === 'true';
+  if (soakGateBypassEngaged({ soakGateDisabled })) {
+    console.log(`ℹ️  ${SOAK_GATE_BYPASS_NOTE}`);
+    console.error(`::warning title=Staging soak evidence gate BYPASSED::${SOAK_GATE_BYPASS_NOTE}`);
+    return;
+  }
+  if (soakGateDisabled) {
+    console.error(`::warning title=Soak-gate bypass window has closed::${SOAK_GATE_BYPASS_EXPIRED_NOTE}`);
+  }
+
   // Required base: fail closed if it can't resolve (getBaseRef exits 1).
   const baseRef = getBaseRef({ required: true })!;
   const files = changedFiles();
@@ -3369,6 +3512,9 @@ function main(): void {
     // .github/workflows/staging-evidence.yml — see CheckOptions.deployWorkerPaused
     // for why this must be a literal 'true' string match, not truthiness.
     deployWorkerPaused: process.env.DEPLOY_WORKER_PAUSED === 'true',
+    // Always false here — the engaged case returned above. Passed anyway so
+    // the CLI and the library agree on the contract.
+    soakGateDisabled,
   });
 
   for (const note of result.notes) console.log(`ℹ️  ${note}`);

@@ -20,6 +20,7 @@ import {
   Users,
   FileText,
   SlidersHorizontal,
+  Coins,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -27,6 +28,7 @@ import { useAdminList } from '@/hooks/useAdminList';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -41,8 +43,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { workerFetch } from '@/lib/workerClient';
-import { ROUTES } from '@/lib/routes';
+import { ROUTES, orgProfilePath } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
+import { ADMIN_CREDIT_ADJUST_LABELS as CREDIT } from '@/lib/copy';
 
 interface AdminOrganization {
   id: string;
@@ -55,10 +58,398 @@ interface AdminOrganization {
   anchor_count: number;
   is_test: boolean;
   anchor_quota: number | null;
+  credit_balance: number | null;
   created_at: string;
 }
 
 const DEFAULT_FREE_QUOTA = 10;
+
+// The helpers below are pure (no hook/closure dependencies) and are declared
+// at module scope rather than inside the component. Besides being
+// independently testable, this keeps them out of the component function's
+// own lexical body — SonarCloud typescript:S3776 (Cognitive Complexity) was
+// flagging the component at 20 against a limit of 15 because every branch
+// in every inline handler was scored as part of one giant function.
+
+function renderOrgCapBadge(org: AdminOrganization) {
+  if (org.is_test && org.anchor_quota != null) {
+    const over = org.anchor_count >= org.anchor_quota;
+    return (
+      <Badge variant={over ? 'destructive' : 'secondary'} className="text-[10px]">
+        {org.anchor_count}/{org.anchor_quota} free
+      </Badge>
+    );
+  }
+  return <span className="text-xs text-muted-foreground">Uncapped</span>;
+}
+
+function isValidQuotaInput(capEnabled: boolean, quotaNum: number): boolean {
+  return !capEnabled || (Number.isInteger(quotaNum) && quotaNum >= 0);
+}
+
+function buildQuotaPayload(capEnabled: boolean, quotaNum: number): { anchor_quota: number | null; is_test: boolean } {
+  return capEnabled
+    ? { anchor_quota: quotaNum, is_test: true }
+    : { anchor_quota: null, is_test: false };
+}
+
+function buildQuotaSuccessMessage(displayName: string, capEnabled: boolean, quotaNum: number): string {
+  if (!capEnabled) return `${displayName}: uncapped (billable).`;
+  const unit = quotaNum === 1 ? 'action' : 'actions';
+  return `${displayName}: capped at ${quotaNum} free testing ${unit}.`;
+}
+
+/** Maps an adjust-credits API error code to a user-facing toast message. */
+function resolveCreditsErrorMessage(errorCode: string | undefined): string {
+  if (errorCode === 'insufficient_balance') return CREDIT.ERROR_INSUFFICIENT_BALANCE;
+  return errorCode ?? CREDIT.ERROR_GENERIC;
+}
+
+function buildCreditsSuccessMessage(action: 'add' | 'remove', amountLabel: string, displayName: string): string {
+  return action === 'add'
+    ? CREDIT.SUCCESS_ADD(amountLabel, displayName)
+    : CREDIT.SUCCESS_REMOVE(amountLabel, displayName);
+}
+
+interface CreditsPreview {
+  amountValid: boolean;
+  signedAmount: number;
+  newBalance: number;
+}
+
+/** Derives the add/remove preview shown in the confirm step: the signed
+ *  delta and the resulting balance. Pulled out alongside the other helpers
+ *  above for the same S3776 reason — these were plain top-level `const`s in
+ *  the component body (not inside any handler), so every `&&`/`?:` in them
+ *  counted directly against the component's own complexity budget. */
+function computeCreditsPreview(action: 'add' | 'remove', amountInput: string, currentBalance: number): CreditsPreview {
+  const amountNum = Number.parseInt(amountInput, 10);
+  const amountValid = Number.isInteger(amountNum) && amountNum > 0;
+  const signedAmount = action === 'add' ? amountNum : -amountNum;
+  const newBalance = amountValid ? currentBalance + signedAmount : currentBalance;
+  return { amountValid, signedAmount, newBalance };
+}
+
+interface OrganizationsListBodyProps {
+  loading: boolean;
+  items: AdminOrganization[];
+  searchInput: string;
+  onClearFilters: () => void;
+  onOpenOrg: (orgId: string) => void;
+  onOpenCap: (org: AdminOrganization) => void;
+  onOpenCredits: (org: AdminOrganization) => void;
+}
+
+/** Loading / empty / populated body of the organizations card. Extracted from
+ *  the page component for the same S3776 reason as the helpers above — the
+ *  three-way render branch scores against this component's own budget, not the
+ *  page's. Purely presentational: all state and handlers stay in the page. */
+function OrganizationsListBody({ loading, items, searchInput, onClearFilters, onOpenOrg, onOpenCap, onOpenCredits }: Readonly<OrganizationsListBodyProps>) {
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Skeleton key={`skel-${i}`} className="h-16 w-full" />
+        ))}
+      </div>
+    );
+  }
+
+  if (items.length === 0) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-sm text-muted-foreground">No organizations found.</p>
+        {searchInput && (
+          <Button variant="link" size="sm" className="mt-2" onClick={onClearFilters}>
+            Clear filters
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* Mobile card layout */}
+      <div className="space-y-3 md:hidden">
+        {items.map((org) => (
+          <div
+            key={org.id}
+            className="rounded-lg border p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+            onClick={() => onOpenOrg(org.id)}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium">{org.display_name}</span>
+              {org.org_prefix && (
+                <Badge variant="secondary" className="font-mono text-[10px]">{org.org_prefix}</Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {org.member_count}</span>
+              <span className="flex items-center gap-1"><FileText className="h-3 w-3" /> {org.anchor_count}</span>
+              {org.domain && <span>{org.domain}</span>}
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Free tier:</span>
+                {renderOrgCapBadge(org)}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7"
+                onClick={(e) => { e.stopPropagation(); onOpenCap(org); }}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5 mr-1" /> Set cap
+              </Button>
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">{CREDIT.COLUMN_LABEL}:</span>
+                <Badge variant="secondary" className="text-[10px] font-mono">
+                  {org.credit_balance != null ? org.credit_balance.toLocaleString() : CREDIT.UNKNOWN_BALANCE}
+                </Badge>
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7"
+                onClick={(e) => { e.stopPropagation(); onOpenCredits(org); }}
+              >
+                <Coins className="h-3.5 w-3.5 mr-1" /> {CREDIT.BUTTON_LABEL}
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table */}
+      <div className="overflow-x-auto hidden md:block">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b text-left text-muted-foreground">
+              <th className="pb-2 pr-4">Organization</th>
+              <th className="pb-2 pr-4">Prefix</th>
+              <th className="pb-2 pr-4">Domain</th>
+              <th className="pb-2 pr-4">Members</th>
+              <th className="pb-2 pr-4">Records</th>
+              <th className="pb-2 pr-4">Free tier</th>
+              <th className="pb-2 pr-4">{CREDIT.COLUMN_LABEL}</th>
+              <th className="pb-2">Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((org) => (
+              <tr
+                key={org.id}
+                className="border-b last:border-0 hover:bg-muted/50 cursor-pointer"
+                onClick={() => onOpenOrg(org.id)}
+              >
+                <td className="py-3 pr-4">
+                  <div className="font-medium">{org.display_name}</div>
+                  {org.legal_name && org.legal_name !== org.display_name && (
+                    <div className="text-xs text-muted-foreground">{org.legal_name}</div>
+                  )}
+                </td>
+                <td className="py-3 pr-4">
+                  {org.org_prefix ? (
+                    <Badge variant="secondary" className="font-mono text-[10px]">{org.org_prefix}</Badge>
+                  ) : '—'}
+                </td>
+                <td className="py-3 pr-4 text-muted-foreground">
+                  {org.domain ?? '—'}
+                </td>
+                <td className="py-3 pr-4">
+                  <span className="flex items-center gap-1">
+                    <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                    {org.member_count}
+                  </span>
+                </td>
+                <td className="py-3 pr-4">
+                  <span className="flex items-center gap-1">
+                    <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                    {org.anchor_count}
+                  </span>
+                </td>
+                <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-2">
+                    {renderOrgCapBadge(org)}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title="Set free-tier cap"
+                      onClick={(e) => { e.stopPropagation(); onOpenCap(org); }}
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </td>
+                <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-[10px] font-mono">
+                      {org.credit_balance != null ? org.credit_balance.toLocaleString() : CREDIT.UNKNOWN_BALANCE}
+                    </Badge>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title={CREDIT.BUTTON_TITLE}
+                      onClick={(e) => { e.stopPropagation(); onOpenCredits(org); }}
+                    >
+                      <Coins className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </td>
+                <td className="py-3 text-muted-foreground">
+                  {new Date(org.created_at).toLocaleDateString()}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+interface CreditsAdjustDialogProps {
+  org: AdminOrganization | null;
+  action: 'add' | 'remove';
+  amountInput: string;
+  reasonInput: string;
+  step: 'input' | 'confirm';
+  saving: boolean;
+  currentBalance: number;
+  newBalance: number;
+  onActionChange: (action: 'add' | 'remove') => void;
+  onAmountInputChange: (value: string) => void;
+  onReasonInputChange: (value: string) => void;
+  onReview: () => void;
+  onBack: () => void;
+  onConfirm: () => void;
+  onClose: () => void;
+}
+
+/** L2-A5 credit adjust dialog (input step → confirm step). Extracted from the
+ *  page component for the same S3776 reason as OrganizationsListBody. Purely
+ *  presentational: the page owns all dialog state and the submit flow. */
+function CreditsAdjustDialog({
+  org,
+  action,
+  amountInput,
+  reasonInput,
+  step,
+  saving,
+  currentBalance,
+  newBalance,
+  onActionChange,
+  onAmountInputChange,
+  onReasonInputChange,
+  onReview,
+  onBack,
+  onConfirm,
+  onClose,
+}: Readonly<CreditsAdjustDialogProps>) {
+  return (
+    <Dialog open={!!org} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{CREDIT.DIALOG_TITLE}</DialogTitle>
+          <DialogDescription>
+            {org ? CREDIT.DIALOG_DESCRIPTION(org.display_name) : ''}
+          </DialogDescription>
+        </DialogHeader>
+
+        {step === 'input' ? (
+          <div className="space-y-4 py-2">
+            <div className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2">
+              <span className="text-sm text-muted-foreground">{CREDIT.CURRENT_BALANCE_LABEL}</span>
+              <span className="font-mono text-sm font-medium">{currentBalance.toLocaleString()}</span>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={action === 'add' ? 'default' : 'outline'}
+                size="sm"
+                className="flex-1"
+                onClick={() => onActionChange('add')}
+              >
+                {CREDIT.ACTION_ADD}
+              </Button>
+              <Button
+                type="button"
+                variant={action === 'remove' ? 'default' : 'outline'}
+                size="sm"
+                className="flex-1"
+                onClick={() => onActionChange('remove')}
+              >
+                {CREDIT.ACTION_REMOVE}
+              </Button>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="credits-amount">{CREDIT.AMOUNT_LABEL}</Label>
+              <Input
+                id="credits-amount"
+                type="number"
+                min={1}
+                step={1}
+                value={amountInput}
+                onChange={(e) => onAmountInputChange(e.target.value)}
+                className="w-32"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="credits-reason">{CREDIT.REASON_LABEL}</Label>
+              <Textarea
+                id="credits-reason"
+                value={reasonInput}
+                onChange={(e) => onReasonInputChange(e.target.value)}
+                placeholder={CREDIT.REASON_PLACEHOLDER}
+                rows={3}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4 py-2">
+            <div className="rounded-md border p-3 space-y-2">
+              <p className="text-sm font-medium">
+                {action === 'add'
+                  ? CREDIT.CONFIRM_SUMMARY_ADD(amountInput, org?.display_name ?? '')
+                  : CREDIT.CONFIRM_SUMMARY_REMOVE(amountInput, org?.display_name ?? '')}
+              </p>
+              <p className="text-xs text-muted-foreground">{CREDIT.REASON_LABEL}: {reasonInput}</p>
+              <div className="flex items-center justify-between pt-2 border-t">
+                <span className="text-xs text-muted-foreground">{CREDIT.NEW_BALANCE_LABEL}</span>
+                <span className="font-mono text-sm font-medium">
+                  {currentBalance.toLocaleString()} → {Math.max(newBalance, 0).toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          {step === 'input' ? (
+            <>
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button onClick={onReview}>{CREDIT.REVIEW_BUTTON}</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" onClick={onBack} disabled={saving}>
+                {CREDIT.BACK_BUTTON}
+              </Button>
+              <Button onClick={onConfirm} disabled={saving}>
+                {saving ? CREDIT.CONFIRMING_BUTTON : CREDIT.CONFIRM_BUTTON}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export function AdminOrganizationsPage() {
   const navigate = useNavigate();
@@ -74,6 +465,15 @@ export function AdminOrganizationsPage() {
   const [capEnabled, setCapEnabled] = useState(true);
   const [quotaInput, setQuotaInput] = useState(String(DEFAULT_FREE_QUOTA));
   const [saving, setSaving] = useState(false);
+
+  // L2-A5 — credit adjust dialog state (founder admin-controls: add/remove credits).
+  const [creditsOrg, setCreditsOrg] = useState<AdminOrganization | null>(null);
+  const [creditsAction, setCreditsAction] = useState<'add' | 'remove'>('add');
+  const [creditsAmountInput, setCreditsAmountInput] = useState('');
+  const [creditsReasonInput, setCreditsReasonInput] = useState('');
+  const [creditsStep, setCreditsStep] = useState<'input' | 'confirm'>('input');
+  const [creditsIdempotencyKey, setCreditsIdempotencyKey] = useState<string | null>(null);
+  const [creditsSaving, setCreditsSaving] = useState(false);
 
   const isAdmin = isPlatformAdmin(profile);
 
@@ -95,6 +495,12 @@ export function AdminOrganizationsPage() {
     doFetch(newPage);
   };
 
+  const clearFilters = () => {
+    setSearchInput('');
+    setSearchParams({});
+    fetchList({ page: 1, search: '' });
+  };
+
   const handleSignOut = async () => {
     await signOut();
     navigate(ROUTES.LOGIN);
@@ -108,8 +514,8 @@ export function AdminOrganizationsPage() {
 
   const saveCap = async () => {
     if (!editingOrg) return;
-    const quotaNum = parseInt(quotaInput, 10);
-    if (capEnabled && (!Number.isInteger(quotaNum) || quotaNum < 0)) {
+    const quotaNum = Number.parseInt(quotaInput, 10);
+    if (!isValidQuotaInput(capEnabled, quotaNum)) {
       toast.error('Enter a whole number of free actions (0 or more).');
       return;
     }
@@ -118,22 +524,14 @@ export function AdminOrganizationsPage() {
       const res = await workerFetch(`/api/admin/organizations/${encodeURIComponent(editingOrg.id)}/quota`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          capEnabled
-            ? { anchor_quota: quotaNum, is_test: true }
-            : { anchor_quota: null, is_test: false },
-        ),
+        body: JSON.stringify(buildQuotaPayload(capEnabled, quotaNum)),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast.error(data.error ?? 'Failed to update cap');
         return;
       }
-      toast.success(
-        capEnabled
-          ? `${editingOrg.display_name}: capped at ${quotaNum} free testing action${quotaNum === 1 ? '' : 's'}.`
-          : `${editingOrg.display_name}: uncapped (billable).`,
-      );
+      toast.success(buildQuotaSuccessMessage(editingOrg.display_name, capEnabled, quotaNum));
       setEditingOrg(null);
       doFetch(page);
     } catch {
@@ -143,16 +541,69 @@ export function AdminOrganizationsPage() {
     }
   };
 
-  const renderCap = (org: AdminOrganization) => {
-    if (org.is_test && org.anchor_quota != null) {
-      const over = org.anchor_count >= org.anchor_quota;
-      return (
-        <Badge variant={over ? 'destructive' : 'secondary'} className="text-[10px]">
-          {org.anchor_count}/{org.anchor_quota} free
-        </Badge>
-      );
+  // L2-A5 — credit adjust dialog handlers.
+  const openCredits = (org: AdminOrganization) => {
+    setCreditsOrg(org);
+    setCreditsAction('add');
+    setCreditsAmountInput('');
+    setCreditsReasonInput('');
+    setCreditsStep('input');
+    setCreditsIdempotencyKey(null);
+  };
+
+  const closeCredits = () => {
+    setCreditsOrg(null);
+    setCreditsStep('input');
+    setCreditsIdempotencyKey(null);
+  };
+
+  const creditsReasonValid = creditsReasonInput.trim().length > 0;
+  const creditsCurrentBalance = creditsOrg?.credit_balance ?? 0;
+  const {
+    amountValid: creditsAmountValid,
+    signedAmount: creditsSignedAmount,
+    newBalance: creditsNewBalance,
+  } = computeCreditsPreview(creditsAction, creditsAmountInput, creditsCurrentBalance);
+
+  const reviewCredits = () => {
+    if (!creditsAmountValid) {
+      toast.error(CREDIT.AMOUNT_REQUIRED_ERROR);
+      return;
     }
-    return <span className="text-xs text-muted-foreground">Uncapped</span>;
+    if (!creditsReasonValid) {
+      toast.error(CREDIT.REASON_REQUIRED_ERROR);
+      return;
+    }
+    setCreditsIdempotencyKey(crypto.randomUUID());
+    setCreditsStep('confirm');
+  };
+
+  const confirmCredits = async () => {
+    if (!creditsOrg || !creditsIdempotencyKey) return;
+    setCreditsSaving(true);
+    try {
+      const res = await workerFetch(`/api/admin/organizations/${encodeURIComponent(creditsOrg.id)}/credits/adjust`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: creditsSignedAmount,
+          reason: creditsReasonInput.trim(),
+          idempotency_key: creditsIdempotencyKey,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(resolveCreditsErrorMessage(data.error));
+        return;
+      }
+      toast.success(buildCreditsSuccessMessage(creditsAction, creditsAmountInput, creditsOrg.display_name));
+      closeCredits();
+      doFetch(page);
+    } catch {
+      toast.error(CREDIT.ERROR_GENERIC);
+    } finally {
+      setCreditsSaving(false);
+    }
   };
 
   if (!profileLoading && !isAdmin) {
@@ -220,131 +671,15 @@ export function AdminOrganizationsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {loading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={`skel-${i}`} className="h-16 w-full" />
-              ))}
-            </div>
-          ) : items.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-sm text-muted-foreground">No organizations found.</p>
-              {searchInput && (
-                <Button variant="link" size="sm" className="mt-2" onClick={() => { setSearchInput(''); setSearchParams({}); fetchList({ page: 1, search: '' }); }}>
-                  Clear filters
-                </Button>
-              )}
-            </div>
-          ) : (
-            <>
-              {/* Mobile card layout */}
-              <div className="space-y-3 md:hidden">
-                {items.map((org) => (
-                  <div
-                    key={org.id}
-                    className="rounded-lg border p-4 cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => navigate(`/organizations/${org.id}`)}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium">{org.display_name}</span>
-                      {org.org_prefix && (
-                        <Badge variant="secondary" className="font-mono text-[10px]">{org.org_prefix}</Badge>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {org.member_count}</span>
-                      <span className="flex items-center gap-1"><FileText className="h-3 w-3" /> {org.anchor_count}</span>
-                      {org.domain && <span>{org.domain}</span>}
-                    </div>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">Free tier:</span>
-                        {renderCap(org)}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7"
-                        onClick={(e) => { e.stopPropagation(); openCap(org); }}
-                      >
-                        <SlidersHorizontal className="h-3.5 w-3.5 mr-1" /> Set cap
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Desktop table */}
-              <div className="overflow-x-auto hidden md:block">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-left text-muted-foreground">
-                      <th className="pb-2 pr-4">Organization</th>
-                      <th className="pb-2 pr-4">Prefix</th>
-                      <th className="pb-2 pr-4">Domain</th>
-                      <th className="pb-2 pr-4">Members</th>
-                      <th className="pb-2 pr-4">Records</th>
-                      <th className="pb-2 pr-4">Free tier</th>
-                      <th className="pb-2">Created</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((org) => (
-                      <tr
-                        key={org.id}
-                        className="border-b last:border-0 hover:bg-muted/50 cursor-pointer"
-                        onClick={() => navigate(`/organizations/${org.id}`)}
-                      >
-                        <td className="py-3 pr-4">
-                          <div className="font-medium">{org.display_name}</div>
-                          {org.legal_name && org.legal_name !== org.display_name && (
-                            <div className="text-xs text-muted-foreground">{org.legal_name}</div>
-                          )}
-                        </td>
-                        <td className="py-3 pr-4">
-                          {org.org_prefix ? (
-                            <Badge variant="secondary" className="font-mono text-[10px]">{org.org_prefix}</Badge>
-                          ) : '—'}
-                        </td>
-                        <td className="py-3 pr-4 text-muted-foreground">
-                          {org.domain ?? '—'}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <span className="flex items-center gap-1">
-                            <Users className="h-3.5 w-3.5 text-muted-foreground" />
-                            {org.member_count}
-                          </span>
-                        </td>
-                        <td className="py-3 pr-4">
-                          <span className="flex items-center gap-1">
-                            <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                            {org.anchor_count}
-                          </span>
-                        </td>
-                        <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center gap-2">
-                            {renderCap(org)}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              title="Set free-tier cap"
-                              onClick={(e) => { e.stopPropagation(); openCap(org); }}
-                            >
-                              <SlidersHorizontal className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        </td>
-                        <td className="py-3 text-muted-foreground">
-                          {new Date(org.created_at).toLocaleDateString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
+          <OrganizationsListBody
+            loading={loading}
+            items={items}
+            searchInput={searchInput}
+            onClearFilters={clearFilters}
+            onOpenOrg={(orgId) => navigate(orgProfilePath(orgId))}
+            onOpenCap={openCap}
+            onOpenCredits={openCredits}
+          />
 
           {/* Pagination */}
           {totalPages > 1 && (
@@ -403,6 +738,25 @@ export function AdminOrganizationsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* L2-A5 — credit adjust dialog (founder admin-controls: add/remove credits) */}
+      <CreditsAdjustDialog
+        org={creditsOrg}
+        action={creditsAction}
+        amountInput={creditsAmountInput}
+        reasonInput={creditsReasonInput}
+        step={creditsStep}
+        saving={creditsSaving}
+        currentBalance={creditsCurrentBalance}
+        newBalance={creditsNewBalance}
+        onActionChange={setCreditsAction}
+        onAmountInputChange={setCreditsAmountInput}
+        onReasonInputChange={setCreditsReasonInput}
+        onReview={reviewCredits}
+        onBack={() => setCreditsStep('input')}
+        onConfirm={confirmCredits}
+        onClose={closeCredits}
+      />
     </AppShell>
   );
 }
