@@ -543,6 +543,9 @@ export interface ProcessBatchAnchorOptions {
 /**
  * PostgREST row limit per response. Supabase caps RPC results at 1000 rows.
  * We claim in chunks of this size and accumulate up to BATCH_SIZE.
+ *
+ * This governs how many rows come BACK. It is NOT a safe width for an
+ * `.in('id', …)` URL filter — use `POSTGREST_IN_FILTER_CHUNK` for those.
  */
 const POSTGREST_ROW_LIMIT = 1000;
 
@@ -1912,7 +1915,8 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     );
   }
 
-  // CML-02: Populate compliance_controls per credential type (non-fatal post-processing)
+  // CML-02: Populate compliance_controls per credential type (non-fatal post-processing).
+  // See `applyComplianceControls` below for the chunking/error-visibility rationale.
   try {
     await applyComplianceControls(orderedAnchors, batchId);
   } catch (complianceErr) {
