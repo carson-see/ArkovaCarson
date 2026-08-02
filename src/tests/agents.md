@@ -12,6 +12,7 @@ Integration and infrastructure test suites that cross-cut the codebase: migratio
 - `migration-drift-logic.test.ts` — unit-tests the diff algorithm used by the migration-drift CI workflow (SCRUM-908)
 - `rls-performance.test.ts` — checks RLS performance indexes exist in the baseline schema (SCRUM-348..352)
 - `0363-enable-org-credit-enforcement-flag.test.ts` — pins migration 0363 + seed.sql: `ENABLE_ORG_CREDIT_ENFORCEMENT` switchboard row seeds `enabled=false` with idempotent `ON CONFLICT (flag_key) DO NOTHING` (G4; worker behavior pinned in `services/worker/src/utils/orgCreditEnforcementFlag.test.ts`)
+- `f5b-stats-fn-null-identity-guard.test.ts` — pins migration 0391 (F-5b), the compensating fix for 0380's NULL-identity bypass on `get_org_anchor_stats`/`get_user_anchor_stats`: a caller with no identity passing an explicit NULL argument hit `NULL IS DISTINCT FROM NULL` = FALSE and got HTTP 200 + all-zero stats instead of 42501. Content-guard layer asserts the identity is resolved into a local and NULL-checked **before** the argument comparison (the assertion that would have caught 0380); `RUN_LIVE_RLS=1` layer invokes both RPCs with NULL as anon, org-less authenticated, and ORG_ADMIN against a throwaway DB. Note the measured PostgREST behaviour recorded in its header: 42501 surfaces as HTTP **401 for `anon`** and 403 for `authenticated`, so assert on SQLSTATE, never HTTP status
 
 ## Subdirectories
 - `edge/` — Cloudflare edge worker security tests (JWT verify, HMAC, rate-limit)

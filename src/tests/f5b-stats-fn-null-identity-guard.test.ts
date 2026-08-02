@@ -1,13 +1,13 @@
 /**
  * F-5b — NULL-identity bypass in the F-5 ownership guard.
  *
- * Compensating migration: supabase/migrations/0389_f5b_anchor_stats_null_identity_guard.sql
+ * Compensating migration: supabase/migrations/0391_f5b_anchor_stats_null_identity_guard.sql
  * Supersedes the guard added by 0380 (PR #1778), which is already applied to
  * production and therefore must not be edited (CLAUDE.md §1.2).
  *
  * THE HOLE THIS CLOSES:
  *   0380 guards with `p_org_id IS DISTINCT FROM get_user_org_id()` (and
- *   `p_user_id IS DISTINCT FROM auth.uid()`). For a caller with no identity
+ *   `p_user_id IS DISTINCT FROM (SELECT auth.uid())`). For a caller with no identity
  *   both sides are NULL, and `NULL IS DISTINCT FROM NULL` is FALSE — so an
  *   explicit NULL argument skipped the RAISE and returned HTTP 200 with
  *   {"total":0,"secured":0,"pending":0} instead of a 403.
@@ -28,13 +28,13 @@
  *   which is still open. A test on this branch cannot readFileSync 0380's
  *   .sql or extend a file that does not exist here without either failing on
  *   main or colliding with #1778 in the merge. This file therefore stands
- *   alone and asserts against 0389, with the 0380 cross-checks written to
+ *   alone and asserts against 0391, with the 0380 cross-checks written to
  *   activate automatically once #1778 lands. Fold the two together after that.
  *
  * TWO LAYERS OF ASSERTION (repo convention):
  *   (1) CONTENT-GUARD (always runs, no DB) — asserts on the migration SQL.
  *   (2) LIVE RLS INTEGRATION (opt-in, RUN_LIVE_RLS=1, throwaway/isolated DB
- *       with 0389 applied) — actually invokes both RPCs and asserts the real
+ *       with 0391 applied) — actually invokes both RPCs and asserts the real
  *       response shape. Never runs in default CI. NEVER against prod: several
  *       cases are deliberately cross-tenant reads.
  */
@@ -45,7 +45,7 @@ import * as path from 'node:path';
 
 const MIGRATION_PATH = path.join(
   process.cwd(),
-  'supabase/migrations/0389_f5b_anchor_stats_null_identity_guard.sql',
+  'supabase/migrations/0391_f5b_anchor_stats_null_identity_guard.sql',
 );
 const MIGRATION_0380_PATH = path.join(
   process.cwd(),
@@ -81,8 +81,8 @@ function extractFunctionBlock(sql: string, fnName: string): string {
 const ORG_FN = 'get_org_anchor_stats';
 const USER_FN = 'get_user_anchor_stats';
 
-describe('F-5b: migration 0389 exists, is transactional, and is reversible', () => {
-  it('migration 0389 exists', () => {
+describe('F-5b: migration 0391 exists, is transactional, and is reversible', () => {
+  it('migration 0391 exists', () => {
     expect(fs.existsSync(MIGRATION_PATH)).toBe(true);
   });
 
@@ -104,8 +104,8 @@ describe('F-5b: migration 0389 exists, is transactional, and is reversible', () 
   });
 
   it('does not modify 0380 — it is a separate, higher-numbered file', () => {
-    expect(path.basename(MIGRATION_PATH).startsWith('0389_')).toBe(true);
-    // Ordering safety: lexical migration order must apply 0389 AFTER 0380 so
+    expect(path.basename(MIGRATION_PATH).startsWith('0391_')).toBe(true);
+    // Ordering safety: lexical migration order must apply 0391 AFTER 0380 so
     // the compensating bodies win on a fresh `supabase db reset`.
     expect(path.basename(MIGRATION_PATH) > '0380_').toBe(true);
   });
@@ -113,7 +113,7 @@ describe('F-5b: migration 0389 exists, is transactional, and is reversible', () 
 
 describe.each([
   { fn: ORG_FN, idArg: 'p_org_id', identityExpr: 'get_user_org_id\\(\\)' },
-  { fn: USER_FN, idArg: 'p_user_id', identityExpr: 'auth\\.uid\\(\\)' },
+  { fn: USER_FN, idArg: 'p_user_id', identityExpr: '\\(SELECT auth\\.uid\\(\\)\\)' },
 ])('F-5b: $fn — NULL-identity guard', ({ fn, idArg, identityExpr }) => {
   const block = () => extractFunctionBlock(executableSql(migration()), fn);
 
@@ -184,7 +184,7 @@ describe('F-5b: scope — authorization tightening only', () => {
   it('the dashboard never calls the org RPC without an org, so the guard is non-regressive', async () => {
     const { resolveDashboardStatsRequest } = await import('@/lib/dashboardStats');
     // An ORG_ADMIN with no org must NOT be routed to the org RPC — otherwise
-    // 0389 would turn a working dashboard into a 403.
+    // 0391 would turn a working dashboard into a 403.
     for (const profileOrgId of [null, undefined, '']) {
       const req = resolveDashboardStatsRequest({
         userId: 'user-1',
@@ -222,10 +222,10 @@ describe.skipIf(!fs.existsSync(MIGRATION_0380_PATH))(
       expect(org).not.toMatch(/IS\s+NULL\s+THEN/);
     });
 
-    it('0389 sorts after 0380 so the compensating bodies win on a fresh reset', () => {
+    it('0391 sorts after 0380 so the compensating bodies win on a fresh reset', () => {
       const files = fs
         .readdirSync(path.join(process.cwd(), 'supabase/migrations'))
-        .filter((f) => /^0(380|389)_/.test(f))
+        .filter((f) => /^0(380|391)_/.test(f))
         .sort();
       expect(files[files.length - 1]).toBe(path.basename(MIGRATION_PATH));
     });
@@ -235,7 +235,7 @@ describe.skipIf(!fs.existsSync(MIGRATION_0380_PATH))(
 // ---------------------------------------------------------------------------
 // (2) LIVE RLS INTEGRATION — opt-in only.
 //
-// Requires 0389 applied to a THROWAWAY/ISOLATED DB, RUN_LIVE_RLS=1, and the
+// Requires 0391 applied to a THROWAWAY/ISOLATED DB, RUN_LIVE_RLS=1, and the
 // RLS helper env vars (SUPABASE_URL / SUPABASE_ANON_KEY /
 // SUPABASE_SERVICE_ROLE_KEY / RLS_TEST_PASSWORD).
 //
@@ -245,7 +245,7 @@ describe.skipIf(!fs.existsSync(MIGRATION_0380_PATH))(
 const RUN_LIVE = process.env.RUN_LIVE_RLS === '1';
 
 describe.skipIf(!RUN_LIVE)(
-  'F-5b: live NULL-identity behaviour (throwaway/isolated DB, 0389 applied)',
+  'F-5b: live NULL-identity behaviour (throwaway/isolated DB, 0391 applied)',
   () => {
     const helpers = () => import('./rls/helpers');
 
