@@ -34,6 +34,10 @@ jobs:
 
       - name: Verify production worker
         id: prod
+        env:
+          # Empty until the secret is provisioned; an empty header is harmless
+          # and the assertions below are shape-tolerant (SCRUM-2653).
+          HEALTH_DETAIL_TOKEN: ${{ secrets.HEALTH_DETAIL_TOKEN }}
         run: |
           set -euo pipefail
           SERVICE_JSON="$(gcloud run services describe "${PROD_SERVICE}" \
@@ -43,11 +47,20 @@ jobs:
           REVISION="$(jq -r '.status.latestReadyRevisionName' <<<"${SERVICE_JSON}")"
           TRAFFIC="$(jq -r '.status.traffic[]? | select(.revisionName == "'"${REVISION}"'") | .percent // 0' <<<"${SERVICE_JSON}" | head -n 1)"
           GEMINI_MODEL="$(jq -r '.spec.template.spec.containers[0].env[]? | select(.name == "GEMINI_MODEL") | .value // empty' <<<"${SERVICE_JSON}")"
-          HEALTH="$(curl -fsS 'https://arkova-worker-270018525501.us-central1.run.app/health?detailed=true')"
+          # SCRUM-2653: `?detailed=true` is now gated on the X-Health-Token
+          # shared secret and fails CLOSED in production when the secret is not
+          # configured, degrading to the compact body. Send the token when the
+          # repo secret exists; read each check with a shape-tolerant jq so this
+          # step is correct both before and after HEALTH_DETAIL_TOKEN is
+          # provisioned (compact renders `checks.database` as the string "ok",
+          # detailed renders it as `{ "status": "ok", ... }`).
+          HEALTH="$(curl -fsS -H "X-Health-Token: ${HEALTH_DETAIL_TOKEN}" \
+            'https://arkova-worker-270018525501.us-central1.run.app/health?detailed=true')"
           HEALTH_SHA="$(jq -r '.git_sha' <<<"${HEALTH}")"
-          DB="$(jq -r '.checks.database.status' <<<"${HEALTH}")"
-          ANCHORING="$(jq -r '.checks.anchoring.status' <<<"${HEALTH}")"
-          KMS="$(jq -r '.checks.kms.status' <<<"${HEALTH}")"
+          check_status() { jq -r --arg k "$1" 'if (.checks[$k]|type) == "object" then .checks[$k].status else .checks[$k] end' <<<"${HEALTH}"; }
+          DB="$(check_status database)"
+          ANCHORING="$(check_status anchoring)"
+          KMS="$(check_status kms)"
 
           echo "revision=${REVISION}" >> "$GITHUB_OUTPUT"
           echo "traffic=${TRAFFIC:-0}" >> "$GITHUB_OUTPUT"
@@ -64,6 +77,7 @@ jobs:
         if: inputs.pr_number != ''
         env:
           PR_NUMBER: ${{ inputs.pr_number }}
+          HEALTH_DETAIL_TOKEN: ${{ secrets.HEALTH_DETAIL_TOKEN }}
         run: |
           set -euo pipefail
           PR="${PR_NUMBER}"
@@ -76,12 +90,16 @@ jobs:
             --format='value(status.url)')"
           TAG_URL="${RAW_URL/https:\/\//https://pr-${PR}---}"
           TOKEN="$(gcloud auth print-identity-token --audiences="${TAG_URL}")"
-          HEALTH="$(curl -fsS -H "Authorization: Bearer ${TOKEN}" "${TAG_URL}/health?detailed=true")"
+          # SCRUM-2653: see the prod step above — shape-tolerant reads so this
+          # passes whether or not HEALTH_DETAIL_TOKEN is provisioned.
+          HEALTH="$(curl -fsS -H "Authorization: Bearer ${TOKEN}" \
+            -H "X-Health-Token: ${HEALTH_DETAIL_TOKEN}" "${TAG_URL}/health?detailed=true")"
           echo "${HEALTH}" | jq .
+          check_status() { jq -r --arg k "$1" 'if (.checks[$k]|type) == "object" then .checks[$k].status else .checks[$k] end' <<<"${HEALTH}"; }
           test "$(jq -r '.status' <<<"${HEALTH}")" = "healthy"
-          test "$(jq -r '.checks.database.status' <<<"${HEALTH}")" = "ok"
-          test "$(jq -r '.checks.anchoring.status' <<<"${HEALTH}")" = "ok"
-          test "$(jq -r '.checks.kms.status' <<<"${HEALTH}")" = "ok"
+          test "$(check_status database)" = "ok"
+          test "$(check_status anchoring)" = "ok"
+          test "$(check_status kms)" = "ok"
 
       - name: Summary
         run: |
