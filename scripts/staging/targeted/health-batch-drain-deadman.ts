@@ -104,6 +104,18 @@ export function assertBatchDrainHealthPayload(
 ): BatchDrainHealthSnapshot {
   if (!isRecord(payload)) fail('Expected /health?detailed=true response body to be a JSON object.');
   if (!isRecord(payload.checks)) fail('Expected /health?detailed=true response to include checks object.');
+  // SCRUM-2653: distinguish "detail was DENIED" from "detail is malformed".
+  // A denied response is a well-formed compact body carrying detail:"unauthorized",
+  // where checks.anchoring degrades from an object to the bare string "ok".
+  // Reporting that as a schema error would send an operator hunting a
+  // non-existent worker bug.
+  if (payload.detail === 'unauthorized') {
+    fail(
+      'GET /health?detailed=true was DENIED (response carries detail:"unauthorized"). '
+        + 'The detailed health view is gated (SCRUM-2653) and this target runs NODE_ENV=production. '
+        + 'Set HEALTH_DETAIL_TOKEN to the value configured on this rig and re-run.',
+    );
+  }
   if (!isRecord(payload.checks.anchoring)) {
     fail('Expected /health?detailed=true response to include detailed checks.anchoring object.');
   }
@@ -169,6 +181,14 @@ function fetchIamToken(): string {
 async function fetchHealthPayload(apiBase: string): Promise<unknown> {
   const url = buildDetailedHealthUrl(apiBase);
   const headers = new Headers({ Authorization: `Bearer ${fetchIamToken()}` });
+  // SCRUM-2653: `?detailed=true` is gated on this shared secret and fails CLOSED
+  // whenever the target runs NODE_ENV=production — which every staging rig does
+  // (`arkova-worker-staging` env verified 2026-08-01: NODE_ENV=production).
+  // Without the token the worker returns the COMPACT body and the assertions
+  // below would report a confusing "missing checks.anchoring object" instead of
+  // the real cause. Set HEALTH_DETAIL_TOKEN to the value configured on the rig.
+  const detailToken = process.env.HEALTH_DETAIL_TOKEN?.trim();
+  if (detailToken) headers.set('X-Health-Token', detailToken);
   const response = await fetch(url, { headers });
   const text = await response.text();
   if (!response.ok) {
