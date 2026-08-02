@@ -5,6 +5,9 @@ Shared TypeScript type definitions for the worker service.
 ## 2026-07-28 R19 — anchors.fingerprint_source (manual patch, not a live regen)
 
 Same manual patch as `src/types/agents.md` — migration `0376` (unmerged, file-only) adds `anchors.fingerprint_source`. Regenerate for real once `0376` lands on a reachable project.
+## 2026-07-28 — Hand-added `admin_adjust_org_credit` Functions entry (L2-A5, pre-soak)
+
+Migration `0375_admin_org_credit_adjust.sql` (file-only, pre-soak — see `supabase/migrations/agents.md`) is not yet applied to the local dev DB's committed ledger, so a full `npm run gen:types` resync wasn't run for this change. Instead, the `admin_adjust_org_credit` entry was hand-added to the `Functions` block (alphabetically, after `activate_user`) in both this file and `src/types/database.types.ts`, matching the exact shape (`Args`/`Returns`) the generator would emit — same pattern as the existing `admin_set_org_anchor_quota` entry. **Follow-up:** once 0375 lands on the local dev DB's migration ledger, run the canonical `npm run gen:types` (`--local`, per the Rules below) to confirm the hand-added entry matches byte-for-byte and pick up anything else pending.
 
 ## 2026-06-16 — Resynced to migration head 0339 (108 → 114 tables)
 
