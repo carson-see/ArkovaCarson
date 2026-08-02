@@ -1747,6 +1747,30 @@ export const openApiSpec: Record<string, any> = {
           record_uri: { type: 'string', format: 'uri' },
           jurisdiction: { type: 'string', description: 'Omitted when null, never returned as null' },
           description: { type: 'string', description: 'Immutable credential description, omitted when not present' },
+          proof_availability: {
+            type: 'string',
+            enum: ['per_document', 'root_only'],
+            description:
+              'SCRUM-2575. Whether a per-document proof can actually be retrieved '
+              + 'for this record. `per_document` = a per-document inclusion branch '
+              + 'is stored and GET /verify/{publicId}/proof returns it. `root_only` '
+              + '= no per-document branch is stored; the fingerprint is committed '
+              + 'on-chain via the referenced anchor receipt, but no self-contained '
+              + 'offline proof bundle is available. Measured from stored proof data '
+              + '— never derived from status. Omitted (never null) for records that '
+              + 'have not reached a settled on-chain state (PENDING / SUBMITTED). '
+              + 'Additive field (Constitution 1.8); no API version change.',
+          },
+          proof_availability_note: {
+            type: 'string',
+            description:
+              'SCRUM-2575. Omitted when not applicable, never returned as null. '
+              + 'Present exactly when proof_availability is. States what is '
+              + 'measured, what is asserted, and what is NOT asserted for that '
+              + 'class (Constitution 1.5) — in particular, for root_only records, '
+              + 'that no self-contained per-document offline proof is available, '
+              + 'and that its absence is not evidence the record is invalid.',
+          },
           compliance_controls: {
             type: 'object',
             nullable: true,
