@@ -14,6 +14,7 @@ import { Router, Request, Response } from 'express';
 import { ExtractionRequestSchema } from '../../ai/schemas.js';
 import { createExtractionProvider } from '../../ai/factory.js';
 import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
+import { captureCreditRpcFailureAlert } from '../../utils/sentry.js';
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
 import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
 import { buildExtractionManifest } from '../../ai/extraction-manifest.js';
@@ -247,8 +248,20 @@ router.post('/', async (req: Request, res: Response) => {
 
     const deducted = await deductAICredits(orgId, userId, 1);
     if (!deducted && creditBalance) {
-      // Deduction failed but credits existed — DB error, not insufficient balance
+      // Deduction failed but credits existed — DB error, not insufficient balance.
+      // Behavior is intentionally unchanged here (fail OPEN — proceed with the
+      // extraction) per the RISK-6 product decision; this is a REVENUE LEAK
+      // (free AI extraction) and must page, not just log.
       logger.error({ orgId, userId }, 'AI credit deduction failed — proceeding with extraction');
+      captureCreditRpcFailureAlert({
+        rpc: 'deduct_ai_credits',
+        operation: 'ai-extract.deductAICredits',
+        failMode: 'open',
+        error: new Error('deduct_ai_credits failed — proceeding with FREE AI extraction'),
+        orgId,
+        userId,
+        extra: { amount: 1 },
+      });
     }
 
     // Call AI provider
