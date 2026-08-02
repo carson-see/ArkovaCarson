@@ -146,8 +146,12 @@ router.post('/bulk', async (req, res) => {
       }
     };
 
-    await runBulkUpdate(optOutIds, true);
-    await runBulkUpdate(optInIds, false);
+    // Concurrent, as before the chunking change: the two id groups are disjoint
+    // by construction (`r.opt_out` partitions `records`), so the shared Sets are
+    // only ever `add`ed to, and JS runs each `add` to completion without
+    // interleaving. Serialising these doubled the endpoint's worst-case latency
+    // for no correctness gain.
+    await Promise.all([runBulkUpdate(optOutIds, true), runBulkUpdate(optInIds, false)]);
 
     const results = records.map(r => {
       if (updatedIds.has(r.public_id)) return { public_id: r.public_id, updated: true };

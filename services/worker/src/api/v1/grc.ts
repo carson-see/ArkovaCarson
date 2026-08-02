@@ -464,10 +464,11 @@ router.get('/sync-logs', async (req: Request, res: Response) => {
     logs = logs.concat(data ?? []);
   }
 
-  if (logs.length > limit) {
-    logs.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
-    logs = logs.slice(0, limit);
-  }
+  // Sort UNCONDITIONALLY, not just when trimming. Each chunk is internally
+  // newest-first but the concatenation is in chunk order, so a merged result at
+  // or under `limit` would otherwise be returned unsorted.
+  logs.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
+  if (logs.length > limit) logs = logs.slice(0, limit);
 
   res.json({ logs });
 });

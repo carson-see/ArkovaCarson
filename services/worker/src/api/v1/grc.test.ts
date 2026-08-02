@@ -379,6 +379,48 @@ describe('GET /api/v1/grc/sync-logs — connection_id filter', () => {
     expect(res.status).toBe(500);
   });
 
+  // REGRESSION: same guard bug as webhooks — the sort only ran when trimming,
+  // so an under-limit merge came back in chunk order.
+  it('returns newest-first even when the merged result is under the limit', async () => {
+    const ids = connIds(400); // 2 chunks
+    let call = 0;
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'grc_connections') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: ids.map((id) => ({ id })), error: null }),
+          }),
+        };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          in: vi.fn(() => ({
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockImplementation(() => {
+                const first = call++ === 0;
+                return Promise.resolve({
+                  data: [{
+                    id: first ? 'log-old' : 'log-new',
+                    connection_id: ids[0],
+                    created_at: first ? '2026-08-01T00:00:00Z' : '2026-08-02T00:00:00Z',
+                  }],
+                  error: null,
+                });
+              }),
+            }),
+          })),
+        }),
+      };
+    });
+
+    const res = await request(createApp()).get('/api/v1/grc/sync-logs?limit=50');
+
+    expect(res.status).toBe(200);
+    expect(res.body.logs).toHaveLength(2);
+    expect(res.body.logs[0].id).toBe('log-new');
+    expect(res.body.logs[1].id).toBe('log-old');
+  });
+
   it('caps the merged result at the requested limit, newest first', async () => {
     mockSyncLogs({ ids: connIds(1_000) });
 

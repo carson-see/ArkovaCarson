@@ -183,6 +183,50 @@ describe('GET /webhooks/deliveries — endpoint_id filter width', () => {
     expect([...times].sort().reverse()).toEqual(times);
   });
 
+  // REGRESSION: the merge sort was originally inside `if (logs.length > limit)`,
+  // so a result at or under the limit came back in CHUNK order — the common
+  // case, and the one the limit-capping test above never reaches.
+  it('returns newest-first even when the merged result is under the limit', async () => {
+    const ids = endpointIds(400); // 2 chunks
+    // Chunk 1 gets the OLD row, chunk 2 gets the NEW one. Concatenated in chunk
+    // order that is oldest-first — the exact inversion the guard allowed.
+    // Hoisted: `db.from()` runs once per chunk, so a counter declared inside
+    // the implementation resets every time and both chunks look like chunk 1.
+    let call = 0;
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'webhook_endpoints') {
+        return { select: () => ({ eq: () => Promise.resolve({ data: ids.map((id) => ({ id })), error: null }) }) };
+      }
+      return {
+        select: () => ({
+          order: () => ({
+            limit: () => ({
+              in: () => {
+                const first = call++ === 0;
+                return Promise.resolve({
+                  data: [{
+                    id: first ? 'log-old' : 'log-new',
+                    endpoint_id: ids[0],
+                    created_at: first ? '2026-08-01T00:00:00Z' : '2026-08-02T00:00:00Z',
+                  }],
+                  error: null,
+                });
+              },
+            }),
+          }),
+        }),
+      };
+    });
+
+    const res = await request(buildApp()).get('/api/v1/webhooks/deliveries?limit=50');
+
+    expect(res.status).toBe(200);
+    expect(res.body.deliveries).toHaveLength(2);
+    // Under the limit, so no trimming happens — ordering must still be global.
+    expect(res.body.deliveries[0].id).toBe('log-new');
+    expect(res.body.deliveries[1].id).toBe('log-old');
+  });
+
   it('500s when a chunk fails rather than returning a short delivery list', async () => {
     const ids = endpointIds(400);
     // Hoisted: `db.from()` is called once per chunk, so a counter declared

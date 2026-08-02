@@ -354,13 +354,22 @@ async function loadJurisdictionRules(
   // guarantee lives here rather than depending on a `.max()` in the request
   // schema staying where it is — relying on a bound declared in another file
   // is how the 500-wide cohort in this codebase got its number.
+  // The cap is a budget across the WHOLE result, not per chunk. Applying
+  // `.limit(JURISDICTION_RULE_LIMIT)` to each chunk and slicing the
+  // concatenation afterwards would let the first chunk fill the cap on its own
+  // and silently discard every later chunk's rules — understating the rule set
+  // an audit scores against, which is the same fail-OPEN direction this
+  // function was just fixed for.
   const rules: JurisdictionRule[] = [];
   for (const { values, start } of chunkForInFilter(filter)) {
+    const remaining = JURISDICTION_RULE_LIMIT - rules.length;
+    if (remaining <= 0) break;
+
     const { data, error } = await dbAny
       .from('jurisdiction_rules')
       .select('*')
       .in('jurisdiction_code', values)
-      .limit(JURISDICTION_RULE_LIMIT);
+      .limit(remaining);
     if (error) {
       throw new Error(
         `jurisdiction_rules read failed at chunk ${start}: ${(error as { message?: string }).message ?? String(error)}`,
@@ -368,7 +377,7 @@ async function loadJurisdictionRules(
     }
     rules.push(...((data ?? []) as JurisdictionRule[]));
   }
-  return rules.slice(0, JURISDICTION_RULE_LIMIT);
+  return rules;
 }
 
 async function loadOrgAnchors(orgId: string): Promise<OrgAnchor[]> {
