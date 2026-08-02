@@ -386,8 +386,8 @@ app.use(
 // /api/v1/* mounts registered outside apiV1Router (org, integrations,
 // rules/templates, versions, anchor, audit, partner-provisioning), by their
 // own explicit `rateLimiters.api` instance. Anonymous /api/v1 traffic and
-// everything outside /api/v1 (badge, checkout, verify-anchor, treasury,
-// admin) is unaffected and still capped here at 60/min per IP.
+// everything outside /api/v1 (badge, checkout, treasury, admin) is unaffected
+// and still capped here at 60/min per IP.
 const hasApiKeyCredential = (req: Request): boolean => {
   const auth = req.headers.authorization;
   if (typeof auth === 'string' && auth.startsWith('Bearer ak_')) return true;
@@ -401,7 +401,9 @@ const apiIpShadowGuard = rateLimit({
 });
 app.use('/api', apiIpShadowGuard, badgeRouter); // /api/badge/:publicId
 app.use('/api', billingRouter);    // /api/checkout/session, /api/billing/portal
-app.use('/api', anchorRouter);     // /api/verify-anchor, /api/recipients, /api/account
+// NOTE: every route on anchorRouter is authenticated. Do not mount an
+// anonymous, fingerprint-keyed route here — see the tombstone in anchor.ts.
+app.use('/api', anchorRouter);     // /api/recipients, /api/send-invitation-email, /api/account
 app.use('/api', adminRouter);      // /api/treasury/*, /api/admin/*
 app.use('/jobs', cronRouter);      // /jobs/* (Cloud Scheduler + dev manual trigger)
 

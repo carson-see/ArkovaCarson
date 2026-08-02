@@ -14,7 +14,6 @@ import { config } from '../config.js';
 import { rateLimiters } from '../utils/rateLimit.js';
 import { corsMiddleware, extractAuthUserId } from './middleware.js';
 // DEBT-3: Static imports — circular dependency resolved by router extraction
-import { verifyAnchorByFingerprint } from '../api/verify-anchor.js';
 import { createPendingRecipient } from '../api/recipients.js';
 import { handleAccountDelete } from '../api/account-delete.js';
 import { handleAccountExport } from '../api/account-export.js';
@@ -31,53 +30,40 @@ function sendError(res: import('express').Response, statusCode: number, code: st
   res.status(statusCode).json({ error: { code, message } });
 }
 
-/**
- * POST /api/verify-anchor
- * Public anchor verification — accepts fingerprint hash, NOT files.
- * Constitution 1.6: Documents never leave the user's device.
- */
-anchorRouter.post('/verify-anchor', rateLimiters.checkout, async (req, res) => {
-  const { fingerprint } = req.body as { fingerprint?: string };
-
-  if (!fingerprint) {
-    sendError(res, 400, 'invalid_request', 'fingerprint is required (64-char hex SHA-256)');
-    return;
-  }
-
-  try {
-    const lookup = {
-      async lookupByFingerprint(fp: string) {
-        const { data } = await db
-          .from('anchors')
-          .select('fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, public_id, created_at, credential_type')
-          .eq('fingerprint', fp)
-          .is('deleted_at', null)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (!data) return null;
-
-        return {
-          fingerprint: data.fingerprint,
-          status: data.status,
-          chain_tx_id: data.chain_tx_id,
-          chain_block_height: data.chain_block_height,
-          chain_block_timestamp: data.chain_timestamp,
-          public_id: data.public_id,
-          created_at: data.created_at,
-          credential_type: data.credential_type,
-        };
-      },
-    };
-
-    const result = await verifyAnchorByFingerprint(fingerprint, lookup);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'Anchor verification failed');
-    sendError(res, 500, 'verification_failed', 'Verification failed');
-  }
-});
+// ─── REMOVED: POST /api/verify-anchor ────────────────────────────────────────
+//
+// DO NOT RE-ADD THIS ROUTE. It was an unauthenticated fingerprint oracle.
+//
+// Added 2026-03-14 (`1ca06c122`) and mounted at `app.use('/api', anchorRouter)`
+// with no auth middleware, it queried `anchors` through the **service_role**
+// client (RLS bypassed) filtering only on `deleted_at IS NULL` — no status
+// filter. Live at `https://app.arkova.ai/api/verify-anchor` via the
+// `vercel.json` `/api/:path*` rewrite, and advertised as a no-auth endpoint in
+// `public/llms.txt`.
+//
+// A hit returned `status` (PENDING / SUBMITTED / SUPERSEDED / EXPIRED /
+// REVOKED anchors all disclosed, none of which we deliberately publish),
+// `anchor_timestamp`, `network_receipt_id`, `credential_type`, and
+// `record_uri` — the `public_id` **capability** the owner chose to share. A
+// miss returned a bare `{ verified: false }`, so hit and miss were trivially
+// distinguishable on an indexed, non-timing-out lookup. That converted mere
+// possession of a fingerprint into the shareable record link, and thence into
+// whatever `get_public_anchor` serves.
+//
+// It also bypassed `get_public_anchor_by_fingerprint` entirely, so the
+// SQL-side SECURED-only hardening (migration 0386) did not cover it.
+//
+// It had ZERO first-party consumers: the public verify form queries Supabase
+// directly (`src/components/verify/VerificationForm.tsx`), the edge MCP
+// `verify_document` tool calls the `get_public_anchor_by_fingerprint` RPC, and
+// the SDKs use `/api/v1/verify/:publicId` + `/api/v2/*`.
+//
+// Fingerprint verification is served by the authenticated, scope-gated
+// surfaces: `GET /api/v2/verify/:fingerprint` and
+// `GET /api/v2/fingerprints/:fingerprint` (`read:records`). `public_id`-keyed
+// public verification remains at `GET /api/v1/verify/:publicId`.
+//
+// Regression cover: `anchor-verify-fingerprint-oracle.test.ts`.
 
 /**
  * POST /api/recipients

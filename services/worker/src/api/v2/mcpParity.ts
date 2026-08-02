@@ -48,8 +48,12 @@ export type SearchResponse = z.infer<typeof SearchResponseSchema>;
 
 /**
  * Verify result for the public_id-keyed verify endpoint and the MCP
- * `verify` tool. Mirrors `services/worker/src/api/verify-anchor.ts`
- * VerifyAnchorResult — strict() enforces no internal-UUID fields leak.
+ * `verify` tool. strict() enforces no internal-UUID fields leak.
+ *
+ * This schema is now the single definition of the shape. It previously
+ * mirrored `services/worker/src/api/verify-anchor.ts`, which was deleted
+ * together with the unauthenticated `POST /api/verify-anchor` fingerprint
+ * oracle it implemented (see `routes/anchor.ts`).
  */
 export const VerifyAnchorStatusSchema = z.enum([
   'ACTIVE', 'REVOKED', 'SUPERSEDED', 'EXPIRED', 'PENDING', 'UNKNOWN',

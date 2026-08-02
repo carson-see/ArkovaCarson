@@ -935,62 +935,33 @@ describe('worker server', () => {
   // POST /api/verify-anchor
   // ================================================================
 
-  describe('POST /api/verify-anchor', () => {
+  // SEC — the route was an unauthenticated fingerprint existence-and-metadata
+  // oracle (service_role, no status filter, leaked the public_id capability as
+  // `record_uri`) and was removed. It must stay removed and must answer
+  // identically whatever fingerprint is supplied. Full indistinguishability
+  // cover lives in `routes/anchor-verify-fingerprint-oracle.test.ts`.
+  describe('POST /api/verify-anchor (removed — fingerprint oracle)', () => {
     beforeEach(() => {
       mockDbFrom.mockClear();
     });
 
-    it('returns 400 when fingerprint is missing', async () => {
-      const res = await request(app, 'POST', '/api/verify-anchor', {});
-
-      expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: { code: 'invalid_request', message: 'fingerprint is required (64-char hex SHA-256)' } });
-    });
-
-    it('returns verification result for valid fingerprint', async () => {
-      const chain: Record<string, ReturnType<typeof vi.fn>> = {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        is: vi.fn().mockReturnThis(),
-        order: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockReturnThis(),
-        maybeSingle: vi.fn().mockResolvedValue({
-          data: {
-            fingerprint: 'a'.repeat(64),
-            status: 'SECURED',
-            chain_tx_id: 'tx_123',
-            chain_block_height: 100,
-            chain_timestamp: '2026-03-14T00:00:00Z',
-            public_id: 'pub-1',
-            created_at: '2026-03-14T00:00:00Z',
-            credential_type: 'diploma',
-          },
-          error: null,
-        }),
-      };
-      mockDbFrom.mockReturnValue(chain);
-
-      const res = await request(app, 'POST', '/api/verify-anchor', { fingerprint: 'a'.repeat(64) }, {
-        origin: 'http://localhost:5173',
+    it('is gone, and answers identically for a real-looking and a missing fingerprint', async () => {
+      const withFingerprint = await request(app, 'POST', '/api/verify-anchor', {
+        fingerprint: 'a'.repeat(64),
       });
+      const withoutFingerprint = await request(app, 'POST', '/api/verify-anchor', {});
 
-      expect(res.status).toBe(200);
-      expect(res.body.verified).toBe(true);
-    });
-
-    it('returns 500 when verification throws', async () => {
-      mockDbFrom.mockImplementation(() => { throw new Error('DB down'); });
-
-      const res = await request(app, 'POST', '/api/verify-anchor', { fingerprint: 'a'.repeat(64) });
-
-      expect(res.status).toBe(500);
-      expect(res.body).toEqual({ error: { code: 'verification_failed', message: 'Verification failed' } });
+      expect(withFingerprint.status).toBe(404);
+      expect(withFingerprint.body).toEqual(withoutFingerprint.body);
+      expect(withoutFingerprint.status).toBe(404);
+      // Never reaches the anchors table, so there is no timing channel either.
+      expect(mockDbFrom).not.toHaveBeenCalled();
     });
   });
 
-  describe('OPTIONS /api/verify-anchor (CORS preflight)', () => {
+  describe('OPTIONS /api/recipients (CORS preflight)', () => {
     it('returns 204 with CORS headers', async () => {
-      const res = await request(app, 'OPTIONS', '/api/verify-anchor', undefined, {
+      const res = await request(app, 'OPTIONS', '/api/recipients', undefined, {
         origin: 'http://localhost:5173',
       });
 

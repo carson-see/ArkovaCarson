@@ -74,7 +74,6 @@ services/worker/
     ai/schemas.ts                            <- Zod schemas for AI request/response validation
     ai/mock.ts                               <- Mock AI provider for tests
     ai/prompts/                              <- Prompt templates for extraction, classification
-    api/verify-anchor.ts                     <- Public anchor verification by fingerprint
     api/v1/router.ts                         <- Verification API v1 route dispatcher
     api/v1/verify.ts                         <- GET /api/v1/verify/:publicId
     api/v1/batch.ts                          <- POST /api/v1/verify/batch

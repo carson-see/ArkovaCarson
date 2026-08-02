@@ -5,7 +5,11 @@
  * response schema (CLAUDE.md Section 10).
  *
  * This endpoint accepts a publicId (e.g., ARK-2026-TEST-001), NOT a
- * fingerprint. For fingerprint-based verification, use POST /api/verify-anchor.
+ * fingerprint — a publicId is a capability its owner chose to share, a
+ * fingerprint is not. Fingerprint-based verification is authenticated:
+ * GET /api/v2/verify/:fingerprint (`read:records` scope). The former
+ * unauthenticated POST /api/verify-anchor was removed as a fingerprint
+ * existence-and-metadata oracle; do not reintroduce an anonymous one.
  */
 
 import { Router, type Request } from 'express';

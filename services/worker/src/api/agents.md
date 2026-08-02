@@ -53,6 +53,14 @@ checking. Per the DON'T rule in `services/worker/agents.md`: don't reintroduce
 - `handleListPendingResolution` (`queue-resolution.ts`) called RPC `list_pending_resolution_anchors_v2`, which resolves the caller via `SELECT … FROM profiles WHERE id = auth.uid()` and raises `'Profile not found'` otherwise. But the worker invokes RPCs through the **service-role** `db` client, where `auth.uid()` is **NULL** → the RPC raised on every call → `/api/queue/pending` returned **500** every time (Review Queue page hung on "Loading…"). A perfect index (`idx_anchors_org_status_created`) existed, so it was never a timeout — purely an auth-context mismatch.
 - **Rule:** never call an `auth.uid()`-dependent RPC from the worker's service-role client. Resolve the caller's org from the authenticated userId (passed by the route via `extractAuthUserId`) and query org-scoped directly, or pass an explicit `p_user_id` into the RPC. Fix: the handler now takes `callerUserId`, resolves `profiles.org_id`, queries `anchors` org-scoped (`.eq('org_id', …).eq('status','PENDING_RESOLUTION')`), and computes `sibling_count` in TS — no `auth.uid()` dependency and no exact-count scan (the R0-8 planner-safe rule).
 
+## 2026-08-02 `verify-anchor.ts` DELETED — unauthenticated fingerprint oracle
+
+- `api/verify-anchor.ts` (and its test) are **gone**, together with the `POST /api/verify-anchor` route in `routes/anchor.ts` that was its only production caller. The route was mounted with no auth middleware, queried `anchors` through the **service_role** client, and filtered on `deleted_at` only — **no status filter**. A hit disclosed `status` (PENDING / SUBMITTED / SUPERSEDED / EXPIRED / REVOKED included), `anchor_timestamp`, `network_receipt_id`, `credential_type`, and `record_uri` — i.e. it handed out the `public_id` **capability** in exchange for a fingerprint. A miss returned a bare `{ verified: false }`. It was live at `https://app.arkova.ai/api/verify-anchor` via the `vercel.json` `/api/:path*` rewrite and advertised as no-auth in `public/llms.txt`.
+- **A fingerprint is not a capability.** `public_id` is something an owner chose to share; a document hash is not. Any surface that answers a question about an anchor keyed on a fingerprint must be authenticated. Do not add one to this folder.
+- The route bypassed `get_public_anchor_by_fingerprint`, so migration 0386's SECURED-only hardening did **not** cover it — an RPC fix and a worker-route fix are not substitutes for each other. When you harden one fingerprint surface, enumerate the others.
+- Supported fingerprint verification: `GET /api/v2/verify/:fingerprint` and `GET /api/v2/fingerprints/:fingerprint` (`requireScopeV2('read:records')`). `public_id`-keyed public verification stays at `GET /api/v1/verify/:publicId`.
+- `api/v2/mcpParity.ts`'s `VerifyAnchorResultSchema` used to mirror the deleted module; it is now the sole definition of that shape.
+
 ## 2026-05-29 Phantom-column filters silently zero out counts (SCRUM-1984)
 
 - `admin-stats.ts` filtered `.is('deleted_at', null)` on `organizations`, which has **no** `deleted_at` column. PostgREST does not throw on a filter against a missing column — it resolves with `{ count: null, error: <column missing> }`. Under `Promise.allSettled` the promise is *fulfilled* (carrying the error), so `val(i)?.count ?? 0` collapsed to `0` and Total Orgs always showed 0 despite real orgs existing.
@@ -76,7 +84,6 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 | `badge.ts` | Public `/api/badge/:publicId` SVG endpoint; resolves status from `get_public_anchor` and fails closed for unknown states |
 | `anchor-lineage.ts` | Anchor parent/child lineage traversal endpoint |
 | `anchor-revoke.ts` | Anchor revocation endpoint |
-| `verify-anchor.ts` | Public anchor verification endpoint |
 | `proof-packet.ts` | Proof package generation (Bitcoin TX + metadata + timestamps) |
 | `proof-keys.ts` | Proof signing key management |
 | `did-web.ts` | did:web identity docs — `GET /.well-known/did.json` (Arkova) + `GET /orgs/:id/.well-known/did.json` (issuing orgs). Public, no auth. Reuses the active proof key (PEM→Ed25519 JWK); org sub-DIDs are controlled by the Arkova DID. Strict org-public-id charset guard before lookup (SCRUM-1922) |

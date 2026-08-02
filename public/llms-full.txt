@@ -39,7 +39,7 @@
 
 ## API Reference
 
-Base URL: `https://app.arkova.ai/api/v1` (with one exception — `verify-anchor` is at the root `/api/` path, see below)
+Base URL: `https://app.arkova.ai/api/v1`
 
 ### Verify a Credential (public, no auth)
 
@@ -60,14 +60,20 @@ Returns verification status and metadata for a credential by its public identifi
 | anchor_timestamp | string | ISO 8601 timestamp when anchored |
 | record_uri | string | Canonical verification URL |
 
-### Verify by Fingerprint (public, no auth — note no /v1 prefix)
+### Verify by Fingerprint (API key required)
 
 ```
-POST https://app.arkova.ai/api/verify-anchor
-Content-Type: application/json
-
-{ "fingerprint": "<64-char hex SHA-256 fingerprint>" }
+GET https://app.arkova.ai/api/v2/verify/<64-char hex SHA-256 fingerprint>
+X-API-Key: <your-key>
 ```
+
+Requires the `read:records` scope.
+
+A `publicId` is a capability its owner chose to share; a document fingerprint
+is not. Answering "does this fingerprint exist" to an anonymous caller would
+disclose records nobody published — including records still pending — so
+fingerprint lookup is authenticated. The former public `POST /api/verify-anchor`
+endpoint was removed for this reason and now returns 404.
 
 ### Search Credentials (API key required)
 
@@ -81,7 +87,7 @@ Semantic search across verified credentials using natural language.
 ### Authentication
 
 - **API Key:** Pass via `X-API-Key` header. Obtain at https://app.arkova.ai/settings/api-keys
-- **Public verification:** No authentication required for `GET /api/v1/verify/{publicId}` and `POST /api/verify-anchor`. Every other v1 endpoint requires an API key or Supabase JWT.
+- **Public verification:** No authentication required for `GET /api/v1/verify/{publicId}`. Every other endpoint, including every fingerprint lookup, requires an API key or Supabase JWT.
 
 ### Rate Limits
 
