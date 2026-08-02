@@ -3859,3 +3859,29 @@ export const SPREADSHEET_MODE_LABELS = {
   FILE_SIZE_LABEL: 'Size',
   CHOOSE_DIFFERENT_FILE: 'Choose a different file',
 } as const;
+
+// ─── QUEUE-01 / SCRUM-2894 (L2-A1) — Pending Documents page ─────────────────
+//
+// Append-only block (per CLAUDE.md §6 "Two PRs each appending..." guidance —
+// titled distinctly, added at EOF to avoid colliding with the concurrent
+// terminology-scrub / copy.ts PRs this sprint). Extends the existing
+// SECURE_QUEUE_LABELS / SECURING_CHOICE_LABELS / SECURING_CHOICE_HINTS
+// (defined above, ~line 3420) rather than duplicating them. §1.3-clean: no
+// Wallet / Transaction / Hash / Blockchain / Bitcoin / Testnet / Mainnet /
+// UTXO / Broadcast.
+
+/** The consumer secure-queue page (/queue) — list + remove own items. */
+export const SECURE_QUEUE_PAGE_LABELS = {
+  BATCH_EXPLAINER: 'Queued documents are secured automatically once a day. No action needed — add more anytime.',
+  REMOVE_BUTTON_ARIA: 'Remove from queue',
+  REMOVE_CONFIRM_TITLE: 'Remove from queue?',
+  REMOVE_CONFIRM_BODY: 'This document will not be secured. You can add it again later.',
+  REMOVE_ACTION: 'Remove',
+  REMOVE_TOAST: 'Removed from the queue.',
+  REMOVE_FAILED: 'Could not remove this item. It may have already been secured or removed.',
+  PERSONAL_TAB_LABEL: 'My Queue',
+  ORG_TAB_LABEL: 'Organization Queue',
+  ORG_QUEUE_SUBTITLE: "Documents your organization's members have queued.",
+  OWNER_LABEL: 'Added by',
+  ADMIN_REMOVE_UNAVAILABLE: "Removing another member's queued document isn't available yet.",
+} as const;
