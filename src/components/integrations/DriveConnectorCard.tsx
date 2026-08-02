@@ -24,6 +24,10 @@ interface DriveConnection {
   connected_at: string | null;
   subscription_expires_at: string | null;
   scope: string | null;
+  // SCRUM-2903 (GD-PROD): last time the changes-feed runner advanced this
+  // integration's persisted page token — the closest available "last synced"
+  // signal (org_integrations has no dedicated last-sync column).
+  last_token_advanced_at: string | null;
 }
 
 export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
@@ -40,7 +44,7 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error: queryError } = await (supabase as any)
         .from('org_integrations')
-        .select('id, account_label, connected_at, subscription_expires_at, scope')
+        .select('id, account_label, connected_at, subscription_expires_at, scope, last_token_advanced_at')
         .eq('org_id', orgId)
         .eq('provider', 'google_drive')
         .is('revoked_at', null)
@@ -55,6 +59,18 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
       }
 
       setConnection(data ?? null);
+
+      // NOTE: a "N documents secured via Drive" counter was deliberately cut
+      // from this card. It used an exact PostgREST row count on `anchors`
+      // filtered by `metadata->>connector_source`, which (a) increases the R0-8 /
+      // SCRUM-1254 exact-count baseline that `scripts/ci/check-count-exact-baseline.ts`
+      // fails the build on, and (b) has no supporting index — on the ~2.97M-row
+      // anchors table that is a sequential scan on every render of the Settings
+      // tab, the exact shape that trips the 60s PostgREST timeout.
+      // Reinstating it needs a `CREATE INDEX CONCURRENTLY` migration on
+      // `(org_id, (metadata->>'connector_source')) WHERE deleted_at IS NULL`
+      // plus the `count-exact-allowed` label — out of scope for the producer
+      // bridge, and not worth blocking it on.
     } catch {
       setError('Unable to load Drive connection status.');
       setConnection(null);
@@ -132,6 +148,9 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
   const subscriptionDate = connection?.subscription_expires_at
     ? new Date(connection.subscription_expires_at).toLocaleDateString('en-US', { dateStyle: 'medium' })
     : null;
+  const lastSyncedDate = connection?.last_token_advanced_at
+    ? new Date(connection.last_token_advanced_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
+    : null;
 
   return (
     <Card>
@@ -170,6 +189,11 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
               {connected && subscriptionDate && (
                 <p className="mt-1 text-xs text-muted-foreground">
                   Push channel renews before {subscriptionDate}
+                </p>
+              )}
+              {connected && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {lastSyncedDate ? `Last synced ${lastSyncedDate}` : 'Not yet synced'}
                 </p>
               )}
             </div>
