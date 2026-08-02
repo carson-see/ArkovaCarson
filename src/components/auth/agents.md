@@ -37,3 +37,13 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 ## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
 
 IdentityVerification helper copy scrubbed ("your records and attestations"). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
+
+## AuthLinkErrorRedirect (PR #1824, SCRUM-2907)
+
+`AuthLinkErrorRedirect.tsx` is a render-nothing component mounted once inside `<BrowserRouter>` in `App.tsx`. When a Supabase email link fails (expired / already used / tampered), Supabase puts `error` + `error_code` in the URL **fragment** and creates no session. `emailRedirectTo` only governs links minted *after* it shipped, so links already in inboxes come back to the project Site URL (`/`) — a route with nothing to explain the failure. This component bounces those loads to `/auth/callback`, the one page that renders the explanation.
+
+**It MUST stay one-shot.** `authLinkErrorFromUrl` (`@/lib/supabase`) is a module-scope constant captured at load — before `detectSessionInUrl` consumes the fragment — and is never cleared. A plain `pathname`-keyed effect therefore re-fires on every later navigation and drags the user back to `/auth/callback`, which makes the error card's own CTAs (`Request a new link` → `/signup`, `Back to sign in` → `/login`) unusable. The `handledRef` latch is set the first time the effect *observes* a link error, not only when it redirects — a user who lands directly on `/auth/callback` is never redirected, so latching only on redirect would leave their first click away unprotected.
+
+Regression coverage: `AuthLinkErrorRedirect.test.tsx` drives a **real** `MemoryRouter` (react-router-dom is deliberately not mocked — a mocked `useNavigate` never changes the location, so the re-fire is invisible) and asserts the CTA still lands on `/login` from both entry paths. The pure-predicate tests in `src/lib/authLinkRedirect.test.ts` cannot catch this: `shouldRedirectToAuthCallback` is correct in isolation; the defect was in how often it is called.
+
+Note: `eslint-rules/no-unscoped-service-test.cjs` flags any test-file variable whose name merely *contains* "from" (substring match), so a mock named `mockAuthLinkErrorFromUrl` trips it spuriously. Mock state here is named `stubbedAuthLinkError` to avoid the false positive.

@@ -191,6 +191,55 @@ by API, fall back to the manual Connect configuration in step 3 above; the conne
 stays degraded until a reprovision succeeds
 (`POST /api/v1/integrations/docusign/connect/reprovision`).
 
+### Known failure signatures
+
+| `docusign_status` / `docusign_detail` | Cause | Fix |
+|---|---|---|
+| `400` — `INVALID_REQUEST_PARAMETER`, `Unsupported 'events' field. "deliveryMode": "SIM" and "eventData": {"version": "restv2.1"} are required for the 'events' field` | The provisioning payload sent the modern `events` field without the `deliveryMode`/`eventData` pair DocuSign requires alongside it. Every org connect failed; no Connect listener was ever created by API in production. | **Fixed in code** (PR #1690, `bffde484c`, live in prod). Nothing account-side to change — just re-run the connect flow. |
+| No `docusign_status` / `docusign_detail` at all, only `{"error":"DocuSign Connect create failed"}` | The worker revision predates the SCRUM-3014 diagnostics. | Redeploy; retry. The status/detail then appear on the row. |
+| Listener created, but every delivery returns `401 invalid_signature` | HMAC key mismatch — see below. | Align the account-side key, or enable `integratorManaged`. |
+
+### The HMAC key is ACCOUNT-SIDE, not something provisioning installs
+
+`DOCUSIGN_CONNECT_HMAC_SECRET` is what `/webhooks/docusign` verifies
+`X-DocuSign-Signature-1` against. It is **not** pushed to DocuSign by
+`provisionConnectListener()`: DocuSign's `ConnectCustomConfiguration` resource has
+no `hmacSecret` field, so a payload carrying one is accepted and the field silently
+dropped. (The worker sent exactly that until this was corrected — the code read as
+though provisioning configured the signing key while DocuSign was signing with a
+completely different one.)
+
+`includeHMAC: "true"` only tells DocuSign *to* sign. **Which** key it signs with is
+account state, so one of these must be true before deliveries verify:
+
+1. **Per-account (current model, manual).** A DocuSign admin on the *customer's*
+   account creates a Connect HMAC key (DocuSign Admin → Connect → Keys) and its
+   value is stored in Secret Manager `docusign_connect_hmac_secret_prod`. Works, but
+   does not scale past one customer — every new org needs a manual key copy, and a
+   mismatch is silent (listener healthy, deliveries 401).
+2. **Partner-managed (`integratorManaged`) — the multi-tenant answer, NOT YET BUILT.**
+   DocuSign's "HMAC for Partners" flag makes Connect sign every customer account's
+   deliveries with the HMAC key registered on the account that owns
+   `DOCUSIGN_INTEGRATION_KEY` — i.e. the key the worker already holds. API-only;
+   it cannot be set from the DocuSign admin console.
+
+   Deliberately not shipped yet, because turning it on safely needs more than a
+   payload field:
+   - an HMAC key must first exist on the integration-key account, or deliveries
+     flip onto a key nobody configured and every webhook 401s;
+   - it is a **one-way door** as the payload is currently shaped — a PUT that
+     omits the field cannot turn it back off, so rollback would be a DocuSign
+     admin action;
+   - `provisionConnectListener()` only runs on OAuth connect and the reprovision
+     endpoint, so enabling it does nothing for already-connected orgs, leaving a
+     split where some orgs sign with Arkova's key and some do not;
+   - the listener-drift checker (`jobs/docusign-listener-drift.ts`) has no notion
+     of `integratorManaged`, so it would report **in sync** for every mismatched
+     listener — exactly the silent-failure shape this section exists to prevent.
+
+   A story that adds it must cover all four, plus reprovisioning existing
+   listeners.
+
 ## Verification
 
 1. Run the safe production route smoke. This verifies invalid HMAC rejection and signed unknown-account acknowledgement without creating integration rows, rule events, or jobs.
@@ -322,10 +371,19 @@ Sentry fires a `warning` when the expected listener is missing or has config dri
 - Missing listener for the expected Arkova webhook URL
 - Listener disabled (`allowEnvelopePublish` not true)
 - HMAC signing disabled
-- Required envelope or Connect events missing
-- Wrong payload format or version
+- Listener not subscribed to completed-envelope notifications in **either** event vocabulary
+- Wrong payload format (only when explicitly set to something other than JSON) or wrong version
 
 Sentry tags: `integration_id`, `org_id`. Extra: `account_id`, `reasons`, `detected_at`.
+
+**Two shapes that are NOT drift** (both produced false positives until 2026-08-01):
+
+- **No `envelopeEvents`.** DocuSign has two event vocabularies and a listener uses one. A SIM-mode listener (`deliveryMode: "SIM"`) carries `events: ["envelope-completed"]` and no legacy `envelopeEvents: ["Completed"]`. The production listener is SIM, so an absent `envelopeEvents` is not drift.
+
+  The converse is **not** true, and the check is deliberately asymmetric: a listener carrying only the legacy `envelopeEvents` **is** flagged. Arkova's webhook parser requires `event: "envelope-completed"`, which the legacy format does not send, so a legacy-only listener delivers payloads `/webhooks/docusign` rejects — a silent total outage. What this check asserts is SIM coverage; `envelopeEvents` is reported for context and is **not** asserted as sufficient.
+- **`eventData.format` absent.** DocuSign omits it when it is the default (JSON for `restv2.1`). Only an explicitly different format is drift. `eventData.version` is *not* treated the same way — an absent version means the listener is not pinned to `restv2.1`, which changes the payload shape `/webhooks/docusign` parses.
+
+This job was declared in `scripts/gcp-setup/cloud-scheduler.sh` long before it was applied to prod; the Cloud Scheduler job was created 2026-08-01. Because it fires hourly, any new check added to `detectDrift()` must be validated against the real GET `/connect` **response** shape, not against the request payload the provisioner sends — the two differ.
 
 Normal output: `{ ok: true, integrations_checked: N, drift_detected: 0, in_sync: N, errors: [], drifts: [] }`. If `ok: false`, at least one integration could not be checked, usually due to token refresh or DocuSign Connect API failure. Scheduler retries transient failures with `30s,120s,2`.
 
