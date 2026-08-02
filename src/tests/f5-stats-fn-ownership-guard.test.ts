@@ -25,12 +25,34 @@
  *   (2) LIVE RLS INTEGRATION (opt-in via RUN_LIVE_RLS=1 against a
  *       throwaway DB with 0380 applied): actually invokes both RPCs
  *       cross-tenant and same-tenant and asserts the real Postgres/
- *       PostgREST behavior. Gated OFF by default — this session did not
- *       run it (the shared local Supabase instance used by other parallel
- *       worktree sessions this window is not a clean/isolated DB safe to
- *       mutate for this proof; see PR body for the isolated-rig plan).
- *       Never runs in default CI; NOT run against prod (0380 is NOT
- *       applied to prod in this PR).
+ *       PostgREST behavior. Gated OFF by default and never runs in default
+ *       CI (no live DB creds there).
+ *
+ * READ THIS BEFORE TRUSTING LAYER (1): the content-guard tests assert on the
+ * TEXT of the migration file, not on database behaviour. They cannot catch a
+ * body that parses but misbehaves. The behavioural proof for this change is
+ * (a) the opt-in layer (2) suite, and (b) the direct prod verification
+ * recorded in the PR body — anon denied 42501, authenticated own-org allowed,
+ * authenticated cross-tenant denied 42501.
+ *
+ * PROD STATE (verified 2026-08-02 via Supabase MCP against vzwyaatejekddvltxyye,
+ * not inferred from this PR): 0380 IS APPLIED. `pg_get_functiondef` shows both
+ * functions SECURITY DEFINER with the 42501 raise and the service_role bypass,
+ * and `supabase_migrations.schema_migrations` carries numeric version '0380'
+ * for name '0380_f5_anchor_stats_fn_ownership_guard'. An earlier revision of
+ * this header said 0380 was "NOT applied anywhere yet"; that was true when it
+ * was written and is now false — do not re-derive prod state from this comment,
+ * re-assert it (CLAUDE.md §1.13 / memory/feedback_assert_prod_state_directly.md).
+ *
+ * KNOWN, DELIBERATELY UNPATCHED EDGE (not a leak): the guard is
+ * `p_org_id IS DISTINCT FROM get_user_org_id()`. For an anon caller BOTH sides
+ * are NULL, and `NULL IS DISTINCT FROM NULL` is FALSE — so a call passing an
+ * explicit NULL id skips the raise and returns `{total:0,secured:0,pending:0}`
+ * with HTTP 200 instead of a 403. No cross-tenant data is reachable that way
+ * (`WHERE org_id = NULL` / `WHERE user_id = NULL` never matches a row), so this
+ * is a response-shape wart, not a disclosure. It is left as-is here because
+ * 0380 is already applied to prod and migrations are never edited in place
+ * (CLAUDE.md §1.2) — closing it needs a compensating migration.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -247,9 +269,9 @@ describe('F-5: confirmed dashboard call site always passes the caller\'s own ide
 // ---------------------------------------------------------------------------
 // (2) LIVE RLS INTEGRATION — opt-in only. Requires 0380 applied to a
 // THROWAWAY/isolated DB and RUN_LIVE_RLS=1 + the RLS helper env vars.
-// Never runs in default CI (no live DB creds there). NOT run against prod
-// or the shared local dev instance in this session — 0380 is NOT applied
-// anywhere yet.
+// Never runs in default CI (no live DB creds there), and must never be
+// pointed at prod — several of these cases are cross-tenant reads.
+// 0380 itself IS applied to prod; see the file header for that verification.
 // ---------------------------------------------------------------------------
 const RUN_LIVE = process.env.RUN_LIVE_RLS === '1';
 
