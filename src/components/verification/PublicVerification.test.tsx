@@ -525,6 +525,79 @@ describe('PublicVerification', () => {
     expect(screen.getByTestId('source-provenance-display')).not.toHaveTextContent('evidence-hash-123');
   });
 
+  // SCRUM-2913 (Lane 2 wiring) — round-trip: get_public_anchor (0362) nests
+  // registry_url / ce_envelope_sha256 under `metadata`. These keys were
+  // previously ALLOW-LISTED but never PRODUCED anywhere (an inert column) —
+  // this pins that a CE-imported record's page actually surfaces them, and
+  // that a normal (non-CE) record's page never shows the row at all.
+  describe('CE Registry provenance round-trip (registry_url + ce_envelope_sha256)', () => {
+    const REGISTRY_URL = 'https://credentialengineregistry.org/resources/ce-11111111-2222-4333-8444-555555555555';
+
+    it('surfaces the registry reference link for a CE-imported record', async () => {
+      rpcMock.mockResolvedValue({
+        data: {
+          ...baseAnchor,
+          status: 'SECURED',
+          secured_at: '2026-04-01T12:00:00Z',
+          network_receipt_id: 'receipt-123',
+          metadata: {
+            registry_url: REGISTRY_URL,
+            ce_envelope_sha256: 'c'.repeat(64),
+          },
+        },
+        error: null,
+      });
+
+      render(<PublicVerification publicId="ARK-DOC-123" />);
+
+      expect(await screen.findByTestId('source-provenance-display')).toBeInTheDocument();
+      const registryLink = screen.getByTestId('registry-reference-link');
+      expect(registryLink).toHaveAttribute('href', REGISTRY_URL);
+      // The integrity fingerprint is carried, but never rendered raw on the page.
+      expect(screen.getByTestId('source-provenance-display')).not.toHaveTextContent('c'.repeat(64));
+      // Never a raw dump in the generic credential metadata section either.
+      expect(screen.getByTestId('credential-renderer')).not.toHaveTextContent(REGISTRY_URL);
+    });
+
+    it('OMITS the registry reference entirely for a non-CE record (absent, not a blank row)', async () => {
+      rpcMock.mockResolvedValue({
+        data: {
+          ...baseAnchor,
+          status: 'SECURED',
+          secured_at: '2026-04-01T12:00:00Z',
+          network_receipt_id: 'receipt-123',
+          metadata: {
+            source_url: 'https://credly.com/badges/abc',
+            source_provider: 'credly',
+          },
+        },
+        error: null,
+      });
+
+      render(<PublicVerification publicId="ARK-DOC-123" />);
+
+      expect(await screen.findByTestId('source-provenance-display')).toBeInTheDocument();
+      expect(screen.queryByTestId('registry-reference-link')).not.toBeInTheDocument();
+    });
+
+    it('OMITS the registry reference when the anchor has no metadata at all', async () => {
+      rpcMock.mockResolvedValue({
+        data: {
+          ...baseAnchor,
+          status: 'SECURED',
+          secured_at: '2026-04-01T12:00:00Z',
+          network_receipt_id: 'receipt-123',
+        },
+        error: null,
+      });
+
+      render(<PublicVerification publicId="ARK-DOC-123" />);
+
+      await screen.findByTestId('does-not-assert-disclaimer');
+      expect(screen.queryByTestId('registry-reference-link')).not.toBeInTheDocument();
+    });
+  });
+
   // SCRUM-2495 / ABUSE-DISCLAIMER: the does-not-assert disclaimer must always
   // render on the verification surface, visibly, without requiring a click or
   // hover to reveal it (CLAUDE.md §1.5).

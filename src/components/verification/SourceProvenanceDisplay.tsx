@@ -116,8 +116,20 @@ export function SourceProvenanceDisplay({
   const provider = formatProvider(data.source_provider);
   const verificationLevel = parseVerificationLevel(data.verification_level);
   const fetchedAt = data.fetched_at ? formatDate(data.fetched_at) : null;
-  const hasEvidencePackage = Boolean(data.evidence_package_hash || data.source_payload_hash);
-  const hasAnyContent = safeUrl || provider || verificationLevel || fetchedAt || hasEvidencePackage;
+  // SCRUM-2913 (Lane 2 wiring): ce_envelope_sha256 is an integrity fingerprint
+  // of the exact CE Registry envelope consumed, so it counts as evidence-package
+  // content on the same footing as the other two hashes. Presence drives the
+  // row; the hash VALUES are deliberately not rendered here (same as
+  // evidence_package_hash / source_payload_hash) — the full values live in the
+  // downloadable proof package.
+  const hasEvidencePackage = Boolean(
+    data.evidence_package_hash || data.source_payload_hash || data.ce_envelope_sha256,
+  );
+  // SCRUM-2913 (Lane 2 wiring): CE Registry provenance link, sanitized the
+  // same way as source_url (strip tokens/secrets, http(s)-only) before it is
+  // ever rendered as a clickable link.
+  const registryUrl = sanitizeSourceUrl(data.registry_url);
+  const hasAnyContent = safeUrl || provider || verificationLevel || fetchedAt || hasEvidencePackage || registryUrl;
 
   if (!hasAnyContent) return null;
 
@@ -218,6 +230,33 @@ export function SourceProvenanceDisplay({
             </span>{' '}
             <span>{SOURCE_PROVENANCE_LABELS.PROOF_SECTION_DESCRIPTION}</span>
           </div>
+        )}
+
+        {/* CE Registry reference (SCRUM-2913, Lane 2 wiring). R-7 §1.13: a
+            provenance link only — never rendered as a listing/endorsement
+            claim. Distinct row from Source URL above (a registry record vs.
+            the credential's own issuer page can both be present). */}
+        {registryUrl && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground shrink-0">
+              {SOURCE_PROVENANCE_LABELS.REGISTRY_REFERENCE_LABEL}:
+            </span>
+            <a
+              href={registryUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline inline-flex items-center gap-1 truncate"
+              data-testid="registry-reference-link"
+            >
+              <span className="truncate">{truncateUrl(registryUrl)}</span>
+              <ExternalLink className="h-3 w-3 shrink-0" />
+            </a>
+          </div>
+        )}
+        {registryUrl && (
+          <p className="text-xs text-muted-foreground" data-testid="registry-reference-description">
+            {SOURCE_PROVENANCE_LABELS.REGISTRY_REFERENCE_DESCRIPTION}
+          </p>
         )}
       </div>
     </div>

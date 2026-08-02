@@ -543,7 +543,13 @@ router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), x402PayerRa
 // 2026-04-18 prod incident where an unguarded gate at `router.use('/', …)`
 // 503'd unrelated `/api/v1/*` traffic) so this root mount is safe alongside
 // the `signatureComplianceRouter` / `keyInventoryRouter` mounts below, which
-// already use the same root-mount pattern.
+// use the same root-mount pattern via `requireComplianceAuth` /
+// `complianceAiRateLimiter` (2026-07-28 root-mount auth-leak fix — those two
+// mounts previously ran unguarded `requireAuth`/`aiRateLimiter` at bare '/',
+// 401ing downstream public routes like `/regulatory/alerts` and
+// `/compliance/rules`; see api/v1/agents.md and src/tests/api-e2e.test.ts
+// "Root-mounted compliance middleware must not leak onto downstream public
+// routes").
 function requireSignatureAuth(req: Request, res: Response, next: NextFunction): void {
   const p = req.path;
   const isSignPath = p === '/sign' || p.startsWith('/sign?');
@@ -559,11 +565,28 @@ function requireSignatureAuth(req: Request, res: Response, next: NextFunction): 
   requireAuth(req, res, next);
 }
 router.use('/', adesSignatureGate(), requireSignatureAuth, signaturesRouter);
+function isComplianceSignaturesPath(reqPath: string): boolean {
+  return reqPath === '/signatures' || reqPath.startsWith('/signatures/') || reqPath.startsWith('/signatures?');
+}
+function requireComplianceAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!isComplianceSignaturesPath(req.path)) {
+    next();
+    return;
+  }
+  requireAuth(req, res, next);
+}
+function complianceAiRateLimiter(req: Request, res: Response, next: NextFunction): void {
+  if (!isComplianceSignaturesPath(req.path)) {
+    next();
+    return;
+  }
+  aiRateLimiter(req, res, next);
+}
 // Compliance endpoints — audit proofs, bulk export, SOC 2 evidence (PH3-ESIG-03)
-router.use('/', adesSignatureGate(), requireAuth, signatureComplianceRouter);
+router.use('/', adesSignatureGate(), requireComplianceAuth, signatureComplianceRouter);
 // ─── Key Inventory — COMP-05 (SOC 2 CC6.1 audit evidence) ───
 // Feature-gated + JWT auth + rate limited — admin/compliance_officer only
-router.use('/', adesSignatureGate(), requireAuth, aiRateLimiter, keyInventoryRouter);
+router.use('/', adesSignatureGate(), requireComplianceAuth, complianceAiRateLimiter, keyInventoryRouter);
 
 // ─── Compliance Trends — COMP-07 ───
 // Feature-gated + JWT auth + rate limited

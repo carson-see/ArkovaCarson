@@ -61,6 +61,10 @@ const ALLOWED_PATHS = new Set([
   // 4. Third-party proper nouns / external field names
   'CE_PUBLICATION_COPY.STATUS_DETAIL',
   'SOURCE_PROVENANCE_LABELS.SHARE_LINKEDIN_DESCRIPTION',
+  // SCRUM-2913 (Lane 2 wiring) — "Credential Engine" is the third-party
+  // registry's own proper noun (R-7 provenance-not-endorsement wording), same
+  // category as SHARE_LINKEDIN_DESCRIPTION above.
+  'SOURCE_PROVENANCE_LABELS.REGISTRY_REFERENCE_DESCRIPTION',
   'LINKEDIN_SHARE_LABELS.CREDENTIAL_URL_LABEL',
   'LINKEDIN_SHARE_LABELS.NOTE',
   // 5. Frozen API identifiers rendered as code

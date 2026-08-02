@@ -274,3 +274,66 @@ describe('linkedInCredentialUrl', () => {
     expect(linkedInCredentialUrl('ARK-2026-001')).not.toContain('linkedin.com');
   });
 });
+
+/**
+ * SCRUM-2480 — the weakest evidence tier rendered NO badge at all.
+ *
+ * The worker writes `captured_upload_ai` (see
+ * `CREDENTIAL_EVIDENCE_VERIFICATION_LEVELS` in
+ * `services/worker/src/lib/credential-evidence.ts`), which is what actually
+ * lands in `anchors.metadata.verification_level` and comes back out of
+ * `get_public_anchor`. This module only knew `ai_captured`, so
+ * `parseVerificationLevel` returned null, `getEvidenceLevelLabel` returned
+ * null, and the badge rendered nothing.
+ *
+ * Absence of a badge does not read as "weakest evidence" — it reads as "no
+ * caveat", which is the opposite of the truth and the exact inversion the
+ * claims gate (§1.13 R-7) exists to prevent. The two spellings only ever met
+ * in test fixtures, so nothing caught it.
+ */
+describe('SCRUM-2480 — server evidence-level spelling is understood', () => {
+  const SERVER_SPELLING = 'captured_upload_ai';
+
+  it('labels the AI-captured tier when given the spelling the server actually writes', () => {
+    expect(getEvidenceLevelLabel(SERVER_SPELLING)).toBe(
+      getEvidenceLevelLabel('ai_captured'),
+    );
+    expect(getEvidenceLevelLabel(SERVER_SPELLING)).not.toBeNull();
+  });
+
+  it('describes it identically to the client spelling', () => {
+    expect(getEvidenceLevelDescription(SERVER_SPELLING)).toBe(
+      getEvidenceLevelDescription('ai_captured'),
+    );
+    expect(getEvidenceLevelDescription(SERVER_SPELLING)).not.toBeNull();
+  });
+
+  it('scores it as the WEAKEST tier, never as unknown', () => {
+    // 0 is what an unrecognised value returns — the bug's signature.
+    expect(getEvidenceLevelStrength(SERVER_SPELLING)).toBe(1);
+    expect(isStrongEvidence(SERVER_SPELLING)).toBe(false);
+  });
+
+  it('never counts as issuer-authenticated', () => {
+    // The failure mode must not swing the other way: a normalisation bug that
+    // let the weakest tier render the green issuer badge would be far worse.
+    expect(isIssuerAuthenticated(SERVER_SPELLING)).toBe(false);
+  });
+
+  it('leaves genuinely unknown values unrecognised', () => {
+    for (const bogus of ['definitely_not_a_level', '', null, undefined, 42]) {
+      expect(getEvidenceLevelLabel(bogus as unknown as string)).toBeNull();
+      expect(getEvidenceLevelStrength(bogus as unknown as string)).toBe(0);
+    }
+  });
+
+  it('does not resolve Object prototype keys through the alias lookup', () => {
+    // The alias table is a Map precisely so these miss. An object literal would
+    // resolve 'constructor'/'toString' to a function off the prototype chain.
+    for (const protoKey of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+      expect(getEvidenceLevelLabel(protoKey)).toBeNull();
+      expect(getEvidenceLevelStrength(protoKey)).toBe(0);
+      expect(isIssuerAuthenticated(protoKey)).toBe(false);
+    }
+  });
+});

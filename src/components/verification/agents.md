@@ -81,6 +81,46 @@ credential-card metadata is defensively filtered for PII and CSI internal fields
 source fields render in `SourceProvenanceDisplay`, and hashes belong in proof
 downloads.
 
+## CE Registry provenance (SCRUM-2913 Lane-2 wiring, 2026-07-28)
+
+`get_public_anchor` (migration `0362`) nests `registry_url` / `ce_envelope_sha256`
+under `metadata` ONLY — unlike `source_url`, there is no duplicate top-level key.
+`extractSourceProvenance()` reads `metadata.registry_url` /
+`metadata.ce_envelope_sha256` exclusively and adds them to `SourceProvenanceData`
+(`src/lib/sourceProvenance.ts`). `SourceProvenanceDisplay` renders a distinct
+"Registry reference" row (sanitized via `sanitizeSourceUrl`, same token/secret
+stripping as `source_url`) — a SEPARATE row from Source URL, since a CE registry
+record and the credential's own issuer page can both be present. Copy lives in
+`SOURCE_PROVENANCE_LABELS.REGISTRY_REFERENCE_LABEL` /
+`REGISTRY_REFERENCE_DESCRIPTION` (`src/lib/copy.ts`) — R-7 honest: a provenance
+link ("sourced from this registry URL"), never a claim that Arkova is
+listed/registered/endorsed by Credential Engine. Both `registry_url` and
+`ce_envelope_sha256` are added to `PUBLIC_METADATA_HIDDEN_KEYS` in
+`PublicVerification.tsx` so they never ALSO leak into the raw "Additional
+metadata" dump passed to `CredentialRenderer`. The producer side (what actually
+writes these keys — previously nothing did, an inert column) lives in
+`services/worker/src/lib/credential-source-import.ts`
+(`extractCeRegistryProvenance`) — see that folder's `agents.md`. Round-trip
+pinned in `PublicVerification.test.tsx` ("CE Registry provenance round-trip");
+component-level pinned in `SourceProvenanceDisplay.test.tsx` ("CE Registry
+provenance (registry_url)").
+
+`ce_envelope_sha256` counts toward `hasEvidencePackage` alongside
+`evidence_package_hash` / `source_payload_hash`, so a CE-sourced record shows the
+Evidence Package row. Consistent with the other two, only its PRESENCE is
+rendered — the hash value itself is never printed on the page; full values belong
+in the downloadable proof package. (Before 2026-08-01 the field was plumbed
+through the type and the extractor but reached no DOM node at all.)
+
+**The projection this depends on is NOT live in prod yet.** Migration `0376`
+redefined `get_public_anchor` from a body branched off `0355` and silently
+dropped `0362`'s two keys, so `metadata.registry_url` /
+`metadata.ce_envelope_sha256` do not currently come back from the API and this
+UI renders nothing. Compensating migration
+`0383_scrum2913_get_public_anchor_restore_hmac_and_registry_keys.sql` restores
+them; the UI goes live only once the RTE applies it to prod. See
+`supabase/migrations/agents.md`.
+
 ## Badge / provenance honesty (SCRUM-2481, 2026-07-07)
 
 `EvidenceLevelBadge` and `SourceProvenanceDisplay` are structurally honest about
