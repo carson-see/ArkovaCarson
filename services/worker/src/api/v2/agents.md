@@ -12,6 +12,7 @@ v2 agent-tool API surface. Designed for AI agents + future MCP parity. Per-scope
 - `openapi.ts` — `GET /api/v2/openapi.json` returns the canonical OpenAPI 3.1 spec.
 
 ## Conventions
+- `auth.ts` records key usage via `touchApiKeyLastUsed` (exported from `middleware/apiKeyAuth.ts`) — a single implementation shared with the v1 middleware. Do NOT inline `void db.from('api_keys').update(...)` here: supabase-js builders are lazy and a discarded builder never issues its request (see `middleware/agents.md`, 2026-08-01 silent-write note).
 - Every endpoint: `requireScopeV2('<scope>')` + `createV2ScopeRateLimit('<scope>')` middleware pair.
 - Zod schemas live in `mcpParity.ts` and are imported by both REST handlers and (eventually) MCP tool handlers — single source of truth.
 - Response sort: when emitting field-name lists in errors, use `localeCompare` (SonarCloud S2871 — fixed in PR #737).
