@@ -31,6 +31,9 @@ vi.mock('../utils/logger.js', () => ({
   },
 }));
 
+const captureCreditRpcFailureAlert = vi.hoisted(() => vi.fn());
+vi.mock('../utils/sentry.js', () => ({ captureCreditRpcFailureAlert }));
+
 import { db } from '../utils/db.js';
 import { paymentTierRouter, PaymentResolution, stripeMeteredIdempotencyKey } from './paymentTierRouter.js';
 
@@ -144,6 +147,48 @@ describe('paymentTierRouter', () => {
       expect(res.status).toBe(200);
       expect(res.body.tier).toBe('credits');
       expect(res.headers['x-credits-remaining']).toBe('99');
+      // Happy path — no alert.
+      expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
+    });
+
+    it('falls through to Stripe metered billing AND alerts Sentry (fail-OPEN: org had credits, gets charged instead)', async () => {
+      // Not admin; subscriptions lookup returns an active subscription so
+      // tier 2 (Stripe metered) succeeds after tier 1 fails.
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: { is_platform_admin: false }, error: null }),
+            in: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'sub-1', stripe_subscription_id: 'sub_stripe_1', status: 'active', plan_id: 'p1' },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+      });
+
+      (db.rpc as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ data: 50, error: null }) // not beta
+        .mockResolvedValueOnce({ data: { remaining: 100 }, error: null }) // check_unified_credits: org has credits
+        .mockResolvedValueOnce({ data: null, error: { message: 'deduct RPC failed' } }); // deduct_unified_credits fails
+
+      const app = createApp('user-1', 'org-1');
+      const res = await request(app).get('/api/v1/verify/test');
+      expect(res.status).toBe(200);
+      expect(res.body.tier).toBe('stripe_metered');
+
+      expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);
+      expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rpc: 'deduct_unified_credits',
+          operation: 'paymentTierRouter.tryCredits',
+          failMode: 'open',
+          orgId: 'org-1',
+          userId: 'user-1',
+        }),
+      );
     });
   });
 

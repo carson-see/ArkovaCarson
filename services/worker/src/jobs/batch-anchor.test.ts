@@ -157,6 +157,9 @@ vi.mock('../utils/db.js', () => {
   };
 });
 
+const captureCreditRpcFailureAlert = vi.hoisted(() => vi.fn());
+vi.mock('../utils/sentry.js', () => ({ captureCreditRpcFailureAlert }));
+
 // ---- System under test ----
 
 import { processBatchAnchors, BATCH_SIZE, MIN_BATCH_SIZE, MIN_BATCH_THRESHOLD } from './batch-anchor.js';
@@ -809,6 +812,9 @@ describe('processBatchAnchors', () => {
       return patch?.status !== undefined;
     });
     expect(statusUpdates.length).toBe(0);
+
+    // Retry succeeded on attempt 2 — no alert (only the "failed twice" branch alerts).
+    expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
   });
 
   it('falls back to direct SUBMITTED update when submit_batch_anchors fails twice (prevents double-broadcast)', async () => {
@@ -844,6 +850,14 @@ describe('processBatchAnchors', () => {
         txId: MOCK_RECEIPT.receiptId,
       }),
       expect.stringContaining('falling back'),
+    );
+
+    // Failed twice → fallback engaged → alert Sentry (retried, not silent).
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpc: 'submit_batch_anchors',
+        failMode: 'retried',
+      }),
     );
   });
 

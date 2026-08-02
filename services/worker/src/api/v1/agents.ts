@@ -18,6 +18,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 import { API_KEY_SCOPES } from '../apiScopes.js';
+import { recordAuditEvent } from '../../utils/auditEvent.js';
 
 // agents table not yet in database.types.ts — use untyped client
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -128,7 +129,7 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     // Audit event
-    void db.from('audit_events').insert({
+    void recordAuditEvent({
       actor_id: userId,
       event_type: 'AGENT_REGISTERED',
       event_category: 'SYSTEM',
@@ -249,7 +250,7 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
       return;
     }
 
-    void db.from('audit_events').insert({
+    void recordAuditEvent({
       actor_id: userId,
       org_id: orgId,
       event_type: parsed.data.status === 'suspended' ? 'AGENT_SUSPENDED' : 'AGENT_UPDATED',
@@ -304,7 +305,7 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
       .eq('agent_id', agentId)
       .eq('org_id', orgId);
 
-    void db.from('audit_events').insert({
+    void recordAuditEvent({
       actor_id: userId,
       org_id: orgId,
       event_type: 'AGENT_REVOKED',
@@ -372,7 +373,7 @@ router.post('/:agentId/key', async (req: Request, res: Response) => {
       return;
     }
 
-    void db.from('audit_events').insert({
+    void recordAuditEvent({
       actor_id: userId,
       event_type: 'AGENT_KEY_CREATED',
       event_category: 'SYSTEM',
