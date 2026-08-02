@@ -80,7 +80,11 @@ describe('CredentialSourceImportDialog', () => {
     expect(screen.getByText('Credly')).toBeInTheDocument();
     expect(screen.getByText('Ada Recipient')).toBeInTheDocument();
     expect(screen.getByText('2028-04-15')).toBeInTheDocument();
-    expect(screen.getByText('72%')).toBeInTheDocument();
+    // SCRUM-2914 (Founder UI findings): the extraction-confidence percentage
+    // is no longer surfaced — the score is unreliable and must not be shown.
+    // The fixture still returns extraction_confidence: 0.72; it simply must
+    // not reach the user.
+    expect(screen.queryByText('72%')).not.toBeInTheDocument();
 
     const [previewEndpoint, previewInit] = workerFetchMock.mock.calls[0] as [string, RequestInit];
     expect(previewEndpoint).toBe('/api/v1/credential-sources/import-url/preview');
