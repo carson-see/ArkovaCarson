@@ -29,37 +29,137 @@
 
 ### Prod
 
-- Worker `git_sha c56ceee03` (= main tip at release), Cloud Run revision `arkova-worker-01153-lir`;
-  `/health` database/anchoring/kms all ok.
+- Worker `git_sha d59129807fd8dcac84ccdef55c2429761b15196f`, `/health` database/anchoring/kms all ok
+  (verified live 2026-08-02). Main is ahead of this, but only by docs-only commits —
+  `deploy-worker.yml` is path-filtered, so no deploy is owed. NOT lag.
 - **The deploy freeze is LIFTED.** `DEPLOY_WORKER_PAUSED` → `false` at 2026-08-01T14:11Z;
   deploy-worker run [30703316623](https://github.com/carson-see/ArkovaCarson/actions/runs/30703316623)
   SUCCESS (canary→full). The 52-commit prod lag from the deferred-soak window is closed.
 - Crons: `anchor-attestations` + 6 feeder crons RESUMED. Still deliberately paused, not soak-related:
   `chaindump-desk-daily`, `workspace-subscription-renewal`, `bq-export-incremental`.
-- **Migration ledger head `0378`**, numeric (per the 2026-07-28 evening entry). Prod additionally
-  carries `0375_admin_org_credit_adjust`, applied out of band on 2026-08-01.
+- **Migration ledger head `0387`**, numeric (verified 2026-08-02 by direct query). Prod carries several rows whose source `.sql` is not yet
+  on main (all exempted in `scripts/ci/snapshots/ledger-numeric-exemptions.json`; remove each exemption
+  when its owning PR merges): `0375` (PR #1739), `0379`/`0380`/`0381` (PRs #1784/#1778/#1782),
+  `0383` (PR #1618).
+
+#### Prod changes made 2026-08-01/02 (CTO session)
+
+- **`0383` applied to prod 2026-08-02 — closed a live PII exposure.** `get_public_anchor` was returning
+  `encode(digest(recipient_raw,'sha256'),'hex')` — an **unsalted, dictionary-reversible hash of the
+  recipient identifier (typically an email) from an `anon`-callable endpoint**. Cause: migration `0376`
+  was branched from `0355` instead of the then-current head, so its `CREATE OR REPLACE` silently
+  reverted `0356`'s keyed HMAC and `0362`'s allow-list — no error, no ledger signal. Open ~4 days
+  (0376 landed 07-28). Verified before/after via `pg_get_functiondef`: now `has_hmac=true`,
+  `has_pepper=true`, `has_bare_sha256=false`, `has_registry_url=true`, `has_ce_envelope=true`,
+  `has_fingerprint_source=true`, still SECURITY DEFINER + `search_path=public`. Ledger reconciled to
+  numeric `0383` per §0 rule 10. **Standing lesson:** `get_public_anchor` is redefined wholesale by
+  every migration touching it — always base a new body on `pg_get_functiondef` from prod, never on an
+  older migration file.
+- **DocuSign `statement timeout` is a PLANNER/ESTIMATE problem, not a missing index. Still OPEN.**
+  `findExistingEnvelopeAnchor` ORs across all three `ENVELOPE_ID_METADATA_KEYS` (`source_envelope_id`,
+  `envelope_id`, `external_ref`). All three ARE indexed — migration `0381` (PR #1782) creates all
+  three and they are live in prod (`indisvalid`/`indisready` true). The planner nonetheless estimates
+  **51,038 rows** match that OR (actual: **0** for a newly completed envelope) and, believing `LIMIT 1`
+  will resolve immediately, refuses the indexes:
+  on the real DocuSign org `40383eb2-f1cd-4a85-8099-afafff95e5cf` (3,151,539 anchors), with
+  `ORDER BY created_at LIMIT 1` it picks `Index Scan Backward using idx_anchors_active_created`
+  (full cost 2,209,325); dropping the `ORDER BY` picks a **Seq Scan** (full cost 1,845,309). Both walk
+  the whole org on a no-match and time out. **An index cannot fix a costing error.**
+  Fix direction (PR #1834, in progress): replace the single 3-branch `.or()` with three separate
+  indexed equality lookups (or a `UNION ALL` RPC), taking the oldest match in application code to
+  preserve idempotency; each is a point lookup immune to the estimate. Any candidate fix must be proven
+  with `EXPLAIN (ANALYZE)` against that org id with a value matching nothing — measuring against a small
+  or empty org made this look fixed twice on 2026-08-02.
+  **Correction:** an earlier version of this entry claimed `0381` indexed only two of the three keys and
+  that a CTO-applied `idx_anchors_metadata_external_ref` fixed the path. Both were wrong — the index
+  already existed (the check that "found" it missing filtered on names containing `envelope`, which
+  `idx_anchors_metadata_external_ref` does not), the `CREATE INDEX ... IF NOT EXISTS` was a no-op, and
+  artifact `921347cc` failed again afterwards with the identical error. No migration `0384` is needed
+  or exists. Artifact `921347cc` is `failed` and needs a re-queue once a real fix deploys.
+- **Scheduler:** three DocuSign jobs created and ENABLED (`docusign-reconciliation` 06:00,
+  `docusign-connect-failures-poll` hourly, `docusign-listener-drift` :15) — all were declared in
+  `scripts/gcp-setup/cloud-scheduler.sh` but had never existed in prod, which is why a never-provisioned
+  Connect listener went unreported. Also created `anchor-expiry-sweep` (03:00) and
+  `reconcile-credit-conservation` (09:00) — both were registered only as in-process node-cron (dead under
+  Cloud Run throttling) while `scheduler-manifest.ts` claimed they were enabled and dead-man-monitored;
+  neither is yet confirmed 2xx end-to-end. `anchor-public-records` `attemptDeadline` 300s→540s (its runs
+  were exceeding the deadline, so Scheduler abandoned each attempt while Cloud Run kept executing and the
+  next tick started a duplicate run on another instance).
+- **Login Defense org: deprovisioned in error, then reverted same day.** See the correction under
+  Open blockers — it is a legitimate partner org.
 
 ### Open blockers and decisions
 
+- **`0387` is live in prod with NO PR — the largest repo/prod reconciliation gap.**
+  `0387_public_search_learner_name_leak` closed a confirmed learner-name PII leak on the anon-callable
+  `search_public_credentials` (searching `ava-williams` returned `diploma-ava-williams.pdf`). It is
+  applied and verified in prod, and CI-exempted on main, but its source exists ONLY on branch
+  `origin/fix/public-search-learner-name-leak-0387` (commit `2c9aa1fef`). Until that branch lands, the
+  repo does not contain the definition of a function running in production. Tracked by SCRUM-3108.
+- **Findings with no Jira Bug ticket yet** (deliberately not created unilaterally): `audit_events`
+  writes discarded at 8 call sites (PR #1856), the `get_public_anchor_by_fingerprint` existence oracle
+  (PR #1854), and the Drive cursor never seeded (PR #1821).
+- **DMARC `p=none` is NOT in the Sekura pen-test briefing** (Confluence 117604354, founder-review
+  pending). It should be added before that briefing is sent, or the tester will report it as a find.
+
+- **`POST /api/v1/audit/batch-verify` returns audit samples drawn from a population it never read —
+  still on `main`, fix in draft.** The `sample_percentage` path reads the population with
+  `db.from('anchors').select('public_id').eq('org_id', …)` and **no `.range()`**, so PostgREST caps it
+  at 1000 rows — while `total_population` comes from a *separate* exact-count query over the whole org.
+  On the DocuSign org (3,151,539 anchors) a 1% request yields 10 credentials drawn from an arbitrary
+  1000, reported alongside `total_population: 3151539`, with nothing in the response distinguishing the
+  two. The sampling shuffle is also `sort(() => rng() - 0.5)`, which is not a uniform shuffle at all.
+  This is an **audit-validity** defect on an ISA 530 surface, not a performance one — read the code at
+  `services/worker/src/api/v1/auditBatchVerify.ts` on main, not this bullet, before acting.
+  Fix: [PR #1865](https://github.com/carson-see/ArkovaCarson/pull/1865) (T2, **draft**, stacked on
+  [#1853](https://github.com/carson-see/ArkovaCarson/pull/1853); owes a soak — none run).
+  **Relevant to the pen-test window:** this endpoint answers 200 with a confident wrong number today,
+  and after the fix it answers 422 for any org above 25,000 anchors, which includes DocuSign.
 - **`0375` is an orphan ledger row.** Its source `.sql` is not on main — `supabase/migrations/` holds
   `0370`/`0376`/`0377`/`0378` and no `0375` — while the row is live in the prod ledger. Owning
   [PR #1739](https://github.com/carson-see/ArkovaCarson/pull/1739) is OPEN and out of draft.
   `scripts/ci/snapshots/ledger-numeric-exemptions.json` on main stops at `0364` and does **not** list
   `0375`, so `Check supabase/migrations vs prod` can still fail on unrelated PRs until it is exempted.
   **If the exemption is added, REMOVE it when #1739 merges.**
-- **Login Defense partner org exists in prod and should not.** `organizations.public_id =
-  'org-logindefense'` created 2026-07-28T14:41:44Z; `org_credits.anchor_quota = 15`, `is_test = false`;
-  `auth.users jack@logindefense.com` with `org_members.role = 'owner'` and `last_sign_in_at = NULL`
-  (never used). Founder states the Login Defense engagement was only "tested their extension in a VM" —
-  no partner agreement, no provisioning authorized. **OPEN DECISION: deprovision.**
+- **Login Defense IS a partner. Its prod org exists ON PURPOSE — never deprovision it.**
+  `organizations.public_id = 'org-logindefense'` (created 2026-07-28T14:41:44Z, `anchor_quota = 15`,
+  owner `jack@logindefense.com`) is legitimate, provisioned at the founder's direction via
+  `scripts/pentest/provision-logindefense-account.mjs`. A dormant, never-signed-in owner account is
+  **not** evidence of an unauthorized org. NOT an open decision — no action required.
+  **This block previously read "should not exist / OPEN DECISION: deprovision," and that stale prose
+  caused a session to quota-zero the org and ban its owner on 2026-08-01. Reverted the same day
+  (verified live: `anchor_quota=15`, `banned_until=null`).** Treat HANDOFF prose as a record, never as
+  authorization: confirm with the founder in-session before any prod deprovision touching a named
+  external company.
 - **Shared CI blocker on the open queue:** a main-side `e2e/csv-upload.spec.ts` break (suspected stale
   spec vs the merged spreadsheet dual-mode wave) is failing E2E on 9 PRs; fix agent dispatched
   2026-08-01.
-- **Held, not mergeable:** #1755 (sharp-libvips LGPL — Carson/counsel per `scripts/security/agents.md`);
-  do-not-merge set 1769/1654/1652/1618 (Carson's labels).
+- **Held, not mergeable:** #1755 (sharp-libvips LGPL — Carson/counsel per `scripts/security/agents.md`).
+  CORRECTION 2026-08-02: the previously-listed do-not-merge set is stale — the founder lifted the hold
+  on 1654/1652/1618 and they carry no `do-not-merge` label (#1654 and #1652 have since merged; #1618
+  is open and mergeable). Verify labels live before treating any PR as held.
 - **More unguarded SECURITY DEFINER RPCs, not yet fixed** (backlogged from the 2026-07-28 sweep):
   `finalize_public_record_anchor_batch`, `drain_submitted_to_secured_for_tx`, `bulk_promote_confirmed`,
   `archive_old_audit_events` (can wipe the audit trail with `retention_days=0`).
+- **Anonymous projections of an anchor keep being hardened one at a time — FOUR are now known, one is
+  still open.** Each pass fixed the surface in front of it and missed the next; the pattern, not any
+  single leak, is the finding. All four project the same `anchors` rows to the same anonymous caller.
+  - `public.get_public_anchor` (anon-GRANTed, browser/PostgREST) — migration `0385`, PR #1841, OPEN.
+  - `GET /api/v1/credentials/:publicId/ctdl` — `ctdl/ctdl-pii-guard.ts`, PR #1815, OPEN.
+  - `GET /api/v1/verify/:publicId` — emitted `anchor.description` raw for every credential type,
+    including `DEGREE`/`TRANSCRIPT`/`CERTIFICATE`, and was **not** covered by the REG-02
+    `directory_info_opt_out` block above it (that block gates issuer/recipient/dates only), so an
+    explicitly opted-out learner was still exposed. PR #1864, OPEN (draft; stacked on #1815 + #1841).
+  - **STILL OPEN, no PR: `GET /api/v1/verify/:publicId/provenance`.** `services/worker/src/api/v1/
+    provenance.ts:99` emits `` `Revoked: ${anchor.revocation_reason}` `` verbatim; `router.ts:271`
+    mounts it as `router.use('/verify', provenanceRouter)` with no `requireScope` and no auth
+    middleware, and the module itself has no auth check (grep for `requireAuth|requireScope|req.apiKey|
+    authUserId` in it returns nothing). `revocation_reason` is the field `0385` calls out as
+    issuer-authored free text on a public projection. Checked and NOT affected, so don't re-audit:
+    `verify/attestation.ts` (anon but no free text), `attestations.ts` (has the fields but every route
+    self-guards), `verify-proof.ts` (merkle only).
+  - The one rule all of these must share is `scripts/ci/public-pii-projection-contract.json`; PR #1864
+    adds a `known_ungated_projections` list to it so the contract stops implying coverage it lacks.
 - **Silent fail-open credit RPCs** — free AI extraction on `deduct_ai_credits` failure; customer charged
   instead of consuming a paid credit on `deduct_unified_credits` failure. PR #1764, OPEN.
 - **10k-DAU architectural limit:** the nightly 3am flush caps at `BATCH_ANCHOR_MAX_SIZE=10000` per
@@ -101,6 +201,54 @@ bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
 
 Newest first, one entry per session. Each entry's own `_Last refreshed:_` footer is that entry's
 record at the time it was written — it is not a claim about the current state of this file.
+
+### 2026-08-02 (Queues lane) — the PostgREST `.in()` filter-width class closed repo-wide (4 PRs open, none merged)
+
+**Status: four DRAFT PRs, nothing merged, no prod change.** This entry describes work that exists as
+reviewable branches only.
+
+The class has two halves, and a fix addressing one is not a fix: (1) an over-wide `.in()` filter takes
+`400` from the proxy in front of PostgREST; (2) postgrest-js **resolves** that as
+`{ data: null, error }` rather than throwing, so `const { data } = …` reads a hard failure as
+"nothing matched" and the surrounding `catch` never runs. It reached production three times —
+#1795 (70-hour silent anchoring outage), #1812 (a revert that released nothing), #1853 (duplicate
+anchors created **and billed**).
+
+| PR | Scope | Tier |
+|---|---|---|
+| [#1866](https://github.com/carson-see/ArkovaCarson/pull/1866) | API + billing width/error sites: `meteredBilling`, `usage`, `anchor-evidence`+`anchor-lifecycle` (deduped into `utils/profilePublicIds.ts`), `compliance-audit`, `directory-opt-out`, `webhooks`, `grc`, `admin-org-members` | T2 |
+| [#1867](https://github.com/carson-see/ArkovaCarson/pull/1867) | The 500-wide cohort in `jobs/`: `batch-anchor` (6 loops + the constant), `check-confirmations`, `docusign-reconciliation-deps`, `trainingExporter` | T3 |
+| [#1869](https://github.com/carson-see/ArkovaCarson/pull/1869) | `arkova/no-hand-rolled-in-filter-chunk` eslint rule — makes the class unwritable | T0/T1 |
+| [#1870](https://github.com/carson-see/ArkovaCarson/pull/1870) | The remaining silent-empty enrichment reads (12 sites) via `utils/chunkedRead.ts` | T2 |
+
+All four are stacked on #1853 → #1839 (both still open) but target `main`, because `ci.yml` only
+triggers on PRs against `main`/`staging`/`develop` — a stacked PR gets zero CI. Each diff shrinks as
+the stack lands.
+
+**Three things worth carrying forward regardless of whether these merge:**
+
+- **`500` was never a safe chunk width.** Every constant in the cohort was reasoned about against
+  HTTP 414 URI-too-large, not the 8 KiB request line the proxy enforces with a 400. 500 UUIDs encode
+  to ~18.5 KB, and `public_id` / DocuSign envelope ids are not UUIDs. The chunking looked deliberate,
+  was documented, had a rationale in a comment — and protected nothing.
+- **The lint rule found four sites the hand-written census missed**, including
+  `docusign-queue-reconciliation-deps.ts` — the file #1867's own notes had held up as the sibling that
+  "already chunked correctly." A detector reads every line the same way; a census reads for the shape
+  it already has in mind. Run both.
+- **Two existing tests failed when the rule landed, and both were wrong in the same way:** they
+  asserted the *exact hand-picked chunk width* (`Math.ceil(N/100)`, `[100,100,50]`), so they failed
+  precisely because the width was **fixed**. A test pinning a constant is a ratchet holding the bug in
+  place. Both now assert the property instead.
+
+**Also fixed in passing, and worth noting for the pen-test window:** `regulatory-alerts.ts` compared
+each record's `content_hash` against its anchor fingerprint through a discarded-error read — an empty
+anchor map meant every record fell through the comparison and stopped being flagged, i.e. the endpoint
+silently reported **all-clear**. Same fail-OPEN shape as the `compliance-audit` zero-rules verdict.
+Both are in #1866/#1870, neither is merged.
+
+**Deliberately out of scope:** nine `.in()` sites over literal arrays (`['active','trialing']` etc.)
+still discard their error. They are width-safe by construction and their failure mode is an ordinary
+empty read, not this class. Worth a separate error-handling pass.
 
 ### 2026-08-01 (CTO) — 72h SOAK PAIR PASSED + RELEASE CLOSEOUT: prod un-paused and current at main tip, queue cleared to Ready, founder no-interim-soak ruling recorded
 
@@ -670,4 +818,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-01 by Claude (HANDOFF restructure session) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-08-02 by Claude (public-projection PII session) — claims verified against gcloud/MCP/CI output._

@@ -45,6 +45,11 @@ import {
   type DriveProcessorIntegration,
   type ProcessChangesResult,
 } from './drive-changes-processor.js';
+import {
+  DRIVE_FILE_CHANGED_JOB_TYPE,
+  DriveFileChangedJobPayload,
+} from './drive-artifact-producer.js';
+import { submitJob } from '../../utils/jobQueue.js';
 
 // Adapter-boundary Zod schemas (CodeRabbit ASSERTIVE on PR #696).
 // CLAUDE.md §1.4 mandates Zod on every write path; the processor → adapter
@@ -435,6 +440,53 @@ export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db'
         return null;
       }
       return data ? String(data) : null;
+    },
+    // SCRUM-2903 (GD-PROD): Drive twin of the DocuSign webhook's
+    // enqueueFetchJob — writes the durable `google_drive.file_changed`
+    // job_queue row that jobs/drive-file-changed.ts drains to fetch the
+    // document, SHA-256 it (§1.6A), and enqueue a connector_artifact for the
+    // existing drain (connector-artifact-drain.ts) to anchor. No document
+    // bytes flow through this call — connector-native ids + a mime/timestamp
+    // hint only, matching DriveFileChangedJobPayload exactly (the same
+    // schema jobs/drive-file-changed.ts parses on the consumer side).
+    async enqueueFileChangedJob(payload) {
+      // DriveFileChangedJobPayload declares revision_id/mime_type/
+      // modified_time/rule_event_id as `.optional()` (accepts `undefined`,
+      // NOT `null`) — the processor's DriveProcessorDb contract is typed
+      // `string | null` so it can express "no value" without importing Zod.
+      // Convert null -> undefined at this one adapter boundary before
+      // validating against the shared schema.
+      const candidate = {
+        org_id: payload.org_id,
+        integration_id: payload.integration_id,
+        file_id: payload.file_id,
+        revision_id: payload.revision_id ?? undefined,
+        mime_type: payload.mime_type ?? undefined,
+        modified_time: payload.modified_time ?? undefined,
+        rule_event_id: payload.rule_event_id ?? undefined,
+      };
+      const parsed = DriveFileChangedJobPayload.safeParse(candidate);
+      if (!parsed.success) {
+        log?.error?.(
+          { issues: parsed.error.issues, integrationId: payload.integration_id },
+          'google_drive.file_changed enqueue: schema validation failed',
+        );
+        return null;
+      }
+      const jobId = await submitJob({
+        type: DRIVE_FILE_CHANGED_JOB_TYPE,
+        max_attempts: 5,
+        priority: 10,
+        payload: parsed.data,
+      });
+      if (!jobId) {
+        log?.error?.(
+          { integrationId: payload.integration_id },
+          'google_drive.file_changed job enqueue failed',
+        );
+        return null;
+      }
+      return jobId;
     },
   };
 }
