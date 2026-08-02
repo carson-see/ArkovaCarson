@@ -93,6 +93,7 @@ import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
 import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-completed.js';
 import { runDocusignNotarizationCompletedJobs } from '../jobs/docusign-notarization-completed.js';
+import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
 import { runDbHealthMonitor } from '../jobs/db-health-monitor.js';
 import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
@@ -127,6 +128,7 @@ export const cronRouter = Router();
 import { corsMiddleware } from './middleware.js';
 
 const DocusignEnvelopeCompletedLimitSchema = z.coerce.number().int().min(1).max(100);
+const DriveFileChangedLimitSchema = z.coerce.number().int().min(1).max(100);
 
 cronRouter.use(corsMiddleware);
 
@@ -759,6 +761,37 @@ cronRouter.post('/docusign-envelope-completed', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign completed-envelope queue pass failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-2903 (GD-PROD): Google Drive file-changed job queue ───
+//
+// Drive twin of /docusign-envelope-completed above. PRODUCTION TRIGGER —
+// Cloud Scheduler hits this HTTP endpoint (in-process node-cron is the
+// dev/test backup in routes/scheduled.ts; it's dormant under Cloud Run CPU
+// throttling per the PROOF-03 finding). Drains the `google_drive.file_changed`
+// job_queue type that drive-changes-runner.ts writes on a matched change:
+// fetch bytes -> SHA-256 in memory -> discard -> enqueue_connector_artifact
+// (§1.6A). `runDriveFileChangedJobs` no-ops the hash/enqueue step (returns
+// the disabled sentinel per job) when ENABLE_CONNECTOR_ARTIFACT_ENQUEUE is
+// false, so hitting this route is safe with the flag off.
+cronRouter.post('/drive-file-changed', async (req, res) => {
+  try {
+    const rawLimit = req.query.limit ?? req.body?.limit;
+    const parsedLimit = rawLimit === undefined
+      ? undefined
+      : DriveFileChangedLimitSchema.safeParse(rawLimit);
+    if (parsedLimit && !parsedLimit.success) {
+      res.status(400).json({ error: 'Invalid request', details: parsedLimit.error.flatten() });
+      return;
+    }
+    const result = await runDriveFileChangedJobs({
+      limit: parsedLimit?.data,
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Drive file-changed queue pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

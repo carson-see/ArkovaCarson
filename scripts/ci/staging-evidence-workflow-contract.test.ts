@@ -389,3 +389,56 @@ describe("staging-evidence workflow live-state contract (SCRUM-3026)", () => {
     expect(() => assertWorkflowContract(mutated)).toThrow();
   });
 });
+
+/**
+ * Founder directive 2026-08-01: the temporary `SOAK_GATE_DISABLED` bypass is
+ * only defensible while its ON switch lives in repo-admin state. `vars.*` is
+ * settable by a repo admin (`gh variable set`) and by nobody else; the frozen
+ * webhook payload, the PR body, the branch name and the labels are all
+ * author-reachable. If that binding ever regressed to one of those, any PR
+ * author could disable the staging-evidence gate for their own PR.
+ *
+ * This also pins that the variable is threaded at all — silently dropping the
+ * env line leaves a set variable with no effect, i.e. an operator who believes
+ * the queue is unblocked while every PR is still red.
+ */
+describe("staging-evidence workflow soak-gate bypass contract", () => {
+  const soakGateEnvLine = /^ {10}SOAK_GATE_DISABLED:\s*\$\{\{\s*vars\.SOAK_GATE_DISABLED\s*\}\}\s*$/mu;
+
+  it("threads SOAK_GATE_DISABLED into the check step from the live vars context", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    expect(soakGateEnvLine.test(workflow)).toBe(true);
+  });
+
+  it("binds the bypass beside DEPLOY_WORKER_PAUSED on the evidence-check step", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const checkStep = rootSteps(workflow).find((step) => /check-staging-evidence\.ts/u.test(step));
+    expect(checkStep).toBeDefined();
+    expect(soakGateEnvLine.test(checkStep!)).toBe(true);
+    expect(/DEPLOY_WORKER_PAUSED:\s*\$\{\{\s*vars\.DEPLOY_WORKER_PAUSED\s*\}\}/u.test(checkStep!)).toBe(true);
+  });
+
+  it("pins the bypass to exactly ONE binding of the key", () => {
+    // Asserting the correct line is PRESENT is not enough: a second
+    // `SOAK_GATE_DISABLED:` under the same `env:` mapping leaves the pinned
+    // line intact while changing what the step actually receives.
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const bindings = workflow.match(/^\s*SOAK_GATE_DISABLED:/gmu) ?? [];
+    expect(bindings).toHaveLength(1);
+  });
+
+  it("rejects rebinding the bypass to any author-reachable context", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    for (const forged of [
+      "${{ github.event.pull_request.body }}",
+      "${{ contains(github.event.pull_request.labels.*.name, 'soak-gate-disabled') }}",
+      "${{ github.head_ref }}",
+      "${{ github.event.pull_request.title }}",
+      "true",
+    ]) {
+      const mutated = workflow.replace(soakGateEnvLine, `          SOAK_GATE_DISABLED: ${forged}`);
+      expect(mutated).not.toBe(workflow);
+      expect(soakGateEnvLine.test(mutated)).toBe(false);
+    }
+  });
+});
