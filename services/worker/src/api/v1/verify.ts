@@ -31,6 +31,7 @@ import {
   normalizePublicText,
   MAX_SCAN_CHARS,
 } from '../../ctdl/ctdl-pii-guard.js';
+import { recordAuditEvent } from '../../utils/auditEvent.js';
 
 const router = Router();
 
@@ -536,8 +537,7 @@ function logVerificationAudit(
   credentialVerifiedDispatched: boolean | null = null,
   credentialVerifiedDispatchError: string | null = null,
 ): void {
-  // eslint-disable-next-line arkova/missing-org-filter -- anonymous public verification endpoint, no org context for the querier
-  void db.from('audit_events').insert({
+  void recordAuditEvent({
     event_type: 'VERIFICATION_QUERIED',
     event_category: 'ANCHOR',
     target_type: 'anchor',

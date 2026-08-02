@@ -62,6 +62,27 @@ The rule is written down ONCE in `scripts/ci/public-pii-projection-contract.json
 - `middleware/requireOrgAdmin.ts` (NEW) — chain AFTER `requireOrgId` when a route needs ORG_ADMIN, not merely membership. Delegates to `isCallerOrgAdminResult`.
 - **Do not read `x-org-id` (or any client-controlled org identifier) directly in a handler and trust it.** Either mount `requireOrgId` (+ `requireOrgAdmin` if needed) upstream, or — for routes where the org id is a route param, not a header (e.g. `org-kyb.ts`) — call `isUserMemberOfOrgResult` / `isCallerOrgAdminResult` directly before touching the DB.
 - **RLS is not a backstop here.** Every table this vulnerability touched (`ferpa_disclosure_log`, `emergency_access_grants`, `kyb_events`, `signatures`, `organizations`, `anchors`) already had correct FORCE RLS + org-scoped policies (verified against `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql`) — RLS was never the gap. The worker's service_role client bypasses RLS entirely, so application-code authorization (the `_org-auth.ts` helpers) is the ONLY tenant boundary for any service_role-executed query. Any new route added under this router needs its own explicit membership/admin check — RLS will not save it.
+## 2026-08-02 — merge resolution note (PR #1738 rebased onto #1839's anchor-bulk duplicate-check fix)
+
+PR #1738 (below) and the duplicate-check fix documented further down this file (Zod-cap-vs-URL-budget
+dedup defect, fixed via `chunkForInFilter` + fail-closed 503 + `normalizeFingerprint`) touched the
+same insert call in `anchor-bulk.ts` on adjacent lines — #1738 added the missing `filename` field
+(NOT NULL fix), main added `normalizeFingerprint(row.fingerprint)` in place of a bare
+`row.fingerprint.toLowerCase()`. Merge resolution kept both: `normalizeFingerprint()` (main's
+version — `.trim().toLowerCase()`, matching the normalization used everywhere else in this file,
+vs #1738's bare `.toLowerCase()`) for the fingerprint, and #1738's `filename` fallback unchanged.
+`fetchExistingFingerprints`/`chunkForInFilter`/the fail-closed 503 path were untouched by #1738 and
+carried through as-is. Also verified against `docs/release/wave-merge-choreography-2026-08.md`
+"Collision 2" (`FileUpload.tsx` dispatch routing, #1736 vs #1738): main already carried the required
+union (multi-file all-spreadsheet-vs-mixed check + single-spreadsheet mode-choice step), auto-merged
+clean, confirmed correct by re-reading the merged `dispatchFiles` and its test coverage rather than
+trusting the clean exit.
+
+## 2026-07-28 Dashboard bridge for mixed-format batch anchoring (SCRUM-2911 W1, founder P0)
+
+- **`anchor-bulk.ts` bug fix:** the insert into `anchors` never set `filename`, which is `NOT NULL` at the DB layer — every real (non-mocked) call to `POST /api/v1/anchor/bulk` would have failed a Postgres constraint violation; the unit suite's fully-mocked `db` never caught it. `BulkAnchorRowSchema` gained an optional `filename` field (additive, §1.8-safe); the insert falls back to a synthetic `bulk-${fingerprint.slice(0,12)}` placeholder when the caller doesn't supply one (mirrors `anchor-submit.ts`'s `api-${fingerprint}` pattern). Regression test in `anchor-bulk.test.ts`.
+- **New `anchor-bulk-self-service.ts`** (`POST /api/v1/anchor/bulk/self-service`, mounted in `router.ts` BEFORE `/anchor/bulk` — same route-shadowing rule as `/verify/search` before `/verify`): the browser dashboard cannot reach `/api/v1/anchor/bulk` directly because that route is `apiKeyAuth`-gated (`ak_...` keys only), and the dashboard authenticates with a Supabase session JWT. This bridge is the bulk-anchor analogue of `webhooks-self-service.ts` — mounted behind the router's local `requireAuth`, it re-derives `org_id` from `profiles` (never trusts the client), synthesizes an `ApiKeyMeta`-shaped caller (`scopes: ['anchor:write']`), and delegates into the SAME, byte-for-byte unmodified `anchorBulkRouter` — no duplicated dedup/credit/quota/insert logic. Any org member may call it (document creation, not an admin setting). No-org accounts get 403 `organization_required` (org-scoped credits are canonical per the 2026-07-28 CTO ruling R4; individuals still use the single-document flow). Dedicated rate limiter `anchorBulkSelfServiceRateLimiter` (10 req/min per user, Constitution §1.10 batch tier).
+- Frontend consumer: `src/components/upload/MixedBatchUploadWizard.tsx`, wired via `SecureDocumentDialog.tsx`'s `onMixedBatchDetected` (fired by `FileUpload.tsx` for a multi-file drop that isn't all-spreadsheets).
 ## 2026-07-28 root-mount auth-leak on signatureComplianceRouter/keyInventoryRouter (bug hunt during PR #1754)
 
 - `router.ts` mounted `signatureComplianceRouter` and `keyInventoryRouter` as `router.use('/', adesSignatureGate(), requireAuth, ...)` (and `...requireAuth, aiRateLimiter, keyInventoryRouter` for the latter). `router.use(path, mw1, mw2, subRouter)` registers EACH middleware as its OWN Express layer at that path — a bare `'/'` path matches every request. `adesSignatureGate()` path-guards itself (bypasses non-AdES paths, per its own 2026-04-18-incident fix — see `adesFeatureGate.ts` header), but the local `requireAuth` had no such guard, so it ran — and 401'd — on every request that reached this point in the stack, including routes registered LATER in the file: `GET /api/v1/regulatory/alerts` and `GET /api/v1/compliance/rules`, both documented and implemented as public/anonymous. `aiRateLimiter` on the key-inventory mount had the same unguarded-leak shape (silently consuming its shared rate-limit budget for unrelated downstream requests).
@@ -205,6 +226,7 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 | `GET /api/v1/credentials/<id>/ctdl` | anonymous OR `verify` |
 | `GET /api/v1/usage` | `usage:read` |
 | `/api/v1/anchor/bulk`, `/api/v1/contracts` | `anchor:write` |
+| `POST /api/v1/anchor/bulk/self-service` | Supabase JWT (any org member; org resolved from `profiles`) |
 | `POST /api/v1/exports/cpe-log` | Supabase JWT (own records only) |
 | `POST /api/v1/exports/org/cpe-log` | Supabase JWT + ORG_ADMIN (own-org members only) |
 | `POST /api/v1/exports/cle-log` | Supabase JWT (own records only) |
@@ -225,6 +247,10 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 
 ## Open work
 - SCRUM-1740 (PR #738) — quota gate awaits Carson merge + Mon deploy.
+
+## Silent credit-RPC alerting (revenue-leak pre-mortem)
+- `ai-extract.ts` — `deduct_ai_credits` RPC failure (DB error, not insufficient balance) fails OPEN by product decision (RISK-6): the extraction proceeds for FREE. Now calls `captureCreditRpcFailureAlert({ failMode: 'open', ... })` from `utils/sentry.ts` (fatal level, `credit_rpc_fail_mode:open` tag) so the revenue leak pages instead of only logging. Behavior unchanged, observability only.
+- `credits.ts` — the dev/test-only `deduct_unified_credits` grant path (no Stripe key, non-prod) alerts (`failMode: 'closed'`) on RPC failure so a real regression in this RPC doesn't hide behind "it's just dev mode."
 
 ## 2026-07-28 L3-A6 — CE registry-anchor route (CE Noncredit Data Taxonomy POC)
 
