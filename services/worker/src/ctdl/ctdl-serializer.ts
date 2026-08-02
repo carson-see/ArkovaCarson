@@ -1,5 +1,6 @@
 import {
   CTDL_CONTEXT,
+  academicRecordName,
   isContinuingEducationCreditType,
   resolveCtdlType,
   statusAllowsExpiration,
@@ -16,11 +17,11 @@ import { assertNoProhibitedClaimInJsonLd, containsProhibitedClaim } from './ctdl
 // truth for every PII detector used on this projection.
 import {
   CtdlPiiSafetyError,
-  academicRecordName,
   assertNoPiiInJsonLd,
   containsHighConfidencePii,
-  containsLearnerNamePii,
+  containsOutboundFreeTextPii,
   isEducationCredentialType,
+  normalizePublicText,
   stripUrlQueryAndFragment,
 } from './ctdl-pii-guard.js';
 // SCRUM-1922 R-CTDL-FR9 — keep the issuer DID format in lockstep with the
@@ -170,16 +171,15 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function stripControlChars(value: string): string {
-  return Array.from(value).filter((ch) => {
-    const code = ch.charCodeAt(0);
-    return code >= 32 && code !== 127;
-  }).join('');
-}
-
+// SCRUM-2293: normalization is delegated to `ctdl-pii-guard.ts` so the
+// serializer's notion of a control character and the detectors' cannot drift —
+// they used to be two hand-rolled copies that already disagreed about ordering.
+// Length capping stays here because it is a PUBLIC-OUTPUT budget (240/500),
+// not a scan bound, and it must apply after normalization so a collapsed
+// whitespace run does not eat the budget.
 function cleanPublicString(value: unknown, maxLength = 240): string | null {
   if (typeof value !== 'string') return null;
-  const clean = stripControlChars(value).replace(/\s+/g, ' ').trim();
+  const clean = normalizePublicText(value, Number.MAX_SAFE_INTEGER);
   if (!clean) return null;
   return clean.length <= maxLength ? clean : clean.slice(0, maxLength).trimEnd();
 }
@@ -197,7 +197,7 @@ function cleanPublicString(value: unknown, maxLength = 240): string | null {
 // line behind a structural one, not the only defence.
 function cleanPublicFreeText(value: unknown, maxLength = 240): string | null {
   const clean = cleanPublicString(value, maxLength);
-  if (!clean || containsHighConfidencePii(clean) || containsLearnerNamePii(clean)) return null;
+  if (!clean || containsOutboundFreeTextPii(clean)) return null;
   if (containsProhibitedClaim(clean)) return null;
   return clean;
 }
@@ -210,21 +210,13 @@ function pickMetadataString(metadata: Record<string, unknown>, keys: readonly st
   return null;
 }
 
-// SCRUM-2293: the query string and fragment are dropped. `ceterms:subjectWebpage`
-// is hygiene-cleaned only, so a query parameter is exactly where an identifier
-// rides into an otherwise innocuous field (`?student=jane@example.edu`).
-// Removing the carrier is structural; it does not depend on recognising the
-// payload, and an issuer's public homepage never needs a query string.
+// SCRUM-2293: userinfo, query string, and fragment are dropped —
+// `ceterms:subjectWebpage` is hygiene-cleaned only, so those three components
+// are exactly where an identifier rides into an otherwise innocuous field.
 function isPublicHttpUrl(value: unknown): string | null {
   const clean = cleanPublicString(value, 500);
   if (!clean) return null;
-  try {
-    const url = new URL(clean);
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
-    return stripUrlQueryAndFragment(url);
-  } catch {
-    return null;
-  }
+  return stripUrlQueryAndFragment(clean);
 }
 
 function credentialName(anchor: CtdlAnchor, metadata: Record<string, unknown>): string {
@@ -323,6 +315,18 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
   // could not be made both safe and precise, while this cannot leak a learner
   // name of ANY shape and cannot take a legitimate credential offline.
   const isAcademicRecord = isEducationCredentialType(anchor.credentialType);
+  // THE CHOKE POINT. Every RECORD-DESCRIPTIVE free-text field must go through
+  // `recordFreeText`, never `cleanPublicFreeText` directly. The invariant above
+  // is a property of the whole body, so implementing it as one gate rather than
+  // per-field ternaries is what stops the NEXT descriptive field (a keyword, a
+  // subject, an alternate name) from silently shipping learner text: the body
+  // scan below runs only high-confidence detectors and by this module's own
+  // premise cannot see a bare personal name, so such a regression would be
+  // invisible. Issuer IDENTITY (`issuerName`, `subjectWebpage`) is deliberately
+  // NOT record-descriptive and stays emitted for academic records.
+  const recordFreeText = isAcademicRecord
+    ? () => null
+    : (value: unknown, maxLength?: number) => cleanPublicFreeText(value, maxLength);
   const offeredBy: CtdlJsonLd['ceterms:offeredBy'] = {
     '@type': 'ceterms:Organization',
     'ceterms:name': issuerName(anchor, metadata),
@@ -352,7 +356,7 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
     '@context': CTDL_CONTEXT,
     '@type': ctdlType,
     'ceterms:name': isAcademicRecord
-      ? academicRecordName(ctdlType, anchor.credentialType)
+      ? academicRecordName(ctdlType)
       : credentialName(anchor, metadata),
     'ceterms:offeredBy': offeredBy,
     'ceterms:credentialStatusType': statusType,
@@ -374,7 +378,7 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
 
   // Academic records omit the description entirely — it is the single largest
   // free-text surface and the one the live prod leak shipped through.
-  const description = isAcademicRecord ? null : cleanPublicFreeText(anchor.description, 500);
+  const description = recordFreeText(anchor.description, 500);
   if (description) jsonLd['ceterms:description'] = description;
   // SCRUM-2374 (CE-03): `ceterms:expirationDate` carries RESOURCE-AVAILABILITY
   // (offering) expiry ONLY — per Jeanne Kitchens (Credential Engine, SCRUM-2294):
@@ -413,7 +417,7 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
     // assertNoProhibitedClaimInJsonLd below remains the backstop).
     // SCRUM-2293: academic records omit the reason outright — a revocation
     // reason on a student record is one of the likeliest places to find a name.
-    const reason = isAcademicRecord ? null : cleanPublicFreeText(anchor.revocationReason, 500);
+    const reason = recordFreeText(anchor.revocationReason, 500);
     if (reason) jsonLd['ceterms:revocationReason'] = reason;
   }
 

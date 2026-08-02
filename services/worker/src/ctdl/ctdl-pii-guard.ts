@@ -115,18 +115,29 @@ export function isEducationCredentialType(credentialType: string | null | undefi
  */
 export const MAX_SCAN_CHARS = 4000;
 
-function normalizeForScan(value: string): string {
-  const bounded = value.length > MAX_SCAN_CHARS ? value.slice(0, MAX_SCAN_CHARS) : value;
-  // Strip control characters so a NUL or similar cannot split a value out from
-  // under a detector, and collapse whitespace so no pattern meets a long run.
-  return Array.from(bounded)
-    .filter((ch) => {
-      const code = ch.charCodeAt(0);
-      return code >= 32 && code !== 127;
-    })
-    .join('')
-    .replace(/\s+/g, ' ')
-    .trim();
+/**
+ * C0 controls plus DEL. Stripped so a NUL cannot split a value out from under a
+ * detector.
+ *
+ * `no-control-regex` is disabled deliberately: matching control characters is
+ * the entire purpose of this pattern. The escaped form is also load-bearing —
+ * writing the bytes literally would make every file containing them binary to
+ * git, which is exactly the defect this PR fixed in its own test file.
+ */
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\x00-\x1F\x7F]/g;
+
+/**
+ * The one definition of "public-safe text shape" for this surface: strip
+ * control characters, collapse whitespace runs, trim, and bound the length.
+ *
+ * `ctdl-serializer.ts` `cleanPublicString` delegates here, so the serializer's
+ * notion of a control character and the detectors' can never drift — they used
+ * to be two hand-rolled copies that already disagreed about ordering.
+ */
+export function normalizePublicText(value: string, maxChars = MAX_SCAN_CHARS): string {
+  const bounded = value.length > maxChars ? value.slice(0, maxChars) : value;
+  return bounded.replace(CONTROL_CHARS, '').replace(/\s+/g, ' ').trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +222,7 @@ const HIGH_CONFIDENCE_PATTERNS: readonly RegExp[] = [
  * keyword-anchored date of birth, or a keyword-anchored student/learner ID.
  */
 export function containsHighConfidencePii(value: string): boolean {
-  const text = normalizeForScan(value);
+  const text = normalizePublicText(value);
   if (!text) return false;
   return HIGH_CONFIDENCE_PATTERNS.some((pattern) => pattern.test(text))
     || containsInternationalPhone(text);
@@ -245,8 +256,24 @@ const NAME_FIRST_LEARNER_PATTERN = new RegExp(
  * credential types. Never call this to decide whether a credential publishes.
  */
 export function containsLearnerNamePii(value: string): boolean {
-  const text = normalizeForScan(value);
+  const text = normalizePublicText(value);
   return CONTEXTUAL_LEARNER_NAME_PATTERN.test(text) || NAME_FIRST_LEARNER_PATTERN.test(text);
+}
+
+/**
+ * The single field-suppression predicate: does this free text carry anything
+ * that must not ship on the public projection?
+ *
+ * One entry point so a caller cannot forget half the check, and so the value is
+ * normalized ONCE rather than once per detector family.
+ */
+export function containsOutboundFreeTextPii(value: string): boolean {
+  const text = normalizePublicText(value);
+  if (!text) return false;
+  return HIGH_CONFIDENCE_PATTERNS.some((pattern) => pattern.test(text))
+    || containsInternationalPhone(text)
+    || CONTEXTUAL_LEARNER_NAME_PATTERN.test(text)
+    || NAME_FIRST_LEARNER_PATTERN.test(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -299,45 +326,36 @@ export function assertNoPiiInJsonLd(value: unknown, depth = 0): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Controlled-vocabulary naming for academic records.
-// ---------------------------------------------------------------------------
-
 /**
- * `ceterms:Credential` is what `TRANSCRIPT` resolves to, which reads as nothing
- * at all. Name it for what it is instead.
- */
-const TRANSCRIPT_LABEL = 'Academic Transcript';
-
-/**
- * A public, PII-free name for an academic record, derived ONLY from controlled
- * vocabulary: the resolved CTDL `@type` (itself computed from the
- * `credential_type` enum plus a fixed set of degree levels). No issuer text, no
- * extraction output, no metadata — so there is nothing for a learner identity
- * to ride in on.
+ * Reduce a public URL to scheme + host + path, dropping the query string,
+ * fragment, and userinfo.
  *
- * `ceterms:MasterDegree` → "Master Degree"; `ceterms:Certificate` →
- * "Certificate".
- */
-export function academicRecordName(
-  ctdlType: string,
-  credentialType: string | null | undefined,
-): string {
-  if (credentialType?.toUpperCase() === 'TRANSCRIPT') return TRANSCRIPT_LABEL;
-  return ctdlType.replace(/^ceterms:/, '').replace(/([a-z])([A-Z])/g, '$1 $2');
-}
-
-/**
- * Reduce a public URL to scheme + host + path, dropping the query string and
- * fragment.
- *
- * Structural, not heuristic: query parameters are where identifiers ride into
- * an otherwise innocuous field (`?student=jane@example.edu`), and
+ * Structural, not heuristic: those three components are where identifiers and
+ * bearer material ride into an otherwise innocuous field
+ * (`https://jane@example.edu/x?student=jane@example.edu#ref`), and
  * `ceterms:subjectWebpage` is hygiene-cleaned only. Dropping them removes the
  * carrier instead of trying to recognise every payload, and an issuer's public
- * homepage never needs a query string to resolve.
+ * homepage never needs any of the three to resolve.
+ *
+ * Takes and returns a string rather than mutating a caller's `URL` — the
+ * previous in-place form was a side effect the name did not advertise.
+ *
+ * NOTE: `lib/credential-evidence.ts` `normalizeCredentialSourceUrl` does a
+ * related but DIFFERENT job — it preserves non-tracking query parameters,
+ * because an evidence source URL must still resolve to the exact document.
+ * Here the query is precisely what must go, so the two are deliberately not
+ * merged.
  */
-export function stripUrlQueryAndFragment(url: URL): string {
+export function stripUrlQueryAndFragment(rawUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  url.username = '';
+  url.password = '';
   url.search = '';
   url.hash = '';
   return url.toString();

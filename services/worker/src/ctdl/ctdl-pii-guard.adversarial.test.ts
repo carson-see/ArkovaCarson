@@ -140,8 +140,9 @@ describe('SCRUM-2300 — adversarial transcript fixtures never leak learner PII'
   // The controlled-vocabulary name is derived from the resolved CTDL @type, so
   // an academic record still publishes something truthful and useful.
   it.each([
-    ['DEGREE', 'bachelor', 'Bachelor Degree'],
-    ['DEGREE', 'master', 'Master Degree'],
+    ['DEGREE', 'bachelor', "Bachelor's Degree"],
+    ['DEGREE', 'master', "Master's Degree"],
+    ['DEGREE', null, 'Academic Degree'],
     ['CERTIFICATE', null, 'Certificate'],
     ['TRANSCRIPT', null, 'Academic Transcript'],
   ])('names a %s/%s record from controlled vocabulary', (credentialType, subType, expected) => {
@@ -188,6 +189,19 @@ describe('SCRUM-2300 — adversarial transcript fixtures never leak learner PII'
       VERIFY,
     );
     expect(jsonLd['ceterms:name']).toBe('Accounting Update');
+  });
+
+  // The assembled-body scan is the backstop for values that never route through
+  // the free-text cleaner at all. `ceterms:identifierValue` is emitted verbatim
+  // from the anchor's public id, so it is the honest way to prove the scan
+  // still fails closed after the URL carriers were removed structurally.
+  it('fails closed when PII reaches the body through a non-free-text field', () => {
+    expect(() =>
+      buildCtdlJsonLd(
+        { ...baseTranscript, credentialType: 'LICENSE', publicId: 'jane.student@example.edu' },
+        VERIFY,
+      ),
+    ).toThrow(CtdlPiiSafetyError);
   });
 
   // A single unauthenticated request must not be able to stall the event loop.

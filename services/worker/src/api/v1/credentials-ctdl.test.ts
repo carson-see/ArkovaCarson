@@ -243,9 +243,9 @@ describe('GET /credentials/:publicId/ctdl', () => {
     expect(res.body['ceterms:offeredBy']['ceterms:subjectWebpage']).toBe('https://example.edu/lookup');
   });
 
-  // The assembled-body scan still fails closed when unambiguous PII reaches the
-  // body by a route field suppression cannot see.
-  it('fails closed when high-confidence PII reaches the assembled body', async () => {
+  // Userinfo is the other carrier a hygiene-only URL clean leaves in place. It
+  // is now removed structurally, so the credential publishes rather than 404s.
+  it('drops issuer website userinfo rather than leaking or 404-ing', async () => {
     const lookup: CredentialsCtdlLookup = {
       lookupByPublicId: vi.fn().mockResolvedValue(anchor({
         credentialType: 'LICENSE',
@@ -259,10 +259,9 @@ describe('GET /credentials/:publicId/ctdl', () => {
 
     const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
 
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
     expect(JSON.stringify(res.body)).not.toContain('jane.student@example.edu');
-    const auditPayload = insertAudit.mock.calls[0][0];
-    expect(JSON.parse(auditPayload.details)).toMatchObject({ outcome: 'safety_blocked' });
+    expect(res.body['ceterms:offeredBy']['ceterms:subjectWebpage']).toBe('https://example.edu/lookup');
   });
 
   it('fails closed (no published body) when a credential carries a fabricated CTID (CE-02)', async () => {

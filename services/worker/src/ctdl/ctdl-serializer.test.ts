@@ -218,7 +218,7 @@ describe('buildCtdlJsonLd', () => {
 
     expect(JSON.stringify(jsonLd)).not.toContain('Jane Q Student');
     expect(jsonLd).not.toHaveProperty('ceterms:description');
-    expect(jsonLd['ceterms:name']).toBe('Degree');
+    expect(jsonLd['ceterms:name']).toBe('Academic Degree');
   });
 
   it('emits no learner name for a name-first transcript label', () => {
