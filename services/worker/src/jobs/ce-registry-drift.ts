@@ -39,6 +39,7 @@
 
 import { createHash } from 'node:crypto';
 
+import { REAL_CTID_PATTERN } from '../ctdl/ctdl-ctid-guard.js';
 import {
   DEFAULT_REGISTRY_TIMEOUT_MS,
   RegistryTimeoutError,
@@ -168,11 +169,21 @@ export interface CeRegistryDriftResult {
   drifted: number;
   withdrawn: number;
   unreachable: number;
+  /**
+   * The loader returned a full batch, so more anchored records exist than this
+   * pass could reconcile. Surfaced because the job's entire value is
+   * COMPLETENESS of the read-back: a coverage gap that is invisible is worse
+   * than one that is reported. There is no cursor yet — see the module header.
+   */
+  truncated: boolean;
+  /** The load itself failed (e.g. statement timeout). NOT the same as "nothing to check". */
+  loadFailed: boolean;
 }
 
-const EMPTY_RESULT: CeRegistryDriftResult = {
-  skipped: true, checked: 0, match: 0, drifted: 0, withdrawn: 0, unreachable: 0,
-};
+const ZERO_COUNTS = {
+  checked: 0, match: 0, drifted: 0, withdrawn: 0, unreachable: 0,
+  truncated: false, loadFailed: false,
+} as const;
 
 function clampLimit(limit: number | undefined): number {
   if (limit === undefined || !Number.isFinite(limit)) return CE_REGISTRY_DRIFT_MAX_BATCH;
@@ -203,12 +214,29 @@ export async function reconcileCeRegistryDrift(
 ): Promise<CeRegistryDriftResult> {
   if (!deps.enabled) {
     logger.info('CE registry drift check disabled via ENABLE_CE_REGISTRY_DRIFT_CHECK — skipping');
-    return { ...EMPTY_RESULT };
+    return { ...ZERO_COUNTS, skipped: true };
   }
 
   const limit = clampLimit(options.limit);
-  const records = (await deps.loadAnchoredRecords(limit)).slice(0, limit);
-  const result: CeRegistryDriftResult = { ...EMPTY_RESULT, skipped: false };
+  const result: CeRegistryDriftResult = { ...ZERO_COUNTS, skipped: false };
+
+  // A failed LOAD must never look like "nothing to reconcile". This folder's
+  // agents.md records a 70-hour prod outage whose root cause was exactly that
+  // conflation: an all-chunks-failed read was indistinguishable downstream from
+  // an empty result, and the silent-success path hid the outage.
+  let records: AnchoredCeRecord[];
+  try {
+    records = await deps.loadAnchoredRecords(limit);
+  } catch (error) {
+    logger.error({ error }, 'CE registry drift load failed — reconciled NOTHING this pass');
+    return { ...result, loadFailed: true };
+  }
+
+  result.truncated = records.length >= limit;
+  records = records.slice(0, limit);
+  if (records.length === 0) {
+    logger.warn('CE registry drift pass found no anchored CE records — verify this is expected');
+  }
 
   for (const record of records) {
     const observed = await observeSafely(deps, record);
@@ -270,6 +298,12 @@ function toAnchoredRecord(row: AnchorMetadataRow, anchoredAt: string | null): An
   const ctid = metadata.ce_registry_ctid;
   const sha256 = metadata.ce_envelope_sha256;
   if (typeof ctid !== 'string' || typeof sha256 !== 'string') return null;
+  // The CTID is caller-supplied text at the anchor route and is interpolated
+  // into the registry URL path. Both sibling callers of `buildRegistryGraphUrl`
+  // gate on REAL_CTID_PATTERN before fetching; this one must too, or a crafted
+  // value ('../', '?', '#') would steer a SCHEDULED outbound request to an
+  // arbitrary path on the registry host long after the original request.
+  if (!REAL_CTID_PATTERN.test(ctid)) return null;
   return {
     anchorId: row.id,
     publicId: row.public_id,
@@ -281,18 +315,32 @@ function toAnchoredRecord(row: AnchorMetadataRow, anchoredAt: string | null): An
 }
 
 /**
- * Load anchors carrying a CE Registry snapshot. Keyed on the metadata written
- * by the registry-anchor route; an anchor missing either the CTID or the
- * recorded hash is skipped rather than guessed at.
+ * Load anchors carrying a CE Registry snapshot.
  *
- * ORDERED NEWEST-FIRST DELIBERATELY. There is no index on
- * `metadata->>'ce_registry_ctid'`, and `anchors` is a multi-million-row table,
- * so the planner walks the `created_at` ordering and filters. CE registry
- * anchors are a small, recent cohort, so descending order reaches them almost
- * immediately; ascending order would walk the entire historical table first.
- * If this cohort ever grows large enough to care about oldest-first
- * reconciliation, the right fix is a partial index on the metadata key (a
- * migration, hence out of scope for a flag-dark job) — not a re-ordering here.
+ * ⚠ REQUIRES A PARTIAL INDEX BEFORE THIS JOB MAY BE ENABLED. There is no index
+ * on `metadata->>'ce_registry_ctid'`, and `anchors` is a ~3M-row table.
+ *
+ * An earlier version of this comment claimed that ordering newest-first let the
+ * scan "reach the CE cohort almost immediately". That is WRONG, and the error is
+ * worth recording so nobody re-derives it: with `LIMIT 100` and far fewer than
+ * 100 matching rows, Postgres CANNOT stop early — it must walk the whole
+ * `idx_anchors_active_created` index and heap-fetch (and detoast) `metadata` for
+ * every row before it can conclude the limit is unsatisfiable. Scan direction is
+ * irrelevant to the total work. This repo has already taken a 14-day prod
+ * anchoring outage from exactly this shape hitting the 60s PostgREST
+ * `statement_timeout` (see `check-confirmations.ts`).
+ *
+ * The prerequisite is a partial expression index, following the pattern already
+ * in this schema for `pipeline_source`
+ * (`0342_cpe_cle_dashboard_partial_index.sql`):
+ *
+ *   CREATE INDEX CONCURRENTLY idx_anchors_ce_registry_ctid
+ *     ON anchors ((metadata->>'ce_registry_ctid'))
+ *     WHERE deleted_at IS NULL AND metadata->>'ce_registry_ctid' IS NOT NULL;
+ *
+ * That is a migration (T3), deliberately out of scope for this flag-dark PR —
+ * but it is a HARD PREREQUISITE, not a nice-to-have. Do not set
+ * `ENABLE_CE_REGISTRY_DRIFT_CHECK=true` before it exists.
  */
 export async function loadAnchoredCeRecords(limit: number): Promise<AnchoredCeRecord[]> {
   const { data, error } = await db

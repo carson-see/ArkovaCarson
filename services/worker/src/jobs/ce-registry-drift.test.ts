@@ -120,6 +120,42 @@ describe('reconcileCeRegistryDrift', () => {
     expect(d.observeRegistryState).not.toHaveBeenCalled();
   });
 
+  // A failed LOAD must never be indistinguishable from "nothing to reconcile" —
+  // this folder's agents.md records a 70-hour prod outage from that conflation.
+  it('reports loadFailed instead of a silent empty pass when the load throws', async () => {
+    const d = deps({
+      loadAnchoredRecords: vi.fn().mockRejectedValue(new Error('statement timeout')),
+    });
+
+    const result = await reconcileCeRegistryDrift(d);
+
+    expect(result).toMatchObject({ skipped: false, loadFailed: true, checked: 0 });
+    expect(d.observeRegistryState).not.toHaveBeenCalled();
+  });
+
+  it('does not set loadFailed for a genuinely empty cohort', async () => {
+    const d = deps({ loadAnchoredRecords: vi.fn().mockResolvedValue([]) });
+    const result = await reconcileCeRegistryDrift(d);
+    expect(result).toMatchObject({ checked: 0, loadFailed: false, truncated: false });
+  });
+
+  // The job's value is COMPLETENESS of the read-back, so a coverage cap must be
+  // reported rather than silently swallowed.
+  it('flags truncated when the loader returns a full batch', async () => {
+    const many = Array.from({ length: CE_REGISTRY_DRIFT_MAX_BATCH }, (_, i) => record({ anchorId: `a${i}` }));
+    const d = deps({ loadAnchoredRecords: vi.fn().mockResolvedValue(many) });
+
+    const result = await reconcileCeRegistryDrift(d);
+
+    expect(result.truncated).toBe(true);
+    expect(result.checked).toBe(CE_REGISTRY_DRIFT_MAX_BATCH);
+  });
+
+  it('does not flag truncated for a partial batch', async () => {
+    const result = await reconcileCeRegistryDrift(deps());
+    expect(result.truncated).toBe(false);
+  });
+
   it('reports only non-MATCH findings', async () => {
     const d = deps({
       loadAnchoredRecords: vi.fn().mockResolvedValue([
