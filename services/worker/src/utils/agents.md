@@ -31,3 +31,30 @@ Shared utilities consumed across the worker. Each file is small and single-purpo
 
 ## Open work
 - SCRUM-1740 (PR #738) — quota gate awaits merge.
+
+## SILENT-WRITE CLASS — audit events (2026-08-02, PR #1808 follow-on)
+
+`recordAuditEvent()` in `auditEvent.ts` is the ONLY sanctioned way to write `audit_events`.
+
+supabase-js query builders are lazy PromiseLikes — `PostgrestBuilder.then()` is where the HTTP
+request is issued — so `void db.from('audit_events').insert({...});` builds a query, discards it,
+and sends **nothing**: no request, no error, no row, no signal. Eight call sites shipped that way
+(`api/v1/verify.ts`, `keys.ts` (the `logAuditEvent` helper, i.e. every API-key admin event),
+`oracle.ts`, `key-inventory.ts`, and four in `agents.ts`).
+
+**Verified against prod 2026-08-02, not inferred:** `audit_events` held ZERO rows for every event
+type those sites emit (`VERIFICATION_QUERIED`, the API-key lifecycle events, the agent events)
+while unrelated writers had 381k+ rows — the table was fine; only these writes vanished. Same
+empirical method as PR #1808's `api_keys.last_used_at` finding (0 of 19 rows non-null).
+
+Rules:
+- Never `void db.from('audit_events')...` — call `recordAuditEvent(row)`.
+- A `mockReturnThis()` or resolved-Promise test double CANNOT catch this bug: it never distinguishes
+  "builder constructed" from "request issued". Use `test-utils/lazy-supabase-builder.ts`'s
+  `createLazyBuilderRecorder`, which records only on `.then()`. `auditEvent.test.ts` reproduces the
+  defect against that recorder before asserting the fix.
+- Failures log at **error**, not warn: a lost audit row is a compliance event. `recordAuditEvent`
+  never rejects, so a floating call cannot become an unhandled rejection.
+- Fire-and-forget is deliberate (an audit write must not fail an anonymous public verify request),
+  but the returned promise is awaitable. Whether API-key lifecycle events should be awaited — so a
+  key is never reported created without its audit row — is an open decision, not an oversight.
