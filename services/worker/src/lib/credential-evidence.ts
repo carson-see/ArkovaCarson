@@ -67,14 +67,18 @@ export const CREDENTIAL_EVIDENCE_VERIFICATION_LEVELS = [
  * the Credly and Accredible adapters cap at `account_linked` even when the
  * provider returns a `proof` block (see their `agents.md`: "DO NOT promote
  * verification_level to source_signed from this module"), and URL import
- * hardcodes `captured_url`. A client-supplied value is therefore the ONLY way
- * these levels can reach `anchors.metadata` — which `get_public_anchor` serves
- * to anonymous verifiers. That made the issuer-authenticated badge assertable
- * by anyone holding an API key.
+ * hardcodes `captured_url`. Every way these levels reach `anchors.metadata` —
+ * which `get_public_anchor` serves to anonymous verifiers — is therefore a
+ * client supplying them. There are TWO such paths, and this module closes only
+ * one: `POST /api/v1/anchor` (here), and the browser's direct PostgREST
+ * `anchors` insert, which no API guard can see and which migration 0384 closes
+ * with a trigger. Do not read this file as evidence that the API route was the
+ * only hole; it was the more expensive one.
  *
  * Treat both as server-attested-only: a value arriving on a client write path
  * is dropped before persistence. Promote this list only alongside a real
- * server-side attestation (v1.1 cryptographic proof verification).
+ * server-side attestation (v1.1 cryptographic proof verification) — and in
+ * BOTH places, this list and 0384's `v_new_level NOT IN (...)`.
  */
 export const SERVER_ATTESTED_VERIFICATION_LEVELS = [
   'issuer_anchored',
