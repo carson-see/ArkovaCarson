@@ -28,7 +28,12 @@ import { buildMerkleTree } from '../utils/merkle.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config.js';
 import { upsertAnchorProofs } from '../utils/anchorProofs.js';
-import { POSTGREST_ROW_LIMIT, chunkForInFilter, resolveAnchorBatchSize } from './anchor-batching.js';
+import { resolveAnchorBatchSize } from './anchor-batching.js';
+import {
+  POSTGREST_ROW_LIMIT,
+  assertNotAllChunksFailed,
+  chunkForInFilter,
+} from '../utils/postgrest-filter.js';
 import type { ChainReceipt } from '../chain/types.js';
 
 /** Max records per batch — one Bitcoin TX can commit up to 10k pipeline anchors. */
@@ -209,12 +214,8 @@ function uniqueById<T extends { id: string }>(rows: T[]): T[] {
 }
 
 /**
- * Every id-filter call site in this module (this function,
- * `claimPendingPipelineAnchors`, `revertClaimedAnchors`) builds its filter with
- * `chunkForInFilter` — never a hand-rolled `i += SIZE` loop. See that helper's
- * docstring for why the width is not a call-site decision, and
- * `POSTGREST_IN_FILTER_CHUNK`'s for the 70-hour outage the old conflation
- * caused. `POSTGREST_ROW_LIMIT` is still used in this file, but only for
+ * Every id filter in this module is built with `chunkForInFilter`, never a
+ * hand-rolled `i += SIZE` loop; `POSTGREST_ROW_LIMIT` appears only on
  * `.range()` pagination, which is what it actually governs.
  */
 async function fetchAnchorRows(
@@ -223,11 +224,10 @@ async function fetchAnchorRows(
 ): Promise<PipelineAnchorRow[]> {
   const rows: PipelineAnchorRow[] = [];
   const ids = Array.from(new Set(anchorIds));
-  let attemptedChunks = 0;
+  const chunks = chunkForInFilter(ids);
   let failedChunks = 0;
 
-  for (const { values, start } of chunkForInFilter(ids)) {
-    attemptedChunks += 1;
+  for (const { values, start } of chunks) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (client as any)
       .from('anchors')
@@ -250,12 +250,8 @@ async function fetchAnchorRows(
   // Every chunk failing is indistinguishable from "no anchors exist" downstream:
   // partitionRecordAnchors yields no pending items, the job logs a benign
   // "no new pending" and returns 200. That silent-success path is what hid a
-  // 70-hour production outage. Fail loudly instead.
-  if (attemptedChunks > 0 && failedChunks === attemptedChunks) {
-    throw new Error(
-      `fetchAnchorRows: all ${failedChunks} chunk(s) failed for ${ids.length} anchor id(s); refusing to report an empty result set as success`,
-    );
-  }
+  // 70-hour production outage.
+  assertNotAllChunksFailed('fetchAnchorRows', chunks.length, failedChunks, `${ids.length} anchor id(s)`);
 
   return rows;
 }
@@ -268,8 +264,10 @@ async function claimPendingPipelineAnchors(
   // Project to ids BEFORE chunking: `chunkForInFilter` only accepts the values
   // that go on the wire, so the width it guarantees is the width actually sent.
   const anchorIds = uniqueById(anchors).map((a) => a.id);
+  const chunks = chunkForInFilter(anchorIds);
+  let failedChunks = 0;
 
-  for (const { values, start } of chunkForInFilter(anchorIds)) {
+  for (const { values, start } of chunks) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (client as any)
       .from('anchors')
@@ -279,12 +277,24 @@ async function claimPendingPipelineAnchors(
       .select('id, fingerprint, status, chain_tx_id, metadata');
 
     if (error) {
+      failedChunks += 1;
       logger.error({ error, chunkStart: start, chunkSize: values.length }, 'Failed to claim pipeline anchors');
       continue;
     }
 
     claimed.push(...((data ?? []) as PipelineAnchorRow[]));
   }
+
+  // An empty claim reads downstream as "nothing was PENDING" — the job logs a
+  // benign result and returns 200. That is the same silent-success shape as
+  // fetchAnchorRows, and this function shipped without the guard while its two
+  // siblings had it: the exact 2-of-3 miss that let #1795 leave a defect behind.
+  assertNotAllChunksFailed(
+    'claimPendingPipelineAnchors',
+    chunks.length,
+    failedChunks,
+    `${anchorIds.length} anchor id(s)`,
+  );
 
   return claimed;
 }
@@ -313,9 +323,10 @@ interface RevertClaimedAnchorsResult {
  * `chain_tx_id` back to PENDING, so the batch does recover — but with no
  * signal, a permanently-broken revert is indistinguishable from a healthy one.
  * A total failure is therefore escalated to error level naming the stranded
- * count and the recovering job. It deliberately does NOT throw: this runs
- * inside the chain-submission failure path, and throwing here would replace
- * the caller's real chain error with a secondary one.
+ * count and the recovering job. It deliberately does NOT call
+ * `assertNotAllChunksFailed` — this runs inside the chain-submission failure
+ * path, and throwing here would replace the caller's real chain error with a
+ * secondary one. That is an explicit opt-out, not an omission.
  */
 async function revertClaimedAnchors(
   client: SupabaseClient,

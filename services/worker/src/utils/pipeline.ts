@@ -7,10 +7,7 @@
 
 import { createHash } from 'node:crypto';
 import { logger } from './logger.js';
-// `jobs/anchor-batching.ts` is an import-free leaf module of shared PostgREST /
-// batch constants, so importing it here creates no cycle and no runtime
-// coupling to the anchoring jobs themselves.
-import { chunkForInFilter } from '../jobs/anchor-batching.js';
+import { assertNotAllChunksFailed, chunkForInFilter } from './postgrest-filter.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /** SHA-256 content hash for deduplication and fingerprinting. */
@@ -51,37 +48,20 @@ export async function batchUpsertRecords(
 /**
  * Check which source_ids already exist (batch dedup). Returns a Set of existing IDs.
  *
- * Two defects addressed here, both from the class that cost 70 hours of
- * public-record anchoring (see `chunkForInFilter` in `jobs/anchor-batching.ts`).
- * Be precise about which was live, because they differ:
+ * A partial result is safe and is returned as-is: `batchUpsertRecords` upserts
+ * with `ignoreDuplicates`, so a missed duplicate costs a redundant write, never
+ * a wrong row. A run where EVERY chunk failed is not — an empty Set reads as
+ * "nothing is a duplicate", so it throws rather than reporting dedup success.
  *
- *  1. **Unchunked `.in('source_id', …)` — LATENT, not live.** Today's only
- *     caller (`jobs/jurisdictionFetcher.ts` `ingestStatutes`) passes section
- *     ids from module-constant `StatuteDefinition[]` arrays — tens of ids, a
- *     filter of a few dozen bytes. It was never near the limit. It is fixed
- *     anyway because this module's contract is "new fetchers import from here
- *     instead of re-declaring", and the first fetcher to arrive with a
- *     data-sized id list would have inherited the defect silently. `source_id`
- *     is an arbitrary upstream identifier (URLs, docket numbers), not a UUID,
- *     which is exactly why the helper bounds by encoded WIRE BYTES rather than
- *     by a value count.
- *  2. **Discarded error (`const { data } = …`) — LIVE.** Any PostgREST failure
- *     returned an empty Set, indistinguishable from "nothing is a duplicate",
- *     so dedup could be dead while every caller reported success.
+ * BEHAVIOUR CHANGE: that throw propagates out of `ingestStatutes`, which
+ * `fetchJurisdictionCompliance` runs BEFORE `fetchCaseLaw` — so a total dedup
+ * failure now also skips case-law ingestion for that jurisdiction, where
+ * previously it degraded to re-upserting everything. Intended: a cron 500 that
+ * Cloud Scheduler retries beats a silent no-op, and an all-chunks-failed result
+ * means PostgREST is unavailable for this table anyway.
  *
- * Mirrors `fetchAnchorRows`: per-chunk failures are logged and skipped, but a
- * run where EVERY chunk failed refuses to report an empty result as success.
- * A partial result is still safe for dedup — `batchUpsertRecords` upserts with
- * `ignoreDuplicates`, so a missed duplicate costs a redundant write, never a
- * wrong row.
- *
- * BEHAVIOUR CHANGE: the throw propagates out of `ingestStatutes`, and
- * `fetchJurisdictionCompliance` calls that BEFORE `fetchCaseLaw` — so a total
- * dedup failure now also skips case-law ingestion for that jurisdiction, where
- * previously it degraded to re-upserting everything. That is the intended
- * trade (a cron 500 that Cloud Scheduler retries, versus a silent no-op), and
- * an all-chunks-failed result means PostgREST is unavailable for this table
- * anyway.
+ * (Of the two defects fixed here the unchunked filter was LATENT and the
+ * discarded error was LIVE — see `utils/agents.md` for which and why.)
  */
 export async function getExistingSourceIds(
   supabase: SupabaseClient,
@@ -91,11 +71,10 @@ export async function getExistingSourceIds(
   if (sourceIds.length === 0) return new Set();
 
   const existing = new Set<string>();
-  let attemptedChunks = 0;
+  const chunks = chunkForInFilter(sourceIds);
   let failedChunks = 0;
 
-  for (const { values, start } of chunkForInFilter(sourceIds)) {
-    attemptedChunks += 1;
+  for (const { values, start } of chunks) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- service-role admin query
     const { data, error } = await (supabase as any)
       .from('public_records')
@@ -117,11 +96,12 @@ export async function getExistingSourceIds(
     }
   }
 
-  if (failedChunks === attemptedChunks) {
-    throw new Error(
-      `getExistingSourceIds: all ${failedChunks} chunk(s) failed for source=${source} (${sourceIds.length} id(s)); refusing to report an empty dedup set as success`,
-    );
-  }
+  assertNotAllChunksFailed(
+    'getExistingSourceIds',
+    chunks.length,
+    failedChunks,
+    `source=${source} (${sourceIds.length} id(s))`,
+  );
 
   return existing;
 }

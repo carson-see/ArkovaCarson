@@ -16,7 +16,7 @@
  */
 
 import { runWithConcurrency } from '../utils/concurrency.js';
-import { chunkForInFilter } from './anchor-batching.js';
+import { chunkForInFilter } from '../utils/postgrest-filter.js';
 
 /**
  * Cardinality probes fetch at most 2 ids. Classification only ever needs
@@ -74,9 +74,9 @@ export function clampBound(
  * Generic list splitter for REQUEST-BODY batches (RPC payloads, insert rows).
  *
  * NOT for PostgREST `.in()` filters — those go through `chunkForInFilter`
- * (`anchor-batching.ts`), which bounds by encoded URL bytes rather than by a
- * caller-chosen count. Reaching for a count constant here is the mistake that
- * cost 70 hours of public-record anchoring.
+ * (`utils/postgrest-filter.ts`), which bounds by encoded URL bytes rather than
+ * by a caller-chosen count. Reaching for a count constant here is the mistake
+ * that cost 70 hours of public-record anchoring.
  */
 export function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];

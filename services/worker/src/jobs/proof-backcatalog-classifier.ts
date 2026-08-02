@@ -82,12 +82,11 @@ import {
   type CheckpointHandle as SharedCheckpointHandle,
 } from './proofJobCheckpoint.js';
 import {
-  chunk,
   fetchProofRows as sharedFetchProofRows,
   fetchScanPage as sharedFetchScanPage,
   resolveCardinalities as sharedResolveCardinalities,
 } from './proofJobScan.js';
-import { chunkForInFilter } from './anchor-batching.js';
+import { chunkForInFilter } from '../utils/postgrest-filter.js';
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
@@ -1359,7 +1358,6 @@ async function finalizeWriteMode(
 export const __testing = {
   clampBatchSize,
   clampMaxBatches,
-  chunk,
   DEFAULT_BATCH_SIZE,
   MIN_BATCH_SIZE,
   MAX_BATCH_SIZE,

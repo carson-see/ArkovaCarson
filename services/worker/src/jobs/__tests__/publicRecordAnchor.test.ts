@@ -78,7 +78,7 @@ vi.mock('../../chain/client.js', () => ({
 
 function makeMock(
   records: Array<Record<string, unknown>> = [],
-  options: { revertError?: unknown } = {},
+  options: { revertError?: unknown; claimError?: unknown } = {},
 ) {
   const anchorRows = records.map((record, i) => ({
     id: `anchor-uuid-${i}`,
@@ -122,7 +122,11 @@ function makeMock(
   const anchorsBroadcastingUpdate = {
     in: vi.fn(() => ({
       eq: vi.fn(() => ({
-        select: vi.fn().mockResolvedValue({ data: claimedAnchorRows, error: null }),
+        select: vi.fn().mockResolvedValue(
+          options.claimError
+            ? { data: null, error: options.claimError }
+            : { data: claimedAnchorRows, error: null },
+        ),
       })),
     })),
   };
@@ -418,5 +422,46 @@ describe('publicRecordAnchor claim-revert escalation', () => {
     await processPublicRecordAnchoring(client);
 
     expect(strandedAlerts()).toHaveLength(0);
+  });
+});
+
+/**
+ * The silent-empty guard on the CLAIM step.
+ *
+ * `fetchAnchorRows` and `revertClaimedAnchors` both accounted for
+ * all-chunks-failed; `claimPendingPipelineAnchors` did not — a 2-of-3 miss in
+ * the same three functions, and the same shape as PR #1795's. An empty claim
+ * reads downstream as "nothing was PENDING", so a totally broken claim step
+ * would log a benign result and return 200 forever.
+ */
+describe('publicRecordAnchor claim step', () => {
+  it('refuses to treat an all-chunks-failed claim as "nothing was pending"', async () => {
+    const records = Array.from({ length: 20 }, (_, i) => ({
+      id: `record-${i}`,
+      content_hash: (i.toString(16).padStart(2, '0')).repeat(32),
+      metadata: {},
+      source: 'edgar',
+      source_id: `CIK-${i}`,
+      source_url: `https://sec.gov/filing/${i}`,
+      record_type: '10-K',
+      title: `Test Filing ${i}`,
+    }));
+    const anchorResults = records.map((r, i) => ({
+      id: `anchor-uuid-${i}`,
+      fingerprint: r.content_hash,
+    }));
+    mockRpc
+      .mockResolvedValueOnce({ data: true })
+      .mockResolvedValueOnce({ data: anchorResults });
+
+    const { client } = makeMock(records, { claimError: { message: 'Bad Request' } });
+
+    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
+
+    await expect(processPublicRecordAnchoring(client)).rejects.toThrow(
+      /claimPendingPipelineAnchors: all \d+ chunk\(s\) failed/,
+    );
+    // …and it never reached the chain with an empty batch.
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
   });
 });

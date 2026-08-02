@@ -31,9 +31,17 @@ to export the three functions and assert the emitted filter width at each call s
 not a guarantee: it only ever covers the call sites that existed when it was written, which is
 exactly how #1795 shipped a fix that missed one of three. This entry replaces it.
 
-- **`chunkForInFilter(values: readonly string[]): InFilterChunk[]`** (`anchor-batching.ts`) is now the
-  only supported way to build a PostgREST `.in()` filter over a caller-sized list. Shape chosen so
-  the wrong thing is unwritable rather than merely tested:
+- **`chunkForInFilter(values: readonly string[]): InFilterChunk[]`** — now the only supported way to
+  build a PostgREST `.in()` filter over a caller-sized list. It lives in **`utils/postgrest-filter.ts`**
+  along with `POSTGREST_ROW_LIMIT` / `POSTGREST_URL_FILTER_BUDGET_BYTES` /
+  `POSTGREST_IN_FILTER_CHUNK` / `assertNotAllChunksFailed`. It was first written into
+  `jobs/anchor-batching.ts` next to the Bitcoin batch caps; review moved it because (a) it is a
+  wire-shape concern with no anchoring semantics, (b) every non-`jobs` consumer had to justify a
+  `utils/ -> jobs/` import to reach it, and (c) `publicRecordEmbedder.test.ts` factory-mocks
+  `anchor-batching.js` wholesale, so the first module in that test's import graph to call
+  `chunkForInFilter` would get `undefined` at runtime with a baffling error in an unrelated suite.
+  `anchor-batching.ts` keeps only `MAX/MIN_ANCHORS_PER_BITCOIN_TX` + `resolveAnchorBatchSize`.
+  Shape chosen so the wrong thing is unwritable rather than merely tested:
   - **No size parameter.** Both defects were a call site choosing between two plausible constants in
     scope and hand-rolling `for (i += SIZE)`. There is no knob to get wrong now.
   - **`string[]`, not generic `T[]`.** Chunking ROWS and mapping to ids afterwards (what
@@ -55,15 +63,30 @@ exactly how #1795 shipped a fix that missed one of three. This entry replaces it
   `fetchAnchorRows` / `claimPendingPipelineAnchors` / `revertClaimedAnchors` are **private again** —
   they were only exported for the width assertion. `POSTGREST_ROW_LIMIT` still appears in
   `publicRecordAnchor.ts`, but only on `.range()` pagination, which is what it actually governs.
+- **`assertNotAllChunksFailed(label, attempted, failed, detail)`** (same module) is the second half of
+  the class. Width is only one of the two defects — the other is that a chunked loop which logs each
+  failure and continues returns `[]` when EVERY chunk 400s, which downstream cannot distinguish from
+  "no matching rows". Review caught this PR reproducing the SAME 2-of-3 miss it exists to prevent:
+  `fetchAnchorRows` and `getExistingSourceIds` both had a hand-copied guard (already diverged — one
+  had the `attempted > 0` check, one did not) while **`claimPendingPipelineAnchors` had none**, so a
+  totally broken claim step would read as "nothing was PENDING" and return 200 forever. All three now
+  call the shared guard. `revertClaimedAnchors` deliberately does NOT — it runs inside the
+  chain-failure path where a secondary throw would mask the real error, and returns counts for its
+  caller to escalate instead. That is now an explicit opt-out rather than an invisible omission.
 - **Constant consolidation.** `proofJobScan.IN_FILTER_CHUNK` (100) and
   `proof-backcatalog-classifier`'s own local `IN_FILTER_CHUNK` (100, a third variant shadowing the
   second) are both DELETED. `proofJobScan.chunk(items, size)` survives as the generic splitter for
   REQUEST-BODY batches only (RPC payloads, insert rows — `proof-materializer`'s `INSERT_CHUNK`); its
   docstring now says so and points `.in()` callers at `chunkForInFilter`.
-- **Width is asserted ONCE**, on the helper (`anchor-batching.test.ts`). Mutation-verified: reverting
-  `POSTGREST_IN_FILTER_CHUNK` to `POSTGREST_ROW_LIMIT` fails 2 tests; removing the byte cap fails 3;
-  removing the count cap fails 1. The claim-revert stranded-count escalation from #1812 is preserved
-  and now covered through the real entrypoint (`publicRecordAnchor.test.ts`) instead of an export.
+- **Width is asserted ONCE**, on the helper (`utils/postgrest-filter.test.ts`). Mutation-verified:
+  reverting `POSTGREST_IN_FILTER_CHUNK` to `POSTGREST_ROW_LIMIT` fails 2 tests; removing the byte cap
+  fails 3; removing the count cap fails 1; restoring the `encodeURIComponent` accounting fails 2;
+  removing the claim guard fails 1; removing the caller's stranded-claim escalation fails 1. The
+  #1812 stranded-count escalation is preserved and now covered through the real entrypoint
+  (`publicRecordAnchor.test.ts`) instead of an export. The wire-width oracle used by tests lives in
+  `test-utils/postgrestWire.ts` — ONE copy, mirroring postgrest-js's own algorithm. A second copy in
+  `pipeline.test.ts` was still using `encodeURIComponent` and would have passed on an over-budget
+  chunk the moment its fixture grew a `(`.
 - **`utils/pipeline.getExistingSourceIds` fixed here, not filed** (a deliberate cross-lane touch —
   it is feeder-lane code). It had both halves of the outage, but **only one was live**: the
   unchunked `.in('source_id', …)` was LATENT (one caller, module-constant statute section ids, tens
@@ -86,7 +109,11 @@ exactly how #1795 shipped a fix that missed one of three. This entry replaces it
   proxy's 8 KiB request-line limit. `const { data } = …` appears at 17 of the 63 non-literal sites;
   that destructure alone is what converts a 400 into an indistinguishable "no rows". Full census is
   in the PR body. **No repo-wide lint rule was added** — a rule broad enough to catch the 500-cohort
-  would fail the build on existing code, and `npm run lint` is the deploy gate (§0 rule 9).
+  would fail the build on existing code, and `npm run lint` is the deploy gate (§0 rule 9). Note the
+  worker's own lint script is `eslint --max-warnings 0`, so a `warn`-severity rule is NOT an escape
+  hatch here: warnings fail that gate exactly like errors. The viable shapes are an `error` rule with
+  a file-level allowlist of the known sites, or the rule landing after the census is fixed. Whichever
+  is chosen, the rule — not this helper — is what finally closes the class.
 - **Scope the claim honestly.** The helper makes the *width* unchoosable for anyone who uses it; it
   does NOT make a hand-rolled loop impossible. `POSTGREST_ROW_LIMIT` is still exported and still in
   scope in `publicRecordAnchor.ts` (legitimately, for `.range()`), so nothing but convention stops a

@@ -24,12 +24,9 @@ const { mockLogger } = vi.hoisted(() => ({
 vi.mock('./logger.js', () => ({ logger: mockLogger }));
 
 import { getExistingSourceIds } from './pipeline.js';
-import { POSTGREST_URL_FILTER_BUDGET_BYTES } from '../jobs/anchor-batching.js';
+import { POSTGREST_URL_FILTER_BUDGET_BYTES } from './postgrest-filter.js';
+import { encodedInFilterBytesFor } from '../test-utils/postgrestWire.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
-
-function encodedInFilterBytes(values: string[]): number {
-  return encodeURIComponent(`in.(${values.join(',')})`).length;
-}
 
 /**
  * Records the `.in()` filter each chunk actually puts on the wire. `matches`
@@ -68,11 +65,15 @@ function recordingSupabase(options: {
   return { client, inCalls };
 }
 
-/** Real-world shape: source ids are upstream identifiers, not UUIDs. */
+/**
+ * Real-world shape: source ids are upstream identifiers, not UUIDs — and some
+ * carry the `,`/`(`/`)` characters postgrest-js double-quotes, which is the
+ * case a naive byte count under-charges by ~3x.
+ */
 function sourceIds(count: number, width = 40): string[] {
   return Array.from(
     { length: count },
-    (_, i) => `https://example.gov/${'s'.repeat(width)}/${i}`,
+    (_, i) => `https://example.gov/${'s'.repeat(width)}/Doe,Roe(ND-Cal)/${i}`,
   );
 }
 
@@ -96,7 +97,7 @@ describe('getExistingSourceIds', () => {
 
     expect(inCalls.length).toBeGreaterThan(1);
     for (const values of inCalls) {
-      expect(encodedInFilterBytes(values)).toBeLessThanOrEqual(POSTGREST_URL_FILTER_BUDGET_BYTES);
+      expect(encodedInFilterBytesFor(values)).toBeLessThanOrEqual(POSTGREST_URL_FILTER_BUDGET_BYTES);
     }
   });
 
@@ -116,7 +117,7 @@ describe('getExistingSourceIds', () => {
     const { client } = recordingSupabase({ errorFor: () => ({ message: 'Bad Request' }) });
 
     await expect(getExistingSourceIds(client, 'edgar', sourceIds(1_000))).rejects.toThrow(
-      /refusing to report an empty dedup set as success/,
+      /getExistingSourceIds: all \d+ chunk\(s\) failed for source=edgar .*refusing to report an empty result set as success/,
     );
   });
 
