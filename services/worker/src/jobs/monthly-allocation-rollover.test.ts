@@ -118,8 +118,14 @@ describe('runAllocationRollover', () => {
   });
 
   it('increments errors on thrown RPC and alerts Sentry', async () => {
-    mockOpenPeriods(['throws']);
-    mockDb.rpc.mockRejectedValueOnce(new Error('connection reset'));
+    // Two orgs, not one: with a single all-failing org this would hit the
+    // SCRUM-3050 postcondition throw (see the describe block below) and never
+    // return a summary to assert on. A mixed cohort keeps this test focused
+    // on the Sentry-alert content for the thrown-RPC path specifically.
+    mockOpenPeriods(['throws', 'good']);
+    mockDb.rpc
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockResolvedValueOnce({ data: { ok: true }, error: null });
 
     const s = await runAllocationRollover();
     expect(s.errors).toBe(1);
