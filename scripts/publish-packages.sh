@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
 #
-# Publish @arkova/sdk and @arkova/embed to npm (INT-01 / INT-03).
+# Publish @carsonarkova/sdk and @arkova/embed to npm (INT-01 / INT-03).
+#
+# NOTE: the two packages currently live under DIFFERENT npm scopes.
+#   - @carsonarkova/sdk uses the `carsonarkova` org (SCRUM npm-scope
+#     founder ruling 2026-08-01: the `arkova` scope was never the
+#     intended org — `carsonarkova` is, and the NPM secret's token is
+#     scoped to it). See packages/sdk/agents.md.
+#   - @arkova/embed still targets the `arkova` scope pending the same
+#     decision being extended to it (not yet ruled on).
 #
 # Prerequisites:
-#   1. `@arkova` npm scope exists and you have owner/maintainer permissions.
-#      If not: `npm org create arkova` (as the scope owner).
-#   2. NPM_TOKEN exported with publish permission for @arkova scope.
+#   1. The relevant npm scope (`carsonarkova` for sdk, `arkova` for embed)
+#      exists and you have owner/maintainer permissions on it.
+#      If not: `npm org create <scope>` (as the scope owner).
+#   2. NPM_TOKEN exported with publish permission for that scope.
 #      Or: `npm login` interactively before running this script.
 #   3. First publish of a scoped package requires --access public.
 #
