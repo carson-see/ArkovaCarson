@@ -62,6 +62,45 @@ export function resolveCtdlType(
   return CTDL_TYPE_MAP[credentialType];
 }
 
+/**
+ * SCRUM-2293 — public, PII-free display labels for ACADEMIC-RECORD credentials.
+ *
+ * An academic record (DEGREE / CERTIFICATE / TRANSCRIPT) emits no issuer- or
+ * extraction-authored free text, so its `ceterms:name` is drawn from here. This
+ * is a DECLARED map, not a derivation: the module's whole argument is that the
+ * name is controlled vocabulary, and controlled vocabulary should be declared.
+ *
+ * It lives beside {@link CTDL_TYPE_MAP} on purpose — adding a credential type
+ * or degree level and forgetting its public label is then a same-file omission,
+ * caught by the exhaustiveness test in `ctdl-type-map.test.ts`.
+ *
+ * A derived camelCase split was rejected: it produced "Master Degree" /
+ * "Bachelor Degree" (not idiomatic English on a partner-facing, CE-Registry-
+ * bound label), rendered a subType-less DEGREE as bare "Degree", and could not
+ * split consecutive capitals at all.
+ */
+export const ACADEMIC_RECORD_LABELS: Record<string, string> = {
+  'ceterms:Degree': 'Academic Degree',
+  'ceterms:AssociateDegree': "Associate's Degree",
+  'ceterms:BachelorDegree': "Bachelor's Degree",
+  'ceterms:MasterDegree': "Master's Degree",
+  'ceterms:DoctoralDegree': 'Doctoral Degree',
+  'ceterms:ProfessionalDegree': 'Professional Degree',
+  'ceterms:Certificate': 'Certificate',
+  // TRANSCRIPT resolves to the generic `ceterms:Credential`, which reads as
+  // nothing at all; name it for what it is.
+  'ceterms:Credential': 'Academic Transcript',
+};
+
+/**
+ * The public name for an academic record, from controlled vocabulary only.
+ * Falls back to a truthful generic rather than inventing a label, so an
+ * unmapped future type degrades honestly instead of emitting a munged string.
+ */
+export function academicRecordName(ctdlType: string): string {
+  return ACADEMIC_RECORD_LABELS[ctdlType] ?? 'Academic Credential';
+}
+
 export function toCtdlCredentialStatusType(status: string): CtdlStatusType | null {
   switch (status) {
     case 'SECURED':

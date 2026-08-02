@@ -39,6 +39,21 @@ import { callRpc } from '../utils/rpc.js';
 import { Sentry } from '../utils/sentry.js';
 import { config } from '../config.js';
 import { findExistingEnvelopeAnchor } from './docusign-anchor-reconciliation.js';
+import { boundedErrorDetail } from '../utils/byte-safety.js';
+
+/**
+ * The ONE way a failure string becomes safe to persist, alert on, or log as a
+ * scalar on this path: length-capped (~500 post-scrub), byte-runs collapsed,
+ * PII scrubbed. Never persist or alert on an unbounded vendor/DB string.
+ *
+ * NOTE: `boundedErrorDetail` emits lowercase placeholder tokens
+ * (`[fingerprint]`, `[uuid]`, `[email]`) where `utils/pii-scrub.ts` emits
+ * uppercase. Harmless today — nothing parses these — but do not build a
+ * consumer that pattern-matches one casing.
+ */
+function boundedReason(raw: string): string {
+  return boundedErrorDetail(raw) ?? 'drain row failed';
+}
 
 /**
  * Strict Zod schema for the `anchors` insert this job persists (CLAUDE.md §1.2:
@@ -824,7 +839,7 @@ async function handleDebitFailure(
   // Truly-terminal debit failures → mark failed + bounded alert. No
   // batch-anchor, no silent drop. The row is reviewable. If the guarded
   // mark-failed matched zero rows the lease was lost — stop, don't count.
-  if (await markFailed(deps, orgId, row.id, debitError ?? 'debit_failed')) {
+  if (await markFailed(deps, orgId, row, debitError ?? 'debit_failed')) {
     deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: debitError ?? 'debit_failed' });
     result.failed += 1;
   } else {
@@ -957,8 +972,16 @@ async function handleRowDrainError(
   debitSucceeded: boolean,
   result: ConnectorArtifactDrainResult,
 ): Promise<void> {
-  const reason = err instanceof Error ? err.message : 'drain row failed';
-  deps.logger.error({ error: err, orgId, artifactId: row.id }, 'connector-artifact row drain failed');
+  // `reason` is the BOUNDED string that gets persisted and alerted on (§1.6A —
+  // see markFailed). `err` is logged alongside it so the STACK survives: for the
+  // DB statement-timeout that motivated this the two are equivalent, but for a
+  // TypeError deeper in materialization the stack is the only thing that
+  // localises the fault. Logger-side redaction of `err` is centralised in
+  // utils/logger.ts (redactErrorSerializer + redactBinaryValues), so logging the
+  // error object here is safe; what must never be unbounded is the string we
+  // PERSIST and alert on.
+  const reason = boundedReason(err instanceof Error ? err.message : 'drain row failed');
+  deps.logger.error({ err, reason, orgId, artifactId: row.id }, 'connector-artifact row drain failed');
 
   if (debitSucceeded) {
     // The charge already landed and the anchor is BROADCASTING. A post-debit
@@ -975,7 +998,7 @@ async function handleRowDrainError(
 
   // Pre-debit failure → terminal `failed`. The guarded mark-failed matching
   // zero rows = lost lease → stop, don't count.
-  if (await markFailed(deps, orgId, row.id, reason)) {
+  if (await markFailed(deps, orgId, row, reason)) {
     deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason });
     result.failed += 1;
   } else {
@@ -1062,12 +1085,42 @@ async function markRequeued(
 async function markFailed(
   deps: ConnectorArtifactDrainDeps,
   orgId: string,
-  id: string,
-  reason: string,
+  row: ConnectorArtifactRow,
+  rawReason: string,
 ): Promise<boolean> {
+  const id = row.id;
+  // Bound HERE, not at the call sites. `handleDebitFailure` passes the raw
+  // PostgREST/Postgres `error.message` straight through, and Postgres
+  // constraint-violation text routinely echoes the offending VALUE. Migration
+  // 0343 grants `SELECT ON connector_artifact TO authenticated` under
+  // `connector_artifact_org_select`, so anything landing in this column is
+  // readable by every member of the org — raw database error text must never
+  // get there. Bounding inside the only writer makes that structural rather
+  // than a rule each future caller has to remember.
+  const reason = boundedReason(rawReason);
+  // Persist the cause ON THE ROW. A terminal `failed` artifact is what an
+  // operator triages, and until this existed the reason was accepted here and
+  // silently dropped — the UPDATE set status only, so the sole surviving copy
+  // was a Sentry alert.
+  //
+  // This is a read-modify-WRITE of the whole `metadata` column from the snapshot
+  // taken at claim time. Safe TODAY because `markFailed` is the only writer of
+  // this column after insert (`enqueue_connector_artifact` is ON CONFLICT DO
+  // NOTHING). The first writer that does `ON CONFLICT DO UPDATE` on `metadata`
+  // gets silently clobbered by this. The durable form is a server-side
+  // `metadata = metadata || jsonb_build_object('drain_error', $1)` in an RPC,
+  // which needs a migration — do that before adding a second writer.
+  const existingMetadata =
+    row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+      ? (row.metadata as Record<string, unknown>)
+      : {};
   const { data, error } = await deps.db
     .from('connector_artifact')
-    .update({ status: 'failed', updated_at: new Date().toISOString() })
+    .update({
+      status: 'failed',
+      metadata: { ...existingMetadata, drain_error: reason },
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', id)
     .eq('org_id', orgId)
     .in('status', ['processing', 'materialized'])
@@ -1076,7 +1129,12 @@ async function markFailed(
   if (error) {
     // A row stuck in-flight because we couldn't even mark it failed is the ONE
     // thing we must never hide — log loudly.
-    deps.logger.error({ error, orgId, artifactId: id, reason }, 'connector-artifact mark-failed failed (row stuck in-flight)');
+    // `reason` is already bounded above; `error` goes through logger.ts's
+    // redacting serializer.
+    deps.logger.error(
+      { error, orgId, artifactId: id, reason },
+      'connector-artifact mark-failed failed (row stuck in-flight)',
+    );
     return false;
   }
   return data != null;
