@@ -1759,7 +1759,13 @@ export const openApiSpec: Record<string, any> = {
             description:
               'API-RICH-01 regulatory control IDs mapped to this anchor. Informational '
               + 'metadata only — see compliance_controls_note, which is always present '
-              + 'alongside this field and states what these identifiers do NOT assert.',
+              + 'alongside this field and states what these identifiers do NOT assert. '
+              + 'OMITTED for records that are not a current anchored credential '
+              + '(REVOKED / EXPIRED / SUPERSEDED / not yet anchored): these identifiers '
+              + 'describe a live compliance posture, so listing them for such a record '
+              + 'would assert something Arkova does not hold (BUG-2026-06-24-007). '
+              + 'Absence is not a statement that the record was never anchored — the '
+              + 'anchor receipt fields are unaffected.',
           },
           compliance_controls_note: {
             type: 'string',

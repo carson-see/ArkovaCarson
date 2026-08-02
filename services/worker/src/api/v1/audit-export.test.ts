@@ -328,6 +328,70 @@ describe('POST /audit-export', () => {
     expect(res.text).toContain('SOC2-CC6.1');
   });
 
+  // The PDF is the human-facing artifact, and an empty controls section is
+  // ambiguous — it could read as "this record never had controls". It must say
+  // WHY, and the two reasons are NOT interchangeable: a revoked record was once
+  // current and has a receipt; a pending one never was and has none.
+  it('PDF explains WHY controls are withheld for a REVOKED credential', async () => {
+    const profileQuery = mockQuery({ data: { org_id: 'org-uuid-1' } });
+    const anchorQuery = mockQuery({
+      data: { ...MOCK_ANCHOR, status: 'REVOKED', revoked_at: '2026-02-01T00:00:00Z' },
+    });
+    const proofQuery = mockQuery({ data: MOCK_PROOF });
+    vi.mocked(db.from).mockImplementation((table: string) => {
+      if (table === 'profiles') return profileQuery as never;
+      if (table === 'anchors') return anchorQuery as never;
+      if (table === 'anchor_proofs') return proofQuery as never;
+      return mockQuery({ data: null }) as never;
+    });
+
+    const res = await request(app)
+      .post('/audit-export')
+      .set('x-test-user-id', 'user-1')
+      .send({ anchorId: 'pub_abc123', format: 'pdf' });
+
+    expect(res.status).toBe(200);
+    const pdf = res.body.toString('latin1');
+    expect(pdf).toContain('Regulatory Compliance Controls');
+    expect(pdf).toMatch(/no longer/);
+    // The live control set must be gone.
+    expect(pdf).not.toContain('CC6.1');
+  });
+
+  it('PDF uses the NOT-YET-ANCHORED wording for a PENDING record', async () => {
+    // The revoked wording claims "its anchor receipt and timestamps above are
+    // unchanged" — false for a record with no receipt at all. Shipping one
+    // string for both states would put a false claim on an auditor artifact.
+    const profileQuery = mockQuery({ data: { org_id: 'org-uuid-1' } });
+    const anchorQuery = mockQuery({
+      data: {
+        ...MOCK_ANCHOR,
+        status: 'PENDING',
+        chain_tx_id: null,
+        chain_block_height: null,
+        chain_timestamp: null,
+        chain_confirmations: null,
+      },
+    });
+    vi.mocked(db.from).mockImplementation((table: string) => {
+      if (table === 'profiles') return profileQuery as never;
+      if (table === 'anchors') return anchorQuery as never;
+      if (table === 'anchor_proofs') return mockQuery({ data: null }) as never;
+      return mockQuery({ data: null }) as never;
+    });
+
+    const res = await request(app)
+      .post('/audit-export')
+      .set('x-test-user-id', 'user-1')
+      .send({ anchorId: 'pub_abc123', format: 'pdf' });
+
+    expect(res.status).toBe(200);
+    const pdf = res.body.toString('latin1');
+    expect(pdf).toMatch(/not completed/);
+    // Must NOT claim a receipt that does not exist.
+    expect(pdf).not.toMatch(/receipt and timestamps above are unchanged/);
+  });
+
   it('includes compliance controls in PDF response', async () => {
     const profileQuery = mockQuery({ data: { org_id: 'org-uuid-1' } });
     const anchorQuery = mockQuery({ data: MOCK_ANCHOR });

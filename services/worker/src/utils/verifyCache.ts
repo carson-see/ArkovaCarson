@@ -18,9 +18,20 @@ const CACHE_TTL_SECONDS = 300; // 5 minutes
 // buildVerificationResult, so without this bump every anchor cached before the
 // deploy would keep serving the retired identifiers with no note for the whole
 // TTL — the exact claim this change exists to stop making.
+// Bumped v3 → v5 for BUG-2026-06-24-007: compliance controls are now WITHHELD for
+// credentials that are no longer current. Without the bump, any revoked anchor
+// cached before the deploy keeps serving the full SOC2/HIPAA/eIDAS set next to
+// `status: REVOKED` for the whole TTL — the exact claim this change removes.
+// `invalidateVerificationCache` does not help: nothing re-fires for an ALREADY
+// revoked/expired anchor.
+//
+// v4 is skipped deliberately. PR #1816 (SCRUM-2575) takes v2 → v4 for its own
+// response-shape change on a branch based on main; going to v5 here keeps the two
+// namespaces distinct in EVERY merge order, so neither can serve the other's shape.
+//
 // Bump again on any response-shape change so post-deploy cache hits don't serve stale
 // thin responses. Old keys age out naturally via TTL.
-const KEY_PREFIX = 'verify:v3:';
+const KEY_PREFIX = 'verify:v5:';
 
 /** Module-level config cache — avoids process.env reads on every request */
 let _redisConfig: { url: string; token: string } | null | undefined;
