@@ -393,6 +393,14 @@ const ConfigSchema = z.object({
    * string so that fail-loud classification stays in the job, not the schema.
    */
   ceApiKeyExpiresAt: z.string().optional(),
+  /**
+   * ENABLE_CE_REGISTRY_DRIFT_CHECK — gate the CE Registry drift reconciliation
+   * cron (`ce-registry-drift.ts`). Default FALSE: the pass makes one OUTBOUND
+   * request per anchored CTID against Credential Engine's public
+   * infrastructure, so it ships dark and is enabled deliberately. Read-only —
+   * it publishes nothing to CE.
+   */
+  enableCeRegistryDriftCheck: boolFlag(false),
 
   // Arize observability (SCRUM-1067)
   /** ARIZE_TRACING_ENABLED — initialize OTLP exporter when true and creds present. */
@@ -831,6 +839,7 @@ function loadConfig(): Config {
     // the single source of truth.
     enableCeKeyExpiryAlerts: process.env.ENABLE_CE_KEY_EXPIRY_ALERTS,
     ceApiKeyExpiresAt: process.env.CE_API_KEY_EXPIRES_AT,
+    enableCeRegistryDriftCheck: process.env.ENABLE_CE_REGISTRY_DRIFT_CHECK,
     arizeTracingEnabled: process.env.ARIZE_TRACING_ENABLED,
     arizeTracingConsole: process.env.ARIZE_TRACING_CONSOLE,
     arizeApiKey: process.env.ARIZE_API_KEY,

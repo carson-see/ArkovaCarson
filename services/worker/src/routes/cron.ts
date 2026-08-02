@@ -101,6 +101,7 @@ import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migrati
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { runConnectorHealthCheck } from '../jobs/connector-health-alert.js';
 import { runCeKeyExpiryCheck } from '../jobs/ce-key-expiry-alert.js';
+import { runCeRegistryDriftCheck } from '../jobs/ce-registry-drift.js';
 import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
 import {
   runPipelineThroughputMonitor,
@@ -675,6 +676,34 @@ cronRouter.post('/ce-key-expiry-check', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'CE key expiry check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── CE Registry drift reconciliation (read-only read-back) ───
+// Re-reads every anchored CE Registry CTID from the PUBLIC registry, re-hashes
+// the bytes, and records a finding wherever the registry's current content no
+// longer matches what we anchored. Read-only: it publishes NOTHING to
+// Credential Engine. Gated by ENABLE_CE_REGISTRY_DRIFT_CHECK (default FALSE) —
+// with the flag off this route returns `skipped:true` and makes no outbound
+// request, so the surface is dark until deliberately enabled. No Cloud
+// Scheduler job is created by this PR; standing it up is a separate,
+// intentional ops step.
+cronRouter.post('/ce-registry-drift-check', async (req, res) => {
+  try {
+    const rawLimit = req.query.limit ?? req.body?.limit;
+    const parsedLimit = rawLimit === undefined ? undefined : Number.parseInt(String(rawLimit), 10);
+    const result = await runCeRegistryDriftCheck({
+      limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+    });
+    // A load failure reconciled NOTHING. Answering 200 would hand Cloud
+    // Scheduler a success for a pass that did no work — the job carries a
+    // `loadFailed` field precisely so this is distinguishable, and burying it in
+    // a 200 body throws that distinction away at the only layer that acts on it.
+    // 500 so Scheduler retries.
+    res.status(result.loadFailed ? 500 : 200).json(result);
+  } catch (error) {
+    logger.error({ error }, 'CE registry drift check failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

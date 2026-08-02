@@ -357,6 +357,22 @@ vi.mock('../jobs/stuck-anchor-monitor.js', () => ({
   runStuckAnchorCheck: (...args: unknown[]) => mockRunStuckAnchorCheck(...args),
 }));
 
+// CE Registry drift reconciliation cron route.
+const mockRunCeRegistryDriftCheck = vi.fn().mockResolvedValue({
+  skipped: false,
+  checked: 3,
+  match: 3,
+  drifted: 0,
+  withdrawn: 0,
+  unreachable: 0,
+  truncated: false,
+  loadFailed: false,
+  reportFailures: 0,
+});
+vi.mock('../jobs/ce-registry-drift.js', () => ({
+  runCeRegistryDriftCheck: (...args: unknown[]) => mockRunCeRegistryDriftCheck(...args),
+}));
+
 const mockRunPipelineThroughputMonitor = vi.fn().mockResolvedValue({
   healthy: true,
   alertFired: false,
@@ -2799,6 +2815,70 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/reconcile-credit-conservation');
       expect(res.status).toBe(401);
       expect(mockRunCreditConservationReconciler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /ce-registry-drift-check', () => {
+    it('returns the reconciliation summary on a clean pass', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/ce-registry-drift-check');
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ checked: 3, match: 3, loadFailed: false });
+      expect(mockRunCeRegistryDriftCheck).toHaveBeenCalled();
+    });
+
+    it('returns 200 when the flag is off — a deliberate skip is not a failure', async () => {
+      mockRunCeRegistryDriftCheck.mockResolvedValueOnce({
+        skipped: true, checked: 0, match: 0, drifted: 0, withdrawn: 0,
+        unreachable: 0, truncated: false, loadFailed: false, reportFailures: 0,
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/ce-registry-drift-check');
+      expect(res.status).toBe(200);
+      expect(res.body.skipped).toBe(true);
+    });
+
+    // The whole point of the job's `loadFailed` field is that a pass which
+    // reconciled NOTHING is distinguishable from one that found nothing to do.
+    // Answering 200 would throw that distinction away at the only layer that
+    // acts on it: Cloud Scheduler would bank a success and never retry.
+    it('returns 500 when the load failed, so Scheduler retries', async () => {
+      mockRunCeRegistryDriftCheck.mockResolvedValueOnce({
+        skipped: false, checked: 0, match: 0, drifted: 0, withdrawn: 0,
+        unreachable: 0, truncated: false, loadFailed: true, reportFailures: 0,
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/ce-registry-drift-check');
+      expect(res.status).toBe(500);
+      expect(res.body.loadFailed).toBe(true);
+    });
+
+    it('returns 200 for an empty cohort — nothing to check is not a failure', async () => {
+      mockRunCeRegistryDriftCheck.mockResolvedValueOnce({
+        skipped: false, checked: 0, match: 0, drifted: 0, withdrawn: 0,
+        unreachable: 0, truncated: false, loadFailed: false, reportFailures: 0,
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/ce-registry-drift-check');
+      expect(res.status).toBe(200);
+      expect(res.body.checked).toBe(0);
+    });
+
+    it('clamps a caller-supplied limit down to the job, ignoring garbage', async () => {
+      const app = createApp();
+      await request(app).post('/cron/ce-registry-drift-check?limit=7');
+      expect(mockRunCeRegistryDriftCheck).toHaveBeenLastCalledWith({ limit: 7 });
+
+      await request(app).post('/cron/ce-registry-drift-check?limit=not-a-number');
+      expect(mockRunCeRegistryDriftCheck).toHaveBeenLastCalledWith({ limit: undefined });
+    });
+
+    it('is protected by cronAuth — 401 unauthenticated in production', async () => {
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      const app = createApp();
+      const res = await request(app).post('/cron/ce-registry-drift-check');
+      expect(res.status).toBe(401);
+      expect(mockRunCeRegistryDriftCheck).not.toHaveBeenCalled();
     });
   });
 });
