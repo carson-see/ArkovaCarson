@@ -254,8 +254,16 @@ export const calibrationWorkflowMachine = defineMachine({
         domains: {
           Calibrations: ids({ prefix: "c", size: 4 }),
         },
+        // Budgeted AT the 100_000 graph-equivalence cap, but the estimator puts
+        // this tier at 1_048_576, so `check --tier nightly` failed with
+        // "Estimated state count 1_048_576 exceeds budget 100_000" and the tier
+        // had never run. Equivalence cannot cover a machine this size, so
+        // disable it here and budget against the real raw product (same
+        // resolution as drainRunAccounting). Domain size unchanged; the `pr`
+        // tier keeps equivalence on.
+        graphEquivalence: false,
         budgets: {
-          maxEstimatedStates: 100_000,
+          maxEstimatedStates: 1_200_000,
         },
       },
     },
