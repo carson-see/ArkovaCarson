@@ -6561,6 +6561,16 @@ export type Database = {
         Args: { p_password: string; p_token: string }
         Returns: Json
       }
+      admin_adjust_org_credit: {
+        Args: {
+          p_actor: string
+          p_amount: number
+          p_idempotency_key: string
+          p_org_id: string
+          p_reason: string
+        }
+        Returns: Json
+      }
       admin_change_user_role: {
         Args: { p_new_role: string; p_user_id: string }
         Returns: undefined

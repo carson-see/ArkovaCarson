@@ -1794,6 +1794,39 @@ export const TREASURY_LABELS = {
 } as const;
 
 // =============================================================================
+// ADMIN ORG CREDIT ADJUST (L2-A5 — founder admin-controls: platform-admin
+// add/remove on an organization's credit balance)
+// =============================================================================
+
+export const ADMIN_CREDIT_ADJUST_LABELS = {
+  COLUMN_LABEL: 'Credits',
+  BUTTON_LABEL: 'Adjust credits',
+  BUTTON_TITLE: 'Adjust credit balance',
+  DIALOG_TITLE: 'Adjust credits',
+  DIALOG_DESCRIPTION: (orgName: string) => `Add or remove credits for ${orgName}.`,
+  CURRENT_BALANCE_LABEL: 'Current balance',
+  ACTION_ADD: 'Add credits',
+  ACTION_REMOVE: 'Remove credits',
+  AMOUNT_LABEL: 'Amount',
+  REASON_LABEL: 'Reason',
+  REASON_PLACEHOLDER: 'Why are you adjusting this balance? Shown in the audit log.',
+  REASON_REQUIRED_ERROR: 'Enter a reason for this adjustment.',
+  AMOUNT_REQUIRED_ERROR: 'Enter a whole number of credits greater than zero.',
+  REVIEW_BUTTON: 'Review',
+  BACK_BUTTON: 'Back',
+  CONFIRM_BUTTON: 'Confirm adjustment',
+  CONFIRMING_BUTTON: 'Adjusting…',
+  CONFIRM_SUMMARY_ADD: (amount: string, orgName: string) => `Add ${amount} credits to ${orgName}.`,
+  CONFIRM_SUMMARY_REMOVE: (amount: string, orgName: string) => `Remove ${amount} credits from ${orgName}.`,
+  NEW_BALANCE_LABEL: 'New balance',
+  SUCCESS_ADD: (amount: string, orgName: string) => `Added ${amount} credits to ${orgName}.`,
+  SUCCESS_REMOVE: (amount: string, orgName: string) => `Removed ${amount} credits from ${orgName}.`,
+  ERROR_INSUFFICIENT_BALANCE: 'Cannot remove more credits than the organization has.',
+  ERROR_GENERIC: 'Failed to adjust credits.',
+  UNKNOWN_BALANCE: '—',
+} as const;
+
+// =============================================================================
 // DATA ERROR BANNER (SCRUM-1260 R1-6 /simplify carry-over)
 // =============================================================================
 //
