@@ -454,6 +454,23 @@ export interface BatchAnchorResult {
   batchId: string | null;
   merkleRoot: string | null;
   txId: string | null;
+  /**
+   * BUG-2026-08-01-F9: set ONLY when this result represents a definitive,
+   * atomically-resolved broadcast rejection (`isBroadcastRejectedError` —
+   * the node examined the signed tx and refused it, e.g. UTXO contention
+   * with a concurrently-broadcasting org) that was successfully unwound
+   * back to PENDING. `processed: 0` alone is ambiguous — it is also the
+   * shape of "nothing was due", a HOLD/DEFER on an uncertain outcome
+   * (auth/quota/transport failure — the tx may still be live), and an
+   * unresolved reject where the cohort stays BROADCASTING/protected. Only
+   * the fully-unwound definitive reject sets this field, so callers
+   * (org-queue-scheduler.ts, /api/queue/run) can record the run honestly
+   * instead of as a plain success. This is expected to self-heal on the
+   * next drain (the condition, usually a transient UTXO race, typically
+   * clears) — callers should treat it as a recorded outcome to distinguish
+   * from a no-op, not necessarily as an operator page.
+   */
+  rejectedReason?: string;
 }
 
 interface LeafForProof {
@@ -1789,7 +1806,10 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
         );
         return { processed: 0, batchId, merkleRoot: tree.root, txId: prepared.txId };
       }
-      return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
+      // Fully unwound: the cohort is provably back to PENDING and the credit
+      // refund/compensation committed. Safe (and required — BUG-2026-08-01-F9)
+      // to tell the caller this was a resolved rejection, not a no-op.
+      return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null, rejectedReason: errMessage(error) };
     }
 
     // Normalize: an empty provider txid (already-known == success) falls back

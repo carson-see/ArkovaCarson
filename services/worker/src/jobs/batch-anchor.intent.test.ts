@@ -1081,6 +1081,27 @@ describe('#1417-HIGH — Phase 3c: only a definitive reject unwinds; auth/quota/
     expect(proofDeletes).toHaveLength(0);
   });
 
+  // BUG-2026-08-01-F9: a definitive, resolved broadcast rejection (e.g. UTXO
+  // contention when a concurrently-scheduled org's broadcast consumed the
+  // treasury's UTXOs first) returns the SAME processed:0 shape as "nothing was
+  // due" unless the result explicitly signals the rejection. Observed live in
+  // prod 2026-08-01T18:49:31Z (org 40383eb2-f1cd-4a85-8099-afafff95e5cf):
+  // organization_queue_runs recorded status='succeeded', processed_count=0,
+  // error=NULL for a run that WAS a definitive reject — indistinguishable from
+  // a quiet no-op to anyone reading run history. This assertion pins that the
+  // result carries a `rejectedReason` so a caller (org-queue-scheduler.ts,
+  // /api/queue/run) can record the run honestly instead of as a plain success.
+  it('genuine reject sets BatchAnchorResult.rejectedReason so callers can distinguish it from "nothing due" (BUG-2026-08-01-F9)', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    mockBroadcastSigned.mockRejectedValue(new BroadcastRejectedError('min relay fee not met (code -26)', -26));
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result.processed).toBe(0);
+    expect(result.rejectedReason).toBeTruthy();
+    expect(result.rejectedReason).toContain('min relay fee not met');
+  });
+
   it('genuine reject surfaced as RpcApplicationError from sendrawtransaction → unwind DOES fire', async () => {
     mockClaimReturns(CLAIMED_OUT_OF_ORDER);
     mockBroadcastSigned.mockRejectedValue(new RpcApplicationError('bad-txns-inputs-missingorspent (code -25)', -25, 500));
@@ -1092,6 +1113,18 @@ describe('#1417-HIGH — Phase 3c: only a definitive reject unwinds; auth/quota/
       ([name, params]) => name === 'resolve_anchor_txid_journal' && params.p_action === 'REVERT',
     )).toBe(true);
     expect(proofDeletes).toHaveLength(0);
+    // BUG-2026-08-01-F9: same signal must be present on the RpcApplicationError
+    // reject path, not just BroadcastRejectedError.
+    expect(result.rejectedReason).toBeTruthy();
+  });
+
+  it('non-reject failures (HOLD/DEFER outcomes) do NOT set rejectedReason — only a resolved, unwound rejection does', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    mockBroadcastSigned.mockRejectedValue(new HttpError('unauthorized', 401));
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result.rejectedReason).toBeUndefined();
   });
 });
 
