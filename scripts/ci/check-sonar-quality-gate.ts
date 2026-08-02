@@ -4,7 +4,7 @@
  *
  * The SonarCloud project quality gate is configured in the SonarCloud UI,
  * not in git. This script polls the SonarCloud API and asserts the gate
- * matches the contract documented in `sonar-project.properties`, and that
+ * matches the contract documented in `.sonarcloud.properties`, and that
  * the project New Code Definition cannot drift back to `previous_version`:
  *
  *   - new_coverage ≥ 80
@@ -15,6 +15,20 @@
  *
  * If any condition is missing, mismatched, or weaker than the contract,
  * exits non-zero so the PR cannot merge.
+ *
+ * SCOPE — this verifies the gate DEFINITION, not that analysis is running or
+ * that every condition can fire. Two known gaps it does not and cannot cover
+ * (see `.sonarcloud.properties` for the full write-up, both verified
+ * 2026-08-01):
+ *   - `new_coverage` is asserted here and IS defined on the gate, but the
+ *     project runs SonarCloud Automatic Analysis, which imports no coverage
+ *     report. `coverage`/`new_coverage` have never held a value, so this
+ *     condition never fires. Real coverage enforcement is the per-file vitest
+ *     thresholds. The assertion is kept so the condition survives for a future
+ *     migration to CI-based analysis.
+ *   - main-branch analysis has not run since 2026-05-06, so the main
+ *     `alert_status` this gate governs is a stale snapshot. Gate CONFIG being
+ *     green says nothing about analysis freshness.
  *
  * Skipped when `SONARCLOUD_TOKEN` is unset (local dev / non-CI runs).
  *
@@ -295,7 +309,7 @@ async function main(): Promise<void> {
 
   console.error(`SCRUM-1304/SCRUM-1681 ❌ SonarCloud project "${PROJECT_KEY}" does NOT satisfy the CI contract:`);
   if (!result.ok) {
-    console.error(`Quality Gate "${safeGateName}" does NOT satisfy sonar-project.properties:`);
+    console.error(`Quality Gate "${safeGateName}" does NOT satisfy .sonarcloud.properties:`);
   }
   for (const m of result.missing) console.error(`  missing condition: ${m}`);
   for (const w of result.weak) console.error(`  too weak:          ${w}`);
