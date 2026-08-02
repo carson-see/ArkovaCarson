@@ -2425,6 +2425,26 @@ export const AUTH_FORM_LABELS = {
   CREATING_ACCOUNT: 'Creating account...',
 } as const;
 
+/**
+ * SCRUM-2907 — copy for a confirmation link that did not work.
+ *
+ * Supabase signals a dead link with `error`/`error_code` on the redirect hash
+ * and creates no session. Previously the app could not tell that apart from
+ * "not signed in yet" and silently redirected to the login form, so a user
+ * whose link had expired saw no explanation and had no route forward.
+ */
+export const AUTH_CALLBACK_LABELS = {
+  COMPLETING: 'Completing sign in...',
+  EXPIRED_TITLE: 'This link has expired',
+  EXPIRED_DESCRIPTION:
+    'Verification links are single-use and time-limited. Request a new link to finish setting up your account.',
+  FAILED_TITLE: 'We could not complete sign in',
+  FAILED_DESCRIPTION:
+    'Something went wrong verifying this link. Try again, or request a new link.',
+  REQUEST_NEW_LINK: 'Request a new link',
+  BACK_TO_SIGN_IN: 'Back to sign in',
+} as const;
+
 export const BETA_GATE_LABELS = {
   DESCRIPTION: 'Arkova is in closed beta. Enter your invite code to create an account.',
   CODE_LABEL: 'Invite code',
