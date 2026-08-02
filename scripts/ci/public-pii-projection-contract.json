@@ -1,0 +1,307 @@
+{
+  "$comment": [
+    "SHARED CONTRACT for outbound public-projection PII suppression.",
+    "",
+    "Arkova has TWO independent public, unauthenticated projections of the same",
+    "anchor rows, written in two languages:",
+    "",
+    "  1. SQL   — public.get_public_anchor(text) and its delegating sibling",
+    "             public.get_public_anchor_by_fingerprint(text), both GRANTed to",
+    "             `anon` and called straight from the browser over PostgREST by",
+    "             the verify page, the embeddable widget, and the edge MCP tools.",
+    "  2. TS    — services/worker/src/ctdl/ctdl-pii-guard.ts, behind",
+    "             GET /api/v1/credentials/:publicId/ctdl.",
+    "",
+    "They drifted, and the drift IS the defect: the CTDL path was hardened",
+    "(PR #1815) while the SQL path kept shipping learner names and raw",
+    "revocation reasons to anonymous callers. This file is the one place the",
+    "rule is written down, so neither implementation can be changed alone.",
+    "",
+    "Enforced by src/tests/public-anchor-pii-projection.contract.test.ts (static,",
+    "always runs) and tests/rls/public-anchor-pii-projection.test.ts (live DB,",
+    "runs the vector corpus through the real anon-callable RPC).",
+    "",
+    "TO CHANGE THE RULE: edit this file, then BOTH implementations, in ONE PR.",
+    "The tests fail otherwise — which is the entire point."
+  ],
+
+  "sql_owner_migration": "supabase/migrations/0385_public_anchor_academic_record_pii_projection.sql",
+  "ts_owner_module": "services/worker/src/ctdl/ctdl-pii-guard.ts",
+  "ts_owner_pending_pr": 1815,
+  "ts_pre_1815_module": "services/worker/src/ctdl/ctdl-serializer.ts",
+  "ferpa_module": "services/worker/src/constants/ferpa.ts",
+  "$ts_owner_note": [
+    "ts_owner_module does not exist on main yet — it lands with PR #1815 (open,",
+    "out of draft). The contract test asserts its absence today and asserts full",
+    "parity the moment the file appears, so this arms itself with no follow-up",
+    "ticket. When #1815 merges, ts_owner_pending_pr becomes historical; leave it",
+    "as the record of why the self-arming branch exists.",
+    "",
+    "DO NOT read this as 'the two implementations agree on main today'. They do",
+    "not. main's TS-side gate still lives in ts_pre_1815_module, and it is the",
+    "PRE-fix implementation that #1815 replaces. Measured divergences from this",
+    "contract, as of 2026-08-01:",
+    "  - gates on DEGREE/CERTIFICATE only, AND requires a transcript keyword in",
+    "    the free text; TRANSCRIPT is never gated by type. That is the bug #1815",
+    "    fixes and the reason the SQL side could not simply copy it.",
+    "  - no MAX_SCAN_CHARS; detectors run unbounded.",
+    "  - 3 high-confidence families (email, SSN, phone), not 7.",
+    "  - its SSN pattern makes separators OPTIONAL, so it fires on any bounded",
+    "    9-digit run. The SQL side deliberately does not copy that: on a public",
+    "    projection it would blank real fields containing an order number or a",
+    "    numeric URL path segment.",
+    "The SQL detectors were verified vector-for-vector against #1815's guard, not",
+    "against ts_pre_1815_module. Parity with main becomes true when #1815 lands,",
+    "and the self-arming test starts enforcing it the same moment."
+  ],
+
+  "academic_record_credential_types": ["CERTIFICATE", "DEGREE", "TRANSCRIPT"],
+  "$academic_record_note": [
+    "Records ABOUT AN IDENTIFIED LEARNER. These emit NO issuer- or",
+    "extraction-authored free text on either public projection.",
+    "CPE/CLE are deliberately EXCLUDED: practitioner records, not FERPA academic",
+    "records, and their descriptive title is the partner-facing value.",
+    "EVERY addition to this set silently replaces real credential titles with",
+    "generic ones."
+  ],
+
+  "sql_academic_controlled_labels": {
+    "TRANSCRIPT": "Academic Transcript",
+    "DEGREE": "Academic Degree",
+    "CERTIFICATE": "Certificate"
+  },
+  "$controlled_label_divergence": [
+    "The CTDL serializer's academicRecordName() resolves a degree LEVEL from the",
+    "CTDL @type map ('Master Degree'). That map does not exist in the database,",
+    "so the SQL projection flattens DEGREE to 'Academic Degree'. TRANSCRIPT ->",
+    "'Academic Transcript' and CERTIFICATE -> 'Certificate' match the TS side",
+    "exactly. This divergence is DOCUMENTED, not silent — both labels are still",
+    "controlled vocabulary derived only from an enum, so neither can carry PII.",
+    "",
+    "COPY SURFACE: these strings are USER-VISIBLE (the verify page renders",
+    "`filename` as the display title and embeds it in schema.org JSON-LD) but",
+    "they live in SQL, so `npm run lint:copy` cannot see them. If you widen this",
+    "map, check the new label against the CLAUDE.md §1.3 banned-terminology list",
+    "BY HAND — no linter covers this surface."
+  ],
+
+  "ferpa_education_types": ["CERTIFICATE", "CLE", "DEGREE", "TRANSCRIPT"],
+  "$ferpa_note": [
+    "A THIRD education-type list lives in ferpa_module and deliberately DIFFERS:",
+    "it includes CLE. It drives the FERPA §99.33 re-disclosure NOTICE on the",
+    "verification API, not free-text suppression, and a continuing-legal-education",
+    "record is a practitioner record whose descriptive title is the partner-facing",
+    "value. Two lists with two purposes is fine. Two lists where nobody knows the",
+    "second exists is how this class of bug happens — so the contract test pins it,",
+    "and changing it is a decision rather than an accident."
+  ],
+
+  "sql_academic_suppressed_fields": [
+    "metadata.title",
+    "metadata.credential_title",
+    "metadata.description",
+    "metadata.category",
+    "revocation_reason"
+  ],
+  "sql_academic_controlled_fields": ["filename"],
+  "sql_non_academic_fallback_label": "Secured Document",
+  "$fallback_label_note": [
+    "The label a NON-academic record falls back to when its filename is dropped",
+    "by the value gate. Pinned here because it is a USER-VISIBLE string that",
+    "lives in SQL, so `npm run lint:copy` cannot see it and nothing else asserts",
+    "it. Check any replacement against the CLAUDE.md §1.3 banned-terminology list",
+    "by hand."
+  ],
+  "$suppressed_vs_controlled": [
+    "`filename` is the record's DISPLAY TITLE on the verify page and is embedded",
+    "in its schema.org JSON-LD, so it cannot be NULLed without breaking consumers",
+    "that assume a non-empty string — it takes a controlled label instead. It is",
+    "the ONLY controlled field.",
+    "",
+    "metadata.title and metadata.credential_title are OMITTED rather than given",
+    "the label. Emitting it there would leave the `metadata` object non-empty",
+    "after jsonb_strip_nulls, which flips the verify card out of its 'no metadata'",
+    "render mode into the key-value list — where neither key is hidden — and the",
+    "card would read 'Title: Academic Degree' and 'Credential Title: Academic",
+    "Degree' beneath a type banner that already says 'Academic Degree'. Omitting",
+    "preserves the existing render shape and states the label exactly once."
+  ],
+
+  "ungated_keys": [],
+  "$ungated_keys_note": [
+    "Keys the projection emits WITHOUT a value gate and WITHOUT being structural.",
+    "Empty is the goal. The contract test DERIVES the actual set from the latest",
+    "migration that redefines get_public_anchor and fails if it differs from this",
+    "list — so per-field wrapping, which is opt-in and therefore ungated by",
+    "default, becomes a reviewed decision instead of an accident. Adding a key",
+    "here requires stating why it is safe."
+  ],
+
+  "projection_keys": [
+    "anchor_timestamp", "approved_provider_name", "bitcoin_block", "category",
+    "ce_envelope_sha256", "cle_metadata", "course_title", "cpe_metadata",
+    "created_at", "credential_id_hash", "credential_title", "credential_type",
+    "credit_hours", "delivery_format", "delivery_method", "description",
+    "ethics_hours", "evidence_package_hash", "evidence_schema_version",
+    "expires_at", "expiry_date", "extraction_confidence",
+    "extraction_manifest_hash", "extraction_method", "fetched_at",
+    "field_of_study", "file_size", "filename", "fingerprint",
+    "fingerprint_source", "issued_at", "issued_date", "issuer", "issuer_name",
+    "issuer_public_id", "jurisdiction", "merkle_proof_hash", "metadata",
+    "nasba_lookup_date", "nasba_status", "network_receipt_id", "proof_url",
+    "provider_approval_status", "provider_lookup_date", "public_id",
+    "record_uri", "registry_url", "requires_manual_review", "revocation_reason",
+    "revoked_at", "secured_at", "source_id", "source_payload_byte_length",
+    "source_payload_content_type", "source_payload_hash", "source_provider",
+    "source_url", "status", "superseded_at", "title", "verification_level",
+    "verified"
+  ],
+  "$projection_keys_note": [
+    "EVERY `'key', <expr>` pair the contract test must find in the latest",
+    "redefiner of get_public_anchor. Pinned because the derived gate is only as",
+    "honest as its parse: an empty 'ungated' result means BOTH 'everything is",
+    "gated' AND 'the matcher stopped matching', and those must not be",
+    "indistinguishable. Set equality here makes a parse that silently stops",
+    "seeing keys fail LOUDLY instead of reporting a clean bill of health.",
+    "",
+    "Adding a key to the projection therefore requires adding it here — which is",
+    "the point: a new public key is a reviewed decision. Classify it as",
+    "structural_keys (no cleaner needed) or leave it out of that list, in which",
+    "case it MUST route through a cleaner.",
+    "",
+    "`recipient` and `recipient_identifier` are absent on purpose. Neither is a",
+    "projected free-text key: the first is the raw SELECT input consumed by the",
+    "keyed HMAC, the second is that HMAC's output. Both are asserted by the",
+    "dedicated 'keeps the recipient identifier a KEYED HMAC' test."
+  ],
+
+  "structural_keys": [
+    "anchor_timestamp", "bitcoin_block", "cle_metadata", "cpe_metadata",
+    "created_at", "credential_type", "expires_at", "expiry_date", "file_size",
+    "fingerprint", "fingerprint_source", "issued_at", "issued_date",
+    "issuer_public_id", "merkle_proof_hash", "metadata", "network_receipt_id",
+    "public_id", "record_uri", "revoked_at", "secured_at", "status",
+    "superseded_at", "verified"
+  ],
+  "$structural_keys_note": [
+    "The ONLY keys exempt from the cleaner requirement: verification-bearing or",
+    "structural values that carry no issuer- or extraction-authored free text —",
+    "enums (status, credential_type, fingerprint_source), timestamps, chain",
+    "facts (bitcoin_block, network_receipt_id), sizes, the derived record_uri,",
+    "opaque identifiers (public_id, issuer_public_id, fingerprint), the literal",
+    "NULL merkle_proof_hash, and the three container keys whose CHILDREN are",
+    "each gated in their own right (metadata, cpe_metadata, cle_metadata).",
+    "",
+    "This list is an ALLOW-list and the gate FAILS CLOSED against it: any key",
+    "not named here must call a cleaner. The earlier design was the inverse — it",
+    "tried to RECOGNISE anchor-controlled expressions and skipped everything it",
+    "did not recognise, so it was blind to the `g.safe_metadata ->> '...'` alias",
+    "that 0385 itself introduced, and to every source expression a future",
+    "migration might invent. Recognising danger fails open; recognising safety",
+    "fails closed."
+  ],
+
+  "max_public_url_chars": 2048,
+  "$url_note": [
+    "Emitted URLs (proof_url, source_url, registry_url) go through a URL-specific",
+    "cleaner that DROPS on overflow instead of truncating. Truncating a URL",
+    "produces a valid-looking WRONG link that the frontend renders as a live",
+    "anchor — strictly worse than omitting the field. Query string and fragment",
+    "are stripped BEFORE the PII scan: structural, not heuristic, since a query",
+    "parameter is the carrier an identifier rides in on."
+  ],
+
+  "high_confidence_detector_families": [
+    "email",
+    "ssn_separated",
+    "ssn_keyword",
+    "us_phone",
+    "international_phone",
+    "date_of_birth_keyword",
+    "student_id_keyword"
+  ],
+  "sql_implements_learner_name_heuristics": false,
+  "$learner_name_divergence": [
+    "The CTDL serializer carries two capitalised-pair name patterns for",
+    "field-level suppression. The SQL projection deliberately does NOT implement",
+    "them. Measured, not assumed:",
+    "",
+    "  TRUE POSITIVES: zero. Run against this file's own leak_vectors, both",
+    "  patterns return false for every single one — bare, all-caps, non-ASCII,",
+    "  record-noun-first, apostrophe, hyphenated. `[A-Z][a-z]{1,}` cannot express",
+    "  those shapes. Both implementations agree on this; it is the empirical",
+    "  confirmation of PR #1815's own finding.",
+    "",
+    "  FALSE POSITIVES: abundant, because `for` is a bare preposition. 'Center",
+    "  for Professional Development', 'Society for Human Resource Management',",
+    "  'Institute for Supply Management', 'Ethics for Trial Lawyers', 'Credit for",
+    "  Prior Learning', 'Revoked for Non Payment' — all dropped. The second",
+    "  pattern takes ordinary titles the same way: 'Data Science degree',",
+    "  'Project Management certificate'.",
+    "",
+    "A detector with zero measured true positives and abundant measured false",
+    "positives has negative value, and the cost is higher here than on the CTDL",
+    "path: these fields are the verify page's PRIMARY DISPLAY (`filename` is the",
+    "record title and its schema.org `name`), not optional JSON-LD properties.",
+    "Learner names ARE covered on this path, structurally — an academic record",
+    "emits no issuer- or extraction-authored free text at all, which is",
+    "precision-independent and catches every shape above.",
+    "",
+    "The false-positive strings are pinned in must_publish_vectors, so",
+    "reintroducing the patterns fails the suite rather than silently blanking",
+    "real credentials."
+  ],
+  "$detector_note": [
+    "High-confidence detectors are FORMAT- or KEYWORD-anchored, run on every",
+    "credential type, and are the only ones precise enough to act on alone."
+  ],
+
+  "max_scan_chars": 4000,
+
+  "high_confidence_vectors": [
+    { "text": "Revoked — contact registrar jane.doe@example.edu for details", "family": "email" },
+    { "text": "Issued to holder; SSN 123-45-6789 on file", "family": "ssn_separated" },
+    { "text": "Record ssn: 123456789 archived", "family": "ssn_keyword" },
+    { "text": "Questions? Call (415) 555-0142 during office hours", "family": "us_phone" },
+    { "text": "Registrar line +44 20 7946 0958 for verification", "family": "international_phone" },
+    { "text": "Candidate DOB 1994-02-11 verified against photo ID", "family": "date_of_birth_keyword" },
+    { "text": "Awarded under student ID 88123456 in the spring cohort", "family": "student_id_keyword" }
+  ],
+
+  "must_publish_vectors": [
+    { "text": "Issued by Johns Hopkins University", "why": "real institution name — a name heuristic wrongly blocked 28 of 32 of these" },
+    { "text": "Issued by Red Hat", "why": "real institution name, two capitalised tokens" },
+    { "text": "Issued by Carnegie Mellon", "why": "real institution name, two capitalised tokens" },
+    { "text": "Introduction to Machine Learning", "why": "ordinary credential title" },
+    { "text": "Advanced Cardiac Life Support", "why": "ordinary credential title" },
+    { "text": "https://issuer.example.org/proof/123456789/record", "why": "numeric path segment must not read as an unseparated SSN" },
+    { "text": "PHIL 2020 Introduction to Ethics", "why": "course code must not read as a student ID" },
+    { "text": "Academic year 2024-2025", "why": "a bare date is not PII without its keyword" },
+    { "text": "Completed 12 contact hours of continuing education", "why": "ordinary CE description" },
+    { "text": "Center for Professional Development", "why": "real issuer name — the `for` preposition made the name heuristic drop this" },
+    { "text": "Society for Human Resource Management", "why": "real issuer name killed by the `for` trigger" },
+    { "text": "Institute for Supply Management", "why": "real issuer name killed by the `for` trigger" },
+    { "text": "Alliance for Continuing Education", "why": "real issuer name killed by the `for` trigger" },
+    { "text": "Ethics for Trial Lawyers", "why": "real CLE course title killed by the `for` trigger" },
+    { "text": "Credit for Prior Learning", "why": "real credential title killed by the `for` trigger" },
+    { "text": "Revoked for Non Payment", "why": "ordinary revocation reason killed by the `for` trigger" },
+    { "text": "Data Science degree", "why": "ordinary title killed by the name-first credential-noun pattern" },
+    { "text": "Project Management certificate", "why": "ordinary title killed by the name-first credential-noun pattern" }
+  ],
+
+  "$leak_vectors_note": [
+    "These are the shapes the LIVE defect published to anonymous callers. They",
+    "are proved closed end-to-end by the live suite, which seeds them into a",
+    "real anchor row and reads the projection back as an ANON client.",
+    "The bare-name cases are covered STRUCTURALLY (academic record => no free",
+    "text at all), never by a name detector."
+  ],
+  "leak_vectors": [
+    { "text": "Jane Doe", "shape": "bare name as the entire field" },
+    { "text": "MARIA GONZALEZ", "shape": "all-caps name" },
+    { "text": "José García", "shape": "non-ASCII name" },
+    { "text": "Transcript: Jane Doe", "shape": "record-noun-first order" },
+    { "text": "Official transcript for Michael O'Brien", "shape": "apostrophe name behind a relational trigger" },
+    { "text": "Bachelor of Science awarded to Ana-Lucia Fernandez", "shape": "hyphenated name mid-string" }
+  ]
+}
