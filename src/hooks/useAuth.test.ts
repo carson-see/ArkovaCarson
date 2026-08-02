@@ -156,7 +156,11 @@ describe('useAuth', () => {
       await result.current.signUp('redirect@test.com', 'unit-test-credential');
     });
 
-    const options = mockSignUp.mock.calls.at(-1)?.[0]?.options as
+    // Index access, not `.at(-1)`: `tsconfig.build.json` (the Vercel-safe
+    // config CI type-checks with) targets a lib without Array.prototype.at,
+    // so `.at()` passes the root tsconfig locally and fails the build check.
+    const calls = mockSignUp.mock.calls;
+    const options = calls[calls.length - 1]?.[0]?.options as
       | { emailRedirectTo?: string }
       | undefined;
     expect(options?.emailRedirectTo).toBe(`${window.location.origin}/auth/callback`);
