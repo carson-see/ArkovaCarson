@@ -177,7 +177,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/MerkleProofResponse"
         "404":
-          description: No proof available
+          description: >-
+            No proof available. Two distinct states, discriminated by
+            `proof_error_code`: `NO_BATCH_PROOF` (the record exists and is
+            anchored, but no per-document inclusion branch is stored — the honest
+            back-catalogue state, and the only one that carries
+            `proof_availability: root_only` plus its note) and `RECORD_NOT_FOUND`
+            (unknown or deleted publicId, which is given no proof class because
+            classifying a record we do not hold would be an assertion about it).
+            A `NO_BATCH_PROOF` 404 does NOT mean the record failed verification —
+            see `proof_availability_note` and the 200 response of
+            GET /verify/{publicId}.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProofErrorResponse"
 
   /verify/batch:
     post:
@@ -997,6 +1011,28 @@ components:
         description:
           type: string
           description: Immutable credential description, omitted when not present
+        proof_availability:
+          type: string
+          enum: [per_document, root_only]
+          description: >-
+            SCRUM-2575: whether a per-document proof can actually be retrieved for
+            this record. `per_document` = a per-document inclusion branch is stored
+            and GET /verify/{publicId}/proof returns it. `root_only` = no
+            per-document branch is stored; the fingerprint is committed on-chain via
+            the referenced anchor receipt, but no self-contained offline proof bundle
+            is available from Arkova. Measured from stored proof data — never derived
+            from status. Omitted (never null) for records that have not reached a
+            settled on-chain state (PENDING / SUBMITTED). Additive field
+            (Constitution 1.8); no API version change.
+        proof_availability_note:
+          type: string
+          description: >-
+            SCRUM-2575: omitted when not applicable, never returned as null. Present
+            exactly when proof_availability is. States what is measured, what is
+            asserted, and what is NOT asserted for that class (Constitution 1.5) —
+            in particular, for root_only records, that no self-contained
+            per-document offline proof is available, and that its absence is not
+            evidence the record is invalid.
         compliance_controls:
           type: object
           nullable: true
@@ -1081,6 +1117,40 @@ components:
             predates this field; never guessed, Constitution 1.5).
         error:
           type: string
+
+    ProofErrorResponse:
+      type: object
+      required: [error]
+      description: >-
+        Error body for GET /verify/{publicId}/proof. `proof_error_code` is the
+        stable machine-readable discriminator; consumers MUST fall back to the
+        `error` prose when it is absent (older responses predate it).
+      properties:
+        error:
+          type: string
+          description: Human-readable message. Frozen prose — do not match on it when a code is present.
+        proof_error_code:
+          type: string
+          enum: [NO_BATCH_PROOF, RECORD_NOT_FOUND]
+          description: >-
+            Present only on the two 404 bodies; absent on 400/500/503.
+            `NO_BATCH_PROOF` = the record exists and is anchored but stores no
+            per-document branch. `RECORD_NOT_FOUND` = unknown or deleted publicId.
+        proof_availability:
+          type: string
+          enum: [root_only]
+          description: >-
+            SCRUM-2575: present only on a `NO_BATCH_PROOF` 404, where it is always
+            `root_only`. Absent on `RECORD_NOT_FOUND` — a record we do not hold is
+            given no proof class.
+        proof_availability_note:
+          type: string
+          description: >-
+            SCRUM-2575: present exactly when `proof_availability` is. States that
+            the record IS anchored and its fingerprint IS committed on-chain, that
+            no self-contained per-document offline proof is available from Arkova,
+            and that this absence is not evidence the record is invalid
+            (Constitution 1.5).
 
     MerkleProofResponse:
       type: object
