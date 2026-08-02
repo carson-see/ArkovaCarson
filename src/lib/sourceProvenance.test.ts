@@ -326,4 +326,14 @@ describe('SCRUM-2480 — server evidence-level spelling is understood', () => {
       expect(getEvidenceLevelStrength(bogus as unknown as string)).toBe(0);
     }
   });
+
+  it('does not resolve Object prototype keys through the alias lookup', () => {
+    // The alias table is a Map precisely so these miss. An object literal would
+    // resolve 'constructor'/'toString' to a function off the prototype chain.
+    for (const protoKey of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+      expect(getEvidenceLevelLabel(protoKey)).toBeNull();
+      expect(getEvidenceLevelStrength(protoKey)).toBe(0);
+      expect(isIssuerAuthenticated(protoKey)).toBe(false);
+    }
+  });
 });

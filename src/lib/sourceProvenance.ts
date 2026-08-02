@@ -39,16 +39,22 @@ export const verificationLevelSchema = z.enum(VERIFICATION_LEVEL_VALUES);
  * a rename would need a backfill, and the verification API response shape is
  * frozen (§1.8). Accepting both spellings fixes existing data with no
  * migration and no contract change.
+ *
+ * A Map, not an object literal, for two reasons: object index access walks the
+ * prototype chain (so `'constructor'` or `'toString'` would resolve to a
+ * function rather than miss), and the `Object.hasOwn` guard that would fix that
+ * is ES2022 — unavailable under `tsconfig.build.json`, the Vercel-safe config
+ * CI type-checks with. A Map has neither problem.
  */
-const VERIFICATION_LEVEL_ALIASES: Readonly<Record<string, VerificationLevel>> = {
-  captured_upload_ai: 'ai_captured',
-};
+const VERIFICATION_LEVEL_ALIASES: ReadonlyMap<string, VerificationLevel> = new Map([
+  ['captured_upload_ai', 'ai_captured' as VerificationLevel],
+]);
 
 export function parseVerificationLevel(value: unknown): VerificationLevel | null {
   const parsed = verificationLevelSchema.safeParse(value);
   if (parsed.success) return parsed.data;
-  if (typeof value === 'string' && Object.hasOwn(VERIFICATION_LEVEL_ALIASES, value)) {
-    return VERIFICATION_LEVEL_ALIASES[value];
+  if (typeof value === 'string') {
+    return VERIFICATION_LEVEL_ALIASES.get(value) ?? null;
   }
   return null;
 }
