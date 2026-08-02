@@ -681,7 +681,6 @@ export function SecureDocumentDialog({
                       and Continue is never disabled on confidence. */}
                   <TemplateReviewPanel
                     fields={extractedFields}
-                    overallConfidence={overallConfidence}
                     onFieldEdit={handleFieldEdit}
                     onReviewStateChange={() => {}}
                   />
