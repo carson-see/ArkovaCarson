@@ -122,6 +122,14 @@ export function useAuth(): AuthState & AuthActions {
             data: {
               full_name: fullName,
             },
+            // SCRUM-2907: nominate the app-owned landing route for the emailed
+            // confirmation link. Without this, Supabase falls back to the
+            // project Site URL — the app has no say in where the link lands, so
+            // a dead link drops the user on `/` with nothing to explain it.
+            // `/auth/callback` is the one destination Supabase will honour: it
+            // is already in the project's additional_redirect_urls allow-list
+            // for localhost, app.arkova.ai, and the Vercel preview origin.
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
           },
         });
 
