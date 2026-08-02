@@ -12,25 +12,23 @@ import { logger } from './logger.js';
 
 const CACHE_TTL_SECONDS = 300; // 5 minutes
 // Bumped v1 → v2 when API-RICH-01 landed 8 additive response fields (2026-04-16).
-// Bumped v2 → v3 for SCRUM-2227: the verify response now carries
-// `compliance_controls_note` and strips the retired EU-US DPF control IDs from
-// stored values on read. A v2 hit is served verbatim without re-running
-// buildVerificationResult, so without this bump every anchor cached before the
-// deploy would keep serving the retired identifiers with no note for the whole
-// TTL — the exact claim this change exists to stop making.
-// Bumped v3 → v5 for BUG-2026-06-24-007: compliance controls are now WITHHELD for
-// credentials that are no longer current. Without the bump, any revoked anchor
-// cached before the deploy keeps serving the full SOC2/HIPAA/eIDAS set next to
-// `status: REVOKED` for the whole TTL — the exact claim this change removes.
-// `invalidateVerificationCache` does not help: nothing re-fires for an ALREADY
-// revoked/expired anchor.
+// Bumped v2 → v4 for SCRUM-2575 (#1816): the verify response now carries
+// `proof_availability` + `proof_availability_note`. v3 was skipped deliberately
+// so #1816 and #1800 (SCRUM-2227, `compliance_controls_note` + retired EU-US
+// DPF control IDs stripped from stored values on read) could not silently
+// reuse each other's namespace whichever merged first; #1800 landed on top of
+// v4 and inherited it rather than introducing its own bump.
 //
-// v4 is skipped deliberately. PR #1816 (SCRUM-2575) takes v2 → v4 for its own
-// response-shape change on a branch based on main; going to v5 here keeps the two
-// namespaces distinct in EVERY merge order, so neither can serve the other's shape.
+// Bumped v4 → v5 for BUG-2026-06-24-007 (this PR): compliance controls are now
+// WITHHELD for credentials that are no longer current. Without the bump, any
+// revoked anchor cached before the deploy keeps serving the full
+// SOC2/HIPAA/eIDAS set next to `status: REVOKED` for the whole TTL — the exact
+// claim this change removes. `invalidateVerificationCache` does not help:
+// nothing re-fires for an ALREADY revoked/expired anchor.
 //
-// Bump again on any response-shape change so post-deploy cache hits don't serve stale
-// thin responses. Old keys age out naturally via TTL.
+// A hit is served verbatim without re-running buildVerificationResult — bump
+// again on any response-shape change so post-deploy cache hits don't serve
+// stale thin responses. Old keys age out naturally via TTL.
 const KEY_PREFIX = 'verify:v5:';
 
 /** Module-level config cache — avoids process.env reads on every request */

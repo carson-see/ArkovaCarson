@@ -204,8 +204,12 @@ const TYPE_SPECIFIC_CONTROLS: Partial<Record<CredentialType, string[]>> = {
  * needed to stop serving it, on new anchors and on the ~2.9M back catalogue
  * alike. Declared after both catalogs because `const` is not hoisted; it is only
  * read from function bodies, which run long after module init.
+ *
+ * EXPORTED for `scripts/ci/check-compliance-mapping-mirror.ts`, which asserts
+ * this set matches the frontend mirror's. That check is what makes retiring a
+ * control a ONE-file edit instead of a two-file promise (SCRUM-2283).
  */
-const EMITTABLE_CONTROL_IDS: ReadonlySet<string> = new Set([
+export const EMITTABLE_CONTROL_IDS: ReadonlySet<string> = new Set([
   ...UNIVERSAL_CONTROLS,
   ...Object.values(TYPE_SPECIFIC_CONTROLS).flat(),
 ]);
