@@ -26,6 +26,7 @@ export const ROUTES = {
   API_SANDBOX: '/developers/sandbox',
   CLE_API: '/cle',
   ACTIVATE: '/activate',
+  ACCEPT_INVITE: '/accept-invite',
   HOW_IT_WORKS: '/how-it-works',
   USE_CASES: '/use-cases',
   ENTERPRISE: '/enterprise',

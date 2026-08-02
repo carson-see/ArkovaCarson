@@ -57,6 +57,115 @@ describe('detectDrift', () => {
     expect(detectDrift([inSyncListener()], EXPECTED)).toEqual([]);
   });
 
+  // Regression — PROD 2026-08-01T19:55:40Z, integration a900d40f, correlationId
+  // req_4ce0578aa0c1b566af557534. The live production listener is a SIM-mode
+  // listener: it carries the modern `events: ["envelope-completed"]` and no
+  // legacy `envelopeEvents`, and DocuSign's GET /connect response omits
+  // `eventData.format` (JSON is the default for restv2.1). The detector
+  // demanded BOTH event vocabularies and an explicit format, so it reported
+  // drift on a listener that is demonstrably delivering: envelope
+  // 624c1d84-9989-81d3-8218-bcab4aa705ed was HMAC-verified and produced rule
+  // event 7797d755. Firing hourly, that false positive would bury real drift.
+  describe('SIM-mode listeners (prod shape)', () => {
+    function prodSimListener(): ActualConnectListener {
+      return {
+        connectId: '22152148',
+        name: 'Arkova Connect',
+        urlToPublishTo: 'https://arkova-worker.example.com/webhooks/docusign',
+        allowEnvelopePublish: 'true',
+        includeHMAC: 'true',
+        // No `envelopeEvents` — SIM mode uses `events`.
+        events: ['envelope-completed'],
+        // No `format` — DocuSign omits it; restv2.1 defaults to JSON.
+        eventData: { version: 'restv2.1' },
+      };
+    }
+
+    it('reports no drift for the exact live production listener shape', () => {
+      expect(detectDrift([prodSimListener()], EXPECTED)).toEqual([]);
+    });
+
+    // The legacy vocabulary must NOT satisfy the check. Arkova's webhook parser
+    // (`parseDocusignConnectPayload`) hard-fails unless the body carries
+    // `event: "envelope-completed"` — a SIM-only field. A legacy-only listener
+    // delivers payloads the webhook rejects: a total silent outage. Blessing it
+    // here would turn this detector into the thing that hides the outage.
+    it('FLAGS a legacy-only listener — the webhook cannot parse those deliveries', () => {
+      const legacy: ActualConnectListener = {
+        ...prodSimListener(),
+        envelopeEvents: ['Completed'],
+        events: undefined,
+        eventData: { format: 'json', version: 'restv2.1' },
+      };
+      const reasons = detectDrift([legacy], EXPECTED);
+      expect(reasons).toHaveLength(1);
+      expect(reasons[0]).toContain('envelope-completed');
+      expect(reasons[0]).toMatch(/SIM/);
+    });
+
+    it('still flags a listener carrying NEITHER event vocabulary', () => {
+      const none: ActualConnectListener = {
+        ...prodSimListener(),
+        envelopeEvents: [],
+        events: [],
+      };
+      const reasons = detectDrift([none], EXPECTED);
+      expect(reasons).toHaveLength(1);
+      expect(reasons[0]).toContain('envelope-completed');
+    });
+
+    it('still flags a listener subscribed only to unrelated events', () => {
+      const wrong: ActualConnectListener = {
+        ...prodSimListener(),
+        events: ['envelope-sent', 'recipient-completed'],
+      };
+      const reasons = detectDrift([wrong], EXPECTED);
+      expect(reasons).toHaveLength(1);
+      expect(reasons[0]).toContain('envelope-completed');
+    });
+
+    it('does not vacuously pass when the expected events list is empty', () => {
+      const reasons = detectDrift([prodSimListener()], { ...EXPECTED, requiredEvents: [] });
+      expect(reasons).toEqual([
+        'Expected Connect events list is empty — listener event coverage could not be checked.',
+      ]);
+    });
+
+    it('flags an explicitly WRONG payload format but not an absent one', () => {
+      const xml: ActualConnectListener = {
+        ...prodSimListener(),
+        eventData: { format: 'xml', version: 'restv2.1' },
+      };
+      expect(detectDrift([xml], EXPECTED)).toEqual([
+        'Wrong payload format (eventData.format=xml, expected "json").',
+      ]);
+    });
+
+    it('still flags a wrong payload VERSION — never inferred from a default', () => {
+      const oldVersion: ActualConnectListener = {
+        ...prodSimListener(),
+        eventData: { version: 'restv2' },
+      };
+      expect(detectDrift([oldVersion], EXPECTED)).toEqual([
+        'Wrong payload version (eventData.version=restv2, expected "restv2.1").',
+      ]);
+    });
+
+    it('still flags a missing eventData block entirely', () => {
+      const noEventData: ActualConnectListener = { ...prodSimListener(), eventData: undefined };
+      expect(detectDrift([noEventData], EXPECTED)).toEqual([
+        'Wrong payload version (eventData.version=undefined, expected "restv2.1").',
+      ]);
+    });
+
+    it('still flags a disabled SIM listener and one with HMAC off', () => {
+      expect(detectDrift([{ ...prodSimListener(), allowEnvelopePublish: 'false' }], EXPECTED))
+        .toContain('Connect listener is disabled (allowEnvelopePublish=false, expected "true").');
+      expect(detectDrift([{ ...prodSimListener(), includeHMAC: 'false' }], EXPECTED))
+        .toContain('HMAC signing is not enabled (includeHMAC=false, expected "true").');
+    });
+  });
+
   it('flags a missing listener for the expected Arkova webhook URL', () => {
     const other = { ...inSyncListener(), urlToPublishTo: 'https://other.example.com/hook' };
 
@@ -78,8 +187,12 @@ describe('detectDrift', () => {
     const reasons = detectDrift([drifted], EXPECTED);
 
     expect(reasons.some((reason) => /hmac/i.test(reason))).toBe(true);
-    expect(reasons.some((reason) => /Completed/.test(reason))).toBe(true);
+    // One reason now covers event coverage, naming the SIM event that is
+    // missing and reporting the legacy list for context. Previously this was
+    // two reasons because both vocabularies were required — see the SIM-mode
+    // block below for why only the SIM one is load-bearing.
     expect(reasons.some((reason) => /envelope-completed/.test(reason))).toBe(true);
+    expect(reasons.some((reason) => /envelopeEvents=\[\]/.test(reason))).toBe(true);
     expect(reasons.some((reason) => /version/i.test(reason))).toBe(true);
   });
 
