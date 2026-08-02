@@ -52,7 +52,7 @@ import { cibaOpenApiSpec } from './api/v1/openapi-ciba.js';
 import { atsWebhookRouter } from './api/v1/webhooks/ats.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
 import { globalErrorHandler } from './routes/errorHandler.js';
-import { buildHealthResponse, type HealthCheckDeps } from './routes/health.js';
+import { buildHealthResponse, isDetailedHealthAuthorized, type HealthCheckDeps } from './routes/health.js';
 import { setupScheduledJobs } from './routes/scheduled.js';
 import { setupGracefulShutdown, trackOperation } from './routes/lifecycle.js';
 import { startHeapMonitor, logHeapStatus } from './utils/heapMonitor.js';
@@ -117,7 +117,22 @@ app.use(corsMiddleware);
 // byte-identical alias of the SAME handler below; `/health` itself is
 // unchanged.
 const healthCheckHandler = async (req: Request, res: Response) => {
-  const detailed = req.query.detailed === 'true';
+  // SCRUM-2653: plain liveness stays public (Constitution 1.9); the detailed
+  // view is gated on the X-Health-Token shared secret and fails closed in
+  // production when no secret is configured. A denied request degrades to the
+  // compact body with `detail: "unauthorized"` (still HTTP 200) instead of
+  // 401 — Cloud Run probes, deploy verification and uptime monitors keep
+  // working, and no information is disclosed either way.
+  const detailedRequested = req.query.detailed === 'true';
+  const headerToken = req.get('X-Health-Token') ?? undefined;
+  const detailAuthorized = detailedRequested
+    && isDetailedHealthAuthorized({
+      providedToken: headerToken,
+      expectedToken: config.healthDetailToken,
+      isProduction: config.nodeEnv === 'production',
+    });
+  const detailed = detailedRequested && detailAuthorized;
+  const detailDenied = detailedRequested && !detailAuthorized;
 
   const deps: HealthCheckDeps = {
     isDbHealthy,
@@ -184,7 +199,7 @@ const healthCheckHandler = async (req: Request, res: Response) => {
     },
   };
 
-  const result = await buildHealthResponse(deps, detailed);
+  const result = await buildHealthResponse(deps, detailed, { detailDenied });
 
   if (result.statusCode === 503) {
     res.setHeader('Retry-After', '60');

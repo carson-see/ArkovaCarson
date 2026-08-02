@@ -116,6 +116,7 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 
 - `router.ts` — mounts every v1 endpoint with its `requireScope(...)` gate. Anonymous-GET allow on `/verify` is intentional (Constitution §1.10 zero-friction public verification, rate-limited 100/min).
 - **`anchor-submit.ts`** — `POST /api/v1/anchor`. Frozen Zod request shape. Duplicate fingerprint handling: pre-insert dedup returns existing public_id with HTTP 200 (idempotent); insert-race unique constraint violation (23505) returns HTTP 409 `anchor_creation_conflict`; other insert errors return 500 `anchor_creation_failed`. Now wired (SCRUM-1740 commit 9fdaed23) to `ensureAnchorQuotaAvailable` → 402 problem+json `quota_exhausted` for sandbox orgs over their `anchor_quota`. Gate runs AFTER dedup so re-anchoring an existing fingerprint doesn't burn quota.
+  - **SCRUM-2481 — a caller may NOT assert its own issuer-authenticated evidence level.** `metadata.verification_level` used to flow from this request body straight into the service-role insert, and `get_public_anchor` serves it to anonymous verifiers, so any API-key holder could mint an anchor that renders the green issuer-authenticated badge. The route now runs the parsed public-safe metadata through `stripClientUnassertableEvidenceClaims` (`lib/credential-evidence.ts`) and drops `issuer_anchored` / `source_signed`. Lower tiers (`account_linked`, `captured_url`, `captured_upload_ai`) still persist untouched. Strip, don't reject: the request still 201s so the frozen §1.8 contract is unchanged, and the attempt is logged with `stripped` + `attemptedVerificationLevel`. If stripping empties the metadata, the column is omitted so Postgres applies its NULL default (SCRUM-1732 contract). Any new evidence field a client can send must be checked against the same question — *can the server prove this?* — before it is added to the persisted allowlist. **This guard covers this route only.** The browser writes `anchors` directly over PostgREST, which no API guard can see; migration `0384` carries the same rule at the DB layer and is what actually makes the badge unforgeable.
 - `verify.ts` — `GET /api/v1/verify/:public_id`. Anonymous-allowed.
 - `credentials-ctdl.ts` — `GET /api/v1/credentials/:publicId/ctdl`. Anonymous-allowed, public-safe CTDL JSON-LD projection.
 - `anchor-bulk.ts`, `attestations.ts`, `oracle.ts`, `cle-verify.ts`, etc. — additional v1 surfaces.
@@ -207,3 +208,39 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 - **The 404 status code is frozen.** `docs/reference/FE_PROOF_GATE_CONTRACT.md` §2.2 and `src/lib/proofAvailability.ts` both route on it. SCRUM-2575's AC asks for root-only to stop being a 404; that flip is a breaking contract change and is NOT done here — the affirmative honest answer lives on the 200 from `/verify/:publicId` instead.
 - Any change to the verify response shape MUST bump `KEY_PREFIX` in `utils/verifyCache.ts` — a cache hit is returned verbatim without re-running `buildVerificationResult`.
 
+## 2026-08-02 — Two silent-empty `.in()` reads on the v1 surface (PR #1845, follows #1839)
+
+Both are the defect class documented in `services/worker/src/jobs/agents.md`: an unbounded
+PostgREST `.in()` filter takes 400 Bad Request, postgrest-js RESOLVES that as
+`{ data: null, error }` rather than throwing, and a call site that discards the error reads it as
+"nothing matched" and answers 200. Every id filter on this surface now goes through
+`chunkForInFilter` (`utils/postgrest-filter.ts`) — no call site picks a width.
+
+- **`anchor-bulk.ts` — the duplicate check created and BILLED duplicate anchors.** The Zod cap is
+  1000 rows of 64-char hex; the URL budget is exhausted at ~122 of them, so any batch past that took
+  400 on the one-shot `.in('fingerprint', …)`. The error was discarded, the empty result read as "no
+  fingerprint exists yet", every row queued, and `deductOrgCredit` charged the org for the whole
+  batch — HTTP 201, duplicates created, invoiced. Now chunked, and the check **fails CLOSED**: any
+  chunk error returns **503 `duplicate_check_unavailable`** before quota, credit deduction or any
+  insert, rather than the old `logger.warn` + continue. Stricter than `assertNotAllChunksFailed` on
+  purpose — a partially-read dedup answer is a wrong one, not a weaker one. Third defect in the same
+  six lines: the filter used the caller's casing while the insert path lower-cases, so an upper-case
+  resubmission of an existing document matched nothing against `character(64)` and was re-created and
+  re-billed. `normalizeFingerprint()` is now the single normalization, and the probe asks about both
+  casings (extra values in an existence probe can only find more, never fewer). The failure log
+  carries the driver **code only** — a Postgres/PostgREST `.message` routinely echoes the offending
+  value, and a fingerprint must not reach the logs (§1.1). **Prod impact: none.** The path has
+  created zero anchors in prod (census in the PR body); the fix is pre-emptive.
+- **`auditBatchVerify.ts` — the audit sample reported its ENTIRE population as `NOT_FOUND` at 200.**
+  1000 public_ids is roughly twice the URL budget; `const { data: anchors } = await …` discarded the
+  400, `anchorMap` was empty, and every sampled credential came back `NOT_FOUND` — with an
+  `AUDIT_BATCH_VERIFY` event recording the same wrong answer. On an audit surface a confident,
+  reproducible, false "none of these exist" finding is worse than an error. Now chunked, and **ANY**
+  chunk error throws to the route's 500 handler **before** the audit event is written. Also an
+  explicit opt-out from `assertNotAllChunksFailed`, in the strict direction: an ISA 530 sample missing
+  one chunk gets signed off as complete.
+- **Known, NOT fixed here** (separate story): the `sample_percentage` path draws its sample from
+  `db.from('anchors').select('public_id')` with no `.range()`, so PostgREST's default 1000-row cap
+  silently truncates the population — while `total_population` is reported from a separate exact
+  count. On a 3.1M-anchor org the sample is drawn from an arbitrary 1000 rows and reported as if drawn
+  from all of them. That is an audit-validity bug in its own right and needs its own fix + tests.
