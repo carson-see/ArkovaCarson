@@ -15,6 +15,7 @@ import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import type { WebSocketLikeConstructor } from '@supabase/realtime-js';
 import ws from 'ws';
+import { readInChunks } from '../../utils/chunkedRead.js';
 
 interface FlaggedItem {
   id: string;
@@ -114,14 +115,13 @@ export async function runFraudAudit(
 
   // Enrich with anchor metadata
   const anchorIds = flaggedItems.map(f => f.anchor_id);
-  const { data: anchors } = await db
-    .from('anchors')
-    .select('id, credential_type, metadata')
-    .in('id', anchorIds);
-
-  const anchorMap = new Map(
-    (anchors ?? []).map(a => [a.id, a]),
+  const anchors = await readInChunks<{ id: string; credential_type: string | null; metadata: unknown }>(
+    'fraud-audit:anchors',
+    anchorIds,
+    (chunk) => db.from('anchors').select('id, credential_type, metadata').in('id', chunk),
   );
+
+  const anchorMap = new Map(anchors.map(a => [a.id, a]));
 
   // Build structured items
   const items: FlaggedItem[] = flaggedItems.map(f => {

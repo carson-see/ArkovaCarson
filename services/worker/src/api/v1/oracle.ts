@@ -20,6 +20,7 @@ import { Router, Request, Response } from 'express';
 import { createHmac, randomUUID } from 'crypto';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
+import { readInChunks } from '../../utils/chunkedRead.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { buildVerificationResult, EMPTY_API_RICH_FIELDS } from './verify.js';
@@ -98,11 +99,9 @@ router.post('/verify', async (req: Request, res: Response) => {
     const orgIds = [...new Set(anchorList.map((a) => a.org_id).filter((id): id is string => id != null))] as string[];
     const orgNameMap = new Map<string, string>();
     if (orgIds.length > 0) {
-      const { data: orgs } = await db
-        .from('organizations')
-        .select('id, display_name')
-        .in('id', orgIds);
-      for (const org of (orgs ?? [])) {
+      const orgs = await readInChunks('oracle:orgNames', orgIds, (chunk) =>
+        db.from('organizations').select('id, display_name').in('id', chunk));
+      for (const org of orgs) {
         orgNameMap.set(org.id, org.display_name);
       }
     }

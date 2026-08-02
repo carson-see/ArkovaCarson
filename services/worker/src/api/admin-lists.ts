@@ -13,6 +13,7 @@ import type { Request, Response } from 'express';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
+import { readInChunks } from '../utils/chunkedRead.js';
 
 /** Default page size — shared with frontend useAdminList hook */
 export const ADMIN_PAGE_SIZE = 25;
@@ -84,13 +85,9 @@ export async function handleAdminUsers(
     const orgIds = [...new Set((users ?? []).map((u) => u.org_id).filter((id): id is string => id != null))];
     let orgMap: Record<string, string> = {};
     if (orgIds.length > 0) {
-      const { data: orgs } = await db
-        .from('organizations')
-        .select('id, display_name')
-        .in('id', orgIds);
-      if (orgs) {
-        orgMap = Object.fromEntries(orgs.map((o) => [o.id, o.display_name]));
-      }
+      const orgs = await readInChunks('admin-lists:userOrgNames', orgIds, (chunk) =>
+        db.from('organizations').select('id, display_name').in('id', chunk));
+      orgMap = Object.fromEntries(orgs.map((o) => [o.id, o.display_name]));
     }
 
     res.json({
@@ -256,13 +253,9 @@ export async function handleAdminRecords(
     const userIds = [...new Set((records ?? []).map((r) => r.user_id).filter(Boolean))];
     let userMap: Record<string, string> = {};
     if (userIds.length > 0) {
-      const { data: profiles } = await db
-        .from('profiles')
-        .select('id, email')
-        .in('id', userIds);
-      if (profiles) {
-        userMap = Object.fromEntries(profiles.map((p) => [p.id, p.email]));
-      }
+      const profiles = await readInChunks('admin-lists:userEmails', userIds, (chunk) =>
+        db.from('profiles').select('id, email').in('id', chunk));
+      userMap = Object.fromEntries(profiles.map((p) => [p.id, p.email]));
     }
 
     res.json({
@@ -321,13 +314,9 @@ export async function handleAdminSubscriptions(
     const userIds = [...new Set((subscriptions ?? []).map((s) => s.user_id).filter(Boolean))];
     let userMap: Record<string, { email: string; full_name: string | null }> = {};
     if (userIds.length > 0) {
-      const { data: profiles } = await db
-        .from('profiles')
-        .select('id, email, full_name')
-        .in('id', userIds);
-      if (profiles) {
-        userMap = Object.fromEntries(profiles.map((p) => [p.id, { email: p.email, full_name: p.full_name }]));
-      }
+      const profiles = await readInChunks('admin-lists:subscriptionUsers', userIds, (chunk) =>
+        db.from('profiles').select('id, email, full_name').in('id', chunk));
+      userMap = Object.fromEntries(profiles.map((p) => [p.id, { email: p.email, full_name: p.full_name }]));
     }
 
     res.json({
@@ -392,41 +381,30 @@ export async function handleAdminOrganizations(
 
     if (orgIds.length > 0) {
       // Member counts
-      const { data: members } = await db
-        .from('profiles')
-        .select('org_id')
-        .in('org_id', orgIds)
-        .is('deleted_at', null);
-      if (members) {
-        for (const m of members) {
-          if (m.org_id) memberCounts[m.org_id] = (memberCounts[m.org_id] ?? 0) + 1;
-        }
+      const members = await readInChunks('admin-lists:orgMemberCounts', orgIds, (chunk) =>
+        db.from('profiles').select('org_id').in('org_id', chunk).is('deleted_at', null));
+      for (const m of members) {
+        if (m.org_id) memberCounts[m.org_id] = (memberCounts[m.org_id] ?? 0) + 1;
       }
 
       // Anchor counts
-      const { data: anchors } = await db
-        .from('anchors')
-        .select('org_id')
-        .in('org_id', orgIds)
-        .is('deleted_at', null);
-      if (anchors) {
-        for (const a of anchors) {
-          if (a.org_id) anchorCounts[a.org_id] = (anchorCounts[a.org_id] ?? 0) + 1;
-        }
+      const anchors = await readInChunks('admin-lists:orgAnchorCounts', orgIds, (chunk) =>
+        db.from('anchors').select('org_id').in('org_id', chunk).is('deleted_at', null));
+      for (const a of anchors) {
+        if (a.org_id) anchorCounts[a.org_id] = (anchorCounts[a.org_id] ?? 0) + 1;
       }
 
       // Free-tier testing cap (org_credits.is_test + anchor_quota) + balance so
       // the admin UI can show/edit each org's allowance and credits (SCRUM-2225,
       // L2-A5).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: credits } = await (db as any)
-        .from('org_credits')
-        .select('org_id, is_test, anchor_quota, balance')
-        .in('org_id', orgIds);
-      if (credits) {
-        for (const c of credits as Array<{ org_id: string; is_test: boolean; anchor_quota: number | null; balance: number }>) {
-          quotaByOrg[c.org_id] = { is_test: c.is_test, anchor_quota: c.anchor_quota, balance: c.balance };
-        }
+      const credits = await readInChunks<{ org_id: string; is_test: boolean; anchor_quota: number | null; balance: number }>(
+        'admin-lists:orgCredits',
+        orgIds,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (chunk) => (db as any).from('org_credits').select('org_id, is_test, anchor_quota, balance').in('org_id', chunk),
+      );
+      for (const c of credits) {
+        quotaByOrg[c.org_id] = { is_test: c.is_test, anchor_quota: c.anchor_quota, balance: c.balance };
       }
     }
 
