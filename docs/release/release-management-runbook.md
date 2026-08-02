@@ -26,6 +26,14 @@ Every prod-affecting PR declares its tier in the body. The path-based detector
 changed files and **fails closed to the higher tier** — it can force a PR *up*,
 never down. There is **no override label**; the only CI-only path is T0.
 
+> **⚠️ TEMPORARY (founder directive 2026-08-01):** while the repository Actions
+> variable `SOAK_GATE_DISABLED` is `"true"`, the CI gate short-circuits to a pass
+> and none of the tier table below is enforced in CI. Run `gh variable list` to
+> see the live state before relying on this section. The bypass stops being
+> honored after `2026-08-16T00:00:00Z`; re-enable early with
+> `gh variable set SOAK_GATE_DISABLED --body false`. Every PR merged while it is
+> set owes its evidence to the post-pen-test consolidated soak.
+
 | Tier | Trigger (path detector) | Min soak | Required evidence body fields |
 |---|---|---|---|
 | **T0** | Docs / tests / CI / tooling only | 0 h | `Tier:` — CI green only |
