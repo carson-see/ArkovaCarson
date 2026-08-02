@@ -540,6 +540,24 @@ export const bitcoinAnchorMachine = defineMachine({
     },
 
     // INV-1b: SUBMITTED anchors MUST have a chain_tx_id (broadcast already happened)
+    //
+    // F-3 (docs/staging/SOAK-FINDINGS-2026-08.md, 2026-08 soak): a live anchor
+    // was observed SUBMITTED with a NULL chain_tx_id — this exact invariant,
+    // violated. Every current write site that sets status='SUBMITTED'
+    // (workerBroadcast / journalAdopt / broadcastResumeFinalize below) was
+    // re-audited for the fix and each one is a single-statement atomic
+    // UPDATE setting status + chain_tx_id together — no *modeled* transition
+    // can produce the violating state, and this invariant is therefore left
+    // exactly as strict as before. Migration 0379 adds a pure DB-level
+    // self-healing safety net (recover_stuck_broadcasts, extended alongside
+    // its existing BROADCASTING branch) for exactly this "should be
+    // impossible per the design, but wasn't in prod" case — it resets any
+    // such row back to PENDING. This is deliberately NOT modeled as a new
+    // action here: doing so would require weakening this invariant, which
+    // would legitimize a state the design correctly still says must never
+    // happen. Root-causing the actual producer (pre-dates one of the
+    // atomicity hardening passes — RACE-1/RACE-2/S3-P0/SCRUM-2692 — or an
+    // out-of-band write) is tracked separately from the recovery-path fix.
     submittedRequiresChainTx: {
       description: "A document cannot be SUBMITTED without a valid chain_tx_id",
       formula: forall("Anchors", "a",
