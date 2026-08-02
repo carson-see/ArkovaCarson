@@ -136,6 +136,15 @@ describe('CE-06a — Credential Engine Registry publishing stays OFF (no write p
     // it issues no Registry calls and never writes/publishes. Exempt from the
     // INTEGRATION (host) markers, still fully subject to the WRITE markers above.
     path.join(WORKER_SRC, 'ctdl', 'ctdl-importer.ts'),
+    // SCRUM-2913 (Lane 2 wiring) — `credential-source-import.ts` is the
+    // generic CSI-03 credential-source importer (GET-only, arbitrary
+    // caller-supplied URL). It stamps `registry_url` / `ce_envelope_sha256`
+    // provenance ONLY when the URL it already fetched (read-only, single GET,
+    // never a write) happens to resolve to the real CE Registry host — it
+    // never writes to the Registry. Exempt from the INTEGRATION (host)
+    // markers for that host-comparison logic; still fully subject to the
+    // WRITE markers above.
+    path.join(WORKER_SRC, 'lib', 'credential-source-import.ts'),
   ]);
 
   function scanRoots(): string[] {

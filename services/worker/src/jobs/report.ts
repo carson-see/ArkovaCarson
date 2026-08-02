@@ -205,8 +205,20 @@ export async function processPendingReports(): Promise<{ processed: number; fail
     .limit(10);
 
   if (error) {
+    // THROW, do not return a zero result. `{ processed: 0, failed: 0 }` is the
+    // exact value returned for an empty queue, so returning it here makes a
+    // broken read indistinguishable from "nothing to do". This function is
+    // driven by the hourly Cloud Scheduler job `generate-reports` via
+    // `POST /cron/generate-reports`, whose handler serialises the return value
+    // as HTTP 200 — a persistently failing read would report success forever
+    // while the pending queue silently grew. Same defect class as the 70h
+    // public-record anchoring outage (services/worker/src/jobs/agents.md,
+    // 2026-07-29). The route's catch turns this into a 500, which Cloud
+    // Scheduler retries and surfaces.
     logger.error({ error }, 'Failed to fetch pending reports');
-    return { processed: 0, failed: 0 };
+    throw new Error(
+      `Failed to fetch pending reports: ${error.message ?? 'unknown error'}`,
+    );
   }
 
   if (!reports || reports.length === 0) {

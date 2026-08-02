@@ -321,14 +321,33 @@ describe('processPendingReports', () => {
     );
   });
 
-  it('returns { processed: 0, failed: 0 } when query fails', async () => {
+  // A failed read of the pending queue MUST NOT be reportable as an empty
+  // queue. This function became reachable from Cloud Scheduler in PR #1779
+  // (`POST /cron/generate-reports`); returning `{ processed: 0, failed: 0 }`
+  // there makes the route answer HTTP 200, so a persistently broken read looks
+  // exactly like "nothing to do" and Scheduler records success forever. That is
+  // the same silent-success shape that hid the 70h public-record anchoring
+  // outage (see services/worker/src/jobs/agents.md, 2026-07-29). Throwing lets
+  // the route's catch return 500, which Scheduler retries and alarms on.
+  it('throws when the pending-reports query fails, so it cannot be read as an empty queue', async () => {
     // First call to reportsTable is the pending query
     reportsTable._resolve = { data: null, error: { message: 'connection refused' } };
 
-    const result = await processPendingReports();
-
-    expect(result).toEqual({ processed: 0, failed: 0 });
+    await expect(processPendingReports()).rejects.toThrow(/connection refused/);
     expect(mockLogger.error).toHaveBeenCalled();
+  });
+
+  it('distinguishes a failed read from an empty queue', async () => {
+    // The regression guard proper: the two cases must not produce the same
+    // observable outcome. Asserting them independently above is not enough —
+    // the defect was that both returned an identical value, so the contrast
+    // itself is what needs pinning.
+    reportsTable._resolve = { data: [], error: null };
+    const empty = await processPendingReports();
+    expect(empty).toEqual({ processed: 0, failed: 0 });
+
+    reportsTable._resolve = { data: null, error: { message: 'connection refused' } };
+    await expect(processPendingReports()).rejects.toThrow();
   });
 
   it('returns { processed: 0, failed: 0 } when no pending reports', async () => {

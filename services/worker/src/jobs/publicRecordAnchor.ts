@@ -318,6 +318,17 @@ interface RevertClaimedAnchorsResult {
  * batch in BROADCASTING while the job logged only the original chain error.
  * The width is now `chunkForInFilter`'s to decide, not this function's.
  *
+ * Blast radius when it does no-op is a stall, NOT permanent loss:
+ * `recover_stuck_broadcasts` (migration `0358`) resets any anchor with
+ * `status='BROADCASTING' AND chain_tx_id IS NULL AND deleted_at IS NULL`, no
+ * PENDING/HELD `anchor_txid_journal` row, and `updated_at` older than
+ * `p_stale_minutes` (default 5). Anchors claimed here match every predicate —
+ * this job writes no journal row and never sets `chain_tx_id` on the failure
+ * path — so they self-heal on the next recovery pass. Until then the batch is
+ * head-of-line blocked: `batch_insert_anchors` returns the same oldest-first
+ * records, `partitionRecordAnchors` buckets the BROADCASTING rows nowhere, and
+ * the job reports "no new pending" with HTTP 200.
+ *
  * Silence on the revert is the dangerous part, not the stranding itself: the
  * `recover-broadcasts` cron eventually resets BROADCASTING rows with a NULL
  * `chain_tx_id` back to PENDING, so the batch does recover — but with no
