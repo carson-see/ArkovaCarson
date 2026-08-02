@@ -6,6 +6,30 @@ Playwright E2E test specs and shared fixtures for the Arkova application.
 
 ## Live findings an agent must know before touching this code
 
+- **A green test that pins the WRONG PREMISE is worse than no test.** This
+  class of defect bit three separate lanes on 2026-08-01, so it gets top
+  billing. The signup spec asserted the user lands on `/dashboard` immediately
+  after "Create account", justified by a comment claiming prod auto-confirms
+  signups — and `supabase/config.toml` was set to `enable_confirmations = false`
+  **to make CI match that claim**. The claim was false. Verified live against
+  prod on 2026-08-01: signup returns HTTP 200 with `confirmation_sent_at` set
+  and **no session**, and the user row lands with `email_confirmed_at = NULL`.
+  So CI was faithfully validating the opposite of production, on the one flow
+  whose entire purpose is that it stops and waits for the user.
+  - The failure mode is specific and worth recognising: someone hits a spec
+    that disagrees with an environment, and "fixes" it by changing the
+    **environment config** to match the spec's assumption instead of checking
+    which one is right. The spec then goes green and permanently encodes the
+    wrong premise.
+  - **Rule: when a spec's expectation depends on an environment setting, the
+    comment justifying it must cite VERIFIED evidence from that environment —
+    a request/response, an auth log line, or a DB row — not an assumption.**
+    If you cannot produce that evidence, you do not yet know which behaviour is
+    correct, and flipping a config to go green is guessing.
+  - Corollary: `supabase/config.toml` is a *mirror* of the real project's auth
+    settings, not a place to negotiate with a failing test. Changing it changes
+    what every local and CI run believes production does.
+
 - **Click-interception and paint-order bugs are E2E-only. Never answer this
   defect class with Vitest+jsdom.** jsdom has no layout engine and no
   hit-testing, so `fireEvent.click(el)` dispatches straight at the target and

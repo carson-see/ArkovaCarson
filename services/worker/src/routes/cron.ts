@@ -93,12 +93,14 @@ import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
 import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-completed.js';
 import { runDocusignNotarizationCompletedJobs } from '../jobs/docusign-notarization-completed.js';
+import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
 import { runDbHealthMonitor } from '../jobs/db-health-monitor.js';
 import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { runConnectorHealthCheck } from '../jobs/connector-health-alert.js';
 import { runCeKeyExpiryCheck } from '../jobs/ce-key-expiry-alert.js';
+import { runCeRegistryDriftCheck } from '../jobs/ce-registry-drift.js';
 import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
 import {
   runPipelineThroughputMonitor,
@@ -127,6 +129,7 @@ export const cronRouter = Router();
 import { corsMiddleware } from './middleware.js';
 
 const DocusignEnvelopeCompletedLimitSchema = z.coerce.number().int().min(1).max(100);
+const DriveFileChangedLimitSchema = z.coerce.number().int().min(1).max(100);
 
 cronRouter.use(corsMiddleware);
 
@@ -660,6 +663,34 @@ cronRouter.post('/ce-key-expiry-check', async (_req, res) => {
   }
 });
 
+// ─── CE Registry drift reconciliation (read-only read-back) ───
+// Re-reads every anchored CE Registry CTID from the PUBLIC registry, re-hashes
+// the bytes, and records a finding wherever the registry's current content no
+// longer matches what we anchored. Read-only: it publishes NOTHING to
+// Credential Engine. Gated by ENABLE_CE_REGISTRY_DRIFT_CHECK (default FALSE) —
+// with the flag off this route returns `skipped:true` and makes no outbound
+// request, so the surface is dark until deliberately enabled. No Cloud
+// Scheduler job is created by this PR; standing it up is a separate,
+// intentional ops step.
+cronRouter.post('/ce-registry-drift-check', async (req, res) => {
+  try {
+    const rawLimit = req.query.limit ?? req.body?.limit;
+    const parsedLimit = rawLimit === undefined ? undefined : Number.parseInt(String(rawLimit), 10);
+    const result = await runCeRegistryDriftCheck({
+      limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+    });
+    // A load failure reconciled NOTHING. Answering 200 would hand Cloud
+    // Scheduler a success for a pass that did no work — the job carries a
+    // `loadFailed` field precisely so this is distinguishable, and burying it in
+    // a 200 body throws that distinction away at the only layer that acts on it.
+    // 500 so Scheduler retries.
+    res.status(result.loadFailed ? 500 : 200).json(result);
+  } catch (error) {
+    logger.error({ error }, 'CE registry drift check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
 // ─── ARK-107 (SCRUM-1019): Scheduled Queue Review Reminders ───
 cronRouter.post('/queue-reminders', async (_req, res) => {
   try {
@@ -759,6 +790,37 @@ cronRouter.post('/docusign-envelope-completed', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign completed-envelope queue pass failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-2903 (GD-PROD): Google Drive file-changed job queue ───
+//
+// Drive twin of /docusign-envelope-completed above. PRODUCTION TRIGGER —
+// Cloud Scheduler hits this HTTP endpoint (in-process node-cron is the
+// dev/test backup in routes/scheduled.ts; it's dormant under Cloud Run CPU
+// throttling per the PROOF-03 finding). Drains the `google_drive.file_changed`
+// job_queue type that drive-changes-runner.ts writes on a matched change:
+// fetch bytes -> SHA-256 in memory -> discard -> enqueue_connector_artifact
+// (§1.6A). `runDriveFileChangedJobs` no-ops the hash/enqueue step (returns
+// the disabled sentinel per job) when ENABLE_CONNECTOR_ARTIFACT_ENQUEUE is
+// false, so hitting this route is safe with the flag off.
+cronRouter.post('/drive-file-changed', async (req, res) => {
+  try {
+    const rawLimit = req.query.limit ?? req.body?.limit;
+    const parsedLimit = rawLimit === undefined
+      ? undefined
+      : DriveFileChangedLimitSchema.safeParse(rawLimit);
+    if (parsedLimit && !parsedLimit.success) {
+      res.status(400).json({ error: 'Invalid request', details: parsedLimit.error.flatten() });
+      return;
+    }
+    const result = await runDriveFileChangedJobs({
+      limit: parsedLimit?.data,
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Drive file-changed queue pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

@@ -63,3 +63,4 @@ override label. `feedback_dont_recommend_do` needs none — it cannot fail.
 
 If you find yourself reaching for an override more than once, file a Jira
 sub-story to update the policy and remove the override path.
+- `worktree-branch-exception` -> overrides feedback_no_worktree_isolation (branch-name lint; added 2026-08-01 for #1737)
