@@ -71,14 +71,21 @@ export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps
 
     // BUG-003 fix: Check return value directly instead of stale error closure
     if (!result.error) {
-      // SCRUM-2907: Make the confirmation screen session-aware. When signUp
-      // returns an active session, email confirmation is off (auto-confirm, the
-      // current prod state) and the user is already logged in — proceed into the
-      // app like a normal login instead of showing a misleading "check your
-      // email" dead-end. Only when NO session is returned is confirmation
-      // genuinely pending, so we show the EmailConfirmation screen. This is also
-      // forward-compatible: if "Confirm email" is later enabled, signUp returns
-      // no session and the screen correctly appears.
+      // SCRUM-2907: the confirmation screen is session-aware.
+      //
+      // PROD REQUIRES CONFIRMATION — verified live against prod
+      // (vzwyaatejekddvltxyye) on 2026-08-01: signUp returns HTTP 200 with
+      // confirmation_sent_at set and NO session, so this takes the
+      // `setSignupComplete(true)` branch and the user sees "check your email".
+      // An earlier revision of this comment asserted the opposite ("auto-confirm,
+      // the current prod state"); that was wrong and it drove supabase/config.toml
+      // and the signup E2E spec to encode a behaviour prod does not have.
+      //
+      // The session branch is retained deliberately: it is correct for any
+      // environment where confirmation is off (local stacks that opt out,
+      // preview projects), and proceeding into the app is the right outcome
+      // there rather than a "check your email" dead-end for mail that never
+      // gets sent.
       if (result.session) {
         onSuccess?.();
       } else {
