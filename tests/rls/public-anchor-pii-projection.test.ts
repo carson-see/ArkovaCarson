@@ -414,16 +414,36 @@ describe('0385 — anon public anchor projection does not leak learner PII', () 
     });
 
     it.each(['', '   '])(
-      'SCRUM-3102 — an anchor with a blank credential_type (%p) also fails closed',
+      'SCRUM-3102 — a blank credential_type (%p) is unrepresentable, so it cannot leak',
       async (blankType) => {
-        // btrim() in the predicate: whitespace-only is as unclassifiable as NULL.
-        const { publicId } = await seedAnchor({
-          credentialType: blankType as unknown as null,
-          filename: 'maria-gonzalez-certificate.pdf',
-        });
-        const body = await fetchAsAnon(publicId);
-        expect(body.filename).toBe(contract.sql_non_academic_fallback_label);
-        expect(JSON.stringify(body).toLowerCase()).not.toContain('gonzalez');
+        // This previously seeded a blank-typed anchor and asserted the
+        // projection failed closed, but it could never run: `credential_type`
+        // is a Postgres ENUM, so the INSERT is rejected before any projection
+        // happens ("invalid input value for enum credential_type"). The test
+        // was defending a state the schema makes unrepresentable, and failed on
+        // its own fixture rather than on the behaviour it named.
+        //
+        // The btrim() in the SQL predicate stays as defence in depth. What
+        // actually protects us here is the column type, so that is what this
+        // asserts — a real, checkable guarantee instead of an unreachable path.
+        const fpSeed = Math.floor(Math.random() * 1e6);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error } = await (service as any)
+          .from('anchors')
+          .insert({
+            user_id: userId,
+            org_id: ORG_ID,
+            fingerprint: `blank-type-${RUN_ID}-${fpSeed}`.padEnd(64, '0').slice(0, 64),
+            filename: 'maria-gonzalez-certificate.pdf',
+            file_size: 2048,
+            status: 'PENDING',
+            credential_type: blankType,
+          })
+          .select('public_id')
+          .single();
+
+        expect(error, 'a blank credential_type must be rejected by the enum').not.toBeNull();
+        expect(error.message).toMatch(/invalid input value for enum credential_type/u);
       },
     );
 
