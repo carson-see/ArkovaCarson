@@ -18,7 +18,7 @@ import {
   proofAvailabilityFields,
   type ProofAvailability,
 } from '../../constants/proofAvailability.js';
-import { hasServableProofBranch } from '../../utils/merkle.js';
+import { hasServableProofBranch } from '../../utils/proofBranch.js';
 import { getCachedVerification, setCachedVerification } from '../../utils/verifyCache.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 

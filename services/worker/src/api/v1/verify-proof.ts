@@ -15,7 +15,7 @@
 
 import { Router, Request, Response } from 'express';
 import { verifyMerkleInclusion } from '../../utils/merkle-verify.js';
-import { isValidProofArray } from '../../utils/merkle.js';
+import { isValidProofArray } from '../../utils/proofBranch.js';
 import {
   proofAvailabilityFields,
   type ProofAvailability,
@@ -369,14 +369,14 @@ function readMerkleIndex(value: unknown): number | null {
 /**
  * Validate that a merkle_proof array has the correct shape.
  *
- * SCRUM-2575: the implementation moved to `utils/merkle.ts`, beside
- * `MerkleProofEntry`, so `/api/v1/verify` can apply the IDENTICAL test when it
+ * SCRUM-2575: the implementation moved to `utils/proofBranch.ts` so
+ * `/api/v1/verify` can apply the IDENTICAL test when it
  * decides whether to advertise `proof_availability: per_document`. Two surfaces
  * answering "is a proof available?" with two predicates is how the API ends up
  * contradicting itself about one record. Re-exported here to keep this module's
  * public surface unchanged.
  */
-export { isValidProofArray } from '../../utils/merkle.js';
+export { isValidProofArray } from '../../utils/proofBranch.js';
 
 function extractStoredProof(
   proof: ProofRecordData | null,

@@ -108,7 +108,7 @@ export interface ProofAvailabilityFields {
  * and does not assert, which is the exact §1.5 failure this module exists to
  * prevent. A caller now has to visibly discard a field to get that wrong.
  *
- * `hasServableBranch` must come from `hasServableProofBranch` (utils/merkle.ts)
+ * `hasServableBranch` must come from `hasServableProofBranch` (utils/proofBranch.ts)
  * — the same predicate `/proof` uses. Callers that did not measure it must not
  * call this at all; see the tri-state note on `has_stored_proof_branch`.
  */
