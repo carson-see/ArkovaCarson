@@ -12,9 +12,20 @@ import { logger } from './logger.js';
 
 const CACHE_TTL_SECONDS = 300; // 5 minutes
 // Bumped v1 → v2 when API-RICH-01 landed 8 additive response fields (2026-04-16).
+// Bumped to v4 for SCRUM-2575: the verify response now carries
+// `proof_availability` + `proof_availability_note`. A hit is served verbatim
+// without re-running buildVerificationResult, so without a bump every anchor
+// cached before the deploy would keep answering the proof-availability question
+// with silence for the whole TTL.
+//
+// v3 is skipped deliberately. PR #1800 (SCRUM-2227) takes v2 → v3 for its own
+// response-shape change; going straight to v4 here means this bump is correct
+// whichever of the two lands first, and neither can silently reuse the other's
+// namespace.
+//
 // Bump again on any response-shape change so post-deploy cache hits don't serve stale
 // thin responses. Old keys age out naturally via TTL.
-const KEY_PREFIX = 'verify:v2:';
+const KEY_PREFIX = 'verify:v4:';
 
 /** Module-level config cache — avoids process.env reads on every request */
 let _redisConfig: { url: string; token: string } | null | undefined;

@@ -78,7 +78,7 @@ vi.mock('../../chain/client.js', () => ({
 
 function makeMock(
   records: Array<Record<string, unknown>> = [],
-  options: { revertError?: unknown; claimError?: unknown } = {},
+  options: { revertError?: unknown; claimError?: unknown; fetchError?: unknown } = {},
 ) {
   const anchorRows = records.map((record, i) => ({
     id: `anchor-uuid-${i}`,
@@ -116,7 +116,11 @@ function makeMock(
 
   const anchorsSelectByIds = {
     in: vi.fn(() => ({
-      is: vi.fn().mockResolvedValue({ data: anchorRows, error: null }),
+      is: vi.fn().mockResolvedValue(
+        options.fetchError
+          ? { data: null, error: options.fetchError }
+          : { data: anchorRows, error: null },
+      ),
     })),
   };
   const anchorsBroadcastingUpdate = {
@@ -426,34 +430,64 @@ describe('publicRecordAnchor claim-revert escalation', () => {
 });
 
 /**
- * The silent-empty guard on the CLAIM step.
+ * The silent-empty guards on the two steps that read anchors back.
  *
- * `fetchAnchorRows` and `revertClaimedAnchors` both accounted for
- * all-chunks-failed; `claimPendingPipelineAnchors` did not — a 2-of-3 miss in
- * the same three functions, and the same shape as PR #1795's. An empty claim
- * reads downstream as "nothing was PENDING", so a totally broken claim step
- * would log a benign result and return 200 forever.
+ * Both are the 70-hour-outage shape: a chunked `.in()` loop that logs each
+ * failure and continues returns `[]` when EVERY chunk 400s, which downstream
+ * cannot tell apart from "nothing matched", so the job logs a benign line and
+ * returns 200 forever.
+ *
+ *  - FETCH step (`fetchAnchorRows`): an empty read feeds `partitionRecordAnchors`
+ *    zero pending items -> "No new pending public record anchors to submit".
+ *    This is literally the 2026-07-29 outage; the guard shipped in #1795 but
+ *    until now had NO test, so any future edit (the in-flight run-lease rebase
+ *    on this same file, say) could drop the line with the suite still green.
+ *  - CLAIM step (`claimPendingPipelineAnchors`): an empty claim reads as
+ *    "nothing was PENDING" -> "No public record anchors claimed".
+ *
+ * Both are asserted through the real entrypoint, so what is covered is the
+ * end-to-end silent-success path, not the helper in isolation.
  */
-describe('publicRecordAnchor claim step', () => {
-  it('refuses to treat an all-chunks-failed claim as "nothing was pending"', async () => {
-    const records = Array.from({ length: 20 }, (_, i) => ({
-      id: `record-${i}`,
-      content_hash: (i.toString(16).padStart(2, '0')).repeat(32),
-      metadata: {},
-      source: 'edgar',
-      source_id: `CIK-${i}`,
-      source_url: `https://sec.gov/filing/${i}`,
-      record_type: '10-K',
-      title: `Test Filing ${i}`,
-    }));
-    const anchorResults = records.map((r, i) => ({
-      id: `anchor-uuid-${i}`,
-      fingerprint: r.content_hash,
-    }));
+describe('publicRecordAnchor all-chunks-failed guards', () => {
+  const records = Array.from({ length: 20 }, (_, i) => ({
+    id: `record-${i}`,
+    content_hash: (i.toString(16).padStart(2, '0')).repeat(32),
+    metadata: {},
+    source: 'edgar',
+    source_id: `CIK-${i}`,
+    source_url: `https://sec.gov/filing/${i}`,
+    record_type: '10-K',
+    title: `Test Filing ${i}`,
+  }));
+
+  /** get_flag -> true, then batch_insert_anchors -> one anchor per record. */
+  function armAnchorInserts() {
     mockRpc
       .mockResolvedValueOnce({ data: true })
-      .mockResolvedValueOnce({ data: anchorResults });
+      .mockResolvedValueOnce({
+        data: records.map((r, i) => ({ id: `anchor-uuid-${i}`, fingerprint: r.content_hash })),
+      });
+  }
 
+  it('refuses to treat an all-chunks-failed anchor fetch as "nothing was pending"', async () => {
+    armAnchorInserts();
+    const { client } = makeMock(records, { fetchError: { message: 'Bad Request' } });
+
+    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
+
+    await expect(processPublicRecordAnchoring(client)).rejects.toThrow(
+      /fetchAnchorRows: all \d+ chunk\(s\) failed/,
+    );
+    // …and it never logged the benign "nothing to submit" line, nor broadcast.
+    expect(mockLogger.info).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'No new pending public record anchors to submit',
+    );
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+  });
+
+  it('refuses to treat an all-chunks-failed claim as "nothing was pending"', async () => {
+    armAnchorInserts();
     const { client } = makeMock(records, { claimError: { message: 'Bad Request' } });
 
     const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
