@@ -66,6 +66,34 @@
     "and the self-arming test starts enforcing it the same moment."
   ],
 
+  "unknown_credential_type_fails_closed": true,
+  "$unknown_type_note": [
+    "SCRUM-3102 / migration 0390. An anchor with an ABSENT credential_type",
+    "(NULL, empty, or whitespace-only) is SUPPRESSED, exactly as an academic",
+    "record is — it is not treated as non-academic.",
+    "",
+    "0385 keyed on `upper(COALESCE(p_credential_type,'')) IN (...)`, so an",
+    "untyped row evaluated to FALSE and took the PERMISSIVE branch, publishing",
+    "`filename` — the record's public display title and its schema.org `name`.",
+    "The seven detector families are all format- or keyword-anchored, so a bare",
+    "personal name passed. Measured in prod 2026-08-02: 24 of the 59 NULL-type",
+    "anchors (41%) carried a name-shaped filename, the densest such pocket in a",
+    "3,363,788-row corpus (academic types held 21; all other non-academic types",
+    "held 50, which is the accepted residual).",
+    "",
+    "This is the `structural_keys` principle one level up: recognising danger",
+    "fails open, recognising SAFETY fails closed. The academic set recognises",
+    "safety by enumeration, so anything it cannot positively classify must be",
+    "suppressed.",
+    "",
+    "A PRESENT non-academic type still publishes. `credential_type` is an enum",
+    "column, so a non-empty value is always a known type. Both implementations",
+    "must agree: SQL `is_academic_record_credential_type` (0390) and TS",
+    "`suppressesRecordFreeText` (ctdl-pii-guard.ts). Note the TS twin is a",
+    "SEPARATE function from `isEducationCredentialType`, which stays honest",
+    "about taxonomy and still returns false for null."
+  ],
+
   "academic_record_credential_types": ["CERTIFICATE", "DEGREE", "TRANSCRIPT"],
   "$academic_record_note": [
     "Records ABOUT AN IDENTIFIED LEARNER. These emit NO issuer- or",

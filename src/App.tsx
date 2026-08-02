@@ -94,6 +94,7 @@ const StateBarApiPage = lazyWithRetry(() => import('@/pages/StateBarApiPage').th
 const ApiSandboxPage = lazyWithRetry(() => import('@/pages/ApiSandboxPage').then(m => ({ default: m.ApiSandboxPage })));
 const PublicPortfolioPage = lazyWithRetry(() => import('@/pages/PublicPortfolioPage').then(m => ({ default: m.PublicPortfolioPage })));
 const ActivateAccountPage = lazyWithRetry(() => import('@/pages/ActivateAccountPage').then(m => ({ default: m.ActivateAccountPage })));
+const AcceptInvitePage = lazyWithRetry(() => import('@/pages/AcceptInvitePage').then(m => ({ default: m.AcceptInvitePage })));
 const HowItWorksPage = lazyWithRetry(() => import('@/pages/HowItWorksPage').then(m => ({ default: m.HowItWorksPage })));
 const UseCasesPage = lazyWithRetry(() => import('@/pages/UseCasesPage').then(m => ({ default: m.UseCasesPage })));
 const EnterprisePage = lazyWithRetry(() => import('@/pages/EnterprisePage').then(m => ({ default: m.EnterprisePage })));
@@ -241,6 +242,7 @@ export function App() {
           <Route path={ROUTES.PORTFOLIO} element={<RouteErrorBoundary section="Portfolio"><PublicPortfolioPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.VERIFY_SIGNATURE} element={<RouteErrorBoundary section="SignatureVerify"><PublicSignatureVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.ACTIVATE} element={<ActivateAccountPage />} />
+          <Route path={ROUTES.ACCEPT_INVITE} element={<RouteErrorBoundary section="AcceptInvite"><AcceptInvitePage /></RouteErrorBoundary>} />
           <Route path={ROUTES.HOW_IT_WORKS} element={<HowItWorksPage />} />
           <Route path={ROUTES.USE_CASES} element={<UseCasesPage />} />
           <Route path={ROUTES.ENTERPRISE} element={<EnterprisePage />} />
