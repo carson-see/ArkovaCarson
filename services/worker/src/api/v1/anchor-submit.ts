@@ -16,6 +16,7 @@ import {
   ANCHOR_CREDENTIAL_TYPES,
   hasPublicCredentialEvidenceMetadataKeys,
   parsePublicCredentialEvidenceMetadataResult,
+  stripClientUnassertableEvidenceClaims,
 } from '../../lib/credential-evidence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
@@ -100,9 +101,33 @@ async function handleAnchorSubmit(req: Request, res: Response) {
 
   const fingerprint = body.fingerprint.toLowerCase();
   const parsedCredentialEvidenceMetadata = parsePublicCredentialEvidenceMetadataResult(body.metadata);
-  const publicSafeCredentialEvidenceMetadata = parsedCredentialEvidenceMetadata.ok
-    ? parsedCredentialEvidenceMetadata.metadata
+  // SCRUM-2481 — server-side evidence-level trust enforcement. A client may
+  // describe where a credential came from, but it may not assert that the
+  // ISSUER authenticated it: `issuer_anchored` / `source_signed` are the only
+  // levels that render the green issuer-authenticated badge on the public
+  // verification page, and no code path in this platform can prove either.
+  // Drop the claim (the anchor is still created) and log the attempt.
+  const clientAssertableCredentialEvidenceMetadata = parsedCredentialEvidenceMetadata.ok
+    ? stripClientUnassertableEvidenceClaims(parsedCredentialEvidenceMetadata.metadata)
     : null;
+  if (clientAssertableCredentialEvidenceMetadata?.stripped.length) {
+    logger.warn(
+      {
+        orgId: req.apiKey.orgId,
+        keyId: req.apiKey.keyId,
+        stripped: clientAssertableCredentialEvidenceMetadata.stripped,
+        attemptedVerificationLevel: parsedCredentialEvidenceMetadata.ok
+          ? parsedCredentialEvidenceMetadata.metadata.verification_level
+          : null,
+      },
+      'Dropped client-asserted issuer-authenticated evidence level on anchor submit',
+    );
+  }
+  const publicSafeCredentialEvidenceMetadata =
+    clientAssertableCredentialEvidenceMetadata &&
+    Object.keys(clientAssertableCredentialEvidenceMetadata.metadata).length > 0
+      ? clientAssertableCredentialEvidenceMetadata.metadata
+      : null;
   if (body.metadata && hasPublicCredentialEvidenceMetadataKeys(body.metadata) && !parsedCredentialEvidenceMetadata.ok) {
     logger.warn(
       {
