@@ -2,6 +2,33 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-02 — Queues lane (PR #1845): CML-02 stamped 10,000 ids into one filter, into a dead catch (`batch-anchor.ts`)
+
+The `compliance_controls` post-processing block after a successful batch broadcast had **both**
+halves of the class in six lines, on the chain/treasury path:
+
+- `.in('id', ids)` took every anchor of one credential type with no chunking. `BATCH_SIZE` is
+  10,000, so a single-credential-type batch put 10,000 UUIDs — ~390 KB of query string — on one
+  request line. PostgREST answers 400.
+- The result was **not destructured at all** (`await db…in(...)`, no `{ error }`). postgrest-js
+  resolves a 400, so nothing threw, and the enclosing `catch (complianceErr)` — labelled
+  "Non-fatal" — was **dead code for the only failure mode that actually occurs**. A full batch went
+  out with `compliance_controls` silently unset and the job logged nothing at all.
+
+Extracted verbatim to the exported `applyComplianceControls(anchors, batchId)` first (so the defect
+could be tested directly), then routed through `chunkForInFilter` with every chunk result inspected.
+
+**Explicit opt-out from `assertNotAllChunksFailed`, and it does not throw.** This runs AFTER the
+broadcast and after `submit_batch_anchors`: the transaction is on-chain and the rows are SUBMITTED.
+Throwing would turn a completed batch into a reported job failure and a Scheduler retry over work
+that is already done, to repair derived metadata a later run can re-stamp. The escalation is instead
+an error-level line carrying `{batchId, attemptedChunks, failedChunks, unstampedAnchors}` — the
+signal the old code could not produce. If you ever make this fatal, check the caller's unwind
+semantics first (#1417-HIGH: unwind fires only on a definitive typed broadcast reject).
+
+Tests: `batch-anchor.compliance.test.ts` (4). Mutation-verified — unchunking the filter fails the
+10k-batch budget test; restoring the undestructured `await` fails the failure-visibility test.
+
 ## 2026-08-01 — Queues lane (PR #1812): pipeline claim-revert emitted an over-wide id filter (`publicRecordAnchor.ts`)
 
 `revertClaimedAnchors` — the post-failed-submission release of claimed pipeline anchors from
@@ -320,3 +347,44 @@ Key implementation patterns:
 - SCRUM-2098 — `docusign-listener-drift.ts` pure Connect-listener config drift check + `docusign-listener-drift-deps.ts` factory. Reuses the SCRUM-2042 active-integration/token-refresh dependency path, reads DocuSign GET `/connect`, compares against the same `buildArkovaConnectConfig()` payload used by provisioning, and reports Sentry warnings for missing/disabled/HMAC/event/payload-format drift. Detection only; no DocuSign writes. Cron route: `/jobs/docusign-listener-drift`. Scheduler: hourly at minute 15 via `scripts/gcp-setup/cloud-scheduler.sh`.
 - SCRUM-2902 (R-1 FATAL) — `ce-key-expiry-alert.ts` fail-LOUD Credential Engine API key expiry alarm. Pure `decideCeKeyExpiryAlert({ expires_at_raw, now })` + `createSentryCeKeyExpiryDispatcher()` + `runCeKeyExpiryCheck()`. Reads `CE_API_KEY_EXPIRES_AT` from env (NOT `config.ts` — mirrors treasury-alert's direct env read). Emits escalating Sentry events at **T-30/T-14 (warning)**, **T-7/EXPIRED (error)**, and — the fail-closed core — fires an **ERROR every run** with `expiry_window=SENTINEL` when the date is unset / a sentinel placeholder (`CE_KEY_EXPIRY_SENTINEL_VALUES`) / unparseable. **DB-stateless by design** (no dedup table → no migration): firing daily inside a window is the desired loudness; Sentry groups events into one issue and the alert-rule `frequency` throttles Slack pages. **event ≠ alert:** the Sentry event only pages a human via the `"SCRUM-2902 — Credential Engine API key expiry"` rule in `infra/sentry/alert-rules.json` (→ Slack `#ops`, tags `story,expiry_window,days_until_expiry`); code↔rule tag parity is enforced by `scripts/ci/check-ce-key-expiry-alert-contract.test.ts`. An admin must create the rule 1:1 in the Sentry dashboard AND capture a live Slack-delivery proof (see `docs/runbooks/ce-key-expiry-alarm.md`) — the code + rule declaration alone do NOT prove delivery. Cron route: `/jobs/ce-key-expiry-check`. Scheduler: daily 08:00 UTC. Gated by `ENABLE_CE_KEY_EXPIRY_ALERTS` (default true). **Founder blocker:** the real `CE_API_KEY_EXPIRES_AT` (≈2026-09-09, confirm) + demo CTID are Carson-supplied; until set, the alarm intentionally pages continuously.
 - **PostgREST `.in()` filter width is NOT `POSTGREST_ROW_LIMIT`** (prod incident 2026-07-29 → 2026-08-01, fix PR `fix/postgrest-in-filter-url-limit`). `POSTGREST_ROW_LIMIT = 1_000` caps how many rows PostgREST *returns*; it says nothing about how many ids fit in a *URL filter*. `fetchAnchorRows` chunked anchor ids by `POSTGREST_ROW_LIMIT` and passed them to `.in('id', chunk)` — 1,000 UUIDs is a ~38 KB encoded query string, which PostgREST rejected with `400 Bad Request` on **every** chunk. `rows` came back empty, `partitionRecordAnchors` produced zero pending items, and the job logged a benign `"No new pending public record anchors to submit"` and returned **HTTP 200**. Public-record anchoring produced **zero anchors for 70+ hours** while every cron reported success and the unlinked backlog grew past 404k. Use `POSTGREST_IN_FILTER_CHUNK` (200) for any `.in()` id list; keep `POSTGREST_ROW_LIMIT` for row pagination only. `fetchAnchorRows` now **throws** when every chunk fails rather than returning `[]` — an all-chunks-failed read is indistinguishable downstream from "no anchors exist", and that silent-success path is what hid the outage.
+
+
+## 2026-08-02 — the envelope guard uses ONE indexed lookup PER KEY, never a combined `.or()`
+
+`findExistingEnvelopeAnchor` (`docusign-anchor-reconciliation.ts`) stalled the DocuSign envelope→anchor path in prod: `canceling statement due to statement timeout` on org `40383eb2` (**3.15M anchors**, artifact `921347cc`, failed twice).
+
+**The cause is a COSTING error, not a missing index and not the sort.** The planner estimates **51,038** rows match the 3-branch `metadata->>` OR when the true answer is **0**. Believing a match is imminent under a small `LIMIT`, it takes a scan — and no index can beat a wrong belief. Measured on prod with a value that matches nothing (the normal case for a newly completed envelope):
+
+| query shape | plan | cost |
+|---|---|---|
+| `.or(...)` + `ORDER BY created_at LIMIT 1` (original) | Index Scan Backward on `idx_anchors_active_created` | 2,209,325 |
+| `.or(...)` + `LIMIT 1`, no ORDER BY | **Seq Scan** | 1,845,309 |
+| single-key `.eq('metadata->>k', v)` + LIMIT | Index Scan on that key's own index | **1.23 — ACTUAL 0.064 ms, rows=0** |
+
+Removing the ORDER BY is **not** sufficient: it trades a backward index walk for a sequential scan and still times out. (An earlier fix attempt measured a cheap `BitmapOr` plan — that measurement used `LIMIT 50`, which changes the planner's choice, so it did not reflect the production query. Do not benchmark this lookup at a LIMIT the code does not use.)
+
+**Rules:**
+
+- **One `.eq('metadata->>key', envelopeId)` query per key in `ENVELOPE_ID_METADATA_KEYS`, run in parallel.** A single-key equality is a point lookup with exactly one index and one condition — the estimator cannot mislead it. Never reintroduce a combined `.or()` across metadata keys on this table.
+- **No `ORDER BY` in SQL.** The oldest-match tie-break happens in application code over a bounded result set (`ENVELOPE_ANCHOR_LOOKUP_LIMIT`), which keeps the guard idempotent — a repeat call must reuse the same anchor.
+- **Fail closed** if any per-key lookup errors: the one that failed may have held the duplicate, so proceeding would insert a second anchor for the envelope.
+- Each key needs its own index (0381 covered two of three; `idx_anchors_metadata_external_ref` covers the third). The migration anti-drift guard ties the constant to its indexes — adding a key without an index reintroduces a scan.
+
+**Benchmark any change here with `EXPLAIN (ANALYZE)` against org `40383eb2` on prod, using a value that matches nothing.** A plan measured on a small or empty org is meaningless — this query looked fixed twice that way.
+## 2026-08-01 CE Registry drift reconciliation (`ce-registry-drift.ts`) — read-only read-back
+
+- **What it closes.** `POST /api/v1/credentials/ctdl/registry-anchor` (L3-A6) anchors a CE Registry record by fingerprinting the exact bytes retrieved — a claim about a moment in time. Nothing ever went back and looked. This job re-reads each anchored CTID from the **public** registry graph endpoint, re-hashes, and reports where current content no longer matches the anchored snapshot. It is the product thesis applied to CE's own data, and it is the highest-value CE capability provable **inside the evaluation window** because it needs no CE credential at all.
+- **Read-only. It publishes NOTHING to Credential Engine.** It reuses the exact SSRF-hardened primitives already shipped for the import/anchor routes (`fetchRegistryGraph` / `buildRegistryGraphUrl` / `mapSafeFetchError` from `api/v1/credentials-ctdl-import.ts`) — never a second outbound-fetch implementation. Do not add a write path here; a real Registry publish integration needs CE-06b claims sign-off and its own flag (see `services/worker/src/ctdl/agents.md`).
+- **The load-bearing invariant: a failure to LOOK is never reported as a CHANGE.** `ObservedRegistryState` is a closed union (`fetched` / `not_found` / `unreachable`) and `UNREACHABLE` is a first-class verdict counted separately from `DRIFTED`. Collapsing them would make a registry outage or a network blip read as "Credential Engine altered a record", which would destroy the credibility of every finding the job emits. Keep them distinct.
+- **Verdicts**: `MATCH` (byte-identical), `DRIFTED` (content changed after anchoring), `WITHDRAWN` (registry no longer serves the CTID — the anchored snapshot remains valid evidence of what it served at anchor time), `UNREACHABLE` (could not retrieve; not evidence of anything). Only non-`MATCH` findings are recorded — `MATCH` is the steady state and logging it would bury the exceptions.
+- **§1.6A**: retrieved bytes are SHA-256'd in memory and discarded. No finding, audit row, log line, or Sentry event carries registry content — only the two digests, the CTID, and a verdict. A test asserts no serialized finding contains registry markers.
+- **R-7 (§1.13)**: a verdict is a MEASURED fact about public bytes — never an endorsement, never a claim that anything of ours is listed, never a claim about the correctness of CE's data.
+- **Flag `ENABLE_CE_REGISTRY_DRIFT_CHECK`, default FALSE.** New outbound traffic to a partner's public infrastructure ships dark. With the flag off the cron route returns `skipped:true` and makes no request. **No Cloud Scheduler job is created by this PR** — standing it up is a separate, deliberate ops step, so the surface is fully dark on merge.
+- **⚠ BLOCKED ON A PARTIAL INDEX — do not enable the flag yet.** There is no index on `metadata->>'ce_registry_ctid'` and `anchors` is a ~3M-row table. Review round 1 of this PR contained a WRONG claim worth recording so nobody re-derives it: that ordering newest-first lets the scan "reach the CE cohort almost immediately". It does not. With `LIMIT 100` and far fewer than 100 matching rows Postgres CANNOT stop early — it walks the whole `idx_anchors_active_created` index and heap-fetches/detoasts `metadata` for every row before concluding the limit is unsatisfiable. Scan direction is irrelevant to total work. This repo already took a 14-day prod anchoring gap from exactly this shape hitting the 60s PostgREST `statement_timeout` (`check-confirmations.ts`). Prerequisite is a partial expression index following the `pipeline_source` precedent (`0342_cpe_cle_dashboard_partial_index.sql`) — a T3 migration, deliberately out of scope for the flag-dark PR but a HARD prerequisite for enabling it.
+- **Coverage is capped and says so.** There is no cursor: a pass reconciles at most `CE_REGISTRY_DRIFT_MAX_BATCH` newest records. `CeRegistryDriftResult.truncated` reports when more exist, because the job's entire value is COMPLETENESS of the read-back and an invisible gap is worse than a reported one. A keyset cursor (see `anchorExpirySweep.ts` for the established shape) is the follow-up when the CE cohort approaches the cap.
+- **A failed load is never a silent empty pass.** `loadFailed` is distinct from `checked: 0`. This folder's own agents.md records a 70-hour prod outage whose root cause was exactly that conflation — an all-chunks-failed read being indistinguishable downstream from "no rows exist".
+- **The CTID is gated on `REAL_CTID_PATTERN` before any fetch.** It is caller-supplied text at the anchor route and is interpolated into the registry URL path; both sibling callers of `buildRegistryGraphUrl` gate it, and a scheduled job that did not would let a crafted value steer outbound requests to arbitrary paths on the registry host long after the original request.
+- **Politeness + isolation.** `CE_REGISTRY_DRIFT_MAX_BATCH = 100` is a hard ceiling regardless of the caller's `limit`, and the pass is deliberately SEQUENTIAL (one partner-facing request at a time) so it is a trickle, not a burst. Per-record failures are isolated: one bad record surfaces as `UNREACHABLE` and the pass continues, because a job that aborts halfway leaves a silently partial picture — worse than a complete one with known gaps. A reporting failure likewise never abandons the remaining records.
+- **A swallowed reporting failure is COUNTED, not just logged (PR #1838, review round 2).** `reportSafely` returning `void` meant a pass that persisted three drift findings and a pass that lost all three returned byte-identical results at HTTP 200 — the same success-indistinguishable-from-nothing shape as `loadFailed`, one layer down, and only visible in a stray error log. It now returns a boolean and the caller counts `CeRegistryDriftResult.reportFailures`. Mutation-verified: zeroing the increment kills two tests.
+- **`loadFailed` answers HTTP 500 on the cron route, not 200 (PR #1838, review round 2).** Carrying the flag in a 200 body throws the distinction away at the only layer that acts on it — Cloud Scheduler banks a success and never retries a pass that reconciled nothing. Matches the `/reconcile-credit-conservation` precedent (200 for a correct detection, 500 for a broken probe). Mutation-verified.
+- **Known direction of error on `truncated`.** It is computed from the POST-filter record count, so a saturated query whose rows were then dropped for malformed metadata reads as not-truncated. Under-reporting only, and retired by the cursor follow-up — recorded rather than assumed away.
