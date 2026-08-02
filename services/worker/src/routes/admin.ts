@@ -20,7 +20,7 @@ import { handleSystemHealth } from '../api/admin-health.js';
 import { handleOpsSloStats } from '../api/admin-ops-slo.js';
 import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
 import { handleAdminOrgMembers, handleAdminUserSearch, handleAdminAddOrgMember } from '../api/admin-org-members.js';
-import { handlePromoteAdmin, handleChangeRole, handleSetOrg, handleSetOrgQuota } from '../api/admin-actions.js';
+import { handlePromoteAdmin, handleChangeRole, handleSetOrg, handleSetOrgQuota, handleAdjustOrgCredit } from '../api/admin-actions.js';
 import { handleListPendingResolution, handleResolveQueue, handleRunOrgAnchorQueue } from '../api/queue-resolution.js';
 import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
 import { handleConnectorHealth } from '../api/connector-health.js';
@@ -264,6 +264,18 @@ adminRouter.post('/admin/organizations/:id/quota', async (req, res) => {
     await handleSetOrgQuota(userId, req.params.id, req, res);
   } catch (error) {
     logger.error({ error }, 'Set org quota request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── L2-A5 (founder admin-controls): add/remove org credits ───
+adminRouter.post('/admin/organizations/:id/credits/adjust', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleAdjustOrgCredit(userId, req.params.id, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Adjust org credit request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
