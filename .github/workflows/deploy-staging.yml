@@ -177,20 +177,28 @@ jobs:
           BUILD_SHA: ${{ steps.sha.outputs.sha }}
           RAW_URL: ${{ steps.staging_url.outputs.raw_url }}
           ID_TOKEN: ${{ steps.id_token.outputs.id_token }}
+          HEALTH_DETAIL_TOKEN: ${{ secrets.HEALTH_DETAIL_TOKEN }}
         run: |
           set -euo pipefail
           TAG="pr-${INPUT_PR_NUMBER}"
           TAG_URL="${RAW_URL/https:\/\//https://${TAG}---}"
+          # SCRUM-2653: `?detailed=true` is gated on X-Health-Token and fails
+          # closed in production; staging rigs normally run NODE_ENV!=production
+          # so they still serve detail, but the assertions below are written
+          # shape-tolerantly (compact renders each check as a bare string,
+          # detailed as an object) so this gate is correct either way.
           BODY=$(curl -fsS --max-time 20 \
             -H "Authorization: Bearer ${ID_TOKEN}" \
+            -H "X-Health-Token: ${HEALTH_DETAIL_TOKEN}" \
             "${TAG_URL}/health?detailed=true")
           echo "${BODY}" | jq .
           echo "${BODY}" | jq -e --arg sha "${BUILD_SHA}" '
+            def check($k): if (.checks[$k]|type) == "object" then .checks[$k].status else .checks[$k] end;
             .status == "healthy"
             and .git_sha == $sha
-            and .checks.database.status == "ok"
-            and .checks.anchoring.status == "ok"
-            and .checks.kms.status == "ok"
+            and check("database") == "ok"
+            and check("anchoring") == "ok"
+            and check("kms") == "ok"
           ' >/dev/null
 
       - name: Summary
