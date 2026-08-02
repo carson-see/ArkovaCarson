@@ -187,6 +187,54 @@ bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
 Newest first, one entry per session. Each entry's own `_Last refreshed:_` footer is that entry's
 record at the time it was written — it is not a claim about the current state of this file.
 
+### 2026-08-02 (Queues lane) — the PostgREST `.in()` filter-width class closed repo-wide (4 PRs open, none merged)
+
+**Status: four DRAFT PRs, nothing merged, no prod change.** This entry describes work that exists as
+reviewable branches only.
+
+The class has two halves, and a fix addressing one is not a fix: (1) an over-wide `.in()` filter takes
+`400` from the proxy in front of PostgREST; (2) postgrest-js **resolves** that as
+`{ data: null, error }` rather than throwing, so `const { data } = …` reads a hard failure as
+"nothing matched" and the surrounding `catch` never runs. It reached production three times —
+#1795 (70-hour silent anchoring outage), #1812 (a revert that released nothing), #1853 (duplicate
+anchors created **and billed**).
+
+| PR | Scope | Tier |
+|---|---|---|
+| [#1866](https://github.com/carson-see/ArkovaCarson/pull/1866) | API + billing width/error sites: `meteredBilling`, `usage`, `anchor-evidence`+`anchor-lifecycle` (deduped into `utils/profilePublicIds.ts`), `compliance-audit`, `directory-opt-out`, `webhooks`, `grc`, `admin-org-members` | T2 |
+| [#1867](https://github.com/carson-see/ArkovaCarson/pull/1867) | The 500-wide cohort in `jobs/`: `batch-anchor` (6 loops + the constant), `check-confirmations`, `docusign-reconciliation-deps`, `trainingExporter` | T3 |
+| [#1869](https://github.com/carson-see/ArkovaCarson/pull/1869) | `arkova/no-hand-rolled-in-filter-chunk` eslint rule — makes the class unwritable | T0/T1 |
+| [#1870](https://github.com/carson-see/ArkovaCarson/pull/1870) | The remaining silent-empty enrichment reads (12 sites) via `utils/chunkedRead.ts` | T2 |
+
+All four are stacked on #1853 → #1839 (both still open) but target `main`, because `ci.yml` only
+triggers on PRs against `main`/`staging`/`develop` — a stacked PR gets zero CI. Each diff shrinks as
+the stack lands.
+
+**Three things worth carrying forward regardless of whether these merge:**
+
+- **`500` was never a safe chunk width.** Every constant in the cohort was reasoned about against
+  HTTP 414 URI-too-large, not the 8 KiB request line the proxy enforces with a 400. 500 UUIDs encode
+  to ~18.5 KB, and `public_id` / DocuSign envelope ids are not UUIDs. The chunking looked deliberate,
+  was documented, had a rationale in a comment — and protected nothing.
+- **The lint rule found four sites the hand-written census missed**, including
+  `docusign-queue-reconciliation-deps.ts` — the file #1867's own notes had held up as the sibling that
+  "already chunked correctly." A detector reads every line the same way; a census reads for the shape
+  it already has in mind. Run both.
+- **Two existing tests failed when the rule landed, and both were wrong in the same way:** they
+  asserted the *exact hand-picked chunk width* (`Math.ceil(N/100)`, `[100,100,50]`), so they failed
+  precisely because the width was **fixed**. A test pinning a constant is a ratchet holding the bug in
+  place. Both now assert the property instead.
+
+**Also fixed in passing, and worth noting for the pen-test window:** `regulatory-alerts.ts` compared
+each record's `content_hash` against its anchor fingerprint through a discarded-error read — an empty
+anchor map meant every record fell through the comparison and stopped being flagged, i.e. the endpoint
+silently reported **all-clear**. Same fail-OPEN shape as the `compliance-audit` zero-rules verdict.
+Both are in #1866/#1870, neither is merged.
+
+**Deliberately out of scope:** nine `.in()` sites over literal arrays (`['active','trialing']` etc.)
+still discard their error. They are width-safe by construction and their failure mode is an ordinary
+empty read, not this class. Worth a separate error-handling pass.
+
 ### 2026-08-01 (CTO) — 72h SOAK PAIR PASSED + RELEASE CLOSEOUT: prod un-paused and current at main tip, queue cleared to Ready, founder no-interim-soak ruling recorded
 
 **Both 72h signet soaks PASSED** (launch cleared 2026-07-31T19:43Z, legacy 21:32Z). Final verified post-expiry (MCP `execute_sql` 2026-08-01T13:07Z): launch 92,844 SECURED / 1,633 PENDING / 1 SUBMITTED (known F-3 fixture); legacy 92,931 / 1,536 / 1. Zero non-F-1 5xx across both full windows (gcloud logging, URL-verified). Treasury floor 70,471 sats. RC manifest **RC-2026-08-launch-72h finalized and approved** (deferred_consolidated_soak exited per its own sequence) — merged via PR #1770 (`c56ceee03`).
