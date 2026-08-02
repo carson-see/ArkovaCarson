@@ -315,6 +315,17 @@ Three things now hold that line, and all three must stay:
    invisible. It also covers a hand-run `gcloud run services update`, which no
    static test can see.
 
+**The clear step is non-fatal but must never be silent (PR #1823 review).** It
+tolerates a non-zero exit deliberately — clearing a name that is not currently
+set is a no-op, not an error. But it must NOT redirect stderr to `/dev/null`:
+doing so made a genuine rejection (unsupported flag, missing IAM, wrong service
+name) indistinguishable from "nothing to clear", and the only downstream symptom
+was the canary deploy failing later with an apparently-unrelated env/secret type
+conflict. The step now captures combined output, prints it, and emits a
+`::warning::` on a non-zero exit; a contract case (`never swallows the clear step
+failure into silence`) pins that, asserting against the step's executable lines
+only so it grades behaviour rather than the comment that names the old form.
+
 **`ENABLE_CONNECTOR_ARTIFACT_DRAIN` lives in this file's `--set-env-vars`, and
 only here.** It is env-only (`services/worker/src/config.ts` reads
 `process.env` — there is no `switchboard_flags` row), and `--set-env-vars` is

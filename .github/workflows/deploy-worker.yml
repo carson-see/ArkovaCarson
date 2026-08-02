@@ -374,13 +374,29 @@ jobs:
         # between now leaves prod on fully-configured code, which is the
         # correct direction to fail.
         run: |
-          gcloud run services update ${{ env.SERVICE_NAME }} \
+          # Non-fatal BY DESIGN: clearing a name that is not currently set is a
+          # no-op, not an error, so this step must not fail the deploy.
+          #
+          # But stderr is NOT discarded. The previous `2>/dev/null || true` made
+          # a genuine rejection (an unsupported flag, missing IAM, a bad service
+          # name) indistinguishable from "nothing to clear" — the clear would
+          # silently not happen and the only symptom would surface later as an
+          # apparently-unrelated env/secret type conflict in the canary deploy.
+          # Capture the output and surface it as a warning instead.
+          set +e
+          CLEAR_OUT=$(gcloud run services update ${{ env.SERVICE_NAME }} \
             --region ${{ env.REGION }} \
             --project ${{ env.PROJECT_ID }} \
             --no-traffic \
             --remove-secrets CRON_SECRET,DOCUSIGN_INTEGRATION_KEY,DOCUSIGN_CLIENT_SECRET,DOCUSIGN_CONNECT_HMAC_SECRET \
             --remove-env-vars CRON_SECRET,DOCUSIGN_INTEGRATION_KEY,DOCUSIGN_CLIENT_SECRET,DOCUSIGN_CONNECT_HMAC_SECRET,ENABLE_DOCUSIGN_OAUTH,ENABLE_DOCUSIGN_WEBHOOK,DOCUSIGN_DEMO \
-            --quiet 2>/dev/null || true
+            --quiet 2>&1)
+          CLEAR_RC=$?
+          set -e
+          printf '%s\n' "${CLEAR_OUT}"
+          if [ "${CLEAR_RC}" -ne 0 ]; then
+            echo "::warning title=Clear conflicting env/secret types exited ${CLEAR_RC}::The clear step did not succeed. If the canary deploy below fails with an env/secret type conflict, this is why. Output above."
+          fi
 
       - name: Deploy canary (no traffic)
         run: |

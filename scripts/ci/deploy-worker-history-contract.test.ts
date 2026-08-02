@@ -90,6 +90,23 @@ describe('Deploy Worker traffic-safety contract', () => {
     expect(clearStep()).toMatch(/--no-traffic/u);
   });
 
+  it('never swallows the clear step failure into silence', () => {
+    // The step is intentionally non-fatal (clearing an unset name is a no-op),
+    // but it must not DISCARD its diagnostics. `2>/dev/null || true` made a
+    // real rejection — unsupported flag, missing IAM, wrong service — look
+    // exactly like "nothing to clear"; the only downstream symptom was an
+    // apparently-unrelated env/secret type conflict in the canary deploy.
+    // Assert against the EXECUTABLE lines only — the step's own comment
+    // explains the old `2>/dev/null` form by name, and matching that would be
+    // the test grading prose rather than behaviour.
+    const executable = clearStep()
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('#'))
+      .join('\n');
+    expect(executable).not.toMatch(/2>\s*\/dev\/null/u);
+    expect(executable).toMatch(/::warning/u);
+  });
+
   it('keeps the canary off traffic until it has passed its smoke test', () => {
     expect(canaryStep()).toMatch(/--no-traffic/u);
     expect(workflow.indexOf('- name: Smoke test canary revision'))
