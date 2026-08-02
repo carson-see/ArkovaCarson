@@ -15,6 +15,11 @@
 
 import { Router, Request, Response } from 'express';
 import { verifyMerkleInclusion } from '../../utils/merkle-verify.js';
+import { isValidProofArray } from '../../utils/proofBranch.js';
+import {
+  proofAvailabilityFields,
+  type ProofAvailability,
+} from '../../constants/proofAvailability.js';
 import { fromByteaHex } from '../../utils/anchorProofs.js';
 import { createSignedBundle, staticEd25519Signer, type SignerFn } from '../../proof/signed-bundle.js';
 import { buildBoundProofPayload } from '../../proof/did-binding.js';
@@ -229,6 +234,50 @@ export interface ProofErrorResponse {
    * that predates this field — consumers MUST fall back to `error` when absent.
    */
   proof_error_code?: ProofErrorCode;
+  /**
+   * SCRUM-2575: additive proof-availability class, present ONLY on the
+   * NO_BATCH_PROOF 404 — the honest back-catalogue signal, where it is always
+   * `root_only`. Absent on RECORD_NOT_FOUND (an unknown record has no proof
+   * class) and on 400/500/503.
+   */
+  proof_availability?: ProofAvailability;
+  /**
+   * SCRUM-2575: the measured / asserted / NOT-asserted statement for
+   * `proof_availability` (§1.5). Present exactly when it is.
+   *
+   * The prose `error` above says only that no Merkle proof is available, which a
+   * caller can read as "this record could not be verified." That is the wrong
+   * reading: the record IS anchored, its fingerprint IS committed on-chain, and
+   * only the per-document branch is missing. This states that distinction
+   * instead of leaving it to be inferred from a 404.
+   */
+  proof_availability_note?: string;
+}
+
+/**
+ * SCRUM-2575: the NO_BATCH_PROOF 404 body, assembled in one place so the two
+ * routes that emit it (test-lookup path and DB path) cannot drift.
+ *
+ * NOTE ON THE STATUS CODE. SCRUM-2575's acceptance criteria ask for root-only
+ * anchors to be returned "neither a 404 nor a false verified verdict." This
+ * change delivers the second half and the honest statement, but keeps the 404:
+ * the code is load-bearing in the PUBLISHED FE contract
+ * (`docs/reference/FE_PROOF_GATE_CONTRACT.md` §2.2) and in
+ * `src/lib/proofAvailability.ts`, which routes on it to render the honest empty
+ * state. Flipping it to 200 is a breaking contract change requiring the FE
+ * classifier, the contract doc, and both SDKs to move together — see the PR body.
+ * The affirmative honest answer now lives on `GET /api/v1/verify/:publicId`,
+ * which returns 200 and states availability directly.
+ */
+export function noBatchProofBody(): ProofErrorResponse {
+  return {
+    error: 'No Merkle proof available for this record. It may not have been batch-anchored.',
+    proof_error_code: PROOF_ERROR_CODE.NO_BATCH_PROOF,
+    // Reaching this body means the route already failed to resolve a branch
+    // from BOTH the stored row and the legacy metadata, so root_only is a
+    // measurement here, not an assumption.
+    ...proofAvailabilityFields(false),
+  };
 }
 
 /** Injectable lookup for testing */
@@ -318,18 +367,16 @@ function readMerkleIndex(value: unknown): number | null {
 }
 
 /**
- * Validate that a merkle_proof array from metadata has the correct shape.
+ * Validate that a merkle_proof array has the correct shape.
+ *
+ * SCRUM-2575: the implementation moved to `utils/proofBranch.ts` so
+ * `/api/v1/verify` can apply the IDENTICAL test when it
+ * decides whether to advertise `proof_availability: per_document`. Two surfaces
+ * answering "is a proof available?" with two predicates is how the API ends up
+ * contradicting itself about one record. Re-exported here to keep this module's
+ * public surface unchanged.
  */
-export function isValidProofArray(arr: unknown): arr is MerkleProofEntry[] {
-  if (!Array.isArray(arr)) return false;
-  return arr.every(
-    (entry) =>
-      typeof entry === 'object' &&
-      entry !== null &&
-      typeof entry.hash === 'string' &&
-      (entry.position === 'left' || entry.position === 'right'),
-  );
-}
+export { isValidProofArray } from '../../utils/proofBranch.js';
 
 function extractStoredProof(
   proof: ProofRecordData | null,
@@ -642,10 +689,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
         );
 
         if (result === null) {
-          res.status(404).json({
-            error: 'No Merkle proof available for this record. It may not have been batch-anchored.',
-            proof_error_code: PROOF_ERROR_CODE.NO_BATCH_PROOF,
-          } as ProofErrorResponse);
+          res.status(404).json(noBatchProofBody());
           return;
         }
 
@@ -693,10 +737,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
     const result = buildProofResponse(anchor);
 
     if (result === null) {
-      res.status(404).json({
-        error: 'No Merkle proof available for this record. It may not have been batch-anchored.',
-        proof_error_code: PROOF_ERROR_CODE.NO_BATCH_PROOF,
-      } as ProofErrorResponse);
+      res.status(404).json(noBatchProofBody());
       return;
     }
 
