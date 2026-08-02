@@ -52,6 +52,9 @@ export default tseslint.config(
       'src/jobs/docusign-connect-failures-deps.ts',
       'src/jobs/docusign-reconciliation.ts',
       'src/jobs/docusign-reconciliation-deps.ts',
+      // SCRUM-2903 GD-PROD: the Google Drive connector-artifact producer sink
+      // fetches + SHA-256s Drive bytes; hold it to the same no-bytes-to-sink bar.
+      'src/jobs/drive-file-changed.ts',
     ],
     ignores: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
     plugins: {
