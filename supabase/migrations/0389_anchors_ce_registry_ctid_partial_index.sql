@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0388 — anchors CE Registry partial index (unblocks PR #1838's drift job)
+-- 0389 — anchors CE Registry partial index (unblocks PR #1838's drift job)
 --
 -- ROLLBACK: DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_ce_registry_ctid;
 --   Run standalone, outside a transaction. No data migration is involved, and
