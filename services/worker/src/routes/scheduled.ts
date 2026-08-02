@@ -24,6 +24,7 @@ import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
 import { runCreditConservationReconciler } from '../jobs/credit-conservation-reconciler.js';
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
 import { runConnectorArtifactDrain } from '../jobs/connector-artifact-drain.js';
+import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
 import { trackOperation } from './lifecycle.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 
@@ -342,6 +343,33 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
         }
       } catch (error) {
         logger.error({ err: errMsg(error) }, 'Connector-artifact drain cron failed');
+      }
+    });
+  }
+
+  // SCRUM-2903 (GD-PROD): Drive file-changed job drain every 5 minutes. Drains
+  // the `google_drive.file_changed` queue that drive-changes-runner.ts writes
+  // on a matched change: fetch bytes -> SHA-256 in memory -> discard ->
+  // enqueue_connector_artifact (§1.6A) for the existing connector-artifact
+  // drain to anchor. Default OFF alongside ENABLE_CONNECTOR_ARTIFACT_ENQUEUE —
+  // when that flag is false the job runs but no-ops the hash/enqueue step per
+  // job (returns the disabled sentinel), so there's nothing to gain by polling.
+  // In-process is the dev/test BACKUP ONLY: prod runs via Cloud Scheduler ->
+  // POST /jobs/drive-file-changed (node-cron is dormant under Cloud Run CPU
+  // throttling, same as connector-artifact-drain above).
+  if (config.enableConnectorArtifactEnqueue) {
+    scheduleInProcess('drive-file-changed', '*/5 * * * *', async () => {
+      logger.debug('Running Drive file-changed job drain');
+      try {
+        const result = await trackOperation(runDriveFileChangedJobs());
+        if (result.completed > 0 || result.failed > 0) {
+          logger.info(
+            { completed: result.completed, failed: result.failed, dead: result.dead },
+            'Drive file-changed job drain processed jobs',
+          );
+        }
+      } catch (error) {
+        logger.error({ err: errMsg(error) }, 'Drive file-changed job drain cron failed');
       }
     });
   }

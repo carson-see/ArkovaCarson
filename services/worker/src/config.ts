@@ -277,12 +277,15 @@ const ConfigSchema = z.object({
    */
   enableDocusignWebhook: boolFlag(false),
   /**
-   * Connector-artifact enqueue (DS-03 / SCRUM-2363) — when false, connector
-   * jobs (DocuSign envelope-completed) compute the fingerprint but DO NOT
-   * enqueue a `connector_artifact` row. Default false: the row's drain consumer
-   * (QUEUE-06/SCRUM-2352, QUEUE-08/SCRUM-2354) is unbuilt, so enqueuing now
-   * would pile up `pending` rows that nothing anchors. Cloud Run prod env sets
-   * this to true explicitly once the drain ships.
+   * Connector-artifact enqueue (DS-03 / SCRUM-2363; GD-PROD / SCRUM-2903) —
+   * when false, connector jobs (DocuSign envelope-completed, Drive
+   * file-changed) compute the fingerprint but DO NOT enqueue a
+   * `connector_artifact` row. The row's drain consumer (QUEUE-06/SCRUM-2352,
+   * connector-artifact-drain.ts) IS built and merged — this flag is now a
+   * pure launch gate, not a "consumer doesn't exist yet" placeholder. Default
+   * false so enqueuing doesn't start piling up rows before the flip is
+   * founder-approved. Cloud Run prod env sets this to true explicitly once
+   * launch-approved.
    */
   enableConnectorArtifactEnqueue: boolFlag(false),
   /**
@@ -390,6 +393,14 @@ const ConfigSchema = z.object({
    * string so that fail-loud classification stays in the job, not the schema.
    */
   ceApiKeyExpiresAt: z.string().optional(),
+  /**
+   * ENABLE_CE_REGISTRY_DRIFT_CHECK — gate the CE Registry drift reconciliation
+   * cron (`ce-registry-drift.ts`). Default FALSE: the pass makes one OUTBOUND
+   * request per anchored CTID against Credential Engine's public
+   * infrastructure, so it ships dark and is enabled deliberately. Read-only —
+   * it publishes nothing to CE.
+   */
+  enableCeRegistryDriftCheck: boolFlag(false),
 
   // Arize observability (SCRUM-1067)
   /** ARIZE_TRACING_ENABLED — initialize OTLP exporter when true and creds present. */
@@ -828,6 +839,7 @@ function loadConfig(): Config {
     // the single source of truth.
     enableCeKeyExpiryAlerts: process.env.ENABLE_CE_KEY_EXPIRY_ALERTS,
     ceApiKeyExpiresAt: process.env.CE_API_KEY_EXPIRES_AT,
+    enableCeRegistryDriftCheck: process.env.ENABLE_CE_REGISTRY_DRIFT_CHECK,
     arizeTracingEnabled: process.env.ARIZE_TRACING_ENABLED,
     arizeTracingConsole: process.env.ARIZE_TRACING_CONSOLE,
     arizeApiKey: process.env.ARIZE_API_KEY,
