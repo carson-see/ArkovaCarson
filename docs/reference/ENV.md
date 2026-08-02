@@ -95,6 +95,45 @@ CRON_SECRET=                        # min 16 chars
 CRON_OIDC_AUDIENCE=
 ```
 
+## Health endpoint (SCRUM-2653)
+```bash
+HEALTH_DETAIL_TOKEN=                # min 16 chars, optional
+```
+
+Gates the `?detailed=true` view of `/health` and `/api/health`, sent by the
+caller as the `X-Health-Token` header. **Plain `/health` stays public and
+unauthenticated** (CLAUDE.md §1.9) — only the detailed enrichment is gated.
+
+**Exactly what is and is not gated** (stated precisely per CLAUDE.md §1.13's
+claims-review rule — measured vs asserted vs NOT asserted):
+
+| Field | Gated by `HEALTH_DETAIL_TOKEN`? |
+|---|---|
+| `checks.*.status` sub-objects (DB latency + error message, anchoring backlog `pendingCount` / `drainStalled` / `lastBatchAt`, `kms.provider`) | **Yes** — compact renders each check as a bare status string |
+| `info.*` (stripe / sentry / ai / prodAnchoring flags) | **Yes** — omitted entirely |
+| `connection` (`mode` + Supabase URL / project ref) | **Yes** — omitted entirely |
+| `status`, `version`, `git_sha`, `uptime`, `network` | **NO — still public on plain `/health`** |
+
+`git_sha` and `network` remain readable by any anonymous caller. That is a
+**deliberate, pre-existing** carve-out, not an oversight: `revision-drift.yml`
+(10-minute cron), `verify-worker-runtime.yml`, `deploy-staging.yml` and
+`scripts/ci/check-handoff-claims.ts` all read `git_sha` from an unauthenticated
+`/health`, and CLAUDE.md §0.1 requires HANDOFF prod-state claims to cite it.
+Gating it is a separate product decision with real operational cost — raise it
+with Carson rather than assuming this variable covers it.
+
+Behavior when the variable is **unset**:
+
+| Environment | Detailed view |
+|---|---|
+| `NODE_ENV=production` | **DENIED** (fails closed) — response degrades to the compact body with `"detail": "unauthorized"`, HTTP 200 |
+| anything else (local dev, preview, rigs) | allowed, no token needed |
+
+Deliberately optional and deliberately **not** in the production required-vars
+check: a missing secret must not crash-loop the worker. An unauthorized request
+degrades to compact rather than returning 401, so Cloud Run probes, uptime
+monitors, and the deploy-verification workflows never break on this gate.
+
 ## Cloudflare (edge workers)
 ```bash
 CLOUDFLARE_ACCOUNT_ID=
@@ -121,6 +160,38 @@ ENABLE_MCP_SERVER=false             # MCP server kill switch; set true only afte
 RESEND_API_KEY=                     # Resend transactional email (BETA-03)
 EMAIL_FROM=noreply@arkova.ai        # verified sender address
 ```
+
+**`EMAIL_FROM` is set explicitly in `deploy-worker.yml`** as of 2026-08-01. It
+was previously unset on the prod worker and relied on the Zod default in
+`services/worker/src/config.ts` (`.default('noreply@arkova.ai')`) — the same
+value, so this was not a live outage, but an implicit default for the sender
+address of every outbound customer email is not something to leave to a
+fallback.
+
+**The sender domain is verified — checked, not assumed** (DNS, 2026-08-01):
+
+| Record | Value | Meaning |
+|---|---|---|
+| `resend._domainkey.arkova.ai` TXT | RSA public key present | Resend DKIM signing configured |
+| `send.arkova.ai` MX | `feedback-smtp.us-east-1.amazonses.com` | Resend bounce/complaint handling provisioned |
+| `send.arkova.ai` TXT | `v=spf1 include:amazonses.com ~all` | SPF authorises Resend's SES sending |
+| `_dmarc.arkova.ai` TXT | `v=DMARC1; p=none;` | DMARC present, **monitoring only** |
+
+That is Resend's complete standard setup for a verified domain, so
+`noreply@arkova.ai` is a valid sender and mail is not being rejected at the
+domain-authentication layer.
+
+Two things this does NOT prove, kept separate deliberately:
+- **Inbox placement.** Authentication passing is not the same as landing in the
+  inbox rather than spam. Only the Resend dashboard (or a real mailbox) shows
+  delivery outcomes.
+- **DMARC is `p=none`** — monitoring only, no enforcement. Anyone can spoof
+  `@arkova.ai` today without receivers acting on it. Moving to `p=quarantine`
+  after reviewing aggregate reports is a separate, founder-owned DNS change.
+
+Note the root domain's SPF (`v=spf1 include:_spf.google.com ~all`) does **not**
+include SES. That is correct for Resend's current scheme — the MAIL FROM domain
+is `send.arkova.ai`, which carries its own SPF. Do not "fix" the root record.
 
 ## Public record fetchers (worker only)
 ```bash
@@ -282,6 +353,21 @@ ENABLE_CE_KEY_EXPIRY_ALERTS=true
 # → Slack #ops, until a real date is configured. Set from the CE trial/renewal
 # contract. (Known trial expiry ≈ 2026-09-09 per project memory — confirm exact.)
 CE_API_KEY_EXPIRES_AT=               # e.g. 2026-09-09T00:00:00Z — DO NOT leave blank in prod
+# NOTE (verified 2026-08-01): CE_API_KEY_EXPIRES_AT is NOT currently plumbed by
+# .github/workflows/deploy-worker.yml, so it is absent from the prod Cloud Run
+# env entirely and the alarm sits in its fail-LOUD SENTINEL state. Supplying the
+# value alone is not enough — the deploy workflow needs a slot for it too.
+
+# CE Registry drift reconciliation (read-only read-back).
+# Gates POST /jobs/ce-registry-drift-check. When false (DEFAULT) the pass no-ops
+# with `skipped:true` and makes NO outbound request. When true it re-reads each
+# anchored CE Registry CTID from the PUBLIC registry graph endpoint, re-hashes
+# the bytes, and records a finding for any MATCH deviation (DRIFTED / WITHDRAWN /
+# UNREACHABLE). Read-only — it publishes nothing to Credential Engine, and needs
+# no CE credential. Ships dark because it introduces outbound traffic to a
+# partner's public infrastructure; enable deliberately, then create the Cloud
+# Scheduler job separately.
+ENABLE_CE_REGISTRY_DRIFT_CHECK=false
 
 # ─── SCRUM-1162 — Middesk KYB (organization verification) ───
 # Per 2026-04-24 decision these routes are NOT behind a feature flag.
@@ -328,9 +414,14 @@ DOCUSIGN_INTEGRATION_KEY=
 DOCUSIGN_CLIENT_SECRET=
 ENABLE_DOCUSIGN_OAUTH=false         # DocuSign OAuth routes; default off pending org-scale launch validation
 
-# DocuSign Connect HMAC secret. Listener provisioning sends this shared key to
-# DocuSign; the worker verifies X-DocuSign-Signature-1 over the raw body.
+# DocuSign Connect HMAC secret. The worker verifies X-DocuSign-Signature-1 over
+# the raw body with this key. Listener provisioning does NOT install it — DocuSign
+# has no `hmacSecret` field on a Connect configuration, so the signing key is held
+# ACCOUNT-SIDE and must be aligned by a DocuSign admin. Provisioning still requires this var
+# to be set, because enabling includeHMAC with nothing to verify against would 401
+# every delivery. See docs/runbooks/integrations/docusign.md.
 DOCUSIGN_CONNECT_HMAC_SECRET=
+
 ENABLE_DOCUSIGN_WEBHOOK=false       # /webhooks/docusign intake; default off until org-wide Connect testing passes
 WORKER_PUBLIC_URL=                  # Public worker origin used when provisioning DocuSign Connect listener URLs
 

@@ -317,8 +317,13 @@ export interface ArkovaConnectConfig {
   enableLog: 'true';
   allUsers: 'true';
   includeHMAC: 'true';
+  /**
+   * LOCAL flag, not a DocuSign field — never sent. Consumed only by the
+   * listener-drift job (`jobs/docusign-listener-drift-deps.ts`) as the expected
+   * value to compare DocuSign's `includeHMAC` against. Same for `payloadFormat`
+   * / `payloadVersion`, which the drift job compares against `eventData`.
+   */
   hmacEnabled: true;
-  hmacSecret: string;
   includeDocumentFields: 'true';
   requiresAcknowledgement: 'true';
   envelopeEvents: string[];
@@ -357,10 +362,15 @@ function trimTrailingSlashes(value: string): string {
   return trimmed;
 }
 
-function requireConnectConfig(env: NodeJS.ProcessEnv): {
-  connectHmacSecret: string;
-  workerPublicUrl: string;
-} {
+/**
+ * Validate the provisioning preconditions and return the worker's public URL.
+ *
+ * `DOCUSIGN_CONNECT_HMAC_SECRET` is asserted but deliberately NOT returned:
+ * enabling `includeHMAC` without a secret for `/webhooks/docusign` to verify
+ * against would 401 every delivery, so a missing secret must still fail closed —
+ * but the secret itself never belongs on the Connect payload (see below).
+ */
+function requireConnectConfig(env: NodeJS.ProcessEnv): { workerPublicUrl: string } {
   const workerPublicUrl = env.WORKER_PUBLIC_URL;
   if (!workerPublicUrl) {
     throw new DocusignConfigError(
@@ -368,18 +378,19 @@ function requireConnectConfig(env: NodeJS.ProcessEnv): {
     );
   }
 
-  const connectHmacSecret = env.DOCUSIGN_CONNECT_HMAC_SECRET ?? '';
-  if (!connectHmacSecret) {
+  // Trimmed: a whitespace-only secret is not a secret, and would 401 every
+  // delivery at /webhooks/docusign while provisioning reported success.
+  if (!env.DOCUSIGN_CONNECT_HMAC_SECRET?.trim()) {
     throw new DocusignConfigError(
       'DOCUSIGN_CONNECT_HMAC_SECRET is required to provision a secure Connect listener',
     );
   }
 
-  return { connectHmacSecret, workerPublicUrl };
+  return { workerPublicUrl };
 }
 
 export function buildArkovaConnectConfig(env: NodeJS.ProcessEnv = process.env): ArkovaConnectConfig {
-  const { connectHmacSecret, workerPublicUrl } = requireConnectConfig(env);
+  const { workerPublicUrl } = requireConnectConfig(env);
   const webhookUrl = `${trimTrailingSlashes(workerPublicUrl)}/webhooks/docusign`;
 
   return {
@@ -391,7 +402,6 @@ export function buildArkovaConnectConfig(env: NodeJS.ProcessEnv = process.env): 
     allUsers: 'true',
     includeHMAC: 'true',
     hmacEnabled: true,
-    hmacSecret: connectHmacSecret,
     includeDocumentFields: 'true',
     requiresAcknowledgement: 'true',
     envelopeEvents: ['Completed'],
@@ -455,9 +465,14 @@ function buildConnectPayload(args: {
     enableLog: args.config.enableLog,
     allUsers: args.config.allUsers,
     includeHMAC: args.config.includeHMAC,
-    // DocuSign must sign deliveries with the same key the webhook verifier uses.
-    // Never log this Connect payload.
-    hmacSecret: args.config.hmacSecret, // NOSONAR
+    // NOTE: there is deliberately no `hmacSecret` here. It is NOT a declared
+    // field on DocuSign's ConnectCustomConfiguration resource, so it could only
+    // ever be ignored or rejected — and DocuSign demonstrably hard-400s this
+    // endpoint on payload problems (the `events`/deliveryMode failure above).
+    // Either way it never installed Arkova's signing key, while making this
+    // function read as though it had. `includeHMAC` only asks DocuSign TO sign;
+    // WHICH key it signs with is account-side state, aligned by a DocuSign
+    // admin. See docs/runbooks/integrations/docusign.md.
     includeDocumentFields: args.config.includeDocumentFields,
     requiresAcknowledgement: args.config.requiresAcknowledgement,
     envelopeEvents: args.config.envelopeEvents,
