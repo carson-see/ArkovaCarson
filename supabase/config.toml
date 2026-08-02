@@ -49,12 +49,20 @@ enable_signup = true
 [auth.email]
 enable_signup = true
 double_confirm_changes = true
-# SCRUM-2907: prod auth auto-confirms signups (a live session is returned on
-# signUp), so local/CI must mirror that to match prod behavior. With this off,
-# signUp returns a session and the session-aware SignUpForm proceeds into the
-# app — the prod path the E2E "signup ... enters the authenticated app" spec
-# asserts. Leaving it on made local/CI drift from prod and broke that spec.
-enable_confirmations = false
+# SCRUM-2907: prod REQUIRES email confirmation. The previous comment here
+# claimed prod auto-confirms and turned this off to match — that claim was
+# false, and it pointed local/CI at the opposite of production.
+#
+# Verified live against prod (project vzwyaatejekddvltxyye) on 2026-08-01:
+#   POST /auth/v1/signup -> HTTP 200, body carries confirmation_sent_at and
+#   NO session; auth log records action=user_confirmation_requested; the user
+#   row lands with email_confirmed_at = NULL. Following the emailed token
+#   through GET /auth/v1/verify?type=signup returns 303 to
+#   https://app.arkova.ai#access_token=... and sets email_confirmed_at.
+#
+# Keep this ON so local/CI exercise the same confirmation-pending path real
+# users hit. The E2E signup spec asserts that path.
+enable_confirmations = true
 
 [auth.email.template.confirmation]
 subject = "Confirm your Arkova account"
