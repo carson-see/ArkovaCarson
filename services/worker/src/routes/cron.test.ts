@@ -330,6 +330,20 @@ vi.mock('../jobs/docusign-notarization-completed.js', () => ({
   runDocusignNotarizationCompletedJobs: (...args: unknown[]) => mockRunDocusignNotarizationCompletedJobs(...args),
 }));
 
+// SCRUM-2903 (GD-PROD): Drive file-changed job queue HTTP endpoint — the
+// Drive twin of /docusign-envelope-completed above.
+const mockRunDriveFileChangedJobs = vi.fn().mockResolvedValue({
+  claimed: 1,
+  completed: 1,
+  failed: 0,
+  dead: 0,
+  updateFailed: 0,
+  jobIds: ['drive-job-1'],
+});
+vi.mock('../jobs/drive-file-changed.js', () => ({
+  runDriveFileChangedJobs: (...args: unknown[]) => mockRunDriveFileChangedJobs(...args),
+}));
+
 // SCRUM-2234: stuck anchor monitor cron route.
 const mockRunStuckAnchorCheck = vi.fn().mockResolvedValue({
   healthy: true,
@@ -865,6 +879,66 @@ describe('cron routes', () => {
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('Invalid request');
       expect(mockRunDocusignEnvelopeCompletedJobs).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /drive-file-changed', () => {
+    it('runs the Drive file-changed queue processor and forwards the optional limit', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-file-changed?limit=5');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        claimed: 1,
+        completed: 1,
+        failed: 0,
+        dead: 0,
+        updateFailed: 0,
+        jobIds: ['drive-job-1'],
+      });
+      expect(mockRunDriveFileChangedJobs).toHaveBeenCalledWith({ limit: 5 });
+    });
+
+    it('runs with no limit when the query param is omitted', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-file-changed');
+
+      expect(res.status).toBe(200);
+      expect(mockRunDriveFileChangedJobs).toHaveBeenCalledWith({ limit: undefined });
+    });
+
+    it('rejects invalid limit values before running the Drive queue processor', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-file-changed?limit=not-a-number');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid request');
+      expect(mockRunDriveFileChangedJobs).not.toHaveBeenCalled();
+    });
+
+    it('rejects out-of-range limit values before running the Drive queue processor', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-file-changed?limit=101');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid request');
+      expect(mockRunDriveFileChangedJobs).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 when the job processor throws (Scheduler retries)', async () => {
+      mockRunDriveFileChangedJobs.mockRejectedValueOnce(new Error('db unavailable'));
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-file-changed');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
+    });
+
+    it('is protected by cronAuth — 401 unauthenticated in production', async () => {
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-file-changed');
+      expect(res.status).toBe(401);
+      expect(mockRunDriveFileChangedJobs).not.toHaveBeenCalled();
     });
   });
 
