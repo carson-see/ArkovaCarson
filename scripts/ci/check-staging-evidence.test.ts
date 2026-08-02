@@ -1854,6 +1854,80 @@ describe('check-staging-evidence', () => {
       });
     });
 
+    // Founder directive 2026-08-01 (relayed by CTO): temporarily disable the
+    // soak-evidence requirement so the CI-green queue can drain before the
+    // external pen test, then re-enable for the consolidated soak.
+    describe('SOAK_GATE_DISABLED bypass (founder directive 2026-08-01)', () => {
+      // A PR that would otherwise fail hard: T3-required by its migration,
+      // and a body with no evidence section at all.
+      const failingArgs = {
+        body: '## Summary\nno evidence block whatsoever\n',
+        files: ['supabase/migrations/0399_something.sql'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      };
+
+      it('fails normally when the bypass is not engaged', () => {
+        expect(check(failingArgs).ok).toBe(false);
+        expect(check({ ...failingArgs, soakGateDisabled: false }).ok).toBe(false);
+        expect(check({ ...failingArgs, soakGateDisabled: undefined }).ok).toBe(false);
+      });
+
+      it('passes with a loud, unambiguous note when the bypass is engaged', () => {
+        const r = check({ ...failingArgs, soakGateDisabled: true, nowMs: Date.parse('2026-08-01T18:00:00Z') });
+        expect(r.ok).toBe(true);
+        expect(r.errors).toEqual([]);
+        const note = r.notes.join(' ');
+        expect(note).toMatch(/SOAK GATE BYPASSED/);
+        expect(note).toMatch(/founder directive 2026-08-01/i);
+        expect(note).toMatch(/re-enable before the post-pentest consolidated soak/i);
+        expect(note).toMatch(/SOAK_GATE_DISABLED/);
+      });
+
+      it('never claims evidence was produced', () => {
+        const r = check({ ...failingArgs, soakGateDisabled: true, nowMs: Date.parse('2026-08-01T18:00:00Z') });
+        const note = r.notes.join(' ');
+        expect(note).toMatch(/NOT been evaluated|no staging soak evidence/i);
+        // A bypass pass must not be mistakable for the accept-notes the real
+        // evidence paths emit.
+        expect(note).not.toMatch(/coverage accepted/i);
+      });
+
+      it('stops honoring the variable once the bypass window has closed', () => {
+        const r = check({
+          ...failingArgs,
+          soakGateDisabled: true,
+          nowMs: Date.parse('2026-08-16T00:00:01Z'),
+        });
+        expect(r.ok).toBe(false);
+        expect(r.notes.join(' ')).toMatch(/bypass window closed/i);
+        expect(r.notes.join(' ')).not.toMatch(/SOAK GATE BYPASSED/);
+      });
+
+      it('is still engaged immediately before the window closes', () => {
+        const r = check({
+          ...failingArgs,
+          soakGateDisabled: true,
+          nowMs: Date.parse('2026-08-15T23:59:59Z'),
+        });
+        expect(r.ok).toBe(true);
+        expect(r.notes.join(' ')).toMatch(/SOAK GATE BYPASSED/);
+      });
+
+      it('short-circuits before any other evidence path, including T0 classification', () => {
+        // T0 would also pass, but must not be the reason — the bypass note is.
+        const r = check({
+          body: '',
+          files: ['docs/staging/README.md'],
+          soakGateDisabled: true,
+          nowMs: Date.parse('2026-08-01T18:00:00Z'),
+        });
+        expect(r.ok).toBe(true);
+        expect(r.notes.join(' ')).toMatch(/SOAK GATE BYPASSED/);
+        expect(r.notes.join(' ')).not.toMatch(/T0 CI-only PR/);
+      });
+    });
+
     describe('deferred_consolidated_soak mode (CTO ruling 2026-07-28, SCRUM-2980)', () => {
       const headSha = '2222222222222222222222222222222222222222';
       const baseSha = 'ae2209fd771ff088d8f3ef12070f4028cbd421a7';
