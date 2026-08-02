@@ -70,6 +70,8 @@ vi.mock('../../integrations/oauth/crypto.js', () => ({
 }));
 
 import { grcRouter } from './grc.js';
+import { encodedInFilterBytesFor } from '../../test-utils/postgrestWire.js';
+import { POSTGREST_URL_FILTER_BUDGET_BYTES } from '../../utils/postgrest-filter.js';
 
 function createApp() {
   const app = express();
@@ -286,5 +288,105 @@ describe('GRC OAuth route', () => {
       expect(res.status).toBe(403);
       expect(res.body.error).toBe('Must be org admin to connect GRC platforms');
     });
+  });
+});
+
+/**
+ * GET /sync-logs — the connection_id filter and the connections read above it.
+ *
+ * Two defects: the `grc_connections` error was discarded, so a failed read
+ * resolved to `null` and `!connections?.length` reported it as "this org has
+ * no GRC connections" at HTTP 200; and `connectionIds` (one id per connection,
+ * unbounded in code) went out as a single `.in('connection_id', …)`.
+ */
+describe('GET /api/v1/grc/sync-logs — connection_id filter', () => {
+  const connIds = (n: number) =>
+    Array.from({ length: n }, (_, i) => `3c4d5e6f-7a8b-4c9d-8e0f-${String(i).padStart(12, '0')}`);
+
+  function mockSyncLogs(opts: {
+    ids: string[];
+    connectionsError?: { message: string };
+    failChunk?: (v: string[]) => boolean;
+  }) {
+    const seenFilters: string[][] = [];
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'grc_connections') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue(
+              opts.connectionsError
+                ? { data: null, error: opts.connectionsError }
+                : { data: opts.ids.map((id) => ({ id })), error: null },
+            ),
+          }),
+        };
+      }
+      // grc_sync_logs
+      return {
+        select: vi.fn().mockReturnValue({
+          in: vi.fn((_c: string, values: string[]) => {
+            seenFilters.push(values);
+            return {
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue(
+                  opts.failChunk?.(values)
+                    ? { data: null, error: { message: 'request line too large' } }
+                    : {
+                        data: values.map((id, i) => ({
+                          id: `log-${id}`,
+                          connection_id: id,
+                          created_at: `2026-08-01T00:00:${String(i % 60).padStart(2, '0')}Z`,
+                        })),
+                        error: null,
+                      },
+                ),
+              }),
+            };
+          }),
+        }),
+      };
+    });
+    return { seenFilters };
+  }
+
+  it('keeps every emitted filter inside the URL budget for an org with many connections', async () => {
+    const { seenFilters } = mockSyncLogs({ ids: connIds(1_000) });
+
+    const res = await request(createApp()).get('/api/v1/grc/sync-logs');
+
+    expect(res.status).toBe(200);
+    expect(seenFilters.length).toBeGreaterThan(1);
+    for (const chunk of seenFilters) {
+      expect(encodedInFilterBytesFor(chunk)).toBeLessThanOrEqual(POSTGREST_URL_FILTER_BUDGET_BYTES);
+    }
+  });
+
+  it('500s instead of claiming the org has no sync logs when the connections read fails', async () => {
+    mockSyncLogs({ ids: [], connectionsError: { message: 'connection reset' } });
+
+    const res = await request(createApp()).get('/api/v1/grc/sync-logs');
+
+    expect(res.status).toBe(500);
+    expect(res.body.logs).toBeUndefined();
+  });
+
+  it('500s when a sync-log chunk fails rather than returning a short list', async () => {
+    const ids = connIds(400);
+    let call = 0;
+    mockSyncLogs({ ids, failChunk: () => call++ === 1 });
+
+    const res = await request(createApp()).get('/api/v1/grc/sync-logs');
+    expect(res.status).toBe(500);
+  });
+
+  it('caps the merged result at the requested limit, newest first', async () => {
+    mockSyncLogs({ ids: connIds(1_000) });
+
+    const res = await request(createApp()).get('/api/v1/grc/sync-logs?limit=10');
+
+    expect(res.status).toBe(200);
+    expect(res.body.logs.length).toBeLessThanOrEqual(10);
+    const times = res.body.logs.map((l: { created_at: string }) => l.created_at);
+    expect([...times].sort().reverse()).toEqual(times);
   });
 });

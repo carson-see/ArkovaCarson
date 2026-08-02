@@ -16,7 +16,7 @@ import type { Request, Response } from 'express';
 import { db } from '../../utils/db.js';
 import { encodedInFilterBytesFor } from '../../test-utils/postgrestWire.js';
 import { POSTGREST_URL_FILTER_BUDGET_BYTES } from '../../utils/postgrest-filter.js';
-import { usageRouter } from './usage.js';
+import { usageRouter, type UsageResponse } from './usage.js';
 
 // Verify the usage response interface matches the spec
 describe('UsageResponse shape', () => {
@@ -90,6 +90,11 @@ function getHandler() {
   return layer!.route!.stack[0].handle as (req: Request, res: Response) => Promise<void>;
 }
 
+interface CapturedRes {
+  statusCode: number;
+  body: Partial<UsageResponse> | Record<string, unknown> | undefined;
+}
+
 function mockRes() {
   const res = {
     statusCode: 200,
@@ -97,7 +102,7 @@ function mockRes() {
     status(code: number) { this.statusCode = code; return this; },
     json(payload: unknown) { this.body = payload; return this; },
   };
-  return res as unknown as Response & { statusCode: number; body: any };
+  return res as unknown as Response & CapturedRes;
 }
 
 const keyIds = (n: number) =>
