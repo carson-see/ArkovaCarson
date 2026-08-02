@@ -226,8 +226,74 @@ PostgREST `.in()` filter takes 400 Bad Request, postgrest-js RESOLVES that as
   chunk error throws to the route's 500 handler **before** the audit event is written. Also an
   explicit opt-out from `assertNotAllChunksFailed`, in the strict direction: an ISA 530 sample missing
   one chunk gets signed off as complete.
-- **Known, NOT fixed here** (separate story): the `sample_percentage` path draws its sample from
-  `db.from('anchors').select('public_id')` with no `.range()`, so PostgREST's default 1000-row cap
-  silently truncates the population — while `total_population` is reported from a separate exact
-  count. On a 3.1M-anchor org the sample is drawn from an arbitrary 1000 rows and reported as if drawn
-  from all of them. That is an audit-validity bug in its own right and needs its own fix + tests.
+- **The `sample_percentage` population truncation is fixed in the stacked follow-up below**, not in
+  this PR. It was recorded here as "Known, NOT fixed here" while it was still open.
+
+## 2026-08-02 — `auditBatchVerify.ts` sampled a population it did not read (stacked on PR #1853)
+
+The `sample_percentage` path drew its sample from
+`db.from('anchors').select('public_id').eq('org_id', …)` with **no `.range()`**. PostgREST answers
+that with its default 1000-row maximum and says nothing about the rest, so the "population" was an
+arbitrary 1000 rows — while `total_population` was reported from a **separate** `count` head query
+over the whole org. On the real DocuSign org (3,151,539 anchors) a 1% request therefore returned 10
+credentials drawn from an arbitrary 1000, presented alongside `total_population: 3151539`, with
+nothing in the response distinguishing the two. **The auditor was told the sample came from the full
+population; it did not.** An audit-validity defect, not a performance one — the endpoint's entire job
+is to support an inference from sample to population, and that inference was unsound.
+
+Fixed together, because each one independently invalidates the sample:
+
+- **The population is now paged** (`loadOrgPopulation`) with `.range()` in `POSTGREST_ROW_LIMIT`
+  pages, ordered `created_at` then `public_id` — a TOTAL order, because offset paging over a
+  non-deterministic order drops and duplicates rows across page boundaries. `created_at` leads so the
+  scan rides `idx_anchors_org_deleted_created`; ASC so concurrent inserts append past the cursor
+  instead of shifting every page under it. Ids are deduped defensively so a mid-scan insert cannot
+  inflate the figure the response states as fact.
+- **`total_population` is the scan, never a second query.** It is now literally the length of the id
+  list the sample was drawn from, so the response is structurally incapable of claiming a population
+  it did not sample. This also **removes** an exact-`count` head query over the 3.1M-row `anchors`
+  table — a net **decrease** of one call site against the R0-8 / SCRUM-1254 baseline gate
+  (`scripts/ci/check-count-exact-baseline.ts`, 78 → 77). Do not reintroduce one here: the old count
+  ran separately and later than the scan, so even with correct paging the two could disagree.
+- **Above `MAX_SAMPLEABLE_POPULATION` (25,000) the endpoint REFUSES** — 422 `population_too_large`,
+  no sample, no population figure, and no `AUDIT_BATCH_VERIFY` row. A sample drawn from a prefix of
+  the population is not a weaker answer than a full one, it is a wrong one, and nothing in the old
+  response let an auditor tell. The honest lower bound is returned as `population_at_least`. **The
+  DocuSign org is above this ceiling**, so percentage sampling now refuses there instead of
+  fabricating; `credential_ids` is unaffected. Raising the ceiling materially means moving sampling
+  into Postgres (a `TABLESAMPLE`/reservoir RPC returning sample + true population in one call) — that
+  is the follow-on story, and it is a migration, so T3. Do not just add pages here.
+- **Above `MAX_SAMPLE_SIZE` (1000) it also refuses** — 422 `sample_too_large`, carrying the true
+  `total_population`, the `requested_sample_size`, and the `max_sample_percentage` that would fit.
+  Trimming to the cap would report an N% sample that is not an N% sample. 1000 is deliberately the
+  same cap `credential_ids` has always had, so both routes into the handler bound the downstream
+  chunked `.in()` lookup identically.
+- **`seededShuffle` (Fisher-Yates) replaces `[...rows].sort(() => rng() - 0.5)`.** That was never a
+  shuffle: a comparator returning a random sign is not a consistent ordering, so the permutation is a
+  function of the sort algorithm's comparison schedule, not of the randomness — **no PRNG quality
+  fixes it**. Measured under V8's TimSort over 16 elements, 2000 trials, uniform expectation 125: the
+  element at index 0 was selected 340 times, the element at index 1 only 77. A row whose selection
+  probability depends on its position in the result set makes the sample non-random, which is
+  disqualifying under ISA 530. The uniformity test pins this with ±6σ bounds.
+- **`seededRandom` now divides by 2^32, not `0xffffffff`.** The old divisor's maximum draw was
+  exactly 1.0, and `Math.floor(1.0 * (i + 1))` is `i + 1` — one past the end. That does not throw, it
+  swaps `undefined` into the array, and `undefined` would have left here as a sampled credential id.
+  The LCG has full period over 2^32 so the state is reachable, not theoretical. `seededShuffle`
+  additionally clamps with `Math.min(i, …)` rather than trusting its rng's upper bound.
+- **Seed handling.** `seed ?? …`, not `seed || …` — seed 0 is a seed, and `||` sent the one value an
+  auditor is most likely to type down the unseeded `Date.now()` path, making it the least
+  reproducible request the endpoint accepted. When no seed is supplied one is generated and
+  **returned**, because `seed: seed || null` left ISA 530 reproducibility unmeetable for exactly the
+  requests that needed it most.
+- **The empty-org branch** returned a four-field object with no `summary` and no `verified_at`, so a
+  client had two shapes to parse for the same 200. It now takes the normal path.
+
+Both refusals are **422**, distinct from the existing 400 for Zod failures. §1.8: they replace a 200
+carrying invalid data, and every added response field is additive.
+
+**Known, NOT fixed here:** `VerifyResult.fingerprint` puts the document fingerprint on the response,
+which is on the §6 banned-field list. It is ORG_ADMIN-only and pre-existing, and REMOVING a field
+from a frozen v1 body is the breaking change §1.8 governs — it needs its own decision, not a
+drive-by. Separately, the seed is caller-chosen by design, so an auditee can shop seeds for a
+favourable sample; under ISA 530 the seed is meant to be the auditor's to pick, and nothing in the
+endpoint enforces that.
