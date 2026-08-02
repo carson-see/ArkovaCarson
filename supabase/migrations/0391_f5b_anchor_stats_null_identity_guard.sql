@@ -59,11 +59,17 @@
 --   what makes the NULL case unmissable — the bug in 0380 exists precisely
 --   because `IS DISTINCT FROM` silently absorbs NULL-vs-NULL.
 --
--- SCRUM-1278: the caller's auth id is read as `(SELECT auth.uid())`, wrapped so
---   Postgres caches the JWT lookup as an initplan instead of re-evaluating it
---   per row (scripts/ci/check-rls-auth-uid-wrap.ts; per-row evaluation on the
---   1.4M-row anchors table contributed to the 2026-04-25 outage). This matches
---   0380's current tip, which adopted the wrap in commit 46860ca27.
+-- SCRUM-1278: the caller's auth id is read as `(SELECT auth.uid())`, matching
+--   0380's current tip (commit 46860ca27) and satisfying
+--   scripts/ci/check-rls-auth-uid-wrap.ts, which scans every migration for a
+--   bare auth.uid(). Be precise about WHY, because the lint's own rationale
+--   does not literally apply here: initplan caching matters for a bare
+--   auth.uid() inside an RLS policy qual, where the planner re-evaluates it
+--   per row (that is what hurt on the 1.4M-row anchors table in the
+--   2026-04-25 outage). Line 225 below is a PL/pgSQL scalar assignment that
+--   runs once per call, and these functions are SECURITY DEFINER and bypass
+--   RLS entirely — so the wrap here is convention compliance and consistency
+--   with 0380, not a measurable optimization at this call site.
 --
 -- PRESERVED FROM 0380 (deliberately unchanged):
 --   * service_role bypass via get_caller_role() — worker/admin callers, whose
@@ -220,8 +226,8 @@ DECLARE
   v_caller_id uuid;
 BEGIN
   IF get_caller_role() IS DISTINCT FROM 'service_role' THEN
-    -- SCRUM-1278: wrapped so the JWT lookup is cached as an initplan rather
-    -- than re-evaluated per row.
+    -- SCRUM-1278 lint compliance (see header): this runs once per call, so the
+    -- wrap is convention, not a per-row optimization.
     v_caller_id := (SELECT auth.uid());
 
     -- F-5b: reject an unauthenticated caller BEFORE comparing arguments.

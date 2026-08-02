@@ -118,17 +118,19 @@ describe.each([
   const block = () => extractFunctionBlock(executableSql(migration()), fn);
 
   it('is still SECURITY DEFINER, STABLE, with SET search_path = public', () => {
-    expect(block()).toContain('SECURITY DEFINER');
-    expect(block()).toContain('STABLE');
-    expect(block()).toMatch(/SET\s+"search_path"\s+TO\s+'public'/);
+    const b = block();
+    expect(b).toContain('SECURITY DEFINER');
+    expect(b).toContain('STABLE');
+    expect(b).toMatch(/SET\s+"search_path"\s+TO\s+'public'/);
   });
 
   it('resolves the caller identity into a local and rejects it when NULL', () => {
     // THE FIX. This is the assertion that would have caught 0380's bug: the
     // guard must test the identity for NULL explicitly, not rely on
     // IS DISTINCT FROM (which silently absorbs NULL-vs-NULL).
-    expect(block()).toMatch(new RegExp(`v_caller\\w*\\s*:=\\s*${identityExpr}`));
-    expect(block()).toMatch(/IF\s+v_caller\w*\s+IS\s+NULL\s+THEN/);
+    const b = block();
+    expect(b).toMatch(new RegExp(`v_caller\\w*\\s*:=\\s*${identityExpr}`));
+    expect(b).toMatch(/IF\s+v_caller\w*\s+IS\s+NULL\s+THEN/);
   });
 
   it('the NULL-identity RAISE comes BEFORE the argument comparison', () => {
@@ -145,7 +147,6 @@ describe.each([
   it('still raises 42501 (never a silent empty result)', () => {
     const b = block();
     expect(b).toMatch(/RAISE EXCEPTION[^;]*unauthorized/i);
-    expect(b).toContain("USING ERRCODE = '42501'");
     // Two distinct rejection reasons: no identity, and wrong identity.
     expect(b.match(/USING ERRCODE = '42501'/g) ?? []).toHaveLength(2);
   });
@@ -195,18 +196,8 @@ describe('F-5b: scope — authorization tightening only', () => {
       expect(req?.rpcName).toBe(USER_FN);
       expect(req?.rpcParam).toEqual({ p_user_id: 'user-1' });
     }
-    // And with an org, it passes the caller's OWN org.
-    const withOrg = resolveDashboardStatsRequest({
-      userId: 'user-1',
-      profileLoading: false,
-      profileRole: 'ORG_ADMIN',
-      profileOrgId: 'org-1',
-    });
-    expect(withOrg).toEqual({
-      rpcName: ORG_FN,
-      rpcParam: { p_org_id: 'org-1' },
-      requestKey: `${ORG_FN}:org-1`,
-    });
+    // The happy path (ORG_ADMIN *with* an org routes to the org RPC with their
+    // own id) is already covered by src/lib/dashboardStats.test.ts.
   });
 });
 
