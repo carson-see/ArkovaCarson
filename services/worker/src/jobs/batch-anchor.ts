@@ -1048,16 +1048,23 @@ async function deleteIntentProofRows(anchorIds: string[], txId: string): Promise
  * reported-success-over-real-failure shape as the #1812 defect. It now reports
  * what actually happened, and escalates to ERROR when nothing was reverted.
  */
-async function revertIntentAnchors(anchorIds: string[]): Promise<void> {
+export async function revertIntentAnchors(anchorIds: string[]): Promise<void> {
   const chunks = chunkForInFilter(anchorIds);
   let failedChunks = 0;
   let revertedIds = 0;
 
   for (const { values: chunk, start: i } of chunks) {
     try {
-      const { error } = await db
+      // `{ count: 'exact' }` because the summary line below REPORTS this number
+      // and the whole point of that line is to stop claiming work that did not
+      // happen. The statement carries `.eq('status', 'BROADCASTING')`, so rows
+      // already moved off BROADCASTING (e.g. by `recover_stuck_broadcasts`)
+      // match nothing — counting `chunk.length` would report them as reverted.
+      // Same reason `markBroadcastIntent` and `bulkMarkSubmittedFallback` ask
+      // for an exact count.
+      const { error, count } = await db
         .from('anchors')
-        .update({ status: 'PENDING' as const, chain_tx_id: null })
+        .update({ status: 'PENDING' as const, chain_tx_id: null }, { count: 'exact' })
         .in('id', chunk)
         .eq('status', 'BROADCASTING');
       if (error) {
@@ -1065,7 +1072,7 @@ async function revertIntentAnchors(anchorIds: string[]): Promise<void> {
         logger.error({ error, chunkStart: i }, 'Intent revert chunk failed — rows left BROADCASTING for reconcile');
         continue;
       }
-      revertedIds += chunk.length;
+      revertedIds += count ?? 0;
     } catch (err) {
       failedChunks += 1;
       logger.error({ error: err, chunkStart: i }, 'Intent revert chunk threw — rows left BROADCASTING for reconcile');
@@ -1120,6 +1127,18 @@ export function summarizeIntentRevert(args: {
   };
 
   if (args.failedChunks === 0) {
+    // Nothing errored, but the UPDATE matched nothing either — every row had
+    // already left BROADCASTING (typically `recover_stuck_broadcasts` won the
+    // race). Benign, but it is NOT "reverted", and saying so would be the same
+    // overclaim in a quieter register.
+    if (args.total > 0 && args.reverted === 0) {
+      return {
+        level: 'info',
+        message:
+          'Intent revert matched no BROADCASTING rows — already reverted elsewhere (recover_stuck_broadcasts), nothing to do',
+        detail,
+      };
+    }
     return {
       level: 'info',
       message: 'Reverted definitively-rejected intent anchors BROADCASTING → PENDING',
