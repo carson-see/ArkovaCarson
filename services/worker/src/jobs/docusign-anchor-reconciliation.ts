@@ -175,54 +175,61 @@ export async function findExistingEnvelopeAnchor(args: {
   const envelopeId = typeof args.envelopeId === 'string' ? args.envelopeId.trim() : '';
   if (envelopeId.length === 0) return null;
 
-  // Defensive: the envelope id is interpolated into a PostgREST `.or()` filter,
-  // whose grammar is comma/parenthesis-delimited. A value containing `,` `(` `)`
-  // would corrupt the filter (split it into bogus conditions) or worse. DocuSign
-  // envelope ids are GUIDs and legitimate external_refs are token-shaped, so
-  // restrict to a safe charset and BAIL (return null) on anything else — the
+  // Defensive: the envelope id goes into a PostgREST filter value. The `.or()`
+  // grammar that made this critical is gone (see below), but the charset guard
+  // stays — it is cheap, and it keeps a stray `,` `(` `)` from ever reaching a
+  // filter if this is refactored again. DocuSign envelope ids are GUIDs and
+  // legitimate external_refs are token-shaped, so restrict to a safe charset and
+  // BAIL (return null) on anything else — the
   // caller then falls back to the `(user_id, fingerprint)` unique index alone.
   // Fail-safe, not fail-open: a skipped guard never creates a duplicate, it just
   // forgoes the extra cross-hash protection for an unusual id.
   if (!/^[A-Za-z0-9_.:-]+$/.test(envelopeId)) return null;
 
-  // Build an OR across every metadata key the two paths may have used. Values
-  // are JSON-encoded envelope ids (bounded, non-PII connector identifiers).
-  const orFilter = ENVELOPE_ID_METADATA_KEYS.map(
-    (key) => `metadata->>${key}.eq.${envelopeId}`,
-  ).join(',');
+  // ONE INDEXED POINT LOOKUP PER KEY — never a single `.or()`.
+  //
+  // The `.or()` form cannot be made fast on the DocuSign org (3.15M anchors),
+  // because the problem is a COSTING error, not a plan-shape or index gap: the
+  // planner estimates 51,038 rows match the 3-branch OR when the true answer is
+  // 0. Believing a match is imminent it takes a scan, and no index can beat a
+  // belief. Measured on prod against org 40383eb2 with a value that matches
+  // nothing (the normal case for a newly completed envelope):
+  //
+  //   OR + ORDER BY created_at LIMIT 1  -> Index Scan Backward
+  //                                        (idx_anchors_active_created), cost 2,209,325
+  //   OR + LIMIT 1, no ORDER BY         -> Seq Scan,                     cost 1,845,309
+  //   single key .eq + LIMIT            -> Index Scan (its own index),   cost 1.23,
+  //                                        ACTUAL 0.064 ms, rows=0
+  //
+  // A single-key equality is a point lookup the estimator cannot mislead: there
+  // is exactly one index and one condition. Three of them in parallel cost
+  // single-digit milliseconds and stay correct as ENVELOPE_ID_METADATA_KEYS
+  // grows — each new key needs its own index, which the migration anti-drift
+  // guard enforces.
+  const lookups = await Promise.all(
+    ENVELOPE_ID_METADATA_KEYS.map(async (key) => {
+      const { data, error } = await args.db
+        .from('anchors')
+        .select('id, public_id, created_at')
+        .eq('org_id', args.orgId)
+        .is('deleted_at', null)
+        .neq('status', 'REVOKED')
+        .eq(`metadata->>${key}`, envelopeId)
+        .limit(ENVELOPE_ANCHOR_LOOKUP_LIMIT);
+      return { data, error };
+    }),
+  );
 
-  // NO `ORDER BY` HERE. It looks harmless and it is the whole bug.
-  //
-  // With `.order('created_at').limit(1)` Postgres plans an Index Scan Backward
-  // over `idx_anchors_active_created` and applies the org + metadata predicates
-  // as a FILTER, betting the LIMIT 1 is satisfied within a few rows. On a
-  // NO-MATCH — the normal case for a newly completed envelope — it instead walks
-  // the entire index. On the 2.97M-anchor org that is a statement timeout, which
-  // is what stalled the DocuSign envelope→anchor path in prod
-  // (artifact 921347cc, 2026-08-01/02).
-  //
-  // EXPLAIN on prod, same predicate:
-  //   with    ORDER BY -> Index Scan Backward, total cost 2,221,197
-  //   without ORDER BY -> BitmapOr over the three metadata indexes, cost 94
-  //
-  // While the ORDER BY is present the planner does not consult the metadata
-  // indexes AT ALL, so adding indexes cannot fix this — the sort has to go.
-  // Determinism is preserved by tie-breaking on `created_at` in application code
-  // over a bounded result set (below).
-  const { data, error } = await args.db
-    .from('anchors')
-    .select('id, public_id, created_at')
-    .eq('org_id', args.orgId)
-    .is('deleted_at', null)
-    .neq('status', 'REVOKED')
-    .or(orFilter)
-    .limit(ENVELOPE_ANCHOR_LOOKUP_LIMIT);
-
-  if (error) {
+  // Fail closed: a lookup that errored may have been the one holding the
+  // duplicate, so proceeding would insert a second anchor for the envelope.
+  const failed = lookups.find((r) => r.error);
+  if (failed) {
     throw new Error(
-      `envelope anchor lookup failed: ${(error as { message?: string }).message ?? 'unknown'}`,
+      `envelope anchor lookup failed: ${(failed.error as { message?: string }).message ?? 'unknown'}`,
     );
   }
+
+  const data = lookups.flatMap((r) => (Array.isArray(r.data) ? r.data : []));
   const rows = (Array.isArray(data) ? data : []) as Array<{
     id?: unknown;
     public_id?: unknown;

@@ -192,21 +192,25 @@ Key implementation patterns:
 - **PostgREST `.in()` filter width is NOT `POSTGREST_ROW_LIMIT`** (prod incident 2026-07-29 → 2026-08-01, fix PR `fix/postgrest-in-filter-url-limit`). `POSTGREST_ROW_LIMIT = 1_000` caps how many rows PostgREST *returns*; it says nothing about how many ids fit in a *URL filter*. `fetchAnchorRows` chunked anchor ids by `POSTGREST_ROW_LIMIT` and passed them to `.in('id', chunk)` — 1,000 UUIDs is a ~38 KB encoded query string, which PostgREST rejected with `400 Bad Request` on **every** chunk. `rows` came back empty, `partitionRecordAnchors` produced zero pending items, and the job logged a benign `"No new pending public record anchors to submit"` and returned **HTTP 200**. Public-record anchoring produced **zero anchors for 70+ hours** while every cron reported success and the unlinked backlog grew past 404k. Use `POSTGREST_IN_FILTER_CHUNK` (200) for any `.in()` id list; keep `POSTGREST_ROW_LIMIT` for row pagination only. `fetchAnchorRows` now **throws** when every chunk fails rather than returning `[]` — an all-chunks-failed read is indistinguishable downstream from "no anchors exist", and that silent-success path is what hid the outage.
 
 
-## 2026-08-02 — the envelope guard must NOT `ORDER BY` in SQL
+## 2026-08-02 — the envelope guard uses ONE indexed lookup PER KEY, never a combined `.or()`
 
-`findExistingEnvelopeAnchor` (`docusign-anchor-reconciliation.ts`) carried `ORDER BY created_at ASC LIMIT 1`. That single clause is what stalled the whole DocuSign envelope→anchor path in prod (artifact `921347cc`, org `40383eb2`, 2.97M anchors, `canceling statement due to statement timeout`).
+`findExistingEnvelopeAnchor` (`docusign-anchor-reconciliation.ts`) stalled the DocuSign envelope→anchor path in prod: `canceling statement due to statement timeout` on org `40383eb2` (**3.15M anchors**, artifact `921347cc`, failed twice).
 
-Mechanism: with the sort present, Postgres plans an **Index Scan Backward over `idx_anchors_active_created`** and applies the org + metadata predicates as a FILTER, betting `LIMIT 1` is satisfied within a few rows. On a **no-match** — the normal case for a newly completed envelope — it walks the entire index instead.
+**The cause is a COSTING error, not a missing index and not the sort.** The planner estimates **51,038** rows match the 3-branch `metadata->>` OR when the true answer is **0**. Believing a match is imminent under a small `LIMIT`, it takes a scan — and no index can beat a wrong belief. Measured on prod with a value that matches nothing (the normal case for a newly completed envelope):
 
-EXPLAIN on prod, identical predicate:
-
-| query | plan | total cost |
+| query shape | plan | cost |
 |---|---|---|
-| with `ORDER BY created_at` | Index Scan Backward on `idx_anchors_active_created` | **2,221,197** |
-| without `ORDER BY` | **BitmapOr** across all three `metadata->>` indexes | **94** |
+| `.or(...)` + `ORDER BY created_at LIMIT 1` (original) | Index Scan Backward on `idx_anchors_active_created` | 2,209,325 |
+| `.or(...)` + `LIMIT 1`, no ORDER BY | **Seq Scan** | 1,845,309 |
+| single-key `.eq('metadata->>k', v)` + LIMIT | Index Scan on that key's own index | **1.23 — ACTUAL 0.064 ms, rows=0** |
 
-**While the ORDER BY is present the planner does not consult the metadata indexes at all**, so adding indexes cannot fix this — that is why migration 0381 plus a hand-created `idx_anchors_metadata_external_ref` did not clear it and the row failed a second time at 01:01:02Z with the identical error. The sort has to go.
+Removing the ORDER BY is **not** sufficient: it trades a backward index walk for a sequential scan and still times out. (An earlier fix attempt measured a cheap `BitmapOr` plan — that measurement used `LIMIT 50`, which changes the planner's choice, so it did not reflect the production query. Do not benchmark this lookup at a LIMIT the code does not use.)
 
-The "oldest match" semantics are preserved by sorting in application code over a bounded result set (`ENVELOPE_ANCHOR_LOOKUP_LIMIT`), so repeated calls stay idempotent and always reuse the same anchor. Sorting ≤50 rows in memory is free; sorting 2.97M in Postgres is the outage.
+**Rules:**
 
-Any future predicate added here must be re-EXPLAINed against the largest org — a plan that is cheap on a small org can be catastrophic on this one, and the guard's normal case is the expensive one (no match).
+- **One `.eq('metadata->>key', envelopeId)` query per key in `ENVELOPE_ID_METADATA_KEYS`, run in parallel.** A single-key equality is a point lookup with exactly one index and one condition — the estimator cannot mislead it. Never reintroduce a combined `.or()` across metadata keys on this table.
+- **No `ORDER BY` in SQL.** The oldest-match tie-break happens in application code over a bounded result set (`ENVELOPE_ANCHOR_LOOKUP_LIMIT`), which keeps the guard idempotent — a repeat call must reuse the same anchor.
+- **Fail closed** if any per-key lookup errors: the one that failed may have held the duplicate, so proceeding would insert a second anchor for the envelope.
+- Each key needs its own index (0381 covered two of three; `idx_anchors_metadata_external_ref` covers the third). The migration anti-drift guard ties the constant to its indexes — adding a key without an index reintroduces a scan.
+
+**Benchmark any change here with `EXPLAIN (ANALYZE)` against org `40383eb2` on prod, using a value that matches nothing.** A plan measured on a small or empty org is meaningless — this query looked fixed twice that way.
