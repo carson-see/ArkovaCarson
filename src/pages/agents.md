@@ -150,3 +150,26 @@ are NOT scanned by `lint:copy` (which covers only `src/components`, `src/pages`,
 `src/lib`, `src/hooks`, `packages/embed/src`). They deliberately say "records",
 matching `AUDITOR_BATCH_LABELS`, not "credentials". Keep any new server-authored
 message on this path §1.3-clean by hand.
+## 2026-08-01 SCRUM-2907 — AuthCallbackPage is the email-confirmation landing route
+
+`AuthCallbackPage.tsx` is no longer OAuth-only: `useAuth.signUp` now sets
+`emailRedirectTo: ${origin}/auth/callback`, so the emailed signup-confirmation
+link lands here too. Two rules for anyone editing it:
+
+- **A dead link never produces a session.** Supabase reports expired / already-used
+  / tampered links by putting `error` + `error_code` in the URL fragment and
+  creating no session. Before this change the page's only signal was "no session",
+  so an expired link was indistinguishable from "not signed in yet" and the user
+  was bounced to a bare `/login` with no explanation.
+- **Do NOT read that error in the component.** `detectSessionInUrl: true` consumes
+  the fragment inside `createClient`, so by the time this component mounts it is
+  already empty — a component-level read silently loses the error. This was caught
+  in local UAT, not by unit tests (which mock the client and therefore never
+  reproduce the race). The error is captured by `authLinkErrorFromUrl` in
+  `src/lib/supabase.ts`, evaluated at module scope BEFORE `createClient` runs;
+  the component reads that constant and only falls back to the live fragment.
+
+Prod REQUIRES email confirmation — verified live against `vzwyaatejekddvltxyye`
+on 2026-08-01 (signup returns HTTP 200 with `confirmation_sent_at` set and NO
+session). `supabase/config.toml` and the signup E2E spec previously encoded the
+opposite; both are corrected.

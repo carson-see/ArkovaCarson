@@ -708,3 +708,102 @@ describe('POST /api/v1/anchor — credit-gate reference_id (SCRUM-2970)', () => 
     expect(mockDeleteEq).toHaveBeenCalledWith('id', 'row-1');
   });
 });
+
+/**
+ * SCRUM-2481 — server-side evidence-level trust enforcement.
+ *
+ * The frontend half (#1454) gates the green "issuer authenticated" badge on
+ * `isIssuerAuthenticated(verification_level)` — true only for `issuer_anchored`
+ * and `source_signed`. That value is read from `anchors.metadata` via
+ * `get_public_anchor`, which serves ANONYMOUS callers. Until this gate, the
+ * value came straight off the request body of this route and was written by the
+ * service-role client, so any API-key holder could mint an anchor that renders
+ * as issuer-authenticated on the public verification page.
+ *
+ * No server-side writer produces either level: the Credly and Accredible
+ * adapters cap at `account_linked` even when the provider returns a `proof`
+ * block, and URL import hardcodes `captured_url`. Stripping the claim on the
+ * client path therefore cannot break a legitimate write — there is no
+ * legitimate writer.
+ */
+describe('POST /api/v1/anchor — evidence-level trust enforcement (SCRUM-2481)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockQuotaDeltas.length = 0;
+    mockConfig.enableProfessionalEducationSchemaReady = true;
+    mockConfig.enableOrgCreditEnforcement = false;
+    mockInsert.mockImplementation(() => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
+    mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
+    mockInsertChain.single.mockResolvedValue({
+      data: {
+        public_id: 'ARK-2026-ABCD1234',
+        fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING',
+        created_at: '2026-04-27T00:00:00Z',
+      },
+      error: null,
+    });
+  });
+
+  function persistedMetadata(): Record<string, unknown> | undefined {
+    const insertArg = mockInsert.mock.calls[0]?.[0] as InsertCallArg | undefined;
+    return insertArg?.metadata;
+  }
+
+  it.each(['issuer_anchored', 'source_signed'])(
+    'strips a client-asserted %s level but still creates the anchor',
+    async (level) => {
+      const res = await postBadgeMetadata({
+        verification_level: level,
+        source_provider: 'credly',
+        credential_title: 'Totally Legit Credential',
+      });
+
+      expect(res.status).toBe(201);
+      expect(mockInsert).toHaveBeenCalledTimes(1);
+      // The claim never reaches the DB, so get_public_anchor can never serve it
+      // and EvidenceLevelBadge can never render the issuer treatment.
+      expect(persistedMetadata()).not.toHaveProperty('verification_level');
+      // The rest of the caller's provenance metadata is untouched.
+      expect(persistedMetadata()).toMatchObject({
+        source_provider: 'credly',
+        credential_title: 'Totally Legit Credential',
+      });
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-1',
+          keyId: 'key-1',
+          stripped: ['verification_level'],
+          attemptedVerificationLevel: level,
+        }),
+        expect.stringContaining('Dropped client-asserted'),
+      );
+    },
+  );
+
+  it.each(['account_linked', 'captured_url', 'captured_upload_ai'])(
+    'still persists a self-reportable %s level',
+    async (level) => {
+      const res = await postBadgeMetadata({
+        verification_level: level,
+        source_provider: 'credly',
+      });
+
+      expect(res.status).toBe(201);
+      expect(persistedMetadata()).toMatchObject({ verification_level: level });
+      expect(mockLogger.warn).not.toHaveBeenCalledWith(
+        expect.objectContaining({ stripped: expect.anything() }),
+        expect.any(String),
+      );
+    },
+  );
+
+  it('omits the metadata column entirely when the stripped claim was the only key', async () => {
+    const res = await postBadgeMetadata({ verification_level: 'issuer_anchored' });
+
+    expect(res.status).toBe(201);
+    // Not `metadata: {}` — the column is left off so Postgres applies its NULL
+    // default, matching the SCRUM-1732 no-metadata contract.
+    expect(mockInsert.mock.calls[0]?.[0]).not.toHaveProperty('metadata');
+  });
+});
