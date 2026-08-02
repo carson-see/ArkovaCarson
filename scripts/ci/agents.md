@@ -22,6 +22,31 @@ actionable message when a guardrail trips. Run via
   either predicate without re-reading CLAUDE.md §1.11A.
 - **There is no `staging-soak-skip` label.** It was destroyed 2026-05-07 (PR
   #733). The only zero-soak path is T0, computed from changed files.
+- **⚠️ ACTIVE TEMPORARY BYPASS: `SOAK_GATE_DISABLED` (founder directive
+  2026-08-01, relayed by the CTO session).** When the repository Actions
+  variable `SOAK_GATE_DISABLED` is the literal string `"true"`,
+  `check-staging-evidence.ts` short-circuits to a pass at the very top of
+  both `check()` and `main()` — before tier classification, before any
+  evidence is read — and prints a `::warning::` banner
+  (`SOAK_GATE_BYPASS_NOTE`) stating plainly that no evidence was evaluated
+  and none is claimed to exist. Purpose: drain the CI-green PR queue ahead of
+  the external pen test starting 2026-08-02; the week-long consolidated soak
+  that follows the pen test is what produces the deferred evidence.
+  **RE-ENABLE BEFORE THAT SOAK IS GRADED: `gh variable set SOAK_GATE_DISABLED
+  --body false`.** The switch is `vars.*` (repo-admin state, threaded by
+  `.github/workflows/staging-evidence.yml`), never a label, PR body, branch
+  name or anything else a PR author can reach —
+  `staging-evidence-workflow-contract.test.ts` pins that binding. Anything
+  other than the literal `"true"` leaves the gate fully enforcing, and every
+  other code path is untouched so clearing the variable restores the gate
+  exactly as it was. **NOTE THE CONFLICT:** CLAUDE.md §1.11 still reads "No
+  override label exists … the only CI-only path is T0". That sentence is
+  about a *label* and is still true as written, but the spirit of it — that
+  there is no way to skip the evidence requirement — is suspended for as long
+  as this variable is set. Do not read §1.11 as describing live behaviour
+  while the bypass is engaged; reconciling the directive's wording is a
+  founder/CTO call, deliberately not made unilaterally in the PR that added
+  the bypass.
 
 ## Files
 
@@ -29,6 +54,8 @@ actionable message when a guardrail trips. Run via
   - **Staging integrity fields (T2/T3):** PR body evidence must name `PR head SHA`, `Base SHA`, `Staging project ref`, `Cloud Run service/tag URL`, `Image digest`, `Evidence scope`, `Preflight timestamp`, and `Preflight result`. The gate rejects copied evidence when the PR head SHA differs, rejects diagnostic-only scope, and requires the captured preflight result to include `environment_type=clean_mirror`. **Base SHA movement is path-aware (surface-intersection, not SHA-exact / T0-only):** when the evidence `Base SHA` differs from the current base, the gate computes the files main changed in the interval (`baseDriftFiles` in tests, `changedFilesBetween` in CI) and tests them against THIS PR's soak surface = its own changed files ∪ the SHARED prod-runtime surface (`SHARED_PROD_RUNTIME_RULES` = the T2+ subset of `PATH_RULES`: migrations, chain, security, anchor lifecycle, cron, billing, queue/concurrency, public API, stripe/webhooks/auth/ai, edge). **Disjoint drift preserves evidence with no attestation.** Same-surface drift fails closed (re-soak, no override), with a strictly-narrower fallback: a T0-only intersecting drift set can still be preserved by an approved `Base drift impact:` note (documenting changed files, no runtime/schema/migration/staging/soak/deploy impact, and a named approver). An unresolvable drift-file list fails closed.
   - **`isStagingToolingOnly()` allowlist** (per-tool meta-PRs that don't need a soak): `scripts/staging/`, `scripts/ci/check-staging-evidence(.test).ts`, `scripts/ci/mint-fresh-event(.test).sh` (SCRUM-3026 re-trigger helper), `scripts/ci/check-staging-gcloud-policy(.test).ts`, `scripts/ci/lib/`, `scripts/gcp-setup/`, `services/worker/scripts/load-test/`, `tests/k6/`, `tests/load/`, `docs/staging/`, `docs/ops/gemini-model-upgrade.md`, `.github/workflows/ci.yml`, `.github/workflows/staging-evidence.yml`, `CLAUDE.md`, `HANDOFF.md`, `.gitignore`, `.claude/settings.json`, `.claude/hooks/`, `package.json`, `package-lock.json`, `agents.md`.
   - Also allowlisted (PR #798): `eslint-rules/`, `**/eslint.config.(js|cjs|mjs)` — lint config is dev-time tooling with no runtime impact.
+  - Also allowlisted (2026-08-01, same rationale): root-anchored `.sonarcloud.properties` + `sonar-project.properties`, and `check-sonar-quality-gate(.test).ts`. SonarCloud analyzer config is read only by the analyzer — nothing imports, bundles, or deploys it, so a soak has no surface to exercise. The regexes are root-anchored on purpose (`src/lib/sonar-project.properties` and `services/worker/.sonarcloud.properties` still fail), and a pinned test asserts the carve-out cannot downgrade a PR that also touches worker or migration surfaces — both still classify T3.
+  - **`agents-changelog.md` is T0 like `agents.md` (2026-08-01 fix).** The changelog split (cf3917ad2) created three sibling `agents-changelog.md` files without extending the carve-out, so each silently became soak-tier — `services/worker/agents-changelog.md` matched the `services/worker/` PATH_RULE and demanded T3 evidence for a doc edit. The check lives in `isT0OnlyFile`'s early return, ABOVE the PATH_RULES short-circuit; putting it in the `STAGING_TOOLING_ALLOW` list instead is reached too late for worker paths.
   - **Residual-risk exception (PR #924):** when preflight is not `clean_mirror`, a `### Residual-risk note` section with 5 required sub-fields (Contamination type, Affected rows, Impact on this PR, Reason not cleaned, Approved by) satisfies the gate. Implements the CLAUDE.md §1.11A escape valve that was previously uncodified.
   - **T2/T3 deploy-evidence value validation (PR #980):** `requiredValueErrors()` previously began with `if (tier !== 'T1') return []`, so it ran only for T1 — at T2/T3 the deploy fields were label-presence-only (via `missingFields()`) and a PR could pass with every artifact left as `PENDING`. T2/T3 now run the stricter analog: concrete deploy artifacts (`Worker revision`, `Image digest`, `Staging deploy log id`, `Cloud Run service/tag URL`) reject empty, `PENDING`/`TBD`-style placeholders, **and** `N/A`; `Cloud Run service/tag URL` must additionally contain a URL; remaining evidence fields (`Staging branch`, `Staging project ref`, `E2E result`, `Migration applied`, `Rollback rehearsed`, and the T3 trigger/flush/isolation fields) reject empty + placeholders while still allowing legitimate `N/A`/`none` (e.g. `Migration applied: none`). Fields with dedicated validators (SHAs, evidence scope, preflight, soak timestamps) are skipped here to avoid duplicate errors.
   - **Changed-behavior/load evidence admission (2026-07-08 MVP):** T2/T3 evidence must name `Changed behavior:`, `Targeted evidence:`, and `Load/concurrency evidence:`. The gate rejects missing/placeholder/N/A/future-planned load evidence and generic `/health` coverage when it is presented as changed-behavior or heavy-user proof. Acceptable load evidence names the actual changed-behavior stress path, such as `tests/load/*`, `tests/k6/*`, p95/error-rate thresholds, queue drain, retry fan-out, rate-limit bursts, trigger fan-out, or 10k/batch-drain evidence.

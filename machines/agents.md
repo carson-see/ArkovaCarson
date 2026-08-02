@@ -84,3 +84,33 @@ with `check`" as a manual step for them.
 - Run `check` after every machine edit to verify invariants hold — but see the toolchain finding above; `check` does not currently run.
 - Uses `tla-precheck` DSL (`defineMachine`, `enumType`, `variable`, `forall`, etc.).
 - A machine without a `runtimeAdapter` is documentation-only. When its backing table lands, add `runtimeAdapter`/`ownedTables`/`ownedColumns` and `build`.
+
+## `.generated-machines/` is NOT tracked — do not re-add it (2026-08-02)
+
+`.gitignore:59` ignores `.generated-machines/`, but five BitcoinAnchor artifacts were tracked anyway
+(gitignore does not apply to already-tracked paths). They are now untracked. **Do not `git add` them
+back.**
+
+Why they must not be committed:
+- `BitcoinAnchor.pr.certificate.json` is rewritten whenever `tla-precheck check bitcoinAnchor.machine.ts`
+  detects a `machineSha256` mismatch. The rewritten fields are pure run metadata — `checkedAt`, the TLC
+  version banner, pid, RNG seed, and the **absolute path of whoever's checkout ran it**. The copy that
+  was committed embedded `/Volumes/Extreme/Arkova/.codex-worktrees/s33-w2-l1-t0-gate-audit/...`, i.e.
+  one machine's filesystem layout, published in the repo.
+- That made it a live trap for `git add -A`: any engineer or agent running the mandated
+  `verify:machines` left a modified tracked file, and committing it would assert a proof carrying
+  another machine's paths.
+- It was also **stale and silently so**: on `fix/f3-submitted-null-txid-recovery` (PR #1784) the
+  committed certificate recorded `machineSha256 3878b35b…` while `bitcoinAnchor.machine.ts` hashed to
+  `591d2836…`. A committed artifact asserted a proof for a machine version not in the tree.
+
+Why untracking is safe (verified, not assumed): `.github/workflows/ci.yml`'s TLA+ job runs
+`tla-precheck check bitcoinAnchor.machine.ts` (and `partnerProvisioning.machine.ts`) and **regenerates**
+these artifacts. Nothing in CI or any script reads a committed certificate — `grep` for `certificate`
+across `.github/` returns nothing. The sibling machines (`CalibrationWorkflow`, `PartnerProvisioning`)
+were never tracked, so BitcoinAnchor's tracking was an accident, not a policy.
+
+If a checked-in proof artifact is ever wanted, tracking alone is not enough: it must first be made
+deterministic (strip `checkedAt`, pid, seed, TLC banner, absolute paths) **and** paired with a CI check
+that fails when a certificate's `machineSha256` does not match its machine file. Without that check the
+staleness above simply recurs, invisibly. The TLA+ verification itself is unchanged and still mandatory.
