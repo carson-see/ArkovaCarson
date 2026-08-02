@@ -35,7 +35,6 @@ const fields: ExtractionField[] = [
 function makeProps(overrides: Partial<Parameters<typeof TemplateReviewPanel>[0]> = {}) {
   return {
     fields,
-    overallConfidence: 0.8,
     onFieldEdit: vi.fn(),
     onReviewStateChange: vi.fn(),
     ...overrides,
@@ -185,5 +184,70 @@ describe('TemplateReviewPanel — telemetry value-omission (client side)', () =>
     infoSpy.mockRestore();
     warnSpy.mockRestore();
     errorSpy.mockRestore();
+  });
+});
+
+/**
+ * SCRUM-2914 (Founder UI findings) — no confidence percentages surfaced.
+ *
+ * The 2026-07-22 pass removed confidence percentages from `AIFieldSuggestions`
+ * and `ExtractionQualityBanner` on the stated basis that "extraction confidence
+ * scoring is unreliable and must not be surfaced to users" — but it missed this
+ * panel, which kept rendering a percentage per field AND an overall one.
+ *
+ * The review flagging itself is deliberately UNCHANGED. "Needs your review" is
+ * an honest instruction; "42%" is a false precision claim about a score the
+ * team has already ruled unreliable. Removing the number does not weaken the
+ * gate — it removes a misleading justification for it.
+ */
+describe('TemplateReviewPanel — no confidence percentages surfaced', () => {
+  it('renders no per-field confidence percentage', async () => {
+    render(<TemplateReviewPanel {...makeProps()} />);
+    await screen.findByTestId('template-review-panel');
+
+    // Fixture confidences are 0.95 / 0.9 / 0.42 / 0.55.
+    for (const percentage of ['95%', '90%', '42%', '55%']) {
+      expect(screen.queryByText(percentage)).not.toBeInTheDocument();
+    }
+  });
+
+  it('no longer accepts an overall confidence value in its contract', () => {
+    // Enforced by tsc, NOT by this file's own fixture.
+    //
+    // The first cut of this test asserted
+    // `expect(Object.keys(makeProps())).not.toContain('overallConfidence')`,
+    // which is tautological: `makeProps` is a literal in this test file, so the
+    // assertion only restates that the author deleted the key from their own
+    // fixture. It would pass unchanged with the prop fully restored to
+    // `TemplateReviewPanelProps` and rendering a percentage again — a guard
+    // that reads as protection and behaves as a comment.
+    //
+    // A `@ts-expect-error` is evaluated against the real contract: if
+    // `overallConfidence` is ever re-added to the props, the directive becomes
+    // an unused `@ts-expect-error` and the typecheck gate fails.
+    render(
+      // @ts-expect-error -- overallConfidence was deleted from the contract (SCRUM-2914); passing it must not typecheck
+      <TemplateReviewPanel {...makeProps()} overallConfidence={0.8} />,
+    );
+  });
+
+  it('shows no percentage token anywhere in the rendered panel', async () => {
+    const panelProps = makeProps();
+    render(<TemplateReviewPanel {...panelProps} />);
+    const panel = await screen.findByTestId('template-review-panel');
+
+    expect(panel.textContent).not.toMatch(/\d+\s*%/);
+  });
+
+  it('still flags fields for review and still gates completion', async () => {
+    const props = makeProps();
+    render(<TemplateReviewPanel {...props} />);
+    await screen.findByTestId('template-review-panel');
+
+    // The safety property survives the cosmetic removal.
+    expect(screen.getAllByText(TEMPLATE_REVIEW_LABELS.LOW_CONFIDENCE_BADGE)).toHaveLength(2);
+    await waitFor(() => {
+      expect(props.onReviewStateChange).toHaveBeenLastCalledWith(false);
+    });
   });
 });

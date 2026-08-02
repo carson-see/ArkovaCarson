@@ -127,6 +127,15 @@ actually looking at that current state instead of a stale rerun snapshot.
 Per CLAUDE.md §1.11, there is no override label; this tool does not create
 one.
 
+Temporary exception (founder directive 2026-08-01): the repository Actions
+variable `SOAK_GATE_DISABLED` does short-circuit the CI gate while it is set
+to `"true"` (it expires 2026-08-16T00:00:00Z). It is repo-admin state, not a
+label, and this tool still does not create or set it. Note the interaction:
+a PR that went green under the bypass **stays** green after the variable is
+cleared, because the gate only re-evaluates on a new `pull_request` event —
+so re-enabling the gate is exactly when you want this tool, to force those
+PRs to be graded again.
+
 ## Tests
 
 - `scripts/ci/staging-evidence-workflow-contract.test.ts` pins the workflow
