@@ -26,6 +26,7 @@ import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { getCallerOrgId } from '../../compliance/auth-helpers.js';
+import { chunkForInFilter } from '../../utils/postgrest-filter.js';
 import {
   calculateOrgAudit,
   type JurisdictionPair,
@@ -317,14 +318,57 @@ async function loadOrgJurisdictions(
   return pairs;
 }
 
+const JURISDICTION_RULE_LIMIT = 2000;
+
+/**
+ * Load the rules an audit scores against.
+ *
+ * The error used to be discarded (`const { data } = await query`). Because a
+ * PostgREST failure RESOLVES as `{ data: null, error }` rather than throwing,
+ * a broken read produced an empty rule set — and an audit with no applicable
+ * rules scores as fully compliant. That is a fail-OPEN compliance verdict
+ * delivered at HTTP 201, which is strictly worse than an error: it is a
+ * confident wrong answer on the exact surface an auditor relies on.
+ *
+ * Throws instead; the caller's try/catch turns it into a 500.
+ */
 async function loadJurisdictionRules(
   _orgId: string,
   filter?: string[],
 ): Promise<JurisdictionRule[]> {
-  let query = dbAny.from('jurisdiction_rules').select('*').limit(2000);
-  if (filter?.length) query = query.in('jurisdiction_code', filter);
-  const { data } = await query;
-  return (data ?? []) as JurisdictionRule[];
+  if (!filter?.length) {
+    const { data, error } = await dbAny
+      .from('jurisdiction_rules')
+      .select('*')
+      .limit(JURISDICTION_RULE_LIMIT);
+    if (error) {
+      throw new Error(
+        `jurisdiction_rules read failed: ${(error as { message?: string }).message ?? String(error)}`,
+      );
+    }
+    return (data ?? []) as JurisdictionRule[];
+  }
+
+  // `jurisdictions` is Zod-bounded to 50 entries of 50 chars today, so this
+  // yields one chunk. Routed through `chunkForInFilter` anyway so the width
+  // guarantee lives here rather than depending on a `.max()` in the request
+  // schema staying where it is — relying on a bound declared in another file
+  // is how the 500-wide cohort in this codebase got its number.
+  const rules: JurisdictionRule[] = [];
+  for (const { values, start } of chunkForInFilter(filter)) {
+    const { data, error } = await dbAny
+      .from('jurisdiction_rules')
+      .select('*')
+      .in('jurisdiction_code', values)
+      .limit(JURISDICTION_RULE_LIMIT);
+    if (error) {
+      throw new Error(
+        `jurisdiction_rules read failed at chunk ${start}: ${(error as { message?: string }).message ?? String(error)}`,
+      );
+    }
+    rules.push(...((data ?? []) as JurisdictionRule[]));
+  }
+  return rules.slice(0, JURISDICTION_RULE_LIMIT);
 }
 
 async function loadOrgAnchors(orgId: string): Promise<OrgAnchor[]> {
