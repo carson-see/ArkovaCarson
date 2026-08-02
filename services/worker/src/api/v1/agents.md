@@ -2,6 +2,21 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-02 SECURITY — outbound PII gate on `GET /api/v1/verify/:publicId/provenance` (the FOURTH public projection)
+
+**Mounted `router.use('/verify', provenanceRouter)` with NO `requireScope` and NO auth middleware, and `provenance.ts` has no auth check of its own — it is fully anonymous.** Two leaks, closed with two *different* treatments, and the difference is the reusable lesson:
+
+- **`revocation_reason`** — issuer-authored free text that *might* carry identity. Two layers, same as everywhere else: academic records (`isEducationCredentialType`) emit none at all, every other type passes `publicFreeTextOrNull`. `credential_type` had to be added to the SELECT — its absence is *why* this projection could not apply the rule the others do.
+- **`signatures.signer_name`** — a person's name **by construction**: it is `cert.subject_cn` (`signatures.ts:248`), the X.509 Subject CN, stored beside `signer_org`/`location`/`contact_info`. **A value detector is useless against it** — the measured finding behind this whole contract is that no regex separates a bare name from an institution name. So it is **never emitted and never SELECTed**, so a future edit to the detail string cannot reintroduce it. This is the first field on any of these surfaces treated as *never-emit* rather than *gate-or-suppress*, because it is the first that is definitionally an identity rather than prose that may contain one. What survives: that a signature exists, when, its format/level, and an `evidence_ref` resolving the signer through an **authenticated** surface.
+
+**`format`/`level` are emitted unguarded, and that was checked rather than assumed:** both are DB CHECK-constrained closed vocabularies (`signatures_format_check` = XAdES/PAdES/CAdES, `signatures_level_check` = B-B/B-T/B-LT/B-LTA) *and* Zod-enum validated at the write path (`signatures.ts:85`).
+
+**Three facts, three strings.** `no reason provided` is a *claim*. Asserting it over a reason that exists but was suppressed is false (§1.5, §1.13 R-7), so a suppressed reason degrades to a bare `Revoked` — which asserts nothing about why — while a genuinely absent reason keeps the original wording. `hasStoredFreeText` is what distinguishes them; don't collapse the branches.
+
+**New shared module: `public-projection-text.ts`.** The TS value layer (`publicFreeTextOrNull`, `hasStoredFreeText`) now lives in ONE place, imported by `verify.ts` and `provenance.ts`. It was extracted from `verify.ts` the moment a second caller appeared. **Do not copy it into a third file** — two copies of the wrapper is the same drift the contract exists to prevent, just one level down from the detectors. The contract test asserts no other file defines `publicFreeTextOrNull`.
+
+**A FIFTH ungated projection is open and recorded:** `GET /api/v1/anchor/:publicId/evidence` (`anchor-evidence.ts:254,256`) emits `issuer_name` and `description` raw and is anon-reachable via `anchorAnonAllow`. It is in the contract's `known_ungated_projections`. It was NOT fixed here because it is a **signed evidence package** — changing what it contains needs its own decision about whether omission invalidates the package's own hash. Its two sibling routers on the same mount (`anchor-lifecycle.ts`, `anchor-extraction-manifest.ts`) were checked and emit no free text.
+
 ## 2026-08-02 SECURITY — outbound PII gate on `GET /api/v1/verify/:publicId` (the THIRD public projection)
 
 **VULNERABILITY CLASS — do not reintroduce:** `buildVerificationResult` in `verify.ts` emitted `anchor.description` **raw** to anonymous callers, for every credential type, including `DEGREE`/`TRANSCRIPT`/`CERTIFICATE`. The route is anon-reachable by design (`router.ts`: `if (!req.apiKey && req.method === 'GET') next()`). It was **not** covered by the REG-02 `directory_info_opt_out` suppression sitting directly above it in the same function — that block gates `issuer_name`/`recipient_identifier`/`issued_date`/`expiry_date` only — so even an explicitly opted-out learner was exposed here.

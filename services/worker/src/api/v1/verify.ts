@@ -20,12 +20,11 @@ import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 // is deliberately dependency-free (see its header) so a non-CTDL path can reuse
 // the detectors without pulling the whole CTDL serializer onto this hot,
 // anonymous verification path.
-import {
-  containsHighConfidencePii,
-  isEducationCredentialType,
-  normalizePublicText,
-  MAX_SCAN_CHARS,
-} from '../../ctdl/ctdl-pii-guard.js';
+import { isEducationCredentialType } from '../../ctdl/ctdl-pii-guard.js';
+// The value layer itself lives in `public-projection-text.ts` so `verify.ts`
+// and `provenance.ts` share ONE copy — two copies of the wrapper is the same
+// drift the contract exists to prevent.
+import { publicFreeTextOrNull } from './public-projection-text.js';
 
 const router = Router();
 
@@ -94,32 +93,6 @@ const router = Router();
 // are covered STRUCTURALLY here — an academic record emits no issuer- or
 // extraction-authored free text at all, which is precision-independent.
 // ---------------------------------------------------------------------------
-
-/**
- * The value layer: the public-safe form of an issuer- or extraction-authored
- * string, or `null` to OMIT the field.
- *
- * Runs on EVERY credential type, mirroring
- * `private.public_free_text_or_null` (migration 0385).
- */
-function publicFreeTextOrNull(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  // Never emit text we did not scan. `normalizePublicText` bounds its scan at
-  // MAX_SCAN_CHARS so a public, unauthenticated caller cannot drive an
-  // unbounded regex pass; a longer raw value would therefore be published with
-  // an UNSCANNED tail. Omit instead — the same fail-to-omission the CTDL guard
-  // applies to a body too deep to scan. (`anchors.description` is
-  // CHECK-constrained to 500 chars, but `metadata->>'jurisdiction'` and
-  // `anchors.sub_type` are unbounded `text`.)
-  if (value.length > MAX_SCAN_CHARS) return null;
-  // Scan and emit the NORMALIZED form: emitting the raw value would ship a
-  // control-character-split payload (`jane.doe\0@example.edu`) that the
-  // detectors only see once normalized.
-  const text = normalizePublicText(value);
-  if (!text) return null;
-  if (containsHighConfidencePii(text)) return null;
-  return text;
-}
 
 /**
  * API-RICH string keys exempt from the value gate.

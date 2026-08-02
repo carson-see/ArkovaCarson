@@ -168,8 +168,9 @@ describe('academic records emit no issuer- or extraction-authored free text', ()
         // would tell an anonymous verifier that a genuinely anchored document
         // does not exist.
         expect(body.verified).toBe(true);
-        expect(body.fingerprint_source ?? null).not.toBe(undefined);
+        expect(body.status).toBe('ACTIVE');
         expect(body.record_uri).toBeTruthy();
+        expect(body.anchor_timestamp).toBe('2026-03-30T00:00:00Z');
       });
     }
   }

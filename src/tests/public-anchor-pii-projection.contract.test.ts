@@ -66,6 +66,12 @@ interface Contract {
   ts_owner_pending_pr: number;
   ts_pre_1815_module: string;
   verify_owner_module: string;
+  provenance_owner_module: string;
+  provenance_academic_suppressed_fields: string[];
+  provenance_value_gated_fields: string[];
+  provenance_never_emitted_fields: string[];
+  provenance_implements_learner_name_heuristics: boolean;
+  provenance_fails_closed: boolean;
   verify_academic_suppressed_fields: string[];
   verify_value_gated_fields: string[];
   verify_structural_api_rich_keys: string[];
@@ -587,24 +593,24 @@ describe('public projection PII gate — the verify API surface', () => {
    */
   const verifySrc = (): string => stripTsComments(fs.readFileSync(VERIFY, 'utf8'));
 
-  it('reuses the shared detector rather than re-implementing it', () => {
+  it('reuses the shared detector and the shared value layer, re-implementing neither', () => {
     const src = verifySrc();
-    // Importing from the GUARD, not the serializer: the guard is deliberately
-    // dependency-free so a non-CTDL path can reuse it without dragging the CTDL
-    // serializer onto this hot anonymous route.
+    // The STRUCTURAL half comes from the guard (dependency-free by design, so a
+    // non-CTDL path can use it without dragging in the CTDL serializer); the
+    // VALUE half comes from public-projection-text.ts, which every TS
+    // projection shares. A second hand-rolled copy of either is exactly the
+    // drift this contract exists to stop.
     expect(
       src,
-      'verify.ts must import the detectors from ctdl-pii-guard.js — a second ' +
-        'hand-rolled copy of these patterns is exactly the drift this contract exists to stop.',
+      'verify.ts must import isEducationCredentialType from ctdl-pii-guard.js',
     ).toMatch(/from\s+'\.\.\/\.\.\/ctdl\/ctdl-pii-guard\.js'/);
-    for (const symbol of [
-      'containsHighConfidencePii',
-      'isEducationCredentialType',
-      'normalizePublicText',
-      'MAX_SCAN_CHARS',
-    ]) {
-      expect(src, `verify.ts must reuse ${symbol} from the guard`).toContain(symbol);
-    }
+    expect(src).toContain('isEducationCredentialType');
+    expect(
+      src,
+      'verify.ts must import the value layer from ./public-projection-text.js rather than ' +
+        'carrying its own copy.',
+    ).toMatch(/from\s+'\.\/public-projection-text\.js'/);
+    expect(src).toContain('publicFreeTextOrNull');
   });
 
   it('suppresses every contract-listed academic field structurally', () => {
@@ -613,11 +619,15 @@ describe('public projection PII gate — the verify API surface', () => {
     // (which additionally contains CLE and drives a different mechanism).
     expect(src).toMatch(/isAcademicRecord\s*=\s*isEducationCredentialType\(/);
     for (const field of contract.verify_academic_suppressed_fields) {
+      // Escaped: the sibling SQL list already carries dotted names like
+      // `metadata.description`, where an unescaped `.` would silently become a
+      // wildcard and the assertion would stop meaning what it says.
+      const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       expect(
         src,
         `verify.ts must suppress '${field}' on an academic record — it is listed in ` +
           'verify_academic_suppressed_fields.',
-      ).toMatch(new RegExp(String.raw`if\s*\(!isAcademicRecord\)[\s\S]{0,400}?\b${field}\b`));
+      ).toMatch(new RegExp(String.raw`if\s*\(!isAcademicRecord\)[\s\S]{0,400}?\b${escaped}\b`));
     }
   });
 
@@ -640,7 +650,6 @@ describe('public projection PII gate — the verify API surface', () => {
 
   it('routes every contract-listed value-gated field through the gate', () => {
     const src = verifySrc();
-    expect(src).toMatch(/function\s+publicFreeTextOrNull\s*\(/);
     // The two explicitly-wired fields. `description` is covered above;
     // `sub_type`/`file_mime` go through the API-RICH allow-list asserted next.
     for (const field of ['issuer_name', 'jurisdiction']) {
@@ -689,5 +698,128 @@ describe('public projection PII gate — the verify API surface', () => {
     // exist. The guard's fail-closed error type must not appear here.
     expect(src).not.toMatch(/\bCtdlPiiSafetyError\b/);
     expect(src).not.toMatch(/\bassertNoPiiInJsonLd\b/);
+  });
+});
+
+/**
+ * The FOURTH projection: `GET /api/v1/verify/:publicId/provenance`, mounted in
+ * `router.ts` with no `requireScope` and no auth middleware.
+ *
+ * Behavioural proof is `services/worker/src/api/v1/provenance-pii-projection.test.ts`
+ * (supertest through the real anonymous route). These assertions prove the RULE
+ * cannot silently disappear from the source, which behaviour alone cannot: an
+ * edit that deletes the gate and its tests together leaves nothing failing.
+ */
+describe('public projection PII gate — the provenance API surface', () => {
+  const PROVENANCE = path.join(REPO, contract.provenance_owner_module);
+  /** Comment-stripped for the same reason as the verify half — this file also
+   *  documents the symbols the assertions forbid. */
+  const provenanceSrc = (): string => stripTsComments(fs.readFileSync(PROVENANCE, 'utf8'));
+
+  it('reuses the ONE shared value layer instead of a second copy', () => {
+    const src = provenanceSrc();
+    expect(
+      src,
+      'provenance.ts must import publicFreeTextOrNull from ./public-projection-text.js. ' +
+        'A second copy of the wrapper is the drift this contract exists to prevent.',
+    ).toMatch(/from\s+'\.\/public-projection-text\.js'/);
+    expect(src).toContain('publicFreeTextOrNull');
+    // And the structural half comes from the guard, not a local type list.
+    expect(src).toMatch(/from\s+'\.\.\/\.\.\/ctdl\/ctdl-pii-guard\.js'/);
+    expect(src).toContain('isEducationCredentialType');
+  });
+
+  it('suppresses every contract-listed academic field structurally', () => {
+    const src = provenanceSrc();
+    for (const field of contract.provenance_academic_suppressed_fields) {
+      const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      expect(
+        src,
+        `provenance.ts must suppress '${field}' on an academic record`,
+      ).toMatch(
+        new RegExp(String.raw`isEducationCredentialType\([\s\S]{0,200}?\b${escaped}\b`),
+      );
+    }
+  });
+
+  it('never emits a contract-listed never-emit field, and never SELECTs it', () => {
+    const src = provenanceSrc();
+    for (const qualified of contract.provenance_never_emitted_fields) {
+      const column = qualified.split('.').pop() as string;
+      expect(
+        src,
+        `${qualified} is a person's identity by construction (X.509 Subject CN), not prose that ` +
+          'might contain one. No value detector can catch a bare name — that is the measured ' +
+          'finding behind this whole contract — so it must not appear in provenance.ts at all, ' +
+          'including in the SELECT list.',
+      ).not.toContain(column);
+    }
+  });
+
+  it('does not gate the academic suppression on directory_info_opt_out', () => {
+    const src = provenanceSrc();
+    expect(src).not.toMatch(/directory_info_opt_out/);
+  });
+
+  it('implements NO learner-name heuristic', () => {
+    expect(contract.provenance_implements_learner_name_heuristics).toBe(false);
+    expect(provenanceSrc()).not.toMatch(/\bcontainsLearnerNamePii\b/);
+  });
+
+  it('omits rather than fails closed', () => {
+    expect(contract.provenance_fails_closed).toBe(false);
+    const src = provenanceSrc();
+    expect(src).not.toMatch(/\bCtdlPiiSafetyError\b/);
+  });
+
+  it('never asserts "no reason provided" over a suppressed reason', () => {
+    // Three distinct facts, three distinct strings (CLAUDE.md §1.5, §1.13 R-7).
+    // The `hasStoredFreeText` branch is what keeps the false claim off a
+    // revocation whose reason exists but is not publishable.
+    const src = provenanceSrc();
+    expect(
+      src,
+      'provenance.ts must distinguish "no reason stored" from "reason stored but suppressed" ' +
+        'via hasStoredFreeText — asserting the first when the second is true is a false claim ' +
+        'on a public projection.',
+    ).toContain('hasStoredFreeText');
+  });
+});
+
+/**
+ * The shared TS value layer. One function, four callers; a second copy is the
+ * drift in miniature.
+ */
+describe('public projection PII gate — the shared TS value layer', () => {
+  const MODULE = path.join(REPO, 'services/worker/src/api/v1/public-projection-text.ts');
+
+  it('exists and imports its detectors from the guard rather than restating them', () => {
+    expect(fs.existsSync(MODULE)).toBe(true);
+    const src = stripTsComments(fs.readFileSync(MODULE, 'utf8'));
+    expect(src).toMatch(/from\s+'\.\.\/\.\.\/ctdl\/ctdl-pii-guard\.js'/);
+    for (const symbol of ['containsHighConfidencePii', 'normalizePublicText', 'MAX_SCAN_CHARS']) {
+      expect(src, `the shared value layer must reuse ${symbol}`).toContain(symbol);
+    }
+    // No hand-rolled detector may live here — the guard owns them.
+    expect(
+      src,
+      'public-projection-text.ts must not define its own PII patterns; the guard is the single ' +
+        'source of truth for detection.',
+    ).not.toMatch(/new RegExp\(|=\s*\/\^?\[/);
+  });
+
+  it('is the only TS definition of the wrapper', () => {
+    const callers = [
+      'services/worker/src/api/v1/verify.ts',
+      contract.provenance_owner_module,
+    ];
+    for (const rel of callers) {
+      const src = stripTsComments(fs.readFileSync(path.join(REPO, rel), 'utf8'));
+      expect(
+        src,
+        `${rel} must IMPORT publicFreeTextOrNull, not define its own.`,
+      ).not.toMatch(/function\s+publicFreeTextOrNull\s*\(/);
+      expect(src).toMatch(/from\s+'\.\/public-projection-text\.js'/);
+    }
   });
 });
