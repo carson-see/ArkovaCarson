@@ -59,7 +59,17 @@ type _ForbiddenOrchestratorAppend = S33AcceptanceOrchestrator['append'];
 
 const tempRoots: string[] = [];
 afterEach(() => {
-  for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+  // `maxRetries` is load-bearing, not defensive padding. Several fixtures below
+  // shell out to `git init` / `git commit` inside these temp roots, and git can
+  // leave a short-lived background process (auto-gc, index/lock churn) writing
+  // into `.git` after `execFileSync` returns. A recursive remove that races it
+  // fails with ENOTEMPTY — which surfaced as an intermittent RED `Tests` job on
+  // unrelated PRs in the merge queue (e.g. run 30713006527 on PR #1779:
+  // "ENOTEMPTY: directory not empty, rmdir '/tmp/arkova-s33-r10-git-…'").
+  // `force` does not cover this: it suppresses ENOENT, not ENOTEMPTY.
+  for (const root of tempRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
 });
 
 const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex');
