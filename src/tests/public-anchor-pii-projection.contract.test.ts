@@ -122,6 +122,15 @@ function latestRedefiner(): Migration {
  * The message every gate failure carries. A future author who trips one of
  * these needs to know WHY the rule exists, not just that a regex did not match.
  */
+/**
+ * The academic-record predicate, however it is bound. The projection hoists it
+ * into a LATERAL (`g.is_academic`) so it is evaluated once per row instead of
+ * six times; accepting only the direct call would make this gate a formatting
+ * assertion rather than a behavioural one.
+ */
+const ACADEMIC_PREDICATE =
+  String.raw`(?:private\.is_academic_record_credential_type\([^)]*\)|g\.is_academic)`;
+
 function why(m: Migration, detail: string): string {
   return (
     `${m.file} is the newest definition of get_public_anchor — the one production runs — ` +
@@ -162,7 +171,7 @@ describe('public projection PII gate — the definition production runs', () => 
       const key = field.replace(/^metadata\./, '');
       // `'<key>', CASE WHEN is_academic_record_credential_type(...) THEN NULL`
       const pattern = new RegExp(
-        String.raw`'${key}',\s*CASE\s+WHEN\s+private\.is_academic_record_credential_type\([^)]*\)\s*THEN\s+NULL`,
+        String.raw`'${key}',\s*CASE\s+WHEN\s+${ACADEMIC_PREDICATE}\s*THEN\s+NULL`,
         'i',
       );
       expect(m.sql, why(m, `does not force ${field} to NULL for academic records.`)).toMatch(pattern);
@@ -173,7 +182,7 @@ describe('public projection PII gate — the definition production runs', () => 
     const m = latestRedefiner();
     for (const key of contract.sql_academic_controlled_fields) {
       const pattern = new RegExp(
-        String.raw`'${key}',\s*CASE\s+WHEN\s+private\.is_academic_record_credential_type\([^)]*\)\s*THEN\s+private\.academic_record_public_label\(`,
+        String.raw`'${key}',\s*CASE\s+WHEN\s+${ACADEMIC_PREDICATE}\s*THEN\s+private\.academic_record_public_label\(`,
         'i',
       );
       expect(

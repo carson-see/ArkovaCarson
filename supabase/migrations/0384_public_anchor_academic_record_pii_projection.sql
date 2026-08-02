@@ -335,6 +335,16 @@ BEGIN
   -- count is checked procedurally, exactly as containsInternationalPhone() does
   -- in code, so a short false match like '+1 2026-03-27' (9 digits) is rejected
   -- without an unreadable regex.
+  --
+  -- Every international number starts with '+', and regexp_matches is a
+  -- set-returning function whose fixed setup cost (~0.0017 ms) is paid even when
+  -- nothing can possibly match — which is the common case here, since most
+  -- gated values are titles and hashes. This guard is ~30% of the detector's
+  -- cost on a sha256-shaped value, multiplied by ~26 detector calls per request.
+  IF strpos(v_text, '+') = 0 THEN
+    RETURN false;
+  END IF;
+
   FOR v_match IN
     SELECT m[1]
     FROM regexp_matches(v_text, '(\+\d{1,3}(?:[\s.-]\d{1,5}){2,5})', 'g') AS m
@@ -593,7 +603,7 @@ BEGIN
       -- the cleaned filename, falling back to a controlled label so the value is
       -- never NULL and no consumer that assumes a display string breaks.
       'filename', CASE
-        WHEN private.is_academic_record_credential_type(a.credential_type::text)
+        WHEN g.is_academic
           THEN private.academic_record_public_label(a.credential_type::text)
         ELSE COALESCE(
           private.public_free_text_or_null(a.filename),
@@ -617,31 +627,31 @@ BEGIN
         -- already reads "Academic Degree". Omitting keeps the existing render
         -- shape and states the label exactly once.
         'title', CASE
-          WHEN private.is_academic_record_credential_type(a.credential_type::text) THEN NULL
+          WHEN g.is_academic THEN NULL
           ELSE private.public_free_text_or_null(
-            (sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb))) ->> 'title')
+            g.safe_metadata ->> 'title')
         END,
         'credential_title', CASE
-          WHEN private.is_academic_record_credential_type(a.credential_type::text) THEN NULL
+          WHEN g.is_academic THEN NULL
           ELSE private.public_free_text_or_null(
-            (sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb))) ->> 'credential_title')
+            g.safe_metadata ->> 'credential_title')
         END,
         'description', CASE
-          WHEN private.is_academic_record_credential_type(a.credential_type::text) THEN NULL
+          WHEN g.is_academic THEN NULL
           ELSE private.public_free_text_or_null(
-            (sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb))) ->> 'description', 500)
+            g.safe_metadata ->> 'description', 500)
         END,
         'category', CASE
-          WHEN private.is_academic_record_credential_type(a.credential_type::text) THEN NULL
+          WHEN g.is_academic THEN NULL
           ELSE private.public_free_text_or_null(
-            (sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb))) ->> 'category')
+            g.safe_metadata ->> 'category')
         END,
         -- 0384: proof_url drops query + fragment AND runs the value gate, via
         -- the URL-specific cleaner that omits rather than truncates.
         'proof_url', private.public_url_or_null(
-          (sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb))) ->> 'proof_url'),
+          g.safe_metadata ->> 'proof_url'),
         'issuer', private.public_free_text_or_null(
-          (sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb))) ->> 'issuer'),
+          g.safe_metadata ->> 'issuer'),
         -- 0384: the remaining allow-listed keys are structured (enums, hashes,
         -- versions, counts), so they take the BOUNDED gate — high-confidence
         -- detectors only. A name heuristic on a sha256 or a MIME type is pure
@@ -670,7 +680,7 @@ BEGIN
       -- ceterms:revocationReason through cleanPublicFreeText
       -- (BUG-2026-07-06-002).
       'revocation_reason', CASE
-        WHEN private.is_academic_record_credential_type(a.credential_type::text) THEN NULL
+        WHEN g.is_academic THEN NULL
         ELSE private.public_free_text_or_null(a.revocation_reason, 500)
       END,
       'expires_at', a.expires_at,
@@ -722,6 +732,27 @@ BEGIN
     v_result
   FROM anchors a
   LEFT JOIN organizations o ON o.id = a.org_id
+  -- Hoist the two values the projection needs repeatedly.
+  --
+  -- `sanitize_metadata_for_public` rebuilds the whole metadata jsonb
+  -- (jsonb_each -> jsonb_object_agg), and the projection referenced it SIX
+  -- times; `is_academic_record_credential_type` was also called six times and
+  -- cannot be inlined by the planner (a SQL function carrying `SET search_path`
+  -- is refused by the inliner), so each was a real fmgr call with GUC
+  -- save/restore. On an anon-callable endpoint over metadata with no size
+  -- limit, that is the dominant cost: measured 1.05 ms -> 0.41 ms per call on a
+  -- 42 KB metadata row (-66%), 0.52 ms -> 0.41 ms on a typical one (-30%),
+  -- output byte-identical.
+  --
+  -- `OFFSET 0` is LOAD-BEARING, not noise: without it the planner pulls the
+  -- subquery up, flattens it, and every reference is re-evaluated — measured
+  -- back at 6 calls. It is the standard PostgreSQL optimisation fence.
+  CROSS JOIN LATERAL (
+    SELECT
+      sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb)) AS safe_metadata,
+      private.is_academic_record_credential_type(a.credential_type::text) AS is_academic
+    OFFSET 0
+  ) g
   WHERE a.public_id = p_public_id
     AND a.status IN ('SECURED', 'REVOKED', 'EXPIRED', 'SUPERSEDED', 'PENDING', 'SUBMITTED')
     AND a.deleted_at IS NULL;
