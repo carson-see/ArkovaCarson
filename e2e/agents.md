@@ -6,6 +6,30 @@ Playwright E2E test specs and shared fixtures for the Arkova application.
 
 ## Live findings an agent must know before touching this code
 
+- **A green test that pins the WRONG PREMISE is worse than no test.** This
+  class of defect bit three separate lanes on 2026-08-01, so it gets top
+  billing. The signup spec asserted the user lands on `/dashboard` immediately
+  after "Create account", justified by a comment claiming prod auto-confirms
+  signups — and `supabase/config.toml` was set to `enable_confirmations = false`
+  **to make CI match that claim**. The claim was false. Verified live against
+  prod on 2026-08-01: signup returns HTTP 200 with `confirmation_sent_at` set
+  and **no session**, and the user row lands with `email_confirmed_at = NULL`.
+  So CI was faithfully validating the opposite of production, on the one flow
+  whose entire purpose is that it stops and waits for the user.
+  - The failure mode is specific and worth recognising: someone hits a spec
+    that disagrees with an environment, and "fixes" it by changing the
+    **environment config** to match the spec's assumption instead of checking
+    which one is right. The spec then goes green and permanently encodes the
+    wrong premise.
+  - **Rule: when a spec's expectation depends on an environment setting, the
+    comment justifying it must cite VERIFIED evidence from that environment —
+    a request/response, an auth log line, or a DB row — not an assumption.**
+    If you cannot produce that evidence, you do not yet know which behaviour is
+    correct, and flipping a config to go green is guessing.
+  - Corollary: `supabase/config.toml` is a *mirror* of the real project's auth
+    settings, not a place to negotiate with a failing test. Changing it changes
+    what every local and CI run believes production does.
+
 - **Click-interception and paint-order bugs are E2E-only. Never answer this
   defect class with Vitest+jsdom.** jsdom has no layout engine and no
   hit-testing, so `fireEvent.click(el)` dispatches straight at the target and
@@ -158,6 +182,7 @@ E2E job is low-risk.
 - **DO** pair a real `.click()` with an explicit `elementFromPoint` assertion when testing interception — a bare click failure surfaces as a generic actionability timeout, whereas the hit-test names the actual interceptor in the failure message.
 - **DON'T** use a default (substring) `getByRole('button', { name })` match inside the FileUpload drop zone — the drop-zone wrapper is itself a `div[role="button"]` and its accessible name is computed from its whole subtree, so it absorbs descendant sr-only text (e.g. "Remove file") and the locator resolves to 2 elements. Use `exact: true`.
 - **DON'T** instantiate a context fixture (`orgAdminPage`, `orgBAdminPage`) in a test that doesn't use it — each eagerly opens a browser context + teardown. Destructure only the fixtures the block actually drives.
+- **DON'T** hardcode the `SecureDocumentDialog` confirm-step submit locator on visible text alone — prefer `getByTestId('securing-path-queue')` (the always-present "Add to Queue" path) or `getByTestId('securing-path-instant')` ("Secure Instantly", only rendered when `exposedSecuringPaths(capability)` includes `'instant'` — hardcoded unreachable this sprint per R5). 2026-08-01 (QUEUE-01 / SCRUM-2894, PR #1737): the confirm button's visible text changed from "Secure Document" to "Add to Queue", and three call sites that previously called `handleConfirm([])` directly (AI-disabled Continue, extraction-failed Skip, privacy-blocked Continue-without) now route through the confirm step too — so a stale `/Secure Document/i` locator both mismatches the new text AND misses that some paths now require an explicit click they didn't before. Broke `anchor-creation.spec.ts`, `secure-document.spec.ts`, and `template-review.spec.ts` (GH Actions run 30707096632); fixed by switching to the testid and, where the path previously auto-submitted, adding the click.
 
 ## Dependencies
 

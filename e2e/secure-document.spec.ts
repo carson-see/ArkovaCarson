@@ -168,10 +168,15 @@ test.describe('Secure Document Flow', () => {
         await skipExtraction.click();
       }
 
-      // Step 5: We should be on confirm step or processing/success
-      // Try to find Secure Document button (confirm step)
-      const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i }).last();
-      if (await secureBtn.isVisible().catch(() => false)) {
+      // Step 5: We should be on confirm step or processing/success.
+      // QUEUE-01 / SCRUM-2894: the confirm-step submit is now "Add to Queue"
+      // (data-testid="securing-path-queue") — Secure Instantly is R5-dark
+      // this sprint, so "Add to Queue" is the only confirm button rendered.
+      // Every path (including the extraction-failed skip above) now lands on
+      // this step instead of submitting directly, so wait for it rather than
+      // doing a single instantaneous isVisible() check.
+      const secureBtn = individualPage.getByTestId('securing-path-queue');
+      if (await secureBtn.isVisible({ timeout: 15000 }).catch(() => false)) {
         await secureBtn.click();
       }
 
@@ -230,9 +235,10 @@ test.describe('Secure Document Flow', () => {
         await skipExtraction.click();
       }
 
-      // Confirm
-      const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i }).last();
-      if (await secureBtn.isVisible().catch(() => false)) await secureBtn.click();
+      // Confirm — QUEUE-01 / SCRUM-2894: "Add to Queue" (securing-path-queue)
+      // is the only confirm-step button rendered this sprint.
+      const secureBtn = individualPage.getByTestId('securing-path-queue');
+      if (await secureBtn.isVisible({ timeout: 15000 }).catch(() => false)) await secureBtn.click();
 
       // Wait for success
       const success = individualPage.getByText('Document Submitted');

@@ -188,6 +188,20 @@ const ConfigSchema = z.object({
   /** Expected OIDC audience for Cloud Scheduler tokens (typically the Cloud Run service URL) */
   cronOidcAudience: z.string().url().optional(),
 
+  /**
+   * SCRUM-2653: shared secret gating `/health?detailed=true` (sent as the
+   * `X-Health-Token` header). Plain `/health` stays public per Constitution 1.9;
+   * only the detailed view — which discloses git_sha, signing provider, network,
+   * feature flags, backlog depth and the Supabase connection URL — is gated.
+   *
+   * Deliberately OPTIONAL, and deliberately NOT added to the production
+   * required-vars check below: an unset token makes detailed health fail CLOSED
+   * in production (see isDetailedHealthAuthorized), which is the safe direction.
+   * Making it required would turn a missing secret into a worker crash-loop —
+   * trading an information leak for an outage.
+   */
+  healthDetailToken: z.string().min(16).optional(),
+
   // Email (BETA-03)
   /** Resend API key for transactional emails */
   resendApiKey: z.string().min(1).optional(),
@@ -393,6 +407,14 @@ const ConfigSchema = z.object({
    * string so that fail-loud classification stays in the job, not the schema.
    */
   ceApiKeyExpiresAt: z.string().optional(),
+  /**
+   * ENABLE_CE_REGISTRY_DRIFT_CHECK — gate the CE Registry drift reconciliation
+   * cron (`ce-registry-drift.ts`). Default FALSE: the pass makes one OUTBOUND
+   * request per anchored CTID against Credential Engine's public
+   * infrastructure, so it ships dark and is enabled deliberately. Read-only —
+   * it publishes nothing to CE.
+   */
+  enableCeRegistryDriftCheck: boolFlag(false),
 
   // Arize observability (SCRUM-1067)
   /** ARIZE_TRACING_ENABLED — initialize OTLP exporter when true and creds present. */
@@ -761,6 +783,7 @@ function loadConfig(): Config {
     aiBatchRowLatencyBudgetMs: process.env.AI_BATCH_ROW_LATENCY_BUDGET_MS,
     cronSecret: process.env.CRON_SECRET,
     cronOidcAudience: process.env.CRON_OIDC_AUDIENCE,
+    healthDetailToken: process.env.HEALTH_DETAIL_TOKEN,
     corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS,
     x402FacilitatorUrl: process.env.X402_FACILITATOR_URL,
     arkovaUsdcAddress: process.env.ARKOVA_USDC_ADDRESS,
@@ -831,6 +854,7 @@ function loadConfig(): Config {
     // the single source of truth.
     enableCeKeyExpiryAlerts: process.env.ENABLE_CE_KEY_EXPIRY_ALERTS,
     ceApiKeyExpiresAt: process.env.CE_API_KEY_EXPIRES_AT,
+    enableCeRegistryDriftCheck: process.env.ENABLE_CE_REGISTRY_DRIFT_CHECK,
     arizeTracingEnabled: process.env.ARIZE_TRACING_ENABLED,
     arizeTracingConsole: process.env.ARIZE_TRACING_CONSOLE,
     arizeApiKey: process.env.ARIZE_API_KEY,
