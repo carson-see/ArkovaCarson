@@ -1,5 +1,6 @@
 /**
- * Regression tests for the public-record anchoring ROLLBACK path.
+ * Regression test for the public-record anchoring ROLLBACK path's id-filter
+ * width, driven through the real entrypoint at scale.
  *
  * Sibling of the 2026-07-29 → 2026-08-01 production incident fixed in
  * `fix(anchoring): PostgREST .in() filter width killed public-record anchoring
@@ -17,13 +18,23 @@
  * cohort. The cost is a head-of-line stall until that recovery pass runs, during
  * which the batch re-reads the same oldest-first records, partitions the
  * BROADCASTING rows nowhere, and reports "no new pending" with HTTP 200.
+ *
+ * `revertClaimedAnchors` now delegates its chunking to the shared
+ * `chunkForInFilter` (`utils/postgrest-filter.ts`, width asserted once there),
+ * and the failure-escalation behavior (a totally-failed revert surfaced
+ * alongside the chain error) has its own coverage in
+ * `publicRecordAnchor.test.ts`'s "claim-revert escalation" describe block. What
+ * remains here is the thing neither of those covers: driven through the real
+ * `processPublicRecordAnchoring` entrypoint, at a scale that spans multiple
+ * chunks (607 real UUID-shaped ids), every claimed anchor is handed to a
+ * revert call exactly once and no chunk exceeds the PostgREST URL budget.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   POSTGREST_IN_FILTER_CHUNK,
   POSTGREST_URL_FILTER_BUDGET_BYTES,
-} from '../anchor-batching.js';
+} from '../../utils/postgrest-filter.js';
 
 const { mockRpc, mockSubmitFingerprint, mockLogger, mockAnchorProofsUpsert } = vi.hoisted(() => ({
   mockRpc: vi.fn(),
@@ -245,33 +256,10 @@ describe('publicRecordAnchor — revert path in-filter width', () => {
     ]);
   }, 30_000);
 
-  it('reports the failed id count and names the recovery path when a chunk 400s', async () => {
-    const { client, revertChunks } = makeRevertMock(RECORD_COUNT, {
-      revertError: { message: 'Bad Request' },
-    });
-    mockSubmitFingerprint.mockRejectedValue(new Error('chain submission failed'));
-
-    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await processPublicRecordAnchoring(client as any);
-
-    // A failing chunk must not abort the loop — every chunk is still attempted.
-    expect(revertChunks.flat()).toHaveLength(RECORD_COUNT);
-
-    // One aggregate line carrying the id count, pointing at the automatic
-    // recovery path rather than implying manual intervention.
-    const aggregate = mockLogger.error.mock.calls.find(
-      ([, message]) => typeof message === 'string' && message.includes('left in BROADCASTING'),
-    );
-    expect(aggregate).toBeDefined();
-    expect(aggregate?.[0]).toMatchObject({ failed: RECORD_COUNT, attempted: RECORD_COUNT });
-    expect(aggregate?.[1]).toContain('recover_stuck_broadcasts');
-
-    // The caller surfaces the failure alongside the chain error instead of
-    // discarding it — the silent-success shape is what hid the 70h outage.
-    const submissionFailure = mockLogger.error.mock.calls.find(
-      ([, message]) => typeof message === 'string' && message.includes('chain submission failed'),
-    );
-    expect(submissionFailure?.[0]).toMatchObject({ revertFailed: RECORD_COUNT });
-  }, 30_000);
+  // The chunk-failure escalation behavior (aggregate error naming the
+  // stranded count + recovery path, surfaced alongside the chain error) is
+  // covered at 20 records — enough to exercise the escalation logic without
+  // needing multi-chunk scale — in `publicRecordAnchor.test.ts`'s "claim-revert
+  // escalation" describe block. Duplicating it here at 607 records would add
+  // runtime without adding coverage.
 });

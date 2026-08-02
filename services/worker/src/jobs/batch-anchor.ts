@@ -25,6 +25,7 @@ import { config } from '../config.js';
 import { deductOrgCredit, type DeductionResult } from '../utils/orgCredits.js';
 import { flagRegistry } from '../middleware/flagRegistry.js';
 import { isBroadcastRejectedError } from '../chain/utxo-provider.js';
+import { chunkForInFilter } from '../utils/postgrest-filter.js';
 import type { ChainClient, ChainReceipt, PreparedChainTx } from '../chain/types.js';
 import type { Json } from '../types/database.types.js';
 import {
@@ -33,7 +34,6 @@ import {
   type TxidJournalEntry,
   type TxidJournalRecoveryDecision,
 } from './txid-journal.js';
-import { POSTGREST_IN_FILTER_CHUNK } from './anchor-batching.js';
 
 /**
  * Max anchors per batch transaction (BTC-001).
@@ -1916,48 +1916,9 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   }
 
   // CML-02: Populate compliance_controls per credential type (non-fatal post-processing).
-  //
-  // Chunked by POSTGREST_IN_FILTER_CHUNK: `ids` is a per-credential-type group
-  // of `orderedAnchors`, bounded only by BATCH_SIZE (up to 10,000). Batches
-  // concentrate in a few credential types, so an unchunked `.in('id', ids)`
-  // here was a ~390 KB query string — the same 400 Bad Request that killed
-  // public-record anchoring for 70h on 2026-07-29 (see agents.md). It failed
-  // inside this non-fatal try/catch, so large batches silently ended up with
-  // no compliance_controls at all AND the throw skipped every remaining
-  // credential type. Per-chunk error capture keeps one bad chunk from
-  // cancelling the rest.
+  // See `applyComplianceControls` below for the chunking/error-visibility rationale.
   try {
-    const byType = new Map<string | null, string[]>();
-    for (const anchor of orderedAnchors) {
-      const ct = (anchor as { credential_type?: string | null }).credential_type ?? null;
-      if (!byType.has(ct)) byType.set(ct, []);
-      byType.get(ct)!.push(anchor.id);
-    }
-    let complianceChunkFailures = 0;
-    for (const [credType, ids] of byType) {
-      const controls = getComplianceControlIds(credType);
-      for (let i = 0; i < ids.length; i += POSTGREST_IN_FILTER_CHUNK) {
-        const chunk = ids.slice(i, i + POSTGREST_IN_FILTER_CHUNK);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: complianceChunkError } = await (db as any)
-          .from('anchors')
-          .update({ compliance_controls: controls })
-          .in('id', chunk);
-        if (complianceChunkError) {
-          complianceChunkFailures += 1;
-          logger.warn(
-            { error: complianceChunkError, credType, chunkStart: i, chunkSize: chunk.length },
-            'Non-fatal: compliance_controls chunk update failed',
-          );
-        }
-      }
-    }
-    if (complianceChunkFailures > 0) {
-      logger.warn(
-        { batchId, complianceChunkFailures },
-        'Non-fatal: some batch anchors did not receive compliance_controls',
-      );
-    }
+    await applyComplianceControls(orderedAnchors, batchId);
   } catch (complianceErr) {
     logger.warn({ error: complianceErr }, 'Non-fatal: failed to set compliance_controls on batch anchors');
   }
@@ -1979,6 +1940,79 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     merkleRoot: tree.root,
     txId: receipt.receiptId,
   };
+}
+
+/**
+ * CML-02: stamp `compliance_controls` per credential type on a broadcast batch.
+ *
+ * Both halves of this used to be wrong:
+ *
+ *  - The id filter took every anchor of one credential type unchunked. A
+ *    single-credential-type batch at `BATCH_SIZE` puts 10,000 UUIDs — ~390 KB
+ *    of query string — on one request line, which PostgREST answers with 400.
+ *    `chunkForInFilter` owns the width now.
+ *  - The result was not destructured at all, so the resolved-`{ error }` a 400
+ *    produces was invisible and the caller's `catch (complianceErr)` — labelled
+ *    "Non-fatal" — was dead code for the only failure mode that actually
+ *    occurs. Every chunk result is now inspected.
+ *
+ * Deliberately does NOT call `assertNotAllChunksFailed`, and does not throw on
+ * a failed chunk. This runs AFTER a successful broadcast and after
+ * `submit_batch_anchors`: the transaction is on-chain and the rows are
+ * SUBMITTED. Throwing would turn a completed batch into a reported job failure
+ * and a Scheduler retry over work that is already done, to fix derived
+ * metadata that a later run can re-stamp. That is an explicit opt-out, not an
+ * omission — the escalation is an error-level line naming the exact number of
+ * anchors left unstamped, which is what the old code failed to produce.
+ */
+export async function applyComplianceControls(
+  anchors: Array<{ id: string; credential_type?: string | null }>,
+  batchId: string,
+): Promise<void> {
+  const byType = new Map<string | null, string[]>();
+  for (const anchor of anchors) {
+    const ct = anchor.credential_type ?? null;
+    if (!byType.has(ct)) byType.set(ct, []);
+    byType.get(ct)!.push(anchor.id);
+  }
+
+  let attemptedChunks = 0;
+  let failedChunks = 0;
+  let unstampedAnchors = 0;
+
+  for (const [credType, ids] of byType) {
+    const controls = getComplianceControlIds(credType);
+    for (const { values, start } of chunkForInFilter(ids)) {
+      attemptedChunks += 1;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error } = await (db as any)
+        .from('anchors')
+        .update({ compliance_controls: controls })
+        .in('id', values);
+
+      if (error) {
+        failedChunks += 1;
+        unstampedAnchors += values.length;
+        logger.error(
+          {
+            error,
+            batchId,
+            credentialType: credType,
+            chunkStart: start,
+            chunkSize: values.length,
+          },
+          'CML-02: compliance_controls chunk failed',
+        );
+      }
+    }
+  }
+
+  if (failedChunks > 0) {
+    logger.error(
+      { batchId, attemptedChunks, failedChunks, unstampedAnchors },
+      'CML-02: batch broadcast succeeded but some anchors were left without compliance_controls',
+    );
+  }
 }
 
 async function getPendingTriggerProbe(orgId?: string): Promise<{ data: PendingTriggerProbe | null; error: unknown }> {

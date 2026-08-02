@@ -12,12 +12,22 @@
  * throw escaped the per-type loop, every credential type after the first was
  * skipped too. Nothing downstream notices — `audit-export` and the GRC evidence
  * path just emit empty control lists.
+ *
+ * The fix now lives in the exported `applyComplianceControls` (unit-tested
+ * directly, with its own failure-visibility coverage, in
+ * `batch-anchor.compliance.test.ts`) routed through the shared
+ * `chunkForInFilter`/`POSTGREST_IN_FILTER_CHUNK` (`utils/postgrest-filter.ts`).
+ * This file stays as the real-entrypoint check: it drives `processBatchAnchors`
+ * end to end and asserts the wiring at THIS call site — credential-type
+ * grouping feeding the shared chunker — accounts for every anchor exactly once
+ * at a width that spans multiple chunks, which a unit test on the helper alone
+ * cannot confirm.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { ChainReceipt } from '../chain/types.js';
-import { POSTGREST_IN_FILTER_CHUNK, POSTGREST_URL_FILTER_BUDGET_BYTES } from './anchor-batching.js';
+import { POSTGREST_IN_FILTER_CHUNK, POSTGREST_URL_FILTER_BUDGET_BYTES } from '../utils/postgrest-filter.js';
 
 const fp = (seed: string) => createHash('sha256').update(seed).digest('hex');
 
