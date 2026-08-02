@@ -73,6 +73,15 @@ exactly how #1795 shipped a fix that missed one of three. This entry replaces it
   call the shared guard. `revertClaimedAnchors` deliberately does NOT — it runs inside the
   chain-failure path where a secondary throw would mask the real error, and returns counts for its
   caller to escalate instead. That is now an explicit opt-out rather than an invisible omission.
+  **A guard with no test is the same miss one level up.** Review of THIS PR then found the identical
+  2-of-3 shape in the coverage rather than the code: the claim guard and `getExistingSourceIds`'
+  guard each had a test that died without it, but **`fetchAnchorRows`' guard had none** — deleting
+  line 254 left the whole worker suite green, on the one path whose silent success actually caused
+  the 70-hour outage, in a file the PR body's own "Collision note" says is about to be rebased.
+  Covered now (`publicRecordAnchor.test.ts` -> `all-chunks-failed guards`), through the real
+  entrypoint, asserting both the throw and that the benign "No new pending public record anchors to
+  submit" line is never reached. When adding a guard here, add its mutation test in the same commit:
+  an untested guard reads as protection and behaves as a comment.
 - **Constant consolidation.** `proofJobScan.IN_FILTER_CHUNK` (100) and
   `proof-backcatalog-classifier`'s own local `IN_FILTER_CHUNK` (100, a third variant shadowing the
   second) are both DELETED. `proofJobScan.chunk(items, size)` survives as the generic splitter for
@@ -81,7 +90,9 @@ exactly how #1795 shipped a fix that missed one of three. This entry replaces it
 - **Width is asserted ONCE**, on the helper (`utils/postgrest-filter.test.ts`). Mutation-verified:
   reverting `POSTGREST_IN_FILTER_CHUNK` to `POSTGREST_ROW_LIMIT` fails 2 tests; removing the byte cap
   fails 3; removing the count cap fails 1; restoring the `encodeURIComponent` accounting fails 2;
-  removing the claim guard fails 1; removing the caller's stranded-claim escalation fails 1. The
+  removing the claim guard fails 1; removing the **fetch** guard fails 1 (added late — it failed 0
+  when this list was first written, which is what made the omission worth an entry of its own
+  above); removing the caller's stranded-claim escalation fails 1. The
   #1812 stranded-count escalation is preserved and now covered through the real entrypoint
   (`publicRecordAnchor.test.ts`) instead of an export. The wire-width oracle used by tests lives in
   `test-utils/postgrestWire.ts` — ONE copy, mirroring postgrest-js's own algorithm. A second copy in
