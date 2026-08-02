@@ -12,6 +12,7 @@ Integration and infrastructure test suites that cross-cut the codebase: migratio
 - `migration-drift-logic.test.ts` — unit-tests the diff algorithm used by the migration-drift CI workflow (SCRUM-908)
 - `rls-performance.test.ts` — checks RLS performance indexes exist in the baseline schema (SCRUM-348..352)
 - `0363-enable-org-credit-enforcement-flag.test.ts` — pins migration 0363 + seed.sql: `ENABLE_ORG_CREDIT_ENFORCEMENT` switchboard row seeds `enabled=false` with idempotent `ON CONFLICT (flag_key) DO NOTHING` (G4; worker behavior pinned in `services/worker/src/utils/orgCreditEnforcementFlag.test.ts`)
+- `sec-0388-sanitize-metadata-helper-revoke.test.ts` — content-guard for migration 0388 (SEC-RECON): pins the exact `REVOKE ALL … FROM PUBLIC, anon, authenticated` / `GRANT EXECUTE … TO service_role` pair on `sanitize_metadata_for_public(jsonb)`, that nothing re-grants anon/authenticated (grant-count asserted first so an empty match set cannot pass), and that the deliberately-public verification RPCs are untouched. Also pins the SAFETY ARGUMENT itself — every migration defining `get_public_anchor` must stay `SECURITY DEFINER`, and no `src/`/`services/` file may call the helper via `.rpc()` — because a SECURITY INVOKER flip or a direct call site would turn this revoke into a prod outage on the anon verification page. Runs without a DB; the live half is `tests/rls/sanitize-metadata-helper-revoke.test.ts`.
 
 ## Subdirectories
 - `edge/` — Cloudflare edge worker security tests (JWT verify, HMAC, rate-limit)

@@ -18,6 +18,7 @@ Row Level Security integration tests. Verify RLS policies enforce tenant isolati
 - **`public-org-profiles-security-invoker.test.ts`** — org profile view security tests.
 - **`docusign-integrations.test.ts`** — RLS for the 6 DocuSign tables, including `member_integrations` (own-rows / org-admin / deny-write).
 - **`credential-source-providers.test.ts`** — SCRUM-1611: verifies migration 0329 widens `member_integrations.provider` for Credly/Accredible/Udemy while preserving DocuSign back-compat, RLS policies extend to the new providers, and unknown providers stay CHECK-rejected.
+- **`sanitize-metadata-helper-revoke.test.ts`** — SEC-RECON / migration 0388: proves `anon` and `authenticated` get SQLSTATE 42501 calling `public.sanitize_metadata_for_public(jsonb)` directly (it was an anon-callable oracle for the whole redaction denylist), that `service_role` keeps EXECUTE, and — the regression this must not cause — that `get_public_anchor` still projects end to end for `anon` against a REAL seeded anchor, because it reaches the helper as SECURITY DEFINER. Requires 0388 applied. The fixture is load-bearing: it throws on insert failure, since a missing anchor makes `get_public_anchor` return its "Record not found" stub and the end-to-end assertion pass vacuously (that exact bug was caught during authoring — `anchors.filename` is NOT NULL). Content-guard half runs in default CI at `src/tests/sec-0388-sanitize-metadata-helper-revoke.test.ts`.
 
 ## Conventions
 - Requires local Supabase running (`supabase start`) with seed data (`supabase db reset`).
