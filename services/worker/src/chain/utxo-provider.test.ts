@@ -426,6 +426,75 @@ describe('GetBlockHybridProvider listUnspent fallback observability', () => {
     expect(utxos).toHaveLength(1);
     expect(mockEmitRpcFallback).not.toHaveBeenCalled();
   });
+
+  // BUG-2026-08-01-F10: prod (`arkova-worker`, us-central1) logs
+  // `GetBlockHybridProvider.listUnspent: RPC fallback to mempool.space —
+  // reason: "RPC listunspent failed: HTTP 405"` on 100% of calls. That
+  // message shape is `rpcCall`'s bare HttpError path (transport-level
+  // `!response.ok`, body did NOT contain a parseable `{error}` JSON-RPC
+  // envelope) — GENUINELY DIFFERENT from the `rpcErr(...)` helper above,
+  // which simulates a `200 OK` body carrying `{error:{message,code}}`
+  // (an RpcApplicationError). The prior test therefore pinned a failure
+  // shape the RPC endpoint has never actually produced. This test pins the
+  // REAL one: a literal HTTP 405 with a non-JSON-RPC body (GetBlock's
+  // shared-node gateway rejects the `listunspent` WALLET RPC method before
+  // it ever reaches Bitcoin Core — Core itself would answer wallet-not-
+  // loaded as a JSON-RPC error, typically HTTP-500-wrapped per the
+  // #1408-Finding-1 comment above, not a bare 405). Root cause is the
+  // GetBlock shared-plan method allowlist (config/provider-tier), not a
+  // wrong URL/verb/method name in `rpcCall` — see
+  // `docs/staging/SOAK-FINDINGS-2026-08.md` F-10 for the full writeup.
+  it('falls back to mempool.space on a literal HTTP 405 with no JSON-RPC error envelope (real GetBlock shared-endpoint shape, BUG-2026-08-01-F10)', async () => {
+    const provider = new GetBlockHybridProvider({
+      rpcUrl: 'https://go.getblock.io/fake-token',
+      mempoolBaseUrl: 'https://mempool.space/api',
+    });
+    // GetBlock's gateway 405s the wallet RPC method at the transport layer —
+    // no `{error}` envelope in the body, so `tryParseRpcErrorBody` returns
+    // null and `rpcCall` throws a bare HttpError (matches the `RPC
+    // listunspent failed: HTTP 405` reason string observed in prod logs).
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 405,
+      text: () => Promise.resolve('405 Method Not Allowed'),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([{ txid: 'bb', vout: 1, status: { confirmed: true }, value: 50000 }]),
+    });
+    mockFetch.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('0200deadbeef') });
+
+    const utxos = await provider.listUnspent('bc1qtest');
+
+    // Correct request shape reached GetBlock first: POST, JSON-RPC 2.0 body,
+    // the exact `listunspent` params BitcoinChainClient relies on.
+    const [rpcUrl, rpcInit] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(rpcUrl).toBe('https://go.getblock.io/fake-token');
+    expect(rpcInit.method).toBe('POST');
+    expect(JSON.parse(rpcInit.body as string)).toMatchObject({
+      jsonrpc: '2.0',
+      method: 'listunspent',
+      params: [1, 9999999, ['bc1qtest']],
+    });
+
+    // Result still comes from the mempool fallback.
+    expect(utxos).toEqual([{ txid: 'bb', vout: 1, valueSats: 50000, rawTxHex: '' }]);
+
+    // Observability pins the EXACT reason string prod alerting keys off —
+    // if `rpcCall`'s HttpError message format ever drifts, this fails loudly
+    // instead of silently breaking the R0-8 / SCRUM-1254 fallback-rate view.
+    expect(mockEmitRpcFallback).toHaveBeenCalledTimes(1);
+    expect(mockEmitRpcFallback).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'getblock',
+      method: 'listunspent',
+      fallbackTo: 'mempool.space',
+      origin: 'GetBlockHybridProvider.listUnspent',
+      error: expect.objectContaining({
+        name: 'HttpError',
+        message: 'RPC listunspent failed: HTTP 405',
+      }),
+    }));
+  });
 });
 
 describe('SCRUM-2692 GetBlock hybrid receipt absence quorum', () => {

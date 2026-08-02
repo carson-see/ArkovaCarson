@@ -455,6 +455,40 @@ jobs:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
         run: node_modules/.bin/tsx scripts/ci/check-orphaned-exports.ts
 
+  # Agent harness guard tests (scripts/agent/*.test.sh).
+  #
+  # These suites existed since the hooks were written but had NO discovery
+  # mechanism in ci.yml or package.json, so their assertions never ran anywhere
+  # — flagged in docs/staging/sprint-2026-07-28-findings.md item 12 and closed
+  # here. They cover the client-side gates that stand between an agent and
+  # shared staging / prod, so a silent regression in them is expensive.
+  #
+  # Deliberately `continue-on-error: true` for one sprint. This job is NEW and
+  # is not yet in branch protection's required set; a brand-new required check
+  # on a repo where one red check has previously blackouted all prod deploy
+  # (see project memory: deploy typecheck blackout) is a risk not worth taking
+  # on day one. Promote to required — and drop this flag — once it has been
+  # observed green across a sprint.
+  agent-hook-guards:
+    name: Agent Hook Guards
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      # jq is a hard dependency of every hook under test. The suites now FAIL
+      # rather than skip when it is absent, so install it explicitly instead of
+      # relying on whatever the runner image happens to ship.
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Run agent harness guard tests
+        run: npm run test:hooks
+
   # TDD enforcement — production code changes must include test changes.
   # Actual enforcement runs only on pull_request events: TDD is a gate for
   # PRs being merged, not a retroactive check on main. On push events the

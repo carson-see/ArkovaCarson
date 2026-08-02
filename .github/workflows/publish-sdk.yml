@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   publish:
-    name: Build, test, and publish @arkova/sdk
+    name: Build, test, and publish @carsonarkova/sdk
     runs-on: ubuntu-latest
     defaults:
       run:

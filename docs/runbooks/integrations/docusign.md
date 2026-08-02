@@ -371,10 +371,19 @@ Sentry fires a `warning` when the expected listener is missing or has config dri
 - Missing listener for the expected Arkova webhook URL
 - Listener disabled (`allowEnvelopePublish` not true)
 - HMAC signing disabled
-- Required envelope or Connect events missing
-- Wrong payload format or version
+- Listener not subscribed to completed-envelope notifications in **either** event vocabulary
+- Wrong payload format (only when explicitly set to something other than JSON) or wrong version
 
 Sentry tags: `integration_id`, `org_id`. Extra: `account_id`, `reasons`, `detected_at`.
+
+**Two shapes that are NOT drift** (both produced false positives until 2026-08-01):
+
+- **No `envelopeEvents`.** DocuSign has two event vocabularies and a listener uses one. A SIM-mode listener (`deliveryMode: "SIM"`) carries `events: ["envelope-completed"]` and no legacy `envelopeEvents: ["Completed"]`. The production listener is SIM, so an absent `envelopeEvents` is not drift.
+
+  The converse is **not** true, and the check is deliberately asymmetric: a listener carrying only the legacy `envelopeEvents` **is** flagged. Arkova's webhook parser requires `event: "envelope-completed"`, which the legacy format does not send, so a legacy-only listener delivers payloads `/webhooks/docusign` rejects — a silent total outage. What this check asserts is SIM coverage; `envelopeEvents` is reported for context and is **not** asserted as sufficient.
+- **`eventData.format` absent.** DocuSign omits it when it is the default (JSON for `restv2.1`). Only an explicitly different format is drift. `eventData.version` is *not* treated the same way — an absent version means the listener is not pinned to `restv2.1`, which changes the payload shape `/webhooks/docusign` parses.
+
+This job was declared in `scripts/gcp-setup/cloud-scheduler.sh` long before it was applied to prod; the Cloud Scheduler job was created 2026-08-01. Because it fires hourly, any new check added to `detectDrift()` must be validated against the real GET `/connect` **response** shape, not against the request payload the provisioner sends — the two differ.
 
 Normal output: `{ ok: true, integrations_checked: N, drift_detected: 0, in_sync: N, errors: [], drifts: [] }`. If `ok: false`, at least one integration could not be checked, usually due to token refresh or DocuSign Connect API failure. Scheduler retries transient failures with `30s,120s,2`.
 

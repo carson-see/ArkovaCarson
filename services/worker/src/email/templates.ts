@@ -81,6 +81,12 @@ export interface InvitationEmailData {
   inviteUrl: string;
 }
 
+export interface AccountVerificationEmailData {
+  recipientEmail: string;
+  organizationName: string;
+  verificationUrl: string;
+}
+
 export interface DomainVerificationEmailData {
   domain: string;
   verificationCode: string;
@@ -167,6 +173,32 @@ export function buildInvitationEmail(data: InvitationEmailData): { subject: stri
     <p style="${STYLES.muted}">This invitation expires in 7 days. If you didn't expect this email, you can safely ignore it.</p>
     <p style="${STYLES.muted}">Link not working? Copy and paste this URL into your browser:<br/>
     <span style="word-break: break-all; font-size: 12px;">${esc(data.inviteUrl)}</span></p>
+  `);
+
+  return { subject, html };
+}
+
+/**
+ * Account verification email — sent after an org-invitation accept creates a
+ * brand-new account (SCRUM-3012). A SEPARATE step from the invitation email:
+ * the invite link proved control of the mailbox once, but the account still
+ * needs its own confirmed-email login gate (prod runs with email confirmation
+ * required), so this carries the Supabase-issued confirmation link through
+ * the same audited Resend pipeline as every other outbound email.
+ */
+export function buildAccountVerificationEmail(data: AccountVerificationEmailData): { subject: string; html: string } {
+  const subject = `Confirm your email to finish joining ${esc(data.organizationName)}`;
+
+  const html = wrapTemplate(`
+    <h2 style="color: #0f172a; margin-bottom: 16px;">One more step</h2>
+    <p>Your account has been created and you've joined <strong>${esc(data.organizationName)}</strong> on Arkova.</p>
+    <p>Confirm your email address to finish setting up sign-in:</p>
+    <div style="text-align: center; margin: 32px 0;">
+      <a href="${esc(data.verificationUrl)}" style="${STYLES.button}">Confirm Email</a>
+    </div>
+    <p style="${STYLES.muted}">If you didn't expect this email, you can safely ignore it.</p>
+    <p style="${STYLES.muted}">Link not working? Copy and paste this URL into your browser:<br/>
+    <span style="word-break: break-all; font-size: 12px;">${esc(data.verificationUrl)}</span></p>
   `);
 
   return { subject, html };
