@@ -340,6 +340,20 @@ export const InviteMemberSchema = z.object({
 
 export type InviteMemberInput = z.input<typeof InviteMemberSchema>;
 
+/** SCRUM-3012: new-account creation on the /accept-invite page. */
+export const AcceptInvitationSchema = z.object({
+  token: z.string().trim().min(1, 'A valid invitation link is required.'),
+  password: z
+    .string()
+    .min(8, 'Password must be at least 8 characters.'),
+  fullName: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().trim().min(1).optional(),
+  ),
+});
+
+export type AcceptInvitationInput = z.input<typeof AcceptInvitationSchema>;
+
 // =============================================================================
 // AUDIT EVENT SCHEMAS
 // =============================================================================

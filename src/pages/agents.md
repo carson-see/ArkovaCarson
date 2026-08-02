@@ -63,6 +63,7 @@ Top-level page components rendered by react-router-dom routes. Each page compose
 
 ## Recent Changes
 - 2026-07-28 QUEUE-01 / SCRUM-2894 (L2-A1, founder P0): created `SecureQueuePage.tsx` at `ROUTES.SECURE_QUEUE` (`/queue`) — the `consumer_secure_queue` surface from `queueContract.ts`'s `QUEUE_SURFACES` (distinct from `AnchorQueuePage` = `org_duplicate_review` and `ReviewQueuePage` = `org_approvals`; never reuse the "Review queue" title). Lists the signed-in user's own PENDING documents with per-item Remove (soft-delete via `useSecureQueue`). ORG_ADMIN additionally sees an "Organization Queue" tab listing every org member's PENDING items (read via the existing `anchors_select_org` RLS policy — not role-gated at the RLS layer, so this UI-side `profile.role === 'ORG_ADMIN'` gate mirrors the existing `useAnchors.ts` convention, not a new RLS decision); Remove is disabled for non-own org rows because there is no admin UPDATE/DELETE policy on `anchors` yet (SCRUM-3010 territory, not touched here). Reachable from the Sidebar Account section (rule A2). Buy-credits redirect (from `SecureDocumentDialog`'s "Secure Instantly" path) lands on the existing `ROUTES.BILLING` page — no new checkout invented.
+- 2026-07-28 SCRUM-3012: created `AcceptInvitePage.tsx` (route `/accept-invite?token=...`, registered in `App.tsx` + `ROUTES.ACCEPT_INVITE`) — the previously-nonexistent consumer of the org-invite email link. Loads a public preview (org name/role/validity) via `useAcceptInvite`, then either shows a direct "Join" action (signed-in caller's email matches the invitation — no password needed) or a create-account form (email pre-filled/disabled from the preview, password 8+ chars, optional full name) for a new visitor. Success branches on `verificationRequired`: a brand-new account shows the existing `EmailConfirmation` component (prod still requires email confirmation post-invite — the invite token proved mailbox control once, login keeps its own gate); an existing-account join goes straight to "you're in" + a dashboard link. `account_exists` surfaces a sign-in link instead of retrying account creation. All copy in `copy.ts` `ACCEPT_INVITE_LABELS` (append-only block).
 - 2026-07-17 SCRUM-2910 (BUG-2026-07-17-010, P0): `PipelineAdminPage.tsx` record-detail metadata panel filter also hides any `fraud*` key via `isFraudMetadataKey` from `@/lib/fraudDetection` (cross-review nit on PR #1569 — the ad-hoc denylist lacked fraud coverage).
 - 2026-07-22 SCRUM-2914 (Founder UI findings): `DashboardPage.tsx` no longer renders `AuditMyOrganizationButton` or the ORG_ADMIN-gated `ComplianceScoreCard` (widget grid dropped its 3-col ORG_ADMIN variant, now always 2-col Usage + Credit). `ComplianceScoreCard.tsx` deleted (dashboard was its only importer); `AuditMyOrganizationButton.tsx` kept, still used by `ComplianceScorecardPage.tsx`.
 - 2026-06-29 PROOF-04 (SCRUM-2337, Lane 1 S2): `RecordDetailPage.tsx` — the `onDownloadProof` (PDF certificate) handler now fetches the `anchor_proofs` row for SECURED records (RLS-scoped) and passes the full `ProofInput` (merkle root/proof_path/index, block hash/header/height, op_return payload, schema version, observed time) into `generateAuditReport` so the certificate embeds the machine-readable proof packet (PROOF-04). Non-SECURED records still get the legacy certificate with no packet; fetch failures surface a generic `toast.error` (no raw error leak). No change to `onDownloadProofJson`. Download affordance remains gated on `status === 'SECURED'` in `AssetDetailView` (equivalent to the new `isProofDownloadable`).
@@ -134,3 +135,27 @@ Every admin page now derives platform-admin status from `isPlatformAdmin(profile
 ## 2026-07-28 L3-A6 — MyCredentialsPage "From Public Registry" entry point
 
 `MyCredentialsPage.tsx` gains a second header button (`data-testid="add-from-registry-button"`) next to the existing "Add Source" button, opening `CtdlRegistryImportDialog` (`src/components/credentials/`). Two-step flow: look up a public Credential Registry record by CTID (`GET /api/v1/credentials/ctdl/import`), then add it (`POST /api/v1/credentials/ctdl/registry-anchor`, new route). Part of the L3-A6 CE Noncredit Data Taxonomy 3.0 anchoring POC — see `docs/partners/ce-noncredit-anchoring-poc.md` for the research + honest-limits writeup and `services/worker/src/ctdl/agents.md` for the parser fix this UI exercises.
+
+## 2026-08-01 SCRUM-2907 — AuthCallbackPage is the email-confirmation landing route
+
+`AuthCallbackPage.tsx` is no longer OAuth-only: `useAuth.signUp` now sets
+`emailRedirectTo: ${origin}/auth/callback`, so the emailed signup-confirmation
+link lands here too. Two rules for anyone editing it:
+
+- **A dead link never produces a session.** Supabase reports expired / already-used
+  / tampered links by putting `error` + `error_code` in the URL fragment and
+  creating no session. Before this change the page's only signal was "no session",
+  so an expired link was indistinguishable from "not signed in yet" and the user
+  was bounced to a bare `/login` with no explanation.
+- **Do NOT read that error in the component.** `detectSessionInUrl: true` consumes
+  the fragment inside `createClient`, so by the time this component mounts it is
+  already empty — a component-level read silently loses the error. This was caught
+  in local UAT, not by unit tests (which mock the client and therefore never
+  reproduce the race). The error is captured by `authLinkErrorFromUrl` in
+  `src/lib/supabase.ts`, evaluated at module scope BEFORE `createClient` runs;
+  the component reads that constant and only falls back to the live fragment.
+
+Prod REQUIRES email confirmation — verified live against `vzwyaatejekddvltxyye`
+on 2026-08-01 (signup returns HTTP 200 with `confirmation_sent_at` set and NO
+session). `supabase/config.toml` and the signup E2E spec previously encoded the
+opposite; both are corrected.

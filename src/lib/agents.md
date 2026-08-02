@@ -32,6 +32,11 @@ New `extractors/` subfolder (see its own `agents.md`) — `ocrWorker.ts` `extrac
 ## 2026-07-28 QUEUE-01 / SCRUM-2894 (L2-A1, founder P0) — Add to Queue / Secure Instantly wiring
 
 First real consumer of the `queueContract.ts` types (previously orphaned outside `copy.ts` — `rg queueContract` matched only copy.ts before this PR). `SecureDocumentDialog.tsx` now imports `exposedSecuringPaths`/`SecuringPath` from it; `useSecuringCapability.ts` (hooks) builds the `SecuringCapability` object. `routes.ts` gained `ROUTES.SECURE_QUEUE = '/queue'` (the `consumer_secure_queue` surface). `queryClient.ts` gained `queryKeys.secureQueue(userId, orgId, scope)`. `validators.ts` gained `validateAnchorUpdate()` (thin wrapper around the pre-existing `AnchorUpdateSchema`, used for the queue-item soft-delete). `copy.ts` gained an append-only `SECURE_QUEUE_PAGE_LABELS` block at EOF (kept separate from the existing `SECURE_QUEUE_LABELS`/`SECURING_CHOICE_LABELS` block at ~line 3420 to avoid colliding with concurrent copy.ts PRs this sprint — terminology scrub, spreadsheet dual-mode, etc.). `canSecureInstantly` is hardcoded false in `useSecuringCapability.ts` per CTO ruling R5 (Instant-Secure ships dark, flag off) — wiring the real server field is a follow-up, not this PR.
+## 2026-07-28 Accept-invite route + copy + validator (SCRUM-3012)
+
+- `routes.ts` gained `ACCEPT_INVITE: '/accept-invite'` — the previously-missing consumer of the org-invite email link (`AcceptInvitePage.tsx`).
+- `copy.ts` gained `ACCEPT_INVITE_LABELS` (contiguous append-only block near `AUTH_FORM_LABELS`) — every string on the accept-invite page, including the honest "verification email could not be sent" copy so a worker-side send failure is never silently swallowed into a fake success screen.
+- `validators.ts` gained `AcceptInvitationSchema` (token + 8-char-min password + optional full name) for the new-account form on that page.
 
 ## 2026-07-21 Treasury CSP + status-budget copy (SCRUM-2901, PR #1600)
 
