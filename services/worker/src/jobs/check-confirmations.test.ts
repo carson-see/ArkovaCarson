@@ -122,7 +122,11 @@ vi.mock('../ai/factory.js', () => ({
   createAIProvider: vi.fn(),
 }));
 
-vi.mock('../utils/db.js', () => {
+vi.mock('../utils/db.js', async () => {
+  // Async factory so the shared `job_queue` lease double can be imported here.
+  // A static import would not work: `vi.mock` factories are hoisted above it.
+  const { grantedRunLeaseTable } = await import('./__tests__/__testHelpers.js');
+
   // Build chainable mock objects
   const makeSelectChain = () => {
     const chain: Record<string, unknown> = {};
@@ -186,6 +190,13 @@ vi.mock('../utils/db.js', () => {
             return makeProfileChain({ data: { email: 'user@example.com' }, error: null });
           case 'organizations':
             return makeProfileChain({ data: { display_name: 'Test Org' }, error: null });
+          // SCRUM-3031: this job now claims a cross-instance run lease before
+          // doing anything. This suite exercises the CONFIRMATION pipeline, not
+          // the concurrency guard, so the lease is always granted here; lease
+          // semantics are pinned in `__tests__/run-lease.test.ts` and the wiring
+          // in `check-confirmations-lease.test.ts`.
+          case 'job_queue':
+            return grantedRunLeaseTable();
           default:
             return {};
         }
@@ -400,15 +411,26 @@ describe('checkSubmittedConfirmations', () => {
     expect(mockLogger.error).toHaveBeenCalled();
   });
 
-  it('releases the in-process mutex after unexpected failures', async () => {
+  /**
+   * RACE-3, restated for the SCRUM-3031 run lease: a run that throws must still
+   * give the guard back, or the job never runs again on this instance. The
+   * throw is induced on the PIPELINE's first table read, not the first `from()`
+   * call overall — the lease reads `job_queue` before any pipeline work, and a
+   * broken lease store deliberately SKIPS the run (fail closed) rather than
+   * throwing, which would test the wrong thing.
+   */
+  it('releases the run guard after unexpected failures', async () => {
     const { db } = await import('../utils/db.js');
-    const fromMock = db.from as unknown as { mockImplementationOnce: (impl: () => never) => void };
-    fromMock.mockImplementationOnce(() => {
+    const fromMock = vi.mocked(db.from);
+    const pipelineTables = fromMock.getMockImplementation();
+    fromMock.mockImplementation(((table: string) => {
+      if (table === 'job_queue') return pipelineTables?.(table);
       throw new Error('unexpected DB failure');
-    });
+    }) as never);
 
     await expect(checkSubmittedConfirmations()).rejects.toThrow('unexpected DB failure');
 
+    fromMock.mockImplementation(pipelineTables as never);
     mockAnchorsSelectResult.data = [];
     const result = await checkSubmittedConfirmations();
     expect(result).toEqual({ checked: 0, confirmed: 0 });
@@ -985,8 +1007,14 @@ describe('checkSubmittedConfirmations', () => {
       const result = await checkSubmittedConfirmations();
 
       expect(result).toEqual({ checked: 0, confirmed: 0 });
-      const anchorsCall = fromSpy.mock.results.find((entry) => entry.type === 'return');
-      const anchorsTable = anchorsCall?.value as unknown as { select?: ReturnType<typeof vi.fn> };
+      // Located by TABLE, not by call order: the run lease (SCRUM-3031) reads
+      // `job_queue` first, so "the first returned builder" is no longer the
+      // anchors one.
+      const anchorsIndex = fromSpy.mock.calls.findIndex(([table]) => table === 'anchors');
+      expect(anchorsIndex).toBeGreaterThanOrEqual(0);
+      const anchorsTable = fromSpy.mock.results[anchorsIndex]?.value as unknown as {
+        select?: ReturnType<typeof vi.fn>;
+      };
       const selectResult = anchorsTable.select?.mock.results[0]?.value as { eq?: ReturnType<typeof vi.fn> };
       expect(selectResult.eq).toHaveBeenCalledWith('legal_hold', false);
     } finally {

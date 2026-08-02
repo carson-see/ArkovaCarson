@@ -119,7 +119,11 @@ const mockSelectRange = vi.hoisted(() => vi.fn());
 const mockSelectSingle = vi.hoisted(() => vi.fn());
 const mockSelectMaybeSingle = vi.hoisted(() => vi.fn());
 
-vi.mock('../utils/db.js', () => {
+vi.mock('../utils/db.js', async () => {
+  // Async factory so the shared `job_queue` lease double can be imported here.
+  // A static import would not work: `vi.mock` factories are hoisted above it.
+  const { grantedRunLeaseTable } = await import('./__tests__/__testHelpers.js');
+
   // Legacy select chain for fallback path
   const selectChain: Record<string, unknown> = {};
   selectChain.eq = mockSelectEq.mockImplementation(() => selectChain);
@@ -149,6 +153,11 @@ vi.mock('../utils/db.js', () => {
             update: mockAnchorsUpdate,
           };
         }
+        // SCRUM-3031: the drain claims a cross-instance run lease before any
+        // work. This suite exercises the BATCH pipeline, not the concurrency
+        // guard, so the lease is always granted here; lease semantics live in
+        // `__tests__/run-lease.test.ts`, wiring in `batch-anchor.lease.test.ts`.
+        if (table === 'job_queue') return grantedRunLeaseTable();
         return {};
       }),
     },

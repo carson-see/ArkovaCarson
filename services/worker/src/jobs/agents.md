@@ -9,6 +9,72 @@ Both open, from the 2026-08 72h signet soak pair. Canonical writeup: `docs/stagi
 - **F-1 (HIGH, open):** `org-queue-scheduler` returns 500 on ~28-33% of invocations across both rigs (flapping, recovers on later 5-min cycles; ~60x the gate matrix's 0.5% threshold). Confirmed NOT caused by migration `0378`. Root-cause not found yet — start at `claim_due_org_queue_runs` (likely contention or a partial-failure path under concurrent load).
 - **F-3 (MEDIUM, open):** an anchor left `SUBMITTED` with NULL `chain_tx_id` — the state a broadcast attempt produces if it fails between the status write and the txid write — has NO recovery path. `recover_stuck_broadcasts` queries only `BROADCASTING`-state anchors, so this state is structurally outside every scheduled job's scope. Verified by live fault injection that the job correctly recovers its in-scope `BROADCASTING` state, isolating the gap precisely.
 
+## 2026-08-02 — Concurrency lane: the run lease is now a SHARED primitive, and `batch-anchor.ts` + `check-confirmations.ts` are behind it (`run-lease.ts`)
+
+PR #1813 (block below) shipped the cross-instance TTL lease job-locally in `publicRecordAnchor.ts`
+and said explicitly not to hand-copy it a third time. The identical per-PROCESS `…Running = false`
+boolean — and the identical cross-instance blind spot — was still live in the other two anchoring
+jobs. **`batch-anchor.ts` is the one that signs and broadcasts.** `run-lease.ts` now owns the
+mechanism; all three jobs wrap themselves in `withRunLease`, and the job-local copy in
+`publicRecordAnchor.ts` is DELETED (not re-exported, not deprecated).
+
+- **What moved:** `acquireRunLease` / `releaseRunLease` / `runLeaseHolder` / `withRunLease` plus a
+  per-job `RunLeaseSpec` registry. Semantics are unchanged from #1813: `job_queue` row at a fixed
+  uuid PK, atomic compare-and-set UPDATE (`status.eq.completed,scheduled_for.lt.<now>`), release
+  predicate matched on `payload->>holder` so a run whose lease was stolen cannot clear the new
+  holder's claim, acquire fails CLOSED on any store error (including a throw), `try_advisory_lock`
+  still rejected for the PostgREST-pool reason. Each job gets its OWN lease id and type, asserted
+  distinct in tests.
+- **The per-process boolean is gone, not merely shadowed.** `withRunLease` keeps an in-process
+  `Set` of held lease ids and takes it SYNCHRONOUSLY, before the first `await` — exactly where
+  `…Running = true` sat. Adding it after the acquire round-trip would leave a window where two
+  same-process callers both pass the check; the CAS would still refuse the second, but only after
+  two wasted round-trips. A refused claim also skips the release, which otherwise logs a false
+  "this run overran its TTL" against a lease the run never held.
+- **TTLs are derived per job, not copied.** Floor = the SLOWEST cadence recorded across live Cloud
+  Scheduler and `scheduler-manifest.ts`; ceiling = Cloud Run's 3600 s request timeout. Live cadences
+  verified 2026-08-02 via `gcloud scheduler jobs list --location=us-central1`:
+  `anchor-public-records` every 10 min / 540 s deadline, `batch-anchors` every 30 min / 120 s,
+  `check-confirmations` every 30 min / 300 s, plus `daily-anchor-flush` (`0 3 * * *`, 600 s) →
+  `/jobs/batch-anchors?force=true`.
+  - `public-record-anchor` **45 min** (unchanged from #1813).
+  - `batch-anchor` **55 min** — pinned near the ceiling because the failure modes are asymmetric. A
+    STOLEN lease means two instances signing from the same treasury UTXO set: conflicting txs, real
+    mainnet fees burned, and a cohort unwound to PENDING by the definitive-reject path. A STUCK
+    lease only defers work that stays PENDING. Buy the most steal protection the ceiling allows.
+  - `check-confirmations` **35 min** — deliberately the shortest. No signing, no spending; chain
+    reads are idempotent and promotion goes through the drain RPC, so a steal costs duplicated reads
+    while a stuck lease lags SECURED promotion for every customer.
+- **`scheduler-manifest.ts` DRIFTS from live prod on two of these three jobs** (it records
+  `batch-anchors` every 10 min and `check-confirmations` every 2 min; prod runs both every 30 min).
+  Not corrected here — that is a manifest/prod reconciliation of its own — but every TTL floor takes
+  the SLOWER of the two readings, so the drift cannot make a TTL too short.
+- **`batch-anchor`'s lease is GLOBAL, not per-org, and that is a real behaviour change.** An
+  `orgId` run claims only its own org's anchors, but it spends from the SAME treasury, so org
+  scoping does not make two runs independent. Cross-instance, a per-org drain from
+  `org-queue-scheduler.ts` / `connector-artifact-drain.ts` / the manual `/queue/run` API can now be
+  refused while a global drain holds the lease. Inside one process that was ALREADY the behaviour
+  (`batchProcessingRunning` was global); this extends it across the fleet. **Residual risk:** a
+  refused org run is recorded by `recordOrgQueueRunResult` as `status='succeeded', processed=0`, the
+  same as a genuinely empty queue — pre-existing shape, now reachable more often. No work is lost
+  (the anchors stay PENDING and drain on a later tick), but the run row is not distinguishable from
+  a no-op. Distinguishing it needs a `skipped` outcome on the queue-run record; not taken here to
+  keep this change to the concurrency surface.
+- **`check-confirmations` keeps PR #753 audit fix A3.** The lease wraps the mock/real BRANCH, not
+  the real arm — the mock arm mints `mock-batch-${Date.now()}` tx ids and races the `chain_tx_id`
+  backfill if it runs unguarded. Moving the lease inside the real arm fails 3 tests.
+- Tests: `__tests__/run-lease.test.ts` (28 — CAS semantics, bootstrap, steal-on-expiry, holder-scoped
+  release, fail-closed on bootstrap/CAS/throw, holder nonce, in-process short-circuit incl. the
+  race-the-first-acquire case, per-job independence, TTL bounds per spec, unique ids/types),
+  `batch-anchor.lease.test.ts` (6), `check-confirmations.lease.test.ts` (5),
+  `__tests__/publicRecordAnchor-lease.test.ts` (3, reduced to wiring only now that the primitive has
+  its own suite). The shared store double `createRunLeaseStore` lives in `__testHelpers.ts` and
+  EVALUATES the emitted `.or(...)` rather than restating it. **Mutation-verified:** dropping
+  `status.eq.completed` → 12 red; dropping `scheduled_for.lt.<now>` → 1 red; an always-granting
+  predicate → 2 red; dropping the holder nonce → 1 red; deleting the `withRunLease` call from
+  `batch-anchor.ts` → 4 red; moving `check-confirmations`' lease inside the real-mode arm → 3 red.
+  T3 (chain/treasury + concurrency).
+
 ## 2026-08-01 — Queues lane (PR #1813): the SCRUM-3031 wedge has a SECOND, live mechanism — cross-instance overlap (`publicRecordAnchor.ts`)
 
 Migration 0370 (below) killed the original mechanism: verified in prod 2026-08-01, the live

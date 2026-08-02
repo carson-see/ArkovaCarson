@@ -189,8 +189,8 @@ export function buildSelectChain(opts: {
  * `upsert is not a function`. Suites that are exercising the job's PIPELINE,
  * not its concurrency guard, route `job_queue` here and get an
  * always-available lease. Lease semantics themselves are pinned separately
- * (see `publicRecordAnchor-lease.test.ts`), against a store that models the
- * compare-and-set predicate rather than granting unconditionally.
+ * (see `run-lease.test.ts`), against a store that EVALUATES the compare-and-set
+ * predicate rather than granting unconditionally.
  */
 export function grantedRunLeaseTable(): Record<string, ReturnType<typeof vi.fn>> {
   const granted = { data: [{ id: 'lease-row' }], error: null };
@@ -203,6 +203,186 @@ export function grantedRunLeaseTable(): Record<string, ReturnType<typeof vi.fn>>
     upsert: vi.fn().mockResolvedValue({ error: null }),
     update: vi.fn(self),
   };
+}
+
+// ───────────────────────── run-lease store double ──────────────────────────
+
+/** Shape of the singleton `job_queue` lease row, as the lease code writes it. */
+export interface RunLeaseRow {
+  id: string;
+  type: string;
+  status: string;
+  scheduled_for: string | null;
+  payload: Record<string, unknown>;
+}
+
+/** The subset of `RunLeaseSpec` the double needs, kept local to avoid a cycle. */
+interface RunLeaseSpecLike {
+  leaseId: string;
+  leaseType: string;
+}
+
+export type RunLeaseStoreSeed =
+  | 'free'
+  | 'absent'
+  | { held: { holder: string; expiresAt: string } };
+
+export interface RunLeaseStore {
+  /** Pass straight into `acquireRunLease` / `withRunLease({ client })`. */
+  client: SupabaseClient;
+  /** Route this from a per-table `fromImpl`, for wiring tests. */
+  from: (table: string) => unknown;
+  /** Current row, or undefined before the bootstrap upsert has run. */
+  current: () => RunLeaseRow | undefined;
+  /** Terminal store operations performed so far — pins "did not touch the store". */
+  callCount: () => number;
+}
+
+/**
+ * In-memory `job_queue` double for the cross-instance run lease (SCRUM-3031).
+ *
+ * It implements exactly the two operations the lease uses: an
+ * `upsert(…, { ignoreDuplicates: true })` bootstrap on the primary key, and a
+ * compare-and-set `update` whose match predicate is
+ * `id = <leaseId> AND (status = 'completed' OR scheduled_for < now)`.
+ *
+ * **It EVALUATES the `.or(...)` expression the code under test emits rather
+ * than re-stating the predicate here**, and that is the whole point. An earlier
+ * version of this double hard-coded `status === 'completed'` and only
+ * regex-extracted the `scheduled_for` half, so mutating or deleting the
+ * `status.eq.completed` disjunct left every test green — while against real
+ * PostgREST the CAS would match zero rows, acquire would fail closed, and the
+ * job would silently stop running forever. Parsing the emitted expression is
+ * what makes that mutation fail here.
+ */
+export function createRunLeaseStore(
+  spec: RunLeaseSpecLike,
+  seed: RunLeaseStoreSeed = 'free',
+): RunLeaseStore {
+  let row: RunLeaseRow | undefined = seedRow(spec, seed);
+  let calls = 0;
+
+  function evaluateOr(expression: string | undefined, target: RunLeaseRow): boolean {
+    if (expression === undefined) return false;
+    return expression.split(',').some((term) => {
+      const [column, operator, ...rest] = term.split('.');
+      const value = rest.join('.');
+      const actual = (target as unknown as Record<string, string | null>)[column];
+      if (operator === 'eq') return actual === value;
+      if (operator === 'lt') return actual !== null && actual !== undefined && actual < value;
+      throw new Error(`run-lease double: unsupported operator '${operator}' in '${term}'`);
+    });
+  }
+
+  function from(): Record<string, unknown> {
+    const filters: Record<string, string> = {};
+    let pending: Partial<RunLeaseRow> | undefined;
+    let orExpression: string | undefined;
+    let mode: 'upsert' | 'update' | undefined;
+    let releaseHolder: string | undefined;
+
+    const builder: Record<string, unknown> = {};
+    builder.upsert = (values: RunLeaseRow) => {
+      mode = 'upsert';
+      pending = values;
+      return builder;
+    };
+    builder.update = (values: Partial<RunLeaseRow>) => {
+      mode = 'update';
+      pending = values;
+      return builder;
+    };
+    builder.eq = (column: string, value: string) => {
+      if (column === 'payload->>holder') releaseHolder = value;
+      else filters[column] = value;
+      return builder;
+    };
+    builder.or = (expression: string) => {
+      orExpression = expression;
+      return builder;
+    };
+    builder.select = () => builder;
+    builder.then = (resolve: (v: { data: unknown; error: null }) => unknown) => {
+      calls += 1;
+      if (mode === 'upsert') {
+        // `ignoreDuplicates: true` on the primary key: create once, never clobber.
+        if (!row) row = pending as RunLeaseRow;
+        return Promise.resolve(resolve({ data: null, error: null }));
+      }
+      const idMatches = row !== undefined && filters.id === row.id;
+      if (releaseHolder !== undefined) {
+        if (idMatches && row?.payload.holder === releaseHolder) {
+          row = { ...(row as RunLeaseRow), ...(pending as Partial<RunLeaseRow>) };
+          return Promise.resolve(resolve({ data: [{ id: row.id }], error: null }));
+        }
+        return Promise.resolve(resolve({ data: [], error: null }));
+      }
+      if (idMatches && evaluateOr(orExpression, row as RunLeaseRow)) {
+        row = { ...(row as RunLeaseRow), ...(pending as Partial<RunLeaseRow>) };
+        return Promise.resolve(resolve({ data: [{ id: row.id }], error: null }));
+      }
+      return Promise.resolve(resolve({ data: [], error: null }));
+    };
+    return builder;
+  }
+
+  return {
+    client: { from } as unknown as SupabaseClient,
+    from,
+    current: () => row,
+    callCount: () => calls,
+  };
+}
+
+function seedRow(spec: RunLeaseSpecLike, seed: RunLeaseStoreSeed): RunLeaseRow | undefined {
+  if (seed === 'absent') return undefined;
+  const base = { id: spec.leaseId, type: spec.leaseType };
+  if (seed === 'free') {
+    return { ...base, status: 'completed', scheduled_for: null, payload: {} };
+  }
+  return {
+    ...base,
+    status: 'processing',
+    scheduled_for: seed.held.expiresAt,
+    payload: { holder: seed.held.holder },
+  };
+}
+
+/**
+ * A lease client whose store is broken, for the fail-CLOSED assertions. A run
+ * without a verified lease is exactly the concurrent execution the lease
+ * guards against, so an unverifiable lease must skip the run, not proceed on
+ * optimism.
+ */
+export function erroringRunLeaseClient(opts: {
+  failOn: 'upsert' | 'update' | 'throw';
+}): SupabaseClient {
+  return {
+    from: () => {
+      let mode: 'upsert' | 'update' | undefined;
+      const builder: Record<string, unknown> = {};
+      const self = () => builder;
+      builder.upsert = () => {
+        mode = 'upsert';
+        return builder;
+      };
+      builder.update = () => {
+        mode = 'update';
+        return builder;
+      };
+      builder.eq = self;
+      builder.or = self;
+      builder.select = self;
+      builder.then = (resolve: (v: { data: unknown; error: unknown }) => unknown) => {
+        if (opts.failOn === 'throw') throw new Error('lease store unreachable');
+        const failed = mode === opts.failOn;
+        return Promise.resolve(
+          resolve({ data: failed ? null : [], error: failed ? { message: 'boom' } : null }),
+        );
+      };
+      return builder;
+    },
+  } as unknown as SupabaseClient;
 }
 
 /**
