@@ -161,6 +161,38 @@ RESEND_API_KEY=                     # Resend transactional email (BETA-03)
 EMAIL_FROM=noreply@arkova.ai        # verified sender address
 ```
 
+**`EMAIL_FROM` is set explicitly in `deploy-worker.yml`** as of 2026-08-01. It
+was previously unset on the prod worker and relied on the Zod default in
+`services/worker/src/config.ts` (`.default('noreply@arkova.ai')`) — the same
+value, so this was not a live outage, but an implicit default for the sender
+address of every outbound customer email is not something to leave to a
+fallback.
+
+**The sender domain is verified — checked, not assumed** (DNS, 2026-08-01):
+
+| Record | Value | Meaning |
+|---|---|---|
+| `resend._domainkey.arkova.ai` TXT | RSA public key present | Resend DKIM signing configured |
+| `send.arkova.ai` MX | `feedback-smtp.us-east-1.amazonses.com` | Resend bounce/complaint handling provisioned |
+| `send.arkova.ai` TXT | `v=spf1 include:amazonses.com ~all` | SPF authorises Resend's SES sending |
+| `_dmarc.arkova.ai` TXT | `v=DMARC1; p=none;` | DMARC present, **monitoring only** |
+
+That is Resend's complete standard setup for a verified domain, so
+`noreply@arkova.ai` is a valid sender and mail is not being rejected at the
+domain-authentication layer.
+
+Two things this does NOT prove, kept separate deliberately:
+- **Inbox placement.** Authentication passing is not the same as landing in the
+  inbox rather than spam. Only the Resend dashboard (or a real mailbox) shows
+  delivery outcomes.
+- **DMARC is `p=none`** — monitoring only, no enforcement. Anyone can spoof
+  `@arkova.ai` today without receivers acting on it. Moving to `p=quarantine`
+  after reviewing aggregate reports is a separate, founder-owned DNS change.
+
+Note the root domain's SPF (`v=spf1 include:_spf.google.com ~all`) does **not**
+include SES. That is correct for Resend's current scheme — the MAIL FROM domain
+is `send.arkova.ai`, which carries its own SPF. Do not "fix" the root record.
+
 ## Public record fetchers (worker only)
 ```bash
 EDGAR_USER_AGENT=                   # required by SEC for EDGAR API
