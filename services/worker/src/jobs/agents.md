@@ -100,6 +100,15 @@ exactly how #1795 shipped a fix that missed one of three. This entry replaces it
   call the shared guard. `revertClaimedAnchors` deliberately does NOT — it runs inside the
   chain-failure path where a secondary throw would mask the real error, and returns counts for its
   caller to escalate instead. That is now an explicit opt-out rather than an invisible omission.
+  **A guard with no test is the same miss one level up.** Review of THIS PR then found the identical
+  2-of-3 shape in the coverage rather than the code: the claim guard and `getExistingSourceIds`'
+  guard each had a test that died without it, but **`fetchAnchorRows`' guard had none** — deleting
+  line 254 left the whole worker suite green, on the one path whose silent success actually caused
+  the 70-hour outage, in a file the PR body's own "Collision note" says is about to be rebased.
+  Covered now (`publicRecordAnchor.test.ts` -> `all-chunks-failed guards`), through the real
+  entrypoint, asserting both the throw and that the benign "No new pending public record anchors to
+  submit" line is never reached. When adding a guard here, add its mutation test in the same commit:
+  an untested guard reads as protection and behaves as a comment.
 - **Constant consolidation.** `proofJobScan.IN_FILTER_CHUNK` (100) and
   `proof-backcatalog-classifier`'s own local `IN_FILTER_CHUNK` (100, a third variant shadowing the
   second) are both DELETED. `proofJobScan.chunk(items, size)` survives as the generic splitter for
@@ -108,7 +117,9 @@ exactly how #1795 shipped a fix that missed one of three. This entry replaces it
 - **Width is asserted ONCE**, on the helper (`utils/postgrest-filter.test.ts`). Mutation-verified:
   reverting `POSTGREST_IN_FILTER_CHUNK` to `POSTGREST_ROW_LIMIT` fails 2 tests; removing the byte cap
   fails 3; removing the count cap fails 1; restoring the `encodeURIComponent` accounting fails 2;
-  removing the claim guard fails 1; removing the caller's stranded-claim escalation fails 1. The
+  removing the claim guard fails 1; removing the **fetch** guard fails 1 (added late — it failed 0
+  when this list was first written, which is what made the omission worth an entry of its own
+  above); removing the caller's stranded-claim escalation fails 1. The
   #1812 stranded-count escalation is preserved and now covered through the real entrypoint
   (`publicRecordAnchor.test.ts`) instead of an export. The wire-width oracle used by tests lives in
   `test-utils/postgrestWire.ts` — ONE copy, mirroring postgrest-js's own algorithm. A second copy in
@@ -346,6 +357,27 @@ Key implementation patterns:
 - **`eventData.format` is absent when it is the default.** DocuSign omits it (JSON is the default for `restv2.1`), so an ABSENT format is not drift; only an explicitly different one is. `eventData.version` is deliberately NOT relaxed the same way — an absent version means the listener is not pinned to `restv2.1`, which changes the payload shape `/webhooks/docusign` parses.
 
 This job now runs **hourly at :15 in prod** (`docusign-listener-drift`, created 2026-08-01 — it was declared in `scripts/gcp-setup/cloud-scheduler.sh` but had never been applied). A false positive here fires into Sentry every hour and buries real drift, so any new check added to `detectDrift()` must be verified against the actual GET `/connect` response shape, not against the request payload we send.
+## 2026-08-02 — a terminal `failed` connector_artifact MUST carry its own reason
+
+Prod artifact `921347cc` (org `40383eb2`) went terminal `failed` on 2026-08-02T00:41:53Z and **the database recorded nothing about why**: `markFailed()` accepted a `reason` parameter and never persisted it — the UPDATE set `status` and `updated_at` only. The sole surviving copy was a Sentry alert (`ARKOVA-WORKER-2B`), which is how the real cause was eventually recovered: `envelope anchor lookup failed: canceling statement due to statement timeout`. Sentry samples, ages out, and is not queryable alongside the row an operator is triaging.
+
+Rules now enforced by tests in `connector-artifact-drain.test.ts`:
+
+- **Persist the reason on the row.** `markFailed` merges a bounded `drain_error` into `connector_artifact.metadata` (merge, never replace — the envelope/account identifiers downstream code reads live there). No migration: `metadata` is already `jsonb`.
+- **Bound the reason INSIDE `markFailed`, never at the call sites.** `handleDebitFailure` passes the raw PostgREST/Postgres `error.message` through, and Postgres constraint-violation text routinely echoes the offending VALUE. Migration 0343 grants `SELECT ON connector_artifact TO authenticated` (`connector_artifact_org_select`), so **anything written to this column is readable by every member of the org**. Bounding in the single writer makes that structural instead of a rule each future caller must remember. Use the `boundedReason()` helper.
+- **Log the bounded `reason` AND the error object** (`{ err, reason }`). The bounded string is what gets persisted and alerted on; `err` is what carries the stack. Dropping the stack is a wash for a DB timeout and strictly worse for a `TypeError` deeper in materialization.
+
+### What is and is NOT guaranteed here
+
+- **Guaranteed:** every string this module *persists* or *alerts on* is bounded — `boundedReason()` → `boundedErrorDetail()` caps at ~500 chars post-scrub, collapses byte runs, and scrubs PII.
+- **NOT guaranteed by this module:** that no raw `Error` is ever handed to the logger. Eight `logger.{error,warn}({ error, … })` sites remain in this file (571, 610, 643, 856, 1020, 1056, 1162, 1359). That is deliberate and safe: **logger-side redaction is centralised**, not per-call-site — `utils/logger.ts` registers `redactErrorSerializer` for both the `err` and `error` keys plus a `redactBinaryValues` formatter over the whole merged object. Do not "fix" those call sites by stripping the error, and do not write a per-call-site rule here that the code does not enforce.
+- An earlier draft of this note claimed pino renders a raw `Error` under a non-`err` key as `{}`. **That is false for this codebase** — `logger.ts` registers the serializer for exactly that reason. Whatever produced the empty `error` object in the prod log line, it was not pino's default behaviour; the persistence gap above is the defect that actually mattered.
+
+### Known sharp edge
+
+The `metadata` write is a read-modify-**write of the whole column** from the snapshot taken at claim time. Safe today because `markFailed` is the only writer after insert (`enqueue_connector_artifact` is `ON CONFLICT DO NOTHING`). The first writer that does `ON CONFLICT DO UPDATE` on `metadata` will be silently clobbered by it. The durable form is server-side `metadata = metadata || jsonb_build_object('drain_error', $1)` inside an RPC — that needs a migration, so do it before adding a second writer, not after.
+
+`boundedErrorDetail` emits **lowercase** placeholder tokens (`[fingerprint]`, `[uuid]`, `[email]`) where `utils/pii-scrub.ts` emits uppercase. Harmless today (nothing parses them) but do not build a consumer that pattern-matches one casing.
 ## 2026-08-02 — the envelope guard uses ONE indexed lookup PER KEY, never a combined `.or()`
 
 `findExistingEnvelopeAnchor` (`docusign-anchor-reconciliation.ts`) stalled the DocuSign envelope→anchor path in prod: `canceling statement due to statement timeout` on org `40383eb2` (**3.15M anchors**, artifact `921347cc`, failed twice).
