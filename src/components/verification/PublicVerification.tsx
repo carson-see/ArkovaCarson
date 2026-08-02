@@ -140,6 +140,11 @@ const PUBLIC_METADATA_HIDDEN_KEYS = new Set([
   'source_payload_hash',
   'fetched_at',
   'source_fetched_at',
+  // SCRUM-2913 (Lane 2 wiring): CE Registry provenance keys get their own
+  // dedicated, R-7-honest presentation in SourceProvenanceDisplay — never the
+  // raw "Additional metadata" dump.
+  'registry_url',
+  'ce_envelope_sha256',
 ]);
 
 export function PublicVerification({ publicId }: Readonly<PublicVerificationProps>) {
@@ -323,7 +328,8 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
     sourceProvenance.verification_level ||
     sourceProvenance.evidence_package_hash ||
     sourceProvenance.source_payload_hash ||
-    sourceProvenance.fetched_at
+    sourceProvenance.fetched_at ||
+    sourceProvenance.registry_url
   );
 
   // Calculate time since creation for not-yet-secured anchors. PENDING +
@@ -728,6 +734,12 @@ function extractSourceProvenance(data: PublicAnchorData): SourceProvenanceData {
     evidence_package_hash: firstString(data.evidence_package_hash, metadata.evidence_package_hash),
     source_payload_hash: firstString(data.source_payload_hash, metadata.source_payload_hash),
     fetched_at: firstString(data.fetched_at, metadata.fetched_at, metadata.source_fetched_at),
+    // SCRUM-2913 (Lane 2 wiring): the get_public_anchor (0362) projection nests
+    // these under `metadata` only (unlike source_url, there is no top-level
+    // duplicate key) — read from `metadata` exclusively. Absent (undefined),
+    // never null, when the anchor was not CE-Registry-sourced (§1.8).
+    registry_url: sanitizeSourceUrl(firstString(metadata.registry_url)),
+    ce_envelope_sha256: firstString(metadata.ce_envelope_sha256),
   };
 }
 

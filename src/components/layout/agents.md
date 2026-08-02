@@ -1,5 +1,6 @@
 # agents.md — components/layout
 _Last updated: 2026-07-21_
+_Last updated: 2026-07-28_
 
 ## What This Folder Contains
 App-level layout components: shell, sidebar, header, breadcrumbs, error boundaries, and branding.
@@ -26,6 +27,10 @@ App-level layout components: shell, sidebar, header, breadcrumbs, error boundari
 ## Do / Don't Rules
 - DO: Keep primary nav to max 5 items; overflow goes to Header user dropdown
 - DO: Use `ArkovaIcon`/`ArkovaLogo` from this folder for all branding
+
+## 2026-07-28 QUEUE-01 / SCRUM-2894 (L2-A1, founder P0)
+
+`Sidebar.tsx` — added "Pending Documents" (`SECURE_QUEUE_LABELS.PAGE_TITLE`, `Clock` icon, `ROUTES.SECURE_QUEUE`) to the Account section, alongside My Credentials / Billing / API Keys. Personal destination, visible to every authenticated user. Primary nav stays at its existing count (unchanged) — the Account section has no hard cap.
 
 ## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
 
