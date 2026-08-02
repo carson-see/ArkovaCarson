@@ -59,6 +59,10 @@ function makeDb(queues: TableQueues, admin: Partial<Record<string, ReturnType<ty
     auth: {
       admin: {
         createUser: vi.fn(async () => ({ data: { user: { id: 'new-user-id' } }, error: null })),
+        getUserById: vi.fn(async () => ({
+          data: { user: { email_confirmed_at: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z' } },
+          error: null,
+        })),
         deleteUser: vi.fn(async () => ({ error: null })),
         generateLink: vi.fn(async () => ({
           data: { properties: { action_link: 'https://app.arkova.test/verify-link' } },
@@ -86,6 +90,7 @@ const INVITATION_ROW = {
   invited_by: 'admin-user-1',
   status: 'pending',
   expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
 };
 
 const ORG_ROW = { display_name: 'Example Org' };
@@ -379,5 +384,109 @@ describe('InvitationError', () => {
     expect(err.code).toBe('not_found');
     expect(err.message).toBe('boom');
     expect(err).toBeInstanceOf(Error);
+  });
+});
+
+describe('acceptInvitation — unconfirmed-squatter reclaim', () => {
+  const UNCONFIRMED_AFTER_INVITE = {
+    data: {
+      user: {
+        email_confirmed_at: null,
+        created_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(), // after the invite
+      },
+    },
+    error: null,
+  };
+
+  it('releases an unconfirmed account that squatted the invited address, and provisions the real recipient', async () => {
+    const admin = {
+      getUserById: vi.fn(async () => UNCONFIRMED_AFTER_INVITE),
+      deleteUser: vi.fn(async () => ({ error: null })),
+      createUser: vi.fn(async () => ({ data: { user: { id: 'real-recipient-id' } }, error: null })),
+      generateLink: vi.fn(async () => ({
+        data: { properties: { action_link: 'https://app.arkova.test/verify-link' } },
+        error: null,
+      })),
+    };
+    const deps = makeDeps(
+      {
+        invitations: [
+          chain({ data: INVITATION_ROW, error: null }), // load
+          chain({ error: null }), // status -> accepted
+        ],
+        organizations: [chain({ data: ORG_ROW, error: null })],
+        profiles: [
+          chain({ data: { id: 'squatter-id' }, error: null }), // squatter occupies the address
+          chain({ error: null }), // squatter profile delete
+          chain({ error: null }), // real recipient profile insert
+          chain({ error: null }), // org_id backfill
+        ],
+        org_members: [
+          chain({ error: null }), // squatter membership delete
+          chain({ data: null, error: null }), // no existing membership
+          chain({ error: null }), // insert
+        ],
+        audit_events: [chain({ error: null })],
+      },
+      admin,
+    );
+
+    const result = await acceptInvitation(deps, { token: 't', password: 'longenough', callerId: null });
+
+    expect(admin.deleteUser).toHaveBeenCalledWith('squatter-id');
+    expect(admin.createUser).toHaveBeenCalled();
+    expect(result.orgId).toBe('org-1');
+    expect(result.verificationRequired).toBe(true);
+  });
+
+  it('does NOT reclaim a confirmed account — a real user keeps their address', async () => {
+    const admin = {
+      getUserById: vi.fn(async () => ({
+        data: { user: { email_confirmed_at: '2026-02-01T00:00:00Z', created_at: new Date().toISOString() } },
+        error: null,
+      })),
+      deleteUser: vi.fn(async () => ({ error: null })),
+    };
+    const deps = makeDeps(
+      {
+        invitations: [chain({ data: INVITATION_ROW, error: null })],
+        organizations: [chain({ data: ORG_ROW, error: null })],
+        profiles: [chain({ data: { id: 'real-user' }, error: null })],
+      },
+      admin,
+    );
+
+    await expect(
+      acceptInvitation(deps, { token: 't', password: 'longenough', callerId: null }),
+    ).rejects.toMatchObject({ code: 'account_exists' });
+    expect(admin.deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('does NOT reclaim an unconfirmed account that PREDATES the invitation', async () => {
+    const admin = {
+      getUserById: vi.fn(async () => ({
+        data: {
+          user: {
+            email_confirmed_at: null,
+            created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), // before the invite
+          },
+        },
+        error: null,
+      })),
+      deleteUser: vi.fn(async () => ({ error: null })),
+    };
+    const deps = makeDeps(
+      {
+        invitations: [chain({ data: INVITATION_ROW, error: null })],
+        organizations: [chain({ data: ORG_ROW, error: null })],
+        profiles: [chain({ data: { id: 'early-signup' }, error: null })],
+      },
+      admin,
+    );
+
+    await expect(
+      acceptInvitation(deps, { token: 't', password: 'longenough', callerId: null }),
+    ).rejects.toMatchObject({ code: 'account_exists' });
+    expect(admin.deleteUser).not.toHaveBeenCalled();
   });
 });

@@ -78,6 +78,7 @@ interface InvitationRow {
   invited_by: string;
   status: string;
   expires_at: string;
+  created_at: string;
 }
 
 async function loadInvitationByToken(
@@ -86,7 +87,7 @@ async function loadInvitationByToken(
 ): Promise<InvitationRow | null> {
   const { data, error } = await deps.db
     .from('invitations')
-    .select('id, email, role, org_id, invited_by, status, expires_at')
+    .select('id, email, role, org_id, invited_by, status, expires_at, created_at')
     .eq('token', token)
     .maybeSingle();
   if (error) {
@@ -268,6 +269,77 @@ async function sendVerificationEmail(
   }
 }
 
+/**
+ * Release an account that only ever existed because someone who was not the
+ * intended recipient submitted a still-pending invite token first.
+ *
+ * The invite token is treated as proof of mailbox control, so a forwarded or
+ * logged link lets a third party run the new-account path and permanently
+ * occupy `profiles.email` for the invited address. The real recipient then
+ * hits `account_exists` on a link they were legitimately sent, with no
+ * self-service recovery.
+ *
+ * Both conditions below must hold, and each exists to protect a distinct real
+ * account from deletion:
+ *
+ *  - `email_confirmed_at` is null — nobody has proven control of the mailbox,
+ *    so no signed-in session or verified identity is being destroyed.
+ *  - the auth user was created at/after the invitation — an unconfirmed signup
+ *    that PREDATES the invite belongs to someone who arrived on their own, and
+ *    is never reclaimable by an invite token.
+ *
+ * Returns false (caller falls back to `account_exists`) on any lookup failure,
+ * ambiguity, or unmet condition. Deleting the wrong account is far worse than
+ * leaving a squat in place for support to clear manually.
+ */
+async function reclaimUnconfirmedSquatter(
+  deps: InvitationDeps,
+  args: { profileId: string; email: string; invitationCreatedAt: string },
+): Promise<boolean> {
+  const { db, logger } = deps;
+  const { profileId, email, invitationCreatedAt } = args;
+
+  const { data: userData, error: lookupError } = await db.auth.admin.getUserById(profileId);
+  const authUser = (userData as { user?: { email_confirmed_at?: string | null; created_at?: string } } | null)?.user;
+  if (lookupError || !authUser) {
+    logger.warn({ error: lookupError, profileId }, 'Invitation accept: squatter lookup failed — not reclaiming');
+    return false;
+  }
+
+  if (authUser.email_confirmed_at) return false;
+
+  const createdAt = authUser.created_at ? Date.parse(authUser.created_at) : NaN;
+  const invitedAt = Date.parse(invitationCreatedAt);
+  if (!Number.isFinite(createdAt) || !Number.isFinite(invitedAt) || createdAt < invitedAt) {
+    return false;
+  }
+
+  // Order matters: drop dependent rows before the auth user so a mid-way
+  // failure leaves an unconfirmed auth user (already the status quo) rather
+  // than orphaned memberships pointing at a deleted principal.
+  const { error: membersError } = await db.from('org_members').delete().eq('user_id', profileId);
+  if (membersError) {
+    logger.error({ error: membersError, profileId }, 'Invitation accept: squatter membership cleanup failed — not reclaiming');
+    return false;
+  }
+  const { error: profileError } = await db.from('profiles').delete().eq('id', profileId);
+  if (profileError) {
+    logger.error({ error: profileError, profileId }, 'Invitation accept: squatter profile cleanup failed — not reclaiming');
+    return false;
+  }
+  const { error: deleteError } = await db.auth.admin.deleteUser(profileId);
+  if (deleteError) {
+    logger.error({ error: deleteError, profileId }, 'Invitation accept: squatter auth-user delete failed — not reclaiming');
+    return false;
+  }
+
+  logger.warn(
+    { profileId, email },
+    'Invitation accept: released an unconfirmed account that occupied the invited address before the recipient accepted',
+  );
+  return true;
+}
+
 export async function acceptInvitation(
   deps: InvitationDeps,
   params: AcceptInvitationParams,
@@ -349,10 +421,18 @@ export async function acceptInvitation(
     throw new InvitationError('Failed to process this invitation.', 'internal_error');
   }
   if (existingProfile) {
-    throw new InvitationError(
-      'An account with this email already exists. Sign in to accept this invitation.',
-      'account_exists',
-    );
+    const reclaimed = await reclaimUnconfirmedSquatter(deps, {
+      profileId: (existingProfile as { id: string }).id,
+      email,
+      invitationCreatedAt: invitation.created_at,
+    });
+    if (!reclaimed) {
+      throw new InvitationError(
+        'An account with this email already exists. Sign in to accept this invitation. '
+          + 'If you never created this account, contact support to have it released.',
+        'account_exists',
+      );
+    }
   }
 
   if (!password || password.length < 8) {
