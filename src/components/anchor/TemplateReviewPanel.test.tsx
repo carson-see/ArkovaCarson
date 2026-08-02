@@ -211,10 +211,24 @@ describe('TemplateReviewPanel — no confidence percentages surfaced', () => {
     }
   });
 
-  it('no longer accepts an overall confidence value to render', () => {
-    // The prop is gone from the component's contract entirely, not merely
-    // hidden — there is no way for a caller to reintroduce the number.
-    expect(Object.keys(makeProps())).not.toContain('overallConfidence');
+  it('no longer accepts an overall confidence value in its contract', () => {
+    // Enforced by tsc, NOT by this file's own fixture.
+    //
+    // The first cut of this test asserted
+    // `expect(Object.keys(makeProps())).not.toContain('overallConfidence')`,
+    // which is tautological: `makeProps` is a literal in this test file, so the
+    // assertion only restates that the author deleted the key from their own
+    // fixture. It would pass unchanged with the prop fully restored to
+    // `TemplateReviewPanelProps` and rendering a percentage again — a guard
+    // that reads as protection and behaves as a comment.
+    //
+    // A `@ts-expect-error` is evaluated against the real contract: if
+    // `overallConfidence` is ever re-added to the props, the directive becomes
+    // an unused `@ts-expect-error` and the typecheck gate fails.
+    render(
+      // @ts-expect-error -- overallConfidence was deleted from the contract (SCRUM-2914); passing it must not typecheck
+      <TemplateReviewPanel {...makeProps()} overallConfidence={0.8} />,
+    );
   });
 
   it('shows no percentage token anywhere in the rendered panel', async () => {
