@@ -186,12 +186,28 @@ measured, and the planner never chooses it:
   `ORDER BY created_at DESC LIMIT 100` the planner then stays on
   `idx_anchors_active_created`, certain it will stop early. It does not.
 - Measured: with that index present and analyzed, the plan, the buffer count
-  (52,734) and the estimate were identical to having no index at all, and
-  `pg_stats` for the index was empty.
+  (52,734) and the estimate were identical to having no index at all.
+
+**Do not misread the mechanism as "ANALYZE collects nothing."** It usually does
+collect — a second probe on a partial expression index over 50k indexed rows
+found a `pg_stats` row present *and the estimate still pinned to the 0.005
+default* (5,000 estimated / 0 actual). Rebuilding the same index **non-partial**
+dropped the estimate to 1 and the cost from 14,333 to 8.45. The stats exist; the
+planner declines to use them. So raising `statistics_target`, re-running ANALYZE,
+or waiting for autovacuum will not help — only changing the index shape will.
+(In the CE case `pg_stats` was additionally empty, because 7 qualifying rows in
+1M are unlikely to appear in a 30k-row ANALYZE sample. That is a second, smaller
+problem on top of the first.)
 
 Same family as the 2026-08-02 DocuSign finding, where `0381`'s three
 envelope-key indexes are live and `indisvalid` and the planner refuses them all
-(HANDOFF.md: *an index cannot fix a costing error*).
+(HANDOFF.md: *an index cannot fix a costing error*). **Lead, not a proven root
+cause:** the prod plan choice was not reproduced on the rig, but prod's 51,038
+estimate is what three OR'd branches of `DEFAULT_EQ_SEL` over ~3.15M rows
+produces (3 x 0.005 x 3.15M ~ 47k), and those three indexes are all partial —
+so the exclusion above is a strong candidate. Anyone working #1834 should test
+non-partial variants and prove it with `EXPLAIN (ANALYZE)` against org
+`40383eb2-f1cd-4a85-8099-afafff95e5cf` with a value matching nothing.
 
 **Ship the `0342` shape instead** — key on the ordering column, put the metadata
 test in the partial predicate: `ON anchors (created_at DESC) WHERE deleted_at IS
