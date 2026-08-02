@@ -679,7 +679,12 @@ cronRouter.post('/ce-registry-drift-check', async (req, res) => {
     const result = await runCeRegistryDriftCheck({
       limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
     });
-    res.json(result);
+    // A load failure reconciled NOTHING. Answering 200 would hand Cloud
+    // Scheduler a success for a pass that did no work — the job carries a
+    // `loadFailed` field precisely so this is distinguishable, and burying it in
+    // a 200 body throws that distinction away at the only layer that acts on it.
+    // 500 so Scheduler retries.
+    res.status(result.loadFailed ? 500 : 200).json(result);
   } catch (error) {
     logger.error({ error }, 'CE registry drift check failed');
     res.status(500).json({ error: 'Processing failed' });

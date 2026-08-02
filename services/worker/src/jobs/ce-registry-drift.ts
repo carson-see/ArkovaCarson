@@ -178,11 +178,23 @@ export interface CeRegistryDriftResult {
   truncated: boolean;
   /** The load itself failed (e.g. statement timeout). NOT the same as "nothing to check". */
   loadFailed: boolean;
+  /**
+   * Findings that were decided but could NOT be persisted.
+   *
+   * `reportSafely` deliberately swallows a reporting failure so one bad insert
+   * cannot abandon the remaining records — but swallowing it silently would make
+   * a pass that persisted three drift findings and a pass that persisted NONE
+   * return byte-identical results, at HTTP 200 either way. That is the same
+   * success-indistinguishable-from-nothing shape this job's `loadFailed` field
+   * exists to close, one layer down. Counted so it is visible in the result and
+   * the summary log line, not only in a stray error log.
+   */
+  reportFailures: number;
 }
 
 const ZERO_COUNTS = {
   checked: 0, match: 0, drifted: 0, withdrawn: 0, unreachable: 0,
-  truncated: false, loadFailed: false,
+  truncated: false, loadFailed: false, reportFailures: 0,
 } as const;
 
 function clampLimit(limit: number | undefined): number {
@@ -232,6 +244,12 @@ export async function reconcileCeRegistryDrift(
     return { ...result, loadFailed: true };
   }
 
+  // NOTE the direction of error here: `records` is already post-filter (the
+  // production loader drops rows whose metadata lacks a usable CTID/digest), so
+  // a saturated query whose rows were then filtered reads as NOT truncated.
+  // Under-reporting only, and only for malformed metadata — but stated rather
+  // than assumed away, because a coverage gap this job cannot see is the one
+  // thing it exists to prevent. A cursor (see the module header) retires it.
   result.truncated = records.length >= limit;
   records = records.slice(0, limit);
   if (records.length === 0) {
@@ -247,7 +265,9 @@ export async function reconcileCeRegistryDrift(
 
     // MATCH is the expected steady state; recording every one would bury the
     // findings that matter under noise. Only exceptions are reported.
-    if (finding.verdict !== 'MATCH') await reportSafely(deps, finding);
+    if (finding.verdict !== 'MATCH' && !(await reportSafely(deps, finding))) {
+      result.reportFailures += 1;
+    }
   }
 
   logger.info({ ...result }, 'CE registry drift reconciliation pass complete');
@@ -270,15 +290,19 @@ async function observeSafely(
   }
 }
 
-async function reportSafely(deps: CeRegistryDriftDeps, finding: CeDriftFinding): Promise<void> {
+/** @returns true if the finding was persisted, false if it was lost. */
+async function reportSafely(deps: CeRegistryDriftDeps, finding: CeDriftFinding): Promise<boolean> {
   try {
     await deps.reportFinding(finding);
+    return true;
   } catch (error) {
-    // A reporting failure must not abandon the remaining records.
+    // A reporting failure must not abandon the remaining records — but it must
+    // not vanish either. The caller counts the `false` into `reportFailures`.
     logger.error(
       { anchor_id: finding.anchorId, verdict: finding.verdict, error },
       'Failed to record CE registry drift finding',
     );
+    return false;
   }
 }
 

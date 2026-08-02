@@ -202,13 +202,55 @@ describe('reconcileCeRegistryDrift', () => {
     expect(result).toMatchObject({ checked: 2, match: 1, unreachable: 1 });
   });
 
-  it('never lets a reporting failure abort the pass', async () => {
+  it('never lets a reporting failure abort the pass, and counts what was lost', async () => {
+    // Swallowing the insert error keeps the pass alive; swallowing it SILENTLY
+    // would make "3 drift findings recorded" and "3 drift findings lost" return
+    // the identical result at HTTP 200. `reportFailures` is what separates them.
     const d = deps({
+      loadAnchoredRecords: vi.fn().mockResolvedValue([
+        record({ anchorId: 'lost-1' }),
+        record({ anchorId: 'lost-2' }),
+      ]),
       observeRegistryState: vi.fn().mockResolvedValue({ kind: 'fetched', sha256: 'z'.repeat(64) }),
       reportFinding: vi.fn().mockRejectedValue(new Error('audit insert failed')),
     });
 
-    await expect(reconcileCeRegistryDrift(d)).resolves.toMatchObject({ checked: 1, drifted: 1 });
+    await expect(reconcileCeRegistryDrift(d)).resolves.toMatchObject({
+      checked: 2,
+      drifted: 2,
+      reportFailures: 2,
+    });
+    expect(d.reportFinding).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports zero reportFailures when every finding persisted', async () => {
+    const d = deps({
+      observeRegistryState: vi.fn().mockResolvedValue({ kind: 'not_found' }),
+    });
+
+    await expect(reconcileCeRegistryDrift(d)).resolves.toMatchObject({
+      withdrawn: 1,
+      reportFailures: 0,
+    });
+  });
+
+  it('counts only lost findings, not every non-MATCH verdict', async () => {
+    // A partial reporting outage must not read as a total one.
+    const d = deps({
+      loadAnchoredRecords: vi.fn().mockResolvedValue([
+        record({ anchorId: 'kept' }),
+        record({ anchorId: 'lost' }),
+      ]),
+      observeRegistryState: vi.fn().mockResolvedValue({ kind: 'not_found' }),
+      reportFinding: vi.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('audit insert failed')),
+    });
+
+    await expect(reconcileCeRegistryDrift(d)).resolves.toMatchObject({
+      withdrawn: 2,
+      reportFailures: 1,
+    });
   });
 
   it('caps the batch so one pass cannot hammer the public registry', async () => {
