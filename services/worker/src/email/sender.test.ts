@@ -16,9 +16,10 @@ const { mockLogger, mockAuditInsert, mockResendSend, mockConfig, mockSentryCaptu
   };
   const mockAuditInsert = vi.fn().mockResolvedValue({ error: null });
   const mockResendSend = vi.fn();
-  const mockConfig: { resendApiKey: string | undefined; emailFrom: string } = {
+  const mockConfig: { resendApiKey: string | undefined; emailFrom: string; nodeEnv: string } = {
     resendApiKey: 'test-api-key',
     emailFrom: 'noreply@arkova.ai',
+    nodeEnv: 'test',
   };
 
   return { mockLogger, mockAuditInsert, mockResendSend, mockConfig, mockSentryCaptureException };
@@ -69,6 +70,7 @@ describe('sendEmail', () => {
     vi.clearAllMocks();
     _resetClient();
     mockConfig.resendApiKey = 'test-api-key';
+    mockConfig.nodeEnv = 'test';
     mockResendSend.mockResolvedValue({ data: { id: 'msg-123' }, error: null });
     mockAuditInsert.mockResolvedValue({ error: null });
   });
@@ -145,6 +147,29 @@ describe('sendEmail', () => {
     expect(mockLogger.debug).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'notification' }),
       expect.stringContaining('skipped'),
+    );
+  });
+
+  // SCRUM-3012: dev-mode-skip must never masquerade as a real send in prod —
+  // this was the "fake success" bug behind the org-invite flow reporting
+  // sent:true while zero emails ever left the building.
+  it('FAILS honestly (does not fake success) when RESEND_API_KEY is unset in production', async () => {
+    mockConfig.resendApiKey = undefined;
+    mockConfig.nodeEnv = 'production';
+    _resetClient();
+
+    const result = await sendEmail(baseOptions);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Email delivery is not configured');
+    expect(result.messageId).toBeUndefined();
+    expect(mockResendSend).not.toHaveBeenCalled();
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'notification' }),
+      expect.stringContaining('not configured in production'),
+    );
+    expect(mockAuditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'EMAIL_DELIVERY_FAILED' }),
     );
   });
 

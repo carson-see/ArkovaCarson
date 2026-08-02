@@ -373,6 +373,7 @@ export type Database = {
           block_timestamp: string | null
           created_at: string
           id: string
+          materialize_run_id: string | null
           merkle_index: number | null
           merkle_root: string | null
           op_return_payload: string | null
@@ -391,6 +392,7 @@ export type Database = {
           block_timestamp?: string | null
           created_at?: string
           id?: string
+          materialize_run_id?: string | null
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
@@ -409,6 +411,7 @@ export type Database = {
           block_timestamp?: string | null
           created_at?: string
           id?: string
+          materialize_run_id?: string | null
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
@@ -7118,24 +7121,14 @@ export type Database = {
           total_cost_before: Json
         }[]
       }
-      invite_member:
-        | {
-            Args: {
-              invitee_email: string
-              invitee_role: Database["public"]["Enums"]["user_role"]
-              target_org_id: string
-            }
-            Returns: string
-          }
-        | {
-            Args: {
-              invitee_email: string
-              invitee_role: string
-              inviter_user_id: string
-              target_org_id: string
-            }
-            Returns: string
-          }
+      invite_member: {
+        Args: {
+          invitee_email: string
+          invitee_role: Database["public"]["Enums"]["user_role"]
+          target_org_id: string
+        }
+        Returns: string
+      }
       is_current_user_platform_admin: { Args: never; Returns: boolean }
       is_org_admin: { Args: never; Returns: boolean }
       is_org_admin_of: { Args: { target_org_id: string }; Returns: boolean }
@@ -7262,14 +7255,24 @@ export type Database = {
         }
         Returns: string
       }
-      resolve_anchor_queue_by_public_id: {
-        Args: {
-          p_external_file_id: string
-          p_reason?: string
-          p_selected_public_id: string
-        }
-        Returns: string
-      }
+      resolve_anchor_queue_by_public_id:
+        | {
+            Args: {
+              p_external_file_id: string
+              p_reason?: string
+              p_selected_public_id: string
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              p_caller_user_id: string
+              p_external_file_id: string
+              p_reason: string
+              p_selected_public_id: string
+            }
+            Returns: string
+          }
       resolve_anchor_txid_journal: {
         Args: {
           p_action: string
@@ -7382,14 +7385,24 @@ export type Database = {
         }
         Returns: number
       }
-      supersede_anchor: {
-        Args: {
-          new_fingerprint: string
-          old_anchor_id: string
-          reason?: string
-        }
-        Returns: string
-      }
+      supersede_anchor:
+        | {
+            Args: {
+              new_fingerprint: string
+              old_anchor_id: string
+              reason?: string
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              new_fingerprint: string
+              old_anchor_id: string
+              p_caller_user_id: string
+              reason: string
+            }
+            Returns: string
+          }
       suspend_suborg: {
         Args: {
           p_parent_org_id: string

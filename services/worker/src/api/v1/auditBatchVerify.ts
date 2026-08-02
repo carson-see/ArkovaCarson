@@ -15,6 +15,8 @@ import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
+import { chunkForInFilter } from '../../utils/postgrest-filter.js';
+import type { Database } from '../../types/database.types.js';
 
 const router = Router();
 
@@ -26,6 +28,16 @@ const batchVerifySchema = z.object({
   d => d.credential_ids || d.sample_percentage,
   { message: 'Provide credential_ids or sample_percentage' },
 );
+
+/**
+ * The anchor columns the sample lookup reads. Picked from the generated row
+ * type so a schema change breaks the build here rather than silently changing
+ * an audit verdict.
+ */
+type AnchorVerifyRow = Pick<
+  Database['public']['Tables']['anchors']['Row'],
+  'public_id' | 'status' | 'fingerprint' | 'chain_timestamp' | 'chain_tx_id' | 'created_at'
+>;
 
 interface VerifyResult {
   public_id: string;
@@ -99,14 +111,41 @@ router.post('/', async (req: Request, res: Response) => {
     // Batch verify
     const results: VerifyResult[] = [];
 
-    // Fetch all anchors in one query
-    const { data: anchors } = await db
-      .from('anchors')
-      .select('public_id, status, fingerprint, chain_timestamp, chain_tx_id, created_at')
-      .in('public_id', targetIds)
-      .is('deleted_at', null);
+    // Fetch the sampled anchors.
+    //
+    // This was one `.in('public_id', targetIds)` over up to 1000 ids — roughly
+    // twice the PostgREST URL budget — with the error discarded. The request
+    // took 400 Bad Request, `anchors` came back null, and every id in the
+    // sample was reported NOT_FOUND at HTTP 200: a confident, reproducible and
+    // completely false compliance answer, which on an audit surface is worse
+    // than a failure.
+    //
+    // ANY chunk error is fatal here, which is deliberately stricter than
+    // `assertNotAllChunksFailed` (that only refuses the all-failed case). A
+    // sample missing one chunk is not a partial answer — it is a wrong one,
+    // and it would be signed off as if it were complete. The throw is caught
+    // by this route's handler and returned as 500, before the
+    // AUDIT_BATCH_VERIFY event is written.
+    const anchorMap = new Map<string, AnchorVerifyRow>();
+    for (const { values, start } of chunkForInFilter([...new Set(targetIds)])) {
+      const { data: anchors, error } = await db
+        .from('anchors')
+        .select('public_id, status, fingerprint, chain_timestamp, chain_tx_id, created_at')
+        .in('public_id', values)
+        .is('deleted_at', null);
 
-    const anchorMap = new Map((anchors || []).map(a => [a.public_id, a]));
+      if (error) {
+        logger.error(
+          { pgCode: (error as { code?: string } | null)?.code ?? null, chunkStart: start, chunkSize: values.length, orgId },
+          'Audit batch verify: anchor lookup chunk failed — refusing to report the sample as NOT_FOUND',
+        );
+        throw new Error(`audit batch verify: anchor lookup failed at chunk offset ${start}`);
+      }
+
+      for (const anchor of anchors ?? []) {
+        if (anchor.public_id) anchorMap.set(anchor.public_id, anchor);
+      }
+    }
 
     for (const id of targetIds) {
       const anchor = anchorMap.get(id);
