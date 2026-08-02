@@ -2,6 +2,33 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-02 — Queues lane (PR #1845): CML-02 stamped 10,000 ids into one filter, into a dead catch (`batch-anchor.ts`)
+
+The `compliance_controls` post-processing block after a successful batch broadcast had **both**
+halves of the class in six lines, on the chain/treasury path:
+
+- `.in('id', ids)` took every anchor of one credential type with no chunking. `BATCH_SIZE` is
+  10,000, so a single-credential-type batch put 10,000 UUIDs — ~390 KB of query string — on one
+  request line. PostgREST answers 400.
+- The result was **not destructured at all** (`await db…in(...)`, no `{ error }`). postgrest-js
+  resolves a 400, so nothing threw, and the enclosing `catch (complianceErr)` — labelled
+  "Non-fatal" — was **dead code for the only failure mode that actually occurs**. A full batch went
+  out with `compliance_controls` silently unset and the job logged nothing at all.
+
+Extracted verbatim to the exported `applyComplianceControls(anchors, batchId)` first (so the defect
+could be tested directly), then routed through `chunkForInFilter` with every chunk result inspected.
+
+**Explicit opt-out from `assertNotAllChunksFailed`, and it does not throw.** This runs AFTER the
+broadcast and after `submit_batch_anchors`: the transaction is on-chain and the rows are SUBMITTED.
+Throwing would turn a completed batch into a reported job failure and a Scheduler retry over work
+that is already done, to repair derived metadata a later run can re-stamp. The escalation is instead
+an error-level line carrying `{batchId, attemptedChunks, failedChunks, unstampedAnchors}` — the
+signal the old code could not produce. If you ever make this fatal, check the caller's unwind
+semantics first (#1417-HIGH: unwind fires only on a definitive typed broadcast reject).
+
+Tests: `batch-anchor.compliance.test.ts` (4). Mutation-verified — unchunking the filter fails the
+10k-batch budget test; restoring the undestructured `await` fails the failure-visibility test.
+
 ## 2026-08-01 — Queues lane (PR #1812): pipeline claim-revert emitted an over-wide id filter (`publicRecordAnchor.ts`)
 
 `revertClaimedAnchors` — the post-failed-submission release of claimed pipeline anchors from
