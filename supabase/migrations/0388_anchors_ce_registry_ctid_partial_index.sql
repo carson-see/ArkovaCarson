@@ -1,0 +1,190 @@
+-- =============================================================================
+-- 0388 — anchors CE Registry partial index (unblocks PR #1838's drift job)
+--
+-- ROLLBACK: DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_ce_registry_ctid;
+--   Run standalone, outside a transaction. No data migration is involved, and
+--   nothing depends on this index for CORRECTNESS — only for not timing out —
+--   so the rollback is safe at any time, including while the drift job is
+--   enabled: the job reverts to failing loudly via `loadFailed`, never to a
+--   silent empty pass. Verified: dropping the index restores the previous plan
+--   (the filtered `idx_anchors_active_created` walk) exactly.
+--
+-- CONCURRENTLY, NO TXN. MUST STAY IN ITS OWN FILE WITH NO BEGIN/COMMIT — the
+-- convention set by 0313 and followed by 0330, 0335, 0342, 0366 and 0381.
+-- `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block (SQLSTATE
+-- 25001); the Supabase migration builder wraps a file containing BEGIN/COMMIT
+-- (or any multi-statement DDL it decides to wrap) in one transaction, while a
+-- bare file carrying only CONCURRENTLY statements applies OUTSIDE one. Do not
+-- add BEGIN/COMMIT here and do not fold this statement into another migration.
+--
+-- WHY.
+-- ----
+-- `loadAnchoredCeRecords` (services/worker/src/jobs/ce-registry-drift.ts, PR
+-- #1838) is the only read the CE Registry drift-reconciliation job performs:
+--
+--   SELECT id, public_id, org_id, metadata, created_at FROM anchors
+--   WHERE metadata->>'ce_registry_ctid' IS NOT NULL
+--     AND deleted_at IS NULL
+--   ORDER BY created_at DESC
+--   LIMIT 100;
+--
+-- Nothing indexes that predicate and `public.anchors` is a ~3M-row table
+-- (3,151,539 on the dominant org as of 2026-08-02). The dangerous property is
+-- not the filter on its own — it is the filter combined with `ORDER BY
+-- created_at DESC LIMIT 100` while far fewer than 100 rows match. Postgres
+-- cannot stop early: it walks the whole `idx_anchors_active_created` btree and
+-- heap-fetches (and detoasts) `metadata` for every row before it can conclude
+-- the limit is unsatisfiable. Scan direction is irrelevant to the total work —
+-- ordering newest-first does NOT let the scan "reach the CE cohort almost
+-- immediately", and #1838's own review recorded that wrong claim so nobody
+-- re-derives it. This repo has already taken a 14-day prod anchoring gap from
+-- exactly this shape hitting the 60s PostgREST `statement_timeout`
+-- (`services/worker/src/jobs/check-confirmations.ts`).
+--
+-- THE SHAPE THIS MIGRATION DELIBERATELY DOES **NOT** SHIP.
+-- --------------------------------------------------------
+-- #1838's PR body and the docstring on `loadAnchoredCeRecords` both specify the
+-- index as keyed on the JSONB expression:
+--
+--   ON anchors ((metadata->>'ce_registry_ctid'))
+--   WHERE deleted_at IS NULL AND metadata->>'ce_registry_ctid' IS NOT NULL
+--
+-- That index was built and measured, and the planner NEVER CHOOSES IT. Shipping
+-- it would have looked like a fix, passed review, and left the timeout exactly
+-- where it is. The reason is structural, not a tuning accident:
+--
+--   * The query has no equality on the indexed expression — only `IS NOT NULL`,
+--     which the partial predicate already asserts. So the index key does no
+--     work, and selection turns entirely on whether the planner believes few
+--     rows match.
+--   * It does not. With no statistics for that expression, `nulltestsel` falls
+--     back to a 0.5% default, so `IS NOT NULL` is estimated at 99.5% of the
+--     table (995,007 of 1,000,007 in the rig; ~3M in prod). Believing a third
+--     of a million rows qualify, the planner is certain `LIMIT 100` resolves in
+--     the first few entries of `idx_anchors_active_created` and keeps the walk.
+--   * ANALYZE does not rescue it. An expression index normally makes ANALYZE
+--     collect a pg_statistic row for that expression — but `examine_variable()`
+--     (selfuncs.c) DELIBERATELY IGNORES expression statistics belonging to a
+--     PARTIAL index, on the grounds that they do not describe the whole
+--     relation. A partial expression index therefore contributes nothing to the
+--     estimate it would need to fix in order to be chosen.
+--
+-- Measured, same rig, same query (see MEASURED below): with that index present
+-- and `ANALYZE public.anchors` run, the plan, the buffer count and the row
+-- estimate were identical to having no index at all. `pg_stats` for the index
+-- was empty. Dropping the `ORDER BY` did not help either — it degraded to a Seq
+-- Scan, because the same 99.5% estimate makes a Seq Scan under `LIMIT` look
+-- instantly satisfiable too.
+--
+-- This is the 2026-08-02 DocuSign lesson repeating with a different key. 0381's
+-- three envelope-key indexes are live and `indisvalid` and the planner refuses
+-- them, because it estimates 51,038 matching rows where the truth is 0.
+-- HANDOFF.md records the conclusion verbatim: an index cannot fix a costing
+-- error. The correct response is not to add statistics targets and hope — it is
+-- to ship an index whose selection DOES NOT DEPEND on the estimate being right.
+--
+-- WHAT THIS MIGRATION SHIPS INSTEAD.
+-- ----------------------------------
+-- Key the index on the ORDERING column and put the metadata test in the PARTIAL
+-- PREDICATE — the shape 0342 already uses for the CPE/CLE dashboard panels
+-- (`(org_id, issued_at DESC) WHERE cpe_metadata IS NOT NULL`), here reduced to
+-- the one ordering column this query needs:
+--
+--   ON anchors (created_at DESC)
+--   WHERE deleted_at IS NULL AND metadata->>'ce_registry_ctid' IS NOT NULL
+--
+-- Two properties make this immune to the failure above:
+--
+--   1. The partial predicate is written to be exactly what the query's WHERE
+--      clause asserts, so the planner PROVES implication and emits NO Filter
+--      node — every entry in the index is by construction a qualifying row.
+--   2. The index is already in `created_at DESC` order, so it satisfies the
+--      ORDER BY directly and the LIMIT stops after 100 entries with no sort.
+--
+-- Together those mean the plan is cheap no matter what the planner believes
+-- about selectivity. Even while still estimating ~995k qualifying rows, it picks
+-- this index — because under that same estimate an unfiltered ordered scan of
+-- this index strictly dominates a filtered ordered scan of
+-- `idx_anchors_active_created`. The misestimate becomes harmless rather than
+-- fatal. That is the difference between a fix and a coin flip.
+--
+-- MEASURED (isolated scratch Postgres 15.8, 2026-08-02 — NOT prod. This session
+-- is prohibited from touching prod, and shared staging carries neither prod's
+-- row count nor its skew). 1,000,007 rows, exactly 7 carrying
+-- `ce_registry_ctid` and deliberately the OLDEST rows in the table (worst case
+-- for a newest-first scan), `idx_anchors_active_created` present exactly as in
+-- prod. The job's real query, at each stage:
+--
+--   no index                     Index Scan using idx_anchors_active_created,
+--                                est 100 / actual 7, Rows Removed by Filter
+--                                1,000,000, buffers 52,734, 17,873 ms cold.
+--   expression index + ANALYZE   IDENTICAL. Same plan, same 52,734 buffers,
+--                                same 995,007-row estimate. pg_stats for the
+--                                index empty. The rejected shape, measured.
+--   expression index, no ORDER BY  Seq Scan, 50,000 buffers, 3,711 ms.
+--   THIS INDEX                   Index Scan using idx_anchors_ce_registry_ctid,
+--                                no Filter node, buffers 3, 0.137 ms.
+--
+-- 52,734 buffers -> 3. Cold 17,873 ms -> 0.137 ms. Also verified on the same
+-- rig:
+--   * Chosen IMMEDIATELY after `CREATE INDEX CONCURRENTLY` with NO ANALYZE run
+--     (buffers 3, 0.317 ms) — it has no statistics dependency to get wrong.
+--   * Still chosen after a 50,000-row write burst with deliberately stale
+--     statistics — it does not decay between autovacuum cycles.
+--   * Index size 16 kB, unchanged by those 50,000 non-CE inserts: the partial
+--     predicate keeps `anchors`' write path untouched, which is the whole point
+--     of the SCRUM-1286 justification policy on this table.
+--   * Both spellings bind to it. The job issues
+--     `.not('metadata->>ce_registry_ctid', 'is', null)`, which PostgREST
+--     compiles to `NOT (metadata->>'ce_registry_ctid' IS NULL)` rather than a
+--     literal `IS NOT NULL`; Postgres normalizes that via `negate_clause()`
+--     before predicate implication runs, and both forms produced the same plan.
+--   * Soft-deleted CE rows are correctly excluded (`deleted_at` set on one of
+--     the 7 -> 6 visible), so the index cannot resurrect deleted records into
+--     the drift job's cohort.
+--
+-- OPERATOR NOTE (prod apply).
+--   Run the statement standalone, outside any transaction (this file has no
+--   BEGIN/COMMIT — do not wrap one around it). CONCURRENTLY can leave an
+--   INVALID index if the build fails or is interrupted; verify:
+--     SELECT indisvalid FROM pg_index
+--       WHERE indexrelid = 'public.idx_anchors_ce_registry_ctid'::regclass;
+--     -- expect t
+--   If invalid: DROP INDEX CONCURRENTLY public.idx_anchors_ce_registry_ctid;
+--   then re-run (IF NOT EXISTS makes a re-run safe).
+--   `ANALYZE public.anchors;` afterwards is good hygiene but is NOT required
+--   for this index to be chosen — that was measured, above, and it is the
+--   property that distinguishes this shape from the rejected one. Do not reach
+--   for a missing ANALYZE as the explanation if the plan comes back wrong;
+--   capture the EXPLAIN instead.
+--   The build must scan the whole ~13 GB heap to evaluate the predicate for
+--   every row, so it is multi-minute — but CONCURRENTLY never blocks concurrent
+--   INSERT/UPDATE, so the nightly 3am batch drain and live anchoring keep
+--   running throughout. A plain CREATE INDEX would take a SHARE lock and block
+--   every write for that whole window: a prod write outage. 0366 records three
+--   attempts safely aborted by a `lock_timeout` guard before a phased apply
+--   landed it; expect to need the same patience.
+--
+-- BEFORE ENABLING `ENABLE_CE_REGISTRY_DRIFT_CHECK`.
+--   The index existing is NOT sufficient evidence, and neither is the rig
+--   measurement above. Capture an EXPLAIN (ANALYZE) of the job's actual query
+--   against the real prod org that owns the anchors
+--   (40383eb2-f1cd-4a85-8099-afafff95e5cf) showing an Index Scan on
+--   `idx_anchors_ce_registry_ctid` with no Filter node. Measuring against a
+--   small or empty org is not evidence — that mistake made the DocuSign path
+--   look fixed twice on 2026-08-02.
+--   Note also that #1838's docstring and PR body still name the rejected
+--   expression-keyed shape; correcting that text belongs to #1838's lane, but
+--   the flag must not be enabled on the strength of it.
+--
+-- SCOPE. ADDITIVE and read-path only: one index. No table, column, RPC, RLS
+-- policy, trigger or row data is touched. `database.types.ts` is unaffected by
+-- index DDL (index definitions are not part of the generated types), so no type
+-- regeneration is required, and no `NOTIFY pgrst, 'reload schema'` is needed —
+-- there is no function or column surface change for PostgREST to pick up.
+-- =============================================================================
+
+-- anchor-index-justification: loadAnchoredCeRecords (jobs/ce-registry-drift.ts, PR #1838) reads WHERE metadata->>'ce_registry_ctid' IS NOT NULL AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 100; with far fewer than 100 matching rows Postgres cannot stop early and walks all ~3M rows of idx_anchors_active_created, heap-fetching and detoasting metadata for each — the same shape that caused a 14-day prod anchoring gap in check-confirmations.ts against the 60s PostgREST statement_timeout. Keyed on created_at DESC so the index satisfies the ORDER BY directly, with the metadata test in the partial predicate so the planner proves implication and emits no Filter — measured 52,734 buffers/17,873 ms down to 3 buffers/0.137 ms, and chosen without needing ANALYZE. The partial predicate holds the index at 16 kB, so this adds no measurable cost to the anchors write path.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_ce_registry_ctid
+  ON public.anchors (created_at DESC)
+  WHERE deleted_at IS NULL AND (metadata ->> 'ce_registry_ctid') IS NOT NULL;
