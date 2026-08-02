@@ -17,7 +17,7 @@ Developer SDK packages for integrating with the Arkova Verification API. Each su
 
 ## Where is the TypeScript SDK?
 
-**`packages/sdk/`** — that is the one true `@arkova/sdk` (class `Arkova`),
+**`packages/sdk/`** — that is the one true `@carsonarkova/sdk` (class `Arkova`),
 wired into `.github/workflows/publish-sdk.yml` and
 `scripts/publish-packages.sh`. A stale duplicate previously lived here at
 `sdks/typescript/` (class `ArkovaClient`) claiming the same npm name and
