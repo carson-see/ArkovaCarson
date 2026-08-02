@@ -145,6 +145,29 @@ const TYPE_SPECIFIC_CONTROLS: Partial<Record<CredentialType, string[]>> = {
 };
 
 /**
+ * Every control ID this module can attach to a credential — the union of the
+ * universal set and every type-specific set.
+ *
+ * This is the CANONICAL catalogue of controls Arkova claims, and the thing the
+ * worker mirror (`services/worker/src/utils/complianceMapping.ts`) must match.
+ * `scripts/ci/check-compliance-mapping-mirror.ts` compares the two and fails CI
+ * when they diverge — so removing a retired control from this file is now
+ * sufficient to stop it being served, instead of relying on someone remembering
+ * the second file (which is exactly how the EU-US DPF claim survived from
+ * 2026-07-10 to 2026-08-01).
+ *
+ * Deliberately derived from the emitted arrays, NOT from `COMPLIANCE_CONTROLS`:
+ * that dictionary is the definitions registry and legitimately carries
+ * jurisdiction controls (Kenya DPA, APP, POPIA, NDPA) no credential type maps
+ * to yet. Comparing against it would let an incomplete retirement — ID pulled
+ * from the emitted arrays but left in the registry — pass unnoticed.
+ */
+export const EMITTABLE_CONTROL_IDS: ReadonlySet<string> = new Set([
+  ...UNIVERSAL_CONTROLS,
+  ...Object.values(TYPE_SPECIFIC_CONTROLS).flat(),
+]);
+
+/**
  * Get all applicable compliance controls for a credential.
  *
  * @param credentialType - The credential's type
