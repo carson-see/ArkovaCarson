@@ -104,6 +104,14 @@
     "revocation_reason"
   ],
   "sql_academic_controlled_fields": ["filename"],
+  "sql_non_academic_fallback_label": "Secured Document",
+  "$fallback_label_note": [
+    "The label a NON-academic record falls back to when its filename is dropped",
+    "by the value gate. Pinned here because it is a USER-VISIBLE string that",
+    "lives in SQL, so `npm run lint:copy` cannot see it and nothing else asserts",
+    "it. Check any replacement against the CLAUDE.md §1.3 banned-terminology list",
+    "by hand."
+  ],
   "$suppressed_vs_controlled": [
     "`filename` is the record's DISPLAY TITLE on the verify page and is embedded",
     "in its schema.org JSON-LD, so it cannot be NULLed without breaking consumers",
@@ -117,6 +125,16 @@
     "card would read 'Title: Academic Degree' and 'Credential Title: Academic",
     "Degree' beneath a type banner that already says 'Academic Degree'. Omitting",
     "preserves the existing render shape and states the label exactly once."
+  ],
+
+  "ungated_keys": [],
+  "$ungated_keys_note": [
+    "Keys the projection emits from anchor-controlled text WITHOUT a value gate.",
+    "Empty is the goal. The contract test DERIVES the actual set from the latest",
+    "migration that redefines get_public_anchor and fails if it differs from this",
+    "list — so per-field wrapping, which is opt-in and therefore ungated by",
+    "default, becomes a reviewed decision instead of an accident. Adding a key",
+    "here requires stating why it is safe."
   ],
 
   "max_public_url_chars": 2048,

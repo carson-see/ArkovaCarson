@@ -6560,10 +6560,6 @@ export type Database = {
       }
     }
     Functions: {
-      academic_record_public_label: {
-        Args: { p_credential_type: string }
-        Returns: string
-      }
       activate_user: {
         Args: { p_password: string; p_token: string }
         Returns: Json
@@ -6743,10 +6739,6 @@ export type Database = {
       complete_claimed_rule_events: {
         Args: { p_event_ids: string[] }
         Returns: number
-      }
-      contains_high_confidence_pii: {
-        Args: { p_text: string }
-        Returns: boolean
       }
       count_public_records_by_source: {
         Args: never
@@ -7137,10 +7129,6 @@ export type Database = {
         }
         Returns: string
       }
-      is_academic_record_credential_type: {
-        Args: { p_credential_type: string }
-        Returns: boolean
-      }
       is_current_user_platform_admin: { Args: never; Returns: boolean }
       is_org_admin: { Args: never; Returns: boolean }
       is_org_admin_of: { Args: { target_org_id: string }; Returns: boolean }
@@ -7199,11 +7187,6 @@ export type Database = {
         }
         Returns: Json
       }
-      public_free_text_or_null: {
-        Args: { p_max_length?: number; p_text: string }
-        Returns: string
-      }
-      public_url_or_null: { Args: { p_url: string }; Returns: string }
       record_msgraph_nonce_and_enqueue: {
         Args: {
           p_change_type: string

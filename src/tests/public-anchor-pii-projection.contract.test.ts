@@ -46,6 +46,10 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+// Shared with check-views-security-invoker.ts. Its version also strips `/* */`
+// BLOCK comments, which a local copy did not — and a commented-out prior
+// definition pasted into a future migration looks exactly like a block comment.
+import { stripSqlComments } from '../../scripts/ci/check-views-security-invoker';
 
 const REPO = process.cwd();
 const CONTRACT_PATH = path.join(REPO, 'scripts/ci/public-pii-projection-contract.json');
@@ -62,54 +66,15 @@ interface Contract {
   sql_academic_controlled_labels: Record<string, string>;
   sql_academic_suppressed_fields: string[];
   sql_academic_controlled_fields: string[];
+  sql_non_academic_fallback_label: string;
   high_confidence_detector_families: string[];
   sql_implements_learner_name_heuristics: boolean;
   max_scan_chars: number;
   max_public_url_chars: number;
+  ungated_keys: string[];
 }
 
 const contract: Contract = JSON.parse(fs.readFileSync(CONTRACT_PATH, 'utf8'));
-
-/**
- * Strip `--` comments, honouring single-quoted string literals (which in this
- * migration contain regex bracket classes and URLs) and doubled `''` escapes.
- * Comment text must never satisfy a gate assertion — see the header.
- */
-function stripSqlComments(sql: string): string {
-  let out = '';
-  let inString = false;
-  let i = 0;
-  while (i < sql.length) {
-    const c = sql[i];
-    const next = sql[i + 1];
-    if (inString) {
-      out += c;
-      if (c === "'") {
-        if (next === "'") {
-          out += next;
-          i += 2;
-          continue;
-        }
-        inString = false;
-      }
-      i += 1;
-      continue;
-    }
-    if (c === "'") {
-      inString = true;
-      out += c;
-      i += 1;
-      continue;
-    }
-    if (c === '-' && next === '-') {
-      while (i < sql.length && sql[i] !== '\n') i += 1;
-      continue; // the newline itself is emitted on the next pass
-    }
-    out += c;
-    i += 1;
-  }
-  return out;
-}
 
 /**
  * Matches a redefinition of `get_public_anchor` itself, NOT its
@@ -197,7 +162,7 @@ describe('public projection PII gate — the definition production runs', () => 
       const key = field.replace(/^metadata\./, '');
       // `'<key>', CASE WHEN is_academic_record_credential_type(...) THEN NULL`
       const pattern = new RegExp(
-        String.raw`'${key}',\s*CASE\s+WHEN\s+public\.is_academic_record_credential_type\([^)]*\)\s*THEN\s+NULL`,
+        String.raw`'${key}',\s*CASE\s+WHEN\s+private\.is_academic_record_credential_type\([^)]*\)\s*THEN\s+NULL`,
         'i',
       );
       expect(m.sql, why(m, `does not force ${field} to NULL for academic records.`)).toMatch(pattern);
@@ -206,15 +171,14 @@ describe('public projection PII gate — the definition production runs', () => 
 
   it('replaces every contract-listed academic display field with a controlled label', () => {
     const m = latestRedefiner();
-    for (const field of contract.sql_academic_controlled_fields) {
-      const key = field.replace(/^metadata\./, '');
+    for (const key of contract.sql_academic_controlled_fields) {
       const pattern = new RegExp(
-        String.raw`'${key}',\s*CASE\s+WHEN\s+public\.is_academic_record_credential_type\([^)]*\)\s*THEN\s+public\.academic_record_public_label\(`,
+        String.raw`'${key}',\s*CASE\s+WHEN\s+private\.is_academic_record_credential_type\([^)]*\)\s*THEN\s+private\.academic_record_public_label\(`,
         'i',
       );
       expect(
         m.sql,
-        why(m, `does not give ${field} a controlled label for academic records.`),
+        why(m, `does not give ${key} a controlled label for academic records.`),
       ).toMatch(pattern);
     }
   });
@@ -236,7 +200,43 @@ describe('public projection PII gate — the definition production runs', () => 
     expect(
       m.sql,
       why(m, 'emits revocation_reason without the value gate on the non-academic branch.'),
-    ).toMatch(/'revocation_reason',[\s\S]{0,300}?public\.public_free_text_or_null\(/);
+    ).toMatch(/'revocation_reason',[\s\S]{0,300}?private\.public_free_text_or_null\(/);
+  });
+
+  it('gates EVERY key sourced from anchor text — derived from the SQL, not a hand-list', () => {
+    // The failure mode this closes: per-field wrapping is OPT-IN, so a key added
+    // by a future migration is emitted ungated by default. Rather than trusting
+    // a hand-maintained list (which is how the gap arises in the first place),
+    // parse every `'key', <expr>` pair out of the latest redefiner and require
+    // each expression that reads anchor-controlled text to either call a cleaner
+    // or be named in `contract.ungated_keys` with a stated reason.
+    const m = latestRedefiner();
+    const body = m.sql.slice(m.sql.search(REDEFINES_GET_PUBLIC_ANCHOR));
+
+    const CLEANERS = /private\.(public_free_text_or_null|public_url_or_null|public_jsonb_text_or_null|academic_record_public_label)\(/;
+    // Reads text the issuer or the extraction pipeline controls.
+    const ANCHOR_TEXT = /a\.(metadata|cpe_metadata|cle_metadata)\s*->>?\s*'|a\.(filename|revocation_reason)\b/;
+
+    const ungated: string[] = [];
+    // `'key', <expr>` up to the next `'key',` at the same or shallower nesting.
+    for (const match of body.matchAll(/'([a-z0-9_]+)',([\s\S]*?)(?=\n\s*'[a-z0-9_]+',|\n\s*\)\))/g)) {
+      const [, key, expr] = match;
+      if (!ANCHOR_TEXT.test(expr)) continue; // not anchor-controlled text
+      if (CLEANERS.test(expr)) continue; // gated
+      ungated.push(key);
+    }
+
+    expect(
+      [...new Set(ungated)].sort(),
+      why(
+        m,
+        `emits these keys from anchor-controlled text WITHOUT a value gate: ` +
+          `${[...new Set(ungated)].sort().join(', ')}. Route each through a cleaner, or add it to ` +
+          `"ungated_keys" in scripts/ci/public-pii-projection-contract.json with the reason it is ` +
+          `safe. Per-field wrapping is opt-in, so a new key is ungated BY DEFAULT — this assertion ` +
+          `is the only thing that makes that a decision instead of an accident.`,
+      ),
+    ).toEqual([...contract.ungated_keys].sort());
   });
 
   it('never emits a raw filename, and never emits a NULL one', () => {
@@ -274,9 +274,9 @@ describe('public projection PII gate — the definition production runs', () => 
     const m = latestRedefiner();
     expect(
       m.sql,
-      why(m, 'tests the RAW jurisdiction for presence while emitting the cleaned one.'),
+      why(m, 'can emit a null top-level jurisdiction — it must be inside a jsonb_strip_nulls.'),
     ).toMatch(
-      /WHEN\s+public\.public_free_text_or_null\(a\.metadata->>'jurisdiction'\)\s+IS NOT NULL/,
+      /jsonb_strip_nulls\(jsonb_build_object\(\s*'jurisdiction',\s*private\.public_free_text_or_null\(/,
     );
   });
 
@@ -315,7 +315,7 @@ describe('public projection PII gate — detectors and vocabulary (migration 038
 
   it('declares exactly the contract academic-record type set', () => {
     const predicate = owner.match(
-      /CREATE OR REPLACE FUNCTION public\.is_academic_record_credential_type[\s\S]*?\$\$;/,
+      /CREATE OR REPLACE FUNCTION private\.is_academic_record_credential_type[\s\S]*?\$\$;/,
     )?.[0];
     expect(predicate, 'is_academic_record_credential_type must be defined').toBeTruthy();
     const listed = [...(predicate as string).matchAll(/'([A-Z_]{3,})'/g)].map((m) => m[1]).sort();
@@ -327,7 +327,7 @@ describe('public projection PII gate — detectors and vocabulary (migration 038
 
   it('binds each academic type to its label in ONE expression', () => {
     const labelFn = owner.match(
-      /CREATE OR REPLACE FUNCTION public\.academic_record_public_label[\s\S]*?\$\$;/,
+      /CREATE OR REPLACE FUNCTION private\.academic_record_public_label[\s\S]*?\$\$;/,
     )?.[0];
     expect(labelFn, 'academic_record_public_label must be defined').toBeTruthy();
     for (const [type, label] of Object.entries(contract.sql_academic_controlled_labels)) {
@@ -344,7 +344,7 @@ describe('public projection PII gate — detectors and vocabulary (migration 038
 
   it('implements every high-confidence detector family, case-insensitively where required', () => {
     const detector = owner.match(
-      /CREATE OR REPLACE FUNCTION public\.contains_high_confidence_pii[\s\S]*?\n\$\$;/,
+      /CREATE OR REPLACE FUNCTION private\.contains_high_confidence_pii[\s\S]*?\n\$\$;/,
     )?.[0];
     expect(detector, 'contains_high_confidence_pii must be defined').toBeTruthy();
 
@@ -383,6 +383,13 @@ describe('public projection PII gate — detectors and vocabulary (migration 038
     expect(owner).not.toMatch(/\(\?:for\|learner\|student\|recipient\|issued to/);
   });
 
+  it('pins the non-academic fallback label — a user-visible string lint:copy cannot see', () => {
+    // Reached when the value gate drops a non-academic filename. It is emitted
+    // as the record's display title and its schema.org `name`, but it lives in
+    // SQL, so no copy linter covers it and nothing else asserts it.
+    expect(owner).toContain(`'${contract.sql_non_academic_fallback_label}'`);
+  });
+
   it('bounds text scans and URL length at the contract caps', () => {
     expect(owner).toContain(`left(p_text, ${contract.max_scan_chars})`);
     expect(owner).toMatch(
@@ -391,7 +398,7 @@ describe('public projection PII gate — detectors and vocabulary (migration 038
     // A URL is dropped, never truncated — truncation yields a valid-looking
     // wrong link.
     const urlFn = owner.match(
-      /CREATE OR REPLACE FUNCTION public\.public_url_or_null[\s\S]*?\n\$\$;/,
+      /CREATE OR REPLACE FUNCTION private\.public_url_or_null[\s\S]*?\n\$\$;/,
     )?.[0];
     expect(urlFn).toBeTruthy();
     expect(urlFn).not.toMatch(/left\(v_url/);
@@ -404,10 +411,11 @@ describe('public projection PII gate — detectors and vocabulary (migration 038
       'contains_high_confidence_pii',
       'public_free_text_or_null',
       'public_url_or_null',
+      'public_jsonb_text_or_null',
     ]) {
       expect(owner, `${fn} must be revoked from anon/authenticated`).toMatch(
         new RegExp(
-          String.raw`REVOKE ALL ON FUNCTION public\.${fn}\([^)]*\) FROM PUBLIC, anon, authenticated`,
+          String.raw`REVOKE ALL ON FUNCTION private\.${fn}\([^)]*\) FROM PUBLIC, anon, authenticated`,
         ),
       );
     }

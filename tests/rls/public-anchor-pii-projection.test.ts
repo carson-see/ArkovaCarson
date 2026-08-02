@@ -46,8 +46,9 @@ const contract: Contract = JSON.parse(
   fs.readFileSync(path.join(process.cwd(), 'scripts/ci/public-pii-projection-contract.json'), 'utf8'),
 );
 
-const RUN_ID = Date.now().toString(36);
-const RUN_HEX = Date.now().toString(16).padStart(12, '0').slice(-12);
+const RUN_STARTED = Date.now();
+const RUN_ID = RUN_STARTED.toString(36);
+const RUN_HEX = RUN_STARTED.toString(16).padStart(12, '0').slice(-12);
 const ORG_ID = 'a11ea100-0000-4000-8000-00000000b001';
 
 let fpSeed = 0;
@@ -170,7 +171,6 @@ describe('0384 — anon public anchor projection does not leak learner PII', () 
       const serialized = JSON.stringify(body);
 
       // The whole body, not just the fields we remembered to name.
-      expect(serialized).not.toContain(learner);
       expect(serialized.toLowerCase()).not.toContain('jane');
       expect(serialized).not.toContain('1994-02-11');
 

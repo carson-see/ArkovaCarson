@@ -98,10 +98,10 @@ BEGIN;
 --   nouns). Do not reintroduce one here as a gate.
 --
 --   Value layer (EVERY credential type). Every emitted string passes through
---   public.public_free_text_or_null(), which drops the value when it carries
+--   private.public_free_text_or_null(), which drops the value when it carries
 --   FORMAT- or KEYWORD-anchored PII (e-mail, US phone, international phone, SSN,
 --   keyword-anchored date of birth, keyword-anchored student/learner/enrolment
---   ID). Emitted URLs use public.public_url_or_null() instead, which strips the
+--   ID). Emitted URLs use private.public_url_or_null() instead, which strips the
 --   query string and fragment and DROPS rather than truncates.
 --
 --   No learner-name heuristic runs on this path. That is a deliberate,
@@ -125,7 +125,9 @@ BEGIN;
 -- ── ANTI-DRIFT ───────────────────────────────────────────────────────────────
 --
 --   The whole reason this gap existed is that two implementations of one rule
---   drifted. Three mechanisms, all enforced in the default test suite:
+--   drifted. FOUR mechanisms. 1-3 run in the DEFAULT test suite (no database);
+--   4 runs under vitest.config.rls.ts against a live database, which CI provides
+--   via `supabase db reset` + `npm run test:rls` (.github/workflows/ci.yml):
 --
 --   1. scripts/ci/public-pii-projection-contract.json is the SHARED CONTRACT —
 --      the academic-record type set, the controlled labels, the suppressed
@@ -166,17 +168,41 @@ BEGIN;
 --   (PR #1618). That file is the byte-for-byte source of the body this migration
 --   was diffed against, so re-applying it reverts every change made here in one
 --   statement. Then:
---       DROP FUNCTION IF EXISTS public.public_url_or_null(text);
---       DROP FUNCTION IF EXISTS public.public_free_text_or_null(text, integer);
---       DROP FUNCTION IF EXISTS public.contains_high_confidence_pii(text);
---       DROP FUNCTION IF EXISTS public.academic_record_public_label(text);
---       DROP FUNCTION IF EXISTS public.is_academic_record_credential_type(text);
+--       DROP FUNCTION IF EXISTS private.public_url_or_null(text);
+--       DROP FUNCTION IF EXISTS private.public_free_text_or_null(text, integer);
+--       DROP FUNCTION IF EXISTS private.contains_high_confidence_pii(text);
+--       DROP FUNCTION IF EXISTS private.academic_record_public_label(text);
+--       DROP FUNCTION IF EXISTS private.is_academic_record_credential_type(text);
 --       NOTIFY pgrst, 'reload schema';
 --   If #1618 has not landed in the target environment, the equivalent body is
 --   recoverable from prod history via pg_get_functiondef before this apply.
 --   Reverting restores the previous (leaking) behaviour. No data migration to
 --   reverse: this migration changes no rows and no schema.
 -- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- All helpers live in the `private` schema, NOT `public`.
+--
+-- `private` already exists in this database (created by 0299 for the API-key
+-- HMAC secret) and is deliberately absent from `supabase/config.toml`'s
+-- `schemas = ["public", "graphql_public"]`, so PostgREST never introspects it:
+-- these functions are structurally unreachable over the API rather than
+-- reachable-but-revoked, they never enter `src/types/database.types.ts` (and so
+-- never ship to the browser), and there is no per-function grant to forget.
+--
+-- That last point is not theoretical. `0378_sec_recon_revoke_deferred_security_definer_grants.sql`
+-- exists solely to revoke anon/authenticated from 50 over-granted `public`
+-- functions after an unauthenticated PostgREST call reached a worker-only RPC.
+-- Internal machinery does not belong in `public`.
+--
+-- The schema-level REVOKE/GRANT from 0299 is re-asserted here so this migration
+-- is self-contained if it is ever replayed against a database that lacks it.
+-- `get_public_anchor` stays SECURITY DEFINER owned by `postgres`, which holds
+-- USAGE on `private`, so the schema-qualified calls resolve for anon callers.
+-- -----------------------------------------------------------------------------
+CREATE SCHEMA IF NOT EXISTS private;
+REVOKE ALL ON SCHEMA private FROM PUBLIC, anon, authenticated;
+GRANT USAGE ON SCHEMA private TO service_role;
 
 -- -----------------------------------------------------------------------------
 -- Academic-record credential types.
@@ -188,11 +214,11 @@ BEGIN;
 -- credential titles with generic ones — widen only with a documented privacy
 -- reason, in the shared contract, in the same change.
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.is_academic_record_credential_type(p_credential_type text)
+CREATE OR REPLACE FUNCTION private.is_academic_record_credential_type(p_credential_type text)
   RETURNS boolean
   LANGUAGE sql
   IMMUTABLE
-  SET search_path = public
+  SET search_path = private, public
 AS $$
   SELECT upper(COALESCE(p_credential_type, '')) IN ('DEGREE', 'CERTIFICATE', 'TRANSCRIPT');
 $$;
@@ -214,11 +240,11 @@ $$;
 -- contains a banned term. If this set is ever widened, check the new label
 -- against CLAUDE.md §1.3 BY HAND — no linter will do it for you.
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.academic_record_public_label(p_credential_type text)
+CREATE OR REPLACE FUNCTION private.academic_record_public_label(p_credential_type text)
   RETURNS text
   LANGUAGE sql
   IMMUTABLE
-  SET search_path = public
+  SET search_path = private, public
 AS $$
   SELECT CASE upper(COALESCE(p_credential_type, ''))
     WHEN 'TRANSCRIPT'  THEN 'Academic Transcript'
@@ -242,11 +268,11 @@ $$;
 -- Input is capped at 4000 characters (MAX_SCAN_CHARS) because this runs on raw
 -- database text behind a public, unauthenticated endpoint.
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.contains_high_confidence_pii(p_text text)
+CREATE OR REPLACE FUNCTION private.contains_high_confidence_pii(p_text text)
   RETURNS boolean
   LANGUAGE plpgsql
   IMMUTABLE
-  SET search_path = public
+  SET search_path = private, public
 AS $$
 DECLARE
   v_text  text;
@@ -364,11 +390,11 @@ $$;
 -- scripts/ci/public-pii-projection-contract.json. Do not "restore parity" by
 -- reintroducing these patterns here without re-measuring both halves.
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.public_free_text_or_null(p_text text, p_max_length integer DEFAULT 240)
+CREATE OR REPLACE FUNCTION private.public_free_text_or_null(p_text text, p_max_length integer DEFAULT 240)
   RETURNS text
   LANGUAGE plpgsql
   IMMUTABLE
-  SET search_path = public
+  SET search_path = private, public
 AS $$
 DECLARE
   v_text text;
@@ -395,11 +421,10 @@ BEGIN
     RETURN NULL;
   END IF;
 
-  IF length(v_text) > p_max_length THEN
-    v_text := left(v_text, p_max_length);
-  END IF;
+  -- left() already returns the string unchanged when it is shorter.
+  v_text := left(v_text, p_max_length);
 
-  IF public.contains_high_confidence_pii(v_text) THEN
+  IF private.contains_high_confidence_pii(v_text) THEN
     RETURN NULL;
   END IF;
 
@@ -420,11 +445,11 @@ $$;
 -- an otherwise innocuous field (`?student=jane%40example.edu`), and a public
 -- proof, source, or registry link never needs one.
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.public_url_or_null(p_url text)
+CREATE OR REPLACE FUNCTION private.public_url_or_null(p_url text)
   RETURNS text
   LANGUAGE plpgsql
   IMMUTABLE
-  SET search_path = public
+  SET search_path = private, public
 AS $$
 DECLARE
   v_url text;
@@ -449,7 +474,7 @@ BEGIN
     RETURN NULL;
   END IF;
 
-  IF public.contains_high_confidence_pii(v_url) THEN
+  IF private.contains_high_confidence_pii(v_url) THEN
     RETURN NULL;
   END IF;
 
@@ -457,21 +482,53 @@ BEGIN
 END;
 $$;
 
+-- -----------------------------------------------------------------------------
+-- private.public_jsonb_text_or_null — the value gate for a jsonb sub-object key,
+-- WITHOUT changing the emitted JSON type.
+--
+-- The cpe_metadata / cle_metadata sub-objects are key-name ALLOW-LISTS with no
+-- value gate — the same defect class this migration fixes one layer up — and
+-- `src/hooks/useOrgCpeMemberSummary.ts` states in-repo that the cpe blob carries
+-- member PII (participant name, licence number). Gating only `course_title`
+-- while `approved_provider_name` five lines above stayed raw would have been an
+-- arbitrary line.
+--
+-- Applied to EVERY key in both sub-objects, deliberately. A numeric, boolean, or
+-- object value is passed through untouched (only `jsonb_typeof = 'string'` is
+-- cleaned), so this is a no-op on the structured keys and cannot become a §1.8
+-- type change — while a NEW string key added to either object is gated by
+-- default instead of opt-in.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION private.public_jsonb_text_or_null(p_value jsonb)
+  RETURNS jsonb
+  LANGUAGE sql
+  IMMUTABLE
+  SET search_path = private, public
+AS $$
+  SELECT CASE
+    WHEN jsonb_typeof(p_value) = 'string'
+      THEN to_jsonb(private.public_free_text_or_null(p_value #>> '{}'))
+    ELSE p_value
+  END;
+$$;
+
 -- Helpers are internal machinery for the projection, not public RPCs. They are
 -- not SECURITY DEFINER, so get_public_anchor executes them as its own definer
 -- and needs no grant here. service_role keeps EXECUTE so the worker and the
 -- live parity suite can exercise the detectors directly (0377/0378 policy).
-REVOKE ALL ON FUNCTION public.is_academic_record_credential_type(text) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.academic_record_public_label(text) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.contains_high_confidence_pii(text) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.public_free_text_or_null(text, integer) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.public_url_or_null(text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.is_academic_record_credential_type(text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.academic_record_public_label(text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.contains_high_confidence_pii(text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.public_free_text_or_null(text, integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.public_url_or_null(text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.public_jsonb_text_or_null(jsonb) FROM PUBLIC, anon, authenticated;
 
-GRANT EXECUTE ON FUNCTION public.is_academic_record_credential_type(text) TO service_role;
-GRANT EXECUTE ON FUNCTION public.academic_record_public_label(text) TO service_role;
-GRANT EXECUTE ON FUNCTION public.contains_high_confidence_pii(text) TO service_role;
-GRANT EXECUTE ON FUNCTION public.public_free_text_or_null(text, integer) TO service_role;
-GRANT EXECUTE ON FUNCTION public.public_url_or_null(text) TO service_role;
+GRANT EXECUTE ON FUNCTION private.is_academic_record_credential_type(text) TO service_role;
+GRANT EXECUTE ON FUNCTION private.academic_record_public_label(text) TO service_role;
+GRANT EXECUTE ON FUNCTION private.contains_high_confidence_pii(text) TO service_role;
+GRANT EXECUTE ON FUNCTION private.public_free_text_or_null(text, integer) TO service_role;
+GRANT EXECUTE ON FUNCTION private.public_url_or_null(text) TO service_role;
+GRANT EXECUTE ON FUNCTION private.public_jsonb_text_or_null(jsonb) TO service_role;
 
 -- =============================================================================
 -- get_public_anchor — LIVE PROD (0383) BODY, with the free-text projection
@@ -515,7 +572,7 @@ BEGIN
       -- 'Unknown Issuer', which asserts nothing.
       'issuer_name', CASE
         WHEN NULLIF(btrim(COALESCE(a.metadata->>'issuer', '')), '') IS NOT NULL
-          THEN COALESCE(public.public_free_text_or_null(a.metadata->>'issuer'), 'Unknown Issuer')
+          THEN COALESCE(private.public_free_text_or_null(a.metadata->>'issuer'), 'Unknown Issuer')
         ELSE COALESCE(o.display_name, 'Unknown Issuer')
       END,
       'credential_type', COALESCE(a.credential_type::text, 'OTHER'),
@@ -536,11 +593,11 @@ BEGIN
       -- the cleaned filename, falling back to a controlled label so the value is
       -- never NULL and no consumer that assumes a display string breaks.
       'filename', CASE
-        WHEN public.is_academic_record_credential_type(a.credential_type::text)
-          THEN public.academic_record_public_label(a.credential_type::text)
+        WHEN private.is_academic_record_credential_type(a.credential_type::text)
+          THEN private.academic_record_public_label(a.credential_type::text)
         ELSE COALESCE(
-          public.public_free_text_or_null(a.filename),
-          public.academic_record_public_label(NULL)
+          private.public_free_text_or_null(a.filename),
+          private.academic_record_public_label(NULL)
         )
       END,
       'file_size', a.file_size,
@@ -560,46 +617,46 @@ BEGIN
         -- already reads "Academic Degree". Omitting keeps the existing render
         -- shape and states the label exactly once.
         'title', CASE
-          WHEN public.is_academic_record_credential_type(a.credential_type::text) THEN NULL
-          ELSE public.public_free_text_or_null(
+          WHEN private.is_academic_record_credential_type(a.credential_type::text) THEN NULL
+          ELSE private.public_free_text_or_null(
             (sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb))) ->> 'title')
         END,
         'credential_title', CASE
-          WHEN public.is_academic_record_credential_type(a.credential_type::text) THEN NULL
-          ELSE public.public_free_text_or_null(
+          WHEN private.is_academic_record_credential_type(a.credential_type::text) THEN NULL
+          ELSE private.public_free_text_or_null(
             (sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb))) ->> 'credential_title')
         END,
         'description', CASE
-          WHEN public.is_academic_record_credential_type(a.credential_type::text) THEN NULL
-          ELSE public.public_free_text_or_null(
+          WHEN private.is_academic_record_credential_type(a.credential_type::text) THEN NULL
+          ELSE private.public_free_text_or_null(
             (sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb))) ->> 'description', 500)
         END,
         'category', CASE
-          WHEN public.is_academic_record_credential_type(a.credential_type::text) THEN NULL
-          ELSE public.public_free_text_or_null(
+          WHEN private.is_academic_record_credential_type(a.credential_type::text) THEN NULL
+          ELSE private.public_free_text_or_null(
             (sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb))) ->> 'category')
         END,
         -- 0384: proof_url drops query + fragment AND runs the value gate, via
         -- the URL-specific cleaner that omits rather than truncates.
-        'proof_url', public.public_url_or_null(
+        'proof_url', private.public_url_or_null(
           (sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb))) ->> 'proof_url'),
-        'issuer', public.public_free_text_or_null(
+        'issuer', private.public_free_text_or_null(
           (sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb))) ->> 'issuer'),
         -- 0384: the remaining allow-listed keys are structured (enums, hashes,
         -- versions, counts), so they take the BOUNDED gate — high-confidence
         -- detectors only. A name heuristic on a sha256 or a MIME type is pure
         -- noise, which is the same split the CTDL assembled-body scan makes.
-        'jurisdiction', public.public_free_text_or_null(a.metadata ->> 'jurisdiction'),
-        'evidence_schema_version', public.public_free_text_or_null(a.metadata ->> 'evidence_schema_version'),
-        'source_id', public.public_free_text_or_null(a.metadata ->> 'source_id'),
-        'source_payload_content_type', public.public_free_text_or_null(a.metadata ->> 'source_payload_content_type'),
-        'source_payload_byte_length', a.metadata ->> 'source_payload_byte_length',
-        'extraction_method', public.public_free_text_or_null(a.metadata ->> 'extraction_method'),
-        'extraction_manifest_hash', public.public_free_text_or_null(a.metadata ->> 'extraction_manifest_hash'),
-        'extraction_confidence', a.metadata ->> 'extraction_confidence',
-        'credential_id_hash', public.public_free_text_or_null(a.metadata ->> 'credential_id_hash'),
-        'registry_url', public.public_url_or_null(a.metadata ->> 'registry_url'),
-        'ce_envelope_sha256', public.public_free_text_or_null(a.metadata ->> 'ce_envelope_sha256')
+        'jurisdiction', private.public_free_text_or_null(a.metadata ->> 'jurisdiction'),
+        'evidence_schema_version', private.public_free_text_or_null(a.metadata ->> 'evidence_schema_version'),
+        'source_id', private.public_free_text_or_null(a.metadata ->> 'source_id'),
+        'source_payload_content_type', private.public_free_text_or_null(a.metadata ->> 'source_payload_content_type'),
+        'source_payload_byte_length', private.public_free_text_or_null(a.metadata ->> 'source_payload_byte_length'),
+        'extraction_method', private.public_free_text_or_null(a.metadata ->> 'extraction_method'),
+        'extraction_manifest_hash', private.public_free_text_or_null(a.metadata ->> 'extraction_manifest_hash'),
+        'extraction_confidence', private.public_free_text_or_null(a.metadata ->> 'extraction_confidence'),
+        'credential_id_hash', private.public_free_text_or_null(a.metadata ->> 'credential_id_hash'),
+        'registry_url', private.public_url_or_null(a.metadata ->> 'registry_url'),
+        'ce_envelope_sha256', private.public_free_text_or_null(a.metadata ->> 'ce_envelope_sha256')
       )),
       'created_at', a.created_at,
       'secured_at', CASE WHEN a.status NOT IN ('PENDING') THEN a.chain_timestamp END,
@@ -613,64 +670,53 @@ BEGIN
       -- ceterms:revocationReason through cleanPublicFreeText
       -- (BUG-2026-07-06-002).
       'revocation_reason', CASE
-        WHEN public.is_academic_record_credential_type(a.credential_type::text) THEN NULL
-        ELSE public.public_free_text_or_null(a.revocation_reason, 500)
+        WHEN private.is_academic_record_credential_type(a.credential_type::text) THEN NULL
+        ELSE private.public_free_text_or_null(a.revocation_reason, 500)
       END,
       'expires_at', a.expires_at,
-      'source_url', public.public_url_or_null(a.metadata->>'source_url'),
-      'source_provider', public.public_free_text_or_null(a.metadata->>'source_provider'),
-      'verification_level', public.public_free_text_or_null(a.metadata->>'verification_level'),
-      'evidence_package_hash', public.public_free_text_or_null(a.metadata->>'evidence_package_hash'),
-      'source_payload_hash', public.public_free_text_or_null(a.metadata->>'source_payload_hash'),
-      'fetched_at', COALESCE(a.metadata->>'fetched_at', a.metadata->>'source_fetched_at'),
+      'source_url', private.public_url_or_null(a.metadata->>'source_url'),
+      'source_provider', private.public_free_text_or_null(a.metadata->>'source_provider'),
+      'verification_level', private.public_free_text_or_null(a.metadata->>'verification_level'),
+      'evidence_package_hash', private.public_free_text_or_null(a.metadata->>'evidence_package_hash'),
+      'source_payload_hash', private.public_free_text_or_null(a.metadata->>'source_payload_hash'),
+      'fetched_at', private.public_free_text_or_null(
+        COALESCE(a.metadata->>'fetched_at', a.metadata->>'source_fetched_at')),
       'cpe_metadata', CASE
         WHEN a.cpe_metadata IS NOT NULL
         THEN jsonb_strip_nulls(jsonb_build_object(
-          'credit_hours', a.cpe_metadata -> 'credit_hours',
-          'field_of_study', a.cpe_metadata -> 'field_of_study',
-          'delivery_method', a.cpe_metadata -> 'delivery_method',
-          'nasba_status', a.cpe_metadata -> 'nasba_status',
-          'nasba_lookup_date', a.cpe_metadata -> 'nasba_lookup_date',
-          'requires_manual_review', a.cpe_metadata -> 'requires_manual_review'
+          'credit_hours', private.public_jsonb_text_or_null(a.cpe_metadata -> 'credit_hours'),
+          'field_of_study', private.public_jsonb_text_or_null(a.cpe_metadata -> 'field_of_study'),
+          'delivery_method', private.public_jsonb_text_or_null(a.cpe_metadata -> 'delivery_method'),
+          'nasba_status', private.public_jsonb_text_or_null(a.cpe_metadata -> 'nasba_status'),
+          'nasba_lookup_date', private.public_jsonb_text_or_null(a.cpe_metadata -> 'nasba_lookup_date'),
+          'requires_manual_review', private.public_jsonb_text_or_null(a.cpe_metadata -> 'requires_manual_review')
         ))
         ELSE NULL
       END,
       'cle_metadata', CASE
         WHEN a.cle_metadata IS NOT NULL
         THEN jsonb_strip_nulls(jsonb_build_object(
-          'credit_hours', a.cle_metadata -> 'credit_hours',
-          'ethics_hours', a.cle_metadata -> 'ethics_hours',
-          'jurisdiction', a.cle_metadata -> 'jurisdiction',
-          'approved_provider_name', a.cle_metadata -> 'approved_provider_name',
-          'provider_approval_status', a.cle_metadata -> 'provider_approval_status',
-          'provider_lookup_date', a.cle_metadata -> 'provider_lookup_date',
-          'delivery_format', a.cle_metadata -> 'delivery_format',
-          -- Gated, but WITHOUT changing the emitted JSON type. Switching `->` to
-          -- `->>` wholesale would coerce a numeric or object course_title into a
-          -- JSON string, which on a frozen schema (§1.8) is a type change, not a
-          -- value narrowing. Only a genuine JSON string is cleaned; any other
-          -- shape passes through exactly as it did before.
-          'course_title', CASE
-            WHEN jsonb_typeof(a.cle_metadata -> 'course_title') = 'string'
-              THEN to_jsonb(public.public_free_text_or_null(a.cle_metadata ->> 'course_title'))
-            ELSE a.cle_metadata -> 'course_title'
-          END,
-          'requires_manual_review', a.cle_metadata -> 'requires_manual_review'
+          'credit_hours', private.public_jsonb_text_or_null(a.cle_metadata -> 'credit_hours'),
+          'ethics_hours', private.public_jsonb_text_or_null(a.cle_metadata -> 'ethics_hours'),
+          'jurisdiction', private.public_jsonb_text_or_null(a.cle_metadata -> 'jurisdiction'),
+          'approved_provider_name', private.public_jsonb_text_or_null(a.cle_metadata -> 'approved_provider_name'),
+          'provider_approval_status', private.public_jsonb_text_or_null(a.cle_metadata -> 'provider_approval_status'),
+          'provider_lookup_date', private.public_jsonb_text_or_null(a.cle_metadata -> 'provider_lookup_date'),
+          'delivery_format', private.public_jsonb_text_or_null(a.cle_metadata -> 'delivery_format'),
+          'course_title', private.public_jsonb_text_or_null(a.cle_metadata -> 'course_title'),
+          'requires_manual_review', private.public_jsonb_text_or_null(a.cle_metadata -> 'requires_manual_review')
         ))
         ELSE NULL
       END
     )
-    -- 0384: the top-level `jurisdiction` key is NOT inside jsonb_strip_nulls, so
-    -- the presence test must run on the CLEANED value. Testing the raw value and
-    -- emitting the cleaned one would publish `"jurisdiction": null` whenever the
-    -- gate dropped it, which CLAUDE.md §6 explicitly forbids on this frozen
-    -- schema ("omit when null").
-    || CASE
-         WHEN public.public_free_text_or_null(a.metadata->>'jurisdiction') IS NOT NULL
-         THEN jsonb_build_object(
-                'jurisdiction', public.public_free_text_or_null(a.metadata->>'jurisdiction'))
-         ELSE '{}'::jsonb
-       END
+    -- 0384: the top-level `jurisdiction` key is NOT inside the projection's own
+    -- jsonb_strip_nulls, so it gets its own. That is structural rather than a
+    -- hand-written presence test: jsonb_strip_nulls drops the key when the gate
+    -- returns NULL, and `x || '{}'::jsonb = x`, so `"jurisdiction": null` can
+    -- never be published (CLAUDE.md §6, "omit when null" on this frozen schema).
+    -- It also evaluates the gate ONCE instead of once per branch.
+    || jsonb_strip_nulls(jsonb_build_object(
+         'jurisdiction', private.public_free_text_or_null(a.metadata->>'jurisdiction')))
   INTO
     v_recipient_raw,
     v_result
