@@ -282,6 +282,21 @@ ENABLE_CE_KEY_EXPIRY_ALERTS=true
 # → Slack #ops, until a real date is configured. Set from the CE trial/renewal
 # contract. (Known trial expiry ≈ 2026-09-09 per project memory — confirm exact.)
 CE_API_KEY_EXPIRES_AT=               # e.g. 2026-09-09T00:00:00Z — DO NOT leave blank in prod
+# NOTE (verified 2026-08-01): CE_API_KEY_EXPIRES_AT is NOT currently plumbed by
+# .github/workflows/deploy-worker.yml, so it is absent from the prod Cloud Run
+# env entirely and the alarm sits in its fail-LOUD SENTINEL state. Supplying the
+# value alone is not enough — the deploy workflow needs a slot for it too.
+
+# CE Registry drift reconciliation (read-only read-back).
+# Gates POST /jobs/ce-registry-drift-check. When false (DEFAULT) the pass no-ops
+# with `skipped:true` and makes NO outbound request. When true it re-reads each
+# anchored CE Registry CTID from the PUBLIC registry graph endpoint, re-hashes
+# the bytes, and records a finding for any MATCH deviation (DRIFTED / WITHDRAWN /
+# UNREACHABLE). Read-only — it publishes nothing to Credential Engine, and needs
+# no CE credential. Ships dark because it introduces outbound traffic to a
+# partner's public infrastructure; enable deliberately, then create the Cloud
+# Scheduler job separately.
+ENABLE_CE_REGISTRY_DRIFT_CHECK=false
 
 # ─── SCRUM-1162 — Middesk KYB (organization verification) ───
 # Per 2026-04-24 decision these routes are NOT behind a feature flag.
