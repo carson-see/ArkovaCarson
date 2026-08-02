@@ -204,10 +204,17 @@ export const partnerProvisioningMachine = defineMachine({
           Users: modelValues("u", { size: 3, symmetry: true }),
           PartnerAccounts: ids({ prefix: "p", size: 3 }),
         },
+        // Pinning the budget AT the 100_000 graph-equivalence cap did not make
+        // this tier runnable — the estimator puts it at 512_000, so `check
+        // --tier nightly` failed with "Estimated state count 512_000 exceeds
+        // budget 100_000" and this tier had never actually run. Graph
+        // equivalence cannot cover a machine this size at all, so disable it
+        // and budget against the real raw product (same resolution as
+        // drainRunAccounting). Domain sizes unchanged; the `pr` tier keeps
+        // equivalence on.
+        graphEquivalence: false,
         budgets: {
-          // 100_000 is the tool's cap for graph-equivalence tiers (review FIX 1:
-          // 200_000 failed `check` validation before TLC ran).
-          maxEstimatedStates: 100_000,
+          maxEstimatedStates: 600_000,
         },
         checks: { deadlock: false },
       },
