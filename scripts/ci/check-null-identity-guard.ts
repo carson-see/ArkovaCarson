@@ -50,9 +50,10 @@
  * comment in the SQL explaining why a NULL identity is safe at that call site.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { GIT_BIN } from './lib/ciContext.js';
 
 const OVERRIDE_LABEL = 'null-identity-guard-intentional';
 const REPO = process.env.NULL_IDENTITY_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
@@ -100,7 +101,10 @@ function migrationPrefix(file: string): number | null {
 }
 
 export function scan(): Finding[] {
-  const files = execSync('git ls-files supabase/migrations', { cwd: REPO, encoding: 'utf8' })
+  const files = execFileSync(GIT_BIN, ['ls-files', 'supabase/migrations'], {
+    cwd: REPO,
+    encoding: 'utf8',
+  })
     .split('\n')
     .filter((p) => p.endsWith('.sql'));
 
