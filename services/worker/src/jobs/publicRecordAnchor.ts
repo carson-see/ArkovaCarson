@@ -374,10 +374,37 @@ async function finalizePublicRecordAnchorBatch(
   return { recordsUpdated, anchorsUpdated };
 }
 
+/**
+ * Reads the pipeline's feature flag.
+ *
+ * Fails CLOSED on an unreadable flag — an unknown flag state must never start a
+ * run that signs and broadcasts. That part is unchanged.
+ *
+ * What IS new is that a failure says so. This used to be
+ * `const { data: enabled } = await client.rpc(...)`, discarding `error`;
+ * postgrest-js RESOLVES a failed RPC as `{ data: null, error }`, so a PostgREST
+ * 5xx, a statement timeout, or a schema-cache miss right after a function
+ * deploy all collapsed to `Boolean(null)` -> false and logged
+ * "ENABLE_PUBLIC_RECORD_ANCHORING is disabled — skipping". The outcome was
+ * right and the DIAGNOSIS was wrong: a broken flag read was indistinguishable
+ * from the flag being off, so a stalled pipeline reads as an intentional one.
+ *
+ * Log the driver code only, never `error.message` — a PostgREST message can
+ * echo the offending statement back verbatim.
+ */
 async function publicRecordAnchoringEnabled(client: SupabaseClient): Promise<boolean> {
-  const { data: enabled } = await client.rpc('get_flag', {
+  const { data: enabled, error } = await client.rpc('get_flag', {
     p_flag_key: 'ENABLE_PUBLIC_RECORD_ANCHORING',
   });
+
+  if (error) {
+    logger.error(
+      { pgCode: (error as { code?: string } | null)?.code ?? null },
+      'ENABLE_PUBLIC_RECORD_ANCHORING could not be read — skipping this run (failing closed). This is NOT the flag being disabled.',
+    );
+    return false;
+  }
+
   if (!enabled) logger.info('ENABLE_PUBLIC_RECORD_ANCHORING is disabled — skipping');
   return Boolean(enabled);
 }

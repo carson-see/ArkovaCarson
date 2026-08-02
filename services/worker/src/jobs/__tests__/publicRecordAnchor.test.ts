@@ -190,6 +190,47 @@ describe('publicRecordAnchor', () => {
     });
   });
 
+  /**
+   * SILENT SUCCESS. `publicRecordAnchoringEnabled` read `get_flag` as
+   * `const { data: enabled } = await client.rpc(...)`, discarding `error`.
+   * postgrest-js RESOLVES a failed RPC as `{ data: null, error }`, so a
+   * PostgREST 5xx, a statement timeout, or a schema-cache miss right after a
+   * function deploy all produced `data: null` -> `Boolean(null)` -> false, and
+   * the job logged "ENABLE_PUBLIC_RECORD_ANCHORING is disabled — skipping".
+   *
+   * The no-op is the correct FAIL-CLOSED outcome and is preserved. What was
+   * wrong is the DIAGNOSIS: a transport failure was indistinguishable from the
+   * flag genuinely being off, and the log actively asserted the wrong cause —
+   * which is how a stalled pipeline goes unexplained for days while its logs
+   * read as intentional.
+   *
+   * The guard is only moved by this PR (it now runs before the run lease is
+   * claimed), but this call site had no test for its failure mode at all.
+   */
+  it('an errored get_flag is reported as an ERROR, not as "flag disabled"', async () => {
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { code: '57014', message: 'canceling statement due to statement timeout' },
+    });
+
+    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
+    const result = await processPublicRecordAnchoring(makeMock().client);
+
+    // Fail-closed is unchanged: an unreadable flag must NOT start the pipeline.
+    expect(result.processed).toBe(0);
+    expect(result.anchorsCreated).toBe(0);
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+
+    // ...but it must say what actually happened.
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ pgCode: '57014' }),
+      expect.stringContaining('could not be read'),
+    );
+    expect(mockLogger.info).not.toHaveBeenCalledWith(
+      expect.stringContaining('is disabled'),
+    );
+  });
+
   it('skips batch when no unanchored records exist', async () => {
     mockRpc.mockResolvedValue({ data: true });
     const { client: mockSupa } = makeMock([]);
