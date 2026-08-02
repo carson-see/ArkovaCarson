@@ -105,20 +105,60 @@ describe('docusign-anchor-reconciliation — precedence decision (SCRUM-2904)', 
     // A chainable supabase-query stub whose terminal `.maybeSingle()` resolves
     // to the injected result. `.or()` capture lets us assert the cross-path
     // metadata filter.
+    // A chainable supabase-query stub. The query is now ARRAY-terminal
+    // (`.limit()` resolves) rather than `.maybeSingle()`-terminal — see the
+    // ORDER BY regression test below for why. `rows` accepts either a single
+    // row (wrapped) or an array.
     function makeDb(result: { data: unknown; error: unknown }) {
       const orSpy = vi.fn();
+      const calls: string[] = [];
+      const rows = result.data == null
+        ? []
+        : (Array.isArray(result.data) ? result.data : [result.data]);
       const q: Record<string, unknown> = {};
-      for (const m of ['select', 'eq', 'is', 'neq', 'order', 'limit']) {
-        q[m] = vi.fn(() => q);
+      for (const m of ['select', 'eq', 'is', 'neq', 'order']) {
+        q[m] = vi.fn(() => { calls.push(m); return q; });
       }
       q.or = vi.fn((arg: string) => {
+        calls.push('or');
         orSpy(arg);
         return q;
       });
-      q.maybeSingle = vi.fn(async () => result);
+      q.limit = vi.fn(async () => {
+        calls.push('limit');
+        return { data: result.error ? null : rows, error: result.error };
+      });
+      q.maybeSingle = vi.fn(async () => ({ data: null, error: null }));
       const from = vi.fn(() => q);
-      return { db: { from } as never, from, orSpy };
+      return { db: { from } as never, from, orSpy, calls, q };
     }
+
+    // Regression — PROD 2026-08-02, artifact 921347cc, org 40383eb2 (2.97M
+    // anchors). This lookup carried `ORDER BY created_at ASC LIMIT 1`, which made
+    // the planner walk `idx_anchors_active_created` and apply everything else as
+    // a Filter — betting on an early hit. On a NO-MATCH (the normal case for a
+    // new envelope) it walks the whole index and hits the statement timeout.
+    // EXPLAIN on prod: ORDER BY -> Index Scan Backward, total cost 2,221,197.
+    // Without ORDER BY -> BitmapOr across all three metadata indexes, cost 94.
+    // The JSONB indexes are never consulted while the ORDER BY is present, so
+    // adding more indexes cannot fix it — the ORDER BY has to go.
+    it('does not ORDER BY in SQL — that made the planner ignore every metadata index', async () => {
+      const { db, calls } = makeDb({ data: null, error: null });
+      await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: 'env-9' });
+      expect(calls).not.toContain('order');
+    });
+
+    it('still returns the OLDEST match deterministically, tie-broken in application code', async () => {
+      const { db } = makeDb({
+        data: [
+          { id: 'anch-new', public_id: 'pub-new', created_at: '2026-05-02T00:00:00.000Z' },
+          { id: 'anch-old', public_id: 'pub-old', created_at: '2026-05-01T00:00:00.000Z' },
+        ],
+        error: null,
+      });
+      const found = await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: 'env-9' });
+      expect(found).toEqual({ id: 'anch-old', publicId: 'pub-old' });
+    });
 
     it('returns the existing anchor when one exists for the org+envelope', async () => {
       const { db, from } = makeDb({ data: { id: 'anch-1', public_id: 'pub-1' }, error: null });

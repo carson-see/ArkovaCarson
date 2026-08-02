@@ -133,6 +133,14 @@ export const ENVELOPE_ID_METADATA_KEYS = [
   'external_ref',
 ] as const;
 
+/**
+ * Bound on the envelope-guard result set. One envelope should map to at most a
+ * couple of anchors (the duplicate this guard exists to catch); a handful of
+ * rows is ample, and the cap keeps the payload small now that the query returns
+ * a set rather than a single row.
+ */
+export const ENVELOPE_ANCHOR_LOOKUP_LIMIT = 50;
+
 /** A minimal existing-anchor reference returned by the envelope-level guard. */
 export interface ExistingEnvelopeAnchor {
   id: string;
@@ -183,27 +191,54 @@ export async function findExistingEnvelopeAnchor(args: {
     (key) => `metadata->>${key}.eq.${envelopeId}`,
   ).join(',');
 
+  // NO `ORDER BY` HERE. It looks harmless and it is the whole bug.
+  //
+  // With `.order('created_at').limit(1)` Postgres plans an Index Scan Backward
+  // over `idx_anchors_active_created` and applies the org + metadata predicates
+  // as a FILTER, betting the LIMIT 1 is satisfied within a few rows. On a
+  // NO-MATCH — the normal case for a newly completed envelope — it instead walks
+  // the entire index. On the 2.97M-anchor org that is a statement timeout, which
+  // is what stalled the DocuSign envelope→anchor path in prod
+  // (artifact 921347cc, 2026-08-01/02).
+  //
+  // EXPLAIN on prod, same predicate:
+  //   with    ORDER BY -> Index Scan Backward, total cost 2,221,197
+  //   without ORDER BY -> BitmapOr over the three metadata indexes, cost 94
+  //
+  // While the ORDER BY is present the planner does not consult the metadata
+  // indexes AT ALL, so adding indexes cannot fix this — the sort has to go.
+  // Determinism is preserved by tie-breaking on `created_at` in application code
+  // over a bounded result set (below).
   const { data, error } = await args.db
     .from('anchors')
-    .select('id, public_id')
+    .select('id, public_id, created_at')
     .eq('org_id', args.orgId)
     .is('deleted_at', null)
     .neq('status', 'REVOKED')
     .or(orFilter)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .limit(ENVELOPE_ANCHOR_LOOKUP_LIMIT);
 
   if (error) {
     throw new Error(
       `envelope anchor lookup failed: ${(error as { message?: string }).message ?? 'unknown'}`,
     );
   }
-  if (!data) return null;
-  const row = data as { id?: unknown; public_id?: unknown };
-  if (typeof row.id !== 'string') return null;
+  const rows = (Array.isArray(data) ? data : []) as Array<{
+    id?: unknown;
+    public_id?: unknown;
+    created_at?: unknown;
+  }>;
+  const candidates = rows.filter((r) => typeof r.id === 'string');
+  if (candidates.length === 0) return null;
+
+  // Same semantics the SQL ORDER BY gave us: the OLDEST matching anchor, so a
+  // repeated call is idempotent and always reuses the same one. Sorting at most
+  // ENVELOPE_ANCHOR_LOOKUP_LIMIT rows in memory is free; sorting 2.97M in
+  // Postgres is the outage.
+  candidates.sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')));
+  const row = candidates[0];
   return {
-    id: row.id,
+    id: row.id as string,
     publicId: typeof row.public_id === 'string' ? row.public_id : null,
   };
 }
