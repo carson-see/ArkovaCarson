@@ -291,12 +291,15 @@ const ConfigSchema = z.object({
    */
   enableDocusignWebhook: boolFlag(false),
   /**
-   * Connector-artifact enqueue (DS-03 / SCRUM-2363) — when false, connector
-   * jobs (DocuSign envelope-completed) compute the fingerprint but DO NOT
-   * enqueue a `connector_artifact` row. Default false: the row's drain consumer
-   * (QUEUE-06/SCRUM-2352, QUEUE-08/SCRUM-2354) is unbuilt, so enqueuing now
-   * would pile up `pending` rows that nothing anchors. Cloud Run prod env sets
-   * this to true explicitly once the drain ships.
+   * Connector-artifact enqueue (DS-03 / SCRUM-2363; GD-PROD / SCRUM-2903) —
+   * when false, connector jobs (DocuSign envelope-completed, Drive
+   * file-changed) compute the fingerprint but DO NOT enqueue a
+   * `connector_artifact` row. The row's drain consumer (QUEUE-06/SCRUM-2352,
+   * connector-artifact-drain.ts) IS built and merged — this flag is now a
+   * pure launch gate, not a "consumer doesn't exist yet" placeholder. Default
+   * false so enqueuing doesn't start piling up rows before the flip is
+   * founder-approved. Cloud Run prod env sets this to true explicitly once
+   * launch-approved.
    */
   enableConnectorArtifactEnqueue: boolFlag(false),
   /**

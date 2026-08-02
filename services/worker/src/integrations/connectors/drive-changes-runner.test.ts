@@ -29,6 +29,14 @@ vi.mock('./drive-changes-processor.js', async () => {
     processDriveChanges: (...args: unknown[]) => processDriveChangesMock(...args),
   };
 });
+// SCRUM-2903 (GD-PROD): enqueueFileChangedJob calls the real submitJob (like
+// docusign.ts's enqueueFetchJob does) rather than the injected `db` — submitJob
+// owns the global db import from utils/db.js. Mock it the same way
+// docusign.test.ts does so the adapter tests never touch a real Supabase client.
+const submitJobMock = vi.fn();
+vi.mock('../../utils/jobQueue.js', () => ({
+  submitJob: (...args: unknown[]) => submitJobMock(...args),
+}));
 import {
   loadDriveAccessToken,
   loadWatchedFolderIds,
@@ -177,6 +185,8 @@ beforeEach(() => {
   prevClientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
   prevClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   process.env.GCP_KMS_INTEGRATION_TOKEN_KEY = KEY;
+  submitJobMock.mockReset();
+  submitJobMock.mockResolvedValue('job-default');
 });
 
 afterEach(() => {
@@ -581,6 +591,105 @@ describe('createProcessorDbAdapter', () => {
     expect(allLogArgs).not.toContain('leaked@example.com');
     // No RPC was attempted.
     expect(fake.db.rpc).not.toHaveBeenCalled();
+  });
+
+  // SCRUM-2903 (GD-PROD): the file-changed job enqueue — Drive twin of
+  // docusign.ts's enqueueFetchJob, called right after enqueueRuleEvent.
+  describe('enqueueFileChangedJob', () => {
+    it('submits a google_drive.file_changed job carrying only connector-native ids + mime/timestamp hint', async () => {
+      const fake = makeFakeDb();
+      submitJobMock.mockResolvedValueOnce('job-1');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const adapter = createProcessorDbAdapter({ db: fake.db as any });
+      const jobId = await adapter.enqueueFileChangedJob({
+        org_id: ORG,
+        integration_id: INT,
+        file_id: 'f3',
+        revision_id: 'rev-3',
+        mime_type: 'application/pdf',
+        modified_time: '2026-05-04T01:00:00Z',
+        rule_event_id: 'evt-3',
+      });
+
+      expect(jobId).toBe('job-1');
+      expect(submitJobMock).toHaveBeenCalledWith({
+        type: 'google_drive.file_changed',
+        max_attempts: 5,
+        priority: 10,
+        payload: {
+          org_id: ORG,
+          integration_id: INT,
+          file_id: 'f3',
+          revision_id: 'rev-3',
+          mime_type: 'application/pdf',
+          modified_time: '2026-05-04T01:00:00Z',
+          rule_event_id: 'evt-3',
+        },
+      });
+    });
+
+    it('converts null revision_id/mime_type/modified_time to undefined so the shared Zod schema (which requires .optional(), not null) accepts the payload', async () => {
+      const fake = makeFakeDb();
+      submitJobMock.mockResolvedValueOnce('job-2');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const adapter = createProcessorDbAdapter({ db: fake.db as any });
+      const jobId = await adapter.enqueueFileChangedJob({
+        org_id: ORG,
+        integration_id: INT,
+        file_id: 'doc-1',
+        revision_id: null,
+        mime_type: null,
+        modified_time: null,
+        rule_event_id: 'evt-doc-1',
+      });
+
+      expect(jobId).toBe('job-2');
+      const submittedPayload = submitJobMock.mock.calls[0][0].payload;
+      expect(submittedPayload.revision_id).toBeUndefined();
+      expect(submittedPayload.mime_type).toBeUndefined();
+      expect(submittedPayload.modified_time).toBeUndefined();
+      expect(submittedPayload.file_id).toBe('doc-1');
+    });
+
+    it('returns null (does not submit) on Zod failure — e.g. non-UUID org_id', async () => {
+      const fake = makeFakeDb();
+      const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const adapter = createProcessorDbAdapter({ db: fake.db as any, logger: log });
+      const jobId = await adapter.enqueueFileChangedJob({
+        org_id: 'not-a-uuid',
+        integration_id: INT,
+        file_id: 'f4',
+        revision_id: null,
+        mime_type: null,
+        modified_time: null,
+        rule_event_id: 'evt-4',
+      });
+
+      expect(jobId).toBeNull();
+      expect(submitJobMock).not.toHaveBeenCalled();
+      expect(log.error).toHaveBeenCalled();
+    });
+
+    it('returns null and logs when submitJob resolves null (DB insert failure)', async () => {
+      const fake = makeFakeDb();
+      submitJobMock.mockResolvedValueOnce(null);
+      const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const adapter = createProcessorDbAdapter({ db: fake.db as any, logger: log });
+      const jobId = await adapter.enqueueFileChangedJob({
+        org_id: ORG,
+        integration_id: INT,
+        file_id: 'f5',
+        revision_id: null,
+        mime_type: null,
+        modified_time: null,
+        rule_event_id: 'evt-5',
+      });
+
+      expect(jobId).toBeNull();
+      expect(log.error).toHaveBeenCalled();
+    });
   });
 });
 
