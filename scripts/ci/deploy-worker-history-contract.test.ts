@@ -54,3 +54,97 @@ describe('Deploy Worker pre-deploy Git history contract', () => {
     expect(checkoutStepsBeforeWorkerTests(job).at(-1)).toContain('fetch-depth: 1');
   });
 });
+
+/**
+ * Live incident, 2026-08-01: prod was caught mid-deploy on
+ * `arkova-worker-00892-jd2` carrying 50 env vars while the canary had 57, and
+ * the DocuSign Connect webhook was returning 503 `integration_disabled`.
+ *
+ * Cause: service traffic is pinned `--to-latest` by the promote step, and that
+ * setting persists on the service. `Clear conflicting env/secret types` runs
+ * `gcloud run services update --remove-secrets/--remove-env-vars`, which
+ * CREATES A REVISION — so the moment it lands, "latest" is a revision with the
+ * DocuSign/CRON names stripped, and prod follows onto it instantly. It
+ * self-heals when the canary is promoted, but any failure between the clear and
+ * the promote (canary deploy, smoke test, a cancelled run) leaves prod
+ * DocuSign-blind indefinitely, with nothing alarming on it.
+ *
+ * The invariant these tests pin: **no traffic-serving revision may ever lack
+ * the DocuSign/CRON configuration.** Every step that mutates the service before
+ * the smoke test must be `--no-traffic`, and traffic may only move in the
+ * dedicated promote step that runs after the canary passes its health check.
+ */
+describe('Deploy Worker traffic-safety contract', () => {
+  const step = (name: string): string => {
+    const start = workflow.indexOf(`- name: ${name}`);
+    expect(start, `deploy-worker.yml must have a "${name}" step`).toBeGreaterThan(-1);
+    const next = workflow.indexOf('\n      - name: ', start + 1);
+    return workflow.slice(start, next < 0 ? workflow.length : next);
+  };
+
+  const clearStep = (): string => step('Clear conflicting env/secret types');
+  const canaryStep = (): string => step('Deploy canary (no traffic)');
+  const promoteStep = (): string => step('Promote canary to full traffic');
+
+  it('never lets the clear step create a traffic-serving revision', () => {
+    expect(clearStep()).toMatch(/--no-traffic/u);
+  });
+
+  it('keeps the canary off traffic until it has passed its smoke test', () => {
+    expect(canaryStep()).toMatch(/--no-traffic/u);
+    expect(workflow.indexOf('- name: Smoke test canary revision'))
+      .toBeLessThan(workflow.indexOf('- name: Promote canary to full traffic'));
+  });
+
+  it('moves traffic in exactly one place, after the smoke test', () => {
+    const trafficMoves = [...workflow.matchAll(/^\s*gcloud run services update-traffic/gmu)];
+    expect(trafficMoves).toHaveLength(1);
+    expect(promoteStep()).toMatch(/--to-latest/u);
+  });
+
+  it('re-sets every name the clear step removes, so a removal is never permanent', () => {
+    const removed = [...clearStep().matchAll(/--remove-(?:secrets|env-vars)\s+(\S+)/gu)]
+      .flatMap((match) => match[1].split(','))
+      .map((name) => name.trim())
+      .filter(Boolean);
+    expect(removed.length).toBeGreaterThan(0);
+
+    const canary = canaryStep();
+    for (const name of new Set(removed)) {
+      expect(canary, `${name} is cleared but never re-set by the canary deploy`)
+        .toMatch(new RegExp(`[|,"]${name}=`, 'u'));
+    }
+  });
+
+  it('sets ENABLE_CONNECTOR_ARTIFACT_DRAIN so the drain cron stops no-opping', () => {
+    // Env-only flag (services/worker/src/config.ts reads process.env directly —
+    // there is no switchboard row for it), so a manual `gcloud run services
+    // update` would be wiped by the next deploy: --set-env-vars is exhaustive.
+    expect(canaryStep()).toMatch(/\|\|ENABLE_CONNECTOR_ARTIFACT_DRAIN=true/u);
+  });
+
+  it('asserts at runtime that the serving revision carries the required config', () => {
+    const verify = step('Verify serving revision carries required config');
+    expect(verify).toMatch(/gcloud run revisions describe/u);
+    for (const name of [
+      'CRON_SECRET',
+      'DOCUSIGN_INTEGRATION_KEY',
+      'DOCUSIGN_CLIENT_SECRET',
+      'DOCUSIGN_CONNECT_HMAC_SECRET',
+      'ENABLE_DOCUSIGN_OAUTH',
+      'ENABLE_DOCUSIGN_WEBHOOK',
+      'DOCUSIGN_DEMO',
+      'ENABLE_CONNECTOR_ARTIFACT_DRAIN',
+    ]) {
+      expect(verify, `${name} is not asserted on the serving revision`).toContain(name);
+    }
+  });
+
+  it('does NOT yet set ENABLE_CONNECTOR_ARTIFACT_ENQUEUE', () => {
+    // docs/release/prod-enablement-checklist-2026-08.md §2.3: DRAIN first,
+    // observe one clean cron cycle, THEN decide on ENQUEUE. Enabling the
+    // producer before the consumer is confirmed piles up `pending`
+    // connector_artifact rows that nothing drains.
+    expect(workflow).not.toMatch(/ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true/u);
+  });
+});
