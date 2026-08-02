@@ -89,6 +89,19 @@
 
 ### Open blockers and decisions
 
+- **`POST /api/v1/audit/batch-verify` returns audit samples drawn from a population it never read —
+  still on `main`, fix in draft.** The `sample_percentage` path reads the population with
+  `db.from('anchors').select('public_id').eq('org_id', …)` and **no `.range()`**, so PostgREST caps it
+  at 1000 rows — while `total_population` comes from a *separate* exact-count query over the whole org.
+  On the DocuSign org (3,151,539 anchors) a 1% request yields 10 credentials drawn from an arbitrary
+  1000, reported alongside `total_population: 3151539`, with nothing in the response distinguishing the
+  two. The sampling shuffle is also `sort(() => rng() - 0.5)`, which is not a uniform shuffle at all.
+  This is an **audit-validity** defect on an ISA 530 surface, not a performance one — read the code at
+  `services/worker/src/api/v1/auditBatchVerify.ts` on main, not this bullet, before acting.
+  Fix: [PR #1865](https://github.com/carson-see/ArkovaCarson/pull/1865) (T2, **draft**, stacked on
+  [#1853](https://github.com/carson-see/ArkovaCarson/pull/1853); owes a soak — none run).
+  **Relevant to the pen-test window:** this endpoint answers 200 with a confident wrong number today,
+  and after the fix it answers 422 for any org above 25,000 anchors, which includes DocuSign.
 - **`0375` is an orphan ledger row.** Its source `.sql` is not on main — `supabase/migrations/` holds
   `0370`/`0376`/`0377`/`0378` and no `0375` — while the row is live in the prod ledger. Owning
   [PR #1739](https://github.com/carson-see/ArkovaCarson/pull/1739) is OPEN and out of draft.
