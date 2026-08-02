@@ -46,10 +46,23 @@ import { logger } from '../utils/logger.js';
 const MINUTES = 60_000;
 
 /**
- * Cloud Run's request timeout on `arkova-worker`. It is the hard ceiling on how
- * long any HTTP-triggered run can live, and therefore the ceiling on every TTL:
- * a holder that dies without releasing must never block its job for longer than
- * one abandoned request could possibly have run.
+ * Cloud Run's request timeout on `arkova-worker` (`--timeout 3600` in
+ * `.github/workflows/deploy-worker.yml`; confirmed live 2026-08-02 via
+ * `gcloud run services describe arkova-worker`).
+ *
+ * It is the ceiling on every TTL, for a LIVENESS reason: a holder that dies
+ * without releasing must never block its job for longer than one abandoned
+ * request could have run.
+ *
+ * It is deliberately NOT claimed as a bound on how long a run can live. Cloud
+ * Run's timeout terminates the REQUEST, not the JS continuation, and the
+ * service runs CPU-throttled between requests (the same property that makes
+ * in-process node-cron unreliable here — see `routes/cron.ts`). An abandoned
+ * run is therefore frozen, not killed, and can thaw during a later request.
+ * That is exactly why an ACTIVE run renews its lease (`renewRunLease` below)
+ * rather than relying on the TTL to outlast it, and why the txid journal — not
+ * the lease — is the authority on whether a signed transaction may be
+ * broadcast.
  */
 export const CLOUD_RUN_REQUEST_TIMEOUT_MS = 60 * MINUTES;
 
@@ -157,23 +170,29 @@ export const RUN_LEASE_SPECS: readonly RunLeaseSpec[] = [
 ];
 
 /**
- * Per-PROCESS nonce, minted once at module load.
+ * Identifies the holder in logs and, load-bearingly, in the renew and release
+ * predicates. The revision and pid are for humans reading logs; the nonce is
+ * what makes it correct.
  *
- * This is load-bearing, not decoration. `K_REVISION` is the Cloud Run REVISION
- * name — identical on every instance of a revision — and the container's
- * exec-form `CMD ["node", …]` makes node PID 1 in every instance, so
- * `${K_REVISION}:${pid}` is the SAME string on every instance. With a colliding
- * holder id the release predicate would match another instance's lease: A
- * overruns the TTL, B steals it and writes the identical holder string, A
- * finishes and releases B's live claim, and the next tick starts a third
- * overlapping run — the exact failure this lease exists to prevent, made
- * self-sustaining. The nonce is what makes the holder actually per-holder.
+ * A nonce is required because `K_REVISION` is the Cloud Run REVISION name —
+ * identical on every instance of a revision — and the container's exec-form
+ * `CMD ["node", …]` makes node PID 1 in every instance, so `${K_REVISION}:${pid}`
+ * is the SAME string on every instance. With a colliding holder id the release
+ * predicate would match another instance's lease: A overruns the TTL, B steals
+ * it and writes the identical holder string, A finishes and releases B's live
+ * claim, and the next tick starts a third overlapping run — the exact failure
+ * this lease exists to prevent, made self-sustaining.
+ *
+ * The nonce is minted PER ACQUISITION rather than once per process. A
+ * per-process nonce is safe only because `inFlight` below stops two
+ * same-process runs from overlapping — an invisible coupling that a future
+ * refactor of the in-process guard could break silently, reintroducing exactly
+ * the release-someone-else's-lease bug one scope down. Per-acquisition removes
+ * the dependency: a renew or release can only ever match the precise run that
+ * took the lease.
  */
-const LEASE_PROCESS_NONCE = randomUUID();
-
-/** Identifies the holder in logs and in the release predicate. */
 export function runLeaseHolder(): string {
-  return `${process.env.K_REVISION ?? 'local'}:${process.pid}:${LEASE_PROCESS_NONCE}`;
+  return `${process.env.K_REVISION ?? 'local'}:${process.pid}:${randomUUID()}`;
 }
 
 /**
@@ -246,6 +265,57 @@ export async function acquireRunLease(
       { error, holder, lease: spec.label },
       'Run lease store unreachable — skipping run',
     );
+    return false;
+  }
+}
+
+/**
+ * Pushes this holder's expiry out by a fresh TTL. Returns false when the lease
+ * is no longer ours.
+ *
+ * The TTL alone cannot keep a LIVE run safe. It bounds how long a DEAD holder
+ * blocks the job, but nothing bounds how long a healthy run takes: the batch
+ * drain's journal reconcile walks up to 100 journal rows serially, each a chain
+ * `getReceipt` that retries with backoff, and the credit gate loops per claimed
+ * anchor over a batch of up to 10,000. Under a degraded provider — precisely
+ * when a stale mempool view makes a duplicate broadcast most likely — a run can
+ * outlive any TTL that also satisfies the liveness ceiling. Without renewal the
+ * next scheduler tick would then steal the lease from a run that is mid-flight
+ * and, for `batch-anchor.ts`, mid-SIGNING.
+ *
+ * The predicate is holder-scoped for the case that matters: a run whose lease
+ * already lapsed and was STOLEN must NOT renew its way back on top of the new
+ * holder. That would put two runs on one lease — the failure this whole module
+ * exists to prevent. Zero rows matched ⇒ we lost it ⇒ stop renewing and say so.
+ */
+export async function renewRunLease(
+  client: SupabaseClient,
+  spec: RunLeaseSpec,
+  holder: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const nowIso = now.toISOString();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (client as any)
+      .from('job_queue')
+      .update({
+        scheduled_for: new Date(now.getTime() + spec.ttlMs).toISOString(),
+        updated_at: nowIso,
+      })
+      .eq('id', spec.leaseId)
+      .eq('payload->>holder', holder)
+      .select('id');
+
+    if (error) {
+      // Transient: the caller keeps trying until the run ends or the lease is
+      // provably lost. A failed renewal is not itself a reason to stop working.
+      logger.warn({ error, holder, lease: spec.label }, 'Run lease renewal failed — will retry');
+      return false;
+    }
+    return ((data ?? []) as unknown[]).length > 0;
+  } catch (error) {
+    logger.warn({ error, holder, lease: spec.label }, 'Run lease renewal threw — will retry');
     return false;
   }
 }
@@ -339,6 +409,7 @@ export async function withRunLease<T>(
 
   const holder = runLeaseHolder();
   let claimed = false;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
   try {
     claimed = await acquireRunLease(client, spec, holder);
     if (!claimed) {
@@ -348,12 +419,47 @@ export async function withRunLease<T>(
       );
       return { acquired: false };
     }
+    heartbeat = startRunLeaseHeartbeat(client, spec, holder);
     return { acquired: true, result: await body() };
   } finally {
+    if (heartbeat) clearInterval(heartbeat);
     inFlight.delete(spec.leaseId);
     // Only if we actually took it. Releasing after a REFUSED claim would fire
     // an UPDATE that can never match (we never wrote our holder), logging a
     // false "this run overran its TTL" against a lease we never held.
     if (claimed) await releaseRunLease(client, spec, holder);
   }
+}
+
+/**
+ * Keeps an ACTIVE run's lease from lapsing under it.
+ *
+ * Fires at a third of the TTL, so a renewal has two chances to land before the
+ * lease could expire. It is `unref`'d: a heartbeat must never be the reason the
+ * worker process stays alive, and it must never delay a shutdown.
+ *
+ * Renewal STOPS as soon as the lease is provably no longer ours. That is the
+ * safe direction — the run continues, but it stops asserting a claim it does
+ * not hold, and the loud warning is the signal that a run outlived its TTL
+ * before the heartbeat could save it.
+ */
+function startRunLeaseHeartbeat(
+  client: SupabaseClient,
+  spec: RunLeaseSpec,
+  holder: string,
+): ReturnType<typeof setInterval> {
+  const everyMs = Math.max(1, Math.floor(spec.ttlMs / 3));
+  const timer = setInterval(() => {
+    void renewRunLease(client, spec, holder).then((renewed) => {
+      if (!renewed) {
+        clearInterval(timer);
+        logger.warn(
+          { holder, lease: spec.label, ttlMs: spec.ttlMs },
+          'Run lease renewal did not match — this run no longer holds its lease; another instance may be running concurrently',
+        );
+      }
+    });
+  }, everyMs);
+  timer.unref?.();
+  return timer;
 }

@@ -421,16 +421,21 @@ describe('checkSubmittedConfirmations', () => {
    */
   it('releases the run guard after unexpected failures', async () => {
     const { db } = await import('../utils/db.js');
-    const fromMock = vi.mocked(db.from);
+    // The real `from` is overloaded per table name; the mock routes by string,
+    // so widen once here rather than fighting the overload at every call.
+    const fromMock = vi.mocked(db.from) as unknown as {
+      getMockImplementation: () => ((table: string) => unknown) | undefined;
+      mockImplementation: (impl: (table: string) => unknown) => void;
+    };
     const pipelineTables = fromMock.getMockImplementation();
-    fromMock.mockImplementation(((table: string) => {
+    fromMock.mockImplementation((table: string) => {
       if (table === 'job_queue') return pipelineTables?.(table);
       throw new Error('unexpected DB failure');
-    }) as never);
+    });
 
     await expect(checkSubmittedConfirmations()).rejects.toThrow('unexpected DB failure');
 
-    fromMock.mockImplementation(pipelineTables as never);
+    if (pipelineTables) fromMock.mockImplementation(pipelineTables);
     mockAnchorsSelectResult.data = [];
     const result = await checkSubmittedConfirmations();
     expect(result).toEqual({ checked: 0, confirmed: 0 });
@@ -1010,7 +1015,7 @@ describe('checkSubmittedConfirmations', () => {
       // Located by TABLE, not by call order: the run lease (SCRUM-3031) reads
       // `job_queue` first, so "the first returned builder" is no longer the
       // anchors one.
-      const anchorsIndex = fromSpy.mock.calls.findIndex(([table]) => table === 'anchors');
+      const anchorsIndex = fromSpy.mock.calls.findIndex(([table]) => String(table) === 'anchors');
       expect(anchorsIndex).toBeGreaterThanOrEqual(0);
       const anchorsTable = fromSpy.mock.results[anchorsIndex]?.value as unknown as {
         select?: ReturnType<typeof vi.fn>;

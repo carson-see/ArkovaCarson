@@ -455,6 +455,18 @@ export interface BatchAnchorResult {
   batchId: string | null;
   merkleRoot: string | null;
   txId: string | null;
+  /**
+   * SCRUM-3031: the drain DID NOT RUN — another instance holds the run lease,
+   * or the lease store was unverifiable and we failed closed.
+   *
+   * This is not the same as "the queue was empty", and callers that record run
+   * evidence must not conflate them. `org-queue-scheduler.ts` writes
+   * `organization_queue_run_state.last_run_at` on every recorded run, and
+   * `claim_due_org_queue_runs` treats an org as due only once `last_run_at` is
+   * 24 hours old — so recording a refused run as `succeeded` would both file a
+   * false audit row and defer that org's next dedicated drain by a full day.
+   */
+  skipped?: true;
 }
 
 interface LeafForProof {
@@ -591,7 +603,7 @@ export async function processBatchAnchors(opts: ProcessBatchAnchorOptions = {}):
   const outcome = await withRunLease({ ...BATCH_ANCHOR_RUN_LEASE, client: db }, () =>
     _processBatchAnchorsInner(opts),
   );
-  return outcome.acquired ? outcome.result : EMPTY;
+  return outcome.acquired ? outcome.result : { ...EMPTY, skipped: true };
 }
 
 // =============================================================================

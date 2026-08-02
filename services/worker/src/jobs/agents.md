@@ -49,31 +49,77 @@ mechanism; all three jobs wrap themselves in `withRunLease`, and the job-local c
   `batch-anchors` every 10 min and `check-confirmations` every 2 min; prod runs both every 30 min).
   Not corrected here — that is a manifest/prod reconciliation of its own — but every TTL floor takes
   the SLOWER of the two readings, so the drift cannot make a TTL too short.
+- **An ACTIVE run renews its lease; the TTL is not asked to outlast it.** `withRunLease` starts an
+  `unref`'d heartbeat at ttl/3 that calls `renewRunLease` (holder-scoped CAS extending
+  `scheduled_for`). This closes a P1 raised on #1813 and never addressed there, and it matters more
+  now: nothing bounds a batch run's duration. `reconcileTxidJournals` walks up to
+  `TXID_JOURNAL_RECONCILE_LIMIT` = 100 journal rows SERIALLY, each a `getReceipt` that retries with
+  backoff (3 retries x 30s ⇒ ~127s worst case per row), and `applyQueueRunCreditGate` loops two
+  round-trips per credit-gated anchor over a batch of up to 10,000. Under a degraded provider — the
+  exact condition where a stale mempool view also makes a duplicate broadcast most likely — a
+  healthy run can outlive any TTL that still satisfies the liveness ceiling. **Renewal STOPS, loudly,
+  the moment the CAS stops matching**: a run whose lease already lapsed and was stolen must never
+  renew its way back on top of the new holder.
+- **The holder id is minted PER ACQUISITION, not per process.** A per-process nonce is safe only
+  because `inFlight` prevents two same-process runs from overlapping — an invisible coupling that a
+  refactor of the in-process guard could break silently, reintroducing #1813's
+  release-someone-else's-lease bug one scope down. Per-acquisition removes the dependency outright.
+- **The Cloud Run ceiling is a LIVENESS bound, not a bound on run lifetime.** `--timeout 3600`
+  (`deploy-worker.yml`; confirmed live 2026-08-02 via `gcloud run services describe arkova-worker`)
+  terminates the REQUEST, not the JS continuation, and the service is CPU-throttled between requests
+  — the same property that makes in-process node-cron unreliable here. An abandoned run is FROZEN,
+  not killed, and can thaw during a later request. So the ceiling correctly bounds how long a dead
+  holder blocks a job, and does NOT support "a zombie cannot outlive the TTL". The txid journal, not
+  the lease, is the authority on whether a signed tx may be broadcast (`decideTxidJournalRecovery`
+  HOLDs inside the 30-min ambiguity window, so a thawed zombie does not double-broadcast).
 - **`batch-anchor`'s lease is GLOBAL, not per-org, and that is a real behaviour change.** An
   `orgId` run claims only its own org's anchors, but it spends from the SAME treasury, so org
   scoping does not make two runs independent. Cross-instance, a per-org drain from
   `org-queue-scheduler.ts` / `connector-artifact-drain.ts` / the manual `/queue/run` API can now be
   refused while a global drain holds the lease. Inside one process that was ALREADY the behaviour
-  (`batchProcessingRunning` was global); this extends it across the fleet. **Residual risk:** a
-  refused org run is recorded by `recordOrgQueueRunResult` as `status='succeeded', processed=0`, the
-  same as a genuinely empty queue — pre-existing shape, now reachable more often. No work is lost
-  (the anchors stay PENDING and drain on a later tick), but the run row is not distinguishable from
-  a no-op. Distinguishing it needs a `skipped` outcome on the queue-run record; not taken here to
-  keep this change to the concurrency surface.
+  (`batchProcessingRunning` was global); this extends it across the fleet.
+- **A refused run reports `skipped: true` on `BatchAnchorResult`, and the queue callers honour it.**
+  This is a correctness fix, not bookkeeping. `recordOrgQueueRunResult` writes
+  `organization_queue_run_state.last_run_at`, and `claim_due_org_queue_runs` (mig 0294) only
+  re-offers an org once `last_run_at` is 24 HOURS old — so recording a lease refusal as `succeeded`
+  would defer that org's next dedicated drain by a full day AND file an `organization_queue_runs`
+  row saying it ran. With `CLAIM_LIMIT_DEFAULT` = 25, one long global drain could do that to 25 orgs
+  in a single pass. `org-queue-scheduler.ts` now releases the claim via `releaseOrgQueueClaim`
+  (clears `locked_at`/`locked_by` ONLY — PostgREST upsert assigns just the columns given, so the due
+  clock survives) and counts it under a new `skipped` field on `OrgQueueSchedulerResult`; the manual
+  `/queue/run` handler returns 200 with the additive `skipped` field (§1.8) and files no run
+  evidence. A flag-OFF drain deliberately does NOT set `skipped` — otherwise the scheduler would
+  re-claim the same 25 orgs every pass for as long as `ENABLE_BATCH_ANCHORING` is off.
+- **Recovery is NOT gated behind the lease, by design.** `recoverStuckBroadcasts`
+  (`/jobs/recover-broadcasts`, every 2 min) and its `reconcileTxidJournals` call are outside every
+  lease, so a dead batch holder cannot block ADOPT/REVERT/HOLD of its own journaled cohort. The one
+  thing deferred by a stuck batch lease is `reconcileBroadcastIntents`' LEGACY arm (pre-0358
+  `BROADCASTING` + `chain_tx_id` rows with no journal row) — deferred up to 55 min, not lost.
+- **Known residual risks, not fixed here.** (a) A lease refusal returns normally, so
+  `withCronMonitoring` still reports `status:'ok'` to Sentry — a lease stuck behind a dead holder is
+  invisible to cron monitoring for up to the TTL. (b) `connector-artifact-drain`'s per-org call
+  leaves the artifact `materialized` and re-drivable on a refusal (no double-charge — the debit is
+  idempotent on the anchor id), but emits a burst of `anchor_pending_confirmation` alerts. (c) The
+  store double models `payload->>holder` semantically rather than at wire level, so a PostgREST
+  syntax regression there would stay green; the syntax is the established repo pattern on this exact
+  table and column (`proofJobCheckpoint.ts`, `rule-action-dispatcher.ts`), and a stuck release is
+  observable via the "already reclaimed" warn.
 - **`check-confirmations` keeps PR #753 audit fix A3.** The lease wraps the mock/real BRANCH, not
   the real arm — the mock arm mints `mock-batch-${Date.now()}` tx ids and races the `chain_tx_id`
   backfill if it runs unguarded. Moving the lease inside the real arm fails 3 tests.
-- Tests: `__tests__/run-lease.test.ts` (28 — CAS semantics, bootstrap, steal-on-expiry, holder-scoped
-  release, fail-closed on bootstrap/CAS/throw, holder nonce, in-process short-circuit incl. the
-  race-the-first-acquire case, per-job independence, TTL bounds per spec, unique ids/types),
+- Tests: `__tests__/run-lease.test.ts` (33 — CAS semantics, bootstrap, steal-on-expiry, holder-scoped
+  release, fail-closed on bootstrap/CAS/throw, per-acquisition holder, in-process short-circuit incl.
+  the race-the-first-acquire case, per-job independence, renewal incl. refuse-to-renew-a-stolen-lease
+  and keep-a-long-run-alive-past-its-own-TTL, TTL bounds per spec, unique ids/types),
   `batch-anchor.lease.test.ts` (6), `check-confirmations.lease.test.ts` (5),
   `__tests__/publicRecordAnchor-lease.test.ts` (3, reduced to wiring only now that the primitive has
-  its own suite). The shared store double `createRunLeaseStore` lives in `__testHelpers.ts` and
-  EVALUATES the emitted `.or(...)` rather than restating it. **Mutation-verified:** dropping
-  `status.eq.completed` → 12 red; dropping `scheduled_for.lt.<now>` → 1 red; an always-granting
-  predicate → 2 red; dropping the holder nonce → 1 red; deleting the `withRunLease` call from
-  `batch-anchor.ts` → 4 red; moving `check-confirmations`' lease inside the real-mode arm → 3 red.
-  T3 (chain/treasury + concurrency).
+  its own suite), plus 2 new `org-queue-scheduler.test.ts` cases for the skip path. The shared store
+  double `createRunLeaseStore` lives in `__testHelpers.ts` and EVALUATES the emitted `.or(...)`
+  rather than restating it. **Mutation-verified:** dropping `status.eq.completed` → 12 red; dropping
+  `scheduled_for.lt.<now>` → 1 red; an always-granting predicate → 2 red; dropping the holder nonce →
+  1 red; dropping the holder scope from the RENEW predicate → 1 red; deleting the `withRunLease` call
+  from `batch-anchor.ts` → 4 red; moving `check-confirmations`' lease inside the real-mode arm →
+  3 red. T3 (chain/treasury + concurrency).
 
 ## 2026-08-01 — Queues lane (PR #1813): the SCRUM-3031 wedge has a SECOND, live mechanism — cross-instance overlap (`publicRecordAnchor.ts`)
 

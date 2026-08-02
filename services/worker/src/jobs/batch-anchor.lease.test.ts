@@ -70,6 +70,9 @@ vi.mock('../utils/anchorProofs.js', () => ({ upsertAnchorProofs: vi.fn() }));
 
 import { processBatchAnchors } from './batch-anchor.js';
 
+/** The drain did not run because the lease was refused or unverifiable. */
+const SKIPPED = { processed: 0, batchId: null, merkleRoot: null, txId: null, skipped: true };
+/** The drain was never attempted for a NON-lease reason — no `skipped` marker. */
 const EMPTY = { processed: 0, batchId: null, merkleRoot: null, txId: null };
 
 describe('batch anchoring is guarded by the shared run lease', () => {
@@ -82,7 +85,7 @@ describe('batch anchoring is guarded by the shared run lease', () => {
   /**
    * The load-bearing assertion. Every non-lease table read and the chain client
    * itself throw in this suite, so if the lease call were deleted the drain
-   * would blow up here instead of quietly returning EMPTY.
+   * would blow up here instead of quietly reporting a skip.
    */
   it('signs and broadcasts nothing when another instance holds the lease', async () => {
     const held = createRunLeaseStore(BATCH_ANCHOR_RUN_LEASE, {
@@ -90,7 +93,7 @@ describe('batch anchoring is guarded by the shared run lease', () => {
     });
     leaseStores.current = held.from;
 
-    expect(await processBatchAnchors()).toEqual(EMPTY);
+    expect(await processBatchAnchors()).toEqual(SKIPPED);
     expect(mockCallRpc).not.toHaveBeenCalled();
     expect(held.current()?.payload.holder).toBe('other-instance');
   });
@@ -108,7 +111,7 @@ describe('batch anchoring is guarded by the shared run lease', () => {
     });
     leaseStores.current = held.from;
 
-    expect(await processBatchAnchors({ force: true, orgId: 'org-1' })).toEqual(EMPTY);
+    expect(await processBatchAnchors({ force: true, orgId: 'org-1' })).toEqual(SKIPPED);
     expect(mockCallRpc).not.toHaveBeenCalled();
   });
 
@@ -119,13 +122,18 @@ describe('batch anchoring is guarded by the shared run lease', () => {
     });
     leaseStores.current = held.from;
 
-    expect(await processBatchAnchors({ force: true })).toEqual(EMPTY);
+    expect(await processBatchAnchors({ force: true })).toEqual(SKIPPED);
     expect(mockCallRpc).not.toHaveBeenCalled();
   });
 
   /**
    * The flag gate is resolved BEFORE the lease: a disabled pipeline should not
    * write lease rows on every cron tick just to discover it has nothing to do.
+   *
+   * It also must NOT report `skipped` — a deliberately disabled pipeline is not
+   * a lease refusal. Marking it so would make `org-queue-scheduler.ts` keep
+   * every claimed org due and re-claim the same 25 orgs on every pass for as
+   * long as the flag stays off.
    */
   it('does not touch the lease row when batch anchoring is flagged off', async () => {
     const store = createRunLeaseStore(BATCH_ANCHOR_RUN_LEASE, 'free');
@@ -157,7 +165,7 @@ describe('batch anchoring is guarded by the shared run lease', () => {
       throw new Error('lease store unreachable');
     };
 
-    expect(await processBatchAnchors()).toEqual(EMPTY);
+    expect(await processBatchAnchors()).toEqual(SKIPPED);
     expect(mockCallRpc).not.toHaveBeenCalled();
   });
 });

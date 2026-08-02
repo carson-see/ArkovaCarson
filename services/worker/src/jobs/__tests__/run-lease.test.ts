@@ -42,6 +42,7 @@ import {
   RUN_LEASE_SPECS,
   acquireRunLease,
   releaseRunLease,
+  renewRunLease,
   runLeaseHolder,
   withRunLease,
 } from '../run-lease.js';
@@ -203,8 +204,96 @@ describe('run lease — holder identity', () => {
     }
   });
 
-  it('is stable within a process, so a run can release what it acquired', () => {
-    expect(runLeaseHolder()).toBe(runLeaseHolder());
+  /**
+   * PER-ACQUISITION, not per-process.
+   *
+   * A per-process holder would make the holder-scoped release predicate safe
+   * only BECAUSE the in-process guard prevents two same-process runs from
+   * overlapping — an invisible coupling. If anyone later moved the
+   * `inFlight.add` after the acquire, or dropped the Set, run 1 overrunning its
+   * TTL and run 2 stealing it IN THE SAME PROCESS would let run 1's release
+   * free run 2's live claim. Minting per acquisition removes the coupling
+   * outright: a release can only ever match the exact run that took the lease.
+   */
+  it('mints a distinct holder per acquisition, not one per process', () => {
+    expect(runLeaseHolder()).not.toBe(runLeaseHolder());
+  });
+});
+
+describe('run lease renewal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('extends the expiry of a lease this holder still owns', async () => {
+    const store = createRunLeaseStore(SPEC, 'free');
+    const acquiredAt = new Date('2026-08-01T19:00:00Z');
+    await acquireRunLease(store.client, SPEC, 'instance-a', acquiredAt);
+    const firstExpiry = store.current()?.scheduled_for as string;
+
+    const later = new Date('2026-08-01T19:20:00Z');
+    expect(await renewRunLease(store.client, SPEC, 'instance-a', later)).toBe(true);
+
+    const renewedExpiry = store.current()?.scheduled_for as string;
+    expect(new Date(renewedExpiry).getTime()).toBe(later.getTime() + SPEC.ttlMs);
+    expect(new Date(renewedExpiry).getTime()).toBeGreaterThan(new Date(firstExpiry).getTime());
+    expect(store.current()?.payload.holder).toBe('instance-a');
+  });
+
+  /**
+   * The critical renewal property. A run whose lease already expired and was
+   * STOLEN must not renew its way back on top of the new holder — that would
+   * put two runs on the lease at once, which for `batch-anchor.ts` means two
+   * instances signing from the same treasury.
+   */
+  it('refuses to renew a lease that has already been stolen', async () => {
+    const store = createRunLeaseStore(SPEC, {
+      held: { holder: 'thief', expiresAt: '2099-01-01T00:00:00Z' },
+    });
+
+    expect(await renewRunLease(store.client, SPEC, 'overran', new Date())).toBe(false);
+    expect(store.current()?.payload.holder).toBe('thief');
+    expect(store.current()?.scheduled_for).toBe('2099-01-01T00:00:00Z');
+  });
+
+  it('reports failure rather than throwing when the store errors', async () => {
+    const client = erroringRunLeaseClient({ failOn: 'update' });
+    await expect(renewRunLease(client, SPEC, 'instance-a', new Date())).resolves.toBe(false);
+  });
+
+  /**
+   * Wiring: a run that outlives its TTL keeps the lease instead of having it
+   * stolen mid-flight. This was raised as a P1 on PR #1813 and never addressed
+   * there; with `batch-anchor.ts` now behind the same primitive, an unrenewed
+   * long run is a double-broadcast risk, not just a duplicated drain.
+   */
+  it('keeps a long-running body alive past its own TTL', async () => {
+    // Tiny TTL so the real renewal timer fires inside a unit test.
+    const fastSpec = { ...SPEC, ttlMs: 90 };
+    const store = createRunLeaseStore(fastSpec, 'free');
+
+    const outcome = await withRunLease({ ...fastSpec, client: store.client }, async () => {
+      // Outlives ttlMs several times over.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return 'long';
+    });
+
+    expect(outcome).toEqual({ acquired: true, result: 'long' });
+    // Renewed at least once while running: the release still matched, which it
+    // could not have done if the lease had lapsed and been reclaimed.
+    expect(store.current()?.status).toBe('completed');
+    expect(store.current()?.scheduled_for).toBeNull();
+  });
+
+  it('stops renewing once the run finishes', async () => {
+    const fastSpec = { ...SPEC, ttlMs: 60 };
+    const store = createRunLeaseStore(fastSpec, 'free');
+
+    await withRunLease({ ...fastSpec, client: store.client }, async () => 'quick');
+    const callsAtCompletion = store.callCount();
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(store.callCount()).toBe(callsAtCompletion);
   });
 });
 

@@ -25,6 +25,12 @@ type QueueRunStatus = 'succeeded' | 'failed';
 export interface OrgQueueSchedulerResult {
   claimed: number;
   succeeded: number;
+  /**
+   * SCRUM-3031: claimed orgs whose drain never ran because another instance
+   * held the cross-instance batch run lease. Counted separately from
+   * `succeeded` because these orgs did NOT get their run and must stay due.
+   */
+  skipped: number;
   failed: number;
   processed: number;
 }
@@ -156,6 +162,38 @@ export async function recordOrgQueueRunResult(
   }
 }
 
+/**
+ * Hands a claimed org straight back without touching its due clock (SCRUM-3031).
+ *
+ * Used only when the batch run lease refused the drain. Clearing `locked_at` /
+ * `locked_by` is required — `claim_due_org_queue_runs` will not re-offer a
+ * locked org — but `last_run_at`, `last_run_status` and `last_success_at` are
+ * deliberately absent from the payload: PostgREST's upsert only assigns the
+ * columns it is given, so the org's existing due state survives untouched and
+ * it is due again on the very next scheduler pass.
+ */
+async function releaseOrgQueueClaim(
+  orgId: string,
+  deps: ReturnType<typeof getDeps>,
+): Promise<void> {
+  const now = deps.now().toISOString();
+  try {
+    const { error } = await deps.db
+      .from('organization_queue_run_state')
+      .upsert({ org_id: orgId, locked_at: null, locked_by: null, updated_at: now }, {
+        onConflict: 'org_id',
+      });
+    if (error) {
+      deps.logger.warn(
+        { error, orgId },
+        'org queue claim release failed after a run-lease skip — org stays locked until the next lock timeout',
+      );
+    }
+  } catch (err) {
+    deps.logger.warn({ error: err, orgId }, 'org queue claim release threw after a run-lease skip');
+  }
+}
+
 async function claimDueOrganizations(
   deps: ReturnType<typeof getDeps>,
   limit: number,
@@ -189,6 +227,7 @@ export async function runOrgQueueScheduler(
   const result: OrgQueueSchedulerResult = {
     claimed: 0,
     succeeded: 0,
+    skipped: 0,
     failed: 0,
     processed: 0,
   };
@@ -207,6 +246,19 @@ export async function runOrgQueueScheduler(
     const startedAt = deps.now();
     try {
       const batch = await deps.processBatchAnchors({ force: true, orgId: row.org_id });
+
+      // SCRUM-3031: the drain never ran — another instance holds the batch run
+      // lease. Release the claim so this org is immediately re-claimable, but
+      // do NOT write run evidence: `recordOrgQueueRunResult` sets `last_run_at`,
+      // and `claim_due_org_queue_runs` only re-offers an org 24 hours after
+      // that. Recording a refusal as a run would defer a real drain by a day
+      // and file an `organization_queue_runs` row saying it succeeded.
+      if (batch.skipped) {
+        result.skipped += 1;
+        await releaseOrgQueueClaim(row.org_id, deps);
+        continue;
+      }
+
       const finishedAt = deps.now();
       result.succeeded += 1;
       result.processed += batch.processed;

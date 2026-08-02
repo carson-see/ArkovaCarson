@@ -942,8 +942,9 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
           // PR #567 CodeRabbit operational fix: fire-and-forget rather than
           // awaiting inline. A 10K-anchor merkle batch at concurrency=20 with
           // ~1s per dispatch can hold the per-tx Promise.allSettled past the
-          // 2-minute cron interval, blocking subsequent runs from clearing
-          // their `confirmationCheckRunning` mutex. The helper never throws
+          // cron interval, blocking subsequent runs from releasing the run
+          // guard (the `confirmationCheckRunning` boolean at the time; the
+          // SCRUM-3031 run lease now). The helper never throws
           // (errors → DLQ via deliverToEndpoint), so a detached promise is
           // safe; we attach a .catch to surface unexpected throws.
           //
