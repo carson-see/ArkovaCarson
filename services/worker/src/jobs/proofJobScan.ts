@@ -16,9 +16,7 @@
  */
 
 import { runWithConcurrency } from '../utils/concurrency.js';
-
-/** Chunk size for PostgREST `.in()` filters — keeps the query string bounded. */
-export const IN_FILTER_CHUNK = 100;
+import { chunkForInFilter } from './anchor-batching.js';
 
 /**
  * Cardinality probes fetch at most 2 ids. Classification only ever needs
@@ -72,6 +70,14 @@ export function clampBound(
   return Math.min(Math.max(Math.floor(n), bounds.min), bounds.max);
 }
 
+/**
+ * Generic list splitter for REQUEST-BODY batches (RPC payloads, insert rows).
+ *
+ * NOT for PostgREST `.in()` filters — those go through `chunkForInFilter`
+ * (`anchor-batching.ts`), which bounds by encoded URL bytes rather than by a
+ * caller-chosen count. Reaching for a count constant here is the mistake that
+ * cost 70 hours of public-record anchoring.
+ */
 export function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -117,7 +123,7 @@ export async function fetchProofRows(
   label: string,
 ): Promise<Map<string, ScanProofRow>> {
   const map = new Map<string, ScanProofRow>();
-  for (const ids of chunk(anchorIds, IN_FILTER_CHUNK)) {
+  for (const { values: ids } of chunkForInFilter(anchorIds)) {
     const { data, error } = await (db
       .from('anchor_proofs')
       .select('anchor_id, merkle_root, proof_path, batch_id, proof_completeness_class') as unknown as {

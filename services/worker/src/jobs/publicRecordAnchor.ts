@@ -28,7 +28,7 @@ import { buildMerkleTree } from '../utils/merkle.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config.js';
 import { upsertAnchorProofs } from '../utils/anchorProofs.js';
-import { POSTGREST_IN_FILTER_CHUNK, POSTGREST_ROW_LIMIT, resolveAnchorBatchSize } from './anchor-batching.js';
+import { POSTGREST_ROW_LIMIT, chunkForInFilter, resolveAnchorBatchSize } from './anchor-batching.js';
 import type { ChainReceipt } from '../chain/types.js';
 
 /** Max records per batch — one Bitcoin TX can commit up to 10k pipeline anchors. */
@@ -210,15 +210,14 @@ function uniqueById<T extends { id: string }>(rows: T[]): T[] {
 
 /**
  * Every id-filter call site in this module (this function,
- * `claimPendingPipelineAnchors`, `revertClaimedAnchors`) chunks by
- * `POSTGREST_IN_FILTER_CHUNK`, never by `POSTGREST_ROW_LIMIT` — see that
- * constant's docstring for the 70-hour outage the conflation caused. All three
- * are exported so the width invariant can be asserted at the CALL SITE
- * (`__tests__/publicRecordAnchor-in-filter-width.test.ts`) rather than only on
- * the constants: the class recurred precisely because a constant-level test
- * passed while one call site still used the wrong one.
+ * `claimPendingPipelineAnchors`, `revertClaimedAnchors`) builds its filter with
+ * `chunkForInFilter` — never a hand-rolled `i += SIZE` loop. See that helper's
+ * docstring for why the width is not a call-site decision, and
+ * `POSTGREST_IN_FILTER_CHUNK`'s for the 70-hour outage the old conflation
+ * caused. `POSTGREST_ROW_LIMIT` is still used in this file, but only for
+ * `.range()` pagination, which is what it actually governs.
  */
-export async function fetchAnchorRows(
+async function fetchAnchorRows(
   client: SupabaseClient,
   anchorIds: string[],
 ): Promise<PipelineAnchorRow[]> {
@@ -227,20 +226,19 @@ export async function fetchAnchorRows(
   let attemptedChunks = 0;
   let failedChunks = 0;
 
-  for (let i = 0; i < ids.length; i += POSTGREST_IN_FILTER_CHUNK) {
-    const chunk = ids.slice(i, i + POSTGREST_IN_FILTER_CHUNK);
+  for (const { values, start } of chunkForInFilter(ids)) {
     attemptedChunks += 1;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (client as any)
       .from('anchors')
       .select('id, fingerprint, status, chain_tx_id, metadata')
-      .in('id', chunk)
+      .in('id', values)
       .is('deleted_at', null);
 
     if (error) {
       failedChunks += 1;
       logger.error(
-        { error, errorMessage: (error as { message?: string })?.message, chunkStart: i, chunkSize: chunk.length },
+        { error, errorMessage: (error as { message?: string })?.message, chunkStart: start, chunkSize: values.length },
         'Failed to fetch anchor rows after insert',
       );
       continue;
@@ -262,25 +260,26 @@ export async function fetchAnchorRows(
   return rows;
 }
 
-export async function claimPendingPipelineAnchors(
+async function claimPendingPipelineAnchors(
   client: SupabaseClient,
   anchors: PipelineAnchorRow[],
 ): Promise<PipelineAnchorRow[]> {
   const claimed: PipelineAnchorRow[] = [];
-  const uniqueAnchors = uniqueById(anchors);
+  // Project to ids BEFORE chunking: `chunkForInFilter` only accepts the values
+  // that go on the wire, so the width it guarantees is the width actually sent.
+  const anchorIds = uniqueById(anchors).map((a) => a.id);
 
-  for (let i = 0; i < uniqueAnchors.length; i += POSTGREST_IN_FILTER_CHUNK) {
-    const chunk = uniqueAnchors.slice(i, i + POSTGREST_IN_FILTER_CHUNK);
+  for (const { values, start } of chunkForInFilter(anchorIds)) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (client as any)
       .from('anchors')
       .update({ status: 'BROADCASTING' })
-      .in('id', chunk.map((a) => a.id))
+      .in('id', values)
       .eq('status', 'PENDING')
       .select('id, fingerprint, status, chain_tx_id, metadata');
 
     if (error) {
-      logger.error({ error, chunkStart: i, chunkSize: chunk.length }, 'Failed to claim pipeline anchors');
+      logger.error({ error, chunkStart: start, chunkSize: values.length }, 'Failed to claim pipeline anchors');
       continue;
     }
 
@@ -290,7 +289,7 @@ export async function claimPendingPipelineAnchors(
   return claimed;
 }
 
-export interface RevertClaimedAnchorsResult {
+interface RevertClaimedAnchorsResult {
   attemptedChunks: number;
   failedChunks: number;
   /** Anchors whose revert chunk failed — still BROADCASTING after this call. */
@@ -307,6 +306,7 @@ export interface RevertClaimedAnchorsResult {
  * `in.(...)` filters, took 400 Bad Request on every chunk, and released
  * nothing. A failed submission therefore stranded up to a full 10,000-anchor
  * batch in BROADCASTING while the job logged only the original chain error.
+ * The width is now `chunkForInFilter`'s to decide, not this function's.
  *
  * Silence on the revert is the dangerous part, not the stranding itself: the
  * `recover-broadcasts` cron eventually resets BROADCASTING rows with a NULL
@@ -317,7 +317,7 @@ export interface RevertClaimedAnchorsResult {
  * inside the chain-submission failure path, and throwing here would replace
  * the caller's real chain error with a secondary one.
  */
-export async function revertClaimedAnchors(
+async function revertClaimedAnchors(
   client: SupabaseClient,
   anchorIds: string[],
 ): Promise<RevertClaimedAnchorsResult> {
@@ -325,20 +325,19 @@ export async function revertClaimedAnchors(
   let failedChunks = 0;
   let strandedAnchorIds = 0;
 
-  for (let i = 0; i < anchorIds.length; i += POSTGREST_IN_FILTER_CHUNK) {
-    const chunk = anchorIds.slice(i, i + POSTGREST_IN_FILTER_CHUNK);
+  for (const { values, start } of chunkForInFilter(anchorIds)) {
     attemptedChunks += 1;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (client as any)
       .from('anchors')
       .update({ status: 'PENDING' })
-      .in('id', chunk)
+      .in('id', values)
       .eq('status', 'BROADCASTING');
 
     if (error) {
       failedChunks += 1;
-      strandedAnchorIds += chunk.length;
-      logger.error({ error, chunkStart: i, chunkSize: chunk.length }, 'Failed to revert claimed pipeline anchors');
+      strandedAnchorIds += values.length;
+      logger.error({ error, chunkStart: start, chunkSize: values.length }, 'Failed to revert claimed pipeline anchors');
     }
   }
 
