@@ -165,6 +165,11 @@ jobs:
       - name: Require justification for new anchors indexes (SCRUM-1286)
         run: npm run ci:anchor-index-justification
 
+      # Ties ENVELOPE_ID_METADATA_KEYS to the migration set. Adding a key without
+      # a matching expression index reintroduces the 0381 prod statement timeout.
+      - name: Block envelope-key/index drift
+        run: npm run ci:envelope-key-index-parity
+
       - name: Block API scope vocabulary drift (SCRUM-1581)
         run: npm run ci:api-scope-vocabulary
 
