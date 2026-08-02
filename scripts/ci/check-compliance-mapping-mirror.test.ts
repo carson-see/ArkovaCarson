@@ -39,6 +39,19 @@ describe('runMirrorCheck — the retired-claim direction', () => {
     expect(result.lines.join('\n')).toContain('DPF-NOTICE');
   });
 
+  it('fails on a FULL retirement — ID gone from both the emitted arrays and the registry', () => {
+    const result = check(
+      ['SOC2-CC6.1', 'DPF-NOTICE'],
+      ['SOC2-CC6.1'],
+      ['SOC2-CC6.1'], // definition removed too
+    );
+    expect(result.ok).toBe(false);
+    const output = result.lines.join('\n');
+    // Reported as BOTH mirror drift and an undefined emitted ID.
+    expect(output).toContain('the frontend does NOT: DPF-NOTICE');
+    expect(output).toContain('no entry in COMPLIANCE_CONTROLS: DPF-NOTICE');
+  });
+
   it('replays the exact SCRUM-2283 drift that shipped to production', () => {
     const result = check(
       ['SOC2-CC6.1', 'GDPR-25', 'DPF-NOTICE', 'DPF-ACCOUNTABILITY'],
@@ -52,13 +65,19 @@ describe('runMirrorCheck — the retired-claim direction', () => {
     expect(output).toContain('Do NOT');
   });
 
-  it('catches an INCOMPLETE retirement — ID pulled from the emitted arrays but left in the registry', () => {
-    // The minimal, most likely frontend fix. A guard that compared against the
-    // definitions registry instead of the emitted union would pass here while
-    // the worker kept serving the retired claim.
+  it('catches an INCOMPLETE retirement — ID pulled from the emitted arrays but left DEFINED', () => {
+    // The minimal, most likely frontend fix: drop the ID from UNIVERSAL_CONTROLS
+    // (enough to stop the public badge rendering) but leave its COMPLIANCE_CONTROLS
+    // entry. A guard comparing against the definitions registry passes here while
+    // the worker keeps serving the retired claim — this is the case that decided
+    // the emitted-union design.
     const result = check(['SOC2-CC6.1', 'DPF-NOTICE'], ['SOC2-CC6.1'], [...DEFINED]);
     expect(result.ok).toBe(false);
-    expect(result.lines.join('\n')).toContain('DPF-NOTICE');
+    const output = result.lines.join('\n');
+    expect(output).toContain('the frontend does NOT: DPF-NOTICE');
+    // Still defined, so the undefined-ID assertion must NOT fire — proving the
+    // drift was caught by the emitted-union comparison and nothing else.
+    expect(output).not.toContain('no entry in COMPLIANCE_CONTROLS');
   });
 });
 
@@ -85,6 +104,8 @@ describe('runMirrorCheck — the other direction and definitions', () => {
       ['SOC2-CC6.1', 'DPF-NOTICE', 'DPF-ACCOUNTABILITY'],
       ['SOC2-CC6.1'],
     );
+    expect(result.ok).toBe(false);
+    expect(result.lines.join('\n')).toContain('Worker emits 2 control ID(s)');
     expect(result.lines.join('\n')).toContain('DPF-ACCOUNTABILITY, DPF-NOTICE');
   });
 });

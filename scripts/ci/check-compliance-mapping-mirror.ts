@@ -123,9 +123,7 @@ export function runMirrorCheck(input: MirrorInput): MirrorResult {
   //    file's own stated contract, so any asymmetry is drift.
   const workerOnly = sortedDiff(workerEmitted, frontendEmitted);
   const frontendOnly = sortedDiff(frontendEmitted, workerEmitted);
-  const undefinedIds = [...new Set([...workerEmitted, ...frontendEmitted])]
-    .filter((id) => !definedIds.has(id))
-    .sort();
+  const undefinedIds = sortedDiff(new Set([...workerEmitted, ...frontendEmitted]), definedIds);
 
   const lines: string[] = [];
 
