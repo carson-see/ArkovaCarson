@@ -54,9 +54,30 @@
 --      statement_timeout — neither is a per-caller budget for this function.
 --
 -- ---------------------------------------------------------------------------
--- CALLER ENUMERATION — every reference in the tree, verified this session:
+-- CALLER ENUMERATION — verified against LIVE PROD (vzwyaatejekddvltxyye) via
+-- Supabase MCP this session, then cross-checked against the tree. The prod
+-- check is the load-bearing one: this repo has a documented case of a prod body
+-- in THIS EXACT function family silently diverging from the repo (0376 was
+-- branched from an old file and reverted 0356's keyed HMAC — see the 0383 note
+-- in scripts/ci/snapshots/ledger-numeric-exemptions.json), so a repo-only
+-- enumeration would not have been sufficient evidence for this revoke.
 --
---   public.get_public_anchor(text)  ......... THE ONLY CALLER.
+--   SELECT n.nspname, p.oid::regprocedure, p.prosecdef, p.proowner::regrole
+--   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+--   WHERE p.prosrc LIKE '%sanitize_metadata_for_public%';
+--     -> EXACTLY ONE ROW, all schemas:
+--        public.get_public_anchor(text) | prosecdef=t | owner=postgres
+--
+--   Same session, pg_policies (qual + with_check) / pg_views / pg_matviews /
+--   pg_trigger sweep for the same string -> ZERO rows. Nothing else in prod
+--   depends on this helper.
+--
+--   Grant pre-state on prod, has_function_privilege:
+--        anon=t  authenticated=t  service_role=t
+--
+-- Tree cross-check:
+--
+--   public.get_public_anchor(text)  ......... THE ONLY CALLER (prod-confirmed).
 --     Defined in the baseline (line 3453, call site 3488) and redefined by
 --     0311, 0331, 0355, 0356, 0376 — and, in flight, by 0383 (#1618) and 0385
 --     (#1841). EVERY one of those definitions is `LANGUAGE plpgsql SECURITY

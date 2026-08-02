@@ -95,7 +95,7 @@ describe('0388 — sanitize_metadata_for_public is not anon/authenticated callab
   });
 
   it('anon CANNOT execute the redaction helper directly', async () => {
-    const { data, error } = await anon.rpc(
+    const { error } = await anon.rpc(
       'sanitize_metadata_for_public' as never,
       { p_metadata: ORACLE_PROBE } as never,
     );
@@ -104,19 +104,19 @@ describe('0388 — sanitize_metadata_for_public is not anon/authenticated callab
     // not exist, this suite is not testing what it claims to test.
     expect(isMissingFromSchemaCache(error)).toBe(false);
     expect(isPermissionDenied(error)).toBe(true);
-    // And no oracle output came back.
-    expect(data).toBeFalsy();
+    // NB: deliberately no `expect(data).toBeFalsy()` here. supabase-js always
+    // returns data:null alongside an error, so such an assertion can never fail
+    // independently of the one above — it reads as extra protection and is not.
   });
 
   it('authenticated CANNOT execute the redaction helper directly', async () => {
-    const { data, error } = await authed.rpc(
+    const { error } = await authed.rpc(
       'sanitize_metadata_for_public' as never,
       { p_metadata: ORACLE_PROBE } as never,
     );
 
     expect(isMissingFromSchemaCache(error)).toBe(false);
     expect(isPermissionDenied(error)).toBe(true);
-    expect(data).toBeFalsy();
   });
 
   it('service_role CAN still execute it (worker/operator path retained)', async () => {
@@ -231,20 +231,36 @@ describe('0388 — the deliberately-public verification surface still works for 
       p_public_id: PUBLIC_ID,
     } as never);
 
+    const serialized = JSON.stringify(data ?? {});
+
+    // POSITIVE assertion FIRST. Without it every check below is satisfied by an
+    // empty or collapsed projection — "nothing leaked" is trivially true when
+    // nothing at all came back, so the absence checks alone would go green
+    // while the public verification page renders a blank record. `title` is
+    // allow-listed by 0355/0376 and verified to survive the projection.
+    expect(serialized).toContain('SEC-0388 fixture');
+
     // Whole-payload check: the stripped keys must not appear ANYWHERE in the
     // response, at any nesting depth, not merely under `metadata`.
-    const serialized = JSON.stringify(data ?? {});
     expect(serialized).not.toContain('leak@example.test');
     expect(serialized).not.toContain('_raw_tx_hex');
     expect(serialized).not.toContain('deadbeef');
   });
 
+  // NOTE on both tests below: assert `error === null`, NOT merely "not a
+  // permission denial". isPermissionDenied() is false for EVERY non-42501
+  // error, so the weaker form passes on a 500 or a statement timeout. That is
+  // not hypothetical — probing prod during this work,
+  // get_public_anchor_by_fingerprint returned 57014 "canceling statement due to
+  // statement timeout". The weaker assertion would have called a dead endpoint
+  // healthy, which is exactly the regression this suite exists to catch.
   it('anon CAN still call get_public_anchor_by_fingerprint', async () => {
     const { error } = await anon.rpc(
       'get_public_anchor_by_fingerprint' as never,
       { p_fingerprint: FINGERPRINT } as never,
     );
     expect(isPermissionDenied(error)).toBe(false);
+    expect(error).toBeNull();
   });
 
   it('anon CAN still call search_public_credentials', async () => {
@@ -252,5 +268,6 @@ describe('0388 — the deliberately-public verification surface still works for 
       p_query: 'SEC-0388',
     } as never);
     expect(isPermissionDenied(error)).toBe(false);
+    expect(error).toBeNull();
   });
 });

@@ -140,10 +140,37 @@ describe('0388: the sole caller stays SECURITY DEFINER', () => {
       .sort();
   }
 
-  it('finds the caller definitions at all (guards against a vacuous pass)', () => {
-    // If a rename or reformat makes the regex stop matching, this fires instead
-    // of the suite silently going green over zero files.
-    expect(callerDefiningMigrations().length).toBeGreaterThanOrEqual(5);
+  /**
+   * The migrations known to define get_public_anchor, PINNED BY NAME.
+   *
+   * Deliberately not a `length >= N` floor. A floor set below the true count is
+   * slack from the day it is written — 5 against an actual 6 here — and the
+   * slack grows as in-flight PRs land (0383/#1618 and 0385/#1841 take this to
+   * 8). Under a floor, a definition file that stops matching the regex (baseline
+   * regenerated with different quoting, a reformat) silently drops out of the
+   * `it.each` sweep below while the guard still passes — the exact vacuous pass
+   * this guard exists to prevent. Pinning names makes a drop-out fail loudly.
+   *
+   * Adding a new get_public_anchor definition SHOULD require adding it here.
+   */
+  const KNOWN_CALLER_MIGRATIONS = [
+    '00000000000000_baseline_at_main_HEAD.sql',
+    '0311_scrum1599_public_anchor_provenance.sql',
+    '0331_scrum1847_1869_public_anchor_cpe_cle_metadata.sql',
+    '0355_scrum2485_public_anchor_base_projection_allowlist.sql',
+    '0356_scrum2484_public_anchor_recipient_hmac.sql',
+    '0376_r19_anchor_fingerprint_source.sql',
+  ];
+
+  it('still detects every known get_public_anchor definition', () => {
+    const found = callerDefiningMigrations();
+    // Every pinned file must still be detected — catches a regex that quietly
+    // stopped matching one of them.
+    for (const known of KNOWN_CALLER_MIGRATIONS) {
+      expect(found).toContain(known);
+    }
+    // And the sweep must never be empty, whatever else changes.
+    expect(found.length).toBeGreaterThanOrEqual(KNOWN_CALLER_MIGRATIONS.length);
   });
 
   it.each(callerDefiningMigrations())(
