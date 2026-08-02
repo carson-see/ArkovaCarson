@@ -7,6 +7,7 @@
 
 import { createHash } from 'node:crypto';
 import { logger } from './logger.js';
+import { assertNotAllChunksFailed, chunkForInFilter } from './postgrest-filter.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /** SHA-256 content hash for deduplication and fingerprinting. */
@@ -44,18 +45,63 @@ export async function batchUpsertRecords(
   return { inserted: records.length, errors: 0 };
 }
 
-/** Check which source_ids already exist (batch dedup). Returns a Set of existing IDs. */
+/**
+ * Check which source_ids already exist (batch dedup). Returns a Set of existing IDs.
+ *
+ * A partial result is safe and is returned as-is: `batchUpsertRecords` upserts
+ * with `ignoreDuplicates`, so a missed duplicate costs a redundant write, never
+ * a wrong row. A run where EVERY chunk failed is not — an empty Set reads as
+ * "nothing is a duplicate", so it throws rather than reporting dedup success.
+ *
+ * BEHAVIOUR CHANGE: that throw propagates out of `ingestStatutes`, which
+ * `fetchJurisdictionCompliance` runs BEFORE `fetchCaseLaw` — so a total dedup
+ * failure now also skips case-law ingestion for that jurisdiction, where
+ * previously it degraded to re-upserting everything. Intended: a cron 500 that
+ * Cloud Scheduler retries beats a silent no-op, and an all-chunks-failed result
+ * means PostgREST is unavailable for this table anyway.
+ *
+ * (Of the two defects fixed here the unchunked filter was LATENT and the
+ * discarded error was LIVE — see `utils/agents.md` for which and why.)
+ */
 export async function getExistingSourceIds(
   supabase: SupabaseClient,
   source: string,
   sourceIds: string[],
 ): Promise<Set<string>> {
   if (sourceIds.length === 0) return new Set();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- service-role admin query
-  const { data } = await (supabase as any)
-    .from('public_records')
-    .select('source_id')
-    .eq('source', source)
-    .in('source_id', sourceIds);
-  return new Set((data ?? []).map((r: { source_id: string }) => r.source_id));
+
+  const existing = new Set<string>();
+  const chunks = chunkForInFilter(sourceIds);
+  let failedChunks = 0;
+
+  for (const { values, start } of chunks) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- service-role admin query
+    const { data, error } = await (supabase as any)
+      .from('public_records')
+      .select('source_id')
+      .eq('source', source)
+      .in('source_id', values);
+
+    if (error) {
+      failedChunks += 1;
+      logger.error(
+        { error, source, chunkStart: start, chunkSize: values.length },
+        'Pipeline dedup lookup failed for a source_id chunk',
+      );
+      continue;
+    }
+
+    for (const row of (data ?? []) as Array<{ source_id: string }>) {
+      existing.add(row.source_id);
+    }
+  }
+
+  assertNotAllChunksFailed(
+    'getExistingSourceIds',
+    chunks.length,
+    failedChunks,
+    `source=${source} (${sourceIds.length} id(s))`,
+  );
+
+  return existing;
 }
