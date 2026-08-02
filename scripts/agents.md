@@ -15,6 +15,8 @@ Operational, CI, deployment, and security scripts. Run manually or from CI workf
 - **`admin/`** — admin provisioning scripts (sandbox orgs).
 - **`kpi/`** — partner-KPI reconciliation tooling (has its own agents.md). HakiChain LOI KPI #2 weekly reconciliation lives here; sibling to `kpi3/` (KPI #3) but a separate directory/data-source.
 - **`kpi3/`** — KPI #3 (independent, non-issuer verification) clean-room tooling: `external-verify.mjs` (dependency-free public-explorer verifier) + `haki-provision-plan.mjs` (KPI #1 provisioning DRY-RUN planner, founder-gated).
+- **`kpi3/`** — HakiChain KPI tooling (`external-verify.mjs`, `haki-bundle-verify.mjs`, `haki-provision-plan.mjs`). Standalone `node --test` `.mjs` files, not wired into `npm run test`/CI — run manually. `haki-provision-plan.mjs` builds a DRY-RUN-only `POST /api/v1/anchor/bulk` request body for an operator-chosen `--count` of real anchors; it does **not** compute anything from `org_credits.anchor_quota` (that framing — "shortfall to reach the quota" — was retracted 2026-08-01; see the file's own header and `memory/project_hakichain_account_state.md`). Its continued existence is a standing CTO question, not settled by this note — see the file header for the recommendation.
+- **`kpi/`** — HakiChain KPI-2 weekly reconciliation (`haki-weekly-reconciliation.ts`). Read-only, GET-only against prod; see `docs/partners/hakichain-kpi-reconciliation.md` for usage.
 
 ## Top-level files
 - **`deploy-worker.sh`** — builds and deploys the worker to Cloud Run. Must use `--platform linux/amd64` and full 40-char SHA.

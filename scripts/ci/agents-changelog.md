@@ -10,6 +10,36 @@ The durable gate inventory, conventions, and open work live in
 ---
 
 ## Recent Changes
+- 2026-08-01 SonarCloud config reality-check: **`sonar-project.properties` was
+  deleted — SonarCloud never read it.** The project runs **Automatic Analysis**
+  (`sonar.autoscan.enabled = true`; CE tasks carry no `submitterLogin`; no
+  workflow invokes `sonar-scanner` / `sonarqube-scan-action`). Autoscan reads
+  **`.sonarcloud.properties`** only, so every property in
+  `sonar-project.properties` — its five `sonar.issue.ignore.multicriteria`
+  entries, its `sonar.exclusions`, and its lcov report paths — was inert, while
+  its comments asserted suppressions that were not in effect. Verified against
+  the SonarCloud API:
+  - **`sonar.issue.ignore.multicriteria` is not honored by autoscan at all**,
+    including in `.sonarcloud.properties`. Proof: the `m1` entry ignoring
+    `plsql:NullComparison` on `supabase/migrations/**` sat in
+    `.sonarcloud.properties` from 2026-03-11, yet nine such issues were raised
+    on that exact path (created 2026-03-11 → 2026-04-26) across eight later
+    main analyses. Known false positives are documented in
+    `.sonarcloud.properties` but must be resolved in the SonarCloud **UI**.
+  - **Coverage is never imported.** Autoscan runs no tests and honors no lcov
+    paths; `coverage`/`new_coverage` have never held a value. The
+    `new_coverage ≥ 80` condition is defined and still asserted by
+    `check-sonar-quality-gate.ts`, but it cannot fire. Real enforcement is the
+    per-file vitest thresholds.
+  - `supabase/migrations/**` added to `sonar.exclusions`: all 379 open plsql
+    findings there (309 `plsql:S1192`) come from the **Oracle PL/SQL** analyzer
+    applied to PostgreSQL DDL, on files CLAUDE.md §1.2 makes immutable.
+  Two operator-only follow-ups, recorded in `.sonarcloud.properties`: **main-
+  branch analysis has not run since 2026-05-06** (every CE task since is a PR
+  analysis; none failed — they are simply not submitted, so all main issue
+  counts and `alert_status` are a stale snapshot, and the new exclusions are
+  UNVERIFIED until it resumes), and **the SonarCloud project is `public` while
+  the GitHub repo is private**, leaving project source anonymously readable.
 - 2026-07-28 SCRUM-3026 (Wave G gate fix, RTE lane): fixed the Staging Soak
   Evidence Gate's stale-checkout bug. `github.sha` and
   `github.event.pull_request.*` are frozen at the triggering webhook

@@ -72,14 +72,28 @@ arkova-product-demo/
 /test_*.pdf
 
 # Claude agent skills — per-user / per-machine state ignored, project-level
-# config tracked. settings.json + hooks/ are checked in so the team-wide
-# enforcement (e.g. staging-evidence pre-merge hook) ships with the repo.
+# config tracked. settings.json + hooks/ + skills/ are checked in so the
+# team-wide enforcement (staging-evidence pre-merge hook, constitution edit
+# hook) and the shared procedure skills ship with the repo.
+#
+# settings.local.json stays ignored: it is per-machine permission state, not
+# shared config. It was tracked until 2026-08-01, which accumulated ~170
+# entries including one-off grants for a repo we no longer use.
 .agents/
 .claude/*
 !.claude/settings.json
 !.claude/hooks
 !.claude/hooks/**
+!.claude/skills
+!.claude/skills/**
 skills-lock.json
+
+# pnpm — this repo resolves via npm (package-lock.json is the tracked lockfile
+# and CI installs with npm). A stray `pnpm install` on 2026-07-29 produced a
+# second lockfile plus an unfilled workspace stub; ignore both so `git add -A`
+# cannot commit a competing dependency graph.
+pnpm-lock.yaml
+pnpm-workspace.yaml
 
 # Other AI tool configs (may contain pre-approved commands with tokens — see Anthropic 2026-04 source-map leak)
 .cursor/
