@@ -1371,7 +1371,8 @@ export const CREDENTIAL_SOURCE_IMPORT_LABELS = {
   PROVIDER_FIELD: 'Provider',
   RECIPIENT_FIELD: 'Recipient',
   RECIPIENT_PROOF_FIELD: 'Recipient Proof',
-  CONFIDENCE_FIELD: 'Confidence',
+  // SCRUM-2914: CONFIDENCE_FIELD removed — extraction confidence scoring is
+  // unreliable and is no longer surfaced anywhere in the UI. Do not re-add.
   EVIDENCE_FIELD: 'Evidence',
   PAYLOAD_FIELD: 'Payload',
   NOT_DETECTED: 'Not detected',
@@ -1791,6 +1792,39 @@ export const TREASURY_LABELS = {
   TOTAL_PAYMENTS: 'Total Payments',
   REVENUE_USDC: 'Revenue (USDC)',
   RECENT_PAYMENTS: 'Recent payments:',
+} as const;
+
+// =============================================================================
+// ADMIN ORG CREDIT ADJUST (L2-A5 — founder admin-controls: platform-admin
+// add/remove on an organization's credit balance)
+// =============================================================================
+
+export const ADMIN_CREDIT_ADJUST_LABELS = {
+  COLUMN_LABEL: 'Credits',
+  BUTTON_LABEL: 'Adjust credits',
+  BUTTON_TITLE: 'Adjust credit balance',
+  DIALOG_TITLE: 'Adjust credits',
+  DIALOG_DESCRIPTION: (orgName: string) => `Add or remove credits for ${orgName}.`,
+  CURRENT_BALANCE_LABEL: 'Current balance',
+  ACTION_ADD: 'Add credits',
+  ACTION_REMOVE: 'Remove credits',
+  AMOUNT_LABEL: 'Amount',
+  REASON_LABEL: 'Reason',
+  REASON_PLACEHOLDER: 'Why are you adjusting this balance? Shown in the audit log.',
+  REASON_REQUIRED_ERROR: 'Enter a reason for this adjustment.',
+  AMOUNT_REQUIRED_ERROR: 'Enter a whole number of credits greater than zero.',
+  REVIEW_BUTTON: 'Review',
+  BACK_BUTTON: 'Back',
+  CONFIRM_BUTTON: 'Confirm adjustment',
+  CONFIRMING_BUTTON: 'Adjusting…',
+  CONFIRM_SUMMARY_ADD: (amount: string, orgName: string) => `Add ${amount} credits to ${orgName}.`,
+  CONFIRM_SUMMARY_REMOVE: (amount: string, orgName: string) => `Remove ${amount} credits from ${orgName}.`,
+  NEW_BALANCE_LABEL: 'New balance',
+  SUCCESS_ADD: (amount: string, orgName: string) => `Added ${amount} credits to ${orgName}.`,
+  SUCCESS_REMOVE: (amount: string, orgName: string) => `Removed ${amount} credits from ${orgName}.`,
+  ERROR_INSUFFICIENT_BALANCE: 'Cannot remove more credits than the organization has.',
+  ERROR_GENERIC: 'Failed to adjust credits.',
+  UNKNOWN_BALANCE: '—',
 } as const;
 
 // =============================================================================
@@ -2267,7 +2301,8 @@ export const EXTRACTION_FEEDBACK_LABELS = {
 export const INTEGRITY_DETAIL_LABELS = {
   // Breakdown dimension labels
   METADATA_COMPLETENESS: 'Metadata Completeness',
-  EXTRACTION_CONFIDENCE: 'Extraction Confidence',
+  // SCRUM-2914: EXTRACTION_CONFIDENCE removed — no longer rendered as its own
+  // integrity bar. The value still feeds the overall score server-side.
   ISSUER_VERIFICATION: 'Issuer Verification',
   DUPLICATE_CHECK: 'Duplicate Check',
   TEMPORAL_CONSISTENCY: 'Temporal Consistency',
@@ -2388,6 +2423,26 @@ export const AUTH_FORM_LABELS = {
   SIGN_IN: 'Sign in',
   CREATE_ACCOUNT: 'Create account',
   CREATING_ACCOUNT: 'Creating account...',
+} as const;
+
+/**
+ * SCRUM-2907 — copy for a confirmation link that did not work.
+ *
+ * Supabase signals a dead link with `error`/`error_code` on the redirect hash
+ * and creates no session. Previously the app could not tell that apart from
+ * "not signed in yet" and silently redirected to the login form, so a user
+ * whose link had expired saw no explanation and had no route forward.
+ */
+export const AUTH_CALLBACK_LABELS = {
+  COMPLETING: 'Completing sign in...',
+  EXPIRED_TITLE: 'This link has expired',
+  EXPIRED_DESCRIPTION:
+    'Verification links are single-use and time-limited. Request a new link to finish setting up your account.',
+  FAILED_TITLE: 'We could not complete sign in',
+  FAILED_DESCRIPTION:
+    'Something went wrong verifying this link. Try again, or request a new link.',
+  REQUEST_NEW_LINK: 'Request a new link',
+  BACK_TO_SIGN_IN: 'Back to sign in',
 } as const;
 
 export const BETA_GATE_LABELS = {

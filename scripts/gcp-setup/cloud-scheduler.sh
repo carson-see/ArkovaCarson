@@ -69,6 +69,47 @@ JOBS=(
   # ENABLE_CONNECTOR_ARTIFACT_DRAIN=true. Idempotent (compare-and-set claim), so
   # retries never double-anchor; a non-200 (e.g. cycle select failure) retries.
   "drain-connector-artifacts|*/5 * * * *|/jobs/drain-connector-artifacts|30s,120s,2"
+  # SCRUM-2234: stuck-anchor monitor, hourly. Reads the oldest non-deleted
+  # PENDING anchor's created_at and pages via Sentry past
+  # STUCK_ANCHOR_ALERT_HOURS (default 24h). This is the dead-man for the exact
+  # 2026-06-01 shape, where the daily-anchor-flush 401 blackout ran ~6 weeks
+  # undetected because nothing alerted on the queue failing to drain. The route
+  # shipped in services/worker/src/routes/cron.ts but the Scheduler binding was
+  # never created in prod — added here 2026-08-01 after a three-way scheduler
+  # reconciliation found it missing. A DETECTED stall returns 200 (a correct
+  # finding must not be retried); only a broken DB probe 500s, hence the retry.
+  "check-stuck-anchors|0 * * * *|/jobs/check-stuck-anchors|30s,120s,2"
+  # SCRUM-1130: durable 24-hour per-organization queue scheduler. Claims due orgs
+  # via the claim_due_org_queue_runs RPC (migration 0294) and runs
+  # processBatchAnchors({ force: true, orgId }) for each. This is the ONLY driver
+  # for the "Add to Queue" / scheduled-anchoring customer path — the global
+  # batch-anchors job does not cover it, because a handful of per-org PENDING
+  # anchors never crosses Trigger A (>=10,000) or Trigger B (>=3,000 AND >=3h).
+  #
+  # This job was MISSING from prod entirely until 2026-08-01 while every isolated
+  # soak rig had one — which is exactly the drift this script exists to prevent.
+  # Two customer anchors sat PENDING for three days as a result. Keep it here.
+  #
+  # Cadence */15 (not the rigs' */5) is deliberate:
+  #   * it matches the RPC's own 15-minute stale-lock reclaim window, so a tick
+  #     that dies mid-claim has its orgs reclaimable on the very next tick;
+  #   * the contract it serves is a 24-HOUR per-org timer, so sub-15-minute
+  #     granularity buys nothing at prod scale (~10 orgs, claim limit 25/tick —
+  #     one tick covers the whole tenant base);
+  #   * every tick re-probes a 2.97M-row anchors table; 96/day beats 288/day.
+  #
+  # NO_RETRY is deliberate too: on a 500 the claim rows may already be committed
+  # and locked, so a Cloud Scheduler retry would claim nothing and report a
+  # misleading success. The 15-minute lock expiry IS the recovery path.
+  "org-queue-scheduler|*/15 * * * *|/jobs/org-queue-scheduler|NO_RETRY"
+  # SCRUM-2903 (GD-PROD): Drive file-changed producer job every 5 min. Drains
+  # the google_drive.file_changed queue that drive-changes-runner.ts writes on
+  # a matched change → fetch bytes → SHA-256 in memory → discard (§1.6A) →
+  # enqueue_connector_artifact, for drain-connector-artifacts above to anchor.
+  # Endpoint at services/worker/src/routes/cron.ts. No-ops (per-job disabled
+  # sentinel, no hash/enqueue) until ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true.
+  # Idempotent (0343 RPC dedupes on org/source/file/revision).
+  "drive-file-changed|*/5 * * * *|/jobs/drive-file-changed|30s,120s,2"
 )
 # SCRUM-1727 (one-shot historical backfill) is INTENTIONALLY NOT in JOBS.
 # It's a manual operator endpoint at /jobs/bq-export-backfill?table=<name>.

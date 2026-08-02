@@ -17,6 +17,14 @@ item. Filtering reads `Record.folderId`, added to `useAnchors`'s select (see
 in scope for SCRUM-2940 v1. Full component-level notes live in
 `src/components/folders/agents.md`.
 
+## L2-A5 — AdminOrganizationsPage credit adjust (founder admin-controls, founder rule A2)
+
+`AdminOrganizationsPage.tsx` adds a `Credits` column (mobile card + desktop table, next to the existing SCRUM-2225 free-tier cap control) showing `credit_balance` from the enriched `GET /api/admin/organizations` response, plus a per-org "Adjust credits" button opening a two-step dialog: **input step** (Add/Remove toggle, whole-number amount, mandatory reason `Textarea`, current balance shown) → **confirm step** (plain-language summary + old→new balance preview) → `POST /api/admin/organizations/:id/credits/adjust`. A fresh `crypto.randomUUID()` idempotency key is minted when the admin clicks Review (not on dialog open), so re-opening the dialog for a different adjustment never reuses a stale key, and repeated clicks on Confirm within one review screen are safe retries, not double-charges. Errors from the RPC (`insufficient_balance`, etc.) surface as a toast and leave the dialog open so the admin can correct the amount — success closes the dialog and refetches the list. All copy in `src/lib/copy.ts` `ADMIN_CREDIT_ADJUST_LABELS` (see `src/lib/agents.md`). Backend: `services/worker/src/api/admin-actions.ts` `handleAdjustOrgCredit` (see that folder's `agents.md`).
+
+Test file `AdminOrganizationsPage.test.tsx` covers 7 cases: balance render, full review→confirm→API-payload-shape flow for both Add and Remove (asserts the exact signed `amount` + idempotency-key UUID shape sent), the Review button being inert until both amount and reason are filled, the insufficient-balance error path leaving the dialog open, the no-match-search empty state with a working Clear filters action, and the Access Restricted guard for non-platform-admin profiles (no list fetch fires). `src/test/setup.ts`'s global `crypto` mock gained a `randomUUID()` implementation (jsdom doesn't provide one) — needed by this flow and available to any future client-side idempotency-key code.
+
+Structure (SonarCloud S3776 follow-up, 2026-08-01): the page is decomposed into two same-file, non-exported presentational components — `OrganizationsListBody` (loading skeletons / empty state / mobile cards + desktop table) and `CreditsAdjustDialog` (the two-step input→confirm dialog) — plus module-level pure helpers. All state, handlers, and the submit flow stay in `AdminOrganizationsPage`; the extracted components take `Readonly<>` props only. Row click-through navigates via `orgProfilePath()` from `src/lib/routes.ts`, not a hardcoded URL.
+
 ## PR #1561 — WebMCP search URL consumption
 
 `SearchPage.tsx` consumes a bounded `q` query parameter from same-origin
@@ -142,3 +150,26 @@ are NOT scanned by `lint:copy` (which covers only `src/components`, `src/pages`,
 `src/lib`, `src/hooks`, `packages/embed/src`). They deliberately say "records",
 matching `AUDITOR_BATCH_LABELS`, not "credentials". Keep any new server-authored
 message on this path §1.3-clean by hand.
+## 2026-08-01 SCRUM-2907 — AuthCallbackPage is the email-confirmation landing route
+
+`AuthCallbackPage.tsx` is no longer OAuth-only: `useAuth.signUp` now sets
+`emailRedirectTo: ${origin}/auth/callback`, so the emailed signup-confirmation
+link lands here too. Two rules for anyone editing it:
+
+- **A dead link never produces a session.** Supabase reports expired / already-used
+  / tampered links by putting `error` + `error_code` in the URL fragment and
+  creating no session. Before this change the page's only signal was "no session",
+  so an expired link was indistinguishable from "not signed in yet" and the user
+  was bounced to a bare `/login` with no explanation.
+- **Do NOT read that error in the component.** `detectSessionInUrl: true` consumes
+  the fragment inside `createClient`, so by the time this component mounts it is
+  already empty — a component-level read silently loses the error. This was caught
+  in local UAT, not by unit tests (which mock the client and therefore never
+  reproduce the race). The error is captured by `authLinkErrorFromUrl` in
+  `src/lib/supabase.ts`, evaluated at module scope BEFORE `createClient` runs;
+  the component reads that constant and only falls back to the live fragment.
+
+Prod REQUIRES email confirmation — verified live against `vzwyaatejekddvltxyye`
+on 2026-08-01 (signup returns HTTP 200 with `confirmation_sent_at` set and NO
+session). `supabase/config.toml` and the signup E2E spec previously encoded the
+opposite; both are corrected.

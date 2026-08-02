@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/integrations/connectors/
 
-_Last updated: 2026-07-01 (PI-0 S2 Lane 3: DRIVE-01/02/03/06 verified-only connect + watch-state bootstrap + dedupe + channel renewal)._
+_Last updated: 2026-07-28 (PI-0.5 Lane 3-B1: SCRUM-2903 GD-PROD end-to-end wiring — drive-changes-runner.ts now enqueues the `google_drive.file_changed` job; drain registered in routes/cron.ts + routes/scheduled.ts. See #1654.)._
 
 ## What This Folder Contains
 
@@ -16,7 +16,8 @@ Vendor connector services and canonical event adapters. Each connector owns OAut
 | `docusign-token-store.ts` | DocuSign refresh-token Secret Manager store — org + member-level naming (SCRUM-2044) |
 | `docusign-rule-seed.ts` | **SCRUM-3027**: auto-seed the "DocuSign Completion" rule (`ESIGN_COMPLETED` → `AUTO_ANCHOR`, queue-mode, **enabled**) on a successful org DocuSign connect. `seedDocusignCompletionRule()` is idempotent + **non-stomping** — if the org already has ANY `ESIGN_COMPLETED` rule (any action) it seeds nothing, never overriding an admin's choice. NEVER throws (failure-isolated: loud `logger.error` + Sentry, PII-safe = orgId only; fails CLOSED on an ambiguous lookup error). Config shapes are Zod-validated (`TriggerConfigEsignCompleted` / `ActionConfigAutoAnchor`); row is built from the canonical `rule-templates-data.ts` `docusign-completion` template. WIRED into `api/v1/integrations/docusign-oauth.ts` callback (fire-and-forget, after the integration upsert) — surfaces `docusign_completion_rule_seeded` / `_seed_failed` `integration_events`. `enabled=true` is intentional (explicit human connect action, no NL-authoring surface — distinct from the SEC-02 `enabled=false` CRUD path) |
 | `drive-changes-processor.ts` | Drive changes feed processor — paginated, deduped, folder-matched event emission |
-| `drive-changes-runner.ts` | Webhook-to-processor glue — token refresh, watched-folder-id resolution |
+| `drive-changes-runner.ts` | Webhook-to-processor glue — token refresh, watched-folder-id resolution. **SCRUM-2903 GD-PROD (wired 2026-07-28, #1654):** `createProcessorDbAdapter().enqueueFileChangedJob` submits the `google_drive.file_changed` job (`submitJob`, Drive twin of the DocuSign webhook's `enqueueFetchJob`) immediately after `enqueueRuleEvent` succeeds — no bytes cross this call, only connector-native ids + a mime/timestamp hint, validated against the SAME `DriveFileChangedJobPayload` Zod schema `jobs/drive-file-changed.ts` parses on the consumer side (imported from `drive-artifact-producer.ts`, not redefined). |
+| `drive-artifact-producer.ts` | **SCRUM-2903 GD-PROD**: the producer bridge that gives Drive documents an anchor path. `processDriveFileChangedJob` (Drive twin of `processDocusignEnvelopeCompletedJob`): parse (Zod, ids-only payload — NO actor_email/PII field exists) → resolve access token → `fetchDriveFileBytes` → sink. Pure orchestrator (token resolver / fetch / sink all injected). The payload schema deliberately carries only connector-native ids so actor email cannot ride into the artifact. Byte handling is confined to the sink (`jobs/drive-file-changed.ts`). Also owns `DRIVE_FILE_CHANGED_JOB_TYPE` (`'google_drive.file_changed'`) as the single source of truth — `jobs/drive-file-changed.ts` re-exports it rather than duplicating the literal, and `drive-changes-runner.ts` imports it directly (this file has no reverse dependency on either, so no import cycle). **End-to-end wiring landed 2026-07-28 (#1654):** `drive-changes-runner.ts` now enqueues the job; the drain is registered at `POST /jobs/drive-file-changed` in `routes/cron.ts` (prod, Cloud Scheduler) and as an in-process dev/test backup in `routes/scheduled.ts`, both gated by `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE` (still default OFF — founder-gated flip post-soak, per CTO ruling R3 in the 2026-07-28 sprint plan). |
 | `drive-folder-resolver.ts` | Drive parent-chain folder path resolver (20-level depth cap, 15-min TTL cache) |
 | `drive-connect-eligibility.ts` | **DRIVE-01 (SCRUM-2366)**: verified-only Google Drive connect gate. Org-admin / paid-verified-individual paths, resolved via the canonical owner-inclusive resolver (`api/_org-auth.ts`), never `org_members` alone. Re-evaluated at start AND callback so an existing/stale token can't bypass a lapsed entitlement. Fail-closed to `lookup_failed`. **WIRED into `api/v1/integrations/drive-oauth.ts`** (`start` + `callback`) via `assertDriveConnectAllowed` + a `makeEligibilityDb` adapter — do NOT leave it importer-less again. |
 | `drive-watch-bootstrap.ts` | **DRIVE-02 (SCRUM-2367)**: folder-watch bootstrap → persists initial page token, channel id/expiry, owner scope (my_drive vs shared_drive), status, `last_renewal_error` into `drive_watch_state` (mig 0351) via `upsert_drive_watch_state`. `persist()` forwards `p_last_renewal_error` — the RPC MUST declare that param (fixed in 0351: `p_last_renewal_error text DEFAULT NULL`, written on INSERT + ON CONFLICT UPDATE). Folder-permission failures → `status='permission_denied'` (no throw); folder id mismatch → `failed`. `folder_path`/`owner_email` are sensitive — persisted to the RLS row ONLY, never logged. |
@@ -80,3 +81,15 @@ ERROR on this tree + the `docusign-*` job files) enforces this at build time.
   the Sonar new-code duplication gate. A throw from the SUCCESS-path event write
   deliberately falls through to the failure path — that is the behaviour of the
   chain it replaced, not an accident.
+
+
+## 2026-08-01 DRIVE B1 — the changes cursor is seeded at CONNECT time, and only there
+
+`last_page_token` on `org_integrations` is the Drive changes cursor. It has exactly **two** writers:
+
+1. `createDriveOAuthRouter`'s callback (`api/v1/integrations/drive-oauth.ts`) — seeds it from the `startPageToken` that `createChangesWatch()` returns.
+2. `advancePageToken` — only reachable from `processDriveChanges`, which **refuses to run without a token** (`drive-changes-runner.ts` skips with `no_page_token`).
+
+So (2) can never run until (1) has happened. The callback used to type its local `subscription` as `{ resourceId; expiration }`, silently discarding the `startPageToken` the client already returned — which made the entire Drive changes pipeline unreachable by construction: a freshly connected org skipped forever, with no error anywhere. **Never drop `startPageToken` from that call site.**
+
+The write is deliberately **conditional** (`...(subscription ? { last_page_token } : {})`), not `?? null`. This is an upsert: unconditionally writing null on a *failed re-watch* would wipe a working org's cursor, and nothing else can re-seed it, so every change from then on would be skipped silently. Omitting the column preserves the existing cursor. Both behaviours are pinned by tests in `drive-oauth.test.ts`.
