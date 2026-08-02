@@ -45,7 +45,7 @@ Files created/modified:
 - DocuSign signs with ALL account-level keys simultaneously (headers 1 through N). Rotation: add new key → DocuSign sends both sigs → update listener → retire old key. Zero downtime.
 - Max 2 keys enforced to prevent key sprawl.
 - Lookup-first order means we parse the body to get `accountId` before checking HMAC. This is necessary to resolve which HMAC keys to check. The body is already validated by Zod schema.
-- `provisionConnectListener()` still sends `hmacSecret` from env var — Sprint 3 TODO to also send per-org keys.
+- ~~`provisionConnectListener()` still sends `hmacSecret` from env var — Sprint 3 TODO to also send per-org keys.~~ **VOID (2026-08-01, SCRUM-2075/2147).** `hmacSecret` is not a field on DocuSign's `ConnectCustomConfiguration`; it was never honoured and has been removed from the payload. HMAC keys are ACCOUNT-side. See Story C below.
 
 ### SCRUM-2044 — Member-Level DocuSign (Spec Only)
 
@@ -99,14 +99,13 @@ POST /api/v1/integrations/docusign/hmac/retire
 
 Wire `makeRotationDeps()` factory that uses real Supabase. Add E2E or integration tests that hit the endpoint with mocked auth.
 
-### Story C: Update `provisionConnectListener()` to Use Per-Org HMAC Keys
+### Story C: ~~Update `provisionConnectListener()` to Use Per-Org HMAC Keys~~ — CANCELLED, NOT IMPLEMENTABLE
 
-Currently `provisionConnectListener()` sends the env-var HMAC key to DocuSign when creating/updating a Connect listener. Once `hmac_keys` is populated on the integration row, the provisioner should:
-1. Read existing `hmac_keys` from the integration row.
-2. If per-org keys exist, send the latest key to DocuSign (not the env var).
-3. If no per-org keys, continue using the env var.
+**Do not implement this story as written.** It assumed the provisioner could push an HMAC key to DocuSign. It cannot: `hmacSecret` is not a declared field on DocuSign's `ConnectCustomConfiguration` resource, so the key never travelled and the loop this story describes does not exist. Verified 2026-08-01 (SCRUM-2075/2147) against DocuSign's generated model; the field has been removed from the provisioning payload and `services/worker/src/integrations/oauth/agents.md` now forbids re-adding it.
 
-This closes the loop: rotation writes keys to DB → provisioner tells DocuSign to use them → webhook verifier checks them.
+`includeHMAC: "true"` only asks DocuSign *to* sign. **Which** key it signs with is account-side state, established either by a DocuSign admin on the customer account or — the actual multi-tenant answer — by DocuSign's API-only `integratorManaged` "HMAC for Partners" flag, which makes DocuSign sign customer-account deliveries with the key registered on the account that owns Arkova's integration key.
+
+If per-org / rotating keys are still wanted, the replacement story is: register the key on the integration-key account, set `integratorManaged` at provision time, extend the listener-drift checker to detect it, and reprovision existing listeners. Note it is a **one-way door** through code as currently shaped — a PUT that omits the field cannot turn it back off. See `docs/runbooks/integrations/docusign.md` → "The HMAC key is ACCOUNT-SIDE".
 
 ### Story D: Member-Level DocuSign — Schema + OAuth (from SCRUM-2044 spec)
 
