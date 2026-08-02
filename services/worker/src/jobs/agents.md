@@ -2,6 +2,152 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-02 — Queues lane (PR #1845): CML-02 stamped 10,000 ids into one filter, into a dead catch (`batch-anchor.ts`)
+
+The `compliance_controls` post-processing block after a successful batch broadcast had **both**
+halves of the class in six lines, on the chain/treasury path:
+
+- `.in('id', ids)` took every anchor of one credential type with no chunking. `BATCH_SIZE` is
+  10,000, so a single-credential-type batch put 10,000 UUIDs — ~390 KB of query string — on one
+  request line. PostgREST answers 400.
+- The result was **not destructured at all** (`await db…in(...)`, no `{ error }`). postgrest-js
+  resolves a 400, so nothing threw, and the enclosing `catch (complianceErr)` — labelled
+  "Non-fatal" — was **dead code for the only failure mode that actually occurs**. A full batch went
+  out with `compliance_controls` silently unset and the job logged nothing at all.
+
+Extracted verbatim to the exported `applyComplianceControls(anchors, batchId)` first (so the defect
+could be tested directly), then routed through `chunkForInFilter` with every chunk result inspected.
+
+**Explicit opt-out from `assertNotAllChunksFailed`, and it does not throw.** This runs AFTER the
+broadcast and after `submit_batch_anchors`: the transaction is on-chain and the rows are SUBMITTED.
+Throwing would turn a completed batch into a reported job failure and a Scheduler retry over work
+that is already done, to repair derived metadata a later run can re-stamp. The escalation is instead
+an error-level line carrying `{batchId, attemptedChunks, failedChunks, unstampedAnchors}` — the
+signal the old code could not produce. If you ever make this fatal, check the caller's unwind
+semantics first (#1417-HIGH: unwind fires only on a definitive typed broadcast reject).
+
+Tests: `batch-anchor.compliance.test.ts` (4). Mutation-verified — unchunking the filter fails the
+10k-batch budget test; restoring the undestructured `await` fails the failure-visibility test.
+
+## 2026-08-01 — Queues lane (PR #1812): pipeline claim-revert emitted an over-wide id filter (`publicRecordAnchor.ts`)
+
+`revertClaimedAnchors` — the post-failed-submission release of claimed pipeline anchors from
+BROADCASTING back to PENDING — still chunked its `.in('id', …)` by `POSTGREST_ROW_LIMIT` (1,000).
+That is the exact defect PR #1795 fixed in `fetchAnchorRows` and `claimPendingPipelineAnchors` and
+did NOT fix here, so this path emitted ~38 KB request lines, took 400 Bad Request on every chunk,
+and released nothing — a failed submission stranded up to a full 10k batch in BROADCASTING while
+the job logged only the original chain error.
+
+- Chunks by `POSTGREST_IN_FILTER_CHUNK` now, and returns
+  `{attemptedChunks, failedChunks, strandedAnchorIds}` so a partial/total revert failure is
+  escalated at error level naming the stranded count and the recovering job. It deliberately does
+  NOT throw — it runs inside the chain-submission failure path, and throwing would replace the
+  caller's real chain error. `recover_stuck_broadcasts` (verified ENABLED in prod, `*/15`, and
+  confirmed to cover BROADCASTING rows with NULL `chain_tx_id`) stays the backstop.
+- `fetchAnchorRows` / `claimPendingPipelineAnchors` / `revertClaimedAnchors` are exported so the
+  width invariant is asserted at the CALL SITE (`__tests__/publicRecordAnchor-in-filter-width.test.ts`,
+  6 tests) rather than only on the constants — the class recurred precisely because a
+  constant-level test passed while one call site still used the wrong one.
+  _(Superseded by the entry below: the invariant moved into the API, the exports were reverted, and
+  that test file was deleted.)_
+
+## 2026-08-01 — Queues lane: the id-filter width is now an API guarantee, not a per-call-site test (`chunkForInFilter`)
+
+Two production defects in one class, in one file, four days apart (#1795, #1812). #1812's answer was
+to export the three functions and assert the emitted filter width at each call site. That is a test,
+not a guarantee: it only ever covers the call sites that existed when it was written, which is
+exactly how #1795 shipped a fix that missed one of three. This entry replaces it.
+
+- **`chunkForInFilter(values: readonly string[]): InFilterChunk[]`** — now the only supported way to
+  build a PostgREST `.in()` filter over a caller-sized list. It lives in **`utils/postgrest-filter.ts`**
+  along with `POSTGREST_ROW_LIMIT` / `POSTGREST_URL_FILTER_BUDGET_BYTES` /
+  `POSTGREST_IN_FILTER_CHUNK` / `assertNotAllChunksFailed`. It was first written into
+  `jobs/anchor-batching.ts` next to the Bitcoin batch caps; review moved it because (a) it is a
+  wire-shape concern with no anchoring semantics, (b) every non-`jobs` consumer had to justify a
+  `utils/ -> jobs/` import to reach it, and (c) `publicRecordEmbedder.test.ts` factory-mocks
+  `anchor-batching.js` wholesale, so the first module in that test's import graph to call
+  `chunkForInFilter` would get `undefined` at runtime with a baffling error in an unrelated suite.
+  `anchor-batching.ts` keeps only `MAX/MIN_ANCHORS_PER_BITCOIN_TX` + `resolveAnchorBatchSize`.
+  Shape chosen so the wrong thing is unwritable rather than merely tested:
+  - **No size parameter.** Both defects were a call site choosing between two plausible constants in
+    scope and hand-rolling `for (i += SIZE)`. There is no knob to get wrong now.
+  - **`string[]`, not generic `T[]`.** Chunking ROWS and mapping to ids afterwards (what
+    `claimPendingPipelineAnchors` did) hides the real filter width from the only code that can
+    measure it. Callers project first, so the values chunked are the values sent.
+  - **Bounded by encoded WIRE BYTES as well as count.** The 200-value cap is calibrated for UUIDs;
+    `source_id` / `public_id` / 64-char fingerprints are not UUIDs. Chunks close on whichever limit
+    binds first. Carries `{start, index, total}` so `chunkStart` error logging is unchanged.
+    Measured with `URLSearchParams` — what postgrest-js actually uses — **not**
+    `encodeURIComponent`. Those are different encoders (`(`/`)`/`'`/`!`/`~` cost 3 bytes on the wire
+    and 1 under `encodeURIComponent`; a space is 1 on the wire and 3 there), and postgrest-js also
+    double-quotes any value containing `,`, `(` or `)`. Measured wrong, a 200-value chunk of
+    docket-shaped ids goes out ~1 KB OVER budget while the helper reports it as safe — caught in
+    review on this PR, and verified end-to-end against a real `PostgrestClient` builder across
+    UUIDs / dockets / URLs / spaces+emoji / fingerprints (max observed 8,180 of 8,192; 10k values
+    chunk in ~4 ms).
+- **Routed through it:** all three `publicRecordAnchor.ts` id-filter loops; `proofJobScan.fetchProofRows`;
+  `proof-backcatalog-classifier`'s label-apply loop; `utils/pipeline.getExistingSourceIds`.
+  `fetchAnchorRows` / `claimPendingPipelineAnchors` / `revertClaimedAnchors` are **private again** —
+  they were only exported for the width assertion. `POSTGREST_ROW_LIMIT` still appears in
+  `publicRecordAnchor.ts`, but only on `.range()` pagination, which is what it actually governs.
+- **`assertNotAllChunksFailed(label, attempted, failed, detail)`** (same module) is the second half of
+  the class. Width is only one of the two defects — the other is that a chunked loop which logs each
+  failure and continues returns `[]` when EVERY chunk 400s, which downstream cannot distinguish from
+  "no matching rows". Review caught this PR reproducing the SAME 2-of-3 miss it exists to prevent:
+  `fetchAnchorRows` and `getExistingSourceIds` both had a hand-copied guard (already diverged — one
+  had the `attempted > 0` check, one did not) while **`claimPendingPipelineAnchors` had none**, so a
+  totally broken claim step would read as "nothing was PENDING" and return 200 forever. All three now
+  call the shared guard. `revertClaimedAnchors` deliberately does NOT — it runs inside the
+  chain-failure path where a secondary throw would mask the real error, and returns counts for its
+  caller to escalate instead. That is now an explicit opt-out rather than an invisible omission.
+- **Constant consolidation.** `proofJobScan.IN_FILTER_CHUNK` (100) and
+  `proof-backcatalog-classifier`'s own local `IN_FILTER_CHUNK` (100, a third variant shadowing the
+  second) are both DELETED. `proofJobScan.chunk(items, size)` survives as the generic splitter for
+  REQUEST-BODY batches only (RPC payloads, insert rows — `proof-materializer`'s `INSERT_CHUNK`); its
+  docstring now says so and points `.in()` callers at `chunkForInFilter`.
+- **Width is asserted ONCE**, on the helper (`utils/postgrest-filter.test.ts`). Mutation-verified:
+  reverting `POSTGREST_IN_FILTER_CHUNK` to `POSTGREST_ROW_LIMIT` fails 2 tests; removing the byte cap
+  fails 3; removing the count cap fails 1; restoring the `encodeURIComponent` accounting fails 2;
+  removing the claim guard fails 1; removing the caller's stranded-claim escalation fails 1. The
+  #1812 stranded-count escalation is preserved and now covered through the real entrypoint
+  (`publicRecordAnchor.test.ts`) instead of an export. The wire-width oracle used by tests lives in
+  `test-utils/postgrestWire.ts` — ONE copy, mirroring postgrest-js's own algorithm. A second copy in
+  `pipeline.test.ts` was still using `encodeURIComponent` and would have passed on an over-budget
+  chunk the moment its fixture grew a `(`.
+- **`utils/pipeline.getExistingSourceIds` fixed here, not filed** (a deliberate cross-lane touch —
+  it is feeder-lane code). It had both halves of the outage, but **only one was live**: the
+  unchunked `.in('source_id', …)` was LATENT (one caller, module-constant statute section ids, tens
+  at a time), while the discarded `const { data } = …` error WAS live — a 400 returned an empty
+  dedup Set, dedup silently dead while every caller reported success. Now chunked, per-chunk
+  failures logged, and an all-chunks-failed run throws rather than reporting an empty set as
+  success (mirrors `fetchAnchorRows`). A PARTIAL result is still returned: `batchUpsertRecords`
+  upserts with `ignoreDuplicates`, so a missed duplicate is a redundant write, never a wrong row.
+  Behaviour change: the throw also skips that jurisdiction's case-law ingestion, since
+  `fetchJurisdictionCompliance` runs `ingestStatutes` first. See `utils/agents.md`.
+- **KNOWN RESIDUAL EXPOSURE — the class is not closed repo-wide.** A full census of all 102 `.in()`
+  call sites under `services/worker/src` found **8 UNBOUNDED** and **14 BOUNDED-RISKY** sites still
+  outstanding, none of them touched by this PR. Worst: `api/v1/auditBatchVerify.ts:106` (unbounded +
+  error discarded → an audit-sampling endpoint reports the entire population `NOT_FOUND` at HTTP
+  200); `batch-anchor.ts:1925` (10,000 UUIDs, no chunking, error not even destructured);
+  `api/v1/anchor-bulk.ts:195` (Zod `.max(1000)` of 64-char fingerprints breaks the budget at ~126
+  rows, and the empty result disables duplicate rejection). A 500-wide chunk cohort
+  (`INTENT_CHUNK_SIZE`, `CRED_LOOKUP_CHUNK`, two local `CHUNK_SIZE`s in `batch-anchor.ts`) is over
+  budget throughout — those constants were reasoned about against HTTP 414 URI-too-long, not the
+  proxy's 8 KiB request-line limit. `const { data } = …` appears at 17 of the 63 non-literal sites;
+  that destructure alone is what converts a 400 into an indistinguishable "no rows". Full census is
+  in the PR body. **No repo-wide lint rule was added** — a rule broad enough to catch the 500-cohort
+  would fail the build on existing code, and `npm run lint` is the deploy gate (§0 rule 9). Note the
+  worker's own lint script is `eslint --max-warnings 0`, so a `warn`-severity rule is NOT an escape
+  hatch here: warnings fail that gate exactly like errors. The viable shapes are an `error` rule with
+  a file-level allowlist of the known sites, or the rule landing after the census is fixed. Whichever
+  is chosen, the rule — not this helper — is what finally closes the class.
+- **Scope the claim honestly.** The helper makes the *width* unchoosable for anyone who uses it; it
+  does NOT make a hand-rolled loop impossible. `POSTGREST_ROW_LIMIT` is still exported and still in
+  scope in `publicRecordAnchor.ts` (legitimately, for `.range()`), so nothing but convention stops a
+  future `for (i += SIZE)` around a `.in()` — and the per-call-site test that would have caught
+  exactly that is deleted by this change. Closing that last gap needs the lint rule, which needs the
+  census fixed first. Treat "unwritable" as "unwritable via the supported API", not "unreachable".
+
 ## 2026-07-28 SOAK FINDINGS — F-1 (org-queue-scheduler 500s) + F-3 (SUBMITTED/NULL-txid recovery gap)
 
 Both open, from the 2026-08 72h signet soak pair. Canonical writeup: `docs/staging/SOAK-FINDINGS-2026-08.md`.
