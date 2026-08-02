@@ -78,7 +78,7 @@ Clients should branch on `status` and `type`, not string-match `detail`.
 
 ## SDKs
 
-- TypeScript: `@arkova/sdk`
+- TypeScript: `@carsonarkova/sdk`
 - Python: `pip install arkova`
 
 Both SDKs expose v2 search, fingerprint verification, anchor lookup, organization

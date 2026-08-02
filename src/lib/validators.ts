@@ -340,6 +340,20 @@ export const InviteMemberSchema = z.object({
 
 export type InviteMemberInput = z.input<typeof InviteMemberSchema>;
 
+/** SCRUM-3012: new-account creation on the /accept-invite page. */
+export const AcceptInvitationSchema = z.object({
+  token: z.string().trim().min(1, 'A valid invitation link is required.'),
+  password: z
+    .string()
+    .min(8, 'Password must be at least 8 characters.'),
+  fullName: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().trim().min(1).optional(),
+  ),
+});
+
+export type AcceptInvitationInput = z.input<typeof AcceptInvitationSchema>;
+
 // =============================================================================
 // AUDIT EVENT SCHEMAS
 // =============================================================================
@@ -502,6 +516,16 @@ export function validateAnchorCreate(data: unknown): AnchorCreate {
  */
 export function validateProfileUpdate(data: unknown): ProfileUpdate {
   return ProfileUpdateSchema.parse(data);
+}
+
+/**
+ * Validate and parse anchor update data (QUEUE-01 / SCRUM-2894 — the consumer
+ * secure-queue "Remove" action uses this for the soft-delete `deleted_at`
+ * write, scoped by the existing `anchors_update_own` RLS policy).
+ * @throws ZodError if validation fails
+ */
+export function validateAnchorUpdate(data: unknown): AnchorUpdate {
+  return AnchorUpdateSchema.parse(data);
 }
 
 /**
