@@ -194,15 +194,22 @@ Key implementation patterns:
 
 ## 2026-08-02 — a terminal `failed` connector_artifact MUST carry its own reason
 
-Prod artifact `921347cc` (org `40383eb2`) went terminal `failed` on 2026-08-02T00:41:53Z and **the database recorded nothing about why**:
-
-- `handleRowDrainError` computed `reason = err.message` and then logged `{ error: err }`. Pino serializes a raw `Error` under a non-`err` key as `{}`, so the log line said nothing.
-- `markFailed()` accepted that `reason` as a parameter and **never persisted it** — the UPDATE set `status` and `updated_at` only.
-
-The sole surviving copy was a Sentry alert (`ARKOVA-WORKER-2B`), which is how the real cause was eventually recovered: `envelope anchor lookup failed: canceling statement due to statement timeout`. That is not an acceptable place for the only copy — Sentry samples, ages out, and is not queryable alongside the row an operator is triaging.
+Prod artifact `921347cc` (org `40383eb2`) went terminal `failed` on 2026-08-02T00:41:53Z and **the database recorded nothing about why**: `markFailed()` accepted a `reason` parameter and never persisted it — the UPDATE set `status` and `updated_at` only. The sole surviving copy was a Sentry alert (`ARKOVA-WORKER-2B`), which is how the real cause was eventually recovered: `envelope anchor lookup failed: canceling statement due to statement timeout`. Sentry samples, ages out, and is not queryable alongside the row an operator is triaging.
 
 Rules now enforced by tests in `connector-artifact-drain.test.ts`:
 
 - **Persist the reason on the row.** `markFailed` merges a bounded `drain_error` into `connector_artifact.metadata` (merge, never replace — the envelope/account identifiers downstream code reads live there). No migration: `metadata` is already `jsonb`.
-- **Never log a raw error object on this path** (§1.6A — a connector error can carry a vendor response body). Build every logged/persisted reason with `boundedErrorDetail()`, which caps length, collapses byte runs, and scrubs PII. That is also what keeps `drain_error` from becoming a byte sink.
-- Both `markFailed` call sites take the ROW, not the id, because the metadata merge needs the existing value.
+- **Bound the reason INSIDE `markFailed`, never at the call sites.** `handleDebitFailure` passes the raw PostgREST/Postgres `error.message` through, and Postgres constraint-violation text routinely echoes the offending VALUE. Migration 0343 grants `SELECT ON connector_artifact TO authenticated` (`connector_artifact_org_select`), so **anything written to this column is readable by every member of the org**. Bounding in the single writer makes that structural instead of a rule each future caller must remember. Use the `boundedReason()` helper.
+- **Log the bounded `reason` AND the error object** (`{ err, reason }`). The bounded string is what gets persisted and alerted on; `err` is what carries the stack. Dropping the stack is a wash for a DB timeout and strictly worse for a `TypeError` deeper in materialization.
+
+### What is and is NOT guaranteed here
+
+- **Guaranteed:** every string this module *persists* or *alerts on* is bounded — `boundedReason()` → `boundedErrorDetail()` caps at ~500 chars post-scrub, collapses byte runs, and scrubs PII.
+- **NOT guaranteed by this module:** that no raw `Error` is ever handed to the logger. Eight `logger.{error,warn}({ error, … })` sites remain in this file (571, 610, 643, 856, 1020, 1056, 1162, 1359). That is deliberate and safe: **logger-side redaction is centralised**, not per-call-site — `utils/logger.ts` registers `redactErrorSerializer` for both the `err` and `error` keys plus a `redactBinaryValues` formatter over the whole merged object. Do not "fix" those call sites by stripping the error, and do not write a per-call-site rule here that the code does not enforce.
+- An earlier draft of this note claimed pino renders a raw `Error` under a non-`err` key as `{}`. **That is false for this codebase** — `logger.ts` registers the serializer for exactly that reason. Whatever produced the empty `error` object in the prod log line, it was not pino's default behaviour; the persistence gap above is the defect that actually mattered.
+
+### Known sharp edge
+
+The `metadata` write is a read-modify-**write of the whole column** from the snapshot taken at claim time. Safe today because `markFailed` is the only writer after insert (`enqueue_connector_artifact` is `ON CONFLICT DO NOTHING`). The first writer that does `ON CONFLICT DO UPDATE` on `metadata` will be silently clobbered by it. The durable form is server-side `metadata = metadata || jsonb_build_object('drain_error', $1)` inside an RPC — that needs a migration, so do it before adding a second writer, not after.
+
+`boundedErrorDetail` emits **lowercase** placeholder tokens (`[fingerprint]`, `[uuid]`, `[email]`) where `utils/pii-scrub.ts` emits uppercase. Harmless today (nothing parses them) but do not build a consumer that pattern-matches one casing.
