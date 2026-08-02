@@ -13,6 +13,8 @@ import {
   type CredentialEvidenceExtractionMethod,
   type CredentialEvidencePackage,
 } from './credential-evidence.js';
+import { REAL_CTID_PATTERN } from '../ctdl/ctdl-ctid-guard.js';
+import { DEFAULT_REGISTRY_BASE_URL, buildRegistryUrl } from '../ctdl/ctdl-importer.js';
 
 export const CREDENTIAL_SOURCE_IMPORT_FETCH_TIMEOUT_MS = 5_000;
 export const CREDENTIAL_SOURCE_IMPORT_MAX_BYTES = 512 * 1024;
@@ -85,6 +87,25 @@ export interface CredentialSourceImportPreview {
   extraction_confidence: number;
   evidence_package_hash: string;
   anchor_fingerprint: string;
+  /**
+   * SCRUM-2913 (Lane 2 wiring) — the CE Registry PROVENANCE link for this
+   * import: `${DEFAULT_REGISTRY_BASE_URL}/resources/<ctid>`. Stamped ONLY when
+   * BOTH the source was genuinely fetched from the real CE Registry host
+   * (anti-spoofing — see {@link isCeRegistryHost}, checked against the final
+   * redirect-resolved URL, never a client-supplied claim) AND the envelope
+   * carries a real CE CTID shape (anti-fabrication, {@link REAL_CTID_PATTERN},
+   * mirrors `ctdl-ctid-guard.ts`). `null` otherwise — never a guessed/fabricated
+   * value. R-7 (§1.13): provenance ("sourced from this registry URL"), NOT a
+   * claim that Arkova is listed/registered in the CE Registry.
+   */
+  registry_url: string | null;
+  /**
+   * SCRUM-2913 (Lane 2 wiring) — SHA-256 hex of the EXACT bytes fetched
+   * (`source_payload_hash`) when {@link registry_url} was stamped — i.e. an
+   * integrity fingerprint of a REAL CE Registry envelope. `null` whenever
+   * `registry_url` is `null` (the two are always set/unset together).
+   */
+  ce_envelope_sha256: string | null;
   public_metadata: Record<string, string | number | boolean | null>;
 }
 
@@ -123,6 +144,15 @@ interface ExtractedCredentialMetadata {
   expiresAt?: string;
   credentialType: AnchorCredentialType;
   sourceId?: string;
+  /**
+   * SCRUM-2913 (Lane 2 wiring) — a Credential Engine CTID lifted from
+   * `ceterms:ctid` in structured JSON-LD, when present. Distinct from
+   * `sourceId` (which reads `id`/`@id`/`identifier`/`credentialId`) — CE
+   * envelopes carry BOTH a generic `@id` and their own registry `ceterms:ctid`.
+   * Not validated here (fail-soft on shape, per module convention); the
+   * CE-Registry-host + real-ctid-shape checks happen where this is consumed.
+   */
+  ctid?: string;
   confidence: number;
   extractionMethod: CredentialEvidenceExtractionMethod;
 }
@@ -497,6 +527,9 @@ function extractStructuredMetadata(value: unknown, pepper: string | undefined): 
     issuedAt: firstJsonDate(value, ['issuedOn', 'issuanceDate', 'dateIssued', 'validFrom', 'startDate', 'issuedAt']),
     expiresAt: firstJsonDate(value, ['expires', 'expirationDate', 'validUntil', 'endDate', 'expiresAt']),
     sourceId: safeSourceId(firstJsonString(value, ['id', '@id', 'identifier', 'credentialId'])),
+    // SCRUM-2913 (Lane 2 wiring): the CE Registry's OWN identifier for the
+    // resource, distinct from the generic sourceId above.
+    ctid: firstJsonString(value, ['ceterms:ctid']),
   };
 }
 
@@ -624,6 +657,7 @@ function extractHtmlMetadata(
     expiresAt: structured.expiresAt,
     credentialType: inferCredentialType(requestedType, url, finalTitle, issuerName),
     sourceId: structured.sourceId ?? sourceIdFromUrl(url),
+    ctid: structured.ctid,
     confidence: scoreExtraction(title, issuerName, issuedAt),
     extractionMethod: structured.title || structured.issuerName ? 'json_ld' : 'html_metadata',
   };
@@ -650,6 +684,7 @@ function extractJsonMetadata(
     expiresAt: structured.expiresAt,
     credentialType: inferCredentialType(requestedType, url, title, issuerName),
     sourceId: structured.sourceId ?? sourceIdFromUrl(url),
+    ctid: structured.ctid,
     confidence: scoreExtraction(structured.title, issuerName, structured.issuedAt),
     extractionMethod: 'json_ld',
   };
@@ -711,6 +746,75 @@ function extractCredentialMetadata(
   return extractPlainTextMetadata(fetched.text, fetched.url, input.credential_type, input.issuer_hint);
 }
 
+/**
+ * SCRUM-2913 (Lane 2) — the CE Registry hosts that a fetched envelope must have
+ * ACTUALLY come from for `registry_url` / `ce_envelope_sha256` to be honest.
+ * Mirrors {@link DEFAULT_REGISTRY_BASE_URL} (prod) plus the CE sandbox host used
+ * by staging/demo imports. A third-party page cannot earn CE Registry
+ * provenance merely by embedding a `ceterms:ctid`-shaped field.
+ *
+ * READ-ONLY vs the CE Registry (CE-06a / R-7, same contract as
+ * `ctdl-importer.ts`): this module only ever issues a GET-only fetch (see
+ * {@link fetchPublicCredentialSource}) against a caller-supplied URL that MAY
+ * happen to be a CE Registry resource. It never writes to the Registry — no
+ * publish, no envelope submission, no write path of any kind — it only reads
+ * the host off the already-fetched, redirect-resolved URL to decide whether a
+ * provenance link is honest to stamp. Allow-listed in
+ * `ctdl-claims-lint.test.ts` (`READ_ONLY_CE_TOOLING_ALLOWLIST`) against the
+ * INTEGRATION (host) markers; still fully subject to the WRITE markers.
+ */
+const CE_REGISTRY_HOSTS = new Set(['credentialengineregistry.org', 'sandbox.credentialengineregistry.org']);
+
+function isCeRegistryHost(url: string): boolean {
+  try {
+    return CE_REGISTRY_HOSTS.has(new URL(url).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+interface CeRegistryProvenance {
+  registry_url: string;
+  ce_envelope_sha256: string;
+}
+
+/**
+ * SCRUM-2913 (Lane 2 wiring) — the producer half of the 0362 allow-list
+ * widening. `get_public_anchor` (0362) is ALLOWED to project
+ * `anchors.metadata.registry_url` / `ce_envelope_sha256`, but until this,
+ * nothing on main ever WROTE them (an inert column — the importer's own
+ * docblock in `ctdl-importer.ts` calls this "the eventual consumer, NOT done
+ * here"). This makes the columns carry real data for any credential source
+ * import that is genuinely CE-Registry-sourced.
+ *
+ * Stamped ONLY when BOTH:
+ *   1. the FINAL, redirect-resolved, urlGuard-validated fetch URL
+ *      (`fetched.url` — never the client-supplied `source_url`, which could
+ *      point anywhere before redirects are chased) is the real CE Registry
+ *      host ({@link isCeRegistryHost}), and
+ *   2. the envelope carries a real CE CTID shape ({@link REAL_CTID_PATTERN} —
+ *      mirrors the anti-fabrication guard in `ctdl-ctid-guard.ts`).
+ *
+ * `ce_envelope_sha256` reuses `payloadHash` — the SHA-256 of the EXACT bytes
+ * consumed — so it is provably the fingerprint of what was actually fetched,
+ * not a recomputed or partial hash. Returns `null` (never a fabricated/partial
+ * value) when either condition fails; the caller must OMIT both keys from
+ * `public_metadata` in that case (§1.8 additive-nullable — absent, not null).
+ */
+function extractCeRegistryProvenance(
+  fetchedUrl: string,
+  ctid: string | undefined,
+  payloadHash: string,
+): CeRegistryProvenance | null {
+  if (!ctid || !REAL_CTID_PATTERN.test(ctid)) return null;
+  if (!isCeRegistryHost(fetchedUrl)) return null;
+
+  const registryUrl = buildRegistryUrl(ctid, DEFAULT_REGISTRY_BASE_URL);
+  if (!registryUrl) return null;
+
+  return { registry_url: registryUrl, ce_envelope_sha256: payloadHash };
+}
+
 export async function buildCredentialSourceImportPreview(
   input: CredentialSourceImportRequest,
   deps: CredentialSourceImportDeps,
@@ -744,7 +848,14 @@ export async function buildCredentialSourceImportPreview(
       confidence: extracted.confidence,
     },
   });
-  const publicMetadata = toPublicSafeCredentialEvidenceMetadata(evidencePackage);
+  const ceRegistryProvenance = extractCeRegistryProvenance(fetched.url, extracted.ctid, payloadHash);
+  const publicMetadata = {
+    ...toPublicSafeCredentialEvidenceMetadata(evidencePackage),
+    // SCRUM-2913 (Lane 2 wiring): spread only when detected, so an unstamped
+    // import never writes `registry_url: null` / `ce_envelope_sha256: null`
+    // into anchors.metadata — the keys are ABSENT, not null (§1.8).
+    ...(ceRegistryProvenance ?? {}),
+  };
   const anchorFingerprint = buildCredentialSourceAnchorFingerprint({
     normalized_source_url: evidencePackage.source.url,
     source_payload_hash: evidencePackage.source.payloadHash,
@@ -772,6 +883,8 @@ export async function buildCredentialSourceImportPreview(
       extraction_confidence: evidencePackage.evidence.confidence ?? 0,
       evidence_package_hash: evidencePackage.evidencePackageHash,
       anchor_fingerprint: anchorFingerprint,
+      registry_url: ceRegistryProvenance?.registry_url ?? null,
+      ce_envelope_sha256: ceRegistryProvenance?.ce_envelope_sha256 ?? null,
       public_metadata: publicMetadata,
     },
   };

@@ -89,6 +89,11 @@ vi.mock('../jobs/credit-expiry.js', () => ({
   processMonthlyCredits: (...args: unknown[]) => mockProcessMonthlyCredits(...args),
 }));
 
+const mockProcessPendingReports = vi.fn().mockResolvedValue({ processed: 3, failed: 0 });
+vi.mock('../jobs/report.js', () => ({
+  processPendingReports: (...args: unknown[]) => mockProcessPendingReports(...args),
+}));
+
 const mockFetchEdgarFilings = vi.fn().mockResolvedValue({ fetched: 100 });
 const mockFetchEdgarHistoricalBackfill = vi.fn().mockResolvedValue({ backfilled: 50 });
 const mockFetchEdgarBulk = vi.fn().mockResolvedValue({ ingested: 200 });
@@ -1245,6 +1250,28 @@ describe('cron routes', () => {
       mockProcessMonthlyCredits.mockRejectedValueOnce(new Error('fail'));
       const app = createApp();
       const res = await request(app).post('/cron/credit-expiry');
+      expect(res.status).toBe(500);
+    });
+  });
+
+  // Cloud Scheduler job `generate-reports` (hourly) has targeted this route
+  // since 2026-03-16 (MVP-28); the route registration was never added when
+  // /jobs/report.ts's processPendingReports() was implemented, so every
+  // scheduled run 404'd. Restoring the route so the queue drain (pending
+  // rows created via the legacy ReportsList "Generate Report" flow) actually
+  // runs.
+  describe('POST /generate-reports', () => {
+    it('returns processed/failed counts', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/generate-reports');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ processed: 3, failed: 0 });
+    });
+
+    it('returns 500 on failure', async () => {
+      mockProcessPendingReports.mockRejectedValueOnce(new Error('fail'));
+      const app = createApp();
+      const res = await request(app).post('/cron/generate-reports');
       expect(res.status).toBe(500);
     });
   });

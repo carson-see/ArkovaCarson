@@ -15,7 +15,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import type { Json } from '@/types/database.types';
 import { useAuditorMode } from '@/hooks/useAuditorMode';
-import { CheckCircle, AlertCircle, Loader2, Copy, Check, ExternalLink, Sparkles, SkipForward, RefreshCw, PenLine, Clock, ShieldAlert } from 'lucide-react';
+import { CheckCircle, AlertCircle, Loader2, Copy, Check, ExternalLink, Sparkles, SkipForward, RefreshCw, PenLine, Clock, ShieldAlert, Zap } from 'lucide-react';
 import { ExtractionQualityBanner } from './ExtractionQualityBanner';
 import { Button } from '@/components/ui/button';
 import {
@@ -43,9 +43,11 @@ import { applyTemplate } from '@/lib/templateMapper';
 import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { useSecuringCapability } from '@/hooks/useSecuringCapability';
+import { exposedSecuringPaths, type SecuringPath } from '@/lib/queueContract';
 import { toast } from 'sonner';
-import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS, AI_EXTRACTION_LABELS, EXTRACTION_RECOVERY_LABELS, PRIVACY_FAIL_CLOSED_LABELS, CONFIRMATION_PROGRESS_LABELS } from '@/lib/copy';
-import { verifyUrl, recordDetailPath } from '@/lib/routes';
+import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS, AI_EXTRACTION_LABELS, EXTRACTION_RECOVERY_LABELS, PRIVACY_FAIL_CLOSED_LABELS, CONFIRMATION_PROGRESS_LABELS, SECURING_CHOICE_LABELS, SECURING_CHOICE_HINTS, SECURE_QUEUE_LABELS } from '@/lib/copy';
+import { ROUTES, verifyUrl, recordDetailPath } from '@/lib/routes';
 import { useNavigate } from 'react-router-dom';
 
 interface SecureDocumentDialogProps {
@@ -87,6 +89,13 @@ export function SecureDocumentDialog({
   // VAI-04: Auditor mode — suppress dialog entirely
   const { isAuditorMode } = useAuditorMode();
   const navigate = useNavigate();
+
+  // QUEUE-01 / SCRUM-2894 (L2-A1) — Add to Queue / Secure Instantly choice.
+  // capability.canSecureInstantly is hardcoded false this sprint (R5, dark) —
+  // see useSecuringCapability.ts. exposedSecuringPaths() is the frozen
+  // queueContract.ts helper every surface uses so exposure logic never drifts.
+  const { capability } = useSecuringCapability();
+  const exposedPaths = exposedSecuringPaths(capability);
 
   const [step, setStep] = useState<Step>('upload');
   const [fileData, setFileData] = useState<FileData | null>(null);
@@ -264,7 +273,7 @@ export function SecureDocumentDialog({
     }
   }, [open, initialCredentialType, selectedTemplate, autoSelectTemplate]);
 
-  const handleConfirm = useCallback(async (fieldsOverride?: ExtractionField[]) => {
+  const handleConfirm = useCallback(async (fieldsOverride?: ExtractionField[], path: SecuringPath = 'queue') => {
     if (!fileData || !user) return;
 
     setStep('processing');
@@ -317,6 +326,11 @@ export function SecureDocumentDialog({
       if (templateResult?.documentType) {
         metadata.ai_document_type = templateResult.documentType;
       }
+      // QUEUE-01 / SCRUM-2894: tag which securing path the user chose. This is
+      // metadata only — the client never asserts a credit was charged (that's
+      // worker-only, §1.4); the instant path is unreachable in prod this
+      // sprint (capability.canSecureInstantly is hardcoded false, R5).
+      metadata.securing_path = path;
       const fraudResult = await detectFraudForDocument(fileData.file, {
         credentialType: selectedTemplate?.credential_type ?? acceptedFields.credentialType ?? 'OTHER',
         metadataHints: {
@@ -354,7 +368,7 @@ export function SecureDocumentDialog({
         details: `Secured document "${fileData.file.name}"`,
       });
 
-      toast.success(TOAST.ANCHOR_SUBMITTED);
+      toast.success(path === 'instant' ? SECURE_QUEUE_LABELS.SECURED_TOAST : SECURE_QUEUE_LABELS.QUEUED_TOAST);
       setStep('success');
       onSuccess?.();
     } catch (err) {
@@ -462,11 +476,15 @@ export function SecureDocumentDialog({
     if (aiEnabled) {
       await handleStartExtraction();
     } else {
-      // No AI — auto-select General Document and anchor immediately
+      // No AI — auto-select General Document, then show the securing-path
+      // choice (Add to Queue / Secure Instantly) at the confirm step
+      // (QUEUE-01 / SCRUM-2894). Previously jumped straight to
+      // handleConfirm([]), which skipped the choice entirely for
+      // AI-disabled callers.
       await autoSelectTemplate('OTHER');
-      handleConfirm([]);
+      setStep('confirm');
     }
-  }, [fileData, aiEnabled, handleStartExtraction, autoSelectTemplate, handleConfirm]);
+  }, [fileData, aiEnabled, handleStartExtraction, autoSelectTemplate]);
 
   // AI field callbacks (review-panel path; see TemplateReviewPanel)
   const handleFieldEdit = useCallback((key: string, value: string) => {
@@ -508,6 +526,22 @@ export function SecureDocumentDialog({
     setBulkFiles([]);
     onOpenChange(false);
   }, [onOpenChange]);
+
+  // QUEUE-01 / SCRUM-2894 — "Secure Instantly" path. Only reachable when
+  // exposedPaths includes 'instant', which requires capability.canSecureInstantly
+  // === true; that field is hardcoded false this sprint (R5, dark), so this
+  // handler is code-complete but unreachable in prod until L2-A2 wires the
+  // real server capability. Insufficient-credit callers are redirected to the
+  // existing billing page (buy-credits redirect) — no new checkout is invented.
+  const handleSecureNow = useCallback(async () => {
+    if (capability.creditBalance < capability.instantSecureCost) {
+      toast.error(SECURE_QUEUE_LABELS.INSUFFICIENT_CREDITS);
+      handleClose();
+      navigate(ROUTES.BILLING);
+      return;
+    }
+    await handleConfirm(undefined, 'instant');
+  }, [capability, handleConfirm, handleClose, navigate]);
 
   const handleDialogOpenChange = useCallback((nextOpen: boolean) => {
     if (!nextOpen) {
@@ -722,8 +756,10 @@ export function SecureDocumentDialog({
                   variant="ghost"
                   className="w-full justify-start text-muted-foreground"
                   onClick={async () => {
+                    // QUEUE-01: route to the confirm step's securing-path
+                    // choice instead of inserting directly — see handleUploadContinue.
                     await autoSelectTemplate('OTHER');
-                    handleConfirm([]);
+                    setStep('confirm');
                   }}
                 >
                   <SkipForward className="mr-2 h-4 w-4" />
@@ -764,8 +800,10 @@ export function SecureDocumentDialog({
                   variant="ghost"
                   className="w-full justify-start text-muted-foreground"
                   onClick={async () => {
+                    // QUEUE-01: route to the confirm step's securing-path
+                    // choice instead of inserting directly — see handleUploadContinue.
                     await autoSelectTemplate('OTHER');
-                    handleConfirm([]);
+                    setStep('confirm');
                   }}
                 >
                   <SkipForward className="mr-2 h-4 w-4" />
@@ -848,6 +886,16 @@ export function SecureDocumentDialog({
                   {DESCRIPTION_LABELS.FIELD_HELP}
                 </p>
               </div>
+
+              {/* QUEUE-01 / SCRUM-2894 (L2-A1) — securing-path hints. The
+                  "Secure Instantly" hint only renders when the capability
+                  exposes it (hardcoded false this sprint, R5 dark) so this
+                  never shows a control the user can't act on. */}
+              <div className="space-y-1 text-xs text-muted-foreground" data-testid="securing-choice-hints">
+                <p>{SECURING_CHOICE_HINTS.queue}</p>
+                {exposedPaths.includes('instant') && <p>{SECURING_CHOICE_HINTS.instant}</p>}
+              </div>
+
               <Alert>
                 <ArkovaIcon className="h-4 w-4" />
                 <AlertDescription>
@@ -1043,15 +1091,33 @@ export function SecureDocumentDialog({
           )}
 
           {step === 'confirm' && (
-            <>
+            // QUEUE-01 / SCRUM-2894 (L2-A1) — Add to Queue (always available,
+            // free) / Secure Instantly (only when exposedPaths includes
+            // 'instant' — hardcoded unreachable this sprint, R5 dark).
+            <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <Button variant="outline" onClick={() => setStep('template')}>
                 {SECURE_DIALOG_LABELS.BACK}
               </Button>
-              <Button onClick={() => handleConfirm()}>
-                <ArkovaIcon className="mr-2 h-4 w-4" />
-                {SECURE_DIALOG_LABELS.SECURE_BUTTON}
-              </Button>
-            </>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                {exposedPaths.includes('instant') && (
+                  <Button
+                    variant="outline"
+                    onClick={() => void handleSecureNow()}
+                    data-testid="securing-path-instant"
+                  >
+                    <Zap className="mr-2 h-4 w-4" />
+                    {SECURING_CHOICE_LABELS.instant}
+                  </Button>
+                )}
+                <Button
+                  onClick={() => handleConfirm(undefined, 'queue')}
+                  data-testid="securing-path-queue"
+                >
+                  <ArkovaIcon className="mr-2 h-4 w-4" />
+                  {SECURING_CHOICE_LABELS.queue}
+                </Button>
+              </div>
+            </div>
           )}
 
           {step === 'success' && (
