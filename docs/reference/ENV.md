@@ -95,6 +95,45 @@ CRON_SECRET=                        # min 16 chars
 CRON_OIDC_AUDIENCE=
 ```
 
+## Health endpoint (SCRUM-2653)
+```bash
+HEALTH_DETAIL_TOKEN=                # min 16 chars, optional
+```
+
+Gates the `?detailed=true` view of `/health` and `/api/health`, sent by the
+caller as the `X-Health-Token` header. **Plain `/health` stays public and
+unauthenticated** (CLAUDE.md §1.9) — only the detailed enrichment is gated.
+
+**Exactly what is and is not gated** (stated precisely per CLAUDE.md §1.13's
+claims-review rule — measured vs asserted vs NOT asserted):
+
+| Field | Gated by `HEALTH_DETAIL_TOKEN`? |
+|---|---|
+| `checks.*.status` sub-objects (DB latency + error message, anchoring backlog `pendingCount` / `drainStalled` / `lastBatchAt`, `kms.provider`) | **Yes** — compact renders each check as a bare status string |
+| `info.*` (stripe / sentry / ai / prodAnchoring flags) | **Yes** — omitted entirely |
+| `connection` (`mode` + Supabase URL / project ref) | **Yes** — omitted entirely |
+| `status`, `version`, `git_sha`, `uptime`, `network` | **NO — still public on plain `/health`** |
+
+`git_sha` and `network` remain readable by any anonymous caller. That is a
+**deliberate, pre-existing** carve-out, not an oversight: `revision-drift.yml`
+(10-minute cron), `verify-worker-runtime.yml`, `deploy-staging.yml` and
+`scripts/ci/check-handoff-claims.ts` all read `git_sha` from an unauthenticated
+`/health`, and CLAUDE.md §0.1 requires HANDOFF prod-state claims to cite it.
+Gating it is a separate product decision with real operational cost — raise it
+with Carson rather than assuming this variable covers it.
+
+Behavior when the variable is **unset**:
+
+| Environment | Detailed view |
+|---|---|
+| `NODE_ENV=production` | **DENIED** (fails closed) — response degrades to the compact body with `"detail": "unauthorized"`, HTTP 200 |
+| anything else (local dev, preview, rigs) | allowed, no token needed |
+
+Deliberately optional and deliberately **not** in the production required-vars
+check: a missing secret must not crash-loop the worker. An unauthorized request
+degrades to compact rather than returning 401, so Cloud Run probes, uptime
+monitors, and the deploy-verification workflows never break on this gate.
+
 ## Cloudflare (edge workers)
 ```bash
 CLOUDFLARE_ACCOUNT_ID=
