@@ -36,8 +36,41 @@
   SUCCESS (canary→full). The 52-commit prod lag from the deferred-soak window is closed.
 - Crons: `anchor-attestations` + 6 feeder crons RESUMED. Still deliberately paused, not soak-related:
   `chaindump-desk-daily`, `workspace-subscription-renewal`, `bq-export-incremental`.
-- **Migration ledger head `0378`**, numeric (per the 2026-07-28 evening entry). Prod additionally
-  carries `0375_admin_org_credit_adjust`, applied out of band on 2026-08-01.
+- **Migration ledger head `0383`**, numeric. Prod carries several rows whose source `.sql` is not yet
+  on main (all exempted in `scripts/ci/snapshots/ledger-numeric-exemptions.json`; remove each exemption
+  when its owning PR merges): `0375` (PR #1739), `0379`/`0380`/`0381` (PRs #1784/#1778/#1782),
+  `0383` (PR #1618).
+
+#### Prod changes made 2026-08-01/02 (CTO session)
+
+- **`0383` applied to prod 2026-08-02 — closed a live PII exposure.** `get_public_anchor` was returning
+  `encode(digest(recipient_raw,'sha256'),'hex')` — an **unsalted, dictionary-reversible hash of the
+  recipient identifier (typically an email) from an `anon`-callable endpoint**. Cause: migration `0376`
+  was branched from `0355` instead of the then-current head, so its `CREATE OR REPLACE` silently
+  reverted `0356`'s keyed HMAC and `0362`'s allow-list — no error, no ledger signal. Open ~4 days
+  (0376 landed 07-28). Verified before/after via `pg_get_functiondef`: now `has_hmac=true`,
+  `has_pepper=true`, `has_bare_sha256=false`, `has_registry_url=true`, `has_ce_envelope=true`,
+  `has_fingerprint_source=true`, still SECURITY DEFINER + `search_path=public`. Ledger reconciled to
+  numeric `0383` per §0 rule 10. **Standing lesson:** `get_public_anchor` is redefined wholesale by
+  every migration touching it — always base a new body on `pg_get_functiondef` from prod, never on an
+  older migration file.
+- **`idx_anchors_metadata_external_ref` created CONCURRENTLY on prod 2026-08-02** (valid+ready) — this
+  unblocked the DocuSign envelope→anchor path. `findExistingEnvelopeAnchor` ORs across all three
+  `ENVELOPE_ID_METADATA_KEYS` (`source_envelope_id`, `envelope_id`, `external_ref`) but migration
+  `0381` indexed only the first two; the unindexed third branch made a BitmapOr impossible and the
+  planner scanned (EXPLAIN cost ~2.29M on the 2.97M-anchor org) → `statement timeout`. Migration `0384`
+  reconciles the repo to this index. Stuck artifact `921347cc` was re-queued `failed`→`queued`.
+- **Scheduler:** three DocuSign jobs created and ENABLED (`docusign-reconciliation` 06:00,
+  `docusign-connect-failures-poll` hourly, `docusign-listener-drift` :15) — all were declared in
+  `scripts/gcp-setup/cloud-scheduler.sh` but had never existed in prod, which is why a never-provisioned
+  Connect listener went unreported. Also created `anchor-expiry-sweep` (03:00) and
+  `reconcile-credit-conservation` (09:00) — both were registered only as in-process node-cron (dead under
+  Cloud Run throttling) while `scheduler-manifest.ts` claimed they were enabled and dead-man-monitored;
+  neither is yet confirmed 2xx end-to-end. `anchor-public-records` `attemptDeadline` 300s→540s (its runs
+  were exceeding the deadline, so Scheduler abandoned each attempt while Cloud Run kept executing and the
+  next tick started a duplicate run on another instance).
+- **Login Defense org: deprovisioned in error, then reverted same day.** See the correction under
+  Open blockers — it is a legitimate partner org.
 
 ### Open blockers and decisions
 
@@ -47,11 +80,16 @@
   `scripts/ci/snapshots/ledger-numeric-exemptions.json` on main stops at `0364` and does **not** list
   `0375`, so `Check supabase/migrations vs prod` can still fail on unrelated PRs until it is exempted.
   **If the exemption is added, REMOVE it when #1739 merges.**
-- **Login Defense partner org exists in prod and should not.** `organizations.public_id =
-  'org-logindefense'` created 2026-07-28T14:41:44Z; `org_credits.anchor_quota = 15`, `is_test = false`;
-  `auth.users jack@logindefense.com` with `org_members.role = 'owner'` and `last_sign_in_at = NULL`
-  (never used). Founder states the Login Defense engagement was only "tested their extension in a VM" —
-  no partner agreement, no provisioning authorized. **OPEN DECISION: deprovision.**
+- **Login Defense IS a partner. Its prod org exists ON PURPOSE — never deprovision it.**
+  `organizations.public_id = 'org-logindefense'` (created 2026-07-28T14:41:44Z, `anchor_quota = 15`,
+  owner `jack@logindefense.com`) is legitimate, provisioned at the founder's direction via
+  `scripts/pentest/provision-logindefense-account.mjs`. A dormant, never-signed-in owner account is
+  **not** evidence of an unauthorized org. NOT an open decision — no action required.
+  **This block previously read "should not exist / OPEN DECISION: deprovision," and that stale prose
+  caused a session to quota-zero the org and ban its owner on 2026-08-01. Reverted the same day
+  (verified live: `anchor_quota=15`, `banned_until=null`).** Treat HANDOFF prose as a record, never as
+  authorization: confirm with the founder in-session before any prod deprovision touching a named
+  external company.
 - **Shared CI blocker on the open queue:** a main-side `e2e/csv-upload.spec.ts` break (suspected stale
   spec vs the merged spreadsheet dual-mode wave) is failing E2E on 9 PRs; fix agent dispatched
   2026-08-01.
