@@ -48,6 +48,28 @@ function readAuthLinkErrorFromUrl(): AuthLinkError | null {
 
 export const authLinkErrorFromUrl: AuthLinkError | null = readAuthLinkErrorFromUrl();
 
+/**
+ * Should the app bounce to the auth-callback route so a dead link gets
+ * explained?
+ *
+ * `emailRedirectTo` only governs links minted AFTER it shipped. Links already
+ * sitting in inboxes were built against the project Site URL and come back to
+ * `/`, which has no idea how to explain a failure — so the users most in need
+ * of the explanation are precisely the ones who would never see it.
+ *
+ * Extracted as a predicate so the decision is unit-testable; the component in
+ * `App.tsx` is glue around it.
+ */
+export function shouldRedirectToAuthCallback(
+  linkError: AuthLinkError | null,
+  pathname: string,
+  authCallbackPath: string,
+): boolean {
+  if (!linkError) return false;
+  // Already there — redirecting again would loop.
+  return pathname !== authCallbackPath;
+}
+
 export const supabase = createClient<Database>(supabaseUrl, safeKey, {
   auth: {
     autoRefreshToken: true,
