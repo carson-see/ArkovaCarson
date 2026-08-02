@@ -72,6 +72,8 @@ interface Contract {
   max_scan_chars: number;
   max_public_url_chars: number;
   ungated_keys: string[];
+  projection_keys: string[];
+  structural_keys: string[];
 }
 
 const contract: Contract = JSON.parse(fs.readFileSync(CONTRACT_PATH, 'utf8'));
@@ -130,6 +132,32 @@ function latestRedefiner(): Migration {
  */
 const ACADEMIC_PREDICATE =
   String.raw`(?:private\.is_academic_record_credential_type\([^)]*\)|g\.is_academic)`;
+
+/** The value-level gates. An expression calling one of these is cleaned. */
+const CLEANERS =
+  /private\.(public_free_text_or_null|public_url_or_null|public_jsonb_text_or_null|academic_record_public_label)\(/;
+
+/**
+ * Every `'key', <expr>` pair the projection builds, as [key, expr], in source
+ * order. Shared by the parse pin and the value gate so the two cannot disagree
+ * about what was read.
+ *
+ * The key must OPEN a line: that is what distinguishes a jsonb_build_object
+ * argument from a string literal appearing mid-expression, e.g. the
+ * `a.metadata->>'recipient',` SELECT input, which is HMAC'd rather than
+ * projected. `expr` runs to the next line-opening key or to the object close.
+ */
+function projectedKeys(m: Migration): [string, string][] {
+  const body = m.sql.slice(m.sql.search(REDEFINES_GET_PUBLIC_ANCHOR));
+  return [
+    ...body.matchAll(/^[ \t]*'([a-z0-9_]+)',([\s\S]*?)(?=\n[ \t]*'[a-z0-9_]+',|\n[ \t]*\)\))/gm),
+  ].map(([, key, expr]): [string, string] => [key, expr]);
+}
+
+/** Unique, sorted — the shape every assertion below compares against. */
+function uniqueSorted(keys: string[]): string[] {
+  return [...new Set(keys)].sort();
+}
 
 function why(m: Migration, detail: string): string {
   return (
@@ -212,40 +240,71 @@ describe('public projection PII gate — the definition production runs', () => 
     ).toMatch(/'revocation_reason',[\s\S]{0,300}?private\.public_free_text_or_null\(/);
   });
 
-  it('gates EVERY key sourced from anchor text — derived from the SQL, not a hand-list', () => {
-    // The failure mode this closes: per-field wrapping is OPT-IN, so a key added
-    // by a future migration is emitted ungated by default. Rather than trusting
-    // a hand-maintained list (which is how the gap arises in the first place),
-    // parse every `'key', <expr>` pair out of the latest redefiner and require
-    // each expression that reads anchor-controlled text to either call a cleaner
-    // or be named in `contract.ungated_keys` with a stated reason.
+  it('sees EVERY key the projection emits — so the derived gate cannot silently stop parsing', () => {
+    // The gate below reports "nothing ungated" both when everything is gated
+    // and when the matcher matched nothing, and those two must not look alike.
+    // Pinning the parsed key set makes a parse that stops seeing keys fail
+    // LOUDLY rather than hand back a clean bill of health.
     const m = latestRedefiner();
-    const body = m.sql.slice(m.sql.search(REDEFINES_GET_PUBLIC_ANCHOR));
-
-    const CLEANERS = /private\.(public_free_text_or_null|public_url_or_null|public_jsonb_text_or_null|academic_record_public_label)\(/;
-    // Reads text the issuer or the extraction pipeline controls.
-    const ANCHOR_TEXT = /a\.(metadata|cpe_metadata|cle_metadata)\s*->>?\s*'|a\.(filename|revocation_reason)\b/;
-
-    const ungated: string[] = [];
-    // `'key', <expr>` up to the next `'key',` at the same or shallower nesting.
-    for (const match of body.matchAll(/'([a-z0-9_]+)',([\s\S]*?)(?=\n\s*'[a-z0-9_]+',|\n\s*\)\))/g)) {
-      const [, key, expr] = match;
-      if (!ANCHOR_TEXT.test(expr)) continue; // not anchor-controlled text
-      if (CLEANERS.test(expr)) continue; // gated
-      ungated.push(key);
-    }
-
+    // Deduped: `credit_hours`, `jurisdiction` and `requires_manual_review` are
+    // each projected twice (cpe_metadata and cle_metadata carry their own).
     expect(
-      [...new Set(ungated)].sort(),
+      uniqueSorted(projectedKeys(m).map(([key]) => key)),
       why(
         m,
-        `emits these keys from anchor-controlled text WITHOUT a value gate: ` +
-          `${[...new Set(ungated)].sort().join(', ')}. Route each through a cleaner, or add it to ` +
-          `"ungated_keys" in scripts/ci/public-pii-projection-contract.json with the reason it is ` +
-          `safe. Per-field wrapping is opt-in, so a new key is ungated BY DEFAULT — this assertion ` +
-          `is the only thing that makes that a decision instead of an accident.`,
+        `emits a different set of keys than scripts/ci/public-pii-projection-contract.json ` +
+          `pins in "projection_keys". If you ADDED a public key, add it there and decide ` +
+          `explicitly whether it belongs in "structural_keys" (carries no issuer- or ` +
+          `extraction-authored text) or must route through a cleaner. If you did not change the ` +
+          `key set, the parse itself broke — fix it, because a broken parse makes the value gate ` +
+          `below silently vacuous.`,
       ),
-    ).toEqual([...contract.ungated_keys].sort());
+    ).toEqual(uniqueSorted(contract.projection_keys));
+  });
+
+  it('gates EVERY key that is not structural — fail-closed, derived from the SQL', () => {
+    // The failure mode this closes: per-field wrapping is OPT-IN, so a key added
+    // by a future migration is emitted ungated by default.
+    //
+    // The exemption is an ALLOW-LIST of structural keys, never a pattern that
+    // tries to RECOGNISE anchor-controlled expressions. Recognising danger fails
+    // OPEN: the previous form matched only `a.metadata ->> '...'` and friends, so
+    // it never even evaluated the six free-text keys 0385 itself reads through
+    // the `g.safe_metadata` alias, and adding `'awarded_to', g.safe_metadata ->>
+    // 'awarded_to'` re-opened this exact leak with the suite fully green.
+    const m = latestRedefiner();
+    const structural = new Set(contract.structural_keys);
+
+    const ungated = uniqueSorted(
+      projectedKeys(m)
+        .filter(([key, expr]) => !structural.has(key) && !CLEANERS.test(expr))
+        .map(([key]) => key),
+    );
+
+    expect(
+      ungated,
+      why(
+        m,
+        `emits these keys WITHOUT a value gate: ${ungated.join(', ')}. Route each through a ` +
+          `cleaner (private.public_free_text_or_null / public_url_or_null / ` +
+          `public_jsonb_text_or_null / academic_record_public_label), or — if the value carries ` +
+          `no issuer- or extraction-authored text — add it to "structural_keys" in ` +
+          `scripts/ci/public-pii-projection-contract.json. Per-field wrapping is opt-in, so a new ` +
+          `key is ungated BY DEFAULT; this assertion is the only thing that makes that a decision ` +
+          `instead of an accident.`,
+      ),
+    ).toEqual(uniqueSorted(contract.ungated_keys));
+  });
+
+  it('classifies structural_keys as a subset of the keys actually projected', () => {
+    // Otherwise the allow-list rots: a stale entry silently pre-exempts a key
+    // name that a future migration reintroduces for a different, unsafe value.
+    const projected = new Set(contract.projection_keys);
+    expect(
+      contract.structural_keys.filter((k) => !projected.has(k)),
+      'structural_keys names keys the projection does not emit. Remove them — a stale exemption ' +
+        'silently pre-approves whatever a future migration binds to that name.',
+    ).toEqual([]);
   });
 
   it('never emits a raw filename, and never emits a NULL one', () => {
