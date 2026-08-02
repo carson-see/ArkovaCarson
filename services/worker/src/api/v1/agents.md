@@ -26,6 +26,20 @@ policy: log the failed chunk and return a partial (an enrichment miss renders as
 the row already shows), but throw when EVERY chunk fails, which each handler's existing `try/catch`
 turns into a 500.
 
+**Exception — `ai/eval/fraud-audit.ts` chunks with `chunkForInFilter` directly.** It is a standalone
+eval script with its own `createClient`, and `chunkedRead.ts` imports the worker `logger`, which
+pulls in `config.ts` and throws `Invalid worker configuration` at MODULE LOAD unless the full worker
+env is present. Routing it through the shared helper would have made the script unrunnable with the
+two env vars it actually needs. `postgrest-filter.ts` is dependency-free, so it costs nothing there.
+**Check the import chain before adopting `chunkedRead` in `scripts/` or `ai/eval/`.**
+
+**One-chunk reality at the admin call sites.** `parsePagination` caps `limit` at 100 and these are
+UUID lists (~3.7 KB against an 8 KiB budget), so `admin-lists.ts` always produces exactly ONE chunk.
+`assertNotAllChunksFailed(_, 1, 1, _)` therefore fires on ANY failure: the "return a partial"
+half of the policy is unreachable there and these reads are effectively fail-closed. That is a
+deliberate trade — a wrong member count or quota is worse than a 500 — but do not read the policy
+above as "the admin list degrades gracefully". It does not; it 500s.
+
 **Left alone deliberately:** `.in()` over a literal array (`['active','trialing']`,
 `['PENDING','INVESTIGATING']`) — nine such sites still discard their error. They are width-safe by
 construction, and their failure mode is an ordinary empty read, not this class. Chunking a
