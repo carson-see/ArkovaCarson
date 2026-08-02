@@ -207,13 +207,24 @@ export async function acquireRunLease(
   holder: string,
   now: Date = new Date(),
 ): Promise<boolean> {
-  const nowIso = now.toISOString();
-  const expiresAt = new Date(now.getTime() + spec.ttlMs).toISOString();
-
   try {
-    // Bootstrap: create the singleton row once. `ignoreDuplicates` on the
-    // primary key makes concurrent first runs safe, and leaves an existing
-    // lease alone.
+    // Compare-and-set FIRST. This is the whole acquisition in the steady state
+    // — which is every run after the first one ever, per lease — so it is one
+    // round-trip, not two. `org-queue-scheduler` alone re-acquires the global
+    // batch lease up to 25 times per pass, every 15 minutes.
+    const claimed = await compareAndSetLease(client, spec, holder, now);
+    if (claimed.error) {
+      logger.error({ error: claimed.error, holder, lease: spec.label }, 'Run lease claim failed — skipping run');
+      return false;
+    }
+    if (claimed.matched) return true;
+
+    // Zero rows is AMBIGUOUS: either the singleton row does not exist yet, or
+    // another instance genuinely holds an unexpired lease. Seed it — a no-op in
+    // the second case, since `ignoreDuplicates` on the primary key leaves an
+    // existing lease alone — and re-run the CAS, which remains the only
+    // arbiter. Concurrent first-ever runs therefore still cannot both win: one
+    // insert lands, the other is ignored, and the retried CAS decides.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: seedError } = await (client as any)
       .from('job_queue')
@@ -236,30 +247,12 @@ export async function acquireRunLease(
       return false;
     }
 
-    // Compare-and-set: take the lease only if it is free or expired. One
-    // UPDATE, so two instances racing it cannot both match.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (client as any)
-      .from('job_queue')
-      .update({
-        status: 'processing',
-        scheduled_for: expiresAt,
-        payload: { holder, acquired_at: nowIso },
-        updated_at: nowIso,
-      })
-      .eq('id', spec.leaseId)
-      .or(`status.eq.completed,scheduled_for.lt.${nowIso}`)
-      .select('id');
-
-    if (error) {
-      logger.error(
-        { error, holder, lease: spec.label },
-        'Run lease claim failed — skipping run',
-      );
+    const retried = await compareAndSetLease(client, spec, holder, now);
+    if (retried.error) {
+      logger.error({ error: retried.error, holder, lease: spec.label }, 'Run lease claim failed — skipping run');
       return false;
     }
-
-    return ((data ?? []) as unknown[]).length > 0;
+    return retried.matched;
   } catch (error) {
     logger.error(
       { error, holder, lease: spec.label },
@@ -267,6 +260,38 @@ export async function acquireRunLease(
     );
     return false;
   }
+}
+
+/**
+ * The claim itself: take the lease only if it is free or expired.
+ *
+ * ONE `UPDATE`, so two instances racing it cannot both match — Postgres
+ * re-evaluates the `WHERE` after taking the row lock. The `.or(...)` is the
+ * entire safety argument, which is why the test double parses and evaluates the
+ * emitted expression rather than restating it.
+ */
+async function compareAndSetLease(
+  client: SupabaseClient,
+  spec: RunLeaseSpec,
+  holder: string,
+  now: Date,
+): Promise<{ matched: boolean; error: unknown }> {
+  const nowIso = now.toISOString();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (client as any)
+    .from('job_queue')
+    .update({
+      status: 'processing',
+      scheduled_for: new Date(now.getTime() + spec.ttlMs).toISOString(),
+      payload: { holder, acquired_at: nowIso },
+      updated_at: nowIso,
+    })
+    .eq('id', spec.leaseId)
+    .or(`status.eq.completed,scheduled_for.lt.${nowIso}`)
+    .select('id');
+
+  if (error) return { matched: false, error };
+  return { matched: ((data ?? []) as unknown[]).length > 0, error: null };
 }
 
 /**

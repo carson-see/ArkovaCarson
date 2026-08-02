@@ -76,12 +76,43 @@ describe('run lease — compare-and-set semantics', () => {
     expect(new Date(row?.scheduled_for as string).getTime()).toBe(now.getTime() + SPEC.ttlMs);
   });
 
+  /**
+   * The steady state is EVERY acquisition after the first one, ever, per lease.
+   * `org-queue-scheduler` runs every 15 min in prod and claims up to 25 orgs per
+   * pass, re-acquiring the same global batch lease for each — so a redundant
+   * bootstrap write here is thousands of no-op writes a day against `job_queue`,
+   * a table the db-health monitor already tracks as hot.
+   */
+  it('takes a free lease in a single round-trip, with no redundant bootstrap', async () => {
+    const store = createRunLeaseStore(SPEC, 'free');
+
+    expect(await acquireRunLease(store.client, SPEC, 'instance-a', new Date())).toBe(true);
+    expect(store.callCount()).toBe(1);
+  });
+
+  /**
+   * The bootstrap is reachable only when the compare-and-set matches nothing,
+   * which is ambiguous: either the singleton row does not exist yet, or another
+   * instance genuinely holds the lease. Seeding is safe in both cases
+   * (`ignoreDuplicates` on the primary key) and the re-run CAS stays the only
+   * arbiter, so concurrent first-ever runs still cannot both win.
+   */
   it('bootstraps the singleton row on a first-ever run', async () => {
     const store = createRunLeaseStore(SPEC, 'absent');
 
     expect(await acquireRunLease(store.client, SPEC, 'instance-a', new Date())).toBe(true);
     expect(store.current()?.id).toBe(SPEC.leaseId);
     expect(store.current()?.type).toBe(SPEC.leaseType);
+    expect(store.current()?.payload.holder).toBe('instance-a');
+  });
+
+  it('does not grant on the post-bootstrap retry when the lease is genuinely held', async () => {
+    const store = createRunLeaseStore(SPEC, {
+      held: { holder: 'other-instance', expiresAt: '2099-01-01T00:00:00Z' },
+    });
+
+    expect(await acquireRunLease(store.client, SPEC, 'instance-b', new Date())).toBe(false);
+    expect(store.current()?.payload.holder).toBe('other-instance');
   });
 
   // The production failure: two Cloud Run instances, one live lease.
@@ -268,7 +299,12 @@ describe('run lease renewal', () => {
    * long run is a double-broadcast risk, not just a duplicated drain.
    */
   it('keeps a long-running body alive past its own TTL', async () => {
-    // Tiny TTL so the real renewal timer fires inside a unit test.
+    // Real timers, deliberately. The heartbeat is an `unref`'d `setInterval`
+    // whose renewal resolves through a chained `.then()`; driving that with
+    // fake timers means hand-pumping the microtask queue between advances, and
+    // getting that wrong produces a test that passes without the heartbeat ever
+    // firing — the exact false green this test exists to prevent. A tiny TTL
+    // buys the same coverage in ~200ms of real time.
     const fastSpec = { ...SPEC, ttlMs: 90 };
     const store = createRunLeaseStore(fastSpec, 'free');
 
@@ -407,9 +443,9 @@ describe('withRunLease', () => {
 
     expect(await first).toEqual({ acquired: true, result: 'first' });
     expect(second.acquired).toBe(false);
-    // Exactly the first run's bootstrap + compare-and-set + release. The racing
-    // caller performed no store operation at all.
-    expect(store.callCount()).toBe(3);
+    // Exactly the first run's compare-and-set + release. The racing caller
+    // performed no store operation at all.
+    expect(store.callCount()).toBe(2);
   });
 
   it('frees the in-process guard after a run so the next tick can proceed', async () => {

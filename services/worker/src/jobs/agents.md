@@ -60,6 +60,12 @@ mechanism; all three jobs wrap themselves in `withRunLease`, and the job-local c
   healthy run can outlive any TTL that still satisfies the liveness ceiling. **Renewal STOPS, loudly,
   the moment the CAS stops matching**: a run whose lease already lapsed and was stolen must never
   renew its way back on top of the new holder.
+- **Acquire is ONE round-trip in the steady state.** The CAS runs first; the bootstrap upsert is
+  reached only when it matches zero rows — ambiguous between "row does not exist yet" and "someone
+  holds it" — and the retried CAS remains the sole arbiter, so concurrent first-ever runs still
+  cannot both win. The previous shape seeded on every acquisition: `org-queue-scheduler` runs every
+  15 min in prod and re-acquires the global batch lease for up to 25 orgs per pass, so that was
+  thousands of no-op writes a day against `job_queue`, a table `db-health-monitor` tracks as hot.
 - **The holder id is minted PER ACQUISITION, not per process.** A per-process nonce is safe only
   because `inFlight` prevents two same-process runs from overlapping — an invisible coupling that a
   refactor of the in-process guard could break silently, reintroducing #1813's
@@ -107,7 +113,7 @@ mechanism; all three jobs wrap themselves in `withRunLease`, and the job-local c
 - **`check-confirmations` keeps PR #753 audit fix A3.** The lease wraps the mock/real BRANCH, not
   the real arm — the mock arm mints `mock-batch-${Date.now()}` tx ids and races the `chain_tx_id`
   backfill if it runs unguarded. Moving the lease inside the real arm fails 3 tests.
-- Tests: `__tests__/run-lease.test.ts` (33 — CAS semantics, bootstrap, steal-on-expiry, holder-scoped
+- Tests: `__tests__/run-lease.test.ts` (35 — CAS semantics, single-round-trip acquire, bootstrap, steal-on-expiry, holder-scoped
   release, fail-closed on bootstrap/CAS/throw, per-acquisition holder, in-process short-circuit incl.
   the race-the-first-acquire case, per-job independence, renewal incl. refuse-to-renew-a-stolen-lease
   and keep-a-long-run-alive-past-its-own-TTL, TTL bounds per spec, unique ids/types),
