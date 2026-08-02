@@ -92,28 +92,34 @@ export function detectDrift(
     );
   }
 
-  // DocuSign has TWO event vocabularies and a listener uses ONE of them:
+  // DocuSign has TWO event vocabularies, and a listener uses ONE:
   //   - SIM (deliveryMode "SIM")  -> `events: ["envelope-completed"]`
   //   - legacy/aggregate          -> `envelopeEvents: ["Completed"]`
+  //
   // Requiring BOTH reported permanent drift on the live production listener,
   // which is SIM-mode and carries no `envelopeEvents` at all (prod
-  // 2026-08-01T19:55:40Z, integration a900d40f) — while that same listener was
-  // demonstrably delivering completed envelopes. An hourly false positive
-  // buries the real signal, so coverage is satisfied by EITHER vocabulary and
-  // only a listener subscribed to neither is drifted.
-  const coveredBySim = expected.requiredEvents.every(
-    (required) => (match.events ?? []).includes(required),
+  // 2026-08-01T19:55:40Z, integration a900d40f) while demonstrably delivering.
+  //
+  // But the fix is NOT "either vocabulary is fine". Arkova's webhook parser
+  // (`parseDocusignConnectPayload`) requires a SIM-shaped body: it hard-fails
+  // unless `event === "envelope-completed"`, a field the legacy format does not
+  // send. A legacy-only listener would therefore deliver payloads the webhook
+  // rejects — a total silent outage that this detector must FLAG, not bless.
+  // So SIM coverage is required, and `envelopeEvents` is informational only.
+  const missingSimEvents = expected.requiredEvents.filter(
+    (required) => !(match.events ?? []).includes(required),
   );
-  const coveredByLegacy = expected.requiredEnvelopeEvents.every(
-    (required) => (match.envelopeEvents ?? []).includes(required),
-  );
-  if (!coveredBySim && !coveredByLegacy) {
+  if (expected.requiredEvents.length === 0) {
+    // Defensive: an empty expectation would make `.filter()` vacuously pass and
+    // silently disable this check. Config is built by buildArkovaConnectConfig,
+    // so this means the expectation itself is broken.
+    reasons.push('Expected Connect events list is empty — listener event coverage could not be checked.');
+  } else if (missingSimEvents.length > 0) {
     reasons.push(
-      'Listener is not subscribed to completed-envelope notifications '
-      + `(events=${JSON.stringify(match.events ?? [])}, `
-      + `envelopeEvents=${JSON.stringify(match.envelopeEvents ?? [])}; expected `
-      + `${JSON.stringify(expected.requiredEvents)} or `
-      + `${JSON.stringify(expected.requiredEnvelopeEvents)}).`,
+      `Missing required Connect event(s) ${JSON.stringify(missingSimEvents)} `
+      + `(events=${JSON.stringify(match.events ?? [])}). `
+      + 'Arkova\'s webhook only parses SIM-format deliveries, so the legacy '
+      + `envelopeEvents=${JSON.stringify(match.envelopeEvents ?? [])} does not substitute.`,
     );
   }
 

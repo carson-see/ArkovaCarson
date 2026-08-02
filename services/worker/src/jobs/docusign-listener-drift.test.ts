@@ -85,14 +85,22 @@ describe('detectDrift', () => {
       expect(detectDrift([prodSimListener()], EXPECTED)).toEqual([]);
     });
 
-    it('accepts the legacy vocabulary alone (envelopeEvents, no events)', () => {
+    // The legacy vocabulary must NOT satisfy the check. Arkova's webhook parser
+    // (`parseDocusignConnectPayload`) hard-fails unless the body carries
+    // `event: "envelope-completed"` — a SIM-only field. A legacy-only listener
+    // delivers payloads the webhook rejects: a total silent outage. Blessing it
+    // here would turn this detector into the thing that hides the outage.
+    it('FLAGS a legacy-only listener — the webhook cannot parse those deliveries', () => {
       const legacy: ActualConnectListener = {
         ...prodSimListener(),
         envelopeEvents: ['Completed'],
         events: undefined,
         eventData: { format: 'json', version: 'restv2.1' },
       };
-      expect(detectDrift([legacy], EXPECTED)).toEqual([]);
+      const reasons = detectDrift([legacy], EXPECTED);
+      expect(reasons).toHaveLength(1);
+      expect(reasons[0]).toContain('envelope-completed');
+      expect(reasons[0]).toMatch(/SIM/);
     });
 
     it('still flags a listener carrying NEITHER event vocabulary', () => {
@@ -103,7 +111,7 @@ describe('detectDrift', () => {
       };
       const reasons = detectDrift([none], EXPECTED);
       expect(reasons).toHaveLength(1);
-      expect(reasons[0]).toMatch(/completed-envelope/i);
+      expect(reasons[0]).toContain('envelope-completed');
     });
 
     it('still flags a listener subscribed only to unrelated events', () => {
@@ -111,7 +119,16 @@ describe('detectDrift', () => {
         ...prodSimListener(),
         events: ['envelope-sent', 'recipient-completed'],
       };
-      expect(detectDrift([wrong], EXPECTED)).not.toEqual([]);
+      const reasons = detectDrift([wrong], EXPECTED);
+      expect(reasons).toHaveLength(1);
+      expect(reasons[0]).toContain('envelope-completed');
+    });
+
+    it('does not vacuously pass when the expected events list is empty', () => {
+      const reasons = detectDrift([prodSimListener()], { ...EXPECTED, requiredEvents: [] });
+      expect(reasons).toEqual([
+        'Expected Connect events list is empty — listener event coverage could not be checked.',
+      ]);
     });
 
     it('flags an explicitly WRONG payload format but not an absent one', () => {
@@ -170,8 +187,12 @@ describe('detectDrift', () => {
     const reasons = detectDrift([drifted], EXPECTED);
 
     expect(reasons.some((reason) => /hmac/i.test(reason))).toBe(true);
-    expect(reasons.some((reason) => /Completed/.test(reason))).toBe(true);
+    // One reason now covers event coverage, naming the SIM event that is
+    // missing and reporting the legacy list for context. Previously this was
+    // two reasons because both vocabularies were required — see the SIM-mode
+    // block below for why only the SIM one is load-bearing.
     expect(reasons.some((reason) => /envelope-completed/.test(reason))).toBe(true);
+    expect(reasons.some((reason) => /envelopeEvents=\[\]/.test(reason))).toBe(true);
     expect(reasons.some((reason) => /version/i.test(reason))).toBe(true);
   });
 
