@@ -131,13 +131,25 @@ export function isSourceUrlSafe(url: string | null | undefined): boolean {
   return sanitizeSourceUrl(url) !== null;
 }
 
-export function getEvidenceLevelLabel(level: VerificationLevel | string | null | undefined): string | null {
+/**
+ * Accepted shape for every `parseVerificationLevel`-backed helper below.
+ *
+ * Deliberately just `string | null | undefined`, not
+ * `VerificationLevel | string | null | undefined`: `VerificationLevel` is
+ * already a subset of `string`, so including it widens nothing and only
+ * erases the literal members from the union (SonarCloud S4025 / caught as a
+ * maintainability finding on PR #1840). `parseVerificationLevel` is exactly
+ * the function that narrows an arbitrary string back down to the enum.
+ */
+export type EvidenceLevelInput = string | null | undefined;
+
+export function getEvidenceLevelLabel(level: EvidenceLevelInput): string | null {
   const parsed = parseVerificationLevel(level);
   if (!parsed) return null;
   return EVIDENCE_LEVEL_LABELS[parsed] ?? null;
 }
 
-export function getEvidenceLevelDescription(level: VerificationLevel | string | null | undefined): string | null {
+export function getEvidenceLevelDescription(level: EvidenceLevelInput): string | null {
   const parsed = parseVerificationLevel(level);
   if (!parsed) return null;
   return EVIDENCE_LEVEL_DESCRIPTIONS[parsed] ?? null;
@@ -151,13 +163,13 @@ const LEVEL_STRENGTH: Record<VerificationLevel, number> = {
   ai_captured: 1,
 };
 
-export function getEvidenceLevelStrength(level: VerificationLevel | string | null | undefined): number {
+export function getEvidenceLevelStrength(level: EvidenceLevelInput): number {
   const parsed = parseVerificationLevel(level);
   if (!parsed) return 0;
   return LEVEL_STRENGTH[parsed] ?? 0;
 }
 
-export function isStrongEvidence(level: VerificationLevel | string | null | undefined): boolean {
+export function isStrongEvidence(level: EvidenceLevelInput): boolean {
   return getEvidenceLevelStrength(level) >= 4;
 }
 
@@ -184,7 +196,7 @@ const ISSUER_AUTHENTICATED_LEVELS: ReadonlySet<VerificationLevel> = new Set<Veri
   'source_signed',
 ]);
 
-export function isIssuerAuthenticated(level: VerificationLevel | string | null | undefined): boolean {
+export function isIssuerAuthenticated(level: EvidenceLevelInput): boolean {
   const parsed = parseVerificationLevel(level);
   if (!parsed) return false;
   return ISSUER_AUTHENTICATED_LEVELS.has(parsed);
