@@ -90,7 +90,7 @@
 
 ### Open blockers and decisions
 
-- **`0387` was live in prod with NO PR — a PR closing the largest repo/prod reconciliation gap is now open.**
+- **`0387` was already running in prod with NO PR — a PR closing the largest repo/prod reconciliation gap is now open.**
   `0387_public_search_learner_name_leak` closed a confirmed learner-name PII leak on the anon-callable
   `search_public_credentials` (searching `ava-williams` returned `diploma-ava-williams.pdf`). It was
   applied out of band on 2026-08-02, verified in prod, and CI-exempted on main, but its source existed
