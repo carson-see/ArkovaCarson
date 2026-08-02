@@ -36,8 +36,56 @@
   SUCCESS (canary→full). The 52-commit prod lag from the deferred-soak window is closed.
 - Crons: `anchor-attestations` + 6 feeder crons RESUMED. Still deliberately paused, not soak-related:
   `chaindump-desk-daily`, `workspace-subscription-renewal`, `bq-export-incremental`.
-- **Migration ledger head `0378`**, numeric (per the 2026-07-28 evening entry). Prod additionally
-  carries `0375_admin_org_credit_adjust`, applied out of band on 2026-08-01.
+- **Migration ledger head `0383`**, numeric. Prod carries several rows whose source `.sql` is not yet
+  on main (all exempted in `scripts/ci/snapshots/ledger-numeric-exemptions.json`; remove each exemption
+  when its owning PR merges): `0375` (PR #1739), `0379`/`0380`/`0381` (PRs #1784/#1778/#1782),
+  `0383` (PR #1618).
+
+#### Prod changes made 2026-08-01/02 (CTO session)
+
+- **`0383` applied to prod 2026-08-02 — closed a live PII exposure.** `get_public_anchor` was returning
+  `encode(digest(recipient_raw,'sha256'),'hex')` — an **unsalted, dictionary-reversible hash of the
+  recipient identifier (typically an email) from an `anon`-callable endpoint**. Cause: migration `0376`
+  was branched from `0355` instead of the then-current head, so its `CREATE OR REPLACE` silently
+  reverted `0356`'s keyed HMAC and `0362`'s allow-list — no error, no ledger signal. Open ~4 days
+  (0376 landed 07-28). Verified before/after via `pg_get_functiondef`: now `has_hmac=true`,
+  `has_pepper=true`, `has_bare_sha256=false`, `has_registry_url=true`, `has_ce_envelope=true`,
+  `has_fingerprint_source=true`, still SECURITY DEFINER + `search_path=public`. Ledger reconciled to
+  numeric `0383` per §0 rule 10. **Standing lesson:** `get_public_anchor` is redefined wholesale by
+  every migration touching it — always base a new body on `pg_get_functiondef` from prod, never on an
+  older migration file.
+- **DocuSign `statement timeout` is a PLANNER/ESTIMATE problem, not a missing index. Still OPEN.**
+  `findExistingEnvelopeAnchor` ORs across all three `ENVELOPE_ID_METADATA_KEYS` (`source_envelope_id`,
+  `envelope_id`, `external_ref`). All three ARE indexed — migration `0381` (PR #1782) creates all
+  three and they are live in prod (`indisvalid`/`indisready` true). The planner nonetheless estimates
+  **51,038 rows** match that OR (actual: **0** for a newly completed envelope) and, believing `LIMIT 1`
+  will resolve immediately, refuses the indexes:
+  on the real DocuSign org `40383eb2-f1cd-4a85-8099-afafff95e5cf` (3,151,539 anchors), with
+  `ORDER BY created_at LIMIT 1` it picks `Index Scan Backward using idx_anchors_active_created`
+  (full cost 2,209,325); dropping the `ORDER BY` picks a **Seq Scan** (full cost 1,845,309). Both walk
+  the whole org on a no-match and time out. **An index cannot fix a costing error.**
+  Fix direction (PR #1834, in progress): replace the single 3-branch `.or()` with three separate
+  indexed equality lookups (or a `UNION ALL` RPC), taking the oldest match in application code to
+  preserve idempotency; each is a point lookup immune to the estimate. Any candidate fix must be proven
+  with `EXPLAIN (ANALYZE)` against that org id with a value matching nothing — measuring against a small
+  or empty org made this look fixed twice on 2026-08-02.
+  **Correction:** an earlier version of this entry claimed `0381` indexed only two of the three keys and
+  that a CTO-applied `idx_anchors_metadata_external_ref` fixed the path. Both were wrong — the index
+  already existed (the check that "found" it missing filtered on names containing `envelope`, which
+  `idx_anchors_metadata_external_ref` does not), the `CREATE INDEX ... IF NOT EXISTS` was a no-op, and
+  artifact `921347cc` failed again afterwards with the identical error. No migration `0384` is needed
+  or exists. Artifact `921347cc` is `failed` and needs a re-queue once a real fix deploys.
+- **Scheduler:** three DocuSign jobs created and ENABLED (`docusign-reconciliation` 06:00,
+  `docusign-connect-failures-poll` hourly, `docusign-listener-drift` :15) — all were declared in
+  `scripts/gcp-setup/cloud-scheduler.sh` but had never existed in prod, which is why a never-provisioned
+  Connect listener went unreported. Also created `anchor-expiry-sweep` (03:00) and
+  `reconcile-credit-conservation` (09:00) — both were registered only as in-process node-cron (dead under
+  Cloud Run throttling) while `scheduler-manifest.ts` claimed they were enabled and dead-man-monitored;
+  neither is yet confirmed 2xx end-to-end. `anchor-public-records` `attemptDeadline` 300s→540s (its runs
+  were exceeding the deadline, so Scheduler abandoned each attempt while Cloud Run kept executing and the
+  next tick started a duplicate run on another instance).
+- **Login Defense org: deprovisioned in error, then reverted same day.** See the correction under
+  Open blockers — it is a legitimate partner org.
 
 ### Open blockers and decisions
 

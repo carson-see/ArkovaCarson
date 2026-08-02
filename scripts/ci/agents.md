@@ -22,6 +22,31 @@ actionable message when a guardrail trips. Run via
   either predicate without re-reading CLAUDE.md §1.11A.
 - **There is no `staging-soak-skip` label.** It was destroyed 2026-05-07 (PR
   #733). The only zero-soak path is T0, computed from changed files.
+- **⚠️ ACTIVE TEMPORARY BYPASS: `SOAK_GATE_DISABLED` (founder directive
+  2026-08-01, relayed by the CTO session).** When the repository Actions
+  variable `SOAK_GATE_DISABLED` is the literal string `"true"`,
+  `check-staging-evidence.ts` short-circuits to a pass at the very top of
+  both `check()` and `main()` — before tier classification, before any
+  evidence is read — and prints a `::warning::` banner
+  (`SOAK_GATE_BYPASS_NOTE`) stating plainly that no evidence was evaluated
+  and none is claimed to exist. Purpose: drain the CI-green PR queue ahead of
+  the external pen test starting 2026-08-02; the week-long consolidated soak
+  that follows the pen test is what produces the deferred evidence.
+  **RE-ENABLE BEFORE THAT SOAK IS GRADED: `gh variable set SOAK_GATE_DISABLED
+  --body false`.** The switch is `vars.*` (repo-admin state, threaded by
+  `.github/workflows/staging-evidence.yml`), never a label, PR body, branch
+  name or anything else a PR author can reach —
+  `staging-evidence-workflow-contract.test.ts` pins that binding. Anything
+  other than the literal `"true"` leaves the gate fully enforcing, and every
+  other code path is untouched so clearing the variable restores the gate
+  exactly as it was. **NOTE THE CONFLICT:** CLAUDE.md §1.11 still reads "No
+  override label exists … the only CI-only path is T0". That sentence is
+  about a *label* and is still true as written, but the spirit of it — that
+  there is no way to skip the evidence requirement — is suspended for as long
+  as this variable is set. Do not read §1.11 as describing live behaviour
+  while the bypass is engaged; reconciling the directive's wording is a
+  founder/CTO call, deliberately not made unilaterally in the PR that added
+  the bypass.
 
 ## Files
 
