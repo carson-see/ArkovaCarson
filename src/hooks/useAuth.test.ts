@@ -127,8 +127,39 @@ describe('useAuth', () => {
     expect(mockSignUp).toHaveBeenCalledWith({
       email: 'new@test.com',
       password: testCredential,
-      options: { data: { full_name: 'Test User' } },
+      options: {
+        data: { full_name: 'Test User' },
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+      },
     });
+  });
+
+  // SCRUM-2907: prod requires email confirmation (verified live 2026-08-01 —
+  // signup returns no session and sets confirmation_sent_at). Without
+  // emailRedirectTo, Supabase points the emailed link at the project Site URL
+  // — the app cannot nominate a landing route, so an expired or already-used
+  // link lands on `/` with no way to say what went wrong. /auth/callback is
+  // already in the project's additional_redirect_urls allow-list for all three
+  // origins, so it is the one destination Supabase will actually honour.
+  it('signUp nominates the app-owned confirmation landing route', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockSignUp.mockResolvedValue({ data: { session: null }, error: null });
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.signUp('redirect@test.com', 'unit-test-credential');
+    });
+
+    const options = mockSignUp.mock.calls.at(-1)?.[0]?.options as
+      | { emailRedirectTo?: string }
+      | undefined;
+    expect(options?.emailRedirectTo).toBe(`${window.location.origin}/auth/callback`);
   });
 
   // SCRUM-2907: signUp must surface whether an active session was returned so
