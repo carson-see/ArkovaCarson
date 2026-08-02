@@ -17,7 +17,7 @@
 -- key-issuance flow and read by nobody.
 --
 -- WHY IT ONLY BIT THE EDGE PATH (asymmetry, verified in source this session):
---   * services/worker/src/middleware/apiKeyAuth.ts:189 does its own expiry
+--   * services/worker/src/middleware/apiKeyAuth.ts:209 does its own expiry
 --     check in TypeScript (`if (apiKey.expires_at && new Date(...) < new Date())`)
 --     and rejects correctly. The Cloud Run worker was never vulnerable.
 --   * services/edge/src/mcp-server.ts:781 (`validateApiKey`) delegates
@@ -46,21 +46,32 @@
 --
 --   All 11 look like development artifacts by name — "test", "Testing Dev",
 --   "Testing Dev #3", "SDK Test", "PR 1412", "PR 1413", "PR 1415", "PR 1443",
---   "1471", "fadf", "Arkova Key" — and all 11 have last_used_at IS NULL.
+--   "1471", "fadf", "Arkova Key". The NAMES are the evidence.
 --
---   HONEST CAVEAT on that NULL: `last_used_at` is written ONLY by the worker
---   path (services/worker/src/middleware/apiKeyAuth.ts:210, fire-and-forget);
---   this RPC never writes it. So NULL proves the key was never used against the
---   Cloud Run worker — it does NOT prove it was never used against the edge MCP
---   path, which is precisely the vulnerable path. Treat "never used" as strong
---   circumstantial evidence (reinforced by the names), not proof.
+--   DO NOT USE `api_keys.last_used_at` AS EVIDENCE HERE. An earlier draft of
+--   this header cited "all 11 have last_used_at IS NULL" as circumstantial
+--   support. That reading was wrong: the column was never written by anything.
+--   The worker's "fire-and-forget" stamp discarded a supabase-js query builder
+--   with `void <builder>`, and those builders are lazy — the HTTP request is
+--   issued inside `.then()`, so nothing was ever sent. Every prod row read NULL
+--   regardless of use (confirmed live: 0 of 19 rows non-null, including a key
+--   that made an authenticated request hours earlier). The same PR that carries
+--   this migration fixes that write (`touchApiKeyLastUsed`,
+--   services/worker/src/middleware/apiKeyAuth.ts:81), but the existing NULLs
+--   predate the fix and carry no information about any key.
+--
+--   The ledger that DID record key use is `api_key_usage.last_request_at`
+--   (services/worker/src/middleware/usageTracking.ts, awaited). Use it.
 --
 --   Enumerate before applying, and re-run at apply time since expiry is
 --   time-dependent and more keys may have lapsed since this was written:
---     SELECT id, key_prefix, name, org_id, expires_at, last_used_at
---     FROM api_keys
---     WHERE is_active AND revoked_at IS NULL AND expires_at <= now()
---     ORDER BY expires_at;
+--     SELECT k.id, k.key_prefix, k.name, k.org_id, k.expires_at,
+--            max(u.last_request_at) AS last_request_at
+--     FROM api_keys k
+--     LEFT JOIN api_key_usage u ON u.api_key_id = k.id
+--     WHERE k.is_active AND k.revoked_at IS NULL AND k.expires_at <= now()
+--     GROUP BY k.id, k.key_prefix, k.name, k.org_id, k.expires_at
+--     ORDER BY k.expires_at;
 --
 --   If any row in that list is a real integration at apply time, re-issue it or
 --   clear its expires_at BEFORE applying. This migration is intentionally
