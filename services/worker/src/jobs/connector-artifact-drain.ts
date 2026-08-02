@@ -39,6 +39,7 @@ import { callRpc } from '../utils/rpc.js';
 import { Sentry } from '../utils/sentry.js';
 import { config } from '../config.js';
 import { findExistingEnvelopeAnchor } from './docusign-anchor-reconciliation.js';
+import { boundedErrorDetail } from '../utils/byte-safety.js';
 
 /**
  * Strict Zod schema for the `anchors` insert this job persists (CLAUDE.md §1.2:
@@ -824,7 +825,7 @@ async function handleDebitFailure(
   // Truly-terminal debit failures → mark failed + bounded alert. No
   // batch-anchor, no silent drop. The row is reviewable. If the guarded
   // mark-failed matched zero rows the lease was lost — stop, don't count.
-  if (await markFailed(deps, orgId, row.id, debitError ?? 'debit_failed')) {
+  if (await markFailed(deps, orgId, row, debitError ?? 'debit_failed')) {
     deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason: debitError ?? 'debit_failed' });
     result.failed += 1;
   } else {
@@ -957,8 +958,15 @@ async function handleRowDrainError(
   debitSucceeded: boolean,
   result: ConnectorArtifactDrainResult,
 ): Promise<void> {
-  const reason = err instanceof Error ? err.message : 'drain row failed';
-  deps.logger.error({ error: err, orgId, artifactId: row.id }, 'connector-artifact row drain failed');
+  // §1.6A: never log the raw error object on a connector path — it can carry a
+  // vendor response body. `boundedErrorDetail` caps length, collapses byte runs
+  // and scrubs PII. Passing the raw Error under a non-`err` key also made pino
+  // render it as `{}`, which is how prod artifact 921347cc failed on
+  // 2026-08-02 with no recorded cause anywhere in the database.
+  const reason = boundedErrorDetail(
+    err instanceof Error ? err.message : 'drain row failed',
+  ) ?? 'drain row failed';
+  deps.logger.error({ reason, orgId, artifactId: row.id }, 'connector-artifact row drain failed');
 
   if (debitSucceeded) {
     // The charge already landed and the anchor is BROADCASTING. A post-debit
@@ -975,7 +983,7 @@ async function handleRowDrainError(
 
   // Pre-debit failure → terminal `failed`. The guarded mark-failed matching
   // zero rows = lost lease → stop, don't count.
-  if (await markFailed(deps, orgId, row.id, reason)) {
+  if (await markFailed(deps, orgId, row, reason)) {
     deps.emitAlert({ scope: 'row', orgId, artifactId: row.id, reason });
     result.failed += 1;
   } else {
@@ -1062,12 +1070,26 @@ async function markRequeued(
 async function markFailed(
   deps: ConnectorArtifactDrainDeps,
   orgId: string,
-  id: string,
+  row: ConnectorArtifactRow,
   reason: string,
 ): Promise<boolean> {
+  const id = row.id;
+  // Persist the cause ON THE ROW. A terminal `failed` artifact is what an
+  // operator triages, and until this existed the reason was accepted here and
+  // silently dropped — the UPDATE set status only, so the sole surviving copy
+  // was a Sentry alert. Merged into the existing metadata (never replacing it)
+  // and bounded by construction, so this column can never become a byte sink.
+  const existingMetadata =
+    row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+      ? (row.metadata as Record<string, unknown>)
+      : {};
   const { data, error } = await deps.db
     .from('connector_artifact')
-    .update({ status: 'failed', updated_at: new Date().toISOString() })
+    .update({
+      status: 'failed',
+      metadata: { ...existingMetadata, drain_error: reason },
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', id)
     .eq('org_id', orgId)
     .in('status', ['processing', 'materialized'])
@@ -1076,7 +1098,10 @@ async function markFailed(
   if (error) {
     // A row stuck in-flight because we couldn't even mark it failed is the ONE
     // thing we must never hide — log loudly.
-    deps.logger.error({ error, orgId, artifactId: id, reason }, 'connector-artifact mark-failed failed (row stuck in-flight)');
+    deps.logger.error(
+      { dbError: boundedErrorDetail(error), orgId, artifactId: id, reason },
+      'connector-artifact mark-failed failed (row stuck in-flight)',
+    );
     return false;
   }
   return data != null;

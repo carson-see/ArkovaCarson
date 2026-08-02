@@ -349,6 +349,55 @@ describe('drainConnectorArtifactsForOrg', () => {
     expect(alertArg).toMatchObject({ orgId: ORG_A, artifactId: ART_1, reason: 'debit_constraint_violation' });
   });
 
+  // Regression — PROD 2026-08-02T00:41:53Z, artifact 921347cc, org 40383eb2.
+  // A row failed with `envelope anchor lookup failed: canceling statement due to
+  // statement timeout` and the DATABASE RECORDED NOTHING: `markFailed` accepted a
+  // `reason` and never persisted it, and the log line passed the raw Error under
+  // a non-`err` key so pino rendered it as `{}`. The only surviving copy of the
+  // cause was a Sentry alert. A terminal `failed` artifact must carry its own
+  // reason — that is the row an operator triages.
+  it('persists a bounded failure reason on the row and logs it (not an empty object)', async () => {
+    const debit = vi.fn(async () => {
+      throw new Error('envelope anchor lookup failed: canceling statement due to statement timeout');
+    });
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { debitAndEnqueueAnchor: debit });
+
+    const result = await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    expect(result.failed).toBe(1);
+    expect(h.rows[0].status).toBe('failed');
+
+    // 1. The row itself carries the cause — queryable without Sentry.
+    const meta = h.rows[0].metadata as Record<string, unknown>;
+    expect(meta.drain_error).toContain('statement timeout');
+
+    // 2. The log line carries a readable reason, not a raw Error that pino
+    //    serializes to `{}` under a non-`err` key.
+    const loggerErr = h.deps.logger.error as unknown as { mock: { calls: unknown[][] } };
+    const errorCall = loggerErr.mock.calls.find(
+      (c: unknown[]) => String(c[1]).includes('row drain failed'),
+    );
+    expect(errorCall).toBeDefined();
+    const logged = errorCall![0] as Record<string, unknown>;
+    expect(logged).not.toHaveProperty('error');
+    expect(String(logged.reason)).toContain('statement timeout');
+  });
+
+  it('never lets a failure reason carry raw bytes or unbounded vendor output', async () => {
+    const debit = vi.fn(async () => {
+      throw new Error('boom ' + 'A'.repeat(5000) + ' \u0000\u0001\u0002');
+    });
+    const h = makeHarness([makeRow({ id: ART_1, org_id: ORG_A })], { debitAndEnqueueAnchor: debit });
+
+    await drainConnectorArtifactsForOrg(ORG_A, h.deps);
+
+    const meta = h.rows[0].metadata as Record<string, unknown>;
+    expect(typeof meta.drain_error).toBe('string');
+    // Bounded by construction (§1.6A) — a connector failure must never write an
+    // unbounded blob into a column that is read back and logged.
+    expect((meta.drain_error as string).length).toBeLessThanOrEqual(600);
+  });
+
   it('anchor_not_in_expected_status + anchor ALREADY ADVANCED: promote to anchored, NEVER failed (idempotent, no re-charge)', async () => {
     // Regression (found in T3 soak @ ~10k/hr: ~12k artifacts wrongly marked
     // `failed` whose anchors were SECURED/SUBMITTED). A concurrent cycle advanced
