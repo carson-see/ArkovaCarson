@@ -16,6 +16,7 @@ import { buildVerifyUrl } from '../../lib/urls.js';
 import { FERPA_EDUCATION_TYPES, FERPA_REDISCLOSURE_NOTICE } from '../../constants/ferpa.js';
 import {
   COMPLIANCE_CONTROLS_NOTE,
+  controlsApplyForStatus,
   sanitizeStoredComplianceControls,
 } from '../../utils/complianceMapping.js';
 import { getCachedVerification, setCachedVerification } from '../../utils/verifyCache.js';
@@ -272,6 +273,16 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     'fingerprint_source',
   ] as const;
   for (const key of API_RICH_KEYS) {
+    // BUG-2026-06-24-007 (worker side): compliance controls describe a CURRENT
+    // posture. A revoked / superseded / expired credential must not carry them —
+    // the SCRUM-2227 note disclaims attestation, not currency, and a machine
+    // consumer (GRC platform, CSV importer) reads the array regardless of prose.
+    // Matches the frontend, which has gated its compliance section on isSecured
+    // since 0c90f881a. Withheld entirely rather than flagged: silence is not a
+    // claim, a stale control list is.
+    if (key === 'compliance_controls' && !controlsApplyForStatus(anchor.status)) {
+      continue;
+    }
     const v = anchor[key];
     if (v !== null && v !== undefined && v !== '') {
       (result as unknown as Record<string, unknown>)[key] = v;

@@ -119,6 +119,39 @@ export function sanitizeStoredComplianceControls(stored: unknown): string[] | nu
 }
 
 /**
+ * Statuses for which a compliance control list is CURRENT.
+ *
+ * `ACTIVE` is the public-API alias for `SECURED`; both mean the same live
+ * anchored credential.
+ */
+const CONTROLS_CURRENT_STATUSES: ReadonlySet<string> = new Set(['SECURED', 'ACTIVE']);
+
+/**
+ * BUG-2026-06-24-007 (worker side) — do the compliance controls still describe
+ * something true about this credential *as it stands*?
+ *
+ * The note added by SCRUM-2227 disclaims ATTESTATION ("this is not an audit").
+ * It does not disclaim CURRENCY. A revoked credential rendering the full
+ * SOC 2 / HIPAA / eIDAS set next to its "Revoked" line still reads as a live
+ * compliance posture, which is a claim we do not hold (R-7 / §1.5) — and a note
+ * cannot fix it, because the surfaces that matter most are consumed by machines:
+ * a GRC platform ingesting `controls: [...]` maps them as evidence no matter
+ * what prose sits beside them.
+ *
+ * The frontend already works this way. `PublicVerification.tsx` gates its
+ * compliance section on `isSecured` alone (commit 0c90f881a, 2026-06-24), so
+ * REVOKED / SUPERSEDED / EXPIRED render no controls at all. That fix was
+ * explicitly frontend-only; this is the worker half. Same record, same answer,
+ * on the page and in the export.
+ *
+ * FAILS CLOSED: unknown, empty, and null statuses return false. Withholding a
+ * control list is silence; showing a stale one is an assertion.
+ */
+export function controlsApplyForStatus(status: string | null | undefined): boolean {
+  return typeof status === 'string' && CONTROLS_CURRENT_STATUSES.has(status);
+}
+
+/**
  * The single resolver for "which control IDs may this surface show?".
  *
  * Stored controls (CML-02) win, filtered to the current catalog. When nothing

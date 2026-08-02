@@ -201,3 +201,13 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 - Additive nullable field, no API version bump (§1.8). In `verify.ts` the note is derived from whatever `compliance_controls` the allowlist loop actually placed on the response — keyed off `result`, never off `anchor`, so the two cannot disagree. It is deliberately NOT in `EMPTY_API_RICH_FIELDS`: it is derived, not a column on `AnchorByPublicId`.
 - **Retired control IDs are filtered on read.** `sanitizeStoredComplianceControls()` drops `DPF-NOTICE` / `DPF-ACCOUNTABILITY` from stored values. SCRUM-2283 removed the EU-US Data Privacy Framework claim from the frontend as a false external-status claim, but the worker mapping kept emitting it, so ~2.9M SECURED anchors persisted it. No migration can un-say that; the read path is where it is asserted, so that is where it is stopped.
 - `compliance_controls` is declared `ComplianceControls = Record<string, unknown> | string[]`. The column has always held an **array**; the object arm survives only because the public type advertised it. The OpenAPI schema documents both arms for the same reason.
+
+## 2026-08-01 BUG-2026-06-24-007 (worker side) — controls are a CURRENCY claim
+
+- `compliance_controls` is withheld entirely once a credential is no longer current. Gate: `controlsApplyForStatus()` in `utils/complianceMapping.ts` (true only for `SECURED` / `ACTIVE`, fails closed on unknown/null). Applied in `verify.ts`, `audit-export.ts` (`getControlIds`), `ai-accountability-report.ts`, and the GRC push.
+- **Why suppression and not a "no longer current" marker:** the surfaces that matter most are machine-read. A GRC platform ingesting `controls: [...]`, or a CSV importer, maps them as evidence no matter what prose sits beside them. Suppression is unambiguous to both machines and humans; a qualifier only works for humans who read it. The SCRUM-2227 note disclaims **attestation**, not **currency** — it does not cure this.
+- **Matches the frontend**, which has gated its compliance section on `isSecured` since `0c90f881a` (2026-06-24). That fix was explicitly frontend-only, which is why the worker kept serving the full SOC2/HIPAA/eIDAS set next to `status: REVOKED`. Same record must not show none on the page and a full set in the export.
+- **The note goes with the list.** No controls ⇒ no `compliance_controls_note`; the note qualifies a list that is not there.
+- **The audit PDF says WHY** (`CONTROLS_WITHHELD_NOTE`) — absence alone is ambiguous and could be read as "never had controls". Absence + reason is honest. Machine formats (CSV, JSON, GRC payload) just omit.
+- **DO NOT** "fix" this by re-adding controls with a disclaimer string. Withholding is silence; a stale control list is an assertion (R-7 / §1.5).
+
