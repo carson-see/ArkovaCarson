@@ -1854,6 +1854,348 @@ describe('check-staging-evidence', () => {
       });
     });
 
+    // SCRUM-3026 follow-up (2026-08-01): the RC-manifest evidence path was
+    // structurally unsatisfiable for a moving merge queue. Two independent
+    // causes, fixed independently below.
+    describe('RC manifest base coverage by ancestry (moving-base fix)', () => {
+      const headSha = '1234567890abcdef1234567890abcdef12345678';
+      const trainLaunchSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const recordedBaseSha = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      // A main tip that did not exist when the manifest was written — the case
+      // no committed manifest can ever enumerate.
+      const liveBaseSha = 'cccccccccccccccccccccccccccccccccccccccc';
+      const rcPath = 'docs/staging/rc-manifests/rc-2026-08-launch-72h.json';
+      const rcBody = `## Staging Soak Evidence
+- Tier: T2
+- RC manifest path: ${rcPath}
+`;
+
+      const manifest = (overrides: Record<string, unknown> = {}) => ({
+        schema_version: 1,
+        rc_id: 'RC-2026-08-launch-72h',
+        created_at: '2026-07-28T14:57:46Z',
+        created_by: 'RM agent',
+        release_owner: 'Carson',
+        approval_status: 'approved',
+        approval_actor: 'Carson',
+        approval_time: '2026-08-01T13:15:00Z',
+        train_launch_sha: trainLaunchSha,
+        target_main_sha: recordedBaseSha,
+        allowed_base_shas: [trainLaunchSha, recordedBaseSha],
+        covered_main_shas: [trainLaunchSha, recordedBaseSha],
+        included_prs: [
+          {
+            number: 1726,
+            head_sha: headSha,
+            base_sha: recordedBaseSha,
+            risk_tier: 'T2',
+            owner: 'L2',
+            ci_summary: 'required checks green',
+            rollback_note: 'revert PR',
+            migration_files: [],
+          },
+        ],
+        environment: {
+          evidence_scope: 'merge-grade isolated staging',
+          staging_api_base: 'https://launch-72h---arkova-soak.example.run.app',
+          staging_url: 'https://launch-72h---arkova-soak.example.run.app',
+          revision: 'arkova-worker-launch-72h-00004-qgj',
+          deploy_tag: 'launch-72h',
+          image_digest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          supabase_project_ref: 'ujtlwnoqfhtitcmsnrpq',
+          deploy_log_id: '30703316623',
+          preflight_result: 'environment_type=clean_mirror',
+        },
+        soak: {
+          start: '2026-07-28T19:43:55Z',
+          end: '2026-07-31T19:43:55Z',
+          duration_hours: 72,
+          harness_version: 'arkova-soak-loadgen',
+          result: 'PASS',
+          evidence_links: ['https://github.com/carson-see/ArkovaCarson/actions/runs/1'],
+          expires_at: '2026-08-15T19:43:55Z',
+        },
+        ...overrides,
+      });
+
+      const run = (opts: {
+        rc?: Record<string, unknown>;
+        baseSha?: string;
+        ancestryProvider?: (ancestor: string, descendant: string) => boolean | null;
+      } = {}) => check({
+        body: rcBody,
+        files: ['services/worker/src/api/v1/anchors.ts'],
+        headSha,
+        baseSha: opts.baseSha ?? liveBaseSha,
+        prNumber: 1726,
+        nowMs: Date.parse('2026-08-01T18:00:00Z'),
+        rcManifestLoader: () => JSON.stringify(opts.rc ?? manifest()),
+        ancestryProvider: opts.ancestryProvider,
+      });
+
+      it('fails closed when the live base is unlisted and no ancestry provider is available', () => {
+        const r = run();
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/does not cover the current base SHA/i);
+      });
+
+      it('passes when the live base is unlisted but descends from train_launch_sha', () => {
+        const r = run({
+          ancestryProvider: (ancestor, descendant) =>
+            ancestor === trainLaunchSha || descendant === liveBaseSha,
+        });
+        expect(r.ok).toBe(true);
+        expect(r.errors).toEqual([]);
+      });
+
+      it('still fails when the live base is unlisted and is NOT a descendant of any covered SHA', () => {
+        const r = run({ ancestryProvider: () => false });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/does not cover the current base SHA/i);
+      });
+
+      it('fails closed when ancestry cannot be resolved (null), rather than assuming coverage', () => {
+        const r = run({ ancestryProvider: () => null });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/does not cover the current base SHA/i);
+      });
+
+      it('accepts an entry base_sha that is an ancestor of the live base', () => {
+        // The entry recorded an old main tip that appears in no coverage list;
+        // only ancestry can rescue it.
+        const staleEntryBase = 'dddddddddddddddddddddddddddddddddddddddd';
+        const rc = manifest({
+          target_main_sha: liveBaseSha,
+          allowed_base_shas: [trainLaunchSha, liveBaseSha],
+          covered_main_shas: [trainLaunchSha, liveBaseSha],
+        });
+        (rc.included_prs as Record<string, unknown>[])[0]!.base_sha = staleEntryBase;
+        const r = run({
+          rc,
+          ancestryProvider: (ancestor, descendant) =>
+            ancestor === staleEntryBase && descendant === liveBaseSha,
+        });
+        expect(r.ok).toBe(true);
+        expect(r.errors).toEqual([]);
+      });
+
+      it('still fails an entry base_sha that is neither listed nor an ancestor of the live base', () => {
+        const rc = manifest({
+          target_main_sha: liveBaseSha,
+          allowed_base_shas: [trainLaunchSha, liveBaseSha],
+          covered_main_shas: [trainLaunchSha, liveBaseSha],
+        });
+        (rc.included_prs as Record<string, unknown>[])[0]!.base_sha =
+          'dddddddddddddddddddddddddddddddddddddddd';
+        const r = run({ rc, ancestryProvider: () => false });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/entry base SHA/i);
+      });
+
+      it('does not let ancestry coverage paper over an unapproved manifest', () => {
+        const r = run({
+          rc: manifest({ approval_status: 'withdrawn' }),
+          ancestryProvider: () => true,
+        });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/approval_status must be approved/i);
+      });
+    });
+
+    describe('RC manifest head_binding policy (recorded-exception mode)', () => {
+      const recordedHeadSha = '1111111111111111111111111111111111111111';
+      const liveHeadSha = '2222222222222222222222222222222222222222';
+      const baseSha = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      const rcPath = 'docs/staging/rc-manifests/rc-2026-08-launch-72h.json';
+      const rcBody = `## Staging Soak Evidence
+- Tier: T2
+- RC manifest path: ${rcPath}
+`;
+
+      const exception = (overrides: Record<string, unknown> = {}) => ({
+        id: 'founder-ruling-2026-08-01-no-interim-soaks',
+        recorded_at: '2026-08-01T14:20:00Z',
+        approver: 'Carson (founder / release owner)',
+        expires_at: '2026-08-16T00:00:00Z',
+        applies_to: [1726, 1737],
+        text: 'No interim soaks; pen-test then week-long consolidated soak.',
+        ...overrides,
+      });
+
+      const manifest = (overrides: Record<string, unknown> = {}) => ({
+        schema_version: 1,
+        rc_id: 'RC-2026-08-launch-72h',
+        created_at: '2026-07-28T14:57:46Z',
+        created_by: 'RM agent',
+        release_owner: 'Carson',
+        approval_status: 'approved',
+        approval_actor: 'Carson',
+        approval_time: '2026-08-01T13:15:00Z',
+        train_launch_sha: baseSha,
+        target_main_sha: baseSha,
+        allowed_base_shas: [baseSha],
+        covered_main_shas: [baseSha],
+        included_prs: [
+          {
+            number: 1737,
+            head_sha: recordedHeadSha,
+            base_sha: baseSha,
+            risk_tier: 'T2',
+            owner: 'L2',
+            ci_summary: 'required checks green',
+            rollback_note: 'revert PR',
+            migration_files: [],
+          },
+        ],
+        environment: {
+          evidence_scope: 'merge-grade isolated staging',
+          staging_api_base: 'https://launch-72h---arkova-soak.example.run.app',
+          staging_url: 'https://launch-72h---arkova-soak.example.run.app',
+          revision: 'arkova-worker-launch-72h-00004-qgj',
+          deploy_tag: 'launch-72h',
+          image_digest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          supabase_project_ref: 'ujtlwnoqfhtitcmsnrpq',
+          deploy_log_id: '30703316623',
+          preflight_result: 'environment_type=clean_mirror',
+        },
+        soak: {
+          start: '2026-07-28T19:43:55Z',
+          end: '2026-07-31T19:43:55Z',
+          duration_hours: 72,
+          harness_version: 'arkova-soak-loadgen',
+          result: 'PASS',
+          evidence_links: ['https://github.com/carson-see/ArkovaCarson/actions/runs/1'],
+          expires_at: '2026-08-15T19:43:55Z',
+        },
+        ...overrides,
+      });
+
+      const run = (rc: Record<string, unknown>, nowIso = '2026-08-01T18:00:00Z') => check({
+        body: rcBody,
+        files: ['services/worker/src/api/v1/anchors.ts'],
+        headSha: liveHeadSha,
+        baseSha,
+        prNumber: 1737,
+        nowMs: Date.parse(nowIso),
+        rcManifestLoader: () => JSON.stringify(rc),
+      });
+
+      const rosterBinding = (overrides: Record<string, unknown> = {}) => ({
+        mode: 'roster',
+        exception_id: 'founder-ruling-2026-08-01-no-interim-soaks',
+        ...overrides,
+      });
+
+      it('keeps exact-head binding by default (no head_binding field)', () => {
+        const r = run(manifest());
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/does not match current PR head/i);
+      });
+
+      it('keeps exact-head binding when head_binding.mode is the explicit default "exact"', () => {
+        const r = run(manifest({ head_binding: { mode: 'exact' } }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/does not match current PR head/i);
+      });
+
+      it('fails closed on an unrecognized head_binding.mode', () => {
+        const r = run(manifest({
+          head_binding: { mode: 'whatever' },
+          exceptions: [exception()],
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/head_binding\.mode/i);
+      });
+
+      it('accepts a drifted head under roster mode with a complete, unexpired exception', () => {
+        const r = run(manifest({
+          head_binding: rosterBinding(),
+          exceptions: [exception()],
+        }));
+        expect(r.ok).toBe(true);
+        expect(r.notes.join(' ')).toMatch(/RECORDED HUMAN EXCEPTION/i);
+        expect(r.notes.join(' ')).toMatch(/founder-ruling-2026-08-01-no-interim-soaks/);
+        expect(r.notes.join(' ')).toMatch(/Carson/);
+      });
+
+      it('rejects roster mode when the exception has expired', () => {
+        const r = run(
+          manifest({ head_binding: rosterBinding(), exceptions: [exception()] }),
+          '2026-08-20T00:00:00Z',
+        );
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/expired/i);
+      });
+
+      it('rejects roster mode when head_binding.exception_id matches no exceptions[] entry', () => {
+        const r = run(manifest({
+          head_binding: rosterBinding({ exception_id: 'no-such-exception' }),
+          exceptions: [exception()],
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/exception_id/i);
+      });
+
+      it('rejects roster mode when the exception omits a named approver', () => {
+        const r = run(manifest({
+          head_binding: rosterBinding(),
+          exceptions: [exception({ approver: '' })],
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/approver/i);
+      });
+
+      it('rejects roster mode when the exception omits an expiry', () => {
+        const r = run(manifest({
+          head_binding: rosterBinding(),
+          exceptions: [exception({ expires_at: '' })],
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/expires_at/i);
+      });
+
+      it('rejects roster mode when this PR is not in the exception applies_to list', () => {
+        const r = run(manifest({
+          head_binding: rosterBinding(),
+          exceptions: [exception({ applies_to: [1726] })],
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/applies_to/i);
+      });
+
+      it('rejects roster mode when the PR is absent from included_prs entirely', () => {
+        const r = run(manifest({
+          head_binding: rosterBinding(),
+          exceptions: [exception()],
+          included_prs: [],
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/included_prs/i);
+      });
+
+      it('does not relax tier enforcement under roster mode', () => {
+        const rc = manifest({
+          head_binding: rosterBinding(),
+          exceptions: [exception()],
+        });
+        (rc.included_prs as Record<string, unknown>[])[0]!.risk_tier = 'T1';
+        const r = run(rc);
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/risk_tier T1 is below required tier/i);
+      });
+
+      it('does not relax soak-evidence expiry under roster mode', () => {
+        const rc = manifest({
+          head_binding: rosterBinding(),
+          exceptions: [exception({ expires_at: '2026-09-30T00:00:00Z' })],
+        });
+        (rc.soak as Record<string, unknown>).expires_at = '2026-08-01T00:00:00Z';
+        const r = run(rc);
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/expired/i);
+      });
+    });
+
     // Founder directive 2026-08-01 (relayed by CTO): temporarily disable the
     // soak-evidence requirement so the CI-green queue can drain before the
     // external pen test, then re-enable for the consolidated soak.

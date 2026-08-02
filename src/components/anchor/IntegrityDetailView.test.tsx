@@ -32,16 +32,26 @@ describe('IntegrityDetailView', () => {
   it('renders all breakdown bars', () => {
     render(<IntegrityDetailView score={mockScore} />);
     expect(screen.getByText('Metadata Completeness')).toBeTruthy();
-    expect(screen.getByText('Extraction Confidence')).toBeTruthy();
     expect(screen.getByText('Issuer Verification')).toBeTruthy();
     expect(screen.getByText('Duplicate Check')).toBeTruthy();
     expect(screen.getByText('Temporal Consistency')).toBeTruthy();
   });
 
+  /**
+   * SCRUM-2914 (Founder UI findings): extraction confidence is unreliable and
+   * must not be surfaced to users as its own measurement. It still feeds the
+   * overall integrity score server-side — it just has no labelled bar here.
+   */
+  it('does not surface extraction confidence as its own bar', () => {
+    render(<IntegrityDetailView score={mockScore} />);
+    expect(screen.queryByText('Extraction Confidence')).toBeNull();
+    // mockScore.extractionConfidence is 80 — its bar value must be gone too.
+    expect(screen.queryByText('80/100')).toBeNull();
+  });
+
   it('renders score values', () => {
     render(<IntegrityDetailView score={mockScore} />);
     expect(screen.getByText('75/100')).toBeTruthy();
-    expect(screen.getByText('80/100')).toBeTruthy();
     expect(screen.getByText('60/100')).toBeTruthy();
     expect(screen.getByText('100/100')).toBeTruthy();
     expect(screen.getByText('50/100')).toBeTruthy();
