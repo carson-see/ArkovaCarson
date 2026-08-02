@@ -90,12 +90,17 @@
 
 ### Open blockers and decisions
 
-- **`0387` is live in prod with NO PR — the largest repo/prod reconciliation gap.**
+- **`0387` was live in prod with NO PR — a PR closing the largest repo/prod reconciliation gap is now open.**
   `0387_public_search_learner_name_leak` closed a confirmed learner-name PII leak on the anon-callable
-  `search_public_credentials` (searching `ava-williams` returned `diploma-ava-williams.pdf`). It is
-  applied and verified in prod, and CI-exempted on main, but its source exists ONLY on branch
-  `origin/fix/public-search-learner-name-leak-0387` (commit `2c9aa1fef`). Until that branch lands, the
-  repo does not contain the definition of a function running in production. Tracked by SCRUM-3108.
+  `search_public_credentials` (searching `ava-williams` returned `diploma-ava-williams.pdf`). It was
+  applied out of band on 2026-08-02, verified in prod, and CI-exempted on main, but its source existed
+  ONLY on branch `origin/fix/public-search-learner-name-leak-0387` (commit `2c9aa1fef`), with no PR.
+  That branch was merged forward onto current `main` (274 commits) and its migration body re-verified
+  byte-for-byte against the live `pg_get_functiondef` output in-session before opening a PR against
+  `main`. Once that PR merges, drop the `"0387"` entry from
+  `scripts/ci/snapshots/ledger-numeric-exemptions.json` — until then the repo still does not yet
+  contain the definition of a function running in production on the `main` branch itself. Tracked by
+  SCRUM-3108.
 - **Findings with no Jira Bug ticket yet** (deliberately not created unilaterally): `audit_events`
   writes discarded at 8 call sites (PR #1856), the `get_public_anchor_by_fingerprint` existence oracle
   (PR #1854), and the Drive cursor never seeded (PR #1821).
