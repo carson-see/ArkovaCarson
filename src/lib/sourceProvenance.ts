@@ -24,9 +24,39 @@ export const VERIFICATION_LEVEL_VALUES = [
 
 export const verificationLevelSchema = z.enum(VERIFICATION_LEVEL_VALUES);
 
+/**
+ * SCRUM-2480 — server spellings that mean the same tier as a client value.
+ *
+ * The worker's own enum (`CREDENTIAL_EVIDENCE_VERIFICATION_LEVELS` in
+ * `services/worker/src/lib/credential-evidence.ts`) writes
+ * `captured_upload_ai`; this module was only ever taught `ai_captured`. Since
+ * the stored value is what `get_public_anchor` hands back, every AI-captured
+ * anchor parsed as null and rendered NO badge at all — and a missing badge
+ * reads as "no caveat", the exact inverse of "weakest evidence we hold".
+ *
+ * Normalising on READ (rather than renaming either enum) is deliberate: the
+ * server spelling is already persisted in `anchors.metadata` on real rows, so
+ * a rename would need a backfill, and the verification API response shape is
+ * frozen (§1.8). Accepting both spellings fixes existing data with no
+ * migration and no contract change.
+ *
+ * A Map, not an object literal, for two reasons: object index access walks the
+ * prototype chain (so `'constructor'` or `'toString'` would resolve to a
+ * function rather than miss), and the `Object.hasOwn` guard that would fix that
+ * is ES2022 — unavailable under `tsconfig.build.json`, the Vercel-safe config
+ * CI type-checks with. A Map has neither problem.
+ */
+const VERIFICATION_LEVEL_ALIASES: ReadonlyMap<string, VerificationLevel> = new Map([
+  ['captured_upload_ai', 'ai_captured' as VerificationLevel],
+]);
+
 export function parseVerificationLevel(value: unknown): VerificationLevel | null {
   const parsed = verificationLevelSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
+  if (parsed.success) return parsed.data;
+  if (typeof value === 'string') {
+    return VERIFICATION_LEVEL_ALIASES.get(value) ?? null;
+  }
+  return null;
 }
 
 export interface SourceProvenanceData {
@@ -101,13 +131,25 @@ export function isSourceUrlSafe(url: string | null | undefined): boolean {
   return sanitizeSourceUrl(url) !== null;
 }
 
-export function getEvidenceLevelLabel(level: VerificationLevel | string | null | undefined): string | null {
+/**
+ * Accepted shape for every `parseVerificationLevel`-backed helper below.
+ *
+ * Deliberately just `string | null | undefined`, not
+ * `VerificationLevel | string | null | undefined`: `VerificationLevel` is
+ * already a subset of `string`, so including it widens nothing and only
+ * erases the literal members from the union (SonarCloud S4025 / caught as a
+ * maintainability finding on PR #1840). `parseVerificationLevel` is exactly
+ * the function that narrows an arbitrary string back down to the enum.
+ */
+export type EvidenceLevelInput = string | null | undefined;
+
+export function getEvidenceLevelLabel(level: EvidenceLevelInput): string | null {
   const parsed = parseVerificationLevel(level);
   if (!parsed) return null;
   return EVIDENCE_LEVEL_LABELS[parsed] ?? null;
 }
 
-export function getEvidenceLevelDescription(level: VerificationLevel | string | null | undefined): string | null {
+export function getEvidenceLevelDescription(level: EvidenceLevelInput): string | null {
   const parsed = parseVerificationLevel(level);
   if (!parsed) return null;
   return EVIDENCE_LEVEL_DESCRIPTIONS[parsed] ?? null;
@@ -121,13 +163,13 @@ const LEVEL_STRENGTH: Record<VerificationLevel, number> = {
   ai_captured: 1,
 };
 
-export function getEvidenceLevelStrength(level: VerificationLevel | string | null | undefined): number {
+export function getEvidenceLevelStrength(level: EvidenceLevelInput): number {
   const parsed = parseVerificationLevel(level);
   if (!parsed) return 0;
   return LEVEL_STRENGTH[parsed] ?? 0;
 }
 
-export function isStrongEvidence(level: VerificationLevel | string | null | undefined): boolean {
+export function isStrongEvidence(level: EvidenceLevelInput): boolean {
   return getEvidenceLevelStrength(level) >= 4;
 }
 
@@ -154,7 +196,7 @@ const ISSUER_AUTHENTICATED_LEVELS: ReadonlySet<VerificationLevel> = new Set<Veri
   'source_signed',
 ]);
 
-export function isIssuerAuthenticated(level: VerificationLevel | string | null | undefined): boolean {
+export function isIssuerAuthenticated(level: EvidenceLevelInput): boolean {
   const parsed = parseVerificationLevel(level);
   if (!parsed) return false;
   return ISSUER_AUTHENTICATED_LEVELS.has(parsed);

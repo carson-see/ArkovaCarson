@@ -73,6 +73,7 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - `mlRuntime.ts` — WebGPU detection and VRAM budget for in-browser ML (2 GB cap)
 - `csvExport.ts` / `csvParser.ts` / `xlsxParser.ts` — data import/export utilities
 - `sourceProvenance.ts` / `badgeSvg.ts` — SCRUM-1599 public-safe source provenance helpers, evidence-level validation, badge URL construction, and fail-closed badge SVG status mapping
+  - **SCRUM-2480 — the two evidence-level enums do NOT agree, and `parseVerificationLevel` is where that is reconciled.** The worker writes `captured_upload_ai` (`CREDENTIAL_EVIDENCE_VERIFICATION_LEVELS` in `services/worker/src/lib/credential-evidence.ts`); this module's `VERIFICATION_LEVEL_VALUES` says `ai_captured`. That value is persisted in `anchors.metadata.verification_level` and served by `get_public_anchor`, so before the fix every AI-captured anchor parsed as `null` and rendered **no badge at all** — which reads as "no caveat", the inverse of "this is the weakest evidence we hold" (§1.13 R-7 claims gate). The two spellings only ever met in test fixtures, so nothing caught it. Reconciliation is `VERIFICATION_LEVEL_ALIASES`, applied on READ: the server spelling is already on real rows, so renaming either enum would need a backfill, and the verification API response shape is frozen (§1.8). **If you add a level to either enum, add it to both, or add an alias here** — and never alias anything into `issuer_anchored`/`source_signed`, which are the green issuer-authenticated tiers (tested).
 
 ## Recent Changes
 
