@@ -37,6 +37,27 @@ export function createLazyBuilderRecorder(
     executed,
     build(payload) {
       return {
+        // NOSONAR typescript:S7739 — "Do not add `then` to an object".
+        //
+        // The rule is right in general: a thenable object gets awaited by
+        // surprise, so it is a reliability hazard in production code. Here it
+        // is the ENTIRE POINT and cannot be refactored away without destroying
+        // what this file exists to detect.
+        //
+        // `PostgrestBuilder` really is a thenable — supabase-js issues the HTTP
+        // request from `.then()`, not from `.from()/.update()/.eq()`. So
+        // `void db.from('t').update({...}).eq('id', id)` builds a request and
+        // never sends it: no error, no write, HTTP 200. That is the silent-
+        // success defect this repo keeps shipping. A test double that is a
+        // resolved Promise (or `mockReturnThis()`) is EAGER, so it cannot tell
+        // "builder constructed" from "request issued" and passes either way.
+        // Only a lazy thenable reproduces the real contract.
+        //
+        // Scope is one object in one test-only helper, never imported by
+        // production code. Prefer marking this Accepted in the SonarCloud UI
+        // over deleting the suppression — removing it means either failing the
+        // quality gate or weakening the double back into one that cannot catch
+        // the bug.
         then(onfulfilled, onrejected) {
           executed.push(payload);
           return Promise.resolve(result).then(onfulfilled, onrejected);
