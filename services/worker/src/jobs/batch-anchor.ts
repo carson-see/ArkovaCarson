@@ -637,7 +637,11 @@ export async function processBatchAnchors(opts: ProcessBatchAnchorOptions = {}):
 
 /** Rows younger than this are assumed to belong to an in-flight run. */
 const INTENT_STALE_MINUTES = 5;
-const INTENT_CHUNK_SIZE = 500;
+// `INTENT_CHUNK_SIZE = 500` used to live here. It was reasoned about against
+// HTTP 414 URI-too-large and landed on a number that satisfies neither that nor
+// the proxy's 8 KiB request-line limit — 500 UUIDs encode to ~18.5 KB. Every
+// `.in()` filter in this file is now `chunkForInFilter`'s to size; there is no
+// constant left to pick the wrong one of.
 const TXID_JOURNAL_RECONCILE_LIMIT = 100;
 
 interface IntentAnchorRow {
@@ -964,8 +968,7 @@ function parseTxidJournalRow(row: TxidJournalDbRow): TxidJournalEntry {
 
 /** Phase 3b(ii): mark chain_tx_id on the claimed BROADCASTING rows. Throws on failure. */
 async function markBroadcastIntent(anchorIds: string[], txId: string): Promise<void> {
-  for (let i = 0; i < anchorIds.length; i += INTENT_CHUNK_SIZE) {
-    const chunk = anchorIds.slice(i, i + INTENT_CHUNK_SIZE);
+  for (const { values: chunk, start: i } of chunkForInFilter(anchorIds)) {
     const { data, error, count } = await db
       .from('anchors')
       .update({ chain_tx_id: txId }, { count: 'exact' })
@@ -995,8 +998,7 @@ async function markBroadcastIntent(anchorIds: string[], txId: string): Promise<v
 
 /** Abort helper: clear intent marks written by markBroadcastIntent (pre-broadcast only). */
 async function clearBroadcastIntentMarks(anchorIds: string[], txId: string): Promise<void> {
-  for (let i = 0; i < anchorIds.length; i += INTENT_CHUNK_SIZE) {
-    const chunk = anchorIds.slice(i, i + INTENT_CHUNK_SIZE);
+  for (const { values: chunk, start: i } of chunkForInFilter(anchorIds)) {
     try {
       await db
         .from('anchors')
@@ -1012,8 +1014,7 @@ async function clearBroadcastIntentMarks(anchorIds: string[], txId: string): Pro
 
 /** Delete THIS txid's intent/proof rows (definitive-reject or aborted-intent cleanup). */
 async function deleteIntentProofRows(anchorIds: string[], txId: string): Promise<void> {
-  for (let i = 0; i < anchorIds.length; i += INTENT_CHUNK_SIZE) {
-    const chunk = anchorIds.slice(i, i + INTENT_CHUNK_SIZE);
+  for (const { values: chunk, start: i } of chunkForInFilter(anchorIds)) {
     try {
       await db
         .from('anchor_proofs')
@@ -1033,10 +1034,26 @@ async function deleteIntentProofRows(anchorIds: string[], txId: string): Promise
 // message-substring heuristic. Auth (401) / quota (402) / 5xx / timeout / unknown
 // all classify as non-reject → DEFER.
 
-/** Revert intent-marked rows to PENDING, clearing chain_tx_id (definitive reject ONLY). */
+/**
+ * Revert intent-marked rows to PENDING, clearing chain_tx_id (definitive reject ONLY).
+ *
+ * Does NOT throw, and does NOT call `assertNotAllChunksFailed` — an explicit
+ * opt-out, not an omission. This runs inside the broadcast-failure path, where a
+ * secondary throw would mask the real chain error. Rows left BROADCASTING are
+ * recovered by `recover_stuck_broadcasts` (migration `0358`).
+ *
+ * The summary line used to be an unconditional
+ * "Reverted definitively-rejected intent anchors" at INFO, emitted even when
+ * every chunk had just logged a failure immediately above it — the same
+ * reported-success-over-real-failure shape as the #1812 defect. It now reports
+ * what actually happened, and escalates to ERROR when nothing was reverted.
+ */
 async function revertIntentAnchors(anchorIds: string[]): Promise<void> {
-  for (let i = 0; i < anchorIds.length; i += INTENT_CHUNK_SIZE) {
-    const chunk = anchorIds.slice(i, i + INTENT_CHUNK_SIZE);
+  const chunks = chunkForInFilter(anchorIds);
+  let failedChunks = 0;
+  let revertedIds = 0;
+
+  for (const { values: chunk, start: i } of chunks) {
     try {
       const { error } = await db
         .from('anchors')
@@ -1044,13 +1061,86 @@ async function revertIntentAnchors(anchorIds: string[]): Promise<void> {
         .in('id', chunk)
         .eq('status', 'BROADCASTING');
       if (error) {
+        failedChunks += 1;
         logger.error({ error, chunkStart: i }, 'Intent revert chunk failed — rows left BROADCASTING for reconcile');
+        continue;
       }
+      revertedIds += chunk.length;
     } catch (err) {
+      failedChunks += 1;
       logger.error({ error: err, chunkStart: i }, 'Intent revert chunk threw — rows left BROADCASTING for reconcile');
     }
   }
-  logger.info({ count: anchorIds.length }, 'Reverted definitively-rejected intent anchors BROADCASTING → PENDING');
+
+  const outcome = summarizeIntentRevert({
+    total: anchorIds.length,
+    reverted: revertedIds,
+    attemptedChunks: chunks.length,
+    failedChunks,
+  });
+  logger[outcome.level](outcome.detail, outcome.message);
+}
+
+export interface IntentRevertOutcome {
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  detail: {
+    reverted: number;
+    stranded: number;
+    attemptedChunks: number;
+    failedChunks: number;
+  };
+}
+
+/**
+ * Decide what the intent-revert summary line should actually claim.
+ *
+ * Extracted as a pure function because the bug it fixes IS the summary line.
+ * `revertIntentAnchors` used to end with an unconditional
+ * "Reverted definitively-rejected intent anchors" at INFO — emitted even when
+ * every chunk had just logged a failure directly above it. That is the same
+ * reported-success-over-real-failure shape as the #1812 defect, where a revert
+ * that released nothing logged as though it had worked.
+ *
+ * Reaching the real function requires the whole `reconcileBroadcastIntents`
+ * fixture (journal RPCs, stale-row scan, intent hex, a rebroadcast-rejecting
+ * chain client). Testing the decision directly covers the part that was wrong.
+ */
+export function summarizeIntentRevert(args: {
+  total: number;
+  reverted: number;
+  attemptedChunks: number;
+  failedChunks: number;
+}): IntentRevertOutcome {
+  const detail = {
+    reverted: args.reverted,
+    stranded: args.total - args.reverted,
+    attemptedChunks: args.attemptedChunks,
+    failedChunks: args.failedChunks,
+  };
+
+  if (args.failedChunks === 0) {
+    return {
+      level: 'info',
+      message: 'Reverted definitively-rejected intent anchors BROADCASTING → PENDING',
+      detail,
+    };
+  }
+
+  if (args.reverted === 0) {
+    return {
+      level: 'error',
+      message:
+        'Intent revert reverted NOTHING — every chunk failed; all anchors left BROADCASTING for recover_stuck_broadcasts',
+      detail,
+    };
+  }
+
+  return {
+    level: 'warn',
+    message: 'Intent revert partially failed — some anchors left BROADCASTING for recover_stuck_broadcasts',
+    detail,
+  };
 }
 
 /** Load the signed tx hex persisted for a txid's broadcast intent. */
@@ -2094,10 +2184,8 @@ async function bulkMarkSubmittedFallback(
   blockHeight: number | null,
   blockTimestamp: string | null,
 ): Promise<number> {
-  const CHUNK_SIZE = 500;
   let updated = 0;
-  for (let i = 0; i < anchorIds.length; i += CHUNK_SIZE) {
-    const chunk = anchorIds.slice(i, i + CHUNK_SIZE);
+  for (const { values: chunk, start: i } of chunkForInFilter(anchorIds)) {
     try {
       const { error, count } = await db
         .from('anchors')
@@ -2143,9 +2231,7 @@ async function bulkMarkSubmittedFallback(
  * next cron tick. See `bulkMarkSubmittedFallback` for the post-broadcast path.
  */
 async function bulkRevertToPending(anchorIds: string[]): Promise<void> {
-  const CHUNK_SIZE = 500;
-  for (let i = 0; i < anchorIds.length; i += CHUNK_SIZE) {
-    const chunk = anchorIds.slice(i, i + CHUNK_SIZE);
+  for (const { values: chunk, start: i } of chunkForInFilter(anchorIds)) {
     try {
       const { error } = await db
         .from('anchors')
