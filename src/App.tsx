@@ -30,6 +30,7 @@ import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes'
 import { prefetchCriticalRoutes } from '@/lib/prefetch';
 import { lazyWithRetry } from '@/lib/lazyWithRetry';
 import { TOAST_DURATIONS_MS } from '@/lib/toastConfig';
+import { AuthLinkErrorRedirect } from '@/components/auth/AuthLinkErrorRedirect';
 import { shouldDismissToastsForLocationChange, type ToastLocation } from '@/lib/toastNavigation';
 
 // ── Lazy-loaded page components (AUDIT-13: route-level code splitting) ──────
@@ -198,6 +199,7 @@ export function App() {
       <QueryClientProvider client={queryClient}>
       <AuditorModeContext.Provider value={auditorMode}>
       <BrowserRouter>
+        <AuthLinkErrorRedirect />
         <ToastNavigationReset />
         <ProfileProvider>
         <Toaster position="top-right" richColors closeButton duration={TOAST_DURATIONS_MS.default} />
