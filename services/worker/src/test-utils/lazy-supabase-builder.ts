@@ -38,14 +38,21 @@ export function createLazyBuilderRecorder(result: unknown = OK_RESULT): LazyBuil
     executed,
     build(payload) {
       return {
-        // NOSONAR typescript:S7739 — `then` is the POINT of this double, not an
-        // accident. A supabase-js `PostgrestBuilder` really is a thenable, and
-        // `.then()` really is where it issues the HTTP request. S7739 exists to
-        // catch objects that become accidentally awaitable; here the thenable
-        // shape is the behaviour under test. Remove `then` and this recorder
-        // can no longer tell "builder constructed" from "request issued" —
-        // which is the entire silent-write bug class it was written to detect.
-        then(onfulfilled, onrejected) {
+        // typescript:S7739 — "Do not add `then` to an object". Suppressed with
+        // the trailing NOSONAR on the `then` line below (the marker only takes
+        // effect on the exact line the issue is raised against).
+        //
+        // The rule is right in general: a thenable object gets awaited by
+        // surprise, so it is a reliability hazard in production code. Here it
+        // is the POINT of the double — a supabase-js `PostgrestBuilder` really
+        // is a thenable, and `.then()` really is where it issues the HTTP
+        // request. Remove `then` and this recorder can no longer tell
+        // "builder constructed" from "request issued" — which is the entire
+        // silent-write bug class it was written to detect. Test-only code
+        // over deleting the suppression — removing it means either failing the
+        // quality gate or weakening the double back into one that cannot catch
+        // the bug.
+        then(onfulfilled, onrejected) { // NOSONAR
           executed.push(payload);
           return Promise.resolve(result).then(onfulfilled, onrejected);
         },
