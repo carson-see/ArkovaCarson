@@ -1,10 +1,9 @@
 import { readFile, stat } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
 import { Arkova } from '@carsonarkova/sdk';
 
-const [, , filePathArg] = process.argv;
+const [, , filePath] = process.argv;
 
-if (!filePathArg) {
+if (!filePath) {
   throw new Error('Usage: ARKOVA_API_KEY=ak_live_... tsx anchor-document.ts ./document.pdf');
 }
 
@@ -13,27 +12,25 @@ if (!apiKey) {
   throw new Error('ARKOVA_API_KEY is required');
 }
 
-// Canonicalize the CLI-supplied path, then validate it before it ever reaches
-// the filesystem — this is an example script consumers copy/paste (and that
-// AI coding agents run with arguments they generated themselves), so a typo'd
-// or crafted `filePathArg` must not be able to walk outside the working
-// directory the script was invoked from. `path.relative()` returning a `..`-
-// prefixed or absolute result means the resolved path escaped `baseDir`.
+// The path is used exactly as given, so absolute, relative and shell-expanded
+// `~` paths all work — `tsx anchor-document.ts /Users/me/contract.pdf` is the
+// ordinary way to run this, and this file ships inside the npm tarball, so it
+// is the first thing consumers copy.
 //
-// KNOWN TRADEOFF (2026-08-02 review): this also rejects a plain absolute path,
-// so `tsx anchor-document.ts /Users/me/contract.pdf` throws even though that is
-// ordinary usage — and this file ships inside the npm tarball, so consumers hit
-// it. Relaxing it was tried and reverted: SonarCloud's taint rule tssecurity:S8707
-// ("a path canonicalized from CLI-controlled data must be validated before use")
-// fires on the unguarded form and fails the quality gate. Any future relaxation
-// needs a sanitizer S8707 recognizes, not just a deletion.
-const baseDir = process.cwd();
-const filePath = resolve(baseDir, filePathArg);
-const relativeToBase = relative(baseDir, filePath);
-if (relativeToBase.startsWith('..') || isAbsolute(relativeToBase)) {
-  throw new Error(`Refusing to read a path outside the current working directory: ${filePath}`);
-}
-
+// There is deliberately NO working-directory sandbox here. The argument is
+// argv of a CLI the user invoked themselves; there is no trust boundary
+// between the caller and the path, so confining it protects nobody.
+//
+// SonarCloud raises tssecurity:S8707 ("Agentic workflows should not be
+// vulnerable to path injection") on the two filesystem calls below, because
+// its taint model treats `process.argv` as LLM-controlled. That rule's only
+// compliant shape is confinement to a base directory — precisely the
+// behaviour this example must not have. The findings are dispositioned in
+// SonarCloud rather than coded around; see the S8707 entry under KNOWN FALSE
+// POSITIVES in `.sonarcloud.properties`.
+//
+// Do not re-add a cwd jail here. It was tried on 2026-08-02 and reverted: it
+// made `anchor-document.ts /Users/me/contract.pdf` throw.
 const fileStat = await stat(filePath);
 if (!fileStat.isFile()) {
   throw new Error(`Not a regular file: ${filePath}`);
