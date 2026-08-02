@@ -73,6 +73,57 @@ surface undercounts by 8x.
   named `server-card.json` specifically; markdown isn't mechanically
   diffable against `TOOL_DEFINITIONS` the way JSON is), flagged in the PR
   body as a fast-follow.
+_Last updated: 2026-08-01 (MCP official-registry publish fix)._
+
+## MCP official-registry publish fix — schema drift + missing connection info (2026-08-01)
+
+Founder-directed task: get `edge.arkova.ai` MCP server discoverable via the
+official MCP Registry (`registry.modelcontextprotocol.io`,
+`github.com/modelcontextprotocol/registry`).
+
+- **Finding: Arkova was already published, but broken.** `io.github.carson-see/arkova-verification`
+  version `1.0.0` has been live in the official registry since
+  `2026-03-25T02:56:13Z` — but the published record carried **no `remotes` and
+  no `packages`**, so an MCP client discovering Arkova via the registry had no
+  way to actually connect to it. Root cause: `services/edge/server.json` used a
+  non-standard `remoteEndpoints` key (plus `tools`/`resources`/`prompts`/
+  `authentication` fields) that don't exist in the official
+  `server.schema.json` (`https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json`,
+  `#/definitions/ServerDetail`) — the registry backend silently dropped every
+  unrecognized field on the original publish, keeping only `name`/`description`/
+  `version`/`repository`, i.e. a listing with zero connection information.
+  Confirmed live via `GET https://registry.modelcontextprotocol.io/v0.1/servers?search=arkova`
+  before the fix.
+- **Fix**: `server.json` rewritten to the real schema shape — `remotes[]` with
+  `type: streamable-http`, `url: https://edge.arkova.ai/mcp`, and a `headers[]`
+  entry declaring the required `X-API-Key` (matches `mcp-server.ts`'s
+  `validateApiKey` header name). Dropped the non-schema `tools`/`resources`/
+  `prompts`/`authentication` fields — the official `server.schema.json` has
+  **no field for a tool list at all** (`ServerDetail` properties are limited to
+  `$schema`, `_meta`, `description`, `icons`, `name`, `packages`, `remotes`,
+  `repository`, `title`, `version`, `websiteUrl`). Individual tool discovery
+  happens via the live `tools/list` MCP call or the separate discovery card at
+  `arkova.ai/.well-known/mcp/server-card.json` (see PR #1726 for that file's
+  16-tool parity fix) — `_meta.io.modelcontextprotocol.registry/publisher-provided.toolListDoc`
+  points there as a hint, but it is publisher-provided metadata, not a
+  registry-indexed field.
+- **Published**: version `1.0.1` via `mcp-publisher publish` (Homebrew
+  `mcp-publisher@1.5.0`), authenticated `mcp-publisher login github -token`
+  against the `Github_Token` secret in GCP Secret Manager (project `arkova1`;
+  verified via `GET /user` → `carson-see`, personal account, matches the
+  `io.github.carson-see/*` namespace already in use — no org-level auth or DNS
+  domain verification needed). `1.0.1` is now `status: active`,
+  `isLatest: true`, confirmed via the registry search API. The broken `1.0.0`
+  was marked `status: deprecated` (`mcp-publisher status`) with a message
+  pointing at `1.0.1` rather than deleted, so version history stays intact.
+- **Runbook**: `docs/reference/MCP_REGISTRY_PUBLISH.md` (republish steps,
+  version-bump reminder, optional future migration to a `arkova.ai`-domain
+  namespace via DNS TXT record — not executed, DNS is founder-managed per
+  §1.11).
+- **No runtime code touched**: `server.json` is consumed only by the external
+  `mcp-publisher` CLI at publish time; it is never read by the deployed
+  Cloudflare Worker (`services/edge/src/`) or any other running service. Zero
+  behavior change to `edge.arkova.ai` itself.
 
 ## Edge MCP Truthfulness PR-3 — nessie_query → worker Gemini-space proxy + caller-key forwarding (BUG-3a) (2026-06-05)
 
