@@ -7,7 +7,7 @@
  * execution path for queue runs.
  */
 import { z } from 'zod';
-import { db } from '../utils/db.js';
+import { db, isTransientConnectionError } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { processBatchAnchors, type BatchAnchorResult } from './batch-anchor.js';
 import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
@@ -200,16 +200,59 @@ async function releaseOrgQueueClaim(
   );
 }
 
+/**
+ * Incident 2026-07-29 (launch-72h/legacy-soak signet rigs): `claim_due_org_queue_runs`
+ * is a PostgREST RPC — always a POST — and db.ts's outbound fetch wrapper
+ * deliberately never auto-retries POST/RPC calls (SCRUM-2899: a retried WRITE
+ * could double-apply if the transport failure fired AFTER the server already
+ * committed). Under loadgen connection pressure a rotten idle socket threw
+ * `fetch failed` / ECONNRESET on this exact call *after* Postgres had already
+ * committed the row lock, so the throw escaped before the per-org try/catch in
+ * `runOrgQueueScheduler` (the thing that actually clears `locked_at`) —
+ * stranding the claimed org in `last_run_status='running'` until the RPC's own
+ * 15-minute lock timeout, at which point the next tick reclaimed it and hit the
+ * same failure again. Confirmed live: `organization_queue_runs` (the
+ * completion-history table) stayed completely empty for the whole soak despite
+ * dozens of ticks with due orgs.
+ *
+ * Unlike a generic RPC write, this one is safe to retry: `claim_due_org_queue_runs`
+ * uses `FOR UPDATE SKIP LOCKED`, so a retry can only pick up orgs NOT already
+ * locked by a prior (possibly-phantom-committed) attempt — it can never
+ * double-claim or cause `processBatchAnchors` to run twice for the same org
+ * from a single scheduler pass. One bounded retry on a fresh socket, exactly
+ * mirroring the read-path pattern in db.ts's `createResilientFetch`.
+ */
 async function claimDueOrganizations(
   deps: ReturnType<typeof getDeps>,
   limit: number,
 ): Promise<Array<{ org_id: string; last_run_at: string | null }>> {
   const now = deps.now();
-  const { data, error } = await deps.db.rpc('claim_due_org_queue_runs', {
+  const params = {
     p_now: now.toISOString(),
     p_worker_id: deps.workerId,
     p_limit: limit,
-  });
+  };
+
+  let data: unknown;
+  let error: unknown;
+  try {
+    ({ data, error } = await deps.db.rpc('claim_due_org_queue_runs', params));
+  } catch (err) {
+    if (!isTransientConnectionError(err)) throw err;
+    deps.logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      'claim_due_org_queue_runs transport failure — retrying once on a fresh socket (safe: FOR UPDATE SKIP LOCKED)',
+    );
+    ({ data, error } = await deps.db.rpc('claim_due_org_queue_runs', params));
+  }
+
+  if (error && isTransientConnectionError(error)) {
+    deps.logger.warn(
+      { err: (error as { message?: string }).message ?? String(error) },
+      'claim_due_org_queue_runs transport failure — retrying once on a fresh socket (safe: FOR UPDATE SKIP LOCKED)',
+    );
+    ({ data, error } = await deps.db.rpc('claim_due_org_queue_runs', params));
+  }
 
   if (error) {
     throw new Error(`claim_due_org_queue_runs failed: ${(error as { message?: string }).message ?? 'unknown error'}`);

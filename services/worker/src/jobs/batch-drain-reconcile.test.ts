@@ -191,8 +191,14 @@ function rpcSubmitBatchAnchors(params: {
 }
 
 /**
- * recover_stuck_broadcasts: BROADCASTING older than stale AND chain_tx_id IS
- * NULL → PENDING. The chain_tx_id guard is THE double-broadcast protection.
+ * recover_stuck_broadcasts: {BROADCASTING, SUBMITTED} older than stale AND
+ * chain_tx_id IS NULL → PENDING. The chain_tx_id guard is THE
+ * double-broadcast protection — it applies identically to both statuses.
+ *
+ * F-3 (docs/staging/SOAK-FINDINGS-2026-08.md, migration 0379): the SUBMITTED
+ * branch closes the gap where a broadcast attempt fails between the status
+ * write and the txid write, leaving a row SUBMITTED+NULL chain_tx_id with no
+ * recovery path at all pre-0379.
  */
 function rpcRecoverStuckBroadcasts(staleMinutes: number): Array<{
   anchor_id: string;
@@ -205,15 +211,21 @@ function rpcRecoverStuckBroadcasts(staleMinutes: number): Array<{
   const nowIso = new Date().toISOString();
   for (const a of store.anchors.values()) {
     if (
-      a.status === 'BROADCASTING' &&
+      (a.status === 'BROADCASTING' || a.status === 'SUBMITTED') &&
       a.deleted_at === null &&
       a.chain_tx_id === null && // ← the guard: broadcast rows are NEVER reverted
       new Date(a.updated_at).getTime() < cutoff
     ) {
       const prevClaimedBy = (a.metadata?._claimed_by as string) ?? 'unknown';
+      const previousStatus = a.status;
       a.status = 'PENDING';
       a.updated_at = nowIso;
-      a.metadata = { ...(a.metadata ?? {}), _recovery_reason: 'stuck_broadcasting', _previous_claimed_by: prevClaimedBy };
+      a.metadata = {
+        ...(a.metadata ?? {}),
+        _recovery_reason: previousStatus === 'BROADCASTING' ? 'stuck_broadcasting' : 'stuck_submitted_null_txid',
+        _recovered_from_status: previousStatus,
+        _previous_claimed_by: prevClaimedBy,
+      };
       delete a.metadata._claimed_by;
       delete a.metadata._claimed_at;
       recovered.push({ anchor_id: a.id, anchor_fingerprint: a.fingerprint, claimed_by: prevClaimedBy, stuck_since: a.updated_at });
@@ -597,6 +609,72 @@ describe('REAL batch-drain — crash mid-drain RECONCILES, never double-broadcas
     const recovery = await recoverStuckBroadcasts(5);
     expect(recovery.recovered).toBe(1);
     expect(store.anchors.get(row.id)!.status).toBe('PENDING');
+  });
+
+  // F-3 (docs/staging/SOAK-FINDINGS-2026-08.md, migration 0379): SUBMITTED
+  // anchors with a NULL chain_tx_id — the shape a broadcast attempt produces
+  // if it fails between the status write and the txid write — had NO
+  // recovery path. `recover_stuck_broadcasts` only ever queried BROADCASTING.
+  // Proven live during the 72h soak (fixture `5eed0000-...-c1` sat
+  // unrecovered for days). These cases exercise the widened RPC exactly like
+  // the BROADCASTING cases above.
+  it('F-3: recover_stuck_broadcasts leaves a genuinely stuck SUBMITTED row WITH chain_tx_id untouched', async () => {
+    // The broadcast happened — resetting this row would double-spend
+    // treasury sats on the next drain. Same guard as the BROADCASTING case.
+    seedPending(1);
+    const [row] = [...store.anchors.values()];
+    row.status = 'SUBMITTED';
+    row.chain_tx_id = 'mock_tx_already_onchain_submitted';
+    row.updated_at = new Date(Date.now() - 60 * 60_000).toISOString();
+
+    const recovery = await recoverStuckBroadcasts(5);
+    expect(recovery.recovered).toBe(0);
+    expect(store.anchors.get(row.id)!.status).toBe('SUBMITTED');
+    expect(store.anchors.get(row.id)!.chain_tx_id).toBe('mock_tx_already_onchain_submitted');
+  });
+
+  it('F-3: recover_stuck_broadcasts DOES reclaim a stale SUBMITTED row with NULL chain_tx_id (the fix)', async () => {
+    // Positive control — THE F-3 gap: pre-0379 this row had no recovery path
+    // at all. Post-0379 it must return to PENDING exactly like the
+    // BROADCASTING branch does, so it re-drains.
+    seedPending(1);
+    const [row] = [...store.anchors.values()];
+    row.status = 'SUBMITTED';
+    row.chain_tx_id = null;
+    row.metadata = { _claimed_by: 'batch-456' };
+    row.updated_at = new Date(Date.now() - 60 * 60_000).toISOString();
+
+    const recovery = await recoverStuckBroadcasts(5);
+    expect(recovery.recovered).toBe(1);
+    expect(store.anchors.get(row.id)!.status).toBe('PENDING');
+  });
+
+  it('F-3: does not touch a SUBMITTED+NULL-chain_tx_id row that is not yet past the stale threshold', async () => {
+    seedPending(1);
+    const [row] = [...store.anchors.values()];
+    row.status = 'SUBMITTED';
+    row.chain_tx_id = null;
+    row.updated_at = new Date().toISOString(); // fresh — still legitimately in flight
+
+    const recovery = await recoverStuckBroadcasts(5);
+    expect(recovery.recovered).toBe(0);
+    expect(store.anchors.get(row.id)!.status).toBe('SUBMITTED');
+  });
+
+  it('F-3: reclaims a mixed cohort of stale BROADCASTING and stale SUBMITTED rows in a single sweep', async () => {
+    seedPending(2);
+    const [rowA, rowB] = [...store.anchors.values()];
+    rowA.status = 'BROADCASTING';
+    rowA.chain_tx_id = null;
+    rowA.updated_at = new Date(Date.now() - 60 * 60_000).toISOString();
+    rowB.status = 'SUBMITTED';
+    rowB.chain_tx_id = null;
+    rowB.updated_at = new Date(Date.now() - 60 * 60_000).toISOString();
+
+    const recovery = await recoverStuckBroadcasts(5);
+    expect(recovery.recovered).toBe(2);
+    expect(store.anchors.get(rowA.id)!.status).toBe('PENDING');
+    expect(store.anchors.get(rowB.id)!.status).toBe('PENDING');
   });
 });
 
