@@ -25,6 +25,7 @@ Shared utilities consumed across the worker. Each file is small and single-purpo
 - **`postgrest-filter.ts` (2026-08-01)** — PostgREST request-line limits and the ONLY supported way to build an `.in()` filter over a caller-sized list. Owns `POSTGREST_ROW_LIMIT` / `POSTGREST_URL_FILTER_BUDGET_BYTES` / `POSTGREST_IN_FILTER_CHUNK`, `wireLength` / `inFilterValueWireLength`, `chunkForInFilter`, and `assertNotAllChunksFailed`. `chunkForInFilter` takes **no size parameter** (both production defects in this class were a call site picking the wrong constant), accepts **`string[]` only** (so the values chunked are provably the values sent), and bounds each chunk by **encoded wire bytes as well as count** — measured with `URLSearchParams`, which is what postgrest-js uses, and including the double quotes it adds around values containing `,`, `(` or `)`. Do NOT measure with `encodeURIComponent`: it is a different encoder, and 200 docket-shaped ids that measure 6,402 bytes under it are 9,206 on the wire. `assertNotAllChunksFailed` is the other half — a chunked loop that logs-and-continues returns `[]` when every chunk 400s, which downstream cannot tell from "no rows"; that silent success is what hid a 70-hour outage. Callers that must not throw (a revert inside another failure path) opt out explicitly. Full context: `jobs/agents.md`, 2026-08-01 entry.
 - **`pipeline.ts`** — shared helpers for the public-record fetchers (`computeContentHash`, `delay`, `isIngestionEnabled`, `batchUpsertRecords`, `getExistingSourceIds`). **2026-08-01:** `getExistingSourceIds` carried both halves of the PostgREST id-filter defect that killed public-record anchoring for 70 hours, but **only one half was live — do not repeat this as a second outage.** (a) The UNCHUNKED `.in('source_id', …)` was LATENT: `getExistingSourceIds` has exactly ONE caller today (`jobs/jurisdictionFetcher.ts` `ingestStatutes`) and it passes section ids from module-constant `StatuteDefinition[]` arrays — tens of ids, a few dozen bytes, never close to the limit. It is fixed as a trap for the next fetcher to adopt this module per its own "new fetchers import from here" contract. (b) The DISCARDED error (`const { data } = …`) WAS live: any PostgREST failure returned an empty dedup Set, so dedup could be dead while every caller reported success. It now builds its filter with `chunkForInFilter` (`postgrest-filter.ts` — bounded by real encoded wire bytes, which matters here because `source_id` is an arbitrary upstream identifier, not a UUID), logs each failed chunk, and calls the shared `assertNotAllChunksFailed` so an all-chunks-failed run throws rather than reporting an empty set as success (same guard as `jobs/publicRecordAnchor.ts`'s `fetchAnchorRows`; the two had been hand-copied and had already diverged on the `attempted > 0` check). A partial result is still returned deliberately: `batchUpsertRecords` upserts with `ignoreDuplicates`, so a missed duplicate costs a redundant write, never a wrong row. **Behaviour change to know about:** the throw propagates out of `ingestStatutes`, which `fetchJurisdictionCompliance` runs BEFORE `fetchCaseLaw`, so a total dedup failure now also skips case-law ingestion for that jurisdiction (previously it degraded to re-upserting everything). Intended: an all-chunks-failed result means PostgREST is unavailable for that table anyway, and a cron 500 gets a Scheduler retry. Covered by `pipeline.test.ts`.
 - Various: `telemetry.ts`, `correlationId.ts`, `cors.ts`, `rateLimit.ts` (legacy v1), `validation.ts`, `urls.ts`, etc.
+- **`captureCreditRpcFailureAlert()` (sentry.ts, silent-fail pre-mortem)** — the single choke point for the six credit-mutating RPCs (`deduct_ai_credits`, `deduct_unified_credits`, `allocate_monthly_credits`, `roll_over_monthly_allocation`, `batch_insert_anchors`, `submit_batch_anchors`) that previously failed with only `logger.error`, no Sentry alert. Caller passes `failMode: 'open' | 'closed' | 'retried'` — `'open'` (proceeds anyway: free AI extraction, falls through to Stripe billing) is always `fatal` level + a `credit_rpc_fail_mode:open` tag so it's impossible to miss/grep for a revenue leak; `'closed'`/`'retried'` are `error` level. Behavior (fail-open vs fail-closed) is intentionally UNCHANGED by this helper — it only adds observability. Call sites: `api/v1/ai-extract.ts`, `middleware/paymentTierRouter.ts`, `api/v1/credits.ts`, `jobs/credit-expiry.ts`, `jobs/monthly-allocation-rollover.ts`, `jobs/publicRecordAnchor.ts`, `jobs/batch-anchor.ts` (3 sites). PII: org_id/user_id UUIDs + aggregate metadata (amounts, counts, tx ids) only — never emails/fingerprints/API keys, enforced by the same `beforeSend` scrubber as every other Sentry path.
 
 ## Conventions
 - Every utility that touches the DB takes the `SupabaseClient` as a parameter (not imported) so tests don't need to `vi.mock('./db.js')` on every file.
@@ -33,3 +34,30 @@ Shared utilities consumed across the worker. Each file is small and single-purpo
 
 ## Open work
 - SCRUM-1740 (PR #738) — quota gate awaits merge.
+
+## SILENT-WRITE CLASS — audit events (2026-08-02, PR #1808 follow-on)
+
+`recordAuditEvent()` in `auditEvent.ts` is the ONLY sanctioned way to write `audit_events`.
+
+supabase-js query builders are lazy PromiseLikes — `PostgrestBuilder.then()` is where the HTTP
+request is issued — so `void db.from('audit_events').insert({...});` builds a query, discards it,
+and sends **nothing**: no request, no error, no row, no signal. Eight call sites shipped that way
+(`api/v1/verify.ts`, `keys.ts` (the `logAuditEvent` helper, i.e. every API-key admin event),
+`oracle.ts`, `key-inventory.ts`, and four in `agents.ts`).
+
+**Verified against prod 2026-08-02, not inferred:** `audit_events` held ZERO rows for every event
+type those sites emit (`VERIFICATION_QUERIED`, the API-key lifecycle events, the agent events)
+while unrelated writers had 381k+ rows — the table was fine; only these writes vanished. Same
+empirical method as PR #1808's `api_keys.last_used_at` finding (0 of 19 rows non-null).
+
+Rules:
+- Never `void db.from('audit_events')...` — call `recordAuditEvent(row)`.
+- A `mockReturnThis()` or resolved-Promise test double CANNOT catch this bug: it never distinguishes
+  "builder constructed" from "request issued". Use `test-utils/lazy-supabase-builder.ts`'s
+  `createLazyBuilderRecorder`, which records only on `.then()`. `auditEvent.test.ts` reproduces the
+  defect against that recorder before asserting the fix.
+- Failures log at **error**, not warn: a lost audit row is a compliance event. `recordAuditEvent`
+  never rejects, so a floating call cannot become an unhandled rejection.
+- Fire-and-forget is deliberate (an audit write must not fail an anonymous public verify request),
+  but the returned promise is awaitable. Whether API-key lifecycle events should be awaited — so a
+  key is never reported created without its audit row — is an open decision, not an oversight.

@@ -22,6 +22,7 @@ import { API_KEY_SCOPES, DEFAULT_API_KEY_SCOPES } from '../apiScopes.js';
 const router = Router();
 
 import { FERPA_EXCEPTION_CATEGORIES, INSTITUTION_TYPES } from '../../constants/ferpa.js';
+import { recordAuditEvent } from '../../utils/auditEvent.js';
 
 /**
  * SCRUM-1271-D — strip the internal `id` UUID from outbound key responses.
@@ -64,8 +65,7 @@ export const UpdateKeySchema = z.object({
  * Log an audit event (fire-and-forget).
  */
 function logAuditEvent(actorId: string, eventType: string, targetType: string, targetId: string, details?: string, orgId?: string) {
-  void db.from('audit_events')
-    .insert({
+  void recordAuditEvent({
       actor_id: actorId,
       org_id: orgId ?? undefined,
       event_type: eventType,

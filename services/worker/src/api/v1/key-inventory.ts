@@ -9,9 +9,9 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
+import { recordAuditEvent } from '../../utils/auditEvent.js';
 
 export interface KeyInventoryEntry {
   keyId: string;
@@ -112,7 +112,7 @@ router.get('/signatures/key-inventory', async (req: Request, res: Response) => {
     });
 
     // Log audit event for key inventory access
-    void db.from('audit_events').insert({
+    void recordAuditEvent({
       event_type: 'key_inventory_accessed',
       event_category: 'SYSTEM',
       actor_id: userId,

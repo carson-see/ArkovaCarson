@@ -27,7 +27,7 @@ vi.mock('@sentry/profiling-node', () => ({
   nodeProfilingIntegration: vi.fn(() => ({})),
 }));
 
-import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, resolveSentryEnvironment, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, captureSchedulerPauseAlert, SCHEDULER_PAUSE_FINGERPRINT, Sentry } from './sentry.js';
+import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, resolveSentryEnvironment, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, captureSchedulerPauseAlert, SCHEDULER_PAUSE_FINGERPRINT, captureCreditRpcFailureAlert, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
   it('strips email addresses from exception messages', () => {
@@ -654,5 +654,117 @@ describe('captureSchedulerPauseAlert (SCRUM-2900)', () => {
     const findings = scrubbed?.extra?.findings as Array<Record<string, unknown>>;
     expect(findings[0].actor_principal).toBe('carson@arkova.ai');
     expect(scrubbed?.message).not.toContain('[EMAIL]');
+  });
+});
+
+// Silent credit/billing/anchoring RPC failure alerting (pre-mortem: six
+// credit-mutating RPCs failed with only logger.error, no Sentry alert).
+describe('captureCreditRpcFailureAlert', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('captures fail-OPEN branches at fatal level with a greppable fail_mode tag', () => {
+    captureCreditRpcFailureAlert({
+      rpc: 'deduct_ai_credits',
+      operation: 'ai-extract.deductAICredits',
+      failMode: 'open',
+      error: new Error('deduct_ai_credits failed — proceeding with FREE AI extraction'),
+      orgId: 'org-123',
+      userId: 'user-456',
+      extra: { amount: 1 },
+    });
+
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const [err, scope] = (Sentry.captureException as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain('deduct_ai_credits failed');
+    expect(scope).toEqual(
+      expect.objectContaining({
+        level: 'fatal',
+        tags: {
+          credit_rpc: 'deduct_ai_credits',
+          credit_rpc_operation: 'ai-extract.deductAICredits',
+          credit_rpc_fail_mode: 'open',
+        },
+        extra: { org_id: 'org-123', user_id: 'user-456', amount: 1 },
+      }),
+    );
+  });
+
+  it('captures fail-CLOSED branches at error level (not fatal)', () => {
+    captureCreditRpcFailureAlert({
+      rpc: 'allocate_monthly_credits',
+      operation: 'credit-expiry.processMonthlyCredits',
+      failMode: 'closed',
+      error: new Error('allocate_monthly_credits RPC failed — no allocations processed this run'),
+    });
+
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const [, scope] = (Sentry.captureException as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    expect(scope).toEqual(
+      expect.objectContaining({
+        level: 'error',
+        tags: expect.objectContaining({ credit_rpc_fail_mode: 'closed' }),
+      }),
+    );
+  });
+
+  it('captures retried/fallback branches at error level, distinct from fail-open', () => {
+    captureCreditRpcFailureAlert({
+      rpc: 'submit_batch_anchors',
+      operation: 'batch-anchor.legacyPath',
+      failMode: 'retried',
+      error: new Error('submit_batch_anchors RPC failed in legacy path — falling back to individual updates'),
+      extra: { txId: 'tx-1', count: 42 },
+    });
+
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const [, scope] = (Sentry.captureException as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    expect(scope).toEqual(
+      expect.objectContaining({
+        level: 'error',
+        tags: expect.objectContaining({ credit_rpc_fail_mode: 'retried' }),
+        extra: { org_id: null, user_id: null, txId: 'tx-1', count: 42 },
+      }),
+    );
+  });
+
+  it('wraps non-Error error values in a real Error without losing the RPC name', () => {
+    captureCreditRpcFailureAlert({
+      rpc: 'roll_over_monthly_allocation',
+      operation: 'monthly-allocation-rollover.runAllocationRollover',
+      failMode: 'closed',
+      error: { code: 'PGRST000', message: 'timeout' },
+      orgId: 'org-789',
+    });
+
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const [err] = (Sentry.captureException as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain('roll_over_monthly_allocation');
+  });
+
+  it('never includes email, fingerprint, or API-key-shaped strings — only UUIDs and aggregate metadata (§1.4)', () => {
+    captureCreditRpcFailureAlert({
+      rpc: 'deduct_unified_credits',
+      operation: 'paymentTierRouter.tryCredits',
+      failMode: 'open',
+      error: new Error('deduct_unified_credits failed — falling through to Stripe metered billing'),
+      orgId: 'org-abc',
+      userId: 'user-def',
+      extra: { amount: 5 },
+    });
+
+    const [, scope] = (Sentry.captureException as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    const serialized = JSON.stringify(scope);
+    expect(serialized).not.toMatch(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i); // no emails
+    expect(serialized).not.toContain('fingerprint');
+    expect(serialized).not.toMatch(/sk_(live|test)_/); // no Stripe-shaped secret keys
   });
 });
