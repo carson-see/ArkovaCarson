@@ -1,5 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { Arkova } from '@carsonarkova/sdk';
 
 const [, , filePathArg] = process.argv;
@@ -13,18 +13,14 @@ if (!apiKey) {
   throw new Error('ARKOVA_API_KEY is required');
 }
 
-// Canonicalize the CLI-supplied path, then validate it before it ever reaches
-// the filesystem — this is an example script consumers copy/paste (and that
-// AI coding agents run with arguments they generated themselves), so a typo'd
-// or crafted `filePathArg` must not be able to walk outside the working
-// directory the script was invoked from. `path.relative()` returning a `..`-
-// prefixed or absolute result means the resolved path escaped `baseDir`.
-const baseDir = process.cwd();
-const filePath = resolve(baseDir, filePathArg);
-const relativeToBase = relative(baseDir, filePath);
-if (relativeToBase.startsWith('..') || isAbsolute(relativeToBase)) {
-  throw new Error(`Refusing to read a path outside the current working directory: ${filePath}`);
-}
+// Resolve to an absolute path so the log lines below are unambiguous, and fail
+// with a clear message rather than a raw EISDIR/ENOENT from readFile.
+//
+// Deliberately NOT sandboxed to the working directory: the argument is argv of
+// a CLI the user invoked themselves, so there is no trust boundary to enforce
+// here — `anchor-document.ts /Users/me/contract.pdf` is ordinary usage, and
+// rejecting it would only break the example for the consumers who copy it.
+const filePath = resolve(filePathArg);
 
 const fileStat = await stat(filePath);
 if (!fileStat.isFile()) {
