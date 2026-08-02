@@ -452,6 +452,32 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
         logger.warn({ watchError, orgId: callbackOrgId }, 'Drive changes.watch failed; saving OAuth connection without subscription');
       }
 
+      // Every column derived from the watch result, resolved ONCE. These four
+      // must agree with each other — a row claiming an active subscription but
+      // carrying a renewal error, or vice versa, is a lie about the connector's
+      // state — and deriving each one inline meant four independent chances to
+      // get that wrong. Note the asymmetry in the failure arm: it deliberately
+      // omits `last_page_token`.
+      //
+      // Seed the changes cursor (DRIVE B1) only when the watch SUCCEEDED. This
+      // is an upsert, so unconditionally writing null on a failed re-watch
+      // would wipe a working org's cursor, and nothing else can re-seed it —
+      // `advancePageToken` is the only other writer and it refuses to run
+      // without a token. Leaving the column untouched keeps the existing
+      // cursor so no change window is silently skipped.
+      const watchColumns = subscription
+        ? {
+          subscription_id: channelId,
+          subscription_expires_at: subscription.expiration,
+          last_page_token: subscription.startPageToken,
+          last_renewal_error: null,
+        }
+        : {
+          subscription_id: null,
+          subscription_expires_at: null,
+          last_renewal_error: 'changes.watch registration failed during OAuth callback',
+        };
+
       const accountLabelJson = JSON.stringify({
         email: identity.accountLabel,
         channel_token: callbackOrgId,
@@ -470,15 +496,7 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
           scope: tokens.scope ?? null,
           connected_at: (deps.now?.() ?? new Date()).toISOString(),
           revoked_at: null,
-          subscription_id: subscription ? channelId : null,
-          subscription_expires_at: subscription?.expiration ?? null,
-          // Seed the changes cursor (DRIVE B1). Written ONLY when the watch
-          // succeeded: this is an upsert, so unconditionally writing null on a
-          // failed re-watch would wipe a working org's cursor, and nothing else
-          // can re-seed it. Leaving the column untouched keeps the existing
-          // cursor so no change window is silently skipped.
-          ...(subscription ? { last_page_token: subscription.startPageToken } : {}),
-          last_renewal_error: subscription ? null : 'changes.watch registration failed during OAuth callback',
+          ...watchColumns,
           updated_at: (deps.now?.() ?? new Date()).toISOString(),
         }, { onConflict: 'org_id,provider,account_id' })
         .select('id')
