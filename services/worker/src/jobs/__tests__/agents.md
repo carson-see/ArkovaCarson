@@ -21,6 +21,7 @@ Tests for job processors — public record fetchers, pipeline health, embedding,
 | `newFetchers.test.ts` | Tests for newly added public record fetchers |
 | `pipeline-health.test.ts` | Tests for pipeline health monitoring |
 | `publicRecordAnchor.test.ts` | Tests for public record anchor creation |
+| `publicRecordAnchor-revert-in-filter.test.ts` | Guards the failed-broadcast rollback: every `.in('id', …)` revert chunk must fit the PostgREST URL budget (2026-07-29 incident class) |
 | `publicRecordEmbedder.test.ts` | Tests for public record embedding generation |
 | `trainingExporter.test.ts` | Tests for training data export from golden dataset |
 | `usptoFetcher.test.ts` | Tests for USPTO patent/trademark fetcher |

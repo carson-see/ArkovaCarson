@@ -395,6 +395,14 @@ describe('Drive OAuth router', () => {
     // subscription_id must be the channel UUID we generated (not Google's resourceId)
     expect(upsert.subscription_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(upsert.subscription_id).not.toBe('drive-resource-1');
+    // DRIVE B1 — the changes cursor MUST be seeded at connect time.
+    // `advancePageToken` is the only other writer of `last_page_token`, and it
+    // is reachable only from `processDriveChanges`, which itself refuses to run
+    // without a token (`drive-changes-runner.ts` `no_page_token` skip). Dropping
+    // the `startPageToken` that `createChangesWatch` returns therefore made the
+    // whole Drive changes pipeline unreachable by construction: a freshly
+    // connected org would skip forever.
+    expect(upsert.last_page_token).toBe('page-token');
     expect(JSON.stringify(upsert)).not.toContain('access-token-secret');
     // SCRUM-1241 (AUDIT-0424-17): conflict target must include org_id so an
     // upsert from one org cannot collide with another org sharing the same
@@ -408,6 +416,85 @@ describe('Drive OAuth router', () => {
       event_type: 'oauth_connected',
       status: 'success',
     });
+  });
+
+  it('DRIVE B1: leaves last_page_token untouched when changes.watch fails, so an existing cursor is not wiped', async () => {
+    const captured: Record<string, unknown[]> = {};
+    const capture = (method: string, value: unknown) => {
+      captured[method] = [...(captured[method] ?? []), value];
+    };
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'organizations') return mockQuery({ data: { verification_status: 'VERIFIED', suspended: false }, error: null });
+        if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
+        return mockQuery({ data: null, error: null }, capture);
+      }),
+    };
+
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'https://oauth2.googleapis.com/token') {
+        return new Response(JSON.stringify({
+          access_token: 'access-token-secret',
+          expires_in: 3600,
+          refresh_token: 'refresh-token-secret',
+          scope: 'https://www.googleapis.com/auth/drive.file email',
+          token_type: 'Bearer',
+        }), { status: 200 });
+      }
+      if (url === 'https://www.googleapis.com/oauth2/v3/userinfo') {
+        return new Response(JSON.stringify({ sub: 'google-sub-1', email: 'admin@example.com' }), { status: 200 });
+      }
+      // The watch registration fails — the connection is still saved.
+      if (url.includes('/changes/startPageToken') || url.includes('/changes/watch')) {
+        return new Response(JSON.stringify({ error: 'backend error' }), { status: 500 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as unknown as { userId: string }).userId = TEST_USER_ID;
+      next();
+    });
+    app.use('/api/v1/integrations', createDriveOAuthRouter({
+      db,
+      env: {
+        GOOGLE_OAUTH_CLIENT_ID: 'google-client',
+        GOOGLE_OAUTH_CLIENT_SECRET: 'google-secret',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stateSecret: 'test-state-secret',
+      frontendUrl: 'http://localhost:5173',
+      now: () => new Date('2026-04-24T12:00:00.000Z'),
+      kms: {
+        async encrypt() { return Buffer.from('encrypted-token-payload'); },
+        async decrypt() { return Buffer.from('{}'); },
+      },
+    }));
+
+    const start = await request(app)
+      .post('/api/v1/integrations/google_drive/oauth/start')
+      .set('host', 'worker.test')
+      .send({ org_id: TEST_ORG_ID, return_to: 'http://localhost:5173/organizations/org-1?tab=settings' });
+    const state = new URL(start.body.authorizationUrl).searchParams.get('state');
+
+    const callback = await request(app)
+      .get('/api/v1/integrations/google_drive/oauth/callback')
+      .set('host', 'worker.test')
+      .query({ code: 'google-code', state });
+
+    expect(callback.status).toBe(302);
+    const upsert = captured.upsert?.[0] as Record<string, unknown>;
+    expect(upsert.subscription_id).toBeNull();
+    // The KEY assertion: the column is OMITTED, not written as null. This is an
+    // upsert — writing null here would wipe a working org's changes cursor on a
+    // failed re-watch, and nothing else can re-seed it, so every change made
+    // from then on would be skipped silently.
+    expect(upsert).not.toHaveProperty('last_page_token');
   });
 
   it('SCRUM-1237: disconnects active Drive integration without revoking the OAuth token at Google', async () => {

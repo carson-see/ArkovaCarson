@@ -2425,6 +2425,69 @@ export const AUTH_FORM_LABELS = {
   CREATING_ACCOUNT: 'Creating account...',
 } as const;
 
+// =============================================================================
+// ACCEPT INVITE (SCRUM-3012) — /accept-invite?token=...
+// =============================================================================
+
+export const ACCEPT_INVITE_LABELS = {
+  PAGE_TITLE: "You're invited",
+  LOADING: 'Loading your invitation…',
+  INVITED_TO_JOIN: 'You have been invited to join',
+  AS_A_MEMBER: 'as a member.',
+  AS_AN_ADMINISTRATOR: 'as an administrator.',
+
+  INVALID_TITLE: 'Invalid invitation link',
+  INVALID_DESCRIPTION: 'This invitation link is invalid. Please check your email for the correct link.',
+
+  EXPIRED_TITLE: 'This invitation has expired',
+  EXPIRED_DESCRIPTION: 'Ask your organization administrator to send a new invitation.',
+
+  ALREADY_USED_TITLE: 'Invitation already used',
+  ALREADY_USED_DESCRIPTION: 'This invitation has already been accepted. Ask your administrator to send a new one if you need access again.',
+
+  ACCOUNT_EXISTS_TITLE: 'You already have an account',
+  ACCOUNT_EXISTS_DESCRIPTION: 'Sign in with this email address to accept the invitation.',
+  SIGN_IN_TO_ACCEPT: 'Sign in to accept',
+
+  FULL_NAME_LABEL: 'Full name',
+  EMAIL_LABEL: 'Email address',
+  PASSWORD_LABEL: 'Create a password',
+  PASSWORD_PLACEHOLDER: 'Create a password (8+ characters)',
+  CREATE_AND_JOIN: 'Create account and join',
+  JOINING: 'Joining…',
+
+  SUCCESS_JOINED_TITLE: "You're in",
+  SUCCESS_JOINED_DESCRIPTION: 'Your account has joined the organization.',
+  GO_TO_DASHBOARD: 'Go to dashboard',
+
+  SUCCESS_VERIFY_TITLE: 'Confirm your email to finish',
+  SUCCESS_VERIFY_DESCRIPTION: "We've sent a confirmation link to your email. Confirm it to sign in.",
+  VERIFICATION_EMAIL_FAILED: "Your account was created, but we couldn't send the confirmation email. Contact support to finish setting up sign-in.",
+
+  ERROR_GENERIC: 'Something went wrong accepting this invitation. Please try again.',
+  TRY_AGAIN: 'Try again',
+} as const;
+
+/**
+ * SCRUM-2907 — copy for a confirmation link that did not work.
+ *
+ * Supabase signals a dead link with `error`/`error_code` on the redirect hash
+ * and creates no session. Previously the app could not tell that apart from
+ * "not signed in yet" and silently redirected to the login form, so a user
+ * whose link had expired saw no explanation and had no route forward.
+ */
+export const AUTH_CALLBACK_LABELS = {
+  COMPLETING: 'Completing sign in...',
+  EXPIRED_TITLE: 'This link has expired',
+  EXPIRED_DESCRIPTION:
+    'Verification links are single-use and time-limited. Request a new link to finish setting up your account.',
+  FAILED_TITLE: 'We could not complete sign in',
+  FAILED_DESCRIPTION:
+    'Something went wrong verifying this link. Try again, or request a new link.',
+  REQUEST_NEW_LINK: 'Request a new link',
+  BACK_TO_SIGN_IN: 'Back to sign in',
+} as const;
+
 export const BETA_GATE_LABELS = {
   DESCRIPTION: 'Arkova is in closed beta. Enter your invite code to create an account.',
   CODE_LABEL: 'Invite code',
