@@ -24,9 +24,33 @@ export const VERIFICATION_LEVEL_VALUES = [
 
 export const verificationLevelSchema = z.enum(VERIFICATION_LEVEL_VALUES);
 
+/**
+ * SCRUM-2480 — server spellings that mean the same tier as a client value.
+ *
+ * The worker's own enum (`CREDENTIAL_EVIDENCE_VERIFICATION_LEVELS` in
+ * `services/worker/src/lib/credential-evidence.ts`) writes
+ * `captured_upload_ai`; this module was only ever taught `ai_captured`. Since
+ * the stored value is what `get_public_anchor` hands back, every AI-captured
+ * anchor parsed as null and rendered NO badge at all — and a missing badge
+ * reads as "no caveat", the exact inverse of "weakest evidence we hold".
+ *
+ * Normalising on READ (rather than renaming either enum) is deliberate: the
+ * server spelling is already persisted in `anchors.metadata` on real rows, so
+ * a rename would need a backfill, and the verification API response shape is
+ * frozen (§1.8). Accepting both spellings fixes existing data with no
+ * migration and no contract change.
+ */
+const VERIFICATION_LEVEL_ALIASES: Readonly<Record<string, VerificationLevel>> = {
+  captured_upload_ai: 'ai_captured',
+};
+
 export function parseVerificationLevel(value: unknown): VerificationLevel | null {
   const parsed = verificationLevelSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
+  if (parsed.success) return parsed.data;
+  if (typeof value === 'string' && Object.hasOwn(VERIFICATION_LEVEL_ALIASES, value)) {
+    return VERIFICATION_LEVEL_ALIASES[value];
+  }
+  return null;
 }
 
 export interface SourceProvenanceData {
