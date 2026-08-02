@@ -15,7 +15,11 @@ import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
-import { chunkForInFilter, POSTGREST_ROW_LIMIT } from '../../utils/postgrest-filter.js';
+import {
+  chunkForInFilter,
+  scanAllPages,
+  PageScanError,
+} from '../../utils/postgrest-filter.js';
 import type { Database } from '../../types/database.types.js';
 
 const router = Router();
@@ -41,6 +45,21 @@ export const MAX_SAMPLEABLE_POPULATION = 25_000;
  * identically and the downstream `.in()` lookup sees the same worst case.
  */
 export const MAX_SAMPLE_SIZE = 1_000;
+
+/**
+ * Absolute page bound for the population scan.
+ *
+ * The other two loop exits both depend on the server behaving — returning an
+ * empty page at the end, and not repeating rows across offsets. This one does
+ * not depend on anything. Hitting it means the scan could not finish, which is
+ * reported as `truncated` (a refusal), never as a complete read.
+ *
+ * 26 pages is what `MAX_SAMPLEABLE_POPULATION / POSTGREST_ROW_LIMIT + 1` needs
+ * when the server hands back the width it was asked for. The headroom to 64
+ * covers a deployment whose `db-max-rows` is smaller than
+ * `POSTGREST_ROW_LIMIT` — a server setting this code cannot see.
+ */
+export const MAX_POPULATION_PAGES = 64;
 
 const batchVerifySchema = z.object({
   credential_ids: z.array(z.string()).max(1000).optional(),
@@ -74,114 +93,135 @@ interface VerifyResult {
 /**
  * Seeded PRNG for reproducible sampling (ISA 530 requires auditors to reproduce results).
  *
- * Divides by 2^32, not by `0xffffffff`. The old divisor made the maximum draw
- * exactly 1.0, and `Math.floor(1.0 * (i + 1))` is `i + 1` — one past the end of
- * whatever array the caller is indexing. The LCG has full period over 2^32, so
- * the state that produces it is reachable, not theoretical.
+ * mulberry32, matching the idiom already used elsewhere in this repo
+ * (`ctdl/ctdl-importer.fuzz.test.ts`, `ai/eval/pe-synthetic-generator.ts`).
+ *
+ * It replaces an LCG (`s = s * 1664525 + 1013904223`) whose FIRST output is a
+ * near-linear function of the seed, so consecutive seeds produced correlated
+ * first draws. Measured over seeds 1..2000 on a 16-element population, the
+ * LCG's first draw reached only **14 of 16** buckets — two elements could never
+ * be picked first — while mulberry32 reaches all 16. Auditors pick small
+ * sequential seeds, and `seededSample` draws its first pick from that first
+ * output, so this was live sampling bias on the exact input pattern the feature
+ * invites. A full-array shuffle happened to mask it by burning thousands of
+ * draws before the ones that mattered; that was luck, not design.
+ *
+ * The old divisor was also `0xffffffff`, making the maximum draw exactly 1.0 —
+ * `Math.floor(1.0 * n)` is `n`, one past the end of the array being indexed.
+ * This divides by 2^32, so the range is a true [0, 1).
  */
 export function seededRandom(seed: number): () => number {
-  let s = seed;
+  let a = seed;
   return () => {
-    s = (s * 1664525 + 1013904223) & 0xffffffff;
-    return (s >>> 0) / 0x1_0000_0000;
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 0x1_0000_0000;
   };
 }
 
 /**
- * Seeded Fisher-Yates. The only supported way to shuffle a sample here.
+ * Take `count` items uniformly at random, without replacement. The only
+ * supported way to draw a sample here.
  *
- * The previous `[...rows].sort(() => rng() - 0.5)` was not a shuffle. A
- * comparator returning a random sign is not a consistent ordering, so what it
- * produces is a function of the sort algorithm's comparison schedule rather
- * than of the randomness — the quality of the PRNG behind it is irrelevant.
- * Measured under V8's TimSort over a 16-element population: the element at
- * index 0 was selected into the first slot 340 times in 2000 trials against a
- * uniform expectation of 125, and the element at index 1 only 77.
+ * Selection-sampling Fisher-Yates: each output slot swaps in one element drawn
+ * uniformly from the not-yet-picked tail. It stops after `count` swaps rather
+ * than permuting the whole array, which is O(count) instead of O(items) — at
+ * the endpoint's ceilings (25,000 population, 1,000 sample) that is 1,000 draws
+ * instead of 25,000 for an identical result.
+ *
+ * What this replaces was `[...rows].sort(() => rng() - 0.5)`, which is not a
+ * shuffle at all. A comparator returning a random sign is not a consistent
+ * ordering, so the permutation is a function of the sort algorithm's comparison
+ * schedule rather than of the randomness — no PRNG quality fixes it. Measured
+ * under V8's TimSort over 16 elements, 2000 trials, uniform expectation 125:
+ * the element at index 0 was selected 340 times, the element at index 1 only 77.
  *
  * For ISA 530 that is disqualifying, not untidy. If a row's selection
  * probability depends on its position in the result set, the sample is not
- * random and nothing an auditor concludes from it generalises to the
- * population.
+ * random and nothing an auditor concludes from it generalises to the population.
  *
- * `Math.min(i, …)` clamps the index rather than trusting `rng()` to stay below
- * 1: an out-of-range swap here does not throw, it puts `undefined` into the
- * array, and `undefined` would leave this endpoint as a sampled credential id.
+ * `Math.min(…)` clamps the index rather than trusting `rng()` to stay below 1:
+ * an out-of-range swap does not throw, it puts `undefined` into the array, and
+ * `undefined` would leave this endpoint as a sampled credential id.
  */
-export function seededShuffle<T>(items: readonly T[], rng: () => number): T[] {
+export function seededSample<T>(items: readonly T[], count: number, rng: () => number): T[] {
   const out = [...items];
-  for (let i = out.length - 1; i > 0; i -= 1) {
-    const j = Math.min(i, Math.floor(rng() * (i + 1)));
+  const take = Math.max(0, Math.min(count, out.length));
+
+  for (let i = 0; i < take; i += 1) {
+    const remaining = out.length - i;
+    const j = i + Math.min(remaining - 1, Math.floor(rng() * remaining));
     [out[i], out[j]] = [out[j], out[i]];
   }
-  return out;
+
+  return out.slice(0, take);
 }
 
 /**
- * Read every active `public_id` for an org, one PostgREST page at a time.
+ * Read every active `public_id` for an org.
  *
  * The bug this replaces: `db.from('anchors').select('public_id').eq('org_id', …)`
- * with no `.range()`. PostgREST answers with its default 1000-row maximum and
- * says nothing about the rest, so on the real DocuSign org (3,151,539 anchors)
- * the "population" was an arbitrary 1000 rows — and the sample drawn from it
- * was reported next to a `total_population` taken from a separate exact count
- * over all 3.1M.
+ * with no pagination at all. PostgREST answers with its row maximum and says
+ * nothing about the rest, so on the real DocuSign org (3,151,539 anchors) the
+ * "population" was an arbitrary 1000 rows — and the sample drawn from it was
+ * reported next to a `total_population` taken from a separate exact count over
+ * all 3.1M.
  *
- * `truncated` is deliberately distinct from an error: the caller must decide
- * what to do with a population it could not finish reading, and here that
- * decision is to refuse. Ordering is total (`created_at` then `public_id`)
- * because offset paging over a non-deterministic order silently drops and
- * duplicates rows across page boundaries; `created_at` leads so the scan rides
- * `idx_anchors_org_deleted_created` (org_id, created_at DESC) WHERE deleted_at
- * IS NULL, and ASC keeps concurrent inserts appending past the cursor instead
- * of shifting every page under it.
+ * The paging rules live in `scanAllPages`, deliberately not here: the first
+ * attempt at this fix hand-rolled the loop and reintroduced the same truncation
+ * through `if (page.length < POSTGREST_ROW_LIMIT) break`, which is wrong on any
+ * deployment whose `db-max-rows` is below that constant.
+ *
+ * Ordering is total (`created_at` then `public_id`) because offset paging over
+ * a non-deterministic order drops and duplicates rows across page boundaries;
+ * `created_at` leads so the scan rides `idx_anchors_org_deleted_created`
+ * (org_id, created_at DESC) WHERE deleted_at IS NULL, and ASC keeps concurrent
+ * inserts appending past the cursor instead of shifting every page under it.
  */
-async function loadOrgPopulation(
-  orgId: string,
-): Promise<{ ids: string[]; truncated: boolean }> {
-  const ids: string[] = [];
-  const seen = new Set<string>();
-
-  for (let offset = 0; ; offset += POSTGREST_ROW_LIMIT) {
-    const { data, error } = await db
-      .from('anchors')
-      .select('public_id')
-      .eq('org_id', orgId)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: true })
-      .order('public_id', { ascending: true })
-      .range(offset, offset + POSTGREST_ROW_LIMIT - 1);
-
-    if (error) {
+async function loadOrgPopulation(orgId: string): Promise<{ ids: string[]; truncated: boolean }> {
+  let scan;
+  try {
+    scan = await scanAllPages<{ public_id: string | null }>(
+      (offset, limit) =>
+        db
+          .from('anchors')
+          .select('public_id')
+          .eq('org_id', orgId)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: true })
+          .order('public_id', { ascending: true })
+          .range(offset, offset + limit - 1),
+      { maxRows: MAX_SAMPLEABLE_POPULATION, maxPages: MAX_POPULATION_PAGES },
+    );
+  } catch (err) {
+    if (err instanceof PageScanError) {
       // Driver CODE only, never `.message` — a Postgres/PostgREST message
-      // routinely echoes the offending value back, and this is the same
-      // discipline the chunked lookup below uses.
+      // routinely echoes the offending value back, the same discipline the
+      // chunked lookup below uses.
       logger.error(
-        { pgCode: (error as { code?: string } | null)?.code ?? null, offset, orgId },
+        { pgCode: err.pgCode, offset: err.offset, orgId },
         'Audit batch verify: population scan page failed — refusing to sample a partial population',
       );
-      throw new Error(`audit batch verify: population scan failed at offset ${offset}`);
     }
-
-    const page = data ?? [];
-    for (const row of page) {
-      // Dedupe defensively: a row inserted mid-scan shifts later offsets, and a
-      // repeated id would otherwise inflate the population figure the response
-      // reports as fact.
-      if (row.public_id && !seen.has(row.public_id)) {
-        seen.add(row.public_id);
-        ids.push(row.public_id);
-      }
-    }
-
-    // Ceiling first. Checking the short page first would let a population of
-    // exactly MAX + 1 through as complete, because its final page is short —
-    // the one boundary where "we read everything" and "we read too much" are
-    // both true of the same request.
-    if (ids.length > MAX_SAMPLEABLE_POPULATION) return { ids, truncated: true };
-
-    // A short page is the end of the population — no further request needed.
-    if (page.length < POSTGREST_ROW_LIMIT) return { ids, truncated: false };
+    throw err;
   }
+
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const row of scan.rows) {
+    // Dedupe defensively: a row inserted mid-scan shifts later offsets, and a
+    // repeated id would otherwise inflate the population figure the response
+    // reports as fact. The Set is for the O(1) membership test; `ids` is the
+    // ordered result.
+    if (row.public_id && !seen.has(row.public_id)) {
+      seen.add(row.public_id);
+      ids.push(row.public_id);
+    }
+  }
+
+  return { ids, truncated: scan.status !== 'complete' };
 }
 
 router.post('/', async (req: Request, res: Response) => {
@@ -210,17 +250,17 @@ router.post('/', async (req: Request, res: Response) => {
 
     let targetIds: string[] = [];
 
-    // The population the sample was actually drawn from. Reported verbatim as
-    // `total_population`, so the response cannot claim a population that was
-    // never scanned. `null` on the `credential_ids` path, which has no
-    // population.
-    let sampledPopulation: number | null = null;
-
-    // The seed the sample was drawn with, echoed so the auditor can replay it.
-    // `seed: seed || null` previously told an unseeded caller nothing, which
-    // left ISA 530's reproducibility guarantee unmeetable for exactly the
-    // requests that most needed it.
-    let responseSeed: number | null = null;
+    // Set only by the sampling branch, and only on success — so `sample !== null`
+    // IS "a percentage sample was actually drawn", and every field that is
+    // meaningless without one hangs off it rather than being a second nullable
+    // that has to be kept in lockstep by hand.
+    //
+    // `population` is reported verbatim as `total_population`, so the response
+    // cannot claim a population that was never scanned. `seed` is echoed so the
+    // auditor can replay the draw; `seed: seed || null` previously told an
+    // unseeded caller nothing, leaving ISA 530's reproducibility guarantee
+    // unmeetable for exactly the requests that most needed it.
+    let sample: { population: number; seed: number } | null = null;
 
     if (credential_ids) {
       targetIds = credential_ids;
@@ -269,13 +309,12 @@ router.post('/', async (req: Request, res: Response) => {
         return;
       }
 
-      // `?? Date.now()` and not `|| Date.now()`: seed 0 is a seed. `seed ||` sent
-      // the one value an auditor is most likely to type down the unseeded path,
-      // making it the single least reproducible request the endpoint accepted.
+      // `??` and not `||`: seed 0 is a seed, and `||` sent the one value an
+      // auditor is most likely to type down the unseeded path, making it the
+      // single least reproducible request the endpoint accepted.
       const sampleSeed = seed ?? Math.floor(Math.random() * 2 ** 31);
-      responseSeed = sampleSeed;
-      sampledPopulation = population.length;
-      targetIds = seededShuffle(population, seededRandom(sampleSeed)).slice(0, sampleSize);
+      sample = { population: population.length, seed: sampleSeed };
+      targetIds = seededSample(population, sampleSize, seededRandom(sampleSeed));
     }
 
     // Batch verify
@@ -382,9 +421,12 @@ router.post('/', async (req: Request, res: Response) => {
         failed: results.filter(r => r.status === 'FAIL').length,
         not_found: results.filter(r => r.status === 'NOT_FOUND').length,
         anomalies_found: results.filter(r => r.anomalies.length > 0).length,
-        sampling: sample_percentage
-          ? { percentage: sample_percentage, seed: responseSeed }
-          : undefined,
+        // Gated on the branch actually TAKEN, not on the parameter being
+        // present. `credential_ids` wins when both are supplied (the Zod
+        // refine is an OR), and recording a `sampling` block for a run that
+        // verified the caller's own hand-picked list puts a sampling claim
+        // into the permanent audit trail that never happened.
+        sampling: sample ? { percentage: sample_percentage, seed: sample.seed } : undefined,
       }),
     });
 
@@ -393,7 +435,7 @@ router.post('/', async (req: Request, res: Response) => {
     // separately and later, so even with a correct scan the two could disagree,
     // and it was a full count over a 3.1M-row table on the hot `anchors` path
     // (R0-8 / SCRUM-1254, `scripts/ci/check-count-exact-baseline.ts`).
-    const totalPopulation = sampledPopulation ?? targetIds.length;
+    const totalPopulation = sample?.population ?? targetIds.length;
 
     res.json({
       results,
@@ -406,7 +448,7 @@ router.post('/', async (req: Request, res: Response) => {
       },
       total_population: totalPopulation,
       sample_size: results.length,
-      seed: responseSeed,
+      seed: sample?.seed ?? null,
       verified_at: new Date().toISOString(),
     });
   } catch (err) {

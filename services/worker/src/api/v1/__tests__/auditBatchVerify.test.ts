@@ -19,9 +19,10 @@ vi.mock('../../_org-auth.js', () => mockOrgAuth);
 import {
   auditBatchVerifyRouter,
   seededRandom,
-  seededShuffle,
+  seededSample,
   MAX_SAMPLE_SIZE,
   MAX_SAMPLEABLE_POPULATION,
+  MAX_POPULATION_PAGES,
 } from '../auditBatchVerify.js';
 import { db } from '../../../utils/db.js';
 import {
@@ -292,15 +293,20 @@ describe('POST /api/v1/audit/batch-verify — anchor lookup width + failure poli
  * depends on a row's position in the result set is not a random sample, and the
  * conclusion an auditor draws from it does not generalise to the population.
  */
-describe('seededShuffle', () => {
+describe('seededSample', () => {
   it('selects each element into the first slot with near-equal frequency', () => {
     const N = 16;
     const TRIALS = 2000;
     const population = Array.from({ length: N }, (_, i) => i);
 
+    // count = 1 deliberately: it consumes exactly ONE draw per seed, so this
+    // also pins the PRNG's FIRST output across sequential seeds. The old LCG
+    // failed here (its first draw reached only 14 of 16 buckets over seeds
+    // 1..2000, so two elements could never be picked first) — a bias a
+    // whole-array shuffle hid by burning thousands of draws first.
     const firstSlotCounts = new Array<number>(N).fill(0);
     for (let seed = 1; seed <= TRIALS; seed += 1) {
-      firstSlotCounts[seededShuffle(population, seededRandom(seed))[0]] += 1;
+      firstSlotCounts[seededSample(population, 1, seededRandom(seed))[0]] += 1;
     }
 
     // Uniform expectation is 2000/16 = 125, sd ≈ 10.8. These bounds are ~±6 sd
@@ -313,38 +319,73 @@ describe('seededShuffle', () => {
     }
   });
 
-  it('is a permutation — every element survives exactly once', () => {
+  it('draws without replacement — no element appears twice', () => {
     const population = Array.from({ length: 500 }, (_, i) => `id-${i}`);
-    const shuffled = seededShuffle(population, seededRandom(7));
+    const drawn = seededSample(population, 120, seededRandom(7));
 
-    expect(shuffled).toHaveLength(population.length);
-    expect([...shuffled].sort()).toEqual([...population].sort());
+    expect(drawn).toHaveLength(120);
+    expect(new Set(drawn).size).toBe(120);
+    for (const id of drawn) expect(population).toContain(id);
+  });
+
+  it('gives every element an equal chance of appearing in the sample', () => {
+    const N = 16;
+    const TRIALS = 2000;
+    const population = Array.from({ length: N }, (_, i) => i);
+
+    // Membership, not just slot 0: a 4-of-16 sample should include each element
+    // in 4/16 of trials (expectation 500 of 2000, sd ~19). Bounds are ~±6 sd.
+    const memberCounts = new Array<number>(N).fill(0);
+    for (let seed = 1; seed <= TRIALS; seed += 1) {
+      for (const v of seededSample(population, 4, seededRandom(seed))) memberCounts[v] += 1;
+    }
+    for (let i = 0; i < N; i += 1) {
+      expect(memberCounts[i]).toBeGreaterThan(385);
+      expect(memberCounts[i]).toBeLessThan(615);
+    }
+  });
+
+  it('returns the whole population when count meets or exceeds it', () => {
+    const population = ['a', 'b', 'c'];
+    expect([...seededSample(population, 3, seededRandom(1))].sort()).toEqual(['a', 'b', 'c']);
+    expect([...seededSample(population, 99, seededRandom(1))].sort()).toEqual(['a', 'b', 'c']);
+    expect(seededSample(population, 0, seededRandom(1))).toEqual([]);
   });
 
   it('stays in bounds when the rng returns exactly 1', () => {
-    // Defence in depth: the shuffle must not trust its rng's upper bound. An
-    // unclamped `Math.floor(rng() * (i + 1))` indexes one past the end here and
+    // Defence in depth: the sampler must not trust its rng's upper bound. An
+    // unclamped `Math.floor(rng() * remaining)` indexes one past the end and
     // swaps `undefined` into the array — which the caller then reports as a
     // sampled credential.
     const population = ['a', 'b', 'c', 'd'];
-    const shuffled = seededShuffle(population, () => 1);
+    const drawn = seededSample(population, 4, () => 1);
 
-    expect(shuffled).toHaveLength(4);
-    expect(shuffled.every((v) => typeof v === 'string')).toBe(true);
-    expect([...shuffled].sort()).toEqual(['a', 'b', 'c', 'd']);
+    expect(drawn).toHaveLength(4);
+    expect(drawn.every((v) => typeof v === 'string')).toBe(true);
+    expect([...drawn].sort()).toEqual(['a', 'b', 'c', 'd']);
   });
 
   it('does not mutate the population it was given', () => {
     const population = ['a', 'b', 'c', 'd', 'e'];
-    seededShuffle(population, seededRandom(3));
+    seededSample(population, 3, seededRandom(3));
     expect(population).toEqual(['a', 'b', 'c', 'd', 'e']);
   });
 
-  it('reproduces the same permutation for the same seed', () => {
+  it('reproduces the same sample for the same seed', () => {
     const population = Array.from({ length: 200 }, (_, i) => `id-${i}`);
-    expect(seededShuffle(population, seededRandom(99))).toEqual(
-      seededShuffle(population, seededRandom(99)),
+    expect(seededSample(population, 40, seededRandom(99))).toEqual(
+      seededSample(population, 40, seededRandom(99)),
     );
+  });
+
+  it('costs one draw per selected item, not one per population item', () => {
+    // The endpoint samples up to 1,000 from up to 25,000. A whole-array shuffle
+    // burns 25,000 draws for the same 1,000 results.
+    let draws = 0;
+    const rng = seededRandom(5);
+    const counting = () => { draws += 1; return rng(); };
+    seededSample(Array.from({ length: 25_000 }, (_, i) => i), 1000, counting);
+    expect(draws).toBe(1000);
   });
 });
 
@@ -371,10 +412,23 @@ describe('POST /api/v1/audit/batch-verify — sample population source', () => {
   interface DbState {
     /** The org's full active population, in scan order. */
     population: string[];
+    /**
+     * Rows the SERVER will return for one page, regardless of the width the
+     * worker asks for — PostgREST's `db-max-rows`.
+     *
+     * Deliberately NOT defaulted to `POSTGREST_ROW_LIMIT`. This is a server
+     * setting, the worker's constant is a guess at it, and a mock that ties
+     * the two together can only ever prove the code agrees with itself. Tests
+     * that care about completeness set this to something OTHER than the
+     * worker's constant.
+     */
+    serverPageCap: number;
     /** What a `count: 'exact'` head query would report. Defaults to the truth. */
     exactCount?: number;
     /** 0-based page index whose read fails, modelling a mid-scan DB fault. */
     failPageIndex?: number;
+    /** Return the SAME first page for every offset, modelling a lost ordering. */
+    repeatFirstPageForever?: boolean;
     /** Populated by the mock. */
     countQueries: number;
     ranges: Array<[number, number]>;
@@ -385,6 +439,7 @@ describe('POST /api/v1/audit/batch-verify — sample population source', () => {
 
   function newState(overrides: Partial<DbState> & { population: string[] }): DbState {
     return {
+      serverPageCap: POSTGREST_ROW_LIMIT,
       countQueries: 0,
       ranges: [],
       unpagedPopulationReads: 0,
@@ -445,18 +500,19 @@ describe('POST /api/v1/audit/batch-verify — sample population source', () => {
 
       builder.range = vi.fn((from: number, to: number) => {
         state.ranges.push([from, to]);
-        const pageIndex = Math.floor(from / POSTGREST_ROW_LIMIT);
-        if (state.failPageIndex === pageIndex) {
+        if (state.failPageIndex === state.ranges.length - 1) {
           // postgrest-js RESOLVES a failure — it does not throw.
           return Promise.resolve({
             data: null,
             error: { code: 'PGRST', message: 'Bad Request', details: null, hint: null },
           });
         }
-        // PostgREST caps a page at its row limit no matter how wide the range.
-        const width = Math.min(to - from + 1, POSTGREST_ROW_LIMIT);
+        // The SERVER caps the page at its own row limit, whatever width the
+        // caller asked for.
+        const width = Math.min(to - from + 1, state.serverPageCap);
+        const start = state.repeatFirstPageForever ? 0 : from;
         return Promise.resolve({
-          data: state.population.slice(from, from + width).map((id) => ({ public_id: id })),
+          data: state.population.slice(start, start + width).map((id) => ({ public_id: id })),
           error: null,
         });
       });
@@ -680,6 +736,103 @@ describe('POST /api/v1/audit/batch-verify — sample population source', () => {
     );
   });
 
+  it('reads the whole population when the server page cap is BELOW the worker constant', async () => {
+    // `db-max-rows` is a server setting the worker cannot see. Treating "fewer
+    // rows than I asked for" as "no more rows" reintroduced the exact defect
+    // this endpoint was fixed for: with a 500-row cap the scan stopped after
+    // one page and reported a 5,000-anchor org as holding 500 records, at 200.
+    const population = Array.from({ length: 5000 }, (_, i) => PID(i));
+    const state = newState({ population, serverPageCap: 500 });
+    mockDb(state);
+
+    const res = await request(buildApp())
+      .post('/api/v1/audit/batch-verify')
+      .send({ sample_percentage: 10, seed: 3 })
+      .expect(200);
+
+    expect(res.body.total_population).toBe(5000);
+    expect(res.body.sample_size).toBe(500);
+    // Offsets must advance by rows RETURNED, not by the width requested —
+    // otherwise every short page silently skips the rows it withheld.
+    expect(state.ranges.map(([from]) => from).slice(0, 4)).toEqual([0, 500, 1000, 1500]);
+  });
+
+  it('reads the whole population when the server page cap is ABOVE the worker constant', async () => {
+    const population = Array.from({ length: 2500 }, (_, i) => PID(i));
+    const state = newState({ population, serverPageCap: 5000 });
+    mockDb(state);
+
+    const res = await request(buildApp())
+      .post('/api/v1/audit/batch-verify')
+      .send({ sample_percentage: 10, seed: 3 })
+      .expect(200);
+
+    expect(res.body.total_population).toBe(2500);
+    expect(res.body.sample_size).toBe(250);
+  });
+
+  it('refuses rather than looping forever when pages stop advancing', async () => {
+    // If the result ordering ever stops being total, OFFSET paging can hand
+    // back the same rows for every offset. The dedupe then pins `ids.length`
+    // so the population ceiling never fires, and the pages stay full so an
+    // end-of-population check never fires either. Only an absolute page bound
+    // ends this, and it must end it as a refusal, not as a complete read.
+    const population = Array.from({ length: 50_000 }, (_, i) => PID(i));
+    const state = newState({ population, repeatFirstPageForever: true });
+    mockDb(state);
+
+    const res = await request(buildApp())
+      .post('/api/v1/audit/batch-verify')
+      .send({ sample_percentage: 1, seed: 3 });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe('population_too_large');
+    // Bounded, and it refuses. The row budget happens to bite first here
+    // (26 full pages reach 25,000 rows), but the page ceiling is the guarantee
+    // that SOME bound always applies.
+    expect(state.ranges.length).toBeLessThanOrEqual(MAX_POPULATION_PAGES);
+    expect(state.auditEvents).toHaveLength(0);
+  });
+
+  it('refuses when the page budget runs out before the population does', async () => {
+    // Tiny server pages: 64 requests never accumulate enough rows for the row
+    // budget to bite, so only the page ceiling can end this. It must end it as
+    // a refusal — a partial read is never a population figure.
+    const population = Array.from({ length: 50_000 }, (_, i) => PID(i));
+    const state = newState({ population, serverPageCap: 10 });
+    mockDb(state);
+
+    const res = await request(buildApp())
+      .post('/api/v1/audit/batch-verify')
+      .send({ sample_percentage: 1, seed: 3 });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toBe('population_too_large');
+    expect(state.ranges.length).toBe(MAX_POPULATION_PAGES);
+    expect(res.body.total_population).toBeUndefined();
+    expect(state.auditEvents).toHaveLength(0);
+  });
+
+  it('does not record a sampling run when credential_ids won the request', async () => {
+    // The Zod refine is an OR, so both may be supplied; `credential_ids` takes
+    // precedence. Recording `sampling` off the mere presence of the parameter
+    // put a percentage-sample claim into the permanent audit trail for a run
+    // that verified the caller's own two hand-picked ids.
+    const population = Array.from({ length: 100 }, (_, i) => PID(i));
+    const state = newState({ population });
+    mockDb(state);
+
+    const res = await request(buildApp())
+      .post('/api/v1/audit/batch-verify')
+      .send({ credential_ids: [PID(1), PID(2)], sample_percentage: 10, seed: 7 })
+      .expect(200);
+
+    expect(state.ranges).toHaveLength(0);
+    expect(res.body.total_population).toBe(2);
+    const details = JSON.parse((state.auditEvents[0] as { details: string }).details);
+    expect(details.sampling).toBeUndefined();
+  });
+
   it('leaves the credential_ids path untouched by the population scan', async () => {
     const population = Array.from({ length: 3000 }, (_, i) => PID(i));
     const state = newState({ population });
@@ -695,4 +848,128 @@ describe('POST /api/v1/audit/batch-verify — sample population source', () => {
     expect(res.body.total_population).toBe(2);
     expect(res.body.seed).toBeNull();
   });
+});
+
+/**
+ * Property sweep over the sampling contract.
+ *
+ * The hand-written cases above each pin one boundary. This sweeps the whole
+ * matrix — population size x server page cap x requested percentage — and
+ * asserts the ONE invariant the endpoint exists to uphold:
+ *
+ *   Either it refuses, or `total_population` is the TRUE population and the
+ *   sample is a distinct subset of it of exactly the requested size.
+ *
+ * Both bugs this endpoint has now had were violations of that single sentence
+ * while every individual response still looked well-formed, which is why the
+ * check is stated as a property rather than as more examples.
+ */
+describe('POST /api/v1/audit/batch-verify — sampling contract property sweep', () => {
+  const PID = (n: number) => `pid${n.toString(36).padStart(9, '0')}`;
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as unknown as { authUserId: string }).authUserId = 'user-1';
+      next();
+    });
+    app.use('/api/v1/audit/batch-verify', auditBatchVerifyRouter);
+    return app;
+  }
+
+  function mockDb(population: string[], serverPageCap: number) {
+    vi.mocked(db.from).mockImplementation((): never => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const b: any = {};
+      let inValues: string[] | undefined;
+      b.select = vi.fn(() => b);
+      b.eq = vi.fn(() => b);
+      b.is = vi.fn(() => b);
+      b.order = vi.fn(() => b);
+      b.insert = vi.fn(() => Promise.resolve({ data: null, error: null }));
+      b.in = vi.fn((_c: string, v: string[]) => { inValues = v; return b; });
+      b.range = vi.fn((from: number, to: number) =>
+        Promise.resolve({
+          data: population
+            .slice(from, from + Math.min(to - from + 1, serverPageCap))
+            .map((id) => ({ public_id: id })),
+          error: null,
+        }));
+      b.then = (res: (v: unknown) => unknown, rej: (v: unknown) => unknown) => {
+        const known = new Set(population);
+        return Promise.resolve({
+          data: (inValues ?? []).filter((v) => known.has(v)).map((v) => ({
+            public_id: v, status: 'SECURED', fingerprint: 'f'.repeat(64),
+            chain_timestamp: '2026-07-01T00:00:00Z', chain_tx_id: 'tx',
+            created_at: '2026-07-01T00:00:00Z',
+          })),
+          error: null,
+        }).then(res, rej);
+      };
+      return b as never;
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockOrgAuth.getCallerOrgId.mockResolvedValue('org-1');
+    mockOrgAuth.isCallerOrgAdmin.mockResolvedValue(true);
+  });
+
+  // Sizes chosen around every boundary: empty, sub-page, exact page multiples,
+  // page+1, and either side of MAX_SAMPLE_SIZE.
+  const POPULATIONS = [0, 1, 999, 1000, 1001, 2000, 3333];
+  // Caps deliberately unequal to POSTGREST_ROW_LIMIT in both directions.
+  const CAPS = [7, 500, POSTGREST_ROW_LIMIT, 2500];
+  const PERCENTAGES = [0.1, 1, 33.3, 100];
+
+  for (const popSize of POPULATIONS) {
+    for (const cap of CAPS) {
+      for (const pct of PERCENTAGES) {
+        it(`pop=${popSize} cap=${cap} pct=${pct}`, async () => {
+          const population = Array.from({ length: popSize }, (_, i) => PID(i));
+          mockDb(population, cap);
+
+          const res = await request(buildApp())
+            .post('/api/v1/audit/batch-verify')
+            .send({ sample_percentage: pct, seed: 11 });
+
+          if (res.status === 422) {
+            // A refusal must never carry a population figure it did not verify.
+            expect(['population_too_large', 'sample_too_large']).toContain(res.body.error);
+            expect(res.body.results).toBeUndefined();
+            if (res.body.error === 'population_too_large') {
+              expect(res.body.total_population).toBeUndefined();
+            }
+            return;
+          }
+
+          expect(res.status).toBe(200);
+
+          // THE invariant: the reported population is the real one.
+          expect(res.body.total_population).toBe(popSize);
+
+          const expectedSize = Math.min(
+            Math.ceil(popSize * (pct / 100)),
+            MAX_SAMPLE_SIZE,
+          );
+          expect(res.body.sample_size).toBe(expectedSize);
+
+          const sampled = res.body.results.map((r: { public_id: string }) => r.public_id);
+          expect(new Set(sampled).size).toBe(sampled.length);
+          const known = new Set(population);
+          for (const id of sampled) expect(known.has(id)).toBe(true);
+
+          // Reproducible for the same seed.
+          mockDb(population, cap);
+          const replay = await request(buildApp())
+            .post('/api/v1/audit/batch-verify')
+            .send({ sample_percentage: pct, seed: 11 })
+            .expect(200);
+          expect(replay.body.results.map((r: { public_id: string }) => r.public_id)).toEqual(sampled);
+        });
+      }
+    }
+  }
 });
