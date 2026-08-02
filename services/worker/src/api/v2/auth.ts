@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { hashApiKey } from '../../middleware/apiKeyAuth.js';
+import { hashApiKey, touchApiKeyLastUsed } from '../../middleware/apiKeyAuth.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { ProblemError } from './problem.js';
@@ -70,10 +70,7 @@ export function apiKeyAuthV2(hmacSecret: string) {
         keyPrefix: apiKey.key_prefix,
       };
 
-      // eslint-disable-next-line arkova/missing-org-filter -- auth: org unknown until key resolved
-      void db.from('api_keys')
-        .update({ last_used_at: new Date().toISOString() })
-        .eq('id', apiKey.id);
+      touchApiKeyLastUsed(apiKey.id);
 
       next();
     } catch (err) {

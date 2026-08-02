@@ -35,6 +35,9 @@ vi.mock('../../ai/cost-tracker.js', () => ({
   logAIUsageEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+const captureCreditRpcFailureAlert = vi.hoisted(() => vi.fn());
+vi.mock('../../utils/sentry.js', () => ({ captureCreditRpcFailureAlert }));
+
 import { db } from '../../utils/db.js';
 import { createExtractionProvider } from '../../ai/factory.js';
 import { GeminiProvider } from '../../ai/gemini.js';
@@ -231,6 +234,57 @@ describe('AI Extraction Endpoint', () => {
     expect(responseJson.subType).toBe('BACHELOR');
     expect(responseJson.description).toBe('Bachelor of Science in Computer Science');
     expect(responseJson.fraudSignals).toEqual([{ signal: 'font_mismatch', severity: 'low' }]);
+
+    // Happy path (deduction succeeded) — no alert.
+    expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
+  });
+
+  // Pre-mortem finding: deduct_ai_credits failing silently let a FREE AI
+  // extraction proceed with only a logger.error — no page. Behavior
+  // (fail OPEN) is intentionally unchanged (RISK-6 product decision); this
+  // test locks in that the failure now also alerts Sentry.
+  it('proceeds with the extraction (fail OPEN, unchanged) AND alerts Sentry when deduct_ai_credits fails', async () => {
+    const handler = getPostHandler();
+    const { req, res } = createMockReqRes(validBody, 'user-123');
+
+    mockExtractionDatabase();
+
+    (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
+      monthlyAllocation: 500,
+      usedThisMonth: 10,
+      remaining: 490,
+      hasCredits: true,
+    });
+
+    (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+      extractMetadata: vi.fn().mockResolvedValue({
+        fields: { credentialType: 'DEGREE' },
+        confidence: 0.9,
+        provider: 'gemini',
+        tokensUsed: 100,
+      }),
+    });
+
+    // Deduction fails (DB error), NOT insufficient balance.
+    (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+    await handler!(req, res);
+
+    // Behavior unchanged: extraction still proceeds (200, not 402/500).
+    expect(res.status).not.toHaveBeenCalledWith(402);
+    const responseJson: AIExtractResponse = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(responseJson.fields).toEqual(expect.objectContaining({ credentialType: 'DEGREE' }));
+
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpc: 'deduct_ai_credits',
+        operation: 'ai-extract.deductAICredits',
+        failMode: 'open',
+        orgId: 'org-456',
+        userId: 'user-123',
+      }),
+    );
   });
 
   // API-RICH-02 (SCRUM-895): description completes the trio (confidenceScores +
