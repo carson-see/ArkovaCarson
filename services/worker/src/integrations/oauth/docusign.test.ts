@@ -371,7 +371,16 @@ describe('provisionConnectListener', () => {
     expect(body.allowEnvelopePublish).toBe('true');
     expect(body.enableLog).toBe('true');
     expect(body.includeHMAC).toBe('true');
-    expect(body.hmacSecret).toBe('hmac-secret-123');
+    // Regression — `hmacSecret` is NOT a field on DocuSign's
+    // ConnectCustomConfiguration resource. DocuSign silently ignored it, so
+    // sending it created a false belief that provisioning installed Arkova's
+    // signing key. It never did — the key is account-side. Do not put a secret
+    // back on this payload.
+    expect(body).not.toHaveProperty('hmacSecret');
+    // `integratorManaged` is opt-in: it only works once an HMAC key exists on
+    // the DocuSign account that owns the integration key, so it stays absent by
+    // default rather than silently changing which key signs deliveries.
+    expect(body).not.toHaveProperty('integratorManaged');
     // Regression — prod 2026-07-25T17:07:37Z (req_80e749c4635aab853ab710a3):
     // DocuSign 400 INVALID_REQUEST_PARAMETER — the modern `events` field is
     // rejected unless the payload also carries deliveryMode "SIM" alongside
@@ -434,6 +443,27 @@ describe('provisionConnectListener', () => {
     const body = putBody as Record<string, unknown>;
     expect(body.connectId).toBe('22152148');
     expect(body.urlToPublishTo).toBe('https://arkova-worker.example.com/webhooks/docusign');
+    // The update path shares one payload builder with create, so it must carry
+    // the same guarantee: no secret on an unsupported DocuSign field.
+    expect(body).not.toHaveProperty('hmacSecret');
+  });
+
+  it('fails closed when DOCUSIGN_CONNECT_HMAC_SECRET is whitespace-only', async () => {
+    // A blank secret would provision a listener that reports success while every
+    // delivery 401s at /webhooks/docusign.
+    const fetchImpl = async () => new Response('{}', { status: 200 });
+
+    await expect(
+      provisionConnectListener({
+        accessToken: 'at-test',
+        baseUri: 'https://demo.docusign.net',
+        accountId: 'acct-1',
+        deps: {
+          env: { ...PROVISION_ENV, DOCUSIGN_CONNECT_HMAC_SECRET: '   ' },
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        },
+      }),
+    ).rejects.toThrow(DocusignConfigError);
   });
 
   it('throws DocusignApiError when the Connect API returns an error', async () => {

@@ -69,7 +69,7 @@ export function useInviteMember(): UseInviteMemberReturn {
 
       // Step 1: Create invitation record via RPC
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: rpcError } = await (supabase as any).rpc('invite_member', {
+      const { data: invitationId, error: rpcError } = await (supabase as any).rpc('invite_member', {
         invitee_email: email,
         invitee_role: role,
         target_org_id: orgId,
@@ -103,7 +103,7 @@ export function useInviteMember(): UseInviteMemberReturn {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${session.access_token}`,
           },
-          body: JSON.stringify({ email, orgId, orgName, role, inviterName }),
+          body: JSON.stringify({ email, orgId, orgName, role, inviterName, invitationId }),
         });
 
         if (!emailResponse.ok) {
