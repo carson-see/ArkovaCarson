@@ -24,10 +24,16 @@
     "7bca4218360d9bed3c684617e0bc13c282d390d5",
     "edee3004cc28556b57fae4a3ba353193574e8301",
     "5168c7f24acdfede915c7e61337b1a09a071e124",
+    "c56ceee03ce25efbf425f0245ec419e451b2674d",
+    "87063b5e5e8049e3893cd2d62ba7f9987fd0275e",
+    "8818d3af3b7568ee65a525b95f6f969763d15d25",
+    "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
     "055cddb7cd6c284147239215c5d05cd0b32496e2",
     "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
     "ea7e01bf3a9f5397f3518b90be4be8963ea523cf",
-    "57f5c5494b8dc92196eb3e0d27f5c502d3a3038b"
+    "57f5c5494b8dc92196eb3e0d27f5c502d3a3038b",
+    "edde7fc79adda566b1b1261d33df4baa865c1309",
+    "8ec0b53b3f6a8c875048e1e7100f358e71d6f992"
   ],
   "covered_main_shas": [
     "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
@@ -43,10 +49,16 @@
     "7bca4218360d9bed3c684617e0bc13c282d390d5",
     "edee3004cc28556b57fae4a3ba353193574e8301",
     "5168c7f24acdfede915c7e61337b1a09a071e124",
+    "c56ceee03ce25efbf425f0245ec419e451b2674d",
+    "87063b5e5e8049e3893cd2d62ba7f9987fd0275e",
+    "8818d3af3b7568ee65a525b95f6f969763d15d25",
+    "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
     "055cddb7cd6c284147239215c5d05cd0b32496e2",
     "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
     "ea7e01bf3a9f5397f3518b90be4be8963ea523cf",
-    "57f5c5494b8dc92196eb3e0d27f5c502d3a3038b"
+    "57f5c5494b8dc92196eb3e0d27f5c502d3a3038b",
+    "edde7fc79adda566b1b1261d33df4baa865c1309",
+    "8ec0b53b3f6a8c875048e1e7100f358e71d6f992"
   ],
   "_append_procedure": [
     "PURPOSE: this manifest is a living document from now (2026-07-28, PR wave still being opened) through 72h-soak completion. Follow this procedure every time a new sprint PR opens or a Mergify batch lands, per docs/release/wave-merge-choreography-2026-08.md.",
@@ -134,15 +146,15 @@
     },
     {
       "number": 1726,
-      "head_sha": "3ad70472136b012ffc7fa974df93adc173cda3a4",
-      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "head_sha": "ce396468f211af7dabde3db67df6f71d115f9e06",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T1",
       "owner": "L2 (A6 MCP manifest parity, per ratified sprint plan)",
       "title": "fix(mcp): discovery manifest parity — advertise the real 16-tool surface + drift guard",
-      "ci_summary": "LIVE REFRESH 2026-07-28T16:20:00Z: head/base updated to current PR state. draft=True, mergeable=MERGEABLE/BLOCKED, currently-failing checks: [Check supabase/migrations vs prod, Staging Soak Evidence Gate]. Base is current main tip. Detector-computed tier T1 (default — `public/.well-known/mcp/server-card.json` + `services/edge/agents.md` + a test file; none matched by a PATH_RULE at T2+; note `services/edge/src/` IS a T2 PATH_RULE but only `agents.md` under that directory changed here, which is T0-exempt). `Check supabase/migrations vs prod` FAILING at capture — re-verify relevance (this PR touches no migrations; likely a pre-existing/unrelated CI flake, confirm before Wave S).",
+      "ci_summary": "LIVE REFRESH 2026-07-28T16:20:00Z: head/base updated to current PR state. draft=True, mergeable=MERGEABLE/BLOCKED, currently-failing checks: [Check supabase/migrations vs prod, Staging Soak Evidence Gate]. Base is current main tip. Detector-computed tier T1 (default — `public/.well-known/mcp/server- | REBASED 2026-08-01 post-#1774 onto main 2c4f48028 (branch now carries approved manifest).",
       "rollback_note": "Revert PR; MCP discovery manifest reverts to its prior (drifted) tool-count advertisement.",
       "migration_files": [],
-      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) — the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson, recorded by CTO session): no interim soaks for the remaining open queue; pen-testing is next, then a week-long consolidated soak of EVERYTHING; green-CI PRs merge and deploy now. Merge evidence for this entry is that explicit Carson-approved residual-risk exception (CLAUDE.md §1.12), not soak coverage of this PR's own diff. The post-pentest week-long soak covers the merged integrated head."
     },
     {
       "number": 1727,
@@ -160,15 +172,15 @@
     },
     {
       "number": 1728,
-      "head_sha": "eb233d11ec798088a0d8b1e4467c58cf1de45120",
-      "base_sha": "ae2209fd771ff088d8f3ef12070f4028cbd421a7",
+      "head_sha": "6e9679fcd6bcec3384ac689945b0144f7895bd27",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T1",
       "owner": "L1 (Wave 1, materializer-EXECUTE runbook + preflight)",
       "title": "ops(runbook): proof-materializer prod-execute runbook + read-only preflight (SCRUM-2983/2984)",
-      "ci_summary": "LIVE REFRESH 2026-07-28T16:20:00Z: head/base updated to current PR state. draft=True, mergeable=MERGEABLE/BLOCKED, currently-failing checks: [Staging Soak Evidence Gate, TypeCheck & Lint]. Base is current main tip. Detector-computed tier T1 (default — `scripts/ops/materializer-preflight.ts` is not matched by any PATH_RULE; docs + test + agents.md are T0-exempt on their own). `TypeCheck & Lint` currently FAILING — must be fixed before this PR is soak-eligible. This PR documents (does NOT execute) the prod materializer run; per the founder-reserved gate list, actual EXECUTE scheduling stays Carson's.",
+      "ci_summary": "LIVE REFRESH 2026-07-28T16:20:00Z: head/base updated to current PR state. draft=True, mergeable=MERGEABLE/BLOCKED, currently-failing checks: [Staging Soak Evidence Gate, TypeCheck & Lint]. Base is current main tip. Detector-computed tier T1 (default — `scripts/ops/materializer-preflight.ts` is not m | REBASED 2026-08-01 post-#1774 onto main 2c4f48028 (branch now carries approved manifest).",
       "rollback_note": "Revert PR; the runbook/preflight script disappear, no runtime behavior change (read-only preflight, no prod mutation capability in this PR).",
       "migration_files": [],
-      "soak_coverage": "NOT STARTED. This PR is part of the planned 72h wave soak (rig TBD, see environment block) — the soak clock has not begun. Staging Soak Evidence Gate is currently red on this PR (expected pre-soak state); it will read this manifest via `RC manifest path:` once the PR body is updated post-soak-maturity."
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson, recorded by CTO session): no interim soaks for the remaining open queue; pen-testing is next, then a week-long consolidated soak of EVERYTHING; green-CI PRs merge and deploy now. Merge evidence for this entry is that explicit Carson-approved residual-risk exception (CLAUDE.md §1.12), not soak coverage of this PR's own diff. The post-pentest week-long soak covers the merged integrated head."
     },
     {
       "number": 1729,
@@ -258,27 +270,27 @@
     },
     {
       "number": 1737,
-      "head_sha": "1c3724dd41c70b40d2c20706dff257e03fe9bb04",
-      "base_sha": "4f716b73cd63b3dee5e0a189a1865a4300d52755",
+      "head_sha": "1cda47e4303a5c3707082a63699e2c1749f65a81",
+      "base_sha": "8ec0b53b3f6a8c875048e1e7100f358e71d6f992",
       "risk_tier": "T2",
       "owner": "founder P0 (SCRUM-2894 consumer queue)",
       "title": "feat(queue): Add to Queue / Secure Now selector + consumer queue page (founder P0, SCRUM-2894)",
-      "ci_summary": "NEW PR discovered 2026-07-28T16:20:00Z via live gh pr list re-check. Base 4f716b73, draft=True, mergeable=CONFLICTING/DIRTY. Detector-computed tier T2 (src/components/anchor/SecureDocumentDialog.tsx — sensitive user-facing contract surface (detector-computed)). Currently-failing checks: [Policy Lints, Staging Soak Evidence Gate]. SPRINT-S COLLISION MAP: land AFTER #1736.",
+      "ci_summary": "Discovered 2026-07-28T16:20:00Z via live gh pr list; detector-computed tier T2 (src/components/anchor/SecureDocumentDialog.tsx — sensitive user-facing contract surface). REBASED 2026-08-02 onto main 8ec0b53b3 by the Release/DBA session: rebase was CLEAN (zero conflicts), and two commits were dropped as `patch contents already upstream` (76bfc3523 feedback-rules label override, 09052a0c7 T0-allowlist scripts/ci/feedback-rules/) because both landed on main independently — de-duplication, not lost work. Gates re-run at head 1cda47e4: root typecheck clean, root lint clean (zero errors AND zero warnings), lint:copy clean, 38/38 tests pass across useSecureQueue / useSecuringCapability / SecureQueuePage / SecureDocumentDialog. Frontend + E2E only — no worker, migration, or contract surface in the diff.",
       "rollback_note": "Revert PR; Add-to-Queue/Secure-Now selector and consumer queue page disappear, no impact on the existing single-path secure flow.",
       "migration_files": [],
-      "soak_coverage": "NOT STARTED."
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson, recorded by CTO session): no interim soaks for the remaining open queue; pen-testing is next, then a week-long consolidated soak of EVERYTHING; green-CI PRs merge and deploy now. Merge evidence for this entry is that explicit Carson-approved residual-risk exception (CLAUDE.md §1.12), not soak coverage of this PR's own diff. The post-pentest week-long soak covers the merged integrated head."
     },
     {
       "number": 1738,
-      "head_sha": "5a705d6a8778fabaa4238965bc9d31f63ce9ef6e",
-      "base_sha": "4f716b73cd63b3dee5e0a189a1865a4300d52755",
+      "head_sha": "d6a86db57c02ef0eb45004667b782ec5a8494cb9",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
       "risk_tier": "T2",
       "owner": "founder P0 (mixed-format batch anchoring)",
       "title": "feat(upload): mixed-format batch anchoring in dashboard — wire the unused /api/v1/anchor/bulk route (founder P0)",
-      "ci_summary": "NEW PR discovered 2026-07-28T16:20:00Z via live gh pr list re-check. Base 4f716b73, draft=True, mergeable=CONFLICTING/DIRTY. Detector-computed tier T2 (services/worker/src/api/v1/anchor-bulk-self-service.ts — public API surface (detector-computed)). Currently-failing checks: [E2E Tests, Staging Soak Evidence Gate]. SPRINT-S COLLISION MAP, SILENT REGRESSION RISK: FileUpload.tsx dispatch collides with #1736 (both compile, no TS error to catch a wrong resolution). MUST rebase onto #1736 after #1736 lands, taking #1738's all-spreadsheet-vs-mixed check but #1736's single-spreadsheet mode-choice path. Do not resolve by whichever lands last.",
+      "ci_summary": "NEW PR discovered 2026-07-28T16:20:00Z via live gh pr list re-check. Base 4f716b73, draft=True, mergeable=CONFLICTING/DIRTY. Detector-computed tier T2 (services/worker/src/api/v1/anchor-bulk-self-service.ts — public API surface (detector-computed)). Currently-failing checks: [E2E Tests, Staging Soak | REBASED 2026-08-01 post-#1774 onto main 2c4f48028 (branch now carries approved manifest).",
       "rollback_note": "Revert PR; dashboard mixed-format batch anchoring reverts to the prior partial/single-file flow, /api/v1/anchor/bulk remains wired but unused from the dashboard.",
       "migration_files": [],
-      "soak_coverage": "NOT STARTED."
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson, recorded by CTO session): no interim soaks for the remaining open queue; pen-testing is next, then a week-long consolidated soak of EVERYTHING; green-CI PRs merge and deploy now. Merge evidence for this entry is that explicit Carson-approved residual-risk exception (CLAUDE.md §1.12), not soak coverage of this PR's own diff. The post-pentest week-long soak covers the merged integrated head."
     },
     {
       "number": 1739,
@@ -328,15 +340,15 @@
     },
     {
       "number": 1742,
-      "head_sha": "b75b2f80e8691280ec14b2d370ecff4a7ad469d6",
-      "base_sha": "076528d937ae9e73e37e71bb5f1fd1b281e8b2b7",
+      "head_sha": "34d3b9fcb5ccf064ce8b767cb08b3ae1ef642f72",
+      "base_sha": "edde7fc79adda566b1b1261d33df4baa865c1309",
       "risk_tier": "T2",
       "owner": "SCRUM-3012 (org invite flow)",
       "title": "fix(orgs): invite flow end-to-end — token link, real email, accept provisions account + UI (SCRUM-3012)",
-      "ci_summary": "NEW PR discovered 2026-07-28T16:20:00Z via live gh pr list re-check. Base 076528d9, draft=True, mergeable=CONFLICTING/DIRTY. Detector-computed tier T2 (services/worker/src/api/invitations.ts — public API surface (detector-computed)). Currently-failing checks: [Staging Soak Evidence Gate, TypeCheck & Lint]. `TypeCheck & Lint` currently failing — must be fixed before this PR is soak-eligible. Needs rebase (CONFLICTING/DIRTY).",
+      "ci_summary": "Discovered 2026-07-28T16:20:00Z via live gh pr list; detector-computed tier T2 (services/worker/src/api/invitations.ts — public API surface). REBASED 2026-08-02 onto main edde7fc79 by the Release/DBA session: the branch was 33 commits behind and its prior head 38a83d524 carried no core CI run. Rebase was CLEAN (zero conflicts). Gates re-run at head 34d3b9fc: root typecheck clean, root lint 0 errors (1 pre-existing arkova/no-mock-echo warning in this PR's own useAcceptInvite.test.ts), lint:copy clean, worker typecheck clean, worker lint clean (--max-warnings 0), 31/31 frontend tests, 86 worker tests pass across invitations / sender / templates / urls / anchor-invitation-email. services/worker/src/index.test.ts fails locally on a 10s beforeAll hook timeout — verified identical on a clean origin/main checkout, so it is a local cold-import environment limit, not a regression from this PR.",
       "rollback_note": "Revert PR; org invite flow reverts to its prior (broken/incomplete) end-to-end state.",
       "migration_files": [],
-      "soak_coverage": "NOT STARTED."
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson, recorded by CTO session): no interim soaks for the remaining open queue; pen-testing is next, then a week-long consolidated soak of EVERYTHING; green-CI PRs merge and deploy now. Merge evidence for this entry is that explicit Carson-approved residual-risk exception (CLAUDE.md §1.12), not soak coverage of this PR's own diff. The post-pentest week-long soak covers the merged integrated head."
     },
     {
       "number": 1743,
@@ -385,6 +397,150 @@
       "rollback_note": "Revert PR; worker test suite reverts to being silently skipped when the root suite fails (the bug this PR fixes).",
       "migration_files": [],
       "soak_coverage": "N/A — T0, no soak required."
+    },
+    {
+      "number": 1753,
+      "head_sha": "8207d4b627e5c4cd63884ca7ab911600a56fd59d",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
+      "risk_tier": "T1",
+      "owner": "release closeout 2026-08-01",
+      "title": "feat(kpi): HakiChain weekly reconciliation tooling + live KPI-1 anchor verification",
+      "ci_summary": "Appended at queue refresh 2026-08-01 post-soak per founder ruling. Standalone script + docs, no runtime surface; SonarCloud findings fixed on their merits (path-traversal guard added). | REBASED 2026-08-01 post-#1774 onto main 2c4f48028 (branch now carries approved manifest).",
+      "rollback_note": "Revert PR.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson, recorded by CTO session): no interim soaks for the remaining open queue; pen-testing is next, then a week-long consolidated soak of EVERYTHING; green-CI PRs merge and deploy now. Merge evidence for this entry is that explicit Carson-approved residual-risk exception (CLAUDE.md §1.12), not soak coverage of this PR's own diff. The post-pentest week-long soak covers the merged integrated head."
+    },
+    {
+      "number": 1755,
+      "head_sha": "a17603277c4aff6ddd6a37861394570a8ead8f27",
+      "base_sha": "5168c7f24acdfede915c7e61337b1a09a071e124",
+      "risk_tier": "T2",
+      "owner": "release closeout 2026-08-01",
+      "title": "fix(legal): LGPL-blind denylist regex + MIT LICENSE files + third-party notices page",
+      "ci_summary": "Appended at queue refresh 2026-08-01 post-soak per founder ruling. HOLD: sonatype-sca red on sharp-libvips LGPL transitive finding, reserved for Carson/counsel per scripts/security/agents.md — NOT mergeable until that ruling regardless of exception.",
+      "rollback_note": "Revert PR.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson, recorded by CTO session): no interim soaks for the remaining open queue; pen-testing is next, then a week-long consolidated soak of EVERYTHING; green-CI PRs merge and deploy now. Merge evidence for this entry is that explicit Carson-approved residual-risk exception (CLAUDE.md §1.12), not soak coverage of this PR's own diff. The post-pentest week-long soak covers the merged integrated head."
+    },
+    {
+      "number": 1760,
+      "head_sha": "773145ce0c3ac0f805208f6f0969fd19aeaf1a22",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
+      "risk_tier": "T2",
+      "owner": "release closeout 2026-08-01",
+      "title": "fix(api): path-guard root-mounted requireAuth on compliance/key-inventory mounts",
+      "ci_summary": "Appended at queue refresh 2026-08-01 post-soak per founder ruling. Fixes live prod bug (two public endpoints erroneously 401ing); protected-route auth unchanged, regression-tested. | REBASED 2026-08-01 post-#1774 onto main 2c4f48028 (branch now carries approved manifest).",
+      "rollback_note": "Revert PR.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson, recorded by CTO session): no interim soaks for the remaining open queue; pen-testing is next, then a week-long consolidated soak of EVERYTHING; green-CI PRs merge and deploy now. Merge evidence for this entry is that explicit Carson-approved residual-risk exception (CLAUDE.md §1.12), not soak coverage of this PR's own diff. The post-pentest week-long soak covers the merged integrated head."
+    },
+    {
+      "number": 1764,
+      "head_sha": "52dd8eb325c2902f29d5bffbe141cdb82a2acca8",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
+      "risk_tier": "T3",
+      "owner": "release closeout 2026-08-01",
+      "title": "fix(observability): alert on silent credit/billing RPC failures",
+      "ci_summary": "Appended at queue refresh 2026-08-01 post-soak per founder ruling. Behavior-inert additive alerting verified at all 8 call sites; T3 only via batch-anchor.ts path rule. | REBASED 2026-08-01 post-#1774 onto main 2c4f48028 (branch now carries approved manifest).",
+      "rollback_note": "Revert PR.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson, recorded by CTO session): no interim soaks for the remaining open queue; pen-testing is next, then a week-long consolidated soak of EVERYTHING; green-CI PRs merge and deploy now. Merge evidence for this entry is that explicit Carson-approved residual-risk exception (CLAUDE.md §1.12), not soak coverage of this PR's own diff. The post-pentest week-long soak covers the merged integrated head."
+    },
+    {
+      "number": 1765,
+      "head_sha": "88d937e02b9f513dd6512ab604ea750c5c8c90f5",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
+      "risk_tier": "T1",
+      "owner": "release closeout 2026-08-01",
+      "title": "soak(SCRUM-2980): durable load generator for the 72h soak pair",
+      "ci_summary": "Appended at queue refresh 2026-08-01 post-soak per founder ruling. Soak tooling only, no prod runtime surface; supply-chain gate fixes (pinned deps, --ignore-scripts). | REBASED 2026-08-01 post-#1774 onto main 2c4f48028 (branch now carries approved manifest).",
+      "rollback_note": "Revert PR.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson, recorded by CTO session): no interim soaks for the remaining open queue; pen-testing is next, then a week-long consolidated soak of EVERYTHING; green-CI PRs merge and deploy now. Merge evidence for this entry is that explicit Carson-approved residual-risk exception (CLAUDE.md §1.12), not soak coverage of this PR's own diff. The post-pentest week-long soak covers the merged integrated head."
+    },
+    {
+      "number": 1767,
+      "head_sha": "6864bfbbad2a87325bd3618d27a0b5af54488754",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
+      "risk_tier": "T3",
+      "owner": "release closeout 2026-08-01",
+      "title": "fix(worker): retry claim_due_org_queue_runs once on transient transport error (F-1)",
+      "ci_summary": "Appended at queue refresh 2026-08-01 post-soak per founder ruling. F-1 fix; carries migration label — verify migration prod-apply protocol before ready. | REBASED 2026-08-01 post-#1774 onto main 2c4f48028 (branch now carries approved manifest).",
+      "rollback_note": "Revert PR.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson, recorded by CTO session): no interim soaks for the remaining open queue; pen-testing is next, then a week-long consolidated soak of EVERYTHING; green-CI PRs merge and deploy now. Merge evidence for this entry is that explicit Carson-approved residual-risk exception (CLAUDE.md §1.12), not soak coverage of this PR's own diff. The post-pentest week-long soak covers the merged integrated head."
+    },
+    {
+      "number": 1779,
+      "head_sha": "0490af1dafb46104140c9a01d367abde0034e5a8",
+      "base_sha": "8818d3af3b7568ee65a525b95f6f969763d15d25",
+      "risk_tier": "T2",
+      "owner": "release closeout 2026-08-01 (bug-fix wave)",
+      "title": "fix(cron): restore never-implemented /jobs/generate-reports route (prod scheduler 404 since March)",
+      "ci_summary": "TDD route restore wiring healthy processPendingReports(); 186/186 cron tests. Appended at closeout per founder ruling.",
+      "rollback_note": "Revert PR; scheduler job stays paused until route exists.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson): no interim soaks; pen-test next, then week-long consolidated soak of everything; green-CI merges authorized. Carson-approved residual-risk exception per §1.12 (manifest exceptions[] id founder-ruling-2026-08-01-no-interim-soaks)."
+    },
+    {
+      "number": 1776,
+      "head_sha": "860273f4789838aa7fe5f949e9e4ab5069bb82cd",
+      "base_sha": "4764deda83f888a73c8ddc2e04a21f9af6c6ab47",
+      "risk_tier": "T1",
+      "owner": "release closeout 2026-08-01",
+      "title": "fix(mcp): server.json registry schema + gitignore guard",
+      "ci_summary": "Registered at queue-refresh batch 2. Zero runtime surface; registry v1.0.1 already live-verified.",
+      "rollback_note": "Revert PR.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson): no interim soaks; pen-test next, then week-long consolidated soak of everything; green-CI merges authorized (manifest exceptions[] id founder-ruling-2026-08-01-no-interim-soaks)."
+    },
+    {
+      "number": 1778,
+      "head_sha": "46860ca27cf31575952c033c5abd6ac8a4718228",
+      "base_sha": "87063b5e5e8049e3893cd2d62ba7f9987fd0275e",
+      "risk_tier": "T3",
+      "owner": "release closeout 2026-08-01",
+      "title": "fix(security): ownership-gate anchor stats fns (F-5, migration 0380)",
+      "ci_summary": "Registered at queue-refresh batch 2. Authorization tightening only; dashboard call-sites verified unaffected; TDD RED->GREEN.",
+      "rollback_note": "Revert PR.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson): no interim soaks; pen-test next, then week-long consolidated soak of everything; green-CI merges authorized (manifest exceptions[] id founder-ruling-2026-08-01-no-interim-soaks)."
+    },
+    {
+      "number": 1782,
+      "head_sha": "4f51a61c33aa7ea5a963e1f9138b8285047a512e",
+      "base_sha": "87063b5e5e8049e3893cd2d62ba7f9987fd0275e",
+      "risk_tier": "T3",
+      "owner": "release closeout 2026-08-01",
+      "title": "fix(docusign): envelope-anchor lookup indexes (migration 0381)",
+      "ci_summary": "Registered at queue-refresh batch 2. Additive partial indexes + guaranteed-index query restructure; prod incident fix; indexes already applied to prod per operator protocol.",
+      "rollback_note": "Revert PR.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson): no interim soaks; pen-test next, then week-long consolidated soak of everything; green-CI merges authorized (manifest exceptions[] id founder-ruling-2026-08-01-no-interim-soaks)."
+    },
+    {
+      "number": 1784,
+      "head_sha": "5534a5d03003b29adb7d789a6286c5eecfd8bddb",
+      "base_sha": "87063b5e5e8049e3893cd2d62ba7f9987fd0275e",
+      "risk_tier": "T3",
+      "owner": "release closeout 2026-08-01",
+      "title": "fix(recovery): recover SUBMITTED anchors with NULL chain_tx_id (F-3, migration 0379)",
+      "ci_summary": "Registered at queue-refresh batch 2. Recovery-path widening only; rollback rehearsed locally; TDD.",
+      "rollback_note": "Revert PR.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson): no interim soaks; pen-test next, then week-long consolidated soak of everything; green-CI merges authorized (manifest exceptions[] id founder-ruling-2026-08-01-no-interim-soaks)."
+    },
+    {
+      "number": 1785,
+      "head_sha": "827460458516aa7f2509ca3683e7b0601d9154ad",
+      "base_sha": "8818d3af3b7568ee65a525b95f6f969763d15d25",
+      "risk_tier": "T2",
+      "owner": "release closeout 2026-08-01",
+      "title": "fix(sdk): rename npm scope to @carsonarkova (founder ruling)",
+      "ci_summary": "Registered at queue-refresh batch 2. Name/metadata only, no runtime code; founder directly ruled carsonarkova is the org.",
+      "rollback_note": "Revert PR.",
+      "migration_files": [],
+      "soak_coverage": "FOUNDER RULING 2026-08-01 (Carson): no interim soaks; pen-test next, then week-long consolidated soak of everything; green-CI merges authorized (manifest exceptions[] id founder-ruling-2026-08-01-no-interim-soaks)."
     }
   ],
   "excluded_prs": [
@@ -438,6 +594,10 @@
       "migration_files": [],
       "soak_coverage": "NOT STARTED — blocked on rebase (CONFLICTING/DIRTY, see ci_summary) before it can even be built at a frozen head.",
       "excluded_reason": "LIVE RE-VERIFY 2026-07-28T19:55:00Z (go/no-go final check before clock start): still carries do-not-merge + DRAFT per live gh pr list re-run -- go/no-go item #4 (Every included PR blockers cleared) explicitly requires #1618 do-not-merge removed. Also confirmed NOT present on the frozen rig build (nykacscfufdleghzbzhi list_migrations has no 0362/0364 row; these files do not exist in this checkout at all -- they live only on the unmerged PR branches). Moved to excluded_prs rather than blocking clock start, since the actual built artifact never contained them."
+    },
+    {
+      "number": 1780,
+      "reason": "CLOSED 2026-08-01 as duplicate of #1782 (same envelope-lookup fix; also claimed migration number 0379 which #1784 owns). #1782's index DDL is the set applied to prod. Unique salvageable piece noted on the PR: connector-artifact-drain.secured-guard.test.ts."
     }
   ],
   "environment": {
@@ -535,21 +695,24 @@
     "POST-EXPIRY FINALIZATION (2026-08-01): soak_mode=deferred_consolidated_soak REMOVED per its own defined exit sequence: (1) soak_mode removed, (2) environment/soak/migration_plan filled with real evidence above, (3) approval_status flipped to approved. DEPLOY_WORKER_PAUSED un-pause + prod cutover recorded in prod_cutover once executed this session."
   ],
   "prod_cutover": {
-    "deployed_sha": "",
-    "health_check": "",
-    "smoke_result": "",
-    "rollback_readiness": "",
-    "actor": "",
-    "timestamp": "",
-    "residual_note": "Not applicable until the wave merges. See docs/release/release-management-runbook.md §3 (migrate-before-merge) and §9 (Release Done checklist) for the prod-apply + reconciliation sequence each migration in migration_plan.order must go through before its PR merges."
+    "deployed_sha": "c56ceee03ce25efbf425f0245ec419e451b2674d",
+    "health_check": "GET /health 200: status healthy, git_sha c56ceee03..., checks database/anchoring/kms ok (verified 2026-08-01T14:1xZ and again 15:3xZ; zero prod 5xx in the post-deploy 30-min window)",
+    "smoke_result": "public verify endpoint 200 (real receipt ARK-2026-146C9FCE); app.arkova.ai + arkova.ai 200; Stripe webhook signature-rejection correct; MCP edge /health 200",
+    "rollback_readiness": "previous revision retained on Cloud Run; deploy-worker canary->full path exercised; revert = route traffic to prior revision or redeploy previous SHA",
+    "actor": "CTO session (Fable orchestrator) executing founder directive 2026-08-01",
+    "timestamp": "2026-08-01T14:19:00Z",
+    "residual_note": "DEPLOY_WORKER_PAUSED=false (permanent); post-deploy env-only revision update added ENABLE_CONNECTOR_ARTIFACT_ENQUEUE/DRAIN=true (DocuSign real-bytes pipeline enablement, same image/SHA). Migrations at prod: ledger head 0378 + 0375 applied and numerically reconciled (0375 exempted in ledger-numeric-exemptions.json until #1739 lands)."
   },
   "exceptions": [
     {
       "id": "founder-ruling-2026-08-01-no-interim-soaks",
       "date": "2026-08-01",
+      "recorded_at": "2026-08-01T14:20:00Z",
       "approver": "Carson (founder)",
       "ruling": "No interim soaks for the open PR queue: pen-testing next, then a week-long consolidated soak of everything; green-CI PRs merge and deploy now.",
       "scope": "Open queue PRs with included_prs[] entries in this manifest: 1726, 1728, 1737, 1738, 1739, 1742. The ruling also covers 1753/1760/1764/1765/1767, but those have NO included_prs[] entry yet — append one per _append_procedure step 1 before citing this manifest in their evidence blocks, or their gate fails with \"does not include the current PR head SHA\".",
+      "not_cleared_by_this_exception": "1755 (Carson/counsel LGPL ruling pending), and the do-not-merge set 1769/1654/1652/1618 (Carson's own labels). This exception grants no merge authorization for those.",
+      "merge_evidence_note": "For a PR citing this exception, the merge evidence IS this explicit Carson-approved residual-risk exception (CLAUDE.md §1.12) — NOT soak coverage of that PR's own diff. The post-pentest week-long soak covers the merged integrated head.",
       "recorded_by": "RTE repair session 2026-08-01; ruling first captured in HANDOFF.md (commit 391fc64).",
       "residual_risk_note": "Changed paths not exercised by the completed 72h rig pair rely on per-PR CI/E2E evidence plus the scheduled post-pentest consolidated soak.",
       "enforcement_note": "Documentation only: scripts/ci/check-staging-evidence.ts does not read exceptions[]. The gate passes included PRs on the manifest soak/environment/entry fields; this entry records the human authorization for auditors, it is not machine-enforced."
