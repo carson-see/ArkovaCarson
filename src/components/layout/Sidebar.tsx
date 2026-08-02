@@ -20,11 +20,11 @@
 import { useState, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Building2, ChevronLeft, ChevronRight, X, Search, Landmark, Moon, Sun, Monitor, BarChart3, Activity, Database, DollarSign, ChevronDown, ChevronUp, Users, FileCheck, ToggleRight, FileText, Settings as SettingsIcon, CreditCard, KeyRound, ShieldCheck, Award } from 'lucide-react';
+import { LayoutDashboard, Building2, ChevronLeft, ChevronRight, X, Search, Landmark, Moon, Sun, Monitor, BarChart3, Activity, Database, DollarSign, ChevronDown, ChevronUp, Users, FileCheck, ToggleRight, FileText, Settings as SettingsIcon, CreditCard, KeyRound, ShieldCheck, Award, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES, destinationToRoute } from '@/lib/routes';
-import { NAV_LABELS, NAV_POLISH_LABELS, MY_CREDENTIALS_LABELS } from '@/lib/copy';
+import { NAV_LABELS, NAV_POLISH_LABELS, MY_CREDENTIALS_LABELS, SECURE_QUEUE_LABELS } from '@/lib/copy';
 import { useProfile } from '@/hooks/useProfile';
 import { Button } from '@/components/ui/button';
 import { useTheme, type Theme } from '@/hooks/useTheme';
@@ -79,6 +79,10 @@ const accountNavItems: NavItem[] = [
   // section alongside Billing / API Keys and is visible to every authenticated
   // user (including INDIVIDUAL). Label is §1.3-clean ("My Credentials").
   { label: MY_CREDENTIALS_LABELS.NAV_LABEL, icon: Award, to: ROUTES.MY_CREDENTIALS },
+  // Pending Documents (QUEUE-01 / SCRUM-2894 — L2-A1): the consumer secure
+  // queue, reachable from nav per plan rule A2 ("everything that should have
+  // a UI component needs one"). Personal destination, all authenticated users.
+  { label: SECURE_QUEUE_LABELS.PAGE_TITLE, icon: Clock, to: ROUTES.SECURE_QUEUE },
   { label: ACCOUNT_NAV_LABELS.BILLING, icon: CreditCard, to: ROUTES.BILLING },
   { label: ACCOUNT_NAV_LABELS.API_KEYS, icon: KeyRound, to: ROUTES.SETTINGS_API_KEYS },
 ];

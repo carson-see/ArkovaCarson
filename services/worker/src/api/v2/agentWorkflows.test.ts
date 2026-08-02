@@ -11,10 +11,6 @@ const mcpToolsDoc = readRepoFile('docs/api/mcp-tools.md');
 const mcpToolsSource = readRepoFile('services/edge/src/mcp-tools.ts');
 const mcpServerSource = readRepoFile('services/edge/src/mcp-server.ts');
 const mcpJwtSource = readRepoFile('services/edge/src/mcp-jwt-verify.ts');
-const mcpServerManifest = JSON.parse(readRepoFile('services/edge/server.json')) as {
-  tools: Array<{ name: string }>;
-  prompts: Array<{ name: string }>;
-};
 const tsClientSource = readRepoFile('packages/sdk/src/client.ts');
 const tsTypesSource = readRepoFile('packages/sdk/src/types.ts');
 const pyClientSource = readRepoFile('packages/arkova-py/src/arkova/client.py');
@@ -177,15 +173,38 @@ describe('canonical agent workflow documentation', () => {
     expect(workflowDoc).toContain('raw document content');
   });
 
-  it('keeps the MCP tool reference aligned with the published server manifest', () => {
-    expect(mcpServerManifest.tools).toHaveLength(15);
+  it('keeps the MCP tool reference aligned with the runtime tool registry', () => {
+    // `services/edge/server.json` is the official MCP Registry publish
+    // manifest — it no longer carries a `tools`/`prompts` field (the
+    // registry's schema.json has no such field; see #1776). The runtime
+    // source of truth for what tools/prompts the deployed MCP server
+    // actually exposes is `TOOL_DEFINITIONS` in `mcp-tools.ts` (tools) and
+    // the conditional `prompt(...)` registrations in `mcp-server.ts`
+    // (prompts) — both already loaded above as raw source text for the
+    // other assertions in this file, so parse tool names out of the same
+    // strings rather than re-introducing a JSON manifest dependency.
+    const definedToolNames = Array.from(
+      mcpToolsSource.matchAll(/^ {4}name: '([a-z_]+)',$/gm),
+    ).map((match) => match[1]);
+    // `anchor_document` is registered at runtime only when
+    // `MCP_ENABLE_ANCHOR_DOCUMENT=true` (see mcp-server.ts) — it is not
+    // part of the default read-only launch surface.
+    const launchToolNames = definedToolNames.filter((name) => name !== 'anchor_document');
+
+    expect(launchToolNames).toHaveLength(15);
     expect(mcpToolsDoc).toContain('exposes fifteen read-oriented launch tools');
-    expect(mcpServerManifest.tools.map(tool => tool.name)).not.toContain('anchor_document');
-    expect(mcpServerManifest.prompts.map(prompt => prompt.name)).not.toContain('anchor-and-verify');
+    expect(launchToolNames).not.toContain('anchor_document');
     expect(mcpToolsDoc).toContain('MCP_ENABLE_ANCHOR_DOCUMENT=true');
 
-    for (const tool of mcpServerManifest.tools) {
-      expect(mcpToolsDoc).toContain(`\`${tool.name}\``);
+    // The `anchor-and-verify` prompt must stay behind the same flag gate as
+    // the `anchor_document` tool it depends on — not unconditionally
+    // registered like `search-and-verify` / `research-topic`.
+    expect(mcpServerSource).toMatch(
+      /if \(telemetry\.anchorDocumentEnabled\) \{\s*\n\s*prompt\(\s*\n\s*'anchor-and-verify',/,
+    );
+
+    for (const name of launchToolNames) {
+      expect(mcpToolsDoc).toContain(`\`${name}\``);
     }
   });
 
