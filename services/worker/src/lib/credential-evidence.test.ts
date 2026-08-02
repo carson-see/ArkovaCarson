@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   buildCredentialEvidencePackage,
@@ -6,12 +7,20 @@ import {
   computeCredentialEvidenceHash,
   computeNormalizedCredentialEvidenceHash,
   CredentialEvidenceHashInputSchema,
+  isServerAttestedVerificationLevel,
   normalizeCredentialSourceUrl,
   parsePublicCredentialEvidenceMetadata,
   parsePublicCredentialEvidenceMetadataResult,
+  SERVER_ATTESTED_VERIFICATION_LEVELS,
+  stripClientUnassertableEvidenceClaims,
   toPublicSafeCredentialEvidenceMetadata,
   type CredentialEvidenceHashInput,
 } from './credential-evidence.js';
+
+/** Repo-root-relative read, matching the pattern in x402LaunchScope.test.ts. */
+function readRepoFile(path: string): string {
+  return readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8');
+}
 import {
   ACCREDIBLE_STYLE_EVIDENCE_INPUT,
   GENERIC_URL_EVIDENCE_INPUT,
@@ -284,5 +293,89 @@ describe('credential-evidence', () => {
     expect(computeCredentialEvidenceHash(ACCREDIBLE_STYLE_EVIDENCE_INPUT)).toBe(
       '1b34b3a45d31fb6a6cd86c5206ae22aecbc2c2892a0b9c30a41450c50168066a',
     );
+  });
+});
+
+describe('server-attested verification levels (SCRUM-2481)', () => {
+  it('covers exactly the tiers the public badge treats as issuer-authenticated', () => {
+    // Drift guard. `src/lib/sourceProvenance.ts` decides which levels render
+    // the green issuer treatment on the PUBLIC verification page. If a level is
+    // added there without being added here, that level becomes client-assertable
+    // and the badge is spoofable again — the whole point of SCRUM-2481.
+    const provenanceSource = readRepoFile('src/lib/sourceProvenance.ts');
+    const issuerBlock = provenanceSource.match(
+      /ISSUER_AUTHENTICATED_LEVELS[\s\S]*?new Set<VerificationLevel>\(\[([\s\S]*?)\]\)/,
+    );
+    expect(issuerBlock).not.toBeNull();
+    const frontendLevels = Array.from(issuerBlock![1].matchAll(/'([a-z_]+)'/g)).map((m) => m[1]);
+
+    expect([...frontendLevels].sort((a, b) => a.localeCompare(b))).toEqual(
+      [...SERVER_ATTESTED_VERIFICATION_LEVELS].sort((a, b) => a.localeCompare(b)),
+    );
+  });
+
+  it('classifies only the issuer tiers as server-attested', () => {
+    expect(isServerAttestedVerificationLevel('issuer_anchored')).toBe(true);
+    expect(isServerAttestedVerificationLevel('source_signed')).toBe(true);
+    for (const level of ['account_linked', 'captured_url', 'captured_upload_ai']) {
+      expect(isServerAttestedVerificationLevel(level)).toBe(false);
+    }
+    // Non-strings and near-misses must not slip through.
+    for (const value of [null, undefined, 42, {}, ['issuer_anchored'], 'ISSUER_ANCHORED', 'issuer_anchored ']) {
+      expect(isServerAttestedVerificationLevel(value)).toBe(false);
+    }
+  });
+
+  it('strips only the un-assertable level and leaves everything else intact', () => {
+    const result = stripClientUnassertableEvidenceClaims({
+      verification_level: 'source_signed',
+      source_provider: 'credly',
+      evidence_package_hash: 'a'.repeat(64),
+      extraction_confidence: 0.9,
+    });
+
+    expect(result.stripped).toEqual(['verification_level']);
+    expect(result.metadata).toEqual({
+      source_provider: 'credly',
+      evidence_package_hash: 'a'.repeat(64),
+      extraction_confidence: 0.9,
+    });
+  });
+
+  it('is a no-op for self-reportable levels and returns the same object', () => {
+    const input = { verification_level: 'captured_url' as const, source_provider: 'credly' };
+    const result = stripClientUnassertableEvidenceClaims(input);
+
+    expect(result.stripped).toEqual([]);
+    expect(result.metadata).toBe(input);
+  });
+
+  it('does not mutate the caller-supplied metadata object', () => {
+    const input = { verification_level: 'issuer_anchored' as const, source_provider: 'credly' };
+    stripClientUnassertableEvidenceClaims(input);
+
+    expect(input.verification_level).toBe('issuer_anchored');
+  });
+
+  it('every server-side writer stays below the issuer tiers', () => {
+    // The enforcement above is only safe to ship active because no legitimate
+    // server-side path emits an issuer tier. Pin that: if an adapter ever
+    // promotes itself, this test fails and forces a deliberate decision rather
+    // than a silent trust escalation.
+    const writers = [
+      'services/worker/src/integrations/credential-sources/credly/adapter.ts',
+      'services/worker/src/integrations/credential-sources/accredible/adapter.ts',
+      'services/worker/src/lib/credential-source-import.ts',
+    ];
+    for (const path of writers) {
+      const source = readRepoFile(path);
+      const assigned = Array.from(
+        source.matchAll(/verification_?[Ll]evel:\s*'([a-z_]+)'/g),
+      ).map((m) => m[1]);
+      expect(assigned.length).toBeGreaterThan(0);
+      for (const level of assigned) {
+        expect(SERVER_ATTESTED_VERIFICATION_LEVELS).not.toContain(level);
+      }
+    }
   });
 });

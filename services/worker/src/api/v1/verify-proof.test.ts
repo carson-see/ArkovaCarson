@@ -20,6 +20,7 @@ import {
   type ProofRecordData,
   __resetSignerCacheForTests,
 } from './verify-proof.js';
+import { PROOF_AVAILABILITY_NOTE } from '../../constants/proofAvailability.js';
 import { verifySignedBundle } from '../../proof/signed-bundle.js';
 import { verifyDidBinding } from '../../proof/did-binding.js';
 import { buildArkovaDidDocument, ARKOVA_DID } from '../did-web.js';
@@ -647,5 +648,81 @@ describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
         ('41524b56' + TREE.root).toLowerCase(),
       );
     }
+  });
+});
+
+
+// ─── SCRUM-2576: contract tests for BOTH proof classes ──────────────────────
+//
+// The back catalogue (~2.97M SECURED anchors, only ~6,110 with a stored
+// per-document proof) must be answered honestly on both shapes: a full proof
+// returns a bundle, and a root-only record returns a stated non-availability —
+// not a bare 404 that reads as "this record could not be verified."
+describe('SCRUM-2576 — full vs root-only proof contract', () => {
+  const ROOT_ONLY_ANCHOR: ProofAnchorData = {
+    public_id: 'backcat-1',
+    fingerprint: fp('back-catalogue-doc'),
+    status: 'SECURED',
+    chain_tx_id: 'tx-direct-1',
+    chain_block_height: 700_000,
+    chain_timestamp: '2026-02-01T00:00:00Z',
+    // Direct-anchored: the OP_RETURN commits the fingerprint itself. No tree,
+    // no branch, nothing to reconstruct — the emptiness IS the honest truth.
+    metadata: null,
+  };
+
+  it('root-only: 404 body states availability and what it does NOT assert', async () => {
+    const app = buildApp({ lookupByPublicId: async () => ROOT_ONLY_ANCHOR });
+    const res = await request(app).get('/api/v1/verify/backcat-1/proof');
+
+    expect(res.status).toBe(404);
+    expect(res.body.proof_error_code).toBe('NO_BATCH_PROOF');
+    expect(res.body.proof_availability).toBe('root_only');
+    expect(res.body.proof_availability_note).toBe(PROOF_AVAILABILITY_NOTE.root_only);
+    // The record is anchored — the body must not imply otherwise.
+    expect(res.body.proof_availability_note).toMatch(/not evidence that the record is invalid/i);
+    // The offline-proof capability must appear ONLY inside the "Not asserted"
+    // clause, never as a standalone claim. Anchoring the phrase to that prefix
+    // is the assertion that matters — a bare "not present" check would pass on
+    // a note that had dropped the disclaimer entirely.
+    expect(res.body.proof_availability_note).toMatch(
+      /not asserted: that a self-contained per-document proof bundle is available/i,
+    );
+  });
+
+  it('root-only: the legacy prose and code are unchanged (no contract break)', async () => {
+    const app = buildApp({ lookupByPublicId: async () => ROOT_ONLY_ANCHOR });
+    const res = await request(app).get('/api/v1/verify/backcat-1/proof');
+
+    // src/lib/proofAvailability.ts routes on both of these; they are frozen.
+    expect(res.body.error).toBe(
+      'No Merkle proof available for this record. It may not have been batch-anchored.',
+    );
+    expect(res.body.proof_error_code).toBe('NO_BATCH_PROOF');
+  });
+
+  it('full: a per-document proof returns 200 with a verified bundle and no availability error fields', async () => {
+    const app = buildApp({ lookupByPublicId: async () => ANCHOR });
+    const res = await request(app).get('/api/v1/verify/abc123/proof');
+
+    expect(res.status).toBe(200);
+    expect(res.body.verified).toBe(true);
+    expect(res.body.merkle_root).toBe(TREE.root);
+    expect(res.body.merkle_proof.length).toBeGreaterThan(0);
+    // The 200 shape is unchanged — availability fields belong to the 404 body
+    // and to /api/v1/verify/:publicId, not here.
+    expect(res.body.proof_availability).toBeUndefined();
+    expect(res.body.proof_error_code).toBeUndefined();
+  });
+
+  it('an unknown record is NOT given a proof class (404 RECORD_NOT_FOUND stays bare)', async () => {
+    const app = buildApp({ lookupByPublicId: async () => null });
+    const res = await request(app).get('/api/v1/verify/does-not-exist/proof');
+
+    expect(res.status).toBe(404);
+    expect(res.body.proof_error_code).toBe('RECORD_NOT_FOUND');
+    // Classifying a record we do not have would be asserting something about it.
+    expect(res.body.proof_availability).toBeUndefined();
+    expect(res.body.proof_availability_note).toBeUndefined();
   });
 });
