@@ -81,3 +81,15 @@ ERROR on this tree + the `docusign-*` job files) enforces this at build time.
   the Sonar new-code duplication gate. A throw from the SUCCESS-path event write
   deliberately falls through to the failure path — that is the behaviour of the
   chain it replaced, not an accident.
+
+
+## 2026-08-01 DRIVE B1 — the changes cursor is seeded at CONNECT time, and only there
+
+`last_page_token` on `org_integrations` is the Drive changes cursor. It has exactly **two** writers:
+
+1. `createDriveOAuthRouter`'s callback (`api/v1/integrations/drive-oauth.ts`) — seeds it from the `startPageToken` that `createChangesWatch()` returns.
+2. `advancePageToken` — only reachable from `processDriveChanges`, which **refuses to run without a token** (`drive-changes-runner.ts` skips with `no_page_token`).
+
+So (2) can never run until (1) has happened. The callback used to type its local `subscription` as `{ resourceId; expiration }`, silently discarding the `startPageToken` the client already returned — which made the entire Drive changes pipeline unreachable by construction: a freshly connected org skipped forever, with no error anywhere. **Never drop `startPageToken` from that call site.**
+
+The write is deliberately **conditional** (`...(subscription ? { last_page_token } : {})`), not `?? null`. This is an upsert: unconditionally writing null on a *failed re-watch* would wipe a working org's cursor, and nothing else can re-seed it, so every change from then on would be skipped silently. Omitting the column preserves the existing cursor. Both behaviours are pinned by tests in `drive-oauth.test.ts`.
