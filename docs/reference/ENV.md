@@ -328,9 +328,14 @@ DOCUSIGN_INTEGRATION_KEY=
 DOCUSIGN_CLIENT_SECRET=
 ENABLE_DOCUSIGN_OAUTH=false         # DocuSign OAuth routes; default off pending org-scale launch validation
 
-# DocuSign Connect HMAC secret. Listener provisioning sends this shared key to
-# DocuSign; the worker verifies X-DocuSign-Signature-1 over the raw body.
+# DocuSign Connect HMAC secret. The worker verifies X-DocuSign-Signature-1 over
+# the raw body with this key. Listener provisioning does NOT install it — DocuSign
+# has no `hmacSecret` field on a Connect configuration, so the signing key is held
+# ACCOUNT-SIDE and must be aligned by a DocuSign admin. Provisioning still requires this var
+# to be set, because enabling includeHMAC with nothing to verify against would 401
+# every delivery. See docs/runbooks/integrations/docusign.md.
 DOCUSIGN_CONNECT_HMAC_SECRET=
+
 ENABLE_DOCUSIGN_WEBHOOK=false       # /webhooks/docusign intake; default off until org-wide Connect testing passes
 WORKER_PUBLIC_URL=                  # Public worker origin used when provisioning DocuSign Connect listener URLs
 
