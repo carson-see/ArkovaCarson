@@ -408,14 +408,25 @@ describe('publicRecordAnchor — load & pool saturation (SCRUM-1296)', () => {
     const priorityFetches = fetchTimestamps.filter((t) => sources.includes(t.source));
     expect(priorityFetches.length).toBeGreaterThanOrEqual(4);
 
-    // Check overlap: if parallel, multiple sources should have overlapping time ranges
-    if (priorityFetches.length >= 4) {
-      const earliestStart = Math.min(...priorityFetches.map((t) => t.start));
-      const latestStart = Math.max(...priorityFetches.map((t) => t.start));
-      // In parallel: all start within a very short window (< 3ms)
-      // In sequential: starts are spread out by ~5ms each (at least 15ms gap between first and last)
-      const startSpread = latestStart - earliestStart;
-      expect(startSpread).toBeLessThan(10); // Parallel: all start nearly simultaneously
+    // Check overlap: if parallel, multiple sources should have overlapping time ranges.
+    //
+    // Compare each source's FIRST fetch only. Every `.range()` call is
+    // timestamped, and the feeder is a paged scan (BUG-2026-08-02-002): a source
+    // now costs one extra request to prove there is no further page, so later
+    // pages legitimately start ~5ms after the first round. Spreading across all
+    // pages measures the page count, not the concurrency this test is named for.
+    const firstFetchPerSource = new Map<string, number>();
+    for (const t of priorityFetches) {
+      const seen = firstFetchPerSource.get(t.source);
+      if (seen === undefined || t.start < seen) firstFetchPerSource.set(t.source, t.start);
+    }
+
+    if (firstFetchPerSource.size >= 4) {
+      const starts = [...firstFetchPerSource.values()];
+      // In parallel: all four sources start within a very short window.
+      // In sequential: starts are spread by ~5ms each, so ~15ms first-to-last.
+      const startSpread = Math.max(...starts) - Math.min(...starts);
+      expect(startSpread).toBeLessThan(10);
     }
   }, 30_000);
 });

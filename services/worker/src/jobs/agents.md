@@ -331,3 +331,56 @@ Key implementation patterns:
 - SCRUM-2098 — `docusign-listener-drift.ts` pure Connect-listener config drift check + `docusign-listener-drift-deps.ts` factory. Reuses the SCRUM-2042 active-integration/token-refresh dependency path, reads DocuSign GET `/connect`, compares against the same `buildArkovaConnectConfig()` payload used by provisioning, and reports Sentry warnings for missing/disabled/HMAC/event/payload-format drift. Detection only; no DocuSign writes. Cron route: `/jobs/docusign-listener-drift`. Scheduler: hourly at minute 15 via `scripts/gcp-setup/cloud-scheduler.sh`.
 - SCRUM-2902 (R-1 FATAL) — `ce-key-expiry-alert.ts` fail-LOUD Credential Engine API key expiry alarm. Pure `decideCeKeyExpiryAlert({ expires_at_raw, now })` + `createSentryCeKeyExpiryDispatcher()` + `runCeKeyExpiryCheck()`. Reads `CE_API_KEY_EXPIRES_AT` from env (NOT `config.ts` — mirrors treasury-alert's direct env read). Emits escalating Sentry events at **T-30/T-14 (warning)**, **T-7/EXPIRED (error)**, and — the fail-closed core — fires an **ERROR every run** with `expiry_window=SENTINEL` when the date is unset / a sentinel placeholder (`CE_KEY_EXPIRY_SENTINEL_VALUES`) / unparseable. **DB-stateless by design** (no dedup table → no migration): firing daily inside a window is the desired loudness; Sentry groups events into one issue and the alert-rule `frequency` throttles Slack pages. **event ≠ alert:** the Sentry event only pages a human via the `"SCRUM-2902 — Credential Engine API key expiry"` rule in `infra/sentry/alert-rules.json` (→ Slack `#ops`, tags `story,expiry_window,days_until_expiry`); code↔rule tag parity is enforced by `scripts/ci/check-ce-key-expiry-alert-contract.test.ts`. An admin must create the rule 1:1 in the Sentry dashboard AND capture a live Slack-delivery proof (see `docs/runbooks/ce-key-expiry-alarm.md`) — the code + rule declaration alone do NOT prove delivery. Cron route: `/jobs/ce-key-expiry-check`. Scheduler: daily 08:00 UTC. Gated by `ENABLE_CE_KEY_EXPIRY_ALERTS` (default true). **Founder blocker:** the real `CE_API_KEY_EXPIRES_AT` (≈2026-09-09, confirm) + demo CTID are Carson-supplied; until set, the alarm intentionally pages continuously.
 - **PostgREST `.in()` filter width is NOT `POSTGREST_ROW_LIMIT`** (prod incident 2026-07-29 → 2026-08-01, fix PR `fix/postgrest-in-filter-url-limit`). `POSTGREST_ROW_LIMIT = 1_000` caps how many rows PostgREST *returns*; it says nothing about how many ids fit in a *URL filter*. `fetchAnchorRows` chunked anchor ids by `POSTGREST_ROW_LIMIT` and passed them to `.in('id', chunk)` — 1,000 UUIDs is a ~38 KB encoded query string, which PostgREST rejected with `400 Bad Request` on **every** chunk. `rows` came back empty, `partitionRecordAnchors` produced zero pending items, and the job logged a benign `"No new pending public record anchors to submit"` and returned **HTTP 200**. Public-record anchoring produced **zero anchors for 70+ hours** while every cron reported success and the unlinked backlog grew past 404k. Use `POSTGREST_IN_FILTER_CHUNK` (200) for any `.in()` id list; keep `POSTGREST_ROW_LIMIT` for row pagination only. `fetchAnchorRows` now **throws** when every chunk fails rather than returning `[]` — an all-chunks-failed read is indistinguishable downstream from "no anchors exist", and that silent-success path is what hid the outage.
+
+## 2026-08-02 Feeder paging fixed — BUG-2026-08-02-002 (PR stacked on #1865)
+
+`fetchRecordsForSource` and `fetchNonPriorityRecords` ended their paging loop on
+`chunk.length < chunkSize` — "the server returned fewer rows than I asked for" read as
+"there are no more rows". `chunkSize` was `Math.min(POSTGREST_ROW_LIMIT, limit - offset)`, so
+it reaches **1000 on every run** at the default `batchAnchorMaxSize` (10,000 →
+`perSourceCap` 2,500). PostgREST's `db-max-rows` is a **server** setting the worker cannot
+see; wherever it sits below 1000 the FIRST page short-circuited the loop and the pipeline was
+fed a fraction of what it asked for, silently, every run.
+
+Milder than the same mistake in `api/v1/auditBatchVerify.ts` — the filter is
+`anchor_id IS NULL`, so under-read records are picked up by a later run rather than lost — but
+it throttles the path working through the ~259k pending-anchoring backlog.
+
+Both now go through one `fetchUnanchoredRecords` helper over `scanAllPages`
+(`utils/postgrest-filter.ts`, see `utils/agents.md`). **Do not hand-roll a page loop here
+again.** Note this is a BOUNDED read, so `row_budget_exceeded` is the ordinary success case
+(quota filled) and `complete` means the source ran dry first — the opposite reading from the
+audit endpoint, where `row_budget_exceeded` is an anomaly that refuses the request.
+
+**Two deliberate divergences from `auditBatchVerify.ts`, both about what a partial read means
+here:**
+
+- **A page error logs and returns the rows already read, rather than throwing.** The audit
+  endpoint throws because a partial sample is handed to an auditor as a complete answer. Here
+  the records stay `anchor_id IS NULL` for the next run, so the only cost is throughput —
+  while throwing would propagate through the `Promise.all` in `fetchUnanchoredPublicRecords`
+  and take the other three priority sources down with the one that faulted. `PageScanError`
+  carries `partialRows` precisely so this caller can use the good pages; discarding them would
+  throw away real work over one bad page. The log records that the batch is partial.
+- **`page_budget_exhausted` warns and processes what it has.** `MAX_FEEDER_PAGES` is 200 —
+  10 pages at the 10,000 ceiling when the server honours the requested width, with headroom
+  for a much smaller `db-max-rows`. Past it the remainder is left for the next run.
+
+**`POSTGREST_ROW_LIMIT` is no longer imported by this file, on purpose.** It is a request
+width, not an observed server limit, and every use of it here was a loop deriving "there are
+no more rows" from it.
+
+**ORDERING CAVEAT, knowingly left in place:** both scans order by `created_at` only, which is
+not unique on `public_records`, so offset paging can reorder rows sharing a timestamp and skip
+or repeat one across a page boundary. Low impact on this path — a repeat is absorbed by the
+downstream fingerprint dedup, a skip is still `anchor_id IS NULL` next run — while adding an
+`id` tiebreaker changes the query plan on a large hot table. Wants its own measured change with
+an `EXPLAIN (ANALYZE)`, not a drive-by.
+
+**Test-harness note:** `publicRecordAnchor.test.ts`'s `mockSelectChain.range` used to resolve
+the SAME record list for every call — a server that cannot exist — which was survivable only
+because the old loop quit after one short page. It is now offset-aware. Any new paging test
+must set its mock server page cap to something **other than** `POSTGREST_ROW_LIMIT`: a mock
+that caps pages at the same constant the code compares against can only prove the code agrees
+with itself, which is why this bug survived the existing suite. See
+`__tests__/publicRecordAnchor-paging.test.ts`.

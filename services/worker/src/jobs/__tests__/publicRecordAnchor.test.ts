@@ -25,7 +25,10 @@ const {
 
   const mockSingle = vi.fn();
   const mockLimit = vi.fn();
-  const mockRange = vi.fn(() => ({ data: [] as Record<string, unknown>[], error: null }));
+  // Takes (from, to) so a test can serve real pages: the feeder is a paged scan
+  // and a range mock that ignores its offsets models a server that cannot exist.
+  const mockRange = vi.fn((_from = 0, _to = 0) =>
+    Promise.resolve({ data: [] as Record<string, unknown>[], error: null }));
   const mockOrder = vi.fn(() => ({ limit: mockLimit, range: mockRange }));
   const selectChain: Record<string, unknown> = {};
   selectChain.eq = vi.fn(() => selectChain);
@@ -112,7 +115,13 @@ function makeMock(
   });
 
   mockSelectChain.limit.mockResolvedValue({ data: records, error: null });
-  mockSelectChain.range.mockResolvedValue({ data: records, error: null });
+  // Offset-aware, because the feeder is now a real paged scan
+  // (BUG-2026-08-02-002). This used to resolve the SAME record list for every
+  // `.range()` call — a server that cannot exist — which was survivable only
+  // because the old loop quit after one short page. Serve each row once and
+  // then an empty page, which is what ends the scan.
+  mockSelectChain.range.mockImplementation((from: number, to: number) =>
+    Promise.resolve({ data: records.slice(from, to + 1), error: null }));
 
   const anchorsSelectByIds = {
     in: vi.fn(() => ({

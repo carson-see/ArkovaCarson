@@ -55,11 +55,24 @@ Three rules a call site can no longer opt out of:
 `status` is the whole point: `complete` is the ONLY value meaning "these are all the rows".
 A caller that ignores it and presents `rows` as a full set has re-created the bug.
 
-**Known offender, NOT fixed here:** `jobs/publicRecordAnchor.ts:488` and `:514`
-(`fetchRecordsForSource` / `fetchNonPriorityRecords`) both still use `if (chunk.length <
-chunkSize) break`. `chunkSize` there is `config.batchAnchorMaxSize`, which can reach 1000, so
-on any deployment with `db-max-rows` below that they under-read and stop early. Consequence is
-milder than in the audit endpoint (each run re-queries from offset 0, so it degrades to reduced
-per-run throughput rather than a permanent undercount), but it is the same wrong assumption.
-Left alone deliberately: that file is being edited by PR #1853, this PR's base. Migrate it to
-`scanAllPages` in a follow-up rather than conflicting with an in-flight anchoring change.
+### Callers, and why their readings of `status` differ
+
+`maxRows` serves two shapes, and `status` is how they tell apart what happened:
+
+| Caller | Shape | `complete` | `row_budget_exceeded` | Page error |
+|---|---|---|---|---|
+| `api/v1/auditBatchVerify.ts` | exhaustive scan | the population | **anomaly** — refuse the request (422) | **throw** (500); a partial sample would be signed off as a complete audit answer |
+| `jobs/publicRecordAnchor.ts` | bounded read | source ran dry | **normal** — quota filled, slice | **log + use `partialRows`**; records stay `anchor_id IS NULL` for the next run, and throwing would kill the sibling sources under `Promise.all` |
+
+Both readings are correct for their caller. What is never correct is ignoring `status` and
+treating `rows` as a complete set.
+
+`PageScanError.partialRows` exists for the second row of that table: an error mid-scan is
+exactly when a throughput job wants the pages that DID succeed, rather than discarding real
+work over one bad page. It is not a licence to treat them as complete — the caller must say so
+in its log.
+
+**Correction to an earlier note here:** this file previously recorded `publicRecordAnchor.ts`'s
+`chunkSize` as `config.batchAnchorMaxSize`. It was `Math.min(POSTGREST_ROW_LIMIT, limit -
+offset)` — the same bug, but bounded by the 1000 constant rather than by the batch-size config.
+Both call sites are now migrated (BUG-2026-08-02-002).
