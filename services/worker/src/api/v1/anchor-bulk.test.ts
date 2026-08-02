@@ -240,6 +240,47 @@ describe('POST /api/v1/anchor/bulk (SCRUM-1171)', () => {
     expect(meta.bulk_source).toBe('haki-req-02');
   });
 
+  // Regression test (SCRUM-2911 W1): `anchors.filename` is NOT NULL at the DB
+  // layer. The insert previously omitted `filename` entirely, so every real
+  // (non-mocked) call to this route would fail with a Postgres NOT NULL
+  // constraint violation — undetectable by this suite's mocked `db`, which
+  // doesn't enforce schema constraints. Pins the fix at the insert-payload
+  // level: an explicit filename is passed through verbatim, and a caller that
+  // omits it (the original HAKI-REQ-02 bare-fingerprint case) gets a
+  // synthetic, non-PII placeholder instead of `undefined`.
+  it('always includes a non-empty filename on insert (NOT NULL DB constraint)', async () => {
+    const inserted: Array<{ payload: Record<string, unknown> }> = [];
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      if (table === 'anchors') {
+        const builder = makeBuilder({
+          selectData: [],
+          insertedRow: { public_id: 'ARK-003', fingerprint: FP(3), created_at: '2026-07-28T00:00:00Z' },
+        });
+        builder.insert = vi.fn((payload) => {
+          inserted.push({ payload });
+          return builder;
+        }) as unknown as typeof builder.insert;
+        return builder as unknown as never;
+      }
+      return makeBuilder() as unknown as never;
+    });
+
+    await request(buildApp())
+      .post('/api/v1/anchor/bulk')
+      .send({
+        anchors: [
+          { fingerprint: FP(3), filename: 'w2-2025.pdf' },
+          { fingerprint: FP(4) }, // no filename supplied
+        ],
+      })
+      .expect(201);
+
+    expect(inserted).toHaveLength(2);
+    expect(inserted[0].payload.filename).toBe('w2-2025.pdf');
+    expect(typeof inserted[1].payload.filename).toBe('string');
+    expect((inserted[1].payload.filename as string).length).toBeGreaterThan(0);
+  });
+
   it('402s when org credits are insufficient', async () => {
     vi.mocked(deductOrgCredit).mockResolvedValue({
       allowed: false,
