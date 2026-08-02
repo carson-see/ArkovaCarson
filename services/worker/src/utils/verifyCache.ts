@@ -12,9 +12,15 @@ import { logger } from './logger.js';
 
 const CACHE_TTL_SECONDS = 300; // 5 minutes
 // Bumped v1 → v2 when API-RICH-01 landed 8 additive response fields (2026-04-16).
+// Bumped v2 → v3 for the outbound PII gate on `buildVerificationResult`
+// (academic-record free-text suppression + value gate). This bump is a SECURITY
+// requirement, not hygiene: the gate runs before `setCachedVerification`, so new
+// writes are safe either way, but entries written by the PRE-fix build carry a
+// raw `description` and would keep serving it to anonymous callers for the rest
+// of the TTL after deploy. A new prefix orphans them instantly.
 // Bump again on any response-shape change so post-deploy cache hits don't serve stale
 // thin responses. Old keys age out naturally via TTL.
-const KEY_PREFIX = 'verify:v2:';
+const KEY_PREFIX = 'verify:v3:';
 
 /** Module-level config cache — avoids process.env reads on every request */
 let _redisConfig: { url: string; token: string } | null | undefined;

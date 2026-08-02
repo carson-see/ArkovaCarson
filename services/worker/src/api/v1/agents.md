@@ -2,6 +2,36 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-02 SECURITY — outbound PII gate on `GET /api/v1/verify/:publicId` (the THIRD public projection)
+
+**VULNERABILITY CLASS — do not reintroduce:** `buildVerificationResult` in `verify.ts` emitted `anchor.description` **raw** to anonymous callers, for every credential type, including `DEGREE`/`TRANSCRIPT`/`CERTIFICATE`. The route is anon-reachable by design (`router.ts`: `if (!req.apiKey && req.method === 'GET') next()`). It was **not** covered by the REG-02 `directory_info_opt_out` suppression sitting directly above it in the same function — that block gates `issuer_name`/`recipient_identifier`/`issued_date`/`expiry_date` only — so even an explicitly opted-out learner was exposed here.
+
+**There are THREE public projections of the same anchor rows, and they must not drift again:**
+
+| # | Surface | Owner | Landed |
+|---|---|---|---|
+| 1 | `public.get_public_anchor` (anon-GRANTed, browser/PostgREST) | migration `0385` | PR #1841 |
+| 2 | `GET /api/v1/credentials/:publicId/ctdl` | `ctdl/ctdl-pii-guard.ts` | PR #1815 |
+| 3 | `GET /api/v1/verify/:publicId` | `api/v1/verify.ts` | this change |
+
+The rule is written down ONCE in `scripts/ci/public-pii-projection-contract.json`. **Change it there plus all three implementations in one PR** — the contract test fails otherwise, which is the point.
+
+**The policy decision (stated, not inherited).** Academic-record suppression here is **UNCONDITIONAL**, matching the other two — deliberately NOT gated on `directory_info_opt_out`, even though the surrounding REG-02 code is. Opt-out means the default is *publish*, and default-publish is the defect class; the field was not covered by the opt-out anyway; and one row with three anonymous projections giving three answers is not a privacy posture (the verify **page** reads the SQL path, which suppresses — the API disagreeing with the page it serves *is* the drift). Cost: an issuer-authored description no longer ships on an academic record for anyone. It already did not ship on either other public projection, so nothing publicly reachable elsewhere is lost.
+
+**What the gate does.** Two layers, mirroring 0385:
+- **Structural** — `isEducationCredentialType()` (from the guard, `DEGREE`/`CERTIFICATE`/`TRANSCRIPT`) ⇒ `description` omitted outright. `issuer_name` and `jurisdiction` are **not** structurally suppressed: the issuer is an *institution*, not the learner, and a jurisdiction tag is informational (§1.5). Same split as 0385.
+- **Value** — `publicFreeTextOrNull()` runs on every credential type over `description`, `issuer_name`, `jurisdiction`, `sub_type`, `file_mime`. It **omits, never throws**: this body is a verification ANSWER, and 404ing would tell an anonymous verifier a genuinely anchored document does not exist. (The CTDL path fails closed instead, correctly — its body is a *publication*.)
+
+**Rules for anyone touching this file:**
+- **Reuse the detector, never re-implement it.** Import from `../../ctdl/ctdl-pii-guard.js` — the guard, not `ctdl-serializer.js`. The guard is deliberately dependency-free so a non-CTDL path can use it without dragging the CTDL serializer onto this hot anonymous route. A second hand-rolled copy of these patterns is the drift.
+- **Do NOT add a learner-name heuristic.** Measured twice (PR #1815, then again for 0385): the capitalised-pair patterns catch **zero** real leak shapes (bare, all-caps, non-ASCII, apostrophe, hyphenated all evade `[A-Z][a-z]{1,}`) while `for` as a bare preposition drops "Center for Professional Development", "Society for Human Resource Management", "Ethics for Trial Lawyers", "Revoked for Non Payment". Those strings are pinned in the contract's `must_publish_vectors`. Learner names are covered *structurally* here, which is precision-independent.
+- **Do NOT "reconcile" `FERPA_EDUCATION_TYPES`.** `constants/ferpa.ts` carries a **fourth** member (`CLE`) on purpose: it drives the FERPA §99.33 re-disclosure notice and the §99.37 directory opt-out — notice/consent mechanics over the wider practitioner+academic set — not free-text suppression. Two lists, two jobs. Both are pinned by `src/tests/public-anchor-pii-projection.contract.test.ts`; a change there failing CI is the signal to make a decision, not to edit the pin.
+- **`STRUCTURAL_API_RICH_KEYS` is an ALLOW-list and the gate FAILS CLOSED against it.** Every *string*-valued API-RICH key not named there routes through the value gate, so a future additive §1.8 field is gated by default instead of shipping raw because nobody remembered. Adding a key there publishes it raw to anonymous callers — state why it is safe in the contract. (`sub_type` is bare `text` in the schema — no CHECK, no enum — and `file_mime` is client-supplied, so both are gated; the numeric/jsonb members carry no free text.)
+- **The gate lives in `buildVerificationResult`, not in the route handler, on purpose.** `oracle.ts` and `batch.ts` reuse that builder, so all three surfaces inherit the fix. A route-level gate would have left two of them leaking.
+- `utils/verifyCache.ts` `KEY_PREFIX` was bumped `verify:v2:` → `verify:v3:` as part of this change. That is a **security** requirement, not hygiene: the gate runs before `setCachedVerification`, so new writes are safe, but entries written by the pre-fix build carry a raw `description` and would keep serving it for the rest of the 5-minute TTL after deploy.
+
+**Tests.** `verify-pii-projection.test.ts` drives the **real router through supertest** — not `buildVerificationResult` in isolation — because the finding is that the route is anonymously reachable, and a unit test on the builder would not prove that. It loads its corpus from the shared contract rather than restating it. `src/tests/public-anchor-pii-projection.contract.test.ts` gained a source-shape suite proving the rule cannot silently disappear (a behavioural suite alone cannot catch an edit that deletes the gate and its tests together). All three guards were mutation-verified: dropping the academic branch fails 16 behavioural tests; importing `containsLearnerNamePii` fails the contract test; exempting `sub_type` fails both.
+
 ## 2026-07-28 R19 — fingerprint_source additive field (advances SCRUM-2481)
 
 `verify.ts`: `VerificationResult` / `AnchorByPublicId` / `AnchorSelectRow` gained `fingerprint_source: 'document_bytes' | 'issuer_record_attestation' | null` (migration `0376`, `anchors.fingerprint_source`). Additive nullable — §1.8, no version bump. Wired through `API_RICH_KEYS` / `EMPTY_API_RICH_FIELDS` / `mapAnchorRow` / `defaultLookup`'s select string. `docs/api/openapi.yaml` `VerificationResult` schema updated to match. `__test-helpers__/build-anchor.ts` (shared fixture) updated — any NEW hand-built `AnchorByPublicId` literal elsewhere needs the field too (existing callers that spread `EMPTY_API_RICH_FIELDS`, e.g. `batch.ts`/`oracle.ts`, pick it up automatically). Out of scope for this PR: `anchor-bulk.ts` (`POST /api/v1/anchor/bulk`, currently zero callers per the PI-0.5 bulk-upload audit) also always receives pre-computed fingerprints and should set `fingerprint_source: 'document_bytes'` once wired up by whichever workstream lands that.
