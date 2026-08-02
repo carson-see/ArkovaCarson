@@ -5,9 +5,23 @@
 --   (0385); PRE-EXISTING, not introduced by that PR.
 --
 -- =============================================================================
--- STATUS: FILE-ONLY / PRE-SOAK / NOT APPLIED. Authored for review + T3 soak.
---   NOT applied to prod or any rig in this window. Tier T3 (migration touching
---   privilege grants on the anon-reachable verification surface).
+-- STATUS: APPLIED TO PROD 2026-08-02 (vzwyaatejekddvltxyye) via Supabase MCP,
+--   ledger reconciled to numeric 0388 per CLAUDE.md §0 rule 10 and confirmed
+--   via list_migrations. Tier T3 (migration touching privilege grants on the
+--   anon-reachable verification surface).
+--
+--   Applied OUT OF BAND, ahead of merge (migrate-before-merge), on founder
+--   direction: the hole was a LIVE unauthenticated disclosure path on prod with
+--   an external pen test imminent, and there was no soak in flight to wait for
+--   (the two 72h 2026-08 rigs cleared 07-31). Same precedent as 0383.
+--
+--   POST-APPLY VERIFICATION on prod:
+--     - has_function_privilege sweep BOTH directions: anon=f, authenticated=f,
+--       service_role=t. 0 mismatches.
+--     - anon direct RPC -> 42501 permission denied (was HTTP 200 + oracle).
+--     - REGRESSION: public verification BYTE-IDENTICAL before vs after on two
+--       real prod records (ARK-SEC-VMQ3R8 1299 B, ARK-SEC-K2Z4RY 1286 B) and on
+--       search_public_credentials. Baselines captured before the apply.
 --   Numeric prefix 0388 is the next free above main head 0378. Claimed
 --   prefixes verified this session by scanning EVERY remote branch (not just
 --   open PRs) for supabase/migrations/03*.sql: 0379 (#1784 f3-recover, and a
