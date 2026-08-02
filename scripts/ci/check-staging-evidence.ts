@@ -294,6 +294,14 @@ const DOCS_ONLY_RE = /^(?:docs\/|README\.md|ARKOVA_WORKSPACE_README\.md|WORKSPAC
  */
 export type DiffProvider = (file: string) => string | null;
 
+/**
+ * Answers "is `ancestorSha` an ancestor of `descendantSha`?".
+ * `true` / `false` are definitive; `null` means the question could not be
+ * answered (missing object, shallow clone, git unavailable) and every caller
+ * must treat it as "not covered" — never as an implicit yes.
+ */
+export type AncestryProvider = (ancestorSha: string, descendantSha: string) => boolean | null;
+
 export interface TierClassifyOpts {
   diffProvider?: DiffProvider;
   s33RuntimeImporterProvider?: () => readonly string[];
@@ -843,7 +851,19 @@ function isDeployWorkerUsesOnlyExempt(file: string, opts?: TierClassifyOpts): bo
 
 function isT0OnlyFile(file: string, opts?: TierClassifyOpts): boolean {
   if (PUBLIC_CONTRACT_DOC_RE.test(file)) return false;
-  if (TEST_FILE_RE.test(file) || file.endsWith('agents.md')) return true;
+  // `agents-changelog.md` rides the same early return as `agents.md`: cf3917ad2
+  // ("split changelog sediment out of four guide files", 2026-08-01) moved the
+  // dated narrative into sibling changelog files without extending this
+  // carve-out, which silently made every one of them a soak-tier file — e.g.
+  // `services/worker/agents-changelog.md` matches the `services/worker/`
+  // PATH_RULE and would demand T3 evidence for a pure doc edit. The check must
+  // stay HERE, above the PATH_RULES short-circuit, for that reason; the
+  // STAGING_TOOLING_ALLOW list below is reached too late for worker paths.
+  if (
+    TEST_FILE_RE.test(file)
+    || file.endsWith('agents.md')
+    || file.endsWith('agents-changelog.md')
+  ) return true;
   // Binding CTO ruling 102498305: these exact non-test modules are T0 only
   // while a complete production-source scan proves no runtime imports anything
   // from scripts/staging. Missing scan data or any importer voids the carve-out.
@@ -1970,6 +1990,27 @@ function gitFileDiffProvider(baseSha: string): DiffProvider {
   };
 }
 
+/**
+ * Default {@link AncestryProvider}: `git merge-base --is-ancestor`.
+ * Exit 0 → ancestor, exit 1 → definitively not an ancestor, anything else
+ * (128 = bad/unknown object, spawn failure) → `null` so callers fail closed.
+ */
+function gitAncestryProvider(): AncestryProvider {
+  return (ancestorSha: string, descendantSha: string): boolean | null => {
+    if (ancestorSha === descendantSha) return true;
+    try {
+      execFileSync(
+        GIT_BIN,
+        ['merge-base', '--is-ancestor', ancestorSha, descendantSha],
+        { cwd: REPO, stdio: ['ignore', 'ignore', 'ignore'] },
+      );
+      return true;
+    } catch (err) {
+      return (err as { status?: number }).status === 1 ? false : null;
+    }
+  };
+}
+
 function hasNamedApprover(value: string): boolean {
   const match = /\bapproved by:\s*([^.;\n]+)/i.exec(value);
   return match !== null && isFilledValue(match[1] ?? null);
@@ -2159,6 +2200,11 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/mint-fresh-event(\.test)?\.sh$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
+  // SCRUM-1304 / SCRUM-1681: the SonarCloud quality-gate + New Code Definition
+  // drift guard. Runs only in the `sonar-quality-gate-config` CI job, reads the
+  // SonarCloud REST API, and never ships to prod runtime → T0 tooling. Same
+  // class as the staging-gcloud-policy / handoff-claims gates around it.
+  /^scripts\/ci\/check-sonar-quality-gate(\.test)?\.ts$/,
   // SCRUM-2897: evidence-identity gate — a pure body/head-SHA identity checker
   // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
   // CI (reads PR body/head/draft from the event context); never ships to prod
@@ -2200,6 +2246,15 @@ const STAGING_TOOLING_ALLOW = [
   // same class as the other scripts/ci/check-*.ts gates above.
   /^scripts\/ci\/check-orphaned-exports(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
+  // SCRUM-1253 (R0-7): memory feedback-rules CI gates. Per-rule scripts under
+  // scripts/ci/feedback-rules/ + the check-feedback-rules.ts orchestrator run
+  // only in CI (ci.yml "Feedback rules" step); never imported by src/ or
+  // services/worker/src/ → no prod runtime to soak, same class as the other
+  // scripts/ci/check-*.ts gates above. Their shared scripts/ci/lib/ciContext.ts
+  // helper was already covered by the scripts/ci/lib/ entry; this directory
+  // was the missing half, which under-classified PR #1775 to T1.
+  /^scripts\/ci\/feedback-rules\//,
+  /^scripts\/ci\/check-feedback-rules(\.test)?\.ts$/,
   // SCRUM-2977: anti-hollow-soak pre-clock guard set. A pure guard module + CLI
   // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
   // CI (and locally over a soak-preflight JSON); never ships to prod runtime →
@@ -2228,8 +2283,22 @@ const STAGING_TOOLING_ALLOW = [
   /^CLAUDE\.md$/,
   /^HANDOFF\.md$/,
   /^\.gitignore$/,
+  // Claude agent-harness config. These files configure the local agent session
+  // (hooks, on-demand skills, permissions) and have NO prod runtime path — they
+  // are never imported, bundled, or deployed. `.claude/hooks/` and
+  // `.claude/settings.json` were already T0; `skills/`, the retired `hookify.*`
+  // rule files, and `settings.local.json` are the same class and were simply
+  // missing, which forced genuinely tooling-only PRs to T1 (added 2026-08-01).
   /^\.claude\/settings\.json$/,
+  /^\.claude\/settings\.local\.json$/,
   /^\.claude\/hooks\//,
+  /^\.claude\/skills\//,
+  /^\.claude\/hookify\..*\.md$/,
+  // agents.md is documentation wherever it lives — CLAUDE.md §0 rule 8 already
+  // names `**/agents.md` as a doc-only path eligible for direct-to-main. Only
+  // the repo-root and scripts/ci/ copies were listed, so a nested one (e.g.
+  // scripts/ci/feedback-rules/agents.md) forced an otherwise doc-only PR to T1.
+  /(?:^|\/)agents\.md$/,
   // Lockfiles are deterministic re-resolutions of a manifest — T0 at every
   // workspace (root / packages/* / services/* / integrations/*).
   /^package-lock\.json$/,
@@ -2265,6 +2334,17 @@ const STAGING_TOOLING_ALLOW = [
   /agents\.md$/,
   /^eslint-rules\//,
   /(^|\/)eslint\.config\.(js|cjs|mjs)$/,
+  // SonarCloud analyzer configuration — same class as the eslint config above
+  // (PR #798: "lint config is dev-time tooling with no runtime impact"). These
+  // files are read only by SonarCloud's analyzer; nothing imports them, no
+  // bundle includes them, and no deploy ships them, so a soak has no surface to
+  // exercise. Anchored to the repo root because that is the only location
+  // SonarCloud reads: `.sonarcloud.properties` is the file Automatic Analysis
+  // actually consumes, and `sonar-project.properties` is the CI-scanner
+  // filename (deleted 2026-08-01 as inert — kept here so its removal, and any
+  // future re-add under a CI-based scanner, classify as T0 tooling).
+  /^\.sonarcloud\.properties$/,
+  /^sonar-project\.properties$/,
   /^e2e\//,
 ];
 
@@ -2302,6 +2382,14 @@ interface CheckOptions {
    */
   diffProvider?: DiffProvider;
   /**
+   * Git ancestry oracle for RC-manifest base coverage. Defaults to a
+   * git-backed provider in {@link main} (staging-evidence.yml checks out
+   * with `fetch-depth: 0`, so full history is present). Absent or
+   * `null`-answering → base coverage falls back to exact SHA enumeration,
+   * i.e. fails closed. See {@link rcCurrentBaseCovered}.
+   */
+  ancestryProvider?: AncestryProvider;
+  /**
    * Complete production-source import scan required by CTO ruling 102498305.
    * Missing/incomplete data or any importer voids the offline-T0 carve-out.
    */
@@ -2319,7 +2407,82 @@ interface CheckOptions {
    * SCRUM-2980) — see that function for why.
    */
   deployWorkerPaused?: boolean;
+  /**
+   * TEMPORARY, VARIABLE-CONTROLLED BYPASS — founder directive 2026-08-01,
+   * relayed by the CTO session.
+   *
+   * When positively `true`, {@link check} short-circuits to a pass without
+   * evaluating ANY evidence requirement, so Mergify can drain the CI-green
+   * queue ahead of the external pen test that starts 2026-08-02. The
+   * consolidated week-long soak that follows the pen test is what actually
+   * produces the deferred evidence, and this variable MUST be flipped back
+   * to `false` before that soak so the gate grades it.
+   *
+   * Populated in {@link main} from `process.env.SOAK_GATE_DISABLED`, which
+   * `.github/workflows/staging-evidence.yml` threads from the live
+   * `vars.SOAK_GATE_DISABLED` repository variable — repo-admin state, not
+   * anything a PR author controls. Anything other than the literal string
+   * `'true'` is "not engaged" and the gate runs in full (fail closed on
+   * ambiguity), mirroring {@link CheckOptions.deployWorkerPaused}.
+   *
+   * NOTE FOR ANY LATER READER: this is a real, deliberate suspension of the
+   * CLAUDE.md §1.11/§1.12 evidence requirement, not a refactor. Every other
+   * code path is left untouched precisely so that clearing the variable
+   * restores the gate exactly as it was.
+   */
+  soakGateDisabled?: boolean;
 }
+
+/**
+ * Hard stop for the bypass window. A suspension of the evidence requirement
+ * that can only be ended by someone REMEMBERING to end it is a suspension
+ * that becomes permanent; every prior override in this repo's history had to
+ * be destroyed by hand (the `staging-soak-skip` label, 2026-05-07) rather
+ * than lapsing on its own.
+ *
+ * Past this instant the variable stops being honored and the gate enforces
+ * in full again — the fail-closed direction. Two weeks is deliberately
+ * generous against the stated plan (pen test from 2026-08-02, then a
+ * week-long consolidated soak). If the window genuinely needs to run longer,
+ * extending this constant is a one-line PR that is visible in review, which
+ * is the entire point: the extension gets seen, the neglect does not.
+ */
+const SOAK_GATE_BYPASS_EXPIRES_AT = Date.parse('2026-08-16T00:00:00Z');
+
+/**
+ * The banner a bypassed run prints. Deliberately states what was NOT done —
+ * a passing check here must never be readable as "evidence present".
+ */
+const SOAK_GATE_BYPASS_NOTE =
+  '⚠️  SOAK GATE BYPASSED — founder directive 2026-08-01, re-enable before the post-pentest '
+  + 'consolidated soak. The repository variable SOAK_GATE_DISABLED is set to "true", so this '
+  + 'PR\'s staging soak evidence has NOT been evaluated: no tier was computed, no evidence '
+  + 'block was read, and no staging soak evidence is claimed to exist for this change. This '
+  + 'check passing means only that the bypass is engaged. Clear the SOAK_GATE_DISABLED '
+  + 'repository variable (`gh variable set SOAK_GATE_DISABLED --body false`) to restore '
+  + 'CLAUDE.md §1.11/§1.12 enforcement in full before the consolidated soak is graded. '
+  + 'This bypass stops being honored after 2026-08-16T00:00:00Z regardless of the variable.';
+
+/**
+ * `true` only while the bypass is both switched on AND inside its window.
+ * Expiry is evaluated against `nowMs` so it is testable; `main()` passes the
+ * real clock.
+ */
+function soakGateBypassEngaged(opts: Pick<CheckOptions, 'soakGateDisabled' | 'nowMs'>): boolean {
+  if (opts.soakGateDisabled !== true) return false;
+  return (opts.nowMs ?? Date.now()) < SOAK_GATE_BYPASS_EXPIRES_AT;
+}
+
+/** Printed when the variable is still set but the window has closed. */
+const SOAK_GATE_BYPASS_EXPIRED_NOTE =
+  'SOAK_GATE_DISABLED is still set to "true", but the bypass window closed at '
+  + '2026-08-16T00:00:00Z — the staging soak evidence gate is enforcing normally again. '
+  + 'This is the intended end of the founder directive of 2026-08-01, not a fault. Clear '
+  + 'the variable (`gh variable set SOAK_GATE_DISABLED --body false`) so the repo state '
+  + 'stops advertising a bypass that no longer applies. If the window genuinely needs to '
+  + 'be extended, that is a reviewed one-line change to SOAK_GATE_BYPASS_EXPIRES_AT in '
+  + 'scripts/ci/check-staging-evidence.ts — deliberately not something a variable alone '
+  + 'can do.';
 
 function addErrors(result: CheckResult, errors: string[]): void {
   if (errors.length === 0) return;
@@ -2599,9 +2762,47 @@ function rcSoakDurationErrors(
   return errors;
 }
 
+/**
+ * Base-SHA coverage, exact-enumeration first and git ancestry second.
+ *
+ * SCRUM-3026 follow-up (2026-08-01) — why ancestry exists at all: an RC
+ * manifest is a COMMITTED file. Exact enumeration therefore requires it to
+ * list a SHA that will not exist until after it is written, because every
+ * merge into `main` (including the merge of the manifest refresh itself)
+ * mints a new base SHA for every other open PR in the queue. With a
+ * multi-PR train that is not a stale-data problem, it is a live-lock: the
+ * act of curing the staleness re-creates it for everyone else.
+ *
+ * The invariant the enumeration was a proxy for is "the RC's soaked
+ * baseline is contained in the history of the base this PR merges into" —
+ * i.e. `main` only moved FORWARD from the soaked baseline. That is exactly
+ * `git merge-base --is-ancestor <covered> <current-base>`, and it is
+ * satisfiable without predicting the future.
+ *
+ * This does not loosen the gate:
+ *   - `currentBaseSha` is the PR's `base.sha` resolved from the GitHub API
+ *     by staging-evidence.yml, on a workflow restricted to
+ *     `branches: [main, staging, develop]`. It is a protected-branch commit,
+ *     never a PR-author-controlled ref.
+ *   - A base that does NOT contain the soaked baseline (divergent line, or
+ *     a commit older than the RC launch) still fails, exactly as before.
+ *   - An unresolvable ancestry answer (`null` — shallow clone, missing
+ *     object, git unavailable) fails CLOSED to exact-enumeration behavior.
+ */
+function shaCoveredByListOrAncestry(
+  candidate: string,
+  covered: string[],
+  ancestry?: AncestryProvider,
+): boolean {
+  if (covered.includes(candidate)) return true;
+  if (!ancestry) return false;
+  return covered.some((sha) => ancestry(sha, candidate) === true);
+}
+
 function rcCurrentBaseCovered(
   manifest: Record<string, unknown>,
   currentBaseSha?: string,
+  ancestry?: AncestryProvider,
 ): boolean {
   const current = normalizeSha(currentBaseSha);
   if (current === null) return true;
@@ -2613,13 +2814,14 @@ function rcCurrentBaseCovered(
     ...stringArrayAt(manifest, 'covered_main_shas'),
   ].map((value) => normalizeSha(value ?? undefined)).filter((value): value is string => value !== null);
 
-  return allowed.includes(current);
+  return shaCoveredByListOrAncestry(current, allowed, ancestry);
 }
 
 function rcPrBaseCovered(
   manifest: Record<string, unknown>,
   pr: Record<string, unknown>,
   currentBaseSha?: string,
+  ancestry?: AncestryProvider,
 ): boolean {
   const prBase = normalizeSha(stringAt(pr, 'base_sha') ?? undefined);
   if (prBase === null) return false;
@@ -2631,7 +2833,162 @@ function rcPrBaseCovered(
     ...stringArrayAt(pr, 'allowed_base_shas'),
   ].map((value) => normalizeSha(value ?? undefined)).filter((value): value is string => value !== null);
 
-  return allowed.includes(prBase);
+  if (allowed.includes(prBase)) return true;
+
+  // The entry recorded the main tip it was soaked against; `main` has since
+  // moved on. Forward-only drift is covered; a divergent recorded base is not.
+  const current = normalizeSha(currentBaseSha);
+  if (current === null || !ancestry) return false;
+  return ancestry(prBase, current) === true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// head_binding: how an included_prs[] entry is bound to the artifact
+// ─────────────────────────────────────────────────────────────────────────
+//
+// DEFAULT — and the only mode that reads as "this evidence covers this
+// code" — is `exact`: the entry's `head_sha` must equal the live PR head.
+// That is the whole point of the RC manifest when it asserts SOAK COVERAGE,
+// and `memory/feedback_pr_head_sha_in_evidence_block.md` exists because it
+// was once possible to slip a new commit past completed evidence. Absent
+// `head_binding`, nothing about that changes.
+//
+// `roster` mode covers the case where the manifest is NOT asserting soak
+// coverage of this head — where the recorded merge authority is an explicit,
+// named, time-boxed human exception (CLAUDE.md §1.12 "Carson-approved
+// residual-risk exception") and the real soak is scheduled AFTER the merge.
+// In that situation exact-head binding proves nothing about safety (there is
+// no artifact-bound evidence to protect) while costing a manifest re-commit
+// per push — the same live-lock as the base problem. So roster mode swaps
+// artifact binding for something that IS meaningful and is not forgeable by
+// the PR author acting alone:
+//   - the exception lives in the MANIFEST (its own PR, its own review),
+//   - it names a human `approver`,
+//   - it carries an `expires_at` that is enforced, so the relaxation cannot
+//     silently become permanent,
+//   - it must list this PR number in `applies_to[]`, so it cannot be a
+//     blanket amnesty, and
+//   - the check summary always says plainly that merge authority here is a
+//     RECORDED HUMAN EXCEPTION, not soak coverage.
+// Everything else — approval_status, tier floor, environment, soak window,
+// soak freshness, migration_plan — is enforced unchanged.
+const HEAD_BINDING_EXACT = 'exact';
+const HEAD_BINDING_ROSTER = 'roster';
+
+interface HeadBindingPolicy {
+  mode: typeof HEAD_BINDING_EXACT | typeof HEAD_BINDING_ROSTER;
+  exceptionId: string | null;
+}
+
+const EXACT_HEAD_BINDING: HeadBindingPolicy = { mode: HEAD_BINDING_EXACT, exceptionId: null };
+
+function resolveHeadBindingPolicy(
+  manifest: Record<string, unknown>,
+  errors: string[],
+): HeadBindingPolicy {
+  const binding = objectAt(manifest, 'head_binding');
+  if (binding === null) return EXACT_HEAD_BINDING;
+
+  const raw = stringAt(binding, 'mode');
+  const mode = (raw ?? '').trim().toLowerCase();
+  if (mode === HEAD_BINDING_EXACT) return EXACT_HEAD_BINDING;
+  if (mode === HEAD_BINDING_ROSTER) {
+    return { mode: HEAD_BINDING_ROSTER, exceptionId: stringAt(binding, 'exception_id') };
+  }
+  errors.push(
+    `RC manifest head_binding.mode \`${raw ?? ''}\` is not a recognized value. Supported: `
+    + `"${HEAD_BINDING_EXACT}" (default — the entry's head_sha must equal the live PR head) or `
+    + `"${HEAD_BINDING_ROSTER}" (entry matched by PR number; merge authority is a named, `
+    + 'time-boxed exceptions[] entry rather than soak coverage of this head). Omit '
+    + 'head_binding entirely for exact binding.',
+  );
+  return EXACT_HEAD_BINDING;
+}
+
+function numberArrayAt(value: Record<string, unknown>, key: string): number[] {
+  const raw = arrayAt(value, key);
+  if (raw === null) return [];
+  return raw
+    .map((entry) => (typeof entry === 'number' ? entry : Number.parseInt(String(entry), 10)))
+    .filter((entry) => Number.isFinite(entry));
+}
+
+function findManifestException(
+  manifest: Record<string, unknown>,
+  exceptionId: string,
+): Record<string, unknown> | null {
+  const wanted = exceptionId.trim();
+  for (const entry of arrayAt(manifest, 'exceptions') ?? []) {
+    if (!isRecord(entry)) continue;
+    if ((stringAt(entry, 'id') ?? '').trim() === wanted) return entry;
+  }
+  return null;
+}
+
+function rosterHeadBindingErrors(
+  manifest: Record<string, unknown>,
+  policy: HeadBindingPolicy,
+  entryHead: string | null,
+  currentHead: string,
+  opts: CheckOptions,
+  notes: string[],
+): string[] {
+  const errors: string[] = [];
+  const exceptionId = policy.exceptionId;
+  if (!isFilledValue(exceptionId)) {
+    return [
+      'RC manifest head_binding.mode="roster" requires head_binding.exception_id naming an '
+      + 'entry in exceptions[]. Roster mode is only valid as the mechanical expression of a '
+      + 'recorded, named, time-boxed merge-authority exception.',
+    ];
+  }
+
+  const exception = findManifestException(manifest, exceptionId!);
+  if (exception === null) {
+    return [
+      `RC manifest head_binding.exception_id \`${exceptionId}\` matches no exceptions[] entry `
+      + '(compared against exceptions[].id).',
+    ];
+  }
+
+  const label = `exceptions[${exceptionId}]`;
+  const approver = requireRcString(errors, exception, 'approver', `${label}.approver`);
+  requireRcString(errors, exception, 'text', `${label}.text`);
+  requireRcTimestamp(errors, exception, 'recorded_at', `${label}.recorded_at`);
+  const expiresAt = requireRcTimestamp(errors, exception, 'expires_at', `${label}.expires_at`);
+
+  const nowMs = opts.nowMs ?? Date.now();
+  if (expiresAt !== null && expiresAt <= nowMs) {
+    errors.push(
+      `RC manifest ${label}.expires_at has expired; a merge-authority exception cannot be `
+      + 'renewed by the passage of time. Re-record it with a new expiry, or produce real soak '
+      + 'evidence and return this manifest to exact head binding.',
+    );
+  }
+
+  const appliesTo = numberArrayAt(exception, 'applies_to');
+  if (appliesTo.length === 0) {
+    errors.push(
+      `RC manifest ${label}.applies_to must list the PR numbers the exception covers — a `
+      + 'blanket exception is not accepted.',
+    );
+  } else if (opts.prNumber === undefined || !appliesTo.includes(opts.prNumber)) {
+    errors.push(
+      `RC manifest ${label}.applies_to does not list PR #${opts.prNumber ?? 'unknown'}; roster `
+      + 'head binding only applies to the PRs the exception names.',
+    );
+  }
+
+  if (errors.length > 0) return errors;
+
+  notes.push(
+    `⚠️  RECORDED HUMAN EXCEPTION (${exceptionId}): the RC manifest entry records head `
+    + `\`${entryHead ?? 'missing'}\` but this PR's live head is \`${currentHead}\`. Merge `
+    + `authority for this head is NOT soak coverage — it is the exception recorded in the `
+    + `manifest, approved by ${approver}, expiring ${stringAt(exception, 'expires_at')}. Real `
+    + 'evidence for this head is still owed by the scheduled consolidated soak.',
+  );
+  return [];
 }
 
 function findCoveredRcPr(
@@ -2689,8 +3046,13 @@ function requireRcCoreIdentityFields(
   requireRcString(errors, manifest, 'release_owner', 'release_owner');
   requireRcString(errors, manifest, 'train_launch_sha', 'train_launch_sha');
 
-  if (!rcCurrentBaseCovered(manifest, opts.baseSha)) {
-    errors.push('RC manifest does not cover the current base SHA; update the manifest or re-check main drift.');
+  if (!rcCurrentBaseCovered(manifest, opts.baseSha, opts.ancestryProvider)) {
+    errors.push(
+      'RC manifest does not cover the current base SHA; update the manifest or re-check main '
+      + 'drift. (The base is covered when it is listed in train_launch_sha / target_main_sha / '
+      + 'allowed_base_shas / covered_main_shas, OR when git ancestry shows it descends from one '
+      + 'of those — an unresolvable ancestry answer fails closed to the listed set.)',
+    );
   }
 }
 
@@ -2717,10 +3079,15 @@ function validateCoveredRcPr(
   files: string[],
   opts: CheckOptions,
   errors: string[],
+  notes: string[],
 ): Record<string, unknown> | null {
   if (includedPrs.length === 0) {
     errors.push('RC manifest included_prs must list at least one PR.');
   }
+
+  // Resolved unconditionally so an unrecognized mode fails closed even on a
+  // manifest whose recorded head happens to still match.
+  const headBinding = resolveHeadBindingPolicy(manifest, errors);
 
   const coveredPr = findCoveredRcPr(includedPrs, opts);
   if (coveredPr === null) {
@@ -2731,10 +3098,16 @@ function validateCoveredRcPr(
   const entryHead = normalizeSha(stringAt(coveredPr, 'head_sha') ?? undefined);
   const currentHead = normalizeSha(opts.headSha);
   if (currentHead !== null && entryHead !== currentHead) {
-    errors.push(`RC manifest current PR entry head SHA \`${entryHead ?? 'missing'}\` does not match current PR head \`${currentHead}\`.`);
+    if (headBinding.mode === HEAD_BINDING_ROSTER) {
+      errors.push(
+        ...rosterHeadBindingErrors(manifest, headBinding, entryHead, currentHead, opts, notes),
+      );
+    } else {
+      errors.push(`RC manifest current PR entry head SHA \`${entryHead ?? 'missing'}\` does not match current PR head \`${currentHead}\`.`);
+    }
   }
-  if (!rcPrBaseCovered(manifest, coveredPr, opts.baseSha)) {
-    errors.push('RC manifest current PR entry base SHA does not match the current base, train launch SHA, target main SHA, or an allowed base SHA.');
+  if (!rcPrBaseCovered(manifest, coveredPr, opts.baseSha, opts.ancestryProvider)) {
+    errors.push('RC manifest current PR entry base SHA does not match the current base, train launch SHA, target main SHA, an allowed base SHA, or an ancestor of the current base.');
   }
 
   const manifestTier = rcTier(stringAt(coveredPr, 'risk_tier'));
@@ -2933,7 +3306,7 @@ function deferredConsolidatedSoakCoverage(
   deferredConsolidatedSoakMetadataErrors(parsed, opts, errors);
 
   const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
-  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors);
+  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors, notes);
   if (coveredPr === null) return { errors, notes };
 
   if (errors.length === 0) {
@@ -3000,7 +3373,7 @@ function rcManifestCoverage(
 
   validateRcManifestMetadata(parsed, opts, errors);
   const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
-  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors);
+  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors, notes);
   const effectiveTier = rcEffectiveTier(coveredPr, declared);
   validateRcEnvironment(parsed, errors);
   validateRcSoak(parsed, effectiveTier, opts, errors);
@@ -3017,6 +3390,21 @@ export function check(opts: CheckOptions): CheckResult {
   const { body, files } = opts;
   const result: CheckResult = { ok: true, errors: [], notes: [] };
 
+  // TEMPORARY BYPASS (founder directive 2026-08-01) — must be the first thing
+  // this function does. It short-circuits ahead of tier classification so the
+  // banner below is the ONLY reason a bypassed run passes; letting T0 (or any
+  // other path) answer first would hide that the gate was suspended.
+  // See CheckOptions.soakGateDisabled.
+  if (soakGateBypassEngaged(opts)) {
+    result.notes.push(SOAK_GATE_BYPASS_NOTE);
+    return result;
+  }
+  if (opts.soakGateDisabled === true) {
+    // Set but expired: fall through into the full gate, and say why so the
+    // sudden return of red checks is self-explaining rather than a mystery.
+    result.notes.push(SOAK_GATE_BYPASS_EXPIRED_NOTE);
+  }
+
   const required = requiredTierFor(files, {
     diffProvider: opts.diffProvider,
     s33Lane1ImportScan: opts.s33Lane1ImportScan,
@@ -3028,14 +3416,15 @@ export function check(opts: CheckOptions): CheckResult {
 
   const declared = extractDeclaredTier(body);
   if (!declared) {
-    return {
-      ok: false,
-      errors: [
-        `PR body is missing a tier declaration. Add a line \`Tier: ${required.tier}\` under a `
-        + `\`## Staging Soak Evidence\` section. Required tier: ${required.tier} (${required.reason}).`,
-      ],
-      notes: [],
-    };
+    // Accumulate onto `result` rather than returning a fresh object: notes
+    // pushed before this point (e.g. the expired-bypass explanation) are the
+    // context that makes this failure legible, and a literal `notes: []`
+    // silently threw them away.
+    addErrors(result, [
+      `PR body is missing a tier declaration. Add a line \`Tier: ${required.tier}\` under a `
+      + `\`## Staging Soak Evidence\` section. Required tier: ${required.tier} (${required.reason}).`,
+    ]);
+    return result;
   }
 
   addErrors(result, tierDeclarationErrors(declared, required));
@@ -3086,6 +3475,21 @@ export function check(opts: CheckOptions): CheckResult {
 }
 
 function main(): void {
+  // TEMPORARY BYPASS (founder directive 2026-08-01) — checked before ANY
+  // repo/git resolution, so an unrelated base-ref or head-ref resolution
+  // failure cannot red a run that is supposed to be bypassed. Emitted as a
+  // `::warning::` as well as stdout so it surfaces in the Actions annotation
+  // panel, not just the folded log. See CheckOptions.soakGateDisabled.
+  const soakGateDisabled = process.env.SOAK_GATE_DISABLED === 'true';
+  if (soakGateBypassEngaged({ soakGateDisabled })) {
+    console.log(`ℹ️  ${SOAK_GATE_BYPASS_NOTE}`);
+    console.error(`::warning title=Staging soak evidence gate BYPASSED::${SOAK_GATE_BYPASS_NOTE}`);
+    return;
+  }
+  if (soakGateDisabled) {
+    console.error(`::warning title=Soak-gate bypass window has closed::${SOAK_GATE_BYPASS_EXPIRED_NOTE}`);
+  }
+
   // Required base: fail closed if it can't resolve (getBaseRef exits 1).
   const baseRef = getBaseRef({ required: true })!;
   const files = changedFiles();
@@ -3102,11 +3506,15 @@ function main(): void {
     baseSha: baseRef,
     prNumber,
     diffProvider: gitFileDiffProvider(baseRef),
+    ancestryProvider: gitAncestryProvider(),
     s33Lane1ImportScan: gitS33Lane1ImportScan(),
     // Live-threaded from `vars.DEPLOY_WORKER_PAUSED` by
     // .github/workflows/staging-evidence.yml — see CheckOptions.deployWorkerPaused
     // for why this must be a literal 'true' string match, not truthiness.
     deployWorkerPaused: process.env.DEPLOY_WORKER_PAUSED === 'true',
+    // Always false here — the engaged case returned above. Passed anyway so
+    // the CLI and the library agree on the contract.
+    soakGateDisabled,
   });
 
   for (const note of result.notes) console.log(`ℹ️  ${note}`);
