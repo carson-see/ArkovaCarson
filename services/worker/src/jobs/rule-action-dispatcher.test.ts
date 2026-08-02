@@ -147,15 +147,17 @@ vi.mock('../utils/db.js', () => {
       eq: () => selectChain,
       is: () => selectChain,
       neq: () => selectChain,
-      // SCRUM-2904 envelope-level guard: migration 0381 replaced the single
-      // .or() scan with one .eq('metadata->>KEY', ...) lookup per key (see
-      // docusign-anchor-reconciliation.ts). This stub is deliberately dumb —
-      // .eq() is chainable for ANY column/value and always resolves the same
-      // fixture row, since the three per-key lookups are indistinguishable at
-      // this mock's level of fidelity (real filtering is exercised by
-      // docusign-anchor-reconciliation.test.ts directly).
+      // SCRUM-2904 envelope-level guard queries add .or()/.limit(). The guard is
+      // now ARRAY-terminal on .limit() (it dropped its SQL ORDER BY — that sort
+      // made the planner ignore every metadata index and time out on the
+      // 2.97M-anchor org). `.limit()` stays chainable for any other caller by
+      // returning a thenable that also exposes .maybeSingle().
+      or: () => selectChain,
       order: () => selectChain,
-      limit: () => selectChain,
+      limit: () => Object.assign(
+        Promise.resolve({ data: dbState.existingAnchors, error: null }),
+        { maybeSingle: async () => ({ data: dbState.existingAnchors[0] ?? null, error: null }) },
+      ),
       maybeSingle: async () => ({ data: dbState.existingAnchors[0] ?? null, error: null }),
     };
     return {

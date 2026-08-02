@@ -133,6 +133,14 @@ export const ENVELOPE_ID_METADATA_KEYS = [
   'external_ref',
 ] as const;
 
+/**
+ * Bound on the envelope-guard result set. One envelope should map to at most a
+ * couple of anchors (the duplicate this guard exists to catch); a handful of
+ * rows is ample, and the cap keeps the payload small now that the query returns
+ * a set rather than a single row.
+ */
+export const ENVELOPE_ANCHOR_LOOKUP_LIMIT = 50;
+
 /** A minimal existing-anchor reference returned by the envelope-level guard. */
 export interface ExistingEnvelopeAnchor {
   id: string;
@@ -158,38 +166,6 @@ export interface EnvelopeAnchorLookupDb {
  * id (nothing to reconcile on) or no match, so the caller falls back to its
  * normal insert (still protected by the fingerprint unique index). Never throws
  * document bytes/fingerprints into logs — it reads coarse ids only (§1.6A).
- *
- * QUERY SHAPE (SCRUM-2904-perf, migration 0381 — read before touching this):
- * this used to be a SINGLE query with a PostgREST `.or()` across all three
- * `metadata->>key` JSONB text comparisons. That shape has NO supporting index —
- * a JSONB `->>` text-extraction OR'd across three different keys is not a
- * pushable predicate for any single btree — so on prod it fell back to a full
- * scan of the calling org's `anchors` rows. The org that owns the DocuSign
- * connector pipeline (the same org that holds the public-records import) owns
- * ~2.974M of prod's ~2.97M total anchors, so that scan deterministically blows
- * `statement_timeout` — proven twice in prod (a DLQ'd rule-dispatcher execution
- * and a connector_artifact stuck `failed` at materialize).
- *
- * FIX: issue ONE targeted `.eq('metadata->>KEY', envelopeId)` lookup PER key in
- * `ENVELOPE_ID_METADATA_KEYS`, instead of one query OR-ing all three. Migration
- * 0381 adds a partial btree expression index per key
- * (`(metadata->>'source_envelope_id') WHERE ... IS NOT NULL`, etc.), so each of
- * these three lookups is a single, provably-indexed point read — an Index Scan
- * returning at most one row (envelope ids are unique per org) regardless of how
- * many total rows the org owns. Three fast indexed point-reads beat one
- * plan-dependent multi-index OR: Postgres COULD choose a `BitmapOr` across all
- * three per-key indexes for the original `.or()` shape once 0381 lands, but
- * that requires the planner to pick it (cost-estimate dependent, no structural
- * guarantee, and PostgREST's compiled SQL for a JSON-path OR list is opaque to
- * static reasoning) — doing the union in application code removes that
- * uncertainty entirely and is what fixes the demonstrated prod incidents.
- *
- * The original single query used `order('created_at', asc).limit(1)` so the
- * EARLIEST anchor across all three keys won ties (reuse the original, not a
- * later duplicate created by the other path during the race). Splitting into
- * three queries preserves that exact tie-break: every key is looked up (not
- * short-circuited on the first hit) and the candidate with the smallest
- * `created_at` is returned — see the loop below.
  */
 export async function findExistingEnvelopeAnchor(args: {
   db: EnvelopeAnchorLookupDb;
@@ -199,48 +175,77 @@ export async function findExistingEnvelopeAnchor(args: {
   const envelopeId = typeof args.envelopeId === 'string' ? args.envelopeId.trim() : '';
   if (envelopeId.length === 0) return null;
 
-  // Defensive: DocuSign envelope ids are GUIDs and legitimate external_refs are
-  // token-shaped. Restrict to a safe charset and BAIL (return null) on anything
-  // else — the caller then falls back to the `(user_id, fingerprint)` unique
-  // index alone. Fail-safe, not fail-open: a skipped guard never creates a
-  // duplicate, it just forgoes the extra cross-hash protection for an unusual
-  // id. (No longer load-bearing for filter-injection — each lookup below binds
-  // `envelopeId` as a single `.eq()` value, not an interpolated filter string —
-  // but kept as a fail-fast input guard and to preserve existing behavior.)
+  // Defensive: the envelope id goes into a PostgREST filter value. The `.or()`
+  // grammar that made this critical is gone (see below), but the charset guard
+  // stays — it is cheap, and it keeps a stray `,` `(` `)` from ever reaching a
+  // filter if this is refactored again. DocuSign envelope ids are GUIDs and
+  // legitimate external_refs are token-shaped, so restrict to a safe charset and
+  // BAIL (return null) on anything else — the
+  // caller then falls back to the `(user_id, fingerprint)` unique index alone.
+  // Fail-safe, not fail-open: a skipped guard never creates a duplicate, it just
+  // forgoes the extra cross-hash protection for an unusual id.
   if (!/^[A-Za-z0-9_.:-]+$/.test(envelopeId)) return null;
 
-  let best: { id: string; publicId: string | null; createdAtMs: number } | null = null;
+  // ONE INDEXED POINT LOOKUP PER KEY — never a single `.or()`.
+  //
+  // The `.or()` form cannot be made fast on the DocuSign org (3.15M anchors),
+  // because the problem is a COSTING error, not a plan-shape or index gap: the
+  // planner estimates 51,038 rows match the 3-branch OR when the true answer is
+  // 0. Believing a match is imminent it takes a scan, and no index can beat a
+  // belief. Measured on prod against org 40383eb2 with a value that matches
+  // nothing (the normal case for a newly completed envelope):
+  //
+  //   OR + ORDER BY created_at LIMIT 1  -> Index Scan Backward
+  //                                        (idx_anchors_active_created), cost 2,209,325
+  //   OR + LIMIT 1, no ORDER BY         -> Seq Scan,                     cost 1,845,309
+  //   single key .eq + LIMIT            -> Index Scan (its own index),   cost 1.23,
+  //                                        ACTUAL 0.064 ms, rows=0
+  //
+  // A single-key equality is a point lookup the estimator cannot mislead: there
+  // is exactly one index and one condition. Three of them in parallel cost
+  // single-digit milliseconds and stay correct as ENVELOPE_ID_METADATA_KEYS
+  // grows — each new key needs its own index, which the migration anti-drift
+  // guard enforces.
+  const lookups = await Promise.all(
+    ENVELOPE_ID_METADATA_KEYS.map(async (key) => {
+      const { data, error } = await args.db
+        .from('anchors')
+        .select('id, public_id, created_at')
+        .eq('org_id', args.orgId)
+        .is('deleted_at', null)
+        .neq('status', 'REVOKED')
+        .eq(`metadata->>${key}`, envelopeId)
+        .limit(ENVELOPE_ANCHOR_LOOKUP_LIMIT);
+      return { data, error };
+    }),
+  );
 
-  for (const key of ENVELOPE_ID_METADATA_KEYS) {
-    const { data, error } = await args.db
-      .from('anchors')
-      .select('id, public_id, created_at')
-      .eq('org_id', args.orgId)
-      .eq(`metadata->>${key}`, envelopeId)
-      .is('deleted_at', null)
-      .neq('status', 'REVOKED')
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      throw new Error(
-        `envelope anchor lookup failed (metadata key=${key}): ${(error as { message?: string }).message ?? 'unknown'}`,
-      );
-    }
-    if (!data) continue;
-    const row = data as { id?: unknown; public_id?: unknown; created_at?: unknown };
-    if (typeof row.id !== 'string' || typeof row.created_at !== 'string') continue;
-    const createdAtMs = new Date(row.created_at).getTime();
-    if (Number.isNaN(createdAtMs)) continue;
-    if (best === null || createdAtMs < best.createdAtMs) {
-      best = {
-        id: row.id,
-        publicId: typeof row.public_id === 'string' ? row.public_id : null,
-        createdAtMs,
-      };
-    }
+  // Fail closed: a lookup that errored may have been the one holding the
+  // duplicate, so proceeding would insert a second anchor for the envelope.
+  const failed = lookups.find((r) => r.error);
+  if (failed) {
+    throw new Error(
+      `envelope anchor lookup failed: ${(failed.error as { message?: string }).message ?? 'unknown'}`,
+    );
   }
 
-  return best ? { id: best.id, publicId: best.publicId } : null;
+  const data = lookups.flatMap((r) => (Array.isArray(r.data) ? r.data : []));
+  const rows = (Array.isArray(data) ? data : []) as Array<{
+    id?: unknown;
+    public_id?: unknown;
+    created_at?: unknown;
+  }>;
+  const candidates = rows.filter((r) => typeof r.id === 'string');
+  if (candidates.length === 0) return null;
+
+  // Same semantics the SQL ORDER BY gave us: the OLDEST matching anchor, so a
+  // repeated call is idempotent and always reuses the same one. Sorting at most
+  // ENVELOPE_ANCHOR_LOOKUP_LIMIT rows in memory is free; sorting 2.97M in
+  // Postgres is the outage.
+  candidates.sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')));
+  const row = candidates[0];
+  return {
+    id: row.id as string,
+    publicId: typeof row.public_id === 'string' ? row.public_id : null,
+  };
 }

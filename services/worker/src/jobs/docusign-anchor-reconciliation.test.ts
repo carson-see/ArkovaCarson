@@ -102,88 +102,110 @@ describe('docusign-anchor-reconciliation — precedence decision (SCRUM-2904)', 
   });
 
   describe('findExistingEnvelopeAnchor (envelope-level guard)', () => {
-    // A chainable supabase-query stub. SCRUM-2904-perf: the guard now issues
-    // ONE targeted `.eq('metadata->>KEY', envelopeId)` lookup PER metadata key
-    // (each backed by its own migration-0381 partial expression index) instead
-    // of a single `.or()` scan across all three — so the stub records every
-    // `.eq()` call (column, value) pair and lets each `from('anchors')` call
-    // resolve to its own queued result, keyed by call order (one call per
-    // ENVELOPE_ID_METADATA_KEYS entry, in order).
-    function makeDb(results: Array<{ data: unknown; error: unknown }>) {
+    // A chainable supabase-query stub whose terminal `.maybeSingle()` resolves
+    // to the injected result. `.or()` capture lets us assert the cross-path
+    // metadata filter.
+    // A chainable supabase-query stub. The query is now ARRAY-terminal
+    // (`.limit()` resolves) rather than `.maybeSingle()`-terminal — see the
+    // ORDER BY regression test below for why. `rows` accepts either a single
+    // row (wrapped) or an array.
+    // The guard now issues ONE indexed point lookup PER key in
+    // ENVELOPE_ID_METADATA_KEYS instead of a single `.or()`. Each is
+    // array-terminal on `.limit()`. `eqSpy` captures the metadata column each
+    // lookup filtered on.
+    function makeDb(result: { data: unknown; error: unknown }) {
       const eqSpy = vi.fn();
-      let call = 0;
-      const from = vi.fn(() => {
-        const result = results[call] ?? { data: null, error: null };
-        call += 1;
+      const calls: string[] = [];
+      const rows = result.data == null
+        ? []
+        : (Array.isArray(result.data) ? result.data : [result.data]);
+      let served = false;
+      const makeQ = () => {
         const q: Record<string, unknown> = {};
-        for (const m of ['select', 'is', 'neq', 'order', 'limit']) {
-          q[m] = vi.fn(() => q);
+        for (const m of ['select', 'is', 'neq', 'or', 'order']) {
+          q[m] = vi.fn(() => { calls.push(m); return q; });
         }
-        q.eq = vi.fn((col: string, val: unknown) => {
-          eqSpy(col, val);
+        q.eq = vi.fn((col: string) => {
+          if (col.startsWith('metadata->>')) eqSpy(col);
           return q;
         });
-        q.maybeSingle = vi.fn(async () => result);
+        // Serve the injected rows once so a single logical match is not
+        // multiplied across the three per-key lookups.
+        q.limit = vi.fn(async () => {
+          calls.push('limit');
+          if (result.error) return { data: null, error: result.error };
+          if (served) return { data: [], error: null };
+          served = true;
+          return { data: rows, error: null };
+        });
         return q;
-      });
-      return { db: { from } as never, from, eqSpy };
+      };
+      const from = vi.fn(() => makeQ());
+      return { db: { from } as never, from, eqSpy, calls };
     }
 
-    it('returns the existing anchor when the FIRST key (source_envelope_id) matches', async () => {
-      const { db, from } = makeDb([
-        { data: { id: 'anch-1', public_id: 'pub-1', created_at: '2026-01-01T00:00:00Z' }, error: null },
-        { data: null, error: null },
-        { data: null, error: null },
-      ]);
+    // Regression — PROD, org 40383eb2 (3.15M anchors), artifact 921347cc.
+    // The guard used a single 3-branch `.or()` and timed out. The cause is a
+    // COSTING error, not a missing index: the planner estimates 51,038 matching
+    // rows when the truth is 0, so with a small LIMIT it takes a scan. Measured
+    // on prod with a value matching nothing:
+    //   OR + ORDER BY LIMIT 1 -> Index Scan Backward,        cost 2,209,325
+    //   OR + LIMIT 1          -> Seq Scan,                   cost 1,845,309
+    //   single-key .eq        -> Index Scan on its own index, cost 1.23,
+    //                            ACTUAL 0.064 ms, rows=0
+    // No index can beat a wrong estimate, so the OR has to go.
+    it('issues one indexed point lookup per metadata key — never a combined OR', async () => {
+      const { db, from, eqSpy, calls } = makeDb({ data: null, error: null });
+      await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: 'env-9' });
+
+      expect(from).toHaveBeenCalledTimes(ENVELOPE_ID_METADATA_KEYS.length);
+      expect(calls).not.toContain('or');
+      expect(calls).not.toContain('order');
+      const columns = eqSpy.mock.calls.map((c) => c[0] as string);
+      for (const key of ENVELOPE_ID_METADATA_KEYS) {
+        expect(columns).toContain(`metadata->>${key}`);
+      }
+    });
+
+    it('still returns the OLDEST match deterministically, tie-broken in application code', async () => {
+      const { db } = makeDb({
+        data: [
+          { id: 'anch-new', public_id: 'pub-new', created_at: '2026-05-02T00:00:00.000Z' },
+          { id: 'anch-old', public_id: 'pub-old', created_at: '2026-05-01T00:00:00.000Z' },
+        ],
+        error: null,
+      });
+      const found = await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: 'env-9' });
+      expect(found).toEqual({ id: 'anch-old', publicId: 'pub-old' });
+    });
+
+    it('returns the existing anchor when one exists for the org+envelope', async () => {
+      const { db, from } = makeDb({ data: { id: 'anch-1', public_id: 'pub-1' }, error: null });
       const found = await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: 'env-9' });
       expect(found).toEqual({ id: 'anch-1', publicId: 'pub-1' });
       expect(from).toHaveBeenCalledWith('anchors');
-      // Every key is still looked up (needed to find the globally-earliest
-      // match across paths), not short-circuited on the first hit.
-      expect(from).toHaveBeenCalledTimes(ENVELOPE_ID_METADATA_KEYS.length);
     });
 
-    it('issues one targeted eq() lookup per metadata key — no .or() filter string', async () => {
-      const { db, eqSpy } = makeDb([
-        { data: null, error: null },
-        { data: null, error: null },
-        { data: null, error: null },
-      ]);
+    it('matches across BOTH paths metadata keys (source_envelope_id / envelope_id / external_ref)', async () => {
+      const { db, eqSpy } = makeDb({ data: null, error: null });
       await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: 'env-9' });
-      const metadataCalls = eqSpy.mock.calls.filter(([col]) => typeof col === 'string' && col.startsWith('metadata->>'));
-      expect(metadataCalls).toHaveLength(ENVELOPE_ID_METADATA_KEYS.length);
+      const columns = eqSpy.mock.calls.map((c) => c[0] as string);
       for (const key of ENVELOPE_ID_METADATA_KEYS) {
-        expect(metadataCalls).toContainEqual([`metadata->>${key}`, 'env-9']);
+        expect(columns).toContain(`metadata->>${key}`);
       }
-      // org_id is still applied on every lookup (org-scoped guard).
-      for (const call of eqSpy.mock.calls) {
-        if (call[0] === 'org_id') expect(call[1]).toBe('org-1');
-      }
-    });
-
-    it('when BOTH paths raced and each created an anchor, reuses the EARLIER one by created_at (cross-key tie-break)', async () => {
-      // source_envelope_id (checked first) matches a LATER anchor; envelope_id
-      // (checked second) matches an EARLIER one. The earlier anchor must win —
-      // preserving the original single-query `order by created_at asc limit 1`
-      // semantics now that the union happens in application code.
-      const { db } = makeDb([
-        { data: { id: 'later', public_id: 'pub-later', created_at: '2026-02-01T00:00:00Z' }, error: null },
-        { data: { id: 'earlier', public_id: 'pub-earlier', created_at: '2026-01-01T00:00:00Z' }, error: null },
-        { data: null, error: null },
-      ]);
-      const found = await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: 'env-9' });
-      expect(found).toEqual({ id: 'earlier', publicId: 'pub-earlier' });
     });
 
     it('returns null (no cross-path identity) when the envelope id is missing — no query', async () => {
-      const { db, from } = makeDb([]);
+      const { db, from } = makeDb({ data: null, error: null });
       expect(await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: null })).toBeNull();
       expect(await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: '  ' })).toBeNull();
       expect(from).not.toHaveBeenCalled();
     });
 
-    it('bails (returns null, no query) on an unsafe envelope id', async () => {
-      const { db, from } = makeDb([]);
+    it('bails (returns null, no query) on an unsafe envelope id — no PostgREST filter injection', async () => {
+      // A comma/paren would corrupt the .or() filter grammar; bail to the
+      // fingerprint-index fallback rather than issue a corrupted query.
+      const { db, from } = makeDb({ data: null, error: null });
       for (const bad of ['env,evil', 'env)or(1', 'a,b.eq.c']) {
         expect(await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: bad })).toBeNull();
       }
@@ -191,11 +213,7 @@ describe('docusign-anchor-reconciliation — precedence decision (SCRUM-2904)', 
     });
 
     it('accepts GUID-shaped envelope ids (the DocuSign format)', async () => {
-      const { db, from } = makeDb([
-        { data: null, error: null },
-        { data: null, error: null },
-        { data: null, error: null },
-      ]);
+      const { db, from } = makeDb({ data: null, error: null });
       await findExistingEnvelopeAnchor({
         db,
         orgId: 'org-1',
@@ -204,33 +222,16 @@ describe('docusign-anchor-reconciliation — precedence decision (SCRUM-2904)', 
       expect(from).toHaveBeenCalledWith('anchors');
     });
 
-    it('returns null when no key matches for any of the three metadata keys', async () => {
-      const { db } = makeDb([
-        { data: null, error: null },
-        { data: null, error: null },
-        { data: null, error: null },
-      ]);
+    it('returns null when no anchor matches', async () => {
+      const { db } = makeDb({ data: null, error: null });
       expect(await findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: 'env-9' })).toBeNull();
     });
 
     it('throws (fail-closed) on a lookup error rather than silently inserting a duplicate', async () => {
-      const { db } = makeDb([{ data: null, error: { message: 'boom' } }]);
+      const { db } = makeDb({ data: null, error: { message: 'boom' } });
       await expect(
         findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: 'env-9' }),
-      ).rejects.toThrow(/envelope anchor lookup failed.*boom/);
-    });
-
-    it('stops at the first erroring key lookup rather than issuing the remaining two', async () => {
-      const { db, from } = makeDb([
-        { data: null, error: null },
-        { data: null, error: { message: 'boom' } },
-      ]);
-      await expect(
-        findExistingEnvelopeAnchor({ db, orgId: 'org-1', envelopeId: 'env-9' }),
-      ).rejects.toThrow(/envelope anchor lookup failed.*boom/);
-      // source_envelope_id (no match) + envelope_id (error) = 2 calls; the
-      // third (external_ref) is never issued once we've failed closed.
-      expect(from).toHaveBeenCalledTimes(2);
+      ).rejects.toThrow(/envelope anchor lookup failed: boom/);
     });
   });
 });

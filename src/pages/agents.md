@@ -133,3 +133,27 @@ Every admin page now derives platform-admin status from `isPlatformAdmin(profile
 ## 2026-07-28 L3-A6 — MyCredentialsPage "From Public Registry" entry point
 
 `MyCredentialsPage.tsx` gains a second header button (`data-testid="add-from-registry-button"`) next to the existing "Add Source" button, opening `CtdlRegistryImportDialog` (`src/components/credentials/`). Two-step flow: look up a public Credential Registry record by CTID (`GET /api/v1/credentials/ctdl/import`), then add it (`POST /api/v1/credentials/ctdl/registry-anchor`, new route). Part of the L3-A6 CE Noncredit Data Taxonomy 3.0 anchoring POC — see `docs/partners/ce-noncredit-anchoring-poc.md` for the research + honest-limits writeup and `services/worker/src/ctdl/agents.md` for the parser fix this UI exercises.
+
+## 2026-08-01 SCRUM-2907 — AuthCallbackPage is the email-confirmation landing route
+
+`AuthCallbackPage.tsx` is no longer OAuth-only: `useAuth.signUp` now sets
+`emailRedirectTo: ${origin}/auth/callback`, so the emailed signup-confirmation
+link lands here too. Two rules for anyone editing it:
+
+- **A dead link never produces a session.** Supabase reports expired / already-used
+  / tampered links by putting `error` + `error_code` in the URL fragment and
+  creating no session. Before this change the page's only signal was "no session",
+  so an expired link was indistinguishable from "not signed in yet" and the user
+  was bounced to a bare `/login` with no explanation.
+- **Do NOT read that error in the component.** `detectSessionInUrl: true` consumes
+  the fragment inside `createClient`, so by the time this component mounts it is
+  already empty — a component-level read silently loses the error. This was caught
+  in local UAT, not by unit tests (which mock the client and therefore never
+  reproduce the race). The error is captured by `authLinkErrorFromUrl` in
+  `src/lib/supabase.ts`, evaluated at module scope BEFORE `createClient` runs;
+  the component reads that constant and only falls back to the live fragment.
+
+Prod REQUIRES email confirmation — verified live against `vzwyaatejekddvltxyye`
+on 2026-08-01 (signup returns HTTP 200 with `confirmation_sent_at` set and NO
+session). `supabase/config.toml` and the signup E2E spec previously encoded the
+opposite; both are corrected.

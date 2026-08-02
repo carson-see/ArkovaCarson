@@ -6,11 +6,167 @@ Background workers for anchor lifecycle, billing reconciliation, drive ingestion
 
 `findExistingEnvelopeAnchor` (`docusign-anchor-reconciliation.ts`, see the SCRUM-2904 entry below for what it does) was the last remaining break on the DocuSign connector pipeline. Its single query OR'd three `metadata->>key` JSONB text comparisons (`source_envelope_id`/`envelope_id`/`external_ref`) with **no supporting index on any of the three** — on prod, the org running the live connector pipeline (also the public-records holding org) owns ~2,974,731 of ~2.97M total `anchors` rows, so every call from that org was a near-full-table scan that deterministically exceeds `statement_timeout`. Proven twice in prod: a DLQ'd `rule-action-dispatcher.ts` execution (2026-07-27) and a `connector_artifact` row stuck `status='failed'` at materialize in `connector-artifact-drain.ts` (2026-08-01).
 
-- **Migration 0381** (`supabase/migrations/0381_docusign_envelope_metadata_lookup_indexes.sql`, bare `CREATE INDEX CONCURRENTLY` file, no txn — 0366 convention): three partial btree expression indexes, one per metadata key, each `WHERE (metadata ->> 'KEY') IS NOT NULL`.
-- **Query restructure (same PR):** the function no longer issues one `.or()` query across all three keys. It issues one `.eq('metadata->>KEY', envelopeId)` lookup PER key (three total, each a guaranteed single-Index-Scan point read — envelope ids are unique per org, so at most one row matches per key), then compares `created_at` across the up-to-three matches in application code to pick the earliest — preserving the original single-query `order by created_at asc limit 1` "earliest anchor wins" tie-break exactly. This removes any dependency on the Postgres planner choosing to combine three per-key indexes via `BitmapOr` for a PostgREST-compiled OR'd JSON-path filter — a real fix either way, but the per-key-lookup shape is structurally guaranteed rather than cost-estimate-dependent.
-- Both call sites (`rule-action-dispatcher.ts:591-602`'s `findEnvelopeAnchorMaterialization`, `connector-artifact-drain.ts:367`'s `defaultMaterializeAnchor`) are unchanged — the fix is entirely inside `findExistingEnvelopeAnchor`'s query shape; its signature, return type, error semantics (fail-closed throw on lookup error), and unsafe-envelope-id bail behavior are all preserved.
-- Tests: `docusign-anchor-reconciliation.test.ts` rewritten for the new per-key-lookup query shape (20 tests, incl. a dedicated cross-key tie-break test and a first-error-stops-the-loop fail-closed test). `rule-action-dispatcher.test.ts`'s `buildAnchorsBuilder` stub and its one envelope-guard-reuse fixture updated to carry `created_at` (now selected/compared by the guard).
-- T3 (touches `supabase/migrations/`). File-only / pre-soak at authoring time — see PR body for the founder-ruling-2026-08-01-no-interim-soaks exception this PR cites instead of a fresh 48h soak.
+- **Migration 0381** (`supabase/migrations/0381_docusign_envelope_metadata_lookup_indexes.sql`, bare `CREATE INDEX CONCURRENTLY` file, no txn — 0366 convention): three partial btree expression indexes, one per metadata key, each `WHERE (metadata ->> 'KEY') IS NOT NULL`. Applied to prod 2026-08-01 ahead of merge (`indisvalid=t` verified x3); ledger reconciled to numeric `0381` on merge of PR #1782, 2026-08-02.
+- **Query restructure — superseded by PR #1834, already on `main` when #1782 merged.** This PR (#1782) originally paired the migration with its own application-code restructure of `findExistingEnvelopeAnchor` (a sequential for-loop, one `.eq()` lookup per key, first-error-aborts). #1834 landed an equivalent-but-improved version first: `Promise.all` across all three per-key lookups (parallel, not sequential), each `LIMIT ENVELOPE_ANCHOR_LOOKUP_LIMIT` (50) and array-terminal rather than `.order().limit(1).maybeSingle()`, with the earliest-`created_at` tie-break done in JS over the bounded result set. See the 2026-08-02 entry below in this file for the full EXPLAIN-backed reasoning (the SQL `ORDER BY` — not a missing index — was the actual defeat of the planner). On merge, #1834's version was kept verbatim; #1782's own query-restructure diff was dropped as superseded. Only the migration file itself was still needed from #1782 — #1834 assumed the indexes existed but never carried the `.sql` file.
+- Both call sites (`rule-action-dispatcher.ts:591-602`'s `findEnvelopeAnchorMaterialization`, `connector-artifact-drain.ts:367`'s `defaultMaterializeAnchor`) are unchanged either way — the fix is entirely inside `findExistingEnvelopeAnchor`'s query shape; its signature, return type, and fail-closed error semantics are preserved by both versions.
+- Tests: `docusign-anchor-reconciliation.test.ts` and `rule-action-dispatcher.test.ts` carry #1834's test shape (array-terminal `.limit()` stub, `Promise.all` call-count assertions) — #1782's sequential-loop test variant was dropped for the same reason as the code it tested.
+- T3 (touches `supabase/migrations/`). Soak: WAIVED under the founder's 2026-08-01 no-interim-soak ruling (`rc-2026-08-launch-72h.json` `exceptions[]`) — see PR #1782 body.
+## 2026-08-02 — Queues lane (PR #1845): CML-02 stamped 10,000 ids into one filter, into a dead catch (`batch-anchor.ts`)
+
+The `compliance_controls` post-processing block after a successful batch broadcast had **both**
+halves of the class in six lines, on the chain/treasury path:
+
+- `.in('id', ids)` took every anchor of one credential type with no chunking. `BATCH_SIZE` is
+  10,000, so a single-credential-type batch put 10,000 UUIDs — ~390 KB of query string — on one
+  request line. PostgREST answers 400.
+- The result was **not destructured at all** (`await db…in(...)`, no `{ error }`). postgrest-js
+  resolves a 400, so nothing threw, and the enclosing `catch (complianceErr)` — labelled
+  "Non-fatal" — was **dead code for the only failure mode that actually occurs**. A full batch went
+  out with `compliance_controls` silently unset and the job logged nothing at all.
+
+Extracted verbatim to the exported `applyComplianceControls(anchors, batchId)` first (so the defect
+could be tested directly), then routed through `chunkForInFilter` with every chunk result inspected.
+
+**Explicit opt-out from `assertNotAllChunksFailed`, and it does not throw.** This runs AFTER the
+broadcast and after `submit_batch_anchors`: the transaction is on-chain and the rows are SUBMITTED.
+Throwing would turn a completed batch into a reported job failure and a Scheduler retry over work
+that is already done, to repair derived metadata a later run can re-stamp. The escalation is instead
+an error-level line carrying `{batchId, attemptedChunks, failedChunks, unstampedAnchors}` — the
+signal the old code could not produce. If you ever make this fatal, check the caller's unwind
+semantics first (#1417-HIGH: unwind fires only on a definitive typed broadcast reject).
+
+Tests: `batch-anchor.compliance.test.ts` (4). Mutation-verified — unchunking the filter fails the
+10k-batch budget test; restoring the undestructured `await` fails the failure-visibility test.
+
+## 2026-08-01 — Queues lane (PR #1812): pipeline claim-revert emitted an over-wide id filter (`publicRecordAnchor.ts`)
+
+`revertClaimedAnchors` — the post-failed-submission release of claimed pipeline anchors from
+BROADCASTING back to PENDING — still chunked its `.in('id', …)` by `POSTGREST_ROW_LIMIT` (1,000).
+That is the exact defect PR #1795 fixed in `fetchAnchorRows` and `claimPendingPipelineAnchors` and
+did NOT fix here, so this path emitted ~38 KB request lines, took 400 Bad Request on every chunk,
+and released nothing — a failed submission stranded up to a full 10k batch in BROADCASTING while
+the job logged only the original chain error.
+
+- Chunks by `POSTGREST_IN_FILTER_CHUNK` now, and returns
+  `{attemptedChunks, failedChunks, strandedAnchorIds}` so a partial/total revert failure is
+  escalated at error level naming the stranded count and the recovering job. It deliberately does
+  NOT throw — it runs inside the chain-submission failure path, and throwing would replace the
+  caller's real chain error. `recover_stuck_broadcasts` (verified ENABLED in prod, `*/15`, and
+  confirmed to cover BROADCASTING rows with NULL `chain_tx_id`) stays the backstop.
+- `fetchAnchorRows` / `claimPendingPipelineAnchors` / `revertClaimedAnchors` are exported so the
+  width invariant is asserted at the CALL SITE (`__tests__/publicRecordAnchor-in-filter-width.test.ts`,
+  6 tests) rather than only on the constants — the class recurred precisely because a
+  constant-level test passed while one call site still used the wrong one.
+  _(Superseded by the entry below: the invariant moved into the API, the exports were reverted, and
+  that test file was deleted.)_
+
+## 2026-08-01 — Queues lane: the id-filter width is now an API guarantee, not a per-call-site test (`chunkForInFilter`)
+
+Two production defects in one class, in one file, four days apart (#1795, #1812). #1812's answer was
+to export the three functions and assert the emitted filter width at each call site. That is a test,
+not a guarantee: it only ever covers the call sites that existed when it was written, which is
+exactly how #1795 shipped a fix that missed one of three. This entry replaces it.
+
+- **`chunkForInFilter(values: readonly string[]): InFilterChunk[]`** — now the only supported way to
+  build a PostgREST `.in()` filter over a caller-sized list. It lives in **`utils/postgrest-filter.ts`**
+  along with `POSTGREST_ROW_LIMIT` / `POSTGREST_URL_FILTER_BUDGET_BYTES` /
+  `POSTGREST_IN_FILTER_CHUNK` / `assertNotAllChunksFailed`. It was first written into
+  `jobs/anchor-batching.ts` next to the Bitcoin batch caps; review moved it because (a) it is a
+  wire-shape concern with no anchoring semantics, (b) every non-`jobs` consumer had to justify a
+  `utils/ -> jobs/` import to reach it, and (c) `publicRecordEmbedder.test.ts` factory-mocks
+  `anchor-batching.js` wholesale, so the first module in that test's import graph to call
+  `chunkForInFilter` would get `undefined` at runtime with a baffling error in an unrelated suite.
+  `anchor-batching.ts` keeps only `MAX/MIN_ANCHORS_PER_BITCOIN_TX` + `resolveAnchorBatchSize`.
+  Shape chosen so the wrong thing is unwritable rather than merely tested:
+  - **No size parameter.** Both defects were a call site choosing between two plausible constants in
+    scope and hand-rolling `for (i += SIZE)`. There is no knob to get wrong now.
+  - **`string[]`, not generic `T[]`.** Chunking ROWS and mapping to ids afterwards (what
+    `claimPendingPipelineAnchors` did) hides the real filter width from the only code that can
+    measure it. Callers project first, so the values chunked are the values sent.
+  - **Bounded by encoded WIRE BYTES as well as count.** The 200-value cap is calibrated for UUIDs;
+    `source_id` / `public_id` / 64-char fingerprints are not UUIDs. Chunks close on whichever limit
+    binds first. Carries `{start, index, total}` so `chunkStart` error logging is unchanged.
+    Measured with `URLSearchParams` — what postgrest-js actually uses — **not**
+    `encodeURIComponent`. Those are different encoders (`(`/`)`/`'`/`!`/`~` cost 3 bytes on the wire
+    and 1 under `encodeURIComponent`; a space is 1 on the wire and 3 there), and postgrest-js also
+    double-quotes any value containing `,`, `(` or `)`. Measured wrong, a 200-value chunk of
+    docket-shaped ids goes out ~1 KB OVER budget while the helper reports it as safe — caught in
+    review on this PR, and verified end-to-end against a real `PostgrestClient` builder across
+    UUIDs / dockets / URLs / spaces+emoji / fingerprints (max observed 8,180 of 8,192; 10k values
+    chunk in ~4 ms).
+- **Routed through it:** all three `publicRecordAnchor.ts` id-filter loops; `proofJobScan.fetchProofRows`;
+  `proof-backcatalog-classifier`'s label-apply loop; `utils/pipeline.getExistingSourceIds`.
+  `fetchAnchorRows` / `claimPendingPipelineAnchors` / `revertClaimedAnchors` are **private again** —
+  they were only exported for the width assertion. `POSTGREST_ROW_LIMIT` still appears in
+  `publicRecordAnchor.ts`, but only on `.range()` pagination, which is what it actually governs.
+- **`assertNotAllChunksFailed(label, attempted, failed, detail)`** (same module) is the second half of
+  the class. Width is only one of the two defects — the other is that a chunked loop which logs each
+  failure and continues returns `[]` when EVERY chunk 400s, which downstream cannot distinguish from
+  "no matching rows". Review caught this PR reproducing the SAME 2-of-3 miss it exists to prevent:
+  `fetchAnchorRows` and `getExistingSourceIds` both had a hand-copied guard (already diverged — one
+  had the `attempted > 0` check, one did not) while **`claimPendingPipelineAnchors` had none**, so a
+  totally broken claim step would read as "nothing was PENDING" and return 200 forever. All three now
+  call the shared guard. `revertClaimedAnchors` deliberately does NOT — it runs inside the
+  chain-failure path where a secondary throw would mask the real error, and returns counts for its
+  caller to escalate instead. That is now an explicit opt-out rather than an invisible omission.
+  **A guard with no test is the same miss one level up.** Review of THIS PR then found the identical
+  2-of-3 shape in the coverage rather than the code: the claim guard and `getExistingSourceIds`'
+  guard each had a test that died without it, but **`fetchAnchorRows`' guard had none** — deleting
+  line 254 left the whole worker suite green, on the one path whose silent success actually caused
+  the 70-hour outage, in a file the PR body's own "Collision note" says is about to be rebased.
+  Covered now (`publicRecordAnchor.test.ts` -> `all-chunks-failed guards`), through the real
+  entrypoint, asserting both the throw and that the benign "No new pending public record anchors to
+  submit" line is never reached. When adding a guard here, add its mutation test in the same commit:
+  an untested guard reads as protection and behaves as a comment.
+- **Constant consolidation.** `proofJobScan.IN_FILTER_CHUNK` (100) and
+  `proof-backcatalog-classifier`'s own local `IN_FILTER_CHUNK` (100, a third variant shadowing the
+  second) are both DELETED. `proofJobScan.chunk(items, size)` survives as the generic splitter for
+  REQUEST-BODY batches only (RPC payloads, insert rows — `proof-materializer`'s `INSERT_CHUNK`); its
+  docstring now says so and points `.in()` callers at `chunkForInFilter`.
+- **Width is asserted ONCE**, on the helper (`utils/postgrest-filter.test.ts`). Mutation-verified:
+  reverting `POSTGREST_IN_FILTER_CHUNK` to `POSTGREST_ROW_LIMIT` fails 2 tests; removing the byte cap
+  fails 3; removing the count cap fails 1; restoring the `encodeURIComponent` accounting fails 2;
+  removing the claim guard fails 1; removing the **fetch** guard fails 1 (added late — it failed 0
+  when this list was first written, which is what made the omission worth an entry of its own
+  above); removing the caller's stranded-claim escalation fails 1. The
+  #1812 stranded-count escalation is preserved and now covered through the real entrypoint
+  (`publicRecordAnchor.test.ts`) instead of an export. The wire-width oracle used by tests lives in
+  `test-utils/postgrestWire.ts` — ONE copy, mirroring postgrest-js's own algorithm. A second copy in
+  `pipeline.test.ts` was still using `encodeURIComponent` and would have passed on an over-budget
+  chunk the moment its fixture grew a `(`.
+- **`utils/pipeline.getExistingSourceIds` fixed here, not filed** (a deliberate cross-lane touch —
+  it is feeder-lane code). It had both halves of the outage, but **only one was live**: the
+  unchunked `.in('source_id', …)` was LATENT (one caller, module-constant statute section ids, tens
+  at a time), while the discarded `const { data } = …` error WAS live — a 400 returned an empty
+  dedup Set, dedup silently dead while every caller reported success. Now chunked, per-chunk
+  failures logged, and an all-chunks-failed run throws rather than reporting an empty set as
+  success (mirrors `fetchAnchorRows`). A PARTIAL result is still returned: `batchUpsertRecords`
+  upserts with `ignoreDuplicates`, so a missed duplicate is a redundant write, never a wrong row.
+  Behaviour change: the throw also skips that jurisdiction's case-law ingestion, since
+  `fetchJurisdictionCompliance` runs `ingestStatutes` first. See `utils/agents.md`.
+- **KNOWN RESIDUAL EXPOSURE — the class is not closed repo-wide.** A full census of all 102 `.in()`
+  call sites under `services/worker/src` found **8 UNBOUNDED** and **14 BOUNDED-RISKY** sites still
+  outstanding, none of them touched by this PR. Worst: `api/v1/auditBatchVerify.ts:106` (unbounded +
+  error discarded → an audit-sampling endpoint reports the entire population `NOT_FOUND` at HTTP
+  200); `batch-anchor.ts:1925` (10,000 UUIDs, no chunking, error not even destructured);
+  `api/v1/anchor-bulk.ts:195` (Zod `.max(1000)` of 64-char fingerprints breaks the budget at ~126
+  rows, and the empty result disables duplicate rejection). A 500-wide chunk cohort
+  (`INTENT_CHUNK_SIZE`, `CRED_LOOKUP_CHUNK`, two local `CHUNK_SIZE`s in `batch-anchor.ts`) is over
+  budget throughout — those constants were reasoned about against HTTP 414 URI-too-long, not the
+  proxy's 8 KiB request-line limit. `const { data } = …` appears at 17 of the 63 non-literal sites;
+  that destructure alone is what converts a 400 into an indistinguishable "no rows". Full census is
+  in the PR body. **No repo-wide lint rule was added** — a rule broad enough to catch the 500-cohort
+  would fail the build on existing code, and `npm run lint` is the deploy gate (§0 rule 9). Note the
+  worker's own lint script is `eslint --max-warnings 0`, so a `warn`-severity rule is NOT an escape
+  hatch here: warnings fail that gate exactly like errors. The viable shapes are an `error` rule with
+  a file-level allowlist of the known sites, or the rule landing after the census is fixed. Whichever
+  is chosen, the rule — not this helper — is what finally closes the class.
+- **Scope the claim honestly.** The helper makes the *width* unchoosable for anyone who uses it; it
+  does NOT make a hand-rolled loop impossible. `POSTGREST_ROW_LIMIT` is still exported and still in
+  scope in `publicRecordAnchor.ts` (legitimately, for `.range()`), so nothing but convention stops a
+  future `for (i += SIZE)` around a `.in()` — and the per-call-site test that would have caught
+  exactly that is deleted by this change. Closing that last gap needs the lint rule, which needs the
+  census fixed first. Treat "unwritable" as "unwritable via the supported API", not "unreachable".
 
 ## 2026-07-28 SOAK FINDINGS — F-1 (org-queue-scheduler 500s) + F-3 (SUBMITTED/NULL-txid recovery gap)
 
@@ -201,6 +357,50 @@ Key implementation patterns:
 - SCRUM-2902 (R-1 FATAL) — `ce-key-expiry-alert.ts` fail-LOUD Credential Engine API key expiry alarm. Pure `decideCeKeyExpiryAlert({ expires_at_raw, now })` + `createSentryCeKeyExpiryDispatcher()` + `runCeKeyExpiryCheck()`. Reads `CE_API_KEY_EXPIRES_AT` from env (NOT `config.ts` — mirrors treasury-alert's direct env read). Emits escalating Sentry events at **T-30/T-14 (warning)**, **T-7/EXPIRED (error)**, and — the fail-closed core — fires an **ERROR every run** with `expiry_window=SENTINEL` when the date is unset / a sentinel placeholder (`CE_KEY_EXPIRY_SENTINEL_VALUES`) / unparseable. **DB-stateless by design** (no dedup table → no migration): firing daily inside a window is the desired loudness; Sentry groups events into one issue and the alert-rule `frequency` throttles Slack pages. **event ≠ alert:** the Sentry event only pages a human via the `"SCRUM-2902 — Credential Engine API key expiry"` rule in `infra/sentry/alert-rules.json` (→ Slack `#ops`, tags `story,expiry_window,days_until_expiry`); code↔rule tag parity is enforced by `scripts/ci/check-ce-key-expiry-alert-contract.test.ts`. An admin must create the rule 1:1 in the Sentry dashboard AND capture a live Slack-delivery proof (see `docs/runbooks/ce-key-expiry-alarm.md`) — the code + rule declaration alone do NOT prove delivery. Cron route: `/jobs/ce-key-expiry-check`. Scheduler: daily 08:00 UTC. Gated by `ENABLE_CE_KEY_EXPIRY_ALERTS` (default true). **Founder blocker:** the real `CE_API_KEY_EXPIRES_AT` (≈2026-09-09, confirm) + demo CTID are Carson-supplied; until set, the alarm intentionally pages continuously.
 - **PostgREST `.in()` filter width is NOT `POSTGREST_ROW_LIMIT`** (prod incident 2026-07-29 → 2026-08-01, fix PR `fix/postgrest-in-filter-url-limit`). `POSTGREST_ROW_LIMIT = 1_000` caps how many rows PostgREST *returns*; it says nothing about how many ids fit in a *URL filter*. `fetchAnchorRows` chunked anchor ids by `POSTGREST_ROW_LIMIT` and passed them to `.in('id', chunk)` — 1,000 UUIDs is a ~38 KB encoded query string, which PostgREST rejected with `400 Bad Request` on **every** chunk. `rows` came back empty, `partitionRecordAnchors` produced zero pending items, and the job logged a benign `"No new pending public record anchors to submit"` and returned **HTTP 200**. Public-record anchoring produced **zero anchors for 70+ hours** while every cron reported success and the unlinked backlog grew past 404k. Use `POSTGREST_IN_FILTER_CHUNK` (200) for any `.in()` id list; keep `POSTGREST_ROW_LIMIT` for row pagination only. `fetchAnchorRows` now **throws** when every chunk fails rather than returning `[]` — an all-chunks-failed read is indistinguishable downstream from "no anchors exist", and that silent-success path is what hid the outage.
 
+
+## 2026-08-02 — a terminal `failed` connector_artifact MUST carry its own reason
+
+Prod artifact `921347cc` (org `40383eb2`) went terminal `failed` on 2026-08-02T00:41:53Z and **the database recorded nothing about why**: `markFailed()` accepted a `reason` parameter and never persisted it — the UPDATE set `status` and `updated_at` only. The sole surviving copy was a Sentry alert (`ARKOVA-WORKER-2B`), which is how the real cause was eventually recovered: `envelope anchor lookup failed: canceling statement due to statement timeout`. Sentry samples, ages out, and is not queryable alongside the row an operator is triaging.
+
+Rules now enforced by tests in `connector-artifact-drain.test.ts`:
+
+- **Persist the reason on the row.** `markFailed` merges a bounded `drain_error` into `connector_artifact.metadata` (merge, never replace — the envelope/account identifiers downstream code reads live there). No migration: `metadata` is already `jsonb`.
+- **Bound the reason INSIDE `markFailed`, never at the call sites.** `handleDebitFailure` passes the raw PostgREST/Postgres `error.message` through, and Postgres constraint-violation text routinely echoes the offending VALUE. Migration 0343 grants `SELECT ON connector_artifact TO authenticated` (`connector_artifact_org_select`), so **anything written to this column is readable by every member of the org**. Bounding in the single writer makes that structural instead of a rule each future caller must remember. Use the `boundedReason()` helper.
+- **Log the bounded `reason` AND the error object** (`{ err, reason }`). The bounded string is what gets persisted and alerted on; `err` is what carries the stack. Dropping the stack is a wash for a DB timeout and strictly worse for a `TypeError` deeper in materialization.
+
+### What is and is NOT guaranteed here
+
+- **Guaranteed:** every string this module *persists* or *alerts on* is bounded — `boundedReason()` → `boundedErrorDetail()` caps at ~500 chars post-scrub, collapses byte runs, and scrubs PII.
+- **NOT guaranteed by this module:** that no raw `Error` is ever handed to the logger. Eight `logger.{error,warn}({ error, … })` sites remain in this file (571, 610, 643, 856, 1020, 1056, 1162, 1359). That is deliberate and safe: **logger-side redaction is centralised**, not per-call-site — `utils/logger.ts` registers `redactErrorSerializer` for both the `err` and `error` keys plus a `redactBinaryValues` formatter over the whole merged object. Do not "fix" those call sites by stripping the error, and do not write a per-call-site rule here that the code does not enforce.
+- An earlier draft of this note claimed pino renders a raw `Error` under a non-`err` key as `{}`. **That is false for this codebase** — `logger.ts` registers the serializer for exactly that reason. Whatever produced the empty `error` object in the prod log line, it was not pino's default behaviour; the persistence gap above is the defect that actually mattered.
+
+### Known sharp edge
+
+The `metadata` write is a read-modify-**write of the whole column** from the snapshot taken at claim time. Safe today because `markFailed` is the only writer after insert (`enqueue_connector_artifact` is `ON CONFLICT DO NOTHING`). The first writer that does `ON CONFLICT DO UPDATE` on `metadata` will be silently clobbered by it. The durable form is server-side `metadata = metadata || jsonb_build_object('drain_error', $1)` inside an RPC — that needs a migration, so do it before adding a second writer, not after.
+
+`boundedErrorDetail` emits **lowercase** placeholder tokens (`[fingerprint]`, `[uuid]`, `[email]`) where `utils/pii-scrub.ts` emits uppercase. Harmless today (nothing parses them) but do not build a consumer that pattern-matches one casing.
+## 2026-08-02 — the envelope guard uses ONE indexed lookup PER KEY, never a combined `.or()`
+
+`findExistingEnvelopeAnchor` (`docusign-anchor-reconciliation.ts`) stalled the DocuSign envelope→anchor path in prod: `canceling statement due to statement timeout` on org `40383eb2` (**3.15M anchors**, artifact `921347cc`, failed twice).
+
+**The cause is a COSTING error, not a missing index and not the sort.** The planner estimates **51,038** rows match the 3-branch `metadata->>` OR when the true answer is **0**. Believing a match is imminent under a small `LIMIT`, it takes a scan — and no index can beat a wrong belief. Measured on prod with a value that matches nothing (the normal case for a newly completed envelope):
+
+| query shape | plan | cost |
+|---|---|---|
+| `.or(...)` + `ORDER BY created_at LIMIT 1` (original) | Index Scan Backward on `idx_anchors_active_created` | 2,209,325 |
+| `.or(...)` + `LIMIT 1`, no ORDER BY | **Seq Scan** | 1,845,309 |
+| single-key `.eq('metadata->>k', v)` + LIMIT | Index Scan on that key's own index | **1.23 — ACTUAL 0.064 ms, rows=0** |
+
+Removing the ORDER BY is **not** sufficient: it trades a backward index walk for a sequential scan and still times out. (An earlier fix attempt measured a cheap `BitmapOr` plan — that measurement used `LIMIT 50`, which changes the planner's choice, so it did not reflect the production query. Do not benchmark this lookup at a LIMIT the code does not use.)
+
+**Rules:**
+
+- **One `.eq('metadata->>key', envelopeId)` query per key in `ENVELOPE_ID_METADATA_KEYS`, run in parallel.** A single-key equality is a point lookup with exactly one index and one condition — the estimator cannot mislead it. Never reintroduce a combined `.or()` across metadata keys on this table.
+- **No `ORDER BY` in SQL.** The oldest-match tie-break happens in application code over a bounded result set (`ENVELOPE_ANCHOR_LOOKUP_LIMIT`), which keeps the guard idempotent — a repeat call must reuse the same anchor.
+- **Fail closed** if any per-key lookup errors: the one that failed may have held the duplicate, so proceeding would insert a second anchor for the envelope.
+- Each key needs its own index — migration `0381` (PR #1782, merged 2026-08-02) covers all three (`idx_anchors_metadata_source_envelope_id`, `idx_anchors_metadata_envelope_id`, `idx_anchors_metadata_external_ref`) in one file. The migration anti-drift guard ties the constant to its indexes — adding a key without an index reintroduces a scan.
+
+**Benchmark any change here with `EXPLAIN (ANALYZE)` against org `40383eb2` on prod, using a value that matches nothing.** A plan measured on a small or empty org is meaningless — this query looked fixed twice that way.
 ## 2026-08-01 CE Registry drift reconciliation (`ce-registry-drift.ts`) — read-only read-back
 
 - **What it closes.** `POST /api/v1/credentials/ctdl/registry-anchor` (L3-A6) anchors a CE Registry record by fingerprinting the exact bytes retrieved — a claim about a moment in time. Nothing ever went back and looked. This job re-reads each anchored CTID from the **public** registry graph endpoint, re-hashes, and reports where current content no longer matches the anchored snapshot. It is the product thesis applied to CE's own data, and it is the highest-value CE capability provable **inside the evaluation window** because it needs no CE credential at all.
