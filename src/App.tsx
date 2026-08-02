@@ -12,7 +12,7 @@
 
 import React, { Suspense, useEffect, useRef } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Toaster, toast } from 'sonner';
@@ -30,7 +30,7 @@ import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes'
 import { prefetchCriticalRoutes } from '@/lib/prefetch';
 import { lazyWithRetry } from '@/lib/lazyWithRetry';
 import { TOAST_DURATIONS_MS } from '@/lib/toastConfig';
-import { authLinkErrorFromUrl, shouldRedirectToAuthCallback } from '@/lib/supabase';
+import { AuthLinkErrorRedirect } from '@/components/auth/AuthLinkErrorRedirect';
 import { shouldDismissToastsForLocationChange, type ToastLocation } from '@/lib/toastNavigation';
 
 // ── Lazy-loaded page components (AUDIT-13: route-level code splitting) ──────
@@ -156,34 +156,6 @@ function RouteFallback() {
 /** Detect if running on search.arkova.ai subdomain */
 export function isSearchSubdomain(): boolean {
   return typeof window !== 'undefined' && window.location.hostname === 'search.arkova.ai';
-}
-
-/**
- * SCRUM-2907 — a failed auth link must be explained wherever it lands.
- *
- * `emailRedirectTo` only governs links sent AFTER it shipped. Every link
- * already in a user's inbox was minted against the project Site URL, so it
- * comes back to `/` — not `/auth/callback`, the only route that knows how to
- * explain a dead link. Without this, the users most in need of the explanation
- * (whoever is already sitting on an expired link) are exactly the ones who
- * never see it.
- *
- * `authLinkErrorFromUrl` is captured at supabase-module load, before
- * `detectSessionInUrl` consumes the fragment, so it survives this redirect —
- * which reading `window.location.hash` here would not.
- */
-function AuthLinkErrorRedirect() {
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  useEffect(() => {
-    if (!shouldRedirectToAuthCallback(authLinkErrorFromUrl, location.pathname, ROUTES.AUTH_CALLBACK)) {
-      return;
-    }
-    navigate(ROUTES.AUTH_CALLBACK, { replace: true });
-  }, [navigate, location.pathname]);
-
-  return null;
 }
 
 function ToastNavigationReset() {

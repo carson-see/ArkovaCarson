@@ -33,7 +33,7 @@ const mockGetSession = vi.fn();
 // BEFORE createClient consumes the URL fragment. Mirror that shape here and
 // let each test set it, so the module-load path is covered rather than only
 // the live-fragment fallback.
-let mockAuthLinkErrorFromUrl: { expired: boolean } | null = null;
+let stubbedAuthLinkError: { expired: boolean } | null = null;
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
@@ -46,7 +46,7 @@ vi.mock('@/lib/supabase', () => ({
     },
   },
   get authLinkErrorFromUrl() {
-    return mockAuthLinkErrorFromUrl;
+    return stubbedAuthLinkError;
   },
 }));
 
@@ -55,7 +55,7 @@ describe('AuthCallbackPage', () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     authChangeCallback = null;
-    mockAuthLinkErrorFromUrl = null;
+    stubbedAuthLinkError = null;
     mockGetSession.mockResolvedValue({ data: { session: null } });
     // Mock window.history.replaceState
     vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
@@ -201,7 +201,7 @@ describe('AuthCallbackPage', () => {
      * is now captured at supabase-module load and handed over.
      */
     it('explains an expired link captured before the client consumed the fragment', () => {
-      mockAuthLinkErrorFromUrl = { expired: true };
+      stubbedAuthLinkError = { expired: true };
       setHash(''); // Supabase already stripped it — this is the real condition.
 
       render(
@@ -233,7 +233,7 @@ describe('AuthCallbackPage', () => {
     });
 
     it('offers a route back to signup so the user can request a new link', () => {
-      mockAuthLinkErrorFromUrl = { expired: true };
+      stubbedAuthLinkError = { expired: true };
 
       render(
         <MemoryRouter>
@@ -245,7 +245,7 @@ describe('AuthCallbackPage', () => {
     });
 
     it('surfaces a generic auth error that is not an expired link', () => {
-      mockAuthLinkErrorFromUrl = { expired: false };
+      stubbedAuthLinkError = { expired: false };
 
       render(
         <MemoryRouter>
