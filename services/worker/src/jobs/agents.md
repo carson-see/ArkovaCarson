@@ -2,6 +2,24 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-02 — merge resolution note (PR #1810 `feat/observability-silent-failure` onto main)
+
+Two conflicts in `monthly-allocation-rollover.ts` / `.test.ts`, both a "both sides added something at the
+same spot" shape, not an actual behavioral disagreement — combined rather than picked a side:
+
+- **`monthly-allocation-rollover.ts` import block:** this PR added `assertJobPostcondition` (the
+  SCRUM-3050 throw-on-total-failure change, see the entry below); main had independently landed
+  `captureCreditRpcFailureAlert` Sentry alerting on the same two error branches. Only the import lines
+  conflicted — the call sites didn't, since each side touched a disjoint region of the function body.
+  Kept both imports; the merged function now throws on total enumeration/rollover failure (this PR)
+  **and** alerts Sentry on each per-org RPC failure (main) in the same run.
+- **`monthly-allocation-rollover.test.ts`:** this PR appended a new `describe('...postcondition
+  (SCRUM-3050)')` block after the last shared test; main appended two Sentry-alert assertion tests
+  (`'alerts Sentry only for the errored org...'`, `'increments errors on thrown RPC and alerts
+  Sentry'`) to the tail of the *original* describe block instead. Resolved by keeping both: main's two
+  tests now close out the original `describe('runAllocationRollover', ...)` block, followed by this
+  PR's postcondition describe block unchanged. All tests from both sides retained, none dropped.
+
 ## 2026-08-01 — SCRUM-3050: silent-failure hardening (`pipelineThroughputMonitor.ts`, `monthly-allocation-rollover.ts`)
 
 Three independent silent failures were found in one day; all three reported success at every layer a human watches. The two changes here address the parts that live in this folder.
