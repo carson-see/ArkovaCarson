@@ -2397,17 +2397,55 @@ interface CheckOptions {
 }
 
 /**
+ * Hard stop for the bypass window. A suspension of the evidence requirement
+ * that can only be ended by someone REMEMBERING to end it is a suspension
+ * that becomes permanent; every prior override in this repo's history had to
+ * be destroyed by hand (the `staging-soak-skip` label, 2026-05-07) rather
+ * than lapsing on its own.
+ *
+ * Past this instant the variable stops being honored and the gate enforces
+ * in full again — the fail-closed direction. Two weeks is deliberately
+ * generous against the stated plan (pen test from 2026-08-02, then a
+ * week-long consolidated soak). If the window genuinely needs to run longer,
+ * extending this constant is a one-line PR that is visible in review, which
+ * is the entire point: the extension gets seen, the neglect does not.
+ */
+const SOAK_GATE_BYPASS_EXPIRES_AT = Date.parse('2026-08-16T00:00:00Z');
+
+/**
  * The banner a bypassed run prints. Deliberately states what was NOT done —
  * a passing check here must never be readable as "evidence present".
  */
-export const SOAK_GATE_BYPASS_NOTE =
+const SOAK_GATE_BYPASS_NOTE =
   '⚠️  SOAK GATE BYPASSED — founder directive 2026-08-01, re-enable before the post-pentest '
   + 'consolidated soak. The repository variable SOAK_GATE_DISABLED is set to "true", so this '
   + 'PR\'s staging soak evidence has NOT been evaluated: no tier was computed, no evidence '
   + 'block was read, and no staging soak evidence is claimed to exist for this change. This '
   + 'check passing means only that the bypass is engaged. Clear the SOAK_GATE_DISABLED '
   + 'repository variable (`gh variable set SOAK_GATE_DISABLED --body false`) to restore '
-  + 'CLAUDE.md §1.11/§1.12 enforcement in full before the consolidated soak is graded.';
+  + 'CLAUDE.md §1.11/§1.12 enforcement in full before the consolidated soak is graded. '
+  + 'This bypass stops being honored after 2026-08-16T00:00:00Z regardless of the variable.';
+
+/**
+ * `true` only while the bypass is both switched on AND inside its window.
+ * Expiry is evaluated against `nowMs` so it is testable; `main()` passes the
+ * real clock.
+ */
+function soakGateBypassEngaged(opts: Pick<CheckOptions, 'soakGateDisabled' | 'nowMs'>): boolean {
+  if (opts.soakGateDisabled !== true) return false;
+  return (opts.nowMs ?? Date.now()) < SOAK_GATE_BYPASS_EXPIRES_AT;
+}
+
+/** Printed when the variable is still set but the window has closed. */
+const SOAK_GATE_BYPASS_EXPIRED_NOTE =
+  'SOAK_GATE_DISABLED is still set to "true", but the bypass window closed at '
+  + '2026-08-16T00:00:00Z — the staging soak evidence gate is enforcing normally again. '
+  + 'This is the intended end of the founder directive of 2026-08-01, not a fault. Clear '
+  + 'the variable (`gh variable set SOAK_GATE_DISABLED --body false`) so the repo state '
+  + 'stops advertising a bypass that no longer applies. If the window genuinely needs to '
+  + 'be extended, that is a reviewed one-line change to SOAK_GATE_BYPASS_EXPIRES_AT in '
+  + 'scripts/ci/check-staging-evidence.ts — deliberately not something a variable alone '
+  + 'can do.';
 
 function addErrors(result: CheckResult, errors: string[]): void {
   if (errors.length === 0) return;
@@ -3110,9 +3148,14 @@ export function check(opts: CheckOptions): CheckResult {
   // banner below is the ONLY reason a bypassed run passes; letting T0 (or any
   // other path) answer first would hide that the gate was suspended.
   // See CheckOptions.soakGateDisabled.
-  if (opts.soakGateDisabled === true) {
+  if (soakGateBypassEngaged(opts)) {
     result.notes.push(SOAK_GATE_BYPASS_NOTE);
     return result;
+  }
+  if (opts.soakGateDisabled === true) {
+    // Set but expired: fall through into the full gate, and say why so the
+    // sudden return of red checks is self-explaining rather than a mystery.
+    result.notes.push(SOAK_GATE_BYPASS_EXPIRED_NOTE);
   }
 
   const required = requiredTierFor(files, {
@@ -3126,14 +3169,15 @@ export function check(opts: CheckOptions): CheckResult {
 
   const declared = extractDeclaredTier(body);
   if (!declared) {
-    return {
-      ok: false,
-      errors: [
-        `PR body is missing a tier declaration. Add a line \`Tier: ${required.tier}\` under a `
-        + `\`## Staging Soak Evidence\` section. Required tier: ${required.tier} (${required.reason}).`,
-      ],
-      notes: [],
-    };
+    // Accumulate onto `result` rather than returning a fresh object: notes
+    // pushed before this point (e.g. the expired-bypass explanation) are the
+    // context that makes this failure legible, and a literal `notes: []`
+    // silently threw them away.
+    addErrors(result, [
+      `PR body is missing a tier declaration. Add a line \`Tier: ${required.tier}\` under a `
+      + `\`## Staging Soak Evidence\` section. Required tier: ${required.tier} (${required.reason}).`,
+    ]);
+    return result;
   }
 
   addErrors(result, tierDeclarationErrors(declared, required));
@@ -3190,10 +3234,13 @@ function main(): void {
   // `::warning::` as well as stdout so it surfaces in the Actions annotation
   // panel, not just the folded log. See CheckOptions.soakGateDisabled.
   const soakGateDisabled = process.env.SOAK_GATE_DISABLED === 'true';
-  if (soakGateDisabled) {
+  if (soakGateBypassEngaged({ soakGateDisabled })) {
     console.log(`ℹ️  ${SOAK_GATE_BYPASS_NOTE}`);
     console.error(`::warning title=Staging soak evidence gate BYPASSED::${SOAK_GATE_BYPASS_NOTE}`);
     return;
+  }
+  if (soakGateDisabled) {
+    console.error(`::warning title=Soak-gate bypass window has closed::${SOAK_GATE_BYPASS_EXPIRED_NOTE}`);
   }
 
   // Required base: fail closed if it can't resolve (getBaseRef exits 1).

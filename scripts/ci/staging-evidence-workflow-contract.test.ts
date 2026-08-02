@@ -418,6 +418,15 @@ describe("staging-evidence workflow soak-gate bypass contract", () => {
     expect(/DEPLOY_WORKER_PAUSED:\s*\$\{\{\s*vars\.DEPLOY_WORKER_PAUSED\s*\}\}/u.test(checkStep!)).toBe(true);
   });
 
+  it("pins the bypass to exactly ONE binding of the key", () => {
+    // Asserting the correct line is PRESENT is not enough: a second
+    // `SOAK_GATE_DISABLED:` under the same `env:` mapping leaves the pinned
+    // line intact while changing what the step actually receives.
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const bindings = workflow.match(/^\s*SOAK_GATE_DISABLED:/gmu) ?? [];
+    expect(bindings).toHaveLength(1);
+  });
+
   it("rejects rebinding the bypass to any author-reachable context", () => {
     const workflow = readFileSync(WORKFLOW_PATH, "utf8");
     for (const forged of [

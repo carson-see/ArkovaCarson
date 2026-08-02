@@ -1874,7 +1874,7 @@ describe('check-staging-evidence', () => {
       });
 
       it('passes with a loud, unambiguous note when the bypass is engaged', () => {
-        const r = check({ ...failingArgs, soakGateDisabled: true });
+        const r = check({ ...failingArgs, soakGateDisabled: true, nowMs: Date.parse('2026-08-01T18:00:00Z') });
         expect(r.ok).toBe(true);
         expect(r.errors).toEqual([]);
         const note = r.notes.join(' ');
@@ -1885,12 +1885,33 @@ describe('check-staging-evidence', () => {
       });
 
       it('never claims evidence was produced', () => {
-        const r = check({ ...failingArgs, soakGateDisabled: true });
+        const r = check({ ...failingArgs, soakGateDisabled: true, nowMs: Date.parse('2026-08-01T18:00:00Z') });
         const note = r.notes.join(' ');
         expect(note).toMatch(/NOT been evaluated|no staging soak evidence/i);
         // A bypass pass must not be mistakable for the accept-notes the real
         // evidence paths emit.
         expect(note).not.toMatch(/coverage accepted/i);
+      });
+
+      it('stops honoring the variable once the bypass window has closed', () => {
+        const r = check({
+          ...failingArgs,
+          soakGateDisabled: true,
+          nowMs: Date.parse('2026-08-16T00:00:01Z'),
+        });
+        expect(r.ok).toBe(false);
+        expect(r.notes.join(' ')).toMatch(/bypass window closed/i);
+        expect(r.notes.join(' ')).not.toMatch(/SOAK GATE BYPASSED/);
+      });
+
+      it('is still engaged immediately before the window closes', () => {
+        const r = check({
+          ...failingArgs,
+          soakGateDisabled: true,
+          nowMs: Date.parse('2026-08-15T23:59:59Z'),
+        });
+        expect(r.ok).toBe(true);
+        expect(r.notes.join(' ')).toMatch(/SOAK GATE BYPASSED/);
       });
 
       it('short-circuits before any other evidence path, including T0 classification', () => {
@@ -1899,6 +1920,7 @@ describe('check-staging-evidence', () => {
           body: '',
           files: ['docs/staging/README.md'],
           soakGateDisabled: true,
+          nowMs: Date.parse('2026-08-01T18:00:00Z'),
         });
         expect(r.ok).toBe(true);
         expect(r.notes.join(' ')).toMatch(/SOAK GATE BYPASSED/);

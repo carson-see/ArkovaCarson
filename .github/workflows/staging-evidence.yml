@@ -12,6 +12,15 @@ name: Staging Soak Evidence
 # Every other prod-bound PR must produce real evidence; T1 expedited evidence
 # still requires exact head SHA, health/smoke, rollback, rationale, and approval.
 #
+# ⚠️ TEMPORARY EXCEPTION TO THE PARAGRAPH ABOVE (founder directive 2026-08-01):
+# the repository variable `SOAK_GATE_DISABLED` (threaded to the check step at
+# the bottom of this file) short-circuits the whole gate to a pass while it is
+# the literal string "true". It is still not a *label* and still not anything a
+# PR author can set — but while it is set, "every other prod-bound PR must
+# produce real evidence" is NOT live behaviour. It stops being honored after
+# 2026-08-16T00:00:00Z regardless of the variable. Re-enable with:
+#   gh variable set SOAK_GATE_DISABLED --body false
+#
 # SCRUM-3026 (2026-07-28) — live-state fix: `github.sha` and
 # `github.event.pull_request.*` are FROZEN at the moment the triggering event
 # was delivered. A bare re-run of an already-created job (GitHub UI "Re-run
