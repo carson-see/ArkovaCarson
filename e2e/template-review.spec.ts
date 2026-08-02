@@ -224,7 +224,10 @@ test.describe('AI-03 template review — privacy-contract happy path', () => {
       await skipButton.click();
     }
     await expect(readyHeading).toBeVisible({ timeout: 15000 });
-    await page.getByRole('button', { name: /Secure Document/i }).last().click();
+    // QUEUE-01 / SCRUM-2894: confirm-step submit is now "Add to Queue"
+    // (data-testid="securing-path-queue") — Secure Instantly is R5-dark
+    // this sprint, so it's the only confirm button rendered.
+    await page.getByTestId('securing-path-queue').click();
     await expect(page.getByText(/Document Submitted/i)).toBeVisible({ timeout: 20000 });
 
     // ── PRIVACY CONTRACT ASSERTIONS ──
