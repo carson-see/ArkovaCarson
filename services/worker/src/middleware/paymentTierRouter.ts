@@ -18,6 +18,7 @@ import { Request, Response, NextFunction } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getCorrelationId } from '../utils/correlationId.js';
+import { captureCreditRpcFailureAlert } from '../utils/sentry.js';
 
 export type PaymentTier = 'credits' | 'stripe_metered' | 'x402' | 'admin_bypass' | 'beta_unlimited';
 
@@ -93,7 +94,21 @@ async function tryCredits(orgId: string, userId: string, cost: number): Promise<
     });
 
     if (deductError) {
+      // Fail OPEN by construction: returning null here makes the caller fall
+      // through to the next payment tier (Stripe metered billing) even though
+      // the org already had credits — the customer gets CHARGED instead of a
+      // credit they already paid for being consumed. Behavior intentionally
+      // unchanged (product decision); this alert makes the leak visible.
       logger.warn({ error: deductError }, 'Credit deduction failed');
+      captureCreditRpcFailureAlert({
+        rpc: 'deduct_unified_credits',
+        operation: 'paymentTierRouter.tryCredits',
+        failMode: 'open',
+        error: new Error('deduct_unified_credits failed — falling through to Stripe metered billing'),
+        orgId,
+        userId,
+        extra: { amount: cost },
+      });
       return null;
     }
 
