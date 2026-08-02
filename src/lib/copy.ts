@@ -2905,6 +2905,7 @@ export const PUBLIC_FOOTER_LABELS = {
   NAV_CONTACT: 'Contact',
   NAV_PRIVACY: 'Privacy',
   NAV_TERMS: 'Terms',
+  NAV_THIRD_PARTY_NOTICES: 'Third-Party Notices',
   COPYRIGHT: 'Arkova',
   STEP_PREFIX: 'Step',
 } as const;
@@ -2914,6 +2915,30 @@ export const LEGAL_PAGE_LABELS = {
     'We may update this policy from time to time. Material changes will be posted here, and registered users will receive notice when required.',
   TERMS_UPDATE_NOTICE:
     'We may update these terms from time to time. Material changes will be posted here, and registered users will receive notice when required.',
+} as const;
+
+// =============================================================================
+// THIRD-PARTY NOTICES PAGE (engineering-counsel LGPL/MIT review, 2026-07-28)
+// =============================================================================
+
+export const THIRD_PARTY_NOTICES_LABELS = {
+  PAGE_TITLE: 'Third-Party Notices — Arkova',
+  PAGE_DESCRIPTION: 'Open-source components used to build Arkova, their licenses, and license text.',
+  HEADING: 'Third-Party Notices',
+  INTRO:
+    'Arkova is built with open-source software. This page lists the third-party components included in our applications and their license terms, including the components with obligations beyond a standard permissive license.',
+  COPYLEFT_SECTION_HEADING: 'Components with additional license obligations',
+  COPYLEFT_SECTION_INTRO:
+    'These components carry license terms beyond a standard permissive license (MIT/ISC/BSD/Apache-2.0). Each entry states what is used, how, and links the full license text.',
+  PENDING_BADGE: 'In development — not yet shipped',
+  UNMODIFIED_LABEL: 'Used unmodified from the published upstream release.',
+  SOURCE_LINK_LABEL: 'Unmodified upstream source',
+  LICENSE_TEXT_LABEL: 'License text',
+  GENERAL_SECTION_HEADING: 'Open-source components',
+  GENERAL_SECTION_INTRO:
+    'The following components are used under their respective permissive licenses (MIT, ISC, BSD, Apache-2.0, and similar). This list is generated from our dependency tree.',
+  GENERATED_AT_PREFIX: 'List generated',
+  REPOSITORY_LABEL: 'Repository',
 } as const;
 
 // =============================================================================
