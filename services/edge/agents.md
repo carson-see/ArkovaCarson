@@ -98,6 +98,36 @@ harness; PR-2: BUG-1 RPC; PR-3: nessie proxy through the worker).
   (Gemini `gemini-embedding-001`) — the tripwire for BUG-3a. Flip its `.not`
   assertion to equality when PR-3 unifies the model.
 
+## 2026-08-02 — the fingerprint filter is a DATABASE invariant; our tests only mock it (0386)
+
+Read this before trusting `mcp-tools.test.ts`'s two "filtered by RPC" cases.
+
+`get_public_anchor_by_fingerprint` is documented below as filtering to
+`status = 'SECURED'`. **Production had silently drifted** to
+`status IN ('SECURED','SUBMITTED','PENDING')` — no migration on main redefined
+the function after `0339`, so the running body had no source in the repo — and
+3 PENDING + 48,149 SUBMITTED anchors were confirmable by an anonymous caller.
+Migration `0386` restores it.
+
+`mcp-tools.test.ts`'s `'PENDING fingerprint filtered by RPC → UNKNOWN'` and its
+SUBMITTED twin passed throughout, because they **mock the RPC**: they assert
+this layer's mapping of `{error:'Record not found'}` → `UNKNOWN`, while the
+fixture supplies the premise that the database filters. They did not fail to
+catch the drift — they certified it.
+
+Division of ownership, keep both:
+- **This package** owns the edge layer's *handling* of the RPC result. Mocking
+  the RPC here is correct.
+- **`tests/rls/fingerprint-lookup-secured-only.test.ts`** owns the SQL predicate,
+  against a live database as a real `anon` client.
+
+The general rule, and why it belongs in your head and not just in a file: **a
+mock may stand in for a COLLABORATOR, never for the INVARIANT under test.** When
+the assertion is "the database refuses to answer", the database has to be the
+one refusing. Full statement, with the two test shapes that make such a suite
+non-vacuous (positive control; assert indistinguishability rather than mere
+refusal), is in `tests/rls/agents.md`.
+
 ## Edge MCP Truthfulness PR-2 — verify-by-fingerprint via DEFINER RPC (2026-06-05)
 
 BUG-1: the `verify` / `verify_document` / `get_fingerprint` tools returned
