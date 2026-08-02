@@ -37,6 +37,7 @@
     "ci:staging-gcloud-policy": "tsx scripts/ci/check-staging-gcloud-policy.ts",
     "ci:duplicate-artifacts": "tsx scripts/ci/check-duplicate-artifacts.ts",
     "ci:retry-after-429": "tsx scripts/ci/check-retry-after-429.ts",
+    "ci:compliance-mapping-mirror": "tsx scripts/ci/check-compliance-mapping-mirror.ts",
     "ci:sonar-quality-gate": "tsx scripts/ci/check-sonar-quality-gate.ts",
     "security:license-denylist": "tsx scripts/security/license-denylist.ts package-lock.json services/worker/package-lock.json",
     "ci:staging-evidence": "tsx scripts/ci/check-staging-evidence.ts",
