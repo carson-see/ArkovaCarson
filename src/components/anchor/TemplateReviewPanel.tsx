@@ -3,9 +3,17 @@
  *
  * Review/correct step for AI-extracted credential fields:
  *  - Renders every extracted field; ALL fields are editable.
- *  - Low-confidence fields are visually flagged and REQUIRE explicit
- *    acknowledgment ("This is correct") or correction (an edit) before the
- *    parent flow may proceed — reported via `onReviewStateChange`.
+ *  - Fields the extractor was least sure about are visually flagged and REQUIRE
+ *    explicit acknowledgment ("This is correct") or correction (an edit) before
+ *    the parent flow may proceed — reported via `onReviewStateChange`.
+ *
+ * SCRUM-2914 (Founder UI findings): the per-field and overall confidence
+ * PERCENTAGES were removed — extraction confidence scoring is unreliable and
+ * must not be surfaced to users. This completes the 2026-07-22 pass, which
+ * removed the same UI from `AIFieldSuggestions` and `ExtractionQualityBanner`
+ * but missed this panel. The confidence value still drives which fields get
+ * flagged, as an internal implementation detail; do NOT render it. "Needs your
+ * review" is an honest instruction, a percentage is a false precision claim.
  *  - Gated by ENABLE_AI_EXTRACTION: flag off → the panel renders NOTHING and
  *    reports review-complete so the flow is never blocked (absent, not broken).
  *
@@ -55,7 +63,6 @@ function labelForField(key: string): string {
 
 interface TemplateReviewPanelProps {
   fields: ExtractionField[];
-  overallConfidence: number;
   /** Propagates a corrected value upstream (marks the field `edited`). */
   onFieldEdit: (key: string, value: string) => void;
   /**
@@ -69,7 +76,6 @@ interface TemplateReviewPanelProps {
 
 export function TemplateReviewPanel({
   fields,
-  overallConfidence,
   onFieldEdit,
   onReviewStateChange,
   lowConfidenceThreshold = LOW_CONFIDENCE_THRESHOLD,
@@ -179,9 +185,6 @@ export function TemplateReviewPanel({
                     <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       {labelForField(field.key)}
                     </span>
-                    <span className="text-[10px] text-muted-foreground">
-                      {Math.round(field.confidence * 100)}%
-                    </span>
                     {isPending && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium border text-amber-500 bg-amber-500/10 border-amber-500/20">
                         <TriangleAlert className="h-3 w-3" />
@@ -281,9 +284,6 @@ export function TemplateReviewPanel({
           {reviewComplete
             ? TEMPLATE_REVIEW_LABELS.ALL_REVIEWED_NOTICE
             : TEMPLATE_REVIEW_LABELS.REVIEW_REQUIRED_NOTICE}
-        </span>
-        <span className="text-muted-foreground ml-auto">
-          {Math.round(overallConfidence * 100)}%
         </span>
       </div>
     </div>
