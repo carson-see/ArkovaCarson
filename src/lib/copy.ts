@@ -2425,6 +2425,49 @@ export const AUTH_FORM_LABELS = {
   CREATING_ACCOUNT: 'Creating account...',
 } as const;
 
+// =============================================================================
+// ACCEPT INVITE (SCRUM-3012) — /accept-invite?token=...
+// =============================================================================
+
+export const ACCEPT_INVITE_LABELS = {
+  PAGE_TITLE: "You're invited",
+  LOADING: 'Loading your invitation…',
+  INVITED_TO_JOIN: 'You have been invited to join',
+  AS_A_MEMBER: 'as a member.',
+  AS_AN_ADMINISTRATOR: 'as an administrator.',
+
+  INVALID_TITLE: 'Invalid invitation link',
+  INVALID_DESCRIPTION: 'This invitation link is invalid. Please check your email for the correct link.',
+
+  EXPIRED_TITLE: 'This invitation has expired',
+  EXPIRED_DESCRIPTION: 'Ask your organization administrator to send a new invitation.',
+
+  ALREADY_USED_TITLE: 'Invitation already used',
+  ALREADY_USED_DESCRIPTION: 'This invitation has already been accepted. Ask your administrator to send a new one if you need access again.',
+
+  ACCOUNT_EXISTS_TITLE: 'You already have an account',
+  ACCOUNT_EXISTS_DESCRIPTION: 'Sign in with this email address to accept the invitation.',
+  SIGN_IN_TO_ACCEPT: 'Sign in to accept',
+
+  FULL_NAME_LABEL: 'Full name',
+  EMAIL_LABEL: 'Email address',
+  PASSWORD_LABEL: 'Create a password',
+  PASSWORD_PLACEHOLDER: 'Create a password (8+ characters)',
+  CREATE_AND_JOIN: 'Create account and join',
+  JOINING: 'Joining…',
+
+  SUCCESS_JOINED_TITLE: "You're in",
+  SUCCESS_JOINED_DESCRIPTION: 'Your account has joined the organization.',
+  GO_TO_DASHBOARD: 'Go to dashboard',
+
+  SUCCESS_VERIFY_TITLE: 'Confirm your email to finish',
+  SUCCESS_VERIFY_DESCRIPTION: "We've sent a confirmation link to your email. Confirm it to sign in.",
+  VERIFICATION_EMAIL_FAILED: "Your account was created, but we couldn't send the confirmation email. Contact support to finish setting up sign-in.",
+
+  ERROR_GENERIC: 'Something went wrong accepting this invitation. Please try again.',
+  TRY_AGAIN: 'Try again',
+} as const;
+
 /**
  * SCRUM-2907 — copy for a confirmation link that did not work.
  *
