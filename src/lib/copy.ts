@@ -2425,6 +2425,69 @@ export const AUTH_FORM_LABELS = {
   CREATING_ACCOUNT: 'Creating account...',
 } as const;
 
+// =============================================================================
+// ACCEPT INVITE (SCRUM-3012) — /accept-invite?token=...
+// =============================================================================
+
+export const ACCEPT_INVITE_LABELS = {
+  PAGE_TITLE: "You're invited",
+  LOADING: 'Loading your invitation…',
+  INVITED_TO_JOIN: 'You have been invited to join',
+  AS_A_MEMBER: 'as a member.',
+  AS_AN_ADMINISTRATOR: 'as an administrator.',
+
+  INVALID_TITLE: 'Invalid invitation link',
+  INVALID_DESCRIPTION: 'This invitation link is invalid. Please check your email for the correct link.',
+
+  EXPIRED_TITLE: 'This invitation has expired',
+  EXPIRED_DESCRIPTION: 'Ask your organization administrator to send a new invitation.',
+
+  ALREADY_USED_TITLE: 'Invitation already used',
+  ALREADY_USED_DESCRIPTION: 'This invitation has already been accepted. Ask your administrator to send a new one if you need access again.',
+
+  ACCOUNT_EXISTS_TITLE: 'You already have an account',
+  ACCOUNT_EXISTS_DESCRIPTION: 'Sign in with this email address to accept the invitation.',
+  SIGN_IN_TO_ACCEPT: 'Sign in to accept',
+
+  FULL_NAME_LABEL: 'Full name',
+  EMAIL_LABEL: 'Email address',
+  PASSWORD_LABEL: 'Create a password',
+  PASSWORD_PLACEHOLDER: 'Create a password (8+ characters)',
+  CREATE_AND_JOIN: 'Create account and join',
+  JOINING: 'Joining…',
+
+  SUCCESS_JOINED_TITLE: "You're in",
+  SUCCESS_JOINED_DESCRIPTION: 'Your account has joined the organization.',
+  GO_TO_DASHBOARD: 'Go to dashboard',
+
+  SUCCESS_VERIFY_TITLE: 'Confirm your email to finish',
+  SUCCESS_VERIFY_DESCRIPTION: "We've sent a confirmation link to your email. Confirm it to sign in.",
+  VERIFICATION_EMAIL_FAILED: "Your account was created, but we couldn't send the confirmation email. Contact support to finish setting up sign-in.",
+
+  ERROR_GENERIC: 'Something went wrong accepting this invitation. Please try again.',
+  TRY_AGAIN: 'Try again',
+} as const;
+
+/**
+ * SCRUM-2907 — copy for a confirmation link that did not work.
+ *
+ * Supabase signals a dead link with `error`/`error_code` on the redirect hash
+ * and creates no session. Previously the app could not tell that apart from
+ * "not signed in yet" and silently redirected to the login form, so a user
+ * whose link had expired saw no explanation and had no route forward.
+ */
+export const AUTH_CALLBACK_LABELS = {
+  COMPLETING: 'Completing sign in...',
+  EXPIRED_TITLE: 'This link has expired',
+  EXPIRED_DESCRIPTION:
+    'Verification links are single-use and time-limited. Request a new link to finish setting up your account.',
+  FAILED_TITLE: 'We could not complete sign in',
+  FAILED_DESCRIPTION:
+    'Something went wrong verifying this link. Try again, or request a new link.',
+  REQUEST_NEW_LINK: 'Request a new link',
+  BACK_TO_SIGN_IN: 'Back to sign in',
+} as const;
+
 export const BETA_GATE_LABELS = {
   DESCRIPTION: 'Arkova is in closed beta. Enter your invite code to create an account.',
   CODE_LABEL: 'Invite code',
@@ -3301,6 +3364,11 @@ export const SOURCE_PROVENANCE_LABELS = {
   SHARE_LINKEDIN_DESCRIPTION: 'Use your Arkova verification URL as the Credential URL on LinkedIn.',
   PROOF_SECTION_TITLE: 'Evidence Package',
   PROOF_SECTION_DESCRIPTION: 'Cryptographic proof of source provenance included in the verification record.',
+  // SCRUM-2913 (Lane 2 wiring, R-7 §1.13): this is a PROVENANCE link only —
+  // "this record's evidence was sourced from this registry entry" — never a
+  // claim that Arkova is listed, registered, or endorsed by Credential Engine.
+  REGISTRY_REFERENCE_LABEL: 'Registry reference',
+  REGISTRY_REFERENCE_DESCRIPTION: 'A source reference, not a Credential Engine listing or endorsement.',
 } as const;
 
 // ─── LinkedIn Share (CSI-03 / SCRUM-1599) ─────────────────────────────────────
@@ -3795,4 +3863,30 @@ export const SPREADSHEET_MODE_LABELS = {
   DOCUMENT_HINT: 'The whole file is secured as a single record, the same as a PDF or Word document.',
   FILE_SIZE_LABEL: 'Size',
   CHOOSE_DIFFERENT_FILE: 'Choose a different file',
+} as const;
+
+// ─── QUEUE-01 / SCRUM-2894 (L2-A1) — Pending Documents page ─────────────────
+//
+// Append-only block (per CLAUDE.md §6 "Two PRs each appending..." guidance —
+// titled distinctly, added at EOF to avoid colliding with the concurrent
+// terminology-scrub / copy.ts PRs this sprint). Extends the existing
+// SECURE_QUEUE_LABELS / SECURING_CHOICE_LABELS / SECURING_CHOICE_HINTS
+// (defined above, ~line 3420) rather than duplicating them. §1.3-clean: no
+// Wallet / Transaction / Hash / Blockchain / Bitcoin / Testnet / Mainnet /
+// UTXO / Broadcast.
+
+/** The consumer secure-queue page (/queue) — list + remove own items. */
+export const SECURE_QUEUE_PAGE_LABELS = {
+  BATCH_EXPLAINER: 'Queued documents are secured automatically once a day. No action needed — add more anytime.',
+  REMOVE_BUTTON_ARIA: 'Remove from queue',
+  REMOVE_CONFIRM_TITLE: 'Remove from queue?',
+  REMOVE_CONFIRM_BODY: 'This document will not be secured. You can add it again later.',
+  REMOVE_ACTION: 'Remove',
+  REMOVE_TOAST: 'Removed from the queue.',
+  REMOVE_FAILED: 'Could not remove this item. It may have already been secured or removed.',
+  PERSONAL_TAB_LABEL: 'My Queue',
+  ORG_TAB_LABEL: 'Organization Queue',
+  ORG_QUEUE_SUBTITLE: "Documents your organization's members have queued.",
+  OWNER_LABEL: 'Added by',
+  ADMIN_REMOVE_UNAVAILABLE: "Removing another member's queued document isn't available yet.",
 } as const;

@@ -16,6 +16,85 @@ _Last updated: 2026-07-28 (L2-A5 admin org-credit adjust)_
 ## 2026-07-28 — Lane 2: platform-admin org credit add/remove (L2-A5, founder admin-controls)
 
 `admin-actions.ts` adds `handleAdjustOrgCredit` → `POST /api/admin/organizations/:id/credits/adjust` (wired in `routes/admin.ts`), body `{ amount: signed integer, reason: string, idempotency_key: uuid }`. Same `isPlatformAdmin(userId)` gate as every other handler in this file, then dispatches to the new `admin_adjust_org_credit` RPC (migration `0375`). `amount` is signed — positive = GRANT, negative = REVOKE; `reason` and `idempotency_key` are both mandatory (400 if missing/malformed — `idempotency_key` is checked against a UUID-shape regex client-side so a bad key 400s instead of surfacing a raw Postgres cast error). RPC error codes map to HTTP status: `insufficient_balance` / `idempotency_key_conflict` → 409, `org_not_initialized` → 404, anything else / transport error → 500/400. The RPC itself reuses the existing `org_credit_deductions` idempotency ledger (0326/0341) via its `GRANT`/`REVOKE` `entry_type` values — **no new table** — and writes an `audit_events` row (actor + reason) in the same transaction; see `supabase/migrations/agents.md` for the full RPC writeup. `admin-lists.ts`'s `handleAdminOrganizations` now also selects `org_credits.balance` and returns it as `credit_balance` per org, so the admin organizations list can render/edit it (`AdminOrganizationsPage.tsx`, see `src/pages/agents.md`). Tests in `admin-actions.test.ts` cover the gate, validation, RPC dispatch shape (positive/negative amount passthrough), idempotent-replay passthrough, and the error-code → status mapping.
+_Last updated: 2026-07-28 (SCRUM-3012 invitation accept)_
+
+## 2026-07-28 — Org-invite flow, end to end (SCRUM-3012)
+
+Root cause: `routes/anchor.ts`'s `/send-invitation-email` built the emailed link as
+`/login?invite=true&org=...`, dropping `invitations.token` entirely — nothing in
+the app ever consumed a token because the link never carried one, so "accept"
+could not exist. Prod evidence: 1 invitation row ever, 0 accepted, 0 emails.
+
+`invitations.ts` (new) is the missing accept step, DI-style (`{ db, logger }`
+deps, mirrors `account-delete.ts` — makes the many differently-shaped
+`db.from()` chains mockable without `vi.mock` hoisting gymnastics):
+
+- `getInvitationPreview(deps, token)` — public preview (org name, email, role,
+  `expired`/`alreadyUsed` booleans) for the `/accept-invite` page. No auth —
+  the token itself is the proof of access.
+- **Token shape is validated before the query** (shared `loadInvitationByToken`,
+  so both preview and accept get it). `invitations.token` is a `uuid` column, so
+  `.eq('token', <non-uuid>)` makes Postgres raise 22P02 → supabase-js `error` →
+  `internal_error` → HTTP 500 + an error-level log, for input as ordinary as a
+  link mangled by an email client. A malformed token is not a known invitation:
+  it returns `not_found` (404) without touching the DB.
+- `acceptInvitation(deps, { token, password?, fullName?, callerId })` —
+  validates token + `expires_at`, then branches:
+  - **`callerId` present** (authenticated) — the caller's `profiles.email`
+    MUST match the invitation's email (else `email_mismatch`, 403); on match,
+    only `org_members` is inserted. No account creation risk on this path.
+  - **`callerId` null, existing account** (a `profiles` row already has that
+    email) — `account_exists` (409); the frontend sends them to sign in
+    instead of silently trying (and failing) to create a duplicate. The one
+    exception is `reclaimUnconfirmedSquatter`, which deletes the occupying auth
+    user so the real recipient can provision. It is deliberately hard to
+    trigger — ALL THREE of `email_confirmed_at IS NULL`, created at/after the
+    invitation, **and zero `org_members` rows** must hold. The membership check
+    is load-bearing: two orgs can each hold a pending invite for one address
+    (the unique constraint is per-org) and multi-org membership is supported, so
+    a genuine invitee who accepted org B's invite and then clicked org A's older
+    link matched the first two conditions and had his org B membership deleted
+    with no way to replay the already-'accepted' invitation B. Never relax this
+    to a two-condition check. Deletion relies on the
+    `ON DELETE CASCADE` from `auth.users` — do NOT re-add a blanket
+    `org_members.delete().eq('user_id', …)`.
+  - **`callerId` null, no existing account** — creates the auth user
+    WORKER-SIDE via `db.auth.admin.createUser({ email, password,
+    email_confirm: false })` (Constitution §1.4: `supabase.auth.admin` never
+    reaches the browser), inserts `profiles` (tolerates a `23505` race against
+    a possible DB trigger — not a failure), then provisions membership.
+  - Idempotent replay: an already-`accepted` invitation only succeeds again
+    when the caller can prove membership (`org_members` row) — otherwise
+    `already_used` (410, not a silent no-op for a stranger).
+  - **Rollback on partial failure (new-account path only):** if anything
+    after `createUser` throws, `db.auth.admin.deleteUser(newUserId)` runs
+    best-effort so a partial failure never leaves a dangling, re-invite-
+    blocking auth user. The existing-user join path never creates an account,
+    so it never needs this.
+  - **Email verification interplay:** prod runs `mailer_autoconfirm=false`, so
+    a brand-new account still needs a confirmed email before sign-in works —
+    the invite token proved mailbox control ONCE, but login keeps its normal
+    gate. The worker mints a Supabase signup-confirmation link via
+    `db.auth.admin.generateLink({ type: 'signup', ... })` and sends it through
+    the same audited `sendEmail`/Resend pipeline as every other outbound
+    email (own template `buildAccountVerificationEmail`, own `emailType:
+    'account_verification'`) rather than relying on Supabase's separate
+    built-in mailer. A failed verification-email send does NOT undo the
+    already-provisioned account/membership — surfaced via
+    `verificationEmailSent: false` instead.
+
+`InvitationError` carries a stable `code` (`not_found` / `expired` /
+`already_used` / `email_mismatch` / `account_exists` / `invalid_input` /
+`internal_error`) the route layer (`routes/anchor.ts`) maps 1:1 to an HTTP
+status — never a raw DB/RPC message reaches the client.
+
+**Known follow-up, deliberately not fixed here:** two competing SQL overloads
+of `invite_member()` exist in the baseline (`(invitee_email, invitee_role,
+target_org_id)` — SEC-RECON-8-guarded, blocks inviting as `ORG_ADMIN`, the one
+the frontend actually calls; and an older `(inviter_user_id, invitee_email,
+invitee_role, target_org_id)` shape whose `status='PENDING'` insert would
+violate the `invitations_status_check` CHECK constraint if ever called). Not
+addressed in SCRUM-3012 — flagged in the PR body as a dedup follow-up.
 
 ## 2026-07-21 — Lane 2 PI-0.5: partner-provisioning skeleton is flag-gated + statically guarded (SCRUM-2990)
 
