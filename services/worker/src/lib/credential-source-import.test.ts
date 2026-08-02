@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
   CREDENTIAL_SOURCE_IMPORT_MAX_BYTES,
@@ -107,6 +108,104 @@ describe('credential-source-import', () => {
     expect(result.preview.credential_issuer).toBe('Structured Issuer');
     expect(result.preview.credential_recipient_display).toBe('Source Recipient');
     expect(result.preview.credential_recipient_hash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  // SCRUM-2913 (Lane 2) — 0362's get_public_anchor allow-list widening exists
+  // to project `registry_url` + `ce_envelope_sha256`, but nothing on main wrote
+  // them into anchors.metadata (an inert column). This wires the producer side:
+  // when a credential source is genuinely fetched from the CE Registry AND the
+  // envelope carries a real `ceterms:ctid`, stamp both provenance keys onto
+  // `preview.public_metadata` (which `buildAnchorInsertPayload` spreads into
+  // `anchors.metadata`, and 0362 projects to anon callers).
+  describe('CE Registry provenance (registry_url + ce_envelope_sha256)', () => {
+    const REAL_CTID = 'ce-11111111-2222-4333-8444-555555555555';
+
+    it('stamps registry_url + ce_envelope_sha256 when fetched from the real CE Registry host with a real ctid', async () => {
+      const body = JSON.stringify({
+        '@context': 'https://credentialengineregistry.org/ns/ctdlasn',
+        '@type': 'ceterms:Certificate',
+        'ceterms:ctid': REAL_CTID,
+        'ceterms:name': 'Example CE Certificate',
+        'ceterms:ownedBy': [{ 'ceterms:name': 'Example CE Org' }],
+      });
+      const expectedHash = createHash('sha256').update(body).digest('hex');
+
+      const result = await buildCredentialSourceImportPreview({
+        source_url: `https://credentialengineregistry.org/graph/${REAL_CTID}`,
+      }, {
+        fetchFn: vi.fn().mockResolvedValue(response(body, { headers: { 'content-type': 'application/ld+json' } })),
+        urlGuard: vi.fn().mockResolvedValue(false),
+        now: () => FIXED_NOW,
+      });
+
+      expect(result.preview.registry_url).toBe(`https://credentialengineregistry.org/resources/${REAL_CTID}`);
+      expect(result.preview.ce_envelope_sha256).toBe(expectedHash);
+      expect(result.preview.public_metadata).toMatchObject({
+        registry_url: `https://credentialengineregistry.org/resources/${REAL_CTID}`,
+        ce_envelope_sha256: expectedHash,
+      });
+    });
+
+    it('omits registry_url + ce_envelope_sha256 (never null-writes them) when the source is NOT the real CE Registry host, even with a matching ceterms:ctid claim', async () => {
+      const body = JSON.stringify({
+        '@type': 'ceterms:Certificate',
+        'ceterms:ctid': REAL_CTID,
+        'ceterms:name': 'Spoofed CE-shaped payload',
+      });
+
+      const result = await buildCredentialSourceImportPreview({
+        source_url: 'https://not-the-real-registry.example/graph/spoof',
+      }, {
+        fetchFn: vi.fn().mockResolvedValue(response(body, { headers: { 'content-type': 'application/ld+json' } })),
+        urlGuard: vi.fn().mockResolvedValue(false),
+        now: () => FIXED_NOW,
+      });
+
+      expect(result.preview.registry_url).toBeNull();
+      expect(result.preview.ce_envelope_sha256).toBeNull();
+      expect(result.preview.public_metadata).not.toHaveProperty('registry_url');
+      expect(result.preview.public_metadata).not.toHaveProperty('ce_envelope_sha256');
+    });
+
+    it('omits registry_url + ce_envelope_sha256 when the CE Registry host is real but the envelope carries no ctid', async () => {
+      const body = JSON.stringify({
+        '@type': 'ceterms:Certificate',
+        'ceterms:name': 'CE Registry response with no ctid',
+      });
+
+      const result = await buildCredentialSourceImportPreview({
+        source_url: 'https://credentialengineregistry.org/graph/unknown',
+      }, {
+        fetchFn: vi.fn().mockResolvedValue(response(body, { headers: { 'content-type': 'application/ld+json' } })),
+        urlGuard: vi.fn().mockResolvedValue(false),
+        now: () => FIXED_NOW,
+      });
+
+      expect(result.preview.registry_url).toBeNull();
+      expect(result.preview.ce_envelope_sha256).toBeNull();
+      expect(result.preview.public_metadata).not.toHaveProperty('registry_url');
+      expect(result.preview.public_metadata).not.toHaveProperty('ce_envelope_sha256');
+    });
+
+    it('omits registry_url + ce_envelope_sha256 when the ctid is fabricated-shaped (not a real ce-<uuid>)', async () => {
+      const body = JSON.stringify({
+        '@type': 'ceterms:Certificate',
+        'ceterms:ctid': 'urn:ctid:fake-org',
+        'ceterms:name': 'Fabricated ctid shape',
+      });
+
+      const result = await buildCredentialSourceImportPreview({
+        source_url: 'https://credentialengineregistry.org/graph/fabricated',
+      }, {
+        fetchFn: vi.fn().mockResolvedValue(response(body, { headers: { 'content-type': 'application/ld+json' } })),
+        urlGuard: vi.fn().mockResolvedValue(false),
+        now: () => FIXED_NOW,
+      });
+
+      expect(result.preview.registry_url).toBeNull();
+      expect(result.preview.ce_envelope_sha256).toBeNull();
+      expect(result.preview.public_metadata).not.toHaveProperty('registry_url');
+    });
   });
 
   it('ignores invalid date-shaped metadata instead of building invalid evidence', async () => {

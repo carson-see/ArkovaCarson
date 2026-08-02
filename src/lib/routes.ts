@@ -26,6 +26,7 @@ export const ROUTES = {
   API_SANDBOX: '/developers/sandbox',
   CLE_API: '/cle',
   ACTIVATE: '/activate',
+  ACCEPT_INVITE: '/accept-invite',
   HOW_IT_WORKS: '/how-it-works',
   USE_CASES: '/use-cases',
   ENTERPRISE: '/enterprise',
@@ -60,6 +61,11 @@ export const ROUTES = {
   CREDENTIAL_TEMPLATES: '/settings/credential-templates',
   HELP: '/help',
   REVIEW_PENDING: '/review-pending',
+
+  // Consumer secure queue (QUEUE-01 / SCRUM-2894 — L2-A1). The
+  // `consumer_secure_queue` surface from queueContract.ts's QUEUE_SURFACES —
+  // distinct from ANCHOR_QUEUE (org_duplicate_review) below.
+  SECURE_QUEUE: '/queue',
 
   // Attestations (Phase II)
   ATTESTATIONS: '/attestations',
