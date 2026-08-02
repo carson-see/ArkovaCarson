@@ -38,6 +38,9 @@ vi.mock('../_org-auth.js', () => ({
   getCallerOrgId: vi.fn(),
 }));
 
+const captureCreditRpcFailureAlert = vi.hoisted(() => vi.fn());
+vi.mock('../../utils/sentry.js', () => ({ captureCreditRpcFailureAlert }));
+
 import { db } from '../../utils/db.js';
 import { getCallerOrgId } from '../_org-auth.js';
 import { creditsRouter, CREDIT_PACKS } from './credits.js';
@@ -156,6 +159,33 @@ describe('POST /api/v1/credits/purchase', () => {
     expect(res.body.status).toBe('completed');
     expect(res.body.credits_added).toBe(1000);
     expect(res.body.mode).toBe('development');
+    // Happy path — no alert.
+    expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 and alerts Sentry (fail-CLOSED) when deduct_unified_credits grant fails', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+    (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: null,
+      error: { message: 'grant RPC failed' },
+    });
+
+    const app = createApp('user-1');
+    const res = await request(app)
+      .post('/api/v1/credits/purchase')
+      .send({ pack_id: 'pack_1k' });
+
+    expect(res.status).toBe(500);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpc: 'deduct_unified_credits',
+        operation: 'credits.purchase.devGrant',
+        failMode: 'closed',
+        orgId: 'org-1',
+        userId: 'user-1',
+      }),
+    );
   });
 
   it('calls deduct_unified_credits with negative amount (grant)', async () => {

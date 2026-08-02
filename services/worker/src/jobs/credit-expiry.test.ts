@@ -23,6 +23,9 @@ vi.mock('../utils/db.js', () => ({
   },
 }));
 
+const captureCreditRpcFailureAlert = vi.hoisted(() => vi.fn());
+vi.mock('../utils/sentry.js', () => ({ captureCreditRpcFailureAlert }));
+
 import { processMonthlyCredits } from './credit-expiry.js';
 
 describe('processMonthlyCredits', () => {
@@ -37,14 +40,23 @@ describe('processMonthlyCredits', () => {
 
     expect(result).toBe(5);
     expect(mockRpc).toHaveBeenCalledWith('allocate_monthly_credits', undefined);
+    // Happy path — no alert.
+    expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
   });
 
-  it('returns 0 on RPC error', async () => {
+  it('returns 0 on RPC error and alerts Sentry (no fallback exists for this RPC)', async () => {
     mockRpc.mockResolvedValue({ data: null, error: { message: 'RPC failed' } });
 
     const result = await processMonthlyCredits();
 
     expect(result).toBe(0);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpc: 'allocate_monthly_credits',
+        failMode: 'closed',
+      }),
+    );
   });
 
   it('returns 0 when no users need processing', async () => {
@@ -53,13 +65,21 @@ describe('processMonthlyCredits', () => {
     const result = await processMonthlyCredits();
 
     expect(result).toBe(0);
+    expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
   });
 
-  it('handles thrown errors', async () => {
+  it('handles thrown errors and alerts Sentry', async () => {
     mockRpc.mockRejectedValue(new Error('Network error'));
 
     const result = await processMonthlyCredits();
 
     expect(result).toBe(0);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpc: 'allocate_monthly_credits',
+        failMode: 'closed',
+      }),
+    );
   });
 });

@@ -27,6 +27,7 @@ import { buildVerificationResult, EMPTY_API_RICH_FIELDS } from './verify.js';
 import type { AnchorByPublicId } from './verify.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 import { runWithConcurrency } from '../../utils/concurrency.js';
+import { recordAuditEvent } from '../../utils/auditEvent.js';
 
 const router = Router();
 
@@ -251,7 +252,7 @@ router.post('/verify', async (req: Request, res: Response) => {
     }
 
     // Audit trail — log every oracle query
-    void db.from('audit_events').insert({
+    void recordAuditEvent({
       event_type: 'ORACLE_QUERY',
       event_category: 'ANCHOR',
       org_id: req.apiKey?.orgId ?? undefined,
