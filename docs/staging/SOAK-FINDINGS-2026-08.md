@@ -48,9 +48,11 @@ Observed on **both** rigs, worsening over the first few hours (launch ~27–30%,
 
 **Fix ready:** [PR #1768](https://github.com/carson-see/ArkovaCarson/pull/1768) (draft, T2). Adds a `skip` predicate so the per-IP limiter bypasses `/api/v1/*` requests carrying a syntactically valid API key — those stay fully governed by `apiV1Router`'s own 1,000/min-per-key limiter. Anon traffic and everything outside `/api/v1` is unchanged. Integration test proves both directions; full worker suite (8,921 tests) green. **Not deployed to either soak rig** — needs a T2 soak (12h + rollback rehearsal) and explicit CTO go-ahead before touching the frozen evidence.
 
-## F-3 — `SUBMITTED` with NULL `chain_tx_id` has no recovery path (MEDIUM, open)
+## F-3 — `SUBMITTED` with NULL `chain_tx_id` has no recovery path (MEDIUM, ROOT-CAUSED, fix in draft PR #1784)
 
 `recover_stuck_broadcasts` queries only `BROADCASTING`-state anchors. An anchor left `SUBMITTED` with no txid — the state a broadcast attempt produces if it fails between the status write and the txid write — is structurally outside every scheduled job's scope. Verified by live fault injection that the job *does* correctly recover its in-scope `BROADCASTING` state, which isolates the gap precisely.
+
+**Fix:** `recover_stuck_broadcasts()` widened to `status IN ('BROADCASTING', 'SUBMITTED')`, keeping every existing guard identical for both branches (`chain_tx_id IS NULL`, `deleted_at IS NULL`, the SCRUM-2692 `anchor_txid_journal` PENDING/HELD protection, `FOR UPDATE SKIP LOCKED`). Migration `0379_f3_recover_submitted_null_txid.sql`, worker-side `broadcast-recovery.ts` extended in parallel. TDD, forward→rollback→verify→re-apply rehearsed against a local Postgres stack, new dedicated unit suite (job previously had none) + env-gated real-Postgres RPC test + structural migration test. **Draft PR #1784** (`fix/f3-submitted-null-txid-recovery`), tier T3 (anchor lifecycle recovery path) — rides the founder's 2026-08-01 no-interim-soaks exception (green-CI merge authorized after the consolidated post-pentest soak), not yet deployed to either frozen soak rig.
 
 ## F-4 — GetBlock broadcast parity NOT covered by either soak (disclosed exception)
 
@@ -111,3 +113,30 @@ Once F-2 unblocked real anchor creation, the `batch-anchors-forced-flush` job (a
 **Fix:** widened the forced-flush schedule from `*/10 * * * *` to `0 */8 * * *` on both rigs (Cloud Scheduler config only, no worker redeploy, no resoak). At the observed ~21 anchors/min combined creation rate, an 8-hour window accumulates toward the real 10,000 ceiling before each forced flush, while Trigger A (≥10,000 claimed) and Trigger B (≥3,000 pending AND ≥3h old) remain untouched and can still fire early if conditions are met. Confirmed live via `gcloud scheduler jobs describe`: both jobs show `0 */8 * * *` / `ENABLED`.
 
 **Side benefit:** because each broadcast commits a single 32-byte merkle root regardless of batch size, transaction fee cost tracks broadcast *count*, not anchor count — fewer, larger batches should reduce total treasury burn over the remaining window versus the prior high-frequency/small-batch pattern, partially addressing the standing signet-BTC-runway watch item.
+
+## F-10 — GetBlock HTTP 405 on `listunspent` root-caused: provider-tier config, not a code bug (CLOSED, no code fix required)
+
+_(Numbering: this entry is filed as F-10 per the assigning CTO session; F-9 is tracked separately by a concurrent bug-log session and is not duplicated here.)_
+
+CTO observed, via `gcloud logging read` against prod service `arkova-worker` (project `arkova1`, us-central1), that **100% of `GetBlockHybridProvider.listUnspent` calls** log:
+
+```
+GetBlockHybridProvider.listUnspent: RPC fallback to mempool.space
+reason: "RPC listunspent failed: HTTP 405"
+```
+
+**Root cause (config/provider-tier, not code):** `listunspent` is a Bitcoin Core **wallet** RPC method. `BITCOIN_RPC_URL` (Secret Manager `bitcoin-rpc-url`) points at GetBlock's **shared/pooled** endpoint tier, which serves many customers off one node with no per-customer wallet loaded — its API gateway rejects the method at the transport layer with a bare HTTP 405 and no JSON-RPC `{error}` envelope, before the request reaches Bitcoin Core. This is distinguishable from an auth failure (would be 401/403) and from a node-level "no wallet loaded" answer (Bitcoin Core would return a JSON-RPC error envelope, typically HTTP-500-wrapped per the `#1408-Finding-1` handling already in `rpcCall`) — the bare-405-no-envelope shape is specifically the signature of a gateway-level method allowlist, confirmed further by the fact that the SAME `rpcUrl` broadcasts successfully (`sendrawtransaction` is not a wallet method). This is not a new finding — first root-caused 2026-04-26 (SCRUM-1262 / R1-8, "forensic 1/8", `services/worker/agents.md`) and already mitigated: `GetBlockHybridProvider.listUnspent`'s untyped `catch` falls back to `mempool.space` (read-only, safe) on any RPC failure and reports every fallback via `emitRpcFallback` (feeds the R0-8 / SCRUM-1254 db-health-monitor fallback-rate view — already alerting at 100%, which is how this was flagged for re-verification).
+
+**What changed this session:** confirmed the existing fallback correctly handles the REAL prod failure shape. The pre-existing regression test (`utxo-provider.test.ts`, `GetBlockHybridProvider listUnspent fallback observability`) only simulated a JSON-RPC-envelope rejection (HTTP 200 + `{error:{message,code}}` body) — a shape this endpoint has never actually produced for `listunspent`. Added a new test case pinning the true shape (bare HTTP 405, unparseable body) plus the exact JSON-RPC request (`POST`, `{jsonrpc:'2.0', method:'listunspent', params:[1,9999999,[address]]}`) and the exact `reason` string (`RPC listunspent failed: HTTP 405`) the fallback-rate dashboard keys off. **The test passes unmodified against the existing code — no production code change was made or needed.** TDD note: per CLAUDE.md §0 rule 1, a red-first bug-fix cycle does not apply here because there is no code bug to fix; the addition closes a test-fidelity gap (pinning the real failure shape instead of an unobserved one) and is disclosed as such rather than staged as a fabricated red→green cycle.
+
+**Config change that WOULD restore sovereign UTXO listing (not done, needs its own story/decision):**
+1. Upgrade to a GetBlock **dedicated-node** plan with the treasury address imported as a watch-only wallet, so `listunspent` is served by GetBlock directly; or
+2. Implement the multi-source `UtxoProvider` already scoped in `docs/sprint-0/lane1/chain-resilience-predesign.md` (Esplora ranked ahead of `mempool.space`, cross-checked value-sum across ≥2 sources, `mempool.space` demoted to one-of-N instead of the sole fallback).
+
+Neither is a same-session hotfix; both require a dedicated story, and (2) requires its own T3 soak.
+
+**CLAUDE.md §1.1 check:** the current wording ("**UTXO listing + fee estimation + frontend balance reads**: still via public `mempool.space`") is already accurate — no wording change needed. `services/worker/agents.md`'s "Bitcoin paths" table is likewise already accurate on this row.
+
+**Related — F-4 broadcast-fallback, reassessed this session:** whether `GetBlockHybridProvider.broadcastTx` should get a symmetrical mempool fallback was reassessed in the same PR. Not implemented — see the F-4 entry above for the original finding and `services/worker/src/chain/agents.md` "2026-08-01 F-4 broadcast-fallback" for the reasoning (existing prepare/persist-then-broadcast architecture already defers safely on ambiguous failures; a fallback is plausible but unvalidated for cross-provider mempool-policy divergence and this is T3 code with no soak capacity available this session).
+
+_Last refreshed: 2026-08-01 by Claude (Lane 1 chain session) — claims verified against: prod log line as reported by CTO session (`gcloud logging read`, service `arkova-worker`, us-central1, 2026-08-01T19:10Z reproduction); `gcloud secrets list --project=arkova1` confirming `bitcoin-rpc-url` + separate `GetBlock` secret names exist (values not read); `.github/workflows/deploy-worker.yml` confirming `BITCOIN_RPC_URL=bitcoin-rpc-url:latest` and `BITCOIN_UTXO_PROVIDER=getblock` are the live prod wiring; `npx vitest run src/chain/` (609/609 passing, worktree HEAD on branch `fix/f10-getblock-405-listunspent`) including the new pinning test; `npx tsc --noEmit` and `npm run lint` clean on the changed files. No prod config, secret, or Cloud Run revision was changed._

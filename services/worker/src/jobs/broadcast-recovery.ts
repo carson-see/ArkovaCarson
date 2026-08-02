@@ -1,11 +1,18 @@
 /**
- * Broadcast Recovery Job (RACE-1)
+ * Broadcast Recovery Job (RACE-1, extended by F-3 / migration 0379)
  *
- * Recovers anchors stuck in BROADCASTING state due to worker crashes.
+ * Recovers anchors stuck in BROADCASTING state due to worker crashes, AND
+ * (F-3, docs/staging/SOAK-FINDINGS-2026-08.md) anchors left SUBMITTED with a
+ * NULL chain_tx_id — the shape a broadcast attempt produces if it fails
+ * between the status write and the txid write. Before migration 0379 that
+ * second shape had no recovery path at all: no scheduled job's WHERE clause
+ * ever selected it. Proven live during the 72h soak (fixture
+ * `5eed0000-...-c1` sat unrecovered for days).
  *
  * Durable journal recovery runs first. Only unjournaled stale claims may enter
  * the generic reset; PENDING and HELD journal cohorts are excluded atomically
- * by migration 0358 and by the manual compatibility fallback below.
+ * by migration 0358 (extended to the SUBMITTED branch by 0379) and by the
+ * manual compatibility fallback below.
  *
  * Constitution refs:
  *   - 1.4: Treasury keys never logged
@@ -25,10 +32,14 @@ export interface BroadcastRecoveryResult {
 }
 
 /**
- * Recover anchors stuck in BROADCASTING state.
+ * Recover anchors stuck in BROADCASTING state, and (F-3, migration 0379)
+ * anchors stuck SUBMITTED with a NULL chain_tx_id.
  *
  * Calls the recover_stuck_broadcasts() RPC which atomically:
- * 1. Finds BROADCASTING anchors older than stale threshold with no chain_tx_id
+ * 1. Finds BROADCASTING or SUBMITTED anchors older than stale threshold with
+ *    no chain_tx_id (a SUBMITTED anchor that already carries a real
+ *    chain_tx_id is never touched — the broadcast happened; resetting it
+ *    would double-spend treasury sats on the next drain)
  * 2. Resets them to PENDING with recovery metadata
  * 3. Returns the recovered anchors for logging
  */
@@ -69,9 +80,14 @@ export async function recoverStuckBroadcasts(
     claimedBy: row.claimed_by ?? 'unknown',
   }));
 
+  // The RPC's public row shape is deliberately unchanged by migration 0379
+  // (no per-row previous-status column — see the migration header), so a
+  // BROADCASTING/SUBMITTED breakdown isn't available here without an extra
+  // query; each recovered row's `anchors.metadata->>'_recovered_from_status'`
+  // carries that provenance for post-hoc investigation.
   logger.warn(
     { count: recovered.length, anchors: recovered.map((a: { id: string }) => a.id) },
-    'Recovered stuck BROADCASTING anchors → PENDING',
+    'Recovered stuck BROADCASTING/SUBMITTED anchors → PENDING',
   );
 
   return { recovered: recovered.length, anchors: recovered };
@@ -79,6 +95,13 @@ export async function recoverStuckBroadcasts(
 
 /**
  * Manual fallback recovery when RPC is not available.
+ *
+ * F-3 (migration 0379): claims BOTH the BROADCASTING branch (RACE-1) and the
+ * SUBMITTED-with-NULL-chain_tx_id branch, mirroring the RPC exactly — a row
+ * that already carries a real chain_tx_id is never touched regardless of
+ * status, and each row's `_recovery_reason` / compare-and-set filter tracks
+ * its OWN previous status (a mixed BROADCASTING+SUBMITTED result set must
+ * never cross-tag or cross-filter between the two).
  *
  * SCRUM-1296: Uses chunked bulk updates instead of per-row UPDATE calls.
  * Each anchor needs unique metadata (previous_claimed_by differs), so we
@@ -96,8 +119,8 @@ async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryRe
 
   const { data: stuck, error: fetchError } = await db
     .from('anchors')
-    .select('id, fingerprint, metadata')
-    .eq('status', 'BROADCASTING')
+    .select('id, fingerprint, status, metadata')
+    .in('status', ['BROADCASTING', 'SUBMITTED'])
     .is('chain_tx_id', null)
     .is('deleted_at', null)
     .lt('updated_at', threshold)
@@ -114,7 +137,8 @@ async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryRe
     const cleanMeta = { ...meta };
     delete cleanMeta._claimed_by;
     delete cleanMeta._claimed_at;
-    return { id: anchor.id, fingerprint: anchor.fingerprint, claimedBy, cleanMeta };
+    const previousStatus = anchor.status as 'BROADCASTING' | 'SUBMITTED';
+    return { id: anchor.id, fingerprint: anchor.fingerprint, claimedBy, cleanMeta, previousStatus };
   });
 
   // SCRUM-1296: Chunked bulk update — process in batches of 100
@@ -127,6 +151,12 @@ async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryRe
 
     // Per-anchor update to preserve existing metadata — each anchor may
     // have different business-critical fields in metadata that must survive.
+    // The compare-and-set `.eq('status', anchor.previousStatus)` guards
+    // against a concurrent transition landing between the SELECT above and
+    // this UPDATE (e.g. a worker legitimately finishing the broadcast in the
+    // interim) — exactly the same race the RPC's FOR UPDATE SKIP LOCKED
+    // closes atomically; this JS fallback only ever runs when the RPC itself
+    // is unavailable.
     const results = await Promise.allSettled(
       chunk.map((anchor) =>
         db
@@ -135,13 +165,15 @@ async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryRe
             status: 'PENDING',
             metadata: {
               ...anchor.cleanMeta,
-              _recovery_reason: 'stuck_broadcasting',
+              _recovery_reason:
+                anchor.previousStatus === 'BROADCASTING' ? 'stuck_broadcasting' : 'stuck_submitted_null_txid',
               _recovered_at: recoveredAt,
+              _recovered_from_status: anchor.previousStatus,
               _previous_claimed_by: anchor.claimedBy,
             },
           })
           .eq('id', anchor.id)
-          .eq('status', 'BROADCASTING'),
+          .eq('status', anchor.previousStatus),
       ),
     );
 
@@ -158,9 +190,14 @@ async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryRe
   }
 
   if (recovered.length > 0) {
+    const recoveredIds = new Set(recovered.map((a) => a.id));
+    const fromBroadcasting = allAnchors.filter(
+      (a) => a.previousStatus === 'BROADCASTING' && recoveredIds.has(a.id),
+    ).length;
+    const fromSubmitted = recovered.length - fromBroadcasting;
     logger.warn(
-      { count: recovered.length, anchors: recovered.map((a) => a.id) },
-      'Manually recovered stuck BROADCASTING anchors → PENDING',
+      { count: recovered.length, fromBroadcasting, fromSubmitted, anchors: recovered.map((a) => a.id) },
+      'Manually recovered stuck BROADCASTING/SUBMITTED anchors → PENDING',
     );
   }
 

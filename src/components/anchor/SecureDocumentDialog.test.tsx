@@ -14,12 +14,15 @@ import {
   SECURE_DIALOG_LABELS,
   AI_EXTRACTION_LABELS,
   EXTRACTION_RECOVERY_LABELS,
+  SECURING_CHOICE_LABELS,
+  SECURE_QUEUE_LABELS,
 } from '@/lib/copy';
 import { detectFraudForDocument } from '@/lib/fraudDetection';
 import { supabase } from '@/lib/supabase';
 import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { runExtraction, fetchTemplateReconstruction } from '@/lib/aiExtraction';
 import { applyTemplate } from '@/lib/templateMapper';
+import { ROUTES } from '@/lib/routes';
 
 type FileUploadMockProps = {
   onFileSelect?: (file: File, fingerprint: string) => void;
@@ -36,6 +39,13 @@ type FileUploadMockProps = {
 
 let lastFileUploadProps: FileUploadMockProps | null = null;
 const mockProfileOrgId = vi.hoisted(() => ({ current: null as string | null }));
+// QUEUE-01 / SCRUM-2894 (L2-A1) — controllable securing-capability + navigate
+// mocks so tests can exercise both capability states without a QueryClient.
+const mockCapability = vi.hoisted(() => ({
+  current: { canSecureInstantly: false, creditBalance: 5, instantSecureCost: 1 },
+}));
+const mockNavigate = vi.hoisted(() => vi.fn());
+const DEFAULT_CAPABILITY = { canSecureInstantly: false, creditBalance: 5, instantSecureCost: 1 };
 
 function createTemplateSelectMock(data: unknown[] = []) {
   const query = {
@@ -68,7 +78,11 @@ vi.mock('@/components/upload', () => ({
 }));
 
 vi.mock('react-router-dom', () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mockNavigate,
+}));
+
+vi.mock('@/hooks/useSecuringCapability', () => ({
+  useSecuringCapability: () => ({ capability: mockCapability.current, loading: false }),
 }));
 
 vi.mock('@/lib/supabase', () => ({
@@ -137,6 +151,7 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
     vi.clearAllMocks();
     lastFileUploadProps = null;
     mockProfileOrgId.current = null;
+    mockCapability.current = { ...DEFAULT_CAPABILITY };
     vi.mocked(detectFraudForDocument).mockResolvedValue(null);
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
       data: { session: null },
@@ -227,6 +242,15 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
       screen.getByTestId('secure-document-continue').click();
     });
 
+    // QUEUE-01 / SCRUM-2894: AI-disabled Continue now lands on the confirm
+    // step's securing-path choice instead of inserting immediately — pick
+    // "Add to Queue" (the only path exposed this sprint, R5 dark).
+    expect(screen.getByTestId('securing-path-queue')).toBeInTheDocument();
+    expect(screen.queryByTestId('securing-path-instant')).not.toBeInTheDocument();
+    await act(async () => {
+      screen.getByTestId('securing-path-queue').click();
+    });
+
     expect(detectFraudForDocument).toHaveBeenCalledWith(file, {
       credentialType: 'OTHER',
       metadataHints: {},
@@ -254,6 +278,7 @@ describe('SecureDocumentDialog — extraction-failed recovery + toast behavior',
     vi.clearAllMocks();
     lastFileUploadProps = null;
     mockProfileOrgId.current = null;
+    mockCapability.current = { ...DEFAULT_CAPABILITY };
     vi.mocked(detectFraudForDocument).mockResolvedValue(null);
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
       data: { session: { access_token: 'token' } },
@@ -419,6 +444,7 @@ describe('AI-03 (SCRUM-2383) — extraction review gate', () => {
     vi.clearAllMocks();
     lastFileUploadProps = null;
     mockProfileOrgId.current = null;
+    mockCapability.current = { ...DEFAULT_CAPABILITY };
     vi.mocked(detectFraudForDocument).mockResolvedValue(null);
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
       data: { session: { access_token: 'token' } },
@@ -624,5 +650,124 @@ describe('AI-03 (SCRUM-2383) — extraction review gate', () => {
       },
       0.7,
     );
+  });
+});
+
+// QUEUE-01 / SCRUM-2894 (L2-A1) — Add to Queue / Secure Instantly selector.
+// Per CTO R5 (2026-07-28), canSecureInstantly is hardcoded false this sprint
+// (see useSecuringCapability.ts), so these tests mock the hook directly to
+// exercise BOTH capability states — the "Secure Instantly" path is dark in
+// prod, but must be built, correct, and tested per the sprint brief.
+describe('SecureDocumentDialog — Add to Queue / Secure Instantly selector (QUEUE-01)', () => {
+  async function reachConfirmStep() {
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    const file = new File(['doc'], 'diploma.pdf', { type: 'application/pdf' });
+    act(() => {
+      lastFileUploadProps?.onFileSelect?.(file, 'fp');
+    });
+    await act(async () => {
+      screen.getByTestId('secure-document-continue').click();
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    lastFileUploadProps = null;
+    mockProfileOrgId.current = null;
+    mockCapability.current = { ...DEFAULT_CAPABILITY };
+    vi.mocked(detectFraudForDocument).mockResolvedValue(null);
+    vi.mocked(isAIExtractionEnabled).mockResolvedValue(false);
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { access_token: 'token' } },
+      error: null,
+    } as Awaited<ReturnType<typeof supabase.auth.getSession>>);
+    vi.mocked(supabase.from).mockReturnValue({
+      insert: vi.fn(() => ({
+        select: vi.fn(() => ({
+          single: vi.fn(async () => ({
+            data: { id: 'anchor-id', public_id: 'public-id' },
+            error: null,
+          })),
+        })),
+      })),
+      select: createTemplateSelectMock(),
+    } as unknown as ReturnType<typeof supabase.from>);
+  });
+
+  it('renders ONLY "Add to Queue" when capability.canSecureInstantly is false (R5 dark, this sprint)', async () => {
+    await reachConfirmStep();
+
+    expect(screen.getByTestId('securing-path-queue')).toHaveTextContent(SECURING_CHOICE_LABELS.queue);
+    expect(screen.queryByTestId('securing-path-instant')).not.toBeInTheDocument();
+  });
+
+  it('renders BOTH paths when capability.canSecureInstantly is true', async () => {
+    mockCapability.current = { canSecureInstantly: true, creditBalance: 5, instantSecureCost: 1 };
+    await reachConfirmStep();
+
+    expect(screen.getByTestId('securing-path-queue')).toHaveTextContent(SECURING_CHOICE_LABELS.queue);
+    expect(screen.getByTestId('securing-path-instant')).toHaveTextContent(SECURING_CHOICE_LABELS.instant);
+  });
+
+  it('"Add to Queue" tags the insert with securing_path=queue and shows QUEUED_TOAST', async () => {
+    const insert = vi.fn((_payload: unknown) => ({
+      select: vi.fn(() => ({
+        single: vi.fn(async () => ({ data: { id: 'a1', public_id: 'p1' }, error: null })),
+      })),
+    }));
+    vi.mocked(supabase.from).mockReturnValue({
+      insert,
+      select: createTemplateSelectMock(),
+    } as unknown as ReturnType<typeof supabase.from>);
+
+    await reachConfirmStep();
+    await act(async () => {
+      screen.getByTestId('securing-path-queue').click();
+    });
+
+    const payload = insert.mock.calls[0]?.[0] as { metadata?: Record<string, unknown> };
+    expect(payload.metadata).toMatchObject({ securing_path: 'queue' });
+    expect(toast.success).toHaveBeenCalledWith(SECURE_QUEUE_LABELS.QUEUED_TOAST);
+  });
+
+  it('"Secure Instantly" redirects to billing and does NOT insert when credits are insufficient', async () => {
+    mockCapability.current = { canSecureInstantly: true, creditBalance: 0, instantSecureCost: 1 };
+    const insert = vi.fn();
+    vi.mocked(supabase.from).mockReturnValue({
+      insert,
+      select: createTemplateSelectMock(),
+    } as unknown as ReturnType<typeof supabase.from>);
+
+    await reachConfirmStep();
+    await act(async () => {
+      screen.getByTestId('securing-path-instant').click();
+    });
+
+    expect(insert).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(SECURE_QUEUE_LABELS.INSUFFICIENT_CREDITS);
+    expect(mockNavigate).toHaveBeenCalledWith(ROUTES.BILLING);
+  });
+
+  it('"Secure Instantly" tags the insert with securing_path=instant and shows SECURED_TOAST when credits suffice', async () => {
+    mockCapability.current = { canSecureInstantly: true, creditBalance: 5, instantSecureCost: 1 };
+    const insert = vi.fn((_payload: unknown) => ({
+      select: vi.fn(() => ({
+        single: vi.fn(async () => ({ data: { id: 'a1', public_id: 'p1' }, error: null })),
+      })),
+    }));
+    vi.mocked(supabase.from).mockReturnValue({
+      insert,
+      select: createTemplateSelectMock(),
+    } as unknown as ReturnType<typeof supabase.from>);
+
+    await reachConfirmStep();
+    await act(async () => {
+      screen.getByTestId('securing-path-instant').click();
+    });
+
+    const payload = insert.mock.calls[0]?.[0] as { metadata?: Record<string, unknown> };
+    expect(payload.metadata).toMatchObject({ securing_path: 'instant' });
+    expect(toast.success).toHaveBeenCalledWith(SECURE_QUEUE_LABELS.SECURED_TOAST);
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 });

@@ -36,6 +36,7 @@ import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
+import { processPendingReports } from '../jobs/report.js';
 import { sweepExpiredAnchors, makeAnchorExpirySweepDb } from '../jobs/anchorExpirySweep.js';
 import { fetchEdgarFilings, fetchEdgarHistoricalBackfill, fetchEdgarBulk } from '../jobs/edgarFetcher.js';
 import { fetchUsptoPAtents } from '../jobs/usptoFetcher.js';
@@ -581,6 +582,22 @@ cronRouter.post('/credit-expiry', async (_req, res) => {
     res.json({ processed });
   } catch (error) {
     logger.error({ error }, 'Credit expiry processing failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// Cloud Scheduler job `generate-reports` (hourly, `0 * * * *`) has targeted
+// this path since MVP-28 (2026-03-16), but the route registration was never
+// added when jobs/report.ts's processPendingReports() was written — every
+// scheduled run 404'd. Drains `reports` rows in status='pending' (created via
+// the legacy ReportsList "Generate Report" action) and materializes the
+// artifact into `report_artifacts`.
+cronRouter.post('/generate-reports', async (_req, res) => {
+  try {
+    const result = await processPendingReports();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Report generation failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
