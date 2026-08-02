@@ -48,28 +48,213 @@
   },
   "tools": [
     {
-      "name": "search",
-      "description": "Search public-safe Arkova organization, record, fingerprint, and document metadata.",
+      "name": "verify_credential",
+      "description": "Verify a credential's authenticity and current status by its public identifier. Returns verification status, issuer information, credential type, dates, and network anchoring proof.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "q": { "type": "string", "minLength": 1, "maxLength": 500 },
-          "type": { "type": "string", "enum": ["all", "org", "record", "fingerprint", "document"], "default": "all" },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 50 }
+          "public_id": { "type": "string", "pattern": "^ARK-[A-Z0-9-]{3,60}$", "maxLength": 64, "description": "The credential's public identifier (e.g., ARK-2026-001)" }
+        },
+        "required": ["public_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_credentials",
+      "description": "Search for credentials using natural language queries. Uses semantic similarity matching against the credential database. Returns ranked results with verification status and relevance scores.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Natural language search query (e.g., \"University of Michigan computer science degree\")" },
+          "max_results": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Maximum number of results to return (default: 10, max: 50)" }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search",
+      "description": "Agent-friendly v2 search tool. Search organizations, anchored records, fingerprints, and documents by natural language query or exact fingerprint. Broader in scope than search_credentials, which is limited to the credential corpus — prefer this tool for general discovery.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Natural language query or exact SHA-256 fingerprint" },
+          "type": { "type": "string", "enum": ["all", "org", "record", "fingerprint", "document"], "default": "all", "description": "Optional result filter" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 50, "description": "Maximum results to return (capped to the record search RPC ceiling)" },
+          "max_results": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Deprecated alias for limit; prefer limit for REST v2 parity" }
         },
         "required": ["q"],
         "additionalProperties": false
       }
     },
     {
-      "name": "get_anchor",
-      "description": "Fetch public-safe Arkova verification metadata by public ID.",
+      "name": "verify",
+      "description": "Agent-friendly v2 verification tool. Verify whether a SHA-256 document fingerprint has been anchored. Canonical name for this capability — get_fingerprint is a documented alias returning the identical response.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "public_id": { "type": "string", "minLength": 1, "maxLength": 128 }
+          "fingerprint": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$", "minLength": 64, "maxLength": 64, "description": "64-character SHA-256 document fingerprint" }
+        },
+        "required": ["fingerprint"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "verify_document",
+      "description": "Verify a document by its SHA-256 fingerprint. Checks if the document has been anchored and returns the anchor proof including the network receipt and timestamp. Same underlying lookup as verify; kept for backward compatibility with earlier integrations.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "content_hash": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$", "minLength": 64, "maxLength": 64, "description": "SHA-256 fingerprint of the document to verify" }
+        },
+        "required": ["content_hash"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "verify_batch",
+      "description": "Verify multiple credentials in a single call. Accepts up to 100 public IDs and returns each result in input order. Use this when an agent needs to validate a list of credentials (e.g., a candidate portfolio, a screening pipeline batch).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "public_ids": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^ARK-[A-Z0-9-]{3,60}$", "maxLength": 64 },
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "Array of credential public identifiers (max 100). Each is verified individually."
+          }
+        },
+        "required": ["public_ids"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "oracle_batch_verify",
+      "description": "Batch-verify multiple credentials via the Arkova Oracle. Use for bulk verification workflows where a response envelope with query_id + per-credential results is needed. Lower item cap than verify_batch (25 vs 100) in exchange for the envelope format; returns an HMAC-signed envelope when MCP_SIGNING_KEY is provisioned, otherwise an explicit signed:false marker.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "public_ids": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^ARK-[A-Z0-9-]{3,60}$", "maxLength": 64 },
+            "minItems": 1,
+            "maxItems": 25,
+            "description": "Array of Arkova public IDs to verify (max 25)"
+          }
+        },
+        "required": ["public_ids"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_anchor",
+      "description": "Get redacted public anchor metadata by Arkova public ID. Use after search returns a public_id. Canonical name for this capability — get_record and get_document are documented aliases returning the identical response; verify_credential returns the same underlying data shaped for direct credential lookups.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "public_id": { "type": "string", "pattern": "^ARK-[A-Z0-9-]{3,60}$", "maxLength": 64, "description": "Arkova public identifier (for example ARK-DOC-ABCDEF)" }
         },
         "required": ["public_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_record",
+      "description": "Get public-safe record metadata by Arkova public ID. Use after search returns a record public_id. Alias of get_anchor (identical response) kept for v2 REST parity — result-type-specific naming makes the search → get_* workflow self-documenting when an agent doesn't already know the result type.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "public_id": { "type": "string", "pattern": "^ARK-[A-Z0-9-]{3,60}$", "maxLength": 64, "description": "Arkova public identifier returned by search" }
+        },
+        "required": ["public_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_document",
+      "description": "Get public-safe document metadata by Arkova public ID. Use after search returns a document public_id. Alias of get_anchor (identical response) kept for v2 REST parity — see get_record for why the alias exists.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "public_id": { "type": "string", "pattern": "^ARK-[A-Z0-9-]{3,60}$", "maxLength": 64, "description": "Arkova public identifier returned by search" }
+        },
+        "required": ["public_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_fingerprint",
+      "description": "Get public-safe record metadata by SHA-256 fingerprint. Use after search returns a fingerprint result. Alias of verify (identical response) kept for v2 REST parity — see get_record for why the alias exists.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fingerprint": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$", "minLength": 64, "maxLength": 64, "description": "SHA-256 fingerprint returned by search" }
+        },
+        "required": ["fingerprint"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_organization",
+      "description": "Get organization profile details by organization public_id. Use after search returns an organization public_id.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "public_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$", "minLength": 2, "maxLength": 128, "description": "Organization public identifier returned by search" }
+        },
+        "required": ["public_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_orgs",
+      "description": "List the organizations available to the authenticated caller. Use to establish org context before scoped searches.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_agents",
+      "description": "List AI agents registered to the authenticated caller's organization. Returns agent names, types, scopes, and status.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "nessie_query",
+      "description": "Query Arkova's verified intelligence engine (Nessie). Searches anchored public records (SEC filings, patents, regulatory documents) using semantic similarity. In \"context\" mode, returns a synthesized answer with citations linking to anchored documents with proof.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Natural language query (e.g., \"Apple annual revenue 2025\")" },
+          "mode": { "type": "string", "enum": ["retrieval", "context"], "default": "retrieval", "description": "\"retrieval\" returns raw ranked documents; \"context\" returns a synthesized answer with citations" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Maximum number of results (default: 10, max: 50)" }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "anchor_document",
+      "description": "Submit a document fingerprint for anchoring to the public ledger. The document itself is never sent — only its SHA-256 fingerprint. Returns an anchor receipt with a public identifier for later verification. Conditionally available: registered only when MCP_ENABLE_ANCHOR_DOCUMENT=true and the caller holds a write:anchors or anchor:write scope. Absent that, this tool will not appear in a live tools/list call even though it is part of the documented server surface.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "content_hash": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$", "minLength": 64, "maxLength": 64, "description": "SHA-256 fingerprint of the document content" },
+          "record_type": { "type": "string", "maxLength": 50, "description": "Type of record (e.g., patent_grant, 10-K, regulatory_notice)" },
+          "source": { "type": "string", "maxLength": 50, "description": "Source identifier (e.g., edgar, uspto, federal_register)" },
+          "title": { "type": "string", "maxLength": 500, "description": "Title of the document" },
+          "source_url": { "type": "string", "format": "uri", "maxLength": 2048, "description": "URL of the original document" },
+          "idempotency_key": { "type": "string", "format": "uuid", "description": "Client-supplied UUID for retry deduplication" }
+        },
+        "required": ["content_hash"],
         "additionalProperties": false
       }
     }

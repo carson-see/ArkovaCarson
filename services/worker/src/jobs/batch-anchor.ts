@@ -25,6 +25,7 @@ import { config } from '../config.js';
 import { deductOrgCredit, type DeductionResult } from '../utils/orgCredits.js';
 import { flagRegistry } from '../middleware/flagRegistry.js';
 import { isBroadcastRejectedError } from '../chain/utxo-provider.js';
+import { captureCreditRpcFailureAlert } from '../utils/sentry.js';
 import { chunkForInFilter } from '../utils/postgrest-filter.js';
 import type { ChainClient, ChainReceipt, PreparedChainTx } from '../chain/types.js';
 import type { Json } from '../types/database.types.js';
@@ -1467,7 +1468,17 @@ async function reconcileOneIntent(
     p_batch_id: null,
   });
   if (submitError) {
+    // No immediate retry here — the intent is left intact and picked up by
+    // the next reconcile pass, so this isn't silent data loss, but a
+    // persistent failure would keep deferring the same batch indefinitely.
     logger.error({ error: submitError, txId }, 'Intent reconcile: submit_batch_anchors failed — deferring (intent intact)');
+    captureCreditRpcFailureAlert({
+      rpc: 'submit_batch_anchors',
+      operation: 'batch-anchor.intentReconcile',
+      failMode: 'retried',
+      error: new Error('submit_batch_anchors failed during intent reconcile — deferred to next pass'),
+      extra: { txId, count: ids.length },
+    });
     result.deferred += 1;
     return;
   }
@@ -1949,6 +1960,17 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
         { error: retry.error, txId: receipt.receiptId, count: broadcastAnchors.length },
         'submit_batch_anchors failed twice — falling back to direct SUBMITTED updates (do NOT revert to PENDING)',
       );
+      // Failed twice — the fallback path engages, so no data is lost, but two
+      // consecutive RPC failures on a chain-broadcast-already-happened path
+      // is page-worthy: a persistent RPC outage here risks the fallback's
+      // slower per-row updates falling behind under load.
+      captureCreditRpcFailureAlert({
+        rpc: 'submit_batch_anchors',
+        operation: 'batch-anchor.finalizeBatch.retryExhausted',
+        failMode: 'retried',
+        error: new Error('submit_batch_anchors failed twice — falling back to direct SUBMITTED updates'),
+        extra: { txId: receipt.receiptId, count: broadcastAnchors.length },
+      });
       updatedCount = await bulkMarkSubmittedFallback(
         anchorIds,
         receipt.receiptId,
@@ -2313,6 +2335,13 @@ async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorRes
   if (bulkError) {
     // Fallback: try individual updates if RPC not available
     logger.warn({ error: bulkError }, 'submit_batch_anchors RPC failed in legacy path — falling back to individual updates');
+    captureCreditRpcFailureAlert({
+      rpc: 'submit_batch_anchors',
+      operation: 'batch-anchor.legacyPath',
+      failMode: 'retried',
+      error: new Error('submit_batch_anchors RPC failed in legacy path — falling back to individual updates'),
+      extra: { txId: receipt.receiptId, count: broadcastAnchors.length },
+    });
     let updatedCount = 0;
 
     for (const anchor of broadcastAnchors) {
