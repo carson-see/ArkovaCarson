@@ -13,7 +13,7 @@
  * They drifted, and the drift WAS the defect: the CTDL path was hardened while
  * the SQL path kept shipping learner names, raw filenames, and raw revocation
  * reasons to anonymous callers, because `sanitize_metadata_for_public` is a
- * key-NAME denylist that never inspects a value. Migration 0384 closes the SQL
+ * key-NAME denylist that never inspects a value. Migration 0385 closes the SQL
  * side.
  *
  * ── HOW THESE ASSERTIONS STAY ALIVE ──────────────────────────────────────────
@@ -23,11 +23,11 @@
  * forever while production runs whatever the newest redefinition says. Every
  * behavioural assertion here therefore runs against the **latest redefiner** —
  * the highest-numbered migration that redefines `get_public_anchor` — which is
- * the only definition that matters at runtime. Today that is 0384; when an 0385
+ * the only definition that matters at runtime. Today that is 0385; when an 0386
  * lands, these assertions automatically move to it.
  *
  * The SQL is also **comment-stripped** before matching. Without that, an 0385
- * written by following 0384's own documented ROLLBACK block would carry
+ * written by following 0385's own documented ROLLBACK block would carry
  * `public_free_text_or_null` and `is_academic_record_credential_type` in its
  * DROP list and satisfy a naive substring check while removing the gate.
  *
@@ -315,7 +315,7 @@ describe('public projection PII gate — the definition production runs', () => 
   });
 });
 
-describe('public projection PII gate — detectors and vocabulary (migration 0384)', () => {
+describe('public projection PII gate — detectors and vocabulary (migration 0385)', () => {
   // These assert the OWNING migration, which defines the helper functions. They
   // are re-verified behaviourally, against a real database, by the live suite.
   const owner = stripSqlComments(

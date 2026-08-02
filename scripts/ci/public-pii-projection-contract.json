@@ -25,7 +25,7 @@
     "The tests fail otherwise — which is the entire point."
   ],
 
-  "sql_owner_migration": "supabase/migrations/0384_public_anchor_academic_record_pii_projection.sql",
+  "sql_owner_migration": "supabase/migrations/0385_public_anchor_academic_record_pii_projection.sql",
   "ts_owner_module": "services/worker/src/ctdl/ctdl-pii-guard.ts",
   "ts_owner_pending_pr": 1815,
   "ts_pre_1815_module": "services/worker/src/ctdl/ctdl-serializer.ts",

@@ -1,6 +1,6 @@
 /**
  * LIVE PROOF that the anon-callable public verification projection no longer
- * leaks learner PII (migration 0384).
+ * leaks learner PII (migration 0385).
  *
  * `public.get_public_anchor(text)` and its delegating sibling
  * `get_public_anchor_by_fingerprint(text)` are GRANTed to `anon` and called
@@ -20,8 +20,8 @@
  * the assertions forgot to name.
  *
  * RED/GREEN: every assertion in the "learner PII" and "revocation reason"
- * blocks fails against the pre-0384 definition — that is the leak. They pass
- * once 0384 is applied.
+ * blocks fails against the pre-0385 definition — that is the leak. They pass
+ * once 0385 is applied.
  *
  * The vectors come from scripts/ci/public-pii-projection-contract.json, the
  * shared contract that also binds services/worker/src/ctdl/ctdl-pii-guard.ts,
@@ -65,7 +65,7 @@ interface SeedOpts {
   status?: 'SECURED' | 'REVOKED';
 }
 
-describe('0384 — anon public anchor projection does not leak learner PII', () => {
+describe('0385 — anon public anchor projection does not leak learner PII', () => {
   const service = createServiceClient();
   const anon = createAnonClient();
   let userId: string;

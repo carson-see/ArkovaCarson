@@ -1,10 +1,10 @@
 BEGIN;
 
 -- =============================================================================
--- 0384 — get_public_anchor: value-level PII gate + academic-record free-text
+-- 0385 — get_public_anchor: value-level PII gate + academic-record free-text
 --        suppression on the ANON-GRANTED public projection.
 --
--- ── WHICH DEFINITION THIS IS BASED ON (read this before writing an 0385) ─────
+-- ── WHICH DEFINITION THIS IS BASED ON (read this before writing an 0386) ─────
 --
 --   BASE: the LIVE PRODUCTION definition of public.get_public_anchor as of
 --   2026-08-01, captured via
@@ -26,12 +26,19 @@ BEGIN;
 --   from the highest-numbered migration that redefines the function), diff your
 --   change against THAT, and say here which one you used.
 --
+--   NUMBERING: originally authored as 0384 and renumbered. While it was in
+--   review, `0384_scrum2481_anchor_evidence_claim_authority` (PR #1806) was
+--   applied to prod out of band without first reserving the prefix in
+--   supabase/migrations/agents.md — the exact collision that reservation rule
+--   exists to prevent. Verified against the live ledger on
+--   `vzwyaatejekddvltxyye`: 0379, 0380, 0381, 0383, 0384 = scrum2481. Hence 0385.
+--
 --   Because 0362/0383 live on an unmerged branch (PR #1618), a freshly reset
 --   local/CI database builds 0311 -> ... -> 0376 and therefore lacks the HMAC
 --   and the CE registry keys. This migration carries the full prod body, so
 --   after it applies EVERY environment converges on the same definition
 --   regardless of whether #1618 has landed. Applying 0362/0383 later is a no-op
---   with respect to this file: 0384 sorts last and wins.
+--   with respect to this file: 0385 sorts last and wins.
 --
 -- ── THE DEFECT ───────────────────────────────────────────────────────────────
 --
@@ -139,7 +146,7 @@ BEGIN;
 --      (PR #1815), its EDUCATION_CREDENTIAL_TYPES must equal the contract's.
 --   3. The same test enforces the LATEST-DEFINITION INVARIANT: whichever
 --      migration file redefines get_public_anchor with the HIGHEST numeric
---      prefix must still contain the PII-gate markers. A future 0385 branched
+--      prefix must still contain the PII-gate markers. A future 0386 branched
 --      from a stale file — the exact 0376 mistake — fails CI instead of
 --      silently reopening this hole in production.
 --   4. tests/rls/public-anchor-pii-projection.test.ts runs the contract's
@@ -569,7 +576,7 @@ BEGIN
         WHEN 'SUBMITTED' THEN 'SUBMITTED'
         ELSE a.status::text
       END,
-      -- 0384: the issuer is an INSTITUTION, not the learner, so it is cleaned
+      -- 0385: the issuer is an INSTITUTION, not the learner, so it is cleaned
       -- rather than structurally suppressed.
       --
       -- The fallback ordering is load-bearing. `o.display_name` is the ANCHORING
@@ -596,7 +603,7 @@ BEGIN
       'public_id', a.public_id,
       'fingerprint', a.fingerprint,
       'fingerprint_source', a.fingerprint_source,
-      -- 0384: `filename` is the record's public DISPLAY TITLE on the verify page
+      -- 0385: `filename` is the record's public DISPLAY TITLE on the verify page
       -- and is embedded in its schema.org JSON-LD, so an upload literally named
       -- after the learner published that name to anonymous callers and to search
       -- engines. Academic records get a controlled label; every other type gets
@@ -613,7 +620,7 @@ BEGIN
       'file_size', a.file_size,
       'issuer_public_id', o.public_id,
       'metadata', jsonb_strip_nulls(jsonb_build_object(
-        -- 0384: academic records emit NO issuer- or extraction-authored metadata
+        -- 0385: academic records emit NO issuer- or extraction-authored metadata
         -- text. title/credential_title/description/category are all omitted; the
         -- record's public display name is the controlled label carried by the
         -- top-level `filename` key.
@@ -646,13 +653,13 @@ BEGIN
           ELSE private.public_free_text_or_null(
             g.safe_metadata ->> 'category')
         END,
-        -- 0384: proof_url drops query + fragment AND runs the value gate, via
+        -- 0385: proof_url drops query + fragment AND runs the value gate, via
         -- the URL-specific cleaner that omits rather than truncates.
         'proof_url', private.public_url_or_null(
           g.safe_metadata ->> 'proof_url'),
         'issuer', private.public_free_text_or_null(
           g.safe_metadata ->> 'issuer'),
-        -- 0384: the remaining allow-listed keys are structured (enums, hashes,
+        -- 0385: the remaining allow-listed keys are structured (enums, hashes,
         -- versions, counts), so they take the BOUNDED gate — high-confidence
         -- detectors only. A name heuristic on a sha256 or a MIME type is pure
         -- noise, which is the same split the CTDL assembled-body scan makes.
@@ -673,7 +680,7 @@ BEGIN
       'issued_at', a.issued_at,
       'revoked_at', a.revoked_at,
       'superseded_at', CASE WHEN a.status = 'SUPERSEDED' THEN a.revoked_at END,
-      -- 0384: revocation_reason is issuer-authored free text on a public 410-ish
+      -- 0385: revocation_reason is issuer-authored free text on a public 410-ish
       -- projection ('revoked - contact jane@example.edu'). Academic records omit
       -- it outright; every other type gets the value-level gate. This closes the
       -- exact asymmetry with the CTDL path, which already routes
@@ -719,7 +726,7 @@ BEGIN
         ELSE NULL
       END
     )
-    -- 0384: the top-level `jurisdiction` key is NOT inside the projection's own
+    -- 0385: the top-level `jurisdiction` key is NOT inside the projection's own
     -- jsonb_strip_nulls, so it gets its own. That is structural rather than a
     -- hand-written presence test: jsonb_strip_nulls drops the key when the gate
     -- returns NULL, and `x || '{}'::jsonb = x`, so `"jurisdiction": null` can
@@ -778,7 +785,7 @@ $$;
 COMMENT ON FUNCTION public.get_public_anchor(text)
   IS 'Anon-callable public verification projection. Top-level keys and the '
      'metadata sub-object are explicit allow-lists (0355/0362); recipient is a '
-     'keyed HMAC (0356/0383). 0384 adds the VALUE-level PII gate: academic '
+     'keyed HMAC (0356/0383). 0385 adds the VALUE-level PII gate: academic '
      'records (DEGREE/CERTIFICATE/TRANSCRIPT) emit no issuer- or '
      'extraction-authored free text, and every other type has its free text '
      'dropped when it carries format- or keyword-anchored PII. Mirrors '
