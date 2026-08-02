@@ -77,6 +77,56 @@ describe('collectIndexedMetadataKeys', () => {
     expect(found.has('external_ref')).toBe(false);
   });
 
+  it('does NOT count an index that a comment merely DOCUMENTS but never creates', () => {
+    // Regression: the failure message of this very check hands authors a
+    // ready-to-paste CREATE INDEX template. If that template lands in a header
+    // block or a "planned follow-up" note instead of in the statement body, a
+    // comment-blind scanner reports the key as covered and the guard silently
+    // stops guarding — the precise false-pass it exists to prevent.
+    const found = collectIndexedMetadataKeys(
+      new Map([
+        [
+          '0999_planned.sql',
+          `-- Planned follow-up (NOT applied in this migration):
+           --   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_metadata_fourth_key
+           --     ON public.anchors ((metadata ->> 'fourth_key'))
+           --     WHERE (metadata ->> 'fourth_key') IS NOT NULL;
+           SELECT 1;`,
+        ],
+      ]),
+    );
+
+    expect(found.has('fourth_key')).toBe(false);
+  });
+
+  it('does NOT count a rollback comment that DROPs the index', () => {
+    const found = collectIndexedMetadataKeys(
+      new Map([
+        [
+          '0999_rollback_note.sql',
+          `-- ROLLBACK:
+           --   DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_metadata_external_ref;
+           SELECT 1;`,
+        ],
+      ]),
+    );
+
+    expect(found.has('external_ref')).toBe(false);
+  });
+
+  it('still counts a real statement that has a trailing comment on the same line', () => {
+    const found = collectIndexedMetadataKeys(
+      new Map([
+        [
+          '0999_trailing.sql',
+          "CREATE INDEX i ON public.anchors ((metadata ->> 'envelope_id')); -- point lookup",
+        ],
+      ]),
+    );
+
+    expect(found.get('envelope_id')).toBe('0999_trailing.sql');
+  });
+
   it('ignores indexes on other tables', () => {
     const found = collectIndexedMetadataKeys(
       new Map([['0999_x.sql', "CREATE INDEX i ON public.job_queue ((metadata ->> 'envelope_id'));"]]),

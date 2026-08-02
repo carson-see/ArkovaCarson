@@ -30,7 +30,10 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { collectMigrationFiles } from './check-anchor-index-justification.js';
+import {
+  collectMigrationFiles,
+  stripSqlLineComment,
+} from './check-anchor-index-justification.js';
 
 const KEYS_SOURCE_FILE = join(
   'services',
@@ -103,12 +106,26 @@ export function indexedExpressionOf(statement: string): string {
   return normalized;
 }
 
+/**
+ * Strip `--` line comments before any DDL matching.
+ *
+ * Without this the guard counts an index that a migration merely DESCRIBES —
+ * a header block, a rollback note, a "planned follow-up" comment — as one it
+ * actually creates, and reports an unindexed key as covered. That is the exact
+ * false-pass this check exists to prevent, and it is a live risk because the
+ * failure message below hands the author a ready-to-paste `CREATE INDEX`
+ * template that could land in a comment instead of in the statement body.
+ */
+function executableSql(sql: string): string {
+  return sql.split(/\r?\n/).map(stripSqlLineComment).join('\n');
+}
+
 /** Every `metadata ->> 'key'` indexed as an expression on `public.anchors`. */
 export function collectIndexedMetadataKeys(sqlByFile: Map<string, string>): Map<string, string> {
   const indexedKeys = new Map<string, string>();
 
   for (const [file, sql] of sqlByFile) {
-    for (const statement of sql.split(';')) {
+    for (const statement of executableSql(sql).split(';')) {
       if (!CREATE_INDEX_RE.test(statement) || !ON_ANCHORS_RE.test(statement)) continue;
 
       const expression = indexedExpressionOf(statement);
