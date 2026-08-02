@@ -76,7 +76,10 @@ vi.mock('../../chain/client.js', () => ({
   }),
 }));
 
-function makeMock(records: Array<Record<string, unknown>> = []) {
+function makeMock(
+  records: Array<Record<string, unknown>> = [],
+  options: { revertError?: unknown; claimError?: unknown } = {},
+) {
   const anchorRows = records.map((record, i) => ({
     id: `anchor-uuid-${i}`,
     fingerprint: record.content_hash,
@@ -119,13 +122,18 @@ function makeMock(records: Array<Record<string, unknown>> = []) {
   const anchorsBroadcastingUpdate = {
     in: vi.fn(() => ({
       eq: vi.fn(() => ({
-        select: vi.fn().mockResolvedValue({ data: claimedAnchorRows, error: null }),
+        select: vi.fn().mockResolvedValue(
+          options.claimError
+            ? { data: null, error: options.claimError }
+            : { data: claimedAnchorRows, error: null },
+        ),
       })),
     })),
   };
+  // The revert path: BROADCASTING → PENDING after a failed chain submission.
   const anchorsPendingUpdate = {
     in: vi.fn(() => ({
-      eq: vi.fn().mockResolvedValue({ error: null }),
+      eq: vi.fn().mockResolvedValue({ error: options.revertError ?? null }),
     })),
   };
 
@@ -341,5 +349,119 @@ describe('publicRecordAnchor', () => {
     expect(sql).toContain("a.status IN ('SUBMITTED', 'SECURED')");
     expect(sql).toContain('a.chain_tx_id = p_tx_id');
     expect(sql).toContain('UPDATE public_records pr');
+  });
+});
+
+/**
+ * The claim-revert escalation (PR #1812), covered through the real entrypoint
+ * rather than an export.
+ *
+ * `revertClaimedAnchors` used to chunk its id filter by `POSTGREST_ROW_LIMIT`,
+ * so every chunk took 400 Bad Request and a failed submission released none of
+ * its claimed anchors. The width is now `chunkForInFilter`'s guarantee
+ * (asserted once, in anchor-batching.test.ts); what still needs a behavioral
+ * test is the part a width assertion never covered — that a revert which
+ * releases nothing is escalated instead of being swallowed by the chain error
+ * that triggered it.
+ */
+describe('publicRecordAnchor claim-revert escalation', () => {
+  const records = Array.from({ length: 20 }, (_, i) => ({
+    id: `record-${i}`,
+    content_hash: (i.toString(16).padStart(2, '0')).repeat(32),
+    metadata: {},
+    source: 'edgar',
+    source_id: `CIK-${i}`,
+    source_url: `https://sec.gov/filing/${i}`,
+    record_type: '10-K',
+    title: `Test Filing ${i}`,
+  }));
+
+  function armFailedSubmission() {
+    const anchorResults = records.map((r, i) => ({
+      id: `anchor-uuid-${i}`,
+      fingerprint: r.content_hash,
+    }));
+    mockRpc
+      .mockResolvedValueOnce({ data: true })
+      .mockResolvedValueOnce({ data: anchorResults });
+    mockSubmitFingerprint.mockRejectedValue(new Error('chain node unreachable'));
+  }
+
+  function strandedAlerts() {
+    return mockLogger.error.mock.calls.filter(
+      ([, msg]) => typeof msg === 'string' && msg.includes('claim could not be fully released'),
+    );
+  }
+
+  it('escalates at error level when the revert releases nothing', async () => {
+    armFailedSubmission();
+    const { client } = makeMock(records, { revertError: { message: 'Bad Request' } });
+
+    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
+    const result = await processPublicRecordAnchoring(client);
+
+    // The job still reports the submission failure — the revert problem is
+    // additive signal, never a replacement for the real chain error.
+    expect(result.txId).toBeNull();
+
+    const alerts = strandedAlerts();
+    expect(alerts).toHaveLength(1);
+    const [context] = alerts[0];
+    expect(context).toMatchObject({
+      strandedAnchorIds: records.length,
+      claimed: records.length,
+    });
+    expect((context as { failedChunks: number }).failedChunks).toBeGreaterThan(0);
+  });
+
+  it('stays quiet when the revert succeeds', async () => {
+    armFailedSubmission();
+    const { client } = makeMock(records);
+
+    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
+    await processPublicRecordAnchoring(client);
+
+    expect(strandedAlerts()).toHaveLength(0);
+  });
+});
+
+/**
+ * The silent-empty guard on the CLAIM step.
+ *
+ * `fetchAnchorRows` and `revertClaimedAnchors` both accounted for
+ * all-chunks-failed; `claimPendingPipelineAnchors` did not — a 2-of-3 miss in
+ * the same three functions, and the same shape as PR #1795's. An empty claim
+ * reads downstream as "nothing was PENDING", so a totally broken claim step
+ * would log a benign result and return 200 forever.
+ */
+describe('publicRecordAnchor claim step', () => {
+  it('refuses to treat an all-chunks-failed claim as "nothing was pending"', async () => {
+    const records = Array.from({ length: 20 }, (_, i) => ({
+      id: `record-${i}`,
+      content_hash: (i.toString(16).padStart(2, '0')).repeat(32),
+      metadata: {},
+      source: 'edgar',
+      source_id: `CIK-${i}`,
+      source_url: `https://sec.gov/filing/${i}`,
+      record_type: '10-K',
+      title: `Test Filing ${i}`,
+    }));
+    const anchorResults = records.map((r, i) => ({
+      id: `anchor-uuid-${i}`,
+      fingerprint: r.content_hash,
+    }));
+    mockRpc
+      .mockResolvedValueOnce({ data: true })
+      .mockResolvedValueOnce({ data: anchorResults });
+
+    const { client } = makeMock(records, { claimError: { message: 'Bad Request' } });
+
+    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
+
+    await expect(processPublicRecordAnchoring(client)).rejects.toThrow(
+      /claimPendingPipelineAnchors: all \d+ chunk\(s\) failed/,
+    );
+    // …and it never reached the chain with an empty batch.
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
   });
 });
