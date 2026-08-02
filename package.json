@@ -14,6 +14,7 @@
     "vendor:ner-runtime": "tsx scripts/vendor-ner-runtime.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "verify:machines": "bash scripts/verify-machines.sh",
     "lint": "eslint src/",
     "lint:copy": "tsx scripts/check-copy-terms.ts",
     "lint:batch-drain-evidence": "eslint --no-ignore scripts/staging/batch-drain-harness-lib.ts scripts/staging/batch-drain-harness-lib.test.ts scripts/staging/batch-drain-observation.ts scripts/staging/batch-drain-observation.test.ts scripts/staging/batch-drain-crash-control.ts scripts/staging/batch-drain-crash-control.test.ts scripts/staging/batch-drain-crash-adapter.ts scripts/staging/batch-drain-crash-adapter.test.ts scripts/staging/batch-drain-strict-json.ts scripts/staging/batch-drain-strict-json.test.ts scripts/staging/batch-drain-time.ts scripts/staging/batch-drain-time.test.ts scripts/staging/batch-drain-live-evidence.ts scripts/staging/batch-drain-live-evidence.test.ts scripts/staging/batch-drain-evidence-sources.test.ts scripts/staging/batch-drain-admission-adapter.ts scripts/staging/batch-drain-admission-adapter.test.ts",
