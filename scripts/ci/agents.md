@@ -104,6 +104,17 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - 2026-07-28 union-drop remediation (open): the append-only gate stops NEW drops but does not restore what was already lost — 86 lines off `main` across 19 commits (since 2026-05-01) and live drops on open PRs #1618/#1652/#1654. Recover with `git show <pre-loss-commit>:<file>`; audit scripts are session-scratch, re-derivable from the gate's `findDrops`.
 - L2-S1 follow-up (Sprint 3.3): replace the `check-s33-sequencing-gate.ts` prod-green STUB with a real read-only probe (release-evidence cron / /api/health + gcloud revision match) and wire the gate into `provision-isolated-rig.sh --apply` as a preflight refusal.
 
+## 2026-08-01 `check-compliance-mapping-mirror.ts` — anti-drift for retired compliance claims
+
+- Asserts every control ID `services/worker/src/utils/complianceMapping.ts` can emit is defined in the canonical frontend registry `src/lib/complianceMapping.ts`. Wired as `npm run ci:compliance-mapping-mirror` in the ci.yml lint job.
+- **Why:** the worker file is a hand-maintained mirror ("control IDs must match" per its own header) and nothing enforced it. `DPF-NOTICE` / `DPF-ACCOUNTABILITY` were pulled from the frontend on 2026-07-10 (SCRUM-2283) after the PO confirmed on 2026-06-05 that Arkova holds no EU-US DPF certification — and the worker kept writing them onto every SECURED anchor and serving them from `/api/v1/verify`, the audit export, and the GRC push to Vanta/Drata/Anecdotes until 2026-08-01. **Two** separate remediations each fixed the frontend only.
+- **Compares the two EMITTED unions** (`EMITTABLE_CONTROL_IDS`, exported from both modules), in BOTH directions — not the frontend's `COMPLIANCE_CONTROLS` definitions registry. This is the difference between a guard that works and one that looks like it does: the registry is a strictly larger set (it carries Kenya DPA / APP / POPIA / NDPA controls no credential type maps to yet), so a registry-based check would miss the MINIMAL, most likely retirement — ID pulled from the emitted arrays but left defined in the registry — while the worker kept serving it.
+- **Do NOT reintroduce a hardcoded credential-type list.** The first version enumerated types and called `getComplianceControlIds()` per type; a type added to the worker but not to that list made its controls invisible to the guard, and the "coverage" heuristic meant to catch that only detected total collapse of the type-specific catalogue. Read the exported set instead — it is exactly what the worker will emit and serve from history.
+- **FAILS CLOSED.** An empty emitted set on either side, or an empty definitions registry, is a failure, not a skip. A guard that passes when it cannot see what it guards is worse than none.
+- **Third assertion:** every emitted ID must have a `COMPLIANCE_CONTROLS` entry — an emitted-but-undefined ID renders as nothing in the UI while still being written to anchors and served over the API.
+- Use `isMainModule()` from `scripts/ci/lib/ciContext.ts` for the CLI guard, never a filename `endsWith` check — the latter silently no-ops the whole script on a rename and leaves CI green with a dead gate.
+- **DO NOT silence a failure by re-adding the ID to the frontend** — that re-asserts the retired claim (R-7 / §1.5). Remove it from the worker instead. Historical rows are handled separately, on read.
+
 ---
 
 Historical change log: [./agents-changelog.md](./agents-changelog.md)
