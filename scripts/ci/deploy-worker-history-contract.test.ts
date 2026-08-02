@@ -157,11 +157,22 @@ describe('Deploy Worker traffic-safety contract', () => {
     }
   });
 
-  it('does NOT yet set ENABLE_CONNECTOR_ARTIFACT_ENQUEUE', () => {
-    // docs/release/prod-enablement-checklist-2026-08.md §2.3: DRAIN first,
-    // observe one clean cron cycle, THEN decide on ENQUEUE. Enabling the
-    // producer before the consumer is confirmed piles up `pending`
+  it('never enables the connector-artifact producer without its consumer', () => {
+    // docs/release/prod-enablement-checklist-2026-08.md §2.3 ordered these:
+    // DRAIN first, observe one clean cron cycle, THEN decide on ENQUEUE. The
+    // hazard it guards is a producer with no consumer, which piles up `pending`
     // connector_artifact rows that nothing drains.
-    expect(workflow).not.toMatch(/ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true/u);
+    //
+    // That gate has since been passed, so this asserts the surviving invariant
+    // rather than the one-time ordering. ENQUEUE landed in 4dc9b19ff without
+    // this test being updated, which red-lined every PR that merged main.
+    //
+    // Evidence for the promotion (prod vzwyaatejekddvltxyye, 2026-08-02):
+    // both flags true on the serving revision, and connector_artifact held 3
+    // rows, all `anchored`, 0 `pending` — the drain is demonstrably consuming.
+    if (/ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true/u.test(workflow)) {
+      expect(canaryStep(), 'ENQUEUE is set without DRAIN — the producer would outrun the consumer')
+        .toMatch(/\|\|ENABLE_CONNECTOR_ARTIFACT_DRAIN=true/u);
+    }
   });
 });
