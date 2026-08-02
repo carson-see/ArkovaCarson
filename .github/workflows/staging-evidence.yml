@@ -12,6 +12,15 @@ name: Staging Soak Evidence
 # Every other prod-bound PR must produce real evidence; T1 expedited evidence
 # still requires exact head SHA, health/smoke, rollback, rationale, and approval.
 #
+# ⚠️ TEMPORARY EXCEPTION TO THE PARAGRAPH ABOVE (founder directive 2026-08-01):
+# the repository variable `SOAK_GATE_DISABLED` (threaded to the check step at
+# the bottom of this file) short-circuits the whole gate to a pass while it is
+# the literal string "true". It is still not a *label* and still not anything a
+# PR author can set — but while it is set, "every other prod-bound PR must
+# produce real evidence" is NOT live behaviour. It stops being honored after
+# 2026-08-16T00:00:00Z regardless of the variable. Re-enable with:
+#   gh variable set SOAK_GATE_DISABLED --body false
+#
 # SCRUM-3026 (2026-07-28) — live-state fix: `github.sha` and
 # `github.event.pull_request.*` are FROZEN at the moment the triggering event
 # was delivered. A bare re-run of an already-created job (GitHub UI "Re-run
@@ -172,6 +181,23 @@ jobs:
           # deploy-worker.yml and .github/workflows/agents.md "Deploy-worker
           # pause gate" for the deploy-side half of this coupled control.
           DEPLOY_WORKER_PAUSED: ${{ vars.DEPLOY_WORKER_PAUSED }}
+          # TEMPORARY BYPASS — founder directive 2026-08-01 (relayed by the
+          # CTO session). When this repository variable is the literal string
+          # "true", scripts/ci/check-staging-evidence.ts short-circuits to a
+          # pass and prints a `::warning::` banner stating that NO staging
+          # soak evidence was evaluated. It exists so Mergify can drain the
+          # CI-green queue ahead of the external pen test starting
+          # 2026-08-02; the week-long consolidated soak that follows the pen
+          # test is what produces the deferred evidence.
+          #
+          # RE-ENABLE BEFORE THAT SOAK IS GRADED:
+          #   gh variable set SOAK_GATE_DISABLED --body false
+          #
+          # Like DEPLOY_WORKER_PAUSED above, `vars.*` is read fresh from the
+          # repo's live Actions-variable state on THIS run, so it is
+          # repo-admin state and not anything a PR author can set. Anything
+          # other than the literal "true" leaves the gate fully enforcing.
+          SOAK_GATE_DISABLED: ${{ vars.SOAK_GATE_DISABLED }}
         # Resolved local binary, not `npx tsx` (SonarCloud githubactions:S6505/
         # S8543 — `npx` can install packages on-demand and run their lifecycle
         # scripts). `npm ci` two steps above already installs the pinned
