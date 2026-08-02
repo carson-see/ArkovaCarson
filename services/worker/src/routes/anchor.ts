@@ -10,7 +10,7 @@
 import { Router } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
-import { rateLimiters } from '../utils/rateLimit.js';
+import { rateLimit, rateLimiters } from '../utils/rateLimit.js';
 import { corsMiddleware, extractAuthUserId } from './middleware.js';
 // DEBT-3: Static imports — circular dependency resolved by router extraction
 import { verifyAnchorByFingerprint } from '../api/verify-anchor.js';
@@ -232,11 +232,22 @@ const INVITATION_ERROR_STATUS: Record<InvitationErrorCode, number> = {
 const invitationDeps = { db, logger };
 
 /**
+ * Invitation preview + accept get their OWN namespaced bucket. `rateLimit()`
+ * keys unscoped buckets on the client IP alone, so the unscoped 5/min
+ * `rateLimiters.auth` shared one counter with `index.ts`'s `apiIpShadowGuard`,
+ * which runs for EVERY `/api/*` request before this router matches: each
+ * invitation request burned two of the five, leaving an IP two per minute. One
+ * page reload before submit — or a second colleague behind the same office NAT
+ * — and the accept 429s. Same bug class as the `/api/v1/identity` note at
+ * index.ts:360; the `scope` is what fixes it.
+ */
+const invitationLimiter = rateLimit({ windowMs: 60_000, maxRequests: 30, scope: 'invitations' });
+
+/**
  * GET /api/invitations/:token
  * Public preview for the /accept-invite page — org name + validity, no auth.
- * Rate-limited like other unauthenticated auth-adjacent routes.
  */
-anchorRouter.get('/invitations/:token', rateLimiters.auth, async (req, res) => {
+anchorRouter.get('/invitations/:token', invitationLimiter, async (req, res) => {
   try {
     const token = Array.isArray(req.params.token) ? req.params.token[0] : req.params.token;
     const preview = await getInvitationPreview(invitationDeps, token ?? '');
@@ -260,7 +271,7 @@ anchorRouter.get('/invitations/:token', rateLimiters.auth, async (req, res) => {
  * password creates a brand-new account; see invitations.ts for the full
  * decision tree.
  */
-anchorRouter.post('/invitations/accept', rateLimiters.auth, async (req, res) => {
+anchorRouter.post('/invitations/accept', invitationLimiter, async (req, res) => {
   const callerId = await extractAuthUserId(req);
 
   const { token, password, fullName } = req.body as {

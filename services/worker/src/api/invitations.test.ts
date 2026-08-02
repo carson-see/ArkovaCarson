@@ -95,6 +95,10 @@ const INVITATION_ROW = {
 
 const ORG_ROW = { display_name: 'Example Org' };
 
+/** `invitations.token` is a uuid column — a non-uuid literal makes Postgres
+ *  raise 22P02, so tokens in these tests must be well-formed. */
+const TOKEN = '11111111-1111-4111-8111-111111111111';
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockSendEmail.mockResolvedValue({ success: true, messageId: 'msg-1' });
@@ -108,7 +112,19 @@ describe('getInvitationPreview', () => {
 
   it('returns not_found for an unknown token', async () => {
     const deps = makeDeps({ invitations: [chain({ data: null, error: null })] });
-    await expect(getInvitationPreview(deps, 'bad-token')).rejects.toMatchObject({ code: 'not_found' });
+    await expect(getInvitationPreview(deps, TOKEN)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  // `.eq('token', <non-uuid>)` makes Postgres raise 22P02 (invalid input syntax
+  // for type uuid), which supabase-js surfaces as an `error` -> internal_error
+  // -> HTTP 500 + an error-level log, for input as ordinary as a link mangled
+  // by an email client. The 404 branch was unreachable for malformed links.
+  it('returns not_found for a malformed token without querying the DB', async () => {
+    const deps = makeDeps({});
+    await expect(getInvitationPreview(deps, 'not-a-uuid')).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    expect(deps.db.from).not.toHaveBeenCalled();
   });
 
   it('returns org name + validity for a pending, unexpired invitation', async () => {
@@ -117,7 +133,7 @@ describe('getInvitationPreview', () => {
       organizations: [chain({ data: ORG_ROW, error: null })],
     });
 
-    const preview = await getInvitationPreview(deps, 'good-token');
+    const preview = await getInvitationPreview(deps, TOKEN);
     expect(preview).toEqual({
       orgName: 'Example Org',
       email: 'invitee@example.com',
@@ -134,7 +150,7 @@ describe('getInvitationPreview', () => {
       organizations: [chain({ data: ORG_ROW, error: null })],
     });
 
-    const preview = await getInvitationPreview(deps, 'expired-token');
+    const preview = await getInvitationPreview(deps, TOKEN);
     expect(preview.expired).toBe(true);
     expect(preview.alreadyUsed).toBe(false);
   });
@@ -146,7 +162,7 @@ describe('getInvitationPreview', () => {
       organizations: [chain({ data: ORG_ROW, error: null })],
     });
 
-    const preview = await getInvitationPreview(deps, 'used-token');
+    const preview = await getInvitationPreview(deps, TOKEN);
     expect(preview.alreadyUsed).toBe(true);
   });
 });
@@ -161,9 +177,17 @@ describe('acceptInvitation — validation + lifecycle guards', () => {
 
   it('returns not_found for an unknown token', async () => {
     const deps = makeDeps({ invitations: [chain({ data: null, error: null })] });
-    await expect(acceptInvitation(deps, { token: 'bad', callerId: null })).rejects.toMatchObject({
+    await expect(acceptInvitation(deps, { token: TOKEN, callerId: null })).rejects.toMatchObject({
       code: 'not_found',
     });
+  });
+
+  it('returns not_found for a malformed token without querying the DB', async () => {
+    const deps = makeDeps({});
+    await expect(
+      acceptInvitation(deps, { token: 'not-a-uuid', callerId: null }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+    expect(deps.db.from).not.toHaveBeenCalled();
   });
 
   it('rejects an expired invitation', async () => {
@@ -172,7 +196,7 @@ describe('acceptInvitation — validation + lifecycle guards', () => {
       invitations: [chain({ data: expired, error: null })],
       organizations: [chain({ data: ORG_ROW, error: null })],
     });
-    await expect(acceptInvitation(deps, { token: 't', callerId: null })).rejects.toMatchObject({
+    await expect(acceptInvitation(deps, { token: TOKEN, callerId: null })).rejects.toMatchObject({
       code: 'expired',
     });
   });
@@ -184,7 +208,7 @@ describe('acceptInvitation — validation + lifecycle guards', () => {
       organizations: [chain({ data: ORG_ROW, error: null })],
       org_members: [chain({ data: null, error: null })],
     });
-    await expect(acceptInvitation(deps, { token: 't', callerId: 'user-1' })).rejects.toMatchObject({
+    await expect(acceptInvitation(deps, { token: TOKEN, callerId: 'user-1' })).rejects.toMatchObject({
       code: 'already_used',
     });
   });
@@ -196,7 +220,7 @@ describe('acceptInvitation — validation + lifecycle guards', () => {
       organizations: [chain({ data: ORG_ROW, error: null })],
       org_members: [chain({ data: { id: 'membership-1' }, error: null })],
     });
-    const result = await acceptInvitation(deps, { token: 't', callerId: 'user-1' });
+    const result = await acceptInvitation(deps, { token: TOKEN, callerId: 'user-1' });
     expect(result).toEqual({
       orgId: 'org-1',
       orgName: 'Example Org',
@@ -214,7 +238,7 @@ describe('acceptInvitation — existing-user join path', () => {
       profiles: [chain({ data: { email: 'someone-else@example.com' }, error: null })],
     });
     await expect(
-      acceptInvitation(deps, { token: 't', callerId: 'user-1' }),
+      acceptInvitation(deps, { token: TOKEN, callerId: 'user-1' }),
     ).rejects.toMatchObject({ code: 'email_mismatch' });
   });
 
@@ -242,7 +266,7 @@ describe('acceptInvitation — existing-user join path', () => {
       admin,
     );
 
-    const result = await acceptInvitation(deps, { token: 't', callerId: 'user-1' });
+    const result = await acceptInvitation(deps, { token: TOKEN, callerId: 'user-1' });
 
     expect(admin.createUser).not.toHaveBeenCalled();
     expect(result).toEqual({
@@ -262,7 +286,7 @@ describe('acceptInvitation — new-account path', () => {
       profiles: [chain({ data: null, error: null })], // no existing account
     });
     await expect(
-      acceptInvitation(deps, { token: 't', password: 'short', callerId: null }),
+      acceptInvitation(deps, { token: TOKEN, password: 'short', callerId: null }),
     ).rejects.toMatchObject({ code: 'invalid_input' });
   });
 
@@ -273,7 +297,7 @@ describe('acceptInvitation — new-account path', () => {
       profiles: [chain({ data: { id: 'existing-profile' }, error: null })],
     });
     await expect(
-      acceptInvitation(deps, { token: 't', password: 'longenough', callerId: null }),
+      acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null }),
     ).rejects.toMatchObject({ code: 'account_exists' });
   });
 
@@ -297,7 +321,7 @@ describe('acceptInvitation — new-account path', () => {
     });
 
     const result = await acceptInvitation(deps, {
-      token: 't',
+      token: TOKEN,
       password: 'longenough',
       fullName: 'Jamie Doe',
       callerId: null,
@@ -336,7 +360,7 @@ describe('acceptInvitation — new-account path', () => {
       audit_events: [chain({ error: null })],
     });
 
-    const result = await acceptInvitation(deps, { token: 't', password: 'longenough', callerId: null });
+    const result = await acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null });
     expect(result.verificationRequired).toBe(true);
   });
 
@@ -351,7 +375,7 @@ describe('acceptInvitation — new-account path', () => {
     });
 
     await expect(
-      acceptInvitation(deps, { token: 't', password: 'longenough', callerId: null }),
+      acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null }),
     ).rejects.toMatchObject({ code: 'internal_error' });
 
     expect(deps.db.auth.admin.deleteUser).toHaveBeenCalledWith('new-user-id');
@@ -372,7 +396,7 @@ describe('acceptInvitation — new-account path', () => {
       admin,
     );
 
-    const result = await acceptInvitation(deps, { token: 't', password: 'longenough', callerId: null });
+    const result = await acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null });
     expect(result.verificationRequired).toBe(true);
     expect(result.verificationEmailSent).toBe(false);
   });
@@ -417,12 +441,11 @@ describe('acceptInvitation — unconfirmed-squatter reclaim', () => {
         organizations: [chain({ data: ORG_ROW, error: null })],
         profiles: [
           chain({ data: { id: 'squatter-id' }, error: null }), // squatter occupies the address
-          chain({ error: null }), // squatter profile delete
           chain({ error: null }), // real recipient profile insert
           chain({ error: null }), // org_id backfill
         ],
         org_members: [
-          chain({ error: null }), // squatter membership delete
+          chain({ data: null, error: null }), // squatter holds no membership
           chain({ data: null, error: null }), // no existing membership
           chain({ error: null }), // insert
         ],
@@ -431,7 +454,7 @@ describe('acceptInvitation — unconfirmed-squatter reclaim', () => {
       admin,
     );
 
-    const result = await acceptInvitation(deps, { token: 't', password: 'longenough', callerId: null });
+    const result = await acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null });
 
     expect(admin.deleteUser).toHaveBeenCalledWith('squatter-id');
     expect(admin.createUser).toHaveBeenCalled();
@@ -457,7 +480,35 @@ describe('acceptInvitation — unconfirmed-squatter reclaim', () => {
     );
 
     await expect(
-      acceptInvitation(deps, { token: 't', password: 'longenough', callerId: null }),
+      acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null }),
+    ).rejects.toMatchObject({ code: 'account_exists' });
+    expect(admin.deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('does NOT reclaim an unconfirmed account that already belongs to another org', async () => {
+    // Two orgs can hold a pending invite for the same address (the unique
+    // constraint is per-org), and multi-org membership is supported. Bob
+    // accepts org B's invite -> unconfirmed account + org B membership, then
+    // clicks org A's older invite from the same inbox. He is unconfirmed and
+    // was created after invitation A, so the reclaim conditions look identical
+    // to a squatter's — but deleting him silently drops his org B membership,
+    // and invitation B is already 'accepted' so it cannot be replayed.
+    const admin = {
+      getUserById: vi.fn(async () => UNCONFIRMED_AFTER_INVITE),
+      deleteUser: vi.fn(async () => ({ error: null })),
+    };
+    const deps = makeDeps(
+      {
+        invitations: [chain({ data: INVITATION_ROW, error: null })],
+        organizations: [chain({ data: ORG_ROW, error: null })],
+        profiles: [chain({ data: { id: 'bob-id' }, error: null })],
+        org_members: [chain({ data: { id: 'org-b-membership' }, error: null })],
+      },
+      admin,
+    );
+
+    await expect(
+      acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null }),
     ).rejects.toMatchObject({ code: 'account_exists' });
     expect(admin.deleteUser).not.toHaveBeenCalled();
   });
@@ -485,7 +536,7 @@ describe('acceptInvitation — unconfirmed-squatter reclaim', () => {
     );
 
     await expect(
-      acceptInvitation(deps, { token: 't', password: 'longenough', callerId: null }),
+      acceptInvitation(deps, { token: TOKEN, password: 'longenough', callerId: null }),
     ).rejects.toMatchObject({ code: 'account_exists' });
     expect(admin.deleteUser).not.toHaveBeenCalled();
   });

@@ -32,6 +32,12 @@ deps, mirrors `account-delete.ts` — makes the many differently-shaped
 - `getInvitationPreview(deps, token)` — public preview (org name, email, role,
   `expired`/`alreadyUsed` booleans) for the `/accept-invite` page. No auth —
   the token itself is the proof of access.
+- **Token shape is validated before the query** (shared `loadInvitationByToken`,
+  so both preview and accept get it). `invitations.token` is a `uuid` column, so
+  `.eq('token', <non-uuid>)` makes Postgres raise 22P02 → supabase-js `error` →
+  `internal_error` → HTTP 500 + an error-level log, for input as ordinary as a
+  link mangled by an email client. A malformed token is not a known invitation:
+  it returns `not_found` (404) without touching the DB.
 - `acceptInvitation(deps, { token, password?, fullName?, callerId })` —
   validates token + `expires_at`, then branches:
   - **`callerId` present** (authenticated) — the caller's `profiles.email`
@@ -39,7 +45,19 @@ deps, mirrors `account-delete.ts` — makes the many differently-shaped
     only `org_members` is inserted. No account creation risk on this path.
   - **`callerId` null, existing account** (a `profiles` row already has that
     email) — `account_exists` (409); the frontend sends them to sign in
-    instead of silently trying (and failing) to create a duplicate.
+    instead of silently trying (and failing) to create a duplicate. The one
+    exception is `reclaimUnconfirmedSquatter`, which deletes the occupying auth
+    user so the real recipient can provision. It is deliberately hard to
+    trigger — ALL THREE of `email_confirmed_at IS NULL`, created at/after the
+    invitation, **and zero `org_members` rows** must hold. The membership check
+    is load-bearing: two orgs can each hold a pending invite for one address
+    (the unique constraint is per-org) and multi-org membership is supported, so
+    a genuine invitee who accepted org B's invite and then clicked org A's older
+    link matched the first two conditions and had his org B membership deleted
+    with no way to replay the already-'accepted' invitation B. Never relax this
+    to a two-condition check. Deletion relies on the
+    `ON DELETE CASCADE` from `auth.users` — do NOT re-add a blanket
+    `org_members.delete().eq('user_id', …)`.
   - **`callerId` null, no existing account** — creates the auth user
     WORKER-SIDE via `db.auth.admin.createUser({ email, password,
     email_confirm: false })` (Constitution §1.4: `supabase.auth.admin` never

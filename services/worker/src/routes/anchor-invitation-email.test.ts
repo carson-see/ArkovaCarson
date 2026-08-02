@@ -13,12 +13,15 @@ vi.mock('./middleware.js', () => ({
   extractAuthUserId: mockExtractAuthUserId,
 }));
 
-vi.mock('../utils/rateLimit.js', () => ({
-  rateLimiters: {
-    checkout: (_req: Request, _res: Response, next: NextFunction) => next(),
-    auth: (_req: Request, _res: Response, next: NextFunction) => next(),
-  },
-}));
+// Limiters are pass-throughs here — bucket SCOPING is covered separately in
+// anchor-invitation-ratelimit.test.ts, which runs the real limiters.
+vi.mock('../utils/rateLimit.js', () => {
+  const passthrough = (_req: Request, _res: Response, next: NextFunction) => next();
+  return {
+    rateLimit: () => passthrough,
+    rateLimiters: { checkout: passthrough, auth: passthrough },
+  };
+});
 
 vi.mock('../utils/db.js', () => ({
   db: { from: mockFrom },
@@ -218,7 +221,9 @@ describe('GET /api/invitations/:token', () => {
       return membershipChain(null);
     });
 
-    const req = { params: { token: 'good-token' } } as unknown as Request;
+    // uuid-shaped: `invitations.token` is a uuid column and the loader now
+    // rejects malformed tokens as not_found rather than 500ing on a 22P02.
+    const req = { params: { token: '11111111-1111-4111-8111-111111111111' } } as unknown as Request;
     const res = makeRes();
     await handler(req, res as unknown as Response);
 

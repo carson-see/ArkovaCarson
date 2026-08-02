@@ -81,10 +81,20 @@ interface InvitationRow {
   created_at: string;
 }
 
+/** `invitations.token` is a uuid column, so PostgREST hands a non-uuid literal
+ *  straight to Postgres, which raises 22P02 — surfaced by supabase-js as an
+ *  error, i.e. HTTP 500 + an error-level log for input as ordinary as a link
+ *  mangled by an email client's line wrapping. A malformed token simply is not
+ *  a known invitation; check the shape before querying so the caller gets the
+ *  404 this code was written to return. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function loadInvitationByToken(
   deps: InvitationDeps,
   token: string,
 ): Promise<InvitationRow | null> {
+  if (!UUID_RE.test(token)) return null;
+
   const { data, error } = await deps.db
     .from('invitations')
     .select('id, email, role, org_id, invited_by, status, expires_at, created_at')
@@ -279,14 +289,26 @@ async function sendVerificationEmail(
  * hits `account_exists` on a link they were legitimately sent, with no
  * self-service recovery.
  *
- * Both conditions below must hold, and each exists to protect a distinct real
- * account from deletion:
+ * All three conditions below must hold, and each exists to protect a distinct
+ * real account from deletion:
  *
  *  - `email_confirmed_at` is null — nobody has proven control of the mailbox,
  *    so no signed-in session or verified identity is being destroyed.
  *  - the auth user was created at/after the invitation — an unconfirmed signup
  *    that PREDATES the invite belongs to someone who arrived on their own, and
  *    is never reclaimable by an invite token.
+ *  - the account holds NO org membership — the first two conditions alone do
+ *    not tell a squatter apart from the real recipient mid-onboarding. Two
+ *    orgs can each hold a pending invite for one address (the unique
+ *    constraint is per-org) and multi-org membership is supported, so an
+ *    invitee who accepts org B's invite (unconfirmed, hence created after
+ *    org A's older invite, hence no session on the next click) and then opens
+ *    org A's link from the same inbox matched both — and the reclaim silently
+ *    dropped his org B membership, unrecoverably, since invitation B was
+ *    already 'accepted'. A membership is the only asset an unconfirmed account
+ *    can hold (it cannot sign in to make anything else), and every accept path
+ *    inserts `org_members` BEFORE flipping the invitation to 'accepted', so
+ *    "zero memberships" means "has accepted nothing".
  *
  * Returns false (caller falls back to `account_exists`) on any lookup failure,
  * ambiguity, or unmet condition. Deleting the wrong account is far worse than
@@ -314,19 +336,24 @@ async function reclaimUnconfirmedSquatter(
     return false;
   }
 
-  // Order matters: drop dependent rows before the auth user so a mid-way
-  // failure leaves an unconfirmed auth user (already the status quo) rather
-  // than orphaned memberships pointing at a deleted principal.
-  const { error: membersError } = await db.from('org_members').delete().eq('user_id', profileId);
-  if (membersError) {
-    logger.error({ error: membersError, profileId }, 'Invitation accept: squatter membership cleanup failed — not reclaiming');
+  const { data: membership, error: membershipError } = await db
+    .from('org_members')
+    .select('id')
+    .eq('user_id', profileId)
+    .limit(1)
+    .maybeSingle();
+  if (membershipError) {
+    logger.error({ error: membershipError, profileId }, 'Invitation accept: squatter membership lookup failed — not reclaiming');
     return false;
   }
-  const { error: profileError } = await db.from('profiles').delete().eq('id', profileId);
-  if (profileError) {
-    logger.error({ error: profileError, profileId }, 'Invitation accept: squatter profile cleanup failed — not reclaiming');
+  if (membership) {
+    logger.warn({ profileId }, 'Invitation accept: account occupying the invited address holds a membership — not reclaiming');
     return false;
   }
+
+  // Nothing to clean up by hand: `profiles.id` and `org_members.user_id` are
+  // both `REFERENCES auth.users(id) ON DELETE CASCADE`, and the membership
+  // check above already proved there are no `org_members` rows to cascade.
   const { error: deleteError } = await db.auth.admin.deleteUser(profileId);
   if (deleteError) {
     logger.error({ error: deleteError, profileId }, 'Invitation accept: squatter auth-user delete failed — not reclaiming');
