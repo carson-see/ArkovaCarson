@@ -358,6 +358,28 @@ function setupDbMocks(overrides: {
       };
     }
 
+    // 2026-07-28 root-mount auth-leak regression: regulatory-alerts.ts and
+    // compliance-rules.ts are both public/anonymous endpoints queried via a
+    // long, order-varying chain (`.select().not().gte().order().limit()`
+    // optionally followed by `.eq()`, or `.select().eq().eq().limit()`).
+    // A chainable proxy that resolves at any terminal call handles every
+    // call-order permutation without hand-wiring each one.
+    if (table === 'public_records' || table === 'jurisdiction_rules') {
+      const result = { data: [], error: null };
+      const chain: Record<string, unknown> = new Proxy(
+        {},
+        {
+          get: (_target, prop) => {
+            if (prop === 'then') {
+              return (resolve: (v: unknown) => void) => resolve(result);
+            }
+            return () => chain;
+          },
+        },
+      );
+      return chain;
+    }
+
     if (table === 'switchboard_flags') {
       return {
         select: vi.fn().mockReturnValue({
@@ -902,6 +924,56 @@ describe('API E2E — Verification API', () => {
         .send({ attestations: [{ subject_identifier: 'test', attestation_type: 'VERIFICATION', attester_name: 'X', claims: [{ claim: 'y' }] }] });
 
       expect(res.status).toBe(401);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 2026-07-28 root-mount auth-leak regression (bug hunt during PR #1754)
+  //
+  // router.ts mounts signatureComplianceRouter/keyInventoryRouter as
+  // `router.use('/', adesSignatureGate(), requireAuth, ...)`. Express
+  // registers `adesSignatureGate()` and `requireAuth` as SEPARATE layers at
+  // path '/', which matches every request. `adesSignatureGate()` is
+  // path-guarded (skips non-AdES paths), but the local `requireAuth` was not
+  // — so it ran (and 401'd) for every request that reached this point in the
+  // stack, including routes registered LATER, like `/regulatory/alerts` and
+  // `/compliance/rules`, both of which are documented and implemented as
+  // public/anonymous. Same bug class as the 2026-04-18 adesSignatureGate
+  // incident (see adesFeatureGate.ts header comment).
+  // ════════════════════════════════════════════════════════════════════════
+
+  describe('Root-mounted compliance middleware must not leak onto downstream public routes', () => {
+    it('GET /api/v1/regulatory/alerts does not require auth (documented public endpoint)', async () => {
+      const res = await request(app).get('/api/v1/regulatory/alerts');
+
+      expect(res.status).not.toBe(401);
+      expect(res.body?.error).not.toBe('Supabase JWT authentication required for this endpoint');
+    });
+
+    it('GET /api/v1/compliance/rules does not require auth (documented public endpoint)', async () => {
+      const res = await request(app).get('/api/v1/compliance/rules');
+
+      expect(res.status).not.toBe(401);
+      expect(res.body?.error).not.toBe('Supabase JWT authentication required for this endpoint');
+    });
+
+    // Fix must not loosen auth on the routes the guard is scoped to protect.
+    it('GET /api/v1/signatures/key-inventory (key-inventory router) still requires auth', async () => {
+      process.env.ENABLE_ADES_SIGNATURES = 'true';
+      const res = await request(app).get('/api/v1/signatures/key-inventory');
+
+      expect(res.status).toBe(401);
+      expect(res.body?.error).toBe('Supabase JWT authentication required for this endpoint');
+      delete process.env.ENABLE_ADES_SIGNATURES;
+    });
+
+    it('GET /api/v1/signatures/export (signature-compliance router) still requires auth', async () => {
+      process.env.ENABLE_ADES_SIGNATURES = 'true';
+      const res = await request(app).get('/api/v1/signatures/export');
+
+      expect(res.status).toBe(401);
+      expect(res.body?.error).toBe('Supabase JWT authentication required for this endpoint');
+      delete process.env.ENABLE_ADES_SIGNATURES;
     });
   });
 

@@ -20,9 +20,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# FAIL, do not skip. This suite guards a production gate, and `exit 0` on a
+# runner without jq produces a GREEN check that verified nothing — which reads
+# as validation of whatever change is in flight. If jq is missing, that is a
+# broken environment, not a passing test run.
 if ! command -v jq >/dev/null 2>&1; then
-  echo "SKIP check-claude-bootstrap tests: jq is required"
-  exit 0
+  echo "FAIL check-claude-bootstrap tests: jq is required and was not found."
+  echo "     Install jq (brew install jq / apt-get install jq). Refusing to"
+  echo "     report success for a suite that did not execute."
+  exit 1
 fi
 
 assert_exit() {
@@ -133,6 +139,54 @@ out=$(run_hook "./scripts/staging/deploy.sh --pr 840 --image us-central1-docker.
 assert_exit "stale CLAUDE.md hash hook exits cleanly for Claude" 0 "$rc"
 assert_contains "stale CLAUDE.md denied" '"permissionDecision": "deny"' "$out"
 assert_contains "stale denial mentions re-run ack" "re-run scripts/agent/ack-claude-bootstrap.sh" "$out"
+
+echo ""
+echo "--- matcher bypasses (2026-08-02 enforcement audit) --------"
+# The ack is stale at this point, so every sensitive command must be DENIED.
+# Each case below was probed against the pre-audit matcher and PASSED — i.e.
+# reached a live staging/prod operation without an acknowledged CLAUDE.md.
+assert_denied() {
+  local label="$1" cmd="$2" out
+  out=$(run_hook "$cmd" 2>&1)
+  if grep -qF '"permissionDecision": "deny"' <<<"$out"; then
+    echo "  PASS  $label"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL  $label  (command was NOT denied)"
+    echo "        cmd: $cmd"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+# A quoted wrapper is still the same command. The old boundary class treated a
+# quote as "not a boundary", so the entire gate was one `bash -c '…'` away.
+assert_denied "bypass: quoted wrapper (bash -c)" \
+  "bash -c 'npx supabase db push --linked'"
+# `scripts/staging` required a trailing slash, so `cd`-then-run walked past it.
+assert_denied "bypass: scripts/staging without trailing slash" \
+  "cd scripts/staging && ./deploy.sh"
+# A global flag between the binary and the sub-command split the token run.
+assert_denied "bypass: supabase global flag before subcommand" \
+  "npx supabase --workdir . db push --linked"
+# One --undo anywhere in a compound line used to exempt EVERY `gh pr ready`.
+assert_denied "bypass: --undo scoped to the wrong segment" \
+  "gh pr ready 1 && gh pr ready 2 --undo"
+# PR-body edits are ack-gated; --body-file is the same operation from a file.
+assert_denied "bypass: gh pr edit --body-file" \
+  "gh pr edit 1 --body-file evidence.md"
+
+echo ""
+echo "--- bypass fixes must not over-match --------------------"
+# Widening boundaries and splitting segments must not start blocking ordinary
+# local work. These are the loosening-direction regressions to watch.
+out=$(run_hook "npx supabase db push --local" 2>&1)
+assert_empty "local db push still allowed" "$out"
+out=$(run_hook "gh pr ready 5 --undo" 2>&1)
+assert_empty "gh pr ready --undo still allowed" "$out"
+out=$(run_hook "git status --porcelain" 2>&1)
+assert_empty "git status still allowed" "$out"
+out=$(run_hook "echo 'nothing to see' && ls -la src/" 2>&1)
+assert_empty "compound benign command still allowed" "$out"
 
 echo ""
 echo "--- summary ------------------------------------------------"

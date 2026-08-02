@@ -18,6 +18,8 @@ import {
   buildSignatureVerifyUrl,
   buildRecordUrl,
   buildActivateUrl,
+  buildInviteAcceptUrl,
+  buildLoginUrl,
   BILLING_SUCCESS_URL,
   BILLING_CANCEL_URL,
   BILLING_PORTAL_RETURN_URL,
@@ -66,6 +68,26 @@ describe('URL builders', () => {
       expect(buildActivateUrl('a b+c/d')).toBe(
         'https://app.arkova.ai/activate?token=a%20b%2Bc%2Fd',
       );
+    });
+  });
+
+  describe('buildInviteAcceptUrl', () => {
+    it('embeds the invitation token as a query param (SCRUM-3012)', () => {
+      expect(buildInviteAcceptUrl('a1b2c3-token')).toBe(
+        'https://app.arkova.ai/accept-invite?token=a1b2c3-token',
+      );
+    });
+
+    it('URL-encodes tokens with special characters', () => {
+      expect(buildInviteAcceptUrl('a b+c/d')).toBe(
+        'https://app.arkova.ai/accept-invite?token=a%20b%2Bc%2Fd',
+      );
+    });
+  });
+
+  describe('buildLoginUrl', () => {
+    it('points at /login', () => {
+      expect(buildLoginUrl()).toBe('https://app.arkova.ai/login');
     });
   });
 

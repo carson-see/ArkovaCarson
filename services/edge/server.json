@@ -3,110 +3,30 @@
   "name": "io.github.carson-see/arkova-verification",
   "title": "Arkova Verification",
   "description": "Privacy-first document verification anchored to the public ledger.",
-  "version": "1.0.0",
+  "version": "1.0.1",
+  "websiteUrl": "https://app.arkova.ai/developers",
   "repository": {
     "url": "https://github.com/carson-see/ArkovaCarson",
     "source": "github"
   },
-  "remoteEndpoints": [
+  "remotes": [
     {
-      "transport": {
-        "type": "streamable-http",
-        "url": "https://edge.arkova.ai/mcp"
-      },
-      "authentication": {
-        "type": "api_key",
-        "headerName": "X-API-Key",
-        "instructions": "Get your API key at https://app.arkova.ai/settings/api-keys"
-      }
+      "type": "streamable-http",
+      "url": "https://edge.arkova.ai/mcp",
+      "headers": [
+        {
+          "name": "X-API-Key",
+          "description": "Arkova API key. Get one at https://app.arkova.ai/settings/api-keys",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
     }
   ],
-  "tools": [
-    {
-      "name": "search",
-      "description": "Agent-friendly v2 search across organizations, anchored records, fingerprints, and documents."
-    },
-    {
-      "name": "verify",
-      "description": "Verify whether a SHA-256 document fingerprint has been anchored."
-    },
-    {
-      "name": "list_orgs",
-      "description": "List the organizations available to the authenticated caller."
-    },
-    {
-      "name": "get_anchor",
-      "description": "Get redacted public anchor metadata by Arkova public ID."
-    },
-    {
-      "name": "get_organization",
-      "description": "Get organization detail by organization public ID."
-    },
-    {
-      "name": "get_record",
-      "description": "Get record detail by Arkova public ID."
-    },
-    {
-      "name": "get_fingerprint",
-      "description": "Get fingerprint detail by exact SHA-256 hash."
-    },
-    {
-      "name": "get_document",
-      "description": "Get document detail by Arkova public ID."
-    },
-    {
-      "name": "verify_credential",
-      "description": "Verify a credential's authenticity and current status by its public identifier."
-    },
-    {
-      "name": "search_credentials",
-      "description": "Search for credentials using natural language queries with semantic similarity matching."
-    },
-    {
-      "name": "nessie_query",
-      "description": "Query Arkova's verified intelligence engine over SEC filings, patents, and regulatory documents."
-    },
-    {
-      "name": "verify_document",
-      "description": "Verify a document by its SHA-256 fingerprint and get anchor proof."
-    },
-    {
-      "name": "verify_batch",
-      "description": "Verify up to 100 credentials in one call."
-    },
-    {
-      "name": "oracle_batch_verify",
-      "description": "Batch-verify up to 25 credentials with signed query-envelope metadata."
-    },
-    {
-      "name": "list_agents",
-      "description": "List AI agents registered to the authenticated caller's organization."
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "toolCount": 16,
+      "toolListDoc": "https://arkova.ai/.well-known/mcp/server-card.json"
     }
-  ],
-  "resources": [
-    {
-      "name": "api-overview",
-      "uri": "arkova://api/overview",
-      "description": "Overview of Arkova's verification API, available tools, and authentication."
-    },
-    {
-      "name": "credential-types",
-      "uri": "arkova://schema/credential-types",
-      "description": "Supported credential types, record types, and status values."
-    }
-  ],
-  "prompts": [
-    {
-      "name": "verify-credential",
-      "description": "Look up and verify a credential by its Arkova public ID."
-    },
-    {
-      "name": "search-and-verify",
-      "description": "Search with v2 aliases, inspect detail, and verify the top result."
-    },
-    {
-      "name": "research-topic",
-      "description": "Research a topic using Nessie's verified intelligence engine."
-    }
-  ]
+  }
 }
