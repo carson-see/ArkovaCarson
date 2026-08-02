@@ -57,9 +57,27 @@ mechanism; all three jobs wrap themselves in `withRunLease`, and the job-local c
   backoff (3 retries x 30s ⇒ ~127s worst case per row), and `applyQueueRunCreditGate` loops two
   round-trips per credit-gated anchor over a batch of up to 10,000. Under a degraded provider — the
   exact condition where a stale mempool view also makes a duplicate broadcast most likely — a
-  healthy run can outlive any TTL that still satisfies the liveness ceiling. **Renewal STOPS, loudly,
-  the moment the CAS stops matching**: a run whose lease already lapsed and was stolen must never
-  renew its way back on top of the new holder.
+  healthy run can outlive any TTL that still satisfies the liveness ceiling.
+- **`renewRunLease` returns a TRI-STATE (`'renewed' | 'lost' | 'store-error'`), and the heartbeat
+  stops on `'lost'` ONLY.** `'lost'` is evidence about ownership — the CAS ran and matched zero rows,
+  so a run whose lease already lapsed and was stolen must stop renewing rather than climb back on top
+  of the new holder. `'store-error'` is the ABSENCE of evidence and says nothing about ownership, so
+  the interval keeps running and the next tick retries. Collapsing the two into one falsy value was a
+  bug caught in review on this PR: the first heartbeat of the 3am `daily-anchor-flush` (55 min TTL ⇒
+  first renewal at 18m20s) hitting one transient PostgREST timeout — under exactly the
+  journal-reconcile + credit-gate load that saturates the 23-backend pool — permanently disarmed the
+  anti-double-broadcast protection for the remaining ~40 minutes of the run, and emitted "another
+  instance may be running concurrently" when none was, making the real alarm and the blip
+  indistinguishable in logs. Pinned by `keeps renewing after a transient store error on a renewal`
+  and, in the other direction, `stops renewing once the lease is provably lost, and says so`.
+- **The renewal test's oracle is a COMPETING ACQUISITION, not the release.** An earlier version of
+  `keeps a long-running body alive past its own TTL` asserted only that the release still matched —
+  which proves nothing, because `releaseRunLease` matches on `id AND payload->>holder` and does not
+  consider expiry, so a lapsed-but-unreclaimed lease releases exactly as successfully as a renewed
+  one. Deleting the heartbeat outright left all 49 lease tests green. The test now has a second
+  instance attempt `acquireRunLease` after 2x the TTL has elapsed and asserts it is REFUSED; that
+  assertion flips the moment renewal stops, because the CAS's `scheduled_for.lt.<now>` disjunct
+  starts matching. Verified: deleting the heartbeat call now fails 3 tests.
 - **Acquire is ONE round-trip in the steady state.** The CAS runs first; the bootstrap upsert is
   reached only when it matches zero rows — ambiguous between "row does not exist yet" and "someone
   holds it" — and the retried CAS remains the sole arbiter, so concurrent first-ever runs still

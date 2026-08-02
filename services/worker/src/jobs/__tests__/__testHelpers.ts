@@ -236,6 +236,29 @@ export interface RunLeaseStore {
   current: () => RunLeaseRow | undefined;
   /** Terminal store operations performed so far — pins "did not touch the store". */
   callCount: () => number;
+  /**
+   * Holder-scoped writes ATTEMPTED (renew + release), counted even when
+   * `failOwnedWrites` turns them into store errors. Lets a test distinguish
+   * "the heartbeat stopped firing" from "the heartbeat fired and was refused".
+   */
+  ownedWriteAttempts: () => number;
+  /**
+   * Another instance takes the lease mid-run. Rewrites the holder directly
+   * rather than going through the CAS, because the interesting case is the one
+   * the CAS cannot produce on demand: the row is stolen while the original
+   * run is still executing.
+   */
+  steal: (holder: string) => void;
+}
+
+export interface RunLeaseStoreOptions {
+  /**
+   * Fail the first N holder-scoped writes with a store ERROR (not a zero-row
+   * match). PostgREST reaches this store through a 23-backend pool, so a
+   * renewal can fail transiently while the lease is still perfectly ours —
+   * a state the code must not confuse with "the lease is gone".
+   */
+  failOwnedWrites?: number;
 }
 
 /**
@@ -258,9 +281,12 @@ export interface RunLeaseStore {
 export function createRunLeaseStore(
   spec: RunLeaseSpecLike,
   seed: RunLeaseStoreSeed = 'free',
+  options: RunLeaseStoreOptions = {},
 ): RunLeaseStore {
   let row: RunLeaseRow | undefined = seedRow(spec, seed);
   let calls = 0;
+  let ownedWriteAttempts = 0;
+  let ownedWritesLeftToFail = options.failOwnedWrites ?? 0;
 
   function evaluateOr(expression: string | undefined, target: RunLeaseRow): boolean {
     if (expression === undefined) return false;
@@ -302,7 +328,7 @@ export function createRunLeaseStore(
       return builder;
     };
     builder.select = () => builder;
-    builder.then = (resolve: (v: { data: unknown; error: null }) => unknown) => {
+    builder.then = (resolve: (v: { data: unknown; error: unknown }) => unknown) => {
       calls += 1;
       if (mode === 'upsert') {
         // `ignoreDuplicates: true` on the primary key: create once, never clobber.
@@ -311,6 +337,11 @@ export function createRunLeaseStore(
       }
       const idMatches = row !== undefined && filters.id === row.id;
       if (releaseHolder !== undefined) {
+        ownedWriteAttempts += 1;
+        if (ownedWritesLeftToFail > 0) {
+          ownedWritesLeftToFail -= 1;
+          return Promise.resolve(resolve({ data: null, error: { message: 'ETIMEDOUT' } }));
+        }
         if (idMatches && row?.payload.holder === releaseHolder) {
           row = { ...(row as RunLeaseRow), ...(pending as Partial<RunLeaseRow>) };
           return Promise.resolve(resolve({ data: [{ id: row.id }], error: null }));
@@ -331,6 +362,10 @@ export function createRunLeaseStore(
     from,
     current: () => row,
     callCount: () => calls,
+    ownedWriteAttempts: () => ownedWriteAttempts,
+    steal: (holder: string) => {
+      if (row) row = { ...row, payload: { ...row.payload, holder } };
+    },
   };
 }
 

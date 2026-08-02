@@ -295,8 +295,19 @@ async function compareAndSetLease(
 }
 
 /**
- * Pushes this holder's expiry out by a fresh TTL. Returns false when the lease
- * is no longer ours.
+ * The three genuinely different outcomes of a renewal attempt.
+ *
+ * `'lost'` and `'store-error'` are NOT the same answer, and collapsing them
+ * into one falsy value was a real bug: `'lost'` is EVIDENCE about ownership
+ * (the CAS ran and matched zero rows), while `'store-error'` is the ABSENCE of
+ * evidence (the CAS never got an answer). Treating a PostgREST timeout as proof
+ * the lease was stolen disarms the heartbeat for the rest of the run — the
+ * opposite of the safe direction, since the run keeps working either way.
+ */
+export type RunLeaseRenewal = 'renewed' | 'lost' | 'store-error';
+
+/**
+ * Pushes this holder's expiry out by a fresh TTL.
  *
  * The TTL alone cannot keep a LIVE run safe. It bounds how long a DEAD holder
  * blocks the job, but nothing bounds how long a healthy run takes: the batch
@@ -318,7 +329,7 @@ export async function renewRunLease(
   spec: RunLeaseSpec,
   holder: string,
   now: Date = new Date(),
-): Promise<boolean> {
+): Promise<RunLeaseRenewal> {
   const nowIso = now.toISOString();
   const { matched, error } = await updateOwnedLease(client, spec, holder, {
     scheduled_for: new Date(now.getTime() + spec.ttlMs).toISOString(),
@@ -329,9 +340,9 @@ export async function renewRunLease(
     // Transient: the caller keeps trying until the run ends or the lease is
     // provably lost. A failed renewal is not itself a reason to stop working.
     logger.warn({ error, holder, lease: spec.label }, 'Run lease renewal failed — will retry');
-    return false;
+    return 'store-error';
   }
-  return matched;
+  return matched ? 'renewed' : 'lost';
 }
 
 /**
@@ -478,10 +489,20 @@ export async function withRunLease<T>(
  * lease could expire. It is `unref`'d: a heartbeat must never be the reason the
  * worker process stays alive, and it must never delay a shutdown.
  *
- * Renewal STOPS as soon as the lease is provably no longer ours. That is the
- * safe direction — the run continues, but it stops asserting a claim it does
- * not hold, and the loud warning is the signal that a run outlived its TTL
- * before the heartbeat could save it.
+ * Renewal STOPS on `'lost'` and ONLY on `'lost'` — the CAS ran and matched zero
+ * rows, which is proof the lease is someone else's now. That is the safe
+ * direction: the run continues, but it stops asserting a claim it does not
+ * hold, and the loud warning is the signal that a run outlived its TTL before
+ * the heartbeat could save it.
+ *
+ * A `'store-error'` is deliberately NOT that signal. It carries no information
+ * about ownership, and the lease is most likely still ours — so the interval
+ * keeps running and the next tick retries, which is exactly what
+ * `renewRunLease` promises. Stopping there would let one transient PostgREST
+ * timeout, at ttl/3 into a 55-minute batch drain, silently disarm the
+ * anti-double-broadcast protection for the whole rest of the run. It would also
+ * fire the "another instance may be running concurrently" warning when nothing
+ * of the kind happened, making the real alarm and the blip indistinguishable.
  */
 function startRunLeaseHeartbeat(
   client: SupabaseClient,
@@ -490,14 +511,13 @@ function startRunLeaseHeartbeat(
 ): ReturnType<typeof setInterval> {
   const everyMs = Math.max(1, Math.floor(spec.ttlMs / 3));
   const timer = setInterval(() => {
-    void renewRunLease(client, spec, holder).then((renewed) => {
-      if (!renewed) {
-        clearInterval(timer);
-        logger.warn(
-          { holder, lease: spec.label, ttlMs: spec.ttlMs },
-          'Run lease renewal did not match — this run no longer holds its lease; another instance may be running concurrently',
-        );
-      }
+    void renewRunLease(client, spec, holder).then((outcome) => {
+      if (outcome !== 'lost') return;
+      clearInterval(timer);
+      logger.warn(
+        { holder, lease: spec.label, ttlMs: spec.ttlMs },
+        'Run lease renewal did not match — this run no longer holds its lease; another instance may be running concurrently',
+      );
     });
   }, everyMs);
   timer.unref?.();

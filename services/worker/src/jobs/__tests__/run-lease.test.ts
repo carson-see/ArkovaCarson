@@ -263,7 +263,7 @@ describe('run lease renewal', () => {
     const firstExpiry = store.current()?.scheduled_for as string;
 
     const later = new Date('2026-08-01T19:20:00Z');
-    expect(await renewRunLease(store.client, SPEC, 'instance-a', later)).toBe(true);
+    expect(await renewRunLease(store.client, SPEC, 'instance-a', later)).toBe('renewed');
 
     const renewedExpiry = store.current()?.scheduled_for as string;
     expect(new Date(renewedExpiry).getTime()).toBe(later.getTime() + SPEC.ttlMs);
@@ -282,14 +282,22 @@ describe('run lease renewal', () => {
       held: { holder: 'thief', expiresAt: '2099-01-01T00:00:00Z' },
     });
 
-    expect(await renewRunLease(store.client, SPEC, 'overran', new Date())).toBe(false);
+    expect(await renewRunLease(store.client, SPEC, 'overran', new Date())).toBe('lost');
     expect(store.current()?.payload.holder).toBe('thief');
     expect(store.current()?.scheduled_for).toBe('2099-01-01T00:00:00Z');
   });
 
-  it('reports failure rather than throwing when the store errors', async () => {
+  /**
+   * A store ERROR is not evidence about ownership. Distinguishing it from a
+   * zero-row match is the whole reason this returns a tri-state rather than a
+   * boolean: collapsing them made one transient PostgREST timeout look
+   * identical to a stolen lease.
+   */
+  it('reports a store error as an error, not as a lost lease', async () => {
     const client = erroringRunLeaseClient({ failOn: 'update' });
-    await expect(renewRunLease(client, SPEC, 'instance-a', new Date())).resolves.toBe(false);
+    await expect(renewRunLease(client, SPEC, 'instance-a', new Date())).resolves.toBe(
+      'store-error',
+    );
   });
 
   /**
@@ -297,28 +305,92 @@ describe('run lease renewal', () => {
    * stolen mid-flight. This was raised as a P1 on PR #1813 and never addressed
    * there; with `batch-anchor.ts` now behind the same primitive, an unrenewed
    * long run is a double-broadcast risk, not just a duplicated drain.
+   *
+   * The ORACLE is a competing acquisition, not the release. Releasing does not
+   * prove renewal: `releaseRunLease` matches on `id` AND `payload->>holder`
+   * and does NOT consider expiry, so a lapsed-but-unreclaimed lease releases
+   * exactly as successfully as a renewed one. Only a second instance trying to
+   * claim the lease AFTER the original TTL would have elapsed can tell the two
+   * apart — it is granted the moment renewal stops happening, because the CAS's
+   * `scheduled_for.lt.<now>` disjunct starts matching.
    */
-  it('keeps a long-running body alive past its own TTL', async () => {
+  it('refuses a competing instance while a long run keeps renewing past its own TTL', async () => {
     // Real timers, deliberately. The heartbeat is an `unref`'d `setInterval`
     // whose renewal resolves through a chained `.then()`; driving that with
     // fake timers means hand-pumping the microtask queue between advances, and
     // getting that wrong produces a test that passes without the heartbeat ever
     // firing — the exact false green this test exists to prevent. A tiny TTL
-    // buys the same coverage in ~200ms of real time.
-    const fastSpec = { ...SPEC, ttlMs: 90 };
+    // buys the same coverage in ~350ms of real time.
+    const fastSpec = { ...SPEC, ttlMs: 150 };
     const store = createRunLeaseStore(fastSpec, 'free');
+    let competitor: boolean | undefined;
 
     const outcome = await withRunLease({ ...fastSpec, client: store.client }, async () => {
-      // Outlives ttlMs several times over.
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      // Twice the TTL: without renewal the lease is now provably stealable.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      competitor = await acquireRunLease(store.client, fastSpec, 'competitor', new Date());
       return 'long';
     });
 
+    expect(competitor).toBe(false);
     expect(outcome).toEqual({ acquired: true, result: 'long' });
-    // Renewed at least once while running: the release still matched, which it
-    // could not have done if the lease had lapsed and been reclaimed.
     expect(store.current()?.status).toBe('completed');
     expect(store.current()?.scheduled_for).toBeNull();
+  });
+
+  /**
+   * THE REGRESSION THIS FIXES. The heartbeat's only escape hatch used to be
+   * "the renewal did not return true", which a transient store error satisfies
+   * — so one PostgREST timeout permanently disarmed the anti-double-broadcast
+   * protection for the rest of the run. On the 3am `daily-anchor-flush` that is
+   * the difference between one drain and two instances signing from the same
+   * treasury UTXO set.
+   */
+  it('keeps renewing after a transient store error on a renewal', async () => {
+    const fastSpec = { ...SPEC, ttlMs: 60 }; // heartbeat every 20ms
+    const store = createRunLeaseStore(fastSpec, 'free', { failOwnedWrites: 1 });
+    let attemptsWhileRunning = 0;
+
+    await withRunLease({ ...fastSpec, client: store.client }, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200)); // ~10 periods
+      attemptsWhileRunning = store.ownedWriteAttempts();
+      return 'long';
+    });
+
+    expect(attemptsWhileRunning).toBeGreaterThan(1);
+    // …and the error must not masquerade as the real alarm, which would make a
+    // genuine mid-run steal indistinguishable from a blip in the logs.
+    expect(mockLogger.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('no longer holds its lease'),
+    );
+  });
+
+  /**
+   * The other direction, and the reason the tri-state is not just "never give
+   * up": a run whose lease was genuinely stolen must stop asserting a claim it
+   * does not hold, or it would renew its way back on top of the new holder.
+   */
+  it('stops renewing once the lease is provably lost, and says so', async () => {
+    const fastSpec = { ...SPEC, ttlMs: 60 }; // heartbeat every 20ms
+    const store = createRunLeaseStore(fastSpec, 'free');
+    let attemptsAfterTheft = 0;
+
+    await withRunLease({ ...fastSpec, client: store.client }, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      store.steal('thief');
+      await new Promise((resolve) => setTimeout(resolve, 100)); // ≥5 periods to notice
+      const noticed = store.ownedWriteAttempts();
+      await new Promise((resolve) => setTimeout(resolve, 120)); // 6 more periods
+      attemptsAfterTheft = store.ownedWriteAttempts() - noticed;
+      return 'long';
+    });
+
+    expect(attemptsAfterTheft).toBe(0);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('no longer holds its lease'),
+    );
   });
 
   it('stops renewing once the run finishes', async () => {
