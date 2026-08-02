@@ -1371,7 +1371,8 @@ export const CREDENTIAL_SOURCE_IMPORT_LABELS = {
   PROVIDER_FIELD: 'Provider',
   RECIPIENT_FIELD: 'Recipient',
   RECIPIENT_PROOF_FIELD: 'Recipient Proof',
-  CONFIDENCE_FIELD: 'Confidence',
+  // SCRUM-2914: CONFIDENCE_FIELD removed — extraction confidence scoring is
+  // unreliable and is no longer surfaced anywhere in the UI. Do not re-add.
   EVIDENCE_FIELD: 'Evidence',
   PAYLOAD_FIELD: 'Payload',
   NOT_DETECTED: 'Not detected',
@@ -2300,7 +2301,8 @@ export const EXTRACTION_FEEDBACK_LABELS = {
 export const INTEGRITY_DETAIL_LABELS = {
   // Breakdown dimension labels
   METADATA_COMPLETENESS: 'Metadata Completeness',
-  EXTRACTION_CONFIDENCE: 'Extraction Confidence',
+  // SCRUM-2914: EXTRACTION_CONFIDENCE removed — no longer rendered as its own
+  // integrity bar. The value still feeds the overall score server-side.
   ISSUER_VERIFICATION: 'Issuer Verification',
   DUPLICATE_CHECK: 'Duplicate Check',
   TEMPORAL_CONSISTENCY: 'Temporal Consistency',
