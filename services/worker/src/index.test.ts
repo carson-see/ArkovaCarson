@@ -215,11 +215,17 @@ vi.mock('./utils/rateLimit.js', () => {
   return {
     rateLimit: () => passthrough,
     rateLimiters: {
+      // Keep in sync with the real `rateLimiters` export in ./utils/rateLimit.ts —
+      // a missing key here makes `rateLimiters.<key>` undefined, which Express's
+      // router throws on ("argument handler must be a function") at route
+      // registration time (module load), failing this entire suite rather than
+      // a single test (SCRUM-3012: caught when `auth` was added for the new
+      // /invitations routes but not mirrored here).
       stripeWebhook: passthrough,
       checkout: passthrough,
       api: passthrough,
-      anonymous: passthrough,
-      batch: passthrough,
+      auth: passthrough,
+      quotaCheck: passthrough,
     },
     stopRateLimitCleanup: vi.fn(),
     getRateLimitStoreSize: vi.fn().mockReturnValue(0),

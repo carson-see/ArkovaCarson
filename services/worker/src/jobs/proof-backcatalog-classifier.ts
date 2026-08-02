@@ -82,11 +82,11 @@ import {
   type CheckpointHandle as SharedCheckpointHandle,
 } from './proofJobCheckpoint.js';
 import {
-  chunk,
   fetchProofRows as sharedFetchProofRows,
   fetchScanPage as sharedFetchScanPage,
   resolveCardinalities as sharedResolveCardinalities,
 } from './proofJobScan.js';
+import { chunkForInFilter } from '../utils/postgrest-filter.js';
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
@@ -124,9 +124,6 @@ const CARDINALITY_PROBE_LIMIT = 2;
  * exact-count scan over anchors.)
  */
 const SOFT_DELETED_PROBE_LIMIT = 1_000;
-
-/** `.in()` filters are chunked to stay inside PostgREST query-string limits. */
-const IN_FILTER_CHUNK = 100;
 
 /** Cap on ambiguous samples carried in the checkpoint/summary (bounded payload). */
 const AMBIGUOUS_SAMPLE_CAP = 25;
@@ -1194,7 +1191,7 @@ async function runLabelApply(
     for (const [cls, ids] of idsByClass) {
       const ws = buildClassWriteSet(cls);
       if (!ws.values) continue;
-      for (const chunkIds of chunk(ids, IN_FILTER_CHUNK)) {
+      for (const { values: chunkIds } of chunkForInFilter(ids)) {
         const { data, error } = await db
           .from('anchor_proofs')
           .update(ws.values)
@@ -1361,7 +1358,6 @@ async function finalizeWriteMode(
 export const __testing = {
   clampBatchSize,
   clampMaxBatches,
-  chunk,
   DEFAULT_BATCH_SIZE,
   MIN_BATCH_SIZE,
   MAX_BATCH_SIZE,

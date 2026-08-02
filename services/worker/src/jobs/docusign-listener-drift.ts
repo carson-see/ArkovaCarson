@@ -92,23 +92,45 @@ export function detectDrift(
     );
   }
 
-  const envelopeEvents = match.envelopeEvents ?? [];
-  for (const required of expected.requiredEnvelopeEvents) {
-    if (!envelopeEvents.includes(required)) {
-      reasons.push(`Missing required envelope event "${required}".`);
-    }
-  }
-
-  const events = match.events ?? [];
-  for (const required of expected.requiredEvents) {
-    if (!events.includes(required)) {
-      reasons.push(`Missing required Connect event "${required}".`);
-    }
-  }
-
-  if (match.eventData?.format !== expected.payloadFormat) {
+  // DocuSign has TWO event vocabularies, and a listener uses ONE:
+  //   - SIM (deliveryMode "SIM")  -> `events: ["envelope-completed"]`
+  //   - legacy/aggregate          -> `envelopeEvents: ["Completed"]`
+  //
+  // Requiring BOTH reported permanent drift on the live production listener,
+  // which is SIM-mode and carries no `envelopeEvents` at all (prod
+  // 2026-08-01T19:55:40Z, integration a900d40f) while demonstrably delivering.
+  //
+  // But the fix is NOT "either vocabulary is fine". Arkova's webhook parser
+  // (`parseDocusignConnectPayload`) requires a SIM-shaped body: it hard-fails
+  // unless `event === "envelope-completed"`, a field the legacy format does not
+  // send. A legacy-only listener would therefore deliver payloads the webhook
+  // rejects — a total silent outage that this detector must FLAG, not bless.
+  // So SIM coverage is required, and `envelopeEvents` is informational only.
+  const missingSimEvents = expected.requiredEvents.filter(
+    (required) => !(match.events ?? []).includes(required),
+  );
+  if (expected.requiredEvents.length === 0) {
+    // Defensive: an empty expectation would make `.filter()` vacuously pass and
+    // silently disable this check. Config is built by buildArkovaConnectConfig,
+    // so this means the expectation itself is broken.
+    reasons.push('Expected Connect events list is empty — listener event coverage could not be checked.');
+  } else if (missingSimEvents.length > 0) {
     reasons.push(
-      `Wrong payload format (eventData.format=${String(match.eventData?.format)}, expected "${expected.payloadFormat}").`,
+      `Missing required Connect event(s) ${JSON.stringify(missingSimEvents)} `
+      + `(events=${JSON.stringify(match.events ?? [])}). `
+      + 'Arkova\'s webhook only parses SIM-format deliveries, so the legacy '
+      + `envelopeEvents=${JSON.stringify(match.envelopeEvents ?? [])} does not substitute.`,
+    );
+  }
+
+  // DocuSign omits `eventData.format` when it is the default (JSON for
+  // restv2.1), so an ABSENT format is not drift — only an explicitly different
+  // one is. The VERSION check below is deliberately NOT relaxed the same way:
+  // an absent version really does mean the listener is not pinned to
+  // restv2.1, which changes the payload shape the webhook parser expects.
+  if (match.eventData?.format !== undefined && match.eventData.format !== expected.payloadFormat) {
+    reasons.push(
+      `Wrong payload format (eventData.format=${String(match.eventData.format)}, expected "${expected.payloadFormat}").`,
     );
   }
 

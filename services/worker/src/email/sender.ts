@@ -32,7 +32,7 @@ export interface SendEmailOptions {
   subject: string;
   html: string;
   /** Email type for audit logging */
-  emailType: 'activation' | 'anchor_secured' | 'revocation' | 'notification' | 'invitation' | 'domain_verification' | 'treasury_alert' | 'queue_reminder';
+  emailType: 'activation' | 'anchor_secured' | 'revocation' | 'notification' | 'invitation' | 'account_verification' | 'domain_verification' | 'treasury_alert' | 'queue_reminder';
   /** Related anchor ID for audit trail */
   anchorId?: string;
   /** Actor user ID (who triggered the send) */
@@ -71,6 +71,20 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendResult> 
   const client = getResendClient();
 
   if (!client) {
+    // SCRUM-3012: a missing RESEND_API_KEY in PRODUCTION must never be reported
+    // as a successful send — that is exactly the "fake success" bug that let
+    // the org-invite flow ship zero real emails while every caller (and every
+    // UI toast) believed it worked. Dev/test/preview keep the convenience
+    // skip (no Resend account needed locally); production fails honestly so
+    // the caller can surface the real state instead of a false positive.
+    if (config.nodeEnv === 'production') {
+      logger.error(
+        { to: options.to, type: options.emailType },
+        'Email send failed — RESEND_API_KEY not configured in production',
+      );
+      await logEmailAudit(options, false, undefined, 'RESEND_API_KEY not configured');
+      return { success: false, error: 'Email delivery is not configured' };
+    }
     logger.debug(
       { to: options.to, type: options.emailType },
       'Email skipped — RESEND_API_KEY not configured',
