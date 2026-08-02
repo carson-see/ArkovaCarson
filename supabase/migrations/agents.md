@@ -157,13 +157,52 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 | `0376` | `0376_r19_anchor_fingerprint_source.sql` | #1741 | ? | R19 (CTO ruling 2026-07-28), advances SCRUM-2481. Additive nullable `anchors.fingerprint_source` CHECK column + `get_public_anchor` top-level allow-list widening. `fingerprint_source` is computed **server-side** from the client's structural `fingerprintProvided` boolean — never trust a client-supplied evidence-class label. Renumbered from `0375` after #1739 claimed it first. |
 | `0377` | `0377_sec_recon_revoke_unguarded_rpc_family.sql` | ? (branch `fix/security-revoke-unguarded-security-definer-rpcs`) | **yes** | SEC-RECON. Restricts 6 unguarded SECURITY DEFINER RPCs to `service_role` and explicitly defers the rest to `0378`. HANDOFF 2026-07-28 describes `0377`'s guard as already in place in prod, contradicting this file's old "file-only" row. |
 | `0378` | `0378_sec_recon_revoke_deferred_security_definer_grants.sql` | #1766 | **yes** | Applied to prod `vzwyaatejekddvltxyye` 2026-07-28; ledger reconciled to numeric head **0378** per §0 rule 10. Restricts the 50 remaining deferred SECURITY DEFINER worker-only RPCs to `service_role`. Public verification endpoints, RLS helper functions, and trigger functions deliberately untouched (revoking RLS helpers would break every policy). Verified both directions via a `has_function_privilege()` sweep — 0 mismatches. **Next author claims `0379`.** Grant-level enumeration belongs in the Confluence bug tracker, not this repo. |
-| `0388` | `0388_anchors_ce_registry_ctid_partial_index.sql` | #1858 | no | FILE-ONLY / NOT APPLIED anywhere. Partial index `idx_anchors_ce_registry_ctid` unblocking the CE Registry drift job (#1838), whose `loadAnchoredCeRecords` walks all ~3M rows of `idx_anchors_active_created` because `ORDER BY created_at DESC LIMIT 100` cannot stop early when <100 rows match — the `check-confirmations.ts` shape that cost a 14-day prod anchoring gap. **Ships a different index than #1838 specifies, and the difference is the whole point:** the expression-keyed form (`ON anchors ((metadata->>'ce_registry_ctid'))`) was built and measured and the planner *never chooses it* — `examine_variable()` ignores expression stats from PARTIAL indexes, so `IS NOT NULL` keeps its 0.5%-default estimate and the pathological walk still looks free. This ships the 0342 shape instead — keyed on `created_at DESC` with the metadata test in the partial predicate — so implication is proven (no Filter node), the ORDER BY is served by index order, and selection does not depend on the estimate being right. Measured on an isolated 1M-row PG 15.8 rig: 52,734 buffers / 17,873 ms -> 3 buffers / 0.137 ms, chosen with no ANALYZE and still chosen with stale stats after a 50k-row write burst; index 16 kB and unchanged by those writes. Prefix claimed 2026-08-02 after scanning main (head `0378`), all open-PR migration files (through `0386`), and every branch ref (`0387` on `fix/public-search-learner-name-leak-0387`). **Next author claims `0389`.** |
+| `0388` | `0388_anchors_ce_registry_ctid_partial_index.sql` | #1862 | no | FILE-ONLY / NOT APPLIED anywhere. Partial index `idx_anchors_ce_registry_ctid` unblocking the CE Registry drift job (#1838), whose `loadAnchoredCeRecords` walks all ~3M rows of `idx_anchors_active_created` because `ORDER BY created_at DESC LIMIT 100` cannot stop early when <100 rows match — the `check-confirmations.ts` shape that cost a 14-day prod anchoring gap. **Ships a different index than #1838 specifies, and the difference is the whole point:** the expression-keyed form (`ON anchors ((metadata->>'ce_registry_ctid'))`) was built and measured and the planner *never chooses it* — `examine_variable()` ignores expression stats from PARTIAL indexes, so `IS NOT NULL` keeps its 0.5%-default estimate and the pathological walk still looks free. This ships the 0342 shape instead — keyed on `created_at DESC` with the metadata test in the partial predicate — so implication is proven (no Filter node), the ORDER BY is served by index order, and selection does not depend on the estimate being right. Measured on an isolated 1M-row PG 15.8 rig: 52,734 buffers / 17,873 ms -> 3 buffers / 0.137 ms, chosen with no ANALYZE and still chosen with stale stats after a 50k-row write burst; index 16 kB and unchanged by those writes. Prefix claimed 2026-08-02 after scanning main (head `0378`), all open-PR migration files (through `0386`), and every branch ref (`0387` on `fix/public-search-learner-name-leak-0387`). **Next author claims `0389`.** |
 
 ### Prefixes with no file and no reservation
 
 `0291`, `0298`, `0332`, `0344`, `0361`, `0369`, `0371`-`0374`. `0344` is a
 deliberate renumber to `0349`; the rest were never claimed or were released.
 Never assume a gap is free — apply the next-free rule above.
+
+## Recent migrations (PR #1862)
+
+`0388_anchors_ce_registry_ctid_partial_index.sql` — partial index
+`idx_anchors_ce_registry_ctid` unblocking the CE Registry drift job (#1838).
+
+**Durable lesson, worth more than the index itself: on `anchors`, a partial
+index keyed on a JSONB expression is a trap for `IS NOT NULL` predicates.**
+#1838 specified `ON anchors ((metadata->>'ce_registry_ctid')) WHERE deleted_at
+IS NULL AND metadata->>'ce_registry_ctid' IS NOT NULL`. It was built and
+measured, and the planner never chooses it:
+
+- The query has no equality on the key — only `IS NOT NULL`, which the partial
+  predicate already asserts — so the key does no work and selection turns
+  entirely on the row estimate.
+- `examine_variable()` (`selfuncs.c`) **deliberately ignores expression
+  statistics belonging to a PARTIAL index**, because they do not describe the
+  whole relation. So ANALYZE cannot fix the estimate: `nulltestsel` keeps its
+  0.5% default and `IS NOT NULL` is estimated at 99.5% of the table. Under
+  `ORDER BY created_at DESC LIMIT 100` the planner then stays on
+  `idx_anchors_active_created`, certain it will stop early. It does not.
+- Measured: with that index present and analyzed, the plan, the buffer count
+  (52,734) and the estimate were identical to having no index at all, and
+  `pg_stats` for the index was empty.
+
+Same family as the 2026-08-02 DocuSign finding, where `0381`'s three
+envelope-key indexes are live and `indisvalid` and the planner refuses them all
+(HANDOFF.md: *an index cannot fix a costing error*).
+
+**Ship the `0342` shape instead** — key on the ordering column, put the metadata
+test in the partial predicate: `ON anchors (created_at DESC) WHERE deleted_at IS
+NULL AND metadata->>'ce_registry_ctid' IS NOT NULL`. Implication is proven so no
+Filter node is emitted, and index order serves the ORDER BY, so selection does
+not depend on the estimate being right. Measured 52,734 buffers / 17,873 ms ->
+3 buffers / 0.137 ms; chosen with no ANALYZE, still chosen with stale stats
+after a 50k-row write burst; 16 kB and unchanged by those writes.
+
+Applies to any future `metadata->>'key' IS NOT NULL` + `ORDER BY ... LIMIT`
+read on this table — index the ordering column, not the key.
 
 ## Negative results worth keeping
 
