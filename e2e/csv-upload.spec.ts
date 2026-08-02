@@ -39,15 +39,25 @@ async function openSecureDocumentDialog(page: Page): Promise<Locator> {
 async function openBulkUploadDialog(page: Page): Promise<Locator> {
   const dialog = await openSecureDocumentDialog(page);
 
+  // SCRUM-2911 W1 (PR #1738, 2026-08-01): a multi-file drop only takes the
+  // bulk-CSV-import path when EVERY dropped file is a spreadsheet
+  // (`isBulkUploadFile` in FileUpload.tsx) — otherwise it routes to
+  // `onMixedBatchDetected` / MixedBatchUploadWizard, the new mixed-format
+  // batch anchoring flow. Two PDFs (the previous fixture here) now hit that
+  // new path instead of Bulk Upload Records, so this helper must drop two
+  // spreadsheet files to keep exercising the CSV bulk-upload wizard this
+  // spec is actually testing. NOTE: as of this fix, the mixed-format batch
+  // anchoring flow itself (MixedBatchUploadWizard, /api/v1/anchor/bulk) has
+  // no E2E coverage — see e2e/agents.md.
   await dialog.locator('input[type="file"]').first().setInputFiles([
     {
-      name: 'bulk-route-one.pdf',
-      mimeType: 'application/pdf',
+      name: 'bulk-route-one.csv',
+      mimeType: 'text/csv',
       buffer: Buffer.from('bulk route one'),
     },
     {
-      name: 'bulk-route-two.pdf',
-      mimeType: 'application/pdf',
+      name: 'bulk-route-two.csv',
+      mimeType: 'text/csv',
       buffer: Buffer.from('bulk route two'),
     },
   ]);

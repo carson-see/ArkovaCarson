@@ -21,6 +21,9 @@ vi.mock('../utils/logger.js', () => ({
   },
 }));
 
+const captureCreditRpcFailureAlert = vi.hoisted(() => vi.fn());
+vi.mock('../utils/sentry.js', () => ({ captureCreditRpcFailureAlert }));
+
 import { db } from '../utils/db.js';
 import { runAllocationRollover } from './monthly-allocation-rollover.js';
 
@@ -82,11 +85,39 @@ describe('runAllocationRollover', () => {
     expect(s.errors).toBe(1);
   });
 
-  it('increments errors on thrown RPC', async () => {
+  it('alerts Sentry only for the errored org, not the rolled/skipped orgs (no fallback exists for this RPC)', async () => {
+    mockOpenPeriods(['good', 'noop', 'bad']);
+    mockDb.rpc
+      .mockResolvedValueOnce({ data: { ok: true }, error: null })
+      .mockResolvedValueOnce({ data: { ok: false, reason: 'no_current_period' }, error: null })
+      .mockResolvedValueOnce({ data: null, error: { message: 'rls' } });
+
+    await runAllocationRollover();
+
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpc: 'roll_over_monthly_allocation',
+        failMode: 'closed',
+        orgId: 'bad',
+      }),
+    );
+  });
+
+  it('increments errors on thrown RPC and alerts Sentry', async () => {
     mockOpenPeriods(['throws']);
     mockDb.rpc.mockRejectedValueOnce(new Error('connection reset'));
 
     const s = await runAllocationRollover();
     expect(s.errors).toBe(1);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpc: 'roll_over_monthly_allocation',
+        failMode: 'closed',
+        orgId: 'throws',
+        operation: 'monthly-allocation-rollover.runAllocationRollover.thrown',
+      }),
+    );
   });
 });

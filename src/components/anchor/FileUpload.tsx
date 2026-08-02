@@ -81,8 +81,15 @@ export interface AttestationUpload {
 
 interface FileUploadProps {
   onFileSelect: (file: File, fingerprint: string) => void;
-  /** Called when a bulk upload file (CSV/XLSX) or multiple files are detected */
+  /** Called when a bulk upload file (CSV/XLSX) or multiple ALL-spreadsheet files are detected */
   onBulkDetected?: (files: File[]) => void;
+  /**
+   * Called when multiple files are dropped and at least one is NOT a
+   * spreadsheet (SCRUM-2911 W1, founder P0 2026-07-28). Distinct from
+   * `onBulkDetected`, which only ever understood CSV/XLSX rows — see the
+   * routing comment in `handleFilesDetected` below.
+   */
+  onMixedBatchDetected?: (files: File[]) => void;
   /** Called when a JSON attestation file is detected */
   onAttestationDetected?: (data: AttestationUpload) => void;
   disabled?: boolean;
@@ -94,7 +101,7 @@ interface SelectedFile {
   processing: boolean;
 }
 
-export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected, disabled }: Readonly<FileUploadProps>) {
+export function FileUpload({ onFileSelect, onBulkDetected, onMixedBatchDetected, onAttestationDetected, disabled }: Readonly<FileUploadProps>) {
   const [dragActive, setDragActive] = useState(false);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -134,14 +141,35 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
   }, []);
 
   /**
-   * Shared dispatch for a drop or file-input selection. W2 / F1: a LONE
-   * spreadsheet file pauses on the mode-choice step instead of being routed
-   * straight to bulk mode — a mixed/multi-file drop (W1's surface) is
-   * untouched and still goes straight to bulk mode, same as before.
+   * Shared dispatch for a drop or file-input selection.
+   *
+   * W2 / F1 (founder ruling 2026-07-28): a LONE spreadsheet file pauses on
+   * the explicit mode-choice step (`setPendingModeFile`) instead of being
+   * routed straight to bulk mode — neither `onBulkDetected` nor
+   * `onFileSelect` fires until the user picks.
+   *
+   * SCRUM-2911 W1 (founder P0, 2026-07-28): a multi-file drop previously went
+   * unconditionally to `onBulkDetected`, which only understands CSV/XLSX rows
+   * (`BulkUploadWizard` picks the first spreadsheet out of the dropped files
+   * and silently discards everything else). A multi-file drop now only takes
+   * the bulk-import path when EVERY file is a spreadsheet; otherwise it
+   * routes to `onMixedBatchDetected`, the mixed-format batch anchoring flow
+   * (fingerprints every file client-side, then submits the batch).
+   *
+   * Collision note (Sprint-S collision map, `docs/release/wave-merge-choreography-2026-08.md`,
+   * Collision 2): #1736 (single-spreadsheet mode-choice) and #1738
+   * (all-spreadsheet-vs-mixed multi-file check) both rewrote this dispatcher.
+   * This is the required union — take #1738's multi-file all-spreadsheet-vs-
+   * mixed check, and #1736's single-spreadsheet `setPendingModeFile` path
+   * (never `onBulkDetected` for a lone spreadsheet).
    */
   const dispatchFiles = useCallback((files: File[]) => {
     if (files.length > 1) {
-      onBulkDetected?.(files);
+      if (files.every(isBulkUploadFile)) {
+        onBulkDetected?.(files);
+      } else {
+        onMixedBatchDetected?.(files);
+      }
       return;
     }
     const [file] = files;
@@ -156,7 +184,7 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
       return;
     }
     processFile(file);
-  }, [processFile, onBulkDetected, onAttestationDetected]);
+  }, [processFile, onBulkDetected, onMixedBatchDetected, onAttestationDetected]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
