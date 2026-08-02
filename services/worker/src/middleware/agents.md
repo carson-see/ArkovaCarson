@@ -2,6 +2,22 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-08-01 SILENT-WRITE CLASS — `void <supabase builder>` never executes (PR #1808)
+
+**Do not reintroduce:** supabase-js query builders are **lazy PromiseLikes**. `PostgrestBuilder.then()` is where the HTTP request is issued — nothing happens until something calls `then` (via `await`, `.then(...)`, or `Promise.all`). So
+
+```ts
+void db.from('t').update({ ... }).eq('id', id);   // NO-OP. Never sent.
+```
+
+evaluates the builder, discards it, and writes nothing — no error, no effect, no signal. `apiKeyAuth.ts` shipped this pattern for `api_keys.last_used_at`, and every row in prod read `last_used_at IS NULL` regardless of actual key use, including keys that had authenticated hours earlier. Any dormant-credential audit or key-rotation runbook keyed on that column got a wrong answer 100% of the time.
+
+**Correct fire-and-forget** (see `touchApiKeyLastUsed` in `apiKeyAuth.ts`, used by both `apiKeyAuth.ts` and `api/v2/auth.ts`): keep `void` for the floating-promise lint, but attach `.then(onFulfilled, onRejected)` — the `.then` is what issues the request, and the handlers make failures visible instead of silent.
+
+**Tests must model the laziness.** A mock whose `.eq()` returns a resolved Promise, or `mockReturnThis()`, passes even when the production code never sends anything. Both `apiKeyAuth.test.ts` and `api/v2/auth.test.ts` now use a `lazyUpdateBuilder` that records a write **only when `.then()` is called**.
+
+Sibling audit (2026-08-01): 9 other `void db.…` callsites still carry this bug — `api/v1/verify.ts`, `api/v1/keys.ts`, `api/v1/oracle.ts`, `api/v1/key-inventory.ts`, and 4 in `api/v1/agents.ts`, all discarding `audit_events` inserts. Out of scope for PR #1808; tracked separately. `signatures/compliance/complianceEvents.ts` is already correct (it ends in `.then(() => {}, () => {})`).
+
 ## 2026-07-28 SECURITY — requireOrgId cross-tenant bypass (fix) + new requireOrgAdmin
 
 **VULNERABILITY CLASS — do not reintroduce:** `requireOrgId.ts` previously read `req.headers['x-org-id']` **verbatim** and attached it to `req.orgId` with **no check** that the authenticated caller belonged to that org. Any authenticated Arkova user (any valid JWT, any org) could impersonate any other org on every route mounted behind it, just by sending an arbitrary header — a full cross-tenant read/write bypass on the FERPA disclosure log, directory opt-out, HIPAA audit trail, and HIPAA emergency-access grants. Because `utils/db.ts`'s `db` client is **service_role and bypasses RLS by design**, RLS provided zero protection here — the header WAS the entire tenant boundary.
@@ -105,3 +121,4 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - Feature gates fail closed by default — if the DB read fails, kill-switchable gates return 503. Exception: `ENABLE_AI_EXTRACTION` is launch-required (§1.6) and keeps its launch default; last-known-good DB value wins over the fail default on a transient blip (SCRUM-2247).
 - `errorSanitizer` must be registered BEFORE the global error handler.
 - No raw API keys in logs or DB — HMAC-SHA256 only.
+- `paymentTierRouter.ts` `tryCredits()`: a `deduct_unified_credits` RPC failure falls through to Stripe metered billing (fail OPEN — the org gets charged instead of a credit it already paid for being consumed) and now calls `captureCreditRpcFailureAlert({ failMode: 'open', ... })` from `utils/sentry.ts` — previously only a `logger.warn`, no alert. Fail-open behavior itself is unchanged (product decision); this only adds observability.

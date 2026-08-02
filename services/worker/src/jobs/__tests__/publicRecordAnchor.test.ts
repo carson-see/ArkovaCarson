@@ -76,6 +76,9 @@ vi.mock('../../chain/client.js', () => ({
   }),
 }));
 
+const captureCreditRpcFailureAlert = vi.hoisted(() => vi.fn());
+vi.mock('../../utils/sentry.js', () => ({ captureCreditRpcFailureAlert }));
+
 function makeMock(
   records: Array<Record<string, unknown>> = [],
   options: { revertError?: unknown; claimError?: unknown; fetchError?: unknown } = {},
@@ -298,6 +301,51 @@ describe('publicRecordAnchor', () => {
     expect(result.txId).toBe('tx_mock_123');
     expect(result.batchId).toMatch(/^pr_batch_/);
     expect(result.processed).toBe(records.length);
+    // Happy path — no alert.
+    expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it('falls back to serial inserts AND alerts Sentry when batch_insert_anchors RPC fails', async () => {
+    const records = Array.from({ length: 2 }, (_, i) => ({
+      id: `record-${i}`,
+      content_hash: (i.toString(16).padStart(2, '0')).repeat(32),
+      metadata: {},
+      source: 'edgar',
+      source_id: `CIK-${i}`,
+      source_url: `https://sec.gov/filing/${i}`,
+      record_type: '10-K',
+      title: `Test Filing ${i}`,
+    }));
+
+    mockRpc
+      .mockResolvedValueOnce({ data: true }) // get_flag
+      .mockResolvedValueOnce({ data: null, error: { message: 'batch_insert_anchors RPC failed' } }) // batch_insert_anchors fails
+      .mockResolvedValueOnce({ data: { records_updated: records.length, anchors_updated: records.length } }); // finalize
+
+    const { client: mockSupa } = makeMock(records);
+
+    mockSubmitFingerprint.mockResolvedValue({
+      receiptId: 'tx_mock_456',
+      blockHeight: 0,
+      blockTimestamp: new Date().toISOString(),
+      confirmations: 0,
+    });
+
+    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
+    await processPublicRecordAnchoring(mockSupa);
+
+    // Serial-insert fallback engaged (per-anchor .insert() on the 'anchors' table).
+    expect(mockInsert).toHaveBeenCalled();
+
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);
+    expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rpc: 'batch_insert_anchors',
+        operation: 'publicRecordAnchor.insertAnchorChunk',
+        failMode: 'retried',
+        orgId: 'admin-user-id',
+      }),
+    );
   });
 
   it('persists proof rows outside anchors metadata after finalize', async () => {
