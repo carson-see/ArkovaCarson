@@ -29,7 +29,7 @@ Arkova's core infrastructure is complete: POST /anchor wired E2E, 13 verificatio
 
 | Jira | Story | Pts | Status |
 |---|---|---|---|
-| [SCRUM-642](https://arkova.atlassian.net/browse/SCRUM-642) | INT-01 TypeScript SDK (`@arkova/sdk`) | 5 | **COMPLETE** |
+| [SCRUM-642](https://arkova.atlassian.net/browse/SCRUM-642) | INT-01 TypeScript SDK (`@carsonarkova/sdk`) | 5 | **COMPLETE** |
 | [SCRUM-643](https://arkova.atlassian.net/browse/SCRUM-643) | INT-02 MCP Server Tool Enhancement | 3 | **COMPLETE** |
 | [SCRUM-644](https://arkova.atlassian.net/browse/SCRUM-644) | INT-03 Embeddable Verification Bundle | 5 | **COMPLETE** |
 | [SCRUM-645](https://arkova.atlassian.net/browse/SCRUM-645) | INT-09 Webhook CRUD via API | 3 | **COMPLETE** |

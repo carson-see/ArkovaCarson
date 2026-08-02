@@ -13,6 +13,12 @@ const mockEmitOrgAdminNotifications = vi.fn();
 
 vi.mock('../utils/db.js', () => ({
   db: { rpc: (...args: unknown[]) => mockDbRpc(...args), from: (...args: unknown[]) => mockDbFrom(...args) },
+  // Real implementation — pure string/shape matcher, safe to use unmocked so the
+  // retry test below exercises the same transient-error classification prod uses.
+  isTransientConnectionError: (err: unknown): boolean => {
+    const msg = err instanceof Error ? `${err.message} ${(err as { code?: string }).code ?? ''}` : String(err);
+    return /fetch failed|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|EPIPE|socket hang up|UND_ERR_SOCKET|other side closed|terminated/i.test(msg);
+  },
 }));
 
 vi.mock('../utils/logger.js', () => ({
@@ -160,6 +166,62 @@ describe('runOrgQueueScheduler', () => {
 
     await expect(runOrgQueueScheduler()).rejects.toThrow(/invalid rows/i);
     expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
+  });
+
+  // Incident 2026-07-29: launch-72h/legacy-soak signet rigs — claim_due_org_queue_runs
+  // committed the row lock (organization_queue_run_state.locked_at set, status
+  // 'running') on every single tick that actually had due orgs, yet
+  // organization_queue_runs stayed EMPTY the entire soak. Root cause: the RPC is a
+  // PostgREST POST, and db.ts's fetch wrapper deliberately never auto-retries
+  // POST/RPC calls (SCRUM-2899 — a retried WRITE could double-apply after the
+  // server already committed). A rotten idle socket under loadgen connection
+  // pressure threw a transport error (fetch failed / ECONNRESET) on the RPC
+  // *after* Postgres had already committed the claim, so the throw escaped
+  // BEFORE the per-org try/catch (which is what actually clears locked_at) —
+  // stranding the org in 'running' until the RPC's own 15-minute lock timeout,
+  // at which point the next tick reclaims it and repeats the same failure.
+  // claim_due_org_queue_runs is uniquely safe to retry here (unlike a generic
+  // RPC write): it uses `FOR UPDATE SKIP LOCKED`, so a retry can only pick up
+  // orgs NOT already locked by a prior attempt — it can never double-claim.
+  it('retries the claim RPC once on a transient transport error, then proceeds normally', async () => {
+    mockDbRpc.mockReset();
+    const transportError = Object.assign(new Error('fetch failed'), { cause: new Error('other side closed') });
+    mockDbRpc
+      .mockRejectedValueOnce(transportError)
+      .mockResolvedValueOnce({ data: [{ org_id: ORG_A, last_run_at: null }], error: null });
+    mockProcessBatchAnchors.mockResolvedValue({
+      processed: 2,
+      batchId: 'batch-3',
+      merkleRoot: 'c'.repeat(64),
+      txId: 'tx-3',
+    });
+
+    const result = await runOrgQueueScheduler({}, { workerId: 'worker-3' });
+
+    expect(mockDbRpc).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ claimed: 1, succeeded: 1, failed: 0, processed: 2 });
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(String) }),
+      expect.stringContaining('retrying once'),
+    );
+  });
+
+  it('surfaces the error when the claim RPC fails twice in a row (no infinite retry)', async () => {
+    mockDbRpc.mockReset();
+    const transportError = Object.assign(new Error('fetch failed'), { cause: new Error('ECONNRESET') });
+    mockDbRpc.mockRejectedValue(transportError);
+
+    await expect(runOrgQueueScheduler()).rejects.toThrow(/fetch failed/i);
+    expect(mockDbRpc).toHaveBeenCalledTimes(2);
+    expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a non-transient claim RPC error', async () => {
+    mockDbRpc.mockReset();
+    mockDbRpc.mockRejectedValue(new Error('permission denied for function claim_due_org_queue_runs'));
+
+    await expect(runOrgQueueScheduler()).rejects.toThrow(/permission denied/i);
+    expect(mockDbRpc).toHaveBeenCalledTimes(1);
   });
 });
 

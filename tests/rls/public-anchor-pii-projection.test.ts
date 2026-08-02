@@ -37,6 +37,7 @@ import { createServiceClient, createAnonClient, type TypedClient } from '../../s
 interface Contract {
   academic_record_credential_types: string[];
   sql_academic_controlled_labels: Record<string, string>;
+  sql_non_academic_fallback_label: string;
   high_confidence_vectors: { text: string; family: string }[];
   must_publish_vectors: { text: string; why: string }[];
   leak_vectors: { text: string; shape: string }[];
@@ -381,23 +382,64 @@ describe('0385 — anon public anchor projection does not leak learner PII', () 
       expect(metadata.title, `${text} must still reach the public projection`).toBe(text);
     });
 
-    it('an anchor with NULL credential_type takes the non-academic path and still gates PII', async () => {
-      // anchors.credential_type is nullable and plenty of legacy rows have no
-      // value, so the academic predicate must resolve NULL to FALSE (not error,
-      // not accidentally gate everything) while the value layer still applies.
+    it('SCRUM-3102 — an anchor with NULL credential_type FAILS CLOSED', async () => {
+      // 0390. This previously resolved NULL to FALSE and took the permissive
+      // branch, publishing `filename` — and `filename` is the record's public
+      // display title and its schema.org `name`. The seven value-gate detector
+      // families are all format- or keyword-anchored, so a bare personal name
+      // passed straight through. Measured in prod 2026-08-02: 24 of the 59
+      // NULL-type anchors (41%) carried a learner-name-shaped filename, the
+      // densest such pocket in a 3.36M-row corpus.
+      //
+      // An unclassifiable record cannot be shown to be safe, so it is suppressed:
+      // the academic set recognises SAFETY by enumeration, and unknown must fail
+      // closed. `credential_type` still projects as 'OTHER' (frozen schema,
+      // §1.8) and `filename` takes the controlled fallback label — a shape the
+      // contract already produces whenever an OTHER record's filename trips the
+      // value gate, so this introduces no new output shape.
       const { publicId } = await seedAnchor({
         credentialType: null,
-        filename: 'quarterly-compliance-report.pdf',
-        metadata: { title: 'Quarterly Compliance Report', description: 'Filed by registrar@example.edu' },
+        filename: 'jane-doe-award.pdf',
+        metadata: { title: 'Jane Doe', description: 'Filed by registrar@example.edu' },
       });
       const body = await fetchAsAnon(publicId);
       const metadata = body.metadata as Record<string, unknown>;
       expect(body.credential_type).toBe('OTHER');
-      expect(body.filename).toBe('quarterly-compliance-report.pdf');
-      expect(metadata.title).toBe('Quarterly Compliance Report');
-      // The value layer still runs on a NULL-typed anchor.
+      expect(body.filename).toBe(contract.sql_non_academic_fallback_label);
+      expect(body.filename).not.toContain('jane');
+      expect(metadata.title).toBeUndefined();
       expect(metadata.description).toBeUndefined();
       expect(JSON.stringify(body)).not.toContain('registrar@example.edu');
+      expect(JSON.stringify(body).toLowerCase()).not.toContain('jane');
+    });
+
+    it.each(['', '   '])(
+      'SCRUM-3102 — an anchor with a blank credential_type (%p) also fails closed',
+      async (blankType) => {
+        // btrim() in the predicate: whitespace-only is as unclassifiable as NULL.
+        const { publicId } = await seedAnchor({
+          credentialType: blankType as unknown as null,
+          filename: 'maria-gonzalez-certificate.pdf',
+        });
+        const body = await fetchAsAnon(publicId);
+        expect(body.filename).toBe(contract.sql_non_academic_fallback_label);
+        expect(JSON.stringify(body).toLowerCase()).not.toContain('gonzalez');
+      },
+    );
+
+    it('SCRUM-3102 — a PRESENT non-academic type still publishes its real title', async () => {
+      // The fail-closed rule must not widen to known types: credential_type is
+      // an enum column, so a non-empty value is always a known type, and
+      // blanking those would destroy real descriptive titles.
+      const { publicId } = await seedAnchor({
+        credentialType: 'OTHER',
+        filename: 'quarterly-compliance-report.pdf',
+        metadata: { title: 'Quarterly Compliance Report' },
+      });
+      const body = await fetchAsAnon(publicId);
+      const metadata = body.metadata as Record<string, unknown>;
+      expect(body.filename).toBe('quarterly-compliance-report.pdf');
+      expect(metadata.title).toBe('Quarterly Compliance Report');
     });
 
     it('a CPE record keeps its real descriptive title (CPE/CLE are not academic records)', async () => {
