@@ -21,6 +21,7 @@
     "gen:types": "supabase gen types typescript --local > src/types/database.types.ts",
     "ci:api-contract-drift": "tsx scripts/ci/check-api-contract-drift.ts",
     "test": "vitest run",
+    "test:hooks": "for t in scripts/agent/*.test.sh; do echo \"== $t\"; bash \"$t\" || exit 1; done",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:rls": "vitest run --config vitest.config.rls.ts",

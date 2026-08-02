@@ -63,6 +63,11 @@ export const ROUTES = {
   HELP: '/help',
   REVIEW_PENDING: '/review-pending',
 
+  // Consumer secure queue (QUEUE-01 / SCRUM-2894 — L2-A1). The
+  // `consumer_secure_queue` surface from queueContract.ts's QUEUE_SURFACES —
+  // distinct from ANCHOR_QUEUE (org_duplicate_review) below.
+  SECURE_QUEUE: '/queue',
+
   // Attestations (Phase II)
   ATTESTATIONS: '/attestations',
   VERIFY_ATTESTATION: '/verify/attestation/:publicId',
