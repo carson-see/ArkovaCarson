@@ -94,6 +94,23 @@ describe('useInviteMember', () => {
     );
   });
 
+  // SCRUM-3012: the worker builds the emailed accept link from the invitation's
+  // real token, looked up by `invitationId` — the RPC's returned id MUST reach
+  // the email endpoint or the worker cannot find the token to embed.
+  it('forwards the invite_member RPC return value as invitationId to the email endpoint', async () => {
+    mockRpc.mockResolvedValue({ data: 'invite-uuid-123', error: null });
+
+    const { result } = renderHook(() => useInviteMember());
+
+    await act(async () => {
+      await result.current.inviteMember(defaultOptions);
+    });
+
+    const [, requestInit] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(requestInit.body as string) as Record<string, unknown>;
+    expect(body.invitationId).toBe('invite-uuid-123');
+  });
+
   it('should handle already a member error', async () => {
     mockRpc.mockResolvedValue({
       data: null,
