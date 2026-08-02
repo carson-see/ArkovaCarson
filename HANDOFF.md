@@ -113,6 +113,25 @@
 - **More unguarded SECURITY DEFINER RPCs, not yet fixed** (backlogged from the 2026-07-28 sweep):
   `finalize_public_record_anchor_batch`, `drain_submitted_to_secured_for_tx`, `bulk_promote_confirmed`,
   `archive_old_audit_events` (can wipe the audit trail with `retention_days=0`).
+- **Anonymous projections of an anchor keep being hardened one at a time — FOUR are now known, one is
+  still open.** Each pass fixed the surface in front of it and missed the next; the pattern, not any
+  single leak, is the finding. All four project the same `anchors` rows to the same anonymous caller.
+  - `public.get_public_anchor` (anon-GRANTed, browser/PostgREST) — migration `0385`, PR #1841, OPEN.
+  - `GET /api/v1/credentials/:publicId/ctdl` — `ctdl/ctdl-pii-guard.ts`, PR #1815, OPEN.
+  - `GET /api/v1/verify/:publicId` — emitted `anchor.description` raw for every credential type,
+    including `DEGREE`/`TRANSCRIPT`/`CERTIFICATE`, and was **not** covered by the REG-02
+    `directory_info_opt_out` block above it (that block gates issuer/recipient/dates only), so an
+    explicitly opted-out learner was still exposed. PR #1864, OPEN (draft; stacked on #1815 + #1841).
+  - **STILL OPEN, no PR: `GET /api/v1/verify/:publicId/provenance`.** `services/worker/src/api/v1/
+    provenance.ts:99` emits `` `Revoked: ${anchor.revocation_reason}` `` verbatim; `router.ts:271`
+    mounts it as `router.use('/verify', provenanceRouter)` with no `requireScope` and no auth
+    middleware, and the module itself has no auth check (grep for `requireAuth|requireScope|req.apiKey|
+    authUserId` in it returns nothing). `revocation_reason` is the field `0385` calls out as
+    issuer-authored free text on a public projection. Checked and NOT affected, so don't re-audit:
+    `verify/attestation.ts` (anon but no free text), `attestations.ts` (has the fields but every route
+    self-guards), `verify-proof.ts` (merkle only).
+  - The one rule all of these must share is `scripts/ci/public-pii-projection-contract.json`; PR #1864
+    adds a `known_ungated_projections` list to it so the contract stops implying coverage it lacks.
 - **Silent fail-open credit RPCs** — free AI extraction on `deduct_ai_credits` failure; customer charged
   instead of consuming a paid credit on `deduct_unified_credits` failure. PR #1764, OPEN.
 - **10k-DAU architectural limit:** the nightly 3am flush caps at `BATCH_ANCHOR_MAX_SIZE=10000` per
@@ -723,4 +742,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-01 by Claude (HANDOFF restructure session) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-08-02 by Claude (public-projection PII session) — claims verified against gcloud/MCP/CI output._
