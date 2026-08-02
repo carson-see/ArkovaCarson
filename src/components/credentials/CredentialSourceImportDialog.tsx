@@ -316,8 +316,9 @@ export function CredentialSourceImportDialog({
                     <ExternalLink className="h-3 w-3 shrink-0" />
                   </a>
                 </dd>
-                <dt className="text-muted-foreground">{LABELS.CONFIDENCE_FIELD}</dt>
-                <dd>{Math.round(preview.extraction_confidence * 100)}%</dd>
+                {/* SCRUM-2914: extraction confidence percentage removed —
+                    the score is unreliable and must not be surfaced. The
+                    evidence package hash below is the honest integrity signal. */}
                 <dt className="text-muted-foreground">{LABELS.EVIDENCE_FIELD}</dt>
                 <dd className="font-mono text-xs">{compactHash(preview.evidence_package_hash)}</dd>
                 <dt className="text-muted-foreground">{LABELS.PAYLOAD_FIELD}</dt>
