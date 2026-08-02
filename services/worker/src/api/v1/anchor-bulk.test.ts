@@ -45,6 +45,8 @@ vi.mock('../../utils/jobQueue.js', () => ({
 import { anchorBulkRouter, BulkAnchorRequestSchema } from './anchor-bulk.js';
 import { db } from '../../utils/db.js';
 import { deductOrgCredit } from '../../utils/orgCredits.js';
+import { POSTGREST_URL_FILTER_BUDGET_BYTES } from '../../utils/postgrest-filter.js';
+import { encodedInFilterBytesFor } from '../../test-utils/postgrestWire.js';
 
 const FP = (n: number) => n.toString(16).padStart(64, '0');
 
@@ -390,5 +392,180 @@ describe('POST /api/v1/anchor/bulk (SCRUM-1171)', () => {
     const tooMany = Array.from({ length: 1001 }, (_, i) => ({ fingerprint: FP(i) }));
     const r = BulkAnchorRequestSchema.safeParse({ anchors: tooMany });
     expect(r.success).toBe(false);
+  });
+});
+
+/**
+ * The duplicate-check read is the ONLY thing standing between a re-submitted
+ * batch and a second set of anchors that are created AND billed.
+ *
+ * Two defects met here:
+ *
+ *  1. The whole `inBatchSeen` key set went into one `.in('fingerprint', …)`.
+ *     The Zod cap is 1000 rows of 64-char hex; the URL budget is exhausted at
+ *     ~122 of them, so any batch past that took 400 Bad Request.
+ *  2. `const { data: existing } = await …` discarded the error. PostgREST
+ *     RESOLVES on a 400 (it does not throw), so the `catch` never ran, the
+ *     empty result read as "no fingerprint exists yet", every row queued, and
+ *     `deductOrgCredit` charged the org for the whole batch.
+ *
+ * The failure is silent and billable: HTTP 201, duplicates created, invoiced.
+ */
+describe('POST /api/v1/anchor/bulk — DB duplicate check width + failure policy', () => {
+  /** A recorded `.in('fingerprint', …)` call. */
+  interface InCall { column: string; values: string[] }
+
+  function makeDedupApp(state: {
+    /** Fingerprints (lower-case) that already exist in the org. */
+    existing?: string[];
+    /** Force every dedup chunk to fail, however narrow it is. */
+    failEveryChunk?: boolean;
+    inCalls: InCall[];
+  }) {
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      const builder = {} as Builder;
+      const chain = () => builder;
+      builder.select = vi.fn(chain);
+      builder.eq = vi.fn(chain);
+      builder.insert = vi.fn(chain);
+      builder.single = vi.fn(() => Promise.resolve({
+        data: {
+          id: '550e8400-e29b-41d4-a716-446655440001',
+          public_id: 'ARK-001',
+          fingerprint: FP(999),
+          created_at: '2026-08-01T00:00:00Z',
+        },
+        error: null,
+      })) as unknown as Builder['single'];
+      builder.in = vi.fn((column: string, values: string[]) => {
+        state.inCalls.push({ column, values });
+        // The real wire behaviour: PostgREST sits behind a proxy that rejects
+        // an oversized request line with 400, and postgrest-js RESOLVES that
+        // as `{ data: null, error }` rather than throwing.
+        if (state.failEveryChunk || encodedInFilterBytesFor(values) > POSTGREST_URL_FILTER_BUDGET_BYTES) {
+          return Promise.resolve({
+            data: null,
+            error: { code: 'PGRST', message: 'Bad Request', details: null, hint: null },
+          });
+        }
+        // Byte-for-byte, like `character(64)` — NOT a case-insensitive match.
+        // A forgiving mock here would hide the casing defect entirely.
+        const hits = values
+          .filter((v) => (state.existing ?? []).includes(v))
+          .map((v) => ({ fingerprint: v }));
+        return Promise.resolve({ data: hits, error: null });
+      }) as unknown as Builder['in'];
+      void table;
+      return builder as unknown as never;
+    });
+    return buildApp();
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockQuotaDeltas.length = 0;
+    mockConfig.enableProfessionalEducationSchemaReady = true;
+    vi.mocked(deductOrgCredit).mockResolvedValue({ allowed: true });
+  });
+
+  it('never exceeds the URL filter budget, however many rows the schema allows', async () => {
+    const inCalls: InCall[] = [];
+    // The schema's own maximum. Unchunked this is ~67KB of query string.
+    const anchors = Array.from({ length: 1000 }, (_, i) => ({ fingerprint: FP(i) }));
+
+    await request(makeDedupApp({ inCalls }))
+      .post('/api/v1/anchor/bulk')
+      .send({ dry_run: true, duplicate_strategy: 'skip', anchors })
+      .expect(200);
+
+    expect(inCalls.length).toBeGreaterThan(1);
+    for (const call of inCalls) {
+      expect(encodedInFilterBytesFor(call.values)).toBeLessThanOrEqual(
+        POSTGREST_URL_FILTER_BUDGET_BYTES,
+      );
+    }
+    // Every submitted fingerprint was actually asked about — chunking must not
+    // drop the tail.
+    const asked = new Set(inCalls.flatMap((c) => c.values.map((v) => v.toLowerCase())));
+    for (const a of anchors) expect(asked.has(a.fingerprint.toLowerCase())).toBe(true);
+  });
+
+  it('still finds an existing fingerprint in a batch too wide for one filter', async () => {
+    const inCalls: InCall[] = [];
+    // 200 rows: past the ~122-value budget for 64-char hex, so the pre-fix
+    // single filter 400s and the duplicate goes undetected.
+    const anchors = Array.from({ length: 200 }, (_, i) => ({ fingerprint: FP(i) }));
+    const collidingRow = 173;
+
+    const res = await request(makeDedupApp({ inCalls, existing: [FP(collidingRow)] }))
+      .post('/api/v1/anchor/bulk')
+      .send({ duplicate_strategy: 'skip', anchors });
+
+    expect(res.status).toBe(201);
+    expect(res.body.duplicates).toEqual([
+      expect.objectContaining({ row: collidingRow, scope: 'in_db' }),
+    ]);
+    // The whole point: the duplicate is NOT queued, so it is not billed twice.
+    expect(res.body.queued).toBe(199);
+    expect(deductOrgCredit).toHaveBeenCalledWith(expect.anything(), 'org-1', 199, 'anchor.bulk', undefined);
+  });
+
+  it('matches an upper-case submission against the lower-cased stored row', async () => {
+    const inCalls: InCall[] = [];
+    // The insert path lower-cases before writing; the dedup filter used the
+    // caller's casing verbatim. `character(64)` compares byte-for-byte, so an
+    // upper-case resubmission matched nothing and was re-created and re-billed.
+    const stored = FP(0xabcdef); // has hex letters, so casing is observable
+    expect(stored.toUpperCase()).not.toBe(stored);
+
+    const res = await request(makeDedupApp({ inCalls, existing: [stored] }))
+      .post('/api/v1/anchor/bulk')
+      .send({ duplicate_strategy: 'skip', anchors: [{ fingerprint: stored.toUpperCase() }] });
+
+    expect(res.status).toBe(201);
+    expect(res.body.duplicates).toEqual([
+      expect.objectContaining({ row: 0, scope: 'in_db' }),
+    ]);
+    expect(res.body.queued).toBe(0);
+    expect(deductOrgCredit).not.toHaveBeenCalled();
+  });
+
+  it('fails CLOSED when the duplicate check errors — no insert, no charge', async () => {
+    const inCalls: InCall[] = [];
+    const res = await request(makeDedupApp({ inCalls, failEveryChunk: true }))
+      .post('/api/v1/anchor/bulk')
+      .send({ duplicate_strategy: 'skip', anchors: [{ fingerprint: FP(1) }, { fingerprint: FP(2) }] });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('duplicate_check_unavailable');
+    // A read that failed must never be reported as "no duplicates exist".
+    expect(deductOrgCredit).not.toHaveBeenCalled();
+    expect(mockQuotaDeltas).toEqual([]);
+    expect(mockSubmitJob).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on dry_run too — a dry run reporting 0 duplicates is the lie', async () => {
+    const inCalls: InCall[] = [];
+    const res = await request(makeDedupApp({ inCalls, failEveryChunk: true }))
+      .post('/api/v1/anchor/bulk')
+      .send({ dry_run: true, duplicate_strategy: 'skip', anchors: [{ fingerprint: FP(1) }] });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('duplicate_check_unavailable');
+  });
+
+  it('never logs a fingerprint or a raw driver error when the check fails', async () => {
+    const inCalls: InCall[] = [];
+    await request(makeDedupApp({ inCalls, failEveryChunk: true }))
+      .post('/api/v1/anchor/bulk')
+      .send({ anchors: [{ fingerprint: FP(1) }] });
+
+    // It must be logged at all — a refusal nobody can see is its own defect...
+    expect(mockLogger.error).toHaveBeenCalled();
+    // ...but the log must not carry the fingerprint (§1.1) or the raw driver
+    // message, which routinely echoes the offending value back verbatim.
+    const logged = JSON.stringify(mockLogger.error.mock.calls);
+    expect(logged).not.toContain(FP(1));
+    expect(logged).not.toContain('Bad Request');
   });
 });
