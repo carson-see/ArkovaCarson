@@ -18,6 +18,7 @@ import { db } from '../../utils/db.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { getCallerOrgId } from '../_org-auth.js';
+import { captureCreditRpcFailureAlert } from '../../utils/sentry.js';
 
 export const creditsRouter = Router();
 
@@ -131,6 +132,18 @@ creditsRouter.post('/purchase', async (req: Request, res: Response) => {
       });
 
       if (grantError) {
+        // Fail CLOSED — request errors out, no credits granted, no charge.
+        // Still alert: this is the dev/test-only grant path, but a silent
+        // failure here would mask a real deduct_unified_credits regression.
+        captureCreditRpcFailureAlert({
+          rpc: 'deduct_unified_credits',
+          operation: 'credits.purchase.devGrant',
+          failMode: 'closed',
+          error: new Error('deduct_unified_credits (dev grant) failed'),
+          orgId,
+          userId,
+          extra: { packId: pack.id, credits: pack.credits },
+        });
         res.status(500).json({ error: 'Failed to grant credits' });
         return;
       }

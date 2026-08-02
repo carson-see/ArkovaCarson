@@ -1,4 +1,78 @@
 # agents.md — services/edge
+_Last updated: 2026-07-28 (L2-A6 MCP discovery-manifest parity)._
+
+## L2-A6 — MCP discovery-manifest parity + drift guard (2026-07-28)
+
+Founder finding: the public discovery manifest
+(`public/.well-known/mcp/server-card.json`) advertised only 2 tools
+(`search`, `get_anchor`) while the live server registers all 16 from
+`TOOL_DEFINITIONS` (`mcp-tools.ts`) — an agent or a founder reading the
+manifest before installing the connector had no way to discover
+`verify_batch`, `nessie_query`, `anchor_document`, or the other 12 real
+tools. "MCP must be useful + easy to install" fails hard if the discovery
+surface undercounts by 8x.
+
+- **Manifest synced** (`public/.well-known/mcp/server-card.json`): all 16
+  tools now listed with `inputSchema` (`properties`/`required`) matching
+  `TOOL_DEFINITIONS` exactly, plus the numeric/pattern bounds from
+  `mcp-tool-schemas.ts`'s Zod registry (`PUBLIC_ID_RE`, `SHA256_HEX_RE`,
+  length/min/max) as extra agent-facing hints. `anchor_document` is
+  listed with an explicit note that it's registered conditionally
+  (`MCP_ENABLE_ANCHOR_DOCUMENT=true` + `write:anchors`/`anchor:write`
+  scope — see `isMcpAnchorDocumentAllowed`) rather than omitted, since
+  the manifest documents capability, not per-request gating.
+- **Alias dedupe (manifest-only, no server rename/removal this sprint):**
+  the live server carries duplicate tool NAMES for identical underlying
+  handlers — confirmed from the handler bodies, not guessed:
+  - `get_record` and `get_document` both call `handleAgentGetAnchor`,
+    which is itself a documented "agent-friendly alias" wrapper around
+    `handleVerifyCredential` — byte-identical response to `get_anchor`
+    (and to `verify_credential`, modulo the caller-supplied-`public_id`
+    framing).
+  - `get_fingerprint` calls `handleAgentVerify`, a documented alias of
+    `handleVerifyDocument` — byte-identical response to `verify` (and
+    near-identical to `verify_document`, which `handleAgentVerify` wraps
+    with one defense-in-depth `record_id` strip that's a no-op today).
+  - Per L2-A6 scope: did NOT rename/remove any tool server-side this
+    sprint (server truthfully still exposes 16 names — an existing
+    integration calling `get_document` keeps working). Instead, each
+    alias's manifest `description` now says "Alias of `<canonical>`
+    (identical response); prefer `<canonical>`" so an agent picking a
+    tool for a NEW integration converges on one canonical name per
+    capability without losing discoverability of the alias for
+    already-wired callers. **Recommended post-launch consolidation**
+    (not done here): deprecate then remove `get_record`, `get_document`,
+    `get_fingerprint` from the server once no active integration depends
+    on them (grep MCP audit log `tool_name` distribution first), leaving
+    `verify_credential` + `get_anchor` (id-based family) and `verify` /
+    `verify_document` (fingerprint-based family) as the two canonical
+    lookup primitives. `search` vs `search_credentials` were evaluated
+    and are NOT duplicates — `search` spans org/record/fingerprint/
+    document, `search_credentials` is scoped to the credential corpus
+    only; both stay.
+- **Drift guard, wired as a test not a new CI job**
+  (`tests/infra/mcp-manifest-parity.test.ts`, root-level, imports
+  `TOOL_DEFINITIONS` from `../../services/edge/src/mcp-tools` the same
+  way the pre-existing `tests/infra/mcp-server.test.ts` does): asserts
+  manifest tool-name SET equality against the server registry (both
+  directions — catches under-count AND over-claim), per-tool
+  `required`/`properties` key-set equality, non-empty descriptions, and a
+  Constitution 1.3 / R-7 scan over the manifest's `description` prose
+  only (property/tool identifiers like `content_hash` are internal
+  technical names, out of scope per §1.3). Runs inside the EXISTING
+  `ci.yml` "Tests" job via root `npm run test:coverage` — `ci.yml` is
+  RTE-owned this sprint, not touched. TDD: verified RED (73/88 failing)
+  against the pre-fix 2-tool manifest via `git stash`, GREEN (88/88)
+  after the sync.
+- Mirrors the "one schema module feeds two consumers" pattern from
+  `services/worker/src/api/v2/mcpParity.ts` (REST v2 ↔ MCP response-SHAPE
+  parity) — applied here to the discovery-manifest ↔ server tool-LIST
+  layer instead, a different axis of the same drift problem class.
+- `public/AGENTS.md` (developer-facing markdown, not the JSON manifest)
+  has the identical 2-tool undercount — out of scope for this PR (ticket
+  named `server-card.json` specifically; markdown isn't mechanically
+  diffable against `TOOL_DEFINITIONS` the way JSON is), flagged in the PR
+  body as a fast-follow.
 _Last updated: 2026-08-01 (MCP official-registry publish fix)._
 
 ## MCP official-registry publish fix — schema drift + missing connection info (2026-08-01)

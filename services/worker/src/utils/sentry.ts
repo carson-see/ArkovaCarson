@@ -514,6 +514,78 @@ export function captureCreditConservationAlert(
 }
 
 // ---------------------------------------------------------------------------
+// Credit/billing/anchoring RPC failure alerting (SCRUM — silent-fail pre-mortem)
+// ---------------------------------------------------------------------------
+//
+// Six credit-mutating RPCs (`deduct_ai_credits`, `deduct_unified_credits`,
+// `allocate_monthly_credits`, `roll_over_monthly_allocation`,
+// `batch_insert_anchors`, `submit_batch_anchors`) previously failed with only
+// a `logger.error` — no Sentry alert, so a failure could go undetected for a
+// full billing cycle (or worse, fail OPEN and give away free work / bill
+// Stripe instead of consuming a paid credit). This helper is the single
+// choke point every call site routes through so the shape stays consistent.
+//
+// `failMode` is the caller's honest self-report of what happens NEXT after
+// the RPC error:
+//   - 'open'    — the caller proceeds anyway (free extraction, falls through
+//                 to Stripe metered billing instead of consuming a credit).
+//                 REVENUE LEAK. Always 'fatal' level so it is impossible to
+//                 miss in the alert stream / greppable by
+//                 `credit_rpc_fail_mode:open`.
+//   - 'closed'  — the caller stops (402/500/no-op) — safe for the user/org,
+//                 but the operation did not happen (allocation/rollover
+//                 skipped, grant not applied).
+//   - 'retried' — the caller has a retry/fallback path (batch RPCs) and this
+//                 alert fires once the fallback is engaged, not on every
+//                 transient blip.
+//
+// PII (§1.4/§1.6A): callers MUST pass only org_id/user_id UUIDs + operational
+// metadata (rpc name, amounts, counts, tx ids). NEVER emails, document
+// fingerprints, raw document bytes, or API keys. The beforeSend scrubber
+// still runs as defense in depth.
+
+export type CreditRpcFailMode = 'open' | 'closed' | 'retried';
+
+export interface CreditRpcFailureArgs {
+  /** RPC name, e.g. 'deduct_ai_credits'. */
+  rpc: string;
+  /** Call site identifier, e.g. 'ai-extract.deductAICredits'. */
+  operation: string;
+  /** How the caller responds to the failure — see CreditRpcFailMode above. */
+  failMode: CreditRpcFailMode;
+  /** The RPC error (or thrown exception). */
+  error: unknown;
+  orgId?: string | null;
+  userId?: string | null;
+  /** Aggregate-only extra context (amounts, counts, tx ids) — no PII. */
+  extra?: Record<string, unknown>;
+}
+
+export function captureCreditRpcFailureAlert(args: CreditRpcFailureArgs): void {
+  const err =
+    args.error instanceof Error
+      ? args.error
+      : new Error(`${args.rpc} RPC failed: ${JSON.stringify(args.error)}`);
+
+  Sentry.captureException(err, {
+    // Fail-open is always fatal — it is a live revenue leak, not a routine
+    // handled error. Fail-closed / retried are error-level (still pages, but
+    // distinguishable from the fatal fail-open bucket).
+    level: args.failMode === 'open' ? 'fatal' : 'error',
+    tags: {
+      credit_rpc: args.rpc,
+      credit_rpc_operation: args.operation,
+      credit_rpc_fail_mode: args.failMode,
+    },
+    extra: {
+      org_id: args.orgId ?? null,
+      user_id: args.userId ?? null,
+      ...(args.extra ?? {}),
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Sentry Cron Monitoring (Phase 4, Item 18)
 // ---------------------------------------------------------------------------
 
