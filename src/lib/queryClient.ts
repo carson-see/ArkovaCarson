@@ -49,4 +49,8 @@ export const queryKeys = {
   apiKeys: (userId: string) => ['apiKeys', userId] as const,
   apiUsage: (userId: string) => ['apiUsage', userId] as const,
   platformStats: () => ['platformStats'] as const,
+  // QUEUE-01 / SCRUM-2894 — consumer secure-queue (own) vs org secure-queue
+  // (admin, org-wide). Distinct scope keys so the two views cache separately.
+  secureQueue: (userId: string, orgId: string | null, scope: 'own' | 'org') =>
+    ['secureQueue', userId, orgId ?? 'none', scope] as const,
 } as const;

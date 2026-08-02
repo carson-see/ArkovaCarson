@@ -348,13 +348,55 @@ jobs:
           docker push "${{ steps.build.outputs.latest }}"
 
       - name: Clear conflicting env/secret types
+        # This step exists because a name that currently exists as one TYPE
+        # (env var vs secret) cannot be re-declared as the other in the same
+        # `gcloud run deploy` — gcloud rejects the pair. Clearing first lets
+        # the canary deploy below set them authoritatively.
+        #
+        # `--no-traffic` is LOAD-BEARING, not cosmetic (live incident
+        # 2026-08-01, contract-pinned in
+        # scripts/ci/deploy-worker-history-contract.test.ts).
+        # `gcloud run services update` CREATES A REVISION, and the promote
+        # step at the bottom of this job leaves the service pinned
+        # `--to-latest` — a persistent service setting, not a one-shot. So
+        # without `--no-traffic` this step instantly moves 100% of prod onto a
+        # revision with the DocuSign/CRON names stripped: prod caught on
+        # `arkova-worker-00892-jd2` with 50 env vars against the canary's 57,
+        # DocuSign Connect webhook answering 503 `integration_disabled`. It
+        # self-heals on promote, so it looks harmless — until the canary
+        # deploy, the image scan, the smoke test, or the run itself fails in
+        # between, and prod stays DocuSign-blind indefinitely with nothing
+        # alarming on it.
+        #
+        # With `--no-traffic`, this revision is created but never served, and
+        # traffic stays pinned to the last good revision until `Promote canary
+        # to full traffic` moves it deliberately. A failure anywhere in
+        # between now leaves prod on fully-configured code, which is the
+        # correct direction to fail.
         run: |
-          gcloud run services update ${{ env.SERVICE_NAME }} \
+          # Non-fatal BY DESIGN: clearing a name that is not currently set is a
+          # no-op, not an error, so this step must not fail the deploy.
+          #
+          # But stderr is NOT discarded. The previous `2>/dev/null || true` made
+          # a genuine rejection (an unsupported flag, missing IAM, a bad service
+          # name) indistinguishable from "nothing to clear" — the clear would
+          # silently not happen and the only symptom would surface later as an
+          # apparently-unrelated env/secret type conflict in the canary deploy.
+          # Capture the output and surface it as a warning instead.
+          set +e
+          CLEAR_OUT=$(gcloud run services update ${{ env.SERVICE_NAME }} \
             --region ${{ env.REGION }} \
             --project ${{ env.PROJECT_ID }} \
+            --no-traffic \
             --remove-secrets CRON_SECRET,DOCUSIGN_INTEGRATION_KEY,DOCUSIGN_CLIENT_SECRET,DOCUSIGN_CONNECT_HMAC_SECRET \
             --remove-env-vars CRON_SECRET,DOCUSIGN_INTEGRATION_KEY,DOCUSIGN_CLIENT_SECRET,DOCUSIGN_CONNECT_HMAC_SECRET,ENABLE_DOCUSIGN_OAUTH,ENABLE_DOCUSIGN_WEBHOOK,DOCUSIGN_DEMO \
-            --quiet 2>/dev/null || true
+            --quiet 2>&1)
+          CLEAR_RC=$?
+          set -e
+          printf '%s\n' "${CLEAR_OUT}"
+          if [ "${CLEAR_RC}" -ne 0 ]; then
+            echo "::warning title=Clear conflicting env/secret types exited ${CLEAR_RC}::The clear step did not succeed. If the canary deploy below fails with an env/secret type conflict, this is why. Output above."
+          fi
 
       - name: Deploy canary (no traffic)
         run: |
@@ -371,8 +413,8 @@ jobs:
             --timeout 3600 \
             --tag canary \
             --no-traffic \
-            --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,SUPABASE_JWT_SECRET=supabase-jwt-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,BITCOIN_TREASURY_WIF=bitcoin-treasury-wif:latest,SENTRY_DSN=sentry-dsn:latest,API_KEY_HMAC_SECRET=api-key-hmac-secret:latest,GEMINI_API_KEY=gemini-api-key:latest,CRON_SECRET=cron-secret:latest,RESEND_API_KEY=resend-api-key:latest,TOGETHER_API_KEY=together-api-key:latest,COURTLISTENER_API_TOKEN=courtlistener-api-token:latest,OPENSTATES_API_KEY=openstates-api-key:latest,BITCOIN_RPC_URL=bitcoin-rpc-url:latest,UPSTASH_REDIS_REST_URL=UPSTASH_REDIS_REST_URL:latest,UPSTASH_REDIS_REST_TOKEN=UPSTASH_REDIS_REST_TOKEN:latest,RUNPOD_API_KEY=runpod-api-key:latest,EDGAR_USER_AGENT=edgar-user-agent:latest,SAM_GOV_API_KEY=sam-gov-api-key:latest,CLOUDFLARE_API_TOKEN=cloudflare-api-token:latest,CLOUDFLARE_TUNNEL_TOKEN=cloudflare-tunnel-token:latest,GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,DOCUSIGN_INTEGRATION_KEY=docusign_integration_key:latest,DOCUSIGN_CLIENT_SECRET=docusign_secretkey_prod:latest,DOCUSIGN_CONNECT_HMAC_SECRET=docusign_connect_hmac_secret_prod:latest,INTEGRATION_STATE_HMAC_SECRET=INTEGRATION_STATE_HMAC_SECRET:latest" \
-            --set-env-vars "^||^NODE_ENV=production||LOG_LEVEL=info||BITCOIN_NETWORK=mainnet||ENABLE_PROD_NETWORK_ANCHORING=true||USE_MOCKS=false||FRONTEND_URL=https://app.arkova.ai||CORS_ALLOWED_ORIGINS=https://app.arkova.ai,https://arkova-carson.vercel.app,https://arkova-26.vercel.app||AI_PROVIDER=gemini||GEMINI_MODEL=gemini-2.5-flash||GEMINI_LITE_MODEL=gemini-2.5-flash||ENABLE_AI_EXTRACTION=true||ENABLE_SEMANTIC_SEARCH=true||ENABLE_AI_FRAUD=true||ENABLE_AI_REPORTS=true||CRON_OIDC_AUDIENCE=https://arkova-worker-270018525501.us-central1.run.app||KMS_PROVIDER=gcp||GCP_KMS_KEY_RESOURCE_NAME=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/bitcoin-mainnet/cryptoKeyVersions/1||GCP_KMS_INTEGRATION_TOKEN_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens||ENABLE_VERIFICATION_API=true||BATCH_ANCHOR_MAX_SIZE=10000||X402_FACILITATOR_URL=https://edge.arkova.ai/x402/verify||X402_NETWORK=eip155:84532||BITCOIN_UTXO_PROVIDER=getblock||BITCOIN_FEE_STRATEGY=mempool||ENABLE_DOCUSIGN_OAUTH=true||ENABLE_DOCUSIGN_WEBHOOK=true||DOCUSIGN_DEMO=false||WORKER_PUBLIC_URL=https://arkova-worker-270018525501.us-central1.run.app||EMAIL_FROM=noreply@arkova.ai||TOGETHER_MODEL=carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-e3cda031" \
+            --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,SUPABASE_JWT_SECRET=supabase-jwt-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,BITCOIN_TREASURY_WIF=bitcoin-treasury-wif:latest,SENTRY_DSN=sentry-dsn:latest,API_KEY_HMAC_SECRET=api-key-hmac-secret:latest,GEMINI_API_KEY=gemini-api-key:latest,CRON_SECRET=cron-secret:latest,RESEND_API_KEY=resend-api-key:latest,TOGETHER_API_KEY=together-api-key:latest,COURTLISTENER_API_TOKEN=courtlistener-api-token:latest,OPENSTATES_API_KEY=openstates-api-key:latest,BITCOIN_RPC_URL=bitcoin-rpc-url:latest,UPSTASH_REDIS_REST_URL=UPSTASH_REDIS_REST_URL:latest,UPSTASH_REDIS_REST_TOKEN=UPSTASH_REDIS_REST_TOKEN:latest,RUNPOD_API_KEY=runpod-api-key:latest,EDGAR_USER_AGENT=edgar-user-agent:latest,SAM_GOV_API_KEY=sam-gov-api-key:latest,CLOUDFLARE_API_TOKEN=cloudflare-api-token:latest,CLOUDFLARE_TUNNEL_TOKEN=cloudflare-tunnel-token:latest,GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,DOCUSIGN_INTEGRATION_KEY=docusign_integration_key:latest,DOCUSIGN_CLIENT_SECRET=docusign_secretkey_prod:latest,DOCUSIGN_CONNECT_HMAC_SECRET=docusign_connect_hmac_secret_prod:latest,INTEGRATION_STATE_HMAC_SECRET=INTEGRATION_STATE_HMAC_SECRET:latest,HEALTH_DETAIL_TOKEN=HEALTH_DETAIL_TOKEN:latest" \
+            --set-env-vars "^||^NODE_ENV=production||LOG_LEVEL=info||BITCOIN_NETWORK=mainnet||ENABLE_PROD_NETWORK_ANCHORING=true||USE_MOCKS=false||FRONTEND_URL=https://app.arkova.ai||CORS_ALLOWED_ORIGINS=https://app.arkova.ai,https://arkova-carson.vercel.app,https://arkova-26.vercel.app||AI_PROVIDER=gemini||GEMINI_MODEL=gemini-2.5-flash||GEMINI_LITE_MODEL=gemini-2.5-flash||ENABLE_AI_EXTRACTION=true||ENABLE_SEMANTIC_SEARCH=true||ENABLE_AI_FRAUD=true||ENABLE_AI_REPORTS=true||CRON_OIDC_AUDIENCE=https://arkova-worker-270018525501.us-central1.run.app||KMS_PROVIDER=gcp||GCP_KMS_KEY_RESOURCE_NAME=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/bitcoin-mainnet/cryptoKeyVersions/1||GCP_KMS_INTEGRATION_TOKEN_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens||ENABLE_VERIFICATION_API=true||BATCH_ANCHOR_MAX_SIZE=10000||X402_FACILITATOR_URL=https://edge.arkova.ai/x402/verify||X402_NETWORK=eip155:84532||BITCOIN_UTXO_PROVIDER=getblock||BITCOIN_FEE_STRATEGY=mempool||ENABLE_DOCUSIGN_OAUTH=true||ENABLE_DOCUSIGN_WEBHOOK=true||DOCUSIGN_DEMO=false||ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true||ENABLE_CONNECTOR_ARTIFACT_DRAIN=true||WORKER_PUBLIC_URL=https://arkova-worker-270018525501.us-central1.run.app||EMAIL_FROM=noreply@arkova.ai||TOGETHER_MODEL=carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-e3cda031" \
             --quiet
 
       - name: Smoke test canary revision
@@ -437,3 +479,44 @@ jobs:
           echo "Service URL: ${URL}"
           echo "Checking health endpoint..."
           curl -sf "${URL}/health" | jq .
+
+      # Runtime backstop for the 2026-08-01 incident. The contract tests in
+      # scripts/ci/deploy-worker-history-contract.test.ts pin the workflow
+      # SHAPE (clear is --no-traffic, traffic moves once, everything cleared is
+      # re-set); this asserts the OUTCOME on the revision actually taking
+      # traffic, so a gcloud behaviour change or a hand-run `gcloud run
+      # services update` cannot leave prod configured-blind in silence.
+      # Deliberately after the promote: it is an alarm, not a gate — the point
+      # is that a stripped prod can never again be invisible.
+      - name: Verify serving revision carries required config
+        run: |
+          set -euo pipefail
+          SERVING=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --format=json | jq -r '[.status.traffic[]? | select((.percent // 0) > 0) | .revisionName] | first // empty')
+          if [ -z "${SERVING}" ]; then
+            echo "::error::Could not determine the revision serving traffic."
+            exit 1
+          fi
+          echo "Serving revision: ${SERVING}"
+          NAMES=$(gcloud run revisions describe "${SERVING}" \
+            --region=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --format=json \
+            | jq -r '[.spec.containers[0].env[]?.name] | sort | join(" ")')
+          MISSING=""
+          for required in CRON_SECRET DOCUSIGN_INTEGRATION_KEY DOCUSIGN_CLIENT_SECRET \
+                          DOCUSIGN_CONNECT_HMAC_SECRET ENABLE_DOCUSIGN_OAUTH \
+                          ENABLE_DOCUSIGN_WEBHOOK DOCUSIGN_DEMO \
+                          ENABLE_CONNECTOR_ARTIFACT_DRAIN; do
+            case " ${NAMES} " in
+              *" ${required} "*) ;;
+              *) MISSING="${MISSING} ${required}";;
+            esac
+          done
+          if [ -n "${MISSING}" ]; then
+            echo "::error title=Serving revision is missing required config::${SERVING} does not carry:${MISSING}. This is the 2026-08-01 failure mode (prod served a post-clear revision with DocuSign env stripped; the Connect webhook answered 503 integration_disabled). Check that the clear step is still --no-traffic and that the canary deploy re-sets every cleared name."
+            exit 1
+          fi
+          echo "Serving revision carries all required config names."
