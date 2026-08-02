@@ -294,12 +294,12 @@
     },
     {
       "number": 1739,
-      "head_sha": "8ba1459f129c2baf2d0012278364fc857d845e2d",
+      "head_sha": "639aacbd79ade6ca6e45edf2d2b5a25de3a0fad2",
       "base_sha": "055cddb7cd6c284147239215c5d05cd0b32496e2",
       "risk_tier": "T3",
       "owner": "founder admin-controls lane",
       "title": "feat(admin): platform-admin org credit adjust — audited RPC + UI (founder admin-controls)",
-      "ci_summary": "Captured 2026-07-28 during wave discovery; tier T3 (migration 0375, detector-computed). State at current head (2026-08-01): out of draft; SonarCloud quality gate OK (S3776/S6759 resolved); Check supabase/migrations vs prod green; typecheck/lint/test/lint:copy green, 7/7 page tests; Supabase Preview skipping (no preview-branch run for this PR); Staging Soak Evidence Gate pending this refresh; head 8ba1459f is an empty merge-ref-refresh commit on top of 639aacbd (no tree change).",
+      "ci_summary": "Captured 2026-07-28 during wave discovery; tier T3 (migration 0375, detector-computed). MERGED 2026-08-01T20:12:00Z at head 639aacbd (merge commit 4d7ec7c0) with all required checks green: SonarCloud quality gate OK (S3776/S6759 resolved), Check supabase/migrations vs prod green, typecheck/lint/test/lint:copy green, 7/7 page tests. NOTE: an earlier revision of this entry pinned head 8ba1459f, an empty merge-ref-refresh commit prepared locally but never pushed — the PR merged from 639aacbd before that push was needed. 639aacbd is the authoritative merged head.",
       "rollback_note": "Revert PR; apply 0375's own -- ROLLBACK: block (verify the block exists and is correct before relying on this note; not independently re-verified this pass).",
       "migration_files": [
         "supabase/migrations/0375_admin_org_credit_adjust.sql"
@@ -310,7 +310,9 @@
         "2c4f48028333898e2ed3a4aa2a93e6f88f16ee7c",
         "ea7e01bf3a9f5397f3518b90be4be8963ea523cf",
         "57f5c5494b8dc92196eb3e0d27f5c502d3a3038b"
-      ]
+      ],
+      "merge_commit": "4d7ec7c07bc0c4bb25ff2b81b9b29a772633123d",
+      "merged_at": "2026-08-01T20:12:00Z"
     },
     {
       "number": 1740,
