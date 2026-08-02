@@ -25,6 +25,7 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 import { db } from '../utils/db.js';
+import { createLazyBuilderRecorder } from '../test-utils/lazy-supabase-builder.js';
 
 const TEST_HMAC_SECRET = 'test-hmac-secret-for-api-key-hashing';
 
@@ -42,15 +43,18 @@ function createMockRes() {
   } as unknown as Response;
 }
 
+/** `last_used_at` writes whose request was actually issued (see helper docs). */
+const updates = createLazyBuilderRecorder();
+
 function mockKeyLookup(result: Record<string, unknown> | null, error: unknown = null) {
   const singleMock = vi.fn().mockResolvedValue({ data: result, error });
   const eqHashMock = vi.fn().mockReturnValue({ single: singleMock });
   const selectMock = vi.fn().mockReturnValue({ eq: eqHashMock });
   (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
     select: selectMock,
-    update: vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue(Promise.resolve()),
-    }),
+    update: vi.fn((payload: Record<string, unknown>) => ({
+      eq: vi.fn().mockReturnValue(updates.build(payload)),
+    })),
   });
 }
 
@@ -104,6 +108,7 @@ describe('generateApiKey', () => {
 describe('apiKeyAuth middleware', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    updates.reset();
   });
 
   it('allows anonymous requests when required=false', async () => {
@@ -183,6 +188,47 @@ describe('apiKeyAuth middleware', () => {
 
     expect(next).toHaveBeenCalled();
     expect(req.apiKey?.rateLimitTier).toBe('paid');
+  });
+
+  it('actually issues the last_used_at write for an authenticated key', async () => {
+    const { raw } = generateApiKey(TEST_HMAC_SECRET);
+    mockKeyLookup({
+      id: 'key-uuid-3',
+      org_id: 'org-uuid-3',
+      scopes: ['verify'],
+      rate_limit_tier: 'free',
+      key_prefix: raw.substring(0, 12),
+      is_active: true,
+      expires_at: null,
+    });
+
+    const middleware = apiKeyAuth(TEST_HMAC_SECRET);
+    await middleware(createMockReq({ authorization: `Bearer ${raw}` }), createMockRes(), vi.fn());
+
+    // Fire-and-forget, but it must fire: a discarded lazy builder never runs.
+    expect(updates.executed).toHaveLength(1);
+    expect(updates.executed[0].last_used_at).toEqual(expect.any(String));
+  });
+
+  it('does not issue a last_used_at write for a rejected key', async () => {
+    mockKeyLookup({
+      id: 'key-expired-2',
+      org_id: 'org-1',
+      scopes: ['verify'],
+      rate_limit_tier: 'free',
+      key_prefix: 'ak_live_exp',
+      is_active: true,
+      expires_at: '2020-01-01T00:00:00Z',
+    });
+
+    const middleware = apiKeyAuth(TEST_HMAC_SECRET);
+    await middleware(
+      createMockReq({ authorization: 'Bearer ak_live_expiredkey789' }),
+      createMockRes(),
+      vi.fn(),
+    );
+
+    expect(updates.executed).toHaveLength(0);
   });
 
   it('rejects invalid key (not in DB)', async () => {
