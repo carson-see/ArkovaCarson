@@ -54,6 +54,7 @@ import { regulatoryAlertsRouter } from './regulatory-alerts.js';
 import { aiTemplateRouter } from './ai-template.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { anchorBulkRouter } from './anchor-bulk.js';
+import { anchorBulkSelfServiceRouter } from './anchor-bulk-self-service.js';
 import { anchorLifecycleRouter } from './anchor-lifecycle.js';
 import { anchorEvidenceRouter } from './anchor-evidence.js';
 import { anchorExtractionManifestRouter } from './anchor-extraction-manifest.js';
@@ -252,6 +253,16 @@ const webhooksSelfServiceRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
   scope: 'webhooks-self-service',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
+});
+
+// SCRUM-2911 (W1): batch tier per Constitution 1.10, keyed per dashboard user
+// (not per key — there is no key) so one user's bulk anchoring can't starve
+// another's from the shared anon/keyed buckets above.
+const anchorBulkSelfServiceRateLimiter = rateLimit({
+  windowMs: 60_000,
+  maxRequests: 10,
+  scope: 'anchor-bulk-self-service',
   keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
@@ -482,6 +493,14 @@ router.use('/credentials', anchorAnonAllow, credentialsCtdlRouter);
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
 // SCRUM-1273: mutating anchor writes require the explicit anchor:write scope.
 router.use('/anchor', requireScope('anchor:write'), anchorSubmitRouter);
+// SCRUM-2911 (W1, founder P0 2026-07-28): dashboard bridge for mixed-format
+// batch anchoring. MUST be mounted BEFORE `/anchor/bulk` below (same
+// route-shadowing rule as `/verify/search` before `/verify`) — otherwise the
+// API-key-only mount's prefix match would intercept it first. `requireAuth`
+// validates the Supabase session JWT; `anchorBulkSelfServiceRouter` re-derives
+// org_id from `profiles` and delegates into the SAME `anchorBulkRouter` below
+// (see anchor-bulk-self-service.ts for the full rationale).
+router.use('/anchor/bulk/self-service', requireAuth, anchorBulkSelfServiceRateLimiter, anchorBulkSelfServiceRouter);
 // SCRUM-1171 (HAKI-REQ-02): bulk + retroactive anchoring with original-document metadata
 router.use('/anchor/bulk', requireScope('anchor:write'), anchorBulkRouter);
 

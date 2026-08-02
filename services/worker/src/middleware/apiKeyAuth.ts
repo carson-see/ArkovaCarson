@@ -70,6 +70,26 @@ export function generateApiKey(hmacSecret: string, isTest = false): {
 }
 
 /**
+ * Stamp `api_keys.last_used_at` for a key that just authenticated.
+ *
+ * Fire-and-forget, but the `.then()` is load-bearing: supabase-js query
+ * builders are LAZY PromiseLikes that issue their HTTP request only when
+ * `then` is invoked. `void <builder>` discards the builder without ever
+ * calling `then`, so the write silently never happens — which is why every
+ * prod row read `last_used_at IS NULL` regardless of actual key use.
+ */
+export function touchApiKeyLastUsed(keyId: string): void {
+  const warn = (error: unknown) => logger.warn({ error }, 'api_keys.last_used_at update failed');
+  // eslint-disable-next-line arkova/missing-org-filter -- auth: org unknown until key resolved
+  void db.from('api_keys')
+    .update({ last_used_at: new Date().toISOString() })
+    .eq('id', keyId)
+    .then(({ error }) => {
+      if (error) warn(error);
+    }, warn);
+}
+
+/**
  * Extract API key from request headers.
  * Checks Authorization: Bearer ak_... and X-API-Key: ak_... headers.
  */
@@ -205,10 +225,7 @@ export function apiKeyAuth(hmacSecret: string, options: { required?: boolean } =
       };
 
       // Update last_used_at (fire-and-forget, non-blocking)
-      // eslint-disable-next-line arkova/missing-org-filter -- auth: org unknown until key resolved
-      void db.from('api_keys')
-        .update({ last_used_at: new Date().toISOString() })
-        .eq('id', apiKey.id);
+      touchApiKeyLastUsed(apiKey.id);
 
       next();
     } catch (err) {

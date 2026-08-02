@@ -40,6 +40,7 @@ import {
   scanAllPages,
 } from '../utils/postgrest-filter.js';
 import type { ChainReceipt } from '../chain/types.js';
+import { captureCreditRpcFailureAlert } from '../utils/sentry.js';
 
 /** Max records per batch — one Bitcoin TX can commit up to 10k pipeline anchors. */
 export const PUBLIC_RECORD_BATCH_SIZE = resolveAnchorBatchSize(config.batchAnchorMaxSize);
@@ -802,7 +803,19 @@ async function insertAnchorChunk(
   const { data: result, error: rpcError } = await callBatchInsertAnchorsOnce(client, chunk, chunkStart);
 
   if (rpcError) {
+    // Has a fallback (serial inserts), so this isn't silent data loss, but the
+    // fallback is slower and per-row — worth alerting so a persistent RPC
+    // outage (vs. a one-off blip) gets noticed rather than quietly eating
+    // latency on every run.
     logger.error({ error: rpcError, chunkIndex: chunkStart, chunkSize: chunk.length }, 'Batch insert RPC failed — falling back to serial inserts');
+    captureCreditRpcFailureAlert({
+      rpc: 'batch_insert_anchors',
+      operation: 'publicRecordAnchor.insertAnchorChunk',
+      failMode: 'retried',
+      error: new Error('batch_insert_anchors RPC failed — falling back to serial inserts'),
+      orgId: ownerId,
+      extra: { chunkIndex: chunkStart, chunkSize: chunk.length },
+    });
     return insertAnchorSerialFallback(client, chunk, ownerId);
   }
 

@@ -17,6 +17,7 @@
  */
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { captureCreditRpcFailureAlert } from '../utils/sentry.js';
 
 export const MONTHLY_ALLOCATION_ROLLOVER_CRON = '0 0 1 * *' as const;
 
@@ -62,7 +63,17 @@ export async function runAllocationRollover(): Promise<RolloverRunSummary> {
         p_org_id: orgId,
       });
       if (error) {
+        // No fallback: a failure here means this org's rollover silently does
+        // not happen this month — undetectable until next month's tick unless
+        // alerted now.
         logger.error({ error, orgId }, 'rollover RPC failed');
+        captureCreditRpcFailureAlert({
+          rpc: 'roll_over_monthly_allocation',
+          operation: 'monthly-allocation-rollover.runAllocationRollover',
+          failMode: 'closed',
+          error: new Error('roll_over_monthly_allocation RPC failed — org rollover skipped this cycle'),
+          orgId: orgId as string,
+        });
         summary.errors++;
         continue;
       }
@@ -73,6 +84,13 @@ export async function runAllocationRollover(): Promise<RolloverRunSummary> {
       }
     } catch (err) {
       logger.error({ err: (err as Error).message, orgId }, 'rollover threw');
+      captureCreditRpcFailureAlert({
+        rpc: 'roll_over_monthly_allocation',
+        operation: 'monthly-allocation-rollover.runAllocationRollover.thrown',
+        failMode: 'closed',
+        error: err,
+        orgId: orgId as string,
+      });
       summary.errors++;
     }
   }
