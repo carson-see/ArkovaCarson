@@ -56,6 +56,20 @@ export function buildActivateUrl(token: string): string {
   return `${BASE}/activate?token=${encodeURIComponent(token)}`;
 }
 
+/**
+ * Org-invitation accept link (SCRUM-3012).
+ * `token` is `invitations.token` — MUST be the real per-invite uuid, never
+ * dropped. See services/worker/src/api/invitations.ts for the accept flow.
+ */
+export function buildInviteAcceptUrl(token: string): string {
+  return `${BASE}/accept-invite?token=${encodeURIComponent(token)}`;
+}
+
+/** Login page — used as the post-email-verification redirect target. */
+export function buildLoginUrl(): string {
+  return `${BASE}/login`;
+}
+
 /** Stripe Checkout success redirect — `{CHECKOUT_SESSION_ID}` is a literal Stripe placeholder. */
 export const BILLING_SUCCESS_URL = `${BASE}/billing/success?session_id={CHECKOUT_SESSION_ID}`;
 
