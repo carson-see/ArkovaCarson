@@ -158,6 +158,8 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 | `0377` | `0377_sec_recon_revoke_unguarded_rpc_family.sql` | ? (branch `fix/security-revoke-unguarded-security-definer-rpcs`) | **yes** | SEC-RECON. Restricts 6 unguarded SECURITY DEFINER RPCs to `service_role` and explicitly defers the rest to `0378`. HANDOFF 2026-07-28 describes `0377`'s guard as already in place in prod, contradicting this file's old "file-only" row. |
 | `0378` | `0378_sec_recon_revoke_deferred_security_definer_grants.sql` | #1766 | **yes** | Applied to prod `vzwyaatejekddvltxyye` 2026-07-28; ledger reconciled to numeric head **0378** per §0 rule 10. Restricts the 50 remaining deferred SECURITY DEFINER worker-only RPCs to `service_role`. Public verification endpoints, RLS helper functions, and trigger functions deliberately untouched (revoking RLS helpers would break every policy). Verified both directions via a `has_function_privilege()` sweep — 0 mismatches. **Next author claims `0379`.** Grant-level enumeration belongs in the Confluence bug tracker, not this repo. |
 
+| `0386` | `0386_fingerprint_lookup_secured_only.sql` | #1854 | no | Closes the fingerprint EXISTENCE ORACLE on the anon-GRANTed `get_public_anchor_by_fingerprint`. Prod had silently drifted from `0339` to `status IN ('SECURED','SUBMITTED','PENDING')` with **no source on main** — 3 PENDING + 48,149 SUBMITTED non-deleted anchors were confirmable by an anonymous caller. Restores `status = 'SECURED'` and 0339's `ORDER BY created_at DESC, a.id DESC` tiebreak. Based on the CURRENT PROD body via `pg_get_functiondef` (source md5 `1fd78aece7613fd191f7a053f2f66475`), not on the 0339 file. Tier T3. Rollback in the file header. See the PR block below. **Next author claims `0387`.** |
+
 ### Prefixes with no file and no reservation
 
 `0291`, `0298`, `0332`, `0344`, `0361`, `0369`, `0371`-`0374`. `0344` is a
@@ -187,6 +189,40 @@ Fix in any affected clone: `git config --unset merge.union.driver`. Session-star
 guard: `scripts/agent/check-git-merge-config.sh`. CI backstop:
 `scripts/ci/check-agents-md-append-only.ts` (override label
 `agents-md-deletion-approved` for deliberate consolidation).
+
+
+## Recent migrations (PR #1854)
+
+`0386_fingerprint_lookup_secured_only.sql` — prod-vs-repo drift with no repo source.
+
+- **The drift.** `0339_get_public_anchor_by_fingerprint.sql` restricts the lookup
+  to `a.status = 'SECURED'` and states the reason verbatim: "fingerprint lookup
+  must not become a global existence oracle for pending/submitted content
+  hashes." Production ran `a.status IN ('SECURED','SUBMITTED','PENDING')`. No
+  migration on main redefines the function after 0339, so the running body had
+  **no source in this repository** and nothing recorded the change.
+- **Measured exposure** (prod `vzwyaatejekddvltxyye`, read-only, 2026-08-02):
+  **3 PENDING + 48,149 SUBMITTED** non-deleted anchors were confirmable by an
+  anonymous caller. The RPC is GRANTed to `anon` (0339).
+- **Numbering.** Claimed after verifying the live ledger — head was `0385`
+  (0379, 0380, 0381, 0383, 0384, 0385) — and that no open PR claimed `0386`.
+  Note `0384` (#1806) and `0385` (#1841) were prod-applied ahead of their source
+  landing on main; their exemptions ride PR #1850.
+- **Two changes only**, both restoring 0339: the status predicate, and the
+  `, a.id DESC` tiebreak (`created_at` is not unique, so the current ordering
+  can resolve one fingerprint to different `public_id`s across calls). The
+  tiebreak is named separately so it can be dropped without touching the
+  security fix.
+- **Base body.** Taken from prod via `pg_get_functiondef` (source md5
+  `1fd78aece7613fd191f7a053f2f66475`), NOT from the 0339 file — restoring an
+  intent is not a licence to restore an old body. Branching from a stale file is
+  what made `0376` revert `0356`'s keyed HMAC and `0362`'s allow-list.
+- **Test-integrity note.** `services/edge/src/mcp-tools.test.ts` already asserted
+  this invariant and stayed green throughout, because it MOCKS the RPC — it
+  tests the edge layer's mapping while the fixture supplies the premise that the
+  database filters. `tests/rls/fingerprint-lookup-secured-only.test.ts` now pins
+  the SQL predicate against the real function. A mock may stand in for a
+  collaborator, never for the invariant under test.
 
 ## Related
 
