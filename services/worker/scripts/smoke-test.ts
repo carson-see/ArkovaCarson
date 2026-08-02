@@ -24,7 +24,15 @@ const TIMEOUT_MS = 10_000;
 
 interface CheckResult {
   name: string;
-  status: 'pass' | 'fail';
+  /**
+   * SCRUM-2653 added 'skip': a check that could not be evaluated for a reason
+   * that is NOT a worker fault (e.g. the detailed-health gate denied the probe
+   * because no HEALTH_DETAIL_TOKEN was supplied). A skip must never be counted
+   * as a failure — the exit code below keys off 'fail' only — and must never be
+   * counted as a pass either, so the summary cannot claim coverage it does not
+   * have.
+   */
+  status: 'pass' | 'fail' | 'skip';
   durationMs: number;
   detail?: string;
   error?: string;
@@ -80,9 +88,29 @@ async function checkHealth(): Promise<CheckResult> {
 async function checkHealthDetailed(): Promise<CheckResult> {
   const start = Date.now();
   try {
-    const res = await fetchWithTimeout(`${WORKER_URL}/health?detailed=true`);
+    // SCRUM-2653: the detailed view is gated on X-Health-Token and fails closed
+    // whenever the target runs NODE_ENV=production (prod AND every staging rig).
+    const detailToken = process.env.HEALTH_DETAIL_TOKEN?.trim();
+    const res = await fetchWithTimeout(
+      `${WORKER_URL}/health?detailed=true`,
+      detailToken ? { headers: { 'X-Health-Token': detailToken } } : undefined,
+    );
     const body = await res.json();
     const durationMs = Date.now() - start;
+
+    // A DENIED response is a healthy worker refusing to disclose detail — not a
+    // failure of the worker. Report it as a skip-with-reason so an operator is
+    // not sent chasing a phantom outage.
+    if (body.detail === 'unauthorized') {
+      return {
+        name: 'health-detailed',
+        status: 'skip',
+        durationMs,
+        detail:
+          'detailed health DENIED (SCRUM-2653 gate); set HEALTH_DETAIL_TOKEN to probe it. '
+          + `Compact liveness reports status=${body.status}.`,
+      };
+    }
 
     // Validate response structure has expected subsystem checks
     const hasDatabase = body.checks?.database !== undefined;
@@ -254,7 +282,7 @@ async function main(): Promise<void> {
     const result = await check();
     results.push(result);
 
-    const icon = result.status === 'pass' ? 'PASS' : 'FAIL';
+    const icon = result.status === 'pass' ? 'PASS' : result.status === 'skip' ? 'SKIP' : 'FAIL';
     const line = `[${icon}] ${result.name} (${result.durationMs}ms)`;
     if (result.detail) {
       console.log(`${line} - ${result.detail}`);
@@ -267,10 +295,12 @@ async function main(): Promise<void> {
 
   const passed = results.filter((r) => r.status === 'pass').length;
   const failed = results.filter((r) => r.status === 'fail').length;
+  const skipped = results.filter((r) => r.status === 'skip').length;
 
   console.log(`\n--- Summary ---`);
   console.log(`Passed: ${passed}/${results.length}`);
   console.log(`Failed: ${failed}/${results.length}`);
+  if (skipped > 0) console.log(`Skipped: ${skipped}/${results.length} (not evaluated — see detail)`);
 
   // Output JSON for machine consumption
   const report = {
@@ -278,6 +308,7 @@ async function main(): Promise<void> {
     timestamp: new Date().toISOString(),
     passed,
     failed,
+    skipped,
     total: results.length,
     results,
   };
