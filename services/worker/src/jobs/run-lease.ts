@@ -295,29 +295,18 @@ export async function renewRunLease(
   now: Date = new Date(),
 ): Promise<boolean> {
   const nowIso = now.toISOString();
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (client as any)
-      .from('job_queue')
-      .update({
-        scheduled_for: new Date(now.getTime() + spec.ttlMs).toISOString(),
-        updated_at: nowIso,
-      })
-      .eq('id', spec.leaseId)
-      .eq('payload->>holder', holder)
-      .select('id');
+  const { matched, error } = await updateOwnedLease(client, spec, holder, {
+    scheduled_for: new Date(now.getTime() + spec.ttlMs).toISOString(),
+    updated_at: nowIso,
+  });
 
-    if (error) {
-      // Transient: the caller keeps trying until the run ends or the lease is
-      // provably lost. A failed renewal is not itself a reason to stop working.
-      logger.warn({ error, holder, lease: spec.label }, 'Run lease renewal failed — will retry');
-      return false;
-    }
-    return ((data ?? []) as unknown[]).length > 0;
-  } catch (error) {
-    logger.warn({ error, holder, lease: spec.label }, 'Run lease renewal threw — will retry');
+  if (error) {
+    // Transient: the caller keeps trying until the run ends or the lease is
+    // provably lost. A failed renewal is not itself a reason to stop working.
+    logger.warn({ error, holder, lease: spec.label }, 'Run lease renewal failed — will retry');
     return false;
   }
+  return matched;
 }
 
 /**
@@ -329,39 +318,65 @@ export async function releaseRunLease(
   spec: RunLeaseSpec,
   holder: string,
 ): Promise<void> {
+  const { matched, error } = await updateOwnedLease(client, spec, holder, {
+    status: 'completed',
+    scheduled_for: null,
+    updated_at: new Date().toISOString(),
+  });
+
+  // Best-effort: a failed release must not mask the run's real outcome. The TTL
+  // is the backstop.
+  if (error) {
+    logger.warn(
+      { error, holder, lease: spec.label },
+      'Run lease release failed — TTL will expire it',
+    );
+    return;
+  }
+
+  // Zero rows means this run overran the TTL and someone else already took the
+  // lease. Worth saying out loud: it means a run exceeded its TTL, which is the
+  // signal that the batch size or the cadence needs revisiting.
+  if (!matched) {
+    logger.warn(
+      { holder, lease: spec.label, ttlMs: spec.ttlMs },
+      'Run lease was already reclaimed — this run overran its TTL; nothing released',
+    );
+  }
+}
+
+/**
+ * The one holder-scoped write. Renew and release are the same UPDATE with
+ * different payloads, so the predicate that makes both safe —
+ * `id = <lease> AND payload->>holder = <us>` — lives in exactly one place and
+ * cannot drift between them.
+ *
+ * Deliberately NOT shared with `acquireRunLease`. That one carries a bootstrap
+ * upsert the other two do not, matches on a materially different condition
+ * (free-or-expired, not still-mine), and fails at error level because it BLOCKS
+ * the run rather than being best-effort. Folding it in would hide the predicate
+ * difference behind a parameter — and that predicate is the whole safety
+ * argument.
+ */
+async function updateOwnedLease(
+  client: SupabaseClient,
+  spec: RunLeaseSpec,
+  holder: string,
+  patch: Record<string, unknown>,
+): Promise<{ matched: boolean; error: unknown }> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (client as any)
       .from('job_queue')
-      .update({ status: 'completed', scheduled_for: null, updated_at: new Date().toISOString() })
+      .update(patch)
       .eq('id', spec.leaseId)
       .eq('payload->>holder', holder)
       .select('id');
 
-    // Best-effort: a failed release must not mask the run's real outcome. The
-    // TTL is the backstop.
-    if (error) {
-      logger.warn(
-        { error, holder, lease: spec.label },
-        'Run lease release failed — TTL will expire it',
-      );
-      return;
-    }
-
-    // Zero rows means this run overran the TTL and someone else already took
-    // the lease. Worth saying out loud: it means a run exceeded its TTL, which
-    // is the signal that the batch size or the cadence needs revisiting.
-    if (((data ?? []) as unknown[]).length === 0) {
-      logger.warn(
-        { holder, lease: spec.label, ttlMs: spec.ttlMs },
-        'Run lease was already reclaimed — this run overran its TTL; nothing released',
-      );
-    }
+    if (error) return { matched: false, error };
+    return { matched: ((data ?? []) as unknown[]).length > 0, error: null };
   } catch (error) {
-    logger.warn(
-      { error, holder, lease: spec.label },
-      'Run lease release threw — TTL will expire it',
-    );
+    return { matched: false, error };
   }
 }
 

@@ -130,9 +130,9 @@ export async function recordOrgQueueRunResult(
     );
   }
 
-  try {
-    const finishedAt = args.finishedAt.toISOString();
-    const statePayload = {
+  const finishedAt = args.finishedAt.toISOString();
+  await upsertOrgQueueRunState(
+    {
       org_id: args.orgId,
       last_run_at: finishedAt,
       ...(args.status === 'succeeded' ? { last_success_at: finishedAt } : {}),
@@ -142,23 +142,39 @@ export async function recordOrgQueueRunResult(
       locked_at: null,
       locked_by: null,
       updated_at: finishedAt,
-    };
+    },
+    actual,
+    { orgId: args.orgId, trigger: args.trigger },
+    'org queue run state upsert',
+  );
+}
 
-    const { error: stateError } = await actual.db
+/**
+ * The single `organization_queue_run_state` writer. Best-effort by design: a
+ * failed state write must not mask the run's real outcome.
+ *
+ * The PAYLOAD is deliberately the caller's, not this function's. PostgREST's
+ * upsert assigns only the columns it is given, and which columns a caller omits
+ * is load-bearing — `releaseOrgQueueClaim` leaving out `last_run_at` is exactly
+ * what keeps a skipped org due. A mode flag here instead of caller-owned
+ * payloads would put the skip path one boolean away from asserting run evidence
+ * it does not have, which is the bug class SCRUM-3031 is closing.
+ */
+async function upsertOrgQueueRunState(
+  payload: Record<string, unknown>,
+  deps: ReturnType<typeof getDeps>,
+  logContext: Record<string, unknown>,
+  what: string,
+): Promise<void> {
+  try {
+    const { error } = await deps.db
       .from('organization_queue_run_state')
-      .upsert(statePayload, { onConflict: 'org_id' });
-
-    if (stateError) {
-      actual.logger.warn(
-        { error: stateError, orgId: args.orgId, trigger: args.trigger },
-        'org queue run state upsert failed',
-      );
+      .upsert(payload, { onConflict: 'org_id' });
+    if (error) {
+      deps.logger.warn({ error, ...logContext }, `${what} failed`);
     }
   } catch (err) {
-    actual.logger.warn(
-      { error: err, orgId: args.orgId, trigger: args.trigger },
-      'org queue run state upsert threw',
-    );
+    deps.logger.warn({ error: err, ...logContext }, `${what} threw`);
   }
 }
 
@@ -176,22 +192,12 @@ async function releaseOrgQueueClaim(
   orgId: string,
   deps: ReturnType<typeof getDeps>,
 ): Promise<void> {
-  const now = deps.now().toISOString();
-  try {
-    const { error } = await deps.db
-      .from('organization_queue_run_state')
-      .upsert({ org_id: orgId, locked_at: null, locked_by: null, updated_at: now }, {
-        onConflict: 'org_id',
-      });
-    if (error) {
-      deps.logger.warn(
-        { error, orgId },
-        'org queue claim release failed after a run-lease skip — org stays locked until the next lock timeout',
-      );
-    }
-  } catch (err) {
-    deps.logger.warn({ error: err, orgId }, 'org queue claim release threw after a run-lease skip');
-  }
+  await upsertOrgQueueRunState(
+    { org_id: orgId, locked_at: null, locked_by: null, updated_at: deps.now().toISOString() },
+    deps,
+    { orgId },
+    'org queue claim release after a run-lease skip',
+  );
 }
 
 async function claimDueOrganizations(
