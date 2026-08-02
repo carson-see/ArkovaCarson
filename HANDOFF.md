@@ -94,6 +94,7 @@ adjudicate them. Source: [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SO
 | F-6 | Both rigs provisioned without the `batch-anchors-forced-flush` job | HIGH, FIXED live on both rigs |
 | F-7 | Legacy rig's loadgen org is quota-blocked | HIGH, NEW, open |
 | F-8 | Forced-flush cadence prevented batches reaching real 10k scale | found + fixed, no resoak |
+| F-10 | GetBlock HTTP 405 on `listunspent` | CLOSED — root-caused as provider-tier config (GetBlock shared-endpoint wallet-RPC allowlist), not code; existing mempool fallback already handles it. See PR TBD / `docs/staging/SOAK-FINDINGS-2026-08.md`. |
 
 ### Environment gotcha
 
