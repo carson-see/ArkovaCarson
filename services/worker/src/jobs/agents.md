@@ -175,6 +175,15 @@ exactly how #1795 shipped a fix that missed one of three. This entry replaces it
   call the shared guard. `revertClaimedAnchors` deliberately does NOT — it runs inside the
   chain-failure path where a secondary throw would mask the real error, and returns counts for its
   caller to escalate instead. That is now an explicit opt-out rather than an invisible omission.
+  **A guard with no test is the same miss one level up.** Review of THIS PR then found the identical
+  2-of-3 shape in the coverage rather than the code: the claim guard and `getExistingSourceIds`'
+  guard each had a test that died without it, but **`fetchAnchorRows`' guard had none** — deleting
+  line 254 left the whole worker suite green, on the one path whose silent success actually caused
+  the 70-hour outage, in a file the PR body's own "Collision note" says is about to be rebased.
+  Covered now (`publicRecordAnchor.test.ts` -> `all-chunks-failed guards`), through the real
+  entrypoint, asserting both the throw and that the benign "No new pending public record anchors to
+  submit" line is never reached. When adding a guard here, add its mutation test in the same commit:
+  an untested guard reads as protection and behaves as a comment.
 - **Constant consolidation.** `proofJobScan.IN_FILTER_CHUNK` (100) and
   `proof-backcatalog-classifier`'s own local `IN_FILTER_CHUNK` (100, a third variant shadowing the
   second) are both DELETED. `proofJobScan.chunk(items, size)` survives as the generic splitter for
@@ -183,7 +192,9 @@ exactly how #1795 shipped a fix that missed one of three. This entry replaces it
 - **Width is asserted ONCE**, on the helper (`utils/postgrest-filter.test.ts`). Mutation-verified:
   reverting `POSTGREST_IN_FILTER_CHUNK` to `POSTGREST_ROW_LIMIT` fails 2 tests; removing the byte cap
   fails 3; removing the count cap fails 1; restoring the `encodeURIComponent` accounting fails 2;
-  removing the claim guard fails 1; removing the caller's stranded-claim escalation fails 1. The
+  removing the claim guard fails 1; removing the **fetch** guard fails 1 (added late — it failed 0
+  when this list was first written, which is what made the omission worth an entry of its own
+  above); removing the caller's stranded-claim escalation fails 1. The
   #1812 stranded-count escalation is preserved and now covered through the real entrypoint
   (`publicRecordAnchor.test.ts`) instead of an export. The wire-width oracle used by tests lives in
   `test-utils/postgrestWire.ts` — ONE copy, mirroring postgrest-js's own algorithm. A second copy in
@@ -412,6 +423,50 @@ Key implementation patterns:
 - SCRUM-2902 (R-1 FATAL) — `ce-key-expiry-alert.ts` fail-LOUD Credential Engine API key expiry alarm. Pure `decideCeKeyExpiryAlert({ expires_at_raw, now })` + `createSentryCeKeyExpiryDispatcher()` + `runCeKeyExpiryCheck()`. Reads `CE_API_KEY_EXPIRES_AT` from env (NOT `config.ts` — mirrors treasury-alert's direct env read). Emits escalating Sentry events at **T-30/T-14 (warning)**, **T-7/EXPIRED (error)**, and — the fail-closed core — fires an **ERROR every run** with `expiry_window=SENTINEL` when the date is unset / a sentinel placeholder (`CE_KEY_EXPIRY_SENTINEL_VALUES`) / unparseable. **DB-stateless by design** (no dedup table → no migration): firing daily inside a window is the desired loudness; Sentry groups events into one issue and the alert-rule `frequency` throttles Slack pages. **event ≠ alert:** the Sentry event only pages a human via the `"SCRUM-2902 — Credential Engine API key expiry"` rule in `infra/sentry/alert-rules.json` (→ Slack `#ops`, tags `story,expiry_window,days_until_expiry`); code↔rule tag parity is enforced by `scripts/ci/check-ce-key-expiry-alert-contract.test.ts`. An admin must create the rule 1:1 in the Sentry dashboard AND capture a live Slack-delivery proof (see `docs/runbooks/ce-key-expiry-alarm.md`) — the code + rule declaration alone do NOT prove delivery. Cron route: `/jobs/ce-key-expiry-check`. Scheduler: daily 08:00 UTC. Gated by `ENABLE_CE_KEY_EXPIRY_ALERTS` (default true). **Founder blocker:** the real `CE_API_KEY_EXPIRES_AT` (≈2026-09-09, confirm) + demo CTID are Carson-supplied; until set, the alarm intentionally pages continuously.
 - **PostgREST `.in()` filter width is NOT `POSTGREST_ROW_LIMIT`** (prod incident 2026-07-29 → 2026-08-01, fix PR `fix/postgrest-in-filter-url-limit`). `POSTGREST_ROW_LIMIT = 1_000` caps how many rows PostgREST *returns*; it says nothing about how many ids fit in a *URL filter*. `fetchAnchorRows` chunked anchor ids by `POSTGREST_ROW_LIMIT` and passed them to `.in('id', chunk)` — 1,000 UUIDs is a ~38 KB encoded query string, which PostgREST rejected with `400 Bad Request` on **every** chunk. `rows` came back empty, `partitionRecordAnchors` produced zero pending items, and the job logged a benign `"No new pending public record anchors to submit"` and returned **HTTP 200**. Public-record anchoring produced **zero anchors for 70+ hours** while every cron reported success and the unlinked backlog grew past 404k. Use `POSTGREST_IN_FILTER_CHUNK` (200) for any `.in()` id list; keep `POSTGREST_ROW_LIMIT` for row pagination only. `fetchAnchorRows` now **throws** when every chunk fails rather than returning `[]` — an all-chunks-failed read is indistinguishable downstream from "no anchors exist", and that silent-success path is what hid the outage.
 
+
+## 2026-08-02 — a terminal `failed` connector_artifact MUST carry its own reason
+
+Prod artifact `921347cc` (org `40383eb2`) went terminal `failed` on 2026-08-02T00:41:53Z and **the database recorded nothing about why**: `markFailed()` accepted a `reason` parameter and never persisted it — the UPDATE set `status` and `updated_at` only. The sole surviving copy was a Sentry alert (`ARKOVA-WORKER-2B`), which is how the real cause was eventually recovered: `envelope anchor lookup failed: canceling statement due to statement timeout`. Sentry samples, ages out, and is not queryable alongside the row an operator is triaging.
+
+Rules now enforced by tests in `connector-artifact-drain.test.ts`:
+
+- **Persist the reason on the row.** `markFailed` merges a bounded `drain_error` into `connector_artifact.metadata` (merge, never replace — the envelope/account identifiers downstream code reads live there). No migration: `metadata` is already `jsonb`.
+- **Bound the reason INSIDE `markFailed`, never at the call sites.** `handleDebitFailure` passes the raw PostgREST/Postgres `error.message` through, and Postgres constraint-violation text routinely echoes the offending VALUE. Migration 0343 grants `SELECT ON connector_artifact TO authenticated` (`connector_artifact_org_select`), so **anything written to this column is readable by every member of the org**. Bounding in the single writer makes that structural instead of a rule each future caller must remember. Use the `boundedReason()` helper.
+- **Log the bounded `reason` AND the error object** (`{ err, reason }`). The bounded string is what gets persisted and alerted on; `err` is what carries the stack. Dropping the stack is a wash for a DB timeout and strictly worse for a `TypeError` deeper in materialization.
+
+### What is and is NOT guaranteed here
+
+- **Guaranteed:** every string this module *persists* or *alerts on* is bounded — `boundedReason()` → `boundedErrorDetail()` caps at ~500 chars post-scrub, collapses byte runs, and scrubs PII.
+- **NOT guaranteed by this module:** that no raw `Error` is ever handed to the logger. Eight `logger.{error,warn}({ error, … })` sites remain in this file (571, 610, 643, 856, 1020, 1056, 1162, 1359). That is deliberate and safe: **logger-side redaction is centralised**, not per-call-site — `utils/logger.ts` registers `redactErrorSerializer` for both the `err` and `error` keys plus a `redactBinaryValues` formatter over the whole merged object. Do not "fix" those call sites by stripping the error, and do not write a per-call-site rule here that the code does not enforce.
+- An earlier draft of this note claimed pino renders a raw `Error` under a non-`err` key as `{}`. **That is false for this codebase** — `logger.ts` registers the serializer for exactly that reason. Whatever produced the empty `error` object in the prod log line, it was not pino's default behaviour; the persistence gap above is the defect that actually mattered.
+
+### Known sharp edge
+
+The `metadata` write is a read-modify-**write of the whole column** from the snapshot taken at claim time. Safe today because `markFailed` is the only writer after insert (`enqueue_connector_artifact` is `ON CONFLICT DO NOTHING`). The first writer that does `ON CONFLICT DO UPDATE` on `metadata` will be silently clobbered by it. The durable form is server-side `metadata = metadata || jsonb_build_object('drain_error', $1)` inside an RPC — that needs a migration, so do it before adding a second writer, not after.
+
+`boundedErrorDetail` emits **lowercase** placeholder tokens (`[fingerprint]`, `[uuid]`, `[email]`) where `utils/pii-scrub.ts` emits uppercase. Harmless today (nothing parses them) but do not build a consumer that pattern-matches one casing.
+## 2026-08-02 — the envelope guard uses ONE indexed lookup PER KEY, never a combined `.or()`
+
+`findExistingEnvelopeAnchor` (`docusign-anchor-reconciliation.ts`) stalled the DocuSign envelope→anchor path in prod: `canceling statement due to statement timeout` on org `40383eb2` (**3.15M anchors**, artifact `921347cc`, failed twice).
+
+**The cause is a COSTING error, not a missing index and not the sort.** The planner estimates **51,038** rows match the 3-branch `metadata->>` OR when the true answer is **0**. Believing a match is imminent under a small `LIMIT`, it takes a scan — and no index can beat a wrong belief. Measured on prod with a value that matches nothing (the normal case for a newly completed envelope):
+
+| query shape | plan | cost |
+|---|---|---|
+| `.or(...)` + `ORDER BY created_at LIMIT 1` (original) | Index Scan Backward on `idx_anchors_active_created` | 2,209,325 |
+| `.or(...)` + `LIMIT 1`, no ORDER BY | **Seq Scan** | 1,845,309 |
+| single-key `.eq('metadata->>k', v)` + LIMIT | Index Scan on that key's own index | **1.23 — ACTUAL 0.064 ms, rows=0** |
+
+Removing the ORDER BY is **not** sufficient: it trades a backward index walk for a sequential scan and still times out. (An earlier fix attempt measured a cheap `BitmapOr` plan — that measurement used `LIMIT 50`, which changes the planner's choice, so it did not reflect the production query. Do not benchmark this lookup at a LIMIT the code does not use.)
+
+**Rules:**
+
+- **One `.eq('metadata->>key', envelopeId)` query per key in `ENVELOPE_ID_METADATA_KEYS`, run in parallel.** A single-key equality is a point lookup with exactly one index and one condition — the estimator cannot mislead it. Never reintroduce a combined `.or()` across metadata keys on this table.
+- **No `ORDER BY` in SQL.** The oldest-match tie-break happens in application code over a bounded result set (`ENVELOPE_ANCHOR_LOOKUP_LIMIT`), which keeps the guard idempotent — a repeat call must reuse the same anchor.
+- **Fail closed** if any per-key lookup errors: the one that failed may have held the duplicate, so proceeding would insert a second anchor for the envelope.
+- Each key needs its own index (0381 covered two of three; `idx_anchors_metadata_external_ref` covers the third). The migration anti-drift guard ties the constant to its indexes — adding a key without an index reintroduces a scan.
+
+**Benchmark any change here with `EXPLAIN (ANALYZE)` against org `40383eb2` on prod, using a value that matches nothing.** A plan measured on a small or empty org is meaningless — this query looked fixed twice that way.
 ## 2026-08-01 CE Registry drift reconciliation (`ce-registry-drift.ts`) — read-only read-back
 
 - **What it closes.** `POST /api/v1/credentials/ctdl/registry-anchor` (L3-A6) anchors a CE Registry record by fingerprinting the exact bytes retrieved — a claim about a moment in time. Nothing ever went back and looked. This job re-reads each anchored CTID from the **public** registry graph endpoint, re-hashes, and reports where current content no longer matches the anchored snapshot. It is the product thesis applied to CE's own data, and it is the highest-value CE capability provable **inside the evaluation window** because it needs no CE credential at all.
