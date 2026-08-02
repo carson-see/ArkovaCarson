@@ -218,6 +218,192 @@ Both open, from the 2026-08 72h signet soak pair. Canonical writeup: `docs/stagi
 - **F-1 (HIGH, open):** `org-queue-scheduler` returns 500 on ~28-33% of invocations across both rigs (flapping, recovers on later 5-min cycles; ~60x the gate matrix's 0.5% threshold). Confirmed NOT caused by migration `0378`. Root-cause not found yet — start at `claim_due_org_queue_runs` (likely contention or a partial-failure path under concurrent load).
 - **F-3 (MEDIUM, open):** an anchor left `SUBMITTED` with NULL `chain_tx_id` — the state a broadcast attempt produces if it fails between the status write and the txid write — has NO recovery path. `recover_stuck_broadcasts` queries only `BROADCASTING`-state anchors, so this state is structurally outside every scheduled job's scope. Verified by live fault injection that the job correctly recovers its in-scope `BROADCASTING` state, isolating the gap precisely.
 
+## 2026-08-02 — Concurrency lane: the run lease is now a SHARED primitive, and `batch-anchor.ts` + `check-confirmations.ts` are behind it (`run-lease.ts`)
+
+PR #1813 (block below) shipped the cross-instance TTL lease job-locally in `publicRecordAnchor.ts`
+and said explicitly not to hand-copy it a third time. The identical per-PROCESS `…Running = false`
+boolean — and the identical cross-instance blind spot — was still live in the other two anchoring
+jobs. **`batch-anchor.ts` is the one that signs and broadcasts.** `run-lease.ts` now owns the
+mechanism; all three jobs wrap themselves in `withRunLease`, and the job-local copy in
+`publicRecordAnchor.ts` is DELETED (not re-exported, not deprecated).
+
+- **What moved:** `acquireRunLease` / `releaseRunLease` / `runLeaseHolder` / `withRunLease` plus a
+  per-job `RunLeaseSpec` registry. Semantics are unchanged from #1813: `job_queue` row at a fixed
+  uuid PK, atomic compare-and-set UPDATE (`status.eq.completed,scheduled_for.lt.<now>`), release
+  predicate matched on `payload->>holder` so a run whose lease was stolen cannot clear the new
+  holder's claim, acquire fails CLOSED on any store error (including a throw), `try_advisory_lock`
+  still rejected for the PostgREST-pool reason. Each job gets its OWN lease id and type, asserted
+  distinct in tests.
+- **The per-process boolean is gone, not merely shadowed.** `withRunLease` keeps an in-process
+  `Set` of held lease ids and takes it SYNCHRONOUSLY, before the first `await` — exactly where
+  `…Running = true` sat. Adding it after the acquire round-trip would leave a window where two
+  same-process callers both pass the check; the CAS would still refuse the second, but only after
+  two wasted round-trips. A refused claim also skips the release, which otherwise logs a false
+  "this run overran its TTL" against a lease the run never held.
+- **TTLs are derived per job, not copied.** Floor = the SLOWEST cadence recorded across live Cloud
+  Scheduler and `scheduler-manifest.ts`; ceiling = Cloud Run's 3600 s request timeout. Live cadences
+  verified 2026-08-02 via `gcloud scheduler jobs list --location=us-central1`:
+  `anchor-public-records` every 10 min / 540 s deadline, `batch-anchors` every 30 min / 120 s,
+  `check-confirmations` every 30 min / 300 s, plus `daily-anchor-flush` (`0 3 * * *`, 600 s) →
+  `/jobs/batch-anchors?force=true`.
+  - `public-record-anchor` **45 min** (unchanged from #1813).
+  - `batch-anchor` **55 min** — pinned near the ceiling because the failure modes are asymmetric. A
+    STOLEN lease means two instances signing from the same treasury UTXO set: conflicting txs, real
+    mainnet fees burned, and a cohort unwound to PENDING by the definitive-reject path. A STUCK
+    lease only defers work that stays PENDING. Buy the most steal protection the ceiling allows.
+  - `check-confirmations` **35 min** — deliberately the shortest. No signing, no spending; chain
+    reads are idempotent and promotion goes through the drain RPC, so a steal costs duplicated reads
+    while a stuck lease lags SECURED promotion for every customer.
+- **`scheduler-manifest.ts` DRIFTS from live prod on two of these three jobs** (it records
+  `batch-anchors` every 10 min and `check-confirmations` every 2 min; prod runs both every 30 min).
+  Not corrected here — that is a manifest/prod reconciliation of its own — but every TTL floor takes
+  the SLOWER of the two readings, so the drift cannot make a TTL too short.
+- **An ACTIVE run renews its lease; the TTL is not asked to outlast it.** `withRunLease` starts an
+  `unref`'d heartbeat at ttl/3 that calls `renewRunLease` (holder-scoped CAS extending
+  `scheduled_for`). This closes a P1 raised on #1813 and never addressed there, and it matters more
+  now: nothing bounds a batch run's duration. `reconcileTxidJournals` walks up to
+  `TXID_JOURNAL_RECONCILE_LIMIT` = 100 journal rows SERIALLY, each a `getReceipt` that retries with
+  backoff (3 retries x 30s ⇒ ~127s worst case per row), and `applyQueueRunCreditGate` loops two
+  round-trips per credit-gated anchor over a batch of up to 10,000. Under a degraded provider — the
+  exact condition where a stale mempool view also makes a duplicate broadcast most likely — a
+  healthy run can outlive any TTL that still satisfies the liveness ceiling.
+- **`renewRunLease` returns a TRI-STATE (`'renewed' | 'lost' | 'store-error'`), and the heartbeat
+  stops on `'lost'` ONLY.** `'lost'` is evidence about ownership — the CAS ran and matched zero rows,
+  so a run whose lease already lapsed and was stolen must stop renewing rather than climb back on top
+  of the new holder. `'store-error'` is the ABSENCE of evidence and says nothing about ownership, so
+  the interval keeps running and the next tick retries. Collapsing the two into one falsy value was a
+  bug caught in review on this PR: the first heartbeat of the 3am `daily-anchor-flush` (55 min TTL ⇒
+  first renewal at 18m20s) hitting one transient PostgREST timeout — under exactly the
+  journal-reconcile + credit-gate load that saturates the 23-backend pool — permanently disarmed the
+  anti-double-broadcast protection for the remaining ~40 minutes of the run, and emitted "another
+  instance may be running concurrently" when none was, making the real alarm and the blip
+  indistinguishable in logs. Pinned by `keeps renewing after a transient store error on a renewal`
+  and, in the other direction, `stops renewing once the lease is provably lost, and says so`.
+- **The renewal test's oracle is a COMPETING ACQUISITION, not the release.** An earlier version of
+  `keeps a long-running body alive past its own TTL` asserted only that the release still matched —
+  which proves nothing, because `releaseRunLease` matches on `id AND payload->>holder` and does not
+  consider expiry, so a lapsed-but-unreclaimed lease releases exactly as successfully as a renewed
+  one. Deleting the heartbeat outright left all 49 lease tests green. The test now has a second
+  instance attempt `acquireRunLease` after 2x the TTL has elapsed and asserts it is REFUSED; that
+  assertion flips the moment renewal stops, because the CAS's `scheduled_for.lt.<now>` disjunct
+  starts matching. Verified: deleting the heartbeat call now fails 3 tests.
+- **Acquire is ONE round-trip in the steady state.** The CAS runs first; the bootstrap upsert is
+  reached only when it matches zero rows — ambiguous between "row does not exist yet" and "someone
+  holds it" — and the retried CAS remains the sole arbiter, so concurrent first-ever runs still
+  cannot both win. The previous shape seeded on every acquisition: `org-queue-scheduler` runs every
+  15 min in prod and re-acquires the global batch lease for up to 25 orgs per pass, so that was
+  thousands of no-op writes a day against `job_queue`, a table `db-health-monitor` tracks as hot.
+- **The holder id is minted PER ACQUISITION, not per process.** A per-process nonce is safe only
+  because `inFlight` prevents two same-process runs from overlapping — an invisible coupling that a
+  refactor of the in-process guard could break silently, reintroducing #1813's
+  release-someone-else's-lease bug one scope down. Per-acquisition removes the dependency outright.
+- **The Cloud Run ceiling is a LIVENESS bound, not a bound on run lifetime.** `--timeout 3600`
+  (`deploy-worker.yml`; confirmed live 2026-08-02 via `gcloud run services describe arkova-worker`)
+  terminates the REQUEST, not the JS continuation, and the service is CPU-throttled between requests
+  — the same property that makes in-process node-cron unreliable here. An abandoned run is FROZEN,
+  not killed, and can thaw during a later request. So the ceiling correctly bounds how long a dead
+  holder blocks a job, and does NOT support "a zombie cannot outlive the TTL". The txid journal, not
+  the lease, is the authority on whether a signed tx may be broadcast (`decideTxidJournalRecovery`
+  HOLDs inside the 30-min ambiguity window, so a thawed zombie does not double-broadcast).
+- **`batch-anchor`'s lease is GLOBAL, not per-org, and that is a real behaviour change.** An
+  `orgId` run claims only its own org's anchors, but it spends from the SAME treasury, so org
+  scoping does not make two runs independent. Cross-instance, a per-org drain from
+  `org-queue-scheduler.ts` / `connector-artifact-drain.ts` / the manual `/queue/run` API can now be
+  refused while a global drain holds the lease. Inside one process that was ALREADY the behaviour
+  (`batchProcessingRunning` was global); this extends it across the fleet.
+- **A refused run reports `skipped: true` on `BatchAnchorResult`, and the queue callers honour it.**
+  This is a correctness fix, not bookkeeping. `recordOrgQueueRunResult` writes
+  `organization_queue_run_state.last_run_at`, and `claim_due_org_queue_runs` (mig 0294) only
+  re-offers an org once `last_run_at` is 24 HOURS old — so recording a lease refusal as `succeeded`
+  would defer that org's next dedicated drain by a full day AND file an `organization_queue_runs`
+  row saying it ran. With `CLAIM_LIMIT_DEFAULT` = 25, one long global drain could do that to 25 orgs
+  in a single pass. `org-queue-scheduler.ts` now releases the claim via `releaseOrgQueueClaim`
+  (clears `locked_at`/`locked_by` ONLY — PostgREST upsert assigns just the columns given, so the due
+  clock survives) and counts it under a new `skipped` field on `OrgQueueSchedulerResult`; the manual
+  `/queue/run` handler returns 200 with the additive `skipped` field (§1.8) and files no run
+  evidence. A flag-OFF drain deliberately does NOT set `skipped` — otherwise the scheduler would
+  re-claim the same 25 orgs every pass for as long as `ENABLE_BATCH_ANCHORING` is off.
+- **Recovery is NOT gated behind the lease, by design.** `recoverStuckBroadcasts`
+  (`/jobs/recover-broadcasts`, every 2 min) and its `reconcileTxidJournals` call are outside every
+  lease, so a dead batch holder cannot block ADOPT/REVERT/HOLD of its own journaled cohort. The one
+  thing deferred by a stuck batch lease is `reconcileBroadcastIntents`' LEGACY arm (pre-0358
+  `BROADCASTING` + `chain_tx_id` rows with no journal row) — deferred up to 55 min, not lost.
+- **Known residual risks, not fixed here.** (a) A lease refusal returns normally, so
+  `withCronMonitoring` still reports `status:'ok'` to Sentry — a lease stuck behind a dead holder is
+  invisible to cron monitoring for up to the TTL. (b) `connector-artifact-drain`'s per-org call
+  leaves the artifact `materialized` and re-drivable on a refusal (no double-charge — the debit is
+  idempotent on the anchor id), but emits a burst of `anchor_pending_confirmation` alerts. (c) The
+  store double models `payload->>holder` semantically rather than at wire level, so a PostgREST
+  syntax regression there would stay green; the syntax is the established repo pattern on this exact
+  table and column (`proofJobCheckpoint.ts`, `rule-action-dispatcher.ts`), and a stuck release is
+  observable via the "already reclaimed" warn.
+- **`check-confirmations` keeps PR #753 audit fix A3.** The lease wraps the mock/real BRANCH, not
+  the real arm — the mock arm mints `mock-batch-${Date.now()}` tx ids and races the `chain_tx_id`
+  backfill if it runs unguarded. Moving the lease inside the real arm fails 3 tests.
+- Tests: `__tests__/run-lease.test.ts` (35 — CAS semantics, single-round-trip acquire, bootstrap, steal-on-expiry, holder-scoped
+  release, fail-closed on bootstrap/CAS/throw, per-acquisition holder, in-process short-circuit incl.
+  the race-the-first-acquire case, per-job independence, renewal incl. refuse-to-renew-a-stolen-lease
+  and keep-a-long-run-alive-past-its-own-TTL, TTL bounds per spec, unique ids/types),
+  `batch-anchor.lease.test.ts` (6), `check-confirmations.lease.test.ts` (5),
+  `__tests__/publicRecordAnchor-lease.test.ts` (3, reduced to wiring only now that the primitive has
+  its own suite), plus 2 new `org-queue-scheduler.test.ts` cases for the skip path. The shared store
+  double `createRunLeaseStore` lives in `__testHelpers.ts` and EVALUATES the emitted `.or(...)`
+  rather than restating it. **Mutation-verified:** dropping `status.eq.completed` → 12 red; dropping
+  `scheduled_for.lt.<now>` → 1 red; an always-granting predicate → 2 red; dropping the holder nonce →
+  1 red; dropping the holder scope from the RENEW predicate → 1 red; deleting the `withRunLease` call
+  from `batch-anchor.ts` → 4 red; moving `check-confirmations`' lease inside the real-mode arm →
+  3 red. T3 (chain/treasury + concurrency).
+
+## 2026-08-01 — Queues lane (PR #1813): the SCRUM-3031 wedge has a SECOND, live mechanism — cross-instance overlap (`publicRecordAnchor.ts`)
+
+Migration 0370 (below) killed the original mechanism: verified in prod 2026-08-01, the live
+`batch_insert_anchors` body matches 0370 and prod logs show ten 1,000-row chunks completing in
+~2.2–2.5 s each (was ~106 s). The ticket's SYMPTOM is still real, but its cause has moved.
+
+- **New mechanism (observed live, prod revision `arkova-worker-01164-xux`):** `anchor-public-records`
+  is scheduled every 10 min with a Cloud Scheduler `attemptDeadline` of **300 s**, while the Cloud
+  Run request timeout is **3600 s**. Once PR #1795 restored the job's real work (50 id-filter chunks
+  + the link RPCs instead of 10 failing chunks), a run stopped fitting in 300 s. Cloud Scheduler
+  abandons the attempt (`AttemptFinished status=DEADLINE_EXCEEDED`, 19:15:04Z) but Cloud Run keeps
+  executing it, so the next tick starts a SECOND run — on a DIFFERENT instance (19:12:27Z inst
+  `…72908`, 19:22:26Z inst `…72963`, both `recordCount=10000`). Both runs call
+  `batch_insert_anchors` on the same fingerprints; the row-lock contention pushes every chunk past
+  the 20 s client deadline (`AbortError`, chunkIndex 0/1000/2000/3000) into
+  `insertAnchorSerialFallback` (1,000 round-trips/chunk), which makes the run slower and guarantees
+  the next overlap. Measured outcome: 19:25:12Z inst `…72908` `alreadyAnchored=0 total=10000` vs
+  19:25:49Z inst `…72963` `linked=10000` — one run links the batch, the loser spends ~13 min to link
+  ZERO. The overlap does NOT halt the drain (backlog moved 405,376 → 395,376); it burns a duplicate
+  copy of every run, and leaves Cloud Scheduler reporting permanent DEADLINE_EXCEEDED so a scheduler
+  dead-man cannot tell this from a genuinely dead job.
+- **Why the 72h rigs never reproduced it:** the rigs drive the org/batch path, hold ~95k anchors and
+  have no 400k-record unlinked backlog, so their runs finish in seconds — they never exceed a
+  scheduler attempt deadline, and a single-instance rig has no second instance to overlap with.
+  Both preconditions are prod-only.
+- **Fix:** `publicRecordAnchoringRunning` is a per-PROCESS boolean and cannot see another instance.
+  The guard is now a TTL **run lease** — `job_queue` row `type='public-record-anchor:lease'` at a
+  fixed PK, claimed by an atomic compare-and-set UPDATE (`status='completed' OR scheduled_for < now`),
+  released only by its own holder, TTL 45 min (above the 10-min cadence so a healthy run is never
+  stolen mid-flight; below Cloud Run's 3600 s ceiling so a crashed holder cannot block the drain
+  longer than one abandoned request). `claim_next_job` is type-scoped so no job runner ever claims
+  the row, and the free state is `completed` so queue-depth monitors ignore it. Acquire fails CLOSED.
+  A `try_advisory_lock` session lock was rejected: it is reached through PostgREST's 23-backend pool,
+  so a release can land on a different backend and no-op, and a stuck lock on a 10-minute cron is a
+  worse outage than the overlap.
+- **Flag check runs BEFORE the lease.** `ENABLE_PUBLIC_RECORD_ANCHORING` is resolved in the outer
+  entrypoint now, so a disabled pipeline does not write three `job_queue` rows per cron tick just to
+  discover it has nothing to do.
+- **Holder ids carry a per-process nonce, and that is load-bearing.** Review caught that the first
+  cut used `${K_REVISION}:${pid}` — `K_REVISION` is the REVISION name (identical on every instance)
+  and the exec-form `CMD ["node", …]` makes node PID 1 everywhere, so every instance computed the
+  SAME holder string and the release predicate would free ANOTHER instance's live lease, making the
+  overlap self-sustaining. A module-load `randomUUID()` is appended.
+- Tests: `__tests__/publicRecordAnchor-lease.test.ts` (10). The store double EVALUATES the emitted
+  `.or(...)` expression instead of restating the predicate — dropping either disjunct from the
+  production CAS fails 4 tests. Mutation-verified: removing the acquire call from the entrypoint, or
+  either half of the `.or()`, turns the suite red. `grantedRunLeaseTable()` in `__testHelpers.ts`
+  lets pipeline-focused suites grant the lease. The sibling id-filter-width fix is PR #1812,
+  documented in its own block below.
+
 ## 2026-07-28 — Lane 1: batch_insert_anchors wedge fix + RPC hardening (SCRUM-3031, `publicRecordAnchor.ts`, migration 0370)
 
 CTO ruling R15 root-cause investigation into `batch_insert_anchors` burning ~106s/call and inserting ZERO rows on repeat calls, holding `RowExclusiveLock` on `anchors` (~2.97M rows) near-continuously — suspected root cause of the 259k pending-anchoring backlog never draining; blocked the 0365/0366 prod DDL apply for ~15min on 2026-07-27.

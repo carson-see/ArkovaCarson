@@ -35,6 +35,8 @@ import {
   POSTGREST_IN_FILTER_CHUNK,
   POSTGREST_URL_FILTER_BUDGET_BYTES,
 } from '../../utils/postgrest-filter.js';
+import { PUBLIC_RECORD_ANCHOR_RUN_LEASE } from '../run-lease.js';
+import { createRunLeaseStore } from './__testHelpers.js';
 
 const { mockRpc, mockSubmitFingerprint, mockLogger, mockAnchorProofsUpsert } = vi.hoisted(() => ({
   mockRpc: vi.fn(),
@@ -182,9 +184,17 @@ function makeRevertMock(recordCount: number, options: { revertError?: unknown } 
     return chain;
   };
 
+  // SCRUM-3031: processPublicRecordAnchoring now wraps its run in the shared
+  // run lease (`withRunLease`), reading/writing `job_queue` on the SAME
+  // client passed in here before any of the revert-path queries below are
+  // ever reached. A free lease (the default) lets it acquire, matching an
+  // untouched job_queue row in real Postgres.
+  const jobQueueStore = createRunLeaseStore(PUBLIC_RECORD_ANCHOR_RUN_LEASE, 'free');
+
   const client = {
     rpc: mockRpc,
     from: vi.fn((table: string) => {
+      if (table === 'job_queue') return jobQueueStore.from(table);
       if (table === 'profiles') {
         return {
           select: vi.fn(() => ({
