@@ -28,7 +28,12 @@ import { buildMerkleTree } from '../utils/merkle.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config.js';
 import { upsertAnchorProofs } from '../utils/anchorProofs.js';
-import { POSTGREST_IN_FILTER_CHUNK, POSTGREST_ROW_LIMIT, resolveAnchorBatchSize } from './anchor-batching.js';
+import { resolveAnchorBatchSize } from './anchor-batching.js';
+import {
+  POSTGREST_ROW_LIMIT,
+  assertNotAllChunksFailed,
+  chunkForInFilter,
+} from '../utils/postgrest-filter.js';
 import type { ChainReceipt } from '../chain/types.js';
 import { captureCreditRpcFailureAlert } from '../utils/sentry.js';
 
@@ -209,29 +214,32 @@ function uniqueById<T extends { id: string }>(rows: T[]): T[] {
   return Array.from(new Map(rows.map((row) => [row.id, row])).values());
 }
 
+/**
+ * Every id filter in this module is built with `chunkForInFilter`, never a
+ * hand-rolled `i += SIZE` loop; `POSTGREST_ROW_LIMIT` appears only on
+ * `.range()` pagination, which is what it actually governs.
+ */
 async function fetchAnchorRows(
   client: SupabaseClient,
   anchorIds: string[],
 ): Promise<PipelineAnchorRow[]> {
   const rows: PipelineAnchorRow[] = [];
   const ids = Array.from(new Set(anchorIds));
-  let attemptedChunks = 0;
+  const chunks = chunkForInFilter(ids);
   let failedChunks = 0;
 
-  for (let i = 0; i < ids.length; i += POSTGREST_IN_FILTER_CHUNK) {
-    const chunk = ids.slice(i, i + POSTGREST_IN_FILTER_CHUNK);
-    attemptedChunks += 1;
+  for (const { values, start } of chunks) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (client as any)
       .from('anchors')
       .select('id, fingerprint, status, chain_tx_id, metadata')
-      .in('id', chunk)
+      .in('id', values)
       .is('deleted_at', null);
 
     if (error) {
       failedChunks += 1;
       logger.error(
-        { error, errorMessage: (error as { message?: string })?.message, chunkStart: i, chunkSize: chunk.length },
+        { error, errorMessage: (error as { message?: string })?.message, chunkStart: start, chunkSize: values.length },
         'Failed to fetch anchor rows after insert',
       );
       continue;
@@ -243,12 +251,8 @@ async function fetchAnchorRows(
   // Every chunk failing is indistinguishable from "no anchors exist" downstream:
   // partitionRecordAnchors yields no pending items, the job logs a benign
   // "no new pending" and returns 200. That silent-success path is what hid a
-  // 70-hour production outage. Fail loudly instead.
-  if (attemptedChunks > 0 && failedChunks === attemptedChunks) {
-    throw new Error(
-      `fetchAnchorRows: all ${failedChunks} chunk(s) failed for ${ids.length} anchor id(s); refusing to report an empty result set as success`,
-    );
-  }
+  // 70-hour production outage.
+  assertNotAllChunksFailed('fetchAnchorRows', chunks.length, failedChunks, `${ids.length} anchor id(s)`);
 
   return rows;
 }
@@ -258,46 +262,101 @@ async function claimPendingPipelineAnchors(
   anchors: PipelineAnchorRow[],
 ): Promise<PipelineAnchorRow[]> {
   const claimed: PipelineAnchorRow[] = [];
-  const uniqueAnchors = uniqueById(anchors);
+  // Project to ids BEFORE chunking: `chunkForInFilter` only accepts the values
+  // that go on the wire, so the width it guarantees is the width actually sent.
+  const anchorIds = uniqueById(anchors).map((a) => a.id);
+  const chunks = chunkForInFilter(anchorIds);
+  let failedChunks = 0;
 
-  for (let i = 0; i < uniqueAnchors.length; i += POSTGREST_IN_FILTER_CHUNK) {
-    const chunk = uniqueAnchors.slice(i, i + POSTGREST_IN_FILTER_CHUNK);
+  for (const { values, start } of chunks) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (client as any)
       .from('anchors')
       .update({ status: 'BROADCASTING' })
-      .in('id', chunk.map((a) => a.id))
+      .in('id', values)
       .eq('status', 'PENDING')
       .select('id, fingerprint, status, chain_tx_id, metadata');
 
     if (error) {
-      logger.error({ error, chunkStart: i, chunkSize: chunk.length }, 'Failed to claim pipeline anchors');
+      failedChunks += 1;
+      logger.error({ error, chunkStart: start, chunkSize: values.length }, 'Failed to claim pipeline anchors');
       continue;
     }
 
     claimed.push(...((data ?? []) as PipelineAnchorRow[]));
   }
 
+  // An empty claim reads downstream as "nothing was PENDING" — the job logs a
+  // benign result and returns 200. That is the same silent-success shape as
+  // fetchAnchorRows, and this function shipped without the guard while its two
+  // siblings had it: the exact 2-of-3 miss that let #1795 leave a defect behind.
+  assertNotAllChunksFailed(
+    'claimPendingPipelineAnchors',
+    chunks.length,
+    failedChunks,
+    `${anchorIds.length} anchor id(s)`,
+  );
+
   return claimed;
 }
 
+interface RevertClaimedAnchorsResult {
+  attemptedChunks: number;
+  failedChunks: number;
+  /** Anchors whose revert chunk failed — still BROADCASTING after this call. */
+  strandedAnchorIds: number;
+}
+
+/**
+ * Releases claimed pipeline anchors from BROADCASTING back to PENDING after a
+ * failed chain submission.
+ *
+ * This ran with a `POSTGREST_ROW_LIMIT`-wide id filter until SCRUM-3031's
+ * follow-up: PR #1795 corrected the same defect in `fetchAnchorRows` and
+ * `claimPendingPipelineAnchors` but not here, so this path emitted 1,000-uuid
+ * `in.(...)` filters, took 400 Bad Request on every chunk, and released
+ * nothing. A failed submission therefore stranded up to a full 10,000-anchor
+ * batch in BROADCASTING while the job logged only the original chain error.
+ * The width is now `chunkForInFilter`'s to decide, not this function's.
+ *
+ * Silence on the revert is the dangerous part, not the stranding itself: the
+ * `recover-broadcasts` cron eventually resets BROADCASTING rows with a NULL
+ * `chain_tx_id` back to PENDING, so the batch does recover — but with no
+ * signal, a permanently-broken revert is indistinguishable from a healthy one.
+ * A total failure is therefore escalated to error level naming the stranded
+ * count and the recovering job. It deliberately does NOT call
+ * `assertNotAllChunksFailed` — this runs inside the chain-submission failure
+ * path, and throwing here would replace the caller's real chain error with a
+ * secondary one. That is an explicit opt-out, not an omission.
+ */
 async function revertClaimedAnchors(
   client: SupabaseClient,
   anchorIds: string[],
-): Promise<void> {
-  for (let i = 0; i < anchorIds.length; i += POSTGREST_ROW_LIMIT) {
-    const chunk = anchorIds.slice(i, i + POSTGREST_ROW_LIMIT);
+): Promise<RevertClaimedAnchorsResult> {
+  let attemptedChunks = 0;
+  let failedChunks = 0;
+  let strandedAnchorIds = 0;
+
+  for (const { values, start } of chunkForInFilter(anchorIds)) {
+    attemptedChunks += 1;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (client as any)
       .from('anchors')
       .update({ status: 'PENDING' })
-      .in('id', chunk)
+      .in('id', values)
       .eq('status', 'BROADCASTING');
 
     if (error) {
-      logger.error({ error, chunkStart: i, chunkSize: chunk.length }, 'Failed to revert claimed pipeline anchors');
+      failedChunks += 1;
+      strandedAnchorIds += values.length;
+      logger.error({ error, chunkStart: start, chunkSize: values.length }, 'Failed to revert claimed pipeline anchors');
     }
   }
+
+  // The aggregate escalation is the CALLER's — it is the only one that knows
+  // the merkle root and the claim size, and one failure should not produce
+  // three stacked error lines saying the same thing.
+  return { attemptedChunks, failedChunks, strandedAnchorIds };
 }
 
 async function linkExistingPublicRecordAnchors(
@@ -836,7 +895,13 @@ async function processPublicRecordAnchoringInner(
     });
   } catch (error) {
     logger.error({ error, merkleRoot: tree.root }, 'Public record batch chain submission failed');
-    await revertClaimedAnchors(client, uniqueClaimedAnchors.map((a) => a.id));
+    const revert = await revertClaimedAnchors(client, uniqueClaimedAnchors.map((a) => a.id));
+    if (revert.strandedAnchorIds > 0) {
+      logger.error(
+        { merkleRoot: tree.root, claimed: uniqueClaimedAnchors.length, ...revert },
+        'Public record batch failed AND its claim could not be fully released — anchors left BROADCASTING; recover-broadcasts will reset those with a NULL chain_tx_id',
+      );
+    }
     return {
       processed: alreadyAnchored,
       anchorsCreated: createdAnchors.length,
