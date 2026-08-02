@@ -18,9 +18,15 @@ interface IntegrityDetailViewProps {
   onClose?: () => void;
 }
 
+/**
+ * SCRUM-2914 (Founder UI findings): `extractionConfidence` is deliberately
+ * absent. It is still computed and still contributes to the overall integrity
+ * score server-side — it is simply not shown as its own labelled bar, because
+ * extraction confidence scoring is unreliable and must not be surfaced to
+ * users as a standalone measurement. Do not re-add it here.
+ */
 const BREAKDOWN_LABELS: Record<string, string> = {
   metadataCompleteness: INTEGRITY_DETAIL_LABELS.METADATA_COMPLETENESS,
-  extractionConfidence: INTEGRITY_DETAIL_LABELS.EXTRACTION_CONFIDENCE,
   issuerVerification: INTEGRITY_DETAIL_LABELS.ISSUER_VERIFICATION,
   duplicateCheck: INTEGRITY_DETAIL_LABELS.DUPLICATE_CHECK,
   temporalConsistency: INTEGRITY_DETAIL_LABELS.TEMPORAL_CONSISTENCY,
@@ -47,7 +53,6 @@ function getBarColor(value: number): string {
 export function IntegrityDetailView({ score, onClose }: IntegrityDetailViewProps) {
   const breakdownEntries = [
     { key: 'metadataCompleteness', value: score.metadataCompleteness },
-    { key: 'extractionConfidence', value: score.extractionConfidence },
     { key: 'issuerVerification', value: score.issuerVerification },
     { key: 'duplicateCheck', value: score.duplicateCheck },
     { key: 'temporalConsistency', value: score.temporalConsistency },
