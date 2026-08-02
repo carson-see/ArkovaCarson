@@ -1,7 +1,7 @@
 -- =============================================================================
 -- 0389 — anchors CE Registry partial index (unblocks PR #1838's drift job)
 --
--- ROLLBACK: DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_ce_registry_ctid;
+-- ROLLBACK: DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_ce_registry_created_at;
 --   Run standalone, outside a transaction. No data migration is involved, and
 --   nothing depends on this index for CORRECTNESS — only for not timing out —
 --   so the rollback is safe at any time, including while the drift job is
@@ -122,7 +122,7 @@
 --                                same 995,007-row estimate. pg_stats for the
 --                                index empty. The rejected shape, measured.
 --   expression index, no ORDER BY  Seq Scan, 50,000 buffers, 3,711 ms.
---   THIS INDEX                   Index Scan using idx_anchors_ce_registry_ctid,
+--   THIS INDEX                   Index Scan using idx_anchors_ce_registry_created_at,
 --                                no Filter node, buffers 3, 0.137 ms.
 --
 -- 52,734 buffers -> 3. Cold 17,873 ms -> 0.137 ms. Also verified on the same
@@ -146,12 +146,25 @@
 -- OPERATOR NOTE (prod apply).
 --   Run the statement standalone, outside any transaction (this file has no
 --   BEGIN/COMMIT — do not wrap one around it). CONCURRENTLY can leave an
---   INVALID index if the build fails or is interrupted; verify:
+--   INVALID index if the build fails or is interrupted. CHECK THIS FIRST, and
+--   do not skip it:
 --     SELECT indisvalid FROM pg_index
---       WHERE indexrelid = 'public.idx_anchors_ce_registry_ctid'::regclass;
+--       WHERE indexrelid = 'public.idx_anchors_ce_registry_created_at'::regclass;
 --     -- expect t
---   If invalid: DROP INDEX CONCURRENTLY public.idx_anchors_ce_registry_ctid;
---   then re-run (IF NOT EXISTS makes a re-run safe).
+--
+--   RE-RUNNING THIS MIGRATION DOES NOT REPAIR AN INVALID INDEX. `IF NOT EXISTS`
+--   matches on NAME ONLY, so a re-run against a leftover INVALID index is a
+--   SILENT NO-OP: it prints `CREATE INDEX`, exits 0, and leaves an index the
+--   planner will not use but Postgres still maintains on every write — all of
+--   the cost, none of the benefit — while `pg_index` shows a row, so it looks
+--   applied. The drift job then keeps timing out with "but the index exists"
+--   as the standing explanation. Not hypothetical: HANDOFF.md records a
+--   `CREATE INDEX ... IF NOT EXISTS` on this same table landing as a no-op on
+--   2026-08-02, after which connector artifact `921347cc` failed again with the
+--   identical error. Repair order is DROP FIRST, THEN re-run:
+--     DROP INDEX CONCURRENTLY public.idx_anchors_ce_registry_created_at;
+--   then re-check `indisvalid`. Presence in `pg_index` is not success;
+--   `indisvalid = t` is.
 --   `ANALYZE public.anchors;` afterwards is good hygiene but is NOT required
 --   for this index to be chosen — that was measured, above, and it is the
 --   property that distinguishes this shape from the rejected one. Do not reach
@@ -170,7 +183,7 @@
 --   measurement above. Capture an EXPLAIN (ANALYZE) of the job's actual query
 --   against the real prod org that owns the anchors
 --   (40383eb2-f1cd-4a85-8099-afafff95e5cf) showing an Index Scan on
---   `idx_anchors_ce_registry_ctid` with no Filter node. Measuring against a
+--   `idx_anchors_ce_registry_created_at` with no Filter node. Measuring against a
 --   small or empty org is not evidence — that mistake made the DocuSign path
 --   look fixed twice on 2026-08-02.
 --   Note also that #1838's docstring and PR body still name the rejected
@@ -185,6 +198,6 @@
 -- =============================================================================
 
 -- anchor-index-justification: loadAnchoredCeRecords (jobs/ce-registry-drift.ts, PR #1838) reads WHERE metadata->>'ce_registry_ctid' IS NOT NULL AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 100; with far fewer than 100 matching rows Postgres cannot stop early and walks all ~3M rows of idx_anchors_active_created, heap-fetching and detoasting metadata for each — the same shape that caused a 14-day prod anchoring gap in check-confirmations.ts against the 60s PostgREST statement_timeout. Keyed on created_at DESC so the index satisfies the ORDER BY directly, with the metadata test in the partial predicate so the planner proves implication and emits no Filter — measured 52,734 buffers/17,873 ms down to 3 buffers/0.137 ms, and chosen without needing ANALYZE. The partial predicate holds the index at 16 kB, so this adds no measurable cost to the anchors write path.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_ce_registry_ctid
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_ce_registry_created_at
   ON public.anchors (created_at DESC)
   WHERE deleted_at IS NULL AND (metadata ->> 'ce_registry_ctid') IS NOT NULL;
