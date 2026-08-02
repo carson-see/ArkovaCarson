@@ -74,8 +74,17 @@ export interface MirrorResult {
   lines: string[];
 }
 
+/**
+ * Explicit comparator, pinned to a fixed locale. A bare `.sort()` orders by
+ * UTF-16 code unit, and a bare `localeCompare` follows the runner's locale —
+ * both would make this guard's diagnostic output depend on where CI happens to
+ * run. These lines are read off a failed build to name the drifting control ID,
+ * so their order has to be the same everywhere.
+ */
+const byControlId = (x: string, y: string): number => x.localeCompare(y, 'en');
+
 function sortedDiff(a: ReadonlySet<string>, b: ReadonlySet<string>): string[] {
-  return [...a].filter((id) => !b.has(id)).sort();
+  return [...a].filter((id) => !b.has(id)).sort(byControlId);
 }
 
 /**
