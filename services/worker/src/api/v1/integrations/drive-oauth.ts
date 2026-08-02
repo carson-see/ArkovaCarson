@@ -432,7 +432,14 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
       }, { kms, env: deps.env });
 
       const channelId = randomUUID();
-      let subscription: { resourceId: string; expiration: string } | null = null;
+      // DRIVE B1: `startPageToken` must be captured here. It is the cursor the
+      // changes pipeline starts from, and connect time is the ONLY moment it can
+      // be seeded — `advancePageToken` is the only other writer, and it runs
+      // exclusively inside `processDriveChanges`, which refuses to run without a
+      // token. Dropping it made the pipeline unreachable by construction.
+      let subscription:
+        | { resourceId: string; expiration: string; startPageToken: string }
+        | null = null;
       try {
         subscription = await createChangesWatch({
           accessToken: tokens.access_token,
@@ -465,6 +472,12 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
           revoked_at: null,
           subscription_id: subscription ? channelId : null,
           subscription_expires_at: subscription?.expiration ?? null,
+          // Seed the changes cursor (DRIVE B1). Written ONLY when the watch
+          // succeeded: this is an upsert, so unconditionally writing null on a
+          // failed re-watch would wipe a working org's cursor, and nothing else
+          // can re-seed it. Leaving the column untouched keeps the existing
+          // cursor so no change window is silently skipped.
+          ...(subscription ? { last_page_token: subscription.startPageToken } : {}),
           last_renewal_error: subscription ? null : 'changes.watch registration failed during OAuth callback',
           updated_at: (deps.now?.() ?? new Date()).toISOString(),
         }, { onConflict: 'org_id,provider,account_id' })
