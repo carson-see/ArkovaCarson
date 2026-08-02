@@ -179,6 +179,7 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 | `0380` | `0380_f5_anchor_stats_fn_ownership_guard.sql` | #1778 | **yes** | F-5 (`docs/staging/SOAK-FINDINGS-2026-08.md`). Ownership-gates `get_org_anchor_stats(uuid)` / `get_user_anchor_stats(uuid)` — both were SECURITY DEFINER taking a caller-supplied `p_org_id`/`p_user_id` with no identity check, so any caller (anon included, per the live grant) could read another tenant's anchor counts. `0378` deferred this exact pair because the live dashboard is a real caller. Adds a body-level `RAISE EXCEPTION ... USING ERRCODE = '42501'` on identity mismatch, keyed off `get_user_org_id()` / `auth.uid()`, with a `get_caller_role() = 'service_role'` bypass. **No grant changes** — the body guard alone closes it for every existing grantee. Applied to prod `vzwyaatejekddvltxyye` 2026-08-01 ahead of merge (live, anon-callable, CTO-confirmed cross-tenant read); ledger reconciled to numeric `0380` per §0 rule 10. Re-verified 2026-08-02 via `pg_get_functiondef` (42501 + service_role bypass present on both) and `schema_migrations` (numeric `0380`). Only caller is `src/pages/DashboardPage.tsx:213` via `resolveDashboardStatsRequest()`, which always passes the caller's own id — dashboard unaffected. **Known non-leak edge:** `NULL IS DISTINCT FROM NULL` is FALSE, so an anon call passing an explicit NULL id skips the raise and returns zeroed stats with HTTP 200 instead of 403; no row is reachable (`WHERE org_id = NULL` never matches), so it is a response-shape wart, not a disclosure. Closing it needs a compensating migration — `0380` is applied and is never edited in place (§1.2). **Next author claims `0381`+ per the next-free rule.** |
 | `0384` | `0384_scrum2481_anchor_evidence_claim_authority.sql` | #1806 | no | SCRUM-2481 DB half. `enforce_anchor_evidence_claim_authority()` + `trg_strip_unassertable_evidence_claims` (BEFORE INSERT OR UPDATE OF `metadata`, `fingerprint_source`): a non-`service_role` caller may not introduce or change `metadata.verification_level` to `issuer_anchored`/`source_signed` (key is STRIPPED, row still created) and may not change `fingerprint_source` at all (REFUSED). Closes the browser's direct-PostgREST forgery of the public issuer-authenticated badge — `anchors_insert_own` constrains `user_id`/`status`/`org_id` and nothing about `metadata`, so the API-route guard in the same PR could not see it. Trigger name deliberately sorts AFTER `trg_prevent_metadata_edit` so that trigger's post-SECURED RAISE still fires first. `0379`-`0383` are claimed by #1784/#1778/#1782/#1808/#1618. |
 
+| `0386` | `0386_fingerprint_lookup_secured_only.sql` | #1854 | no | Closes the fingerprint EXISTENCE ORACLE on the anon-GRANTed `get_public_anchor_by_fingerprint`. Prod had silently drifted from `0339` to `status IN ('SECURED','SUBMITTED','PENDING')` with **no source on main** — 3 PENDING + 48,149 SUBMITTED non-deleted anchors were confirmable by an anonymous caller. Restores `status = 'SECURED'` and 0339's `ORDER BY created_at DESC, a.id DESC` tiebreak. Based on the CURRENT PROD body via `pg_get_functiondef` (source md5 `1fd78aece7613fd191f7a053f2f66475`), not on the 0339 file. Tier T3. Rollback in the file header. See the PR block below. **Next author claims `0387`.** |
 | `0387` | `0387_public_search_learner_name_leak.sql` | (this PR) | **yes — applied out of band 2026-08-02, ahead of this PR** | **Confirmed LIVE leak, since fixed in prod.** `search_public_credentials` is anon-executable (`anon_execute=true`) and projected `'title', a.filename` RAW — the same learner-name PII 0385 removed from `get_public_anchor`, still exposed through the public search surface (search.arkova.ai). Verified in prod: `search_public_credentials('ava-williams',3)` returned `title = 'diploma-ava-williams.pdf'`, `credential_type = DEGREE`. Fixes BOTH sides: projection uses 0385's `private.*` label/cleaner, academic-record types are excluded from MATCHING (projection-only suppression would leave a hit-count oracle), non-academic rows match only on text the projection would print, and status narrows to `SECURED` (SUBMITTED was pre-publication filename disclosure). Based on the live prod body via `pg_get_functiondef` (md5 `411787e41120fda83c3aef4511b00da9` pre-fix). CTO applied this exact body directly on 2026-08-02 (pen-test window did not allow waiting for the normal PR/soak cycle); post-fix verification found zero academic hits on every learner-name probe, with legitimate ACRA/FINRA/USPTO public records still searchable. This PR's `0387_public_search_learner_name_leak.sql` was re-diffed against the live `pg_get_functiondef` output in-session (2026-08-02) and matches byte-for-byte — the repo file is the source of truth for what is running. It is a prod-orphan row, exempted in `scripts/ci/snapshots/ledger-numeric-exemptions.json` (`"0387"`) until this PR merges, at which point that exemption should be removed. Depends on 0385's helpers. Tier T3. Rollback in the file header. **Do NOT assume `0388`/`0389`/`0391` are free** — per `scripts/ci/snapshots/ledger-numeric-exemptions.json`'s own notes, `0388` is claimed/applied out of band (branch `claude/optimistic-perlman-9ff2fe`, PR #1863), `0389` is claimed file-only (branch `perf/anchors-ce-registry-ctid-index-0388`), and `0391` is claimed (PR #1871). `0390` is already merged to `main`. Next author: re-derive the true next-free prefix per the next-free rule at the top of this file (`max(main numeric head, this table, open-PR migrations) + 1`) rather than trusting any number asserted here. |
 
 ### Prefixes with no file and no reservation
@@ -210,6 +211,40 @@ Fix in any affected clone: `git config --unset merge.union.driver`. Session-star
 guard: `scripts/agent/check-git-merge-config.sh`. CI backstop:
 `scripts/ci/check-agents-md-append-only.ts` (override label
 `agents-md-deletion-approved` for deliberate consolidation).
+
+
+## Recent migrations (PR #1854)
+
+`0386_fingerprint_lookup_secured_only.sql` — prod-vs-repo drift with no repo source.
+
+- **The drift.** `0339_get_public_anchor_by_fingerprint.sql` restricts the lookup
+  to `a.status = 'SECURED'` and states the reason verbatim: "fingerprint lookup
+  must not become a global existence oracle for pending/submitted content
+  hashes." Production ran `a.status IN ('SECURED','SUBMITTED','PENDING')`. No
+  migration on main redefines the function after 0339, so the running body had
+  **no source in this repository** and nothing recorded the change.
+- **Measured exposure** (prod `vzwyaatejekddvltxyye`, read-only, 2026-08-02):
+  **3 PENDING + 48,149 SUBMITTED** non-deleted anchors were confirmable by an
+  anonymous caller. The RPC is GRANTed to `anon` (0339).
+- **Numbering.** Claimed after verifying the live ledger — head was `0385`
+  (0379, 0380, 0381, 0383, 0384, 0385) — and that no open PR claimed `0386`.
+  Note `0384` (#1806) and `0385` (#1841) were prod-applied ahead of their source
+  landing on main; their exemptions ride PR #1850.
+- **Two changes only**, both restoring 0339: the status predicate, and the
+  `, a.id DESC` tiebreak (`created_at` is not unique, so the current ordering
+  can resolve one fingerprint to different `public_id`s across calls). The
+  tiebreak is named separately so it can be dropped without touching the
+  security fix.
+- **Base body.** Taken from prod via `pg_get_functiondef` (source md5
+  `1fd78aece7613fd191f7a053f2f66475`), NOT from the 0339 file — restoring an
+  intent is not a licence to restore an old body. Branching from a stale file is
+  what made `0376` revert `0356`'s keyed HMAC and `0362`'s allow-list.
+- **Test-integrity note.** `services/edge/src/mcp-tools.test.ts` already asserted
+  this invariant and stayed green throughout, because it MOCKS the RPC — it
+  tests the edge layer's mapping while the fixture supplies the premise that the
+  database filters. `tests/rls/fingerprint-lookup-secured-only.test.ts` now pins
+  the SQL predicate against the real function. A mock may stand in for a
+  collaborator, never for the invariant under test.
 
 ## Related
 
