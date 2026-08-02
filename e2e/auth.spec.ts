@@ -43,7 +43,19 @@ test.describe('Authentication', () => {
     await expect(page.getByRole('button', { name: 'Create account' })).toBeVisible();
   });
 
-  test('signup creates account and enters the authenticated app', async ({ page }) => {
+  /**
+   * SCRUM-2907 — signup stops on the confirmation screen; it does NOT enter the app.
+   *
+   * This spec previously asserted the user lands on /dashboard right after
+   * "Create account", on the stated basis that prod auto-confirms signups.
+   * That basis was wrong. Verified live against prod (vzwyaatejekddvltxyye)
+   * on 2026-08-01: POST /auth/v1/signup returns HTTP 200 with
+   * confirmation_sent_at set and NO session, and the user row lands with
+   * email_confirmed_at = NULL. `supabase/config.toml` now sets
+   * enable_confirmations = true so local/CI match, and this spec asserts the
+   * path a real user actually walks.
+   */
+  test('signup stops on the email-confirmation screen and does not enter the app', async ({ page }) => {
     const serviceClient = getServiceClient();
     const email = `${uniqueTestId('e2e-signup')}@test.arkova.io`;
     let userId: string | null = null;
@@ -58,14 +70,17 @@ test.describe('Authentication', () => {
 
       await page.getByRole('button', { name: 'Create account' }).click();
 
-      await page.waitForURL(/\/(dashboard|onboarding|review-pending)/, { timeout: 15000 });
+      // The confirmation screen, not the app.
+      await expect(page.getByText('Check your email')).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText(email)).toBeVisible();
+      expect(new URL(page.url()).pathname).not.toMatch(/\/(dashboard|onboarding|review-pending)/);
 
-      const { data: profile } = await serviceClient
-        .from('profiles')
-        .select('id')
-        .eq('email', email)
-        .maybeSingle();
-      userId = (profile?.id as string | undefined) ?? null;
+      // The account exists but is unconfirmed — the gate is real, not cosmetic.
+      const { data: users } = await serviceClient.auth.admin.listUsers();
+      const created = users.users.find((user) => user.email === email);
+      expect(created, 'signup must still create the auth user').toBeTruthy();
+      expect(created?.email_confirmed_at ?? null).toBeNull();
+      userId = created?.id ?? null;
     } finally {
       if (!userId) {
         const { data: profile } = await serviceClient

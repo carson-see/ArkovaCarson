@@ -196,8 +196,14 @@ describe('buildCtdlJsonLd', () => {
     expect(body).not.toContain('555-867-5309');
   });
 
-  it('fails closed for transcript-like education records when learner-name PII confidence is low', () => {
-    expect(() => buildCtdlJsonLd({
+  // SCRUM-2293 — these two used to assert a 404 from the learner-name heuristic
+  // gate. That heuristic was removed (it 404'd real institutions while still
+  // missing all-caps and non-ASCII names — see the design note in
+  // ctdl-pii-guard.ts). They now assert the STRONGER, mechanism-independent
+  // property: an academic record emits no issuer free text, so the learner name
+  // cannot appear whatever its shape — and the credential is not taken offline.
+  it('emits no learner name for a transcript-like education record', () => {
+    const jsonLd = buildCtdlJsonLd({
       ...baseAnchor,
       credentialType: 'DEGREE',
       subType: 'transcript',
@@ -208,11 +214,15 @@ describe('buildCtdlJsonLd', () => {
       },
     }, {
       verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
-    })).toThrow(/CTDL PII safety gate/);
+    });
+
+    expect(JSON.stringify(jsonLd)).not.toContain('Jane Q Student');
+    expect(jsonLd).not.toHaveProperty('ceterms:description');
+    expect(jsonLd['ceterms:name']).toBe('Academic Degree');
   });
 
-  it('fails closed for name-first transcript labels that previously evaded the learner-name gate', () => {
-    expect(() => buildCtdlJsonLd({
+  it('emits no learner name for a name-first transcript label', () => {
+    const jsonLd = buildCtdlJsonLd({
       ...baseAnchor,
       credentialType: 'DEGREE',
       subType: 'academic_record',
@@ -223,7 +233,10 @@ describe('buildCtdlJsonLd', () => {
       },
     }, {
       verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
-    })).toThrow(/CTDL PII safety gate/);
+    });
+
+    expect(JSON.stringify(jsonLd)).not.toContain('Jane Q Student');
+    expect(jsonLd).not.toHaveProperty('ceterms:description');
   });
 
   it('suppresses learner-name free text across non-transcript credential types', () => {
