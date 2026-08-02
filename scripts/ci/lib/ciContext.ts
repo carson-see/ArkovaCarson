@@ -228,6 +228,7 @@ export const LABELS = {
   coverageDropAllowed: 'coverage-drop-allowed',
   ciConfigChange: 'ci-config-change',
   confluenceDriftSkip: 'confluence-drift-skip',
+  worktreeBranchException: 'worktree-branch-exception',
 } as const;
 
 /**
