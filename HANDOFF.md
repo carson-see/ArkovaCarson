@@ -29,14 +29,15 @@
 
 ### Prod
 
-- Worker `git_sha c56ceee03` (= main tip at release), Cloud Run revision `arkova-worker-01153-lir`;
-  `/health` database/anchoring/kms all ok.
+- Worker `git_sha d59129807fd8dcac84ccdef55c2429761b15196f`, `/health` database/anchoring/kms all ok
+  (verified live 2026-08-02). Main is ahead of this, but only by docs-only commits —
+  `deploy-worker.yml` is path-filtered, so no deploy is owed. NOT lag.
 - **The deploy freeze is LIFTED.** `DEPLOY_WORKER_PAUSED` → `false` at 2026-08-01T14:11Z;
   deploy-worker run [30703316623](https://github.com/carson-see/ArkovaCarson/actions/runs/30703316623)
   SUCCESS (canary→full). The 52-commit prod lag from the deferred-soak window is closed.
 - Crons: `anchor-attestations` + 6 feeder crons RESUMED. Still deliberately paused, not soak-related:
   `chaindump-desk-daily`, `workspace-subscription-renewal`, `bq-export-incremental`.
-- **Migration ledger head `0383`**, numeric. Prod carries several rows whose source `.sql` is not yet
+- **Migration ledger head `0387`**, numeric (verified 2026-08-02 by direct query). Prod carries several rows whose source `.sql` is not yet
   on main (all exempted in `scripts/ci/snapshots/ledger-numeric-exemptions.json`; remove each exemption
   when its owning PR merges): `0375` (PR #1739), `0379`/`0380`/`0381` (PRs #1784/#1778/#1782),
   `0383` (PR #1618).
@@ -89,6 +90,18 @@
 
 ### Open blockers and decisions
 
+- **`0387` is live in prod with NO PR — the largest repo/prod reconciliation gap.**
+  `0387_public_search_learner_name_leak` closed a confirmed learner-name PII leak on the anon-callable
+  `search_public_credentials` (searching `ava-williams` returned `diploma-ava-williams.pdf`). It is
+  applied and verified in prod, and CI-exempted on main, but its source exists ONLY on branch
+  `origin/fix/public-search-learner-name-leak-0387` (commit `2c9aa1fef`). Until that branch lands, the
+  repo does not contain the definition of a function running in production. Tracked by SCRUM-3108.
+- **Findings with no Jira Bug ticket yet** (deliberately not created unilaterally): `audit_events`
+  writes discarded at 8 call sites (PR #1856), the `get_public_anchor_by_fingerprint` existence oracle
+  (PR #1854), and the Drive cursor never seeded (PR #1821).
+- **DMARC `p=none` is NOT in the Sekura pen-test briefing** (Confluence 117604354, founder-review
+  pending). It should be added before that briefing is sent, or the tester will report it as a find.
+
 - **`POST /api/v1/audit/batch-verify` returns audit samples drawn from a population it never read —
   still on `main`, fix in draft.** The `sample_percentage` path reads the population with
   `db.from('anchors').select('public_id').eq('org_id', …)` and **no `.range()`**, so PostgREST caps it
@@ -121,8 +134,10 @@
 - **Shared CI blocker on the open queue:** a main-side `e2e/csv-upload.spec.ts` break (suspected stale
   spec vs the merged spreadsheet dual-mode wave) is failing E2E on 9 PRs; fix agent dispatched
   2026-08-01.
-- **Held, not mergeable:** #1755 (sharp-libvips LGPL — Carson/counsel per `scripts/security/agents.md`);
-  do-not-merge set 1769/1654/1652/1618 (Carson's labels).
+- **Held, not mergeable:** #1755 (sharp-libvips LGPL — Carson/counsel per `scripts/security/agents.md`).
+  CORRECTION 2026-08-02: the previously-listed do-not-merge set is stale — the founder lifted the hold
+  on 1654/1652/1618 and they carry no `do-not-merge` label (#1654 and #1652 have since merged; #1618
+  is open and mergeable). Verify labels live before treating any PR as held.
 - **More unguarded SECURITY DEFINER RPCs, not yet fixed** (backlogged from the 2026-07-28 sweep):
   `finalize_public_record_anchor_batch`, `drain_submitted_to_secured_for_tx`, `bulk_promote_confirmed`,
   `archive_old_audit_events` (can wipe the audit trail with `retention_days=0`).
