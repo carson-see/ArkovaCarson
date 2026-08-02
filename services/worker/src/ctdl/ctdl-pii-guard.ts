@@ -104,6 +104,33 @@ export function isEducationCredentialType(credentialType: string | null | undefi
 }
 
 /**
+ * SCRUM-3102 — the predicate the SERIALIZER must use, which FAILS CLOSED on an
+ * absent credential type.
+ *
+ * `isEducationCredentialType` answers "is this one of the three academic types",
+ * and for `null` the honest answer is false. But the serializer is not asking
+ * that — it is asking "may this record emit issuer-authored free text", and for
+ * an anchor with NO type the safe answer is NO. Routing the serializer through
+ * `isEducationCredentialType` made an untyped anchor take the PERMISSIVE branch:
+ * measured in prod 2026-08-02, 24 of the 59 `credential_type IS NULL` anchors
+ * (41%) carry a learner-name-shaped filename, the densest such pocket in a
+ * 3.36M-row corpus.
+ *
+ * This mirrors the contract's own `structural_keys` principle — "recognising
+ * danger fails open; recognising safety fails closed". The academic set
+ * recognises SAFETY by enumeration, so anything outside the enumeration that we
+ * cannot positively classify must be suppressed, not waved through.
+ *
+ * A PRESENT but non-academic type (`OTHER`, `CPE`, `CLE`, …) still publishes:
+ * `credential_type` is an enum column, so a non-empty value is always a known
+ * type, and blanking those would destroy the partner-facing descriptive title.
+ */
+export function suppressesRecordFreeText(credentialType: string | null | undefined): boolean {
+  if (typeof credentialType !== 'string' || credentialType.trim() === '') return true;
+  return EDUCATION_CREDENTIAL_TYPES.has(credentialType.toUpperCase());
+}
+
+/**
  * Upper bound on the characters any detector will scan.
  *
  * Detectors run on RAW database text at some call sites (e.g.
@@ -114,6 +141,13 @@ export function isEducationCredentialType(credentialType: string | null | undefi
  * the emitted fields themselves cap at 240/500 characters.
  */
 export const MAX_SCAN_CHARS = 4000;
+
+/**
+ * Upper bound on an emitted public URL, matching the shared contract's
+ * `max_public_url_chars`. Overflow DROPS the field (see
+ * {@link stripUrlQueryAndFragment}) rather than truncating it.
+ */
+export const MAX_PUBLIC_URL_CHARS = 2048;
 
 /**
  * C0 controls plus DEL. Stripped so a NUL cannot split a value out from under a
@@ -174,10 +208,25 @@ const US_PHONE_PATTERN =
  * unreadable pattern.
  */
 const INTL_PHONE_CANDIDATE = /\+\d{1,3}(?:[\s.-]\d{1,5}){2,5}/g;
+/**
+ * The COMPACT form, with no separators at all (`+442079460958`) — how a number
+ * is written when copied from a `tel:` link or a contact page.
+ *
+ * The separated candidate above cannot match it (it requires at least two
+ * separator groups), and `US_PHONE_PATTERN` only covers the compact case for
+ * `+1`. The serializer pattern this module replaced carried
+ * `\+(?:[2-9]\d)\d{7,11}`, which DID match it, so omitting this was a silent
+ * detection regression for every non-US number.
+ *
+ * Bounded {10,15} to E.164 and `\b`-terminated, so a longer digit run (not a
+ * valid phone number) does not match at any backtrack position.
+ */
+const INTL_PHONE_COMPACT = /\+\d{10,15}\b/;
 const MIN_E164_DIGITS = 10;
 const MAX_E164_DIGITS = 15;
 
 function containsInternationalPhone(value: string): boolean {
+  if (INTL_PHONE_COMPACT.test(value)) return true;
   for (const match of value.matchAll(INTL_PHONE_CANDIDATE)) {
     const digits = match[0].replace(/\D/g, '').length;
     if (digits >= MIN_E164_DIGITS && digits <= MAX_E164_DIGITS) return true;
@@ -244,11 +293,41 @@ export function containsHighConfidencePii(value: string): boolean {
 const NAME_TOKEN = String.raw`[A-Z][a-z]{1,}`;
 const OPTIONAL_MIDDLE = String.raw`(?:\s(?:[A-Z]\.?|${NAME_TOKEN}))?`;
 const FULL_NAME = String.raw`${NAME_TOKEN}${OPTIONAL_MIDDLE}\s${NAME_TOKEN}`;
+/**
+ * SCRUM-3102 — `for` was REMOVED as a trigger, and the generic credential nouns
+ * (`certificate`, `credential`, `degree`) were removed from the name-first
+ * pattern. Both changes delete measured FALSE POSITIVES that were erasing real
+ * issuer and course names from the public projection.
+ *
+ * `for` is a bare preposition, so it collides with ordinary organisation names.
+ * Every one of these is pinned in the shared contract's `must_publish_vectors`
+ * and every one was being dropped: "Society for Human Resource Management",
+ * "Institute for Supply Management", "Center for Professional Development",
+ * "Alliance for Continuing Education", "Ethics for Trial Lawyers", "Credit for
+ * Prior Learning", "Revoked for Non Payment". The generic nouns did the same to
+ * "Data Science degree" and "Project Management certificate".
+ *
+ * That was not a cosmetic loss. Suppression here is not an omission of one
+ * optional property: `cleanPublicFreeText` returning null makes `issuerName`
+ * and `credentialName` fall through EVERY metadata fallback (they all route
+ * through the same cleaner) to the literal placeholders "Arkova verified issuer"
+ * and "Arkova credential <publicId>" — so an issuer named "Society for Human
+ * Resource Management" published with its identity erased.
+ *
+ * What remains are RELATIONAL triggers that do not collide with institution
+ * names, and record nouns that are not ordinary credential titles. This costs
+ * one shape the old pattern caught ("Official transcript for Jane Q Student",
+ * noun-before-name). That shape is academic by construction, and academic
+ * records emit no issuer-authored free text at all — the structural rule, which
+ * is precision-independent, already covers it.
+ *
+ * Do not re-add `for`, or any other bare preposition, as a trigger.
+ */
 const CONTEXTUAL_LEARNER_NAME_PATTERN = new RegExp(
-  String.raw`\b(?:for|learner|student|recipient|issued to|awarded to|completed by|earned by|held by)\s${FULL_NAME}\b`,
+  String.raw`\b(?:learner|student|recipient|issued to|awarded to|completed by|earned by|held by)\s${FULL_NAME}\b`,
 );
 const NAME_FIRST_LEARNER_PATTERN = new RegExp(
-  String.raw`\b${FULL_NAME}(?:'s)?\s(?:transcript|student record|learner record|certificate|credential|degree|completion)\b`,
+  String.raw`\b${FULL_NAME}(?:'s)?\s(?:transcript|student record|learner record|completion)\b`,
 );
 
 /**
@@ -347,6 +426,13 @@ export function assertNoPiiInJsonLd(value: unknown, depth = 0): void {
  * merged.
  */
 export function stripUrlQueryAndFragment(rawUrl: string): string | null {
+  // SCRUM-3102 — DROP on overflow, never truncate. The caller cleans with a
+  // length budget sized for prose, and a truncated URL still PARSES, so it
+  // publishes as a valid-looking WRONG link that the consumer renders as a live
+  // anchor — strictly worse than omitting the field. Migration 0385's
+  // `public_url_or_null` already drops for exactly this reason; this keeps the
+  // two public projections honest about the same value.
+  if (rawUrl.length > MAX_PUBLIC_URL_CHARS) return null;
   let url: URL;
   try {
     url = new URL(rawUrl);

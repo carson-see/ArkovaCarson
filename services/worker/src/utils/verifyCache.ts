@@ -12,15 +12,33 @@ import { logger } from './logger.js';
 
 const CACHE_TTL_SECONDS = 300; // 5 minutes
 // Bumped v1 → v2 when API-RICH-01 landed 8 additive response fields (2026-04-16).
-// Bumped v2 → v3 for the outbound PII gate on `buildVerificationResult`
-// (academic-record free-text suppression + value gate). This bump is a SECURITY
-// requirement, not hygiene: the gate runs before `setCachedVerification`, so new
-// writes are safe either way, but entries written by the PRE-fix build carry a
-// raw `description` and would keep serving it to anonymous callers for the rest
-// of the TTL after deploy. A new prefix orphans them instantly.
+//
+// Bumped to v4 for SCRUM-2575: the verify response now carries
+// `proof_availability` + `proof_availability_note`. A hit is served verbatim
+// without re-running buildVerificationResult, so without a bump every anchor
+// cached before the deploy would keep answering the proof-availability question
+// with silence for the whole TTL.
+//
+// v3 was skipped deliberately: several independent response-shape changes
+// landed around the same time and each needed its own bump — PR #1800
+// (SCRUM-2227, compliance_controls_note + retired DPF ID stripping) and #1864's
+// outbound PII gate on `buildVerificationResult` (academic-record free-text
+// suppression + value gate on description/issuer_name/jurisdiction/sub_type/
+// file_mime) among them. Jumping straight from v2 to v4 means the bump is
+// correct no matter which of them lands on main first, and none of them can
+// silently reuse another's namespace by both claiming v3.
+//
+// #1864's v4 claim is a SECURITY requirement, not hygiene: the gate runs
+// before `setCachedVerification`, so new writes are safe either way, but
+// entries written by the PRE-fix build carry a raw `description` and would
+// keep serving it to anonymous callers for the rest of the TTL after deploy. A
+// new prefix orphans them instantly. This PR (the anon /provenance PII gate)
+// does not read or write this cache — `provenance.ts` has no cache of its own
+// — so it inherits the bump without needing one of its own.
+//
 // Bump again on any response-shape change so post-deploy cache hits don't serve stale
 // thin responses. Old keys age out naturally via TTL.
-const KEY_PREFIX = 'verify:v3:';
+const KEY_PREFIX = 'verify:v4:';
 
 /** Module-level config cache — avoids process.env reads on every request */
 let _redisConfig: { url: string; token: string } | null | undefined;

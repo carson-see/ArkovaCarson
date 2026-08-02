@@ -14,6 +14,11 @@ import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { FERPA_EDUCATION_TYPES, FERPA_REDISCLOSURE_NOTICE } from '../../constants/ferpa.js';
+import {
+  proofAvailabilityFields,
+  type ProofAvailability,
+} from '../../constants/proofAvailability.js';
+import { hasServableProofBranch } from '../../utils/proofBranch.js';
 import { getCachedVerification, setCachedVerification } from '../../utils/verifyCache.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 // Imported from the GUARD, not from `ctdl-serializer.js`, on purpose: the guard
@@ -169,8 +174,41 @@ export interface VerificationResult {
    * never guessed, Constitution 1.5). Additive nullable — Constitution 1.8.
    */
   fingerprint_source?: 'document_bytes' | 'issuer_record_attestation' | null;
+  /**
+   * SCRUM-2575: whether a per-document proof can actually be retrieved for this
+   * record, or only the on-chain commitment exists. Measured from stored proof
+   * data, never guessed and never derived from `status`.
+   *
+   * Omitted (never null) when the anchor has not reached a state where a proof
+   * answer is meaningful — see buildVerificationResult. Additive —
+   * Constitution 1.8, no version bump.
+   */
+  proof_availability?: ProofAvailability;
+  /**
+   * SCRUM-2575: the measured / asserted / NOT-asserted statement for
+   * `proof_availability` (Constitution 1.5). Present exactly when
+   * `proof_availability` is, so a class never travels without its meaning.
+   */
+  proof_availability_note?: string;
   error?: string;
 }
+
+/**
+ * Public statuses for which a proof-availability answer is a measurement rather
+ * than a guess. PENDING / SUBMITTED are excluded: those records have not
+ * finished confirming, so the absence of a branch says nothing yet, and the
+ * note's "was committed to the Bitcoin network" would be premature for a
+ * broadcast-but-unconfirmed transaction.
+ *
+ * Typed against `VerificationResult['status']` so a typo'd literal fails to
+ * compile rather than silently omitting the fields for that status.
+ */
+const SETTLED_PROOF_STATUSES = new Set<VerificationResult['status']>([
+  'ACTIVE',
+  'REVOKED',
+  'EXPIRED',
+  'SUPERSEDED',
+]);
 
 function mapStatus(status: string): VerificationResult['status'] {
   switch (status) {
@@ -251,6 +289,26 @@ export interface AnchorByPublicId {
   sub_type: string | null;
   /** R19: fingerprint evidence class from anchors.fingerprint_source (migration 0376). */
   fingerprint_source: string | null;
+  /**
+   * SCRUM-2575: can `/proof` actually serve a per-document branch for this
+   * anchor? Measured with `hasServableProofBranch` — the SAME predicate the
+   * proof route uses, so the two endpoints cannot contradict each other.
+   *
+   * TRI-STATE, and the distinction matters:
+   *   `true`  — a branch is servable        → proof_availability: per_document
+   *   `false` — measured, none servable     → proof_availability: root_only
+   *   `null`/absent — NOT MEASURED          → both fields OMITTED
+   *
+   * The third case is why this is not a plain boolean. Endpoints that build an
+   * `AnchorByPublicId` without loading proof data (the batch endpoint and the
+   * oracle, via `EMPTY_API_RICH_FIELDS`) must stay SILENT rather than report
+   * `root_only`: a note that opens "Measured: Arkova does not store a
+   * per-document inclusion proof for this record" is a measurement claim, and
+   * those paths measured nothing. Defaulting them to `false` would have made
+   * `/verify/batch` assert the opposite of `/verify/:publicId` for the same
+   * anchor.
+   */
+  has_stored_proof_branch?: boolean | null;
 }
 
 /**
@@ -385,6 +443,36 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     result.version_number = anchor.version_number;
   }
 
+  // SCRUM-2575: state whether a per-document proof can actually be retrieved.
+  //
+  // THREE conditions, all required, because the note makes two claims and both
+  // must be true before it is emitted:
+  //
+  //  1. The branch question was actually MEASURED. `null`/absent means the
+  //     caller never loaded proof data (batch, oracle) — stay silent rather
+  //     than report a measurement nobody took.
+  //  2. The status is settled. PENDING / SUBMITTED have not finished
+  //     confirming; "root_only" there would describe an unfinished process, and
+  //     a caller would reasonably read it as "this record will never have one."
+  //  3. There is an actual on-chain receipt to point at. The note asserts the
+  //     fingerprint "was committed to the Bitcoin network in the referenced
+  //     anchor receipt" — and a status label alone does NOT establish that.
+  //     `revoke_anchor()` accepts a PENDING, never-broadcast anchor (see
+  //     jobs/revocation.ts, which logs "cannot broadcast revocation" for
+  //     exactly this case), and a SUPERSEDED parent may never have been
+  //     SECURED. Gating on `chain_tx_id` means the claim is backed by the same
+  //     receipt the response already returns as `network_receipt_id`, instead
+  //     of asserting external chain state we do not hold (§1.5 / R-7).
+  //
+  // Omitted, never null, when any condition fails — frozen schema, CLAUDE.md §6.
+  if (
+    anchor.has_stored_proof_branch != null
+    && SETTLED_PROOF_STATUSES.has(publicStatus)
+    && anchor.chain_tx_id != null
+  ) {
+    Object.assign(result, proofAvailabilityFields(anchor.has_stored_proof_branch));
+  }
+
   return result;
 }
 
@@ -394,6 +482,10 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
  * adding a new rich field only requires touching this constant + the interface.
  */
 export const EMPTY_API_RICH_FIELDS = {
+  // SCRUM-2575: `null` = NOT MEASURED, not "no proof". Consumers of this
+  // constant do not load proof data, so they must omit proof_availability
+  // entirely rather than claim a measurement they never took.
+  has_stored_proof_branch: null,
   compliance_controls: null,
   chain_confirmations: null,
   parent_public_id: null,
@@ -448,6 +540,11 @@ function logVerificationAudit(
 /** Single embedded `anchor_proofs` row (merkle_root lives here, not on anchors). */
 interface AnchorProofEmbed {
   merkle_root: string | null;
+  /**
+   * SCRUM-2575: the per-document Merkle inclusion branch, when one is stored.
+   * JSONB, so untyped on the wire — only a non-empty ARRAY counts as a branch.
+   */
+  proof_path?: unknown;
 }
 
 /**
@@ -500,16 +597,59 @@ export interface AnchorSelectRow {
 /** Reads `merkle_root` from the joined anchor_proofs embed (object or array),
  *  falling back to the legacy `metadata.merkle_root` string. Returns null when
  *  neither source carries a string value. */
-function resolveMerkleRoot(row: AnchorSelectRow): string | null {
+/**
+ * Normalise the `anchor_proofs` embed to an array.
+ *
+ * PostgREST surfaces a to-one relationship as either a single object or a
+ * one-element array depending on how it resolves the join, so every reader has
+ * to handle both. One helper rather than a copy per reader: a divergent copy
+ * fails SILENTLY to `[]`, which reads as "no proof" — a wrong public claim
+ * rather than an error.
+ */
+function proofEmbedRows(row: AnchorSelectRow): AnchorProofEmbed[] {
   const proofs = row.anchor_proofs;
-  const proofRows = Array.isArray(proofs) ? proofs : proofs ? [proofs] : [];
-  for (const proof of proofRows) {
+  return Array.isArray(proofs) ? proofs : proofs ? [proofs] : [];
+}
+
+function resolveMerkleRoot(row: AnchorSelectRow): string | null {
+  for (const proof of proofEmbedRows(row)) {
     if (typeof proof?.merkle_root === 'string' && proof.merkle_root.length > 0) {
       return proof.merkle_root;
     }
   }
   const legacy = row.metadata?.merkle_root;
   return typeof legacy === 'string' && legacy.length > 0 ? legacy : null;
+}
+
+/**
+ * SCRUM-2575: can `/proof` actually serve a per-document branch for this row?
+ *
+ * Delegates to `hasServableProofBranch`, the SAME predicate the proof route
+ * applies, and feeds it BOTH places a branch can live — the `anchor_proofs`
+ * embed and the legacy `anchors.metadata` proof that `/proof` still falls back
+ * to. Checking only the embed would make `/verify` answer `root_only` for a
+ * legacy record whose proof `/proof` happily serves.
+ *
+ * Deliberately does NOT consult `anchor_proofs.proof_completeness_class` (mig
+ * 0354). That column is populated by a Carson-gated classifier that has not been
+ * run in write mode over prod, so it is NULL for essentially the whole
+ * catalogue; keying the public answer off it would report `root_only` for
+ * everything regardless of what is actually stored. The branch itself is the
+ * measurement.
+ */
+function resolveHasStoredProofBranch(row: AnchorSelectRow): boolean {
+  return proofEmbedRows(row).some((proof) =>
+    hasServableProofBranch({
+      storedRoot: proof?.merkle_root,
+      storedPath: proof?.proof_path,
+      // The metadata arm is evaluated once, below, not per embed row.
+      metadata: null,
+    }),
+  ) || hasServableProofBranch({
+    storedRoot: null,
+    storedPath: null,
+    metadata: row.metadata ?? null,
+  });
 }
 
 /** Reads `jurisdiction` from anchors.metadata JSONB (informational tag,
@@ -562,6 +702,7 @@ export function mapAnchorRow(row: AnchorSelectRow): AnchorByPublicId {
     confidence_scores: latestManifest?.confidence_scores ?? null,
     sub_type: row.sub_type ?? null,
     fingerprint_source: row.fingerprint_source ?? null,
+    has_stored_proof_branch: resolveHasStoredProofBranch(row),
   };
 }
 
@@ -577,7 +718,7 @@ const defaultLookup: PublicIdLookup = {
           'revocation_tx_id, revocation_block_height, file_mime, file_size, ' +
           'org_id, fingerprint_source, metadata, ' +
           'organization:org_id(display_name), parent:parent_anchor_id(public_id), ' +
-          'anchor_proofs(merkle_root), ' +
+          'anchor_proofs(merkle_root, proof_path), ' +
           'extraction_manifests(confidence_scores, extraction_timestamp)',
       )
       .eq('public_id', publicId)
