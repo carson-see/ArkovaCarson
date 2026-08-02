@@ -17,12 +17,14 @@ import { assertNoProhibitedClaimInJsonLd, containsProhibitedClaim } from './ctdl
 // truth for every PII detector used on this projection.
 import {
   CtdlPiiSafetyError,
+  MAX_PUBLIC_URL_CHARS,
+  MAX_SCAN_CHARS,
   assertNoPiiInJsonLd,
   containsHighConfidencePii,
   containsOutboundFreeTextPii,
-  isEducationCredentialType,
   normalizePublicText,
   stripUrlQueryAndFragment,
+  suppressesRecordFreeText,
 } from './ctdl-pii-guard.js';
 // SCRUM-1922 R-CTDL-FR9 — keep the issuer DID format in lockstep with the
 // did:web resolver so the CTDL `sameAs` link resolves to the org's DID doc.
@@ -179,7 +181,18 @@ function asRecord(value: unknown): Record<string, unknown> {
 // whitespace run does not eat the budget.
 function cleanPublicString(value: unknown, maxLength = 240): string | null {
   if (typeof value !== 'string') return null;
-  const clean = normalizePublicText(value, Number.MAX_SAFE_INTEGER);
+  // SCRUM-3102 — CAP BEFORE NORMALISING. `Number.MAX_SAFE_INTEGER` here meant
+  // two full-length regex passes over RAW metadata, which defeats the whole
+  // point of MAX_SCAN_CHARS on a PUBLIC, UNAUTHENTICATED, single-threaded
+  // endpoint: `anchors.metadata` has no size constraint beyond "is an object",
+  // so any org member can plant a megabyte value, and `pickMetadataString`
+  // calls this once per candidate key (~20x per body). Migration 0385 caps
+  // first for exactly this reason and measured 70 ms vs 1.6 ms on a 1 MB value.
+  //
+  // The bound is taken ABOVE both the output budget and MAX_SCAN_CHARS, so the
+  // visible output is byte-identical to the uncapped form for any value a
+  // legitimate credential asserts.
+  const clean = normalizePublicText(value, Math.max(maxLength, MAX_SCAN_CHARS));
   if (!clean) return null;
   return clean.length <= maxLength ? clean : clean.slice(0, maxLength).trimEnd();
 }
@@ -214,7 +227,11 @@ function pickMetadataString(metadata: Record<string, unknown>, keys: readonly st
 // `ceterms:subjectWebpage` is hygiene-cleaned only, so those three components
 // are exactly where an identifier rides into an otherwise innocuous field.
 function isPublicHttpUrl(value: unknown): string | null {
-  const clean = cleanPublicString(value, 500);
+  // SCRUM-3102 — clean at the URL budget, not the 500-char prose budget. The
+  // old 500 cap SILENTLY TRUNCATED a longer URL into a string that still
+  // parses, publishing a valid-looking wrong link; `stripUrlQueryAndFragment`
+  // now drops anything over MAX_PUBLIC_URL_CHARS instead.
+  const clean = cleanPublicString(value, MAX_PUBLIC_URL_CHARS);
   if (!clean) return null;
   return stripUrlQueryAndFragment(clean);
 }
@@ -314,7 +331,14 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
   // for why this replaced a name-detection heuristic — in short, a heuristic
   // could not be made both safe and precise, while this cannot leak a learner
   // name of ANY shape and cannot take a legitimate credential offline.
-  const isAcademicRecord = isEducationCredentialType(anchor.credentialType);
+  // SCRUM-3102 — `suppressesRecordFreeText`, NOT `isEducationCredentialType`.
+  // The latter answers "is this one of the three academic types", and for an
+  // anchor with NO credential type the honest answer is false — which sent
+  // untyped records down the PERMISSIVE branch and published their description
+  // and revocation reason. The serializer's real question is "may this record
+  // emit issuer-authored free text", and for an unclassifiable record that
+  // answer must be no.
+  const isAcademicRecord = suppressesRecordFreeText(anchor.credentialType);
   // THE CHOKE POINT. Every RECORD-DESCRIPTIVE free-text field must go through
   // `recordFreeText`, never `cleanPublicFreeText` directly. The invariant above
   // is a property of the whole body, so implementing it as one gate rather than

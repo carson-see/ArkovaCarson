@@ -15,6 +15,7 @@ import {
   containsLearnerNamePii,
   containsOutboundFreeTextPii,
   isEducationCredentialType,
+  suppressesRecordFreeText,
   stripUrlQueryAndFragment,
 } from './ctdl-pii-guard.js';
 import { academicRecordName } from './ctdl-type-map.js';
@@ -119,10 +120,19 @@ describe('containsLearnerNamePii (suppression-only heuristic)', () => {
     ['issued to', 'Certificate issued to Robert Allen Smith'],
     ['awarded to', 'Certificate awarded to Jane Q Student'],
     ['held by', 'Completion credential held by Jane Q Student'],
-    ['for', 'Official transcript for Jane Q Student'],
     ['name-first possessive', "Jane Q Student's transcript"],
   ])('flags a learner name — %s', (_label, value) => {
     expect(containsLearnerNamePii(value)).toBe(true);
+  });
+
+  // SCRUM-3102: the `for` trigger was REMOVED. It is a bare preposition, so it
+  // collided with ordinary organisation names and erased them from the public
+  // projection (see must_publish_vectors below). This shape is the one true
+  // positive that removal costs, and it is academic by construction — academic
+  // records emit no issuer-authored free text at all, so the structural rule,
+  // which is precision-independent, already covers it.
+  it('no longer flags a noun-first name behind the bare preposition `for`', () => {
+    expect(containsLearnerNamePii('Official transcript for Jane Q Student')).toBe(false);
   });
 
   // These are the false positives that made a broader heuristic unshippable.
@@ -143,6 +153,52 @@ describe('containsLearnerNamePii (suppression-only heuristic)', () => {
     'Delivered in partnership with Johnson Controls',
   ])('does not flag %s', (value) => {
     expect(containsLearnerNamePii(value)).toBe(false);
+  });
+
+  // SCRUM-3102 — the shared contract's `must_publish_vectors`, verbatim. Every
+  // one of these was being DROPPED: the `for` trigger is a bare preposition, and
+  // the name-first pattern's generic credential nouns matched ordinary titles.
+  //
+  // Suppression here is not a missing optional property. `cleanPublicFreeText`
+  // returning null makes `issuerName`/`credentialName` fall through every
+  // metadata fallback (all route through the same cleaner) to the literal
+  // "Arkova verified issuer" / "Arkova credential <publicId>" — so a real
+  // issuer published with its identity erased.
+  it.each([
+    'Center for Professional Development',
+    'Society for Human Resource Management',
+    'Institute for Supply Management',
+    'Alliance for Continuing Education',
+    'Ethics for Trial Lawyers',
+    'Credit for Prior Learning',
+    'Revoked for Non Payment',
+    'Data Science degree',
+    'Project Management certificate',
+  ])('publishes the contract must_publish vector %s', (value) => {
+    expect(containsLearnerNamePii(value)).toBe(false);
+    expect(containsOutboundFreeTextPii(value)).toBe(false);
+  });
+});
+
+describe('suppressesRecordFreeText (SCRUM-3102 — fails closed on unknown type)', () => {
+  it.each(['DEGREE', 'CERTIFICATE', 'TRANSCRIPT'])('suppresses academic type %s', (type) => {
+    expect(suppressesRecordFreeText(type)).toBe(true);
+  });
+
+  // The fail-open this exists to close. `isEducationCredentialType(null)` is
+  // false — honest for "is this academic", wrong as a publish gate. Measured in
+  // prod 2026-08-02: 24 of 59 `credential_type IS NULL` anchors (41%) carry a
+  // learner-name-shaped filename.
+  it.each([null, undefined, '', '   '])('fails CLOSED on absent type %p', (type) => {
+    expect(isEducationCredentialType(type as string | null | undefined)).toBe(false);
+    expect(suppressesRecordFreeText(type as string | null | undefined)).toBe(true);
+  });
+
+  // A PRESENT non-academic type still publishes — credential_type is an enum
+  // column, so a non-empty value is always a known type, and blanking these
+  // would destroy the partner-facing descriptive title.
+  it.each(['CPE', 'CLE', 'LICENSE', 'BADGE', 'OTHER'])('still publishes %s', (type) => {
+    expect(suppressesRecordFreeText(type)).toBe(false);
   });
 });
 
