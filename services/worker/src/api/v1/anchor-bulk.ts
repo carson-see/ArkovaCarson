@@ -32,6 +32,7 @@ import {
   isProfessionalEducationSchemaReady,
   professionalEducationSchemaUnavailableBody,
 } from '../../utils/professionalEducationSchemaGate.js';
+import { chunkForInFilter } from '../../utils/postgrest-filter.js';
 
 const router = Router();
 
@@ -184,28 +185,44 @@ router.post('/', async (req: Request, res: Response) => {
   });
 
   // ── DB-level duplicate detection (AC4 second pass) ──────────────────
-  let dbDuplicates: DuplicateRow[] = [];
+  let existingFingerprints: Set<string>;
   try {
-    const fingerprints = [...inBatchSeen.keys()];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: existing } = await (db as any)
-      .from('anchors')
-      .select('fingerprint')
-      .eq('org_id', orgId)
-      .in('fingerprint', fingerprints);
-    const existingSet = new Set((existing ?? []).map((r: { fingerprint: string }) => r.fingerprint.toLowerCase()));
-    dbDuplicates = body.anchors
-      .map((row, i) => ({ row, i }))
-      .filter(({ row }) => existingSet.has(row.fingerprint.toLowerCase()))
-      .map(({ row, i }) => ({
-        row: i,
-        fingerprint: row.fingerprint,
-        scope: 'in_db' as const,
-        decision: body.duplicate_strategy,
-      }));
+    existingFingerprints = await fetchExistingFingerprints(orgId, [...inBatchSeen.keys()]);
   } catch (err) {
-    logger.warn({ err, orgId }, 'bulk-anchor: db duplicate check failed; continuing without DB-side dedup');
+    // FAIL CLOSED. This check is the only thing between a re-submitted batch
+    // and a second set of anchors that are created AND billed. Treating an
+    // unreadable answer as "no duplicates exist" is what turned a 400 on the
+    // filter into duplicate anchors on a customer invoice; the previous
+    // `logger.warn` + continue was exactly that.
+    //
+    // Log the driver's error CODE only — a Postgres/PostgREST `.message`
+    // routinely echoes the offending value back verbatim, and a fingerprint
+    // must not reach the logs (§1.1).
+    logger.error(
+      {
+        pgCode: (err as { pgCode?: string } | null)?.pgCode ?? null,
+        orgId,
+        fingerprintCount: inBatchSeen.size,
+      },
+      'bulk-anchor: duplicate check failed — refusing the batch rather than risking duplicate billed anchors',
+    );
+    res.status(503).json({
+      error: 'duplicate_check_unavailable',
+      message:
+        'Could not determine whether these fingerprints already exist. No anchors were created and no credits were consumed. Please retry.',
+    });
+    return;
   }
+
+  const dbDuplicates: DuplicateRow[] = body.anchors
+    .map((row, i) => ({ row, i }))
+    .filter(({ row }) => existingFingerprints.has(normalizeFingerprint(row.fingerprint)))
+    .map(({ row, i }) => ({
+      row: i,
+      fingerprint: row.fingerprint,
+      scope: 'in_db' as const,
+      decision: body.duplicate_strategy,
+    }));
 
   const allDuplicates = [...intraBatchDuplicates, ...dbDuplicates];
 
@@ -229,13 +246,13 @@ router.post('/', async (req: Request, res: Response) => {
   //                  re-attach to the existing anchor
   //   - fail       → already returned 409 above
   const dropRowsAtBatchIndex = new Set<number>(intraBatchDuplicates.map((d) => d.row));
-  const dbDupFingerprints = new Set<string>(dbDuplicates.map((d) => d.fingerprint.toLowerCase()));
+  const dbDupFingerprints = new Set<string>(dbDuplicates.map((d) => normalizeFingerprint(d.fingerprint)));
 
   const queueable = body.anchors
     .map((row, originalRow) => ({ row, originalRow }))
     .filter(({ row, originalRow }) => {
       if (dropRowsAtBatchIndex.has(originalRow)) return false;
-      if (dbDupFingerprints.has(row.fingerprint.toLowerCase())) return false;
+      if (dbDupFingerprints.has(normalizeFingerprint(row.fingerprint))) return false;
       return true;
     });
 
@@ -284,7 +301,7 @@ router.post('/', async (req: Request, res: Response) => {
         .insert({
           org_id: orgId,
           user_id: req.apiKey.userId,
-          fingerprint: row.fingerprint.toLowerCase(),
+          fingerprint: normalizeFingerprint(row.fingerprint),
           credential_type: row.credential_type ?? null,
           status: 'PENDING',
           metadata,
@@ -350,6 +367,82 @@ router.post('/', async (req: Request, res: Response) => {
     anchors: inserted,
   } satisfies BulkAnchorResponse);
 });
+
+/**
+ * The one normalization for a fingerprint on this route.
+ *
+ * The insert lower-cases before writing, so every row this endpoint creates is
+ * stored lower-case. `anchors.fingerprint` is `character(64)` and PostgREST
+ * compares it byte-for-byte, so a comparison that skips this is case-sensitive
+ * against a case-normalized column — which is how an upper-case resubmission
+ * of an existing document matched nothing and was re-created and re-billed.
+ * `trim` guards the bpchar padding an under-length legacy value could carry.
+ */
+function normalizeFingerprint(fingerprint: string): string {
+  return fingerprint.trim().toLowerCase();
+}
+
+/** Error carrying only a driver code — never a message that could echo a fingerprint. */
+class DuplicateCheckError extends Error {
+  constructor(readonly pgCode: string | null, chunkStart: number) {
+    super(`bulk-anchor: duplicate check failed at chunk offset ${chunkStart}`);
+    this.name = 'DuplicateCheckError';
+  }
+}
+
+/**
+ * Which of `fingerprints` already exist on an anchor in this org.
+ *
+ * Two things this must get right, both of which it previously got wrong:
+ *
+ *  - **Width.** The Zod cap is 1000 rows of 64-char hex, and the PostgREST URL
+ *    budget is exhausted at ~122 of them. A single `.in()` over the whole set
+ *    took 400 Bad Request. `chunkForInFilter` owns the width; this function
+ *    does not get to pick one.
+ *  - **Failure.** postgrest-js RESOLVES a 400 as `{ data: null, error }`
+ *    rather than throwing, so `const { data } = await …` silently produced an
+ *    empty set and the surrounding `catch` never ran.
+ *
+ * Throws on the FIRST failed chunk rather than counting failures: this is
+ * deliberately stricter than `assertNotAllChunksFailed`, which only refuses
+ * the all-failed case. A partially-read dedup answer is not a weaker signal
+ * here — it is a wrong one, and every fingerprint it misses becomes an anchor
+ * the customer is charged for twice.
+ */
+async function fetchExistingFingerprints(
+  orgId: string | null,
+  fingerprints: string[],
+): Promise<Set<string>> {
+  const existing = new Set<string>();
+  if (fingerprints.length === 0) return existing;
+
+  // Ask about BOTH the caller's casing and the normalized casing we insert
+  // with. Extra values in an existence probe can only find more matches, never
+  // fewer, so this is safe against rows written before the insert path
+  // normalized — and it costs nothing for the common all-lower-case batch.
+  const variants = [
+    ...new Set(fingerprints.flatMap((f) => [f, normalizeFingerprint(f)])),
+  ];
+
+  for (const { values, start } of chunkForInFilter(variants)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db as any)
+      .from('anchors')
+      .select('fingerprint')
+      .eq('org_id', orgId)
+      .in('fingerprint', values);
+
+    if (error) {
+      throw new DuplicateCheckError((error as { code?: string } | null)?.code ?? null, start);
+    }
+
+    for (const row of (data ?? []) as Array<{ fingerprint: string | null }>) {
+      if (row.fingerprint) existing.add(normalizeFingerprint(row.fingerprint));
+    }
+  }
+
+  return existing;
+}
 
 /** Build the metadata JSONB stored on the anchor row. AC1 + AC6. */
 function buildMetadata(row: BulkAnchorRow, batchId: string | undefined): Record<string, unknown> {
