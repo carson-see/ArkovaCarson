@@ -54,6 +54,76 @@
       "name": "libheif-js",
       "version": "1.19.8",
       "reason": "LGPL-3.0, browser-only. Transitive dependency of heic-decode (client-side HEIC/HEIF image decoding, F4 founder 22-format KPI). Used unmodified from the published npm tarball (wraps upstream libheif/libde265 as a self-contained wasm bundle — no fork, no patch). Isolated to the lazy 'vendor-heic' Vite chunk (see vite.config.ts manualChunks) and never inlined into the initial/main bundle, so the LGPL-3.0 relinking/swap obligation is satisfiable without shipping a static-linked main bundle. Third-party notices (LGPL-3.0 + GPLv3 texts, unmodified-source link) published at /legal/third-party-notices, linked from the public footer. Decode-only usage confirmed — no x265 (GPL-2.0) encoder evidence found in the wasm binary. See scripts/security/agents.md and PR remediating SCRUM license-denylist LGPL blind spot."
+    },
+    {
+      "name": "@img/sharp-libvips-darwin-arm64",
+      "version": "1.2.4",
+      "reason": "LGPL-3.0-or-later, unused-at-runtime. Transitive platform binary of `sharp`, itself a transitive dependency of @huggingface/transformers (src/lib/nerPiiDetector.ts, client-side PII/NER detector, §1.6). @huggingface/transformers' package.json `exports` map routes the bundler/browser condition (what Vite resolves) to dist/transformers.web.js, NOT dist/transformers.node.cjs — confirmed by inspecting the installed package: the web build's bundler stubs `sharp` to an empty object at publish time (`// ignore-modules:sharp` directive, `var sharp_default = {}`) rather than importing it. `sharp` and its @img/sharp-libvips-* platform binaries are therefore never imported, bundled, or executed by our shipped browser code, and are not referenced anywhere in services/worker (grep-confirmed zero server-side usage) — inert transitive dependency-of-a-dependency in node_modules/package-lock.json only. No distribution, no relinking obligation triggered. Re-audit if @huggingface/transformers is ever imported server-side or its exports map changes on upgrade."
+    },
+    {
+      "name": "@img/sharp-libvips-darwin-x64",
+      "version": "1.2.4",
+      "reason": "Same as @img/sharp-libvips-darwin-arm64@1.2.4 — platform-variant binary of the same inert transitive dependency. See that entry for full reasoning."
+    },
+    {
+      "name": "@img/sharp-libvips-linux-arm",
+      "version": "1.2.4",
+      "reason": "Same as @img/sharp-libvips-darwin-arm64@1.2.4 — platform-variant binary of the same inert transitive dependency. See that entry for full reasoning."
+    },
+    {
+      "name": "@img/sharp-libvips-linux-arm64",
+      "version": "1.2.4",
+      "reason": "Same as @img/sharp-libvips-darwin-arm64@1.2.4 — platform-variant binary of the same inert transitive dependency. See that entry for full reasoning."
+    },
+    {
+      "name": "@img/sharp-libvips-linux-ppc64",
+      "version": "1.2.4",
+      "reason": "Same as @img/sharp-libvips-darwin-arm64@1.2.4 — platform-variant binary of the same inert transitive dependency. See that entry for full reasoning."
+    },
+    {
+      "name": "@img/sharp-libvips-linux-riscv64",
+      "version": "1.2.4",
+      "reason": "Same as @img/sharp-libvips-darwin-arm64@1.2.4 — platform-variant binary of the same inert transitive dependency. See that entry for full reasoning."
+    },
+    {
+      "name": "@img/sharp-libvips-linux-s390x",
+      "version": "1.2.4",
+      "reason": "Same as @img/sharp-libvips-darwin-arm64@1.2.4 — platform-variant binary of the same inert transitive dependency. See that entry for full reasoning."
+    },
+    {
+      "name": "@img/sharp-libvips-linux-x64",
+      "version": "1.2.4",
+      "reason": "Same as @img/sharp-libvips-darwin-arm64@1.2.4 — platform-variant binary of the same inert transitive dependency. See that entry for full reasoning."
+    },
+    {
+      "name": "@img/sharp-libvips-linuxmusl-arm64",
+      "version": "1.2.4",
+      "reason": "Same as @img/sharp-libvips-darwin-arm64@1.2.4 — platform-variant binary of the same inert transitive dependency. See that entry for full reasoning."
+    },
+    {
+      "name": "@img/sharp-libvips-linuxmusl-x64",
+      "version": "1.2.4",
+      "reason": "Same as @img/sharp-libvips-darwin-arm64@1.2.4 — platform-variant binary of the same inert transitive dependency. See that entry for full reasoning."
+    },
+    {
+      "name": "@img/sharp-wasm32",
+      "version": "0.34.5",
+      "reason": "Apache-2.0 AND LGPL-3.0-or-later AND MIT (multi-licensed). Same inert-transitive-dependency situation as @img/sharp-libvips-darwin-arm64@1.2.4 — a platform build of `sharp` pulled in transitively by @huggingface/transformers, never imported by the browser build we ship. See that entry for full reasoning."
+    },
+    {
+      "name": "@img/sharp-win32-arm64",
+      "version": "0.34.5",
+      "reason": "Apache-2.0 AND LGPL-3.0-or-later (multi-licensed). Same inert-transitive-dependency situation as @img/sharp-libvips-darwin-arm64@1.2.4 — a platform build of `sharp` pulled in transitively by @huggingface/transformers, never imported by the browser build we ship. See that entry for full reasoning."
+    },
+    {
+      "name": "@img/sharp-win32-ia32",
+      "version": "0.34.5",
+      "reason": "Apache-2.0 AND LGPL-3.0-or-later (multi-licensed). Same inert-transitive-dependency situation as @img/sharp-libvips-darwin-arm64@1.2.4 — a platform build of `sharp` pulled in transitively by @huggingface/transformers, never imported by the browser build we ship. See that entry for full reasoning."
+    },
+    {
+      "name": "@img/sharp-win32-x64",
+      "version": "0.34.5",
+      "reason": "Apache-2.0 AND LGPL-3.0-or-later (multi-licensed). Same inert-transitive-dependency situation as @img/sharp-libvips-darwin-arm64@1.2.4 — a platform build of `sharp` pulled in transitively by @huggingface/transformers, never imported by the browser build we ship. See that entry for full reasoning."
     }
   ]
 }
