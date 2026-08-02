@@ -28,6 +28,8 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 import { db } from '../utils/db.js';
+import { encodedInFilterBytesFor } from '../test-utils/postgrestWire.js';
+import { POSTGREST_URL_FILTER_BUDGET_BYTES } from '../utils/postgrest-filter.js';
 import {
   recordMeteredUsage,
   getMeteredUsage,
@@ -302,6 +304,89 @@ describe('reportMeteredUsageToStripe', () => {
         creditsError: { message: 'connection reset' },
         throwOnBillingEvents: true,
       });
+
+      const results = await reportMeteredUsageToStripe();
+      expect(results).toEqual([]);
+    });
+  });
+
+  // The sandbox-exclusion read takes one org id per ACTIVE SUBSCRIPTION. That
+  // set has no upper bound — it grows with the customer base — and it was sent
+  // as a single `.in('org_id', …)`. Past ~200 subscribed orgs the request line
+  // exceeds the proxy budget, PostgREST answers 400, and the fail-closed branch
+  // above aborts the whole cycle: every org silently stops being metered, every
+  // cycle, with the only signal an error log nobody reads.
+  describe('org_credits id-filter width (PostgREST request-line budget)', () => {
+    function mockWideReportDb(orgIds: string[], failFilter?: (values: string[]) => boolean) {
+      const seenFilters: string[][] = [];
+      dbFromMock().mockImplementation((table: string) => {
+        if (table === 'subscriptions') {
+          return mockSelectIn(
+            orgIds.map((org, i) => ({
+              id: `s-${i}`,
+              user_id: `u-${i}`,
+              org_id: org,
+              stripe_subscription_id: `sub_${i}`,
+              plan_id: 'plan-metered',
+            })),
+          );
+        }
+        if (table === 'org_credits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn((_col: string, values: string[]) => {
+                seenFilters.push(values);
+                if (failFilter?.(values)) {
+                  return Promise.resolve({ data: null, error: { message: 'request line too large' } });
+                }
+                return Promise.resolve({
+                  data: values.map((org) => ({ org_id: org, is_test: org.startsWith('sandbox') })),
+                  error: null,
+                });
+              }),
+            }),
+          };
+        }
+        return mockBillingEventsChain([{ payload: { quantity: 1 } }], null);
+      });
+      return { seenFilters };
+    }
+
+    const orgIds = (n: number, prefix = 'org') =>
+      Array.from({ length: n }, (_, i) => `${prefix}-1a2b3c4d-5e6f-4a8b-9c0d-${String(i).padStart(12, '0')}`);
+
+    it('keeps every emitted org_credits filter inside the URL budget at 5,000 subscribed orgs', async () => {
+      const ids = orgIds(5_000);
+      const { seenFilters } = mockWideReportDb(ids);
+
+      await reportMeteredUsageToStripe();
+
+      expect(seenFilters.length).toBeGreaterThan(1);
+      for (const chunk of seenFilters) {
+        expect(encodedInFilterBytesFor(chunk)).toBeLessThanOrEqual(POSTGREST_URL_FILTER_BUDGET_BYTES);
+      }
+      // No org id may be dropped by chunking — a missed org is an unmetered org.
+      expect(seenFilters.flat().sort()).toEqual([...ids].sort());
+    });
+
+    it('still excludes a sandbox org that lands in a later chunk', async () => {
+      const ids = [...orgIds(400), 'sandbox-org-late'];
+      mockWideReportDb(ids);
+
+      const results = await reportMeteredUsageToStripe();
+
+      const sandbox = results.find((r) => r.org_id === 'sandbox-org-late');
+      expect(sandbox?.error).toBe('sandbox_excluded');
+      expect(sandbox?.reported_to_stripe).toBe(false);
+    });
+
+    it('fails CLOSED when ONE chunk errors — a partial is_test map may mark a sandbox org billable', async () => {
+      const ids = orgIds(400);
+      // Only the second chunk fails: the first returns a complete-looking map
+      // that simply omits every org in the failed chunk. Indistinguishable from
+      // "those orgs have no org_credits row", i.e. is_test=false, i.e. billable.
+      let call = 0;
+      mockWideReportDb(ids, () => call++ === 1);
 
       const results = await reportMeteredUsageToStripe();
       expect(results).toEqual([]);
