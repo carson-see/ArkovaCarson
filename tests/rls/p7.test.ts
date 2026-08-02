@@ -13,6 +13,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {
   withUser,
   createServiceClient,
@@ -664,7 +666,19 @@ describe('P7-S7: Public Verification', () => {
     expect(result).not.toBeNull();
     expect(result.verified).toBe(true);
     expect(result.public_id).toBe(testPublicId);
-    expect(result.filename).toBe('public_test.pdf');
+    // This test's own name is "returns REDACTED data" — asserting the raw
+    // filename contradicted that and encoded the PII leak as expected
+    // behaviour. `get_public_anchor` now projects a controlled label instead
+    // of the uploaded filename, so an anon caller cannot read it. The fixture
+    // carries no credential type, so it takes the non-academic fallback.
+    // Bound to the shared contract (scripts/ci/public-pii-projection-contract.json)
+    // rather than a literal, so a future label change cannot silently pass here
+    // while breaking the projection suite that reads the same file.
+    const piiContract = JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), 'scripts/ci/public-pii-projection-contract.json'), 'utf8'),
+    ) as { sql_non_academic_fallback_label: string };
+    expect(result.filename).toBe(piiContract.sql_non_academic_fallback_label);
+    expect(result.filename).not.toBe('public_test.pdf');
     // Migration 0272 restored the 0121 status mapping: raw 'SECURED' renders as
     // public 'ACTIVE'. (0174 had stripped the mapping; 0272 reversed that.)
     expect(result.status).toBe('ACTIVE');
