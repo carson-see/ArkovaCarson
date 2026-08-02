@@ -78,4 +78,54 @@ describe('audit_events silent-write class', () => {
     await expect(recordAuditEvent(ROW)).resolves.toBeUndefined();
     expect(loggerError).toHaveBeenCalledTimes(1);
   });
+
+  // ── SYNCHRONOUS failure, which is what actually reaches the caller ─────────
+  //
+  // The async guarantee above is the easy half. `recordAuditEvent` is called as
+  // `void recordAuditEvent(...)` from inside a request handler, so anything it
+  // throws SYNCHRONOUSLY propagates straight out of the handler and 500s the
+  // user's request — the exact outcome the module docstring says must never
+  // happen ("A failed audit write must not fail the user's request"). Two
+  // shapes reach that path, and both were live:
+  //
+  //   1. `.insert()` throws outright.
+  //   2. `.insert()` returns a NON-THENABLE, so calling `.then()` on it throws
+  //      `TypeError: ....then is not a function`. This is not hypothetical —
+  //      it is the shape of every unlisted table in the api-e2e supabase
+  //      double, and it took `GET /api/v1/verify/:publicId` from 200 to 500.
+  //
+  // A fire-and-forget writer that can kill the request it is auditing is a
+  // guard that only looks like it works.
+
+  it('does not throw when the query builder throws synchronously', async () => {
+    insert.mockImplementationOnce(() => {
+      throw new Error('client not initialised');
+    });
+
+    await expect(recordAuditEvent(ROW)).resolves.toBeUndefined();
+    expect(loggerError).toHaveBeenCalledTimes(1);
+    const [ctx] = loggerError.mock.calls[0] as [Record<string, unknown>];
+    expect(ctx.eventType).toBe('VERIFICATION_QUERIED');
+  });
+
+  it('does not throw when the builder is not thenable (api-e2e double shape)', async () => {
+    // No `.then` anywhere on the returned object — `.then()` is a TypeError.
+    insert.mockImplementationOnce(() => ({ select: () => ({}) }) as never);
+
+    await expect(recordAuditEvent(ROW)).resolves.toBeUndefined();
+    expect(loggerError).toHaveBeenCalledTimes(1);
+    const [ctx] = loggerError.mock.calls[0] as [Record<string, unknown>];
+    expect(ctx.eventType).toBe('VERIFICATION_QUERIED');
+  });
+
+  it('a synchronous failure is still reported, never silently dropped', async () => {
+    insert.mockImplementationOnce(() => {
+      throw new Error('client not initialised');
+    });
+
+    await recordAuditEvent(ROW);
+
+    const [, msg] = loggerError.mock.calls[0] as [Record<string, unknown>, string];
+    expect(msg).toMatch(/audit trail incomplete/);
+  });
 });

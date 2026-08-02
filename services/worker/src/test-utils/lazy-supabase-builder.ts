@@ -28,15 +28,23 @@ export interface LazyBuilderRecorder {
   reset(): void;
 }
 
-export function createLazyBuilderRecorder(
-  result: unknown = { data: null, error: null },
-): LazyBuilderRecorder {
+/** Default builder result: a successful write with no returned row. */
+const OK_RESULT = Object.freeze({ data: null, error: null });
+
+export function createLazyBuilderRecorder(result: unknown = OK_RESULT): LazyBuilderRecorder {
   const executed: Array<Record<string, unknown>> = [];
 
   return {
     executed,
     build(payload) {
       return {
+        // NOSONAR typescript:S7739 — `then` is the POINT of this double, not an
+        // accident. A supabase-js `PostgrestBuilder` really is a thenable, and
+        // `.then()` really is where it issues the HTTP request. S7739 exists to
+        // catch objects that become accidentally awaitable; here the thenable
+        // shape is the behaviour under test. Remove `then` and this recorder
+        // can no longer tell "builder constructed" from "request issued" —
+        // which is the entire silent-write bug class it was written to detect.
         then(onfulfilled, onrejected) {
           executed.push(payload);
           return Promise.resolve(result).then(onfulfilled, onrejected);

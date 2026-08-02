@@ -43,17 +43,30 @@ export function recordAuditEvent(row: AuditEventRow): Promise<void> {
       'audit_events insert failed — audit trail incomplete',
     );
 
-  // `any`: audit rows vary by call site. `missing-org-filter`: this is an
-  // INSERT, not a read — the row carries whatever scope the caller supplies
-  // (`org_id` when known, none for the anonymous public verify path), so there
-  // is nothing to filter.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter
-  const issued = (db.from('audit_events').insert(row as any) as PromiseLike<{ error: unknown }>)
-    .then(({ error }) => {
-      if (error) fail(error);
-    }, fail);
+  // The try/catch is load-bearing, not defensive dressing. Callers invoke this
+  // as `void recordAuditEvent(...)` from inside a request handler, so anything
+  // thrown SYNCHRONOUSLY here propagates out of the handler and 500s the user's
+  // request — precisely what the contract above forbids. Two shapes throw
+  // before any promise exists: `.insert()` raising outright, and `.insert()`
+  // returning a non-thenable so `.then()` is a TypeError. Handling only the
+  // async rejection would be a guard that merely looks like it works.
+  try {
+    // `any`: audit rows vary by call site. `missing-org-filter`: this is an
+    // INSERT, not a read — the row carries whatever scope the caller supplies
+    // (`org_id` when known, none for the anonymous public verify path), so
+    // there is nothing to filter.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter
+    const issued = (db.from('audit_events').insert(row as any) as PromiseLike<{ error: unknown }>)
+      .then(({ error }) => {
+        if (error) fail(error);
+      }, fail);
 
-  // `.then()` on a supabase-js builder returns a PromiseLike, not a Promise.
-  // Wrap so callers get the full Promise surface (`catch`/`finally`).
-  return Promise.resolve(issued);
+    // `.then()` on a supabase-js builder returns a PromiseLike, not a Promise.
+    // Wrap so callers get the full Promise surface (`catch`/`finally`).
+    return Promise.resolve(issued);
+  } catch (error) {
+    // Report, never swallow: a lost audit row is a compliance event.
+    fail(error);
+    return Promise.resolve();
+  }
 }
