@@ -295,6 +295,65 @@ and the worker kept writing them onto every SECURED anchor and serving them from
 **Do not add an override label.** The failure mode this prevents is a false external-status
 claim (R-7 / CLAUDE.md §1.5), and the fix is always a one-line removal from the worker
 catalogue — never a re-add to the frontend, which would re-assert the retired claim.
+## Deploy-worker traffic safety: the clear step must be `--no-traffic` (2026-08-01)
+
+**The service is permanently pinned `--to-latest`.** `Promote canary to full
+traffic` runs `gcloud run services update-traffic --to-latest`, and that is a
+persistent *service* setting, not a one-shot for that deploy. Consequence:
+**any** `gcloud run services update` on this service creates a revision that
+immediately takes 100% of production traffic.
+
+`Clear conflicting env/secret types` is exactly such a command. It exists for a
+real reason — a name that currently exists as one type (env var vs secret)
+cannot be re-declared as the other in the same `gcloud run deploy`, so the
+canary deploy needs them cleared first — but without `--no-traffic` it briefly
+moves prod onto a revision with `CRON_SECRET` + the four DocuSign names
+stripped. Observed live on 2026-08-01: prod on `arkova-worker-00892-jd2` with
+50 env vars against the canary's 57, DocuSign Connect webhook answering 503
+`integration_disabled`. It self-heals on promote, which is why it went
+unnoticed — but any failure between the clear and the promote (canary deploy,
+smoke test, a cancelled run) strands prod DocuSign-blind indefinitely, and
+nothing alarms on it.
+
+Three things now hold that line, and all three must stay:
+
+1. `--no-traffic` on the clear step. The cleared revision is created but never
+   served; traffic stays on the last good revision until the promote step moves
+   it deliberately. A failure in between now leaves prod on fully-configured
+   code — the correct direction to fail.
+2. `scripts/ci/deploy-worker-history-contract.test.ts` → `Deploy Worker
+   traffic-safety contract` pins the SHAPE: the clear step is `--no-traffic`,
+   the canary is `--no-traffic`, `update-traffic` appears exactly once and after
+   the smoke test, and **every name the clear step removes is re-set by the
+   canary deploy** (so a future `--remove-*` addition cannot become a permanent
+   strip).
+3. `Verify serving revision carries required config` pins the OUTCOME at
+   runtime — it reads the revision actually taking traffic and fails the job if
+   any required name is absent. It runs after the promote, so it is an alarm
+   rather than a gate; the point is that a stripped prod can never again be
+   invisible. It also covers a hand-run `gcloud run services update`, which no
+   static test can see.
+
+**The clear step is non-fatal but must never be silent (PR #1823 review).** It
+tolerates a non-zero exit deliberately — clearing a name that is not currently
+set is a no-op, not an error. But it must NOT redirect stderr to `/dev/null`:
+doing so made a genuine rejection (unsupported flag, missing IAM, wrong service
+name) indistinguishable from "nothing to clear", and the only downstream symptom
+was the canary deploy failing later with an apparently-unrelated env/secret type
+conflict. The step now captures combined output, prints it, and emits a
+`::warning::` on a non-zero exit; a contract case (`never swallows the clear step
+failure into silence`) pins that, asserting against the step's executable lines
+only so it grades behaviour rather than the comment that names the old form.
+
+**`ENABLE_CONNECTOR_ARTIFACT_DRAIN` lives in this file's `--set-env-vars`, and
+only here.** It is env-only (`services/worker/src/config.ts` reads
+`process.env` — there is no `switchboard_flags` row), and `--set-env-vars` is
+exhaustive, so a manual `gcloud run services update` to set it is wiped by the
+next deploy. Per `docs/release/prod-enablement-checklist-2026-08.md` §2.3 the
+order is DRAIN first → observe one clean `/jobs/drain-connector-artifacts` cron
+cycle → **then** decide on `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE`. A contract test
+asserts ENQUEUE is still absent; reversing the order piles up `pending`
+`connector_artifact` rows with nothing consuming them.
 
 ## Related
 
