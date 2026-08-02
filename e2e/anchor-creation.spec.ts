@@ -103,6 +103,17 @@ test.describe('Anchor Creation (Secure Document)', () => {
       // AI was off — anchor already created by Continue click
     }
 
+    // QUEUE-01 / SCRUM-2894: every path (including the extraction-failed
+    // "Anchor Without Metadata" skip above) now lands on the confirm step
+    // instead of calling handleConfirm([]) directly — the anchor is only
+    // created once the securing-path choice is made. This sprint only
+    // "Add to Queue" is exposed (Secure Instantly is R5-dark), so that is
+    // the confirm button to click here.
+    const confirmQueueBtn = dialog.getByTestId('securing-path-queue');
+    if (await confirmQueueBtn.isVisible({ timeout: 10_000 }).catch(() => false)) {
+      await confirmQueueBtn.click();
+    }
+
     let createdAnchorId: string | null = null;
     await expect.poll(async () => {
       const { data } = await serviceClient

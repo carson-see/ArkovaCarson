@@ -83,53 +83,80 @@ resolve_state_dir() {
   fi
 }
 
+# Token boundary. Deliberately includes quote and paren characters as well as
+# whitespace and shell separators: `bash -c 'npx supabase db push --linked'`
+# previously slipped the gate entirely because the sensitive command was
+# preceded by a single quote, which the old `[[:space:];&|]` class did not
+# accept as a boundary.
+_B="(^|[[:space:];&|(){}\"'])"
+# The END boundary must mirror the START boundary, not just accept whitespace.
+# In `bash -c 'npx supabase db push --linked'` the final token is followed by a
+# closing quote, so a whitespace-or-EOL end boundary rejected it and the whole
+# quoted-wrapper bypass survived even after the start boundary was widened.
+_E="([[:space:];&|(){}\"']|\$)"
+
+# A segment is one command in a compound line. Splitting first is what makes
+# negations correct: `gh pr ready 1 && gh pr ready 2 --undo` used to pass
+# WHOLESALE, because a single `--undo` anywhere in the line exempted every
+# `gh pr ready` in it. Each segment is now judged on its own tokens.
+#
+# The split is not a shell parser — a separator inside a quoted string splits
+# too. That errs toward MORE segments and therefore more matches, which is the
+# fail-closed direction for a gate.
+segment_is_sensitive() {
+  local s="$1"
+
+  grep -Eq "${_B}(\./)?scripts/staging(/|${_E})" <<<"$s" && return 0
+  grep -Eq "${_B}(npm|pnpm|yarn)([[:space:]]+run)?[[:space:]]+staging:" <<<"$s" && return 0
+
+  # Supabase CLI. Sub-commands are matched by word PRESENCE within the segment
+  # rather than by adjacency, because a global flag between the binary and the
+  # sub-command (`supabase --workdir . db push --linked`) split the token run
+  # and defeated the old adjacent-token patterns.
+  if grep -Eq "${_B}(npx[[:space:]]+)?supabase${_E}" <<<"$s"; then
+    grep -Eq "${_B}db${_E}" <<<"$s" && grep -Eq "${_B}push${_E}" <<<"$s" \
+      && grep -Eq "${_B}--linked${_E}" <<<"$s" && return 0
+    grep -Eq "${_B}db${_E}" <<<"$s" && grep -Eq "${_B}reset${_E}" <<<"$s" && return 0
+    grep -Eq "${_B}migration${_E}" <<<"$s" && grep -Eq "${_B}repair${_E}" <<<"$s" && return 0
+    grep -Eq "${_B}migration${_E}" <<<"$s" && grep -Eq "${_B}list${_E}" <<<"$s" \
+      && grep -Eq "${_B}--linked${_E}" <<<"$s" && return 0
+    grep -Eq "${_B}link${_E}" <<<"$s" && return 0
+  fi
+
+  grep -Eq "${_B}gcloud[[:space:]]+run[[:space:]]+deploy${_E}" <<<"$s" && return 0
+  grep -Eq "${_B}gcloud[[:space:]]+run[[:space:]]+services[[:space:]]+(update|replace|delete)${_E}" <<<"$s" && return 0
+  grep -Eq "${_B}gcloud[[:space:]]+run[[:space:]]+jobs[[:space:]]+(execute|update|create|delete)${_E}" <<<"$s" && return 0
+
+  if grep -Eq "${_B}gh[[:space:]]+pr[[:space:]]+ready${_E}" <<<"$s" \
+     && ! grep -Eq "${_B}--undo${_E}" <<<"$s"; then
+    return 0
+  fi
+  grep -Eq "${_B}gh[[:space:]]+pr[[:space:]]+merge${_E}" <<<"$s" && return 0
+
+  # `--body-file` was missing, so the documented soak-evidence remediation loop
+  # (rewriting a PR body from a file) bypassed the ack gate that §1.11A requires.
+  if grep -Eq "${_B}gh[[:space:]]+pr[[:space:]]+edit${_E}" <<<"$s" \
+     && grep -Eq "${_B}--body(-file)?([[:space:]]|=|\$)" <<<"$s"; then
+    return 0
+  fi
+
+  return 1
+}
+
 is_sensitive_command() {
-  local cmd="$1"
-
-  if grep -Eq '(^|[[:space:];&|])(\./)?scripts/staging/' <<<"$cmd"; then
-    return 0
-  fi
-  if grep -Eq '(^|[[:space:];&|])(npm|pnpm|yarn)([[:space:]]+run)?[[:space:]]+staging:' <<<"$cmd"; then
-    return 0
-  fi
-  if grep -Eq '(^|[[:space:];&|])(npx[[:space:]]+)?supabase[[:space:]]+db[[:space:]]+push' <<<"$cmd" \
-     && grep -Eq '(^|[[:space:]])--linked([[:space:]]|$)' <<<"$cmd"; then
-    return 0
-  fi
-  if grep -Eq '(^|[[:space:];&|])(npx[[:space:]]+)?supabase[[:space:]]+db[[:space:]]+reset([[:space:]]|$)' <<<"$cmd"; then
-    return 0
-  fi
-  if grep -Eq '(^|[[:space:];&|])(npx[[:space:]]+)?supabase[[:space:]]+migration[[:space:]]+repair([[:space:]]|$)' <<<"$cmd"; then
-    return 0
-  fi
-  if grep -Eq '(^|[[:space:];&|])(npx[[:space:]]+)?supabase[[:space:]]+migration[[:space:]]+list' <<<"$cmd" \
-     && grep -Eq '(^|[[:space:]])--linked([[:space:]]|$)' <<<"$cmd"; then
-    return 0
-  fi
-  if grep -Eq '(^|[[:space:];&|])(npx[[:space:]]+)?supabase[[:space:]]+link([[:space:]]|$)' <<<"$cmd"; then
-    return 0
-  fi
-  if grep -Eq '(^|[[:space:];&|])gcloud[[:space:]]+run[[:space:]]+deploy([[:space:]]|$)' <<<"$cmd"; then
-    return 0
-  fi
-  if grep -Eq '(^|[[:space:];&|])gcloud[[:space:]]+run[[:space:]]+services[[:space:]]+(update|replace|delete)([[:space:]]|$)' <<<"$cmd"; then
-    return 0
-  fi
-  if grep -Eq '(^|[[:space:];&|])gcloud[[:space:]]+run[[:space:]]+jobs[[:space:]]+(execute|update|create|delete)([[:space:]]|$)' <<<"$cmd"; then
-    return 0
-  fi
-  if grep -Eq '(^|[[:space:];&|])gh[[:space:]]+pr[[:space:]]+ready([[:space:]]|$)' <<<"$cmd" \
-     && ! grep -Eq '(^|[[:space:]])--undo([[:space:]]|$)' <<<"$cmd"; then
-    return 0
-  fi
-  if grep -Eq '(^|[[:space:];&|])gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)' <<<"$cmd"; then
-    return 0
-  fi
-  if grep -Eq '(^|[[:space:];&|])gh[[:space:]]+pr[[:space:]]+edit([[:space:]]|$)' <<<"$cmd" \
-     && grep -Eq '(^|[[:space:]])--body([[:space:]]|$|=)' <<<"$cmd"; then
-    return 0
-  fi
-
+  local cmd="$1" seg
+  # NOTE two deliberate details, both of which fail OPEN if got wrong:
+  #   * `printf '%s\n'` — with a bare `%s` the stream has no trailing newline,
+  #     so `read` returns non-zero on the final (only) segment and the loop body
+  #     never runs at all. That silently reports EVERY command as non-sensitive.
+  #   * `|| [[ -n "$seg" ]]` — belt-and-braces for the same case, so a missing
+  #     trailing newline can never again swallow the last segment.
+  while IFS= read -r seg || [[ -n "$seg" ]]; do
+    if [[ -n "${seg//[[:space:]]/}" ]]; then
+      segment_is_sensitive "$seg" && return 0
+    fi
+    seg=""
+  done < <(printf '%s\n' "$cmd" | sed -E 's/(\|\||&&|\||;|&)/\n/g')
   return 1
 }
 
