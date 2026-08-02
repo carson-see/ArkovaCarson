@@ -39,9 +39,17 @@ exactly how #1795 shipped a fix that missed one of three. This entry replaces it
   - **`string[]`, not generic `T[]`.** Chunking ROWS and mapping to ids afterwards (what
     `claimPendingPipelineAnchors` did) hides the real filter width from the only code that can
     measure it. Callers project first, so the values chunked are the values sent.
-  - **Bounded by encoded BYTES as well as count.** The 200-value cap is calibrated for UUIDs;
+  - **Bounded by encoded WIRE BYTES as well as count.** The 200-value cap is calibrated for UUIDs;
     `source_id` / `public_id` / 64-char fingerprints are not UUIDs. Chunks close on whichever limit
     binds first. Carries `{start, index, total}` so `chunkStart` error logging is unchanged.
+    Measured with `URLSearchParams` — what postgrest-js actually uses — **not**
+    `encodeURIComponent`. Those are different encoders (`(`/`)`/`'`/`!`/`~` cost 3 bytes on the wire
+    and 1 under `encodeURIComponent`; a space is 1 on the wire and 3 there), and postgrest-js also
+    double-quotes any value containing `,`, `(` or `)`. Measured wrong, a 200-value chunk of
+    docket-shaped ids goes out ~1 KB OVER budget while the helper reports it as safe — caught in
+    review on this PR, and verified end-to-end against a real `PostgrestClient` builder across
+    UUIDs / dockets / URLs / spaces+emoji / fingerprints (max observed 8,180 of 8,192; 10k values
+    chunk in ~4 ms).
 - **Routed through it:** all three `publicRecordAnchor.ts` id-filter loops; `proofJobScan.fetchProofRows`;
   `proof-backcatalog-classifier`'s label-apply loop; `utils/pipeline.getExistingSourceIds`.
   `fetchAnchorRows` / `claimPendingPipelineAnchors` / `revertClaimedAnchors` are **private again** —
@@ -57,12 +65,15 @@ exactly how #1795 shipped a fix that missed one of three. This entry replaces it
   removing the count cap fails 1. The claim-revert stranded-count escalation from #1812 is preserved
   and now covered through the real entrypoint (`publicRecordAnchor.test.ts`) instead of an export.
 - **`utils/pipeline.getExistingSourceIds` fixed here, not filed** (a deliberate cross-lane touch —
-  it is feeder-lane code). It had BOTH halves of the outage: an unchunked `.in('source_id', …)` over
-  a whole fetch page, and `const { data } = …` discarding the error so a 400 returned an empty dedup
-  Set — dedup silently dead while every caller reported success. Now chunked, per-chunk failures
-  logged, and an all-chunks-failed run throws rather than reporting an empty set as success (mirrors
-  `fetchAnchorRows`). A PARTIAL result is still returned: `batchUpsertRecords` upserts with
-  `ignoreDuplicates`, so a missed duplicate is a redundant write, never a wrong row.
+  it is feeder-lane code). It had both halves of the outage, but **only one was live**: the
+  unchunked `.in('source_id', …)` was LATENT (one caller, module-constant statute section ids, tens
+  at a time), while the discarded `const { data } = …` error WAS live — a 400 returned an empty
+  dedup Set, dedup silently dead while every caller reported success. Now chunked, per-chunk
+  failures logged, and an all-chunks-failed run throws rather than reporting an empty set as
+  success (mirrors `fetchAnchorRows`). A PARTIAL result is still returned: `batchUpsertRecords`
+  upserts with `ignoreDuplicates`, so a missed duplicate is a redundant write, never a wrong row.
+  Behaviour change: the throw also skips that jurisdiction's case-law ingestion, since
+  `fetchJurisdictionCompliance` runs `ingestStatutes` first. See `utils/agents.md`.
 - **KNOWN RESIDUAL EXPOSURE — the class is not closed repo-wide.** A full census of all 102 `.in()`
   call sites under `services/worker/src` found **8 UNBOUNDED** and **14 BOUNDED-RISKY** sites still
   outstanding, none of them touched by this PR. Worst: `api/v1/auditBatchVerify.ts:106` (unbounded +
@@ -76,6 +87,12 @@ exactly how #1795 shipped a fix that missed one of three. This entry replaces it
   that destructure alone is what converts a 400 into an indistinguishable "no rows". Full census is
   in the PR body. **No repo-wide lint rule was added** — a rule broad enough to catch the 500-cohort
   would fail the build on existing code, and `npm run lint` is the deploy gate (§0 rule 9).
+- **Scope the claim honestly.** The helper makes the *width* unchoosable for anyone who uses it; it
+  does NOT make a hand-rolled loop impossible. `POSTGREST_ROW_LIMIT` is still exported and still in
+  scope in `publicRecordAnchor.ts` (legitimately, for `.range()`), so nothing but convention stops a
+  future `for (i += SIZE)` around a `.in()` — and the per-call-site test that would have caught
+  exactly that is deleted by this change. Closing that last gap needs the lint rule, which needs the
+  census fixed first. Treat "unwritable" as "unwritable via the supported API", not "unreachable".
 
 ## 2026-07-28 SOAK FINDINGS — F-1 (org-queue-scheduler 500s) + F-3 (SUBMITTED/NULL-txid recovery gap)
 

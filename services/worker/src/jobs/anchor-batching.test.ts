@@ -17,13 +17,23 @@ function uuids(count: number): string[] {
 }
 
 /**
- * The oracle: the exact query-string value PostgREST receives for one `.in()`
- * filter. Deliberately re-derived here from the raw wire format instead of
- * reusing the production byte accounting — if the two ever drift, that is the
- * bug these tests exist to catch.
+ * The oracle: the exact query-string bytes postgrest-js puts on the wire for
+ * one `.in()` filter.
+ *
+ * This mirrors `PostgrestFilterBuilder.in` — double-quote any value containing
+ * `,`, `(` or `)`, join with `,`, wrap in `in.(…)`, then hand the whole thing
+ * to `URLSearchParams`. It is deliberately computed all-at-once here while the
+ * production helper accumulates per value, so the two are genuinely independent
+ * derivations of the same spec rather than the same code called twice.
+ *
+ * NOT `encodeURIComponent`: that is a different encoder (it leaves `(`/`)`
+ * unescaped and escapes spaces as `%20` rather than `+`), and using it here is
+ * what let a reserved-character value blow the budget while the helper reported
+ * the chunk as safe.
  */
 function encodedInFilterBytesFor(values: string[]): number {
-  return encodeURIComponent(`in.(${values.join(',')})`).length;
+  const cleaned = values.map((v) => (/[,()]/.test(v) ? `"${v}"` : v)).join(',');
+  return new URLSearchParams([['id', `in.(${cleaned})`]]).toString().length - 'id='.length;
 }
 
 function encodedInFilterBytes(idCount: number): number {
@@ -109,6 +119,41 @@ describe('chunkForInFilter', () => {
     const encodingHeavy = Array.from({ length: 400 }, (_, i) => `a,b,c/${'%'.repeat(40)}/${i}`);
 
     for (const chunk of chunkForInFilter(encodingHeavy)) {
+      expect(encodedInFilterBytesFor(chunk.values)).toBeLessThanOrEqual(
+        POSTGREST_URL_FILTER_BUDGET_BYTES,
+      );
+    }
+  });
+
+  it('charges the quotes postgrest-js adds around reserved-character values', () => {
+    // postgrest-js wraps any value containing `,`, `(` or `)` in double quotes
+    // before joining. Measuring with `encodeURIComponent` misses BOTH the
+    // quotes and the 3-byte cost of the parens themselves, under-counting a
+    // docket-shaped id by roughly 3x — so 200 of them passed the count cap and
+    // went out ~1 KB over budget while the helper reported them as safe.
+    const docketIds = Array.from(
+      { length: 400 },
+      (_, i) => `Doe,Roe(ND-Cal)(2024)No${i}`,
+    );
+
+    const chunks = chunkForInFilter(docketIds);
+
+    for (const chunk of chunks) {
+      expect(encodedInFilterBytesFor(chunk.values)).toBeLessThanOrEqual(
+        POSTGREST_URL_FILTER_BUDGET_BYTES,
+      );
+    }
+    // The byte cap, not the count cap, is what bound these.
+    expect(chunks[0].values.length).toBeLessThan(POSTGREST_IN_FILTER_CHUNK);
+  });
+
+  it('measures spaces and multi-byte values at their real wire cost', () => {
+    // Two encoders disagree in OPPOSITE directions here: a space is 1 byte on
+    // the wire (`+`) but 3 under encodeURIComponent, while an emoji is 12.
+    // Pinning both keeps the accounting honest rather than accidentally safe.
+    const mixed = Array.from({ length: 600 }, (_, i) => `record ${i} \u{1F600} name`);
+
+    for (const chunk of chunkForInFilter(mixed)) {
       expect(encodedInFilterBytesFor(chunk.values)).toBeLessThanOrEqual(
         POSTGREST_URL_FILTER_BUDGET_BYTES,
       );

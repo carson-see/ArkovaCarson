@@ -51,23 +51,37 @@ export async function batchUpsertRecords(
 /**
  * Check which source_ids already exist (batch dedup). Returns a Set of existing IDs.
  *
- * Two defects fixed here, both from the class that cost 70 hours of
- * public-record anchoring (see `chunkForInFilter` in `jobs/anchor-batching.ts`):
+ * Two defects addressed here, both from the class that cost 70 hours of
+ * public-record anchoring (see `chunkForInFilter` in `jobs/anchor-batching.ts`).
+ * Be precise about which was live, because they differ:
  *
- *  1. The `.in('source_id', …)` filter was unchunked. Callers pass every
- *     source id in a fetch page, so the encoded query string grew with the
- *     upstream corpus until PostgREST answered 400 Bad Request. `source_id` is
- *     an arbitrary upstream identifier (URLs, docket numbers), not a UUID,
- *     which is why the helper bounds by encoded BYTES and not by a count.
- *  2. The error was discarded (`const { data } = …`), so a 400 returned an
- *     empty Set — indistinguishable from "nothing is a duplicate". Dedup would
- *     be silently dead while every caller reported success.
+ *  1. **Unchunked `.in('source_id', …)` — LATENT, not live.** Today's only
+ *     caller (`jobs/jurisdictionFetcher.ts` `ingestStatutes`) passes section
+ *     ids from module-constant `StatuteDefinition[]` arrays — tens of ids, a
+ *     filter of a few dozen bytes. It was never near the limit. It is fixed
+ *     anyway because this module's contract is "new fetchers import from here
+ *     instead of re-declaring", and the first fetcher to arrive with a
+ *     data-sized id list would have inherited the defect silently. `source_id`
+ *     is an arbitrary upstream identifier (URLs, docket numbers), not a UUID,
+ *     which is exactly why the helper bounds by encoded WIRE BYTES rather than
+ *     by a value count.
+ *  2. **Discarded error (`const { data } = …`) — LIVE.** Any PostgREST failure
+ *     returned an empty Set, indistinguishable from "nothing is a duplicate",
+ *     so dedup could be dead while every caller reported success.
  *
  * Mirrors `fetchAnchorRows`: per-chunk failures are logged and skipped, but a
  * run where EVERY chunk failed refuses to report an empty result as success.
  * A partial result is still safe for dedup — `batchUpsertRecords` upserts with
  * `ignoreDuplicates`, so a missed duplicate costs a redundant write, never a
  * wrong row.
+ *
+ * BEHAVIOUR CHANGE: the throw propagates out of `ingestStatutes`, and
+ * `fetchJurisdictionCompliance` calls that BEFORE `fetchCaseLaw` — so a total
+ * dedup failure now also skips case-law ingestion for that jurisdiction, where
+ * previously it degraded to re-upserting everything. That is the intended
+ * trade (a cron 500 that Cloud Scheduler retries, versus a silent no-op), and
+ * an all-chunks-failed result means PostgREST is unavailable for this table
+ * anyway.
  */
 export async function getExistingSourceIds(
   supabase: SupabaseClient,

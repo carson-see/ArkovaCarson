@@ -37,11 +37,34 @@ export const POSTGREST_URL_FILTER_BUDGET_BYTES = 8_192;
  */
 export const POSTGREST_IN_FILTER_CHUNK = 200;
 
+/**
+ * Encoded length of one query-string component on the wire.
+ *
+ * Measured with `URLSearchParams`, which is what postgrest-js actually uses to
+ * serialize a filter (`url.searchParams.append(column, …)`). That is
+ * application/x-www-form-urlencoded, NOT `encodeURIComponent`: `(`/`)`/`'`/`!`/`~`
+ * cost 3 bytes here and 1 there, and a space costs 1 here (`+`) and 3 there.
+ * Measuring with the wrong encoder is how a "guaranteed" chunk goes over budget.
+ */
+function wireLength(text: string): number {
+  return new URLSearchParams([['', text]]).toString().length - 1;
+}
+
+/**
+ * postgrest-js double-quotes any value containing `,`, `(` or `)` before
+ * joining them (`PostgrestFilterBuilder.in`). Those quotes are on the request
+ * line, so they are on the budget — and they are why a docket number or a URL
+ * with parentheses can cost several times a UUID.
+ */
+function inFilterValueWireLength(value: string): number {
+  return wireLength(/[,()]/.test(value) ? `"${value}"` : value);
+}
+
 /** Encoded cost of the `in.()` wrapper itself. */
-const IN_FILTER_ENVELOPE_BYTES = encodeURIComponent('in.()').length;
+const IN_FILTER_ENVELOPE_BYTES = wireLength('in.()');
 
 /** Encoded cost of the separator between two values (`,` → `%2C`). */
-const IN_FILTER_SEPARATOR_BYTES = encodeURIComponent(',').length;
+const IN_FILTER_SEPARATOR_BYTES = wireLength(',');
 
 /** One `.in()` call's worth of filter values, guaranteed inside the URL budget. */
 export interface InFilterChunk {
@@ -71,10 +94,14 @@ export interface InFilterChunk {
  *    ids afterwards hides the actual filter width from the only code that can
  *    measure it. Requiring the projection first (`rows.map(r => r.id)`) means
  *    the values chunked are exactly the values sent.
- *  - **Bytes, not just count.** The 200-value cap is calibrated for UUIDs.
- *    `public_records` dedup filters on `source_id`, an arbitrary upstream
- *    identifier that can be far longer, so the chunk is bounded by whichever
- *    of the two limits binds first.
+ *  - **Bytes, not just count, measured with the REAL serializer.** The
+ *    200-value cap is calibrated for UUIDs; `source_id` / `public_id` /
+ *    64-char fingerprints are not UUIDs, so the chunk closes on whichever of
+ *    the two limits binds first. The byte figure comes from `URLSearchParams`
+ *    (what postgrest-js uses) and includes the double quotes postgrest-js adds
+ *    around values containing `,`, `(` or `)` — measuring with
+ *    `encodeURIComponent` instead under-counts such a value by ~3x and would
+ *    let a "guaranteed" chunk sail past the budget.
  *
  * Caveat: a single value larger than the whole budget cannot be split. It is
  * emitted alone so the request fails loudly at the call site rather than being
@@ -88,7 +115,7 @@ export function chunkForInFilter(values: readonly string[]): InFilterChunk[] {
 
   for (let i = 0; i < values.length; i += 1) {
     const value = values[i];
-    const valueBytes = encodeURIComponent(value).length;
+    const valueBytes = inFilterValueWireLength(value);
     const cost = current.length === 0 ? valueBytes : valueBytes + IN_FILTER_SEPARATOR_BYTES;
     const wouldOverflow =
       current.length >= POSTGREST_IN_FILTER_CHUNK ||

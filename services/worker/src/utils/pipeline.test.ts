@@ -1,11 +1,18 @@
 /**
- * `getExistingSourceIds` — the public-record dedup lookup shared by 20+ fetchers.
+ * `getExistingSourceIds` — the public-record dedup lookup in `utils/pipeline.ts`,
+ * the module new fetchers are told to import from instead of re-declaring.
  *
  * It carried both halves of the defect that killed public-record anchoring for
- * 70 hours: an unchunked `.in()` filter, and a discarded error that turned the
- * resulting 400 into an empty result set. These tests pin the fix from the
- * outside — the emitted wire filter and the failure semantics — not the
- * chunking arithmetic.
+ * 70 hours, though only one half was live. The discarded error (a 400 becoming
+ * an empty result set) was reachable in production. The unchunked `.in()` was
+ * NOT: the single caller today passes module-constant statute section ids, tens
+ * at a time. It is fixed as a latent trap for the next fetcher to adopt this
+ * helper with a data-sized id list — do not read these tests as evidence of a
+ * second live outage.
+ *
+ * They pin the fix from the outside — the emitted wire filter and the failure
+ * semantics — not the chunking arithmetic, which is owned by
+ * `jobs/anchor-batching.test.ts`.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

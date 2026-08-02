@@ -141,7 +141,8 @@ const MAX_BATCHES_PER_INVOCATION = 200;
 const CARDINALITY_PROBE_LIMIT = 2;
 
 // `.in()` read-filter chunking now lives with the shared proof-row fetch
-// (IN_FILTER_CHUNK in proofJobScan.ts).
+// (proofJobScan.fetchProofRows, which delegates the width to `chunkForInFilter`
+// in anchor-batching.ts — there is no per-job chunk constant any more).
 
 /** Skeleton upserts travel in the request BODY; 500 mirrors utils/anchorProofs.ts. */
 const INSERT_CHUNK = 500;
