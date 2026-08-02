@@ -16,7 +16,6 @@ item. Filtering reads `Record.folderId`, added to `useAnchors`'s select (see
 **not** wired to folders in this pass — only the dedicated My Records page is
 in scope for SCRUM-2940 v1. Full component-level notes live in
 `src/components/folders/agents.md`.
-_Last updated: 2026-07-28_
 
 ## L2-A5 — AdminOrganizationsPage credit adjust (founder admin-controls, founder rule A2)
 
