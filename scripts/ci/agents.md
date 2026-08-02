@@ -76,6 +76,15 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - 2026-07-28 union-drop remediation (open): the append-only gate stops NEW drops but does not restore what was already lost — 86 lines off `main` across 19 commits (since 2026-05-01) and live drops on open PRs #1618/#1652/#1654. Recover with `git show <pre-loss-commit>:<file>`; audit scripts are session-scratch, re-derivable from the gate's `findDrops`.
 - L2-S1 follow-up (Sprint 3.3): replace the `check-s33-sequencing-gate.ts` prod-green STUB with a real read-only probe (release-evidence cron / /api/health + gcloud revision match) and wire the gate into `provision-isolated-rig.sh --apply` as a preflight refusal.
 
+## 2026-08-01 `check-compliance-mapping-mirror.ts` — anti-drift for retired compliance claims
+
+- Asserts every control ID `services/worker/src/utils/complianceMapping.ts` can emit is defined in the canonical frontend registry `src/lib/complianceMapping.ts`. Wired as `npm run ci:compliance-mapping-mirror` in the ci.yml lint job.
+- **Why:** the worker file is a hand-maintained mirror ("control IDs must match" per its own header) and nothing enforced it. `DPF-NOTICE` / `DPF-ACCOUNTABILITY` were pulled from the frontend on 2026-07-10 (SCRUM-2283) after the PO confirmed on 2026-06-05 that Arkova holds no EU-US DPF certification — and the worker kept writing them onto every SECURED anchor and serving them from `/api/v1/verify`, the audit export, and the GRC push to Vanta/Drata/Anecdotes until 2026-08-01. **Two** separate remediations each fixed the frontend only.
+- **DIRECTIONAL:** worker ⊄ frontend is an error; frontend ⊅ worker is fine and expected (the registry carries jurisdiction controls no credential type maps to yet). Do not "fix" the reverse direction — it would fire constantly and get the guard disabled.
+- **FAILS CLOSED.** An empty frontend registry, an empty worker set, or a credential-type list that no longer matches the worker union are all failures, not skips. A guard that passes when it cannot see what it guards is worse than none.
+- **Behavioural, not textual:** the worker side is read by CALLING `getComplianceControlIds()` across every credential type, so it survives refactors of the private catalogues (it kept working across the allowlist rewrite in PR #1800).
+- **DO NOT silence a failure by re-adding the ID to the frontend** — that re-asserts the retired claim (R-7 / §1.5). Remove it from the worker instead. Historical rows are handled separately, on read.
+
 ---
 
 Historical change log: [./agents-changelog.md](./agents-changelog.md)
