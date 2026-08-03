@@ -135,6 +135,20 @@ export interface ProcessChangesResult {
 const SAFE_PAGE_LIMIT = 25;
 
 /**
+ * FINDING 1 (PR #1944 review round 3, perf): bounded fan-out for folder-path
+ * resolution across ONE page's matching changes. A cold cache walks up to 20
+ * SEQUENTIAL `files.get` calls per file (inherently serial — that part is
+ * unavoidable), but nothing previously parallelized ACROSS different files
+ * in the same page: a 20-file burst at ~5 levels deep could add ~20s of
+ * inline latency to a single webhook/cron drain. Bounded (not
+ * `Promise.all` over the whole page unbounded) for the same reason
+ * `drive-subscription-renewal.ts`'s `RENEWAL_CONCURRENCY` is bounded — Drive
+ * pages run up to ~50 changes, and an unbounded burst of `files.get` calls
+ * risks vendor throttling.
+ */
+const FOLDER_PATH_RESOLUTION_CONCURRENCY = 8;
+
+/**
  * Resolve the revision identifier for a Drive change.
  *
  * Prefer `headRevisionId` (Drive's monotonic revision token, available for
@@ -173,6 +187,107 @@ function classifyLedgerOutcome(matches: boolean, parentCount: number): LedgerOut
   if (matches) return 'queued';
   if (parentCount > 0) return 'parent_mismatch';
   return 'unrelated_change';
+}
+
+/**
+ * FINDING 1: one page's worth of sync classification, computed up front so
+ * folder-path resolution (I/O) can run concurrently across changes BEFORE
+ * the strictly-sequential ledger-insert/enqueue commit phase — see
+ * `processDriveChanges`'s two-phase structure below.
+ */
+interface ChangeDescriptor {
+  fileId: string;
+  revisionId: string;
+  parents: string[];
+  matches: boolean;
+  actorEmail: string | null;
+  modifiedTime: string | null;
+  filename: string | null;
+  mimeType: string | null;
+}
+
+/** Sync-only pass: classify every change in a page. No I/O. */
+function classifyPage(
+  changes: DriveChangesListEntry[],
+  watchedFolderIds: string[],
+  onCount: () => void,
+  onSkip: (change: DriveChangesListEntry) => void,
+): ChangeDescriptor[] {
+  const descriptors: ChangeDescriptor[] = [];
+  for (const change of changes) {
+    onCount();
+
+    // Skip removed/trashed changes — they don't carry a fingerprintable
+    // file revision. (We don't anchor deletions; the verification API
+    // handles tombstoned credentials separately.)
+    if (change.removed === true || change.file?.trashed === true) continue;
+
+    const fileId = change.file?.id ?? change.fileId ?? null;
+    const revisionId = resolveRevisionId(change);
+    if (!fileId || !revisionId) {
+      onSkip(change);
+      continue;
+    }
+
+    const parents = change.file?.parents ?? [];
+    descriptors.push({
+      fileId,
+      revisionId,
+      parents,
+      matches: parentMatches(parents, watchedFolderIds),
+      actorEmail: change.file?.lastModifyingUser?.emailAddress ?? null,
+      modifiedTime: change.file?.modifiedTime ?? null,
+      filename: change.file?.name ?? null,
+      mimeType: change.file?.mimeType ?? null,
+    });
+  }
+  return descriptors;
+}
+
+/**
+ * FINDING 1: resolve `folder_path` for every MATCHING descriptor's fileId,
+ * bounded-concurrently, deduplicated by fileId (a burst can carry multiple
+ * changes — e.g. two revisions — for the same file within one page; a
+ * file's folder path does not depend on which revision triggered the
+ * resolution, so resolving once and sharing is strictly better than the
+ * pre-fix per-change behavior, not just faster). Never resolves for a
+ * non-matching change — resolving a path nobody will use would be a wasted
+ * Drive API round-trip, the same rule the pre-fix per-change resolution
+ * already followed.
+ */
+async function resolveFolderPathsForPage(
+  descriptors: ChangeDescriptor[],
+  args: {
+    orgId: string;
+    accessToken: string;
+    integrationId: string;
+    resolveFolderPath: NonNullable<DriveProcessorDeps['resolveFolderPath']>;
+    log?: DriveProcessorDeps['logger'];
+  },
+): Promise<Map<string, string | null>> {
+  const results = new Map<string, string | null>();
+  const uniqueFileIds = [...new Set(descriptors.filter((d) => d.matches).map((d) => d.fileId))];
+
+  for (let i = 0; i < uniqueFileIds.length; i += FOLDER_PATH_RESOLUTION_CONCURRENCY) {
+    const chunk = uniqueFileIds.slice(i, i + FOLDER_PATH_RESOLUTION_CONCURRENCY);
+    await Promise.all(chunk.map(async (fileId) => {
+      // `resolveFolderPath`'s production implementation
+      // (drive-folder-resolver.ts) already never throws, but we guard here
+      // too so a misbehaving test double or future implementation can never
+      // abort an otherwise-valid change over a folder-path lookup failure.
+      try {
+        const path = await args.resolveFolderPath({ orgId: args.orgId, fileId, accessToken: args.accessToken });
+        results.set(fileId, path);
+      } catch (err) {
+        args.log?.warn?.(
+          { err, integrationId: args.integrationId, fileId },
+          'drive folder-path resolution failed — proceeding with null',
+        );
+        results.set(fileId, null);
+      }
+    }));
+  }
+  return results;
 }
 
 export async function processDriveChanges(args: {
@@ -215,33 +330,41 @@ export async function processDriveChanges(args: {
     }
     result.pagesProcessed += 1;
 
-    for (const change of response.changes) {
-      result.changesProcessed += 1;
+    // PHASE 1 (sync, no I/O): classify every change in this page.
+    const descriptors = classifyPage(
+      response.changes,
+      args.integration.watched_folder_ids,
+      () => { result.changesProcessed += 1; },
+      (change) => log?.warn?.({ change, integrationId: args.integration.id }, 'drive change missing fileId or revisionId — skipping'),
+    );
 
-      // Skip removed/trashed changes — they don't carry a fingerprintable
-      // file revision. (We don't anchor deletions; the verification API
-      // handles tombstoned credentials separately.)
-      if (change.removed === true || change.file?.trashed === true) continue;
+    // PHASE 2 (FINDING 1, concurrent I/O): resolve folder_path for every
+    // matching change's fileId up front, bounded-concurrently, BEFORE any
+    // ledger-insert/enqueue work starts. This is the part that did NOT need
+    // to be sequential — see the module-level FOLDER_PATH_RESOLUTION_CONCURRENCY
+    // doc comment.
+    const folderPaths = args.deps?.resolveFolderPath
+      ? await resolveFolderPathsForPage(descriptors, {
+        orgId: args.integration.org_id,
+        accessToken: args.accessToken,
+        integrationId: args.integration.id,
+        resolveFolderPath: args.deps.resolveFolderPath,
+        log,
+      })
+      : new Map<string, string | null>();
 
-      const fileId = change.file?.id ?? change.fileId ?? null;
-      const revisionId = resolveRevisionId(change);
-      if (!fileId || !revisionId) {
-        log?.warn?.({ change, integrationId: args.integration.id }, 'drive change missing fileId or revisionId — skipping');
-        continue;
-      }
-
-      const parents = change.file?.parents ?? [];
-      const matches = parentMatches(parents, args.integration.watched_folder_ids);
-      const actorEmail = change.file?.lastModifyingUser?.emailAddress ?? null;
-      const modifiedTime = change.file?.modifiedTime ?? null;
-      const filename = change.file?.name ?? null;
-
+    // PHASE 3 (sequential, UNCHANGED semantics): ledger-insert +
+    // enqueue + compensation, strictly per-change and in page order. This
+    // is the part that MUST stay sequential — the UNIQUE(integration, file,
+    // revision) reservation ordering and the first-failure page-abort
+    // contract both depend on it.
+    for (const d of descriptors) {
       // GD-07 dedupe: the ledger UNIQUE(integration, file, revision)
       // refuses a second insert. We probe with the *intended* outcome so a
       // future operator can read the ledger and see "this revision was
       // queued / dropped because parents didn't match" without needing
       // engineering to replay logs.
-      const ledgerOutcome = classifyLedgerOutcome(matches, parents.length);
+      const ledgerOutcome = classifyLedgerOutcome(d.matches, d.parents.length);
 
       // Reserve-then-confirm ordering: insert ledger row BEFORE enqueue so the
       // UNIQUE(integration, file, revision) constraint dedupes against an at-
@@ -252,11 +375,11 @@ export async function processDriveChanges(args: {
       const ledgerResult = await args.db.insertRevisionLedger({
         integration_id: args.integration.id,
         org_id: args.integration.org_id,
-        file_id: fileId,
-        revision_id: revisionId,
-        parent_ids: parents,
-        modified_time: modifiedTime,
-        actor_email: actorEmail,
+        file_id: d.fileId,
+        revision_id: d.revisionId,
+        parent_ids: d.parents,
+        modified_time: d.modifiedTime,
+        actor_email: d.actorEmail,
         outcome: ledgerOutcome,
         rule_event_id: null,
       });
@@ -266,12 +389,12 @@ export async function processDriveChanges(args: {
         continue;
       }
 
-      if (!matches) {
+      if (!d.matches) {
         // SCRUM-1647 follow-up: only count true parent-mismatches; the
         // `unrelated_change` ledger outcome (parents.length === 0) is a
         // distinct telemetry class and would inflate the mismatch metric
         // if mixed in here.
-        if (parents.length > 0) result.parentMismatch += 1;
+        if (d.parents.length > 0) result.parentMismatch += 1;
         continue;
       }
 
@@ -285,43 +408,19 @@ export async function processDriveChanges(args: {
       // fingerprints the document, so the change has no path to anchoring.
       // Both enqueues share one compensation: any failure rolls back the
       // ledger reservation so the next pass retries the whole change.
-      const mimeType = change.file?.mimeType ?? null;
-
-      // SCRUM-1837: resolve folder_path for THIS matching change only — a
-      // mismatched/unrelated change is never enqueued, so resolving its path
-      // would be a wasted Drive API round-trip. `resolveFolderPath` is a
-      // best-effort injected dependency; its production implementation
-      // (drive-folder-resolver.ts) already never throws, but we guard here
-      // too so a misbehaving test double or future implementation can never
-      // abort an otherwise-valid change over a folder-path lookup failure.
-      let folderPath: string | null = null;
-      if (args.deps?.resolveFolderPath) {
-        try {
-          folderPath = await args.deps.resolveFolderPath({
-            orgId: args.integration.org_id,
-            fileId,
-            accessToken: args.accessToken,
-          });
-        } catch (err) {
-          log?.warn?.(
-            { err, integrationId: args.integration.id, fileId },
-            'drive folder-path resolution failed — proceeding with null',
-          );
-          folderPath = null;
-        }
-      }
+      const folderPath = folderPaths.get(d.fileId) ?? null;
 
       let ruleEventId: string | null;
       let fileChangedJobId: string | null;
       try {
         ruleEventId = await args.db.enqueueRuleEvent({
           org_id: args.integration.org_id,
-          file_id: fileId,
-          parent_ids: parents,
-          actor_email: actorEmail,
-          revision_id: revisionId,
+          file_id: d.fileId,
+          parent_ids: d.parents,
+          actor_email: d.actorEmail,
+          revision_id: d.revisionId,
           integration_id: args.integration.id,
-          filename,
+          filename: d.filename,
           folder_path: folderPath,
         });
         fileChangedJobId = ruleEventId === null
@@ -329,7 +428,7 @@ export async function processDriveChanges(args: {
           : await args.db.enqueueFileChangedJob({
             org_id: args.integration.org_id,
             integration_id: args.integration.id,
-            file_id: fileId,
+            file_id: d.fileId,
             // MUST be the RESOLVED revisionId, not the raw headRevisionId.
             // Google Workspace-native files (Docs/Sheets/Slides) have no
             // headRevisionId at all — that is why resolveRevisionId() falls back
@@ -340,38 +439,38 @@ export async function processDriveChanges(args: {
             // NOTHING, and was recorded as a `success` integration_event that
             // anchored nothing. The ledger row (which uses the resolved id)
             // still advanced, so the failure was completely silent.
-            revision_id: revisionId,
-            mime_type: mimeType,
-            modified_time: modifiedTime,
+            revision_id: d.revisionId,
+            mime_type: d.mimeType,
+            modified_time: d.modifiedTime,
             rule_event_id: ruleEventId,
           });
       } catch (err) {
         // Compensate: roll back the ledger reservation so retry isn't blocked.
         await args.db.deleteRevisionLedgerEntry({
           integration_id: args.integration.id,
-          file_id: fileId,
-          revision_id: revisionId,
+          file_id: d.fileId,
+          revision_id: d.revisionId,
         });
-        log?.error?.({ err, integrationId: args.integration.id, fileId, revisionId }, 'drive enqueueRuleEvent/enqueueFileChangedJob threw — ledger rolled back, page abort');
+        log?.error?.({ err, integrationId: args.integration.id, fileId: d.fileId, revisionId: d.revisionId }, 'drive enqueueRuleEvent/enqueueFileChangedJob threw — ledger rolled back, page abort');
         throw err;
       }
       if (ruleEventId === null) {
         // Same compensation for null-return failures.
         await args.db.deleteRevisionLedgerEntry({
           integration_id: args.integration.id,
-          file_id: fileId,
-          revision_id: revisionId,
+          file_id: d.fileId,
+          revision_id: d.revisionId,
         });
-        log?.warn?.({ integrationId: args.integration.id, fileId, revisionId }, 'drive enqueueRuleEvent returned null — ledger rolled back, page abort');
+        log?.warn?.({ integrationId: args.integration.id, fileId: d.fileId, revisionId: d.revisionId }, 'drive enqueueRuleEvent returned null — ledger rolled back, page abort');
         throw new Error('drive enqueueRuleEvent returned null');
       }
       if (fileChangedJobId === null) {
         await args.db.deleteRevisionLedgerEntry({
           integration_id: args.integration.id,
-          file_id: fileId,
-          revision_id: revisionId,
+          file_id: d.fileId,
+          revision_id: d.revisionId,
         });
-        log?.warn?.({ integrationId: args.integration.id, fileId, revisionId, ruleEventId }, 'drive enqueueFileChangedJob returned null — ledger rolled back, page abort');
+        log?.warn?.({ integrationId: args.integration.id, fileId: d.fileId, revisionId: d.revisionId, ruleEventId }, 'drive enqueueFileChangedJob returned null — ledger rolled back, page abort');
         throw new Error('drive enqueueFileChangedJob returned null');
       }
       result.queued += 1;
