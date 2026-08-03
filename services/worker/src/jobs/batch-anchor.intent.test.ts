@@ -779,6 +779,24 @@ describe('SCRUM-2692 — durable journal integration', () => {
         && params.p_reason === 'affirmative_absence_after_ambiguity_window',
     )).toBe(true);
     expect(mockBroadcastSigned).not.toHaveBeenCalled();
+    // BUG-2026-08-01-F9 (GAP 2): a journal REVERT is itself a definitive,
+    // fully-unwound rejection of a prior tick's cohort (same shape as the
+    // legacy-compat reconcileOneIntent reject, just decided by affirmative
+    // absence rather than a node-level reject) — it must not disappear as a
+    // bare `reverted: 1` count with no explanation available to callers.
+    expect(result.rejectedReason).toBeTruthy();
+    expect(result.rejectedReason).toContain('affirmative_absence_after_ambiguity_window');
+  });
+
+  it('BUG-2026-08-01-F9 (GAP 2): a journal REVERT with nothing else due this tick still surfaces on the final BatchAnchorResult, not a plain EMPTY', async () => {
+    stageJournal();
+    mockGetReceipt.mockResolvedValue(null); // affirmative absence → REVERT
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result.processed).toBe(0);
+    expect(result.rejectedReason).toBeTruthy();
+    expect(result.rejectedReason).toContain('affirmative_absence_after_ambiguity_window');
   });
 
   it.each(['SUBMITTED', 'SECURED'])('never refunds before SQL rejects a %s cohort REVERT', async (status) => {
@@ -1091,6 +1109,27 @@ describe('#1417-HIGH — Phase 3c: only a definitive reject unwinds; auth/quota/
     expect(proofDeletes).toHaveLength(0);
   });
 
+  // BUG-2026-08-01-F9: a definitive, resolved broadcast rejection (e.g. UTXO
+  // contention when a concurrently-scheduled org's broadcast consumed the
+  // treasury's UTXOs first) returns the SAME processed:0 shape as "nothing was
+  // due" unless the result explicitly signals the rejection. Observed live in
+  // prod 2026-08-01T18:49:31Z (org 40383eb2-f1cd-4a85-8099-afafff95e5cf):
+  // organization_queue_runs recorded status='succeeded', processed_count=0,
+  // error=NULL for a run that WAS a definitive reject — indistinguishable from
+  // a quiet no-op to anyone reading run history. This assertion pins that the
+  // result carries a `rejectedReason` so a caller (org-queue-scheduler.ts,
+  // /api/queue/run) can record the run honestly instead of as a plain success.
+  it('genuine reject sets BatchAnchorResult.rejectedReason so callers can distinguish it from "nothing due" (BUG-2026-08-01-F9)', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    mockBroadcastSigned.mockRejectedValue(new BroadcastRejectedError('min relay fee not met (code -26)', -26));
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result.processed).toBe(0);
+    expect(result.rejectedReason).toBeTruthy();
+    expect(result.rejectedReason).toContain('min relay fee not met');
+  });
+
   it('genuine reject surfaced as RpcApplicationError from sendrawtransaction → unwind DOES fire', async () => {
     mockClaimReturns(CLAIMED_OUT_OF_ORDER);
     mockBroadcastSigned.mockRejectedValue(new RpcApplicationError('bad-txns-inputs-missingorspent (code -25)', -25, 500));
@@ -1102,6 +1141,18 @@ describe('#1417-HIGH — Phase 3c: only a definitive reject unwinds; auth/quota/
       ([name, params]) => name === 'resolve_anchor_txid_journal' && params.p_action === 'REVERT',
     )).toBe(true);
     expect(proofDeletes).toHaveLength(0);
+    // BUG-2026-08-01-F9: same signal must be present on the RpcApplicationError
+    // reject path, not just BroadcastRejectedError.
+    expect(result.rejectedReason).toBeTruthy();
+  });
+
+  it('non-reject failures (HOLD/DEFER outcomes) do NOT set rejectedReason — only a resolved, unwound rejection does', async () => {
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+    mockBroadcastSigned.mockRejectedValue(new HttpError('unauthorized', 401));
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result.rejectedReason).toBeUndefined();
   });
 });
 
@@ -1156,10 +1207,57 @@ describe('#1417-HIGH — reconcile rebroadcast: outage on a LIVE tx defers, neve
     mockGetReceipt.mockResolvedValue(null);
     mockBroadcastSigned.mockRejectedValue(new BroadcastRejectedError('dust (code -26)', -26));
 
-    await processBatchAnchors({ force: true });
+    const result = await processBatchAnchors({ force: true });
 
     expect(mockBroadcastSigned).toHaveBeenCalledWith(TX_HEX);
     expect(proofDeletes.length).toBeGreaterThan(0);
     expect(callOrder).toContain('revertToPending');
+    // BUG-2026-08-01-F9 (GAP 2): the main claim path found nothing new to do
+    // this tick (no PENDING claims staged), so — before this fix — the
+    // function returned the plain EMPTY shape with no way to tell this
+    // apart from "nothing was due", even though a prior tick's broadcast was
+    // JUST discovered to be definitively rejected and rolled back right here.
+    expect(result.processed).toBe(0);
+    expect(result.rejectedReason).toBeTruthy();
+    expect(result.rejectedReason).toContain('dust');
+  });
+
+  it('non-reject reconcile outcomes (DEFER/HOLD) do NOT set rejectedReason on the final result', async () => {
+    stageInterruptedIntent();
+    mockGetReceipt.mockResolvedValue(null);
+    mockBroadcastSigned.mockRejectedValue(new HttpError('unauthorized', 401));
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(callOrder).not.toContain('revertToPending');
+    expect(result.rejectedReason).toBeUndefined();
+  });
+
+  // Precedence: a same-tick reconcile-phase rejection (cleaning up a PRIOR
+  // tick's interrupted broadcast) AND a same-tick main-path rejection (THIS
+  // tick's own new broadcast attempt) can both occur. The main-path reason
+  // wins — it reflects what just happened to the anchors this very call
+  // claimed and is the more actionable, current signal; the reconcile-phase
+  // reason exists only to keep an otherwise-empty-looking result honest.
+  it('precedence: a same-tick main-path rejection reason wins over a same-tick reconcile-phase rejection reason', async () => {
+    stageInterruptedIntent(); // stale reconcile cohort on TX_ID
+    mockGetReceipt.mockResolvedValue(null);
+    mockBroadcastSigned
+      .mockRejectedValueOnce(new BroadcastRejectedError('reconcile-phase stale-cohort reject', -26))
+      .mockRejectedValueOnce(new BroadcastRejectedError('main-path current-tick reject', -26));
+    // A distinct txId for the NEW cohort so it never collides with the stale
+    // reconcile txid (TX_ID) in the mock DB state.
+    mockPrepare.mockImplementation(async (req: { fingerprint: string }) => ({
+      txHex: '02000000newbytes',
+      txId: 'e2'.repeat(32),
+      feeSats: 141,
+      opReturnData: `41524b56${req.fingerprint}`,
+    }));
+    mockClaimReturns(CLAIMED_OUT_OF_ORDER);
+
+    const result = await processBatchAnchors({ force: true });
+
+    expect(result.rejectedReason).toContain('main-path current-tick reject');
+    expect(result.rejectedReason).not.toContain('reconcile-phase stale-cohort reject');
   });
 });
