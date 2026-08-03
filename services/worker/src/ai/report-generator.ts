@@ -177,10 +177,16 @@ export async function generateReport(reportId: string): Promise<boolean> {
 async function generateIntegritySummary(orgId: string): Promise<Record<string, unknown>> {
   // Get score distribution
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: scores } = await (db as any)
+  const { data: scores, error } = await (db as any)
     .from('integrity_scores')
     .select('overall_score, level, flags')
     .eq('org_id', orgId);
+
+  if (error) {
+    throw new Error(
+      `generateIntegritySummary: failed to read integrity_scores for org ${orgId}: ${error.message ?? error}`,
+    );
+  }
 
   const distribution = { HIGH: 0, MEDIUM: 0, LOW: 0, FLAGGED: 0 };
   const allFlags: Record<string, number> = {};
@@ -255,11 +261,17 @@ async function generateCredentialAnalytics(
   since.setDate(since.getDate() - days);
 
   // Get credential counts by type and status
-  const { data: anchors } = await db
+  const { data: anchors, error } = await db
     .from('anchors')
     .select('credential_type, status, created_at')
     .eq('org_id', orgId)
     .gte('created_at', since.toISOString());
+
+  if (error) {
+    throw new Error(
+      `generateCredentialAnalytics: failed to read anchors for org ${orgId}: ${error.message ?? error}`,
+    );
+  }
 
   const byType: Record<string, number> = {};
   const byStatus: Record<string, number> = {};
@@ -293,12 +305,18 @@ async function generateComplianceOverview(orgId: string): Promise<Record<string,
 
   // Get recent audit events
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: auditEvents } = await (db as any)
+  const { data: auditEvents, error } = await (db as any)
     .from('audit_events')
     .select('event_type, created_at')
     .eq('org_id', orgId)
     .order('created_at', { ascending: false })
     .limit(100);
+
+  if (error) {
+    throw new Error(
+      `generateComplianceOverview: failed to read audit_events for org ${orgId}: ${error.message ?? error}`,
+    );
+  }
 
   const eventTypes: Record<string, number> = {};
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
