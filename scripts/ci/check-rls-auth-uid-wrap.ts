@@ -71,6 +71,18 @@ function scan(): Finding[] {
     // remains historical artifact. Filename is 00000000000000_baseline_at_main_HEAD.sql.
     if (file === 'supabase/migrations/00000000000000_baseline_at_main_HEAD.sql') continue;
 
+    // Same shape as the two exemptions above, happening in real time instead
+    // of historically: 0398 reproduced resolve_anchor_queue/supersede_anchor's
+    // bodies verbatim via pg_get_functiondef (to eliminate transcription risk
+    // on the actual bug it was fixing — a dropped audit_events column), which
+    // carried over 9 pre-existing bare auth.uid() calls from the live baseline
+    // definitions. 0398 is already applied to prod and cannot be edited per
+    // the never-edit-migrations rule, so 0399 (same PR) CREATE OR REPLACEs the
+    // same three functions with every occurrence wrapped — fixed at runtime,
+    // exactly like 0280 did for the baseline file. 0398's immutable file text
+    // remains a historical artifact of that fix, same as the two rows above.
+    if (file === 'supabase/migrations/0398_fix_audit_events_actor_email_dropped_column.sql') continue;
+
     // Skip historical migrations (< 0280). Their bare occurrences were
     // rewritten at runtime by 0280; the immutable migration text is benign.
     const prefix = migrationPrefix(file);
