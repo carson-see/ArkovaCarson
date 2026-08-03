@@ -4,7 +4,7 @@
   "description": "LangChain tool wrappers for Arkova credential verification API",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": ["dist", "LICENSE"],
   "scripts": {
     "build": "tsc",
     "test": "vitest run"
