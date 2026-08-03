@@ -1,0 +1,27 @@
+{
+  "name": "cloud_scheduler_job_failure_count",
+  "description": "Counts Cloud Scheduler attempt-finished log entries at severity ERROR (job fired but the target did not succeed: NOT_FOUND, DEADLINE_EXCEEDED, INTERNAL, UNAVAILABLE, UNKNOWN, ...). This is the ONLY signal that survives a target the worker never receives: a 404'd job produces no worker log, no Sentry event, and no dead-man tick, so every in-repo monitor is structurally blind to it. `generate-reports` 404'd hourly for ~4.5 months (~3,300 consecutive failures from 2026-03-16) without a single alert because nothing consumed this log stream.",
+  "filter": "resource.type=\"cloud_scheduler_job\"\njsonPayload.\"@type\"=\"type.googleapis.com/google.cloud.scheduler.logging.AttemptFinished\"\nseverity>=ERROR",
+  "metricDescriptor": {
+    "metricKind": "DELTA",
+    "valueType": "INT64",
+    "unit": "1",
+    "displayName": "Cloud Scheduler job failure count",
+    "labels": [
+      {
+        "key": "job_id",
+        "valueType": "STRING",
+        "description": "Cloud Scheduler job id (from the log entry's monitored resource)."
+      },
+      {
+        "key": "status",
+        "valueType": "STRING",
+        "description": "Canonical failure status from the attempt, e.g. NOT_FOUND, DEADLINE_EXCEEDED, INTERNAL, UNKNOWN."
+      }
+    ]
+  },
+  "labelExtractors": {
+    "job_id": "EXTRACT(resource.labels.job_id)",
+    "status": "EXTRACT(jsonPayload.status)"
+  }
+}

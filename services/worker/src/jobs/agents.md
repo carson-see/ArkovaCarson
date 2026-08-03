@@ -2,6 +2,31 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-02 — merge resolution note (PR #1810 `feat/observability-silent-failure` onto main)
+
+Two conflicts in `monthly-allocation-rollover.ts` / `.test.ts`, both a "both sides added something at the
+same spot" shape, not an actual behavioral disagreement — combined rather than picked a side:
+
+- **`monthly-allocation-rollover.ts` import block:** this PR added `assertJobPostcondition` (the
+  SCRUM-3050 throw-on-total-failure change, see the entry below); main had independently landed
+  `captureCreditRpcFailureAlert` Sentry alerting on the same two error branches. Only the import lines
+  conflicted — the call sites didn't, since each side touched a disjoint region of the function body.
+  Kept both imports; the merged function now throws on total enumeration/rollover failure (this PR)
+  **and** alerts Sentry on each per-org RPC failure (main) in the same run.
+- **`monthly-allocation-rollover.test.ts`:** this PR appended a new `describe('...postcondition
+  (SCRUM-3050)')` block after the last shared test; main appended two Sentry-alert assertion tests
+  (`'alerts Sentry only for the errored org...'`, `'increments errors on thrown RPC and alerts
+  Sentry'`) to the tail of the *original* describe block instead. Resolved by keeping both: main's two
+  tests now close out the original `describe('runAllocationRollover', ...)` block, followed by this
+  PR's postcondition describe block unchanged. All tests from both sides retained, none dropped.
+
+## 2026-08-01 — SCRUM-3050: silent-failure hardening (`pipelineThroughputMonitor.ts`, `monthly-allocation-rollover.ts`)
+
+Three independent silent failures were found in one day; all three reported success at every layer a human watches. The two changes here address the parts that live in this folder.
+
+- **Dead-man escalation (`pipelineThroughputMonitor.ts`).** This monitor WORKED — it detected the 70h anchoring outage and fired every ~30 min for 70+ hours with an accurate diagnosis, and nobody saw it. One stable Sentry fingerprint meant every re-fire collapsed into a single issue created on hour zero, so the alarm got *quieter* as the incident got worse. The decision now carries `sustained_hours` + `sustained_bucket` (`t0`/`t24h`/`t48h`/`t72h`/`t168h`), derived purely from values already measured — `last_secured_age_hours` for condition A, `oldest_unlinked_age_hours` for condition B — so there is still no state table and no migration. The bucket is appended to the fingerprint (crossing a boundary opens a NEW issue and re-triggers `FirstSeenEventCondition`) and the level escalates `error` → `fatal` past 72h. **`sustainedBucketFor(null)` returns the TOP bucket, not `t0`**: an unbounded duration ("nothing has ever secured") is the worst case, and resolving it to the mildest bucket would be the classic no-data-means-healthy bug. Do not "simplify" that branch.
+- **Postcondition assertion (`monthly-allocation-rollover.ts`).** The narrow, highest-risk application of `utils/jobPostcondition.ts`: billing + monthly cadence = the worst detection latency in the fleet. Two behaviour changes, both intentional and both previously HTTP 200: a failed enumeration of open periods now throws, and a run where every org errored now throws. A fully *skipped* run is still success (no open period to roll is completed work, not a failure), and partial failure stays 200 + a `DEGRADED` warn because retrying would redo the orgs that already rolled.
+- Alert routing for both lives in `infra/sentry/alert-rules.json` + `scripts/gcp-setup/`, pinned by `scripts/ci/check-pipeline-throughput-alert-contract.test.ts` and `check-scheduler-failure-alert-contract.test.ts`. **A rule in a JSON file is not a working alarm** — as of 2026-08-01 project `arkova1` had ZERO alert policies, ZERO notification channels and ZERO log-based metrics, so delivery is still a founder-side dashboard action.
 ## 2026-08-01 — SCRUM-2904-perf: `findExistingEnvelopeAnchor` statement-timeout fix (migration 0381, P0 demo blocker)
 
 `findExistingEnvelopeAnchor` (`docusign-anchor-reconciliation.ts`, see the SCRUM-2904 entry below for what it does) was the last remaining break on the DocuSign connector pipeline. Its single query OR'd three `metadata->>key` JSONB text comparisons (`source_envelope_id`/`envelope_id`/`external_ref`) with **no supporting index on any of the three** — on prod, the org running the live connector pipeline (also the public-records holding org) owns ~2,974,731 of ~2.97M total `anchors` rows, so every call from that org was a near-full-table scan that deterministically exceeds `statement_timeout`. Proven twice in prod: a DLQ'd `rule-action-dispatcher.ts` execution (2026-07-27) and a `connector_artifact` row stuck `status='failed'` at materialize in `connector-artifact-drain.ts` (2026-08-01).
