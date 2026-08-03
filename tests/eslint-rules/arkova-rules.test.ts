@@ -32,6 +32,8 @@ const noMockEcho = require('../../eslint-rules/no-mock-echo.cjs');
 const tenantIsolation = require('../../eslint-rules/tenant-isolation.cjs');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const noConnectorBytesToSink = require('../../eslint-rules/no-connector-bytes-to-sink.cjs');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const noHandRolledInFilterChunk = require('../../eslint-rules/no-hand-rolled-in-filter-chunk.cjs');
 
 describe('arkova/no-unscoped-service-test', () => {
   ruleTester.run('no-unscoped-service-test', noUnscopedServiceTest, {
@@ -493,6 +495,131 @@ describe('arkova/no-connector-bytes-to-sink', () => {
         filename: 'docusign.ts',
         code: "logger.child({ rpc: 'docusign' }).warn({ documentBytes }, 'failed');",
         errors: [{ messageId: 'bytesToSink' }],
+      },
+    ],
+  });
+});
+
+/**
+ * The rule that finally makes the `.in()` filter-width class UNWRITABLE.
+ *
+ * It could not ship with #1839: a rule broad enough to catch the then-existing
+ * 500-wide cohort would have failed the build, and `npm run lint` from
+ * `services/worker/` IS the deploy gate (CLAUDE.md rule 9). #1866 and #1867
+ * removed the cohort; this locks the door behind them.
+ */
+describe('arkova/no-hand-rolled-in-filter-chunk', () => {
+  ruleTester.run('no-hand-rolled-in-filter-chunk', noHandRolledInFilterChunk, {
+    valid: [
+      {
+        // The supported form.
+        filename: 'job.ts',
+        code: `
+          for (const { values, start } of chunkForInFilter(ids)) {
+            await db.from('anchors').select('id').in('id', values);
+          }
+        `,
+      },
+      {
+        // An unchunked \`.in()\` over a statically small list is correct and
+        // common — flagging it would get the rule disabled at honest sites.
+        filename: 'job.ts',
+        code: `await db.from('anchors').select('id').in('status', ['SECURED', 'PENDING']);`,
+      },
+      {
+        // Ordinary iteration, not chunking.
+        filename: 'job.ts',
+        code: `
+          for (let i = 0; i < ids.length; i++) {
+            await db.from('anchors').select('id').in('id', [ids[i]]);
+          }
+        `,
+      },
+      {
+        // \`i += 1\` is iteration too.
+        filename: 'job.ts',
+        code: `
+          for (let i = 0; i < ids.length; i += 1) {
+            await db.from('anchors').select('id').in('id', [ids[i]]);
+          }
+        `,
+      },
+      {
+        // A chunk loop with no \`.in()\` in it — e.g. a request-BODY batch,
+        // which has no URL budget. \`chunk()\` is correct here.
+        filename: 'job.ts',
+        code: `
+          for (const rows of chunk(items, 500)) {
+            await db.from('anchor_proofs').insert(rows);
+          }
+        `,
+      },
+      {
+        // Index-stepped loop that never issues a filter.
+        filename: 'job.ts',
+        code: `
+          for (let i = 0; i < ids.length; i += 500) {
+            results.push(ids.slice(i, i + 500));
+          }
+        `,
+      },
+    ],
+
+    invalid: [
+      {
+        // The exact shape of #1795 / #1812.
+        filename: 'job.ts',
+        code: `
+          for (let i = 0; i < anchorIds.length; i += CHUNK_SIZE) {
+            const chunk = anchorIds.slice(i, i + CHUNK_SIZE);
+            await db.from('anchors').update({ status: 'PENDING' }).in('id', chunk);
+          }
+        `,
+        errors: [{ messageId: 'handRolledChunk' }],
+      },
+      {
+        // A numeric literal width — the 500-wide cohort.
+        filename: 'job.ts',
+        code: `
+          for (let i = 0; i < ids.length; i += 500) {
+            await db.from('anchors').select('public_id').in('public_id', ids.slice(i, i + 500));
+          }
+        `,
+        errors: [{ messageId: 'handRolledChunk' }],
+      },
+      {
+        // `i = i + SIZE` spelling.
+        filename: 'job.ts',
+        code: `
+          for (let i = 0; i < ids.length; i = i + 200) {
+            await db.from('profiles').select('id').in('id', ids.slice(i, i + 200));
+          }
+        `,
+        errors: [{ messageId: 'handRolledChunk' }],
+      },
+      {
+        // Reaching for the request-BODY splitter to size a URL filter — the
+        // exact conflation behind the 70-hour outage.
+        filename: 'job.ts',
+        code: `
+          for (const ids of chunk(anchorIds, 1000)) {
+            await db.from('anchor_proofs').select('anchor_id').in('anchor_id', ids);
+          }
+        `,
+        errors: [{ messageId: 'wrongChunker' }],
+      },
+      {
+        // Nested a little deeper inside the loop body.
+        filename: 'job.ts',
+        code: `
+          for (let i = 0; i < ids.length; i += SIZE) {
+            try {
+              const { data } = await db.from('anchors').select('id').in('id', ids.slice(i, i + SIZE));
+              use(data);
+            } catch (e) { log(e); }
+          }
+        `,
+        errors: [{ messageId: 'handRolledChunk' }],
       },
     ],
   });
