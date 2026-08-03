@@ -12,6 +12,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { resolveMempoolApiBase } from '../utils/mempool-url.js';
 
 // ─── Interface ──────────────────────────────────────────────────────────
 
@@ -242,16 +243,22 @@ export function createFeeEstimator(
   }
 
   if (factoryConfig.strategy === 'mempool') {
+    // SCRUM-3016: this estimator builds requests as `${baseUrl}/v1/fees/...`
+    // — it never appends `/api` itself, so `baseUrl` must already carry it.
+    // resolveMempoolApiBase normalizes a MEMPOOL_API_URL set WITHOUT a
+    // trailing /api (the OTHER convention some sibling consumers expect —
+    // see mempool-url.ts) up to the form this estimator needs.
+    const baseUrl = resolveMempoolApiBase(factoryConfig.mempoolApiUrl, DEFAULT_MEMPOOL_URL);
     logger.info(
       {
         strategy: 'mempool',
-        baseUrl: factoryConfig.mempoolApiUrl ?? DEFAULT_MEMPOOL_URL,
+        baseUrl,
         target: factoryConfig.target ?? 'halfHour',
       },
       'Creating mempool fee estimator',
     );
     return new MempoolFeeEstimator({
-      baseUrl: factoryConfig.mempoolApiUrl,
+      baseUrl,
       fallbackRate: factoryConfig.fallbackRate,
       target: factoryConfig.target,
       timeoutMs: factoryConfig.timeoutMs,

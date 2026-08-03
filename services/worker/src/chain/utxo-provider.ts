@@ -15,6 +15,7 @@
 
 import { logger } from '../utils/logger.js';
 import { emitRpcFallback } from '../utils/sentry.js';
+import { resolveMempoolApiBase } from '../utils/mempool-url.js';
 
 // ─── HttpError ──────────────────────────────────────────────────────────
 
@@ -992,12 +993,23 @@ export function createUtxoProvider(factoryConfig: UtxoProviderFactoryConfig): Ut
   }
   if (factoryConfig.type === 'getblock') {
     if (!factoryConfig.rpcUrl) throw new Error('BITCOIN_RPC_URL is required for GetBlock hybrid provider');
-    const mempoolBaseUrl = factoryConfig.mempoolApiUrl ?? MEMPOOL_URLS[factoryConfig.network ?? 'mainnet'] ?? MEMPOOL_URLS.mainnet;
+    // SCRUM-3016: MEMPOOL_URLS entries all include /api — this provider's
+    // mempool fallback builds requests as `${baseUrl}/address/...`, `${baseUrl}/tx`,
+    // never appending /api itself, so an operator-set MEMPOOL_API_URL must
+    // resolve to that same "with /api" shape regardless of which convention
+    // they used (see mempool-url.ts).
+    const mempoolBaseUrl = resolveMempoolApiBase(
+      factoryConfig.mempoolApiUrl,
+      MEMPOOL_URLS[factoryConfig.network ?? 'mainnet'] ?? MEMPOOL_URLS.mainnet,
+    );
     logger.info({ provider: 'getblock', rpcUrl: factoryConfig.rpcUrl, mempoolBaseUrl }, 'Creating GetBlock hybrid UTXO provider');
     return new GetBlockHybridProvider({ rpcUrl: factoryConfig.rpcUrl, rpcAuth: factoryConfig.rpcAuth, mempoolBaseUrl });
   }
   if (factoryConfig.type === 'mempool') {
-    const baseUrl = factoryConfig.mempoolApiUrl ?? MEMPOOL_URLS[factoryConfig.network ?? 'testnet4'] ?? MEMPOOL_URLS.testnet4;
+    const baseUrl = resolveMempoolApiBase(
+      factoryConfig.mempoolApiUrl,
+      MEMPOOL_URLS[factoryConfig.network ?? 'testnet4'] ?? MEMPOOL_URLS.testnet4,
+    );
     logger.info({ provider: 'mempool', baseUrl }, 'Creating Mempool.space UTXO provider');
     return new MempoolUtxoProvider({ baseUrl });
   }
