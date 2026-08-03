@@ -14,6 +14,101 @@
 
 ## Now
 
+**State as of 2026-08-03T02:49Z, verified live.** This block is the only current-state claim in this
+file; everything under `## History` is the dated record and is not re-asserted here. Canonical soak
+findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md).
+
+### Prod
+
+- Worker `git_sha 18d33efcfb5366d121baf77f132fad545bf1f3cb` (short `18d33efcf`); deploy-worker run
+  succeeded 2026-08-03T02:49Z (canary→full), `/health` verified live: `status: healthy`,
+  `database/anchoring/kms: ok`.
+- **Migration ledger is fully reconciled — `scripts/ci/snapshots/ledger-numeric-exemptions.json`
+  `exemptPrefixes` is `[]`.** Every migration applied to prod now has its source `.sql` on `main`. This
+  is the first time today the orphan-row set has been empty; verified by reading the file directly, not
+  assumed.
+- Migrations applied to prod and reconciled today (2026-08-02/03): `0382`, `0383`, `0384`, `0385`,
+  `0386`, `0387`, `0388`, `0389`, `0390`, `0391`, `0392` — all verified live via `pg_get_functiondef` /
+  `pg_index` / direct query at apply time; see the exemption file's `_comment` history for the per-row
+  rationale (kept there deliberately as the audit trail, not duplicated here).
+
+### PR board
+
+- **~73 PRs merged to main since 2026-08-02T12:00.** Two remain open: **#1864** and **#1813**, both
+  **superseded, not defective** — #1864's outbound PII gate on `verify.ts` is already live on main via
+  #1898's shared `public-projection-text.ts` module (confirmed: `provenance.ts` now calls
+  `publicFreeTextOrNull(anchor.revocation_reason)`); #1813's inline run-lease copy for
+  `publicRecordAnchor.ts` is superseded by #1846's shared `withRunLease()` primitive, which that file
+  now imports directly. Close both once confirmed rather than merging redundant code.
+- **Held, not superseded:** #1755 (sharp/libvips LGPL denylist — counsel/Carson call per
+  `scripts/security/agents.md`).
+- A stale test assertion in `deploy-worker-history-contract.test.ts` was red-lining the whole board for
+  part of the day (asserted `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE` must never be true; a same-day commit
+  had enabled it without updating the guard) — fixed to assert the surviving producer/consumer
+  invariant instead of the one-time enablement ordering. Two stale RLS/E2E test suites that pre-dated
+  today's PII-redaction migrations (asserting the OLD leaky filename behavior) were also corrected —
+  **not a new leak, the assertions hadn't caught up to already-shipped fixes.**
+- A pre-deploy typecheck blackout (2 TS errors in test files, unrelated to any single PR) was blocking
+  every deploy regardless of branch; fixed directly on `main` (`18d33efcf`).
+
+### Soaks
+
+- **No soak is running.** Founder ruling holds: no interim soaks for the open PR queue through the
+  pen-test window; green-CI PRs merge and deploy now. Both rigs and loadgens remain up for the
+  post-pentest week-long consolidated soak.
+
+### Jira / Confluence sync (2026-08-02/03, this session)
+
+- **8 Jira tickets transitioned to Done** with PR/evidence links: SCRUM-3108, 2480, 2535,
+  2260/2261/2270, 2952, 2956. Everything soak-gated (SCRUM-2481), founder-reserved (SCRUM-3012's Resend
+  DNS), or scope-mismatched was left as-is rather than guessed — see ticket comments for reasoning.
+  **Flag: SCRUM-2894 is a Story with no parent epic** (should auto-route to Needs Human per rule R2;
+  not force-transitioned).
+- **4 Confluence pages updated inline**: Security & RLS Policies, On-Chain Content Policy, Webhooks,
+  Audit Events — each with a dated 2026-08-02/03 section. **2 pages (Bug Tracker Master Log, Payments &
+  Entitlements) got footer comments instead of inline edits** — both bodies are ~98K characters and the
+  Confluence MCP only supports full-body replacement; reproducing that much text byte-for-byte was
+  judged too high a corruption risk for a canonical audit trail. Promote those comments into the body
+  tables in a lower-risk follow-up session.
+
+### Open items carried forward
+
+- **10k-DAU architectural limit:** the nightly 3am flush caps at `BATCH_ANCHOR_MAX_SIZE=10000` per
+  invocation with no intra-day cadence, so 25k anchors/day cannot drain in one nightly pass. Needs a
+  design change before that scale.
+- **SDKs are NOT publicly published** — npm `@arkova/sdk` unpublished; PyPI `arkova` now returns 200
+  (was 404 as of 2026-08-01) — **unverified whether this is Arkova's own publish or a namesquat**, check
+  before citing either way. Publish path needs the founder-reserved accounts.
+- **5 dead paid Supabase rigs need a founder-side dashboard delete/downgrade** (MCP cannot pause paid
+  tier): `oyixdghudcnjkyyjvlnr`, `xxnxdojavujuduntpmis`, `sfhrjnelzhopbrvfywel`, `xegdwkywfrioghzbpuzj`,
+  `dblprpjqzsbtkwcqxwal`.
+- **DMARC `p=none` is NOT in the Sekura pen-test briefing** (Confluence 117604354, founder-review
+  pending) — add before the briefing or the tester will report it as a find.
+- **More unguarded SECURITY DEFINER RPCs, not yet fixed** (backlogged from the 2026-07-28 sweep):
+  `finalize_public_record_anchor_batch`, `drain_submitted_to_secured_for_tx`, `bulk_promote_confirmed`,
+  `archive_old_audit_events` (can wipe the audit trail with `retention_days=0`).
+- Drive connector issues opened 2026-08-02, not yet triaged: **#1837** (`folder_path` hardcoded null,
+  `folder_path_starts_with` rules can never fire), **#1836** (SECURITY, pen-test scope: Drive push
+  channel token is the org UUID, not a secret), **#1835** (Drive `no changes.watch` channel renewal —
+  every connection goes silent within 7 days).
+
+### Environment gotcha
+
+`gcloud` on the dev Mac needs `CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14`; the
+bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
+
+---
+
+## History
+
+Newest first, one entry per session. Each entry's own `_Last refreshed:_` footer is that entry's
+record at the time it was written — it is not a claim about the current state of this file.
+
+### 2026-08-01/02 (CTO session) — pre-pentest PII/security hardening wave, DocuSign timeout investigation, soak findings F-1..F-10
+
+_Archived verbatim from the "Now" block this entry superseded — preserved as the dated record of that
+session's state, not re-asserted as current._
+
 **State as of 2026-08-01.** This block is the only current-state claim in this file; everything under
 `## History` is the dated record and is not re-asserted here. Canonical soak findings live in
 [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md).
@@ -203,10 +298,7 @@ bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
 
 ---
 
-## History
-
-Newest first, one entry per session. Each entry's own `_Last refreshed:_` footer is that entry's
-record at the time it was written — it is not a claim about the current state of this file.
+_Last refreshed: 2026-08-02 by CTO session — superseded 2026-08-03 by the merge-wave entry above._
 
 ### 2026-08-02 (Queues lane) — the PostgREST `.in()` filter-width class closed repo-wide (4 PRs open, none merged)
 
@@ -824,4 +916,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-02 by Claude (public-projection PII session) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-08-03 by CTO session — claims verified against gcloud/MCP/CI output, not asserted from prior-session prose._
