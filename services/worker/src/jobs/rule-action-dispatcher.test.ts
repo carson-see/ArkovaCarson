@@ -42,6 +42,7 @@ interface AnchorLookupRow {
   id?: string;
   public_id: string;
   status: string;
+  created_at?: string;
 }
 
 interface JobQueueRow {
@@ -955,10 +956,25 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
       // envelope-level guard finds it and REUSES it instead of inserting a
       // second, distinct anchor — the core "one document → one anchor" guarantee
       // even when the two paths' fingerprints differ.
-      dbState.existingAnchors = [{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', public_id: 'ARK-2026-CONNECTOR', status: 'PENDING' }];
+      dbState.existingAnchors = [{
+        id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        public_id: 'ARK-2026-CONNECTOR',
+        status: 'PENDING',
+        created_at: '2026-05-10T00:00:00.000Z',
+      }];
       setScenario({ rule: { ...defaultRule, action_type: 'AUTO_ANCHOR', action_config: {} } });
       // setScenario resets existingAnchors — re-set after.
-      dbState.existingAnchors = [{ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', public_id: 'ARK-2026-CONNECTOR', status: 'PENDING' }];
+      dbState.existingAnchors = [{
+        id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        public_id: 'ARK-2026-CONNECTOR',
+        status: 'PENDING',
+        // SCRUM-2904-perf (migration 0381): findExistingEnvelopeAnchor now
+        // issues one .eq('metadata->>KEY', ...) lookup PER key and compares
+        // `created_at` across the (at most 3) matches in application code to
+        // pick the earliest — the fixture row must carry a real created_at for
+        // the stub's generic anchors-table SELECT to be treated as a candidate.
+        created_at: '2026-05-10T00:00:00.000Z',
+      }];
 
       const result = await runRuleActionDispatcher();
 
