@@ -13,6 +13,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 const mockConfig = vi.hoisted(() => ({
   stuckAnchorAlertHours: 24,
+  stuckSubmittedAlertHours: 6,
 }));
 
 vi.mock('../config.js', () => ({
@@ -29,15 +30,20 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 const mockCaptureStuckAnchorAlert = vi.fn();
+const mockCaptureStuckSubmittedAlert = vi.fn();
 vi.mock('../utils/sentry.js', () => ({
   captureStuckAnchorAlert: (...args: unknown[]) => mockCaptureStuckAnchorAlert(...args),
+  captureStuckSubmittedAlert: (...args: unknown[]) => mockCaptureStuckSubmittedAlert(...args),
 }));
 
 import {
   decideStuckAnchorAlert,
+  decideStuckSubmittedAlert,
   runStuckAnchorCheck,
   DEFAULT_STUCK_ANCHOR_ALERT_HOURS,
+  DEFAULT_STUCK_SUBMITTED_ALERT_HOURS,
   type StuckAnchorAlertInput,
+  type StuckSubmittedAlertInput,
 } from './stuck-anchor-monitor.js';
 import { logger } from '../utils/logger.js';
 
@@ -112,6 +118,73 @@ describe('decideStuckAnchorAlert', () => {
   });
 });
 
+function submittedInput(overrides: Partial<StuckSubmittedAlertInput> = {}): StuckSubmittedAlertInput {
+  return {
+    oldest_submitted_created_at: null,
+    submitted_count: null,
+    threshold_hours: 6,
+    now: NOW,
+    ...overrides,
+  };
+}
+
+// SCRUM-3017 / BUG-2026-07-26-004: the monitor above only ever watched
+// PENDING age. Every historical SUBMITTED-stage freeze — the April incident
+// (1.18M anchors), the ~6-week silent June freeze, and the July isolated-rig
+// MEMPOOL_API_URL freeze — was invisible to on-call because nothing watched
+// how long an anchor sits in SUBMITTED. This mirrors `decideStuckAnchorAlert`
+// with SUBMITTED-flavored wording and its own (shorter) threshold: a
+// SUBMITTED anchor should resolve within confirmation windows of hours, not
+// the ~24h a PENDING anchor can legitimately wait for the daily batch flush.
+describe('decideStuckSubmittedAlert', () => {
+  it('does not fire when there are no SUBMITTED anchors', () => {
+    const decision = decideStuckSubmittedAlert(submittedInput({ oldest_submitted_created_at: null }));
+    expect(decision.should_fire).toBe(false);
+    expect(decision.oldest_age_hours).toBeNull();
+    expect(decision.reason).toMatch(/no submitted/i);
+  });
+
+  it('does not fire when the oldest SUBMITTED anchor is younger than the threshold', () => {
+    const oneHourAgo = new Date(NOW.getTime() - 1 * 60 * 60 * 1000).toISOString();
+    const decision = decideStuckSubmittedAlert(
+      submittedInput({ oldest_submitted_created_at: oneHourAgo, threshold_hours: 6 }),
+    );
+    expect(decision.should_fire).toBe(false);
+    expect(decision.oldest_age_hours).toBe(1);
+  });
+
+  it('fires at error severity when the oldest SUBMITTED anchor exceeds the threshold', () => {
+    const tenHoursAgo = new Date(NOW.getTime() - 10 * 60 * 60 * 1000).toISOString();
+    const decision = decideStuckSubmittedAlert(
+      submittedInput({ oldest_submitted_created_at: tenHoursAgo, threshold_hours: 6, submitted_count: 47 }),
+    );
+    expect(decision.should_fire).toBe(true);
+    expect(decision.severity).toBe('error');
+    expect(decision.oldest_age_hours).toBe(10);
+    expect(decision.pending_count).toBe(47);
+    expect(decision.reason).toContain('10');
+    expect(decision.reason).toContain('6');
+    expect(decision.reason).toMatch(/submitted/i);
+  });
+
+  it('does not fire exactly at the threshold boundary (strictly greater)', () => {
+    const exactly6h = new Date(NOW.getTime() - 6 * 60 * 60 * 1000).toISOString();
+    const decision = decideStuckSubmittedAlert(
+      submittedInput({ oldest_submitted_created_at: exactly6h, threshold_hours: 6 }),
+    );
+    expect(decision.should_fire).toBe(false);
+  });
+
+  it('does not fire on an unparseable timestamp (fail safe — no spurious page)', () => {
+    const decision = decideStuckSubmittedAlert(
+      submittedInput({ oldest_submitted_created_at: 'not-a-date', threshold_hours: 6 }),
+    );
+    expect(decision.should_fire).toBe(false);
+    expect(decision.oldest_age_hours).toBeNull();
+    expect(decision.reason).toMatch(/unparseable|invalid/i);
+  });
+});
+
 // ─── Cron entry point ───
 
 interface OldestRow {
@@ -119,27 +192,41 @@ interface OldestRow {
 }
 
 /**
- * Minimal chainable Supabase stub. The oldest-PENDING query is:
- *   db.from('anchors').select('created_at').eq(...).is(...).order(...).limit(1)
+ * Minimal chainable Supabase stub. The oldest-PENDING / oldest-SUBMITTED
+ * queries share the same shape, distinguished only by the `.eq('status', X)`
+ * argument:
+ *   db.from('anchors').select('created_at').eq('status', X).is(...).order(...).limit(1)
  * resolving to { data: OldestRow[], error }.
- * The pending-count read is:
+ * The count read is:
  *   db.from('pipeline_dashboard_cache').select('cache_value').eq(...).single()
+ *
+ * `submitted` defaults to "no rows" (healthy, no fire) so every PENDING-only
+ * test written before SCRUM-3017 keeps working unmodified — a test that
+ * never configures `submitted` should never surprise-fire the new check.
  */
 function mockDb(opts: {
   oldest?: { data: OldestRow[] | null; error?: unknown };
+  submitted?: { data: OldestRow[] | null; error?: unknown };
   cache?: { data: { cache_value: Record<string, unknown> } | null; error?: unknown };
 } = {}) {
   const oldest = opts.oldest ?? { data: [], error: null };
-  const cache = opts.cache ?? { data: { cache_value: { PENDING: 0 } }, error: null };
+  const submitted = opts.submitted ?? { data: [], error: null };
+  const cache = opts.cache ?? { data: { cache_value: { PENDING: 0, SUBMITTED: 0 } }, error: null };
   return {
     from(table: string) {
       if (table === 'anchors') {
         const chain: Record<string, unknown> = {};
+        let status: string | null = null;
         chain.select = vi.fn(() => chain);
-        chain.eq = vi.fn(() => chain);
+        chain.eq = vi.fn((col: string, val: string) => {
+          if (col === 'status') status = val;
+          return chain;
+        });
         chain.is = vi.fn(() => chain);
         chain.order = vi.fn(() => chain);
-        chain.limit = vi.fn(() => Promise.resolve(oldest));
+        chain.limit = vi.fn(() =>
+          Promise.resolve(status === 'SUBMITTED' ? submitted : oldest),
+        );
         return chain;
       }
       if (table === 'pipeline_dashboard_cache') {
@@ -267,5 +354,109 @@ describe('runStuckAnchorCheck', () => {
     } finally {
       mockConfig.stuckAnchorAlertHours = prev;
     }
+  });
+
+  // SCRUM-3017 — the SUBMITTED-stage watchdog rides the SAME cron entry
+  // point (no new Cloud Scheduler job to provision — see the "operator
+  // dependencies" note in the PR body on why that matters in this repo).
+  describe('SUBMITTED-stage coverage (SCRUM-3017)', () => {
+    it('returns healthy + does not alert when no SUBMITTED anchors are stuck (existing PENDING-only tests keep working)', async () => {
+      mockCaptureStuckSubmittedAlert.mockClear();
+      const db = mockDb({ oldest: { data: [], error: null } });
+
+      const result = await runStuckAnchorCheck(db, { now: NOW, thresholdHours: 24 });
+
+      expect(result.submittedHealthy).toBe(true);
+      expect(result.submittedAlertFired).toBe(false);
+      expect(result.oldestSubmittedAgeHours).toBeNull();
+      expect(mockCaptureStuckSubmittedAlert).not.toHaveBeenCalled();
+    });
+
+    it('fires the SUBMITTED alert independently of PENDING, with its own fingerprint-bearing helper', async () => {
+      mockCaptureStuckAnchorAlert.mockClear();
+      mockCaptureStuckSubmittedAlert.mockClear();
+      const tenHoursAgo = new Date(NOW.getTime() - 10 * 60 * 60 * 1000).toISOString();
+      const db = mockDb({
+        oldest: { data: [], error: null }, // PENDING healthy
+        submitted: { data: [{ created_at: tenHoursAgo }], error: null },
+        cache: { data: { cache_value: { PENDING: 0, SUBMITTED: 61 } }, error: null },
+      });
+
+      const result = await runStuckAnchorCheck(db, { now: NOW, thresholdHours: 24, submittedThresholdHours: 6 });
+
+      // PENDING side is unaffected.
+      expect(result.healthy).toBe(true);
+      expect(result.alertFired).toBe(false);
+      expect(mockCaptureStuckAnchorAlert).not.toHaveBeenCalled();
+
+      // SUBMITTED side fired on its own.
+      expect(result.submittedHealthy).toBe(false);
+      expect(result.submittedAlertFired).toBe(true);
+      expect(result.oldestSubmittedAgeHours).toBe(10);
+      expect(result.submittedCount).toBe(61);
+      expect(mockCaptureStuckSubmittedAlert).toHaveBeenCalledTimes(1);
+      const [message, extra, level] = mockCaptureStuckSubmittedAlert.mock.calls[0] as [
+        string,
+        Record<string, unknown>,
+        string,
+      ];
+      expect(message).toMatch(/submitted/i);
+      expect(level).toBe('error');
+      expect(extra.oldest_age_hours).toBe(10);
+      expect(extra.submitted_count).toBe(61);
+    });
+
+    it('fires BOTH alerts in the same run when PENDING and SUBMITTED are independently stuck', async () => {
+      mockCaptureStuckAnchorAlert.mockClear();
+      mockCaptureStuckSubmittedAlert.mockClear();
+      const thirtyHoursAgo = new Date(NOW.getTime() - 30 * 60 * 60 * 1000).toISOString();
+      const twelveHoursAgo = new Date(NOW.getTime() - 12 * 60 * 60 * 1000).toISOString();
+      const db = mockDb({
+        oldest: { data: [{ created_at: thirtyHoursAgo }], error: null },
+        submitted: { data: [{ created_at: twelveHoursAgo }], error: null },
+      });
+
+      const result = await runStuckAnchorCheck(db, { now: NOW, thresholdHours: 24, submittedThresholdHours: 6 });
+
+      expect(result.alertFired).toBe(true);
+      expect(result.submittedAlertFired).toBe(true);
+      expect(mockCaptureStuckAnchorAlert).toHaveBeenCalledTimes(1);
+      expect(mockCaptureStuckSubmittedAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads the SUBMITTED threshold from STUCK_SUBMITTED_ALERT_HOURS when no override is given', async () => {
+      mockCaptureStuckSubmittedAlert.mockClear();
+      const prev = mockConfig.stuckSubmittedAlertHours;
+      mockConfig.stuckSubmittedAlertHours = 1;
+      try {
+        const twoHoursAgo = new Date(NOW.getTime() - 2 * 60 * 60 * 1000).toISOString();
+        const db = mockDb({ submitted: { data: [{ created_at: twoHoursAgo }], error: null } });
+
+        const result = await runStuckAnchorCheck(db, { now: NOW });
+
+        expect(result.submittedThresholdHours).toBe(1);
+        expect(result.submittedHealthy).toBe(false);
+        expect(result.submittedAlertFired).toBe(true);
+      } finally {
+        mockConfig.stuckSubmittedAlertHours = prev;
+      }
+    });
+
+    it('falls back to the default SUBMITTED threshold on an invalid config value', async () => {
+      const prev = mockConfig.stuckSubmittedAlertHours;
+      mockConfig.stuckSubmittedAlertHours = Number.NaN;
+      try {
+        const db = mockDb();
+        const result = await runStuckAnchorCheck(db, { now: NOW });
+        expect(result.submittedThresholdHours).toBe(DEFAULT_STUCK_SUBMITTED_ALERT_HOURS);
+      } finally {
+        mockConfig.stuckSubmittedAlertHours = prev;
+      }
+    });
+
+    it('throws when the oldest-SUBMITTED query errors (Cloud Scheduler retries on 500)', async () => {
+      const db = mockDb({ submitted: { data: null, error: { message: 'statement timeout' } } });
+      await expect(runStuckAnchorCheck(db, { now: NOW })).rejects.toThrow(/submitted/i);
+    });
   });
 });
