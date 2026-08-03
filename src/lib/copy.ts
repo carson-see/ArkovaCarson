@@ -1646,13 +1646,36 @@ export const AI_EXTRACTION_LABELS = {
 // =============================================================================
 
 export const PRIVACY_FAIL_CLOSED_LABELS = {
-  TITLE: 'On-Device Privacy Protection Unavailable',
+  // Founder report 2026-08-03: the old copy said the privacy tools "failed to
+  // load", which reads as a system fault — and an adversarial review of the
+  // first fix attempt (2026-08-03) proved that framing was actually RIGHT, not
+  // wrong. `step === 'privacy-blocked'` is reached ONLY via `failClosed: true`
+  // in src/lib/aiExtraction.ts, which is set ONLY by isPiiStripFailClosedError
+  // (a genuine OCR-engine/NER-model load-or-run failure). The separate benign
+  // case — a file with no readable text layer (HEIC/SVG/EPUB/ODP/TIFF/scanned
+  // PDF) — is deliberately routed to a DIFFERENT step, 'extraction-failed',
+  // with its own EXTRACTION_RECOVERY_LABELS copy (see aiExtraction.ts's
+  // isUnsupportedImageFormatError / isNoTextExtractedError branches, and the
+  // SCRUM-2911 fix, commit d971e55af, 2026-07-23, that split them apart
+  // specifically so the benign case would stop surfacing this screen).
+  // So: every user who sees THIS screen has hit a real tool-load failure —
+  // some fraction transient and retriable. The first rewrite of this copy
+  // (same day) got the population backwards, leading with the benign
+  // explanation and making Continue the primary action for a screen that,
+  // by construction, is never the benign case. Reverted that ordering.
+  TITLE: 'On-Device Privacy Tools Failed to Load',
   BODY:
-    'Arkova removes personal information on your device before anything is sent. That on-device step couldn’t run just now, so this document was not analyzed and no information was sent. Your file never left your device.',
-  WHAT_HAPPENED_LABEL: 'What happened',
+    'Arkova reads and removes personal information on your device before anything is sent. That on-device step could not run — most often a slow or unreliable connection while loading the analysis tools, or low memory on this device. Nothing was analyzed and nothing was sent. Your file never left your device.',
+  WHAT_HAPPENED_LABEL: 'What to try',
   WHAT_HAPPENED:
-    'The on-device privacy tools (the personal-information remover or the document reader) failed to load. To protect you, we stopped instead of sending anything that wasn’t fully checked.',
-  RETRY: 'Reload and Try Again',
+    'This is usually temporary. Try again — a retry succeeds in most cases. If it keeps happening, a stronger network connection or a different device often resolves it.',
+  // Anchoring does NOT depend on this step: fingerprinting is byte-based and
+  // works for every file type, so continuing without a retry is always SAFE,
+  // even though it is not the recommended first action on this screen (most
+  // failures here are transient and a retry recovers full AI metadata).
+  SAFE_TO_CONTINUE:
+    'If you would rather not retry, you can continue instead — the document is still fingerprinted and secured exactly the same way, just without the optional AI-suggested metadata.',
+  RETRY: 'Try Again',
   CONTINUE_WITHOUT: 'Continue Without AI Metadata',
   REASSURANCE: 'No information was sent to Arkova or anyone else.',
 } as const;
