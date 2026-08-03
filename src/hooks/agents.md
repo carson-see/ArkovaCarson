@@ -1,5 +1,5 @@
 # agents.md — hooks
-_Last updated: 2026-07-28_
+_Last updated: 2026-08-03_
 
 ## What This Folder Contains
 
@@ -7,6 +7,10 @@ React hooks for data fetching and mutations against Supabase. Each hook encapsul
 
 ## Recent Changes
 
+- 2026-08-03 ART Lane 1 bug sprint — three silent-failure fixes, same class as the `useFolders.ts` fix from the same sprint (RLS blocks a write, Supabase reports zero rows/no error, and unguarded code takes the success path anyway):
+  - `useCredentialTemplates.ts` `updateTemplate`/`deleteTemplate`: `credential_templates_update`/`_delete` RLS requires `role='ORG_ADMIN'`, but `credential_templates_select` does not, and `CredentialTemplatesManager.tsx` renders working Edit/Delete/Active-toggle controls for every row unconditionally — any org member reaching `/settings/credential-templates` (route-gated only by `MAIN_APP_DESTINATIONS`, not role) could click them and get a false success toast + audit log + optimistic cache mutation for a write RLS silently no-opped. Fixed with `.select('id')` + zero-row detection, mirroring the already-correct pattern in `useOrganization.ts`/`useSecureQueue.ts` in this same folder. New `TOAST.TEMPLATE_PERMISSION_DENIED` copy key.
+  - `useOnboarding.ts` `createOrg`'s two direct-insert fallback branches (RPC-errors path, and RPC-succeeds-but-`already_set`-with-no-org path): the `org_members` insert and `profiles` org_id/role update were fire-and-forget — results fully discarded, not even `{ error }` captured. A failure left a real orphaned `organizations` row while the function still returned `success: true`, so `OnboardingOrgPage`'s post-success `refreshProfile()` would see `org_id` still null and RouteGuard would silently bounce the user back into the same onboarding form; a retry created a SECOND orphaned org. Extracted shared `linkUserToNewOrg()` helper used by both call sites — checks both writes, returns an error message on either failure instead of a fabricated success.
+  - `useNotifications.ts` `markRead`/`markAllRead`: the Supabase `.update()` result was discarded with zero error handling (not even `{ error }` destructured) — a failed write left the optimistic "read" state on screen (badge decremented, item styled read) until the next 30s poll silently flipped it back with no explanation. Now captures `{ error }`, reverts the specific optimistic change immediately on failure, and surfaces it via the hook's `error` state. This hook had **no test file at all** before this fix — `useNotifications.test.ts` is new (10 tests: initial fetch/poll-init, both mutations' happy + failure paths, `notificationDeepLink`).
 - 2026-07-28 R19 (advances SCRUM-2481): `useBulkAnchors.ts` `createBulkAnchors(records, options?)` gained a second `{ attested?: boolean }` param. Any batch containing a record whose `fingerprintProvided === false` (row-mode CSV import, no fingerprint column mapped — `src/lib/csvParser.ts`) requires `options.attested === true` or the hook rejects BEFORE calling the `bulk_create_anchors` RPC (sets `error`, returns `null`, never a partial submission). The RPC payload now carries `fingerprintProvided: r.fingerprintProvided ?? false` per row (fails closed to "record-derived, attestation required" when the flag is missing — never silently assumed `document_bytes`); the SQL function computes `fingerprint_source` server-side from this boolean (migration `0376`). Caller: `BulkUploadWizard.tsx`.
 - 2026-07-27 SCRUM-2940 (Folders UI): `useAnchors.ts` — the `AnchorPartial`
   select/Pick gained `folder_id`, mapped to `Record.folderId` (`null` =

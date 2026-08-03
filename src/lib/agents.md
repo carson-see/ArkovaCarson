@@ -1,6 +1,10 @@
 # agents.md — lib
 
-_Last updated: 2026-07-28_
+_Last updated: 2026-08-03_
+
+## 2026-08-03 ART Lane 1 bug sprint
+
+`copy.ts`: added `TOAST.TEMPLATE_PERMISSION_DENIED` ('Only organization admins can manage templates.') — surfaced by `useCredentialTemplates.ts`'s new zero-row RLS detection on `updateTemplate`/`deleteTemplate` (see `src/hooks/agents.md` for the full bug writeup). No other copy.ts changes; `npm run lint:copy` clean.
 
 ## 2026-07-28 R19 — fingerprint_source evidence class (advances SCRUM-2481)
 
