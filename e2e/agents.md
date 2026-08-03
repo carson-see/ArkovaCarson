@@ -30,6 +30,38 @@ Playwright E2E test specs and shared fixtures for the Arkova application.
     settings, not a place to negotiate with a failing test. Changing it changes
     what every local and CI run believes production does.
 
+- **A fully-mocked spec proves the client, not the write — say so in the
+  docblock, and assert the OUTCOME the user came for.** Sibling of the
+  wrong-premise finding above, found 2026-08-03.
+  `ctdl-registry-import.spec.ts` stubbed both worker legs and asserted the
+  in-dialog success link, then stopped. It never looked at the Imported Records
+  list — so it passed for a route that created records **permanently invisible**
+  to the user who added them (`credentials-ctdl-registry-anchor.ts` wrote
+  `anchors.user_id` but no `anchor_recipients` row; `get_my_credentials()`
+  inner-joins that table with no fallback). Every visible assertion was green
+  and every one of them was about the dialog.
+  - **Rule: assert the user-visible end state of the flow, not the last thing
+    the component rendered.** "Add" is not the outcome; "the record is in my
+    list" is. A spec that stops at the confirmation UI is testing that the
+    confirmation UI renders.
+  - When the stubs make an assertion structurally incapable of catching a
+    server-side defect, state that in the docblock and name the suite that
+    does cover it. Coverage that only looks like coverage is how this shipped.
+- **`fixtures/index.ts` is a single point of failure — never use `__dirname`
+  in it (or in anything it re-exports).** The root package is
+  `"type": "module"`, so Playwright transpiles the barrel to ESM where
+  `__dirname` is undefined. Every spec imports from this barrel, so one
+  `__dirname` throws at module load and takes the **entire** suite down before
+  a single test is listed — `playwright test --list` returned
+  `Total: 0 tests in 0 files`, not a per-spec failure. Landed 2026-08-02 in
+  `e01fa2198`, fixed 2026-08-03 with
+  `fileURLToPath(new URL('...', import.meta.url))`.
+  - Symptom to recognise: a "No tests found" / 0-test run that looks like a
+    bad path filter but is actually a module-load crash in the barrel. Check
+    the top of the output for the `ReferenceError` before touching globs.
+  - The path-gated `Run E2E tests` CI step (`e2e-changed`) means a barrel
+    break can sit on `main` for a while, going unnoticed on the PRs that do
+    not touch app paths. Do not read a green CI as proof the suite ran.
 - **Click-interception and paint-order bugs are E2E-only. Never answer this
   defect class with Vitest+jsdom.** jsdom has no layout engine and no
   hit-testing, so `fireEvent.click(el)` dispatches straight at the target and

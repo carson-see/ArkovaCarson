@@ -2,6 +2,40 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-03 — `POST /credentials/ctdl/registry-anchor` created records nobody could see
+
+**Creating an anchor row is not the same as giving the user a record.** The CE registry-anchor
+route wrote `anchors.user_id` and stopped there. `get_my_credentials()` — the RPC behind
+`/my-credentials` — is a strict INNER JOIN with **no `anchors.user_id` fallback**:
+
+```sql
+FROM anchor_recipients ar JOIN anchors a ON a.id = ar.anchor_id
+WHERE ar.recipient_user_id = auth.uid() AND a.deleted_at IS NULL
+```
+
+so every record added through that route was **permanently** absent from the adder's own list.
+Not a cache/refresh bug — there was structurally no row to join through, ever. The user got a
+success toast, a working verify link, a spent credit, and nothing in their list.
+
+`anchors.user_id` and `anchor_recipients` are **not interchangeable ownership signals** on this
+surface. Anything that creates an anchor a user is meant to *see* must write both. The sibling
+self-import path (`credential-sources.ts` `linkSelfRecipient`) already did; this one was the
+outlier, and it reuses the same shared `buildSelfImportRecipientHash` so both stay compatible
+with the `link_recipient_to_anchors` claim flow.
+
+Ordering matters and is now pinned by a test: **link before the credit gate.** A record the
+caller cannot see is worse than no record, so an unlinkable anchor is rolled back rather than
+shipped — and a credit is never spent on one. The credit-rejection path unlinks (best-effort;
+the soft-delete plus the RPC's `deleted_at IS NULL` filter already make a surviving row
+invisible). Both duplicate paths re-link too, which makes the fix self-healing for anchors
+created before it.
+
+**Why it shipped:** `e2e/ctdl-registry-import.spec.ts` stubbed both worker legs and asserted
+only the in-dialog success link — it never looked at the list, so it could not have caught this.
+That spec now asserts the record appears after the dialog closes, with a docblock stating
+plainly what its stubs do and do not prove. A green E2E over a fully-mocked flow is a claim
+about the client, not about the write.
+
 ## 2026-08-02 — the silent-empty enrichment sweep (`readInChunks`)
 
 Closes the last of the `.in()` defect class on this surface. `#1866` fixed the sites whose *width* was
