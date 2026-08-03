@@ -38,7 +38,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const MIGRATIONS_DIR = path.join(process.cwd(), 'supabase/migrations');
-const REDEFINES = 'CREATE OR REPLACE FUNCTION public.get_public_anchor';
+// Paren-anchored: without it this is a PREFIX match, and 0386's redefinition
+// of get_public_anchor_by_fingerprint was wrongly resolved as the head of
+// get_public_anchor itself, failing every invariant against the wrong body.
+const REDEFINES = 'CREATE OR REPLACE FUNCTION public.get_public_anchor(';
 
 /** Strip SQL comment lines so header prose can never satisfy an assertion. */
 function executableSql(sql: string): string {
