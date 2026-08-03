@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { grantedRunLeaseTable } from './__testHelpers.js';
 
 // ---- Hoisted mocks with call tracking ----
 const {
@@ -226,6 +227,9 @@ function createLoadMockSupabase(totalRecords: number) {
       if (table === 'profiles') return makeProfilesMock(trackedDbCall);
       if (table === 'anchors') return makeAnchorsMock(anchorRows as never, claimedRows as never, anchorResults[0], trackedDbCall);
       if (table === 'anchor_proofs') return { upsert: vi.fn(() => trackedDbCall({ error: null })) };
+      // SCRUM-3031: grant the cross-instance run lease — this suite measures
+      // pipeline throughput, not the concurrency guard.
+      if (table === 'job_queue') return grantedRunLeaseTable();
       if (table === 'public_records') return makePublicRecordsMock(recordsBySource, trackedDbCall);
       return {
         select: vi.fn(() => ({
@@ -362,6 +366,9 @@ describe('publicRecordAnchor — load & pool saturation (SCRUM-1296)', () => {
         }
         if (table === 'anchor_proofs') {
           return { upsert: vi.fn().mockResolvedValue({ error: null }) };
+        }
+        if (table === 'job_queue') {
+          return grantedRunLeaseTable();
         }
         // public_records — track timing per source
         return {
