@@ -108,7 +108,12 @@ export function AuditorBatchPage() {
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: 'Request failed' }));
-        setError(err.error || `HTTP ${resp.status}`);
+        // Prefer the server's `message` over its `error` code. The sampling
+        // endpoint refuses an over-large population or sample with a 422 whose
+        // `error` is a machine token (`population_too_large`) and whose
+        // `message` is the sentence explaining what to do instead — showing the
+        // token alone left the auditor with no next step.
+        setError(err.message || err.error || `HTTP ${resp.status}`);
         return;
       }
 

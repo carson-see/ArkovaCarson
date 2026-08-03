@@ -17,6 +17,7 @@
 import { z } from 'zod';
 import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { BATCH_ANCHOR_RUN_LEASE, withRunLease } from './run-lease.js';
 import { getChainClientAsync } from '../chain/client.js';
 import { buildMerkleTree, type MerkleTreeResult } from '../utils/merkle.js';
 import { upsertAnchorProofs } from '../utils/anchorProofs.js';
@@ -473,6 +474,18 @@ export interface BatchAnchorResult {
    * from a no-op, not necessarily as an operator page.
    */
   rejectedReason?: string;
+  /**
+   * SCRUM-3031: the drain DID NOT RUN — another instance holds the run lease,
+   * or the lease store was unverifiable and we failed closed.
+   *
+   * This is not the same as "the queue was empty", and callers that record run
+   * evidence must not conflate them. `org-queue-scheduler.ts` writes
+   * `organization_queue_run_state.last_run_at` on every recorded run, and
+   * `claim_due_org_queue_runs` treats an org as due only once `last_run_at` is
+   * 24 hours old — so recording a refused run as `succeeded` would both file a
+   * false audit row and defer that org's next dedicated drain by a full day.
+   */
+  skipped?: true;
 }
 
 interface LeafForProof {
@@ -568,12 +581,6 @@ export interface ProcessBatchAnchorOptions {
 const POSTGREST_ROW_LIMIT = 1000;
 
 /**
- * SCALE-3: In-process mutex — prevents overlapping batch runs when cron fires
- * faster than batch processing completes. Same pattern as confirmation checker.
- */
-let batchProcessingRunning = false;
-
-/**
  * Process pending anchors as a batch using a Merkle tree.
  *
  * Uses claim-before-broadcast pattern:
@@ -584,7 +591,7 @@ let batchProcessingRunning = false;
  *
  * SCALE-1: Smart skip — don't waste UTXOs on tiny batches
  * SCALE-2: Pre-claim fee check with dynamic ceiling based on backlog age
- * SCALE-3: In-process mutex prevents overlapping runs
+ * SCALE-3 / SCRUM-3031: cross-instance run lease prevents overlapping runs
  */
 export async function processBatchAnchors(opts: ProcessBatchAnchorOptions = {}): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
@@ -601,17 +608,24 @@ export async function processBatchAnchors(opts: ProcessBatchAnchorOptions = {}):
     return EMPTY;
   }
 
-  // SCALE-3: Mutex — skip if already running
-  if (batchProcessingRunning) {
-    logger.info('Batch processing skipped — already in progress');
-    return EMPTY;
-  }
-  batchProcessingRunning = true;
-  try {
-    return await _processBatchAnchorsInner(opts);
-  } finally {
-    batchProcessingRunning = false;
-  }
+  // SCALE-3 / SCRUM-3031: cross-instance run lease. The `batchProcessingRunning`
+  // boolean this replaced was per-PROCESS, so under Cloud Run it guarded
+  // nothing across instances — and THIS is the job that signs and broadcasts.
+  // Two concurrent runs claim disjoint anchor cohorts (the claim RPC is atomic)
+  // but then select from the SAME treasury UTXO set, producing conflicting
+  // transactions: one is rejected as a double-spend, its cohort unwinds to
+  // PENDING, and the fee is burned for nothing. See `run-lease.ts` for the
+  // 2026-08-01 incident and for why this TTL is the longest of the three.
+  //
+  // The lease is GLOBAL, not per-org, even though `orgId` runs claim only their
+  // own org's anchors: the treasury is shared, so org scoping does not make two
+  // runs independent. This matches — and extends across instances — what
+  // `batchProcessingRunning` already did to concurrent per-org calls inside one
+  // process. A skipped org run leaves its anchors PENDING for the next tick.
+  const outcome = await withRunLease({ ...BATCH_ANCHOR_RUN_LEASE, client: db }, () =>
+    _processBatchAnchorsInner(opts),
+  );
+  return outcome.acquired ? outcome.result : { ...EMPTY, skipped: true };
 }
 
 // =============================================================================

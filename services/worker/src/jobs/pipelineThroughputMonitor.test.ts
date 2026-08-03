@@ -97,7 +97,11 @@ describe('decidePipelineThroughputAlert', () => {
       }),
     );
     expect(decision.should_fire).toBe(true);
-    expect(decision.severity).toBe('error');
+    // SCRUM-3050: a 700h stall is far past the 72h escalation boundary, so the
+    // level is now 'fatal' rather than a flat 'error'. See
+    // pipelineThroughputMonitor.escalation.test.ts for the bucketing contract.
+    expect(decision.severity).toBe('fatal');
+    expect(decision.sustained_bucket).toBe('t168h');
     expect(decision.reason).toMatch(/linker stall/i);
     expect(decision.reason).toContain('700');
     expect(decision.reason).toContain('48');
@@ -114,7 +118,9 @@ describe('decidePipelineThroughputAlert', () => {
       }),
     );
     expect(decision.should_fire).toBe(true);
-    expect(decision.severity).toBe('error');
+    // SCRUM-3050: securing has been dead 90h — past the 72h boundary, so fatal.
+    expect(decision.severity).toBe('fatal');
+    expect(decision.sustained_bucket).toBe('t72h');
     expect(decision.reason).not.toMatch(/linker stall/i);
     expect(decision.reason).toMatch(/network-wide/i);
     expect(decision.reason).toContain('24');

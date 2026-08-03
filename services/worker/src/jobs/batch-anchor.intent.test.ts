@@ -132,7 +132,11 @@ vi.mock('../chain/client.js', () => ({
   getChainClient: vi.fn(),
 }));
 
-vi.mock('../utils/db.js', () => {
+vi.mock('../utils/db.js', async () => {
+  // Async factory so the shared `job_queue` lease double can be imported here.
+  // A static import would not work: `vi.mock` factories are hoisted above it.
+  const { grantedRunLeaseTable } = await import('./__tests__/__testHelpers.js');
+
   // Query-builder that records filters and resolves by table + terminal.
   function makeSelectBuilder(table: string) {
     const filters: Array<[string, ...unknown[]]> = [];
@@ -248,14 +252,20 @@ vi.mock('../utils/db.js', () => {
   return {
     db: {
       rpc: mockDbRpc,
-      from: vi.fn((table: string) => ({
-        select: vi.fn(() => makeSelectBuilder(table)),
-        insert: vi.fn((payload: Record<string, unknown>) => makeInsertBuilder(table, payload)),
-        delete: vi.fn(() => makeDeleteBuilder(table)),
-        update: vi.fn((payload: Record<string, unknown>, options?: Record<string, unknown>) =>
-          makeUpdateBuilder(table, payload, options),
-        ),
-      })),
+      from: vi.fn((table: string) => {
+        // SCRUM-3031: the drain claims a cross-instance run lease before any
+        // work. This suite exercises the INTENT pipeline, so the lease is
+        // always granted; semantics live in `__tests__/run-lease.test.ts`.
+        if (table === 'job_queue') return grantedRunLeaseTable();
+        return {
+          select: vi.fn(() => makeSelectBuilder(table)),
+          insert: vi.fn((payload: Record<string, unknown>) => makeInsertBuilder(table, payload)),
+          delete: vi.fn(() => makeDeleteBuilder(table)),
+          update: vi.fn((payload: Record<string, unknown>, options?: Record<string, unknown>) =>
+            makeUpdateBuilder(table, payload, options),
+          ),
+        };
+      }),
     },
     withDbTimeout: vi.fn((fn: () => Promise<unknown>) => fn()),
   };

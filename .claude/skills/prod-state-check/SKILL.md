@@ -28,7 +28,13 @@ git log --oneline origin/main | head -1
 git rev-list --count <prod_sha>..origin/main   # how far behind prod is
 ```
 
-**Check the deploy freeze.** If `DEPLOY_WORKER_PAUSED=true` in `.github/workflows/deploy-worker.yml`, merges are not reaching prod at all and the gap will keep growing. As of 2026-08-01 this was deliberately set pending the signet soak, leaving prod ~52 commits behind main. Under that condition, "merged to main" tells you nothing about prod.
+**Check the deploy freeze.** `DEPLOY_WORKER_PAUSED` is a **repository Actions variable**, not a value in a YAML file — `deploy-worker.yml` only reads it as `vars.DEPLOY_WORKER_PAUSED`, so grepping the workflow finds prose and tells you nothing. Read the live value:
+
+```bash
+gh variable get DEPLOY_WORKER_PAUSED
+```
+
+When it is `true`, merges are not reaching prod at all and the gap keeps growing, so "merged to main" tells you nothing about prod. It also changes **merge** semantics, not just deploy timing: the `deferred_consolidated_soak` evidence path fails closed while deploys are live. Never state the freeze from memory or from a doc — this flag has been flipped in both directions mid-sprint.
 
 Also confirm via `gcloud run services describe arkova-worker --region <region> --format='value(status.latestReadyRevisionName)'` when gcloud is working. A service sitting on a non-tip SHA may be a deliberate in-flight soak, not drift — check HANDOFF before "fixing" it.
 
@@ -82,4 +88,4 @@ WHERE o.public_id = '<id>';
 
 ## Related
 
-`memory/feedback_assert_prod_state_directly.md`, `memory/feedback_soak_clock_is_worker_uptime.md`, `memory/feedback_frozen_soak_head_not_orphan.md`, `.claude/skills/task-gates/SKILL.md`.
+None of this skill's rules have a standalone `memory/` file. The index is `memory/README.md`.

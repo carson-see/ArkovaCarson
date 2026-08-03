@@ -25,6 +25,12 @@ type QueueRunStatus = 'succeeded' | 'failed';
 export interface OrgQueueSchedulerResult {
   claimed: number;
   succeeded: number;
+  /**
+   * SCRUM-3031: claimed orgs whose drain never ran because another instance
+   * held the cross-instance batch run lease. Counted separately from
+   * `succeeded` because these orgs did NOT get their run and must stay due.
+   */
+  skipped: number;
   failed: number;
   processed: number;
 }
@@ -124,9 +130,9 @@ export async function recordOrgQueueRunResult(
     );
   }
 
-  try {
-    const finishedAt = args.finishedAt.toISOString();
-    const statePayload = {
+  const finishedAt = args.finishedAt.toISOString();
+  await upsertOrgQueueRunState(
+    {
       org_id: args.orgId,
       last_run_at: finishedAt,
       ...(args.status === 'succeeded' ? { last_success_at: finishedAt } : {}),
@@ -136,24 +142,62 @@ export async function recordOrgQueueRunResult(
       locked_at: null,
       locked_by: null,
       updated_at: finishedAt,
-    };
+    },
+    actual,
+    { orgId: args.orgId, trigger: args.trigger },
+    'org queue run state upsert',
+  );
+}
 
-    const { error: stateError } = await actual.db
+/**
+ * The single `organization_queue_run_state` writer. Best-effort by design: a
+ * failed state write must not mask the run's real outcome.
+ *
+ * The PAYLOAD is deliberately the caller's, not this function's. PostgREST's
+ * upsert assigns only the columns it is given, and which columns a caller omits
+ * is load-bearing — `releaseOrgQueueClaim` leaving out `last_run_at` is exactly
+ * what keeps a skipped org due. A mode flag here instead of caller-owned
+ * payloads would put the skip path one boolean away from asserting run evidence
+ * it does not have, which is the bug class SCRUM-3031 is closing.
+ */
+async function upsertOrgQueueRunState(
+  payload: Record<string, unknown>,
+  deps: ReturnType<typeof getDeps>,
+  logContext: Record<string, unknown>,
+  what: string,
+): Promise<void> {
+  try {
+    const { error } = await deps.db
       .from('organization_queue_run_state')
-      .upsert(statePayload, { onConflict: 'org_id' });
-
-    if (stateError) {
-      actual.logger.warn(
-        { error: stateError, orgId: args.orgId, trigger: args.trigger },
-        'org queue run state upsert failed',
-      );
+      .upsert(payload, { onConflict: 'org_id' });
+    if (error) {
+      deps.logger.warn({ error, ...logContext }, `${what} failed`);
     }
   } catch (err) {
-    actual.logger.warn(
-      { error: err, orgId: args.orgId, trigger: args.trigger },
-      'org queue run state upsert threw',
-    );
+    deps.logger.warn({ error: err, ...logContext }, `${what} threw`);
   }
+}
+
+/**
+ * Hands a claimed org straight back without touching its due clock (SCRUM-3031).
+ *
+ * Used only when the batch run lease refused the drain. Clearing `locked_at` /
+ * `locked_by` is required — `claim_due_org_queue_runs` will not re-offer a
+ * locked org — but `last_run_at`, `last_run_status` and `last_success_at` are
+ * deliberately absent from the payload: PostgREST's upsert only assigns the
+ * columns it is given, so the org's existing due state survives untouched and
+ * it is due again on the very next scheduler pass.
+ */
+async function releaseOrgQueueClaim(
+  orgId: string,
+  deps: ReturnType<typeof getDeps>,
+): Promise<void> {
+  await upsertOrgQueueRunState(
+    { org_id: orgId, locked_at: null, locked_by: null, updated_at: deps.now().toISOString() },
+    deps,
+    { orgId },
+    'org queue claim release after a run-lease skip',
+  );
 }
 
 /**
@@ -232,6 +276,7 @@ export async function runOrgQueueScheduler(
   const result: OrgQueueSchedulerResult = {
     claimed: 0,
     succeeded: 0,
+    skipped: 0,
     failed: 0,
     processed: 0,
   };
@@ -250,6 +295,19 @@ export async function runOrgQueueScheduler(
     const startedAt = deps.now();
     try {
       const batch = await deps.processBatchAnchors({ force: true, orgId: row.org_id });
+
+      // SCRUM-3031: the drain never ran — another instance holds the batch run
+      // lease. Release the claim so this org is immediately re-claimable, but
+      // do NOT write run evidence: `recordOrgQueueRunResult` sets `last_run_at`,
+      // and `claim_due_org_queue_runs` only re-offers an org 24 hours after
+      // that. Recording a refusal as a run would defer a real drain by a day
+      // and file an `organization_queue_runs` row saying it succeeded.
+      if (batch.skipped) {
+        result.skipped += 1;
+        await releaseOrgQueueClaim(row.org_id, deps);
+        continue;
+      }
+
       const finishedAt = deps.now();
       // BUG-2026-08-01-F9: processBatchAnchors does NOT throw on a definitive
       // broadcast rejection (e.g. UTXO contention with a concurrently-running

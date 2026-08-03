@@ -68,7 +68,7 @@ describe('runOrgQueueScheduler', () => {
 
     const result = await runOrgQueueScheduler();
 
-    expect(result).toEqual({ claimed: 0, succeeded: 0, failed: 0, processed: 0 });
+    expect(result).toEqual({ claimed: 0, succeeded: 0, skipped: 0, failed: 0, processed: 0 });
     expect(mockDbRpc).not.toHaveBeenCalled();
     expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
   });
@@ -100,7 +100,7 @@ describe('runOrgQueueScheduler', () => {
       p_limit: 10,
     });
     expect(mockProcessBatchAnchors).toHaveBeenCalledWith({ force: true, orgId: ORG_A });
-    expect(result).toEqual({ claimed: 1, succeeded: 1, failed: 0, processed: 3 });
+    expect(result).toEqual({ claimed: 1, succeeded: 1, skipped: 0, failed: 0, processed: 3 });
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({
       org_id: ORG_A,
       trigger: 'scheduled',
@@ -151,7 +151,7 @@ describe('runOrgQueueScheduler', () => {
       },
     );
 
-    expect(result).toEqual({ claimed: 2, succeeded: 1, failed: 1, processed: 1 });
+    expect(result).toEqual({ claimed: 2, succeeded: 1, skipped: 0, failed: 1, processed: 1 });
     expect(mockProcessBatchAnchors).toHaveBeenNthCalledWith(1, { force: true, orgId: ORG_A });
     expect(mockProcessBatchAnchors).toHaveBeenNthCalledWith(2, { force: true, orgId: ORG_B });
     expect(upsert.mock.calls[0]?.[0]).not.toHaveProperty('last_success_at');
@@ -159,6 +159,68 @@ describe('runOrgQueueScheduler', () => {
       expect.objectContaining({ orgId: ORG_A }),
       'scheduled org queue run failed',
     );
+  });
+
+  /**
+   * SCRUM-3031. `processBatchAnchors` now returns `skipped: true` when the
+   * cross-instance run lease is held by another instance (or is unverifiable
+   * and we fail closed) — the drain DID NOT RUN.
+   *
+   * Recording that as `succeeded` would be worse than a cosmetic audit lie:
+   * `recordOrgQueueRunResult` writes `last_run_at`, and
+   * `claim_due_org_queue_runs` only considers an org due once `last_run_at` is
+   * 24 hours old. A single long global drain holding the lease could therefore
+   * defer up to CLAIM_LIMIT_DEFAULT (25) orgs' dedicated runs by a full day
+   * each, while filing 25 `organization_queue_runs` rows saying they succeeded.
+   */
+  it('does not burn an org 24-hour slot when the run lease refuses the drain', async () => {
+    const { insert, upsert } = setupWriteTables();
+    mockDbRpc.mockResolvedValue({ data: [{ org_id: ORG_A, last_run_at: null }], error: null });
+    mockProcessBatchAnchors.mockResolvedValue({
+      processed: 0,
+      batchId: null,
+      merkleRoot: null,
+      txId: null,
+      skipped: true,
+    });
+
+    const result = await runOrgQueueScheduler(
+      {},
+      { now: () => new Date('2026-08-02T01:00:00.000Z'), workerId: 'worker-3' },
+    );
+
+    expect(result).toEqual({ claimed: 1, succeeded: 0, skipped: 1, failed: 0, processed: 0 });
+    // No false run-evidence row.
+    expect(insert).not.toHaveBeenCalled();
+    // The claim IS released — otherwise the org stays locked and is never
+    // re-claimable — but WITHOUT advancing the due clock.
+    expect(upsert).toHaveBeenCalledTimes(1);
+    const state = upsert.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(state).toMatchObject({ org_id: ORG_A, locked_at: null, locked_by: null });
+    expect(state).not.toHaveProperty('last_run_at');
+    expect(state).not.toHaveProperty('last_run_status');
+    expect(state).not.toHaveProperty('last_success_at');
+  });
+
+  it('still records a genuinely empty queue as a completed run', async () => {
+    const { insert, upsert } = setupWriteTables();
+    mockDbRpc.mockResolvedValue({ data: [{ org_id: ORG_A, last_run_at: null }], error: null });
+    // No `skipped` flag: the drain ran and found nothing. That IS a run.
+    mockProcessBatchAnchors.mockResolvedValue({
+      processed: 0,
+      batchId: null,
+      merkleRoot: null,
+      txId: null,
+    });
+
+    const result = await runOrgQueueScheduler(
+      {},
+      { now: () => new Date('2026-08-02T01:00:00.000Z'), workerId: 'worker-3' },
+    );
+
+    expect(result).toEqual({ claimed: 1, succeeded: 1, skipped: 0, failed: 0, processed: 0 });
+    expect(insert).toHaveBeenCalled();
+    expect(upsert.mock.calls[0]?.[0]).toHaveProperty('last_run_at');
   });
 
   it('fails loudly when the claim RPC returns malformed rows', async () => {
@@ -255,7 +317,7 @@ describe('runOrgQueueScheduler', () => {
     const result = await runOrgQueueScheduler({}, { workerId: 'worker-3' });
 
     expect(mockDbRpc).toHaveBeenCalledTimes(2);
-    expect(result).toEqual({ claimed: 1, succeeded: 1, failed: 0, processed: 2 });
+    expect(result).toEqual({ claimed: 1, succeeded: 1, skipped: 0, failed: 0, processed: 2 });
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ err: expect.any(String) }),
       expect.stringContaining('retrying once'),

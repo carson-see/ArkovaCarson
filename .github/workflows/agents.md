@@ -34,7 +34,7 @@ The root `typecheck-lint` job also runs `npm run lint:batch-drain-evidence`. Kee
 ## SCRUM-1068 — Sonatype SCA
 
 - `ci.yml` includes a non-blocking `sonatype-sca` PR job for the first sprint.
-- The local GPL/AGPL/SSPL deny-list is always enforced with `npm run security:license-denylist`; legacy `snarkjs` GPL transitive packages are documented in `scripts/security/license-denylist.allowlist.json`.
+- The local GPL/AGPL/LGPL/SSPL deny-list is always enforced with `npm run security:license-denylist`; legacy `snarkjs` GPL transitive packages and `libheif-js` (LGPL-3.0 — **shipped today** via the `heic-decode` production dependency, not "pending PR #1740" as this line previously claimed; corrected 2026-08-01) are documented in `scripts/security/license-denylist.allowlist.json`. 2026-07-28 (engineering-counsel review): the pattern was blind to `LGPL-*` strings (word-boundary bug — see `scripts/security/agents.md`) and newly flags `@img/sharp-libvips-*` (LGPL-3.0-or-later, transitive via `@huggingface/transformers` → `sharp`) on `main` with no allowlist entry yet — this gate is expected to be RED until that's triaged.
 - Sonatype Lifecycle remote evaluation runs only when `SONATYPE_LIFECYCLE_URL`, `SONATYPE_LIFECYCLE_USERNAME`, `SONATYPE_LIFECYCLE_PASSWORD`, and `SONATYPE_LIFECYCLE_APPLICATION_ID` secrets exist.
 
 ## Patterns

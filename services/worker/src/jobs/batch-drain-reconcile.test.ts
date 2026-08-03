@@ -365,11 +365,20 @@ vi.mock('../chain/client.js', () => ({
   getInitializedChainClient: vi.fn(),
 }));
 
-vi.mock('../utils/db.js', () => ({
+vi.mock('../utils/db.js', async () => {
+  // Async factory so the shared `job_queue` lease double can be imported here.
+  // A static import would not work: `vi.mock` factories are hoisted above it.
+  const { grantedRunLeaseTable } = await import('./__tests__/__testHelpers.js');
+  return {
   db: {
     from: (table: string) => {
       if (table === 'anchors') return makeAnchorsQuery();
       if (table === 'anchor_txid_journal') return makeEmptyJournalQuery();
+      // SCRUM-3031: the drain claims a cross-instance run lease before any
+      // work. This suite drives the REAL drain against SQL-faithful RPC
+      // doubles, so the lease is always granted; its semantics are pinned in
+      // `__tests__/run-lease.test.ts`.
+      if (table === 'job_queue') return grantedRunLeaseTable();
       throw new Error(`unexpected table ${table}`);
     },
     rpc: async (fn: string, params: Record<string, unknown>) => {
@@ -389,7 +398,8 @@ vi.mock('../utils/db.js', () => ({
     },
   },
   withDbTimeout: async (fn: () => Promise<unknown>) => fn(),
-}));
+  };
+});
 
 // orgCredits: no CONTRACT_POSTSIGNING anchors here, so the gate is a pass-through,
 // but mock it so the import graph doesn't pull the real Supabase client.

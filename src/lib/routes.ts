@@ -17,6 +17,7 @@ export const ROUTES = {
   ABOUT: '/about',
   PRIVACY: '/privacy',
   TERMS: '/terms',
+  THIRD_PARTY_NOTICES: '/legal/third-party-notices',
   CONTACT: '/contact',
   EMBED_VERIFY: '/embed/verify/:publicId',
   SEARCH: '/search',

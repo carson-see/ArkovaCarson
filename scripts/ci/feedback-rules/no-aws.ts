@@ -18,9 +18,14 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { REPO, hasLabel, changedFiles, LABELS } from '../lib/ciContext.js';
 
+// Only files that actually exist belong here. `aws-kms-provider.ts` was
+// allow-listed as a "documented dead branch" long after it was deleted from the
+// tree — an exemption for a nonexistent path is a standing hole, because
+// re-creating that exact filename would silently bypass this lint. Removed
+// 2026-08-02; if an AWS provider is ever reintroduced it must be argued for,
+// not inherited.
 const ALLOWED_PATHS = [
   'services/worker/src/chain/signing-provider.ts',
-  'services/worker/src/chain/aws-kms-provider.ts',
 ];
 
 const VIOLATION_RES = [

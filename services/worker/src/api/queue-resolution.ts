@@ -445,6 +445,19 @@ export async function handleRunOrgAnchorQueue(
   const startedAt = new Date();
   try {
     const result = await processBatchAnchors({ force: true, orgId });
+
+    // SCRUM-3031: the drain never ran — another instance holds the batch run
+    // lease. Do not file run evidence for it: `recordOrgQueueRunResult` writes
+    // `last_run_at`, and `claim_due_org_queue_runs` only re-offers an org 24
+    // hours after that, so recording a refusal as "succeeded" would tell the
+    // admin their queue ran AND defer the org's next scheduled drain by a day.
+    // `skipped` is an additive field on an existing 200 response (§1.8).
+    if (result.skipped) {
+      logger.info({ orgId, userId }, 'Manual org queue run skipped — batch run lease held elsewhere');
+      res.json({ ok: true, ...result });
+      return;
+    }
+
     const finishedAt = new Date();
 
     // BUG-2026-08-01-F9 (GAP 1): processBatchAnchors does NOT throw on a
