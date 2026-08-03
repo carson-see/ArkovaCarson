@@ -52,6 +52,51 @@ Every fix is mutation-verified — each was reverted individually to confirm its
 defect. One first cut (`compliance-audit`) passed against the defective code because it 500'd for an
 unrelated seeded reason, and was rewritten so the rules read is the only variable. **A guard with no
 test that dies without it is a comment.**
+## 2026-08-02 SECURITY — outbound PII gate on `GET /api/v1/verify/:publicId/provenance` (the FOURTH public projection)
+
+**Mounted `router.use('/verify', provenanceRouter)` with NO `requireScope` and NO auth middleware, and `provenance.ts` has no auth check of its own — it is fully anonymous.** Two leaks, closed with two *different* treatments, and the difference is the reusable lesson:
+
+- **`revocation_reason`** — issuer-authored free text that *might* carry identity. Two layers, same as everywhere else: academic records (`isEducationCredentialType`) emit none at all, every other type passes `publicFreeTextOrNull`. `credential_type` had to be added to the SELECT — its absence is *why* this projection could not apply the rule the others do.
+- **`signatures.signer_name`** — a person's name **by construction**: it is `cert.subject_cn` (`signatures.ts:248`), the X.509 Subject CN, stored beside `signer_org`/`location`/`contact_info`. **A value detector is useless against it** — the measured finding behind this whole contract is that no regex separates a bare name from an institution name. So it is **never emitted and never SELECTed**, so a future edit to the detail string cannot reintroduce it. This is the first field on any of these surfaces treated as *never-emit* rather than *gate-or-suppress*, because it is the first that is definitionally an identity rather than prose that may contain one. What survives: that a signature exists, when, its format/level, and an `evidence_ref` resolving the signer through an **authenticated** surface.
+
+**`format`/`level` are emitted unguarded, and that was checked rather than assumed:** both are DB CHECK-constrained closed vocabularies (`signatures_format_check` = XAdES/PAdES/CAdES, `signatures_level_check` = B-B/B-T/B-LT/B-LTA) *and* Zod-enum validated at the write path (`signatures.ts:85`).
+
+**Three facts, three strings.** `no reason provided` is a *claim*. Asserting it over a reason that exists but was suppressed is false (§1.5, §1.13 R-7), so a suppressed reason degrades to a bare `Revoked` — which asserts nothing about why — while a genuinely absent reason keeps the original wording. `hasStoredFreeText` is what distinguishes them; don't collapse the branches.
+
+**New shared module: `public-projection-text.ts`.** The TS value layer (`publicFreeTextOrNull`, `hasStoredFreeText`) now lives in ONE place, imported by `verify.ts` and `provenance.ts`. It was extracted from `verify.ts` the moment a second caller appeared. **Do not copy it into a third file** — two copies of the wrapper is the same drift the contract exists to prevent, just one level down from the detectors. The contract test asserts no other file defines `publicFreeTextOrNull`.
+
+**A FIFTH ungated projection is open and recorded:** `GET /api/v1/anchor/:publicId/evidence` (`anchor-evidence.ts:254,256`) emits `issuer_name` and `description` raw and is anon-reachable via `anchorAnonAllow`. It is in the contract's `known_ungated_projections`. It was NOT fixed here because it is a **signed evidence package** — changing what it contains needs its own decision about whether omission invalidates the package's own hash. Its two sibling routers on the same mount (`anchor-lifecycle.ts`, `anchor-extraction-manifest.ts`) were checked and emit no free text.
+
+## 2026-08-02 SECURITY — outbound PII gate on `GET /api/v1/verify/:publicId` (the THIRD public projection)
+
+**VULNERABILITY CLASS — do not reintroduce:** `buildVerificationResult` in `verify.ts` emitted `anchor.description` **raw** to anonymous callers, for every credential type, including `DEGREE`/`TRANSCRIPT`/`CERTIFICATE`. The route is anon-reachable by design (`router.ts`: `if (!req.apiKey && req.method === 'GET') next()`). It was **not** covered by the REG-02 `directory_info_opt_out` suppression sitting directly above it in the same function — that block gates `issuer_name`/`recipient_identifier`/`issued_date`/`expiry_date` only — so even an explicitly opted-out learner was exposed here.
+
+**There are THREE public projections of the same anchor rows, and they must not drift again:**
+
+| # | Surface | Owner | Landed |
+|---|---|---|---|
+| 1 | `public.get_public_anchor` (anon-GRANTed, browser/PostgREST) | migration `0385` | PR #1841 |
+| 2 | `GET /api/v1/credentials/:publicId/ctdl` | `ctdl/ctdl-pii-guard.ts` | PR #1815 |
+| 3 | `GET /api/v1/verify/:publicId` | `api/v1/verify.ts` | this change |
+
+The rule is written down ONCE in `scripts/ci/public-pii-projection-contract.json`. **Change it there plus all three implementations in one PR** — the contract test fails otherwise, which is the point.
+
+**The policy decision (stated, not inherited).** Academic-record suppression here is **UNCONDITIONAL**, matching the other two — deliberately NOT gated on `directory_info_opt_out`, even though the surrounding REG-02 code is. Opt-out means the default is *publish*, and default-publish is the defect class; the field was not covered by the opt-out anyway; and one row with three anonymous projections giving three answers is not a privacy posture (the verify **page** reads the SQL path, which suppresses — the API disagreeing with the page it serves *is* the drift). Cost: an issuer-authored description no longer ships on an academic record for anyone. It already did not ship on either other public projection, so nothing publicly reachable elsewhere is lost.
+
+**What the gate does.** Two layers, mirroring 0385:
+- **Structural** — `isEducationCredentialType()` (from the guard, `DEGREE`/`CERTIFICATE`/`TRANSCRIPT`) ⇒ `description` omitted outright. `issuer_name` and `jurisdiction` are **not** structurally suppressed: the issuer is an *institution*, not the learner, and a jurisdiction tag is informational (§1.5). Same split as 0385.
+- **Value** — `publicFreeTextOrNull()` runs on every credential type over `description`, `issuer_name`, `jurisdiction`, `sub_type`, `file_mime`. It **omits, never throws**: this body is a verification ANSWER, and 404ing would tell an anonymous verifier a genuinely anchored document does not exist. (The CTDL path fails closed instead, correctly — its body is a *publication*.)
+
+**Rules for anyone touching this file:**
+- **Reuse the detector, never re-implement it.** Import from `../../ctdl/ctdl-pii-guard.js` — the guard, not `ctdl-serializer.js`. The guard is deliberately dependency-free so a non-CTDL path can use it without dragging the CTDL serializer onto this hot anonymous route. A second hand-rolled copy of these patterns is the drift.
+- **Do NOT add a learner-name heuristic.** Measured twice (PR #1815, then again for 0385): the capitalised-pair patterns catch **zero** real leak shapes (bare, all-caps, non-ASCII, apostrophe, hyphenated all evade `[A-Z][a-z]{1,}`) while `for` as a bare preposition drops "Center for Professional Development", "Society for Human Resource Management", "Ethics for Trial Lawyers", "Revoked for Non Payment". Those strings are pinned in the contract's `must_publish_vectors`. Learner names are covered *structurally* here, which is precision-independent.
+- **Do NOT "reconcile" `FERPA_EDUCATION_TYPES`.** `constants/ferpa.ts` carries a **fourth** member (`CLE`) on purpose: it drives the FERPA §99.33 re-disclosure notice and the §99.37 directory opt-out — notice/consent mechanics over the wider practitioner+academic set — not free-text suppression. Two lists, two jobs. Both are pinned by `src/tests/public-anchor-pii-projection.contract.test.ts`; a change there failing CI is the signal to make a decision, not to edit the pin.
+- **`STRUCTURAL_API_RICH_KEYS` is an ALLOW-list and the gate FAILS CLOSED against it.** Every *string*-valued API-RICH key not named there routes through the value gate, so a future additive §1.8 field is gated by default instead of shipping raw because nobody remembered. Adding a key there publishes it raw to anonymous callers — state why it is safe in the contract. (`sub_type` is bare `text` in the schema — no CHECK, no enum — and `file_mime` is client-supplied, so both are gated; the numeric/jsonb members carry no free text.)
+- **The gate lives in `buildVerificationResult`, not in the route handler, on purpose.** `oracle.ts` and `batch.ts` reuse that builder, so all three surfaces inherit the fix. A route-level gate would have left two of them leaking.
+- `utils/verifyCache.ts` `KEY_PREFIX` was bumped `verify:v2:` → `verify:v3:` as part of this change. That is a **security** requirement, not hygiene: the gate runs before `setCachedVerification`, so new writes are safe, but entries written by the pre-fix build carry a raw `description` and would keep serving it for the rest of the 5-minute TTL after deploy.
+
+**Tests.** `verify-pii-projection.test.ts` drives the **real router through supertest** — not `buildVerificationResult` in isolation — because the finding is that the route is anonymously reachable, and a unit test on the builder would not prove that. It loads its corpus from the shared contract rather than restating it. `src/tests/public-anchor-pii-projection.contract.test.ts` gained a source-shape suite proving the rule cannot silently disappear (a behavioural suite alone cannot catch an edit that deletes the gate and its tests together). All three guards were mutation-verified: dropping the academic branch fails 16 behavioural tests; importing `containsLearnerNamePii` fails the contract test; exempting `sub_type` fails both.
+
 ## 2026-07-28 R19 — fingerprint_source additive field (advances SCRUM-2481)
 
 `verify.ts`: `VerificationResult` / `AnchorByPublicId` / `AnchorSelectRow` gained `fingerprint_source: 'document_bytes' | 'issuer_record_attestation' | null` (migration `0376`, `anchors.fingerprint_source`). Additive nullable — §1.8, no version bump. Wired through `API_RICH_KEYS` / `EMPTY_API_RICH_FIELDS` / `mapAnchorRow` / `defaultLookup`'s select string. `docs/api/openapi.yaml` `VerificationResult` schema updated to match. `__test-helpers__/build-anchor.ts` (shared fixture) updated — any NEW hand-built `AnchorByPublicId` literal elsewhere needs the field too (existing callers that spread `EMPTY_API_RICH_FIELDS`, e.g. `batch.ts`/`oracle.ts`, pick it up automatically). Out of scope for this PR: `anchor-bulk.ts` (`POST /api/v1/anchor/bulk`, currently zero callers per the PI-0.5 bulk-upload audit) also always receives pre-computed fingerprints and should set `fingerprint_source: 'document_bytes'` once wired up by whichever workstream lands that.
@@ -283,6 +328,18 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 - Additive nullable field, no API version bump (§1.8). In `verify.ts` the note is derived from whatever `compliance_controls` the allowlist loop actually placed on the response — keyed off `result`, never off `anchor`, so the two cannot disagree. It is deliberately NOT in `EMPTY_API_RICH_FIELDS`: it is derived, not a column on `AnchorByPublicId`.
 - **Retired control IDs are filtered on read.** `sanitizeStoredComplianceControls()` drops `DPF-NOTICE` / `DPF-ACCOUNTABILITY` from stored values. SCRUM-2283 removed the EU-US Data Privacy Framework claim from the frontend as a false external-status claim, but the worker mapping kept emitting it, so ~2.9M SECURED anchors persisted it. No migration can un-say that; the read path is where it is asserted, so that is where it is stopped.
 - `compliance_controls` is declared `ComplianceControls = Record<string, unknown> | string[]`. The column has always held an **array**; the object arm survives only because the public type advertised it. The OpenAPI schema documents both arms for the same reason.
+
+## 2026-08-01 BUG-2026-06-24-007 (worker side) — controls are a CURRENCY claim
+
+- `compliance_controls` is withheld entirely once a credential is no longer current. Gate: `controlsApplyForStatus()` in `utils/complianceMapping.ts` (true only for `SECURED` / `ACTIVE`, fails closed on unknown/null). Applied in `verify.ts`, `audit-export.ts` (`getControlIds`), `ai-accountability-report.ts`, and the GRC push.
+- **Why suppression and not a "no longer current" marker:** the surfaces that matter most are machine-read. A GRC platform ingesting `controls: [...]`, or a CSV importer, maps them as evidence no matter what prose sits beside them. Suppression is unambiguous to both machines and humans; a qualifier only works for humans who read it. The SCRUM-2227 note disclaims **attestation**, not **currency** — it does not cure this.
+- **Matches the frontend**, which has gated its compliance section on `isSecured` since `0c90f881a` (2026-06-24). That fix was explicitly frontend-only, which is why the worker kept serving the full SOC2/HIPAA/eIDAS set next to `status: REVOKED`. Same record must not show none on the page and a full set in the export.
+- **The note goes with the list.** No controls ⇒ no `compliance_controls_note`; the note qualifies a list that is not there.
+- **The audit PDF says WHY**, with TWO distinct strings — absence alone is ambiguous and could be read as "never had controls". `CONTROLS_WITHHELD_NO_LONGER_CURRENT` (REVOKED/EXPIRED/SUPERSEDED) vs `CONTROLS_WITHHELD_NOT_YET_ANCHORED` (PENDING/SUBMITTED/unknown, and the default). **Do not merge them:** the revoked wording says "its anchor receipt and timestamps above are unchanged", which is FALSE for a record whose `chain_tx_id`/height/timestamp are all null — that would put a false claim on an auditor-facing artifact inside a claims-honesty fix. Machine formats (CSV, JSON, GRC payload) just omit.
+- **Batch PDF:** `frameworkSet` can now be EMPTY (the batch endpoint takes a caller-supplied `status`, e.g. `REVOKED`); before the currency gate this was unreachable because `getControlIds` always fell back to the never-empty universal set. Render the withheld explanation in that case — never a blank Framework Coverage line followed by the informational note, which would leave the note qualifying a list that is not there.
+- **Any change to the verify response shape MUST bump `KEY_PREFIX` in `utils/verifyCache.ts`.** Hits are served verbatim without re-running `buildVerificationResult`, and `invalidateVerificationCache` does NOT re-fire for an already-revoked/expired anchor, so a stale entry would keep serving the withheld controls for the full TTL.
+- **DO NOT** "fix" this by re-adding controls with a disclaimer string. Withholding is silence; a stale control list is an assertion (R-7 / §1.5).
+
 ## 2026-08-01 SCRUM-2293 — CTDL academic records emit no issuer free text
 
 - `credentials-ctdl.ts` is unchanged, but the BODY of an academic-record projection is narrower: for `credential_type` in `DEGREE`/`CERTIFICATE`/`TRANSCRIPT`, `ceterms:name` is now controlled vocabulary derived from the CTDL `@type` ("Bachelor Degree", "Academic Transcript") and `ceterms:description` / `ceterms:revocationReason` are omitted. Rationale + the measured reason a name-detection heuristic was rejected: `services/worker/src/ctdl/agents.md` (2026-08-01).
@@ -331,8 +388,100 @@ PostgREST `.in()` filter takes 400 Bad Request, postgrest-js RESOLVES that as
   chunk error throws to the route's 500 handler **before** the audit event is written. Also an
   explicit opt-out from `assertNotAllChunksFailed`, in the strict direction: an ISA 530 sample missing
   one chunk gets signed off as complete.
-- **Known, NOT fixed here** (separate story): the `sample_percentage` path draws its sample from
-  `db.from('anchors').select('public_id')` with no `.range()`, so PostgREST's default 1000-row cap
-  silently truncates the population — while `total_population` is reported from a separate exact
-  count. On a 3.1M-anchor org the sample is drawn from an arbitrary 1000 rows and reported as if drawn
-  from all of them. That is an audit-validity bug in its own right and needs its own fix + tests.
+- **The `sample_percentage` population truncation is fixed in the stacked follow-up below**, not in
+  this PR. It was recorded here as "Known, NOT fixed here" while it was still open.
+
+## 2026-08-02 — `auditBatchVerify.ts` sampled a population it did not read (PR #1865, stacked on #1853)
+
+The `sample_percentage` path drew its sample from
+`db.from('anchors').select('public_id').eq('org_id', …)` with **no pagination**. PostgREST
+answers that with its row maximum and says nothing about the rest, so the "population" was an
+arbitrary 1000 rows — while `total_population` was reported from a **separate** exact-`count`
+head query over the whole org. On the real DocuSign org (3,151,539 anchors) a 1% request
+returned 10 credentials drawn from an arbitrary 1000, presented alongside
+`total_population: 3151539`. **The auditor was told the sample came from the full population;
+it did not.** An audit-validity defect, not a performance one — the endpoint's entire job is to
+support an inference from sample to population, and that inference was unsound.
+
+### The invariant this file now upholds
+
+> Either the endpoint refuses, or `total_population` is the TRUE population and the sample is a
+> distinct subset of it of exactly the requested size.
+
+`total_population` is literally `sample.population`, the length of the id list the draw came
+from — there is no second query it can disagree with. A 112-case property sweep
+(population x server page cap x percentage) asserts the sentence above directly, because both
+bugs this endpoint has had were violations of it while every individual response still looked
+well-formed.
+
+### Paging
+
+Delegated to `scanAllPages` (`utils/postgrest-filter.ts`) — see `utils/agents.md`. **The first
+attempt at this fix hand-rolled the loop and reintroduced the same truncation** via
+`if (page.length < POSTGREST_ROW_LIMIT) break`, which is wrong whenever the server's
+`db-max-rows` is below that constant: with a 500-row cap it reported a 5,000-anchor org as
+holding 500 records, at HTTP 200. That is why the loop is no longer written here.
+
+Ordering is total (`created_at` then `public_id`): offset paging over a non-deterministic order
+drops and duplicates rows across page boundaries. `created_at` leads so the scan rides
+`idx_anchors_org_deleted_created`; ASC so concurrent inserts append past the cursor instead of
+shifting every page under it. Ids are deduped after the scan, so a mid-scan insert cannot
+inflate the reported figure.
+
+**Kept as OFFSET paging deliberately.** Keyset would be ~13x less index work at the ceiling,
+but the compound `(created_at, public_id)` cursor needs an `.or()` across columns, and HANDOFF
+records that exact shape on `anchors` misleading the planner into a seq scan on the DocuSign
+org. Do not switch without an `EXPLAIN (ANALYZE)` against org
+`40383eb2-f1cd-4a85-8099-afafff95e5cf`.
+
+### Refusals (both 422, distinct from the existing 400 for Zod failures)
+
+- Above `MAX_SAMPLEABLE_POPULATION` (25,000) → `population_too_large`: no sample, **no
+  population figure**, no `AUDIT_BATCH_VERIFY` row. Only an honest lower bound, labelled
+  `population_at_least`. **The DocuSign org is above this ceiling**, so percentage sampling
+  refuses there rather than fabricating; `credential_ids` is unaffected.
+- Above `MAX_SAMPLE_SIZE` (1000) → `sample_too_large`, carrying the true `total_population`,
+  `requested_sample_size`, and the `max_sample_percentage` that would fit. Trimming to the cap
+  would report an N% sample that is not an N% sample. 1000 is the same cap `credential_ids`
+  has always had, so both routes bound the downstream chunked `.in()` identically.
+
+Raising the population ceiling means moving sampling into Postgres (a `TABLESAMPLE`/reservoir
+RPC returning sample **and** true population in one call). That is a migration, so T3, and a
+separate story. Adding pages is not the fix.
+
+### Sampling primitives (both exported for direct unit test)
+
+- **`seededSample(items, count, rng)`** — selection-sampling Fisher-Yates, O(count) not
+  O(items): 1,000 draws instead of 25,000 at the ceilings. Replaces
+  `[...rows].sort(() => rng() - 0.5)`, which was **not a shuffle**: a comparator returning a
+  random sign is not a consistent ordering, so the permutation is a function of the sort
+  algorithm's comparison schedule, not of the randomness — **no PRNG quality fixes it**.
+  Measured under V8's TimSort, 16 elements, 2000 trials, uniform expectation 125: index 0 was
+  selected 340 times, index 1 only 77.
+- **`seededRandom`** is now **mulberry32** (the idiom already used in `ctdl-importer.fuzz.test.ts`
+  and `ai/eval/pe-synthetic-generator.ts`), not the previous LCG. The LCG's FIRST output is a
+  near-linear function of the seed: over seeds 1..2000 on a 16-element population it reached
+  only **14 of 16** buckets, so two elements could never be picked first. Auditors pick small
+  sequential seeds and `seededSample` takes its first pick from that first output, so this was
+  live sampling bias on the exact input pattern the feature invites. The old whole-array
+  shuffle masked it by burning thousands of draws first — luck, not design. **If you make this
+  cheaper again, keep the count=1 uniformity test: it is the only thing that pins the PRNG's
+  first output.** The old divisor `0xffffffff` also made the max draw exactly 1.0, indexing one
+  past the end; `seededSample` clamps as well rather than trusting its rng.
+
+### Seed and audit-trail handling
+
+`seed ??`, not `seed ||` — seed 0 is a seed, and `||` sent the likeliest value an auditor would
+type down the unseeded path. An unseeded request now generates a seed and **returns** it, so
+ISA 530 reproducibility is meetable. The `sampling` block in the audit row is gated on the
+branch actually TAKEN (`sample !== null`), not on `sample_percentage` being present: the Zod
+refine is an OR, so both params validate, `credential_ids` wins, and gating on presence put a
+percentage-sample claim into the permanent audit trail for a run that verified the caller's own
+hand-picked list.
+
+The empty-org branch no longer returns a second response shape for the same 200.
+
+**Known, NOT fixed here:** `VerifyResult.fingerprint` is on the §6 banned-field list —
+ORG_ADMIN-only and pre-existing, and removing a field from a frozen v1 body is exactly the
+breaking change §1.8 governs. Separately, the seed is caller-chosen by design, so an auditee can
+shop seeds for a favourable sample; under ISA 530 the seed is meant to be the auditor's to pick.

@@ -11,3 +11,4 @@
 ## Conventions
 - CSP-safe: no inline styles injected at runtime; uses shadow DOM isolation.
 - Deployed to CDN via `scripts/deploy-embed-cdn.sh`.
+- **`LICENSE`** (2026-07-28, engineering-counsel review): MIT text copied verbatim from `packages/verifier-cli/LICENSE`. Listed in `package.json` `files` so it actually ships in the published tarball. See `scripts/security/package-license-files.test.ts`.

@@ -48,17 +48,7 @@ Verify yourself — never ask the reviewer to check manually.
 
 ## Doc Update Matrix
 
-| Changed | Update Confluence page |
-|---|---|
-| Schema | Data Model |
-| RLS | Security & RLS |
-| Audit events | Audit Events |
-| Bitcoin / chain | On-Chain Policy |
-| Billing | Payments & Entitlements |
-| Webhooks | Webhooks |
-| Verification API | Identity & Access |
-| Feature flags | Switchboard |
-| Anchor lifecycle | + `machines/bitcoinAnchor.machine.ts` (re-verify with `check`) |
+**In CLAUDE.md §4.** It used to be duplicated here verbatim, in a file edited independently — two copies of the same table, guaranteed to drift. CLAUDE.md keeps it because it reaches every agent, including ones that never load a skill.
 
 ## Shipping check
 
@@ -66,4 +56,4 @@ A feature is not shipped because the hook or endpoint exists. Grep for a **non-t
 
 ## Related
 
-`memory/feedback_ship_the_ui_not_just_the_hook.md`, `memory/feedback_no_premature_jira_transitions.md`, `memory/feedback_transition_subtasks_with_parent.md`, `memory/feedback_sweep_ci_for_full_suite_regressions.md`.
+None of this skill's rules have a standalone `memory/` file. The index is `memory/README.md`.
