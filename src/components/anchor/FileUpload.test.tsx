@@ -226,6 +226,106 @@ describe('FileUpload — spreadsheet dual-mode (W2 / F1)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Lane 4 HakiChain 22-format matrix (SCRUM bug blitz, 2026-08)
+//
+// The 22 formats are the ones enumerated in the actual HakiChain LOI /
+// Exhibit A pilot documents (Drive, `HakiChain LOI: Exhibit A` +
+// `Arkova_HakiChain - Letter of Intent`): PDF, Word (.doc/.docx),
+// OpenDocument Text (.odt), RTF, Plain Text, HTML, XML, JSON, Excel
+// (.xls/.xlsx), OpenDocument Spreadsheet (.ods), CSV, PowerPoint
+// (.ppt/.pptx), OpenDocument Presentation (.odp), EPUB, Markdown, PNG, JPEG,
+// TIFF, GIF, WebP, SVG, HEIF/HEIC.
+//
+// FileUpload.tsx has NO `accept` attribute and NO type-based rejection for a
+// single-file drop/select — every one of the 22 formats reaches either the
+// spreadsheet mode-choice step (csv/xlsx/xls — the ones isBulkUploadFile()
+// recognizes) or `processFile()` -> `generateFingerprint()` ->
+// `onFileSelect()` directly. This suite proves that for all 22, including
+// the two (.doc, .ppt — legacy binary Office formats) that CANNOT be
+// extracted for AI metadata (see ocrWorker.test.ts) — upload + fingerprint
+// is unaffected by that separate, later-stage limitation.
+// ---------------------------------------------------------------------------
+describe('FileUpload — HakiChain 22-format LOI matrix (accept/dispatch logic)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Reaches onFileSelect (fingerprint + anchor path) WITHOUT pausing on the
+  // spreadsheet mode-choice step. Includes .ods (spreadsheet-family, but NOT
+  // recognized by isBulkUploadFile()) and the two legacy-binary formats whose
+  // extraction later soft-fails but whose upload/fingerprint does not.
+  it.each([
+    ['contract.pdf', 'application/pdf'],
+    ['agreement.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    ['legacy-agreement.doc', 'application/msword'],
+    ['deed.odt', 'application/vnd.oasis.opendocument.text'],
+    ['affidavit.rtf', 'application/rtf'],
+    ['notice.txt', 'text/plain'],
+    ['filing.html', 'text/html'],
+    ['metadata.xml', 'application/xml'],
+    ['attachment.json', 'application/json'],
+    ['roster.ods', 'application/vnd.oasis.opendocument.spreadsheet'],
+    ['slides.pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+    ['legacy-slides.ppt', 'application/vnd.ms-powerpoint'],
+    ['minutes.odp', 'application/vnd.oasis.opendocument.presentation'],
+    ['handbook.epub', 'application/epub+zip'],
+    ['summary.md', 'text/markdown'],
+    ['scan.png', 'image/png'],
+    ['scan.jpg', 'image/jpeg'],
+    ['scan.jpeg', 'image/jpeg'],
+    ['scan.tiff', 'image/tiff'],
+    ['scan.gif', 'image/gif'],
+    ['scan.webp', 'image/webp'],
+    ['seal.svg', 'image/svg+xml'],
+    ['scan.heic', 'image/heic'],
+  ])('%s (%s) reaches generateFingerprint + onFileSelect directly, no mode-choice step', async (name, type) => {
+    const { input, onFileSelect, onBulkDetected, onMixedBatchDetected } = renderUpload();
+    const file = new File(['bytes'], name, { type });
+    changeFiles(input, file);
+
+    await vi.waitFor(() => {
+      expect(onFileSelect).toHaveBeenCalledWith(file, 'a'.repeat(64));
+    });
+    expect(screen.queryByTestId('spreadsheet-mode-choice')).not.toBeInTheDocument();
+    expect(onBulkDetected).not.toHaveBeenCalled();
+    expect(onMixedBatchDetected).not.toHaveBeenCalled();
+  });
+
+  // Excel formats (.xls/.xlsx) and CSV are recognized by isBulkUploadFile()
+  // and pause on the W2/F1 mode-choice step instead of going straight to
+  // onFileSelect — this is intentional dual-mode behavior (see the
+  // "spreadsheet dual-mode (W2 / F1)" describe block above), not a rejection.
+  // Re-asserted here as part of the full 22-format sweep so the matrix in the
+  // PR body has a single source of truth to cite.
+  it.each([
+    ['records.csv', 'text/csv'],
+    ['records.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    ['records.xls', 'application/vnd.ms-excel'],
+  ])('%s (%s) pauses on the spreadsheet mode-choice step (dual-mode, not a rejection)', (name, type) => {
+    const { input, onFileSelect, onBulkDetected } = renderUpload();
+    const file = new File(['a,b\n1,2'], name, { type });
+    changeFiles(input, file);
+
+    expect(screen.getByTestId('spreadsheet-mode-choice')).toBeInTheDocument();
+    expect(onFileSelect).not.toHaveBeenCalled();
+    expect(onBulkDetected).not.toHaveBeenCalled();
+  });
+
+  it('choosing "Secure this file as a document" for each spreadsheet format still reaches onFileSelect (matrix completeness)', async () => {
+    const { input, onFileSelect } = renderUpload();
+    const file = new File(['a,b\n1,2'], 'records.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    changeFiles(input, file);
+    fireEvent.click(screen.getByTestId('spreadsheet-mode-document'));
+
+    await vi.waitFor(() => {
+      expect(onFileSelect).toHaveBeenCalledWith(file, 'a'.repeat(64));
+    });
+  });
+});
+
 describe('isBulkUploadFile', () => {
   it('returns true for .csv files', () => {
     expect(isBulkUploadFile(new File([], 'data.csv', { type: 'text/csv' }))).toBe(true);
