@@ -344,6 +344,18 @@ vi.mock('../jobs/drive-file-changed.js', () => ({
   runDriveFileChangedJobs: (...args: unknown[]) => mockRunDriveFileChangedJobs(...args),
 }));
 
+// GH #1835: Drive subscription (changes.watch channel) renewal cron route.
+// PR #1944 review correction: the route now calls the lease-guarded
+// runDriveSubscriptionRenewal() entry point (jobs/drive-subscription-renewal-deps.js)
+// directly, not the pure renewDriveSubscriptions() + the three factories —
+// see routes/scheduled.ts for the in-process backup that calls the SAME function.
+const mockRunDriveSubscriptionRenewal = vi.fn().mockResolvedValue({
+  scanned: 2, renewed: 1, degraded: 0, failed: 1,
+});
+vi.mock('../jobs/drive-subscription-renewal-deps.js', () => ({
+  runDriveSubscriptionRenewal: (...args: unknown[]) => mockRunDriveSubscriptionRenewal(...args),
+}));
+
 // SCRUM-2234: stuck anchor monitor cron route.
 const mockRunStuckAnchorCheck = vi.fn().mockResolvedValue({
   healthy: true,
@@ -955,6 +967,37 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/drive-file-changed');
       expect(res.status).toBe(401);
       expect(mockRunDriveFileChangedJobs).not.toHaveBeenCalled();
+    });
+  });
+
+  // GH #1835: renews Drive changes.watch channels before their ~7-day expiry.
+  // PR #1944 review correction: calls the lease-guarded
+  // runDriveSubscriptionRenewal() directly (no args — it builds its own
+  // deps internally) rather than the pure function + factories.
+  describe('POST /drive-subscription-renewal', () => {
+    it('runs the lease-guarded renewal sweep and returns its summary', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-subscription-renewal');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ scanned: 2, renewed: 1, degraded: 0, failed: 1 });
+      expect(mockRunDriveSubscriptionRenewal).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns 500 when the renewal sweep throws (Scheduler retries)', async () => {
+      mockRunDriveSubscriptionRenewal.mockRejectedValueOnce(new Error('db unavailable'));
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-subscription-renewal');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
+    });
+
+    it('is protected by cronAuth — 401 unauthenticated in production', async () => {
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      const app = createApp();
+      const res = await request(app).post('/cron/drive-subscription-renewal');
+      expect(res.status).toBe(401);
+      expect(mockRunDriveSubscriptionRenewal).not.toHaveBeenCalled();
     });
   });
 

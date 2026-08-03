@@ -180,6 +180,20 @@ describe('0388 — the deliberately-public verification surface still works for 
         status: 'SECURED',
         org_id: org.id,
         user_id: profile.id,
+        // 0390 (SCRUM-3102) made `credential_type IS NULL` FAIL CLOSED on the
+        // academic-record suppression gate — an absent type now suppresses
+        // `metadata.title` and replaces `filename` with the generic
+        // "Secured Document" label, same as a real academic record. This
+        // fixture's whole point is proving `metadata.title` SURVIVES the
+        // projection for an ordinary record, so it must pick a concrete
+        // non-academic, non-suppressed type. Leaving this column unset (as
+        // it was before 0390 existed) silently flips the anchor into the
+        // suppressed branch and the assertion below fails — that is exactly
+        // the "stale fixture vs already-shipped fix" class, not a leak; see
+        // tests/rls/public-anchor-pii-projection.test.ts's own
+        // 'SCRUM-3102 — an anchor with NULL credential_type FAILS CLOSED'
+        // case for the behavior this fixture must NOT trigger.
+        credential_type: 'OTHER',
         // 0357's "SECURED => on-chain receipt present" trigger is GUC-gated and
         // inert by default, but supply both anyway so this fixture keeps
         // working if/when that GUC is flipped on.

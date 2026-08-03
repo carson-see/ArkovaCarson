@@ -138,6 +138,38 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
     enabled: true,
     maxSilenceMs: 30 * HOURS,
   },
+  // GH #1835/#1836 (PR #1944 review round 3): Drive changes.watch channel
+  // renewal — also the rotation mechanism for the legacy org-id
+  // channel_token security fix. `enabled: true` records INTENT (this SHOULD
+  // be scheduled hourly), which is what the dead-man's silence-based
+  // alarming needs to catch a forgotten/failed Cloud Scheduler creation —
+  // the job is declared in scripts/gcp-setup/cloud-scheduler.sh but NOT YET
+  // applied to prod as of this PR. maxSilenceMs matches check-stuck-anchors
+  // (identical hourly cadence).
+  //
+  // HONESTY NOTE (verified against this exact head — do not assume this
+  // note stays accurate without re-checking): registering here makes this
+  // job COVERED BY CONSTRUCTION whenever scheduler-deadman.ts /
+  // scheduler-pause-attribution.ts's audit actually runs, but that audit
+  // has NO live Cloud Scheduler trigger of its own anywhere in this repo as
+  // of this PR (`grep -rln 'runSchedulerPauseAudit\|evaluateSchedulerDeadman'
+  // services/worker/src/routes services/worker/src/index.ts` returns
+  // nothing) — scheduler-pause-attribution.ts's own header comment confirms
+  // this is a "deferred post-train T3 slice." So this manifest entry alone
+  // does NOT make a forgotten Cloud Scheduler creation page anyone TODAY;
+  // it is the correct, scoped, config-as-code step so that the alarm fires
+  // automatically once that pre-existing wiring gap (which predates this
+  // PR and affects every manifest entry, not just this one) is closed.
+  {
+    id: 'drive-subscription-renewal',
+    category: 'maintenance',
+    schedule: '0 * * * *',
+    targetPath: '/jobs/drive-subscription-renewal',
+    method: 'POST',
+    owner: 'lane-3',
+    enabled: true,
+    maxSilenceMs: 3 * HOURS,
+  },
   // ── Public-record FEEDERS ─────────────────────────────────────────────────
   // §1.5 / assert-prod-state-directly: VERIFIED ACTIVE in prod via Cloud Run
   // request logs on 2026-07-20 (fetch-courtlistener every ~15m — and 504-ing at
