@@ -15,6 +15,7 @@ import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import type { WebSocketLikeConstructor } from '@supabase/realtime-js';
 import ws from 'ws';
+import { assertNotAllChunksFailed, chunkForInFilter } from '../../utils/postgrest-filter.js';
 
 interface FlaggedItem {
   id: string;
@@ -112,16 +113,45 @@ export async function runFraudAudit(
     };
   }
 
-  // Enrich with anchor metadata
+  // Enrich with anchor metadata.
+  //
+  // Chunks via `chunkForInFilter` DIRECTLY rather than through
+  // `utils/chunkedRead.js`. This is a standalone eval script with its own
+  // `createClient` — it deliberately does not import the worker's `logger`,
+  // which pulls in `config.ts` and throws `Invalid worker configuration` at
+  // module load unless the full worker env is present. `postgrest-filter.ts` is
+  // dependency-free, so it costs nothing here.
   const anchorIds = flaggedItems.map(f => f.anchor_id);
-  const { data: anchors } = await db
-    .from('anchors')
-    .select('id, credential_type, metadata')
-    .in('id', anchorIds);
+  type AnchorRow = { id: string; credential_type: string | null; metadata: unknown };
+  const anchors: AnchorRow[] = [];
+  let failedChunks = 0;
+  const chunks = chunkForInFilter(anchorIds);
 
-  const anchorMap = new Map(
-    (anchors ?? []).map(a => [a.id, a]),
+  for (const { values, start } of chunks) {
+    const { data, error } = await db
+      .from('anchors')
+      .select('id, credential_type, metadata')
+      .in('id', values);
+
+    if (error) {
+      failedChunks += 1;
+      console.error(`fraud-audit: anchor enrichment chunk at ${start} failed: ${error.message}`);
+      continue;
+    }
+    anchors.push(...((data ?? []) as AnchorRow[]));
+  }
+
+  // An all-chunks-failed enrichment would render every flagged item with no
+  // credential type and no metadata — an audit report that looks complete and
+  // says nothing. Same guard as every other call site in this class.
+  assertNotAllChunksFailed(
+    'fraud-audit.anchorEnrichment',
+    chunks.length,
+    failedChunks,
+    `${anchorIds.length} flagged anchor(s)`,
   );
+
+  const anchorMap = new Map(anchors.map(a => [a.id, a]));
 
   // Build structured items
   const items: FlaggedItem[] = flaggedItems.map(f => {

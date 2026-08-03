@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { db as defaultDb } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { submitJob } from '../utils/jobQueue.js';
+import { chunkForInFilter } from '../utils/postgrest-filter.js';
 import { refreshDocusignAccessToken } from '../integrations/oauth/docusign.js';
 import {
   createGcpSecretManagerRefreshTokenStore,
@@ -69,10 +70,11 @@ function dbErrorMessage(error: DbQueryResult<unknown>['error']): string {
   return error.message ?? String(error);
 }
 
-// PostgREST `.in()` filters are chunked at 100 ids/batch to stay within the
-// query-string / request-size limit on large candidate sets (worker jobs
-// agents.md convention — mirrors the SCRUM-1296 N+1 cleanup).
-const IN_CHUNK_SIZE = 100;
+// `IN_CHUNK_SIZE = 100` used to live here. Chunk width for a PostgREST `.in()`
+// filter is `chunkForInFilter`'s to decide — a hand-picked count is the mistake
+// that reached production three times (#1795, #1812, #1853), and envelope ids
+// are DocuSign-issued strings, not UUIDs, so a count-only bound was never the
+// right measure.
 
 // §1.2 / §1.4: Zod-validate every write path before the persisted mutation.
 // Both schemas assert ids-only shapes — no fingerprint, no bytes (§1.6A). A
@@ -325,16 +327,18 @@ export function makeQueueReconciliationDeps(
     ): Promise<Set<string>> {
       if (envelopeIds.length === 0) return new Set();
 
-      // Chunk the `.in()` filter at IN_CHUNK_SIZE ids per batch (worker
-      // agents.md convention): a busy DocuSign account can surface up to
-      // MAX_PAGES*100 completed envelopes for one integration, and pushing the
-      // whole candidate set through a single PostgREST `.in()` would blow the
-      // query-string / request-size limit — failing the lookup, marking the run
-      // failed, and leaving Scheduler to retry without ever reconciling a gap.
-      // Each chunk carries the same org_id/source scope; results are unioned.
+      // A busy DocuSign account can surface up to MAX_PAGES*100 completed
+      // envelopes for one integration, and pushing the whole candidate set
+      // through a single PostgREST `.in()` would blow the request line —
+      // failing the lookup, marking the run failed, and leaving Scheduler to
+      // retry without ever reconciling a gap.
+      //
+      // This used to chunk by a hand-picked `IN_CHUNK_SIZE`. `chunkForInFilter`
+      // owns the width now: envelope ids are DocuSign-issued strings, not
+      // UUIDs, so a count-only bound was never the right measure. Each chunk
+      // carries the same org_id/source scope; results are unioned.
       const found = new Set<string>();
-      for (let i = 0; i < envelopeIds.length; i += IN_CHUNK_SIZE) {
-        const chunk = envelopeIds.slice(i, i + IN_CHUNK_SIZE);
+      for (const { values: chunk } of chunkForInFilter(envelopeIds)) {
         const { data, error } = await db
           .from('connector_artifact')
           .select('external_ref')

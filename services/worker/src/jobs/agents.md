@@ -12,6 +12,81 @@ PR #1828 (F9 fix, scheduler + `batch-anchor.ts` main claim path) deliberately le
 - **Precedence when a reconcile-phase rejection AND a same-tick main-path rejection (the F9 fix's own `rejectedReason` set at the definitive-broadcast-reject branch, roughly line 1830) both occur:** the main-path reason wins, structurally — that return statement is a distinct `return { ..., rejectedReason: errMessage(error) }` that never routes through `emptyResult()`, so it is never overwritten. Rationale: the main-path rejection is about anchors THIS tick just claimed and tried to broadcast — a more current, more actionable signal — while the reconcile-phase rejection is cleanup of a stale cohort from an earlier interrupted tick; the reconcile reason exists ONLY to keep an otherwise-uninformative empty result honest, not to compete with a richer same-tick outcome.
 - **Deliberately out of scope:** the DEFER/HOLD branches within the intent-capable claim path that return `{ processed: 0, batchId, merkleRoot, txId }` (non-EMPTY shape — already informative that something happened this tick, just with an uncertain outcome) are untouched; only the literal `EMPTY`-shaped "nothing happened" returns get the reconcile-phase reason merged in. The pre-0358 legacy compatibility path (`legacyProcessBatchAnchors`, not reached by the Bitcoin/Mock intent-capable clients) is also untouched.
 - Tests: `batch-anchor.intent.test.ts` — extended "genuine dust reject during reconcile rebroadcast" to assert `result.rejectedReason` on the final `BatchAnchorResult` (not just the reconcile side effects); new tests for non-reject DEFER/HOLD NOT setting it, the main-path-wins precedence case (distinct txIds + `mockRejectedValueOnce` ordering to disambiguate reconcile-phase vs main-path rejects), and a `SCRUM-2692` durable-journal-integration test proving a journal REVERT alone (no legacy-compat reject) still surfaces on `processBatchAnchors`'s result. `txid-journal.test.ts` untouched (the reason string is assembled one layer up, in `batch-anchor.ts`, not in `txid-journal.ts`'s pure decision function). T2 (worker behavior only — no migration, no DB schema, no change to the unwind/refund/broadcast logic itself, only to what gets reported).
+## 2026-08-02 — `arkova/no-hand-rolled-in-filter-chunk` is now an ERROR in this folder
+
+The `.in()` filter-width class is no longer merely unlikely — it is **unwritable**. A hand-rolled
+chunk loop around a `.in()` call fails `npm run lint`, which IS the deploy gate (CLAUDE.md rule 9).
+
+Turning the rule on surfaced **four sites the manual census had missed**, all in this folder:
+`attestationExpiry.ts` (two `.in()` status updates — its `.insert()` webhook loop is a request-BODY
+batch and correctly still uses `CHUNK_SIZE`), `cloud-logging-drain.ts` (the retry-count fallback),
+and `docusign-queue-reconciliation-deps.ts` — **the file the previous PR cited as the sibling that
+"already chunked" correctly.** It chunked by a hand-picked `IN_CHUNK_SIZE = 100` over
+DocuSign-issued strings, so a count-only bound was never the right measure. Its constant is gone too.
+
+Two existing tests failed when the rule landed, and both were wrong in an instructive way: they
+asserted the **exact hand-picked width** (`Math.ceil(N / 100)`, `[100, 100, 50]`) rather than the
+property. Such a test fails precisely when someone *fixes* the width. Both now assert what actually
+matters — chunked rather than per-row, every chunk inside the real encoded budget, no id dropped.
+Width itself is asserted ONCE, on the helper, in `utils/postgrest-filter.test.ts`.
+
+## 2026-08-02 — the 500-wide chunk cohort is gone (`chunkForInFilter` everywhere)
+
+Follows #1839 (`chunkForInFilter`) and #1853 (the three worst sites). This closes the *bounded but
+over-budget* half of the census in `jobs/`.
+
+**Why 500 was never a safe number.** Every one of these constants was reasoned about against
+**HTTP 414 URI-too-large**, not against the **8 KiB request line** the proxy in front of PostgREST
+enforces with a **400**. 500 UUIDs encode to ~18.5 KB; `public_id` and DocuSign envelope ids are not
+even UUIDs. So the chunking looked deliberate, was documented, had a rationale in a code comment —
+and protected nothing. A wrong constant with a confident comment is worse than no constant, because
+it stops the next reader from checking.
+
+Deleted, replaced by `chunkForInFilter` (bounded by real encoded wire bytes AND count, whichever
+binds first):
+
+- **`batch-anchor.ts`** — `INTENT_CHUNK_SIZE` (500) across `markBroadcastIntent`,
+  `clearBroadcastIntentMarks`, `deleteIntentProofRows`, `revertIntentAnchors`, plus two separate
+  local `CHUNK_SIZE = 500` in `bulkMarkSubmittedFallback` and `bulkRevertToPending`. **The constant
+  itself is gone** — there is no longer a number in this file for a new call site to pick.
+- **`check-confirmations.ts`** — `CRED_LOOKUP_CHUNK` (500) on the `credential_type` fan-out lookup.
+  Its comment explicitly cited "HTTP 414" and "same chunk size as PROOF_UPSERT_CHUNK": both the wrong
+  limit and the wrong sibling to copy. `PROOF_UPSERT_CHUNK` bounds a request **BODY**, which has no
+  URL budget at all — see `proofJobScan.chunk`'s docstring on that distinction.
+- **`docusign-reconciliation-deps.ts`** — `getReceivedEnvelopeIds` sent up to 1,000 DocuSign envelope
+  ids unchunked, while its sibling `docusign-queue-reconciliation-deps.ts:getReceivedEnvelopeIds`
+  chunked the byte-identical lookup. **The same one-of-a-pair divergence that left
+  `revertClaimedAnchors` unfixed after #1795.** If you touch either, touch both. Throws on the FIRST
+  failed chunk, not after all of them: this set drives gap detection, so a partial "received" set
+  manufactures phantom gaps for every envelope in the missing chunk.
+- **`trainingExporter.ts`** — the worst of the cohort, because the failure COMPOUNDS. Rows are
+  appended to the JSONL corpus on disk and THEN marked `training_exported`; that flag is the only
+  thing stopping the next tick re-selecting and re-appending them. The one-shot `.in()` over a
+  1,000-row page 400'd, the flag was never set, and every tick re-appended the same page —
+  **unbounded duplicate growth in the training corpus**, with the job still returning a
+  success-shaped result. Now chunked, and an all-chunks-failed mark **throws** via
+  `assertNotAllChunksFailed`: the caller cannot tell "exported 1000" from "exported 1000 again for
+  the ninth time", so a cron failure is what stops the loop. First test file this module has ever had.
+
+### `revertIntentAnchors` also lied in its logs
+
+It ended with an **unconditional** `Reverted definitively-rejected intent anchors BROADCASTING →
+PENDING` at INFO — emitted even when every chunk had just logged a failure on the line directly
+above it. That is the same reported-success-over-real-failure shape as **#1812**, where a
+claim-revert that released nothing reported success.
+
+It deliberately does not throw (it runs inside the broadcast-failure path, where a secondary throw
+would mask the real chain error) and deliberately does not call `assertNotAllChunksFailed` — so
+**the log line is the only signal that exists, and it has to be true.** The decision is now the pure,
+exported `summarizeIntentRevert`, tested directly: INFO only when nothing failed, ERROR naming the
+stranded count when nothing was reverted, WARN in between. Reaching the real function needs the whole
+`reconcileBroadcastIntents` fixture (journal RPCs, stale-row scan, intent hex, a rebroadcast-rejecting
+chain client), which is disproportionate for a log assertion — so the part that was wrong is the part
+under test.
+
+**Rule for this folder:** never hand-roll `for (i += SIZE)` around a `.in()`, and never reach for
+`POSTGREST_ROW_LIMIT` (it governs how many rows come back, not how wide the URL may be).
+`proofJobScan.chunk(items, size)` is for request-BODY batches ONLY.
 ## 2026-08-02 — merge resolution note (PR #1810 `feat/observability-silent-failure` onto main)
 
 Two conflicts in `monthly-allocation-rollover.ts` / `.test.ts`, both a "both sides added something at the

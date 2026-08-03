@@ -126,6 +126,64 @@ describe('POST /api/v1/compliance/audit', () => {
     expect(res.body.quarantines[0].regulation).toBe('HIPAA');
   });
 
+  // A failed `jurisdiction_rules` read used to resolve to an empty rule set,
+  // and an audit with no applicable rules scores as fully compliant. Fail-OPEN
+  // at HTTP 201 is worse than an error: it is a confident wrong verdict on the
+  // one surface an auditor relies on.
+  //
+  // Every other table is seeded to SUCCEED (including the audit insert), so the
+  // rules read is the only variable — otherwise this passes against the
+  // defective code for an unrelated reason, which is what a first cut of it did.
+  it('500s rather than scoring a fail-OPEN audit when the rules read fails', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+
+    const inserted = {
+      id: '33333333-3333-4333-8333-333333333333',
+      org_id: 'org-1',
+      overall_score: 100,
+      overall_grade: 'A',
+      per_jurisdiction: [],
+      gaps: [],
+      quarantines: [],
+      status: 'COMPLETED',
+      started_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+      duration_ms: 5,
+      jurisdiction_filter: null,
+      error_code: null,
+      error_message: null,
+      metadata: {},
+      created_at: new Date().toISOString(),
+    };
+
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      if (table === 'compliance_audits') {
+        return makeBuilder({ maybeSingleData: null, singleData: inserted }) as unknown as never;
+      }
+      if (table === 'organizations') {
+        return makeBuilder({
+          maybeSingleData: { jurisdictions: ['US-CA'], industry: 'accounting' },
+        }) as unknown as never;
+      }
+      if (table === 'jurisdiction_rules') {
+        return makeBuilder({
+          selectData: null,
+          selectError: { message: 'request line too large' },
+        }) as unknown as never;
+      }
+      return makeBuilder({ selectData: [] }) as unknown as never;
+    });
+
+    const app = buildApp('user-1');
+    const res = await request(app).post('/api/v1/compliance/audit').send({});
+
+    expect(res.status).toBe(500);
+    // The tell-tale of the old behaviour: a scored, COMPLETED audit built on
+    // zero rules — a perfect score awarded because nothing was checked.
+    expect(res.body.status).not.toBe('COMPLETED');
+    expect(res.body.overall_score).toBeUndefined();
+  });
+
   it('writes NCA-05 recommendations into metadata on insert', async () => {
     vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
 

@@ -47,3 +47,57 @@ Custom ESLint plugin (`eslint-plugin-arkova`) enforcing test quality standards.
 1. **Now:** All 3 rules at `warn` — CI passes, violations visible
 2. **Next sprint:** Fix the 23 `no-unscoped-service-test` violations
 3. **Then:** Escalate `no-unscoped-service-test` to `error` — new tests MUST assert scoping
+
+### `arkova/no-hand-rolled-in-filter-chunk` (error — `services/worker/src` + `scripts`)
+
+**What:** Flags a hand-rolled chunk loop wrapped around a PostgREST `.in()` call — an index-stepped
+`for (let i = 0; i < xs.length; i += SIZE)` whose body issues `.in(...)`, or a `for...of` over a
+request-BODY splitter (`chunk`, `chunkArray`, `batch`, …) whose body issues `.in(...)`.
+
+**Why:** supabase-js serializes `.in('col', values)` into the URL query string, and the proxy in
+front of PostgREST rejects oversized request lines with **400**. postgrest-js **resolves** that as
+`{ data: null, error }` — it does not throw — so a call site that discards the error reads a hard
+failure as "nothing matched". This class reached production three times:
+
+| PR | Site | Blast radius |
+|---|---|---|
+| #1795 | `fetchAnchorRows` | 70-hour silent public-record anchoring outage |
+| #1812 | `revertClaimedAnchors` | a failed submission released nothing |
+| #1853 | `anchor-bulk` dedup | duplicate anchors created **and billed** |
+
+Every one was a call site picking its own width. `chunkForInFilter(values)`
+(`services/worker/src/utils/postgrest-filter.ts`) takes **no size parameter** and bounds each chunk
+by real encoded wire bytes (measured with `URLSearchParams`, the serializer postgrest-js actually
+uses) as well as by count.
+
+**Fix:** `for (const { values, start } of chunkForInFilter(ids)) { … .in('id', values) }`.
+
+**Why it did not ship with #1839:** a rule broad enough to catch the then-existing 500-wide cohort
+would have failed the build, and `npm run lint` from `services/worker/` **is** the deploy gate
+(CLAUDE.md rule 9). It ships now that the cohort is gone (#1866, #1867).
+
+**It earned its keep immediately:** enabling it surfaced **four sites the manual census had missed** —
+`jobs/attestationExpiry.ts` (×2), `jobs/cloud-logging-drain.ts`, and
+`jobs/docusign-queue-reconciliation-deps.ts`. That last one is the file #1867 cited as the sibling
+that "already chunked" correctly; it chunked by a hand-picked `IN_CHUNK_SIZE = 100` over
+DocuSign-issued strings, so a count-only bound was never the right measure. A census read by a human
+missed all four. The rule found them in one run.
+
+**Deliberately NOT flagged:** an unchunked `.in()` with no loop around it. An `.in()` over a
+statically small list (a status enum, a 3-element literal) is correct and common, and a rule that
+flagged those would be disabled at dozens of honest call sites — which is how a rule stops being
+read. This targets the case where the author *knew* width mattered, hand-rolled a bound, and picked
+the wrong one.
+
+**Known blind spot (accepted):** a chunk loop split across functions is not tracked — the worker
+eslint config has no `parserOptions.project`, so there is no type information for cross-function
+flow. `chunkForInFilter`'s own tests are the backstop for width itself; this rule covers the shape
+that actually recurred.
+
+**A note on the tests it broke.** Turning it on made two existing tests fail — both asserting the
+*exact hand-picked chunk width* of the code under test (`Math.ceil(N / 100)`, `[100, 100, 50]`).
+That is the per-call-site width assertion #1839 replaced: it fails the moment the width is *fixed*,
+punishing a change that made the code more correct. Both were rewritten to assert the property
+(chunked not per-row; every chunk inside the real encoded budget; no id lost). **If this rule ever
+makes a test fail, check whether the test is pinning a number rather than a behaviour before
+changing the code.**
