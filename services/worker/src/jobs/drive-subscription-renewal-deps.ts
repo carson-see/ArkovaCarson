@@ -8,6 +8,7 @@
  * consumed by the pure `renewDriveSubscriptions()`.
  */
 import * as Sentry from '@sentry/node';
+import { config } from '../config.js';
 import { db as defaultDb } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -84,6 +85,12 @@ export interface DriveSubscriptionRenewalDepOptions {
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
   kms?: KmsClient;
+  /**
+   * Test-only override for the worker's own public base URL. Production
+   * always resolves this through the Zod-validated `config.workerPublicUrl`
+   * (config.ts) — this file never reads the underlying env var directly.
+   */
+  workerPublicUrl?: string;
 }
 
 export function makeDriveSubscriptionRenewalDb(
@@ -144,6 +151,12 @@ export function makeDriveSubscriptionRenewalDb(
 export function makeDriveSubscriptionRenewalClient(
   options: DriveSubscriptionRenewalDepOptions = {},
 ): DriveSubscriptionRenewalClient {
+  // `env` here is a pure passthrough vehicle to `oauth/drive.ts`'s existing
+  // `deps.env ?? process.env` convention (every Drive/DocuSign OAuth call
+  // site in this codebase already threads a test-overridable env object the
+  // same way) — it is never read for a NAMED variable in this file itself.
+  // The one named variable this module actually needs — WORKER_PUBLIC_URL —
+  // is resolved from the Zod-validated `config` export below, not from here.
   const env = options.env ?? process.env;
   const driveDeps: DriveClientDeps = { fetchImpl: options.fetchImpl, env };
   let kmsPromise: Promise<KmsClient> | null = null;
@@ -188,11 +201,12 @@ export function makeDriveSubscriptionRenewalClient(
     },
 
     async createChannel({ accessToken, channelId, channelToken }) {
-      // Same `WORKER_PUBLIC_URL` env var docusign.ts's Connect-listener
-      // provisioning requires out-of-request-context — fail closed rather
-      // than register a channel pointed at a broken address (mirrors
-      // requireConnectConfig's guard).
-      const workerPublicUrl = env.WORKER_PUBLIC_URL;
+      // Zod-validated config.workerPublicUrl (config.ts), not an ad-hoc
+      // process.env read — same `WORKER_PUBLIC_URL` var docusign.ts's
+      // Connect-listener provisioning requires out-of-request-context. Fail
+      // closed rather than register a channel pointed at a broken address
+      // (mirrors requireConnectConfig's guard).
+      const workerPublicUrl = options.workerPublicUrl ?? config.workerPublicUrl;
       if (!workerPublicUrl) {
         throw new Error('WORKER_PUBLIC_URL not set — cannot renew Drive changes.watch channel.');
       }

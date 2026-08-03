@@ -4,12 +4,20 @@
  * Real Supabase / Drive API / KMS are all mocked at the module boundary; no
  * network or Postgres traffic.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const loadDriveAccessTokenMock = vi.fn();
 const createChangesWatchMock = vi.fn();
 const stopDriveChannelMock = vi.fn();
 const captureMessageMock = vi.fn();
+
+// PR #1944 review follow-up: WORKER_PUBLIC_URL is resolved through the
+// Zod-validated `config` export (config.ts), not an ad-hoc process.env read
+// in this file — mock `config` directly rather than mutating process.env.
+const { mockConfig } = vi.hoisted(() => ({
+  mockConfig: { workerPublicUrl: 'https://worker.example.com' as string | undefined },
+}));
+vi.mock('../config.js', () => ({ config: mockConfig }));
 
 vi.mock('../utils/db.js', () => ({ db: {} }));
 vi.mock('../utils/logger.js', () => ({
@@ -43,15 +51,9 @@ import {
 const ORG = 'org-1';
 const INT = 'int-1';
 
-let prevWorkerUrl: string | undefined;
 beforeEach(() => {
   vi.clearAllMocks();
-  prevWorkerUrl = process.env.WORKER_PUBLIC_URL;
-  process.env.WORKER_PUBLIC_URL = 'https://worker.example.com';
-});
-afterEach(() => {
-  if (prevWorkerUrl === undefined) delete process.env.WORKER_PUBLIC_URL;
-  else process.env.WORKER_PUBLIC_URL = prevWorkerUrl;
+  mockConfig.workerPublicUrl = 'https://worker.example.com';
 });
 
 function mockQuery(result: { data: unknown; error: unknown }) {
@@ -226,13 +228,30 @@ describe('makeDriveSubscriptionRenewalClient', () => {
     );
   });
 
-  it('createChannel fails closed when WORKER_PUBLIC_URL is unset', async () => {
-    delete process.env.WORKER_PUBLIC_URL;
+  it('createChannel fails closed when config.workerPublicUrl is unset', async () => {
+    mockConfig.workerPublicUrl = undefined;
     const client = makeDriveSubscriptionRenewalClient({ db: { from: vi.fn() } });
     await expect(
       client.createChannel({ accessToken: 'at', channelId: 'chan-new', channelToken: 'tok-new' }),
     ).rejects.toThrow(/WORKER_PUBLIC_URL/);
     expect(createChangesWatchMock).not.toHaveBeenCalled();
+  });
+
+  it('createChannel honors an explicit workerPublicUrl DI override over config.workerPublicUrl', async () => {
+    mockConfig.workerPublicUrl = 'https://config-value.example.com';
+    createChangesWatchMock.mockResolvedValueOnce({
+      resourceId: 'res-3',
+      expiration: '2026-08-10T00:00:00.000Z',
+      startPageToken: 'ignored',
+    });
+    const client = makeDriveSubscriptionRenewalClient({
+      db: { from: vi.fn() },
+      workerPublicUrl: 'https://override.example.com',
+    });
+    await client.createChannel({ accessToken: 'at', channelId: 'chan-new', channelToken: 'tok-new' });
+    expect(createChangesWatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({ address: 'https://override.example.com/api/v1/webhooks/drive' }),
+    );
   });
 });
 

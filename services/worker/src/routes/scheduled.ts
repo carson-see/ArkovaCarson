@@ -25,12 +25,6 @@ import { runCreditConservationReconciler } from '../jobs/credit-conservation-rec
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
 import { runConnectorArtifactDrain } from '../jobs/connector-artifact-drain.js';
 import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
-import { renewDriveSubscriptions } from '../integrations/connectors/drive-subscription-renewal.js';
-import {
-  makeDriveSubscriptionRenewalDb,
-  makeDriveSubscriptionRenewalClient,
-  alertDriveSubscriptionRenewal,
-} from '../jobs/drive-subscription-renewal-deps.js';
 import { trackOperation } from './lifecycle.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 
@@ -380,30 +374,19 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
     });
   }
 
-  // GH #1835: Drive changes.watch channel renewal, hourly. In-process is the
-  // dev/test BACKUP ONLY — prod runs via Cloud Scheduler -> POST
-  // /jobs/drive-subscription-renewal (node-cron is dormant under Cloud Run
-  // CPU throttling, same as every other job in this file). Unconditional
-  // (no feature flag): renewal is not an opt-in surface, it is the fix for
-  // "every Drive connection goes silent within a week."
-  scheduleInProcess('drive-subscription-renewal', '0 * * * *', async () => {
-    logger.debug('Running Drive subscription renewal sweep');
-    try {
-      const result = await trackOperation(renewDriveSubscriptions({
-        db: makeDriveSubscriptionRenewalDb(),
-        client: makeDriveSubscriptionRenewalClient(),
-        alert: alertDriveSubscriptionRenewal,
-      }));
-      if (result.renewed > 0 || result.failed > 0 || result.degraded > 0) {
-        logger.info(
-          { scanned: result.scanned, renewed: result.renewed, degraded: result.degraded, failed: result.failed },
-          'Drive subscription renewal sweep processed connections',
-        );
-      }
-    } catch (error) {
-      logger.error({ err: errMsg(error) }, 'Drive subscription renewal cron failed');
-    }
-  });
+  // GH #1835: Drive changes.watch channel renewal, hourly. Deliberately NO
+  // in-process backup here — prod runs it exclusively via Cloud Scheduler ->
+  // POST /jobs/drive-subscription-renewal (routes/cron.ts). Its sibling
+  // docusign-reconciliation (SCRUM-2042, same file-organization shape:
+  // Cloud-Scheduler-only cron.ts route, no scheduleInProcess entry) is the
+  // established precedent — when the Cloud Run instance is NOT throttled,
+  // an unconditional in-process schedule running the SAME hourly cadence
+  // would double-fire every tick: two concurrent sweeps racing to renew the
+  // same due connections, each independently stopping the other's
+  // just-registered channel. Dev/test coverage lives entirely in
+  // drive-subscription-renewal.test.ts (pure orchestrator) and
+  // drive-subscription-renewal-deps.test.ts (real wiring) instead of an
+  // in-process cron loop.
 
   logger.info('Scheduled jobs configured (including chain maintenance)');
 }

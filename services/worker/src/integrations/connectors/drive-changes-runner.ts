@@ -599,7 +599,11 @@ export async function runDriveChanges(
       fileId: args.fileId,
       accessToken: args.accessToken,
       cache: folderPathCache,
-      deps: { fetchImpl: deps.drive?.fetchImpl },
+      // PR #1944 review follow-up: without a logger, every resolution
+      // failure was a completely silent swallow-to-null — pass one through
+      // so a real failure (permission loss, an unexpected bug) actually
+      // produces a log line instead of just quietly degrading rule matching.
+      deps: { fetchImpl: deps.drive?.fetchImpl, logger: deps.logger },
     });
   return processDriveChanges({
     integration: procIntegration,
