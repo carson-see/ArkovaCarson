@@ -18,6 +18,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { supabase } from '@/lib/supabase';
 import { COMPLIANCE_TREND_LABELS } from '@/lib/copy';
+import { resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
 
 interface TrendDataPoint {
   period: string;
@@ -63,7 +64,7 @@ export function ComplianceTrendPage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setError(COMPLIANCE_TREND_LABELS.ERR_NOT_AUTHENTICATED); return; }
 
-      const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
+      const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
       const params = new URLSearchParams({
         granularity,
         from: new Date(fromDate).toISOString(),

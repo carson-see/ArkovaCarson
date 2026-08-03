@@ -12,7 +12,7 @@ import { supabase } from '@/lib/supabase';
 import { useAsyncAction } from './useAsyncAction';
 import { TOAST } from '@/lib/copy';
 import { InviteMemberSchema, type InviteMemberInput } from '@/lib/validators';
-import { resolveSafeWorkerEndpoint } from '@/lib/workerUrlSafety';
+import { resolveSafeWorkerEndpoint, resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
 
 interface UseInviteMemberReturn {
   inviteMember: (options: InviteMemberInput) => Promise<boolean>;
@@ -20,8 +20,6 @@ interface UseInviteMemberReturn {
   error: string | null;
   clearError: () => void;
 }
-
-const WORKER_URL = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
 
 /**
  * Generic, user-safe fallback shown for any unrecognized failure.
@@ -65,7 +63,8 @@ export function useInviteMember(): UseInviteMemberReturn {
       }
 
       const { email, role, orgId, orgName, inviterName } = parsedOptions.data;
-      const emailEndpoint = resolveSafeWorkerEndpoint(WORKER_URL, '/api/send-invitation-email');
+      const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
+      const emailEndpoint = resolveSafeWorkerEndpoint(workerUrl, '/api/send-invitation-email');
 
       // Step 1: Create invitation record via RPC
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
