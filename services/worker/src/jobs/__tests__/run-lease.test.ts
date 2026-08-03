@@ -28,22 +28,19 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// PR #1944 review follow-up (SCRUM-1258): runLeaseHolder() now reads
-// config.kRevision (Zod-validated, config.ts) instead of an ad-hoc
-// process.env.K_REVISION read. Mock `config` directly so the holder-identity
-// tests below control the value without depending on module-load-time
-// process.env state (config.ts's `loadConfig()` parses process.env exactly
-// once, at import time — mutating process.env afterward has no effect).
-const { mockConfig } = vi.hoisted(() => ({
-  mockConfig: { kRevision: undefined as string | undefined },
-}));
-vi.mock('../../config.js', () => ({ config: mockConfig }));
-
 const { mockLogger } = vi.hoisted(() => ({
   mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
+// SCRUM-1258: run-lease.ts reads the Cloud Run revision via the Zod-validated
+// `config` export rather than `process.env` directly. config.ts validates the
+// whole environment at import time and throws outside a fully-configured
+// worker, so tests mock it — the established pattern in this directory
+// (edgarFetcher, australiaLawFetcher, publicRecordAnchor-lease, …).
+vi.mock('../../config.js', () => ({
+  config: { logLevel: 'info', nodeEnv: 'test', kRevision: 'arkova-worker-01164-xux' },
+}));
 
 import {
   BATCH_ANCHOR_RUN_LEASE,
@@ -229,30 +226,17 @@ describe('run lease — holder identity', () => {
    * exists to prevent, made self-sustaining.
    */
   it('mints a holder that cannot collide across instances of one revision', () => {
-    const original = mockConfig.kRevision;
-    mockConfig.kRevision = 'arkova-worker-01164-xux';
-    try {
-      const holder = runLeaseHolder();
-      const shared = `arkova-worker-01164-xux:${process.pid}:`;
-      // Everything a second instance of the same revision would also compute…
-      expect(holder.startsWith(shared)).toBe(true);
-      // …plus something it could not.
-      expect(holder.slice(shared.length)).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-      );
-    } finally {
-      mockConfig.kRevision = original;
-    }
-  });
-
-  it('falls back to "local" when config.kRevision is unset', () => {
-    const original = mockConfig.kRevision;
-    mockConfig.kRevision = undefined;
-    try {
-      expect(runLeaseHolder().startsWith(`local:${process.pid}:`)).toBe(true);
-    } finally {
-      mockConfig.kRevision = original;
-    }
+    // The revision comes from the mocked `config.kRevision` above, which is what
+    // production reads too — this test no longer mutates process.env, so it can
+    // never pass by exercising a code path prod does not take.
+    const holder = runLeaseHolder();
+    const shared = `arkova-worker-01164-xux:${process.pid}:`;
+    // Everything a second instance of the same revision would also compute…
+    expect(holder.startsWith(shared)).toBe(true);
+    // …plus something it could not.
+    expect(holder.slice(shared.length)).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
   });
 
   /**

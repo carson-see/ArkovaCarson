@@ -193,6 +193,9 @@ export const RUN_LEASE_SPECS: readonly RunLeaseSpec[] = [
  * took the lease.
  */
 export function runLeaseHolder(): string {
+  // SCRUM-1258: read the Cloud Run revision through the Zod-validated `config`
+  // export, never `process.env` directly — an ad-hoc read here bypasses that
+  // validation and is rejected by the worker-env gate in ci.yml.
   return `${config.kRevision ?? 'local'}:${process.pid}:${randomUUID()}`;
 }
 
