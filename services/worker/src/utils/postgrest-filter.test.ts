@@ -3,8 +3,10 @@ import {
   POSTGREST_IN_FILTER_CHUNK,
   POSTGREST_ROW_LIMIT,
   POSTGREST_URL_FILTER_BUDGET_BYTES,
+  PageScanError,
   assertNotAllChunksFailed,
   chunkForInFilter,
+  scanAllPages,
 } from './postgrest-filter.js';
 import { encodedInFilterBytesFor } from '../test-utils/postgrestWire.js';
 
@@ -192,5 +194,108 @@ describe('assertNotAllChunksFailed', () => {
     // 0 === 0 must NOT read as "everything failed". Omitting this guard is a
     // live bug the moment a caller loses its empty-input early return.
     expect(() => assertNotAllChunksFailed('fetchThings', 0, 0, '0 id(s)')).not.toThrow();
+  });
+});
+
+/**
+ * `scanAllPages` — the read-side half of the same `db-max-rows` ambiguity
+ * `chunkForInFilter` handles on the filter side.
+ *
+ * The failure it exists to prevent is quieter than an over-wide filter: a
+ * too-wide `.in()` takes a 400 and is loud, while a scan that stops early
+ * returns a plausible short answer at HTTP 200. `api/v1/auditBatchVerify.ts`
+ * shipped exactly that, and the first attempt at fixing it hand-rolled the loop
+ * and reintroduced it via `if (page.length < POSTGREST_ROW_LIMIT) break`.
+ */
+describe('scanAllPages', () => {
+  /** A server that caps a page at `cap` rows regardless of the width asked for. */
+  function server(rows: number[], cap: number) {
+    const requested: Array<{ offset: number; limit: number }> = [];
+    const fetchPage = (offset: number, limit: number) => {
+      requested.push({ offset, limit });
+      return Promise.resolve({
+        data: rows.slice(offset, offset + Math.min(limit, cap)),
+        error: null,
+      });
+    };
+    return { fetchPage, requested };
+  }
+
+  const rows = (n: number) => Array.from({ length: n }, (_, i) => i);
+
+  it('reads every row when the server cap EQUALS the requested width', async () => {
+    const { fetchPage } = server(rows(2500), POSTGREST_ROW_LIMIT);
+    const scan = await scanAllPages(fetchPage, { maxRows: 25_000, maxPages: 64 });
+    expect(scan.status).toBe('complete');
+    expect(scan.rows).toHaveLength(2500);
+  });
+
+  it('reads every row when the server cap is BELOW the requested width', async () => {
+    // `db-max-rows` is a server setting this code cannot see. Treating a short
+    // page as end-of-data stops after page 1 and reports 500 of 5,000 rows.
+    const { fetchPage, requested } = server(rows(5000), 500);
+    const scan = await scanAllPages(fetchPage, { maxRows: 25_000, maxPages: 64 });
+    expect(scan.status).toBe('complete');
+    expect(scan.rows).toHaveLength(5000);
+    // Offsets advance by rows RETURNED, not by the width requested.
+    expect(requested.slice(0, 4).map((r) => r.offset)).toEqual([0, 500, 1000, 1500]);
+  });
+
+  it('reads every row when the server cap is ABOVE the requested width', async () => {
+    const { fetchPage } = server(rows(2500), 5000);
+    const scan = await scanAllPages(fetchPage, { maxRows: 25_000, maxPages: 64 });
+    expect(scan.status).toBe('complete');
+    expect(scan.rows).toHaveLength(2500);
+  });
+
+  it('treats an empty result set as complete, not as a failure', async () => {
+    const { fetchPage, requested } = server([], POSTGREST_ROW_LIMIT);
+    const scan = await scanAllPages(fetchPage, { maxRows: 10, maxPages: 64 });
+    expect(scan).toEqual({ rows: [], status: 'complete' });
+    expect(requested).toHaveLength(1);
+  });
+
+  it('costs exactly one extra request to prove there is no further page', async () => {
+    const { fetchPage, requested } = server(rows(2 * POSTGREST_ROW_LIMIT), POSTGREST_ROW_LIMIT);
+    const scan = await scanAllPages(fetchPage, { maxRows: 25_000, maxPages: 64 });
+    expect(scan.status).toBe('complete');
+    // Two full pages, then the empty one that ends it. A short-page shortcut
+    // would save this request and buy a silent truncation with it.
+    expect(requested).toHaveLength(3);
+  });
+
+  it('reports row_budget_exceeded rather than a complete short read', async () => {
+    const { fetchPage } = server(rows(50_000), POSTGREST_ROW_LIMIT);
+    const scan = await scanAllPages(fetchPage, { maxRows: 25_000, maxPages: 64 });
+    expect(scan.status).toBe('row_budget_exceeded');
+    expect(scan.rows.length).toBeGreaterThan(25_000);
+  });
+
+  it('reports page_budget_exhausted and cannot loop forever', async () => {
+    // A server that never returns an empty page: every offset yields rows.
+    let calls = 0;
+    const fetchPage = () => {
+      calls += 1;
+      return Promise.resolve({ data: [1, 2, 3], error: null });
+    };
+    const scan = await scanAllPages(fetchPage, { maxRows: 1_000_000, maxPages: 8 });
+    expect(scan.status).toBe('page_budget_exhausted');
+    expect(calls).toBe(8);
+  });
+
+  it('throws PageScanError carrying the offset, never a silent empty result', async () => {
+    const fetchPage = (offset: number) =>
+      offset === 0
+        ? Promise.resolve({ data: [1, 2, 3], error: null })
+        : Promise.resolve({ data: null, error: { code: 'PGRST103' } });
+
+    await expect(scanAllPages(fetchPage, { maxRows: 100, maxPages: 8 })).rejects.toThrow(
+      PageScanError,
+    );
+    await scanAllPages(fetchPage, { maxRows: 100, maxPages: 8 }).catch((err) => {
+      expect(err).toBeInstanceOf(PageScanError);
+      expect((err as PageScanError).offset).toBe(3);
+      expect((err as PageScanError).pgCode).toBe('PGRST103');
+    });
   });
 });
