@@ -276,6 +276,25 @@ Out of scope: plain shell heredocs that feed a **static, repo-authored** script
 into a program (e.g. `node <<'NODE'` in the golden-audit summary step). Those
 frame no author-controlled value and write no key/value file.
 
+## Compliance-mapping mirror gate (2026-08-01, SCRUM-2283)
+
+`ci.yml` → `typecheck-lint` job gains `npm run ci:compliance-mapping-mirror`
+(`scripts/ci/check-compliance-mapping-mirror.ts`).
+
+Asserts the two `EMITTABLE_CONTROL_IDS` sets — `src/lib/complianceMapping.ts` and
+`services/worker/src/utils/complianceMapping.ts` — are identical in both directions.
+
+**Why it is a CI gate and not a code review item:** the worker file is a hand-maintained
+mirror ("control IDs must match" per its own header) and **two** separate remediations each
+fixed the frontend only. `DPF-NOTICE` / `DPF-ACCOUNTABILITY` were pulled from the frontend on
+2026-07-10 after the PO confirmed on 2026-06-05 that Arkova holds no EU-US DPF certification,
+and the worker kept writing them onto every SECURED anchor and serving them from
+`/api/v1/verify`, the audit export, and the GRC push to Vanta/Drata/Anecdotes until
+2026-08-01. Review did not catch it twice; a gate does.
+
+**Do not add an override label.** The failure mode this prevents is a false external-status
+claim (R-7 / CLAUDE.md §1.5), and the fix is always a one-line removal from the worker
+catalogue — never a re-add to the frontend, which would re-assert the retired claim.
 ## Deploy-worker traffic safety: the clear step must be `--no-traffic` (2026-08-01)
 
 **The service is permanently pinned `--to-latest`.** `Promote canary to full

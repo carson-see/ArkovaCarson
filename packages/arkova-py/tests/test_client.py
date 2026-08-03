@@ -203,7 +203,7 @@ def test_verify_maps_rich_v1_verification_fields() -> None:
                 "description": "Bachelor of Science credential",
                 "ferpa_notice": "Redisclosure notice",
                 "directory_info_suppressed": False,
-                "compliance_controls": {"SOC2-CC6.1": True},
+                "compliance_controls": ["SOC2-CC6.1"],
                 "chain_confirmations": 6,
                 "parent_public_id": "ARK-2026-PARENT",
                 "version_number": 2,
@@ -231,7 +231,7 @@ def test_verify_maps_rich_v1_verification_fields() -> None:
     assert result.verified is True
     assert result.issuer_name == "University of Michigan"
     assert result.description == "Bachelor of Science credential"
-    assert result.compliance_controls == {"SOC2-CC6.1": True}
+    assert result.compliance_controls == ["SOC2-CC6.1"]
     assert result.chain_confirmations == 6
     assert result.parent_public_id == "ARK-2026-PARENT"
     assert result.version_number == 2
@@ -334,7 +334,7 @@ def test_get_anchor_exposes_typed_rich_fields_when_returned() -> None:
                 "status": "ACTIVE",
                 "record_uri": "https://app.arkova.ai/verify/ARK-DOC-ABC",
                 "description": "Diploma",
-                "compliance_controls": {"FERPA-99.31": True},
+                "compliance_controls": ["FERPA-99.31"],
                 "chain_confirmations": 3,
                 "parent_public_id": "ARK-DOC-PARENT",
                 "version_number": 2,
@@ -351,7 +351,7 @@ def test_get_anchor_exposes_typed_rich_fields_when_returned() -> None:
         result = client.get_anchor("ARK-DOC-ABC")
 
     assert result.description == "Diploma"
-    assert result.compliance_controls == {"FERPA-99.31": True}
+    assert result.compliance_controls == ["FERPA-99.31"]
     assert result.chain_confirmations == 3
     assert result.parent_public_id == "ARK-DOC-PARENT"
     assert result.version_number == 2

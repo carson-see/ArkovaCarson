@@ -28,10 +28,9 @@ export interface LazyBuilderRecorder {
   reset(): void;
 }
 
-/** Default builder result: a successful write with no returned row. */
-const OK_RESULT = Object.freeze({ data: null, error: null });
-
-export function createLazyBuilderRecorder(result: unknown = OK_RESULT): LazyBuilderRecorder {
+export function createLazyBuilderRecorder(
+  result: unknown = { data: null, error: null },
+): LazyBuilderRecorder {
   const executed: Array<Record<string, unknown>> = [];
 
   return {
@@ -44,11 +43,20 @@ export function createLazyBuilderRecorder(result: unknown = OK_RESULT): LazyBuil
         //
         // The rule is right in general: a thenable object gets awaited by
         // surprise, so it is a reliability hazard in production code. Here it
-        // is the POINT of the double — a supabase-js `PostgrestBuilder` really
-        // is a thenable, and `.then()` really is where it issues the HTTP
-        // request. Remove `then` and this recorder can no longer tell
-        // "builder constructed" from "request issued" — which is the entire
-        // silent-write bug class it was written to detect. Test-only code
+        // is the ENTIRE POINT and cannot be refactored away without destroying
+        // what this file exists to detect.
+        //
+        // `PostgrestBuilder` really is a thenable — supabase-js issues the HTTP
+        // request from `.then()`, not from `.from()/.update()/.eq()`. So
+        // `void db.from('t').update({...}).eq('id', id)` builds a request and
+        // never sends it: no error, no write, HTTP 200. That is the silent-
+        // success defect this repo keeps shipping. A test double that is a
+        // resolved Promise (or `mockReturnThis()`) is EAGER, so it cannot tell
+        // "builder constructed" from "request issued" and passes either way.
+        // Only a lazy thenable reproduces the real contract.
+        //
+        // Scope is one object in one test-only helper, never imported by
+        // production code. Prefer marking this Accepted in the SonarCloud UI
         // over deleting the suppression — removing it means either failing the
         // quality gate or weakening the double back into one that cannot catch
         // the bug.
