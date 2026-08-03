@@ -1,5 +1,5 @@
 # services/worker/src/
-_Last updated: 2026-08-03 (PR #1944 review round 3: create-then-stop CRITICAL fix, run lease, manifest, PII scrub, account_label parser convergence)_
+_Last updated: 2026-08-03 (merge: PR #1944 Drive review rounds 2-3 create-then-stop/run-lease/manifest/PII-scrub/parser-convergence + ART Lane 1 bug-bounty SCRUM-3016/3017/3021)_
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
@@ -21,9 +21,6 @@ Multiple adversarial review passes on the same PR found real, escalating issues 
 
 - **`config.ts` gains `workerPublicUrl` (`WORKER_PUBLIC_URL`, optional, `z.string().url()`) and `enableDriveLegacyChannelTokenRejection` (boolFlag, default false).** The former lets `jobs/drive-subscription-renewal-deps.ts` (GH #1835) resolve the worker's own public base URL through the Zod-validated config export instead of an ad-hoc env read — `integrations/oauth/docusign.ts`'s `requireConnectConfig` reads the SAME underlying var directly via its own pre-existing `deps.env ?? process.env` passthrough, unaffected by this change; reconciling it onto `config.workerPublicUrl` too is a natural follow-up, not done here.
 - **`jobs/run-lease.ts`'s `runLeaseHolder()` reads `config.kRevision` instead of `process.env.K_REVISION` directly.** This was a genuinely pre-existing SCRUM-1258 violation, confirmed present on a clean `origin/main` checkout, unrelated to any Drive work — fixed independently on `main` by commit `06b3ef86b` (it was red-lining the required Dependency Scanning check for every open PR) while this PR fixed the identical thing on its own branch; reconciled by merge, taking `main`'s version wholesale per the coordinator's explicit instruction. `run-lease.ts` also gained a 4th spec, `DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE` — see `jobs/agents.md`.
-_Last updated: 2026-08-03 (ART Lane 1 bug-bounty: SCRUM-3016/3017/3021)_
-
-Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
 ## 2026-08-03 — ART Lane 1 bug-bounty (PR #1965): three bug-tracker rows fixed, config.ts gains `stuckSubmittedAlertHours`
 
