@@ -82,6 +82,27 @@ test that dies without it is a comment.**
 - `middleware/requireOrgAdmin.ts` (NEW) — chain AFTER `requireOrgId` when a route needs ORG_ADMIN, not merely membership. Delegates to `isCallerOrgAdminResult`.
 - **Do not read `x-org-id` (or any client-controlled org identifier) directly in a handler and trust it.** Either mount `requireOrgId` (+ `requireOrgAdmin` if needed) upstream, or — for routes where the org id is a route param, not a header (e.g. `org-kyb.ts`) — call `isUserMemberOfOrgResult` / `isCallerOrgAdminResult` directly before touching the DB.
 - **RLS is not a backstop here.** Every table this vulnerability touched (`ferpa_disclosure_log`, `emergency_access_grants`, `kyb_events`, `signatures`, `organizations`, `anchors`) already had correct FORCE RLS + org-scoped policies (verified against `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql`) — RLS was never the gap. The worker's service_role client bypasses RLS entirely, so application-code authorization (the `_org-auth.ts` helpers) is the ONLY tenant boundary for any service_role-executed query. Any new route added under this router needs its own explicit membership/admin check — RLS will not save it.
+## 2026-08-02 — merge resolution note (PR #1738 rebased onto #1839's anchor-bulk duplicate-check fix)
+
+PR #1738 (below) and the duplicate-check fix documented further down this file (Zod-cap-vs-URL-budget
+dedup defect, fixed via `chunkForInFilter` + fail-closed 503 + `normalizeFingerprint`) touched the
+same insert call in `anchor-bulk.ts` on adjacent lines — #1738 added the missing `filename` field
+(NOT NULL fix), main added `normalizeFingerprint(row.fingerprint)` in place of a bare
+`row.fingerprint.toLowerCase()`. Merge resolution kept both: `normalizeFingerprint()` (main's
+version — `.trim().toLowerCase()`, matching the normalization used everywhere else in this file,
+vs #1738's bare `.toLowerCase()`) for the fingerprint, and #1738's `filename` fallback unchanged.
+`fetchExistingFingerprints`/`chunkForInFilter`/the fail-closed 503 path were untouched by #1738 and
+carried through as-is. Also verified against `docs/release/wave-merge-choreography-2026-08.md`
+"Collision 2" (`FileUpload.tsx` dispatch routing, #1736 vs #1738): main already carried the required
+union (multi-file all-spreadsheet-vs-mixed check + single-spreadsheet mode-choice step), auto-merged
+clean, confirmed correct by re-reading the merged `dispatchFiles` and its test coverage rather than
+trusting the clean exit.
+
+## 2026-07-28 Dashboard bridge for mixed-format batch anchoring (SCRUM-2911 W1, founder P0)
+
+- **`anchor-bulk.ts` bug fix:** the insert into `anchors` never set `filename`, which is `NOT NULL` at the DB layer — every real (non-mocked) call to `POST /api/v1/anchor/bulk` would have failed a Postgres constraint violation; the unit suite's fully-mocked `db` never caught it. `BulkAnchorRowSchema` gained an optional `filename` field (additive, §1.8-safe); the insert falls back to a synthetic `bulk-${fingerprint.slice(0,12)}` placeholder when the caller doesn't supply one (mirrors `anchor-submit.ts`'s `api-${fingerprint}` pattern). Regression test in `anchor-bulk.test.ts`.
+- **New `anchor-bulk-self-service.ts`** (`POST /api/v1/anchor/bulk/self-service`, mounted in `router.ts` BEFORE `/anchor/bulk` — same route-shadowing rule as `/verify/search` before `/verify`): the browser dashboard cannot reach `/api/v1/anchor/bulk` directly because that route is `apiKeyAuth`-gated (`ak_...` keys only), and the dashboard authenticates with a Supabase session JWT. This bridge is the bulk-anchor analogue of `webhooks-self-service.ts` — mounted behind the router's local `requireAuth`, it re-derives `org_id` from `profiles` (never trusts the client), synthesizes an `ApiKeyMeta`-shaped caller (`scopes: ['anchor:write']`), and delegates into the SAME, byte-for-byte unmodified `anchorBulkRouter` — no duplicated dedup/credit/quota/insert logic. Any org member may call it (document creation, not an admin setting). No-org accounts get 403 `organization_required` (org-scoped credits are canonical per the 2026-07-28 CTO ruling R4; individuals still use the single-document flow). Dedicated rate limiter `anchorBulkSelfServiceRateLimiter` (10 req/min per user, Constitution §1.10 batch tier).
+- Frontend consumer: `src/components/upload/MixedBatchUploadWizard.tsx`, wired via `SecureDocumentDialog.tsx`'s `onMixedBatchDetected` (fired by `FileUpload.tsx` for a multi-file drop that isn't all-spreadsheets).
 ## 2026-07-28 root-mount auth-leak on signatureComplianceRouter/keyInventoryRouter (bug hunt during PR #1754)
 
 - `router.ts` mounted `signatureComplianceRouter` and `keyInventoryRouter` as `router.use('/', adesSignatureGate(), requireAuth, ...)` (and `...requireAuth, aiRateLimiter, keyInventoryRouter` for the latter). `router.use(path, mw1, mw2, subRouter)` registers EACH middleware as its OWN Express layer at that path — a bare `'/'` path matches every request. `adesSignatureGate()` path-guards itself (bypasses non-AdES paths, per its own 2026-04-18-incident fix — see `adesFeatureGate.ts` header), but the local `requireAuth` had no such guard, so it ran — and 401'd — on every request that reached this point in the stack, including routes registered LATER in the file: `GET /api/v1/regulatory/alerts` and `GET /api/v1/compliance/rules`, both documented and implemented as public/anonymous. `aiRateLimiter` on the key-inventory mount had the same unguarded-leak shape (silently consuming its shared rate-limit budget for unrelated downstream requests).
@@ -225,6 +246,7 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 | `GET /api/v1/credentials/<id>/ctdl` | anonymous OR `verify` |
 | `GET /api/v1/usage` | `usage:read` |
 | `/api/v1/anchor/bulk`, `/api/v1/contracts` | `anchor:write` |
+| `POST /api/v1/anchor/bulk/self-service` | Supabase JWT (any org member; org resolved from `profiles`) |
 | `POST /api/v1/exports/cpe-log` | Supabase JWT (own records only) |
 | `POST /api/v1/exports/org/cpe-log` | Supabase JWT + ORG_ADMIN (own-org members only) |
 | `POST /api/v1/exports/cle-log` | Supabase JWT (own records only) |
@@ -246,11 +268,21 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 ## Open work
 - SCRUM-1740 (PR #738) — quota gate awaits Carson merge + Mon deploy.
 
+## Silent credit-RPC alerting (revenue-leak pre-mortem)
+- `ai-extract.ts` — `deduct_ai_credits` RPC failure (DB error, not insufficient balance) fails OPEN by product decision (RISK-6): the extraction proceeds for FREE. Now calls `captureCreditRpcFailureAlert({ failMode: 'open', ... })` from `utils/sentry.ts` (fatal level, `credit_rpc_fail_mode:open` tag) so the revenue leak pages instead of only logging. Behavior unchanged, observability only.
+- `credits.ts` — the dev/test-only `deduct_unified_credits` grant path (no Stripe key, non-prod) alerts (`failMode: 'closed'`) on RPC failure so a real regression in this RPC doesn't hide behind "it's just dev mode."
+
 ## 2026-07-28 L3-A6 — CE registry-anchor route (CE Noncredit Data Taxonomy POC)
 
 - `credentials-ctdl-registry-anchor.ts` — `POST /api/v1/credentials/ctdl/registry-anchor`. Given a CTID, REUSES the exact §1.6A-compliant `fetchRegistryGraph`/`buildRegistryGraphUrl`/`mapSafeFetchError`/`RegistryTimeoutError` primitives exported from `credentials-ctdl-import.ts` (no second outbound-fetch implementation), parses with `parseCtdlEnvelope(..., { credentialNodesOnly: true, includeNoncreditProgramClasses: true })` (see `services/worker/src/ctdl/agents.md`), runs `assertNoProhibitedClaimInJsonLd` BEFORE creating the anchor, and inserts an `anchors` row from the in-memory envelope SHA-256 + bounded PII-free metadata (`ce_registry_ctid`/`ce_registry_url`/`ce_envelope_sha256`/`ce_retrieved_at`/`ce_record_type`/`ce_record_name`/`ce_issuer_name`). `credential_type: 'OTHER'` (no dedicated noncredit enum value — see the honest-limits section of `docs/partners/ce-noncredit-anchoring-poc.md`). Idempotent via `sha256(ctid + envelope_sha256)` fingerprint; a staleness guard (`expected_envelope_sha256`) rejects anchoring if the registry record changed since a prior lookup. `credentials-ctdl-import.ts`'s previously-internal fetch helpers (`fetchRegistryGraph`, `buildRegistryGraphUrl`, `mapSafeFetchError`, `RegistryTimeoutError`, `MAX_RESPONSE_BYTES`, `DEFAULT_REGISTRY_TIMEOUT_MS`, `ImportOutcome`) are now exported specifically for this reuse — keep them as the ONE fetch implementation if a third CTDL consumer route is ever added.
 - Mounted at `/credentials/ctdl/registry-anchor` in `router.ts` with its own `requireAuth` + a 5 req/min-per-user rate limiter (`ctdlRegistryAnchorRateLimiter`) — tighter than the read-only import route's 10/min, since this leg also writes an anchor + deducts org credit.
 
+## 2026-08-01 SCRUM-2227 — `compliance_controls_note` (claims honesty)
+
+- **`compliance_controls` never travels alone.** `verify.ts`, `ai-accountability-report.ts` and `audit-export.ts` all attach `COMPLIANCE_CONTROLS_NOTE` (from `services/worker/src/utils/complianceMapping.ts`) whenever they surface a non-empty control list, and omit it when there is none. Control IDs are a credential-type *mapping*; without the note they read as an assertion that the record, its issuer, or Arkova has been assessed against the named framework — and for `eIDAS-25`/`eIDAS-35` that misread ("qualified trust service") is direct legal exposure. §1.5 / R-7. **Do not surface `compliance_controls` from a new endpoint without the note.**
+- Additive nullable field, no API version bump (§1.8). In `verify.ts` the note is derived from whatever `compliance_controls` the allowlist loop actually placed on the response — keyed off `result`, never off `anchor`, so the two cannot disagree. It is deliberately NOT in `EMPTY_API_RICH_FIELDS`: it is derived, not a column on `AnchorByPublicId`.
+- **Retired control IDs are filtered on read.** `sanitizeStoredComplianceControls()` drops `DPF-NOTICE` / `DPF-ACCOUNTABILITY` from stored values. SCRUM-2283 removed the EU-US Data Privacy Framework claim from the frontend as a false external-status claim, but the worker mapping kept emitting it, so ~2.9M SECURED anchors persisted it. No migration can un-say that; the read path is where it is asserted, so that is where it is stopped.
+- `compliance_controls` is declared `ComplianceControls = Record<string, unknown> | string[]`. The column has always held an **array**; the object arm survives only because the public type advertised it. The OpenAPI schema documents both arms for the same reason.
 ## 2026-08-01 SCRUM-2293 — CTDL academic records emit no issuer free text
 
 - `credentials-ctdl.ts` is unchanged, but the BODY of an academic-record projection is narrower: for `credential_type` in `DEGREE`/`CERTIFICATE`/`TRANSCRIPT`, `ceterms:name` is now controlled vocabulary derived from the CTDL `@type` ("Bachelor Degree", "Academic Transcript") and `ceterms:description` / `ceterms:revocationReason` are omitted. Rationale + the measured reason a name-detection heuristic was rejected: `services/worker/src/ctdl/agents.md` (2026-08-01).
