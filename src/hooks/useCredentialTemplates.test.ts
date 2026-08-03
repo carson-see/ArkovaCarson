@@ -156,4 +156,119 @@ describe('useCredentialTemplates', () => {
 
     expect(updated).toBe(false);
   });
+
+  // BUG (2026-08-03 bug sprint): credential_templates_update / _delete RLS
+  // policies require role='ORG_ADMIN' (supabase/migrations/00000000000000_baseline_at_main_HEAD.sql),
+  // but credential_templates_select does NOT — any org member (including a
+  // non-admin ORG_MEMBER) can reach CredentialTemplatesPage and see working
+  // Edit/Delete controls (CredentialTemplatesManager.tsx renders them
+  // unconditionally). When a non-admin's write hits RLS, Postgres reports
+  // zero rows matched, not an error — so without a `.select()` zero-row
+  // check, the old code took the success branch: audit-logged a change that
+  // never happened, toasted success, and optimistically rewrote the cache.
+  it('updateTemplate returns false and does not log/toast success when RLS silently matches zero rows', async () => {
+    setupFetchMock([{ id: 'tpl-1', name: 'Diploma', credential_type: 'DEGREE', org_id: 'org-1' }]);
+
+    const { useCredentialTemplates } = await import('./useCredentialTemplates');
+    const { result } = renderHook(() => useCredentialTemplates('org-1'), { wrapper: createQueryWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    const mockSelect = vi.fn().mockResolvedValue({ data: [], error: null });
+    const mockEqOrg = vi.fn().mockReturnValue({ select: mockSelect });
+    const mockEqId = vi.fn().mockReturnValue({ eq: mockEqOrg });
+    mockFrom.mockReturnValueOnce({ update: vi.fn().mockReturnValue({ eq: mockEqId }) });
+
+    const { toast } = await import('sonner');
+    let updated: boolean = true;
+    await act(async () => {
+      updated = await result.current.updateTemplate('tpl-1', { name: 'New' });
+    });
+
+    expect(updated).toBe(false);
+    expect(mockLogAuditEvent).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalled();
+  });
+
+  it('updateTemplate returns true and logs the audit event when the update affects a row', async () => {
+    setupFetchMock([{ id: 'tpl-1', name: 'Diploma', credential_type: 'DEGREE', org_id: 'org-1' }]);
+
+    const { useCredentialTemplates } = await import('./useCredentialTemplates');
+    const { result } = renderHook(() => useCredentialTemplates('org-1'), { wrapper: createQueryWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    const mockSelect = vi.fn().mockResolvedValue({ data: [{ id: 'tpl-1' }], error: null });
+    const mockEqOrg = vi.fn().mockReturnValue({ select: mockSelect });
+    const mockEqId = vi.fn().mockReturnValue({ eq: mockEqOrg });
+    mockFrom.mockReturnValueOnce({ update: vi.fn().mockReturnValue({ eq: mockEqId }) });
+
+    let updated: boolean = false;
+    await act(async () => {
+      updated = await result.current.updateTemplate('tpl-1', { name: 'New' });
+    });
+
+    expect(updated).toBe(true);
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'TEMPLATE_UPDATED', targetId: 'tpl-1' }),
+    );
+  });
+
+  it('deleteTemplate returns false and does not log/toast success when RLS silently matches zero rows', async () => {
+    setupFetchMock([{ id: 'tpl-1', name: 'Diploma', credential_type: 'DEGREE', org_id: 'org-1' }]);
+
+    const { useCredentialTemplates } = await import('./useCredentialTemplates');
+    const { result } = renderHook(() => useCredentialTemplates('org-1'), { wrapper: createQueryWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    const mockSelect = vi.fn().mockResolvedValue({ data: [], error: null });
+    const mockEqOrg = vi.fn().mockReturnValue({ select: mockSelect });
+    const mockEqId = vi.fn().mockReturnValue({ eq: mockEqOrg });
+    mockFrom.mockReturnValueOnce({ delete: vi.fn().mockReturnValue({ eq: mockEqId }) });
+
+    const { toast } = await import('sonner');
+    let deleted: boolean = true;
+    await act(async () => {
+      deleted = await result.current.deleteTemplate('tpl-1');
+    });
+
+    expect(deleted).toBe(false);
+    expect(mockLogAuditEvent).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalled();
+  });
+
+  it('deleteTemplate returns true and logs the audit event when the delete affects a row', async () => {
+    setupFetchMock([{ id: 'tpl-1', name: 'Diploma', credential_type: 'DEGREE', org_id: 'org-1' }]);
+
+    const { useCredentialTemplates } = await import('./useCredentialTemplates');
+    const { result } = renderHook(() => useCredentialTemplates('org-1'), { wrapper: createQueryWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    const mockSelect = vi.fn().mockResolvedValue({ data: [{ id: 'tpl-1' }], error: null });
+    const mockEqOrg = vi.fn().mockReturnValue({ select: mockSelect });
+    const mockEqId = vi.fn().mockReturnValue({ eq: mockEqOrg });
+    mockFrom.mockReturnValueOnce({ delete: vi.fn().mockReturnValue({ eq: mockEqId }) });
+
+    let deleted: boolean = false;
+    await act(async () => {
+      deleted = await result.current.deleteTemplate('tpl-1');
+    });
+
+    expect(deleted).toBe(true);
+    expect(mockLogAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'TEMPLATE_DELETED', targetId: 'tpl-1' }),
+    );
+  });
 });

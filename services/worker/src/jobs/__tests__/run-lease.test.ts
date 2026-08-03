@@ -33,6 +33,14 @@ const { mockLogger } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
+// SCRUM-1258: run-lease.ts reads the Cloud Run revision via the Zod-validated
+// `config` export rather than `process.env` directly. config.ts validates the
+// whole environment at import time and throws outside a fully-configured
+// worker, so tests mock it — the established pattern in this directory
+// (edgarFetcher, australiaLawFetcher, publicRecordAnchor-lease, …).
+vi.mock('../../config.js', () => ({
+  config: { logLevel: 'info', nodeEnv: 'test', kRevision: 'arkova-worker-01164-xux' },
+}));
 
 import {
   BATCH_ANCHOR_RUN_LEASE,
@@ -218,21 +226,17 @@ describe('run lease — holder identity', () => {
    * exists to prevent, made self-sustaining.
    */
   it('mints a holder that cannot collide across instances of one revision', () => {
-    const original = process.env.K_REVISION;
-    process.env.K_REVISION = 'arkova-worker-01164-xux';
-    try {
-      const holder = runLeaseHolder();
-      const shared = `arkova-worker-01164-xux:${process.pid}:`;
-      // Everything a second instance of the same revision would also compute…
-      expect(holder.startsWith(shared)).toBe(true);
-      // …plus something it could not.
-      expect(holder.slice(shared.length)).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-      );
-    } finally {
-      if (original === undefined) delete process.env.K_REVISION;
-      else process.env.K_REVISION = original;
-    }
+    // The revision comes from the mocked `config.kRevision` above, which is what
+    // production reads too — this test no longer mutates process.env, so it can
+    // never pass by exercising a code path prod does not take.
+    const holder = runLeaseHolder();
+    const shared = `arkova-worker-01164-xux:${process.pid}:`;
+    // Everything a second instance of the same revision would also compute…
+    expect(holder.startsWith(shared)).toBe(true);
+    // …plus something it could not.
+    expect(holder.slice(shared.length)).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
   });
 
   /**
