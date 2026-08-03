@@ -19,22 +19,15 @@ const CACHE_TTL_SECONDS = 300; // 5 minutes
 // cached before the deploy would keep answering the proof-availability question
 // with silence for the whole TTL.
 //
-// v3 was skipped deliberately: several independent response-shape changes
-// landed around the same time and each needed its own bump — PR #1800
-// (SCRUM-2227, compliance_controls_note + retired DPF ID stripping) and #1864's
-// outbound PII gate on `buildVerificationResult` (academic-record free-text
-// suppression + value gate on description/issuer_name/jurisdiction/sub_type/
-// file_mime) among them. Jumping straight from v2 to v4 means the bump is
-// correct no matter which of them lands on main first, and none of them can
-// silently reuse another's namespace by both claiming v3.
-//
-// #1864's v4 claim is a SECURITY requirement, not hygiene: the gate runs
-// before `setCachedVerification`, so new writes are safe either way, but
-// entries written by the PRE-fix build carry a raw `description` and would
-// keep serving it to anonymous callers for the rest of the TTL after deploy. A
-// new prefix orphans them instantly. This PR (the anon /provenance PII gate)
-// does not read or write this cache — `provenance.ts` has no cache of its own
-// — so it inherits the bump without needing one of its own.
+// v3 was skipped deliberately. PR #1800 (SCRUM-2227) also needed a bump for its
+// own response-shape change (`compliance_controls_note` + retired EU-US DPF
+// control IDs stripped from stored values on read); PR #1816 (SCRUM-2575) landed
+// on main first and jumped straight from v2 to v4 so the bump would be correct
+// whichever PR merged first, and neither could silently reuse the other's
+// namespace. #1800 merges on top of that v4, so it inherits the existing bump
+// instead of introducing its own v3 — without it, every anchor cached before
+// this deploy would keep serving the retired DPF identifiers with no note for
+// the whole TTL, the exact claim this change exists to stop making.
 //
 // Bump again on any response-shape change so post-deploy cache hits don't serve stale
 // thin responses. Old keys age out naturally via TTL.
