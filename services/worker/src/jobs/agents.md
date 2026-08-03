@@ -2,6 +2,65 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-03 — ART Lane 1 bug-bounty: SCRUM-3021 (check-confirmations tip height) + SCRUM-3017 (SUBMITTED watchdog)
+
+Two bug-tracker rows (`docs/staging/SOAK-FINDINGS-2026-08.md` F-numbered findings predate these; canonical
+rows are BUG-2026-07-26-006/SCRUM-3021 and BUG-2026-07-26-004/SCRUM-3017 in the Confluence Bug Tracker —
+Master Log), both genuinely open as of 2026-08-03 (verified against current code before touching either).
+
+- **`check-confirmations.ts` — SCRUM-3021.** The chain-tip-height fetch inside
+  `checkSubmittedConfirmationsUnlocked` was a single unretried call that silently fell back to
+  `currentTipHeight = 0` on ANY failure (network blip, timeout, rate limit, malformed body) — no retry, no
+  fallback provider, unlike its sibling `fetchTxStatus` in the SAME FILE, which already had the ERR-2
+  retry-then-blockstream.info-fallback pattern. Downstream, `blockHeight > 0 && currentTipHeight > 0` was
+  the ONLY branch that computed a real confirmation count; a 0 tip height skipped it and `confirmations`
+  stayed at its hardcoded default of 1. On mainnet (`getMinConfirmations() === 6`), `1 < 6` is always
+  true, so a sustained tip-height outage silently held EVERY already-confirmed SUBMITTED anchor — including
+  ones with 100+ real confirmations — at "waiting for confirmations" indefinitely, with only a
+  `logger.warn` nobody watches. New `fetchChainTipHeight()` mirrors `fetchTxStatus`'s exact
+  retry+blockstream-fallback shape and returns `number | null` (never a fake 0). The per-tx branch now
+  reads: real tip height → compute real depth (unchanged); tip height unknown AND `minConfirmations <= 1`
+  (signet/testnet) → proceed, `confirmed:true` already satisfies the trivial threshold (unchanged
+  behavior, regression-guarded by a dedicated test); tip height unknown AND `minConfirmations > 1`
+  (mainnet) → defer this run (same net effect as before) but log at ERROR and fire ONE new Sentry alert
+  per run (`captureConfirmationTipHeightUnavailable`, `utils/sentry.ts`, its own stable fingerprint) —
+  the previously-nonexistent signal. Tests: 4 new cases in `check-confirmations.test.ts` (retry-then-succeed,
+  blockstream-fallback-then-succeed, both-fail-defers-and-alerts-once on mainnet, still-promotes-when-unknown
+  on a 1-confirmation network) using `vi.useFakeTimers()` + `advanceTimersByTimeAsync` (the established
+  pattern in `chain/utxo-provider.test.ts`, not previously used in this file). Full pre-existing suite
+  (28 tests) regression-checked green.
+- **`stuck-anchor-monitor.ts` — SCRUM-3017.** The monitor only ever watched PENDING age. Every historical
+  SUBMITTED-stage freeze — the April 1.18M-anchor incident, the ~6-week silent June freeze, and the July
+  MEMPOOL_API_URL isolated-rig freeze (see the SCRUM-3016 entry in `chain/agents.md`) — was invisible to
+  on-call because nothing watched how long an anchor sits in SUBMITTED. `decideStuckAnchorAlert`'s
+  age-vs-threshold core is extracted into `computeStuckStageDecision(stageLabel, ...)` (byte-identical
+  wording preserved for the PENDING case — asymmetric casing intact: "No pending anchors" lowercase, but
+  "oldest PENDING anchor" uppercase, matching the pre-existing strings exactly) and reused by a new
+  `decideStuckSubmittedAlert`. `runStuckAnchorCheck` now runs BOTH checks in the SAME invocation and
+  returns additive fields (`submittedHealthy`, `submittedAlertFired`, `oldestSubmittedAgeHours`,
+  `submittedCount`, `submittedThresholdHours`) — §1.8-style, existing `healthy`/`alertFired`/etc. fields
+  unchanged. **Deliberately rides the SAME `/jobs/check-stuck-anchors` Cloud Scheduler job
+  (`scripts/gcp-setup/cloud-scheduler.sh:81`, hourly) instead of requiring a new one** — this repo has a
+  demonstrated, repeated failure mode where a job is coded but never provisioned (F-6 in
+  `docs/staging/SOAK-FINDINGS-2026-08.md`: both 2026-08 soak rigs missing the forced-flush scheduler job;
+  BUG-2026-07-28-015: `paymentTierRouter.ts` never mounted). A SEPARATE Sentry fingerprint
+  (`captureStuckSubmittedAlert` / `STUCK_SUBMITTED_FINGERPRINT`, `utils/sentry.ts`) keeps a SUBMITTED
+  stall from collapsing into the same issue as a PENDING one — different root cause, different runbook.
+  Default threshold `STUCK_SUBMITTED_ALERT_HOURS=6` (vs. PENDING's 24h) — a SUBMITTED anchor already has a
+  broadcast tx and should resolve within confirmation windows of hours, not the ~24h a PENDING anchor can
+  legitimately wait for the daily batch flush. Tests: 5 new `decideStuckSubmittedAlert` pure-decision
+  cases + 6 new `runStuckAnchorCheck` integration cases (independent firing, BOTH firing together,
+  threshold-from-config, invalid-config fallback, DB-error throws) in `stuck-anchor-monitor.test.ts`;
+  the shared `mockDb()` test helper now discriminates the `.eq('status', X)` argument so PENDING and
+  SUBMITTED queries resolve independently (defaults SUBMITTED to "no rows" so every pre-existing
+  PENDING-only test keeps passing unmodified — verified, not assumed).
+- Both T3 (touches cron-on-anchors behavior per CLAUDE.md §1.12's explicit trigger list). See the PR
+  body's Premortem for detection/rollback/operator-dependency analysis, including the honest caveat that
+  a Sentry `captureMessage` creates an ISSUE, not a page — whether anyone is actually notified depends on
+  Sentry project-level alert rules/notification channels, which the SCRUM-3050 entry below documented as
+  entirely empty (`arkova1`, zero policies/channels) as of 2026-08-01 and were NOT independently
+  re-verified this session.
+
 ## 2026-08-01 — BUG-2026-08-01-F9 GAP 2: reconcile-phase rejections now reach `BatchAnchorResult.rejectedReason` too (`batch-anchor.ts`)
 
 PR #1828 (F9 fix, scheduler + `batch-anchor.ts` main claim path) deliberately left one sibling gap: `reconcileBroadcastIntents(chainClient)` — which runs at the top of every `_processBatchAnchorsInner` tick, BEFORE the main claim path — can itself definitively reject-and-unwind a **prior tick's** interrupted broadcast (via either the durable-journal REVERT in `reconcileTxidJournals`, or the legacy-compat path's `reconcileOneIntent`). That outcome was tracked only in the discarded `IntentReconcileResult.rejected` counter and logged (`'Broadcast-intent reconcile pass complete'`), never surfaced on the function's return value. If the SAME tick's main claim path then found nothing else to do (empty treasury, no PENDING anchors, trigger not met, fee ceiling, claim RPC failure, or a claimed cohort below `MIN_BATCH_SIZE`), the tick returned the plain `EMPTY` shape — the identical "rejection indistinguishable from idleness" defect F9 fixed, one layer up.

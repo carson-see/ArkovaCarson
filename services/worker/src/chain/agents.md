@@ -1,10 +1,46 @@
 # agents.md — services/worker/src/chain/
 
-_Last updated: 2026-08-01_
+_Last updated: 2026-08-03_
 
 ## What This Folder Contains
 
 Bitcoin chain client implementation for anchoring document fingerprints on-chain via OP_RETURN transactions.
+
+## 2026-08-03 BUG-2026-07-26-003 / SCRUM-3016 — MEMPOOL_API_URL `/api` contract, fixed
+
+`config.mempoolApiUrl` (raw `MEMPOOL_API_URL` env var) was read by five call sites split across two
+mutually-incompatible conventions, verified directly against current code (not assumed from the bug
+report): `utxo-provider.ts` (`createUtxoProvider`'s `getblock`/`mempool` branches, both call sites) and
+`fee-estimator.ts` (`createFeeEstimator`'s `mempool` branch) build requests as `${baseUrl}/address/...`,
+`${baseUrl}/v1/fees/...` — never appending `/api` themselves, so `baseUrl` must already carry it (their
+own defaults/`MEMPOOL_URLS` all end in `/api`). `jobs/chain-maintenance.ts` and
+`jobs/check-confirmations.ts` build `${baseUrl}/api/tx/...` — they append `/api` themselves, so `baseUrl`
+must NOT carry it (their own defaults are bare hosts). **No single value of `MEMPOOL_API_URL` satisfied
+both conventions** — this is exactly what froze 2 isolated soak rigs for ~24h (BUG-2026-07-26-003), and
+prod has only ever been safe because the var happens to be unset there, leaving every consumer on its own
+mutually-consistent hardcoded default.
+
+Fix: new `utils/mempool-url.ts` — `normalizeMempoolHostUrl` (strips a trailing `/api` and trailing slash
+down to a bare host, `undefined` for unset) plus two named resolvers, `resolveMempoolApiBase` (for the
+"caller appends nothing" convention: `utxo-provider.ts`, `fee-estimator.ts`, `jobs/treasury-cache.ts`) and
+`resolveMempoolHostBase` (for the "caller appends `/api/...` itself" convention:
+`jobs/chain-maintenance.ts`, `jobs/check-confirmations.ts`). Every one of the five call sites now routes
+through one of the two instead of reading `config.mempoolApiUrl` directly, so an operator-set value in
+EITHER shape produces the correct URL for that consumer either way — the class is closed at the API level
+(unwritable-wrong), not just tested at each site. `MEMPOOL_URLS`/`DEFAULT_MEMPOOL_URL`/per-network
+fallback constants are UNCHANGED; only what happens to an operator-SET value changed. The unset (default)
+path is byte-identical to before on all five sites — verified via the full pre-existing regression suites
+(fee-estimator.test.ts, utxo-provider.test.ts, chain-maintenance.test.ts, check-confirmations.test.ts,
+treasury-cache.test.ts, client.test.ts — 328 tests, all green).
+
+Tests: `utils/mempool-url.test.ts` (19 cases — the pure contract logic, including "produces the SAME
+result regardless of which convention the operator used", the actual incident, for both resolvers)
+plus two new integration cases in `chain/utxo-provider.test.ts`'s `createUtxoProvider` describe block that
+assert the REAL outbound `fetch` URL (not just the helper) is identical whether `MEMPOOL_API_URL` is set
+with or without the trailing `/api`. `x402PaymentGate.ts` / `feeAwareScheduler.ts` / `jobs/anchor.ts`
+construct `MempoolFeeEstimator` directly WITHOUT ever passing `mempoolApiUrl` at all (always the hardcoded
+default) — those never participated in this contract bug and were deliberately left untouched; a
+follow-up to make them honor `MEMPOOL_API_URL` too is a separate, unfiled gap.
 
 ## 2026-08-01 BUG-2026-08-01-F10 — GetBlock 405 on `listunspent` root-caused: provider-tier config, not a code bug (CLOSED, no code fix required)
 

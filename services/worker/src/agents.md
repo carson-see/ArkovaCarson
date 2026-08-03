@@ -1,7 +1,16 @@
 # services/worker/src/
-_Last updated: 2026-07-28 (72h soak F-2 finding)_
+_Last updated: 2026-08-03 (ART Lane 1 bug-bounty: SCRUM-3016/3017/3021)_
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
+
+## 2026-08-03 — ART Lane 1 bug-bounty: three bug-tracker rows fixed, config.ts gains `stuckSubmittedAlertHours`
+
+`config.ts` adds `stuckSubmittedAlertHours` (env `STUCK_SUBMITTED_ALERT_HOURS`, default 6, same
+`positiveNumberWithFallback` pattern as `stuckAnchorAlertHours`) for the new SUBMITTED-stage watchdog
+in `jobs/stuck-anchor-monitor.ts` (SCRUM-3017). See `jobs/agents.md` and `chain/agents.md` for the full
+writeup of this session's three fixes (SCRUM-3021 check-confirmations tip-height retry/fallback,
+SCRUM-3017 SUBMITTED watchdog, SCRUM-3016 MEMPOOL_API_URL `/api` contract). No new env var is
+*required* — the default (unset `STUCK_SUBMITTED_ALERT_HOURS`/`MEMPOOL_API_URL`) path is unchanged.
 
 ## 2026-07-28 SOAK FINDING F-2 — per-IP limiter shadows per-API-key limiter (HIGH, open)
 

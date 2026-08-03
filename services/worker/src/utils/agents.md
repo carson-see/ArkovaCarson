@@ -2,6 +2,24 @@
 
 Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
+## 2026-08-03 — new `mempool-url.ts` (SCRUM-3016); `sentry.ts` gains two new fingerprinted alerts (SCRUM-3021, SCRUM-3017)
+
+- **`mempool-url.ts` (new).** `normalizeMempoolHostUrl` / `resolveMempoolApiBase` / `resolveMempoolHostBase`
+  — the single place that resolves an operator-set `MEMPOOL_API_URL` for BOTH conventions this repo's
+  chain/queue code uses (some callers want the base WITH `/api`, some append `/api/...` themselves and
+  want the bare host). Full incident writeup in the module docstring and `chain/agents.md`. Pure
+  functions, no I/O — `mempool-url.test.ts` covers both resolvers directly.
+- **`sentry.ts`** gains `captureConfirmationTipHeightUnavailable` (own fingerprint
+  `CONFIRMATION_TIP_HEIGHT_FINGERPRINT`) for SCRUM-3021 (`jobs/check-confirmations.ts`'s chain-tip-height
+  fetch failing from both mempool.space and blockstream.info) and `captureStuckSubmittedAlert` (own
+  fingerprint `STUCK_SUBMITTED_FINGERPRINT`, mirrors the existing `captureStuckAnchorAlert` shape exactly)
+  for SCRUM-3017 (`jobs/stuck-anchor-monitor.ts`'s new SUBMITTED-stage watchdog). Both follow the
+  established pattern in this file: a stable fingerprint so repeated cron re-fires of the SAME condition
+  collapse into one Sentry issue instead of flooding the inbox. See `jobs/agents.md` for the full writeup
+  of both fixes, including the honest caveat that a Sentry `captureMessage` is an issue, not a page —
+  delivery depends on project-level alert rules/notification channels this session did not touch or
+  re-verify.
+
 ## Files
 - **`merkle.ts` / `merkle-verify.ts` (S3-P0)** — `buildMerkleTree` now documents the leaf-ordering contract (caller-ordered; the batch producer sorts by fingerprint asc, id asc), the Bitcoin double-SHA256 node rule and odd-node duplication, and returns `proofsByIndex` (positional branches — correct for duplicate fingerprints, which the legacy fingerprint-keyed `proofs` map interleaves into one unusable entry). Known-vector tests pin 2/3/4/5-leaf roots. Verify side unchanged (CVE-2012-2459 structural guard).
 - `db.ts` — Supabase service-role client. Lazy-initialized; throws if env not set. Passes `realtime: { transport: ws }` for Node 20 compat (supabase-js ≥2.105.4 requires explicit WebSocket implementation on Node <22).
