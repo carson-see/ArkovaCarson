@@ -464,6 +464,8 @@ const ConfigSchema = z.object({
   treasuryLowBalanceUsd: z.coerce.number().nonnegative().default(50),
   /** STUCK_ANCHOR_ALERT_HOURS — oldest pending-anchor age threshold; invalid values fall back to 24. */
   stuckAnchorAlertHours: positiveNumberWithFallback(24),
+  /** STUCK_SUBMITTED_ALERT_HOURS (SCRUM-3017) — oldest submitted-anchor age threshold; invalid values fall back to 6. */
+  stuckSubmittedAlertHours: positiveNumberWithFallback(6),
 
   // Compliance-log exports (SCRUM-1848 / SCRUM-1870)
   /**
@@ -892,6 +894,7 @@ function loadConfig(): Config {
     treasuryAlertEmail: process.env.TREASURY_ALERT_EMAIL,
     treasuryLowBalanceUsd: process.env.TREASURY_LOW_BALANCE_USD,
     stuckAnchorAlertHours: process.env.STUCK_ANCHOR_ALERT_HOURS,
+    stuckSubmittedAlertHours: process.env.STUCK_SUBMITTED_ALERT_HOURS,
 
     // Compliance-log exports (SCRUM-1848 / SCRUM-1870). `|| undefined` so an
     // empty string falls through to the schema default 'exports', preserving

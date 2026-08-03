@@ -14,6 +14,7 @@ import { createUtxoProvider } from '../chain/utxo-provider.js';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { fetchAnchorStats } from '../utils/anchor-stats.js';
+import { resolveMempoolApiBase } from '../utils/mempool-url.js';
 
 export interface TreasuryCacheData {
   balance_confirmed_sats: number;
@@ -36,7 +37,12 @@ export interface TreasuryCacheData {
 }
 
 function mempoolApiUrl(): string {
-  return config.mempoolApiUrl || 'https://mempool.space/api';
+  // SCRUM-3016: this job builds requests as `${apiBase}/address/${address}` —
+  // it never appends /api itself, so the base must already carry it.
+  // resolveMempoolApiBase normalizes a MEMPOOL_API_URL set WITHOUT a
+  // trailing /api (the OTHER convention some sibling consumers expect — see
+  // mempool-url.ts) up to the form this job needs.
+  return resolveMempoolApiBase(config.mempoolApiUrl, 'https://mempool.space/api');
 }
 
 /**

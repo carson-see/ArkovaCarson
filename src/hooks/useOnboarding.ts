@@ -51,6 +51,37 @@ interface OnboardingActions {
   clearError: () => void;
 }
 
+/**
+ * Links a newly-created organization to the current user: adds them as an
+ * `owner` org_member row, then stamps `org_id`/role='ORG_ADMIN' on their
+ * profile. Both writes used to be fire-and-forget in `createOrg`'s two
+ * direct-insert fallback branches — the result was fully discarded, not even
+ * `{ error }` was captured (BUG, 2026-08-03 bug sprint). A failure here left
+ * a real `organizations` row in the DB while the caller still reported
+ * `success: true`, so `OnboardingOrgPage`'s post-success `refreshProfile()`
+ * would refetch a profile whose `org_id` was never actually set — RouteGuard
+ * then silently bounced the user back into the same onboarding form, and a
+ * retry created a second orphaned org. Returns an error message on failure,
+ * or null on success.
+ */
+async function linkUserToNewOrg(orgId: string, userId: string): Promise<string | null> {
+  const { error: memberError } = await supabase
+    .from('org_members')
+    .insert({ org_id: orgId, user_id: userId, role: 'owner' as const });
+
+  if (memberError) return memberError.message;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: profileError } = await (supabase as any)
+    .from('profiles')
+    .update({ org_id: orgId, role: 'ORG_ADMIN' })
+    .eq('id', userId);
+
+  if (profileError) return profileError.message;
+
+  return null;
+}
+
 export function useOnboarding(): OnboardingState & OnboardingActions {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -152,29 +183,25 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
 
           // Add the user as ORG_ADMIN member
           const { data: { user: currentUser } } = await supabase.auth.getUser();
-          if (currentUser && orgData) {
-            await supabase
-              .from('org_members')
-              .insert({
-                org_id: orgData.id,
-                user_id: currentUser.id,
-                role: 'owner' as const,
-              });
+          if (!currentUser || !orgData) {
+            setError('Failed to resolve the signed-in user for organization setup.');
+            setLoading(false);
+            return null;
+          }
 
-            // Update profile with org_id
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (supabase as any)
-              .from('profiles')
-              .update({ org_id: orgData.id, role: 'ORG_ADMIN' })
-              .eq('id', currentUser.id);
+          const linkError = await linkUserToNewOrg(orgData.id, currentUser.id);
+          if (linkError) {
+            setError(linkError);
+            setLoading(false);
+            return null;
           }
 
           const directResult: OnboardingResult = {
             success: true,
             role: 'ORG_ADMIN',
             already_set: false,
-            user_id: currentUser?.id ?? '',
-            org_id: orgData?.id,
+            user_id: currentUser.id,
+            org_id: orgData.id,
           };
           setResult(directResult);
           setLoading(false);
@@ -211,18 +238,20 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
           }
 
           const { data: { user: currentUser } } = await supabase.auth.getUser();
-          if (currentUser && orgData) {
-            await supabase
-              .from('org_members')
-              .insert({ org_id: orgData.id, user_id: currentUser.id, role: 'owner' as const });
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (supabase as any)
-              .from('profiles')
-              .update({ org_id: orgData.id, role: 'ORG_ADMIN' })
-              .eq('id', currentUser.id);
+          if (!currentUser || !orgData) {
+            setError('Failed to resolve the signed-in user for organization setup.');
+            setLoading(false);
+            return null;
           }
 
-          onboardingResult.org_id = orgData?.id;
+          const linkError = await linkUserToNewOrg(orgData.id, currentUser.id);
+          if (linkError) {
+            setError(linkError);
+            setLoading(false);
+            return null;
+          }
+
+          onboardingResult.org_id = orgData.id;
           onboardingResult.success = true;
         }
 
