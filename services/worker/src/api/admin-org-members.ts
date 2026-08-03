@@ -35,6 +35,7 @@ import type { Request, Response } from 'express';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
+import { chunkForInFilter } from '../utils/postgrest-filter.js';
 
 const FORBIDDEN = { error: 'Forbidden — platform admin access required' };
 
@@ -111,19 +112,30 @@ export async function handleAdminOrgMembers(
       return;
     }
 
-    const { data: profileRows, error: profileError } = await db
-      .from('profiles')
-      .select('id, email, full_name, avatar_url')
-      .in('id', userIds)
-      .is('deleted_at', null);
+    // The roster select above is `.limit(500)`, and all 500 ids went into one
+    // `.in('id', userIds)` — roughly 18.5 KB of encoded query string against an
+    // 8 KiB budget. PostgREST answered 400 from about 220 members up, and since
+    // the error IS handled here the symptom was the member list 500ing for
+    // exactly the largest orgs.
+    const profilesById = new Map<string, ProfileRow>();
+    for (const { values, start } of chunkForInFilter(userIds)) {
+      const { data: profileRows, error: profileError } = await db
+        .from('profiles')
+        .select('id, email, full_name, avatar_url')
+        .in('id', values)
+        .is('deleted_at', null);
 
-    if (profileError) {
-      logger.error({ error: profileError, orgId }, 'Admin org members profile query failed');
-      res.status(500).json({ error: 'Query failed' });
-      return;
+      if (profileError) {
+        logger.error(
+          { error: profileError, orgId, chunkStart: start, chunkSize: values.length },
+          'Admin org members profile query failed',
+        );
+        res.status(500).json({ error: 'Query failed' });
+        return;
+      }
+
+      for (const p of profileRows ?? []) profilesById.set(p.id, p as ProfileRow);
     }
-
-    const profilesById = new Map((profileRows ?? []).map((p) => [p.id, p as ProfileRow]));
     const members = memberships.flatMap((membership) => {
       const profile = profilesById.get(membership.user_id);
       if (!profile) return [];
