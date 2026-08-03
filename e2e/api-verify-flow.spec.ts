@@ -12,7 +12,7 @@
  * @created 2026-03-28
  */
 
-import { test, expect, getServiceClient, createTestAnchor, deleteTestAnchor, SEED_USERS } from './fixtures';
+import { test, expect, getServiceClient, createTestAnchor, deleteTestAnchor, SEED_USERS, PUBLIC_FALLBACK_FILENAME_LABEL } from './fixtures';
 
 const WORKER_URL = process.env.E2E_WORKER_URL || 'http://localhost:3001';
 
@@ -143,8 +143,10 @@ test.describe('API Verification Flow (QA-E2E-02)', () => {
         page.getByText(/Verified|Document Verified/i).first()
       ).toBeVisible({ timeout: 10000 });
 
-      // Should show the filename
-      await expect(page.getByText('e2e_api_verify_test.pdf')).toBeVisible();
+      // The public projection redacts the uploaded filename (0385/0387/0390):
+      // an anonymous viewer sees the controlled fallback label, never the raw name.
+      await expect(page.getByText(PUBLIC_FALLBACK_FILENAME_LABEL).first()).toBeVisible();
+      await expect(page.getByText('e2e_api_verify_test.pdf')).toHaveCount(0);
 
       // Should show fingerprint section
       await expect(page.getByText(/^Fingerprint \(SHA-256\)$/)).toBeVisible();
