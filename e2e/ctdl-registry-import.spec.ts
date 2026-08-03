@@ -5,15 +5,27 @@
  *
  * Covers the "Imported Records" (`/my-credentials`) page's "From Public
  * Registry" flow: CTID input → look-up (fetch+fingerprint result) → add
- * (resulting record link). Both worker legs are stubbed at the Playwright
- * `route()` boundary — no live Credential Engine Registry call and no live
- * worker call runs in CI, mirroring `treasury-observability.spec.ts`'s
- * network-boundary-stub pattern.
+ * (resulting record link) → the added record APPEARING IN THE LIST. Both
+ * worker legs are stubbed at the Playwright `route()` boundary — no live
+ * Credential Engine Registry call and no live worker call runs in CI,
+ * mirroring `treasury-observability.spec.ts`'s network-boundary-stub pattern.
+ *
+ * SCOPE OF THE STUBS — read before trusting this spec as coverage. Because
+ * both worker legs AND the `get_my_credentials` RPC are stubbed, this file
+ * proves the CLIENT contract only: that a successful add triggers a list
+ * refetch and renders whatever that refetch returns. It canNOT prove the
+ * worker actually writes the `anchor_recipients` row the RPC inner-joins
+ * through — that half is pinned server-side by the "recipient linkage" suite
+ * in `credentials-ctdl-registry-anchor.test.ts`. The original version of this
+ * spec asserted only the in-dialog success link and stopped there, which is
+ * exactly why a record that was permanently invisible in this list still
+ * passed E2E. The two suites are complementary; neither alone is coverage.
  *
  * @see src/components/credentials/CtdlRegistryImportDialog.tsx
  * @see src/pages/MyCredentialsPage.tsx
  * @see services/worker/src/api/v1/credentials-ctdl-import.ts       (GET leg)
  * @see services/worker/src/api/v1/credentials-ctdl-registry-anchor.ts (POST leg)
+ * @see services/worker/src/api/v1/credentials-ctdl-registry-anchor.test.ts (recipient-row proof)
  */
 import { test, expect } from './fixtures';
 import { acceptDisclaimerIfVisible } from './helpers/dashboard';
@@ -74,6 +86,32 @@ const ANCHOR_RESPONSE = {
   },
 };
 
+/**
+ * The list row `get_my_credentials()` would return for the anchor the POST leg
+ * creates. Shape mirrors the RPC's RETURNS TABLE columns as mapped in
+ * `src/hooks/useMyCredentials.ts`; `filename` is what the worker derives from
+ * the registry record name (`${label}.jsonld`) and what the card renders.
+ */
+const RECORD_FILENAME = 'Certified Production Technician Noncredit Program.jsonld';
+
+const MY_CREDENTIALS_ROW = {
+  recipient_id: '11111111-1111-4111-8111-111111111111',
+  anchor_id: '22222222-2222-4222-8222-222222222222',
+  claimed_at: null,
+  recipient_created_at: '2026-07-28T00:00:00.000Z',
+  public_id: ANCHOR_RESPONSE.anchor.public_id,
+  filename: RECORD_FILENAME,
+  fingerprint: 'b'.repeat(64),
+  status: 'PENDING',
+  credential_type: 'OTHER',
+  metadata: { ce_registry_ctid: CTID },
+  issued_at: null,
+  expires_at: null,
+  created_at: '2026-07-28T00:00:00.000Z',
+  org_name: null,
+  org_id: null,
+};
+
 test.describe('CE Registry import — Imported Records page (L3-A6)', () => {
   test('looks up a public registry record and adds it, revealing the record link', async ({ individualPage }) => {
     await individualPage.route(IMPORT_LEG, (route) =>
@@ -108,6 +146,51 @@ test.describe('CE Registry import — Imported Records page (L3-A6)', () => {
     const anchorLink = individualPage.getByTestId('ctdl-registry-anchor-link');
     await expect(anchorLink).toContainText('ARK-2026-NONCRED01');
     await expect(anchorLink).toHaveAttribute('href', ANCHOR_RESPONSE.anchor.record_uri);
+  });
+
+  test('the added record appears in the Imported Records list after the dialog closes', async ({ individualPage }) => {
+    // The list is driven by `get_my_credentials()`, which INNER JOINs
+    // `anchor_recipients` — an anchor with no recipient row never appears here,
+    // no matter how successful the add looked. Model that causally: the RPC
+    // only returns the row once the anchor leg has actually been called.
+    let anchorAdded = false;
+
+    await individualPage.route(IMPORT_LEG, (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(LOOKUP_RESPONSE) }),
+    );
+    await individualPage.route(ANCHOR_LEG, (route) => {
+      anchorAdded = true;
+      return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(ANCHOR_RESPONSE) });
+    });
+    await individualPage.route('**/rest/v1/rpc/get_my_credentials*', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(anchorAdded ? [MY_CREDENTIALS_ROW] : []),
+      }),
+    );
+
+    await individualPage.goto(ROUTES.MY_CREDENTIALS);
+    await acceptDisclaimerIfVisible(individualPage);
+
+    // Precondition: the record is genuinely absent before the add.
+    const recordEntry = individualPage.getByText(RECORD_FILENAME);
+    await expect(recordEntry).toBeHidden();
+
+    await individualPage.getByTestId('add-from-registry-button').click();
+    await individualPage.getByLabel(/Registry identifier/i).fill(CTID);
+    await individualPage.getByRole('button', { name: /Look Up/i }).click();
+    await expect(individualPage.getByTestId('ctdl-registry-lookup-result')).toBeVisible({ timeout: 10_000 });
+
+    await individualPage.getByRole('button', { name: /Add Record/i }).click();
+    await expect(individualPage.getByTestId('ctdl-registry-anchor-result')).toBeVisible({ timeout: 10_000 });
+
+    // Close the dialog — `onImported` has already fired `refreshCredentials()`.
+    await individualPage.getByRole('button', { name: /^Cancel$/ }).click();
+    await expect(individualPage.getByTestId('ctdl-registry-anchor-result')).toBeHidden();
+
+    // The point of the whole flow: the user can now see what they just added.
+    await expect(recordEntry).toBeVisible({ timeout: 10_000 });
   });
 
   test('surfaces a lookup failure without attempting to add', async ({ individualPage }) => {

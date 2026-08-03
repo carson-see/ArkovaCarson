@@ -34,9 +34,18 @@ export {
  * Specs that seed an anchor with NO credential_type must assert THIS is
  * visible on the public verify page — never the raw uploaded filename, which
  * the projection deliberately withholds from anonymous viewers.
+ *
+ * Resolved from `import.meta.url`, NOT `__dirname`: the root package is
+ * `"type": "module"`, so Playwright transpiles this barrel to ESM where
+ * `__dirname` is undefined. Because every spec imports from this barrel, a
+ * `__dirname` here is not a local defect — it throws at module load and takes
+ * the WHOLE Playwright suite down before a single test is listed.
  */
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 export const PUBLIC_FALLBACK_FILENAME_LABEL: string = (JSON.parse(
-  readFileSync(resolve(__dirname, '..', '..', 'scripts/ci/public-pii-projection-contract.json'), 'utf8'),
+  readFileSync(
+    fileURLToPath(new URL('../../scripts/ci/public-pii-projection-contract.json', import.meta.url)),
+    'utf8',
+  ),
 ) as { sql_non_academic_fallback_label: string }).sql_non_academic_fallback_label;

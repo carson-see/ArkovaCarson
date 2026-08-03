@@ -41,6 +41,13 @@
  * response body. `ceEnvelopeSignatureVerified` is emitted as `null`
  * (unchecked) and is NEVER rendered as CE endorsement of Arkova.
  *
+ * RECIPIENT LINKAGE: every anchor created here also gets an
+ * `anchor_recipients` row for the caller (see {@link linkSelfRecipient}).
+ * `get_my_credentials()` inner-joins that table with no `anchors.user_id`
+ * fallback, so an anchor without one is permanently invisible to the user who
+ * created it. Same self-recipient marker as the sibling self-import path in
+ * `credential-sources.ts`.
+ *
  * anchors.credential_type: 'OTHER'. There is no dedicated noncredit
  * `credential_type` enum value — adding one is a schema change (migration +
  * `gen:types` + Confluence Data Model update) out of scope for this POC; see
@@ -76,6 +83,7 @@ import {
   fetchRegistryGraph,
   mapSafeFetchError,
 } from './credentials-ctdl-import.js';
+import { buildSelfImportRecipientHash } from '../../lib/credential-source-import.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit, type DeductionResult } from '../../utils/orgCredits.js';
@@ -109,6 +117,13 @@ const RequestBodySchema = z
   .strict();
 
 const MAX_PUBLIC_ID_INSERT_ATTEMPTS = 5;
+
+/** §1.1 — Zod on every write path. Mirrors `credential-sources.ts`. */
+const AnchorRecipientSchema = z.object({
+  anchor_id: z.string().min(1),
+  recipient_email_hash: z.string().min(1),
+  recipient_user_id: z.string().min(1),
+});
 
 interface AnchorRow {
   id: string;
@@ -220,6 +235,51 @@ async function insertRegistryAnchor(
   }
 
   return { anchor: null, error: lastError };
+}
+
+/**
+ * Make the created anchor reachable from the user's own "My Credentials" list.
+ *
+ * `get_my_credentials()` — the RPC behind `useMyCredentials` /
+ * `src/pages/MyCredentialsPage.tsx` — is a STRICT INNER JOIN with no
+ * `anchors.user_id` fallback:
+ *
+ *   FROM anchor_recipients ar JOIN anchors a ON a.id = ar.anchor_id
+ *   WHERE ar.recipient_user_id = auth.uid() AND a.deleted_at IS NULL
+ *
+ * so an anchor carrying `user_id` alone is PERMANENTLY invisible to the very
+ * user who created it — there is structurally no row to join through. This
+ * writes the same self-recipient marker the sibling self-import path writes
+ * (`credential-sources.ts` `linkSelfRecipient`), reusing the SHARED
+ * {@link buildSelfImportRecipientHash} so both paths stay compatible with the
+ * `link_recipient_to_anchors` claim flow.
+ *
+ * `23505` is the `anchor_recipients_unique (anchor_id, recipient_email_hash)`
+ * constraint — already linked, which is the desired end state, so it is
+ * tolerated (this is what makes the duplicate-anchor paths below self-healing
+ * for any anchor created before this fix).
+ */
+async function linkSelfRecipient(anchorId: string, userId: string): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dbAny = db as any;
+  const payload = AnchorRecipientSchema.parse({
+    anchor_id: anchorId,
+    recipient_email_hash: buildSelfImportRecipientHash(userId),
+    recipient_user_id: userId,
+  });
+  const { error } = await dbAny.from('anchor_recipients').insert(payload);
+  if (error && !isUniqueViolation(error)) throw error;
+}
+
+/** Compensation for {@link linkSelfRecipient} when a later step rejects the anchor. */
+async function unlinkSelfRecipient(anchorId: string, userId: string): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dbAny = db as any;
+  const { error } = await dbAny
+    .from('anchor_recipients')
+    .delete()
+    .match({ anchor_id: anchorId, recipient_user_id: userId });
+  if (error) throw error;
 }
 
 async function rollbackAnchor(anchorId: string, userId: string): Promise<void> {
@@ -448,12 +508,17 @@ export function buildCredentialsCtdlRegistryAnchorRouter(
     try {
       const existing = await findExistingRegistryAnchor(userId, fingerprint);
       if (existing) {
+        // Re-link on the idempotent path too: self-heals any anchor created
+        // before the recipient row was written (and is a no-op via 23505 once
+        // the link exists).
+        await linkSelfRecipient(existing.id, userId);
         res.status(200).json({ duplicate: true, anchor: toReceipt(existing), ...responseBody });
         return;
       }
 
       const createResult = await insertRegistryAnchor(userId, orgId, fingerprint, metadata, retrievedAt);
       if (createResult.duplicate) {
+        await linkSelfRecipient(createResult.duplicate.id, userId);
         res.status(200).json({ duplicate: true, anchor: toReceipt(createResult.duplicate), ...responseBody });
         return;
       }
@@ -464,9 +529,35 @@ export function buildCredentialsCtdlRegistryAnchorRouter(
         return;
       }
 
+      // Link BEFORE the credit gate: a record the caller cannot see is worse
+      // than no record at all, so an unlinkable anchor is rolled back rather
+      // than shipped — and a credit is never spent on one.
+      try {
+        await linkSelfRecipient(anchor.id, userId);
+      } catch (linkError) {
+        logger.error(
+          { error: linkError, anchorId: anchor.id, userId },
+          'Failed to link CE registry anchor recipient — rolling the anchor back',
+        );
+        await rollbackAnchor(anchor.id, userId);
+        res.status(500).json({ error: 'anchor_create_failed' });
+        return;
+      }
+
       if (orgId) {
         const deduction = await deductOrgCredit(db, orgId, 1, 'ce_registry_anchor.create', anchor.id);
         if (!deduction.allowed) {
+          try {
+            await unlinkSelfRecipient(anchor.id, userId);
+          } catch (unlinkError) {
+            // Best-effort: the anchor is soft-deleted next, and
+            // `get_my_credentials` filters `a.deleted_at IS NULL`, so a
+            // surviving recipient row stays invisible either way.
+            logger.error(
+              { error: unlinkError, anchorId: anchor.id, userId },
+              'Failed to unlink CE registry anchor recipient during credit-gate rollback',
+            );
+          }
           await rollbackAnchor(anchor.id, userId);
           sendCreditFailure(res, orgId, deduction);
           return;
