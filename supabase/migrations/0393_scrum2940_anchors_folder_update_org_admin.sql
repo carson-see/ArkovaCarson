@@ -72,6 +72,10 @@
 
 BEGIN;
 
+-- No CREATE POLICY IF NOT EXISTS exists in Postgres; drop-then-create (matching
+-- this file's own trigger convention and 0365's policy precedent) makes a
+-- partial-failure retry or re-apply safe instead of erroring on "already exists".
+DROP POLICY IF EXISTS anchors_update_org_admin ON public.anchors;
 CREATE POLICY anchors_update_org_admin ON public.anchors
   FOR UPDATE TO authenticated
   USING (org_id = public.get_user_org_id() AND public.is_org_admin())
