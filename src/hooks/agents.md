@@ -1,5 +1,5 @@
 # agents.md — hooks
-_Last updated: 2026-07-28_
+_Last updated: 2026-08-03_
 
 ## What This Folder Contains
 
@@ -7,6 +7,26 @@ React hooks for data fetching and mutations against Supabase. Each hook encapsul
 
 ## Recent Changes
 
+- 2026-08-03 Lane 2 bug blitz — founder-priority bug ("why can't I sort my
+  records into envelopes"), fixed alongside migration `0393`
+  (`supabase/migrations/agents.md`): `useFolders.ts` `assignMutation` now
+  does `.select('id')` after the `anchors.update({ folder_id })` and throws
+  when zero rows come back, mirroring `useSecureQueue.removeItem`'s
+  established pattern (§ below, 2026-07-28 entry). Root cause was NOT the
+  `trg_prevent_metadata_edit`/SECURED-lock hypothesis (verified live: an
+  owner moving their own SECURED anchor into a folder already worked) — it
+  was that `useAnchors.fetchAnchorsData` gives an ORG_ADMIN the WHOLE org's
+  anchor list, but the only anchors UPDATE policy was `anchors_update_own`
+  (`user_id = auth.uid()`). An ORG_ADMIN moving a teammate-created record
+  (the common case for "My Records" as an org admin) hit a zero-row
+  RLS-filtered UPDATE, which PostgREST reports as `error: null` — the
+  pre-fix hook resolved successfully and `MyRecordsPage` toasted a false
+  "Record moved". Migration `0393` widens RLS for the ORG_ADMIN-on-org-record
+  case (folder_id-only, trigger-enforced); this hook's zero-row check is the
+  honest-failure backstop for every path RLS still denies (e.g. a plain org
+  member moving a teammate's record — deliberately unaffected by `0393`).
+  Tests: `useFolders.test.ts` (new file, 4 cases) +
+  `tests/rls/folders.test.ts` (4 new live-RLS cases, `tests/rls/agents.md`).
 - 2026-07-28 R19 (advances SCRUM-2481): `useBulkAnchors.ts` `createBulkAnchors(records, options?)` gained a second `{ attested?: boolean }` param. Any batch containing a record whose `fingerprintProvided === false` (row-mode CSV import, no fingerprint column mapped — `src/lib/csvParser.ts`) requires `options.attested === true` or the hook rejects BEFORE calling the `bulk_create_anchors` RPC (sets `error`, returns `null`, never a partial submission). The RPC payload now carries `fingerprintProvided: r.fingerprintProvided ?? false` per row (fails closed to "record-derived, attestation required" when the flag is missing — never silently assumed `document_bytes`); the SQL function computes `fingerprint_source` server-side from this boolean (migration `0376`). Caller: `BulkUploadWizard.tsx`.
 - 2026-07-27 SCRUM-2940 (Folders UI): `useAnchors.ts` — the `AnchorPartial`
   select/Pick gained `folder_id`, mapped to `Record.folderId` (`null` =
