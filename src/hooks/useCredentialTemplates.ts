@@ -123,7 +123,13 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
     async (id: string, params: UpdateTemplateParams): Promise<boolean> => {
       if (!orgId) return false;
 
-      const { error: updateError } = await supabase
+      // .select() to detect silent RLS failures (SCRUM bug sprint 2026-08-03):
+      // credential_templates_update requires role='ORG_ADMIN', but any org
+      // member can reach this hook. When RLS blocks the write, Postgres
+      // matches zero rows and Supabase returns { error: null } — without
+      // .select() there's no way to tell that apart from a real update, so
+      // the caller can't distinguish "worked" from "silently no-opped".
+      const { data: updatedRows, error: updateError } = await supabase
         .from('credential_templates')
         .update({
           ...params,
@@ -132,10 +138,17 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
             : (params.default_metadata as Json) ?? {},
         })
         .eq('id', id)
-        .eq('org_id', orgId);
+        .eq('org_id', orgId)
+        .select('id');
 
       if (updateError) {
         toast.error(TOAST.TEMPLATE_UPDATE_FAILED);
+        return false;
+      }
+
+      // Detect silent RLS rejection: query succeeded but no rows matched.
+      if (!updatedRows || updatedRows.length === 0) {
+        toast.error(TOAST.TEMPLATE_PERMISSION_DENIED);
         return false;
       }
 
@@ -167,14 +180,21 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
     async (id: string): Promise<boolean> => {
       if (!orgId) return false;
 
-      const { error: deleteError } = await supabase
+      // Same zero-row RLS detection as updateTemplate above.
+      const { data: deletedRows, error: deleteError } = await supabase
         .from('credential_templates')
         .delete()
         .eq('id', id)
-        .eq('org_id', orgId);
+        .eq('org_id', orgId)
+        .select('id');
 
       if (deleteError) {
         toast.error(TOAST.TEMPLATE_DELETE_FAILED);
+        return false;
+      }
+
+      if (!deletedRows || deletedRows.length === 0) {
+        toast.error(TOAST.TEMPLATE_PERMISSION_DENIED);
         return false;
       }
 
