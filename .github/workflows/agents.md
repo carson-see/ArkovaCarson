@@ -355,6 +355,47 @@ cycle → **then** decide on `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE`. A contract tes
 asserts ENQUEUE is still absent; reversing the order piles up `pending`
 `connector_artifact` rows with nothing consuming them.
 
+## Drive connector flag activation (2026-08-03, GH #1835/#1836/#1837)
+
+PR #1944 (merged) fixed three Drive-connector code defects — channel-token secret
+(was the org UUID), the lease-guarded renewal job, `folder_path` population — but
+left the connector fully dark: `ENABLE_DRIVE_OAUTH`, `ENABLE_DRIVE_WEBHOOK`,
+`ENABLE_DRIVE_CHANGES_RUNNER` were never added to this file's `--set-env-vars`, so
+nobody could connect, no webhook push could land, and no landed push would be
+processed. This PR flips all three `true` in the canary deploy step, after
+re-verifying directly against the merged code (not assumed from a prior claim):
+the create-then-stop channel-renewal ordering fix is real
+(`integrations/connectors/drive-subscription-renewal.ts`), `WORKER_PUBLIC_URL` was
+already in this file's `--set-env-vars`, and the run-lease guard
+(`DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE`, `jobs/run-lease.ts`) really is shared by
+both the Cloud Scheduler HTTP route (`routes/cron.ts`) and the in-process backup
+(`routes/scheduled.ts`) via the one `runDriveSubscriptionRenewal()` entry point —
+so the two triggers cannot double-fire. Boot-time config validation for
+`ENABLE_DRIVE_OAUTH=true` in production (`config.ts`) requires
+`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`,
+`INTEGRATION_STATE_HMAC_SECRET` (all three already in this file's `--set-secrets`)
+and `GCP_KMS_INTEGRATION_TOKEN_KEY` (already in `--set-env-vars`) — verified
+present so the flag flip cannot crash-loop the worker at boot.
+
+**`ENABLE_WORKSPACE_RENEWAL` was deliberately NOT added**, despite being named
+alongside the other three in `flagRegistry.ts` and in a Drive-flavored doc comment
+in `config.ts`. It does not gate `runDriveSubscriptionRenewal()` (that job is
+unconditional, protected only by the run lease above) — it gates a different,
+unrelated job (`workspace-subscription-renewal.ts`, SCRUM-1147) whose
+`driveRenew`/`graphRenew` deps are hardcoded stubs that always throw "not
+configured," with no Cloud Scheduler trigger anywhere in this repo. Setting it
+would not activate anything Drive-related.
+
+**This PR does not fully activate the connector by itself.** The renewal job's
+Cloud Scheduler job (`drive-subscription-renewal`, declared in
+`scripts/gcp-setup/cloud-scheduler.sh`) is still not applied to prod — that is a
+separate, manual `gcloud scheduler jobs create` step outside this workflow's
+reach (no `gcloud` credentials in the authoring session). Until it runs, renewal
+relies solely on the hourly in-process backup, which is not a reliable substitute
+under Cloud Run CPU throttling (node-cron does not fire on a throttled instance).
+See the activating PR's body for the exact command and a post-deploy verification
+runbook.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails

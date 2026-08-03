@@ -398,6 +398,42 @@ jobs:
             echo "::warning title=Clear conflicting env/secret types exited ${CLEAR_RC}::The clear step did not succeed. If the canary deploy below fails with an env/secret type conflict, this is why. Output above."
           fi
 
+      # GH #1835/#1836/#1837 activation (2026-08-03): PR #1944 already merged the
+      # three code fixes (channel-token secret instead of the org UUID, the
+      # lease-guarded renewal job, folder_path population) but left the
+      # connector fully dark — ENABLE_DRIVE_OAUTH / ENABLE_DRIVE_WEBHOOK /
+      # ENABLE_DRIVE_CHANGES_RUNNER were never added here, so nobody could
+      # connect Drive, no push notification could reach the webhook, and no
+      # received push would be processed. All three flipped true below.
+      # Boot-time config validation (config.ts) for ENABLE_DRIVE_OAUTH=true in
+      # production requires GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET,
+      # INTEGRATION_STATE_HMAC_SECRET (all three already in --set-secrets below)
+      # and GCP_KMS_INTEGRATION_TOKEN_KEY (already in --set-env-vars below) —
+      # verified present before flipping the flag so this canary cannot
+      # crash-loop the whole worker on a missing-secret Zod validation error.
+      # ENABLE_DRIVE_CHANGES_RUNNER fails soft (skips + logs, never throws) on
+      # an integration with no last_page_token per drive-changes-runner.ts —
+      # safe for a from-zero activation where ENABLE_DRIVE_OAUTH has been off
+      # this whole time, so there are no pre-existing connections to strand.
+      #
+      # DELIBERATELY NOT added: ENABLE_WORKSPACE_RENEWAL. It does not gate the
+      # renewal job above (routes/cron.ts's POST /jobs/drive-subscription-renewal
+      # and routes/scheduled.ts's in-process backup both call
+      # runDriveSubscriptionRenewal() unconditionally — protected by a run
+      # lease, not a feature flag). ENABLE_WORKSPACE_RENEWAL instead gates a
+      # DIFFERENT, unrelated job (workspace-subscription-renewal.ts, SCRUM-1147)
+      # whose driveRenew/graphRenew deps are hardcoded stubs that always throw
+      # "not configured" — it has no Cloud Scheduler trigger anywhere and
+      # setting it true would not activate anything Drive-related. See the PR
+      # body for the full trace.
+      #
+      # The renewal job's Cloud Scheduler job (scripts/gcp-setup/cloud-scheduler.sh,
+      # `drive-subscription-renewal`) is declared but NOT applied to prod — that
+      # is a separate, manual `gcloud scheduler jobs create` step (see the PR
+      # body) that this workflow cannot perform. Until it runs, renewal relies
+      # solely on the hourly in-process backup, which is not reliable under
+      # Cloud Run CPU throttling (node-cron does not fire on a throttled
+      # instance) — see the PR's Premortem.
       - name: Deploy canary (no traffic)
         run: |
           gcloud run deploy ${{ env.SERVICE_NAME }} \
@@ -414,7 +450,7 @@ jobs:
             --tag canary \
             --no-traffic \
             --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,SUPABASE_JWT_SECRET=supabase-jwt-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,BITCOIN_TREASURY_WIF=bitcoin-treasury-wif:latest,SENTRY_DSN=sentry-dsn:latest,API_KEY_HMAC_SECRET=api-key-hmac-secret:latest,GEMINI_API_KEY=gemini-api-key:latest,CRON_SECRET=cron-secret:latest,RESEND_API_KEY=resend-api-key:latest,TOGETHER_API_KEY=together-api-key:latest,COURTLISTENER_API_TOKEN=courtlistener-api-token:latest,OPENSTATES_API_KEY=openstates-api-key:latest,BITCOIN_RPC_URL=bitcoin-rpc-url:latest,UPSTASH_REDIS_REST_URL=UPSTASH_REDIS_REST_URL:latest,UPSTASH_REDIS_REST_TOKEN=UPSTASH_REDIS_REST_TOKEN:latest,RUNPOD_API_KEY=runpod-api-key:latest,EDGAR_USER_AGENT=edgar-user-agent:latest,SAM_GOV_API_KEY=sam-gov-api-key:latest,CLOUDFLARE_API_TOKEN=cloudflare-api-token:latest,CLOUDFLARE_TUNNEL_TOKEN=cloudflare-tunnel-token:latest,GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,DOCUSIGN_INTEGRATION_KEY=docusign_integration_key:latest,DOCUSIGN_CLIENT_SECRET=docusign_secretkey_prod:latest,DOCUSIGN_CONNECT_HMAC_SECRET=docusign_connect_hmac_secret_prod:latest,INTEGRATION_STATE_HMAC_SECRET=INTEGRATION_STATE_HMAC_SECRET:latest,HEALTH_DETAIL_TOKEN=HEALTH_DETAIL_TOKEN:latest" \
-            --set-env-vars "^||^NODE_ENV=production||LOG_LEVEL=info||BITCOIN_NETWORK=mainnet||ENABLE_PROD_NETWORK_ANCHORING=true||USE_MOCKS=false||FRONTEND_URL=https://app.arkova.ai||CORS_ALLOWED_ORIGINS=https://app.arkova.ai,https://arkova-carson.vercel.app,https://arkova-26.vercel.app||AI_PROVIDER=gemini||GEMINI_MODEL=gemini-2.5-flash||GEMINI_LITE_MODEL=gemini-2.5-flash||ENABLE_AI_EXTRACTION=true||ENABLE_SEMANTIC_SEARCH=true||ENABLE_AI_FRAUD=true||ENABLE_AI_REPORTS=true||CRON_OIDC_AUDIENCE=https://arkova-worker-270018525501.us-central1.run.app||KMS_PROVIDER=gcp||GCP_KMS_KEY_RESOURCE_NAME=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/bitcoin-mainnet/cryptoKeyVersions/1||GCP_KMS_INTEGRATION_TOKEN_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens||ENABLE_VERIFICATION_API=true||BATCH_ANCHOR_MAX_SIZE=10000||X402_FACILITATOR_URL=https://edge.arkova.ai/x402/verify||X402_NETWORK=eip155:84532||BITCOIN_UTXO_PROVIDER=getblock||BITCOIN_FEE_STRATEGY=mempool||ENABLE_DOCUSIGN_OAUTH=true||ENABLE_DOCUSIGN_WEBHOOK=true||DOCUSIGN_DEMO=false||ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true||ENABLE_CONNECTOR_ARTIFACT_DRAIN=true||WORKER_PUBLIC_URL=https://arkova-worker-270018525501.us-central1.run.app||EMAIL_FROM=noreply@arkova.ai||TOGETHER_MODEL=carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-e3cda031" \
+            --set-env-vars "^||^NODE_ENV=production||LOG_LEVEL=info||BITCOIN_NETWORK=mainnet||ENABLE_PROD_NETWORK_ANCHORING=true||USE_MOCKS=false||FRONTEND_URL=https://app.arkova.ai||CORS_ALLOWED_ORIGINS=https://app.arkova.ai,https://arkova-carson.vercel.app,https://arkova-26.vercel.app||AI_PROVIDER=gemini||GEMINI_MODEL=gemini-2.5-flash||GEMINI_LITE_MODEL=gemini-2.5-flash||ENABLE_AI_EXTRACTION=true||ENABLE_SEMANTIC_SEARCH=true||ENABLE_AI_FRAUD=true||ENABLE_AI_REPORTS=true||CRON_OIDC_AUDIENCE=https://arkova-worker-270018525501.us-central1.run.app||KMS_PROVIDER=gcp||GCP_KMS_KEY_RESOURCE_NAME=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/bitcoin-mainnet/cryptoKeyVersions/1||GCP_KMS_INTEGRATION_TOKEN_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens||ENABLE_VERIFICATION_API=true||BATCH_ANCHOR_MAX_SIZE=10000||X402_FACILITATOR_URL=https://edge.arkova.ai/x402/verify||X402_NETWORK=eip155:84532||BITCOIN_UTXO_PROVIDER=getblock||BITCOIN_FEE_STRATEGY=mempool||ENABLE_DOCUSIGN_OAUTH=true||ENABLE_DOCUSIGN_WEBHOOK=true||DOCUSIGN_DEMO=false||ENABLE_DRIVE_OAUTH=true||ENABLE_DRIVE_WEBHOOK=true||ENABLE_DRIVE_CHANGES_RUNNER=true||ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true||ENABLE_CONNECTOR_ARTIFACT_DRAIN=true||WORKER_PUBLIC_URL=https://arkova-worker-270018525501.us-central1.run.app||EMAIL_FROM=noreply@arkova.ai||TOGETHER_MODEL=carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-e3cda031" \
             --quiet
 
       - name: Smoke test canary revision
