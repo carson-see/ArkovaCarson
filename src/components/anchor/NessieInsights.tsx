@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { NESSIE_LABELS } from '@/lib/copy';
+import { resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
 
 interface NessieInsightsProps {
   /** The anchor record's credential type */
@@ -76,7 +77,7 @@ export function NessieInsights({ credentialType, issuerName, metadata, publicId:
     setHasQueried(true);
 
     try {
-      const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
+      const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
       const res = await fetch(
         `${workerUrl}/api/v1/nessie/query?${new URLSearchParams({
           q: query,

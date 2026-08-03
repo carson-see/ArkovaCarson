@@ -17,6 +17,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { supabase } from '@/lib/supabase';
 import { AUDITOR_BATCH_LABELS } from '@/lib/copy';
+import { resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
 
 interface VerifyResult {
   public_id: string;
@@ -66,7 +67,7 @@ export function AuditorBatchPage() {
         return;
       }
 
-      const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
+      const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
       const body: Record<string, unknown> = {};
 
       if (mode === 'csv') {

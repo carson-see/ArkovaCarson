@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockRpc = vi.hoisted(() => vi.fn());
 const mockGetSession = vi.hoisted(() => vi.fn());
 const mockResolveSafeWorkerEndpoint = vi.hoisted(() => vi.fn());
+const mockResolveWorkerBaseUrl = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
 
@@ -30,6 +31,7 @@ vi.mock('@/lib/supabase', () => ({
 
 vi.mock('@/lib/workerUrlSafety', () => ({
   resolveSafeWorkerEndpoint: mockResolveSafeWorkerEndpoint,
+  resolveWorkerBaseUrl: mockResolveWorkerBaseUrl,
 }));
 
 // Mock fetch for worker email endpoint
@@ -50,6 +52,7 @@ const defaultOptions = {
 describe('useInviteMember', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveWorkerBaseUrl.mockReturnValue('http://localhost:3001');
     mockResolveSafeWorkerEndpoint.mockReturnValue(new URL('http://localhost:3001/api/send-invitation-email'));
     mockGetSession.mockResolvedValue({ data: { session: { access_token: 'test-token' } } });
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ sent: true }) });
@@ -209,6 +212,35 @@ describe('useInviteMember', () => {
     expect(result.current.error).toContain('HTTPS outside localhost');
   });
 
+  // Root cause of "invitation was created, but the email could not be sent" with
+  // ZERO requests in prod worker logs: VITE_WORKER_URL was unset at build time and
+  // the naive `|| 'http://localhost:3001'` fallback silently posted to the
+  // browser's own machine. resolveWorkerBaseUrl now fails loudly instead — this
+  // must ALSO block the RPC (no invitation should be created if we already know
+  // the email leg cannot possibly succeed), matching the existing unsafe-URL case.
+  it('should not create an invitation when the worker URL cannot be resolved (VITE_WORKER_URL unset in prod)', async () => {
+    mockResolveWorkerBaseUrl.mockImplementation(() => {
+      throw new Error('Worker URL is not configured for this production build (VITE_WORKER_URL is unset).');
+    });
+
+    const { result } = renderHook(() => useInviteMember());
+
+    let success: boolean;
+    await act(async () => {
+      success = await result.current.inviteMember(defaultOptions);
+    });
+
+    expect(success!).toBe(false);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockGetSession).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+    // The toast (what the end user actually sees) is what §1.4 governs: only
+    // curated ActionableInviteError messages surface verbatim, so an unadorned
+    // config Error — like the existing "unsafe worker URL" case below it — maps
+    // to the generic, curated toast rather than the raw resolver message.
+    expect(mockToastError).toHaveBeenCalledWith('Failed to send invitation. Please try again.');
+  });
+
   it('should fail when the invitation email endpoint rejects after RPC success', async () => {
     mockRpc.mockResolvedValue({ data: 'invite-uuid', error: null });
     mockFetch.mockResolvedValueOnce({ ok: false, status: 403, json: async () => ({ error: { code: 'forbidden' } }) });
@@ -259,6 +291,7 @@ describe('useInviteMember', () => {
 describe('useInviteMember — actionable error surfacing (SCRUM-1979)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveWorkerBaseUrl.mockReturnValue('http://localhost:3001');
     mockResolveSafeWorkerEndpoint.mockReturnValue(new URL('http://localhost:3001/api/send-invitation-email'));
     mockGetSession.mockResolvedValue({ data: { session: { access_token: 'test-token' } } });
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ sent: true }) });

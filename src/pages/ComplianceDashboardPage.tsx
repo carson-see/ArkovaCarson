@@ -28,6 +28,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { isPlatformAdmin } from '@/lib/platform';
 import { ROUTES } from '@/lib/routes';
+import { resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
 import { COMPLIANCE_LABELS } from '@/lib/copy';
 import { NessieIntelligencePanel } from '@/components/search/NessieIntelligencePanel';
 import { cn } from '@/lib/utils';
@@ -616,7 +617,7 @@ export function ComplianceDashboardPage() {
       const jwt = session.data.session?.access_token;
       if (!jwt) return;
 
-      const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
+      const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
       const res = await fetch(`${workerUrl}/api/v1/audit-export/batch`, {
         method: 'POST',
         headers: {
