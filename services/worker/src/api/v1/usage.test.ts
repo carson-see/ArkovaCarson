@@ -161,7 +161,7 @@ describe('GET /api/v1/usage — api_key_usage id-filter', () => {
     }
     expect(res.statusCode).toBe(200);
     // Every key counted: 1,000 keys x 7 requests.
-    expect(res.body.used).toBe(7_000);
+    expect(res.body!.used).toBe(7_000);
   });
 
   it('returns 500 rather than reporting 0 requests when the usage read fails', async () => {
@@ -182,7 +182,7 @@ describe('GET /api/v1/usage — api_key_usage id-filter', () => {
     await getHandler()(req(), res);
 
     expect(res.statusCode).toBe(200);
-    expect(res.body.used).toBe(0);
-    expect(res.body.keys).toEqual([]);
+    expect(res.body!.used).toBe(0);
+    expect(res.body!.keys).toEqual([]);
   });
 });

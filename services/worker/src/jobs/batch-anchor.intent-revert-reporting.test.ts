@@ -12,7 +12,7 @@
  * path, where a secondary throw would mask the real chain error), so the log
  * line is the ONLY signal that exists. It has to be true.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Same module stubs the sibling batch-anchor suites use — importing the module
 // pulls in config/db/chain, none of which this pure function touches.
