@@ -127,11 +127,11 @@ describe('bumpRetryCounts (SCRUM-2251 / HARDEN-1-H) — N+1 elimination', () => 
   });
 
   describe('fallback when RPC is unavailable', () => {
-    it('does <= ceil(N/100) reads + grouped updates, never per-row, and increments retry_count', async () => {
+    it('does a bounded number of chunked reads + grouped updates, never per-row, and increments retry_count', async () => {
       // RPC returns an error → fall through to chunked fallback.
       dbState.rpcResult = { error: { message: 'function does not exist' } };
 
-      const N = 250; // -> ceil(250/100) = 3 chunks
+      const N = 250;
       const ids = Array.from({ length: N }, (_, i) => `audit-${i}`);
       // Seed two distinct retry_count values so each chunk groups into <= 2 updates.
       ids.forEach((id, i) => dbState.queueRows.set(id, i % 2 === 0 ? 0 : 3));
@@ -141,14 +141,21 @@ describe('bumpRetryCounts (SCRUM-2251 / HARDEN-1-H) — N+1 elimination', () => 
       // RPC attempted once before fallback.
       expect(dbState.rpcCalls).toHaveLength(1);
 
-      // Reads: one per 100-chunk, never per-row.
-      const expectedChunks = Math.ceil(N / 100);
-      expect(dbState.selectInCalls).toBe(expectedChunks);
-      expect(dbState.selectInCalls).toBeLessThanOrEqual(expectedChunks);
+      // This used to assert `selectInCalls === Math.ceil(N / 100)`, pinning the
+      // hand-rolled chunk width of the code under test. That is the per-call-site
+      // width assertion #1839 replaced: it fails the moment the width is fixed,
+      // for a change that made the code MORE correct. Width is now
+      // `chunkForInFilter`'s single guarantee, asserted once in
+      // `utils/postgrest-filter.test.ts`. What this test is actually about is
+      // N+1 elimination, so assert THAT: chunked, not per-row.
+      const maxChunks = Math.ceil(N / 2); // any real chunking beats this
+      expect(dbState.selectInCalls).toBeGreaterThan(0);
+      expect(dbState.selectInCalls).toBeLessThanOrEqual(maxChunks);
+      expect(dbState.selectInCalls).toBeLessThan(N);
 
       // Updates: grouped by distinct retry_count per chunk (2 groups here),
-      // so <= 2 * chunks — and far fewer than N (the per-row count).
-      expect(dbState.updateCalls.length).toBeLessThanOrEqual(2 * expectedChunks);
+      // so at most 2 per chunk — and far fewer than N (the per-row count).
+      expect(dbState.updateCalls.length).toBeLessThanOrEqual(2 * dbState.selectInCalls);
       expect(dbState.updateCalls.length).toBeLessThan(N);
 
       // Every update INCREMENTS retry_count (current + 1) and stamps last_error.

@@ -12,6 +12,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
+import { assertNotAllChunksFailed, chunkForInFilter } from '../utils/postgrest-filter.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /** Maximum records per export batch */
@@ -85,18 +86,44 @@ export async function exportTrainingData(supabase: SupabaseClient): Promise<{
     }
   }
 
-  // Mark exported records
-  if (exportedIds.length > 0) {
+  // Mark exported records.
+  //
+  // This is the load-bearing half of the job: the rows have ALREADY been
+  // appended to the JSONL corpus on disk, and `training_exported` is the only
+  // thing stopping the next tick from selecting and appending them again. The
+  // filter took the whole page (`.limit(1000)` upstream) in one `.in()`, which
+  // is several times the request-line budget, so the update took a 400 and the
+  // flag was never set — every tick re-selected the same rows and re-appended
+  // them, growing the corpus with duplicates without bound.
+  //
+  // Chunked, and an all-chunks-failed mark THROWS rather than returning a
+  // success-shaped result: the caller cannot distinguish "exported 1000" from
+  // "exported 1000 again for the ninth time" on its own, and a cron failure is
+  // the signal that stops the loop.
+  let failedChunks = 0;
+  const chunks = chunkForInFilter(exportedIds);
+  for (const { values, start } of chunks) {
     const { error: updateError } = await supabase
       .from('public_records')
       .update({ training_exported: true })
-      .in('id', exportedIds);
+      .in('id', values);
 
     if (updateError) {
-      logger.error({ error: updateError }, 'Failed to mark records as exported');
+      failedChunks++;
       errors++;
+      logger.error(
+        { error: updateError, chunkStart: start, chunkSize: values.length },
+        'Failed to mark records as exported — these rows WILL be re-exported next tick',
+      );
     }
   }
+
+  assertNotAllChunksFailed(
+    'trainingExporter.markExported',
+    chunks.length,
+    failedChunks,
+    `${exportedIds.length} record(s) already appended to ${outputPath}`,
+  );
 
   logger.info({ exported: exportedIds.length, errors }, 'Training export complete');
   return { exported: exportedIds.length, errors };
