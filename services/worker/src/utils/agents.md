@@ -47,6 +47,37 @@ Shared utilities consumed across the worker. Each file is small and single-purpo
 ## Open work
 - SCRUM-1740 (PR #738) — quota gate awaits merge.
 
+## 2026-08-02 `scanAllPages` — the read-side twin of `chunkForInFilter` (PR #1865)
+
+`postgrest-filter.ts` gains `scanAllPages` / `PageScan` / `PageScanError`. Use it for ANY
+read that must return every row a filter matches. Do not hand-roll the loop.
+
+Same argument as `chunkForInFilter`, on the other half of the same `db-max-rows` ambiguity —
+and the more dangerous half: a too-wide `.in()` takes a 400 and is loud, while a scan that
+stops early returns a plausible short answer at HTTP 200.
+
+Three rules a call site can no longer opt out of:
+
+1. **An empty page is the only end-of-data signal.** A SHORT page is not. PostgREST's
+   `db-max-rows` is a server setting the worker cannot see and may be below
+   `POSTGREST_ROW_LIMIT`, so `if (page.length < requested) break` stops after page one. Costs
+   one extra request per scan; buys back a whole class of silent truncation.
+2. **Advance by rows RETURNED, never by the width requested** — otherwise a short page skips
+   every row it withheld.
+3. **A hard `maxPages` ceiling**, so the loop cannot hang when the other two exits depend on a
+   misbehaving server. Exhausting it yields `page_budget_exhausted`, never a complete read.
+
+`status` is the whole point: `complete` is the ONLY value meaning "these are all the rows".
+A caller that ignores it and presents `rows` as a full set has re-created the bug.
+
+**Known offender, NOT fixed here:** `jobs/publicRecordAnchor.ts:488` and `:514`
+(`fetchRecordsForSource` / `fetchNonPriorityRecords`) both still use `if (chunk.length <
+chunkSize) break`. `chunkSize` there is `config.batchAnchorMaxSize`, which can reach 1000, so
+on any deployment with `db-max-rows` below that they under-read and stop early. Consequence is
+milder than in the audit endpoint (each run re-queries from offset 0, so it degrades to reduced
+per-run throughput rather than a permanent undercount), but it is the same wrong assumption.
+Left alone deliberately: that file is being edited by PR #1853, this PR's base. Migrate it to
+`scanAllPages` in a follow-up rather than conflicting with an in-flight anchoring change.
 ## 2026-08-01 SCRUM-2227 — `complianceMapping.ts` claims discipline
 
 - `COMPLIANCE_CONTROLS_NOTE` is the single informational-not-attestation string for `compliance_controls`. Rendered **verbatim** by `/api/v1/verify`, the AI accountability report, and the audit export (PDF + CSV). It states what is measured vs asserted vs NOT asserted (§1.5) and explicitly disclaims eIDAS qualified status. Do not paraphrase per-surface — one string, one meaning. **Not yet counsel-reviewed** (drafted against the approved `JURISDICTION_INFORMATIONAL_DISCLAIMER` in `services/worker/src/exports/cle-log-export.ts`).
