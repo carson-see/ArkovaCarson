@@ -25,9 +25,103 @@ import {
 import { hasServableProofBranch } from '../../utils/proofBranch.js';
 import { getCachedVerification, setCachedVerification } from '../../utils/verifyCache.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
+// Imported from the GUARD, not from `ctdl-serializer.js`, on purpose: the guard
+// is deliberately dependency-free (see its header) so a non-CTDL path can reuse
+// the detectors without pulling the whole CTDL serializer onto this hot,
+// anonymous verification path.
+import { isEducationCredentialType } from '../../ctdl/ctdl-pii-guard.js';
+// The value layer itself lives in `public-projection-text.ts` so `verify.ts`
+// and `provenance.ts` share ONE copy — two copies of the wrapper is the same
+// drift the contract exists to prevent.
+import { publicFreeTextOrNull } from './public-projection-text.js';
 import { recordAuditEvent } from '../../utils/auditEvent.js';
 
 const router = Router();
+
+// ---------------------------------------------------------------------------
+// Outbound PII gate — the THIRD public projection of an anchor row.
+//
+// `router.ts` allows anonymous GET on this route
+// (`if (!req.apiKey && req.method === 'GET') next()`), so everything
+// `buildVerificationResult` emits is public. Two sibling projections of the
+// SAME rows were hardened first and this one was missed:
+//
+//   * SQL  — `public.get_public_anchor` (migration 0385, PR #1841), anon-GRANTed
+//            and called from the browser over PostgREST.
+//   * CTDL — `services/worker/src/ctdl/ctdl-pii-guard.ts` (PR #1815), behind
+//            `GET /api/v1/credentials/:publicId/ctdl`.
+//
+// Both apply the same two-layer rule; this file now applies it too. The shared
+// statement of the rule is `scripts/ci/public-pii-projection-contract.json`.
+//
+// ── THE POLICY DECISION ────────────────────────────────────────────────────
+//
+// Academic-record suppression here is UNCONDITIONAL, matching the other two —
+// it is deliberately NOT gated on `directory_info_opt_out`. Three reasons:
+//
+//   1. Opt-out means the DEFAULT IS PUBLISH, and default-publish is the defect
+//      class this work exists to close. `directory_info_opt_out` defaults to
+//      `false`, so before this change every learner's description shipped
+//      unless an institution had explicitly set a flag.
+//   2. `description` was not gated by the opt-out ANYWAY. The REG-02 block
+//      below suppresses issuer/recipient/dates; `description` was emitted raw
+//      underneath it, so even an opted-out learner was exposed on this route.
+//   3. One row, three anonymous projections, three different answers is not a
+//      privacy posture. The verify page (browser) already reads the SQL path,
+//      which suppresses; the API disagreeing with the page it serves is the
+//      drift itself.
+//
+// The cost is real and bounded: an issuer-authored description no longer ships
+// on an academic record for anyone. It already does not ship on the other two
+// public projections, so no consumer loses access to data it could still get
+// publicly elsewhere.
+//
+// `FERPA_EDUCATION_TYPES` is NOT reused for this and is NOT edited. It carries
+// a fourth member (`CLE`) and drives the FERPA §99.33 re-disclosure NOTICE plus
+// the §99.37 directory-information opt-out — different jobs from free-text
+// suppression, and a continuing-legal-education record is a practitioner
+// record whose descriptive title is the partner-facing value. The academic set
+// comes from the guard's `EDUCATION_CREDENTIAL_TYPES`. Two lists, two purposes,
+// both pinned by the contract test.
+//
+// ── OMISSION, NOT FAIL-CLOSED ──────────────────────────────────────────────
+//
+// The CTDL path 404s on a PII hit because its body is a PUBLICATION. This body
+// is a VERIFICATION ANSWER: refusing it would tell an anonymous verifier that a
+// genuinely anchored document does not exist, in exchange for nothing — the
+// verification-bearing fields (fingerprint, chain receipt, status, block) carry
+// no free text. Dropping the FIELD contains the leak while the answer survives.
+//
+// ── NO LEARNER-NAME HEURISTIC ──────────────────────────────────────────────
+//
+// `containsLearnerNamePii` is deliberately NOT imported. Measured in PR #1815
+// and again for migration 0385: the capitalised-pair patterns detect NONE of
+// the real leak shapes (bare, all-caps, non-ASCII, apostrophe, hyphenated) while
+// `for` as a bare preposition drops "Center for Professional Development",
+// "Society for Human Resource Management", "Ethics for Trial Lawyers" and more.
+// Zero measured true positives, abundant measured false positives. Learner names
+// are covered STRUCTURALLY here — an academic record emits no issuer- or
+// extraction-authored free text at all, which is precision-independent.
+// ---------------------------------------------------------------------------
+
+/**
+ * API-RICH string keys exempt from the value gate.
+ *
+ * An ALLOW-list, and the gate FAILS CLOSED against it: any string-valued
+ * API-RICH key NOT named here routes through `publicFreeTextOrNull`, so a
+ * future additive field is gated by default instead of shipping raw because
+ * nobody remembered. (Recognising danger fails open; recognising safety fails
+ * closed — the same inversion `$structural_keys_note` records in the contract.)
+ *
+ * These three are opaque or structural: a chain transaction id, an
+ * Arkova-issued public id, and a closed enum. None can carry issuer- or
+ * extraction-authored prose.
+ */
+const STRUCTURAL_API_RICH_KEYS: ReadonlySet<string> = new Set([
+  'parent_public_id',
+  'revocation_tx_id',
+  'fingerprint_source',
+]);
 
 /** Full frozen schema result per CLAUDE.md Section 10 */
 export interface VerificationResult {
@@ -269,11 +363,21 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     (FERPA_EDUCATION_TYPES as readonly string[]).includes(anchor.credential_type);
   const suppressDirectory = anchor.directory_info_opt_out && isEducationType;
 
+  // Structural layer: an ACADEMIC RECORD (a record about an identified learner)
+  // emits no issuer- or extraction-authored free text. Unconditional — see the
+  // policy note above. Distinct from `isEducationType`, which is the wider
+  // FERPA notice/opt-out set and additionally includes CLE.
+  const isAcademicRecord = isEducationCredentialType(anchor.credential_type);
+
   if (anchor.credential_type) {
     result.credential_type = anchor.credential_type;
   }
-  if (anchor.org_name && !suppressDirectory) {
-    result.issuer_name = anchor.org_name;
+  // The issuer is an INSTITUTION, not the learner, so it is cleaned rather than
+  // structurally suppressed — deliberate parity with migration 0385's
+  // `issuer_name` handling. The REG-02 opt-out still hides it as directory info.
+  const issuerName = publicFreeTextOrNull(anchor.org_name);
+  if (issuerName && !suppressDirectory) {
+    result.issuer_name = issuerName;
   }
   if (anchor.recipient_hash && !suppressDirectory) {
     result.recipient_identifier = anchor.recipient_hash;
@@ -284,9 +388,12 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   if (anchor.expires_at !== undefined && !suppressDirectory) {
     result.expiry_date = anchor.expires_at;
   }
-  // Frozen schema: omit jurisdiction when null, never return null
-  if (anchor.jurisdiction) {
-    result.jurisdiction = anchor.jurisdiction;
+  // Frozen schema: omit jurisdiction when null, never return null.
+  // Value-gated but not academically suppressed — an informational
+  // jurisdiction tag (§1.5) is not a statement about the learner. Matches 0385.
+  const jurisdiction = publicFreeTextOrNull(anchor.jurisdiction);
+  if (jurisdiction) {
+    result.jurisdiction = jurisdiction;
   }
   // BETA-11: explorer URL (additive, nullable — Constitution 1.8)
   if (anchor.chain_tx_id && /^[a-fA-F0-9]+$/.test(anchor.chain_tx_id)) {
@@ -300,9 +407,20 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     const base = baseMap[network] ?? baseMap.signet;
     result.explorer_url = `${base}/tx/${anchor.chain_tx_id}`;
   }
-  // BETA-12: description (additive, nullable — Constitution 1.8)
-  if (anchor.description) {
-    result.description = anchor.description;
+  // BETA-12: description (additive, nullable — Constitution 1.8).
+  //
+  // THE LEAK THIS FIXES: `anchor.description` shipped RAW here, to an anonymous
+  // caller, for every credential type — including the three the other two
+  // public projections suppress outright. It was not even covered by the
+  // REG-02 opt-out above.
+  //
+  // Academic record  -> omitted entirely (structural).
+  // Everything else  -> value-gated, same as the other two projections.
+  if (!isAcademicRecord) {
+    const description = publicFreeTextOrNull(anchor.description);
+    if (description) {
+      result.description = description;
+    }
   }
 
   // REG-02: Signal when directory info was suppressed
@@ -332,9 +450,19 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   ] as const;
   for (const key of API_RICH_KEYS) {
     const v = anchor[key];
-    if (v !== null && v !== undefined && v !== '') {
-      (result as unknown as Record<string, unknown>)[key] = v;
+    if (v === null || v === undefined || v === '') continue;
+    // Every STRING here is issuer- or extraction-authored unless the allow-list
+    // says otherwise. `sub_type` is bare `text` in the schema (no CHECK, no
+    // enum) and `file_mime` is client-supplied, so both are gated; the numeric
+    // and jsonb members (`chain_confirmations`, `file_size`,
+    // `compliance_controls`, `confidence_scores`) carry no free text and pass
+    // through untouched.
+    if (typeof v === 'string' && !STRUCTURAL_API_RICH_KEYS.has(key)) {
+      const safe = publicFreeTextOrNull(v);
+      if (safe) (result as unknown as Record<string, unknown>)[key] = safe;
+      continue;
     }
+    (result as unknown as Record<string, unknown>)[key] = v;
   }
   // SCRUM-2227: a control list must never travel without the statement of what
   // it does NOT assert. Keyed off the value actually placed on the response by
