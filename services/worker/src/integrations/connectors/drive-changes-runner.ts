@@ -50,6 +50,10 @@ import {
   DriveFileChangedJobPayload,
 } from './drive-artifact-producer.js';
 import { submitJob } from '../../utils/jobQueue.js';
+import {
+  resolveDriveFolderPath,
+  type FolderPathCacheStore,
+} from './drive-folder-resolver.js';
 
 // Adapter-boundary Zod schemas (CodeRabbit ASSERTIVE on PR #696).
 // CLAUDE.md §1.4 mandates Zod on every write path; the processor → adapter
@@ -83,6 +87,12 @@ const EnqueueRuleEventPayloadSchema = z.object({
   revision_id: z.string().min(1),
   integration_id: z.string().uuid(),
   filename: z.string().nullable(),
+  // SCRUM-1837 (GH #1837): optional so a caller that predates folder_path
+  // resolution (e.g. an existing test double) still validates — `.optional()`
+  // rather than requiring the key lets `validated.folder_path` come back
+  // `undefined`, which the adapter below normalizes to `null` (never `''`,
+  // which would make a `folder_path_starts_with` rule match everything).
+  folder_path: z.string().nullable().optional(),
 });
 
 const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
@@ -417,7 +427,11 @@ export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db'
         p_vendor: 'google_drive',
         p_external_file_id: validated.file_id,
         p_filename: validated.filename ?? null,
-        p_folder_path: null,
+        // SCRUM-1837 (GH #1837): was hardcoded null, so folder_path_starts_with
+        // rules could never fire. `?? null` (not `?? ''`) — the resolver's own
+        // contract is "unresolvable stays null", never an empty string that
+        // would make startsWith match every rule.
+        p_folder_path: validated.folder_path ?? null,
         p_sender_email: validated.actor_email,
         p_subject: null,
         p_payload: {
@@ -492,6 +506,49 @@ export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db'
 }
 
 /**
+ * SCRUM-1837 (GH #1837): Postgres-backed `FolderPathCacheStore` over
+ * `drive_folder_path_cache` (org_id, file_id PK). `resolveDriveFolderPath`
+ * checks this before spending a `files.get` round-trip per parent, and the
+ * resolver enforces its own 15-minute TTL on top of `cached_at` — this
+ * adapter is a plain read/upsert, no TTL logic here. The cache is
+ * best-effort: a write failure is logged and swallowed rather than failing
+ * the whole changes pass — losing the cache costs an extra Drive API call
+ * on the next event for this file, not correctness.
+ */
+export function createFolderPathCache(
+  deps: Pick<DriveChangesRunnerDeps, 'db' | 'logger'>,
+): FolderPathCacheStore {
+  return {
+    async get({ orgId, fileId }) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (deps.db as any)
+        .from('drive_folder_path_cache')
+        .select('folder_path, cached_at')
+        .eq('org_id', orgId)
+        .eq('file_id', fileId)
+        .maybeSingle();
+      if (error || !data) return null;
+      return { folder_path: data.folder_path ?? null, cached_at: data.cached_at };
+    },
+    async put({ orgId, fileId, folderPath }) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error } = await (deps.db as any)
+        .from('drive_folder_path_cache')
+        .upsert(
+          { org_id: orgId, file_id: fileId, folder_path: folderPath, cached_at: new Date().toISOString() },
+          { onConflict: 'org_id,file_id' },
+        );
+      if (error) {
+        deps.logger?.warn?.(
+          { error, orgId, fileId },
+          'drive_folder_path_cache write failed — best-effort, next lookup re-resolves',
+        );
+      }
+    },
+  };
+}
+
+/**
  * Top-level runner. Webhook handler calls this with the resolved
  * integration row; everything else is dependency-injected.
  */
@@ -532,10 +589,22 @@ export async function runDriveChanges(
     watched_folder_ids: watched,
   };
   const db = createProcessorDbAdapter(deps);
+  // SCRUM-1837 (GH #1837): wire the folder-path resolver so
+  // folder_path_starts_with rules can finally match. Bound once per run
+  // (not per change) over the real drive_folder_path_cache-backed store.
+  const folderPathCache = createFolderPathCache(deps);
+  const resolveFolderPath = (args: { orgId: string; fileId: string; accessToken: string }) =>
+    resolveDriveFolderPath({
+      orgId: args.orgId,
+      fileId: args.fileId,
+      accessToken: args.accessToken,
+      cache: folderPathCache,
+      deps: { fetchImpl: deps.drive?.fetchImpl },
+    });
   return processDriveChanges({
     integration: procIntegration,
     accessToken,
     db,
-    deps: { logger: deps.logger },
+    deps: { logger: deps.logger, resolveFolderPath },
   });
 }

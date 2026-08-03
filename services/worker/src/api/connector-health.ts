@@ -135,6 +135,33 @@ interface ConnectorHealth {
   last_error: string | null;
 }
 
+/**
+ * GH #1836 (SECURITY): `account_label` for some providers (currently only
+ * google_drive) is a JSON blob that carries the push-channel `channel_token`
+ * — a secret used to authenticate inbound webhook deliveries — alongside a
+ * human-readable email. This dashboard read is scoped to the org's own
+ * authenticated members (`.eq('org_id', orgId)` above), but the token has no
+ * legitimate reason to ever reach a frontend response regardless (treat it as
+ * a secret: never log it, never return it — same rule the connect flow
+ * follows in drive-oauth.ts). Strip channel_token (and the opaque
+ * resource_id) before surfacing account_label, keeping only the
+ * human-readable email when present. Providers whose account_label is a
+ * plain display string (DocuSign, Adobe Sign, …) are untouched — a raw
+ * string is never valid JSON with a `channel_token` key, so it passes through.
+ */
+function sanitizeAccountLabel(raw: string | null): string | null {
+  if (!raw) return raw;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown> | null;
+    if (parsed && typeof parsed === 'object' && 'channel_token' in parsed) {
+      return typeof parsed.email === 'string' ? parsed.email : null;
+    }
+    return raw;
+  } catch {
+    return raw;
+  }
+}
+
 async function safeFetch<T>(promise: Promise<{ data: T | null; error: unknown }>, fallback: T): Promise<T> {
   try {
     const { data, error } = await promise;
@@ -304,7 +331,7 @@ export async function handleConnectorHealth(
       kind: entry.kind,
       state,
       health_reason: reason,
-      account_label: integration?.account_label ?? null,
+      account_label: sanitizeAccountLabel(integration?.account_label ?? null),
       last_event_at,
       last_renewal_at: subscription?.last_renewed_at ?? null,
       next_expires_at: subscription?.expires_at ?? null,
