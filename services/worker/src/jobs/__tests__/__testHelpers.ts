@@ -182,6 +182,30 @@ export function buildSelectChain(opts: {
 }
 
 /**
+ * `job_queue` table double that always GRANTS a run lease (SCRUM-3031).
+ *
+ * Jobs guarded by a cross-instance TTL lease claim it before doing any work, so
+ * a `fromImpl` that does not route `job_queue` makes every such test fail on
+ * `upsert is not a function`. Suites that are exercising the job's PIPELINE,
+ * not its concurrency guard, route `job_queue` here and get an
+ * always-available lease. Lease semantics themselves are pinned separately
+ * (see `publicRecordAnchor-lease.test.ts`), against a store that models the
+ * compare-and-set predicate rather than granting unconditionally.
+ */
+export function grantedRunLeaseTable(): Record<string, ReturnType<typeof vi.fn>> {
+  const granted = { data: [{ id: 'lease-row' }], error: null };
+  const chain: Record<string, ReturnType<typeof vi.fn>> = {};
+  const self = () => chain;
+  chain.eq = vi.fn(self);
+  chain.or = vi.fn(self);
+  chain.select = vi.fn(() => Promise.resolve(granted));
+  return {
+    upsert: vi.fn().mockResolvedValue({ error: null }),
+    update: vi.fn(self),
+  };
+}
+
+/**
  * Create a mock Supabase client that covers all chain patterns used across
  * the jobs test suite. Returns both the typed `SupabaseClient` and handles
  * to individual mocks for per-test assertions/overrides.
