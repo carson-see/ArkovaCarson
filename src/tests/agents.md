@@ -17,6 +17,8 @@ Integration and infrastructure test suites that cross-cut the codebase: migratio
 - `sec-recon-unguarded-rpc-family-revokes.test.ts` — content-guard (always-run) + opt-in live-RLS (`RUN_LIVE_RLS=1`) proof for migration 0377's anon/authenticated REVOKEs on the unguarded SECURITY DEFINER RPC family + the dropped `invite_member` 4-arg overload
 - `f5-stats-fn-ownership-guard.test.ts` — F-5 (`docs/staging/SOAK-FINDINGS-2026-08.md`): TDD content-guard (always-run, RED-before/GREEN-after migration 0380 existed) + opt-in live-RLS (`RUN_LIVE_RLS=1`) proof that `get_org_anchor_stats`/`get_user_anchor_stats` now reject a caller-supplied org/user id that doesn't match the caller's own identity (service_role exempt); also pins that the only real caller (`DashboardPage.tsx` via `dashboardStats.ts`) always passes the caller's own id, so the fix is non-breaking for the live dashboard
 
+- `f5c-monthly-count-null-identity-guard.test.ts` — pins migration 0392 (F-5c) and the `scripts/ci/check-null-identity-guard.ts` lint. Migration layer asserts the identity is resolved into a local and NULL-checked **before** the comparison, plus the added `service_role` bypass and the SCRUM-1278 wrap. Lint layer is a **failure-mode** suite: it writes throwaway migrations into a temp git repo and asserts the lint EXITS 1 on the bad shape (bare, wrapped, and `get_user_org_id()` variants) and EXITS 0 on the fixed shape, on comment-only occurrences, below the grandfather prefix, on the baseline, under the override label, and on NULL-safe `= auth.uid()` RLS quals / `EXISTS` admin checks
+
 ## Subdirectories
 - `edge/` — Cloudflare edge worker security tests (JWT verify, HMAC, rate-limit)
 - `pages/` — page-level contract tests (URL param parsing, deep-link contracts)

@@ -186,6 +186,11 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: node_modules/.bin/tsx scripts/ci/check-rls-auth-uid-wrap.ts
 
+      - name: Block NULL-collapsing identity guards in new migrations (F-5b/F-5c)
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node_modules/.bin/tsx scripts/ci/check-null-identity-guard.ts
+
       - name: Block ENABLE RLS without policy (SCRUM-1275)
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
