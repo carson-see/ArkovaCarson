@@ -23,6 +23,7 @@
 
 import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { PUBLIC_RECORD_ANCHOR_RUN_LEASE, withRunLease } from './run-lease.js';
 import { getChainClientAsync } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -113,8 +114,6 @@ interface RecordAnchorPartition {
   alreadyAnchoredItems: RecordAnchorItem[];
   pendingRecordItems: Array<{ record: PipelinePublicRecord; anchor: PipelineAnchorRow }>;
 }
-
-let publicRecordAnchoringRunning = false;
 
 /**
  * Map public record source/type to a display-friendly filename for the anchor.
@@ -446,10 +445,37 @@ async function finalizePublicRecordAnchorBatch(
   return { recordsUpdated, anchorsUpdated };
 }
 
+/**
+ * Reads the pipeline's feature flag.
+ *
+ * Fails CLOSED on an unreadable flag — an unknown flag state must never start a
+ * run that signs and broadcasts. That part is unchanged.
+ *
+ * What IS new is that a failure says so. This used to be
+ * `const { data: enabled } = await client.rpc(...)`, discarding `error`;
+ * postgrest-js RESOLVES a failed RPC as `{ data: null, error }`, so a PostgREST
+ * 5xx, a statement timeout, or a schema-cache miss right after a function
+ * deploy all collapsed to `Boolean(null)` -> false and logged
+ * "ENABLE_PUBLIC_RECORD_ANCHORING is disabled — skipping". The outcome was
+ * right and the DIAGNOSIS was wrong: a broken flag read was indistinguishable
+ * from the flag being off, so a stalled pipeline reads as an intentional one.
+ *
+ * Log the driver code only, never `error.message` — a PostgREST message can
+ * echo the offending statement back verbatim.
+ */
 async function publicRecordAnchoringEnabled(client: SupabaseClient): Promise<boolean> {
-  const { data: enabled } = await client.rpc('get_flag', {
+  const { data: enabled, error } = await client.rpc('get_flag', {
     p_flag_key: 'ENABLE_PUBLIC_RECORD_ANCHORING',
   });
+
+  if (error) {
+    logger.error(
+      { pgCode: (error as { code?: string } | null)?.code ?? null },
+      'ENABLE_PUBLIC_RECORD_ANCHORING could not be read — skipping this run (failing closed). This is NOT the flag being disabled.',
+    );
+    return false;
+  }
+
   if (!enabled) logger.info('ENABLE_PUBLIC_RECORD_ANCHORING is disabled — skipping');
   return Boolean(enabled);
 }
@@ -799,27 +825,29 @@ export async function processPublicRecordAnchoring(
     merkleRoot: null,
     txId: null,
   };
-  if (publicRecordAnchoringRunning) {
-    logger.info('Public record anchoring skipped — already in progress');
+  const client = supabase ?? db;
+
+  // Resolved BEFORE the lease: a disabled pipeline should not write three
+  // job_queue rows on every cron tick just to discover it has nothing to do.
+  if (!(await publicRecordAnchoringEnabled(client))) {
     return empty;
   }
-  publicRecordAnchoringRunning = true;
-  try {
-    return await processPublicRecordAnchoringInner(supabase);
-  } finally {
-    publicRecordAnchoringRunning = false;
-  }
+
+  // SCRUM-3031: the guard that actually holds across Cloud Run instances. See
+  // `run-lease.ts` for the 2026-08-01 incident this closes and for why the TTL
+  // is 45 min. The same primitive guards `batch-anchor.ts` and
+  // `check-confirmations.ts`.
+  const outcome = await withRunLease({ ...PUBLIC_RECORD_ANCHOR_RUN_LEASE, client }, () =>
+    processPublicRecordAnchoringInner(client),
+  );
+  return outcome.acquired ? outcome.result : empty;
 }
 
 async function processPublicRecordAnchoringInner(
-  supabase?: SupabaseClient,
+  client: SupabaseClient,
 ): Promise<PublicRecordAnchorResult> {
-  const client = supabase ?? db;
-
-  if (!(await publicRecordAnchoringEnabled(client))) {
-    return { processed: 0, anchorsCreated: 0, batchId: null, merkleRoot: null, txId: null };
-  }
-
+  // `publicRecordAnchoringEnabled` is checked by the caller, before the run
+  // lease is claimed — see processPublicRecordAnchoring.
   const owner = await fetchPipelineOwner(client);
   if (!owner) {
     return { processed: 0, anchorsCreated: 0, batchId: null, merkleRoot: null, txId: null };

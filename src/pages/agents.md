@@ -136,6 +136,22 @@ Every admin page now derives platform-admin status from `isPlatformAdmin(profile
 
 `MyCredentialsPage.tsx` gains a second header button (`data-testid="add-from-registry-button"`) next to the existing "Add Source" button, opening `CtdlRegistryImportDialog` (`src/components/credentials/`). Two-step flow: look up a public Credential Registry record by CTID (`GET /api/v1/credentials/ctdl/import`), then add it (`POST /api/v1/credentials/ctdl/registry-anchor`, new route). Part of the L3-A6 CE Noncredit Data Taxonomy 3.0 anchoring POC — see `docs/partners/ce-noncredit-anchoring-poc.md` for the research + honest-limits writeup and `services/worker/src/ctdl/agents.md` for the parser fix this UI exercises.
 
+## 2026-08-02 AuditorBatchPage surfaces the server `message`, not the `error` code (PR #1865)
+
+`setError(err.error || …)` rendered the API's machine token verbatim, so the
+audit-sampling endpoint's new 422 refusals would have shown the auditor
+`population_too_large` and nothing else. It now reads `err.message` first — the
+server sends the sentence explaining what to do instead (which percentage fits,
+or to switch to record IDs), and the numbers in it are org-specific, so a static
+`copy.ts` string could not carry them. `err.error` and `HTTP <status>` remain as
+fallbacks, so responses without a `message` are unaffected.
+
+Note the vocabulary contract this creates: strings from
+`services/worker/src/api/v1/auditBatchVerify.ts` now reach the UI verbatim and
+are NOT scanned by `lint:copy` (which covers only `src/components`, `src/pages`,
+`src/lib`, `src/hooks`, `packages/embed/src`). They deliberately say "records",
+matching `AUDITOR_BATCH_LABELS`, not "credentials". Keep any new server-authored
+message on this path §1.3-clean by hand.
 ## 2026-08-01 SCRUM-2907 — AuthCallbackPage is the email-confirmation landing route
 
 `AuthCallbackPage.tsx` is no longer OAuth-only: `useAuth.signUp` now sets

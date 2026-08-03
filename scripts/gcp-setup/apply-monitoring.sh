@@ -92,6 +92,27 @@ ensure_metric_descriptors() {
   done
 }
 
+ensure_log_based_metrics() {
+  echo "--- SCRUM-3050: log-based metrics ---"
+  # Log-based metrics live on the LOGGING API, not the Monitoring
+  # metricDescriptors API used by ensure_metric_descriptors — hence a separate
+  # directory (log-metrics/) and a separate function. They must exist BEFORE
+  # ensure_alert_policies, which references
+  # logging.googleapis.com/user/<name>.
+  for metric in "${GCP_SETUP_DIR}"/log-metrics/*.json; do
+    [[ -e "$metric" ]] || continue
+    local metric_name
+    metric_name="$(json_value 'obj.name' "$metric")"
+    if monitoring_api GET "https://logging.googleapis.com/v2/projects/${PROJECT_ID}/metrics/${metric_name}" >/dev/null 2>&1; then
+      monitoring_api PUT "https://logging.googleapis.com/v2/projects/${PROJECT_ID}/metrics/${metric_name}" "$metric" >/dev/null
+      echo "Log-based metric updated: ${metric_name}"
+    else
+      monitoring_api POST "https://logging.googleapis.com/v2/projects/${PROJECT_ID}/metrics" "$metric" >/dev/null
+      echo "Log-based metric created: ${metric_name}"
+    fi
+  done
+}
+
 ensure_monitoring_service() {
   echo "--- SCRUM-1988: monitoring service ---"
   if monitoring_api GET "https://monitoring.googleapis.com/v3/projects/${PROJECT_ID}/services/${SERVICE_ID}" >/dev/null 2>&1; then
@@ -191,6 +212,7 @@ main() {
   require_command node
 
   ensure_metric_descriptors
+  ensure_log_based_metrics
   ensure_monitoring_service
   ensure_slos
   ensure_dashboard

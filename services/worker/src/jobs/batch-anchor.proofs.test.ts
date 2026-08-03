@@ -75,7 +75,11 @@ vi.mock('../middleware/flagRegistry.js', () => ({
 
 // db mock: anchors select chain (oldest probe + threshold probes) + update;
 // anchor_proofs is handled by the mocked upsertAnchorProofs.
-vi.mock('../utils/db.js', () => {
+vi.mock('../utils/db.js', async () => {
+  // Async factory so the shared `job_queue` lease double can be imported here.
+  // A static import would not work: `vi.mock` factories are hoisted above it.
+  const { grantedRunLeaseTable } = await import('./__tests__/__testHelpers.js');
+
   const anchorsSelectChain: Record<string, unknown> = {};
   anchorsSelectChain.eq = vi.fn(() => anchorsSelectChain);
   anchorsSelectChain.is = vi.fn(() => anchorsSelectChain);
@@ -96,6 +100,9 @@ vi.mock('../utils/db.js', () => {
         if (table === 'anchors') {
           return { select: vi.fn(() => anchorsSelectChain), update: vi.fn(() => updateChain) };
         }
+        // SCRUM-3031: run lease claimed before any drain work — always granted
+        // here; semantics live in `__tests__/run-lease.test.ts`.
+        if (table === 'job_queue') return grantedRunLeaseTable();
         return { upsert: vi.fn(async () => ({ error: null })) };
       }),
     },

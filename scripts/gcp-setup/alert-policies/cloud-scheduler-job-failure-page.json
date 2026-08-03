@@ -1,0 +1,63 @@
+{
+  "displayName": "Arkova page: Cloud Scheduler job failing repeatedly",
+  "documentation": {
+    "content": "A Cloud Scheduler job has failed N consecutive times. Cloud Scheduler fired on cadence and the target did NOT succeed — a 404 (job deleted / route renamed / worker not deployed), a timeout, or a 5xx.\n\nWHY THIS EXISTS: `generate-reports` returned `status.code: 5 NOT_FOUND` on every hourly run from 2026-03-16 for ~4.5 months (~3,300 consecutive failures) and NOTHING alerted. Every in-repo monitor (scheduler-deadman, pipeline-throughput-monitor, /health) reads worker-side state; a request the worker never receives leaves no worker-side trace at all. This policy reads the Cloud Scheduler log stream, which is the only place that failure is visible.\n\nTRIAGE: identify `metric.label.job_id` and `metric.label.status`.\n- NOT_FOUND -> the target route does not exist on the current worker revision. Either the job is obsolete (delete it) or the route regressed (fix + redeploy). Do NOT simply pause the job: an untracked pause is the 2026-06-01 daily-flush blackout shape.\n- DEADLINE_EXCEEDED -> the handler exceeds the job's attemptDeadline. Make the handler async/chunked; do not raise the deadline indefinitely.\n- INTERNAL / UNAVAILABLE -> worker 5xx. Check Cloud Run logs + Sentry for the same window.\n- UNKNOWN -> connection reset / cold-start failure.\n\nAny job appearing here MUST also be reconciled into `services/worker/src/jobs/scheduler-manifest.ts` (enabled, or paused WITH actor attribution). A job that is neither in the manifest nor deleted is unowned.\n\nNOTE ON EXPECTED VOLUME AT FIRST ENABLE: as of 2026-08-01 the live Cloud Scheduler log stream carries ~464 matching failures per 24h across 11 jobs. That is not policy noise — those jobs are genuinely broken and have been silently failing. Expect an immediate burst on first enable and work the list down. Transient soak-rig jobs (`arkova-worker-*-staging-*`) are deliberately NOT excluded: a soak rig whose scheduler is erroring invalidates its own soak evidence, and per the standing infra-hygiene sweep those jobs should be deleted when the rig is torn down.",
+    "mimeType": "text/markdown"
+  },
+  "userLabels": {
+    "story": "scrum_3050",
+    "surface": "cloud_scheduler",
+    "class": "silent_failure"
+  },
+  "conditions": [
+    {
+      "displayName": "Job failing every hour for 3 consecutive hours",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/cloud_scheduler_job_failure_count\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "3600s",
+            "perSeriesAligner": "ALIGN_SUM",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "groupByFields": ["metric.label.job_id"]
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "10800s",
+        "trigger": {
+          "count": 1
+        },
+        "evaluationMissingData": "EVALUATION_MISSING_DATA_INACTIVE"
+      }
+    },
+    {
+      "displayName": "Job failed 3+ times in 24h (covers jobs that run less than hourly)",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/cloud_scheduler_job_failure_count\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "86400s",
+            "perSeriesAligner": "ALIGN_SUM",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "groupByFields": ["metric.label.job_id"]
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 2,
+        "duration": "0s",
+        "trigger": {
+          "count": 1
+        },
+        "evaluationMissingData": "EVALUATION_MISSING_DATA_INACTIVE"
+      }
+    }
+  ],
+  "combiner": "OR",
+  "enabled": true,
+  "notificationChannels": ["${SLACK_OPS_ALERTS_CHANNEL}"],
+  "alertStrategy": {
+    "autoClose": "86400s"
+  },
+  "severity": "CRITICAL"
+}
