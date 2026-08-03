@@ -192,7 +192,7 @@ export function findUnregisteredWriters(sourceByFile: Map<string, string>): stri
     if (registered.has(file)) continue;
     if (hasCeProvenanceMarker(source)) unregistered.push(file);
   }
-  return unregistered.sort();
+  return unregistered.sort((a, b) => a.localeCompare(b));
 }
 
 /** Recursively collect non-test `.ts` files under `services/worker/src` (relative to `repo`), same shape as `check-v1-uuid-leaks.ts`'s local `walkTs`. */
