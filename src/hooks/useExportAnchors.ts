@@ -114,7 +114,18 @@ export function useExportAnchors(): UseExportAnchorsReturn {
     return true;
   }, []);
 
-  const { execute, loading, error, clearError } = useAsyncAction(exportImpl);
+  // Every throw site above is an authored, curated string or a Supabase
+  // `fetchError.message` passthrough — never an internal/infrastructure
+  // detail like resolveWorkerBaseUrl's (this hook doesn't call it). `error`
+  // isn't wired into any UI today (OrgRegistryTable only destructures
+  // `exportAnchors`/`loading`), but this hook's own test suite pins the
+  // raw-message contract — restore the old blanket-trust behavior explicitly
+  // rather than silently changing it. See useAsyncAction.ts's isSafeError doc.
+  const { execute, loading, error, clearError } = useAsyncAction(
+    exportImpl,
+    undefined,
+    (err): err is Error => err instanceof Error,
+  );
 
   const exportAnchors = useCallback(
     async (orgId: string, scope: ExportScope): Promise<boolean> => {

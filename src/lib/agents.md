@@ -1,6 +1,16 @@
 # agents.md — lib
 
-_Last updated: 2026-07-28_
+_Last updated: 2026-08-03_
+
+## 2026-08-03 Invite-email VITE_WORKER_URL fix — why `workerClient.ts` was deliberately left alone
+
+Root cause of "invite created but the email never sends" (prod worker logs showed ZERO `/api/send-invitation-email` hits): several call sites read `import.meta.env.VITE_WORKER_URL || 'http://localhost:3001'` directly. `VITE_WORKER_URL` is unset in the Vercel build, so Vite bakes the localhost fallback into the production bundle — confirmed by downloading and grepping the live prod chunks (`OrgProfilePage-*.js` / `AcceptInvitePage-*.js` both contain the literal string `http://localhost:3001` next to `send-invitation-email` / `/api/invitations`). Every invite/accept-invite request was silently POSTing to the user's own machine.
+
+`workerUrlSafety.ts` gained `resolveWorkerBaseUrl()`: returns `VITE_WORKER_URL` when set; in a production build (`import.meta.env.PROD`) with it unset, logs `console.error` and **throws** an actionable error instead of silently defaulting to localhost; keeps `localhost:3001` as the dev-only default. Called lazily inside each request-issuing function (never module-level) so a misconfigured deploy fails only when a worker call is attempted, not on page load. Converged onto it: `useInviteMember.ts`, `useAcceptInvite.ts`, `NessieIntelligencePanel.tsx`, `NessieInsights.tsx`, `ComplianceTrendPage.tsx`, `ComplianceDashboardPage.tsx`, `AuditorBatchPage.tsx`. Removed the dead, unused `ENV.WORKER_URL` field from `env.ts` rather than hardening a copy nobody read.
+
+**`workerClient.ts` deliberately NOT converged — this is intentional, not an inconsistency to "fix" later.** It already implements a different, also-safe pattern: `VITE_WORKER_URL ?? (PROD ? CLOUD_RUN_URL : localhost)` — a silent fallback to the real, hardcoded Cloud Run URL rather than a throw. It predates this fix and is the reason billing/`workerFetch` calls kept working in prod even with `VITE_WORKER_URL` unset. Converting it to the throw-based `resolveWorkerBaseUrl()` too would turn currently-working billing into a hard production outage the moment a build with that change ships, for as long as `VITE_WORKER_URL` stays unset in Vercel — a strictly worse outcome than what it fixes. If `VITE_WORKER_URL` is confirmed set in Vercel and a build has shipped after that, converging `workerClient.ts` onto the shared resolver becomes safe and is worth doing for consistency; do not do it before then.
+
+Also fixed in the same PR: four `setError(err instanceof Error ? err.message : <label>)` catch blocks (`NessieInsights.tsx`, `NessieIntelligencePanel.tsx`, `AuditorBatchPage.tsx`, `ComplianceTrendPage.tsx`) rendered a thrown Error's raw `.message` straight into the DOM — including `resolveWorkerBaseUrl`'s internal, engineer-facing misconfiguration text. All four now always use the file's curated generic label in the catch block (`catch { setError(<label>) }`, no `err`/`err.message` reference at all); the `console.error` inside `resolveWorkerBaseUrl` remains the engineer-facing signal. `npm run lint:copy`'s blocklist does not catch this class of leak (it scans literal copy strings, not error-message pass-through) — this is a pattern to watch for by review, not something the linter enforces.
 
 ## 2026-07-28 R19 — fingerprint_source evidence class (advances SCRUM-2481)
 
