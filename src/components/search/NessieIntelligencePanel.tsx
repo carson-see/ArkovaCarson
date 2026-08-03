@@ -117,8 +117,12 @@ export function NessieIntelligencePanel() {
 
       const data: NessieContextResponse = await res.json();
       setResponse(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+    } catch {
+      // Never surface a thrown Error's raw message here: it can be
+      // resolveWorkerBaseUrl's internal misconfiguration text (VITE_WORKER_URL
+      // detail, meant for console/engineer visibility, not end users) or any
+      // other unauthored string. Always use the curated, safe label.
+      setError('An error occurred');
     } finally {
       setLoading(false);
     }

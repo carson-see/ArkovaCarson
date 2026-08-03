@@ -94,8 +94,12 @@ export function NessieInsights({ credentialType, issuerName, metadata, publicId:
 
       const data: InsightResponse = await res.json();
       setResponse(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Analysis unavailable');
+    } catch {
+      // Never surface a thrown Error's raw message here: it can be
+      // resolveWorkerBaseUrl's internal misconfiguration text (VITE_WORKER_URL
+      // detail, meant for console/engineer visibility, not end users) or any
+      // other unauthored string. Always use the curated, safe label.
+      setError('Analysis unavailable');
     } finally {
       setLoading(false);
     }

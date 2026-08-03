@@ -82,8 +82,12 @@ export function ComplianceTrendPage() {
       }
 
       setData(await resp.json());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : COMPLIANCE_TREND_LABELS.ERR_NETWORK);
+    } catch {
+      // Never surface a thrown Error's raw message here: it can be
+      // resolveWorkerBaseUrl's internal misconfiguration text (VITE_WORKER_URL
+      // detail, meant for console/engineer visibility, not end users) or any
+      // other unauthored string. Always use the curated, safe label.
+      setError(COMPLIANCE_TREND_LABELS.ERR_NETWORK);
     } finally {
       setLoading(false);
     }
