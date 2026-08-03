@@ -2,6 +2,63 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-02 — the 500-wide chunk cohort is gone (`chunkForInFilter` everywhere)
+
+Follows #1839 (`chunkForInFilter`) and #1853 (the three worst sites). This closes the *bounded but
+over-budget* half of the census in `jobs/`.
+
+**Why 500 was never a safe number.** Every one of these constants was reasoned about against
+**HTTP 414 URI-too-large**, not against the **8 KiB request line** the proxy in front of PostgREST
+enforces with a **400**. 500 UUIDs encode to ~18.5 KB; `public_id` and DocuSign envelope ids are not
+even UUIDs. So the chunking looked deliberate, was documented, had a rationale in a code comment —
+and protected nothing. A wrong constant with a confident comment is worse than no constant, because
+it stops the next reader from checking.
+
+Deleted, replaced by `chunkForInFilter` (bounded by real encoded wire bytes AND count, whichever
+binds first):
+
+- **`batch-anchor.ts`** — `INTENT_CHUNK_SIZE` (500) across `markBroadcastIntent`,
+  `clearBroadcastIntentMarks`, `deleteIntentProofRows`, `revertIntentAnchors`, plus two separate
+  local `CHUNK_SIZE = 500` in `bulkMarkSubmittedFallback` and `bulkRevertToPending`. **The constant
+  itself is gone** — there is no longer a number in this file for a new call site to pick.
+- **`check-confirmations.ts`** — `CRED_LOOKUP_CHUNK` (500) on the `credential_type` fan-out lookup.
+  Its comment explicitly cited "HTTP 414" and "same chunk size as PROOF_UPSERT_CHUNK": both the wrong
+  limit and the wrong sibling to copy. `PROOF_UPSERT_CHUNK` bounds a request **BODY**, which has no
+  URL budget at all — see `proofJobScan.chunk`'s docstring on that distinction.
+- **`docusign-reconciliation-deps.ts`** — `getReceivedEnvelopeIds` sent up to 1,000 DocuSign envelope
+  ids unchunked, while its sibling `docusign-queue-reconciliation-deps.ts:getReceivedEnvelopeIds`
+  chunked the byte-identical lookup. **The same one-of-a-pair divergence that left
+  `revertClaimedAnchors` unfixed after #1795.** If you touch either, touch both. Throws on the FIRST
+  failed chunk, not after all of them: this set drives gap detection, so a partial "received" set
+  manufactures phantom gaps for every envelope in the missing chunk.
+- **`trainingExporter.ts`** — the worst of the cohort, because the failure COMPOUNDS. Rows are
+  appended to the JSONL corpus on disk and THEN marked `training_exported`; that flag is the only
+  thing stopping the next tick re-selecting and re-appending them. The one-shot `.in()` over a
+  1,000-row page 400'd, the flag was never set, and every tick re-appended the same page —
+  **unbounded duplicate growth in the training corpus**, with the job still returning a
+  success-shaped result. Now chunked, and an all-chunks-failed mark **throws** via
+  `assertNotAllChunksFailed`: the caller cannot tell "exported 1000" from "exported 1000 again for
+  the ninth time", so a cron failure is what stops the loop. First test file this module has ever had.
+
+### `revertIntentAnchors` also lied in its logs
+
+It ended with an **unconditional** `Reverted definitively-rejected intent anchors BROADCASTING →
+PENDING` at INFO — emitted even when every chunk had just logged a failure on the line directly
+above it. That is the same reported-success-over-real-failure shape as **#1812**, where a
+claim-revert that released nothing reported success.
+
+It deliberately does not throw (it runs inside the broadcast-failure path, where a secondary throw
+would mask the real chain error) and deliberately does not call `assertNotAllChunksFailed` — so
+**the log line is the only signal that exists, and it has to be true.** The decision is now the pure,
+exported `summarizeIntentRevert`, tested directly: INFO only when nothing failed, ERROR naming the
+stranded count when nothing was reverted, WARN in between. Reaching the real function needs the whole
+`reconcileBroadcastIntents` fixture (journal RPCs, stale-row scan, intent hex, a rebroadcast-rejecting
+chain client), which is disproportionate for a log assertion — so the part that was wrong is the part
+under test.
+
+**Rule for this folder:** never hand-roll `for (i += SIZE)` around a `.in()`, and never reach for
+`POSTGREST_ROW_LIMIT` (it governs how many rows come back, not how wide the URL may be).
+`proofJobScan.chunk(items, size)` is for request-BODY batches ONLY.
 ## 2026-08-01 — SCRUM-2904-perf: `findExistingEnvelopeAnchor` statement-timeout fix (migration 0381, P0 demo blocker)
 
 `findExistingEnvelopeAnchor` (`docusign-anchor-reconciliation.ts`, see the SCRUM-2904 entry below for what it does) was the last remaining break on the DocuSign connector pipeline. Its single query OR'd three `metadata->>key` JSONB text comparisons (`source_envelope_id`/`envelope_id`/`external_ref`) with **no supporting index on any of the three** — on prod, the org running the live connector pipeline (also the public-records holding org) owns ~2,974,731 of ~2.97M total `anchors` rows, so every call from that org was a near-full-table scan that deterministically exceeds `statement_timeout`. Proven twice in prod: a DLQ'd `rule-action-dispatcher.ts` execution (2026-07-27) and a `connector_artifact` row stuck `status='failed'` at materialize in `connector-artifact-drain.ts` (2026-08-01).
