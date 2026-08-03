@@ -58,7 +58,13 @@ class SearchResponse(ArkovaModel):
 
 class RichVerificationFields(ArkovaModel):
     description: str | None = None
-    compliance_controls: dict[str, Any] | None = None
+    # SCRUM-2227: the API emits this as a LIST of control-ID strings. Declared
+    # dict-only, pydantic raised ValidationError on a real payload and failed
+    # the whole verify() call — proof the dict form had no working consumer.
+    # `compliance_controls_note` states what these identifiers do NOT assert
+    # and is present whenever controls are.
+    compliance_controls: list[str] | None = None
+    compliance_controls_note: str | None = None
     chain_confirmations: int | None = None
     parent_public_id: str | None = None
     version_number: int | None = None
