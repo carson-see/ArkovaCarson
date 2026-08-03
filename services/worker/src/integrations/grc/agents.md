@@ -18,3 +18,6 @@ GRC (Governance, Risk, Compliance) platform integration. Pushes evidence to conn
 
 - **DO** call `syncAnchorToGrc()` only after anchor status transitions to SECURED
 - **DO NOT** log OAuth tokens — handled server-side only (Constitution 1.4)
+- **DO** resolve control IDs through `resolveEvidenceControlIds()` (`syncService.ts`) — never push `anchors.compliance_controls` straight through. Historical rows still carry retired identifiers (`RETIRED_CONTROL_IDS` in `utils/complianceMapping.ts`), and this is the surface where an auditor is most likely to read a control ID as an assessment (SCRUM-2227/2283).
+- **DO NOT** send `compliance_controls` to a platform without `compliance_controls_note`. A control list must never travel without the statement of what it does NOT assert (§1.5 / R-7 claims gate). Each adapter carries it in its platform-specific metadata/properties map; the note is set exactly when controls are non-empty.
+- **DO** keep the worker mapping in sync with the frontend mirror `src/lib/complianceMapping.ts` — the drift between them is what kept a false EU-US DPF claim live on every SECURED anchor for two months.

@@ -24,3 +24,38 @@ Row Level Security integration tests. Verify RLS policies enforce tenant isolati
 ## Conventions
 - Requires local Supabase running (`supabase start`) with seed data (`supabase db reset`).
 - Public endpoints (attestations, public_records, verification/lookup) are intentionally cross-tenant; do not flag as isolation gaps.
+
+### A mock may stand in for a COLLABORATOR, never for the INVARIANT under test
+
+This is why this directory exists, and it is not an abstract principle — it has
+cost real production exposure.
+
+`services/edge/src/mcp-tools.test.ts` has long contained
+`it('PENDING fingerprint filtered by RPC → UNKNOWN, not an existence leak')` and
+its SUBMITTED twin. Both passed continuously while production served exactly
+that leak, because they **mock the RPC**: they assert that the edge layer maps
+`{error:'Record not found'}` to an `UNKNOWN` envelope, while the fixture
+supplies the premise that the database filters those statuses at all. Prod had
+drifted from migration `0339` to `status IN ('SECURED','SUBMITTED','PENDING')`,
+and 3 PENDING + 48,149 SUBMITTED anchors became confirmable by an anonymous
+caller. The tests did not merely fail to catch it — they **certified** it, by
+asserting a premise that had stopped being true. Fixed by `0386` +
+`fingerprint-lookup-secured-only.test.ts`.
+
+So: when the assertion is "the database refuses", the database has to be the one
+refusing. Concretely, a test belongs in THIS directory (live Postgres, real
+`anon`/authenticated client) rather than in a mocked unit suite whenever the
+property under test is enforced by SQL — an RLS policy, a `GRANT`, a `WHERE`
+predicate, a CHECK constraint, or a trigger. A unit test may still own the
+caller's handling of the result; the two are complementary, not substitutes.
+
+Two shapes worth copying when you write one:
+
+- **Always pair a negative with a POSITIVE CONTROL.** "Returns not found for
+  in-flight rows" passes just as well against an RPC that is broken, renamed, or
+  returning not-found for everything — which looks like a fix and is an outage.
+  Assert in the same suite that the allowed case still resolves.
+- **For an information leak, assert INDISTINGUISHABILITY, not just refusal.**
+  The disclosure is the *difference* between the two answers, so compare the
+  bodies (`toEqual`) rather than checking each says "not found" — otherwise a
+  distinguishable error path, timing, or envelope shape still leaks.
