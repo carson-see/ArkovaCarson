@@ -1,5 +1,11 @@
 # agents.md — components/integrations
-_Last updated: 2026-08-01 (SCRUM-2903 GD-PROD, PR #1654 Lane 3 B1: DriveConnectorCard last-synced; documents-secured count cut — see below)_
+_Last updated: 2026-08-03 (GH #1836 review follow-up, PR #1944: DriveConnectorCard no longer selects/renders account_label — see below)_
+
+## 2026-08-03 — GH #1836 (SECURITY) review follow-up: `DriveConnectorCard.tsx` stopped selecting `account_label`
+
+Adversarial review of PR #1944 (the GH #1835/#1836/#1837 Drive fixes) found a WORSE, un-caught surface of the same #1836 vulnerability: this card selected `account_label` directly from `org_integrations` via the browser Supabase client — RLS permits any org admin to read it, with no column-level restriction — and rendered it as plaintext (`Connected as ${account_label}`). For `google_drive` rows, `account_label` is a JSON blob carrying `channel_token`, the webhook-authentication secret (see `api/v1/integrations/agents.md`'s GH #1836 entry in the worker repo tree). That shipped the secret straight to the browser and displayed it on screen — strictly worse than the `connector-health.ts` API leak found in the same review pass, because it bypassed the worker entirely.
+
+Fix: `account_label` is no longer in the `.select()` column list at all (not fetched, then filtered — never fetched), and the card renders a plain `"Connected."` with no account-specific text. No worker-mediated sanitized-label endpoint exists yet for this card to fall back to; restoring a "Connected as {email}" display is a candidate follow-up but explicitly not required — a bare "Connected." is a safe, acceptable default. Pinned by `DriveConnectorCard.test.tsx`'s `describe` block asserting the query never requests the column and the rendered DOM never contains a `channel_token` value even if the mocked row carries one (defense against a future regression re-adding the column to the select).
 
 ## What This Folder Contains
 Third-party integration connector cards for org admins and members to manage OAuth connections.

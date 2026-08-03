@@ -279,6 +279,16 @@ const ConfigSchema = z.object({
   /** Google OAuth client secret (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
   googleOauthClientSecret: z.string().optional(),
   /**
+   * The worker's own externally-reachable base URL. Needed outside any HTTP
+   * request context (crons, e.g. GH #1835's drive-subscription-renewal) to
+   * build a webhook/callback address the way `buildWebhookAddress(req)` does
+   * from request headers when a request IS available. Also required by
+   * DocuSign Connect-listener provisioning (`requireConnectConfig` in
+   * `integrations/oauth/docusign.ts`) — both fail closed when unset rather
+   * than register a channel/listener pointed at a broken address.
+   */
+  workerPublicUrl: z.string().url().optional(),
+  /**
    * DocuSign OAuth flow — when false, /api/v1/integrations/docusign routes 503.
    * Default false pending org-scale validation. Cloud Run prod env sets this to
    * true explicitly once the connector is launch-approved.
@@ -806,6 +816,7 @@ function loadConfig(): Config {
     enableDriveWebhook: process.env.ENABLE_DRIVE_WEBHOOK,
     googleOauthClientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
     googleOauthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    workerPublicUrl: process.env.WORKER_PUBLIC_URL,
     enableDocusignOauth: process.env.ENABLE_DOCUSIGN_OAUTH,
     enableDocusignWebhook: process.env.ENABLE_DOCUSIGN_WEBHOOK,
     enableConnectorArtifactEnqueue: process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE,

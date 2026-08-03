@@ -33,7 +33,7 @@ function makeIntegration(overrides: Partial<DriveProcessorIntegration> = {}): Dr
 interface FakeDb extends DriveProcessorDb {
   ledgerInserts: Array<{ file_id: string; revision_id: string; outcome: string; parent_ids: string[]; actor_email: string | null }>;
   ledgerDeletes: Array<{ file_id: string; revision_id: string }>;
-  enqueueCalls: Array<{ file_id: string; parent_ids: string[]; actor_email: string | null; revision_id: string }>;
+  enqueueCalls: Array<{ file_id: string; parent_ids: string[]; actor_email: string | null; revision_id: string; folder_path: string | null }>;
   fileChangedJobCalls: Array<{ file_id: string; revision_id: string | null; mime_type: string | null; modified_time: string | null; rule_event_id: string }>;
   advancedPageTokens: string[];
   duplicateKeys: Set<string>;
@@ -97,6 +97,7 @@ function makeFakeDb(opts: {
         parent_ids: payload.parent_ids,
         actor_email: payload.actor_email,
         revision_id: payload.revision_id,
+        folder_path: payload.folder_path,
       });
       if (opts.enqueueImpl) return opts.enqueueImpl(payload);
       return enqueueResult;
@@ -641,5 +642,116 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
       }),
     ).rejects.toThrow(/no last_page_token/);
     expect(listMock).not.toHaveBeenCalled();
+  });
+
+  // SCRUM-1837 (GH #1837): folder_path was hardcoded null, so
+  // folder_path_starts_with rules could never fire. resolveFolderPath is
+  // injected; the processor must call it for a MATCHING change and thread the
+  // result into enqueueRuleEvent, but never bother resolving a change that
+  // isn't going to be enqueued at all.
+  describe('SCRUM-1837: folder_path resolution', () => {
+    it('resolves folder_path for a matching change and passes it to enqueueRuleEvent', async () => {
+      const db = makeFakeDb();
+      const listMock = vi.fn().mockResolvedValueOnce(
+        pageOf([
+          { file: { id: 'file-1', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-1' } },
+        ], { newStartPageToken: 'token-2' }),
+      );
+      const resolveFolderPath = vi.fn().mockResolvedValue('/HR/2026-Q2/file.pdf');
+
+      await processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'access-token-1',
+        db,
+        deps: { listChanges: listMock, resolveFolderPath },
+      });
+
+      expect(resolveFolderPath).toHaveBeenCalledWith({
+        orgId: ORG_ID,
+        fileId: 'file-1',
+        accessToken: 'access-token-1',
+      });
+      expect(db.enqueueCalls[0].folder_path).toBe('/HR/2026-Q2/file.pdf');
+    });
+
+    it('does NOT call resolveFolderPath for a change outside every watched folder (perf: no wasted Drive API round-trip)', async () => {
+      const db = makeFakeDb();
+      const listMock = vi.fn().mockResolvedValueOnce(
+        pageOf([
+          { file: { id: 'file-out', parents: [UNWATCHED_FOLDER], headRevisionId: 'rev-out' } },
+        ], { newStartPageToken: 'token-2' }),
+      );
+      const resolveFolderPath = vi.fn().mockResolvedValue('/should/not/be/called');
+
+      await processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock, resolveFolderPath },
+      });
+
+      expect(resolveFolderPath).not.toHaveBeenCalled();
+      expect(db.enqueueCalls).toHaveLength(0);
+    });
+
+    it('defaults folder_path to null when no resolver is injected (back-compat with the prior hardcoded-null behavior)', async () => {
+      const db = makeFakeDb();
+      const listMock = vi.fn().mockResolvedValueOnce(
+        pageOf([
+          { file: { id: 'file-1', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-1' } },
+        ], { newStartPageToken: 'token-2' }),
+      );
+
+      await processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock },
+      });
+
+      expect(db.enqueueCalls[0].folder_path).toBeNull();
+    });
+
+    it('a resolver that returns null (unresolvable) never produces an empty-string folder_path — must stay non-matching, never wildcard-match', async () => {
+      const db = makeFakeDb();
+      const listMock = vi.fn().mockResolvedValueOnce(
+        pageOf([
+          { file: { id: 'file-1', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-1' } },
+        ], { newStartPageToken: 'token-2' }),
+      );
+      const resolveFolderPath = vi.fn().mockResolvedValue(null);
+
+      await processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock, resolveFolderPath },
+      });
+
+      expect(db.enqueueCalls[0].folder_path).toBeNull();
+      expect(db.enqueueCalls[0].folder_path).not.toBe('');
+    });
+
+    it('a resolver that throws is swallowed — folder_path falls back to null instead of aborting the page', async () => {
+      const db = makeFakeDb();
+      const listMock = vi.fn().mockResolvedValueOnce(
+        pageOf([
+          { file: { id: 'file-1', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-1' } },
+        ], { newStartPageToken: 'token-2' }),
+      );
+      const resolveFolderPath = vi.fn().mockRejectedValue(new Error('drive api down'));
+      const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+      const result = await processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock, resolveFolderPath, logger: log },
+      });
+
+      expect(result.queued).toBe(1);
+      expect(db.enqueueCalls[0].folder_path).toBeNull();
+      expect(log.warn).toHaveBeenCalled();
+    });
   });
 });

@@ -1,6 +1,12 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-08-01 (BUG-2026-08-01-F9 GAP 1: manual queue-run endpoint honest-rejection fix)_
+_Last updated: 2026-08-03 (GH #1836: connector-health.ts account_label secret leak fix)_
+
+## 2026-08-03 — GH #1836 (SECURITY): `connector-health.ts` no longer echoes a connector's `channel_token` secret to the org dashboard
+
+`GET /api/connectors/health` (`handleConnectorHealth`) returned `integration?.account_label` verbatim. For every provider except `google_drive` that column is a plain display string (e.g. `"Acme Corp"`), but for Drive it is a JSON blob `{ email, channel_token, resource_id }` — `channel_token` is the webhook-authentication secret minted at `changes.watch` registration time (see `api/v1/integrations/agents.md` and `integrations/connectors/agents.md`'s GH #1835/#1836 entries). The dashboard is org-scoped (`.eq('org_id', orgId)`), so this wasn't cross-tenant, but a secret has no legitimate reason to reach ANY frontend response — same rule the connect flow itself follows.
+
+New `sanitizeAccountLabel(raw)`: if the label parses as JSON with a `channel_token` key, return only `email` (or `null` if no email); otherwise pass the raw string through unchanged (DocuSign/Adobe/etc. labels are never valid JSON with that key, so they're untouched). Applied at the one call site building the `ConnectorHealth` response. Tests: `connector-health.test.ts` `describe('account_label sanitization (GH #1836)')`.
 
 ## 2026-08-01 — BUG-2026-08-01-F9 GAP 1: `POST /api/queue/run` now reports a definitive broadcast rejection as 409, not 200 `{ok:true}` (`queue-resolution.ts`)
 

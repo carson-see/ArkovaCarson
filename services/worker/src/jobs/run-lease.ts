@@ -41,6 +41,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 const MINUTES = 60_000;
@@ -192,7 +193,7 @@ export const RUN_LEASE_SPECS: readonly RunLeaseSpec[] = [
  * took the lease.
  */
 export function runLeaseHolder(): string {
-  return `${process.env.K_REVISION ?? 'local'}:${process.pid}:${randomUUID()}`;
+  return `${config.kRevision ?? 'local'}:${process.pid}:${randomUUID()}`;
 }
 
 /**
