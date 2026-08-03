@@ -374,5 +374,19 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
     });
   }
 
+  // GH #1835: Drive changes.watch channel renewal, hourly. Deliberately NO
+  // in-process backup here — prod runs it exclusively via Cloud Scheduler ->
+  // POST /jobs/drive-subscription-renewal (routes/cron.ts). Its sibling
+  // docusign-reconciliation (SCRUM-2042, same file-organization shape:
+  // Cloud-Scheduler-only cron.ts route, no scheduleInProcess entry) is the
+  // established precedent — when the Cloud Run instance is NOT throttled,
+  // an unconditional in-process schedule running the SAME hourly cadence
+  // would double-fire every tick: two concurrent sweeps racing to renew the
+  // same due connections, each independently stopping the other's
+  // just-registered channel. Dev/test coverage lives entirely in
+  // drive-subscription-renewal.test.ts (pure orchestrator) and
+  // drive-subscription-renewal-deps.test.ts (real wiring) instead of an
+  // in-process cron loop.
+
   logger.info('Scheduled jobs configured (including chain maintenance)');
 }

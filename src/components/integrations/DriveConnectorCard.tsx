@@ -20,7 +20,6 @@ interface DriveConnectorCardProps {
 
 interface DriveConnection {
   id: string;
-  account_label: string | null;
   connected_at: string | null;
   subscription_expires_at: string | null;
   scope: string | null;
@@ -41,10 +40,21 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
     setError(null);
     try {
       // org_integrations is newer than generated frontend DB types.
+      //
+      // GH #1836 review follow-up (PR #1944): account_label is DELIBERATELY
+      // NOT selected here. For google_drive it is a JSON blob carrying
+      // channel_token — the webhook-authentication secret minted at
+      // changes.watch registration time (see api/v1/integrations/agents.md's
+      // GH #1836 entry) — and RLS permits any org admin to read this row
+      // directly via the browser client, with no column-level restriction.
+      // Selecting it here would ship that secret straight to the browser and
+      // (before this fix) rendered it as plaintext below. There is no
+      // supporting worker-mediated read for a sanitized display name yet —
+      // this card shows a plain "Connected." until one exists.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error: queryError } = await (supabase as any)
         .from('org_integrations')
-        .select('id, account_label, connected_at, subscription_expires_at, scope, last_token_advanced_at')
+        .select('id, connected_at, subscription_expires_at, scope, last_token_advanced_at')
         .eq('org_id', orgId)
         .eq('provider', 'google_drive')
         .is('revoked_at', null)
@@ -183,7 +193,7 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
               </div>
               <p className="mt-1 max-w-md text-xs text-muted-foreground">
                 {connected
-                  ? `Connected${connection?.account_label ? ` as ${connection.account_label}` : ''}.`
+                  ? 'Connected.'
                   : 'Authorize Arkova with least-privilege Drive access.'}
               </p>
               {connected && subscriptionDate && (
