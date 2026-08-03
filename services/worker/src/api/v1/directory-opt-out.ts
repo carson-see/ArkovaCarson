@@ -21,6 +21,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { FERPA_EDUCATION_TYPES } from '../../constants/ferpa.js';
 import { requireOrgId } from '../../middleware/requireOrgId.js';
+import { chunkForInFilter } from '../../utils/postgrest-filter.js';
 import { invalidateVerificationCache } from '../../utils/verifyCache.js';
 
 const router = Router();
@@ -107,27 +108,59 @@ router.post('/bulk', async (req, res) => {
     const optOutIds = records.filter(r => r.opt_out).map(r => r.public_id);
     const optInIds = records.filter(r => !r.opt_out).map(r => r.public_id);
 
-    const batchResults = await Promise.all([
-      optOutIds.length > 0
-        ? dbAny.from('anchors').update({ directory_info_opt_out: true })
-            .in('public_id', optOutIds).eq('org_id', req.orgId).select('public_id')
-        : { data: [], error: null },
-      optInIds.length > 0
-        ? dbAny.from('anchors').update({ directory_info_opt_out: false })
-            .in('public_id', optInIds).eq('org_id', req.orgId).select('public_id')
-        : { data: [], error: null },
-    ]);
+    // Both filters were sent whole. `records` is Zod-capped at 1000 entries but
+    // `public_id` has no max length, so the encoded filter had no byte bound at
+    // all. On a 400 the errors were never read: `data` came back null, no id
+    // landed in `updatedIds`, and the response told the caller
+    // `updated: 0, failed: N` with `error: 'Not found'` against every record —
+    // a false statement about rows in the caller's OWN org that exist and were
+    // simply never written.
+    //
+    // Records whose chunk failed are now reported as `update_failed`, distinct
+    // from the `Not found` we can actually substantiate (chunk succeeded, row
+    // not returned).
+    const updatedIds = new Set<string>();
+    const failedIds = new Set<string>();
 
-    const updatedIds = new Set([
-      ...(batchResults[0].data ?? []).map((r: { public_id: string }) => r.public_id),
-      ...(batchResults[1].data ?? []).map((r: { public_id: string }) => r.public_id),
-    ]);
+    const runBulkUpdate = async (ids: string[], optOut: boolean) => {
+      for (const { values, start } of chunkForInFilter(ids)) {
+        const { data, error } = await dbAny
+          .from('anchors')
+          .update({ directory_info_opt_out: optOut })
+          .in('public_id', values)
+          .eq('org_id', req.orgId)
+          .select('public_id');
 
-    const results = records.map(r => ({
-      public_id: r.public_id,
-      updated: updatedIds.has(r.public_id),
-      ...(updatedIds.has(r.public_id) ? {} : { error: 'Not found' }),
-    }));
+        if (error) {
+          for (const id of values) failedIds.add(id);
+          logger.error(
+            { err: error, orgId: req.orgId, optOut, chunkStart: start, chunkSize: values.length },
+            'Bulk directory opt-out chunk failed',
+          );
+          continue;
+        }
+
+        for (const row of (data ?? []) as Array<{ public_id: string }>) {
+          updatedIds.add(row.public_id);
+        }
+      }
+    };
+
+    // Concurrent, as before the chunking change: the two id groups are disjoint
+    // by construction (`r.opt_out` partitions `records`), so the shared Sets are
+    // only ever `add`ed to, and JS runs each `add` to completion without
+    // interleaving. Serialising these doubled the endpoint's worst-case latency
+    // for no correctness gain.
+    await Promise.all([runBulkUpdate(optOutIds, true), runBulkUpdate(optInIds, false)]);
+
+    const results = records.map(r => {
+      if (updatedIds.has(r.public_id)) return { public_id: r.public_id, updated: true };
+      return {
+        public_id: r.public_id,
+        updated: false,
+        error: failedIds.has(r.public_id) ? 'update_failed' : 'Not found',
+      };
+    });
 
     const updatedCount = updatedIds.size;
 

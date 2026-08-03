@@ -22,6 +22,7 @@ import { logger } from '../../utils/logger.js';
 import { createGrcAdapter, loadGrcCredentials } from '../../integrations/grc/adapters.js';
 import type { GrcConnection } from '../../integrations/grc/types.js';
 import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
+import { chunkForInFilter } from '../../utils/postgrest-filter.js';
 import {
   createDefaultKmsClient,
   encryptTokens,
@@ -421,10 +422,19 @@ router.get('/sync-logs', async (req: Request, res: Response) => {
 
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
 
-  const { data: connections } = await grcDb
+  // The error used to be discarded here. A failed read resolves to `null`,
+  // which `!connections?.length` reads as "this org has no GRC connections" —
+  // so the endpoint answered 200 with an empty log list and no way for the
+  // caller to tell that apart from a database failure.
+  const { data: connections, error: connectionsError } = await grcDb
     .from('grc_connections')
     .select('id')
-    .eq('org_id', orgId) as { data: { id: string }[] | null };
+    .eq('org_id', orgId) as { data: { id: string }[] | null; error: { message?: string } | null };
+
+  if (connectionsError) {
+    res.status(500).json({ error: 'Failed to fetch sync logs' });
+    return;
+  }
 
   if (!connections?.length) {
     res.json({ logs: [] });
@@ -433,19 +443,34 @@ router.get('/sync-logs', async (req: Request, res: Response) => {
 
   const connectionIds = connections.map((c: { id: string }) => c.id);
 
-  const { data: logs, error } = await grcDb
-    .from('grc_sync_logs')
-    .select('id, connection_id, anchor_id, status, evidence_type, external_evidence_id, error_message, duration_ms, created_at')
-    .in('connection_id', connectionIds)
-    .order('created_at', { ascending: false })
-    .limit(limit);
+  // One id per GRC connection the org owns, unbounded in code. Each chunk asks
+  // for the newest `limit` rows; the global newest `limit` is contained in the
+  // union of those, so the merge below reproduces the one-shot query's answer.
+  type SyncLog = { created_at: string | null };
+  let logs: SyncLog[] = [];
 
-  if (error) {
-    res.status(500).json({ error: 'Failed to fetch sync logs' });
-    return;
+  for (const { values } of chunkForInFilter(connectionIds)) {
+    const { data, error } = await grcDb
+      .from('grc_sync_logs')
+      .select('id, connection_id, anchor_id, status, evidence_type, external_evidence_id, error_message, duration_ms, created_at')
+      .in('connection_id', values)
+      .order('created_at', { ascending: false })
+      .limit(limit) as { data: SyncLog[] | null; error: { message?: string } | null };
+
+    if (error) {
+      res.status(500).json({ error: 'Failed to fetch sync logs' });
+      return;
+    }
+    logs = logs.concat(data ?? []);
   }
 
-  res.json({ logs: logs ?? [] });
+  // Sort UNCONDITIONALLY, not just when trimming. Each chunk is internally
+  // newest-first but the concatenation is in chunk order, so a merged result at
+  // or under `limit` would otherwise be returned unsorted.
+  logs.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
+  if (logs.length > limit) logs = logs.slice(0, limit);
+
+  res.json({ logs });
 });
 
 export { router as grcRouter };

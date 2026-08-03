@@ -27,6 +27,11 @@ export default tseslint.config(
       '@typescript-eslint/ban-ts-comment': 'warn',
       // SCRUM-1208 — tenant isolation on multi-tenant Supabase tables.
       'arkova/missing-org-filter': 'warn',
+      // #1795 / #1812 / #1853 — PostgREST `.in()` filter width belongs to
+      // `chunkForInFilter`, never to a hand-rolled loop. ERROR, not warn: this
+      // class reached production three times, the last two after it was already
+      // understood, and `npm run lint` from here IS the deploy gate (rule 9).
+      'arkova/no-hand-rolled-in-filter-chunk': 'error',
       // eslint 10 promoted these to errors in recommended; keep as warnings
       // to preserve pre-upgrade behavior. Follow-up story to fix and promote.
       'no-useless-assignment': 'warn',

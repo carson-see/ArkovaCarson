@@ -18,6 +18,7 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { writeAuditBatch, type AuditLogEntry } from '../audit/cloud-logging-sink.js';
 import { hasGcpCredential } from '../utils/gcp-auth.js';
+import { chunkForInFilter } from '../utils/postgrest-filter.js';
 
 const BATCH_SIZE = 100;
 const MAX_BATCHES_PER_TICK = 10; // up to 1000 entries per minute
@@ -167,10 +168,7 @@ export async function bumpRetryCounts(auditIds: string[], errorMsg?: string): Pr
   // then batch-update per distinct retry_count value. This avoids indefinite
   // retries when the RPC is unavailable (BUG: previously only set last_error
   // without incrementing retry_count, causing rows to retry forever).
-  const CHUNK_SIZE = 100;
-  for (let i = 0; i < auditIds.length; i += CHUNK_SIZE) {
-    const chunk = auditIds.slice(i, i + CHUNK_SIZE);
-
+  for (const { values: chunk } of chunkForInFilter(auditIds)) {
     // Read current retry_count for this chunk
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: rows, error: readErr } = await (db as any)
