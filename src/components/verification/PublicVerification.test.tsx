@@ -675,3 +675,59 @@ describe('PublicVerification', () => {
     expect(document.body.textContent).not.toContain('0.87');
   });
 });
+
+// ─── CTDL data link (structured-data discoverability) ────────────────────────
+// The public CTDL JSON-LD projection (GET /api/v1/credentials/:publicId/ctdl)
+// existed on the worker with zero UI surface anywhere in the product. Gated
+// on the SAME `hasProof` condition as Section 3 (Cryptographic Proof) / 5
+// (Proof Download) — hasPublicVerificationProof(status) is byte-identical to
+// the worker's own isCtdlPublishableStatus set (SECURED/REVOKED/EXPIRED/
+// SUPERSEDED), so the link is never shown for a status the endpoint would 404.
+describe('PublicVerification — CTDL data link', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders the CTDL data link for a SECURED record', async () => {
+    rpcMock.mockResolvedValue({
+      data: { ...baseAnchor, status: 'SECURED', secured_at: '2026-04-01T12:00:00Z' },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    const link = await screen.findByTestId('ctdl-data-link');
+    expect(link.getAttribute('href')).toContain('/api/v1/credentials/ARK-DOC-123/ctdl');
+  });
+
+  it.each(['REVOKED', 'EXPIRED', 'SUPERSEDED'])(
+    'renders the CTDL data link for a terminal %s record',
+    async (status) => {
+      rpcMock.mockResolvedValue({
+        data: { ...baseAnchor, status, secured_at: '2026-04-01T12:00:00Z' },
+        error: null,
+      });
+
+      render(<PublicVerification publicId="ARK-DOC-123" />);
+
+      expect(await screen.findByTestId('ctdl-data-link')).toBeInTheDocument();
+    },
+  );
+
+  it.each(['PENDING', 'SUBMITTED'])(
+    'does not render the CTDL data link for a pre-secured %s record (the endpoint would 404)',
+    async (status) => {
+      rpcMock.mockResolvedValue({
+        data: { ...baseAnchor, status },
+        error: null,
+      });
+
+      render(<PublicVerification publicId="ARK-DOC-123" />);
+
+      // Wait for the page to settle on a stable, status-specific affordance
+      // before asserting absence, so this isn't just racing the fetch.
+      await screen.findByText(status === 'PENDING' ? 'Processing' : 'Awaiting Confirmation');
+      expect(screen.queryByTestId('ctdl-data-link')).not.toBeInTheDocument();
+    },
+  );
+});

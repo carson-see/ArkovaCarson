@@ -62,6 +62,21 @@ JOBS=(
   # expiry, and EVERY run when CE_API_KEY_EXPIRES_AT is unset/sentinel. NO_RETRY —
   # the job is idempotent and re-fires daily anyway; a retry would only double-page.
   "ce-key-expiry-check|0 8 * * *|/jobs/ce-key-expiry-check|NO_RETRY"
+  # SCRUM-2913 (L3-A6 follow-up): CE Registry drift reconciliation, daily
+  # 05:00 UTC. Read-only read-back — re-reads every anchored CE Registry CTID
+  # from the public registry and records where it no longer matches what was
+  # anchored (services/worker/src/jobs/ce-registry-drift.ts). No-ops
+  # (skipped:true) until ENABLE_CE_REGISTRY_DRIFT_CHECK=true — the route
+  # shipped flag-gated OFF on purpose (new outbound traffic to a partner's
+  # infra), but had NO Cloud Scheduler declaration anywhere, so there was no
+  # way to ever invoke it even after deliberately enabling the flag. Adding
+  # the declaration here does not itself flip the flag or change any runtime
+  # behavior while it stays default-off; it only means the "turn it on
+  # deliberately" step is a one-line env var once an operator runs this
+  # script. Retried (not NO_RETRY): the route 500s specifically when the
+  # anchor load itself failed, precisely so a transient failure is retried
+  # rather than recorded as a false "nothing to reconcile".
+  "ce-registry-drift-check|0 5 * * *|/jobs/ce-registry-drift-check|30s,120s,2"
   # QUEUE-06 (SCRUM-2352): connector_artifact drain consumer every 5 min.
   # Drains pending|queued rows → materialize PENDING anchor → charge at SECURING
   # (debit_and_enqueue_anchor) → batch-anchor. Endpoint at
