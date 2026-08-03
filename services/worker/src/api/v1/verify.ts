@@ -15,6 +15,10 @@ import { config } from '../../config.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { FERPA_EDUCATION_TYPES, FERPA_REDISCLOSURE_NOTICE } from '../../constants/ferpa.js';
 import {
+  COMPLIANCE_CONTROLS_NOTE,
+  sanitizeStoredComplianceControls,
+} from '../../utils/complianceMapping.js';
+import {
   proofAvailabilityFields,
   type ProofAvailability,
 } from '../../constants/proofAvailability.js';
@@ -172,8 +176,32 @@ export interface VerificationResult {
   // API-RICH-01 (SCRUM-772, 2026-04-16): 8 additive nullable fields that surface
   // already-stored data for GRC platform + SDK consumers. All additions per
   // Constitution 1.8 (frozen schema allows additive nullables).
-  /** Regulatory control IDs (SOC 2 / FERPA / HIPAA / GDPR / ISO) — populated by CML-02 (migration 0137). */
-  compliance_controls?: Record<string, unknown> | null;
+  /**
+   * Regulatory control IDs (SOC 2 / FERPA / HIPAA / GDPR / ISO) — populated by
+   * CML-02 (migration 0137).
+   *
+   * SCRUM-2227: the declared type was `Record<string, unknown>`, but the column
+   * has always held a JSON **array** of control-ID strings (see the `anchors.
+   * compliance_controls` column comment and `getComplianceControlIds`). The
+   * object form was never emitted by anything — it had no working consumer, as
+   * both first-party SDKs proved by silently dropping the field. Declaring the
+   * array alone matches what the endpoint actually returns; the wire format is
+   * unchanged, and a non-array stored value now fails closed to omitted rather
+   * than travelling unfiltered (see sanitizeStoredComplianceControls).
+   */
+  compliance_controls?: string[] | null;
+  /**
+   * SCRUM-2227: the informational-not-attestation note for `compliance_controls`.
+   * Present whenever `compliance_controls` is present, absent otherwise — a
+   * control list must never travel without the statement of what it does NOT
+   * assert (§1.5 / R-7 claims gate). Additive — Constitution 1.8.
+   *
+   * Typed `string | undefined` (NOT `| null`): like `jurisdiction`, this field
+   * is OMITTED when it does not apply and is never serialised as `null`
+   * (CLAUDE.md §6). Declaring it nullable would tell clients to handle a value
+   * the endpoint cannot emit.
+   */
+  compliance_controls_note?: string;
   /** Bitcoin block confirmations at anchor time. */
   chain_confirmations?: number | null;
   /** Public ID of the parent anchor (credential lineage). Resolved from internal UUID — Constitution 1.4. */
@@ -296,7 +324,7 @@ export interface AnchorByPublicId {
   /** REG-02: FERPA Section 99.37 directory info opt-out */
   directory_info_opt_out: boolean;
   /** API-RICH-01: Regulatory control IDs (SOC 2 / FERPA / HIPAA / GDPR / ISO) */
-  compliance_controls: Record<string, unknown> | null;
+  compliance_controls: string[] | null;
   /** API-RICH-01: Bitcoin block confirmations at anchor time */
   chain_confirmations: number | null;
   /** API-RICH-01: Parent anchor PUBLIC ID (resolved from internal UUID — never expose UUID) */
@@ -463,6 +491,12 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     }
     (result as unknown as Record<string, unknown>)[key] = v;
   }
+  // SCRUM-2227: a control list must never travel without the statement of what
+  // it does NOT assert. Keyed off the value actually placed on the response by
+  // the loop above, so the two can never disagree.
+  if (result.compliance_controls !== undefined) {
+    result.compliance_controls_note = COMPLIANCE_CONTROLS_NOTE;
+  }
   if (
     anchor.version_number !== null &&
     anchor.version_number !== undefined &&
@@ -509,6 +543,11 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
  * Used by endpoints that don't hydrate rich fields (e.g. the oracle batch endpoint) so
  * adding a new rich field only requires touching this constant + the interface.
  */
+// NOTE: `compliance_controls_note` is deliberately absent here. It is DERIVED in
+// buildVerificationResult from whatever compliance_controls ends up on the
+// response, not stored on the anchor — so a null `compliance_controls` below
+// already yields no note, and listing it would put a non-existent field on
+// AnchorByPublicId.
 export const EMPTY_API_RICH_FIELDS = {
   // SCRUM-2575: `null` = NOT MEASURED, not "no proof". Consumers of this
   // constant do not load proof data, so they must omit proof_availability
@@ -599,7 +638,7 @@ export interface AnchorSelectRow {
   expires_at: string | null;
   description: string | null;
   directory_info_opt_out: boolean;
-  compliance_controls: Record<string, unknown> | null;
+  compliance_controls: string[] | null;
   chain_confirmations: number | null;
   version_number: number | null;
   revocation_tx_id: string | null;
@@ -718,7 +757,10 @@ export function mapAnchorRow(row: AnchorSelectRow): AnchorByPublicId {
     merkle_root: resolveMerkleRoot(row),
     description: row.description ?? null,
     directory_info_opt_out: row.directory_info_opt_out ?? false,
-    compliance_controls: row.compliance_controls ?? null,
+    // SCRUM-2227/2283: historical rows still carry the retired EU-US DPF IDs.
+    // Filter on read — there is no migration that can un-say a claim already
+    // written to 2.9M rows, and the read path is the only place it is asserted.
+    compliance_controls: sanitizeStoredComplianceControls(row.compliance_controls),
     chain_confirmations: row.chain_confirmations ?? null,
     parent_public_id: row.parent?.public_id ?? null,
     version_number: row.version_number ?? null,

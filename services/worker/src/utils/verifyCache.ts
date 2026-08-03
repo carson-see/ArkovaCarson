@@ -19,20 +19,29 @@ const CACHE_TTL_SECONDS = 300; // 5 minutes
 // cached before the deploy would keep answering the proof-availability question
 // with silence for the whole TTL.
 //
-// v3 was skipped deliberately: several independent response-shape changes
-// landed around the same time and each needed its own bump — PR #1800
-// (SCRUM-2227, compliance_controls_note + retired DPF ID stripping) and this
-// PII gate on `buildVerificationResult` (academic-record free-text suppression
-// + value gate on description/issuer_name/jurisdiction/sub_type/file_mime)
-// among them. Jumping straight from v2 to v4 means the bump is correct no
-// matter which of them lands on main first, and none of them can silently
-// reuse another's namespace by both claiming v3.
+// Bumped v2 → v4 for SCRUM-2575 (#1816): the verify response now carries
+// `proof_availability` + `proof_availability_note`. v3 was skipped deliberately
+// so concurrent response-shape changes could not silently reuse each other's
+// namespace; #1800 (SCRUM-2227) landed on top of v4 and inherited it.
+// v5 is claimed by #1843 (BUG-2026-06-24-007, controls withheld for
+// non-current credentials), in flight on its own branch.
 //
-// This PII gate's v4 claim is a SECURITY requirement, not hygiene: the gate
-// runs before `setCachedVerification`, so new writes are safe either way, but
-// entries written by the PRE-fix build carry a raw `description` and would
-// keep serving it to anonymous callers for the rest of the TTL after deploy.
-// A new prefix orphans them instantly.
+// Bumped v4 → v6 for this PR's outbound PII gate on
+// `buildVerificationResult` (academic-record free-text suppression + value
+// gate on description/issuer_name/jurisdiction/sub_type/file_mime). This bump
+// is a SECURITY requirement, not hygiene: the gate runs before
+// `setCachedVerification`, so new writes are safe either way, but entries
+// written by the PRE-gate build (v4 — live on main since #1816) carry a raw
+// `description` and would keep serving it to anonymous callers for the rest
+// of the TTL after deploy. A new prefix orphans them instantly. The PR's
+// original v4 claim predated #1816 taking v4 on main; staying at v4 would
+// have left every pre-gate v4 entry validly servable — the exact exposure
+// this bump exists to close.
+//
+// A hit is served verbatim without re-running buildVerificationResult — bump
+// again on any response-shape change so post-deploy cache hits don't serve
+// stale thin responses. Old keys age out naturally via TTL.
+const KEY_PREFIX = 'verify:v6:';
 //
 // Bump again on any response-shape change so post-deploy cache hits don't serve stale
 // thin responses. Old keys age out naturally via TTL.
