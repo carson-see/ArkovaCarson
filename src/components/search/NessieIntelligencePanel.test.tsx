@@ -2,7 +2,7 @@
  * NessieIntelligencePanel Component Tests (NMT-07)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { NessieIntelligencePanel } from './NessieIntelligencePanel';
 
@@ -18,6 +18,10 @@ describe('NessieIntelligencePanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetch.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('renders panel title and input', () => {
@@ -97,7 +101,14 @@ describe('NessieIntelligencePanel', () => {
     expect(screen.getByText('SEC EDGAR')).toBeInTheDocument();
   });
 
-  it('displays error on failed request', async () => {
+  // The worker's OWN response body is a curated, safe-to-show business
+  // message (a tier-gate, a rate limit, ...) — it must reach the user
+  // verbatim so they can self-diagnose, exactly like it did before the
+  // VITE_WORKER_URL fix. This is the corrected behavior after an earlier
+  // version of that fix over-corrected to a blanket generic label for every
+  // thrown error, silently discarding this exact message (see
+  // `src/lib/workerResponseError.ts` for the full incident writeup).
+  it('displays the worker\'s own response-body error message verbatim on a failed request', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
       json: () => Promise.resolve({ error: 'Nessie query endpoint is not enabled' }),
@@ -109,11 +120,12 @@ describe('NessieIntelligencePanel', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => {
-      expect(screen.getByText(/not enabled/i)).toBeInTheDocument();
+      expect(screen.getByText('Nessie query endpoint is not enabled')).toBeInTheDocument();
     });
+    expect(screen.queryByText('An error occurred')).not.toBeInTheDocument();
   });
 
-  it('displays error on network failure', async () => {
+  it('displays the generic safe label on a network failure, never the raw exception text', async () => {
     mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
     renderComponent();
@@ -122,8 +134,35 @@ describe('NessieIntelligencePanel', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => {
-      expect(screen.getByText(/network error/i)).toBeInTheDocument();
+      expect(screen.getByText('An error occurred')).toBeInTheDocument();
     });
+    expect(screen.queryByText(/network error/i)).not.toBeInTheDocument();
+  });
+
+  // Root cause this guards: resolveWorkerBaseUrl throws an actionable-but-
+  // internal message ("...VITE_WORKER_URL is unset...") when a production
+  // build has no VITE_WORKER_URL configured. That message must reach
+  // console/monitoring (via resolveWorkerBaseUrl's own console.error) but must
+  // NEVER be rendered into the DOM for an end user to read.
+  it('never renders the raw VITE_WORKER_URL config message when the worker URL cannot be resolved in production', async () => {
+    vi.stubEnv('PROD', true);
+    vi.stubEnv('VITE_WORKER_URL', '');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    renderComponent();
+    const input = screen.getByPlaceholderText(/ask a compliance question/i);
+    fireEvent.change(input, { target: { value: 'test' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(screen.getByText('An error occurred')).toBeInTheDocument();
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain('VITE_WORKER_URL');
+    // The loud, engineer-facing signal still fires.
+    expect(consoleError).toHaveBeenCalled();
+
+    consoleError.mockRestore();
   });
 
   it('calls correct API endpoint with query params', async () => {
@@ -151,5 +190,31 @@ describe('NessieIntelligencePanel', () => {
     expect(url).toContain('/api/v1/nessie/query');
     expect(url).toContain('mode=context');
     expect(url).toContain('q=my+query');
+  });
+
+  // Reuse/security review finding: this call site must use BOTH halves of
+  // workerUrlSafety.ts's contract — resolveWorkerBaseUrl (picks the base)
+  // AND resolveSafeWorkerEndpoint (pins the request path/query to that base's
+  // origin) — not a hand-built `${workerUrl}/path` template string.
+  it('pins the request to the configured worker origin via resolveSafeWorkerEndpoint', async () => {
+    const customWorkerOrigin = 'https://custom-worker.example.test';
+    vi.stubEnv('VITE_WORKER_URL', customWorkerOrigin);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ answer: '', citations: [], confidence: 0 }),
+    });
+
+    renderComponent();
+    const input = screen.getByPlaceholderText(/ask a compliance question/i);
+    fireEvent.change(input, { target: { value: 'test' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledOnce();
+    });
+
+    const calledUrl = mockFetch.mock.calls[0][0] as string;
+    expect(new URL(calledUrl).origin).toBe(customWorkerOrigin);
+    expect(new URL(calledUrl).pathname).toBe('/api/v1/nessie/query');
   });
 });
