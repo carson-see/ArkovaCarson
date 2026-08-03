@@ -41,6 +41,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 const MINUTES = 60_000;
@@ -192,7 +193,10 @@ export const RUN_LEASE_SPECS: readonly RunLeaseSpec[] = [
  * took the lease.
  */
 export function runLeaseHolder(): string {
-  return `${process.env.K_REVISION ?? 'local'}:${process.pid}:${randomUUID()}`;
+  // SCRUM-1258: read the Cloud Run revision through the Zod-validated `config`
+  // export, never `process.env` directly — an ad-hoc read here bypasses that
+  // validation and is rejected by the worker-env gate in ci.yml.
+  return `${config.kRevision ?? 'local'}:${process.pid}:${randomUUID()}`;
 }
 
 /**
