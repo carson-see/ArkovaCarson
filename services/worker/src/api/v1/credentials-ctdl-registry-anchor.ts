@@ -172,6 +172,22 @@ interface BoundedRegistryMetadata {
   ce_record_name: string | null;
   ce_issuer_name: string | null;
   ce_source: 'noncredit_registry_import';
+  /**
+   * Lane 4 bug blitz (2026-08, CE-visible-work follow-up): unprefixed
+   * duplicate of `ce_registry_url`, added SOLELY because the public
+   * `get_public_anchor` projection's metadata allow-list (migration 0385,
+   * live — see `private.public_url_or_null(a.metadata ->> 'registry_url')`)
+   * reads the key `registry_url`, not `ce_registry_url`. Before this field,
+   * `SourceProvenanceDisplay`'s "Registry reference" row (SCRUM-2913,
+   * already shipped in the UI) could never populate for a CE-registry-
+   * anchored record — the write and read sides used different key names,
+   * so a genuinely CE-registry-provenanced anchor never showed its registry
+   * link on the public verify page. `ce_registry_ctid` stays the drift job's
+   * (`ce-registry-drift.ts`) only read key — untouched, not renamed. Keep
+   * both keys: `ce_registry_url` for anything reading this endpoint's own
+   * historical metadata shape, `registry_url` for the public projection.
+   */
+  registry_url: string;
 }
 
 async function insertRegistryAnchor(
@@ -394,15 +410,18 @@ export function buildCredentialsCtdlRegistryAnchorRouter(
       return;
     }
 
+    const registryUrl = record.registryUrl ?? `${DEFAULT_REGISTRY_BASE_URL}/resources/${ctid}`;
     const metadata: BoundedRegistryMetadata = {
       ce_registry_ctid: ctid,
-      ce_registry_url: record.registryUrl ?? `${DEFAULT_REGISTRY_BASE_URL}/resources/${ctid}`,
+      ce_registry_url: registryUrl,
       ce_envelope_sha256: envelopeSha256,
       ce_retrieved_at: retrievedAt.toISOString(),
       ce_record_type: record.type,
       ce_record_name: record.name,
       ce_issuer_name: record.issuer?.name ?? null,
       ce_source: 'noncredit_registry_import',
+      // Lane 4 bug blitz: see BoundedRegistryMetadata.registry_url doc comment.
+      registry_url: registryUrl,
     };
 
     const responseBody = {
