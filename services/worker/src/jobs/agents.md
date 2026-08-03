@@ -2,6 +2,109 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-03 — GH #1835: `drive-subscription-renewal-deps.ts` — real wiring for Drive channel renewal
+
+Production adapter for the pure `renewDriveSubscriptions()` orchestrator (`integrations/connectors/drive-subscription-renewal.ts` — see that folder's `agents.md` for the full GH #1835/#1836/#1837 writeup and why this targets `org_integrations`, not `drive_watch_state`). Follows the exact `makeXxxDeps()` factory pattern `docusign-reconciliation-deps.ts` established:
+
+- `makeDriveSubscriptionRenewalDb()` — `listRenewableConnections` selects `org_integrations` where `provider='google_drive'`, `revoked_at IS NULL`, and `.or('subscription_expires_at.lte.<horizon>,subscription_id.is.null')` (the second clause recovers a connection whose bootstrap `changes.watch` call failed at OAuth-callback time). Cross-tenant by design (service-role cron sweep, same rationale as `docusign-reconciliation-deps.ts`'s `listActiveIntegrations` — `arkova/missing-org-filter` suppressed with that comment). `updateConnection` is a plain `.update(patch).eq('id', id)` — `id` is stripped from the patch body so it can never accidentally get written as a column.
+- `makeDriveSubscriptionRenewalClient()` — `getAccessToken` reuses `loadDriveAccessToken` (`integrations/connectors/drive-changes-runner.ts`) so the KMS decrypt/refresh/persist logic has exactly one implementation; a `DriveRunnerError('no_refresh_token')` (or no `encrypted_tokens` at all) maps to `revoked: true`, any OTHER error rethrows so a transient failure retries next sweep instead of being misclassified as a permanent revoke. `createChannel` fails closed on a missing `config.workerPublicUrl` (PR #1944 review: routed through the Zod-validated config export, not an ad-hoc `process.env.WORKER_PUBLIC_URL` read — see `services/worker/src/agents.md`'s 2026-08-03 entry; same underlying var + same fail-closed shape as `docusign.ts`'s `requireConnectConfig` for the Connect-listener provisioning path, which still reads it via its own pre-existing env passthrough) and builds the webhook address from `WEBHOOK_PATHS.GOOGLE_DRIVE` — never a hand-rolled path string, so it can't drift from what `webhooks/drive.ts` actually mounts at. A `workerPublicUrl` DI option is exposed for tests.
+- `alertDriveSubscriptionRenewal` — Sentry, `warning` level for `token_revoked` (recoverable — org just needs to reconnect), `error` for `renewal_failed`. Never throws even if Sentry itself does.
+- **`asRawRow()`'s `conn as unknown as RawConnectionRow` double-cast (evaluated for removal in PR #1944 review round 3, KEPT):** `listRenewableConnections` packs KMS/token columns (`encrypted_tokens`, `token_kms_key_id`, `last_page_token`) onto the object it returns, then casts the array to the pure module's narrower `DriveSubscriptionRow[]` type; `asRawRow()` casts back to recover them at `getAccessToken`'s call site. This looks removable but is not a quick fix: the pure orchestrator (`integrations/connectors/drive-subscription-renewal.ts`) deliberately does NOT declare those fields on its own exported `DriveSubscriptionRow` type — widening it would leak KMS/token-storage internals into a module that has no business knowing about them, and would touch that module's own test fixtures too. The only cast-free alternatives are (a) that widening, or (b) a side-channel (e.g. a `WeakMap` keyed by row identity) trading a compile-time-scoped, locally-verifiable cast for a runtime statefulness assumption that's easier to break silently in a future refactor. Both fail the "quick and low-risk" bar this was flagged under, so the two casts stay — narrowly scoped to one pack site and one unpack site, both in this file, both commented, and a wrong pairing would already surface via the existing `getAccessToken` revoked/no-token tests (they'd start hitting the "never bootstrapped" branch for every row).
+- Cron route: `POST /jobs/drive-subscription-renewal` in `routes/cron.ts`, hourly. Cloud Scheduler declaration in `scripts/gcp-setup/cloud-scheduler.sh` — **not yet applied to prod as of this PR**; running that script against prod is an operator step (see the PR body).
+
+### PR #1944 review round 3 correction: `runDriveSubscriptionRenewal()` — lease-guarded entry point, in-process backup RESTORED
+
+An earlier round of this same review explicitly instructed removing any `routes/scheduled.ts` in-process backup for this job to avoid double-firing against Cloud Scheduler (the "No `scheduled.ts` in-process backup — deliberately" note that used to live in the paragraph above). **That instruction was wrong and was explicitly reversed by the coordinator**: Cloud Scheduler is not yet applied to prod, so Cloud-Scheduler-only meant the job would NEVER run automatically until an operator remembered a manual `gcloud` step — trading a double-fire race for a silent single point of failure is the wrong trade when the job's own job is to prevent a silent outage (#1835).
+
+Fix: both trigger paths now call the SAME lease-guarded function, `runDriveSubscriptionRenewal()` (new, this file) — whichever fires first wins, the other no-ops:
+
+```ts
+export async function runDriveSubscriptionRenewal(
+  options: DriveSubscriptionRenewalDepOptions = {},
+): Promise<DriveSubscriptionRenewalRunResult> {
+  const leaseClient = options.db ?? (defaultDb as AnyDb);
+  const outcome = await withRunLease(
+    { ...DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, client: leaseClient },
+    () => renewDriveSubscriptions({
+      db: makeDriveSubscriptionRenewalDb(options),
+      client: makeDriveSubscriptionRenewalClient(options),
+      alert: alertDriveSubscriptionRenewal,
+    }),
+  );
+  return outcome.acquired ? outcome.result : { ...EMPTY_RENEWAL_SUMMARY, skipped: true };
+}
+```
+
+- **`DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE`** (`run-lease.ts`, new spec) is the same `withRunLease` cross-instance CAS-lease primitive `batch-anchor.ts` / `check-confirmations.ts` already use — a TTL-based lease row in `job_queue`, not a new table. **Deliberately NOT added to the shared `RUN_LEASE_SPECS` array**: that array's cross-cutting test asserts `ttlMs > slowestRecordedCadenceMs` for every entry, which is mathematically impossible here — this job's cadence (hourly, both triggers) equals the shared `CLOUD_RUN_REQUEST_TIMEOUT_MS` ceiling (60 min) that bounds every lease TTL. It has its own dedicated test coverage instead (see below) rather than being silently excluded from the array with no explanation.
+- `routes/cron.ts`'s `POST /jobs/drive-subscription-renewal` now just calls `runDriveSubscriptionRenewal()` with no args (was manually assembling `renewDriveSubscriptions({db, client, alert})` inline).
+- `routes/scheduled.ts`'s in-process backup is restored, calling the same `runDriveSubscriptionRenewal()` — see `routes/agents.md`.
+- Tests (`drive-subscription-renewal-deps.test.ts`, new `describe('runDriveSubscriptionRenewal (lease-guarded entry point, PR #1944 correction)')`): acquires-and-runs; skipped-when-already-held; a store/CAS-failure fails closed (skipped, not a throw); and the CRITICAL test — `Promise.all([runDriveSubscriptionRenewal(...), runDriveSubscriptionRenewal(...)])` against `createRunLeaseStore` (`./__tests__/__testHelpers.ts`, the REAL `.or()` CAS predicate, not a restated mock) proves the underlying orchestrator body runs exactly once for two concurrent invocations.
+
+### PR #1944 review round 3 (final round): `drive-subscription-renewal` registered in `SCHEDULER_MANIFEST` (SCRUM-2900)
+
+Added to `scheduler-manifest.ts` — `category: 'maintenance'`, `schedule: '0 * * * *'`, `targetPath: '/jobs/drive-subscription-renewal'`, `owner: 'lane-3'`, `enabled: true`, `maxSilenceMs: 3 * HOURS`. Purpose: if the Cloud Scheduler job in `scripts/gcp-setup/cloud-scheduler.sh` is never applied to prod (an open operator step as of this PR — see above) AND the in-process backup somehow also stops firing, this registration is what would let the existing dead-man audit (`scheduler-deadman.ts` / `scheduler-pause-attribution.ts`) notice and alarm.
+
+**Honesty note, verified by grep, not assumed:** as of this PR, that dead-man audit has **no live Cloud Scheduler trigger of its own anywhere in the repo** — `runSchedulerPauseAudit` / `evaluateSchedulerDeadman` are called from nowhere in `routes/index.ts` or any Cloud Scheduler manifest. This is a **pre-existing, repo-wide gap**, not something this PR introduces or was asked to fix. Registering this job is necessary-but-not-sufficient for the dead-man protection to actually fire; it does make the job COVERED BY CONSTRUCTION the moment that audit does get wired up, instead of needing a second follow-up PR to remember it. Tests: `scheduler-manifest.test.ts` `describe('drive-subscription-renewal (GH #1835/#1836)')` — registered/enabled/hourly, carries a `maxSilenceMs` budget, included in `enabledScheduledJobs()`.
+
+## 2026-08-03 — ART Lane 1 bug-bounty (PR #1965): SCRUM-3021 (check-confirmations tip height) + SCRUM-3017 (SUBMITTED watchdog)
+
+Two bug-tracker rows (`docs/staging/SOAK-FINDINGS-2026-08.md` F-numbered findings predate these; canonical
+rows are BUG-2026-07-26-006/SCRUM-3021 and BUG-2026-07-26-004/SCRUM-3017 in the Confluence Bug Tracker —
+Master Log), both genuinely open as of 2026-08-03 (verified against current code before touching either).
+
+- **`check-confirmations.ts` — SCRUM-3021.** The chain-tip-height fetch inside
+  `checkSubmittedConfirmationsUnlocked` was a single unretried call that silently fell back to
+  `currentTipHeight = 0` on ANY failure (network blip, timeout, rate limit, malformed body) — no retry, no
+  fallback provider, unlike its sibling `fetchTxStatus` in the SAME FILE, which already had the ERR-2
+  retry-then-blockstream.info-fallback pattern. Downstream, `blockHeight > 0 && currentTipHeight > 0` was
+  the ONLY branch that computed a real confirmation count; a 0 tip height skipped it and `confirmations`
+  stayed at its hardcoded default of 1. On mainnet (`getMinConfirmations() === 6`), `1 < 6` is always
+  true, so a sustained tip-height outage silently held EVERY already-confirmed SUBMITTED anchor — including
+  ones with 100+ real confirmations — at "waiting for confirmations" indefinitely, with only a
+  `logger.warn` nobody watches. New `fetchChainTipHeight()` mirrors `fetchTxStatus`'s exact
+  retry+blockstream-fallback shape and returns `number | null` (never a fake 0). The per-tx branch now
+  reads: real tip height → compute real depth (unchanged); tip height unknown AND `minConfirmations <= 1`
+  (signet/testnet) → proceed, `confirmed:true` already satisfies the trivial threshold (unchanged
+  behavior, regression-guarded by a dedicated test); tip height unknown AND `minConfirmations > 1`
+  (mainnet) → defer this run (same net effect as before) but log at ERROR and fire ONE new Sentry alert
+  per run (`captureConfirmationTipHeightUnavailable`, `utils/sentry.ts`, its own stable fingerprint) —
+  the previously-nonexistent signal. Tests: 4 new cases in `check-confirmations.test.ts` (retry-then-succeed,
+  blockstream-fallback-then-succeed, both-fail-defers-and-alerts-once on mainnet, still-promotes-when-unknown
+  on a 1-confirmation network) using `vi.useFakeTimers()` + `advanceTimersByTimeAsync` (the established
+  pattern in `chain/utxo-provider.test.ts`, not previously used in this file). Full pre-existing suite
+  (28 tests) regression-checked green.
+- **`stuck-anchor-monitor.ts` — SCRUM-3017.** The monitor only ever watched PENDING age. Every historical
+  SUBMITTED-stage freeze — the April 1.18M-anchor incident, the ~6-week silent June freeze, and the July
+  MEMPOOL_API_URL isolated-rig freeze (see the SCRUM-3016 entry in `chain/agents.md`) — was invisible to
+  on-call because nothing watched how long an anchor sits in SUBMITTED. `decideStuckAnchorAlert`'s
+  age-vs-threshold core is extracted into `computeStuckStageDecision(stageLabel, ...)` (byte-identical
+  wording preserved for the PENDING case — asymmetric casing intact: "No pending anchors" lowercase, but
+  "oldest PENDING anchor" uppercase, matching the pre-existing strings exactly) and reused by a new
+  `decideStuckSubmittedAlert`. `runStuckAnchorCheck` now runs BOTH checks in the SAME invocation and
+  returns additive fields (`submittedHealthy`, `submittedAlertFired`, `oldestSubmittedAgeHours`,
+  `submittedCount`, `submittedThresholdHours`) — §1.8-style, existing `healthy`/`alertFired`/etc. fields
+  unchanged. **Deliberately rides the SAME `/jobs/check-stuck-anchors` Cloud Scheduler job
+  (`scripts/gcp-setup/cloud-scheduler.sh:81`, hourly) instead of requiring a new one** — this repo has a
+  demonstrated, repeated failure mode where a job is coded but never provisioned (F-6 in
+  `docs/staging/SOAK-FINDINGS-2026-08.md`: both 2026-08 soak rigs missing the forced-flush scheduler job;
+  BUG-2026-07-28-015: `paymentTierRouter.ts` never mounted). A SEPARATE Sentry fingerprint
+  (`captureStuckSubmittedAlert` / `STUCK_SUBMITTED_FINGERPRINT`, `utils/sentry.ts`) keeps a SUBMITTED
+  stall from collapsing into the same issue as a PENDING one — different root cause, different runbook.
+  Default threshold `STUCK_SUBMITTED_ALERT_HOURS=6` (vs. PENDING's 24h) — a SUBMITTED anchor already has a
+  broadcast tx and should resolve within confirmation windows of hours, not the ~24h a PENDING anchor can
+  legitimately wait for the daily batch flush. Tests: 5 new `decideStuckSubmittedAlert` pure-decision
+  cases + 6 new `runStuckAnchorCheck` integration cases (independent firing, BOTH firing together,
+  threshold-from-config, invalid-config fallback, DB-error throws) in `stuck-anchor-monitor.test.ts`;
+  the shared `mockDb()` test helper now discriminates the `.eq('status', X)` argument so PENDING and
+  SUBMITTED queries resolve independently (defaults SUBMITTED to "no rows" so every pre-existing
+  PENDING-only test keeps passing unmodified — verified, not assumed).
+- Both T3 (touches cron-on-anchors behavior per CLAUDE.md §1.12's explicit trigger list). See the PR
+  body's Premortem for detection/rollback/operator-dependency analysis, including the honest caveat that
+  a Sentry `captureMessage` creates an ISSUE, not a page — whether anyone is actually notified depends on
+  Sentry project-level alert rules/notification channels, which the SCRUM-3050 entry below documented as
+  entirely empty (`arkova1`, zero policies/channels) as of 2026-08-01 and were NOT independently
+  re-verified this session.
+
 ## 2026-08-01 — BUG-2026-08-01-F9 GAP 2: reconcile-phase rejections now reach `BatchAnchorResult.rejectedReason` too (`batch-anchor.ts`)
 
 PR #1828 (F9 fix, scheduler + `batch-anchor.ts` main claim path) deliberately left one sibling gap: `reconcileBroadcastIntents(chainClient)` — which runs at the top of every `_processBatchAnchorsInner` tick, BEFORE the main claim path — can itself definitively reject-and-unwind a **prior tick's** interrupted broadcast (via either the durable-journal REVERT in `reconcileTxidJournals`, or the legacy-compat path's `reconcileOneIntent`). That outcome was tracked only in the discarded `IntentReconcileResult.rejected` counter and logged (`'Broadcast-intent reconcile pass complete'`), never surfaced on the function's return value. If the SAME tick's main claim path then found nothing else to do (empty treasury, no PENDING anchors, trigger not met, fee ceiling, claim RPC failure, or a claimed cohort below `MIN_BATCH_SIZE`), the tick returned the plain `EMPTY` shape — the identical "rejection indistinguishable from idleness" defect F9 fixed, one layer up.
@@ -463,6 +566,8 @@ mechanism; all three jobs wrap themselves in `withRunLease`, and the job-local c
   1 red; dropping the holder scope from the RENEW predicate → 1 red; deleting the `withRunLease` call
   from `batch-anchor.ts` → 4 red; moving `check-confirmations`' lease inside the real-mode arm →
   3 red. T3 (chain/treasury + concurrency).
+
+**2026-08-03 addendum (PR #1944, GH #1835):** a 4th spec, `DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE`, was added to `run-lease.ts` — see the `GH #1835` entry near the top of this file for the full writeup. It deliberately follows every convention above (per-job lease id/type, `withRunLease` wrapping, dedicated test suite) EXCEPT it is not in the `RUN_LEASE_SPECS` array: this job's only real cadence is hourly on both trigger paths, which equals the `CLOUD_RUN_REQUEST_TIMEOUT_MS` ceiling this section derives every other TTL against, so the array's own `ttlMs > slowestRecordedCadenceMs` test would be unsatisfiable for it. Not a gap in this job's protection — `withRunLease` still guards it identically — just a reason it can't share the cross-cutting array test the other three do.
 
 ## 2026-08-01 — Queues lane (PR #1813): the SCRUM-3031 wedge has a SECOND, live mechanism — cross-instance overlap (`publicRecordAnchor.ts`)
 

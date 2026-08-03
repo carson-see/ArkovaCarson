@@ -274,10 +274,35 @@ const ConfigSchema = z.object({
    * env sets this to true explicitly once the connector is launch-approved.
    */
   enableDriveWebhook: boolFlag(false),
+  /**
+   * GH #1836 (SECURITY) backstop. Default false: a Drive channel_token that
+   * equals the org's own UUID (the pre-fix scheme) is currently accepted
+   * with a warning, for backward compat while drive-subscription-renewal.ts's
+   * cron rotates existing connections to a real random secret. When true,
+   * `webhooks/drive.ts` REJECTS (401) that same match instead of accepting
+   * it — a hard cutoff for the case where the renewal cron was never
+   * deployed and legacy-token exposure would otherwise persist indefinitely.
+   * Flip on only after confirming the renewal cron is live (see
+   * jobs/agents.md + api/v1/integrations/agents.md for the full writeup) —
+   * flipping it before that would lock out every connection that hasn't had
+   * a chance to rotate yet, including the one prod integration as of this
+   * PR.
+   */
+  enableDriveLegacyChannelTokenRejection: boolFlag(false),
   /** Google OAuth client id (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
   googleOauthClientId: z.string().optional(),
   /** Google OAuth client secret (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
   googleOauthClientSecret: z.string().optional(),
+  /**
+   * The worker's own externally-reachable base URL. Needed outside any HTTP
+   * request context (crons, e.g. GH #1835's drive-subscription-renewal) to
+   * build a webhook/callback address the way `buildWebhookAddress(req)` does
+   * from request headers when a request IS available. Also required by
+   * DocuSign Connect-listener provisioning (`requireConnectConfig` in
+   * `integrations/oauth/docusign.ts`) — both fail closed when unset rather
+   * than register a channel/listener pointed at a broken address.
+   */
+  workerPublicUrl: z.string().url().optional(),
   /**
    * DocuSign OAuth flow — when false, /api/v1/integrations/docusign routes 503.
    * Default false pending org-scale validation. Cloud Run prod env sets this to
@@ -439,6 +464,8 @@ const ConfigSchema = z.object({
   treasuryLowBalanceUsd: z.coerce.number().nonnegative().default(50),
   /** STUCK_ANCHOR_ALERT_HOURS — oldest pending-anchor age threshold; invalid values fall back to 24. */
   stuckAnchorAlertHours: positiveNumberWithFallback(24),
+  /** STUCK_SUBMITTED_ALERT_HOURS (SCRUM-3017) — oldest submitted-anchor age threshold; invalid values fall back to 6. */
+  stuckSubmittedAlertHours: positiveNumberWithFallback(6),
 
   // Compliance-log exports (SCRUM-1848 / SCRUM-1870)
   /**
@@ -804,8 +831,10 @@ function loadConfig(): Config {
     integrationStateHmacSecret: process.env.INTEGRATION_STATE_HMAC_SECRET,
     enableDriveOauth: process.env.ENABLE_DRIVE_OAUTH,
     enableDriveWebhook: process.env.ENABLE_DRIVE_WEBHOOK,
+    enableDriveLegacyChannelTokenRejection: process.env.ENABLE_DRIVE_LEGACY_CHANNEL_TOKEN_REJECTION,
     googleOauthClientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
     googleOauthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    workerPublicUrl: process.env.WORKER_PUBLIC_URL,
     enableDocusignOauth: process.env.ENABLE_DOCUSIGN_OAUTH,
     enableDocusignWebhook: process.env.ENABLE_DOCUSIGN_WEBHOOK,
     enableConnectorArtifactEnqueue: process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE,
@@ -865,6 +894,7 @@ function loadConfig(): Config {
     treasuryAlertEmail: process.env.TREASURY_ALERT_EMAIL,
     treasuryLowBalanceUsd: process.env.TREASURY_LOW_BALANCE_USD,
     stuckAnchorAlertHours: process.env.STUCK_ANCHOR_ALERT_HOURS,
+    stuckSubmittedAlertHours: process.env.STUCK_SUBMITTED_ALERT_HOURS,
 
     // Compliance-log exports (SCRUM-1848 / SCRUM-1870). `|| undefined` so an
     // empty string falls through to the schema default 'exports', preserving
