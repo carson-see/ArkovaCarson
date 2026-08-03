@@ -106,6 +106,11 @@ export class VantaAdapter implements IGrcAdapter {
         network_receipt: evidence.network_receipt,
         block_height: evidence.block_height,
         compliance_controls: evidence.compliance_controls,
+        // SCRUM-2227: control IDs never travel to an auditor's tooling without
+        // the statement of what they do NOT assert. Key omitted when absent.
+        ...(evidence.compliance_controls_note
+          ? { compliance_controls_note: evidence.compliance_controls_note }
+          : {}),
         frameworks: evidence.frameworks,
         secured_at: evidence.secured_at,
       },
@@ -216,6 +221,10 @@ export class DrataAdapter implements IGrcAdapter {
       metadata: {
         network_receipt: evidence.network_receipt,
         block_height: evidence.block_height,
+        // SCRUM-2227: see VantaAdapter — the note rides with the controls.
+        ...(evidence.compliance_controls_note
+          ? { compliance_controls_note: evidence.compliance_controls_note }
+          : {}),
         frameworks: evidence.frameworks,
       },
     };
@@ -327,6 +336,10 @@ export class AnecdotesAdapter implements IGrcAdapter {
         block_height: evidence.block_height,
         chain_timestamp: evidence.chain_timestamp,
         status: evidence.status,
+        // SCRUM-2227: see VantaAdapter — the note rides with the controls.
+        ...(evidence.compliance_controls_note
+          ? { compliance_controls_note: evidence.compliance_controls_note }
+          : {}),
       },
     };
 

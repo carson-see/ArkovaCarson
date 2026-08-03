@@ -165,6 +165,11 @@ jobs:
       - name: Require justification for new anchors indexes (SCRUM-1286)
         run: npm run ci:anchor-index-justification
 
+      # Ties ENVELOPE_ID_METADATA_KEYS to the migration set. Adding a key without
+      # a matching expression index reintroduces the 0381 prod statement timeout.
+      - name: Block envelope-key/index drift
+        run: npm run ci:envelope-key-index-parity
+
       - name: Block API scope vocabulary drift (SCRUM-1581)
         run: npm run ci:api-scope-vocabulary
 
@@ -611,6 +616,17 @@ jobs:
         # (with `ci-config-change` / `build-parity-ack` signoff), same as lint
         # parity.
         run: node_modules/.bin/tsx scripts/ci/check-deploy-build-parity.ts
+
+      - name: Verify compliance-mapping mirror (worker vs frontend)
+        # SCRUM-2227/2283 anti-drift. services/worker/src/utils/complianceMapping.ts
+        # is a hand-maintained mirror of src/lib/complianceMapping.ts. Nothing
+        # enforced that, and a retired EU-US DPF control ID kept being written onto
+        # every SECURED anchor and served from /api/v1/verify, the audit export, and
+        # the GRC push to Vanta/Drata/Anecdotes for weeks after the frontend dropped
+        # it — TWO separate remediations each fixed the frontend only. Fails CLOSED:
+        # a control ID the worker can emit but the frontend registry does not define
+        # is a claim we no longer stand behind.
+        run: npm run ci:compliance-mapping-mirror
 
       - name: Verify 429 responses include Retry-After
         run: npm run ci:retry-after-429

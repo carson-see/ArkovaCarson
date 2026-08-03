@@ -120,8 +120,23 @@ export interface AnchorReceipt {
 export interface RichVerificationFields {
   /** Immutable credential description when present */
   description?: string | null;
-  /** Regulatory control IDs mapped to this anchor */
-  complianceControls?: Record<string, unknown> | null;
+  /**
+   * Regulatory control IDs mapped to this anchor.
+   *
+   * SCRUM-2227: the API emits this as an ARRAY of control-ID strings. The SDK
+   * previously declared it object-only and mapped it through a helper that
+   * returns `null` for arrays, so this field was silently `null` for every real
+   * anchor — proof the object form had no working consumer. Now array-only,
+   * matching the published spec.
+   */
+  complianceControls?: string[] | null;
+  /**
+   * SCRUM-2227: the informational-not-attestation note that accompanies
+   * `complianceControls`. Present whenever controls are present, `null`
+   * otherwise. Control IDs are a credential-type mapping — NOT an audit,
+   * certification, conformity assessment, or attestation.
+   */
+  complianceControlsNote?: string | null;
   /** Bitcoin block confirmations at anchor time */
   chainConfirmations?: number | null;
   /** Public ID of the parent anchor in a credential lineage */

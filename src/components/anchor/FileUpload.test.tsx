@@ -1,9 +1,11 @@
 /**
- * FileUpload Component Tests (SCRUM-1789; W2 / F1 dual-mode 2026-07-28)
+ * FileUpload Component Tests (SCRUM-1789; W2/F1 dual-mode + SCRUM-2911 W1 mixed-batch)
  *
- * Verifies upload routing: single file → onFileSelect, multi-file → onBulkDetected,
- * single CSV/XLSX/XLS/TSV → explicit mode-choice step (W2), disabled state blocks
- * processing. Also tests exported helper functions: isBulkUploadFile, isJsonFile.
+ * Verifies upload routing: single file → onFileSelect, all-spreadsheet
+ * multi-file → onBulkDetected, mixed-format multi-file → onMixedBatchDetected,
+ * single CSV/XLSX/XLS/TSV → explicit mode-choice step (W2), disabled state
+ * blocks processing. Also tests exported helper functions: isBulkUploadFile,
+ * isJsonFile.
  *
  * W2 / F1 (founder ruling 2026-07-28): FOUND BUG — a dropped spreadsheet used to
  * be intercepted by isBulkUploadFile() and routed to onBulkDetected() BEFORE
@@ -15,6 +17,17 @@
  * block is the actual regression test proving the bug is fixed — choosing
  * "Secure this file as a document" now reaches generateFingerprint / onFileSelect
  * for a real spreadsheet file, which was previously impossible for ANY choice.
+ *
+ * SCRUM-2911 W1 (founder P0, 2026-07-28): a founder-reported bug had ANY
+ * multi-file drop (`files.length > 1`) route unconditionally to
+ * `onBulkDetected` → `BulkUploadWizard`, which only understands CSV/XLSX
+ * rows and picks the first spreadsheet out of the dropped files — if none of
+ * the files were spreadsheets, ALL of them were silently discarded with no
+ * error (e.g. dropping 2 PDFs + a DOCX lost all three, and — the fix this
+ * revision also pins — a mixed spreadsheet + non-spreadsheet drop dropped the
+ * non-spreadsheet files). A multi-file drop now only takes the bulk-import
+ * path when EVERY file is a spreadsheet; otherwise it routes to the new
+ * `onMixedBatchDetected` callback instead.
  */
 
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -35,11 +48,17 @@ vi.mock('@/components/layout/ArkovaLogo', () => ({
 function renderUpload(props: Partial<Parameters<typeof FileUpload>[0]> = {}) {
   const onFileSelect = vi.fn();
   const onBulkDetected = vi.fn();
+  const onMixedBatchDetected = vi.fn();
   const result = render(
-    <FileUpload onFileSelect={onFileSelect} onBulkDetected={onBulkDetected} {...props} />
+    <FileUpload
+      onFileSelect={onFileSelect}
+      onBulkDetected={onBulkDetected}
+      onMixedBatchDetected={onMixedBatchDetected}
+      {...props}
+    />
   );
   const input = result.container.querySelector('input[type="file"]') as HTMLInputElement;
-  return { input, onFileSelect, onBulkDetected };
+  return { input, onFileSelect, onBulkDetected, onMixedBatchDetected };
 }
 
 function changeFiles(input: HTMLInputElement, files: File | File[]) {
@@ -48,32 +67,62 @@ function changeFiles(input: HTMLInputElement, files: File | File[]) {
 
 describe('FileUpload', () => {
   it('does not process files when disabled', () => {
-    const { input, onFileSelect, onBulkDetected } = renderUpload({ disabled: true });
+    const { input, onFileSelect, onBulkDetected, onMixedBatchDetected } = renderUpload({ disabled: true });
     changeFiles(input, new File(['x'], 'document.pdf', { type: 'application/pdf' }));
     expect(onFileSelect).not.toHaveBeenCalled();
     expect(onBulkDetected).not.toHaveBeenCalled();
+    expect(onMixedBatchDetected).not.toHaveBeenCalled();
   });
 
-  it('routes multiple files to bulk mode via onBulkDetected', () => {
-    const { input, onFileSelect, onBulkDetected } = renderUpload();
+  // Regression test — pins the founder-reported bug fix. Pre-fix this exact
+  // call went to onBulkDetected (which discards non-spreadsheet files); the
+  // fix routes it to onMixedBatchDetected instead so nothing is lost.
+  it('routes a mixed-format multi-file drop (2 PDFs) to onMixedBatchDetected, NOT onBulkDetected', () => {
+    const { input, onFileSelect, onBulkDetected, onMixedBatchDetected } = renderUpload();
     expect(input.multiple).toBe(true);
     const files = [
       new File(['one'], 'bulk-one.pdf', { type: 'application/pdf' }),
       new File(['two'], 'bulk-two.pdf', { type: 'application/pdf' }),
     ];
     changeFiles(input, files);
-    expect(onBulkDetected).toHaveBeenCalledWith(files);
+    expect(onMixedBatchDetected).toHaveBeenCalledWith(files);
+    expect(onBulkDetected).not.toHaveBeenCalled();
     expect(onFileSelect).not.toHaveBeenCalled();
   });
 
+  it('routes a genuinely mixed batch (pdf + docx + png + xml) to onMixedBatchDetected', () => {
+    const { input, onBulkDetected, onMixedBatchDetected } = renderUpload();
+    const files = [
+      new File(['a'], 'contract.pdf', { type: 'application/pdf' }),
+      new File(['b'], 'notes.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }),
+      new File(['c'], 'photo.png', { type: 'image/png' }),
+      new File(['d'], 'data.xml', { type: 'application/xml' }),
+    ];
+    changeFiles(input, files);
+    expect(onMixedBatchDetected).toHaveBeenCalledWith(files);
+    expect(onBulkDetected).not.toHaveBeenCalled();
+  });
+
+  it('still routes an all-spreadsheet multi-file drop to onBulkDetected (unchanged)', () => {
+    const { input, onBulkDetected, onMixedBatchDetected } = renderUpload();
+    const files = [
+      new File(['a,b'], 'sheet-one.csv', { type: 'text/csv' }),
+      new File(['c,d'], 'sheet-two.csv', { type: 'text/csv' }),
+    ];
+    changeFiles(input, files);
+    expect(onBulkDetected).toHaveBeenCalledWith(files);
+    expect(onMixedBatchDetected).not.toHaveBeenCalled();
+  });
+
   it('routes single file to onFileSelect with fingerprint', async () => {
-    const { input, onFileSelect, onBulkDetected } = renderUpload();
+    const { input, onFileSelect, onBulkDetected, onMixedBatchDetected } = renderUpload();
     const file = new File(['single doc'], 'document.pdf', { type: 'application/pdf' });
     changeFiles(input, file);
     await vi.waitFor(() => {
       expect(onFileSelect).toHaveBeenCalledWith(file, 'a'.repeat(64));
     });
     expect(onBulkDetected).not.toHaveBeenCalled();
+    expect(onMixedBatchDetected).not.toHaveBeenCalled();
   });
 
   it('renders upload affordance text', () => {
@@ -113,15 +162,16 @@ describe('FileUpload — spreadsheet dual-mode (W2 / F1)', () => {
     expect(mockGenerateFingerprint).not.toHaveBeenCalled();
   });
 
-  it('a mixed multi-file drop (one of which is a spreadsheet) still routes straight to bulk mode — W1 surface untouched', () => {
-    const { input, onFileSelect, onBulkDetected } = renderUpload();
+  it('a mixed multi-file drop (one of which is a spreadsheet) routes to onMixedBatchDetected, not onBulkDetected (SCRUM-2911 W1)', () => {
+    const { input, onFileSelect, onBulkDetected, onMixedBatchDetected } = renderUpload();
     const files = [
       new File(['pdf-bytes'], 'cert.pdf', { type: 'application/pdf' }),
       new File(['csv-bytes'], 'roster.csv', { type: 'text/csv' }),
     ];
     changeFiles(input, files);
 
-    expect(onBulkDetected).toHaveBeenCalledWith(files);
+    expect(onMixedBatchDetected).toHaveBeenCalledWith(files);
+    expect(onBulkDetected).not.toHaveBeenCalled();
     expect(onFileSelect).not.toHaveBeenCalled();
     expect(screen.queryByTestId('spreadsheet-mode-choice')).not.toBeInTheDocument();
   });

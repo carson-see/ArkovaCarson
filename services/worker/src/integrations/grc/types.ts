@@ -63,6 +63,13 @@ export interface GrcEvidencePayload {
   chain_timestamp: string | null;
   /** Applicable compliance control IDs */
   compliance_controls: string[];
+  /**
+   * SCRUM-2227: the informational-not-attestation note for `compliance_controls`.
+   * Set whenever any control is carried, `null` otherwise — a control list must
+   * never reach an auditor's tooling without the statement of what it does NOT
+   * assert (§1.5 / R-7 claims gate).
+   */
+  compliance_controls_note?: string | null;
   /** Compliance frameworks covered */
   frameworks: string[];
   /** Lifecycle timestamps */
