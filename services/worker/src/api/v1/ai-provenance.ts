@@ -14,6 +14,7 @@
 
 import { Router, Request, Response } from 'express';
 import { db } from '../../utils/db.js';
+import { readInChunks } from '../../utils/chunkedRead.js';
 import { logger } from '../../utils/logger.js';
 
 const router = Router();
@@ -79,14 +80,12 @@ router.get('/:fingerprint', async (req: Request<{ fingerprint: string }>, res: R
 
     let anchors: Record<string, unknown>[] = [];
     if (anchorIds.length > 0) {
-      const { data: anchorData } = await db
-        .from('anchors')
-        .select('id, public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, credential_type, created_at')
-        .in('id', anchorIds);
-
-      if (anchorData) {
-        anchors = anchorData as unknown as Record<string, unknown>[];
-      }
+      const anchorData = await readInChunks('ai-provenance:anchors', anchorIds, (chunk) =>
+        db
+          .from('anchors')
+          .select('id, public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, credential_type, created_at')
+          .in('id', chunk));
+      anchors = anchorData as unknown as Record<string, unknown>[];
     }
 
     // Build provenance chain response

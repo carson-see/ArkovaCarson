@@ -20,6 +20,7 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { fetchProfilePublicIdsByActorIds } from '../../utils/profilePublicIds.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
@@ -156,16 +157,7 @@ const defaultAnchorLookup: AnchorLookup = {
 
 const defaultProfileLookup: ProfileLookup = {
   async publicIdsByActorIds(actorIds) {
-    if (actorIds.length === 0) return new Map();
-    const { data } = await dbAny
-      .from('profiles')
-      .select('id, public_id')
-      .in('id', actorIds);
-    const out = new Map<string, string>();
-    for (const row of (data ?? []) as Array<{ id: string; public_id: string | null }>) {
-      if (row.public_id) out.set(row.id, row.public_id);
-    }
-    return out;
+    return fetchProfilePublicIdsByActorIds(dbAny, actorIds, 'anchor-lifecycle');
   },
 };
 

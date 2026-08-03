@@ -25,6 +25,7 @@ import type { IntelligenceMode } from '../../ai/prompts/intelligence.js';
 import { hybridSearch } from '../../ai/hybrid-search.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
+import { readInChunks } from '../../utils/chunkedRead.js';
 import { logger } from '../../utils/logger.js';
 import { monitorQuery } from '../../utils/queryMonitor.js';
 
@@ -295,13 +296,12 @@ router.get('/', async (req: Request, res: Response) => {
     }>();
 
     if (anchorIds.length > 0) {
-      const { data: anchors } = await db
-        .from('anchors')
-        .select('id, chain_tx_id, chain_block_height, chain_timestamp, status, public_id')
-        .in('id', anchorIds);
-      if (anchors) {
-        anchorMap = new Map(anchors.map((a) => [a.id, a]));
-      }
+      const anchors = await readInChunks('nessie-query:anchors', anchorIds, (chunk) =>
+        db
+          .from('anchors')
+          .select('id, chain_tx_id, chain_block_height, chain_timestamp, status, public_id')
+          .in('id', chunk));
+      anchorMap = new Map(anchors.map((a) => [a.id, a]));
     }
 
     const bitcoinNetwork = process.env.BITCOIN_NETWORK ?? 'signet';

@@ -2,6 +2,98 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-02 — the silent-empty enrichment sweep (`readInChunks`)
+
+Closes the last of the `.in()` defect class on this surface. `#1866` fixed the sites whose *width* was
+wrong; this fixes the ones whose **error handling** was, at every remaining variable-width site.
+
+Twelve reads shared one shape — `const { data } = await db.from(...).in('id', ids)` with no `error` —
+across `admin-lists.ts` (×7), `oracle.ts`, `entity-verify.ts`, `ai-provenance.ts`,
+`regulatory-alerts.ts`, `nessie-query.ts` and `ai/eval/fraud-audit.ts`. Because postgrest-js
+**resolves** a failure rather than throwing, every one of them turned a broken read into an
+enrichment that came back empty while the response still looked complete.
+
+Two are worth naming because "degraded" undersells them:
+
+- **`regulatory-alerts.ts`** compares each record's `content_hash` against its anchor fingerprint. An
+  empty anchor map means every record falls through the comparison and stops being flagged — a
+  regulatory alert endpoint silently reporting **all-clear**.
+- **`admin-lists.ts`** anchor counts and `org_credits` quota/balance are numbers an admin acts on.
+  Zero-because-the-read-failed is indistinguishable from zero-because-it-is-zero.
+
+All now route through **`utils/chunkedRead.ts`'s `readInChunks`** — one width guarantee, one error
+policy: log the failed chunk and return a partial (an enrichment miss renders as the same "unknown"
+the row already shows), but throw when EVERY chunk fails, which each handler's existing `try/catch`
+turns into a 500.
+
+**Exception — `ai/eval/fraud-audit.ts` chunks with `chunkForInFilter` directly.** It is a standalone
+eval script with its own `createClient`, and `chunkedRead.ts` imports the worker `logger`, which
+pulls in `config.ts` and throws `Invalid worker configuration` at MODULE LOAD unless the full worker
+env is present. Routing it through the shared helper would have made the script unrunnable with the
+two env vars it actually needs. `postgrest-filter.ts` is dependency-free, so it costs nothing there.
+**Check the import chain before adopting `chunkedRead` in `scripts/` or `ai/eval/`.**
+
+**One-chunk reality at the admin call sites.** `parsePagination` caps `limit` at 100 and these are
+UUID lists (~3.7 KB against an 8 KiB budget), so `admin-lists.ts` always produces exactly ONE chunk.
+`assertNotAllChunksFailed(_, 1, 1, _)` therefore fires on ANY failure: the "return a partial"
+half of the policy is unreachable there and these reads are effectively fail-closed. That is a
+deliberate trade — a wrong member count or quota is worse than a 500 — but do not read the policy
+above as "the admin list degrades gracefully". It does not; it 500s.
+
+**Left alone deliberately:** `.in()` over a literal array (`['active','trialing']`,
+`['PENDING','INVESTIGATING']`) — nine such sites still discard their error. They are width-safe by
+construction, and their failure mode is an ordinary empty read, not this class. Chunking a
+two-element literal would be noise. Worth a separate pass on error handling; not this one.
+## 2026-08-02 — the PostgREST `.in()` filter-width class, API surface (follows #1839/#1853)
+
+`chunkForInFilter` (`utils/postgrest-filter.ts`) is the ONLY supported way to build an `.in()`
+filter over a caller-sized list. Do not hand-roll `for (i += SIZE)`; do not reach for
+`POSTGREST_ROW_LIMIT` (that governs how many rows come back, not how wide the URL may be).
+
+The class has TWO halves and a fix that addresses only one is not a fix:
+
+1. **Width.** An over-wide filter takes `400 Bad Request` from the proxy in front of PostgREST.
+2. **The discarded error.** postgrest-js **resolves** a 400 as `{ data: null, error }` — it does not
+   throw. `const { data } = await ...` therefore turns a hard failure into an empty result that is
+   indistinguishable from "nothing matched", and the surrounding `catch` never runs.
+
+Fixed on this surface, with the error policy each site actually needs:
+
+- **`anchor-evidence.ts` / `anchor-lifecycle.ts`** — both carried a byte-identical private copy of the
+  actor-id -> profile `public_id` lookup, unbounded and error-discarding, so lifecycle entries lost
+  actor attribution at HTTP 200. Deduped into **`utils/profilePublicIds.ts`** — one copy, so a future
+  fix cannot land at one call site and miss the other. Partial results are returned deliberately (a
+  missing actor already renders as unattributed); an ALL-chunks-failed read throws via
+  `assertNotAllChunksFailed` and the routers' `try/catch` makes it a 500.
+- **`usage.ts`** — `api_key_usage` read with the error discarded, so `GET /usage` reported **0 requests
+  this month** on a billing-reconciliation surface. Now 500s on ANY chunk error: an understated total
+  is a wrong answer, not a smaller one. NOTE the pre-existing tests in `usage.test.ts` never imported
+  the router (they assert against object literals they build themselves) — if you change `usage.ts`,
+  only the second describe block can fail.
+- **`compliance-audit.ts`** — `loadJurisdictionRules` discarded its error, and an audit with no
+  applicable rules scores as fully compliant. That is a **fail-OPEN compliance verdict at HTTP 201**:
+  a perfect score awarded because nothing was checked. Now throws. Also chunked even though
+  `jurisdictions` is Zod-capped at 50 today, so the width guarantee lives at the query rather than
+  depending on a `.max()` in the request schema staying put.
+- **`directory-opt-out.ts`** — `records` is capped at 1000 but `public_id` is `z.string().min(1)` with
+  **no max**, so the update filters had no byte bound at all. Errors were never read, so the response
+  claimed `updated: 0, failed: N` and tagged every record `error: 'Not found'` — a false statement
+  about rows in the caller's own org. Failed chunks now report **`update_failed`**, kept distinct from
+  the `Not found` we can actually substantiate (chunk succeeded, row not returned).
+- **`webhooks.ts` (`GET /deliveries`) / `grc.ts` (`GET /sync-logs`)** — both combine the filter with
+  `.order().limit()`. Each chunk asks for the newest `limit` rows and the results are merged, re-sorted
+  and re-capped, because the global newest `limit` is necessarily contained in the union of the
+  per-chunk newest `limit`. `grc.ts` additionally discarded the `grc_connections` error, which
+  `!connections?.length` read as "this org has no connections" at HTTP 200.
+
+**Two new failure responses on a frozen surface (§1.8):** `GET /usage` and `POST /compliance/audit`
+now 500 where a broken read previously returned a confident 200/201. No documented success schema
+changed; both replace a response that was wrong.
+
+Every fix is mutation-verified — each was reverted individually to confirm its test kills only its own
+defect. One first cut (`compliance-audit`) passed against the defective code because it 500'd for an
+unrelated seeded reason, and was rewritten so the rules read is the only variable. **A guard with no
+test that dies without it is a comment.**
 ## 2026-08-02 SECURITY — outbound PII gate on `GET /api/v1/verify/:publicId/provenance` (the FOURTH public projection)
 
 **Mounted `router.use('/verify', provenanceRouter)` with NO `requireScope` and NO auth middleware, and `provenance.ts` has no auth check of its own — it is fully anonymous.** Two leaks, closed with two *different* treatments, and the difference is the reusable lesson:

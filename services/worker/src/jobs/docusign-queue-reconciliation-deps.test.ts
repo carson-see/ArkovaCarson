@@ -10,6 +10,8 @@ vi.mock('../utils/db.js', () => ({ db: {} }));
 import { makeQueueReconciliationDeps } from './docusign-queue-reconciliation-deps.js';
 import type { QueueActiveIntegration } from './docusign-queue-reconciliation.js';
 import { logger } from '../utils/logger.js';
+import { encodedInFilterBytesFor } from '../test-utils/postgrestWire.js';
+import { POSTGREST_URL_FILTER_BUDGET_BYTES } from '../utils/postgrest-filter.js';
 
 const ORG_INT: QueueActiveIntegration = {
   id: 'int-1',
@@ -302,9 +304,8 @@ describe('makeQueueReconciliationDeps', () => {
     // query-string limit and fails the run. The lookup must chunk at 100 ids and
     // union the results. Pre-fix (single unchunked `.in()`) issues ONE query with
     // all 250 ids — this asserts three chunked queries instead.
-    it('chunks the .in() lookup at 100 ids and unions the returned refs', async () => {
+    it('chunks the .in() lookup inside the URL budget and unions the returned refs', async () => {
       const inCalls: string[][] = [];
-      // Envelope ids env-0 .. env-249 (250 → 3 chunks of 100/100/50).
       const envelopeIds = Array.from({ length: 250 }, (_, i) => `env-${i}`);
       // Simulate a match in the 1st chunk (env-5) and the 3rd chunk (env-205).
       const db = {
@@ -329,10 +330,17 @@ describe('makeQueueReconciliationDeps', () => {
 
       const refs = await deps.getQueuedEnvelopeRefs(ORG_INT, envelopeIds);
 
-      // Three chunked queries: 100 + 100 + 50.
-      expect(inCalls.map((c) => c.length)).toEqual([100, 100, 50]);
-      // No chunk exceeds the 100-id bound.
-      expect(inCalls.every((c) => c.length <= 100)).toBe(true);
+      // This used to assert the exact shape `[100, 100, 50]`, pinning the
+      // hand-rolled `IN_CHUNK_SIZE` of the code under test — the per-call-site
+      // width assertion #1839 replaced. It failed the moment the width was
+      // fixed, for a change that made the code more correct. Assert the
+      // PROPERTY instead: more than one chunk, every chunk inside the real
+      // encoded budget, and no id lost.
+      expect(inCalls.length).toBeGreaterThan(1);
+      for (const chunk of inCalls) {
+        expect(encodedInFilterBytesFor(chunk)).toBeLessThanOrEqual(POSTGREST_URL_FILTER_BUDGET_BYTES);
+      }
+      expect(inCalls.flat()).toEqual(envelopeIds);
       // Results unioned across chunks.
       expect(refs.has('env-5')).toBe(true);
       expect(refs.has('env-205')).toBe(true);
