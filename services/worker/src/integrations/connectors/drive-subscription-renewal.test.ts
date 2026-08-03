@@ -170,6 +170,86 @@ describe('renewDriveSubscriptions (GH #1835)', () => {
     expect(update.subscription_id).toBe('chan-old');
     expect(update.last_renewal_error).toBe('changes.watch 500');
     expect(update.watch_renewal_failure_count).toBe(1);
+    // CRITICAL (PR #1944 review): the old channel must NEVER be stopped when
+    // createChannel fails — see the dedicated create-then-stop describe
+    // block below for the full regression coverage.
+    expect(client.stopChannel).not.toHaveBeenCalled();
+  });
+
+  // CRITICAL FIX (PR #1944 review): renewDriveSubscriptions() used to call
+  // tryStop() on the OLD channel BEFORE attempting createChannel() for the
+  // new one. If createChannel then failed, the persisted row still claimed
+  // the OLD channel was active — but it had already been stopped. Net
+  // effect: the org would have ZERO live Drive channels and receive no
+  // webhooks until a LATER sweep happened to succeed — the renewal job
+  // built to close GH #1835 would have reproduced GH #1835's exact
+  // silent-outage symptom, on healthy connections, on a realistic first-run
+  // failure (WORKER_PUBLIC_URL not yet configured) or any transient Google
+  // 5xx. Fixed to create-then-stop: the old channel is stopped ONLY after
+  // the new one is both live at Google AND successfully persisted.
+  describe('create-then-stop ordering (CRITICAL, PR #1944 review)', () => {
+    it('createChannel throws → the old channel is NEVER stopped, and the row still points at the old, still-live channel', async () => {
+      const { db, updates } = makeDb([dueRow()]);
+      const client = makeClient({
+        createChannel: vi.fn(async () => { throw new Error('changes.watch 500 (e.g. WORKER_PUBLIC_URL unset)'); }),
+      });
+      const summary = await renewDriveSubscriptions({ db, client, alert: vi.fn(), now: () => NOW });
+
+      expect(summary).toEqual({ scanned: 1, renewed: 0, degraded: 0, failed: 1 });
+      // The old channel was never touched.
+      expect(client.stopChannel).not.toHaveBeenCalled();
+      // The persisted row still names the OLD, never-stopped channel —
+      // never a channel we killed and then lied about.
+      const update = updates[0] as Record<string, unknown>;
+      expect(update.subscription_id).toBe('chan-old');
+      const label = JSON.parse(update.account_label as string);
+      expect(label.channel_token).toBe('old-token');
+      expect(label.resource_id).toBe('res-old');
+    });
+
+    it('createChannel succeeds but the DB write fails → the old channel is STILL not stopped (new channel is the orphan, not the old one)', async () => {
+      const { db } = makeDb([dueRow()], { updateConnection: vi.fn(async () => ({ error: true })) });
+      const client = makeClient();
+      const summary = await renewDriveSubscriptions({ db, client, alert: vi.fn(), now: () => NOW });
+
+      expect(summary).toEqual({ scanned: 1, renewed: 0, degraded: 0, failed: 1 });
+      // A successfully-created-but-not-persisted new channel must not cost
+      // us the old one — the DB still names the old channel as current, so
+      // the old channel must still be the one actually live.
+      expect(client.stopChannel).not.toHaveBeenCalled();
+    });
+
+    it('createChannel succeeds AND persists → the old channel IS stopped, using the OLD channel id/resourceId (not the new one)', async () => {
+      const { db } = makeDb([dueRow()]);
+      const client = makeClient();
+      const summary = await renewDriveSubscriptions({
+        db, client, alert: vi.fn(), now: () => NOW,
+        channelIdFactory: () => 'chan-new', channelTokenFactory: () => 'tok-new',
+      });
+
+      expect(summary.renewed).toBe(1);
+      expect(client.stopChannel).toHaveBeenCalledTimes(1);
+      expect(client.stopChannel).toHaveBeenCalledWith({
+        accessToken: 'at',
+        channelId: 'chan-old', // the OLD id, never the newly-created 'chan-new'
+        resourceId: 'res-old',
+      });
+    });
+
+    it('stop happens strictly AFTER createChannel and updateConnection, not before (call-order proof)', async () => {
+      const { db } = makeDb([dueRow()]);
+      const order: string[] = [];
+      const client = makeClient({
+        createChannel: vi.fn(async () => { order.push('createChannel'); return { resourceId: 'res-new', expiration: '2026-08-10T00:00:00.000Z' }; }),
+        stopChannel: vi.fn(async () => { order.push('stopChannel'); }),
+      });
+      const dbWithOrder: DriveSubscriptionRenewalDb = {
+        ...db,
+        updateConnection: async (u) => { order.push('updateConnection'); return db.updateConnection(u); },
+      };
+      await renewDriveSubscriptions({ db: dbWithOrder, client, alert: vi.fn(), now: () => NOW });
+      expect(order).toEqual(['createChannel', 'updateConnection', 'stopChannel']);
+    });
   });
 
   it('a DB write failure on the successful-renewal path is counted as failed, not renewed', async () => {
@@ -208,5 +288,157 @@ describe('renewDriveSubscriptions (GH #1835)', () => {
     await renewDriveSubscriptions({ db, client, alert: vi.fn(), now: () => NOW });
     const update = updates[0] as Record<string, unknown>;
     expect((update.last_renewal_error as string).length).toBeLessThanOrEqual(500);
+  });
+
+  // PR #1944 review addendum (SECURITY, higher priority than the perf finds):
+  // boundedReason() used to cap length only — never PII-scrub — even though
+  // the result is persisted to org_integrations.last_renewal_error AND
+  // passed as Sentry extra.reason. A raw Google API error body can carry an
+  // account email or token fragment. Now routed through the canonical
+  // boundedErrorDetail() (utils/byte-safety.ts), which scrubs PII by
+  // construction.
+  describe('PII scrub on persisted/alerted failure reasons (boundedErrorDetail)', () => {
+    it('an error message containing an email does NOT reach the persisted last_renewal_error', async () => {
+      const { db, updates } = makeDb([dueRow()]);
+      const client = makeClient({
+        createChannel: vi.fn(async () => {
+          throw new Error('Google API rejected request for user secret-user@example.com: invalid_grant');
+        }),
+      });
+      await renewDriveSubscriptions({ db, client, alert: vi.fn(), now: () => NOW });
+      const update = updates[0] as Record<string, unknown>;
+      expect(update.last_renewal_error as string).not.toContain('secret-user@example.com');
+    });
+
+    it('an error message containing an email does NOT reach the Sentry alert payload', async () => {
+      const { db } = makeDb([dueRow()]);
+      const client = makeClient({
+        createChannel: vi.fn(async () => {
+          throw new Error('Google API rejected request for user secret-user@example.com: invalid_grant');
+        }),
+      });
+      const alert = vi.fn();
+      await renewDriveSubscriptions({ db, client, alert, now: () => NOW });
+      expect(alert).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: expect.not.stringContaining('secret-user@example.com') }),
+      );
+    });
+
+    it('scrubs PII on the getAccessToken-throw path too (not just createChannel)', async () => {
+      const { db, updates } = makeDb([dueRow()]);
+      const client = makeClient({
+        getAccessToken: vi.fn(async () => {
+          throw new Error('KMS decrypt failed for token belonging to leaked@example.com');
+        }),
+      });
+      await renewDriveSubscriptions({ db, client, alert: vi.fn(), now: () => NOW });
+      const update = updates[0] as Record<string, unknown>;
+      expect(update.last_renewal_error as string).not.toContain('leaked@example.com');
+    });
+  });
+
+  // FINDING 2 (PR #1944 review round 3, perf): connections are independent
+  // and must be processed CONCURRENTLY within a bounded chunk, not one at a
+  // time — sequential processing of a ~100-row batch (each involving a KMS
+  // decrypt + 1-3 Drive API round trips) risks running past the sweep's own
+  // hourly trigger or the Cloud Run request timeout.
+  describe('bounded concurrency (FINDING 2)', () => {
+    it('processes connections within a chunk CONCURRENTLY, not sequentially', async () => {
+      const rows = Array.from({ length: 3 }, (_, i) => dueRow({ id: `int-${i}`, org_id: `org-${i}` }));
+      const { db } = makeDb(rows);
+      const startOrder: string[] = [];
+      const releaseGate: Array<() => void> = [];
+      const client = makeClient({
+        getAccessToken: vi.fn(async (conn) => {
+          startOrder.push(conn.id);
+          // Block until every row has STARTED — this can only resolve if all
+          // three are in flight simultaneously, which is only possible under
+          // concurrent (not sequential) processing.
+          await new Promise<void>((resolve) => releaseGate.push(resolve));
+          return { accessToken: 'at', revoked: false };
+        }),
+      });
+
+      const runPromise = renewDriveSubscriptions({ db, client, alert: vi.fn(), now: () => NOW, concurrency: 5 });
+
+      // Give the microtask queue a chance to let all three getAccessToken
+      // calls start before releasing any of them.
+      await new Promise((r) => setTimeout(r, 10));
+      expect(startOrder).toHaveLength(3);
+      releaseGate.forEach((release) => release());
+
+      const summary = await runPromise;
+      expect(summary.renewed).toBe(3);
+    });
+
+    it('bounds concurrency to the configured limit — no more than N connections have getAccessToken in flight at once', async () => {
+      const rows = Array.from({ length: 12 }, (_, i) => dueRow({ id: `int-${i}`, org_id: `org-${i}` }));
+      const { db } = makeDb(rows);
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const client = makeClient({
+        getAccessToken: vi.fn(async () => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 1));
+          inFlight -= 1;
+          return { accessToken: 'at', revoked: false };
+        }),
+      });
+
+      const summary = await renewDriveSubscriptions({ db, client, alert: vi.fn(), now: () => NOW, concurrency: 4 });
+
+      expect(summary.renewed).toBe(12);
+      expect(maxInFlight).toBeLessThanOrEqual(4);
+      // And it actually USED concurrency — not degenerately serialized to 1.
+      expect(maxInFlight).toBeGreaterThan(1);
+    });
+
+    it('one connection erroring inside a chunk does NOT prevent its chunk-mates from completing (error isolation under concurrency)', async () => {
+      const rows = Array.from({ length: 5 }, (_, i) => dueRow({ id: `int-${i}`, org_id: `org-${i}` }));
+      const { db, updates } = makeDb(rows);
+      // A genuine per-connection DATA dependency (accessToken flows from
+      // THIS connection's own getAccessToken call to THIS connection's own
+      // createChannel call) rather than a call-COUNT coincidence — robust
+      // regardless of exactly how the concurrent chunk interleaves.
+      const client = makeClient({
+        getAccessToken: vi.fn(async (conn) => ({
+          accessToken: conn.id === 'int-2' ? 'at-fail' : 'at-ok',
+          revoked: false,
+        })),
+        createChannel: vi.fn(async (callArgs) => {
+          if (callArgs.accessToken === 'at-fail') throw new Error('changes.watch 500');
+          return { resourceId: 'res-ok', expiration: '2026-08-10T00:00:00.000Z' };
+        }),
+      });
+      const summary = await renewDriveSubscriptions({
+        db, client, alert: vi.fn(), now: () => NOW, concurrency: 5,
+      });
+
+      expect(summary.scanned).toBe(5);
+      expect(summary.renewed).toBe(4);
+      expect(summary.failed).toBe(1);
+      expect(updates).toHaveLength(5);
+    });
+
+    it('processes chunks in SEQUENCE across a batch larger than one chunk (never opens more than `concurrency` at once, even across chunks)', async () => {
+      const rows = Array.from({ length: 10 }, (_, i) => dueRow({ id: `int-${i}`, org_id: `org-${i}` }));
+      const { db } = makeDb(rows);
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const client = makeClient({
+        getAccessToken: vi.fn(async () => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 1));
+          inFlight -= 1;
+          return { accessToken: 'at', revoked: false };
+        }),
+      });
+
+      const summary = await renewDriveSubscriptions({ db, client, alert: vi.fn(), now: () => NOW, concurrency: 3 });
+      expect(summary.renewed).toBe(10);
+      expect(maxInFlight).toBeLessThanOrEqual(3);
+    });
   });
 });

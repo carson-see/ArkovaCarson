@@ -274,6 +274,21 @@ const ConfigSchema = z.object({
    * env sets this to true explicitly once the connector is launch-approved.
    */
   enableDriveWebhook: boolFlag(false),
+  /**
+   * GH #1836 (SECURITY) backstop. Default false: a Drive channel_token that
+   * equals the org's own UUID (the pre-fix scheme) is currently accepted
+   * with a warning, for backward compat while drive-subscription-renewal.ts's
+   * cron rotates existing connections to a real random secret. When true,
+   * `webhooks/drive.ts` REJECTS (401) that same match instead of accepting
+   * it — a hard cutoff for the case where the renewal cron was never
+   * deployed and legacy-token exposure would otherwise persist indefinitely.
+   * Flip on only after confirming the renewal cron is live (see
+   * jobs/agents.md + api/v1/integrations/agents.md for the full writeup) —
+   * flipping it before that would lock out every connection that hasn't had
+   * a chance to rotate yet, including the one prod integration as of this
+   * PR.
+   */
+  enableDriveLegacyChannelTokenRejection: boolFlag(false),
   /** Google OAuth client id (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
   googleOauthClientId: z.string().optional(),
   /** Google OAuth client secret (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
@@ -814,6 +829,7 @@ function loadConfig(): Config {
     integrationStateHmacSecret: process.env.INTEGRATION_STATE_HMAC_SECRET,
     enableDriveOauth: process.env.ENABLE_DRIVE_OAUTH,
     enableDriveWebhook: process.env.ENABLE_DRIVE_WEBHOOK,
+    enableDriveLegacyChannelTokenRejection: process.env.ENABLE_DRIVE_LEGACY_CHANNEL_TOKEN_REJECTION,
     googleOauthClientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
     googleOauthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
     workerPublicUrl: process.env.WORKER_PUBLIC_URL,

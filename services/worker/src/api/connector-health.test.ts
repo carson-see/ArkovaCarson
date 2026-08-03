@@ -230,23 +230,28 @@ describe('connector-health (SCRUM-1146)', () => {
       expect(docusign?.state).toBe('connected');
     });
 
-    it('marks degraded when subscription is degraded — preserves vendor-side error', async () => {
+    // PR #1944 review round 3: google_drive's watch health is derived from
+    // org_integrations directly (subscription_expires_at / last_renewal_at /
+    // last_renewal_error) — NOT from connector_subscriptions, which nothing
+    // ever writes a google_drive row into (drive-oauth.ts and
+    // drive-subscription-renewal.ts both only touch org_integrations). See
+    // deriveDriveWatchHealth() in connector-health.ts.
+    it('marks Drive degraded from org_integrations.last_renewal_error — preserves vendor-side error, expiry, and renewal timestamp', async () => {
       integrationsList.mockResolvedValueOnce({
-        data: [{ provider: 'google_drive', account_label: 'Acme', connected_at: '2026-04-20T00:00:00Z', revoked_at: null }],
+        data: [{
+          provider: 'google_drive',
+          account_label: 'Acme',
+          connected_at: '2026-04-20T00:00:00Z',
+          revoked_at: null,
+          subscription_expires_at: '2026-04-25T00:00:00Z',
+          last_renewed_at: '2026-04-23T00:00:00Z',
+          last_renewal_at: '2026-04-23T00:00:00Z',
+          last_renewal_error: 'invalid_grant — admin must reconnect',
+        }],
         error: null,
       });
-      subsList.mockResolvedValueOnce({
-        data: [
-          {
-            provider: 'google_drive',
-            status: 'degraded',
-            expires_at: '2026-04-25T00:00:00Z',
-            last_renewed_at: '2026-04-23T00:00:00Z',
-            last_renewal_error: 'invalid_grant — admin must reconnect',
-          },
-        ],
-        error: null,
-      });
+      // connector_subscriptions has NOTHING for google_drive in reality —
+      // leaving the default empty mock (see beforeEach) is the honest fixture.
       const ctx = buildRes();
       await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
       const body = ctx.body as {
@@ -265,6 +270,85 @@ describe('connector-health (SCRUM-1146)', () => {
       expect(drive?.next_expires_at).toBe('2026-04-25T00:00:00Z');
       expect(drive?.last_error).toContain('invalid_grant');
       expect(drive?.health_reason).toBe('subscription_expiry');
+    });
+
+    it('a healthy Drive connection (last_renewal_error null) reports connected, not degraded', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [{
+          provider: 'google_drive',
+          account_label: 'Acme',
+          connected_at: '2026-04-20T00:00:00Z',
+          revoked_at: null,
+          subscription_expires_at: '2026-08-10T00:00:00Z',
+          last_renewal_at: '2026-08-03T00:00:00Z',
+          last_renewal_error: null,
+        }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; state: string; next_expires_at?: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('connected');
+      expect(drive?.next_expires_at).toBe('2026-08-10T00:00:00Z');
+    });
+
+    it('a never-renewed Drive connection (subscription_expires_at null) reports next_expires_at: null, not an empty string', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [{
+          provider: 'google_drive',
+          account_label: 'Acme',
+          connected_at: '2026-04-20T00:00:00Z',
+          revoked_at: null,
+          subscription_expires_at: null,
+          last_renewal_at: null,
+          last_renewal_error: null,
+        }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as {
+        connectors: Array<{ id: string; next_expires_at?: string | null }>;
+      };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.next_expires_at).toBeNull();
+    });
+
+    it('a stale connector_subscriptions google_drive row (leftover/legacy) is IGNORED — org_integrations is authoritative', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [{
+          provider: 'google_drive',
+          account_label: 'Acme',
+          connected_at: '2026-04-20T00:00:00Z',
+          revoked_at: null,
+          subscription_expires_at: '2026-08-10T00:00:00Z',
+          last_renewal_at: '2026-08-03T00:00:00Z',
+          last_renewal_error: null,
+        }],
+        error: null,
+      });
+      // Even if something HAD written a stale/misleading connector_subscriptions
+      // row claiming degraded, it must not override the org_integrations-derived
+      // (healthy) truth.
+      subsList.mockResolvedValueOnce({
+        data: [{
+          provider: 'google_drive',
+          status: 'degraded',
+          expires_at: '2020-01-01T00:00:00Z',
+          last_renewed_at: null,
+          last_renewal_error: 'stale row, ignore me',
+        }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; state: string; last_error?: string | null }> };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.state).toBe('connected');
+      expect(drive?.last_error).toBeNull();
     });
 
     it('distinguishes vendor_auth (revoked integration) from subscription_expiry', async () => {

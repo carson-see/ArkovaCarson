@@ -17,6 +17,7 @@ import type { Request, Response } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getCallerOrgId } from './_org-auth.js';
+import { parseDriveAccountLabel } from '../integrations/connectors/drive-account-label.js';
 
 export type ConnectorKind = 'live' | 'demo' | 'gated';
 export type ConnectorState = 'connected' | 'degraded' | 'disconnected';
@@ -95,14 +96,60 @@ interface IntegrationRow {
   account_label: string | null;
   connected_at: string | null;
   revoked_at: string | null;
+  // PR #1944 review round 3: these four columns are how GH #1835's renewal
+  // job (drive-subscription-renewal.ts) and the original OAuth callback
+  // (drive-oauth.ts) actually track Drive's push-channel health — NOT
+  // `connector_subscriptions` (see the note on SubscriptionRow below).
+  // Selected for every provider (they live on the shared org_integrations
+  // table) but only ACTED on for google_drive, in deriveDriveWatchHealth().
+  subscription_expires_at: string | null;
+  last_renewal_error: string | null;
+  last_renewal_at: string | null;
 }
 
+/**
+ * PR #1944 review round 3: `connector_subscriptions` is real and IS the
+ * source of truth for `microsoft_graph` (`microsoft-graph.ts` writes it).
+ * It is NOT for `google_drive` — neither `drive-oauth.ts` nor
+ * `drive-subscription-renewal.ts` (GH #1835) has ever written a
+ * `google_drive` row into it. Left unfixed, `subscription` below is always
+ * `undefined` for Drive, `classify()` always falls through to
+ * `{state:'connected', reason:'none'}`, and `next_expires_at`/
+ * `last_renewal_at` are always `null` — no matter how badly renewal is
+ * failing or how high `watch_renewal_failure_count` climbs. See
+ * `deriveDriveWatchHealth()` below for the google_drive-specific fix
+ * (reads `org_integrations` directly instead).
+ */
 interface SubscriptionRow {
   provider: 'google_drive' | 'microsoft_graph';
   status: string;
-  expires_at: string;
+  // Nullable so a never-bootstrapped Drive connection (no
+  // subscription_expires_at yet) round-trips to next_expires_at: null below,
+  // not an empty string (`?? null` only catches null/undefined, not '').
+  expires_at: string | null;
   last_renewed_at: string | null;
   last_renewal_error: string | null;
+}
+
+/**
+ * Synthesizes a `SubscriptionRow`-shaped view of a google_drive
+ * `org_integrations` row from the columns `drive-oauth.ts` and
+ * `drive-subscription-renewal.ts` actually maintain. `status: 'degraded'`
+ * whenever `last_renewal_error` is non-null — that column is cleared to
+ * `null` on every SUCCESSFUL renewal (`recordSetback`/the success branch in
+ * `drive-subscription-renewal.ts`) and set on every failure, including the
+ * original OAuth-callback bootstrap failure path (`drive-oauth.ts`'s
+ * `watchColumns` failure arm) — so a non-null value here is a real,
+ * current-as-of-last-attempt signal, not a stale one-time flag.
+ */
+function deriveDriveWatchHealth(integration: IntegrationRow): SubscriptionRow {
+  return {
+    provider: 'google_drive',
+    status: integration.last_renewal_error ? 'degraded' : 'active',
+    expires_at: integration.subscription_expires_at,
+    last_renewed_at: integration.last_renewal_at,
+    last_renewal_error: integration.last_renewal_error,
+  };
 }
 
 interface RuleEventRow {
@@ -146,20 +193,17 @@ interface ConnectorHealth {
  * follows in drive-oauth.ts). Strip channel_token (and the opaque
  * resource_id) before surfacing account_label, keeping only the
  * human-readable email when present. Providers whose account_label is a
- * plain display string (DocuSign, Adobe Sign, …) are untouched — a raw
- * string is never valid JSON with a `channel_token` key, so it passes through.
+ * plain display string (DocuSign, Adobe Sign, …) are untouched —
+ * `parseDriveAccountLabel` returns `null` for a non-Drive-shaped string, so
+ * it passes through raw (PR #1944 review: this used to be an inline
+ * JSON.parse copy — now routed through the one canonical parser shared with
+ * `drive-subscription-renewal.ts`, `webhooks/drive.ts`, and
+ * `drive-oauth.ts`'s disconnect flow).
  */
 function sanitizeAccountLabel(raw: string | null): string | null {
-  if (!raw) return raw;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown> | null;
-    if (parsed && typeof parsed === 'object' && 'channel_token' in parsed) {
-      return typeof parsed.email === 'string' ? parsed.email : null;
-    }
-    return raw;
-  } catch {
-    return raw;
-  }
+  const parsed = parseDriveAccountLabel(raw);
+  if (parsed) return parsed.email;
+  return raw;
 }
 
 async function safeFetch<T>(promise: Promise<{ data: T | null; error: unknown }>, fallback: T): Promise<T> {
@@ -259,7 +303,7 @@ export async function handleConnectorHealth(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (db as any)
         .from('org_integrations')
-        .select('provider, account_label, connected_at, revoked_at')
+        .select('provider, account_label, connected_at, revoked_at, subscription_expires_at, last_renewal_error, last_renewal_at')
         .eq('org_id', orgId),
       [],
     ),
@@ -314,7 +358,13 @@ export async function handleConnectorHealth(
 
   const connectors: ConnectorHealth[] = CONNECTOR_CATALOG.map((entry) => {
     const integration = integrationByProvider.get(entry.id);
-    const subscription = subscriptionByProvider.get(entry.id as SubscriptionRow['provider']);
+    // PR #1944 review round 3: google_drive's real watch health lives on
+    // org_integrations (integration), never on connector_subscriptions —
+    // see deriveDriveWatchHealth()'s doc comment. microsoft_graph is
+    // unaffected and keeps reading connector_subscriptions as before.
+    const subscription = entry.id === 'google_drive'
+      ? (integration ? deriveDriveWatchHealth(integration) : undefined)
+      : subscriptionByProvider.get(entry.id as SubscriptionRow['provider']);
     const vendorFailure = entry.vendor_event_sources
       .map((v) => failureByVendor.get(v))
       .find((f): f is PerVendorFailure => f !== undefined);

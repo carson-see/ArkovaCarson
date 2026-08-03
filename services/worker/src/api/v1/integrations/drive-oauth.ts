@@ -37,6 +37,7 @@ import {
   type DriveConnectDenyReason,
   type DriveEligibilityDb,
 } from '../../../integrations/connectors/drive-connect-eligibility.js';
+import { parseDriveAccountLabel } from '../../../integrations/connectors/drive-account-label.js';
 
 // org_integrations landed after generated worker DB types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -593,13 +594,12 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
         }
       }
 
-      // Stop the watch channel at Google if we have the required identifiers
+      // Stop the watch channel at Google if we have the required identifiers.
+      // PR #1944 review: was an inline JSON.parse copy (the 1st of 5
+      // near-dupes across the connector) — now routed through the one
+      // canonical parser.
       if (accessToken && existing.subscription_id) {
-        let resourceId: string | undefined;
-        try {
-          const label = existing.account_label ? JSON.parse(existing.account_label) : null;
-          resourceId = label?.resource_id;
-        } catch { /* label may not be JSON */ }
+        const resourceId = parseDriveAccountLabel(existing.account_label)?.resource_id ?? undefined;
 
         if (resourceId) {
           try {
