@@ -16,6 +16,7 @@ import { buildVerifyUrl } from '../../lib/urls.js';
 import { FERPA_EDUCATION_TYPES, FERPA_REDISCLOSURE_NOTICE } from '../../constants/ferpa.js';
 import {
   COMPLIANCE_CONTROLS_NOTE,
+  controlsApplyForStatus,
   sanitizeStoredComplianceControls,
 } from '../../utils/complianceMapping.js';
 import {
@@ -345,7 +346,13 @@ export interface AnchorByPublicId {
  */
 export function buildVerificationResult(anchor: AnchorByPublicId): VerificationResult {
   const publicStatus = mapStatus(anchor.status);
-  const isVerified = anchor.status === 'SECURED' || anchor.status === 'ACTIVE';
+  // BUG-2026-06-24-007: `verified` and "compliance controls still apply" are the
+  // SAME question — is this a live anchored credential? They were two identical
+  // literals 87 lines apart in this function; if the live-status set ever gains
+  // an alias, a second predicate would silently let `verified: true` and the
+  // presence of controls diverge. One predicate, shared with the other three
+  // surfaces (audit export, AI report, GRC push) so all four answer alike.
+  const isVerified = controlsApplyForStatus(anchor.status);
 
   const result: VerificationResult = {
     verified: isVerified,
@@ -449,6 +456,16 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     'fingerprint_source',
   ] as const;
   for (const key of API_RICH_KEYS) {
+    // BUG-2026-06-24-007 (worker side): compliance controls describe a CURRENT
+    // posture. A revoked / superseded / expired credential must not carry them —
+    // the SCRUM-2227 note disclaims attestation, not currency, and a machine
+    // consumer (GRC platform, CSV importer) reads the array regardless of prose.
+    // Matches the frontend, which has gated its compliance section on isSecured
+    // since 0c90f881a. Withheld entirely rather than flagged: silence is not a
+    // claim, a stale control list is.
+    if (key === 'compliance_controls' && !isVerified) {
+      continue;
+    }
     const v = anchor[key];
     if (v === null || v === undefined || v === '') continue;
     // Every STRING here is issuer- or extraction-authored unless the allow-list

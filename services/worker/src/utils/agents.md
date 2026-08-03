@@ -69,6 +69,13 @@ Left alone deliberately: that file is being edited by PR #1853, this PR's base. 
 
 - `COMPLIANCE_CONTROLS_NOTE` is the single informational-not-attestation string for `compliance_controls`. Rendered **verbatim** by `/api/v1/verify`, the AI accountability report, and the audit export (PDF + CSV). It states what is measured vs asserted vs NOT asserted (§1.5) and explicitly disclaims eIDAS qualified status. Do not paraphrase per-surface — one string, one meaning. **Not yet counsel-reviewed** (drafted against the approved `JURISDICTION_INFORMATIONAL_DISCLAIMER` in `services/worker/src/exports/cle-log-export.ts`).
 - This file is a **mirror of `src/lib/complianceMapping.ts`** — control IDs must match. It drifted for two months after SCRUM-2283 removed `DPF-NOTICE`/`DPF-ACCOUNTABILITY` from the frontend only, so the worker kept writing a certification Arkova does not hold onto every SECURED anchor. When you change either file, change both, and add the removed ID to `RETIRED_CONTROL_IDS` so `sanitizeStoredComplianceControls()` stops serving it from history.
+
+## 2026-08-01 `complianceMapping.ts` — `controlsApplyForStatus()`
+
+- Single gate for "do compliance controls still describe something true about this credential?" — `SECURED` / `ACTIVE` only, fails closed on unknown, empty, and null. Consumed by `api/v1/verify.ts`, `api/v1/audit-export.ts`, `api/v1/ai-accountability-report.ts`, and `integrations/grc/syncService.ts`.
+- Added for BUG-2026-06-24-007's worker half: the frontend stopped rendering controls for REVOKED/SUPERSEDED/EXPIRED on 2026-06-24 and that fix was frontend-only, so the API, the audit export, and the GRC push kept serving them.
+- Keep it in ONE place. Four surfaces answering "is this credential current?" with four predicates is how the frontend and worker drifted in the first place.
+
 ## SILENT-WRITE CLASS — audit events (2026-08-02, PR #1808 follow-on)
 
 `recordAuditEvent()` in `auditEvent.ts` is the ONLY sanctioned way to write `audit_events`.
