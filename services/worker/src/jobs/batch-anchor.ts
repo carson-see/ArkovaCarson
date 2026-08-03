@@ -458,6 +458,23 @@ export interface BatchAnchorResult {
   merkleRoot: string | null;
   txId: string | null;
   /**
+   * BUG-2026-08-01-F9: set ONLY when this result represents a definitive,
+   * atomically-resolved broadcast rejection (`isBroadcastRejectedError` —
+   * the node examined the signed tx and refused it, e.g. UTXO contention
+   * with a concurrently-broadcasting org) that was successfully unwound
+   * back to PENDING. `processed: 0` alone is ambiguous — it is also the
+   * shape of "nothing was due", a HOLD/DEFER on an uncertain outcome
+   * (auth/quota/transport failure — the tx may still be live), and an
+   * unresolved reject where the cohort stays BROADCASTING/protected. Only
+   * the fully-unwound definitive reject sets this field, so callers
+   * (org-queue-scheduler.ts, /api/queue/run) can record the run honestly
+   * instead of as a plain success. This is expected to self-heal on the
+   * next drain (the condition, usually a transient UTXO race, typically
+   * clears) — callers should treat it as a recorded outcome to distinguish
+   * from a no-op, not necessarily as an operator page.
+   */
+  rejectedReason?: string;
+  /**
    * SCRUM-3031: the drain DID NOT RUN — another instance holds the run lease,
    * or the lease store was unverifiable and we failed closed.
    *
@@ -675,6 +692,17 @@ export interface IntentReconcileResult {
   adopted: number;
   reverted: number;
   held: number;
+  /**
+   * BUG-2026-08-01-F9 (GAP 2): set when `rejected` is nonzero, from whichever
+   * definitive-reject/revert source fired most recently in this pass (the
+   * durable-journal REVERT in `reconcileTxidJournals`, or the legacy
+   * compatibility path's `reconcileOneIntent`). A count alone can't tell a
+   * caller WHY — this carries the same message already logged at the reject
+   * site, not an invented one. See `_processBatchAnchorsInner` for how this
+   * merges into `BatchAnchorResult.rejectedReason` when the tick otherwise
+   * has nothing else to report.
+   */
+  rejectedReason?: string;
 }
 
 interface TxidJournalDbRow {
@@ -696,6 +724,8 @@ export interface TxidJournalReconcileResult {
   held: number;
   protectedTxids: string[];
   protectionLoaded: boolean;
+  /** BUG-2026-08-01-F9 (GAP 2): set on the last REVERT this pass resolved. */
+  rejectedReason?: string;
 }
 
 type JournalResolutionAction = 'ADOPT' | 'REVERT' | 'HOLD' | 'PERSISTED';
@@ -1267,6 +1297,12 @@ export async function reconcileTxidJournals(
     const reverted = await resolveTxidJournal(row.id, 'REVERT', { reason: decision.reason });
     if (reverted) {
       result.reverted += 1;
+      // BUG-2026-08-01-F9 (GAP 2): a journal REVERT IS a definitive,
+      // fully-unwound rejection of a prior tick's cohort — reuse the reason
+      // this branch already resolves with (decision.reason), not an
+      // invented string, so a caller several layers up can distinguish this
+      // from "nothing was due."
+      result.rejectedReason = `Txid journal REVERTED after affirmative absence (${decision.reason})`;
       logger.info({ journalId: row.id, txId: entry.txid }, 'Txid journal REVERTED after affirmative absence');
     } else {
       result.held += 1;
@@ -1306,6 +1342,10 @@ export async function reconcileBroadcastIntents(chainClient: ChainClient): Promi
     adopted: journal.adopted,
     reverted: journal.reverted,
     held: journal.held,
+    // Seed from the durable-journal pass; the legacy compatibility loop
+    // below overwrites this if IT also finds a reject (more specific —
+    // a direct node-level refusal rather than an affirmative-absence call).
+    rejectedReason: journal.rejectedReason,
   };
   if (!journal.protectionLoaded) return result;
 
@@ -1421,6 +1461,12 @@ async function reconcileOneIntent(
       await deleteIntentProofRows(revertIds, txId);
       await revertIntentAnchors(revertIds);
       result.rejected += 1;
+      // BUG-2026-08-01-F9 (GAP 2): reuse the exact message just logged above
+      // — the same error the log line already carries — rather than
+      // inventing new copy. Overwrites any journal-path reason from this
+      // same pass: a direct node-level reject is the more specific,
+      // more-recently-resolved signal.
+      result.rejectedReason = errMessage(err);
       return;
     }
   }
@@ -1470,6 +1516,25 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   // Phase 0a: Pre-flight UTXO check — skip immediately if treasury is empty.
   const chainClient = await getChainClientAsync();
 
+  // BUG-2026-08-01-F9 (GAP 2): reconcileBroadcastIntents can definitively
+  // reject-and-unwind a PRIOR tick's interrupted broadcast right here, before
+  // this tick's own claim phase even runs. If the main claim path below then
+  // finds nothing else due (empty treasury, no PENDING anchors, trigger not
+  // met, fee ceiling, claim RPC failure, or a claimed cohort below the
+  // minimum batch size), the function must not fall back to the plain EMPTY
+  // shape — that is the exact "rejection indistinguishable from idleness"
+  // defect this bug is about, one layer up from the scheduler/manual-endpoint
+  // callers. `emptyResult()` carries this tick's reconcile-phase reason (if
+  // any) into every such early return below. It intentionally does NOT
+  // override a return that already sets its OWN rejectedReason (e.g. the
+  // main-path definitive-reject branch further down): a rejection of anchors
+  // THIS tick just claimed and broadcast is a more current, more actionable
+  // signal than a cleanup of a stale cohort from an earlier tick, so the
+  // main-path reason wins when both occur in the same pass.
+  let reconcileRejectedReason: string | undefined;
+  const emptyResult = (): BatchAnchorResult =>
+    reconcileRejectedReason ? { ...EMPTY, rejectedReason: reconcileRejectedReason } : EMPTY;
+
   // S3-P0 Phase -1: finish (or safely unwind) any interrupted batch whose
   // pre-broadcast intent survived a crash, BEFORE claiming new work. Runs
   // under the same mutex; never throws (defers on any uncertainty).
@@ -1478,6 +1543,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     if (reconcile.scanned > 0) {
       logger.info({ ...reconcile }, 'Broadcast-intent reconcile pass complete');
     }
+    reconcileRejectedReason = reconcile.rejectedReason;
   } catch (err) {
     logger.warn({ error: err }, 'Broadcast-intent reconcile pass threw — continuing batch run');
   }
@@ -1487,7 +1553,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
       const funded = await chainClient.hasFunds();
       if (!funded) {
         logger.warn('Treasury empty — skipping batch anchor processing until funded');
-        return EMPTY;
+        return emptyResult();
       }
     }
   } catch (err) {
@@ -1517,7 +1583,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     const stats = oldestRes.data;
     if (!stats) {
       logger.debug('No pending anchors — skipping batch');
-      return EMPTY;
+      return emptyResult();
     }
 
     oldestPendingAgeMs = Date.now() - new Date(stats.created_at).getTime();
@@ -1560,7 +1626,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
         { ...pendingCountLogContext, oldestAgeMs: oldestPendingAgeMs, orgId },
         'Batch trigger not met — deferring',
       );
-      return EMPTY;
+      return emptyResult();
     }
   } catch (err) {
     logger.warn({ error: err }, 'Smart batch skip check failed — proceeding with batch');
@@ -1578,7 +1644,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
           { currentFee, effectiveCeiling, baseCeiling, oldestPendingAgeMs },
           'Fee rate exceeds ceiling — deferring batch until fees drop',
         );
-        return EMPTY;
+        return emptyResult();
       }
 
       logger.debug({ currentFee, effectiveCeiling }, 'Fee pre-check passed');
@@ -1607,7 +1673,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     } catch (timeoutErr) {
       logger.error({ error: timeoutErr, claimedSoFar: allClaimed.length }, 'claim_pending_anchors timed out in batch');
       if (allClaimed.length === 0) {
-        return { processed: 0, batchId: null, merkleRoot: null, txId: null };
+        return emptyResult();
       }
       break; // Proceed with what we have
     }
@@ -1624,7 +1690,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
           return legacyProcessBatchAnchors(orgId ?? undefined);
         }
         logger.error({ error: claimError }, 'claim_pending_anchors RPC failed — skipping batch without legacy fallback');
-        return EMPTY;
+        return emptyResult();
       }
       // Partial claim succeeded — proceed with what we have
       logger.warn({ error: claimError, claimedSoFar: allClaimed.length }, 'claim_pending_anchors chunk failed — proceeding with partial batch');
@@ -1647,7 +1713,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
       await refundQueueRunCredits(chargedAnchors, 'below minimum batch size after queue credit gate');
       await bulkRevertToPending(broadcastAnchors.map(a => a.id));
     }
-    return { processed: 0, batchId: null, merkleRoot: null, txId: null };
+    return emptyResult();
   }
 
   logger.info(
@@ -1818,7 +1884,10 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
         );
         return { processed: 0, batchId, merkleRoot: tree.root, txId: prepared.txId };
       }
-      return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
+      // Fully unwound: the cohort is provably back to PENDING and the credit
+      // refund/compensation committed. Safe (and required — BUG-2026-08-01-F9)
+      // to tell the caller this was a resolved rejection, not a no-op.
+      return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null, rejectedReason: errMessage(error) };
     }
 
     // Normalize: an empty provider txid (already-known == success) falls back

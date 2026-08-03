@@ -309,13 +309,32 @@ export async function runOrgQueueScheduler(
       }
 
       const finishedAt = deps.now();
-      result.succeeded += 1;
+      // BUG-2026-08-01-F9: processBatchAnchors does NOT throw on a definitive
+      // broadcast rejection (e.g. UTXO contention with a concurrently-running
+      // org's batch) — by design, that outcome is resolved and self-healing,
+      // not an exception. Without this check, `batch.processed === 0` from a
+      // rejection was indistinguishable from "nothing was due" and got
+      // recorded status='succeeded' — exactly what happened live in prod
+      // 2026-08-01T18:49:31Z for org 40383eb2-f1cd-4a85-8099-afafff95e5cf.
+      // `rejectedReason` is only ever set on a fully-unwound definitive
+      // reject (batch-anchor.ts), so this is a precise signal, not a guess
+      // from `processed === 0` (which is also the ambiguous HOLD/DEFER shape).
+      const rejected = typeof batch.rejectedReason === 'string' && batch.rejectedReason.length > 0;
+      if (rejected) {
+        result.failed += 1;
+        deps.logger.warn(
+          { orgId: row.org_id, reason: batch.rejectedReason },
+          'scheduled org queue run: batch broadcast definitively rejected — recording as failed (self-healing, expected to clear on next drain)',
+        );
+      } else {
+        result.succeeded += 1;
+      }
       result.processed += batch.processed;
       await recordOrgQueueRunResult(
         {
           orgId: row.org_id,
           trigger: 'scheduled',
-          status: 'succeeded',
+          status: rejected ? 'failed' : 'succeeded',
           startedAt,
           finishedAt,
           processed: batch.processed,
@@ -323,11 +342,12 @@ export async function runOrgQueueScheduler(
           merkleRoot: batch.merkleRoot,
           txId: batch.txId,
           workerId: deps.workerId,
+          error: rejected ? (batch.rejectedReason ?? null) : null,
         },
         deps,
       );
 
-      if (batch.processed > 0) {
+      if (!rejected && batch.processed > 0) {
         await deps.emitOrgAdminNotifications({
           type: 'queue_run_completed',
           organizationId: row.org_id,
