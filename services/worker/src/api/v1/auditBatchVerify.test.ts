@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { z } from 'zod';
 import express from 'express';
 import request from 'supertest';
+import * as nodeCrypto from 'node:crypto';
 
 vi.mock('../../utils/db.js', () => ({
   db: { from: vi.fn() },
@@ -22,6 +23,13 @@ vi.mock('../_org-auth.js', () => ({
   getCallerOrgId: vi.fn(),
   isCallerOrgAdmin: vi.fn(),
 }));
+
+// Spy on the real `node:crypto`, not a stub — the assertion is "this endpoint
+// calls the CSPRNG", which only means something against the genuine module.
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return { ...actual, randomInt: vi.fn(actual.randomInt) };
+});
 
 import { auditBatchVerifyRouter } from './auditBatchVerify.js';
 import { db } from '../../utils/db.js';
@@ -231,5 +239,92 @@ describe('POST /api/v1/audit/batch-verify — owner-inclusive org gate', () => {
       .expect(403);
 
     expect(res.body.error).toBe('Organization administrator role required');
+  });
+});
+
+describe('POST /api/v1/audit/batch-verify — unseeded sample seed source (S2245)', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  /**
+   * A one-row population scanned as two `anchors` pages (one row, then the
+   * empty page `scanAllPages` needs to conclude `status: 'complete'`),
+   * followed by one lookup chunk. Mirrors the real chain shapes in
+   * `loadOrgPopulation` (terminal `.range()`) and the verify loop (terminal
+   * `.is()` after `.in()`) — a mock that resolved on the wrong method would
+   * pass without ever exercising the seed line under test.
+   */
+  function mockOneRowPopulation() {
+    let anchorsCalls = 0;
+    vi.mocked(db.from).mockImplementation((table: string) => {
+      if (table === 'anchors') {
+        anchorsCalls += 1;
+        if (anchorsCalls <= 2) {
+          const data = anchorsCalls === 1 ? [{ public_id: 'cred-1' }] : [];
+          return {
+            select: () => ({
+              eq: () => ({
+                is: () => ({
+                  order: () => ({
+                    order: () => ({
+                      range: () => Promise.resolve({ data, error: null }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          } as never;
+        }
+        return {
+          select: () => ({
+            in: () => ({
+              is: () => Promise.resolve({
+                data: [{ public_id: 'cred-1', status: 'SECURED', fingerprint: 'fp', chain_timestamp: null, chain_tx_id: null, created_at: '2026-01-01T00:00:00Z' }],
+                error: null,
+              }),
+            }),
+          }),
+        } as never;
+      }
+      if (table === 'audit_events') {
+        return { insert: () => Promise.resolve({ data: null, error: null }) } as never;
+      }
+      return { select: () => ({}) } as never;
+    });
+  }
+
+  it('draws the unseeded sample seed from randomInt (CSPRNG), not Math.random()', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+    vi.mocked(isCallerOrgAdmin).mockResolvedValue(true);
+    mockOneRowPopulation();
+    const randomIntSpy = vi.mocked(nodeCrypto.randomInt);
+
+    const app = buildApp('owner-1');
+    const res = await request(app)
+      .post('/api/v1/audit/batch-verify')
+      .send({ sample_percentage: 100 });
+
+    expect(res.status).toBe(200);
+    // The seed generator was actually invoked with the documented bound —
+    // not merely "some random number appeared in the response".
+    expect(randomIntSpy).toHaveBeenCalledWith(0, 2 ** 31);
+    expect(typeof res.body.seed).toBe('number');
+    expect(res.body.seed).toBeGreaterThanOrEqual(0);
+    expect(res.body.seed).toBeLessThan(2 ** 31);
+  });
+
+  it('does not call randomInt when the caller supplies an explicit seed', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+    vi.mocked(isCallerOrgAdmin).mockResolvedValue(true);
+    mockOneRowPopulation();
+    const randomIntSpy = vi.mocked(nodeCrypto.randomInt);
+
+    const app = buildApp('owner-1');
+    const res = await request(app)
+      .post('/api/v1/audit/batch-verify')
+      .send({ sample_percentage: 100, seed: 42 });
+
+    expect(res.status).toBe(200);
+    expect(randomIntSpy).not.toHaveBeenCalled();
+    expect(res.body.seed).toBe(42);
   });
 });
