@@ -157,6 +157,30 @@ describe('extractText routing', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Lane 4 HakiChain 22-format matrix (SCRUM bug blitz): legacy .ppt (binary
+  // PowerPoint 97-2003) is undocumented-but-real parity with legacy .doc —
+  // neither ZIP_XML_KIND_BY_EXTENSION/MIME nor any other branch recognizes it,
+  // so it falls through to the same generic UNSUPPORTED_FILE_TYPE throw as
+  // legacy .doc. OCR_LABELS.UNSUPPORTED_FILE_TYPE already only advertises
+  // "PowerPoint (.pptx)" (never .ppt), so this pins behavior that was already
+  // correct but untested — parsing legacy binary Office formats would need a
+  // new dependency neither mammoth (.docx-only) nor the ZIP-XML extractor
+  // (OOXML/ODF-only) provides. Upload + fingerprint + anchor are UNAFFECTED —
+  // this only governs client-side AI-metadata extraction.
+  // -------------------------------------------------------------------------
+  it('rejects legacy .ppt files (ZIP-XML extractor only handles .pptx OOXML, not binary PPT 97-2003)', async () => {
+    const file = fakeFile('legacy.ppt', 'application/vnd.ms-powerpoint', 'binary-content');
+
+    await expect(extractText(file)).rejects.toThrow(/Unsupported file type/);
+  });
+
+  it('rejects .ppt files by extension alone', async () => {
+    const file = fakeFile('old-slides.ppt', '', 'binary-content');
+
+    await expect(extractText(file)).rejects.toThrow(/Unsupported file type/);
+  });
+
+  // -------------------------------------------------------------------------
   // Unsupported file types
   // -------------------------------------------------------------------------
 
