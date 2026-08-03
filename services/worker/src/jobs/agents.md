@@ -2,6 +2,50 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-03 — GH #1835: `drive-subscription-renewal-deps.ts` — real wiring for Drive channel renewal
+
+Production adapter for the pure `renewDriveSubscriptions()` orchestrator (`integrations/connectors/drive-subscription-renewal.ts` — see that folder's `agents.md` for the full GH #1835/#1836/#1837 writeup and why this targets `org_integrations`, not `drive_watch_state`). Follows the exact `makeXxxDeps()` factory pattern `docusign-reconciliation-deps.ts` established:
+
+- `makeDriveSubscriptionRenewalDb()` — `listRenewableConnections` selects `org_integrations` where `provider='google_drive'`, `revoked_at IS NULL`, and `.or('subscription_expires_at.lte.<horizon>,subscription_id.is.null')` (the second clause recovers a connection whose bootstrap `changes.watch` call failed at OAuth-callback time). Cross-tenant by design (service-role cron sweep, same rationale as `docusign-reconciliation-deps.ts`'s `listActiveIntegrations` — `arkova/missing-org-filter` suppressed with that comment). `updateConnection` is a plain `.update(patch).eq('id', id)` — `id` is stripped from the patch body so it can never accidentally get written as a column.
+- `makeDriveSubscriptionRenewalClient()` — `getAccessToken` reuses `loadDriveAccessToken` (`integrations/connectors/drive-changes-runner.ts`) so the KMS decrypt/refresh/persist logic has exactly one implementation; a `DriveRunnerError('no_refresh_token')` (or no `encrypted_tokens` at all) maps to `revoked: true`, any OTHER error rethrows so a transient failure retries next sweep instead of being misclassified as a permanent revoke. `createChannel` fails closed on a missing `config.workerPublicUrl` (PR #1944 review: routed through the Zod-validated config export, not an ad-hoc `process.env.WORKER_PUBLIC_URL` read — see `services/worker/src/agents.md`'s 2026-08-03 entry; same underlying var + same fail-closed shape as `docusign.ts`'s `requireConnectConfig` for the Connect-listener provisioning path, which still reads it via its own pre-existing env passthrough) and builds the webhook address from `WEBHOOK_PATHS.GOOGLE_DRIVE` — never a hand-rolled path string, so it can't drift from what `webhooks/drive.ts` actually mounts at. A `workerPublicUrl` DI option is exposed for tests.
+- `alertDriveSubscriptionRenewal` — Sentry, `warning` level for `token_revoked` (recoverable — org just needs to reconnect), `error` for `renewal_failed`. Never throws even if Sentry itself does.
+- **`asRawRow()`'s `conn as unknown as RawConnectionRow` double-cast (evaluated for removal in PR #1944 review round 3, KEPT):** `listRenewableConnections` packs KMS/token columns (`encrypted_tokens`, `token_kms_key_id`, `last_page_token`) onto the object it returns, then casts the array to the pure module's narrower `DriveSubscriptionRow[]` type; `asRawRow()` casts back to recover them at `getAccessToken`'s call site. This looks removable but is not a quick fix: the pure orchestrator (`integrations/connectors/drive-subscription-renewal.ts`) deliberately does NOT declare those fields on its own exported `DriveSubscriptionRow` type — widening it would leak KMS/token-storage internals into a module that has no business knowing about them, and would touch that module's own test fixtures too. The only cast-free alternatives are (a) that widening, or (b) a side-channel (e.g. a `WeakMap` keyed by row identity) trading a compile-time-scoped, locally-verifiable cast for a runtime statefulness assumption that's easier to break silently in a future refactor. Both fail the "quick and low-risk" bar this was flagged under, so the two casts stay — narrowly scoped to one pack site and one unpack site, both in this file, both commented, and a wrong pairing would already surface via the existing `getAccessToken` revoked/no-token tests (they'd start hitting the "never bootstrapped" branch for every row).
+- Cron route: `POST /jobs/drive-subscription-renewal` in `routes/cron.ts`, hourly. Cloud Scheduler declaration in `scripts/gcp-setup/cloud-scheduler.sh` — **not yet applied to prod as of this PR**; running that script against prod is an operator step (see the PR body).
+
+### PR #1944 review round 3 correction: `runDriveSubscriptionRenewal()` — lease-guarded entry point, in-process backup RESTORED
+
+An earlier round of this same review explicitly instructed removing any `routes/scheduled.ts` in-process backup for this job to avoid double-firing against Cloud Scheduler (the "No `scheduled.ts` in-process backup — deliberately" note that used to live in the paragraph above). **That instruction was wrong and was explicitly reversed by the coordinator**: Cloud Scheduler is not yet applied to prod, so Cloud-Scheduler-only meant the job would NEVER run automatically until an operator remembered a manual `gcloud` step — trading a double-fire race for a silent single point of failure is the wrong trade when the job's own job is to prevent a silent outage (#1835).
+
+Fix: both trigger paths now call the SAME lease-guarded function, `runDriveSubscriptionRenewal()` (new, this file) — whichever fires first wins, the other no-ops:
+
+```ts
+export async function runDriveSubscriptionRenewal(
+  options: DriveSubscriptionRenewalDepOptions = {},
+): Promise<DriveSubscriptionRenewalRunResult> {
+  const leaseClient = options.db ?? (defaultDb as AnyDb);
+  const outcome = await withRunLease(
+    { ...DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, client: leaseClient },
+    () => renewDriveSubscriptions({
+      db: makeDriveSubscriptionRenewalDb(options),
+      client: makeDriveSubscriptionRenewalClient(options),
+      alert: alertDriveSubscriptionRenewal,
+    }),
+  );
+  return outcome.acquired ? outcome.result : { ...EMPTY_RENEWAL_SUMMARY, skipped: true };
+}
+```
+
+- **`DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE`** (`run-lease.ts`, new spec) is the same `withRunLease` cross-instance CAS-lease primitive `batch-anchor.ts` / `check-confirmations.ts` already use — a TTL-based lease row in `job_queue`, not a new table. **Deliberately NOT added to the shared `RUN_LEASE_SPECS` array**: that array's cross-cutting test asserts `ttlMs > slowestRecordedCadenceMs` for every entry, which is mathematically impossible here — this job's cadence (hourly, both triggers) equals the shared `CLOUD_RUN_REQUEST_TIMEOUT_MS` ceiling (60 min) that bounds every lease TTL. It has its own dedicated test coverage instead (see below) rather than being silently excluded from the array with no explanation.
+- `routes/cron.ts`'s `POST /jobs/drive-subscription-renewal` now just calls `runDriveSubscriptionRenewal()` with no args (was manually assembling `renewDriveSubscriptions({db, client, alert})` inline).
+- `routes/scheduled.ts`'s in-process backup is restored, calling the same `runDriveSubscriptionRenewal()` — see `routes/agents.md`.
+- Tests (`drive-subscription-renewal-deps.test.ts`, new `describe('runDriveSubscriptionRenewal (lease-guarded entry point, PR #1944 correction)')`): acquires-and-runs; skipped-when-already-held; a store/CAS-failure fails closed (skipped, not a throw); and the CRITICAL test — `Promise.all([runDriveSubscriptionRenewal(...), runDriveSubscriptionRenewal(...)])` against `createRunLeaseStore` (`./__tests__/__testHelpers.ts`, the REAL `.or()` CAS predicate, not a restated mock) proves the underlying orchestrator body runs exactly once for two concurrent invocations.
+
+### PR #1944 review round 3 (final round): `drive-subscription-renewal` registered in `SCHEDULER_MANIFEST` (SCRUM-2900)
+
+Added to `scheduler-manifest.ts` — `category: 'maintenance'`, `schedule: '0 * * * *'`, `targetPath: '/jobs/drive-subscription-renewal'`, `owner: 'lane-3'`, `enabled: true`, `maxSilenceMs: 3 * HOURS`. Purpose: if the Cloud Scheduler job in `scripts/gcp-setup/cloud-scheduler.sh` is never applied to prod (an open operator step as of this PR — see above) AND the in-process backup somehow also stops firing, this registration is what would let the existing dead-man audit (`scheduler-deadman.ts` / `scheduler-pause-attribution.ts`) notice and alarm.
+
+**Honesty note, verified by grep, not assumed:** as of this PR, that dead-man audit has **no live Cloud Scheduler trigger of its own anywhere in the repo** — `runSchedulerPauseAudit` / `evaluateSchedulerDeadman` are called from nowhere in `routes/index.ts` or any Cloud Scheduler manifest. This is a **pre-existing, repo-wide gap**, not something this PR introduces or was asked to fix. Registering this job is necessary-but-not-sufficient for the dead-man protection to actually fire; it does make the job COVERED BY CONSTRUCTION the moment that audit does get wired up, instead of needing a second follow-up PR to remember it. Tests: `scheduler-manifest.test.ts` `describe('drive-subscription-renewal (GH #1835/#1836)')` — registered/enabled/hourly, carries a `maxSilenceMs` budget, included in `enabledScheduledJobs()`.
+
 ## 2026-08-03 — ART Lane 1 bug-bounty (PR #1965): SCRUM-3021 (check-confirmations tip height) + SCRUM-3017 (SUBMITTED watchdog)
 
 Two bug-tracker rows (`docs/staging/SOAK-FINDINGS-2026-08.md` F-numbered findings predate these; canonical
@@ -522,6 +566,8 @@ mechanism; all three jobs wrap themselves in `withRunLease`, and the job-local c
   1 red; dropping the holder scope from the RENEW predicate → 1 red; deleting the `withRunLease` call
   from `batch-anchor.ts` → 4 red; moving `check-confirmations`' lease inside the real-mode arm →
   3 red. T3 (chain/treasury + concurrency).
+
+**2026-08-03 addendum (PR #1944, GH #1835):** a 4th spec, `DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE`, was added to `run-lease.ts` — see the `GH #1835` entry near the top of this file for the full writeup. It deliberately follows every convention above (per-job lease id/type, `withRunLease` wrapping, dedicated test suite) EXCEPT it is not in the `RUN_LEASE_SPECS` array: this job's only real cadence is hourly on both trigger paths, which equals the `CLOUD_RUN_REQUEST_TIMEOUT_MS` ceiling this section derives every other TTL against, so the array's own `ttlMs > slowestRecordedCadenceMs` test would be unsatisfiable for it. Not a gap in this job's protection — `withRunLease` still guards it identically — just a reason it can't share the cross-cutting array test the other three do.
 
 ## 2026-08-01 — Queues lane (PR #1813): the SCRUM-3031 wedge has a SECOND, live mechanism — cross-instance overlap (`publicRecordAnchor.ts`)
 

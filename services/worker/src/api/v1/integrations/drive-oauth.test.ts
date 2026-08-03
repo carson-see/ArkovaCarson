@@ -314,7 +314,12 @@ describe('Drive OAuth router', () => {
       }),
     };
 
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    // GH #1836 review round 3 (typecheck fix): declared with a second
+    // `init?: RequestInit` param so a caller inspecting `.mock.calls[n][1]`
+    // type-checks as `RequestInit | undefined` — the mock always DID capture
+    // the real second arg at runtime (JS doesn't enforce declared arity),
+    // the original single-param signature just didn't say so.
+    const fetchImpl = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = String(input);
       if (url === 'https://oauth2.googleapis.com/token') {
         return new Response(JSON.stringify({
@@ -389,8 +394,20 @@ describe('Drive OAuth router', () => {
     expect(upsert.account_id).toBe('google-sub-1');
     const label = JSON.parse(upsert.account_label as string);
     expect(label.email).toBe('admin@example.com');
-    expect(label.channel_token).toBe(TEST_ORG_ID);
+    // GH #1836 (SECURITY): the channel token must NOT be the org UUID — an
+    // org UUID is not a secret (it appears in URLs, API responses, and
+    // client-side state), so reusing it let anyone who learned/guessed an
+    // org UUID forge a push notification past the webhook's token check.
+    // It must instead be a high-entropy random value distinct from the org id.
+    expect(label.channel_token).not.toBe(TEST_ORG_ID);
+    expect(typeof label.channel_token).toBe('string');
+    expect(label.channel_token.length).toBeGreaterThanOrEqual(32);
     expect(label.resource_id).toBe('drive-resource-1');
+    // The SAME random token must be what Drive actually verifies against —
+    // not silently mismatched from what we store.
+    const watchCall = fetchImpl.mock.calls.find(([input]) => String(input).includes('/changes/watch'));
+    const watchBody = watchCall ? JSON.parse(String((watchCall[1] as RequestInit).body)) : null;
+    expect(watchBody?.token).toBe(label.channel_token);
     expect(upsert.encrypted_tokens).toBe('\\x656e637279707465642d746f6b656e2d7061796c6f6164');
     // subscription_id must be the channel UUID we generated (not Google's resourceId)
     expect(upsert.subscription_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
@@ -432,7 +449,12 @@ describe('Drive OAuth router', () => {
       }),
     };
 
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    // GH #1836 review round 3 (typecheck fix): declared with a second
+    // `init?: RequestInit` param so a caller inspecting `.mock.calls[n][1]`
+    // type-checks as `RequestInit | undefined` — the mock always DID capture
+    // the real second arg at runtime (JS doesn't enforce declared arity),
+    // the original single-param signature just didn't say so.
+    const fetchImpl = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = String(input);
       if (url === 'https://oauth2.googleapis.com/token') {
         return new Response(JSON.stringify({
@@ -527,7 +549,12 @@ describe('Drive OAuth router', () => {
     };
 
     const fetchCalls: string[] = [];
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    // GH #1836 review round 3 (typecheck fix): declared with a second
+    // `init?: RequestInit` param so a caller inspecting `.mock.calls[n][1]`
+    // type-checks as `RequestInit | undefined` — the mock always DID capture
+    // the real second arg at runtime (JS doesn't enforce declared arity),
+    // the original single-param signature just didn't say so.
+    const fetchImpl = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = String(input);
       fetchCalls.push(url);
       if (url.includes('channels/stop')) {

@@ -115,4 +115,30 @@ describe('scheduler manifest (SCRUM-2900 config-as-code)', () => {
     ];
     expect(validateSchedulerManifest(dup).join(' ')).toMatch(/duplicate/i);
   });
+
+  // GH #1835/#1836 (PR #1944 review round 3): register the renewal job so a
+  // forgotten/failed Cloud Scheduler creation is COVERED BY CONSTRUCTION
+  // once the dead-man audit (scheduler-deadman.ts / scheduler-pause-
+  // attribution.ts) actually runs against this manifest — see the entry's
+  // own HONESTY NOTE for the current (pre-existing, repo-wide) gap that
+  // audit has no live trigger of its own yet.
+  describe('drive-subscription-renewal (GH #1835/#1836)', () => {
+    it('is registered, enabled, and hourly', () => {
+      const job = getScheduledJob('drive-subscription-renewal');
+      expect(job).toBeDefined();
+      expect(job?.enabled).toBe(true);
+      expect(job?.schedule).toBe('0 * * * *');
+      expect(job?.targetPath).toBe('/jobs/drive-subscription-renewal');
+      expect(job?.method).toBe('POST');
+    });
+
+    it('carries a maxSilenceMs budget (required for the dead-man to evaluate it at all)', () => {
+      const job = getScheduledJob('drive-subscription-renewal');
+      expect(job?.maxSilenceMs).toBeGreaterThan(0);
+    });
+
+    it('is included in enabledScheduledJobs()', () => {
+      expect(enabledScheduledJobs().map((j) => j.id)).toContain('drive-subscription-renewal');
+    });
+  });
 });

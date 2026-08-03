@@ -163,7 +163,52 @@ export const CHECK_CONFIRMATIONS_RUN_LEASE: RunLeaseSpec = {
   slowestRecordedCadenceMs: 30 * MINUTES,
 };
 
-/** Every registered lease. The TTL-bounds suite iterates this, so new specs are covered by construction. */
+/**
+ * `drive-subscription-renewal` (GH #1835/#1836) — Drive `changes.watch`
+ * channel renewal + GH #1836 legacy-token rotation.
+ *
+ * PR #1944 review correction: this job's Cloud Scheduler trigger and its
+ * `scheduled.ts` in-process backup are BOTH hourly (`0 * * * *` — see
+ * `routes/agents.md`), because there is no live-vs-manifest cadence drift to
+ * take the slower of (the Cloud Scheduler job is not even applied to prod
+ * yet as of this PR). `jobs/drive-subscription-renewal-deps.ts`'s
+ * `runDriveSubscriptionRenewal()` is the ONE lease-guarded entry point BOTH
+ * triggers call, so whichever fires first wins and the other no-ops —
+ * exactly the batch-anchor.ts pattern, applied to the renewal job that
+ * would otherwise reproduce GH #1835's own silent-outage symptom if two
+ * concurrent sweeps raced each other's channel registrations.
+ *
+ * DELIBERATELY NOT added to `RUN_LEASE_SPECS` below. That array's shared
+ * test asserts `ttlMs > slowestRecordedCadenceMs` for every entry — a real
+ * safety margin for the three anchor-pipeline jobs, whose cadences (30 min)
+ * sit well under the `CLOUD_RUN_REQUEST_TIMEOUT_MS` ceiling (60 min). This
+ * job's cadence IS the ceiling (60 min), so no TTL can satisfy
+ * `> 60min AND < 60min` simultaneously — the constraint is structurally
+ * unsatisfiable here, not a gap in this spec. TTL is set to 50 min instead:
+ * comfortably under the ceiling, and — for a run that is genuinely ALIVE —
+ * the TTL-vs-cadence relationship isn't what protects it anyway; the
+ * heartbeat (`startRunLeaseHeartbeat`, firing at ttl/3 ≈ 17 min) renews an
+ * active run's lease long before any expiry regardless of how TTL compares
+ * to cadence. TTL only governs how long a CRASHED holder blocks the job,
+ * and a renewal sweep (bounded batch, `RENEWAL_CONCURRENCY`-chunked) is
+ * expected to complete in seconds to low minutes, not 50.
+ */
+export const DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE: RunLeaseSpec = {
+  leaseId: '9c4f2a18-6e73-4b0d-a5f1-3d8c7e2b9061',
+  leaseType: 'drive-subscription-renewal:lease',
+  ttlMs: 50 * MINUTES,
+  label: 'Drive subscription renewal',
+  slowestRecordedCadenceMs: 60 * MINUTES,
+};
+
+/**
+ * Every registered lease covered by the shared TTL-bounds/uniqueness test
+ * suite. `DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE` is deliberately NOT here —
+ * see its own doc comment for why an hourly-cadence job cannot satisfy that
+ * suite's `ttlMs > cadence` assertion under the shared 60-min Cloud Run
+ * ceiling. It has its own dedicated coverage in
+ * jobs/drive-subscription-renewal-deps.test.ts instead.
+ */
 export const RUN_LEASE_SPECS: readonly RunLeaseSpec[] = [
   PUBLIC_RECORD_ANCHOR_RUN_LEASE,
   BATCH_ANCHOR_RUN_LEASE,

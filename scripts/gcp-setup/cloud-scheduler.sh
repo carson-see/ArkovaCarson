@@ -125,6 +125,17 @@ JOBS=(
   # sentinel, no hash/enqueue) until ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true.
   # Idempotent (0343 RPC dedupes on org/source/file/revision).
   "drive-file-changed|*/5 * * * *|/jobs/drive-file-changed|30s,120s,2"
+  # GH #1835 (SECURITY-adjacent — Drive connector was dead in prod): Google
+  # Drive changes.watch push channels expire in ~7 days and NOTHING renewed
+  # them — every Drive connection went silent within a week with no error,
+  # no alert, and no signal beyond the org dashboard still showing
+  # "connected". Hourly is well inside the 7-day cap (the sweep's own
+  # default renewal horizon is 24h, so an hourly cadence gives ~24 retries
+  # before a channel actually lapses). Endpoint at
+  # services/worker/src/routes/cron.ts. Each successful renewal also mints a
+  # fresh random channel_token (GH #1836), rotating any connection still on
+  # the legacy org-id-as-token scheme.
+  "drive-subscription-renewal|0 * * * *|/jobs/drive-subscription-renewal|30s,120s,2"
 )
 # SCRUM-1727 (one-shot historical backfill) is INTENTIONALLY NOT in JOBS.
 # It's a manual operator endpoint at /jobs/bq-export-backfill?table=<name>.

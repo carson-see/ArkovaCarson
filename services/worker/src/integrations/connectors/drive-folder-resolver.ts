@@ -32,6 +32,17 @@ export interface FolderPathCacheStore {
 export interface DriveFolderResolverDeps {
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  /**
+   * PR #1944 review follow-up: `resolveDriveFolderPath` swallows every
+   * failure to `null` by contract (a poisoned/unresolvable path must never
+   * abort the caller's page), but without a logger that swallow was
+   * completely silent — the processor's own `resolveFolderPath` try/catch
+   * wrapper (`drive-changes-processor.ts`) could never actually see anything
+   * to log, because this function never threw AND never logged. Optional so
+   * existing callers/tests that don't care about ops visibility are
+   * unaffected; production wiring (`drive-changes-runner.ts`) always passes one.
+   */
+  logger?: { warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
 }
 
 /**
@@ -71,6 +82,20 @@ export async function resolveDriveFolderPath(args: {
     // Cache the `null` briefly to avoid stampeding the Drive API.
     if (err instanceof DriveApiError) {
       await args.cache.put({ orgId: args.orgId, fileId: args.fileId, folderPath: null });
+      // Expected failure mode (403/404 mid-chain, transient 5xx) — a real
+      // signal for ops (a folder that never resolves means every
+      // folder_path_starts_with rule on it silently never fires), but not
+      // exceptional enough to escalate past warn.
+      args.deps?.logger?.warn?.(
+        { orgId: args.orgId, fileId: args.fileId, status: err.status },
+        'drive folder-path resolution failed — proceeding with null',
+      );
+    } else {
+      // Anything else (a bug, an unexpected throw shape) is a stronger signal.
+      args.deps?.logger?.error?.(
+        { orgId: args.orgId, fileId: args.fileId, err },
+        'drive folder-path resolution failed unexpectedly — proceeding with null',
+      );
     }
     return null;
   }
