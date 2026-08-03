@@ -42,6 +42,17 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
   now imports directly. Close both once confirmed rather than merging redundant code.
 - **Held, not superseded:** #1755 (sharp/libvips LGPL denylist — counsel/Carson call per
   `scripts/security/agents.md`).
+- **New PR opened 2026-08-03** (`services/worker/src/ai/report-generator.ts`):
+  `generateIntegritySummary`/`generateCredentialAnalytics`/`generateComplianceOverview` each discarded
+  a Supabase `error` and could persist an AI report `status: 'COMPLETE'` with fabricated-empty stats on
+  a transient DB read failure — same defect class as the `.in()`-filter/`chunkedRead.ts` silent-success
+  bugs. Fixed to throw into the existing catch-and-mark-FAILED path; TDD failing-test-first, local
+  gates (typecheck/lint/15 tests) all green. Path rule puts this at T2 (`services/worker/src/ai/`);
+  opened for review only, not queued toward Ready — no staging soak was run for it, see the PR's own
+  evidence block for the honest disclosure and the `SOAK_GATE_DISABLED` bypass state checked at open
+  time. Two helper functions with the identical shape (`getReviewQueueStats`, `getExtractionAccuracy`)
+  were found in passing and flagged as a separate follow-up rather than folded in, since each has its
+  own live API caller with its own response-contract question.
 - A stale test assertion in `deploy-worker-history-contract.test.ts` was red-lining the whole board for
   part of the day (asserted `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE` must never be true; a same-day commit
   had enabled it without updating the guard) — fixed to assert the surviving producer/consumer
