@@ -251,6 +251,43 @@ describe('createUtxoProvider', () => {
   it('creates Mempool provider', () => { expect(createUtxoProvider({ type: 'mempool' }).name).toBe('Mempool.space REST API'); });
   it('creates Mempool with custom URL', () => { expect(createUtxoProvider({ type: 'mempool', mempoolApiUrl: 'https://custom/api' }).name).toBe('Mempool.space REST API'); });
   it('throws on unknown type', () => { expect(() => createUtxoProvider({ type: 'unknown' as unknown as 'rpc' })).toThrow('Unknown UTXO provider'); });
+
+  // SCRUM-3016 / BUG-2026-07-26-003: the actual production factory, not just
+  // the pure mempool-url.ts helper — proves an operator-set MEMPOOL_API_URL
+  // resolves to the SAME correct request URL whether or not they included
+  // the trailing /api. Before this fix there was no value that worked for
+  // BOTH this factory's mempool branch AND jobs/check-confirmations.ts's
+  // convention at once; this pins one side of that contract directly against
+  // a real outbound fetch call.
+  describe('mempoolApiUrl /api contract (SCRUM-3016)', () => {
+    beforeEach(() => { mockFetch.mockReset(); });
+
+    it('resolves identically whether MEMPOOL_API_URL omits or includes the trailing /api', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve([]) });
+
+      await createUtxoProvider({ type: 'mempool', mempoolApiUrl: 'https://custom-relay.example.com' })
+        .listUnspent('tb1qtest');
+      const urlWithoutApi = String(mockFetch.mock.calls[0][0]);
+
+      mockFetch.mockClear();
+      await createUtxoProvider({ type: 'mempool', mempoolApiUrl: 'https://custom-relay.example.com/api' })
+        .listUnspent('tb1qtest');
+      const urlWithApi = String(mockFetch.mock.calls[0][0]);
+
+      expect(urlWithoutApi).toBe(urlWithApi);
+      expect(urlWithoutApi).toBe('https://custom-relay.example.com/api/address/tb1qtest/utxo');
+    });
+
+    it('normalizes a trailing slash on an operator-set MEMPOOL_API_URL', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve([]) });
+      await createUtxoProvider({ type: 'mempool', mempoolApiUrl: 'https://custom-relay.example.com/' })
+        .listUnspent('tb1qtest');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://custom-relay.example.com/api/address/tb1qtest/utxo',
+        expect.anything(),
+      );
+    });
+  });
 });
 
 describe('HttpError', () => {

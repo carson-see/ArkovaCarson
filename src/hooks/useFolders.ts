@@ -130,8 +130,25 @@ export function useFolders(): UseFoldersReturn {
 
   const assignMutation = useMutation({
     mutationFn: async ({ anchorId, folderId }: { anchorId: string; folderId: string | null }) => {
-      const { error } = await supabase.from('anchors').update({ folder_id: folderId }).eq('id', anchorId);
+      // .select('id') + row-count check (mirrors useSecureQueue.removeItem):
+      // anchors_update_own's RLS USING clause matches ZERO rows — not an
+      // error — when the caller doesn't own the anchor. PostgREST returns
+      // `{ error: null }` for that zero-row UPDATE, so checking `error`
+      // alone lets the caller believe the move succeeded when nothing
+      // changed (founder-priority bug: an ORG_ADMIN's org-wide "My Records"
+      // view, useAnchors.ts, includes records they didn't personally
+      // create; migration 0393 widens the org-admin case, but this check
+      // stays as the honest-failure backstop for any row RLS still denies,
+      // e.g. a plain org member moving a teammate's record).
+      const { data, error } = await supabase
+        .from('anchors')
+        .update({ folder_id: folderId })
+        .eq('id', anchorId)
+        .select('id');
       if (error) throw error;
+      if (!data || data.length === 0) {
+        throw new Error(FOLDER_LABELS.ERR_ASSIGN);
+      }
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['anchors'] });
