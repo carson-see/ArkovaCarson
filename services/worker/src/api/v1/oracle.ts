@@ -62,8 +62,28 @@ interface OracleVerification {
  * Returns: signed batch verification with agent metadata
  */
 router.post('/verify', async (req: Request, res: Response) => {
+  // SEC (this session): the header above documents this endpoint as
+  // requiring an API key, but the mount at router.ts (`requireScope('verify')`
+  // with no `apiKeyAuth({ required: true })` ahead of it) explicitly allows an
+  // anonymous request through — `requireScope` no-ops when `req.apiKey` is
+  // absent ("Anonymous requests are handled by other auth guards", but
+  // nothing else guards this route). Every sibling agent-callable route
+  // enforces presence itself (e.g. ai-verify-search.ts:36-37); this one
+  // didn't, so a fully anonymous caller got a complete HMAC-signed
+  // OracleResult indistinguishable from an authenticated agent's, with no
+  // caller identity in the audit trail (`org_id: req.apiKey?.orgId ??
+  // undefined`) and 25x the per-call throughput of the intentionally-public
+  // single-record GET /verify/:publicId at the same rate-limit tier.
+  if (!req.apiKey) {
+    res.status(401).json({
+      error: 'authentication_required',
+      message: 'API key required. Pass via Authorization: Bearer ak_... or X-API-Key header.',
+    });
+    return;
+  }
+
   const queryId = randomUUID();
-  const agentKeyId = req.apiKey?.keyId ?? null;
+  const agentKeyId = req.apiKey.keyId;
   const queriedAt = new Date().toISOString();
 
   // Validate input
@@ -251,11 +271,13 @@ router.post('/verify', async (req: Request, res: Response) => {
       }
     }
 
-    // Audit trail — log every oracle query
+    // Audit trail — log every oracle query. req.apiKey is guaranteed present
+    // past the auth guard above, so org_id is now always the real caller's org
+    // (previously `undefined` for the anonymous requests this guard now blocks).
     void recordAuditEvent({
       event_type: 'ORACLE_QUERY',
       event_category: 'ANCHOR',
-      org_id: req.apiKey?.orgId ?? undefined,
+      org_id: req.apiKey.orgId,
       target_type: 'oracle',
       target_id: queryId,
       details: JSON.stringify({
