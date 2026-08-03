@@ -2,6 +2,10 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## Lane 4 bug blitz (2026-08) — `credentials-ctdl-registry-anchor.ts` registry_url key mismatch (FOUND + FIXED)
+
+The public `get_public_anchor` projection (migration `0385`, live) reads `anchors.metadata->>'registry_url'` to populate `SourceProvenanceDisplay`'s "Registry reference" row on the public verify page (`src/components/verification/SourceProvenanceDisplay.tsx`) — UI + projection wiring already shipped under SCRUM-2913. But `credentials-ctdl-registry-anchor.ts` (`POST /api/v1/credentials/ctdl/registry-anchor`, the `ce_registry_ctid`-keyed CE registry anchoring flow that migration `0389`'s index and the `ce-registry-drift.ts` job serve) only ever stamped the metadata key `ce_registry_url` (prefixed) — a key the public projection's allow-list does not recognize. Result: a genuinely CE-registry-anchored record's registry link never reached the verify page, even though every other layer was built. `BoundedRegistryMetadata` now also stamps the unprefixed `registry_url` key (byte-identical value to `ce_registry_url`) alongside the existing keys — purely additive, `ce_registry_ctid` (the drift job's only read key) and `ce_registry_url` (this endpoint's own response-body source) are both untouched. Regression test: `credentials-ctdl-registry-anchor.test.ts` "stamps metadata.registry_url (unprefixed)...". This is a forward-fix only — anchors created before this change keep their existing metadata as-is (no backfill).
+
 ## 2026-08-02 — the silent-empty enrichment sweep (`readInChunks`)
 
 Closes the last of the `.in()` defect class on this surface. `#1866` fixed the sites whose *width* was
