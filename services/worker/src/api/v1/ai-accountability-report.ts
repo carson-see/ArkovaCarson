@@ -17,6 +17,7 @@ import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import {
   COMPLIANCE_CONTROLS_NOTE,
+  controlsApplyForStatus,
   sanitizeStoredComplianceControls,
 } from '../../utils/complianceMapping.js';
 
@@ -94,7 +95,12 @@ router.post('/', async (req: Request, res: Response) => {
     // before anything is rendered. `null` (nothing survived) is the same
     // present/absent test the note uses. No fallback to the computed mapping —
     // this report describes the stored record, not what the type would map to.
-    const complianceControls = sanitizeStoredComplianceControls(anchor.compliance_controls);
+    // BUG-2026-06-24-007: withheld entirely once the credential is no longer
+    // current — see controlsApplyForStatus. The note disclaims attestation, not
+    // currency.
+    const complianceControls = controlsApplyForStatus(anchor.status)
+      ? sanitizeStoredComplianceControls(anchor.compliance_controls)
+      : null;
 
     // Build report data
     const reportData = {

@@ -448,6 +448,64 @@ describe('buildVerificationResult', () => {
       expect(result.compliance_controls_note).toBeUndefined();
     });
 
+    // BUG-2026-06-24-007 (worker side). The frontend stopped rendering controls
+    // for non-current credentials on 2026-06-24; that fix was frontend-only, so
+    // the API kept serving the full set next to `status: REVOKED`. The SCRUM-2227
+    // note disclaims attestation, not currency — it cannot cure this.
+    it('withholds controls AND the note for a REVOKED credential', () => {
+      const result = buildVerificationResult(createAnchor({
+        status: 'REVOKED',
+        compliance_controls: ['SOC2-CC6.1', 'HIPAA-164.312', 'eIDAS-25'],
+      }));
+      expect(result.status).toBe('REVOKED');
+      expect(result.compliance_controls).toBeUndefined();
+      expect(result.compliance_controls_note).toBeUndefined();
+    });
+
+    it('withholds controls for EXPIRED and SUPERSEDED credentials', () => {
+      for (const status of ['EXPIRED', 'SUPERSEDED']) {
+        const result = buildVerificationResult(createAnchor({
+          status,
+          compliance_controls: ['SOC2-CC6.1'],
+        }));
+        expect(result.compliance_controls, `${status} must not carry controls`).toBeUndefined();
+        expect(result.compliance_controls_note).toBeUndefined();
+      }
+    });
+
+    it('withholds controls before anchoring completes', () => {
+      for (const status of ['PENDING', 'SUBMITTED']) {
+        const result = buildVerificationResult(createAnchor({
+          status,
+          compliance_controls: ['SOC2-CC6.1'],
+        }));
+        expect(result.compliance_controls, `${status} must not carry controls`).toBeUndefined();
+      }
+    });
+
+    it('still serves controls for a live SECURED credential', () => {
+      const result = buildVerificationResult(createAnchor({
+        status: 'SECURED',
+        compliance_controls: ['SOC2-CC6.1'],
+      }));
+      expect(result.compliance_controls).toEqual(['SOC2-CC6.1']);
+      expect(result.compliance_controls_note).toBe(COMPLIANCE_CONTROLS_NOTE);
+    });
+
+    it('withholding controls does not disturb the other rich fields', () => {
+      // A revoked record still carries its receipt, block, and revocation data —
+      // only the compliance claim is withheld.
+      const result = buildVerificationResult(createAnchor({
+        status: 'REVOKED',
+        compliance_controls: ['SOC2-CC6.1'],
+        chain_confirmations: 6,
+        revocation_tx_id: 'tx-revoke-1',
+      }));
+      expect(result.compliance_controls).toBeUndefined();
+      expect(result.chain_confirmations).toBe(6);
+      expect(result.revocation_tx_id).toBe('tx-revoke-1');
+    });
+
     it('disclaims eIDAS qualified status, the named misread risk', () => {
       const result = buildVerificationResult(createAnchor({
         compliance_controls: ['eIDAS-25', 'eIDAS-35'],

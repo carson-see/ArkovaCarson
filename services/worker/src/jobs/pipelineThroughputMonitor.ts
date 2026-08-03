@@ -107,7 +107,60 @@ export const DEFAULT_LINKER_STALL_THRESHOLD_HOURS = 48;
 
 const MS_PER_HOUR = 60 * 60 * 1000;
 
-export type AlertSeverity = 'info' | 'error';
+export type AlertSeverity = 'info' | 'error' | 'fatal';
+
+// ─── Sustained-failure escalation (SCRUM-3050) ───────────────────────────────
+//
+// This monitor detected the 70h anchoring outage correctly and fired every
+// ~30 minutes for 70+ hours with an accurate diagnosis. Nobody saw it. Every
+// re-fire carried ONE stable fingerprint, so ~140 events collapsed into a
+// single Sentry issue that was created once and then aged silently — a
+// dead-man switch that gets QUIETER the longer the outage runs.
+//
+// The fix keeps the anti-flood property (a stall does not mint an issue every
+// 30 minutes) while restoring escalation: the fingerprint carries a duration
+// BUCKET, so crossing 24h / 48h / 72h / 1w opens a genuinely new Sentry issue
+// and re-triggers any FirstSeenEventCondition rule, and the level escalates
+// error -> fatal so a separate, louder rule can key on the sustained case.
+//
+// The duration is derived purely from inputs already measured — no state
+// table, no migration, preserving the DB-stateless design.
+
+export type SustainedBucket = 't0' | 't24h' | 't48h' | 't72h' | 't168h';
+
+/** Bucket lower bounds in hours, widest last. */
+export const SUSTAINED_BUCKET_HOURS: ReadonlyArray<readonly [SustainedBucket, number]> = [
+  ['t168h', 168],
+  ['t72h', 72],
+  ['t48h', 48],
+  ['t24h', 24],
+] as const;
+
+/**
+ * Map a failure duration in hours onto an escalating bucket.
+ *
+ * `null` means the duration is UNBOUNDED (e.g. no anchor has ever secured, so
+ * "how long has securing been dead" has no measurable start). That is the
+ * worst case, so it escalates to the TOP bucket. Resolving an unknown duration
+ * to the mildest bucket would be the classic "no data therefore healthy" bug —
+ * the same failure mode `ce-key-expiry-alert.ts` guards with its SENTINEL path.
+ */
+export function sustainedBucketFor(hours: number | null): SustainedBucket {
+  if (hours === null) return 't168h';
+  for (const [bucket, lowerBound] of SUSTAINED_BUCKET_HOURS) {
+    if (hours >= lowerBound) return bucket;
+  }
+  return 't0';
+}
+
+/**
+ * Level for a bucket. Past 72h — three full nightly flush cycles — a stall is
+ * no longer "degraded", it is an outage, and the level must clear a stricter
+ * alert-rule gate than the routine error stream.
+ */
+export function severityForSustainedBucket(bucket: SustainedBucket): 'error' | 'fatal' {
+  return bucket === 't72h' || bucket === 't168h' ? 'fatal' : 'error';
+}
 
 export interface ThroughputAlertInput {
   /** Age in hours of the NEWEST unlinked public record; null when none/unparseable. */
@@ -126,6 +179,13 @@ export interface ThroughputAlertDecision {
   should_fire: boolean;
   severity: AlertSeverity;
   reason: string;
+  /**
+   * How long the firing condition has held, in hours. `null` when unbounded
+   * (nothing has ever secured) or when not firing.
+   */
+  sustained_hours: number | null;
+  /** Escalation bucket; appended to the Sentry fingerprint. */
+  sustained_bucket: SustainedBucket;
 }
 
 /**
@@ -155,9 +215,15 @@ export function decidePipelineThroughputAlert(
       input.last_secured_age_hours !== null
         ? `last securing was ${input.last_secured_age_hours}h ago`
         : 'no securing observed at all';
+    // Duration of the silent failure = time since the last securing event.
+    // Null (nothing ever secured) is unbounded -> top bucket.
+    const sustainedHours = input.last_secured_age_hours;
+    const bucket = sustainedBucketFor(sustainedHours);
     return {
       should_fire: true,
-      severity: 'error',
+      severity: severityForSustainedBucket(bucket),
+      sustained_hours: sustainedHours,
+      sustained_bucket: bucket,
       reason:
         `Pipeline throughput dead-man: new unlinked public record(s) arrived (latest ` +
         `${input.latest_unlinked_age_hours}h ago) while 0 anchors secured network-wide in the ` +
@@ -173,9 +239,14 @@ export function decidePipelineThroughputAlert(
     input.oldest_unlinked_age_hours !== null &&
     input.oldest_unlinked_age_hours > input.linker_stall_threshold_hours
   ) {
+    // Duration of the stall = how long the oldest unlinked record has waited.
+    const sustainedHours = input.oldest_unlinked_age_hours;
+    const bucket = sustainedBucketFor(sustainedHours);
     return {
       should_fire: true,
-      severity: 'error',
+      severity: severityForSustainedBucket(bucket),
+      sustained_hours: sustainedHours,
+      sustained_bucket: bucket,
       reason:
         `Pipeline linker stall: oldest unlinked public record is ` +
         `${input.oldest_unlinked_age_hours}h old, exceeds ` +
@@ -188,6 +259,8 @@ export function decidePipelineThroughputAlert(
     return {
       should_fire: false,
       severity: 'info',
+      sustained_hours: null,
+      sustained_bucket: 't0',
       reason:
         'No unlinked public records — nothing to convert (feeder-death monitoring is ' +
         'SCRUM-2900, not this monitor)',
@@ -197,6 +270,8 @@ export function decidePipelineThroughputAlert(
   return {
     should_fire: false,
     severity: 'info',
+    sustained_hours: null,
+    sustained_bucket: 't0',
     reason:
       `Pipeline converting: last securing ` +
       `${input.last_secured_age_hours !== null ? `${input.last_secured_age_hours}h ago` : 'not observed'}; ` +
@@ -223,6 +298,10 @@ export interface PipelineThroughputResult {
   /** Cache-backed anchors-by-status counts (anchor_status_counts); null when unavailable. */
   batchProgress: Record<string, number> | null;
   reason: string;
+  /** Hours the firing condition has held; null when unbounded or not firing. */
+  sustainedHours: number | null;
+  /** Escalation bucket carried into the Sentry fingerprint (SCRUM-3050). */
+  sustainedBucket: SustainedBucket;
   checkedAt: string;
 }
 
@@ -360,16 +439,25 @@ function emitThroughputAlert(
 ): void {
   try {
     // Aggregate metrics only (§1.4) — never per-document/user data.
-    capturePipelineThroughputAlert(decision.reason, {
-      source: 'pipeline-throughput-monitor',
-      story: 'SCRUM-2901',
-      latest_unlinked_age_hours: input.latest_unlinked_age_hours,
-      oldest_unlinked_age_hours: input.oldest_unlinked_age_hours,
-      last_secured_age_hours: input.last_secured_age_hours,
-      unlinked_total: input.unlinked_total,
-      window_hours: input.window_hours,
-      linker_stall_threshold_hours: input.linker_stall_threshold_hours,
-    });
+    capturePipelineThroughputAlert(
+      decision.reason,
+      {
+        source: 'pipeline-throughput-monitor',
+        story: 'SCRUM-2901',
+        latest_unlinked_age_hours: input.latest_unlinked_age_hours,
+        oldest_unlinked_age_hours: input.oldest_unlinked_age_hours,
+        last_secured_age_hours: input.last_secured_age_hours,
+        unlinked_total: input.unlinked_total,
+        window_hours: input.window_hours,
+        linker_stall_threshold_hours: input.linker_stall_threshold_hours,
+        sustained_hours: decision.sustained_hours,
+        sustained_bucket: decision.sustained_bucket,
+      },
+      {
+        sustainedBucket: decision.sustained_bucket,
+        level: severityForSustainedBucket(decision.sustained_bucket),
+      },
+    );
   } catch (err) {
     logger.error({ error: err }, 'Pipeline throughput monitor: failed to emit Sentry alert');
   }
@@ -432,6 +520,8 @@ export async function runPipelineThroughputMonitor(
     unlinkedTotal,
     batchProgress,
     reason: decision.reason,
+    sustainedHours: decision.sustained_hours,
+    sustainedBucket: decision.sustained_bucket,
     checkedAt: now.toISOString(),
   };
 

@@ -20,6 +20,7 @@ React 19 frontend application — TypeScript + Tailwind CSS 4 + shadcn/ui + Vite
 
 - **1.6 — Documents NEVER leave the browser.** `generateFingerprint`, `piiStripper`, OCR all run client-side only. Never import these in `services/worker/`.
 - **1.3 — No crypto jargon** in user-facing strings. Banned: Wallet, Gas, Hash, Block, Transaction, Crypto, Blockchain, Bitcoin, Testnet, Mainnet, UTXO, Broadcast. See `src/lib/copy.ts`.
+- **`vendor-heic` Vite chunk isolation (counsel LGPL review, 2026-07-28).** `vite.config.ts`'s `manualChunks` MUST route any `heic-decode`/`libheif-js` (LGPL-3.0) module to its own isolated, lazily-loaded chunk — never merge it into a shared vendor chunk. See `scripts/security/agents.md` and `scripts/security/vendor-heic-chunk-isolation.test.ts` for the full rationale and the static guard test.
 
 ## Do / Don't Rules
 
@@ -35,6 +36,7 @@ React 19 frontend application — TypeScript + Tailwind CSS 4 + shadcn/ui + Vite
 
 ## Recent Changes
 
+- **Third-Party Notices page (engineering-counsel LGPL review)** (2026-07-28): `src/pages/ThirdPartyNoticesPage.tsx` at `/legal/third-party-notices` (`ROUTES.THIRD_PARTY_NOTICES`), linked from `PublicFooter.tsx`. Renders `src/data/thirdPartyNotices.generated.json` (regenerate via `npm run license:notices:generate`, `scripts/security/generate-third-party-notices.ts`) — do not hand-edit the generated file. Carries the LGPL-3.0 notice for `libheif-js`, which **ships today** via `heic-decode` (production dependency, dynamically imported from `src/lib/ocrWorker.ts`) — corrected 2026-08-01 from "pre-cleared pending PR #1740", which caused the page to badge a shipped component "In development — not yet shipped". See `scripts/security/agents.md` for the compliance rationale and the chunk-isolation rule.
 - **Agent discovery / WebMCP** (2026-07-15): `webmcp.ts` progressively registers
   the read-only `search_arkova` and `verify_arkova_record` browser tools through
   `navigator.modelContext.registerTool()` with a `document.modelContext`

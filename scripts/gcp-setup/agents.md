@@ -18,9 +18,20 @@ One-shot GCP infrastructure provisioning scripts. Idempotent; safe to re-run.
 - **`schemas/`** — BigQuery table schemas (anchors.json, audit_events.json, verifications.json).
 - **`slos/`** — Cloud Monitoring SLO definitions (YAML).
 - **`slos-json/`** — REST API SLO payloads consumed by `apply-monitoring.sh` because the installed stable gcloud CLI does not expose services/SLO commands.
-- **`metrics/`** — Cloud Monitoring custom metric descriptor JSON for batch-anchor, Gemini token burn, and Verification API latency telemetry.
+- **`metrics/`** — Cloud Monitoring custom metric descriptor JSON for batch-anchor, Gemini token burn, and Verification API latency telemetry. Applied via the **Monitoring** `metricDescriptors` API.
+- **`log-metrics/`** — Cloud **Logging** log-based metric definitions (a different API and a different resource type from `metrics/`, hence a separate directory and a separate `ensure_log_based_metrics` step that runs BEFORE alert policies). Currently: `cloud-scheduler-job-failure.json` (SCRUM-3050).
 - **`dashboards/`** — Cloud Monitoring dashboard JSON.
-- **`alert-policies/`** — Cloud Monitoring SLO burn alert policy templates. `${SLACK_OPS_ALERTS_CHANNEL}` is rendered by `apply-monitoring.sh`.
+- **`alert-policies/`** — Cloud Monitoring alert policy templates (SLO burn + SCRUM-3050 scheduler failure). `${SLACK_OPS_ALERTS_CHANNEL}` is rendered by `apply-monitoring.sh`.
+
+## SCRUM-3050 — Cloud Scheduler job-failure alerting
+
+`generate-reports` returned `status.code: 5 NOT_FOUND` on every hourly run from 2026-03-16 for ~4.5 months (~3,300 consecutive failures) and nothing alerted. A scheduler job that fires and gets a 404 leaves **no worker-side trace at all** — no worker log, no Sentry event, no dead-man tick, no `/health` degradation — so every in-repo monitor is structurally blind to it. The only observable signal is the Cloud Scheduler log stream, which is why this alarm has to live in GCP Monitoring rather than in the worker.
+
+- `log-metrics/cloud-scheduler-job-failure.json` counts `cloud_scheduler_job` `AttemptFinished` entries at `severity>=ERROR`, extracting `job_id` + `status`. **The filter and log shape were verified against production on 2026-08-01**, not inferred from docs: 464 matching entries in 24h across 11 jobs, including `generate-reports`/`NOT_FOUND` x22. `AttemptStarted` is deliberately excluded (it carries no status and would double-count).
+- `alert-policies/cloud-scheduler-job-failure-page.json` OR-combines two conditions, both grouped by `job_id`: failures in every hourly bucket for 3h (covers >=hourly jobs) and >2 failures in 24h (covers 6-hourly and daily jobs, which never fill 3 consecutive hourly buckets). Replayed against the same 24h of real data, this fires on 10 jobs including `generate-reports` and correctly ignores the single-blip jobs.
+- Contract pinned by `scripts/ci/check-scheduler-failure-alert-contract.test.ts`.
+
+**HONESTY / DECLARED-ONLY WARNING.** Verified 2026-08-01 via the Monitoring + Logging REST APIs: project `arkova1` has **ZERO alert policies, ZERO notification channels, and ZERO log-based metrics**. Every JSON in this directory — the SCRUM-1064 SLO burn policies included — is declared-only and has never been applied. `apply-monitoring.sh` hard-fails without `SLACK_OPS_ALERTS_CHANNEL`, and no notification channel exists to point it at. **Do not cite a file here as evidence that an alarm exists.** Wiring it requires a founder-side action: create a notification channel, export it as `SLACK_OPS_ALERTS_CHANNEL`, run `apply-monitoring.sh`, then capture a live delivery (a real page) as proof — the SCRUM-2902 runbook standard.
 
 ## Conventions
 

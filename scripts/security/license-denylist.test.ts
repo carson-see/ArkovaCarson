@@ -47,3 +47,57 @@ describe('license deny-list scan', () => {
     expect(formatDeniedLicenseReport([])).toBe('No unapproved GPL/AGPL/SSPL licenses found.');
   });
 });
+
+describe('GPL_DENYLIST regex — LGPL coverage (LGPL-blind gate hole)', () => {
+  // BUG: the pre-fix pattern `/\b(?:AGPL|GPL|SSPL)(...)?\b/i` requires a word
+  // boundary immediately before `GPL`. In "LGPL-3.0" the character before
+  // "GPL" is "L" — a word character — so `\b` never matches at that position
+  // and the whole license string sails through undetected. Verified against
+  // libheif-js@1.19.8's exact lockfile license string ("LGPL-3.0"), which is
+  // how an LGPL-3.0 dependency reached the tree unflagged.
+  it.each([
+    'LGPL-3.0',
+    'LGPL-2.1-only',
+    'LGPL-2.1-or-later',
+    'LGPLv2.1',
+    'LGPL',
+  ])('flags %s', (license) => {
+    expect(GPL_DENYLIST.test(license)).toBe(true);
+  });
+
+  // Must not regress the licenses the pre-fix pattern already caught.
+  it.each([
+    'AGPL-3.0',
+    'AGPL-3.0-or-later',
+    'GPL-3.0-or-later',
+    'GPL-2.0',
+    'SSPL-1.0',
+  ])('still flags %s (no regression)', (license) => {
+    expect(GPL_DENYLIST.test(license)).toBe(true);
+  });
+
+  it.each([
+    'MIT',
+    'Apache-2.0',
+    'BSD-3-Clause',
+    'ISC',
+    '(MIT OR Apache-2.0)',
+    'Unlicense',
+    '0BSD',
+  ])('does not flag %s', (license) => {
+    expect(GPL_DENYLIST.test(license)).toBe(false);
+  });
+
+  it('flags a real libheif-js-shaped package-lock entry (LGPL-3.0)', () => {
+    const matches = findDeniedLicenses({
+      lockfileVersion: 3,
+      packages: {
+        '': { name: 'arkova', version: '0.1.0' },
+        'node_modules/libheif-js': { version: '1.19.8', license: 'LGPL-3.0' },
+      },
+    }, 'package-lock.json');
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ name: 'libheif-js', version: '1.19.8', license: 'LGPL-3.0' });
+  });
+});

@@ -7,7 +7,19 @@ description: Assemble or repair the "## Staging Soak Evidence" block a PR needs 
 
 Enforces CLAUDE.md §1.11 / §1.11A / §1.12. There is **no override label** — `staging-soak-skip` was destroyed 2026-05-07. Two independent things check this block: the CI job (`scripts/ci/check-staging-evidence.ts`) and the local pre-merge hook (`.claude/hooks/check-staging-evidence-pre-merge.sh`).
 
-> **⚠️ TEMPORARY (founder directive 2026-08-01): the CI half can currently be bypassed.** When the repository Actions variable `SOAK_GATE_DISABLED` is the literal string `"true"`, the CI job short-circuits to a pass without reading the PR body at all, and prints a `::warning::` saying so. It exists to drain the CI-green queue ahead of the 2026-08-02 pen test; the week-long consolidated soak that follows is what produces the deferred evidence. It stops being honored after `2026-08-16T00:00:00Z` regardless of the variable. Check the live state with `gh variable list` before telling anyone the gate cannot be skipped — while it is set, a green `Staging Soak Evidence Gate` means only that the bypass is engaged, **not** that evidence exists. The local pre-merge hook is NOT bypassed and still requires the block, so everything below still applies to `gh pr ready` / `gh pr merge`.
+> **⚠️ The CI half is bypassable. Read the live state — never assert it.**
+>
+> ```bash
+> gh variable get SOAK_GATE_DISABLED
+> ```
+>
+> When that repository Actions variable is the literal string `"true"`, the CI job short-circuits to a pass **without reading the PR body at all**, printing a `::warning::` as it does. So a green `Staging Soak Evidence Gate` means either "evidence is present" **or** "the bypass is engaged", and only the command above tells you which.
+>
+> The bypass also stops being honored after a hard expiry compiled into `scripts/ci/check-staging-evidence.ts` (`SOAK_GATE_BYPASS_EXPIRES_AT`), independent of the variable — after that the job fails while the variable is still `true`. If the gate starts failing unexpectedly, check the expiry before debugging the PR.
+>
+> **The local pre-merge hook is NOT bypassed** and still requires a well-formed block, so everything below still applies to `gh pr ready` and `gh pr merge` regardless of the variable.
+>
+> Do not restate the current value here. A dated assertion in a file nobody re-reads is how this document goes stale; the command is always right.
 
 ## First: is this actually a soak gap, or a format bug?
 
@@ -22,16 +34,11 @@ If both are present and CI still fails, read the job output for *which field* is
 
 The path detector computes the required tier from changed files and **fails closed to the highest tier**. Under-declaring fails the gate; over-declaring only costs soak time. Hard rules:
 
-| If the PR touches | Tier |
-|---|---|
-| `supabase/migrations/**` | **T3** |
-| `services/worker/src/chain/**` | **T3** |
-| Data integrity, concurrency/fan-out, security, anchor lifecycle, cron-on-anchors | **T3** |
-| Public API contracts, worker behavior, queues, AI behavior, billing, webhooks, SDK surface | **T2** |
-| Low-risk config/code with none of the above surfaces | **T1** |
-| Docs, tests, CI, or tooling only | **T0** |
+**The tier table lives in CLAUDE.md §1.12** — surface → tier → minimum soak → required evidence. It is kept there rather than duplicated here on purpose: CLAUDE.md reaches every agent that touches this repo, including subagents and non-Claude runtimes that never load a skill, whereas this file is only in context once someone invokes it. Two copies of a table edited in two places drift, and the tier table is the wrong thing to be wrong about.
 
-T0 is computed from changed files, not asserted. A PR that declares T0 but touches a higher-tier surface fails CI regardless of what the body says.
+Read §1.12, then come back here for the fields.
+
+T0 is **computed from changed files, not asserted**. A PR that declares T0 but touches a higher-tier surface fails CI regardless of what the body says, and the detector fails closed to the *highest* tier.
 
 ## Required fields
 
@@ -84,4 +91,4 @@ Long soak evidence may be centralized in `docs/staging/rc-manifests/rc-*.json` w
 
 ## Related
 
-`memory/feedback_soak_evidence_standard.md`, `memory/feedback_soak_merge_grade_procedure.md`, `memory/feedback_dont_touch_soaking_prs.md`, `docs/reference/STAGING_RIG.md`.
+None of this skill's rules have a standalone `memory/` file. The index is `memory/README.md`.

@@ -72,8 +72,51 @@ describe('Oracle endpoint', () => {
       expect(result.status).toBe('ACTIVE');
       expect(result.credential_type).toBe('DEGREE');
       expect(result.issuer_name).toBe('University of Michigan');
-      expect(result.description).toBe('Bachelor of Science');
+      // DEGREE is an ACADEMIC RECORD, so it emits no issuer- or
+      // extraction-authored free text — `description` is omitted regardless of
+      // its content. This assertion used to read
+      // `toBe('Bachelor of Science')`; it was pinning the leak. The oracle
+      // reuses `buildVerificationResult`, so it inherits the gate, which is the
+      // point of putting the gate at that seam rather than in the route.
+      // Rule + rationale: scripts/ci/public-pii-projection-contract.json.
+      expect(result.description).toBeUndefined();
       expect(result.explorer_url).toBe('https://mempool.space/tx/abcdef0123456789');
+    });
+
+    it('still publishes a description on a NON-academic credential type', () => {
+      // The companion to the assertion above: the gate is scoped to academic
+      // records plus the value detectors, not a blanket description blackout.
+      const result = buildVerificationResult({
+        public_id: 'ARK-TST-CLE-ABC123',
+        fingerprint: 'abc123',
+        status: 'SECURED',
+        chain_tx_id: 'abcdef0123456789',
+        chain_block_height: 900000,
+        chain_timestamp: '2026-04-01T00:00:00Z',
+        created_at: '2026-04-01T00:00:00Z',
+        credential_type: 'CLE',
+        org_name: 'University of Michigan',
+        recipient_hash: null,
+        issued_at: '2026-01-15',
+        expires_at: null,
+        jurisdiction: null,
+        merkle_root: null,
+        description: 'Ethics for Trial Lawyers',
+        directory_info_opt_out: false,
+        compliance_controls: null,
+        chain_confirmations: null,
+        parent_public_id: null,
+        version_number: null,
+        revocation_tx_id: null,
+        revocation_block_height: null,
+        file_mime: null,
+        file_size: null,
+        confidence_scores: null,
+        sub_type: null,
+        fingerprint_source: null,
+      });
+
+      expect(result.description).toBe('Ethics for Trial Lawyers');
     });
 
     it('returns verified=false for PENDING anchors', () => {
