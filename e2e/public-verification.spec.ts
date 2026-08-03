@@ -15,6 +15,7 @@ import {
   deleteTestAnchor,
   resolveSeedIndividualOrFallbackProfileId,
   SEED_USERS,
+  PUBLIC_FALLBACK_FILENAME_LABEL,
 } from './fixtures';
 
 test.describe('Public Verification', () => {
@@ -63,8 +64,12 @@ test.describe('Public Verification', () => {
     // Should show verified status
     await expectVerifiedPage(page);
 
-    // Should show the filename
-    await expect(page.getByText('e2e_public_test.pdf')).toBeVisible();
+    // The public projection redacts the uploaded filename (0385/0387/0390):
+    // an anonymous viewer sees the controlled fallback label, never the raw
+    // name. Assert both directions so a regression that re-leaks the filename
+    // cannot pass while the label also happens to render somewhere.
+    await expect(page.getByText(PUBLIC_FALLBACK_FILENAME_LABEL).first()).toBeVisible();
+    await expect(page.getByText('e2e_public_test.pdf')).toHaveCount(0);
 
     // Should show fingerprint
     await expect(page.getByText('Fingerprint (SHA-256)', { exact: true })).toBeVisible();
