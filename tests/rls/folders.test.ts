@@ -387,6 +387,45 @@ describe('SCRUM-2940 — folders RLS (cross-tenant isolation + owner-scope join 
     expect(verify.filename).not.toBe('pwned.pdf');
   });
 
+  /**
+   * REGRESSION GUARD for the defect 0393 shipped and 0395 fixed.
+   *
+   * `public.revoke_anchor` is SECURITY DEFINER and deliberately has NO
+   * `user_id = auth.uid()` check — an ORG_ADMIN revoking a TEAMMATE's credential
+   * is its entire purpose. But it is called from the browser under the caller's
+   * own JWT, so inside it `get_caller_role()` is still 'authenticated' and
+   * `OLD.user_id <> auth.uid()`. Under 0393 the folder-only trigger therefore saw
+   * status/revoked_at/revocation_reason change on a non-owned row and raised
+   * 42501 — breaking admin revocation in PRODUCTION until 0395.
+   *
+   * 0393's adversarial review refuted five attack paths but never asked whether
+   * the new guard BLOCKS AN EXISTING LEGITIMATE WRITE. This test asks exactly
+   * that, and is the cheapest thing that would have caught it pre-apply.
+   */
+  it('revoke_anchor (SECURITY DEFINER RPC): an org-A ORG_ADMIN CAN revoke a TEAMMATE-owned anchor — the folder-only trigger must not block trusted admin RPCs', async () => {
+    const { error } = await orgAAdmin.client.rpc('revoke_anchor', {
+      anchor_id: orgATeammateSecuredAnchorId,
+      reason: 'regression guard for 0393/0395',
+    });
+    expect(error).toBeNull();
+
+    // Server-side confirmation — never trust the client's echoed response.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: verify } = await (service as any)
+      .from('anchors')
+      .select('status, revocation_reason')
+      .eq('id', orgATeammateSecuredAnchorId)
+      .single();
+    expect(verify.status).toBe('REVOKED');
+
+    // Restore for any test ordering after this one.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (service as any)
+      .from('anchors')
+      .update({ status: 'SECURED', revoked_at: null, revocation_reason: null })
+      .eq('id', orgATeammateSecuredAnchorId);
+  });
+
   it('anchors UPDATE (owner path): an org-B ORG_ADMIN still cannot touch org-A\'s anchor at all (cross-org denial)', async () => {
     const { data, error } = await orgBAdmin.client
       .from('anchors')
