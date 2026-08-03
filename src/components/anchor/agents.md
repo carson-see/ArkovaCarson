@@ -2,6 +2,10 @@
 
 _Last updated: 2026-07-28 (R19 fingerprint_source, advances SCRUM-2481)_
 
+## Lane 4 bug blitz (2026-08) — HakiChain 22-format accept/dispatch matrix
+
+`FileUpload.tsx` has NO `accept` attribute and no type-based rejection for a single-file drop/select — verified this holds for all 22 formats in the actual HakiChain LOI (PDF, Word .doc/.docx, ODT, RTF, TXT, HTML, XML, JSON, Excel .xls/.xlsx, ODS, CSV, PowerPoint .ppt/.pptx, ODP, EPUB, Markdown, PNG, JPEG, TIFF, GIF, WebP, SVG, HEIF/HEIC). Only `.csv`/`.xlsx`/`.xls` (the ones `isBulkUploadFile()` recognizes) pause on the W2/F1 spreadsheet mode-choice step — everything else, including `.ods` (spreadsheet-family but not recognized by `isBulkUploadFile()`) and the two formats whose AI extraction is unsupported (legacy `.doc`/`.ppt`, see `src/lib/agents.md`), reaches `generateFingerprint()`/`onFileSelect()` directly — upload/fingerprint/anchor is independent of extraction support. New `it.each` matrix in `FileUpload.test.tsx` ("HakiChain 22-format LOI matrix") covers all 22 + the 3 spreadsheet-dual-mode formats. No accept-logic gaps found; no fix needed on this file.
+
 ## 2026-07-28 R19 — document_bytes on the single-doc Secure flow
 
 `SecureDocumentDialog.tsx` now sets `fingerprint_source: 'document_bytes'` on the `validateAnchorCreate(...)` payload for every anchor it creates — this flow always hashes real file bytes client-side via `generateFingerprint` (§1.6), so it is document-derived by construction. See `src/lib/agents.md` for the full evidence-class design.
