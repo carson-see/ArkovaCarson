@@ -28,6 +28,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { ChainReceipt } from '../chain/types.js';
 import { POSTGREST_IN_FILTER_CHUNK, POSTGREST_URL_FILTER_BUDGET_BYTES } from '../utils/postgrest-filter.js';
+import { BATCH_ANCHOR_RUN_LEASE } from './run-lease.js';
+import { createRunLeaseStore } from './__tests__/__testHelpers.js';
 
 const fp = (seed: string) => createHash('sha256').update(seed).digest('hex');
 
@@ -73,6 +75,14 @@ vi.mock('../middleware/flagRegistry.js', () => ({
 }));
 
 vi.mock('../utils/db.js', () => {
+  // SCRUM-3031: processBatchAnchors now wraps its entire run in the shared
+  // run lease (`withRunLease`), which reads/writes `job_queue` before the
+  // `anchors` queries this file actually cares about are ever reached. A
+  // free lease (the default) lets the lease acquire — same as an untouched
+  // job_queue row in real Postgres — so the rest of this file's assertions
+  // exercise the compliance-chunking wiring exactly as before SCRUM-3031.
+  const jobQueueStore = createRunLeaseStore(BATCH_ANCHOR_RUN_LEASE, 'free');
+
   const anchorsSelectChain: Record<string, unknown> = {};
   anchorsSelectChain.eq = vi.fn(() => anchorsSelectChain);
   anchorsSelectChain.is = vi.fn(() => anchorsSelectChain);
@@ -105,6 +115,7 @@ vi.mock('../utils/db.js', () => {
             ),
           };
         }
+        if (table === 'job_queue') return jobQueueStore.from(table);
         return { upsert: vi.fn(async () => ({ error: null })) };
       }),
     },
