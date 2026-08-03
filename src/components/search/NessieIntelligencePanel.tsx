@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { NESSIE_LABELS } from '@/lib/copy';
+import { resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
 
 // ---------------------------------------------------------------------------
 // Types (matching nessie-query.ts response shapes)
@@ -99,7 +100,7 @@ export function NessieIntelligencePanel() {
     setResponse(null);
 
     try {
-      const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
+      const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
       const res = await fetch(
         `${workerUrl}/api/v1/nessie/query?${new URLSearchParams({
           q: query.trim(),
@@ -116,8 +117,12 @@ export function NessieIntelligencePanel() {
 
       const data: NessieContextResponse = await res.json();
       setResponse(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+    } catch {
+      // Never surface a thrown Error's raw message here: it can be
+      // resolveWorkerBaseUrl's internal misconfiguration text (VITE_WORKER_URL
+      // detail, meant for console/engineer visibility, not end users) or any
+      // other unauthored string. Always use the curated, safe label.
+      setError('An error occurred');
     } finally {
       setLoading(false);
     }

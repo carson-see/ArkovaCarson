@@ -18,6 +18,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { supabase } from '@/lib/supabase';
 import { COMPLIANCE_TREND_LABELS } from '@/lib/copy';
+import { resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
 
 interface TrendDataPoint {
   period: string;
@@ -63,7 +64,7 @@ export function ComplianceTrendPage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setError(COMPLIANCE_TREND_LABELS.ERR_NOT_AUTHENTICATED); return; }
 
-      const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
+      const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
       const params = new URLSearchParams({
         granularity,
         from: new Date(fromDate).toISOString(),
@@ -81,8 +82,12 @@ export function ComplianceTrendPage() {
       }
 
       setData(await resp.json());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : COMPLIANCE_TREND_LABELS.ERR_NETWORK);
+    } catch {
+      // Never surface a thrown Error's raw message here: it can be
+      // resolveWorkerBaseUrl's internal misconfiguration text (VITE_WORKER_URL
+      // detail, meant for console/engineer visibility, not end users) or any
+      // other unauthored string. Always use the curated, safe label.
+      setError(COMPLIANCE_TREND_LABELS.ERR_NETWORK);
     } finally {
       setLoading(false);
     }

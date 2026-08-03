@@ -2,7 +2,7 @@
  * NessieIntelligencePanel Component Tests (NMT-07)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { NessieIntelligencePanel } from './NessieIntelligencePanel';
 
@@ -18,6 +18,10 @@ describe('NessieIntelligencePanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetch.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('renders panel title and input', () => {
@@ -97,7 +101,11 @@ describe('NessieIntelligencePanel', () => {
     expect(screen.getByText('SEC EDGAR')).toBeInTheDocument();
   });
 
-  it('displays error on failed request', async () => {
+  // A thrown Error's raw `.message` is NEVER rendered verbatim (§1.4) — it can
+  // carry internal detail (e.g. resolveWorkerBaseUrl's VITE_WORKER_URL
+  // misconfiguration text, meant for console/engineer visibility only). The
+  // catch block always shows the curated, safe label instead.
+  it('displays the generic safe label on a failed request, never the raw server error text', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
       json: () => Promise.resolve({ error: 'Nessie query endpoint is not enabled' }),
@@ -109,11 +117,12 @@ describe('NessieIntelligencePanel', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => {
-      expect(screen.getByText(/not enabled/i)).toBeInTheDocument();
+      expect(screen.getByText('An error occurred')).toBeInTheDocument();
     });
+    expect(screen.queryByText(/not enabled/i)).not.toBeInTheDocument();
   });
 
-  it('displays error on network failure', async () => {
+  it('displays the generic safe label on a network failure, never the raw exception text', async () => {
     mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
     renderComponent();
@@ -122,8 +131,35 @@ describe('NessieIntelligencePanel', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => {
-      expect(screen.getByText(/network error/i)).toBeInTheDocument();
+      expect(screen.getByText('An error occurred')).toBeInTheDocument();
     });
+    expect(screen.queryByText(/network error/i)).not.toBeInTheDocument();
+  });
+
+  // Root cause this guards: resolveWorkerBaseUrl throws an actionable-but-
+  // internal message ("...VITE_WORKER_URL is unset...") when a production
+  // build has no VITE_WORKER_URL configured. That message must reach
+  // console/monitoring (via resolveWorkerBaseUrl's own console.error) but must
+  // NEVER be rendered into the DOM for an end user to read.
+  it('never renders the raw VITE_WORKER_URL config message when the worker URL cannot be resolved in production', async () => {
+    vi.stubEnv('PROD', true);
+    vi.stubEnv('VITE_WORKER_URL', '');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    renderComponent();
+    const input = screen.getByPlaceholderText(/ask a compliance question/i);
+    fireEvent.change(input, { target: { value: 'test' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(screen.getByText('An error occurred')).toBeInTheDocument();
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain('VITE_WORKER_URL');
+    // The loud, engineer-facing signal still fires.
+    expect(consoleError).toHaveBeenCalled();
+
+    consoleError.mockRestore();
   });
 
   it('calls correct API endpoint with query params', async () => {

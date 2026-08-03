@@ -17,6 +17,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { supabase } from '@/lib/supabase';
 import { AUDITOR_BATCH_LABELS } from '@/lib/copy';
+import { resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
 
 interface VerifyResult {
   public_id: string;
@@ -66,7 +67,7 @@ export function AuditorBatchPage() {
         return;
       }
 
-      const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
+      const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
       const body: Record<string, unknown> = {};
 
       if (mode === 'csv') {
@@ -118,8 +119,12 @@ export function AuditorBatchPage() {
       }
 
       setResult(await resp.json());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : AUDITOR_BATCH_LABELS.ERR_NETWORK);
+    } catch {
+      // Never surface a thrown Error's raw message here: it can be
+      // resolveWorkerBaseUrl's internal misconfiguration text (VITE_WORKER_URL
+      // detail, meant for console/engineer visibility, not end users) or any
+      // other unauthored string. Always use the curated, safe label.
+      setError(AUDITOR_BATCH_LABELS.ERR_NETWORK);
     } finally {
       setLoading(false);
     }
