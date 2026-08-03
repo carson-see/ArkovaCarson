@@ -350,10 +350,15 @@ only here.** It is env-only (`services/worker/src/config.ts` reads
 `process.env` — there is no `switchboard_flags` row), and `--set-env-vars` is
 exhaustive, so a manual `gcloud run services update` to set it is wiped by the
 next deploy. Per `docs/release/prod-enablement-checklist-2026-08.md` §2.3 the
-order is DRAIN first → observe one clean `/jobs/drain-connector-artifacts` cron
-cycle → **then** decide on `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE`. A contract test
-asserts ENQUEUE is still absent; reversing the order piles up `pending`
-`connector_artifact` rows with nothing consuming them.
+order was DRAIN first → observe one clean `/jobs/drain-connector-artifacts`
+cron cycle → **then** decide on `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE`; that gate
+has since been passed, and both flags now ship in `--set-env-vars`. The
+contract test (`never enables the connector-artifact producer without its
+consumer`) therefore pins the surviving invariant rather than the one-time
+ordering: **if** `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=true` appears in this
+workflow, the canary step must also carry
+`ENABLE_CONNECTOR_ARTIFACT_DRAIN=true` — a producer without its consumer piles
+up `pending` `connector_artifact` rows with nothing draining them.
 
 ## Related
 
