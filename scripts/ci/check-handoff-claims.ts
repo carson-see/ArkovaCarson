@@ -48,7 +48,15 @@ const PATTERNS: ClaimPattern[] = [
   {
     id: 'applied-prod',
     description: 'Migration / DDL applied on prod',
-    regex: /\bappl(?:ied|ying)\s+(?:on|to|in)\s+prod\b|\bmigrated\s+(?:on|to|in)\s+prod\b/gi,
+    // Negative lookbehinds exclude an honest disclosure ("NOT applied to
+    // prod", "not yet applied to prod", "never applied to prod") from being
+    // flagged as if it were the claim this checker exists to catch. Found
+    // 2026-08-03: a PR's HANDOFF.md entry correctly wrote "is file-only, NOT
+    // applied to prod or staging" and the checker demanded a verification
+    // artifact for a claim the sentence was actively disclaiming — the exact
+    // inverse of this file's own stated purpose (catching FALSE assertions
+    // of live prod state, not honest admissions it isn't live yet).
+    regex: /(?<!\bnot\s)(?<!\bnot\s\w+\s)(?<!\bnever\s)\bappl(?:ied|ying)\s+(?:on|to|in)\s+prod\b|(?<!\bnot\s)(?<!\bnot\s\w+\s)(?<!\bnever\s)\bmigrated\s+(?:on|to|in)\s+prod\b/gi,
     artifactPatterns: [
       /supabase\s+migration\s+list/i,
       /information_schema|pg_indexes|pg_proc|pg_class/i,

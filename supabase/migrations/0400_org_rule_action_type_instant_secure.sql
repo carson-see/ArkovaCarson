@@ -1,4 +1,4 @@
--- 0397_org_rule_action_type_instant_secure.sql
+-- 0400_org_rule_action_type_instant_secure.sql
 --
 -- Founder directive (2026-08-03): "The 'Auto Secure' rule doesn't secure.
 -- ... we need to be able to instantly secure or add to queue and we need

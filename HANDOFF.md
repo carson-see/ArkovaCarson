@@ -98,10 +98,15 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 ### Open items carried forward
 
 - **PR open (2026-08-03): `INSTANT_SECURE` rule action (founder directive — "Auto Secure doesn't
-  secure").** Branch `feat/instant-secure-rule-action`. Migration `0397` (adds `INSTANT_SECURE` to
-  `org_rule_action_type`) is **file-only, NOT applied to prod or staging** — needs an RTE/operator
-  apply + §0 rule 10 ledger reconciliation, then `npm run gen:types` as a canonical-regeneration
-  sanity check (types were hand-edited in this PR to avoid touching the shared local Supabase stack,
+  secure").** Branch `feat/instant-secure-rule-action`. Migration `0400` (adds `INSTANT_SECURE` to
+  `org_rule_action_type`; renumbered from `0397` after an independent same-window claim on that
+  prefix merged first as #2001) **applied to prod and ledger-reconciled to numeric `0400`** (CTO,
+  2026-08-03, migrate-before-merge — the drift gate needs a PR's migration present in prod before
+  it can go green, same mechanism as 0386/#1854 and 0397-0399/#2001 earlier the same session).
+  Verified live: `enum_range(NULL::org_rule_action_type)` shows all 7 values including
+  `INSTANT_SECURE`. Purely additive and inert until this PR's dispatcher code merges — no
+  `organization_rules` row can select the new value before then. Run `npm run gen:types` once as a
+  canonical-regeneration sanity check (types were hand-edited in this PR to avoid touching the shared local Supabase stack,
   which other concurrent worktree sessions were actively mutating at the time). Also found in
   passing, fixed in the same PR: `compliance-inbox-summary.ts`'s `secured_automatically` dashboard
   counter was querying a `routed_to` value the dispatcher has never emitted since SCRUM-1649
