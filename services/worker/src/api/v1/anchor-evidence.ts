@@ -19,6 +19,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { buildProofUrl, buildVerifyUrl } from '../../lib/urls.js';
+import { fetchProfilePublicIdsByActorIds } from '../../utils/profilePublicIds.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
@@ -313,13 +314,7 @@ const defaultLookup: EvidenceLookup = {
     return (data ?? []) as AuditEventRow[];
   },
   async profilePublicIdsByActorIds(actorIds) {
-    if (actorIds.length === 0) return new Map();
-    const { data } = await dbAny.from('profiles').select('id, public_id').in('id', actorIds);
-    const out = new Map<string, string>();
-    for (const row of (data ?? []) as Array<{ id: string; public_id: string | null }>) {
-      if (row.public_id) out.set(row.id, row.public_id);
-    }
-    return out;
+    return fetchProfilePublicIdsByActorIds(dbAny, actorIds, 'anchor-evidence');
   },
 };
 

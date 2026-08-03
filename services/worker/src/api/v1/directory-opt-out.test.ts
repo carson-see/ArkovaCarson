@@ -36,6 +36,8 @@ vi.mock('../../utils/verifyCache.js', () => ({
 import { ToggleOptOutSchema, BulkOptOutSchema } from './directory-opt-out.js';
 import directoryOptOutRouter from './directory-opt-out.js';
 import { db } from '../../utils/db.js';
+import { encodedInFilterBytesFor } from '../../test-utils/postgrestWire.js';
+import { POSTGREST_URL_FILTER_BUDGET_BYTES } from '../../utils/postgrest-filter.js';
 
 function createApp(userId: string | null = 'user-org-A') {
   const app = express();
@@ -169,5 +171,121 @@ describe('Directory Opt-Out API — REG-02', () => {
       }));
       expect(BulkOptOutSchema.safeParse({ records: tooMany }).success).toBe(false);
     });
+  });
+});
+
+/**
+ * POST /bulk — the two update filters.
+ *
+ * `records` is Zod-capped at 1000 entries but `public_id` is `z.string().min(1)`
+ * with NO max, so the encoded `.in()` filter had no byte bound whatsoever. The
+ * update errors were never read, so on a 400 `data` came back null, no id
+ * landed in `updatedIds`, and the response told the caller
+ * `updated: 0, failed: N` with `error: 'Not found'` on EVERY record — a false
+ * statement about rows in the caller's own org that exist and were simply never
+ * written.
+ */
+describe('POST /bulk — update filter width and honest failure reporting', () => {
+  const fromMock = db.from as unknown as ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isUserMemberOfOrgResult.mockResolvedValue({ value: true, error: false });
+  });
+
+  function mockBulk(opts: { failChunk?: (values: string[]) => boolean } = {}) {
+    const seenFilters: string[][] = [];
+    fromMock.mockImplementation((table: string) => {
+      if (table !== 'anchors') return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      const builder: Record<string, unknown> = {};
+      let captured: string[] = [];
+      builder.update = vi.fn(() => builder);
+      builder.in = vi.fn((_c: string, values: string[]) => {
+        captured = values;
+        seenFilters.push(values);
+        return builder;
+      });
+      builder.eq = vi.fn(() => builder);
+      builder.select = vi.fn(() =>
+        opts.failChunk?.(captured)
+          ? Promise.resolve({ data: null, error: { message: 'request line too large' } })
+          : Promise.resolve({ data: captured.map((id) => ({ public_id: id })), error: null }),
+      );
+      return builder;
+    });
+    return { seenFilters };
+  }
+
+  const bulkBody = (n: number, idFor = (i: number) => `ARK-2026-EDU-${String(i).padStart(6, '0')}`) => ({
+    records: Array.from({ length: n }, (_, i) => ({ public_id: idFor(i), opt_out: i % 2 === 0 })),
+  });
+
+  it('keeps every emitted filter inside the URL budget at the schema maximum', async () => {
+    // Schema max records, each with a long-but-legal public_id — `min(1)` sets
+    // no ceiling, so this is inside the documented contract.
+    const body = bulkBody(1000, (i) => `ARK-2026-EDUCATION-RECORD-${String(i).padStart(40, '0')}`);
+    const { seenFilters } = mockBulk();
+
+    const res = await request(createApp())
+      .post('/api/v1/directory-opt-out/bulk')
+      .set('x-org-id', 'org-A')
+      .send(body);
+
+    expect(res.status).toBe(200);
+    expect(seenFilters.length).toBeGreaterThan(2);
+    for (const chunk of seenFilters) {
+      expect(encodedInFilterBytesFor(chunk)).toBeLessThanOrEqual(POSTGREST_URL_FILTER_BUDGET_BYTES);
+    }
+    expect(res.body.updated).toBe(1000);
+    expect(res.body.failed).toBe(0);
+  });
+
+  it('never reports a failed write as "Not found"', async () => {
+    const body = bulkBody(400);
+    // Fail exactly the chunk containing the first record.
+    const firstId = body.records[0].public_id;
+    mockBulk({ failChunk: (values) => values.includes(firstId) });
+
+    const res = await request(createApp())
+      .post('/api/v1/directory-opt-out/bulk')
+      .set('x-org-id', 'org-A')
+      .send(body);
+
+    expect(res.status).toBe(200);
+    const first = res.body.results.find((r: { public_id: string }) => r.public_id === firstId);
+    expect(first.updated).toBe(false);
+    // The lie this test exists to prevent.
+    expect(first.error).not.toBe('Not found');
+    expect(first.error).toBe('update_failed');
+    // Records in the surviving chunks are still reported as updated.
+    expect(res.body.updated).toBeGreaterThan(0);
+  });
+
+  it('still reports a genuinely absent record as "Not found"', async () => {
+    const body = bulkBody(4);
+    const missing = body.records[2].public_id;
+    fromMock.mockImplementation((table: string) => {
+      if (table !== 'anchors') return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      const builder: Record<string, unknown> = {};
+      let captured: string[] = [];
+      builder.update = vi.fn(() => builder);
+      builder.in = vi.fn((_c: string, values: string[]) => { captured = values; return builder; });
+      builder.eq = vi.fn(() => builder);
+      builder.select = vi.fn(() =>
+        Promise.resolve({
+          data: captured.filter((id) => id !== missing).map((id) => ({ public_id: id })),
+          error: null,
+        }),
+      );
+      return builder;
+    });
+
+    const res = await request(createApp())
+      .post('/api/v1/directory-opt-out/bulk')
+      .set('x-org-id', 'org-A')
+      .send(body);
+
+    const row = res.body.results.find((r: { public_id: string }) => r.public_id === missing);
+    expect(row.error).toBe('Not found');
   });
 });
