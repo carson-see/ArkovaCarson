@@ -382,6 +382,7 @@ export const TOAST = {
   TEMPLATE_UPDATE_FAILED: 'Failed to update template. Please try again.',
   TEMPLATE_DELETED: 'Template deleted successfully.',
   TEMPLATE_DELETE_FAILED: 'Failed to delete template. Please try again.',
+  TEMPLATE_PERMISSION_DENIED: 'Only organization admins can manage templates.',
 
   // Revoke
   ANCHOR_REVOKED: 'Record revoked successfully.',
