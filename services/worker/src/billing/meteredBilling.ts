@@ -19,6 +19,7 @@ import crypto from 'node:crypto';
 import { db } from '../utils/db.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { chunkForInFilter } from '../utils/postgrest-filter.js';
 
 export interface MeteredUsageRecord {
   org_id: string;
@@ -190,18 +191,36 @@ export async function reportMeteredUsageToStripe(): Promise<UsageReportResult[]>
   const orgIds = Array.from(new Set(subs.map((s) => s.org_id).filter((id): id is string => Boolean(id))));
   const testOrgIds = new Set<string>();
   if (orgIds.length > 0) {
-    const { data: creditRows, error: creditErr } = await orgCreditsForMetering()
-      .select('org_id, is_test')
-      .in('org_id', orgIds);
-    if (creditErr) {
-      // Fail-CLOSED: if we can't tell which orgs are test, skip the whole
-      // report rather than risk billing a partner sandbox. The cron will
-      // retry next cycle.
-      logger.error({ err: creditErr.message ?? String(creditErr) }, 'Failed to load org_credits.is_test for meter-exclusion check; aborting reportMeteredUsageToStripe to avoid billing sandbox orgs');
-      return results;
-    }
-    for (const row of creditRows ?? []) {
-      if (row.is_test === true) testOrgIds.add(row.org_id);
+    // This filter takes one id per ACTIVE SUBSCRIPTION, so it grows with the
+    // customer base and has no upper bound. Sent whole it exceeded the
+    // PostgREST request-line budget at roughly 200 subscribed orgs — and
+    // because the read below is fail-CLOSED, that 400 stopped ALL metered
+    // billing every cycle, not just the oversized part of it.
+    for (const { values, start } of chunkForInFilter(orgIds)) {
+      const { data: creditRows, error: creditErr } = await orgCreditsForMetering()
+        .select('org_id, is_test')
+        .in('org_id', values);
+      if (creditErr) {
+        // Fail-CLOSED on ANY chunk, deliberately not just on an all-chunks
+        // failure: a partial is_test map is not a weaker answer, it is a WRONG
+        // one. An org whose chunk failed is simply absent from the map, which
+        // reads identically to `is_test=false` — i.e. billable. Skip the whole
+        // report rather than risk billing a partner sandbox; the cron retries
+        // next cycle.
+        logger.error(
+          {
+            err: creditErr.message ?? String(creditErr),
+            chunkStart: start,
+            chunkSize: values.length,
+            totalOrgs: orgIds.length,
+          },
+          'Failed to load org_credits.is_test for meter-exclusion check; aborting reportMeteredUsageToStripe to avoid billing sandbox orgs',
+        );
+        return results;
+      }
+      for (const row of creditRows ?? []) {
+        if (row.is_test === true) testOrgIds.add(row.org_id);
+      }
     }
   }
 

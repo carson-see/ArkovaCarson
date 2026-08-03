@@ -44,6 +44,8 @@ import {
   handleAdminAddOrgMember,
 } from './admin-org-members.js';
 import type { Request, Response } from 'express';
+import { encodedInFilterBytesFor } from '../test-utils/postgrestWire.js';
+import { POSTGREST_URL_FILTER_BUDGET_BYTES } from '../utils/postgrest-filter.js';
 
 function mockReq(
   query: Record<string, string> = {},
@@ -106,6 +108,63 @@ describe('Admin Org Members API', () => {
       );
       expect(res.statusCode).toBe(403);
       expect(mockDbFrom).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleAdminOrgMembers profile id-filter width', () => {
+    // The roster select is `.limit(500)`, and every one of those user ids went
+    // into a single `.in('id', userIds)`. 500 UUIDs is ~18.5 KB of encoded
+    // query string against an 8 KiB budget, so PostgREST answered 400 from
+    // roughly 220 members up. The profile error IS handled here, so the visible
+    // symptom was the whole member list 500ing for exactly the largest orgs.
+    it('keeps every emitted profile filter inside the URL budget at the roster limit', async () => {
+      mockIsPlatformAdmin.mockResolvedValue(true);
+
+      const memberships = Array.from({ length: 500 }, (_, i) => ({
+        user_id: `6f1c2d3e-4a5b-4c6d-8e9f-${String(i).padStart(12, '0')}`,
+        role: 'member',
+        joined_at: '2026-01-03T00:00:00Z',
+      }));
+
+      const seenFilters: string[][] = [];
+      const membershipQuery = {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue({ data: memberships, error: null }),
+      };
+      const profileQuery = {
+        select: vi.fn().mockReturnThis(),
+        in: vi.fn((_c: string, values: string[]) => {
+          seenFilters.push(values);
+          return {
+            is: vi.fn().mockResolvedValue(
+              encodedInFilterBytesFor(values) > POSTGREST_URL_FILTER_BUDGET_BYTES
+                ? { data: null, error: { message: 'request line too large' } }
+                : {
+                    data: values.map((id) => ({ id, email: `${id}@acme.com`, full_name: null, avatar_url: null })),
+                    error: null,
+                  },
+            ),
+          };
+        }),
+      };
+      mockDbFrom.mockImplementation((table: string) => {
+        if (table === 'org_members') return membershipQuery;
+        if (table === 'profiles') return profileQuery;
+        throw new Error(`unexpected table ${table}`);
+      });
+
+      const res = mockRes();
+      await handleAdminOrgMembers('admin-1', ORG_ID, mockReq(), res);
+
+      expect(seenFilters.length).toBeGreaterThan(1);
+      for (const chunk of seenFilters) {
+        expect(encodedInFilterBytesFor(chunk)).toBeLessThanOrEqual(POSTGREST_URL_FILTER_BUDGET_BYTES);
+      }
+      expect(res.statusCode).toBe(200);
+      const body = res.body as { members: unknown[] };
+      expect(body.members).toHaveLength(500);
     });
   });
 

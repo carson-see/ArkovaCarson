@@ -9,6 +9,7 @@ import { Router } from 'express';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { getCurrentMonth, getNextResetDate } from '../../middleware/usageTracking.js';
+import { chunkForInFilter } from '../../utils/postgrest-filter.js';
 
 const router = Router();
 
@@ -62,14 +63,31 @@ router.get('/', async (req, res) => {
     const keyIds = keys.map((k) => k.id);
     let usageRows: Array<{ api_key_id: string; request_count: number }> = [];
 
-    if (keyIds.length > 0) {
-      const { data: usageData } = await db
+    // Bounded only by how many active API keys the org has, so it has no
+    // ceiling. Sent whole it eventually takes a 400 — and the error used to be
+    // discarded (`const { data: usageData } = ...`), which resolves to `null`
+    // rather than throwing. The endpoint then answered HTTP 200 reporting **0
+    // requests this month** on a surface customers use to reconcile their bill.
+    for (const { values, start } of chunkForInFilter(keyIds)) {
+      const { data: usageData, error: usageError } = await db
         .from('api_key_usage')
         .select('api_key_id, request_count')
-        .in('api_key_id', keyIds)
+        .in('api_key_id', values)
         .eq('month', month);
 
-      usageRows = usageData ?? [];
+      if (usageError) {
+        // Fail loud on ANY chunk. A partial total is not a smaller number, it
+        // is a WRONG one, and understating usage on a billing-adjacent read is
+        // the failure mode that matters here.
+        logger.error(
+          { error: usageError, orgIdPrefix: orgId?.slice(0, 8), chunkStart: start, chunkSize: values.length },
+          'Failed to fetch API key usage',
+        );
+        res.status(500).json({ error: 'internal_error', message: 'Failed to retrieve usage' });
+        return;
+      }
+
+      usageRows = usageRows.concat(usageData ?? []);
     }
 
     // Build per-key usage map
