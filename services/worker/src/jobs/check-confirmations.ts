@@ -16,6 +16,7 @@ import type { AuditEventCategory } from '../types/audit-event-category.js';
 import { db } from '../utils/db.js';
 import { invalidateVerificationCache } from '../utils/verifyCache.js';
 import { logger } from '../utils/logger.js';
+import { CHECK_CONFIRMATIONS_RUN_LEASE, withRunLease } from './run-lease.js';
 import { config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
@@ -481,9 +482,6 @@ export async function fanOutBulkSecuredWebhooks(
   await fanOutSecuredAnchorWebhooks(securedAnchors, txId, blockHeight, blockTimestamp);
 }
 
-/** In-process mutex — prevents concurrent confirmation check runs */
-let confirmationCheckRunning = false;
-
 /** Minimum confirmations to consider a transaction confirmed.
  * CRIT-1: 6 confirmations for mainnet (Bitcoin Core standard for "settled"),
  * 1 for signet/testnet (fast development cycles).
@@ -744,28 +742,24 @@ async function fetchTxStatus(txid: string): Promise<MempoolTxResponse | null> {
 export async function checkSubmittedConfirmations(): Promise<{ checked: number; confirmed: number }> {
   logger.info('Starting confirmation check for SUBMITTED anchors');
 
-  // PR #753 audit fix A3: serialize BOTH the mock-mode and real-mode paths
-  // through the same in-process mutex. Pre-fix, the mock-mode early-return
-  // bypassed the mutex check, so two concurrent cron-handler invocations
-  // could each generate distinct `txId = mock-batch-${Date.now()}` strings
-  // and race the chain_tx_id backfill UPDATE — the loser's webhook payload
-  // would carry a tx_id that doesn't match what's in the DB.
-  if (confirmationCheckRunning) {
-    logger.info('Confirmation check skipped — already in progress');
-    return { checked: 0, confirmed: 0 };
-  }
-  confirmationCheckRunning = true;
-
-  try {
+  // PR #753 audit fix A3 (preserved): serialize BOTH the mock-mode and
+  // real-mode paths through the SAME guard. Pre-fix, the mock-mode early-return
+  // bypassed the mutex check, so two concurrent cron-handler invocations could
+  // each generate distinct `txId = mock-batch-${Date.now()}` strings and race
+  // the chain_tx_id backfill UPDATE — the loser's webhook payload would carry a
+  // tx_id that doesn't match what's in the DB. The lease therefore wraps the
+  // branch, not one arm of it.
+  //
+  // SCRUM-3031: that guard used to be a per-PROCESS boolean, invisible to
+  // another Cloud Run instance. It is now a TTL lease row (see `run-lease.ts`);
+  // RACE-3's "always release" property is now the primitive's `finally`.
+  const outcome = await withRunLease({ ...CHECK_CONFIRMATIONS_RUN_LEASE, client: db }, async () => {
     if (config.useMocks || config.nodeEnv === 'test') {
-      return await autoConfirmMockAnchors();
+      return autoConfirmMockAnchors();
     }
-    return await checkSubmittedConfirmationsUnlocked();
-  } finally {
-    // RACE-3: Always release the in-process mutex, even if an unexpected
-    // exception occurs after acquiring it.
-    confirmationCheckRunning = false;
-  }
+    return checkSubmittedConfirmationsUnlocked();
+  });
+  return outcome.acquired ? outcome.result : { checked: 0, confirmed: 0 };
 }
 
 async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number; confirmed: number }> {
@@ -948,8 +942,9 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
           // PR #567 CodeRabbit operational fix: fire-and-forget rather than
           // awaiting inline. A 10K-anchor merkle batch at concurrency=20 with
           // ~1s per dispatch can hold the per-tx Promise.allSettled past the
-          // 2-minute cron interval, blocking subsequent runs from clearing
-          // their `confirmationCheckRunning` mutex. The helper never throws
+          // cron interval, blocking subsequent runs from releasing the run
+          // guard (the `confirmationCheckRunning` boolean at the time; the
+          // SCRUM-3031 run lease now). The helper never throws
           // (errors → DLQ via deliverToEndpoint), so a detached promise is
           // safe; we attach a .catch to surface unexpected throws.
           //

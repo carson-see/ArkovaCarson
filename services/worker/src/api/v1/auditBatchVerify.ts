@@ -10,6 +10,7 @@
  * Returns per-credential pass/fail with anomaly detection.
  */
 
+import { randomInt } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
@@ -312,7 +313,18 @@ router.post('/', async (req: Request, res: Response) => {
       // `??` and not `||`: seed 0 is a seed, and `||` sent the one value an
       // auditor is most likely to type down the unseeded path, making it the
       // single least reproducible request the endpoint accepted.
-      const sampleSeed = seed ?? Math.floor(Math.random() * 2 ** 31);
+      //
+      // `randomInt`, not `Math.random()` (typescript:S2245 — this endpoint
+      // IS a security-sensitive context, not a false positive). ISA 530
+      // sampling is only a control on the audited org if the sample is
+      // unpredictable to them; V8's Math.random() is a non-cryptographic
+      // xorshift128+ PRNG whose future outputs are recoverable from a
+      // handful of past ones. This unseeded seed is echoed back in the
+      // response (`sample.seed`, for ISA 530 replay), so every unseeded call
+      // hands an observer one more output to reconstruct engine state from.
+      // `randomInt` draws from the OS CSPRNG, so a leaked seed proves nothing
+      // about the next one.
+      const sampleSeed = seed ?? randomInt(0, 2 ** 31);
       sample = { population: population.length, seed: sampleSeed };
       targetIds = seededSample(population, sampleSize, seededRandom(sampleSeed));
     }

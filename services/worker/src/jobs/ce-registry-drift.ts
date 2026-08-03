@@ -354,17 +354,38 @@ function toAnchoredRecord(row: AnchorMetadataRow, anchoredAt: string | null): An
  * anchoring outage from exactly this shape hitting the 60s PostgREST
  * `statement_timeout` (see `check-confirmations.ts`).
  *
- * The prerequisite is a partial expression index, following the pattern already
- * in this schema for `pipeline_source`
- * (`0342_cpe_cle_dashboard_partial_index.sql`):
+ * The prerequisite is migration `0389_anchors_ce_registry_ctid_partial_index.sql`
+ * (PR #1862). Do not set `ENABLE_CE_REGISTRY_DRIFT_CHECK=true` before it is
+ * applied to prod — it is a HARD PREREQUISITE, not a nice-to-have.
  *
- *   CREATE INDEX CONCURRENTLY idx_anchors_ce_registry_ctid
- *     ON anchors ((metadata->>'ce_registry_ctid'))
- *     WHERE deleted_at IS NULL AND metadata->>'ce_registry_ctid' IS NOT NULL;
+ *   CREATE INDEX CONCURRENTLY idx_anchors_ce_registry_created_at
+ *     ON public.anchors (created_at DESC)
+ *     WHERE deleted_at IS NULL AND (metadata ->> 'ce_registry_ctid') IS NOT NULL;
  *
- * That is a migration (T3), deliberately out of scope for this flag-dark PR —
- * but it is a HARD PREREQUISITE, not a nice-to-have. Do not set
- * `ENABLE_CE_REGISTRY_DRIFT_CHECK=true` before it exists.
+ * NOTE — an earlier version of this comment prescribed keying the index on the
+ * JSONB expression itself (`ON anchors ((metadata->>'ce_registry_ctid'))`).
+ * That was WRONG and is recorded here so nobody rebuilds it: the index was
+ * built and measured, and the planner NEVER chooses it. This query has no
+ * equality on that key — only `IS NOT NULL`, which the partial predicate
+ * already asserts — so selection turns entirely on the row estimate, and
+ * `examine_variable()` (selfuncs.c) deliberately discards expression
+ * statistics belonging to a PARTIAL index. The estimate therefore stays at the
+ * ~0.5% `nulltestsel` default (99.5% of the table) no matter how often ANALYZE
+ * runs, and the planner stays on `idx_anchors_active_created`. Measured on a
+ * 1M-row rig: with that index present and analyzed, the plan, the buffer count
+ * (52,734) and the estimate were identical to having no index at all.
+ *
+ * The shipped shape keys on the ORDERING column and puts the metadata test in
+ * the partial predicate (the `0342_cpe_cle_dashboard_partial_index.sql` shape),
+ * so implication is proven — no Filter node — and index order serves the ORDER
+ * BY directly. Selection does not depend on the estimate being right: measured
+ * 52,734 buffers / 17,873 ms down to 3 buffers / 0.137 ms, chosen without
+ * ANALYZE and still chosen with stale statistics.
+ *
+ * If you change this query, keep BOTH predicates (`deleted_at IS NULL` and the
+ * `ce_registry_ctid IS NOT NULL` test) and the `created_at` ordering. Drop
+ * either and the partial index stops being provably implied, the planner falls
+ * back to the ~3M-row walk, and the `statement_timeout` returns silently.
  */
 export async function loadAnchoredCeRecords(limit: number): Promise<AnchoredCeRecord[]> {
   const { data, error } = await db

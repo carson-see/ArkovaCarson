@@ -20,6 +20,7 @@ import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import {
   COMPLIANCE_CONTROLS_NOTE,
+  controlsApplyForStatus,
   resolveComplianceControlIds,
 } from '../../utils/complianceMapping.js';
 
@@ -94,6 +95,13 @@ function explorerUrl(txId: string): string {
 }
 
 function getControlIds(anchor: AnchorRow): string[] {
+  // BUG-2026-06-24-007 (worker side): a control list is a statement about a
+  // CURRENT posture. Once a credential is revoked / superseded / expired it gets
+  // none — the export is the artifact an auditor actually receives, and the
+  // SCRUM-2227 note disclaims attestation, not currency. `generateAuditPdf`
+  // states WHY they are absent so the gap cannot be misread as "never had any".
+  if (!controlsApplyForStatus(anchor.status)) return [];
+
   // SCRUM-2227/2283: stored controls (CML-02) win, filtered to the IDs this
   // worker still stands behind; falls back to the computed mapping when nothing
   // was stored or nothing survived. Shared with the GRC evidence push so the
@@ -101,6 +109,51 @@ function getControlIds(anchor: AnchorRow): string[] {
   return resolveComplianceControlIds(anchor.compliance_controls, {
     fallbackCredentialType: anchor.credential_type,
   }) ?? [];
+}
+
+/**
+ * BUG-2026-06-24-007: explain an EMPTY control section on a non-current
+ * credential. Suppression is the right call for machine consumers, but a human
+ * reading a PDF with no controls should not be left to guess whether the record
+ * ever had any. Absence + reason is honest; absence alone is ambiguous.
+ */
+const CONTROLS_WITHHELD_NO_LONGER_CURRENT =
+  'Compliance control identifiers are not shown for this record because it is no longer '
+  + 'current. They describe controls Arkova maps to a live anchored credential; listing them '
+  + 'here would suggest a compliance posture this record no longer has. This is not a '
+  + 'statement that the record was never anchored — its anchor receipt and timestamps above '
+  + 'are unchanged.';
+
+/**
+ * The NOT-YET-ANCHORED case. Kept separate because the wording above makes two
+ * statements that are false for a PENDING / SUBMITTED record: it was never
+ * "current", and there is no anchor receipt above to point at (chain_tx_id,
+ * block height and timestamp are all null until it confirms). Shipping one
+ * string for both states would have put a false claim on an auditor-facing
+ * artifact inside a claims-honesty change.
+ */
+const CONTROLS_WITHHELD_NOT_YET_ANCHORED =
+  'Compliance control identifiers are not shown for this record because it has not completed '
+  + 'anchoring. They describe controls Arkova maps to an anchored credential, and this record '
+  + 'does not yet have a confirmed anchor receipt. This is not a statement that the record is '
+  + 'invalid — only that there is nothing anchored for these controls to describe yet.';
+
+/** Terminal statuses meaning "was anchored, no longer current". */
+const NO_LONGER_CURRENT_STATUSES: ReadonlySet<string> = new Set([
+  'REVOKED',
+  'EXPIRED',
+  'SUPERSEDED',
+]);
+
+/**
+ * Pick the honest explanation for an absent control section. Defaults to the
+ * not-yet-anchored wording, which is the safer of the two for an unrecognised
+ * status: it asserts nothing about a receipt that may not exist.
+ */
+function controlsWithheldNote(status: string): string {
+  return NO_LONGER_CURRENT_STATUSES.has(status)
+    ? CONTROLS_WITHHELD_NO_LONGER_CURRENT
+    : CONTROLS_WITHHELD_NOT_YET_ANCHORED;
 }
 
 // ─── PDF Generation ──────────────────────────────────
@@ -189,7 +242,15 @@ function generateAuditPdf(anchor: AnchorRow, proof: ProofRow | null): Buffer {
 
   // ── Compliance Controls ──
   const controlIds = getControlIds(anchor);
-  if (controlIds.length > 0) {
+  if (!controlsApplyForStatus(anchor.status)) {
+    // BUG-2026-06-24-007: say WHY the section is empty. A silent gap is
+    // ambiguous — an auditor could read it as "this record never had controls"
+    // rather than "they no longer apply" / "nothing is anchored yet".
+    // (`getControlIds` returns [] whenever this gate is false, so these two
+    // branches are exclusive.)
+    y = addSection(doc, 'Regulatory Compliance Controls', y, margin);
+    y = addControlsNote(doc, y, margin, contentWidth, controlsWithheldNote(anchor.status));
+  } else if (controlIds.length > 0) {
     y = addSection(doc, 'Regulatory Compliance Controls', y, margin);
 
     // Group by framework
@@ -318,12 +379,29 @@ function generateBatchPdf(anchors: AnchorRow[]): Buffer {
       if (meta) frameworkSet.add(meta.framework);
     }
   }
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.text([...frameworkSet].sort().join(' • '), margin + 4, y);
-  y += 6;
-  // SCRUM-2227: framework coverage is a mapping, not an assessment.
-  y = addControlsNote(doc, y, margin, contentWidth);
+  if (frameworkSet.size > 0) {
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text([...frameworkSet].sort().join(' • '), margin + 4, y);
+    y += 6;
+    // SCRUM-2227: framework coverage is a mapping, not an assessment.
+    y = addControlsNote(doc, y, margin, contentWidth);
+  } else {
+    // BUG-2026-06-24-007: a batch of non-current records (the batch endpoint
+    // accepts a caller-supplied `status`, e.g. REVOKED) now yields NO frameworks.
+    // Before the currency gate this was unreachable, because getControlIds always
+    // fell back to the never-empty universal set. Emitting the blank line plus the
+    // informational note would leave the note qualifying a list that is not there
+    // — the exact thing this surface's agents.md forbids. Explain the absence
+    // instead, matching the single-record PDF.
+    y = addControlsNote(
+      doc, y, margin, contentWidth,
+      'No compliance control identifiers are shown for this batch: none of the included '
+      + 'records is a current anchored credential. Controls describe controls Arkova maps to '
+      + 'a live anchored credential, so listing them here would suggest a compliance posture '
+      + 'these records do not have.',
+    );
+  }
 
   // ── Individual entries (compact) ──
   y = addSection(doc, 'Anchor Details', y, margin);
@@ -449,12 +527,13 @@ function formatFileSize(bytes: number): string {
  */
 function addControlsNote(
   doc: jsPDF, y: number, margin: number, contentWidth: number,
+  text: string = COMPLIANCE_CONTROLS_NOTE,
 ): number {
   const NOTE_FONT_SIZE = 7;
   const LINE_HEIGHT = 3;
   doc.setFontSize(NOTE_FONT_SIZE);
   doc.setFont('helvetica', 'italic');
-  const lines = doc.splitTextToSize(COMPLIANCE_CONTROLS_NOTE, contentWidth - 8) as string[];
+  const lines = doc.splitTextToSize(text, contentWidth - 8) as string[];
 
   // Page-break before rendering if the measured block would not fit.
   if (y + lines.length * LINE_HEIGHT > PAGE_CONTENT_BOTTOM) {

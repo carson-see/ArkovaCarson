@@ -50,6 +50,11 @@ import * as path from 'node:path';
 // BLOCK comments, which a local copy did not — and a commented-out prior
 // definition pasted into a future migration looks exactly like a block comment.
 import { stripSqlComments } from '../../scripts/ci/check-views-security-invoker';
+// The TS half needs the same treatment for the same reason: verify.ts documents
+// at length WHY it does not import `containsLearnerNamePii`, and a naive
+// substring match on the raw file reads that explanation as the import it warns
+// against. String-aware (a `//` inside a URL literal is not a comment).
+import { stripTsComments } from '../../services/worker/src/ctdl/strip-ts-comments';
 
 const REPO = process.cwd();
 const CONTRACT_PATH = path.join(REPO, 'scripts/ci/public-pii-projection-contract.json');
@@ -60,6 +65,18 @@ interface Contract {
   ts_owner_module: string;
   ts_owner_pending_pr: number;
   ts_pre_1815_module: string;
+  verify_owner_module: string;
+  provenance_owner_module: string;
+  provenance_academic_suppressed_fields: string[];
+  provenance_value_gated_fields: string[];
+  provenance_never_emitted_fields: string[];
+  provenance_implements_learner_name_heuristics: boolean;
+  provenance_fails_closed: boolean;
+  verify_academic_suppressed_fields: string[];
+  verify_value_gated_fields: string[];
+  verify_structural_api_rich_keys: string[];
+  verify_implements_learner_name_heuristics: boolean;
+  verify_fails_closed: boolean;
   ferpa_module: string;
   ferpa_education_types: string[];
   academic_record_credential_types: string[];
@@ -551,5 +568,258 @@ describe('public projection PII gate — cross-implementation parity (self-armin
         'academic types (it includes CLE). If you changed one, decide explicitly whether the other ' +
         'should follow, and update scripts/ci/public-pii-projection-contract.json.',
     ).toEqual([...contract.ferpa_education_types].sort());
+  });
+});
+
+/**
+ * The THIRD projection: `GET /api/v1/verify/:publicId`.
+ *
+ * `router.ts` allows anonymous GET on it, and `buildVerificationResult` shipped
+ * `anchor.description` raw — including for the three credential types the other
+ * two projections suppress outright. The behavioural proof runs in
+ * `services/worker/src/api/v1/verify-pii-projection.test.ts` (supertest through
+ * the real route). These assertions prove the RULE cannot silently disappear
+ * from the source, which a behavioural suite alone cannot: a future edit that
+ * deletes the gate and its tests together would leave nothing failing.
+ */
+describe('public projection PII gate — the verify API surface', () => {
+  const VERIFY = path.join(REPO, contract.verify_owner_module);
+  /**
+   * COMMENT-STRIPPED, for the same reason the SQL assertions are: verify.ts
+   * carries a long design note naming the very symbols these assertions forbid
+   * (`containsLearnerNamePii`), and matching the raw file would read the
+   * explanation as the thing it warns against — a test that fails on its own
+   * documentation and passes once you delete the documentation.
+   */
+  const verifySrc = (): string => stripTsComments(fs.readFileSync(VERIFY, 'utf8'));
+
+  it('reuses the shared detector and the shared value layer, re-implementing neither', () => {
+    const src = verifySrc();
+    // The STRUCTURAL half comes from the guard (dependency-free by design, so a
+    // non-CTDL path can use it without dragging in the CTDL serializer); the
+    // VALUE half comes from public-projection-text.ts, which every TS
+    // projection shares. A second hand-rolled copy of either is exactly the
+    // drift this contract exists to stop.
+    expect(
+      src,
+      'verify.ts must import isEducationCredentialType from ctdl-pii-guard.js',
+    ).toMatch(/from\s+'\.\.\/\.\.\/ctdl\/ctdl-pii-guard\.js'/);
+    expect(src).toContain('isEducationCredentialType');
+    expect(
+      src,
+      'verify.ts must import the value layer from ./public-projection-text.js rather than ' +
+        'carrying its own copy.',
+    ).toMatch(/from\s+'\.\/public-projection-text\.js'/);
+    expect(src).toContain('publicFreeTextOrNull');
+  });
+
+  it('suppresses every contract-listed academic field structurally', () => {
+    const src = verifySrc();
+    // The academic branch must key off the GUARD's set, not FERPA_EDUCATION_TYPES
+    // (which additionally contains CLE and drives a different mechanism).
+    expect(src).toMatch(/isAcademicRecord\s*=\s*isEducationCredentialType\(/);
+    for (const field of contract.verify_academic_suppressed_fields) {
+      // Escaped: the sibling SQL list already carries dotted names like
+      // `metadata.description`, where an unescaped `.` would silently become a
+      // wildcard and the assertion would stop meaning what it says.
+      const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      expect(
+        src,
+        `verify.ts must suppress '${field}' on an academic record — it is listed in ` +
+          'verify_academic_suppressed_fields.',
+      ).toMatch(new RegExp(String.raw`if\s*\(!isAcademicRecord\)[\s\S]{0,400}?\b${escaped}\b`));
+    }
+  });
+
+  it('does NOT gate the academic suppression on directory_info_opt_out', () => {
+    // THE POLICY DECISION. `suppressDirectory` is the REG-02 §99.37 opt-out and
+    // stays exactly as it was; the academic free-text rule must not be folded
+    // into it, because opt-out means the default is PUBLISH and that default is
+    // the defect class. Asserted as source shape because the distinction is
+    // invisible in a passing behavioural test that only sets the flag one way.
+    const src = verifySrc();
+    expect(src).toMatch(/const\s+suppressDirectory\s*=/);
+    expect(
+      src,
+      'The academic-record suppression must not be conditioned on suppressDirectory. ' +
+        'If you are deliberately switching this surface to opt-out-conditional, say so in ' +
+        'scripts/ci/public-pii-projection-contract.json $verify_note and change this test — ' +
+        'it is a decision, not a refactor.',
+    ).not.toMatch(/isAcademicRecord\s*&&\s*suppressDirectory|suppressDirectory\s*&&\s*isAcademicRecord/);
+  });
+
+  it('routes every contract-listed value-gated field through the gate', () => {
+    const src = verifySrc();
+    // The two explicitly-wired fields. `description` is covered above;
+    // `sub_type`/`file_mime` go through the API-RICH allow-list asserted next.
+    for (const field of ['issuer_name', 'jurisdiction']) {
+      expect(
+        contract.verify_value_gated_fields,
+        `${field} must be listed in verify_value_gated_fields`,
+      ).toContain(field);
+    }
+    expect(src).toMatch(/const\s+issuerName\s*=\s*publicFreeTextOrNull\(/);
+    expect(src).toMatch(/const\s+jurisdiction\s*=\s*publicFreeTextOrNull\(/);
+    expect(src).toMatch(/const\s+description\s*=\s*publicFreeTextOrNull\(/);
+  });
+
+  it('gates API-RICH strings by ALLOW-list, so a new additive field fails closed', () => {
+    const src = verifySrc();
+    const block = src.match(/STRUCTURAL_API_RICH_KEYS[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/)?.[1];
+    expect(block, 'verify.ts must declare STRUCTURAL_API_RICH_KEYS as a Set literal').toBeTruthy();
+    const keys = [...(block as string).matchAll(/'([a-z_]+)'/g)].map((m) => m[1]).sort();
+    expect(
+      keys,
+      'The API-RICH exemption list changed. Every string key NOT on it is value-gated, so ' +
+        'ADDING one here publishes that field raw to anonymous callers. State why it is safe in ' +
+        'scripts/ci/public-pii-projection-contract.json.',
+    ).toEqual([...contract.verify_structural_api_rich_keys].sort());
+    // The fail-closed direction: strings are gated unless exempted, rather than
+    // exempted unless recognised as dangerous.
+    expect(src).toMatch(/typeof\s+v\s*===\s*'string'\s*&&\s*!STRUCTURAL_API_RICH_KEYS\.has\(/);
+  });
+
+  it('implements NO learner-name heuristic — same measured reason as the SQL path', () => {
+    expect(contract.verify_implements_learner_name_heuristics).toBe(false);
+    const src = verifySrc();
+    expect(
+      src,
+      'verify.ts must not import containsLearnerNamePii. Measured in PR #1815 and again for ' +
+        '0385: zero true positives on the real leak shapes, abundant false positives because ' +
+        "`for` is a bare preposition. The must_publish_vectors pin the strings it would blank.",
+    ).not.toMatch(/\bcontainsLearnerNamePii\b/);
+  });
+
+  it('omits rather than fails closed — this path answers a verification question', () => {
+    expect(contract.verify_fails_closed).toBe(false);
+    const src = verifySrc();
+    // A PII hit must never become a thrown error / 404 on this surface: that
+    // would tell an anonymous verifier a genuinely anchored document does not
+    // exist. The guard's fail-closed error type must not appear here.
+    expect(src).not.toMatch(/\bCtdlPiiSafetyError\b/);
+    expect(src).not.toMatch(/\bassertNoPiiInJsonLd\b/);
+  });
+});
+
+/**
+ * The FOURTH projection: `GET /api/v1/verify/:publicId/provenance`, mounted in
+ * `router.ts` with no `requireScope` and no auth middleware.
+ *
+ * Behavioural proof is `services/worker/src/api/v1/provenance-pii-projection.test.ts`
+ * (supertest through the real anonymous route). These assertions prove the RULE
+ * cannot silently disappear from the source, which behaviour alone cannot: an
+ * edit that deletes the gate and its tests together leaves nothing failing.
+ */
+describe('public projection PII gate — the provenance API surface', () => {
+  const PROVENANCE = path.join(REPO, contract.provenance_owner_module);
+  /** Comment-stripped for the same reason as the verify half — this file also
+   *  documents the symbols the assertions forbid. */
+  const provenanceSrc = (): string => stripTsComments(fs.readFileSync(PROVENANCE, 'utf8'));
+
+  it('reuses the ONE shared value layer instead of a second copy', () => {
+    const src = provenanceSrc();
+    expect(
+      src,
+      'provenance.ts must import publicFreeTextOrNull from ./public-projection-text.js. ' +
+        'A second copy of the wrapper is the drift this contract exists to prevent.',
+    ).toMatch(/from\s+'\.\/public-projection-text\.js'/);
+    expect(src).toContain('publicFreeTextOrNull');
+    // And the structural half comes from the guard, not a local type list.
+    expect(src).toMatch(/from\s+'\.\.\/\.\.\/ctdl\/ctdl-pii-guard\.js'/);
+    expect(src).toContain('isEducationCredentialType');
+  });
+
+  it('suppresses every contract-listed academic field structurally', () => {
+    const src = provenanceSrc();
+    for (const field of contract.provenance_academic_suppressed_fields) {
+      const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      expect(
+        src,
+        `provenance.ts must suppress '${field}' on an academic record`,
+      ).toMatch(
+        new RegExp(String.raw`isEducationCredentialType\([\s\S]{0,200}?\b${escaped}\b`),
+      );
+    }
+  });
+
+  it('never emits a contract-listed never-emit field, and never SELECTs it', () => {
+    const src = provenanceSrc();
+    for (const qualified of contract.provenance_never_emitted_fields) {
+      const column = qualified.split('.').pop() as string;
+      expect(
+        src,
+        `${qualified} is a person's identity by construction (X.509 Subject CN), not prose that ` +
+          'might contain one. No value detector can catch a bare name — that is the measured ' +
+          'finding behind this whole contract — so it must not appear in provenance.ts at all, ' +
+          'including in the SELECT list.',
+      ).not.toContain(column);
+    }
+  });
+
+  it('does not gate the academic suppression on directory_info_opt_out', () => {
+    const src = provenanceSrc();
+    expect(src).not.toMatch(/directory_info_opt_out/);
+  });
+
+  it('implements NO learner-name heuristic', () => {
+    expect(contract.provenance_implements_learner_name_heuristics).toBe(false);
+    expect(provenanceSrc()).not.toMatch(/\bcontainsLearnerNamePii\b/);
+  });
+
+  it('omits rather than fails closed', () => {
+    expect(contract.provenance_fails_closed).toBe(false);
+    const src = provenanceSrc();
+    expect(src).not.toMatch(/\bCtdlPiiSafetyError\b/);
+  });
+
+  it('never asserts "no reason provided" over a suppressed reason', () => {
+    // Three distinct facts, three distinct strings (CLAUDE.md §1.5, §1.13 R-7).
+    // The `hasStoredFreeText` branch is what keeps the false claim off a
+    // revocation whose reason exists but is not publishable.
+    const src = provenanceSrc();
+    expect(
+      src,
+      'provenance.ts must distinguish "no reason stored" from "reason stored but suppressed" ' +
+        'via hasStoredFreeText — asserting the first when the second is true is a false claim ' +
+        'on a public projection.',
+    ).toContain('hasStoredFreeText');
+  });
+});
+
+/**
+ * The shared TS value layer. One function, four callers; a second copy is the
+ * drift in miniature.
+ */
+describe('public projection PII gate — the shared TS value layer', () => {
+  const MODULE = path.join(REPO, 'services/worker/src/api/v1/public-projection-text.ts');
+
+  it('exists and imports its detectors from the guard rather than restating them', () => {
+    expect(fs.existsSync(MODULE)).toBe(true);
+    const src = stripTsComments(fs.readFileSync(MODULE, 'utf8'));
+    expect(src).toMatch(/from\s+'\.\.\/\.\.\/ctdl\/ctdl-pii-guard\.js'/);
+    for (const symbol of ['containsHighConfidencePii', 'normalizePublicText', 'MAX_SCAN_CHARS']) {
+      expect(src, `the shared value layer must reuse ${symbol}`).toContain(symbol);
+    }
+    // No hand-rolled detector may live here — the guard owns them.
+    expect(
+      src,
+      'public-projection-text.ts must not define its own PII patterns; the guard is the single ' +
+        'source of truth for detection.',
+    ).not.toMatch(/new RegExp\(|=\s*\/\^?\[/);
+  });
+
+  it('is the only TS definition of the wrapper', () => {
+    const callers = [
+      'services/worker/src/api/v1/verify.ts',
+      contract.provenance_owner_module,
+    ];
+    for (const rel of callers) {
+      const src = stripTsComments(fs.readFileSync(path.join(REPO, rel), 'utf8'));
+      expect(
+        src,
+        `${rel} must IMPORT publicFreeTextOrNull, not define its own.`,
+      ).not.toMatch(/function\s+publicFreeTextOrNull\s*\(/);
+      expect(src).toMatch(/from\s+'\.\/public-projection-text\.js'/);
+    }
   });
 });
