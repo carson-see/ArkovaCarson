@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 const mockResolveSafeWorkerEndpoint = vi.hoisted(() => vi.fn());
+const mockResolveWorkerBaseUrl = vi.hoisted(() => vi.fn());
 const mockFetch = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/supabase', () => ({
@@ -14,6 +15,7 @@ vi.mock('@/lib/supabase', () => ({
 
 vi.mock('@/lib/workerUrlSafety', () => ({
   resolveSafeWorkerEndpoint: mockResolveSafeWorkerEndpoint,
+  resolveWorkerBaseUrl: mockResolveWorkerBaseUrl,
 }));
 
 vi.stubGlobal('fetch', mockFetch);
@@ -32,6 +34,7 @@ const PREVIEW = {
 describe('useAcceptInvite', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveWorkerBaseUrl.mockReturnValue('http://localhost:3001');
     mockResolveSafeWorkerEndpoint.mockImplementation((base: string, path: string) => new URL(path, base));
     mockGetSession.mockResolvedValue({ data: { session: null } });
   });
@@ -76,6 +79,22 @@ describe('useAcceptInvite', () => {
     it('falls back to a generic error when the worker endpoint is unsafe', async () => {
       mockResolveSafeWorkerEndpoint.mockImplementation(() => {
         throw new Error('Worker endpoint must use HTTPS outside localhost.');
+      });
+      const { result } = renderHook(() => useAcceptInvite());
+
+      await act(async () => {
+        await result.current.loadPreview('good-token').catch(() => {});
+      });
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(result.current.previewError).not.toBeNull();
+    });
+
+    // Same root cause as useInviteMember: VITE_WORKER_URL unset in prod must
+    // fail loudly, not silently fall back to localhost:3001.
+    it('falls back to a generic error when the worker URL cannot be resolved (VITE_WORKER_URL unset in prod)', async () => {
+      mockResolveWorkerBaseUrl.mockImplementation(() => {
+        throw new Error('Worker URL is not configured for this production build (VITE_WORKER_URL is unset).');
       });
       const { result } = renderHook(() => useAcceptInvite());
 
