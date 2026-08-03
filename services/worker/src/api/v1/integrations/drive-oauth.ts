@@ -10,7 +10,7 @@
  * The cleartext access/refresh token payload never reaches Postgres or logs.
  */
 
-import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { config } from '../../../config.js';
@@ -83,6 +83,19 @@ function base64Url(input: string): string {
 
 function hmac(input: string, secret: string): string {
   return createHmac('sha256', secret).update(input).digest('base64url');
+}
+
+/**
+ * GH #1836 (SECURITY, pen-test scope): mint a cryptographically random Drive
+ * `changes.watch` channel token. Previously this reused `callbackOrgId` — the
+ * org's UUID — as the token, but an org UUID is not a secret (it appears in
+ * URLs, API responses, and client-side state throughout the product), so
+ * anyone who learned/guessed an org UUID could forge a push notification to
+ * the webhook and pass the `X-Goog-Channel-Token` check. 256 bits of entropy,
+ * URL-safe so it survives Drive's `token` field verbatim.
+ */
+function generateChannelToken(): string {
+  return randomBytes(32).toString('base64url');
 }
 
 /**
@@ -432,6 +445,10 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
       }, { kms, env: deps.env });
 
       const channelId = randomUUID();
+      // GH #1836: high-entropy per-channel secret, NOT the org UUID (see
+      // generateChannelToken doc comment). Stored below in account_label and
+      // compared constant-time against X-Goog-Channel-Token by the webhook.
+      const channelToken = generateChannelToken();
       // DRIVE B1: `startPageToken` must be captured here. It is the cursor the
       // changes pipeline starts from, and connect time is the ONLY moment it can
       // be seeded — `advancePageToken` is the only other writer, and it runs
@@ -445,7 +462,7 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
           accessToken: tokens.access_token,
           channelId,
           address: buildWebhookAddress(req),
-          token: callbackOrgId,
+          token: channelToken,
           deps: driveDeps,
         });
       } catch (watchError) {
@@ -480,7 +497,9 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
 
       const accountLabelJson = JSON.stringify({
         email: identity.accountLabel,
-        channel_token: callbackOrgId,
+        // GH #1836: random secret, not the org UUID. Never returned by any
+        // API response — see connector-health.ts's sanitizeAccountLabel.
+        channel_token: channelToken,
         resource_id: subscription?.resourceId ?? null,
       });
 

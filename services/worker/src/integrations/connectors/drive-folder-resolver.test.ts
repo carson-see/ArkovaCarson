@@ -136,6 +136,53 @@ describe('resolveDriveFolderPath', () => {
     expect(path).toBe('/fresh.pdf');
   });
 
+  // PR #1944 review follow-up: a silent-swallow-to-null failure produced zero
+  // ops signal. A real failure must now log something.
+  describe('logger signal on failure (PR #1944 follow-up)', () => {
+    it('logs a warning (with status) on a DriveApiError, not an error', async () => {
+      mockGet.mockRejectedValueOnce(new DriveApiError('forbidden', 403));
+      const logger = { warn: vi.fn(), error: vi.fn() };
+      const path = await resolveDriveFolderPath({
+        orgId: ORG,
+        fileId: 'file-x',
+        accessToken: 'at',
+        cache: makeCache(),
+        deps: { logger },
+      });
+      expect(path).toBeNull();
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: ORG, fileId: 'file-x', status: 403 }),
+        expect.stringContaining('folder-path resolution failed'),
+      );
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it('logs an error (not a warning) on a non-DriveApiError failure (e.g. a bug/unexpected throw)', async () => {
+      mockGet.mockRejectedValueOnce(new TypeError('cannot read properties of undefined'));
+      const logger = { warn: vi.fn(), error: vi.fn() };
+      const path = await resolveDriveFolderPath({
+        orgId: ORG,
+        fileId: 'file-x',
+        accessToken: 'at',
+        cache: makeCache(),
+        deps: { logger },
+      });
+      expect(path).toBeNull();
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ orgId: ORG, fileId: 'file-x' }),
+        expect.stringContaining('folder-path resolution failed'),
+      );
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('never throws when no logger is injected (optional dep, back-compat)', async () => {
+      mockGet.mockRejectedValueOnce(new DriveApiError('forbidden', 403));
+      await expect(
+        resolveDriveFolderPath({ orgId: ORG, fileId: 'file-x', accessToken: 'at', cache: makeCache() }),
+      ).resolves.toBeNull();
+    });
+  });
+
   it('caps at MAX_DEPTH without throwing', async () => {
     // 25 levels > MAX_DEPTH (20). Resolver should stop at 20.
     for (let i = 0; i < 25; i++) {

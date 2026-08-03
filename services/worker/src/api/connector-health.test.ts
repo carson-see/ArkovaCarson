@@ -116,6 +116,81 @@ describe('connector-health (SCRUM-1146)', () => {
     });
   });
 
+  // GH #1836 (SECURITY): account_label for google_drive carries channel_token
+  // — a webhook-authentication secret — inside a JSON blob. It must never
+  // reach this org-facing dashboard response.
+  describe('account_label sanitization (GH #1836)', () => {
+    it('strips channel_token and resource_id from a Drive account_label, keeping only email', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [{
+          provider: 'google_drive',
+          account_label: JSON.stringify({
+            email: 'admin@example.com',
+            channel_token: 'super-secret-webhook-token',
+            resource_id: 'drive-resource-1',
+          }),
+          connected_at: '2026-04-20T00:00:00Z',
+          revoked_at: null,
+        }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; account_label: string | null }> };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.account_label).toBe('admin@example.com');
+      expect(JSON.stringify(body)).not.toContain('super-secret-webhook-token');
+      expect(JSON.stringify(body)).not.toContain('resource_id');
+    });
+
+    it('returns null when a Drive account_label JSON has no email (never leaks the raw blob)', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [{
+          provider: 'google_drive',
+          account_label: JSON.stringify({ channel_token: 'super-secret-webhook-token', resource_id: 'r1' }),
+          connected_at: '2026-04-20T00:00:00Z',
+          revoked_at: null,
+        }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; account_label: string | null }> };
+      const drive = body.connectors.find((c) => c.id === 'google_drive');
+      expect(drive?.account_label).toBeNull();
+      expect(JSON.stringify(body)).not.toContain('super-secret-webhook-token');
+    });
+
+    it('passes a plain display-string account_label through unchanged (DocuSign etc.)', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [{
+          provider: 'docusign',
+          account_label: 'Acme Corp',
+          connected_at: '2026-04-20T00:00:00Z',
+          revoked_at: null,
+        }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; account_label: string | null }> };
+      const docusign = body.connectors.find((c) => c.id === 'docusign');
+      expect(docusign?.account_label).toBe('Acme Corp');
+    });
+
+    it('passes null account_label through as null', async () => {
+      integrationsList.mockResolvedValueOnce({
+        data: [{ provider: 'docusign', account_label: null, connected_at: '2026-04-20T00:00:00Z', revoked_at: null }],
+        error: null,
+      });
+      const ctx = buildRes();
+      await handleConnectorHealth(USER_ID, buildReq(), ctx.res);
+      const body = ctx.body as { connectors: Array<{ id: string; account_label: string | null }> };
+      const docusign = body.connectors.find((c) => c.id === 'docusign');
+      expect(docusign?.account_label).toBeNull();
+    });
+  });
+
   describe('handleConnectorHealth', () => {
     it('rejects callers without an organization with 403', async () => {
       profilesMaybeSingle.mockResolvedValueOnce({ data: null, error: null });
