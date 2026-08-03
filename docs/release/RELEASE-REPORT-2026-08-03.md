@@ -1,6 +1,6 @@
 # Arkova Release Report — 2026-08-03
 
-**25 pull requests merged. Production healthy. Migration ledger clean.**
+**30 pull requests merged. Production healthy. Migration ledger clean (zero exemptions).**
 
 Written for a non-engineer. Every claim was verified against production or the
 repository, not taken from a pull request description.
@@ -149,6 +149,41 @@ Premortems are now standard for every pull request.
 
 ---
 
+## Incident: MFA enforcement locked everyone out (~15 minutes)
+
+Worth reading, because it is the sharpest lesson of the day.
+
+MFA every-login enforcement (#1973) merged and deployed. Within minutes the
+founder could not log in. The screen demanded two-factor authentication, invited
+him to scan a QR code, and then showed **"MFA enroll is disabled for TOTP"** — no
+QR code, no way forward, no way back.
+
+**Cause:** TOTP is not enabled on the Supabase project. The app therefore required
+a second factor that the platform physically could not issue. Every user with an
+elevated role was locked out.
+
+**Resolution:** reverted the merge; login restored and confirmed by checking the
+deployed JavaScript bundle contained no MFA gate. Total outage ~15 minutes.
+
+**Why it happened, honestly:** the work was well built and even shipped with a
+premortem that named "lockout" as the top risk. What nobody did — including me,
+who approved it — was check whether TOTP was actually switched on in the project.
+That is a single API call. We verified the code worked and never verified the
+precondition the code depended on.
+
+**Before MFA ships again, all four must hold:**
+1. TOTP enabled on the Supabase project, verified by a real enrollment attempt
+   against production, not by reading code.
+2. Login is never gated on enrollment — you get in first, then get prompted. The
+   industry pattern (Google, GitHub, Stripe) is grace period plus reminders, not a
+   hard wall.
+3. Recovery codes issued at enrollment, and a break-glass path that does not
+   require being able to log in.
+4. Rolled out by role with a deadline, starting with admins.
+
+
+---
+
 ## Production status
 
 - **Worker:** healthy — database, anchoring and key-management checks all passing.
@@ -164,15 +199,18 @@ Premortems are now standard for every pull request.
 Disclosing these is deliberate. A tester finding something we already documented is a
 far better outcome than being surprised.
 
-1. **#1967 security fixes not merged** — the credit-balance and KYC exposures above
-   are still live. **Highest-priority remaining item.**
+1. ~~#1967 security fixes not merged~~ — **RESOLVED.** Migration 0396 applied to
+   production and verified live: the identity guard is active and `anon` can no
+   longer execute the KYC-status function. The unauthenticated credit-balance and
+   verification-status reads are closed.
 2. **Drive connector switched off** — fixes in, feature dormant by choice.
 3. **Folder page has no navigation link** — fix in progress.
 4. **Org-admin invite blocked by a guard the UI doesn't know about** — fix in
    progress; workaround is invite-as-member-then-promote.
 5. **Platform admin vs org admin not represented in the UI** — only Carson and Sarah
    are platform admins; the interface doesn't distinguish the two roles.
-6. **MFA awaiting your decision** on rollout scope, plus two dashboard toggles.
+6. **MFA reverted after causing a lockout** — see the incident section. Blocked on
+   enabling TOTP in the Supabase dashboard before any re-attempt.
 7. **The "Auto Secure" rule doesn't secure.** The DocuSign rule named "Auto Secure"
    adds contracts to the normal batch queue instead. Today's three signed contracts
    were anchored correctly but are waiting in that queue. There is currently **no**
@@ -187,9 +225,9 @@ far better outcome than being surprised.
 
 ## Honest assessment on pen-test readiness
 
-**Yes, with one condition: merge #1967 first.** The unauthenticated credit-balance and
-verification-status reads are exactly what a tester probes in the first hour, and we
-already have the fix written.
+**Yes.** The condition named in the first draft of this report — the unauthenticated
+credit-balance and verification-status reads — has since been closed in production
+and verified live. That was the one genuine security blocker.
 
 Everything else on the open list is dormant, cosmetic, or a disclosed product gap
 rather than a security exposure. The posture is substantially stronger than this
