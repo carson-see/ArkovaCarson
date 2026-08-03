@@ -230,6 +230,62 @@ describe('runOrgQueueScheduler', () => {
     expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
   });
 
+  // BUG-2026-08-01-F9: prod org 40383eb2-f1cd-4a85-8099-afafff95e5cf,
+  // 2026-08-01T18:49:31Z — a preceding org's broadcast consumed both treasury
+  // UTXOs, so this org's batch broadcast was definitively rejected and the
+  // intent correctly unwound (3 anchors back to PENDING). processBatchAnchors
+  // did NOT throw (by design — a definitive reject is not an exception, it's a
+  // resolved, self-healing outcome), so the pre-fix scheduler recorded
+  // organization_queue_runs as status='succeeded', processed_count=0, error=NULL
+  // — indistinguishable from "nothing was due" to anyone reading run history.
+  // This test reproduces that exact shape via BatchAnchorResult.rejectedReason
+  // (batch-anchor.ts's new signal) and pins that the scheduler now records the
+  // run as status='failed' with the rejection reason in `error`, and counts it
+  // under `failed`, not `succeeded`.
+  it('records a definitive broadcast rejection as failed, not succeeded (BUG-2026-08-01-F9)', async () => {
+    const { insert, upsert } = setupWriteTables();
+    mockDbRpc.mockResolvedValue({
+      data: [{ org_id: ORG_A, last_run_at: null }],
+      error: null,
+    });
+    mockProcessBatchAnchors.mockResolvedValue({
+      processed: 0,
+      batchId: null,
+      merkleRoot: 'd'.repeat(64),
+      txId: null,
+      rejectedReason: 'BroadcastRejectedError: min relay fee not met (code -26)',
+    });
+
+    const result = await runOrgQueueScheduler(
+      { limit: 10 },
+      {
+        now: () => new Date('2026-08-01T18:49:31.000Z'),
+        workerId: 'worker-f9',
+      },
+    );
+
+    expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 1, processed: 0, skipped: 0 });
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({
+      org_id: ORG_A,
+      trigger: 'scheduled',
+      status: 'failed',
+      processed_count: 0,
+      tx_id: null,
+      error: expect.stringContaining('min relay fee not met'),
+    }));
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        org_id: ORG_A,
+        last_run_status: 'failed',
+        last_run_trigger: 'scheduled',
+      }),
+      { onConflict: 'org_id' },
+    );
+    // A rejected-but-not-thrown run must not be silently absorbed into the
+    // "succeeded" notification path either.
+    expect(mockEmitOrgAdminNotifications).not.toHaveBeenCalled();
+  });
+
   // Incident 2026-07-29: launch-72h/legacy-soak signet rigs — claim_due_org_queue_runs
   // committed the row lock (organization_queue_run_state.locked_at set, status
   // 'running') on every single tick that actually had due orgs, yet
