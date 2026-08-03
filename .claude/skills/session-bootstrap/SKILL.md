@@ -8,7 +8,7 @@ description: Arkova session start-up sequence — the mandatory read order, the 
 ## 1. Read, in order
 
 1. `CLAUDE.md` — the rules.
-2. `HANDOFF.md` — current state, open blockers, and **ACTIVE SOAKS**.
+2. `HANDOFF.md` — **`## Now` only**: current state, open blockers, and the `### Soaks` block. `## History` is ~75% of the file and is dated narrative that `## Now` supersedes; read it when you need the story behind something, not on the way in.
 3. `docs/operating-model/lane-manifest.yaml` — your lane, RACI, merge policy.
 4. `docs/operating-model/session-operating-model.md` — bootstrap + SDLC self-route.
 5. `agents.md` in any folder you are about to edit.
@@ -26,7 +26,9 @@ Re-run it after CLAUDE.md changes, after context compaction, and after any sessi
 
 ## 3. Check for active soaks before touching anything
 
-A soaking PR is **frozen evidence**. Do not push to it, redeploy it, mutate its rig, or merge it. A Cloud Run service sitting on a non-tip SHA is an in-flight soak, not an orphan. Read the HANDOFF "active soaks" block first and confirm the clock state before any deploy or rig write.
+A soaking PR is **frozen evidence**. Do not push to it, redeploy it, mutate its rig, or merge it. A Cloud Run service sitting on a non-tip SHA is an in-flight soak, not an orphan.
+
+Read the `### Soaks` block under `## Now` in HANDOFF.md and confirm the clock state before any deploy or rig write. **Do not search the file for "active soak" and act on what you find** — that string occurs in dated `## History` entries describing soaks that finished long ago, so a text search returns a stale answer that reads exactly like a current one. Only `## Now` is authoritative. A Cloud Run service still existing does not mean a soak is running.
 
 Never use a live soak rig as a validation target for an unrelated fix.
 
@@ -38,6 +40,8 @@ One lane per session (Sprint 0 is the train-led exception). Execute only your la
 
 - **Atlassian connector.** Jira and Confluence are the sources of truth for status and documentation. In a non-interactive or headless session the connector may be unauthenticated, which silently severs that loop. Confirm access before asserting anything about ticket state; if it is unavailable, say so rather than reasoning from the repo alone.
 - **Worktree isolation.** If other sessions or agents may be active, work in your own `git worktree`, not the shared checkout. A concurrent session running a rebase or `git stash` in the shared tree will silently revert your uncommitted edits.
+  - **But do not name the branch after the worktree.** `memory/feedback_no_worktree_isolation.md` is CI-enforced (`scripts/ci/feedback-rules/no-worktree-isolation.ts`) and rejects worktree-shaped **branch names** — using a worktree is fine, naming your branch `wt-…`/after the worktree path is not. Override label: `worktree-branch-exception`. This trips people who follow the isolation advice literally.
+  - A fresh worktree can arrive carrying staged files that match no ref. Run `git status` before your first commit.
 - **Branch check after resume.** Run `git branch --show-current` before committing. Context resume does not guarantee you are where you left off.
 
 ## 6. Know what you may not do
@@ -48,4 +52,4 @@ One lane per session (Sprint 0 is the train-led exception). Execute only your la
 
 ## Related
 
-`memory/feedback_verify_branch_after_resume.md`, `memory/feedback_dont_touch_soaking_prs.md`, `memory/feedback_no_live_soak_rig_as_validation_target.md`, `memory/feedback_assert_prod_state_directly.md`, `memory/feedback_worktree_isolate_code_agents.md`.
+None of this skill's rules have a standalone `memory/` file. The index is `memory/README.md`.
