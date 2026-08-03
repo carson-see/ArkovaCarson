@@ -393,6 +393,78 @@ export function captureStuckAnchorAlert(
 }
 
 // ---------------------------------------------------------------------------
+// Stuck-SUBMITTED-monitor fingerprinting (SCRUM-3017 / BUG-2026-07-26-004)
+// ---------------------------------------------------------------------------
+//
+// The PENDING watchdog above never covered anchors stuck in SUBMITTED
+// (broadcast to the chain, awaiting confirmation) — a DIFFERENT failure mode
+// (confirmation-check pipeline stalls, e.g. SCRUM-3021) than a PENDING
+// backlog waiting on the batch flush. A SEPARATE fingerprint keeps a
+// SUBMITTED stall from collapsing into the same Sentry issue as a PENDING
+// one — they have different root causes and different runbooks.
+export const STUCK_SUBMITTED_FINGERPRINT = ['stuck-submitted-monitor'] as const;
+
+/**
+ * Capture a stuck-SUBMITTED-monitor alert with a stable fingerprint so
+ * repeated re-fires collapse into a single Sentry issue.
+ *
+ * @param message - Human-readable summary (e.g. "12 anchors stuck in SUBMITTED").
+ * @param extra   - Optional structured context (counts, statuses). Must be
+ *                  PII-free — the beforeSend scrubber still runs, but callers
+ *                  should pass aggregate metrics, never per-document data.
+ */
+export function captureStuckSubmittedAlert(
+  message: string,
+  extra?: Record<string, unknown>,
+  level: 'warning' | 'error' = 'warning',
+): void {
+  Sentry.captureMessage(message, {
+    level,
+    fingerprint: [...STUCK_SUBMITTED_FINGERPRINT],
+    ...(extra ? { extra } : {}),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Confirmation-check tip-height-unavailable fingerprinting (SCRUM-3021 /
+// BUG-2026-07-26-006)
+// ---------------------------------------------------------------------------
+//
+// checkSubmittedConfirmations() (jobs/check-confirmations.ts) needs the
+// current Bitcoin chain tip height to compute real confirmation depth for
+// SUBMITTED transactions. Before this fix, that fetch was a single unretried
+// call that silently fell back to a fake height of 0 on ANY failure —
+// downstream, that made every already-confirmed tx score as exactly 1
+// confirmation, which is below mainnet's 6-confirmation requirement, so a
+// tip-height outage silently held EVERY SUBMITTED anchor at SUBMITTED
+// forever with zero alert. The fetch now retries mempool.space and falls
+// back to blockstream.info (mirroring the existing per-tx `fetchTxStatus`
+// pattern); this alert fires only in the residual case where BOTH providers
+// fail on a network that requires more than the trivial 1-confirmation
+// threshold. A fixed fingerprint collapses repeated 2-minute-cron re-fires
+// of the same outage into one Sentry issue instead of flooding the inbox.
+export const CONFIRMATION_TIP_HEIGHT_FINGERPRINT = ['confirmation-tip-height-unavailable'] as const;
+
+/**
+ * Capture a "chain tip height unavailable" alert with a stable fingerprint.
+ * Called at most once per `checkSubmittedConfirmations()` run (not per tx) —
+ * every affected tx shares the same root cause.
+ */
+export function captureConfirmationTipHeightUnavailable(
+  extra: { uniqueTxIds: number; minConfirmations: number },
+): void {
+  Sentry.captureMessage(
+    `Chain tip height unavailable from mempool.space and blockstream.info — ` +
+      `${extra.uniqueTxIds} SUBMITTED tx group(s) cannot be promoted this run`,
+    {
+      level: 'error',
+      fingerprint: [...CONFIRMATION_TIP_HEIGHT_FINGERPRINT],
+      extra,
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Pipeline-throughput-monitor fingerprinting (SCRUM-2901 / PI-0.5)
 // ---------------------------------------------------------------------------
 //

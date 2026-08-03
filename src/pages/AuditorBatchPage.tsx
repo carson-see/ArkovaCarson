@@ -17,6 +17,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { supabase } from '@/lib/supabase';
 import { AUDITOR_BATCH_LABELS } from '@/lib/copy';
+import { resolveSafeWorkerEndpoint, resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
+import { WorkerResponseError, isWorkerResponseError } from '@/lib/workerResponseError';
 
 interface VerifyResult {
   public_id: string;
@@ -66,7 +68,11 @@ export function AuditorBatchPage() {
         return;
       }
 
-      const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
+      const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
+      // resolveSafeWorkerEndpoint pins the path to the configured worker origin
+      // and enforces HTTPS outside localhost — resolveWorkerBaseUrl alone only
+      // picks the base; this is the other half of the same module's contract.
+      const endpoint = resolveSafeWorkerEndpoint(workerUrl, '/api/v1/audit/batch-verify');
       const body: Record<string, unknown> = {};
 
       if (mode === 'csv') {
@@ -97,7 +103,7 @@ export function AuditorBatchPage() {
         }
       }
 
-      const resp = await fetch(`${workerUrl}/api/v1/audit/batch-verify`, {
+      const resp = await fetch(endpoint.toString(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -107,19 +113,25 @@ export function AuditorBatchPage() {
       });
 
       if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: 'Request failed' }));
+        const errBody = await resp.json().catch(() => ({ error: 'Request failed' }));
         // Prefer the server's `message` over its `error` code. The sampling
         // endpoint refuses an over-large population or sample with a 422 whose
         // `error` is a machine token (`population_too_large`) and whose
         // `message` is the sentence explaining what to do instead — showing the
-        // token alone left the auditor with no next step.
-        setError(err.message || err.error || `HTTP ${resp.status}`);
-        return;
+        // token alone left the auditor with no next step. Curated: this
+        // message came from the worker's own response body, so the worker
+        // already decided it's safe to show verbatim.
+        throw new WorkerResponseError(errBody.message || errBody.error || `HTTP ${resp.status}`);
       }
 
       setResult(await resp.json());
     } catch (err) {
-      setError(err instanceof Error ? err.message : AUDITOR_BATCH_LABELS.ERR_NETWORK);
+      // Only a WorkerResponseError (constructed exclusively from the worker's
+      // own response body above) is shown verbatim. Everything else — network
+      // errors, resolveWorkerBaseUrl's internal VITE_WORKER_URL
+      // misconfiguration text, or any other unauthored exception — falls back
+      // to the generic, curated label.
+      setError(isWorkerResponseError(err) ? err.message : AUDITOR_BATCH_LABELS.ERR_NETWORK);
     } finally {
       setLoading(false);
     }

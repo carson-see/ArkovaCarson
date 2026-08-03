@@ -45,7 +45,18 @@ export function useRevokeAnchor(): UseRevokeAnchorReturn {
     return true;
   }, []);
 
-  const { execute, loading, error, clearError } = useAsyncAction(revokeImpl);
+  // Every throw site above is an authored, curated string or a Supabase
+  // `rpcError.message` passthrough — never an internal/infrastructure detail
+  // like resolveWorkerBaseUrl's (this hook doesn't call it). `error` is
+  // actively rendered in 4 pages (DashboardPage, DocumentsPage,
+  // MyRecordsPage, VaultDashboard) today, so restore the old blanket-trust
+  // behavior explicitly rather than regressing to a generic label. See
+  // useAsyncAction.ts's isSafeError doc.
+  const { execute, loading, error, clearError } = useAsyncAction(
+    revokeImpl,
+    undefined,
+    (err): err is Error => err instanceof Error,
+  );
 
   const revokeAnchor = useCallback(
     async (anchorId: string, reason?: string): Promise<boolean> => {

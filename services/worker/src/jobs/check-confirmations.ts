@@ -21,6 +21,8 @@ import { config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
 import { chunkForInFilter } from '../utils/postgrest-filter.js';
+import { captureConfirmationTipHeightUnavailable } from '../utils/sentry.js';
+import { resolveMempoolHostBase } from '../utils/mempool-url.js';
 
 /** Maximum unique transactions to check per cron run (rate limit mempool.space) */
 const MAX_TX_CHECKS_PER_RUN = 100;
@@ -635,18 +637,19 @@ interface MempoolTxResponse {
  * Get the mempool.space API base URL for the configured network.
  */
 function getMempoolBaseUrl(): string {
-  if (config.mempoolApiUrl) {
-    return config.mempoolApiUrl;
-  }
-
   const networkPaths: Record<string, string> = {
     testnet4: 'https://mempool.space/testnet4',
     testnet: 'https://mempool.space/testnet',
     signet: 'https://mempool.space/signet',
     mainnet: 'https://mempool.space',
   };
-
-  return networkPaths[config.bitcoinNetwork] ?? 'https://mempool.space/signet';
+  const fallback = networkPaths[config.bitcoinNetwork] ?? 'https://mempool.space/signet';
+  // SCRUM-3016: this file appends `/api/...` itself below (e.g.
+  // `${baseUrl}/api/tx/${txid}`) — resolveMempoolHostBase normalizes a
+  // MEMPOOL_API_URL set WITH a trailing /api (the OTHER convention some
+  // sibling consumers expect — see mempool-url.ts) down to the bare host
+  // this file needs.
+  return resolveMempoolHostBase(config.mempoolApiUrl, fallback);
 }
 
 /**
@@ -733,6 +736,98 @@ async function fetchTxStatus(txid: string): Promise<MempoolTxResponse | null> {
 }
 
 /**
+ * Parse a tip-height response body into a validated positive integer, or
+ * null if it isn't one. SCRUM-3021: a malformed/empty body must not silently
+ * become 0 (falsy-but-truthy-as-a-number) or NaN and masquerade as a real
+ * height downstream.
+ */
+function parseTipHeight(text: string): number | null {
+  const height = Number.parseInt(text, 10);
+  return Number.isFinite(height) && height > 0 ? height : null;
+}
+
+/**
+ * SCRUM-3021 / BUG-2026-07-26-006: fetch the current Bitcoin chain tip
+ * height, with the SAME ERR-2 retry-then-blockstream-fallback shape as
+ * `fetchTxStatus` above.
+ *
+ * Before this fix, the tip height was a single unretried fetch that, on ANY
+ * failure (network blip, timeout, rate limit, malformed body), silently fell
+ * back to `currentTipHeight = 0`. Downstream, `blockHeight > 0 &&
+ * currentTipHeight > 0` was the ONLY branch that computed a real
+ * confirmation count — a 0 tip height skipped it entirely and `confirmations`
+ * stayed at its hardcoded default of 1. On mainnet (`getMinConfirmations()`
+ * === 6), `1 < 6` is always true, so EVERY already-confirmed SUBMITTED tx —
+ * including ones with 100+ real confirmations — was reported as "waiting for
+ * confirmations" for as long as the tip-height endpoint stayed degraded,
+ * with no alert (only a `logger.warn` nobody watches).
+ *
+ * Retrying + falling back to blockstream.info resolves the transient case
+ * (the vast majority in practice, mirroring `fetchTxStatus`'s established
+ * pattern). Returning `null` — never a fake 0 — lets the caller distinguish
+ * "verified height" from "genuinely unknown" instead of silently
+ * mis-measuring depth as zero.
+ */
+async function fetchChainTipHeight(): Promise<number | null> {
+  const baseUrl = getMempoolBaseUrl();
+  const url = `${baseUrl}/api/blocks/tip/height`;
+
+  for (let attempt = 0; attempt <= MEMPOOL_MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (response.ok) {
+        const height = parseTipHeight(await response.text());
+        if (height != null) return height;
+        logger.warn({ url }, 'Mempool.space tip-height response was not a valid positive integer');
+        break; // malformed body is not retryable — fall through to fallback
+      }
+
+      if (response.status === 429 || response.status >= 500) {
+        if (attempt < MEMPOOL_MAX_RETRIES) {
+          const delay = MEMPOOL_INITIAL_BACKOFF_MS * Math.pow(2, attempt);
+          logger.debug({ attempt, delay, status: response.status }, 'Retrying mempool.space tip height after backoff');
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+      }
+
+      logger.warn({ status: response.status }, 'Mempool.space tip-height API returned error');
+      break; // Fall through to fallback
+    } catch (error) {
+      if (attempt < MEMPOOL_MAX_RETRIES) {
+        const delay = MEMPOOL_INITIAL_BACKOFF_MS * Math.pow(2, attempt);
+        logger.debug({ attempt, delay, error }, 'Retrying mempool.space tip height after network error');
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      logger.warn({ error }, 'All mempool.space tip-height retries exhausted');
+      break; // Fall through to fallback
+    }
+  }
+
+  // ERR-2: Fallback to blockstream.info
+  try {
+    const fallbackUrl = `${getBlockstreamBaseUrl()}/api/blocks/tip/height`;
+    logger.info({ fallbackUrl }, 'Falling back to blockstream.info for tip height');
+    const response = await fetch(fallbackUrl, {
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (response.ok) {
+      const height = parseTipHeight(await response.text());
+      if (height != null) return height;
+    }
+  } catch (fallbackError) {
+    logger.warn({ error: fallbackError }, 'Blockstream.info tip-height fallback also failed');
+  }
+
+  return null;
+}
+
+/**
  * Check all SUBMITTED anchors for confirmation.
  * Called by cron every 2 minutes.
  *
@@ -788,21 +883,26 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
 
   // Anchors are updated in bulk by chain_tx_id — no in-memory grouping needed
 
-  // CRIT-1: Fetch current chain tip height for confirmation counting
-  let currentTipHeight = 0;
-  try {
-    const baseUrl = getMempoolBaseUrl();
-    const tipResp = await fetch(`${baseUrl}/api/blocks/tip/height`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    if (tipResp.ok) {
-      currentTipHeight = parseInt(await tipResp.text(), 10);
-    }
-  } catch {
-    logger.warn('Failed to fetch chain tip height — using block-relative confirmations');
-  }
+  // CRIT-1: Fetch current chain tip height for confirmation counting.
+  // SCRUM-3021: retries + blockstream fallback; null (never a fake 0) when
+  // BOTH providers fail — see fetchChainTipHeight's docstring above.
+  const currentTipHeight = await fetchChainTipHeight();
 
   const minConf = getMinConfirmations();
+
+  if (currentTipHeight == null && minConf > 1 && txIds.length > 0) {
+    // Depth cannot be verified on a network that requires more than the
+    // trivial 1-confirmation threshold — every affected tx below defers
+    // (not promoted) rather than being silently mis-scored as "1
+    // confirmation, insufficient". Alert ONCE for the whole run, not once
+    // per tx: every affected tx shares the same root cause.
+    logger.error(
+      { uniqueTxIds: txIds.length, minConfirmations: minConf },
+      'Chain tip height unavailable from mempool.space and blockstream.info — cannot verify confirmation depth, SUBMITTED→SECURED promotion deferred this run',
+    );
+    captureConfirmationTipHeightUnavailable({ uniqueTxIds: txIds.length, minConfirmations: minConf });
+  }
+
   logger.info(
     {
       uniqueTxIds: txIds.length,
@@ -844,18 +944,30 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
 
         // CRIT-1: Check if sufficient confirmations reached
         const minConfirmations = getMinConfirmations();
+        // Default of 1 preserved for the "tip height unknown but
+        // minConfirmations <= 1" branch below — matches the pre-existing
+        // payload sent to drain_submitted_to_secured_for_tx (p_confirmations)
+        // for that case.
         let confirmations = 1;
-        if (blockHeight > 0 && currentTipHeight > 0) {
+        if (blockHeight > 0 && currentTipHeight != null) {
           confirmations = currentTipHeight - blockHeight + 1;
-        }
-
-        if (confirmations < minConfirmations) {
-          logger.debug(
-            { txId, confirmations, required: minConfirmations },
-            `TX confirmed but waiting for ${minConfirmations} confirmations (${confirmations}/${minConfirmations})`,
-          );
+          if (confirmations < minConfirmations) {
+            logger.debug(
+              { txId, confirmations, required: minConfirmations },
+              `TX confirmed but waiting for ${minConfirmations} confirmations (${confirmations}/${minConfirmations})`,
+            );
+            return 0;
+          }
+        } else if (currentTipHeight == null && minConfirmations > 1) {
+          // SCRUM-3021: tip height is unverifiable and this network requires
+          // more than the trivial 1-confirmation threshold — do not guess a
+          // depth. Already logged + alerted once for the whole run above.
           return 0;
         }
+        // else: tip height unknown but minConfirmations <= 1 (signet/testnet)
+        // — `txData.status.confirmed === true` already satisfies that
+        // trivial threshold on its own, so proceed without an exact depth
+        // (unchanged pre-existing behavior for non-mainnet networks).
 
         // 2026-04-29 hotfix: the previous single-shot bulk UPDATE on 10k
         // rows reliably hit the 60s PostgREST statement_timeout because of
