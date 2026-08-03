@@ -3424,6 +3424,20 @@ export const SOURCE_PROVENANCE_LABELS = {
   REGISTRY_REFERENCE_DESCRIPTION: 'A source reference, not a Credential Engine listing or endorsement.',
 } as const;
 
+// ─── CTDL Data Link (public verify page structured-data export) ──────────────
+// The public CTDL JSON-LD projection (GET /api/v1/credentials/:publicId/ctdl,
+// services/worker/src/api/v1/credentials-ctdl.ts) is a mature, tested,
+// standards-conformant endpoint with no UI surface anywhere in the product
+// before this. Copy is a data-FORMAT description only — never a Registry
+// membership / publication-status claim (R-7 / CE-06a, see
+// services/worker/src/ctdl/ctdl-claims-guard.ts for the banned phrase set
+// this wording is written to avoid: "listed", "published/live/appears in the
+// Registry", etc.).
+export const CTDL_DATA_LINK_LABELS = {
+  SECTION_LABEL: 'Structured data',
+  LINK_TEXT: 'CTDL data (JSON-LD)',
+} as const;
+
 // ─── LinkedIn Share (CSI-03 / SCRUM-1599) ─────────────────────────────────────
 
 export const LINKEDIN_SHARE_LABELS = {

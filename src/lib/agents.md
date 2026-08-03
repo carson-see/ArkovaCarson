@@ -1,6 +1,10 @@
 # agents.md — lib
 
-_Last updated: 2026-07-28_
+_Last updated: 2026-08-03_
+
+## 2026-08-03 CTDL data link copy (Lane 3, CE demo-gap bug blitz)
+
+`copy.ts` gained `CTDL_DATA_LINK_LABELS` (placed right after `SOURCE_PROVENANCE_LABELS`) — the public verify page's new "Structured data: CTDL data (JSON-LD)" link to the existing `GET /api/v1/credentials/:publicId/ctdl` projection (see `src/components/verification/CtdlDataLink.tsx` + that folder's `agents.md`). Copy is a data-FORMAT description only, never a Registry-membership/publication-status claim — scanned clean by `copy-claims-gate.test.ts`'s whole-file `PROHIBITED_CLAIM_PATTERNS` sweep (imports the same patterns from `services/worker/src/ctdl/ctdl-claims-guard.ts`).
 
 ## 2026-07-28 R19 — fingerprint_source evidence class (advances SCRUM-2481)
 
