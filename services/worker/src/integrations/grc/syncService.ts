@@ -21,6 +21,7 @@ import type { GrcConnection, GrcEvidencePayload, GrcPlatform } from './types.js'
 import { createGrcAdapter, loadGrcCredentials, type GrcPlatformCredentials } from './adapters.js';
 import {
   COMPLIANCE_CONTROLS_NOTE,
+  controlsApplyForStatus,
   resolveComplianceControlIds,
 } from '../../utils/complianceMapping.js';
 import { createDefaultKmsClient, decryptTokens } from '../oauth/crypto.js';
@@ -83,9 +84,17 @@ export async function syncAnchorToGrc(
 
   // Build evidence payload. SCRUM-2227/2283: stored controls are filtered to the
   // IDs this worker still stands behind before they reach an auditor's tooling.
-  const controlIds = resolveComplianceControlIds(anchor.compliance_controls, {
-    fallbackCredentialType: anchor.credential_type,
-  }) ?? [];
+  // BUG-2026-06-24-007: defence in depth. This function's contract is
+  // "call only after SECURED" (see agents.md) and it currently has no runtime
+  // caller, but this is the surface where a stale control list does the most
+  // damage — it lands in Vanta / Drata / Anecdotes as audit evidence, where no
+  // human reads a disclaimer. A future caller that forgets the contract must not
+  // be able to push controls for a revoked credential.
+  const controlIds = controlsApplyForStatus(anchor.status)
+    ? resolveComplianceControlIds(anchor.compliance_controls, {
+        fallbackCredentialType: anchor.credential_type,
+      }) ?? []
+    : [];
   const frameworks = [...new Set(controlIds.map(c => c.split('-')[0]))];
 
   const evidence: GrcEvidencePayload = {

@@ -4,7 +4,11 @@
 >
 > Rolling state lives in [HANDOFF.md](./HANDOFF.md). Env vars live in [docs/reference/ENV.md](./docs/reference/ENV.md). Story detail lives in Jira ([board](https://arkova.atlassian.net/jira/software/projects/SCRUM)). Topic docs live in Confluence ([space A](https://arkova.atlassian.net/wiki/spaces/A)).
 >
-> This file is the directive — rules Claude follows, shaped like a contract. Keep it ≤300 lines.
+> This file is the directive — rules Claude follows, shaped like a contract.
+>
+> **Budget: every line is a rule that is either true and enforced, or true and knowingly unenforceable.** Not a line count. A line count is satisfied by deleting the rules whose enforcement has holes, which is backwards. Before adding, ask whether removing it would cause a mistake; if not, cut it. Before deleting, check that something else actually enforces it — a hook that no-ops in a worktree is not enforcement.
+>
+> Rolling narrative, dated snapshots and amendment logs do not belong here: state goes to HANDOFF.md, procedures go to `.claude/skills/`, history is in `git log`. But **do not move a load-bearing rule into a skill** — this file is delivered to every agent, including subagents, CI, and non-Claude runtimes that never load one.
 
 ---
 
@@ -23,7 +27,7 @@ Every task updates its ticket (DoR checked, DoD checked, status transitioned, Co
 Every Jira story + epic (To Do / In Progress / Blocked / Done / Closed) MUST have a Confluence page. Markdown files in `docs/` are NOT documentation — they are either historical context or internal engineering notes. Auditors read Confluence. See `memory/feedback_confluence_is_the_doc.md`.
 
 ### 5. Bug log is canonical (Confluence from 2026-04-26)
-Every bug found or fixed must land in the master tracker: [Bug Tracker — Master Log](https://arkova.atlassian.net/wiki/spaces/A/pages/88768514) (canonical, rebuilt 2026-06-24; old pageId 28115270 is archived/read-only — do not log there). Google Sheet (https://docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4) is historical archive only — new bugs land in Confluence.
+Every bug found or fixed must land in the master tracker: [Bug Tracker — Master Log](https://arkova.atlassian.net/wiki/spaces/A/pages/88768514). Google Sheet (https://docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4) is historical archive only — new bugs land in Confluence.
 
 ### 6. UAT every UI change
 Dev server up at 1280px and 375px. Screenshots in the PR. Regressions logged in bug tracker.
@@ -34,7 +38,7 @@ Audit `gcloud ai endpoints list` before + after every tuning/eval/deploy run. Ta
 ### 8. Never work on `main` — code/migration changes only
 Feature branches only **for code, migrations, RLS policies, CI scripts, GitHub Actions workflows, and `CLAUDE.md` rule changes**. Push as many commits as you want — no PR-gated workflow runs on a feature-branch push. CI runs **once** when the PR opens and on each update. Claude never merges (hook-enforced: `.claude/hooks/block-pr-merge.sh`); Mergify merges per `memory/feedback_merges_go_through_mergify.md` and §1.13.
 
-**Workflow triggers — accurate as of 2026-08-01.** Most workflows are PR-only or push-to-`main`/`develop`/`staging`, so feature-branch iteration is close to free. Four exceptions matter for Actions cost and PR-event security: `revision-drift.yml` runs on a **10-minute cron** around the clock (dominant standing cost — revisit the cadence); `sonatype-scan.yml` runs weekly; `publish-sdk.yml` / `publish-python-sdk.yml` fire on `sdk-v*` / `arkova-py-v*` tag pushes; and `s33-wave2-batch-acceptance.yml` uses `pull_request_target` + `pull_request_review` + `issue_comment`, so it fires on **any** issue/PR comment and runs with repo-write context against PR head — audit before this repo goes public.
+**Workflow triggers.** Most workflows are PR-only or push-to-`main`/`develop`/`staging`, so feature-branch iteration is close to free. The exception that matters for security: `s33-wave2-batch-acceptance.yml` uses `pull_request_target` + `pull_request_review` + `issue_comment`, so it fires on **any** issue/PR comment and runs with repo-write context against PR head — audit it before this repo goes public. Standing Actions cost (crons, scheduled scans) is a sweep item, not a rule: see the `infra-hygiene-sweep` skill.
 
 **Carve-out: pure documentation changes can land directly on `main`** without PR ceremony. The full PR + CI cycle (HANDOFF lint, staging-soak gate, Confluence coverage, etc.) for a HANDOFF.md edit or a docs/ tweak is process drag with no review value — Carson is the sole reviewer either way. Direct-commit (or fast-track tiny PR + `gh pr merge --admin`) is allowed when **all** of the following are true:
 
@@ -46,10 +50,10 @@ Feature branches only **for code, migrations, RLS policies, CI scripts, GitHub A
 When the carve-out applies, the workflow is just `git commit` + `git push origin main` (or `gh pr merge --admin --merge --delete-branch` for branches that are already pushed). No multi-job CI wait, no review threads, no body-format dance.
 
 ### 9. Deploy gate ≡ CI lint job (R0-4 / SCRUM-1250)
-`deploy-worker.yml` worker-lint step and `ci.yml` `Lint worker (deploy-gate parity)` step BOTH invoke `npm run lint` from `services/worker/` — the script in `services/worker/package.json`. Drift between them caused the 2026-04-25 12-hour deploy blackout (deploy gate ran a stricter eslint than CI). `scripts/ci/check-deploy-lint-parity.ts` enforces this at PR time. Override via PR label `ci-config-change` only. Followup R4 story drives worker eslint warnings to zero so we can re-add `--max-warnings 0` everywhere.
+`deploy-worker.yml` worker-lint step and `ci.yml` `Lint worker (deploy-gate parity)` step BOTH invoke `npm run lint` from `services/worker/` — the script in `services/worker/package.json`. `scripts/ci/check-deploy-lint-parity.ts` enforces this at PR time. Override via PR label `ci-config-change` only.
 
 ### 10. MCP `apply_migration` ledger reconciliation
-The Supabase MCP `apply_migration` records a timestamp-style `version` in `supabase_migrations.schema_migrations`, but the migration-drift gate's "PR numeric ledger drift" check requires the migration's **NUMERIC prefix** (`NNNN`) present in prod. After applying a PR-owned numeric migration via MCP, reconcile in-session: `UPDATE supabase_migrations.schema_migrations SET version='NNNN' WHERE name='<file>' AND version !~ '^[0-9]{4}$';` (operator-approved per §1.11A — this is the **one expected ledger write**, not a `migration repair`). Then confirm `list_migrations` shows the numeric head **before** declaring the migration done. (Ledger reconciled to numeric 2026-06-15; SCRUM-2500 / S0-E4 adds the full-ledger numeric-integrity audit and then retires the stale `0322`/`0323` `exempt_regex`.)
+The Supabase MCP `apply_migration` records a timestamp-style `version` in `supabase_migrations.schema_migrations`, but the migration-drift gate's "PR numeric ledger drift" check requires the migration's **NUMERIC prefix** (`NNNN`) present in prod. After applying a PR-owned numeric migration via MCP, reconcile in-session: `UPDATE supabase_migrations.schema_migrations SET version='NNNN' WHERE name='<file>' AND version !~ '^[0-9]{4}$';` (operator-approved per §1.11A — this is the **one expected ledger write**, not a `migration repair`). Then confirm `list_migrations` shows the numeric head **before** declaring the migration done.
 
 ---
 
@@ -57,20 +61,26 @@ The Supabase MCP `apply_migration` records a timestamp-style `version` in `supab
 
 ```
 1. CLAUDE.md       <- Rules (this file). Then run scripts/agent/ack-claude-bootstrap.sh.
-2. HANDOFF.md      <- Current state, open blockers, ACTIVE SOAKS (never disrupt one).
+2. HANDOFF.md      <- Read `## Now` ONLY (its `### Soaks` block tells you what is
+                      running — never disrupt a soak). `## History` is reference,
+                      NOT bootstrap reading: it is ~75% of the file and is dated
+                      narrative that `## Now` already supersedes. Consult it when
+                      you need the story behind something, not on the way in.
 3. lane-manifest   <- docs/operating-model/lane-manifest.yaml: your lane, RACI, merge council.
 4. operating-model <- docs/operating-model/session-operating-model.md: bootstrap + SDLC self-route.
 5. agents.md       <- In any folder you're about to edit.
 6. Sprint lane block + Jira ticket <- the sprint doc's lane block; Jira if the task references one.
 ```
 
-Do NOT read pre-2026-04-21 CLAUDE.md iterations — historical only. (The old `docs/archive/MEMORY_deprecated.md` and `ARCHIVE_memory.md` pointers were dropped 2026-08-01: both files were deleted on 2026-03-27, before this directive was even written.)
+Do NOT read pre-2026-04-21 CLAUDE.md iterations — historical only.
+
+**Never conclude a soak is running from a `## History` entry.** Those entries record what was true on their date. The authoritative answer is the `### Soaks` block under `## Now`.
 
 **HANDOFF.md edit lint (R0-6 / SCRUM-1252):** edits asserting prod state (`rev arkova-worker-NNNNN`, `applied on prod`, `verified via`, `deployed healthy`, `live in prod`, `N of M findings shipped`) MUST link a verification artifact (gcloud output, MCP query, log line, or GH Actions run URL) in the same PR description or commit body. The `handoff-claims` CI job enforces this. Override label: `handoff-narrative-only` for prose-only retrospectives. Footer must include `_Last refreshed: YYYY-MM-DD by <author> — claims verified against gcloud/MCP/CI output._`.
 
 **Memory feedback rules CI-enforced (R0-7 / SCRUM-1253):** `memory/feedback_*.md` rules are no longer advisory — each one with a parsable detector ships as a CI script under `scripts/ci/feedback-rules/`. The `feedback-rules` CI job runs the orchestrator on every PR. See `memory/README.md` for the index and override labels.
 
-The repo `memory/` corpus is the **durable, versioned** copy of these rules and the only one CI runners, cloud agents, fresh clones, and teammates can read. A session's local assistant memory is an operational cache, not the source of truth — if a rule exists only there, it does not exist. (The corpus was rebuilt 2026-08-01 after an audit found every rule file this directive cites had been lost while its enforcement scripts survived.)
+The repo `memory/` corpus is the **durable, versioned** copy of these rules and the only one CI runners, cloud agents, fresh clones, and teammates can read. A session's local assistant memory is an operational cache, not the source of truth — if a rule exists only there, it does not exist. `memory/README.md` is the index; `scripts/ci/check-doc-pointers.ts` fails CI if this file, `AGENTS.md`, a skill, or a hook cites a path that does not resolve.
 
 ---
 
@@ -86,7 +96,7 @@ The repo `memory/` corpus is the **durable, versioned** copy of these rules and 
 | Routing | react-router-dom v6. Named routes in `src/lib/routes.ts`. |
 | Worker | Node + Express in `services/worker/`. Webhooks, cron, anchoring. |
 | Payments | Stripe (SDK + webhooks). Worker-only, never browser. |
-| Chain | bitcoinjs-lib. **Signing**: WIF in Secret Manager is the active signer (`client.ts:279` "WIF takes precedence (current)"); GCP KMS code path exists and is selected only when WIF is unset. **Broadcast**: GetBlock RPC (sovereign as of 2026-04-25). **UTXO listing + fee estimation + frontend balance reads**: still via public `mempool.space` — see HANDOFF.md "Bitcoin paths" for the honest path-by-path table. AWS KMS provider non-deployed (`memory/feedback_no_aws.md`). MockChainClient for tests. |
+| Chain | bitcoinjs-lib. **Signing**: WIF in Secret Manager is the active signer; the GCP KMS code path exists and is selected only when WIF is unset. **Broadcast**: GetBlock RPC. **UTXO listing + fee estimation + frontend balance reads**: still via public `mempool.space` — the paths differ, so verify which one you are on before claiming sovereignty. AWS KMS provider non-deployed (`memory/feedback_no_aws.md`). MockChainClient for tests. |
 | Testing | Vitest + Playwright + RLS helpers. |
 | Formal verification | TLA PreCheck. `machines/bitcoinAnchor.machine.ts`. |
 | Ingress | Cloudflare Tunnel, Zero Trust. No public ports. |
@@ -156,7 +166,11 @@ Verification API schema is frozen once published. No breaking changes without a 
 Anonymous: 100 req/min/IP. API key: 1,000 req/min. Batch: 10 req/min. `Retry-After` on 429. Headers on every response.
 
 ### 1.11 Staging is mandatory for every prod-bound change
-No code, migration, RLS policy, cron, edge function, or env change reaches prod without first being applied to the staging environment + validated against the staging worker at the proportional tier. **Standing rig (live as of 2026-05-04):** `arkova-staging` is a **standalone Supabase project** (project_ref `ujtlwnoqfhtitcmsnrpq`, region `us-east-2`, https://ujtlwnoqfhtitcmsnrpq.supabase.co) + `arkova-worker-staging` Cloud Run. NOT a Supabase preview branch — preview branches off prod hit the lettered-suffix migration-builder bug (`0055b_seed_alignment_idempotent.sql` skip → `MIGRATIONS_FAILED`). Apply migrations to staging via `npx supabase db push --linked` (recognizes lettered-suffix files; bypasses the preview-branch builder regex `^(\d{14}|\d{1,4})_`). Full operations doc: [docs/reference/STAGING_RIG.md](./docs/reference/STAGING_RIG.md). CI gate `staging-evidence` blocks merge if prod-affecting PRs lack the required `## Staging Soak Evidence` block or approved `RC manifest path: docs/staging/rc-manifests/rc-*.json` coverage. **No override label exists** — the `staging-soak-skip` label was destroyed on 2026-05-07; the only CI-only path is T0, computed from changed files in `scripts/ci/check-staging-evidence.ts` for docs/tests/CI/tooling-only PRs. The agent harness enforces this client-side too via `.claude/hooks/check-staging-evidence-pre-merge.sh` — Claude is blocked from `gh pr ready` (Draft → Ready) or `gh pr merge` if the PR body lacks required tier evidence.
+No code, migration, RLS policy, cron, edge function, or env change reaches prod without first being applied to the staging environment + validated against the staging worker at the proportional tier. **Standing rig:** `arkova-staging` is a **standalone Supabase project** (project_ref `ujtlwnoqfhtitcmsnrpq`, region `us-east-2`) + `arkova-worker-staging` Cloud Run — NOT a Supabase preview branch. Apply migrations to staging via `npx supabase db push --linked`. Full operations doc: [docs/reference/STAGING_RIG.md](./docs/reference/STAGING_RIG.md).
+
+CI gate `staging-evidence` blocks merge if a prod-affecting PR lacks the required `## Staging Soak Evidence` block or approved `RC manifest path: docs/staging/rc-manifests/rc-*.json` coverage. The agent harness enforces the same client-side via `.claude/hooks/check-staging-evidence-pre-merge.sh` — Claude is blocked from `gh pr ready` and `gh pr merge` without tier evidence.
+
+**Never assert the gate's bypass state from this file — read it.** `scripts/ci/check-staging-evidence.ts` short-circuits to a pass when the repository variable `SOAK_GATE_DISABLED` is `true`, so a green Staging Soak Evidence Gate can mean "evidence is present" **or** "the bypass is engaged", and only `gh variable get SOAK_GATE_DISABLED` distinguishes them. Check it before citing that gate as proof of anything. Current state and the closing window live in the `soak-evidence` skill and `scripts/ci/agents.md`, which are updated when it changes; this directive is not.
 
 ### 1.11A Staging integrity and contamination control
 Every Arkova coding, review, staging, migration, prod, Jira, or Confluence session starts by reading the current `CLAUDE.md`; spawned agents must be told to read `CLAUDE.md` plus relevant `agents.md` files before acting. After reading, run `scripts/agent/ack-claude-bootstrap.sh` from the repo root; `.claude/hooks/check-claude-bootstrap.sh` blocks staging/prod-sensitive Bash commands, linked Supabase operations, Cloud Run staging changes, and PR ready/merge/body edits until the current `CLAUDE.md` hash is acknowledged. After context compaction or session resume, re-read the sections relevant to the next action instead of relying on memory.
@@ -183,8 +197,8 @@ Batched T2/T3 release candidates may centralize long soak evidence in `docs/stag
 
 ### 1.13 Operating model, tiered-merge & the drift / claims gates
 - **One lane per session** (Sprint 0 = train-led exception). Execute only your lane's surfaces per [`docs/operating-model/lane-manifest.yaml`](./docs/operating-model/lane-manifest.yaml); a cross-lane change is a handoff, not a reach-in. Bootstrap + SDLC self-routing: [`docs/operating-model/session-operating-model.md`](./docs/operating-model/session-operating-model.md).
-- **Tiered merge — Claude never merges to `main`, ever** (hook-enforced; see `memory/feedback_never_merge_without_ok.md`). **Mergify auto-merges every tier once CI is green and the Staging Soak Evidence Gate passes** — T0/T1 move fast; T2/T3 queue only after merge-grade soak evidence (the real tier gate is the *evidence requirement*, not a manual merge). The `needs-carson-merge` label is an informational tier-marker, **not** a Mergify queue gate (corrected 2026-06-24 — the S0-4.2d gate that held T2/T3 out of the queue was removed from `.mergify.yml`; Mergify-merges-all-tiers is the standing policy per `memory/feedback_merges_go_through_mergify.md`). Carson overrides any PR at any time with `do-not-merge` / `work-in-progress` and retains final admin-merge authority. The path detector computes tier and **fails CLOSED to the highest tier** (more soak evidence required), never to a manual-merge requirement.
-- **Config-drift / parity gate (R-5) — SCAFFOLD, not yet a live-prod gate:** `scripts/ci/check-config-drift.ts` diffs the asserted config manifest (`config.ts` / `deploy-worker.yml` / `vercel.json`: flags / providers / CSP) against **committed snapshots** under `scripts/ci/config-drift/`, plus worker↔edge parity. It does **not** yet read running prod — live source-parse and `/health` capture remain open work, and the script says so in its own header. Do not cite it as proof that prod matches asserted config; assert prod state directly (`memory/feedback_assert_prod_state_directly.md`). Keep the asserted-state manifest honest when you change a flag/provider/CSP.
+- **Tiered merge — Claude never merges to `main`, ever** (hook-enforced; see `memory/feedback_never_merge_without_ok.md`). **Mergify auto-merges every tier once CI is green and the Staging Soak Evidence Gate passes** — T0/T1 move fast; T2/T3 queue only after merge-grade soak evidence (the real tier gate is the *evidence requirement*, not a manual merge). The `needs-carson-merge` label is an informational tier-marker, **not** a Mergify queue gate (per `memory/feedback_merges_go_through_mergify.md`). Carson overrides any PR at any time with `do-not-merge` / `work-in-progress` and retains final admin-merge authority. The path detector computes tier and **fails CLOSED to the highest tier** (more soak evidence required), never to a manual-merge requirement.
+- **Config-drift / parity gate (R-5) — SCAFFOLD, not yet a live-prod gate:** `scripts/ci/check-config-drift.ts` diffs the asserted config manifest (`config.ts` / `deploy-worker.yml` / `vercel.json`: flags / providers / CSP) against **committed snapshots** under `scripts/ci/config-drift/`, plus worker↔edge parity. It does **not** yet read running prod — live source-parse and `/health` capture remain open work, and the script says so in its own header. Do not cite it as proof that prod matches asserted config — query prod directly and cite the artifact (load the `prod-state-check` skill). Keep the asserted-state manifest honest when you change a flag/provider/CSP.
 - **Claims-review gate (R-7):** never make a public/UI claim of external status we don't hold (e.g. "listed in the Credential Registry" when CE only approved us *to publish*). Proof copy states what is measured vs asserted vs **NOT** asserted (extends §1.5).
 
 ---
@@ -207,7 +221,7 @@ Every task — before declaring done — must pass all seven gates:
 4. **Bug log** — Any bugs found or fixed logged in the master tracker.
 5. **agents.md** — Updated in every modified folder.
 6. **HANDOFF.md + CLAUDE.md** — HANDOFF.md updated with the new state. CLAUDE.md only touched if a RULE changes — do not add rolling narrative here.
-7. **Workflow validators (R0-5 / SCRUM-1251)** — Atlassian Automation rules in `docs/jira-workflow/automation-rules.json` MUST approve the Done transition. Reporter ≠ resolver, PR merged > 30 min, Cloud Run SHA matches, all DoD `[ ]` ticked, no red required checks, Bug-issue rows linked. If a rule blocks, fix the underlying gap — do NOT seek a workaround.
+7. **Workflow validators (R0-5 / SCRUM-1251)** — transition the ticket to Done and **confirm it actually landed**; re-read the issue rather than assuming the transition took. The intended gates are reporter ≠ resolver, PR merged > 30 min, Cloud Run SHA matches, all DoD `[ ]` ticked, no red required checks, Bug-issue rows linked. If a rule blocks you, fix the underlying gap — never seek a workaround. **Do not treat a successful transition as proof the gates ran:** `docs/jira-workflow/automation-rules.json` is a versioned registry whose `_metadata.deployed_at` is `null`, so which of R1–R6 are live in Atlassian Automation is verify-in-Jira, not asserted here. Satisfy the six conditions yourself either way.
 
 A task is NOT complete until all 7 gates pass. Announce gate status at the end of every task.
 
@@ -235,23 +249,21 @@ Migration state (reality, not aspiration): see HANDOFF.md.
 
 ## 5. STORY STATUS + PRIORITIZATION
 
-Source of truth: [Jira SCRUM board](https://arkova.atlassian.net/jira/software/projects/SCRUM). Do NOT maintain a per-story status table in this file — it will drift (and did, for months, until the 2026-04-21 audit).
+Source of truth: [Jira SCRUM board](https://arkova.atlassian.net/jira/software/projects/SCRUM). Do NOT maintain a per-story status table in this file — it will drift.
 
-**Roadmap (priority order):** the canonical roadmap is the [12-Month Technical Roadmap v3](https://arkova.atlassian.net/wiki/spaces/A/pages/82444290), executed via the [PI-1 Program Increment Plan](https://arkova.atlassian.net/wiki/spaces/A/pages/83296257) — read before picking up new work; if a Jira label disagrees, the roadmap wins and the label is fixed. (The 2026-05-05 PO Roadmap 27591934 is **SUPERSEDED** by 82444290.)
+**Roadmap (priority order):** the canonical roadmap is the [12-Month Technical Roadmap v3](https://arkova.atlassian.net/wiki/spaces/A/pages/82444290), executed via the [PI-1 Program Increment Plan](https://arkova.atlassian.net/wiki/spaces/A/pages/83296257) — read before picking up new work; if a Jira label disagrees, the roadmap wins and the label is fixed.
 
 For confluence audit pages, see [Confluence space A](https://arkova.atlassian.net/wiki/spaces/A) — every epic has an audit page titled `SCRUM-N — <summary> — AUDIT`.
-
-Current epic health snapshot lives in HANDOFF.md and is updated at the end of every sprint.
 
 ### 5.1 Jira ticket structure conventions (post-2026-04-26)
 
 - **Jira description** = short pointer (≤200 chars) plus Confluence link. The MCP edit endpoint caps `fields` payload size — descriptions over ~200 chars round-trip-fail.
 - **Confluence page** = the structured spec (Goal / Outcomes / Scope / Child Stories / DoD / References). Title format: `SCRUM-NNN — <summary>` for stories or `SCRUM-NNN — <TAG: Title> — AUDIT` for epics. Parent under space `A` homepage `163950`.
-- **Every Story has subtasks** with brief descriptions. Each subtask must close before the parent Story can transition to Done (live rule UUID `019dcaa3-0834-7d67-9dbb-094c3dd7b34f`; registry id `R6`). Subtask issuetype is **id 10002** (named `Subtask`) in this project — verified 2026-04-26 via `getJiraProjectIssueTypesMetadata`. Avoid summary prefix `[DoD]` on subtasks: a Jira→Confluence sync hook tries to create a page-per-subtask using summary as title, and `[DoD] X` collides — the subtask creates fine, but the response shape gets noisy. Prefer `[Verify]` or `[Close-out]`.
+- **Every Story has subtasks** with brief descriptions. Each subtask must close before the parent Story can transition to Done (live rule UUID `019dcaa3-0834-7d67-9dbb-094c3dd7b34f`; registry id `R6`). Subtask issuetype is **id 10002** (named `Subtask`) in this project. Avoid summary prefix `[DoD]` on subtasks: a Jira→Confluence sync hook tries to create a page-per-subtask using summary as title, and `[DoD] X` collides — the subtask creates fine, but the response shape gets noisy. Prefer `[Verify]` or `[Close-out]`.
 - **Every Story has a parent epic.** Stories without parent get blocked back to Needs Human (live rule UUID `019dca9d-8cd5-73c1-b911-77a481538d2f`; registry id `R2`).
 - **Reporter ≠ resolver** on Done transitions (live rule UUID `019dca84-9ae3-7efc-a994-90ce64580fff`; registry id `R1`).
 
-> **Two identities, one rule set.** `docs/jira-workflow/automation-rules.json` is the versioned *registry* (`R1`–`R6`); the UUIDs above are the *live* Atlassian Automation rules. Cite both when adding a rule so the two never drift apart again. The registry's `_metadata.deployed_at` is `null` and its `deployment_notes` still read as a forward plan — treat deployment status as **verify-in-Jira**, not as asserted by the JSON, and do not assume gate 7 blocks a transition until you have seen it block one.
+> **Two identities, one rule set.** `docs/jira-workflow/automation-rules.json` is the versioned *registry* (`R1`–`R6`); the UUIDs above are the *live* Atlassian Automation rules. Cite both when adding a rule so the two cannot drift apart. Deployment status is verify-in-Jira — see §3 gate 7.
 
 ---
 
@@ -285,7 +297,7 @@ Current epic health snapshot lives in HANDOFF.md and is updated at the end of ev
 
 Moved out of this file. Canonical reference: [docs/reference/ENV.md](./docs/reference/ENV.md). Never commit actual values. Worker fails loudly in production when required vars are missing.
 
-**Periodic infra-cost sweep (release close / end-of-sprint):** beyond the per-run Vertex hygiene in §0 rule 7, run a standing sweep of BOTH `gcloud ai endpoints list` AND the Supabase staging-rig inventory (not only around tuning runs). This sprint's sweep found 6 empty Vertex endpoints + ~10 staging rigs. Tear down done/empty isolated soak rigs. NOTE: paid Supabase projects CANNOT be paused via MCP `pause_project` (it needs a free-tier downgrade first) — so either delete the rig, or flag it for Carson to pause/downgrade from the dashboard.
+**Periodic infra-cost sweep (release close / end-of-sprint):** beyond the per-run Vertex hygiene in §0 rule 7, run a standing sweep of BOTH `gcloud ai endpoints list` AND the Supabase staging-rig inventory (not only around tuning runs). Tear down done/empty isolated soak rigs. NOTE: paid Supabase projects CANNOT be paused via MCP `pause_project` (it needs a free-tier downgrade first) — so either delete the rig, or flag it for Carson to pause/downgrade from the dashboard.
 
 ---
 
@@ -295,4 +307,4 @@ Moved to [HANDOFF.md](./HANDOFF.md). This file carries no rolling narrative — 
 
 ---
 
-_Directive version: 2026-04-21 (post-audit refactor); amended 2026-06-05, 2026-06-17 (S0-E3, now ACTIVE not draft), 2026-06-24 (Mergify auto-merges all tiers once green + merge-grade evidence). **Amended 2026-08-01 (AI-ops audit): §0 rule 8 workflow triggers corrected; §0.1 dead pointers dropped + repo-memory primacy; §1.13 config-drift downgraded to scaffold; §5.1 rule identities reconciled; nine dead `hookify.*` files replaced by `.claude/hooks/check-constitution-on-edit.sh`; `block-pr-merge.sh` promoted into the repo.**_ ≤300 lines by design. State → HANDOFF.md. Env → docs/reference/ENV.md. Status → Jira. Docs → Confluence. Mandates here._
+_Directive: rules only. Amendment history is in `git log -- CLAUDE.md`. State -> HANDOFF.md. Env -> docs/reference/ENV.md. Status -> Jira. Docs -> Confluence._

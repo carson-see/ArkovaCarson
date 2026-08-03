@@ -115,7 +115,7 @@ new_text=$(printf '%s' "$input" | jq -r '[.tool_input.content, .tool_input.new_s
 #
 # The root MUST be resolved from the FILE's own directory, not from
 # CLAUDE_PROJECT_DIR or the hook's cwd. This repo does its parallel work in
-# git worktrees (memory/feedback_worktree_isolate_code_agents.md), and a hook
+# git worktrees (memory/feedback_no_worktree_isolation.md), and a hook
 # invoked from the parent checkout while editing a file inside a worktree
 # resolved the parent as the root — the prefix strip then failed, rel_path
 # stayed ABSOLUTE, and every path-scoped rule below silently no-opped. That

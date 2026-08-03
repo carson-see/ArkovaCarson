@@ -10,15 +10,57 @@
  * Returns per-credential pass/fail with anomaly detection.
  */
 
+import { randomInt } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { getCallerOrgId, isCallerOrgAdmin } from '../_org-auth.js';
-import { chunkForInFilter } from '../../utils/postgrest-filter.js';
+import {
+  chunkForInFilter,
+  scanAllPages,
+  PageScanError,
+} from '../../utils/postgrest-filter.js';
 import type { Database } from '../../types/database.types.js';
 
 const router = Router();
+
+/**
+ * Largest population this endpoint will scan for a `sample_percentage` request.
+ *
+ * The population is read a page at a time, so the ceiling is really a cap on
+ * round trips (25 pages plus the one that proves there is no 26th). Above it
+ * the endpoint REFUSES rather than sampling as far as it got: a sample drawn
+ * from a prefix of the population is not a weaker answer than a full one, it is
+ * a wrong one, and the auditor has no way to tell from the response.
+ *
+ * Raising this materially means moving the sampling into Postgres (a
+ * `TABLESAMPLE`/reservoir RPC returning sample + true population in one call),
+ * not adding pages here.
+ */
+export const MAX_SAMPLEABLE_POPULATION = 25_000;
+
+/**
+ * Largest sample one response may carry — the same 1000 the `credential_ids`
+ * path has always been capped at, so both routes into this handler are bounded
+ * identically and the downstream `.in()` lookup sees the same worst case.
+ */
+export const MAX_SAMPLE_SIZE = 1_000;
+
+/**
+ * Absolute page bound for the population scan.
+ *
+ * The other two loop exits both depend on the server behaving — returning an
+ * empty page at the end, and not repeating rows across offsets. This one does
+ * not depend on anything. Hitting it means the scan could not finish, which is
+ * reported as `truncated` (a refusal), never as a complete read.
+ *
+ * 26 pages is what `MAX_SAMPLEABLE_POPULATION / POSTGREST_ROW_LIMIT + 1` needs
+ * when the server hands back the width it was asked for. The headroom to 64
+ * covers a deployment whose `db-max-rows` is smaller than
+ * `POSTGREST_ROW_LIMIT` — a server setting this code cannot see.
+ */
+export const MAX_POPULATION_PAGES = 64;
 
 const batchVerifySchema = z.object({
   credential_ids: z.array(z.string()).max(1000).optional(),
@@ -51,13 +93,136 @@ interface VerifyResult {
 
 /**
  * Seeded PRNG for reproducible sampling (ISA 530 requires auditors to reproduce results).
+ *
+ * mulberry32, matching the idiom already used elsewhere in this repo
+ * (`ctdl/ctdl-importer.fuzz.test.ts`, `ai/eval/pe-synthetic-generator.ts`).
+ *
+ * It replaces an LCG (`s = s * 1664525 + 1013904223`) whose FIRST output is a
+ * near-linear function of the seed, so consecutive seeds produced correlated
+ * first draws. Measured over seeds 1..2000 on a 16-element population, the
+ * LCG's first draw reached only **14 of 16** buckets — two elements could never
+ * be picked first — while mulberry32 reaches all 16. Auditors pick small
+ * sequential seeds, and `seededSample` draws its first pick from that first
+ * output, so this was live sampling bias on the exact input pattern the feature
+ * invites. A full-array shuffle happened to mask it by burning thousands of
+ * draws before the ones that mattered; that was luck, not design.
+ *
+ * The old divisor was also `0xffffffff`, making the maximum draw exactly 1.0 —
+ * `Math.floor(1.0 * n)` is `n`, one past the end of the array being indexed.
+ * This divides by 2^32, so the range is a true [0, 1).
  */
-function seededRandom(seed: number): () => number {
-  let s = seed;
+export function seededRandom(seed: number): () => number {
+  let a = seed;
   return () => {
-    s = (s * 1664525 + 1013904223) & 0xffffffff;
-    return (s >>> 0) / 0xffffffff;
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 0x1_0000_0000;
   };
+}
+
+/**
+ * Take `count` items uniformly at random, without replacement. The only
+ * supported way to draw a sample here.
+ *
+ * Selection-sampling Fisher-Yates: each output slot swaps in one element drawn
+ * uniformly from the not-yet-picked tail. It stops after `count` swaps rather
+ * than permuting the whole array, which is O(count) instead of O(items) — at
+ * the endpoint's ceilings (25,000 population, 1,000 sample) that is 1,000 draws
+ * instead of 25,000 for an identical result.
+ *
+ * What this replaces was `[...rows].sort(() => rng() - 0.5)`, which is not a
+ * shuffle at all. A comparator returning a random sign is not a consistent
+ * ordering, so the permutation is a function of the sort algorithm's comparison
+ * schedule rather than of the randomness — no PRNG quality fixes it. Measured
+ * under V8's TimSort over 16 elements, 2000 trials, uniform expectation 125:
+ * the element at index 0 was selected 340 times, the element at index 1 only 77.
+ *
+ * For ISA 530 that is disqualifying, not untidy. If a row's selection
+ * probability depends on its position in the result set, the sample is not
+ * random and nothing an auditor concludes from it generalises to the population.
+ *
+ * `Math.min(…)` clamps the index rather than trusting `rng()` to stay below 1:
+ * an out-of-range swap does not throw, it puts `undefined` into the array, and
+ * `undefined` would leave this endpoint as a sampled credential id.
+ */
+export function seededSample<T>(items: readonly T[], count: number, rng: () => number): T[] {
+  const out = [...items];
+  const take = Math.max(0, Math.min(count, out.length));
+
+  for (let i = 0; i < take; i += 1) {
+    const remaining = out.length - i;
+    const j = i + Math.min(remaining - 1, Math.floor(rng() * remaining));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+
+  return out.slice(0, take);
+}
+
+/**
+ * Read every active `public_id` for an org.
+ *
+ * The bug this replaces: `db.from('anchors').select('public_id').eq('org_id', …)`
+ * with no pagination at all. PostgREST answers with its row maximum and says
+ * nothing about the rest, so on the real DocuSign org (3,151,539 anchors) the
+ * "population" was an arbitrary 1000 rows — and the sample drawn from it was
+ * reported next to a `total_population` taken from a separate exact count over
+ * all 3.1M.
+ *
+ * The paging rules live in `scanAllPages`, deliberately not here: the first
+ * attempt at this fix hand-rolled the loop and reintroduced the same truncation
+ * through `if (page.length < POSTGREST_ROW_LIMIT) break`, which is wrong on any
+ * deployment whose `db-max-rows` is below that constant.
+ *
+ * Ordering is total (`created_at` then `public_id`) because offset paging over
+ * a non-deterministic order drops and duplicates rows across page boundaries;
+ * `created_at` leads so the scan rides `idx_anchors_org_deleted_created`
+ * (org_id, created_at DESC) WHERE deleted_at IS NULL, and ASC keeps concurrent
+ * inserts appending past the cursor instead of shifting every page under it.
+ */
+async function loadOrgPopulation(orgId: string): Promise<{ ids: string[]; truncated: boolean }> {
+  let scan;
+  try {
+    scan = await scanAllPages<{ public_id: string | null }>(
+      (offset, limit) =>
+        db
+          .from('anchors')
+          .select('public_id')
+          .eq('org_id', orgId)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: true })
+          .order('public_id', { ascending: true })
+          .range(offset, offset + limit - 1),
+      { maxRows: MAX_SAMPLEABLE_POPULATION, maxPages: MAX_POPULATION_PAGES },
+    );
+  } catch (err) {
+    if (err instanceof PageScanError) {
+      // Driver CODE only, never `.message` — a Postgres/PostgREST message
+      // routinely echoes the offending value back, the same discipline the
+      // chunked lookup below uses.
+      logger.error(
+        { pgCode: err.pgCode, offset: err.offset, orgId },
+        'Audit batch verify: population scan page failed — refusing to sample a partial population',
+      );
+    }
+    throw err;
+  }
+
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const row of scan.rows) {
+    // Dedupe defensively: a row inserted mid-scan shifts later offsets, and a
+    // repeated id would otherwise inflate the population figure the response
+    // reports as fact. The Set is for the O(1) membership test; `ids` is the
+    // ordered result.
+    if (row.public_id && !seen.has(row.public_id)) {
+      seen.add(row.public_id);
+      ids.push(row.public_id);
+    }
+  }
+
+  return { ids, truncated: scan.status !== 'complete' };
 }
 
 router.post('/', async (req: Request, res: Response) => {
@@ -86,26 +251,82 @@ router.post('/', async (req: Request, res: Response) => {
 
     let targetIds: string[] = [];
 
+    // Set only by the sampling branch, and only on success — so `sample !== null`
+    // IS "a percentage sample was actually drawn", and every field that is
+    // meaningless without one hangs off it rather than being a second nullable
+    // that has to be kept in lockstep by hand.
+    //
+    // `population` is reported verbatim as `total_population`, so the response
+    // cannot claim a population that was never scanned. `seed` is echoed so the
+    // auditor can replay the draw; `seed: seed || null` previously told an
+    // unseeded caller nothing, leaving ISA 530's reproducibility guarantee
+    // unmeetable for exactly the requests that most needed it.
+    let sample: { population: number; seed: number } | null = null;
+
     if (credential_ids) {
       targetIds = credential_ids;
     } else if (sample_percentage) {
-      // Fetch all anchor public_ids for the org
-      const { data: allAnchors } = await db
-        .from('anchors')
-        .select('public_id')
-        .eq('org_id', orgId)
-        .is('deleted_at', null);
+      const { ids: population, truncated } = await loadOrgPopulation(orgId);
 
-      if (!allAnchors || allAnchors.length === 0) {
-        res.json({ results: [], total_population: 0, sample_size: 0, seed: seed || 0 });
+      if (truncated) {
+        // No sample and no population figure. The only honest thing we know is
+        // a lower bound on the population, and it is labelled as one.
+        res.status(422).json({
+          error: 'population_too_large',
+          // Reads correctly both as an API message and verbatim in the auditor
+          // UI, which surfaces this string (`src/pages/AuditorBatchPage.tsx`).
+          // "records" is the product-facing word there.
+          message:
+            `This organization has more than ${MAX_SAMPLEABLE_POPULATION.toLocaleString('en-US')} ` +
+            'records, which is more than percentage sampling can read in one request. ' +
+            'Supply credential_ids to verify a specific set.',
+          population_at_least: MAX_SAMPLEABLE_POPULATION,
+          max_sampleable_population: MAX_SAMPLEABLE_POPULATION,
+        });
         return;
       }
 
-      // Deterministic sampling
-      const rng = seededRandom(seed || Date.now());
-      const sampleSize = Math.ceil(allAnchors.length * (sample_percentage / 100));
-      const shuffled = [...allAnchors].sort(() => rng() - 0.5);
-      targetIds = shuffled.slice(0, sampleSize).map(a => a.public_id).filter((id): id is string => id != null);
+      const sampleSize = Math.ceil(population.length * (sample_percentage / 100));
+
+      if (sampleSize > MAX_SAMPLE_SIZE) {
+        // Silently trimming to the cap would report an N% sample that is not an
+        // N% sample. Refuse, and say what would have fitted.
+        const maxPercentage = Math.min(
+          100,
+          Math.floor((MAX_SAMPLE_SIZE / population.length) * 100 * 100) / 100,
+        );
+        res.status(422).json({
+          error: 'sample_too_large',
+          message:
+            `A ${sample_percentage}% sample of ${population.length.toLocaleString('en-US')} ` +
+            `records is ${sampleSize.toLocaleString('en-US')} records, above the ` +
+            `${MAX_SAMPLE_SIZE.toLocaleString('en-US')} this endpoint returns in one response. ` +
+            `Request at most ${maxPercentage}%.`,
+          total_population: population.length,
+          requested_sample_size: sampleSize,
+          max_sample_size: MAX_SAMPLE_SIZE,
+          max_sample_percentage: maxPercentage,
+        });
+        return;
+      }
+
+      // `??` and not `||`: seed 0 is a seed, and `||` sent the one value an
+      // auditor is most likely to type down the unseeded path, making it the
+      // single least reproducible request the endpoint accepted.
+      //
+      // `randomInt`, not `Math.random()` (typescript:S2245 — this endpoint
+      // IS a security-sensitive context, not a false positive). ISA 530
+      // sampling is only a control on the audited org if the sample is
+      // unpredictable to them; V8's Math.random() is a non-cryptographic
+      // xorshift128+ PRNG whose future outputs are recoverable from a
+      // handful of past ones. This unseeded seed is echoed back in the
+      // response (`sample.seed`, for ISA 530 replay), so every unseeded call
+      // hands an observer one more output to reconstruct engine state from.
+      // `randomInt` draws from the OS CSPRNG, so a leaked seed proves nothing
+      // about the next one.
+      const sampleSeed = seed ?? randomInt(0, 2 ** 31);
+      sample = { population: population.length, seed: sampleSeed };
+      targetIds = seededSample(population, sampleSize, seededRandom(sampleSeed));
     }
 
     // Batch verify
@@ -212,13 +433,21 @@ router.post('/', async (req: Request, res: Response) => {
         failed: results.filter(r => r.status === 'FAIL').length,
         not_found: results.filter(r => r.status === 'NOT_FOUND').length,
         anomalies_found: results.filter(r => r.anomalies.length > 0).length,
-        sampling: sample_percentage ? { percentage: sample_percentage, seed } : undefined,
+        // Gated on the branch actually TAKEN, not on the parameter being
+        // present. `credential_ids` wins when both are supplied (the Zod
+        // refine is an OR), and recording a `sampling` block for a run that
+        // verified the caller's own hand-picked list puts a sampling claim
+        // into the permanent audit trail that never happened.
+        sampling: sample ? { percentage: sample_percentage, seed: sample.seed } : undefined,
       }),
     });
 
-    const totalPopulation = sample_percentage
-      ? (await db.from('anchors').select('*', { count: 'exact', head: true }).eq('org_id', orgId).is('deleted_at', null)).count || 0
-      : targetIds.length;
+    // The population figure comes from the scan the sample was drawn from — NOT
+    // from a second query. The exact-count head query this replaces ran
+    // separately and later, so even with a correct scan the two could disagree,
+    // and it was a full count over a 3.1M-row table on the hot `anchors` path
+    // (R0-8 / SCRUM-1254, `scripts/ci/check-count-exact-baseline.ts`).
+    const totalPopulation = sample?.population ?? targetIds.length;
 
     res.json({
       results,
@@ -231,7 +460,7 @@ router.post('/', async (req: Request, res: Response) => {
       },
       total_population: totalPopulation,
       sample_size: results.length,
-      seed: seed || null,
+      seed: sample?.seed ?? null,
       verified_at: new Date().toISOString(),
     });
   } catch (err) {

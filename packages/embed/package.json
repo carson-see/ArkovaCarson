@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/embed.umd.js",
   "module": "dist/embed.es.js",
-  "files": ["dist"],
+  "files": ["dist", "LICENSE"],
   "scripts": {
     "build": "vite build",
     "test": "vitest run",
