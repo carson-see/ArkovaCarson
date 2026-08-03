@@ -264,12 +264,37 @@ describe('Cross-check: the pre-0396 baseline genuinely had both bugs (red before
     expect(sql).toMatch(/GRANT ALL ON FUNCTION "public"\."is_user_verified"\("p_user_id" "uuid"\) TO "authenticated";/);
   });
 
-  it('0396 sorts after the baseline and after every other migration, so it wins on a fresh reset', () => {
+  // Was: 'sorts after ... every other migration, so it wins on a fresh
+  // reset' — a proxy that only held while 0396 happened to be the highest
+  // numbered file in the directory, which any unrelated later migration
+  // (e.g. 0397, adding an org_rule_action_type enum value — touches neither
+  // function) invalidates by definition. The invariant that actually matters
+  // — restored here per the `0376`-clobber lesson documented throughout
+  // supabase/migrations/agents.md ("`get_public_anchor` is redefined
+  // WHOLESALE by every migration that touches it... branching a new
+  // definition off an older migration file silently deletes every change
+  // made in between") — is that NO migration sorting after 0396 also
+  // redefines get_user_credits or is_user_verified. A same-numbered-or-later
+  // file that does would silently clobber this fix with no ledger signal,
+  // exactly like 0376 did to 0356/0362.
+  it('no migration after 0396 redefines get_user_credits or is_user_verified (anti-clobber)', () => {
+    const migrationsDir = path.join(process.cwd(), 'supabase/migrations');
     const files = fs
-      .readdirSync(path.join(process.cwd(), 'supabase/migrations'))
+      .readdirSync(migrationsDir)
       .filter((f) => f.endsWith('.sql'))
       .sort();
-    expect(files[files.length - 1]).toBe(path.basename(MIGRATION_PATH));
+    const ownIndex = files.indexOf(path.basename(MIGRATION_PATH));
+    expect(ownIndex).toBeGreaterThanOrEqual(0);
+    const later = files.slice(ownIndex + 1);
+    for (const file of later) {
+      const sql = executableSql(fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
+      expect(sql, `${file} must not redefine ${CREDITS_FN}`).not.toMatch(
+        new RegExp(`FUNCTION\\s+"public"\\."${CREDITS_FN}"`),
+      );
+      expect(sql, `${file} must not redefine ${VERIFIED_FN}`).not.toMatch(
+        new RegExp(`FUNCTION\\s+"public"\\."${VERIFIED_FN}"`),
+      );
+    }
   });
 });
 

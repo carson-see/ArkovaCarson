@@ -166,6 +166,20 @@ export const ActionConfigFastTrackAnchor = z.object({
   reason: z.string().max(200).optional(),
 });
 
+// Founder directive (2026-08-03): AUTO_ANCHOR's dispatcher behavior only ever
+// queues (DS-07) despite copy implying immediacy; INSTANT_SECURE is the rule
+// action that actually secures right away. Same shape as
+// ActionConfigFastTrackAnchor (both go through the shared credit-funded
+// anchor path in rule-action-dispatcher.ts) — kept as a separate schema
+// object, not a re-export, so the two configs can diverge independently
+// without a wholesale-redefinition risk (the org_rule_action_type enum
+// itself learned this lesson the hard way; see supabase/migrations/agents.md
+// on `get_public_anchor`).
+export const ActionConfigInstantSecure = z.object({
+  tag: z.string().max(50).optional(),
+  reason: z.string().max(200).optional(),
+});
+
 export const ActionConfigQueueForReview = z.object({
   // ARK-101 queue metadata — surfaces on /queue dashboard.
   label: z.string().max(100).optional(),
@@ -199,6 +213,7 @@ export const ActionConfigForwardToUrl = z.object({
 export const ActionConfig = z.discriminatedUnion('action_type', [
   z.object({ action_type: z.literal('AUTO_ANCHOR'), config: ActionConfigAutoAnchor }),
   z.object({ action_type: z.literal('FAST_TRACK_ANCHOR'), config: ActionConfigFastTrackAnchor }),
+  z.object({ action_type: z.literal('INSTANT_SECURE'), config: ActionConfigInstantSecure }),
   z.object({ action_type: z.literal('QUEUE_FOR_REVIEW'), config: ActionConfigQueueForReview }),
   z.object({ action_type: z.literal('FLAG_COLLISION'), config: ActionConfigFlagCollision }),
   z.object({ action_type: z.literal('NOTIFY'), config: ActionConfigNotify }),
@@ -226,6 +241,7 @@ export const CreateOrgRuleInput = z.object({
   action_type: z.enum([
     'AUTO_ANCHOR',
     'FAST_TRACK_ANCHOR',
+    'INSTANT_SECURE',
     'QUEUE_FOR_REVIEW',
     'FLAG_COLLISION',
     'NOTIFY',

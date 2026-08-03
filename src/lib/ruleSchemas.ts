@@ -25,6 +25,7 @@ export type TriggerType =
 export type ActionType =
   | 'AUTO_ANCHOR'
   | 'FAST_TRACK_ANCHOR'
+  | 'INSTANT_SECURE'
   | 'QUEUE_FOR_REVIEW'
   | 'FLAG_COLLISION'
   | 'NOTIFY'
@@ -52,6 +53,7 @@ const REQUIRED_TRIGGER_FIELDS: Record<TriggerType, readonly string[]> = {
 const REQUIRED_ACTION_FIELDS: Record<ActionType, readonly string[]> = {
   AUTO_ANCHOR: [],
   FAST_TRACK_ANCHOR: [],
+  INSTANT_SECURE: [],
   QUEUE_FOR_REVIEW: [],
   FLAG_COLLISION: [],
   NOTIFY: ['channels'],

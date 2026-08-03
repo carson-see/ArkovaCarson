@@ -20,6 +20,22 @@ describe('validateWizardConfigs', () => {
     ).toEqual([]);
   });
 
+  // Founder directive (2026-08-03): INSTANT_SECURE is the rule action that
+  // actually secures right away (reuses FAST_TRACK_ANCHOR's credit-funded
+  // path server-side — see services/worker/src/jobs/rule-action-dispatcher.ts).
+  // Same shape as AUTO_ANCHOR/FAST_TRACK_ANCHOR client-side: no required
+  // action_config fields.
+  it('returns no issues for a valid ESIGN_COMPLETED + INSTANT_SECURE pair', () => {
+    expect(
+      validateWizardConfigs({
+        trigger_type: 'ESIGN_COMPLETED',
+        trigger_config: {},
+        action_type: 'INSTANT_SECURE',
+        action_config: {},
+      }),
+    ).toEqual([]);
+  });
+
   it('returns no issues when trigger/action are unset (wizard still on step 1/3)', () => {
     expect(
       validateWizardConfigs({

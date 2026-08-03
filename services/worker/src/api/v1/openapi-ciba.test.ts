@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { cibaOpenApiSpec, getCibaOpenApiSpec } from './openapi-ciba.js';
+import { CreateOrgRuleInput } from '../../rules/schemas.js';
 
 describe('CIBA OpenAPI spec (SCRUM-1122)', () => {
   it('valid OpenAPI 3.x metadata', () => {
@@ -29,6 +30,20 @@ describe('CIBA OpenAPI spec (SCRUM-1122)', () => {
     expect(paths).toContain('/webhooks/docusign');
     expect(paths).toContain('/webhooks/adobe-sign');
     expect(paths).toContain('/webhooks/checkr');
+  });
+
+  // Founder directive (2026-08-03 — INSTANT_SECURE rule action): the doc's
+  // ActionType enum had no drift guard against the actual Zod source of
+  // truth, so a new action_type could ship in schemas.ts and never reach the
+  // public API doc. Pin it exactly rather than adding one more hand-copied
+  // literal array that can silently rot the next time this enum changes.
+  it('ActionType enum matches CreateOrgRuleInput.action_type exactly (no doc drift)', () => {
+    const docEnum = (
+      cibaOpenApiSpec.components.schemas.ActionType as { enum: string[] }
+    ).enum;
+    const zodEnum = CreateOrgRuleInput.shape.action_type.options as readonly string[];
+    expect([...docEnum].sort()).toEqual([...zodEnum].sort());
+    expect(docEnum).toContain('INSTANT_SECURE');
   });
 
   it('every operation declares an auth model in security or tags', () => {

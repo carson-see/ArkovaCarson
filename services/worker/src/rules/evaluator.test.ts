@@ -290,4 +290,31 @@ describe('evaluateRules (bulk)', () => {
     expect(matched).toHaveLength(1);
     expect(matched[0].rule.id).toBe('r1');
   });
+
+  // Founder-directive investigation (2026-08-03): "we need rules to work" —
+  // one hypothesis raised alongside the INSTANT_SECURE work was that the
+  // dispatcher only ever runs the FIRST matching rule per event, starving
+  // every other enabled rule on the same trigger. Read end to end
+  // (evaluator.ts -> rules-engine.ts's buildMatchInserts -> the dispatcher's
+  // fetchPendingExecutions/processWithConcurrencyCap), that is NOT what this
+  // code does: `evaluateRules` below has no `.find()`/early-return, it
+  // collects every match; verified against prod (rule 7c440d28-...,
+  // "SCRUM-1655 DocuSign prod sandbox verification") on 2026-08-03 that the
+  // ONLY rule ever seen "not firing" was the sole rule on its org (no
+  // competitor to lose a first-match race to) and had in fact SUCCEEDED on
+  // all 3 of its lifetime trigger events — so first-match-wins was not
+  // reproducible, in code or in live data. This test pins the actual
+  // contract (ALL enabled rules matching an event are returned, each
+  // independently) as a ratchet against a future regression, since the
+  // absence of the bug is otherwise only provable by reading the source.
+  it('returns EVERY enabled rule that matches the same event — no first-match-wins', () => {
+    const rules: RuleRow[] = [
+      rule({ id: 'r1', action_type: 'AUTO_ANCHOR' }),
+      rule({ id: 'r2', action_type: 'QUEUE_FOR_REVIEW' }),
+      rule({ id: 'r3', action_type: 'NOTIFY' }),
+      rule({ id: 'r4', enabled: false, action_type: 'FAST_TRACK_ANCHOR' }), // still excluded
+    ];
+    const matched = evaluateRules(rules, event({ vendor: 'docusign' }));
+    expect(matched.map((m) => m.rule.id)).toEqual(['r1', 'r2', 'r3']);
+  });
 });

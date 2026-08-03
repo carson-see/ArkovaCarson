@@ -2,6 +2,10 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-03 — `openapi-ciba.ts` ActionType doc gained `INSTANT_SECURE` + a drift guard
+
+Founder directive (rule-action-dispatcher/schemas.ts wiring — see `services/worker/src/jobs/agents.md` and `services/worker/src/rules/agents.md` for the full writeup). `ActionType`'s `enum` array here is a hand-copied literal that had **no test pinning it against the actual Zod source of truth** (`rules/schemas.ts` `CreateOrgRuleInput.action_type`) — `openapi-ciba.test.ts` gained `'ActionType enum matches CreateOrgRuleInput.action_type exactly (no doc drift)'`, asserting the two sorted arrays are equal, so a future new action_type can't ship in the schema and silently miss this doc again. `enum` now reads `['AUTO_ANCHOR', 'FAST_TRACK_ANCHOR', 'INSTANT_SECURE', 'QUEUE_FOR_REVIEW', 'FLAG_COLLISION', 'NOTIFY', 'FORWARD_TO_URL']`.
+
 ## 2026-08-03 — `POST /credentials/ctdl/registry-anchor` created records nobody could see
 
 **Creating an anchor row is not the same as giving the user a record.** The CE registry-anchor

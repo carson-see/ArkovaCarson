@@ -74,7 +74,7 @@ const schemas: Record<string, unknown> = {
   },
   ActionType: {
     type: 'string',
-    enum: ['AUTO_ANCHOR', 'FAST_TRACK_ANCHOR', 'QUEUE_FOR_REVIEW', 'FLAG_COLLISION', 'NOTIFY', 'FORWARD_TO_URL'],
+    enum: ['AUTO_ANCHOR', 'FAST_TRACK_ANCHOR', 'INSTANT_SECURE', 'QUEUE_FOR_REVIEW', 'FLAG_COLLISION', 'NOTIFY', 'FORWARD_TO_URL'],
     description: 'Source-of-truth: services/worker/src/rules/schemas.ts (CreateOrgRuleInput.action_type).',
   },
   Error: {

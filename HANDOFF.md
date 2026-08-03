@@ -84,6 +84,20 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 
 ### Open items carried forward
 
+- **PR open (2026-08-03): `INSTANT_SECURE` rule action (founder directive — "Auto Secure doesn't
+  secure").** Branch `feat/instant-secure-rule-action`. Migration `0397` (adds `INSTANT_SECURE` to
+  `org_rule_action_type`) is **file-only, NOT applied to prod or staging** — needs an RTE/operator
+  apply + §0 rule 10 ledger reconciliation, then `npm run gen:types` as a canonical-regeneration
+  sanity check (types were hand-edited in this PR to avoid touching the shared local Supabase stack,
+  which other concurrent worktree sessions were actively mutating at the time). Also found in
+  passing, fixed in the same PR: `compliance-inbox-summary.ts`'s `secured_automatically` dashboard
+  counter was querying a `routed_to` value the dispatcher has never emitted since SCRUM-1649
+  DS-AUTO-02 (silently zero for every org). Investigated and found NOT reproducible: a hypothesized
+  "dispatcher only runs the first matching rule per event" bug — code and live prod data both show
+  every matching enabled rule gets dispatched independently. Not fixed, flagged for a follow-up PR:
+  `FAST_TRACK_ANCHOR`'s `anchor.fast_track` job has zero consumer anywhere in this codebase (prod
+  `job_queue` carries zero rows of that type) — `INSTANT_SECURE` does not depend on it (accelerates
+  via a direct `processBatchAnchors({force,orgId})` call instead).
 - **10k-DAU architectural limit:** the nightly 3am flush caps at `BATCH_ANCHOR_MAX_SIZE=10000` per
   invocation with no intra-day cadence, so 25k anchors/day cannot drain in one nightly pass. Needs a
   design change before that scale.

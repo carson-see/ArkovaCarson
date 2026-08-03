@@ -76,7 +76,15 @@ async function loadCounts(orgId: string): Promise<SummaryCounts> {
       .select('id', { count: 'exact', head: true })
       .eq('org_id', orgId)
       .eq('status', 'SUCCEEDED')
-      .eq(ROUTED_TO_FIELD, RULE_ROUTED_TO.AUTO_ANCHOR),
+      // AUTO_ANCHOR / FAST_TRACK_ANCHOR / INSTANT_SECURE (rule-action-
+      // dispatcher.ts) all route a successful anchor dispatch through
+      // ANCHOR_QUEUE ('anchor_queue', the free-queue outcome) or
+      // ANCHOR_PIPELINE ('anchor_pipeline', the credit-funded fast/instant
+      // outcome) — never the stale RULE_ROUTED_TO.AUTO_ANCHOR value, which
+      // no dispatcher code path has emitted since SCRUM-1649 DS-AUTO-02.
+      // Querying that stale value left this counter silently pinned at zero
+      // for every org.
+      .in(ROUTED_TO_FIELD, [RULE_ROUTED_TO.ANCHOR_QUEUE, RULE_ROUTED_TO.ANCHOR_PIPELINE]),
   );
   const needsReview = countOrZero(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

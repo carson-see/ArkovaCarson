@@ -155,6 +155,27 @@ describe('compliance-inbox-summary (SCRUM-1145)', () => {
     expect(body.counts.captured_today).toBe(7);
   });
 
+  // Founder directive (2026-08-03) — found in passing while wiring
+  // INSTANT_SECURE: the dispatcher (rule-action-dispatcher.ts) has NEVER
+  // emitted `routed_to: 'auto_anchor'` since SCRUM-1649 DS-AUTO-02 shipped —
+  // AUTO_ANCHOR/FAST_TRACK_ANCHOR/INSTANT_SECURE all emit `anchor_queue` or
+  // `anchor_pipeline` (RULE_ROUTED_TO in rules/schemas.ts). Querying the
+  // stale `RULE_ROUTED_TO.AUTO_ANCHOR` ('auto_anchor') value means this
+  // dashboard counter was silently stuck at zero for every org, making every
+  // rule that actually secured a document look invisible on the one surface
+  // built to show it worked — directly the "doesn't secure" perception this
+  // whole PR responds to.
+  it('secured_automatically counts SUCCEEDED executions routed to the anchor pipeline (anchor_queue OR anchor_pipeline, not the stale auto_anchor value)', async () => {
+    setCount(
+      `organization_rule_executions|org_id=${ORG_ID},output_payload->>routed_to=in(anchor_queue|anchor_pipeline),status=SUCCEEDED`,
+      5,
+    );
+    const ctx = buildRes();
+    await handleComplianceInboxSummary(USER_ID, buildReq(), ctx.res);
+    const body = ctx.body as { counts: { secured_automatically: number } };
+    expect(body.counts.secured_automatically).toBe(5);
+  });
+
   it('needs_review counts SUCCEEDED executions where output_payload->>routed_to=review_queue', async () => {
     // The impl filters on the JSONB extracted field — never on a column.
     setCount(

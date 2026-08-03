@@ -211,6 +211,22 @@ function queueRunCreditReason(anchor: ClaimedAnchor): string | null {
     return 'rule.fast_track_anchor_queue_run';
   }
 
+  // Founder directive (2026-08-03): an INSTANT_SECURE rule that fell back to
+  // the free queue at dispatch time (rule-action-dispatcher.ts
+  // dispatchInstantSecure, insufficient credits) gets the SAME second charge
+  // attempt FAST_TRACK_ANCHOR's fallback already gets above — if the org has
+  // topped up credits by the time the batch claims this anchor, charge once
+  // here instead of anchoring it for free forever. An INSTANT_SECURE anchor
+  // that was ALREADY charged at dispatch time (credit_denial_reason: null)
+  // correctly falls through to `return null` below, same as FAST_TRACK_ANCHOR
+  // — no double charge.
+  if (
+    ruleActionType === 'INSTANT_SECURE' &&
+    metadata.credit_denial_reason === 'insufficient_credits'
+  ) {
+    return 'rule.instant_secure_queue_run';
+  }
+
   return null;
 }
 

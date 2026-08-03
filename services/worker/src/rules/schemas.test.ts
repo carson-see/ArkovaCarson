@@ -203,6 +203,37 @@ describe('ActionConfig discriminator', () => {
       }),
     ).toThrow();
   });
+
+  // Founder directive (2026-08-03) — "we need to be able to instantly secure
+  // or add to queue." INSTANT_SECURE is the credit-funded rule action that
+  // actually secures immediately (reuses FAST_TRACK_ANCHOR's deduct_org_credit
+  // + fast-materialization path); see rule-action-dispatcher.ts.
+  it('accepts INSTANT_SECURE with an empty config (no required fields)', () => {
+    const parsed = ActionConfig.parse({
+      action_type: 'INSTANT_SECURE',
+      config: {},
+    });
+    expect(parsed.action_type).toBe('INSTANT_SECURE');
+  });
+
+  it('accepts INSTANT_SECURE with an optional tag and reason', () => {
+    const parsed = ActionConfig.parse({
+      action_type: 'INSTANT_SECURE',
+      config: { tag: 'vip-contracts', reason: 'enterprise SLA' },
+    });
+    if (parsed.action_type !== 'INSTANT_SECURE') throw new Error('wrong branch');
+    expect(parsed.config.tag).toBe('vip-contracts');
+    expect(parsed.config.reason).toBe('enterprise SLA');
+  });
+
+  it('rejects an unknown action_type (defense against enum/schema drift)', () => {
+    expect(() =>
+      ActionConfig.parse({
+        action_type: 'NOT_A_REAL_ACTION',
+        config: {},
+      }),
+    ).toThrow();
+  });
 });
 
 describe('CreateOrgRuleInput + validateRuleConfigs', () => {
@@ -231,6 +262,19 @@ describe('CreateOrgRuleInput + validateRuleConfigs', () => {
         action_config: {},
       }),
     ).toThrow();
+  });
+
+  it('accepts an INSTANT_SECURE rule end-to-end', () => {
+    const input = CreateOrgRuleInput.parse({
+      org_id: '10000000-1000-4000-8000-000000000001',
+      name: 'Instantly secure signed MSAs',
+      trigger_type: 'ESIGN_COMPLETED',
+      trigger_config: { vendors: ['docusign'] },
+      action_type: 'INSTANT_SECURE',
+      action_config: {},
+    });
+    expect(() => validateRuleConfigs(input)).not.toThrow();
+    expect(input.enabled).toBe(false);
   });
 
   it('catches mismatched trigger_type / trigger_config in validateRuleConfigs', () => {
