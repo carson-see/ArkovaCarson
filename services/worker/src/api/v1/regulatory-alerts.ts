@@ -14,6 +14,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
+import { readInChunks } from '../../utils/chunkedRead.js';
 import { logger } from '../../utils/logger.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -125,14 +126,13 @@ router.get('/', async (req: Request, res: Response) => {
       .map((r: { anchor_id: string | null }) => r.anchor_id)
       .filter((id: string | null): id is string => id !== null);
 
-    const { data: anchors } = await db
-      .from('anchors')
-      .select('id, fingerprint, chain_timestamp, status')
-      .in('id', anchorIds);
+    // A failed read here does NOT mean "no anchors": every record would fall
+    // through the fingerprint comparison below and stop being flagged, i.e. a
+    // regulatory alert surface that silently reports all-clear.
+    const anchors = await readInChunks('regulatory-alerts:anchors', anchorIds, (chunk) =>
+      db.from('anchors').select('id, fingerprint, chain_timestamp, status').in('id', chunk));
 
-    const anchorMap = new Map(
-      (anchors ?? []).map((a) => [a.id, a]),
-    );
+    const anchorMap = new Map(anchors.map((a) => [a.id, a]));
 
     // Build alerts — flag records where content_hash differs from anchor fingerprint
     const alerts: RegulatoryAlert[] = records

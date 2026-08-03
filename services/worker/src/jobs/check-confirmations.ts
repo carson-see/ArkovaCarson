@@ -20,6 +20,7 @@ import { CHECK_CONFIRMATIONS_RUN_LEASE, withRunLease } from './run-lease.js';
 import { config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
+import { chunkForInFilter } from '../utils/postgrest-filter.js';
 
 /** Maximum unique transactions to check per cron run (rate limit mempool.space) */
 const MAX_TX_CHECKS_PER_RUN = 100;
@@ -206,18 +207,18 @@ export async function fanOutSecuredAnchorWebhooks(
   // SELECTs here. credential.status_changed schema requires credential_type;
   // anchors missing it skip the credential.* dispatch (anchor.* still fires).
   //
-  // CodeRabbit PR #753: chunk the `.in()` lookup to 500 entries. Supabase-js
-  // serializes `.in()` as a URL query param; 10K-anchor merkle batches
-  // exceed PostgREST's URI length and trigger HTTP 414, dropping all
-  // credential.* events for that batch. Same chunk size as PROOF_UPSERT_CHUNK
-  // in anchorProofs.ts. Per-chunk failures are logged but other chunks still
-  // populate the map, so a partial outage doesn't silently drop the whole
-  // batch's credential events.
-  const CRED_LOOKUP_CHUNK = 500;
+  // CodeRabbit PR #753 chunked this `.in()` lookup at 500 entries against
+  // HTTP 414 URI-too-large. That was the wrong limit: the binding constraint is
+  // the 8 KiB request line the proxy in front of PostgREST enforces with a 400,
+  // and `public_id` is not a UUID — 500 of them are several times over budget,
+  // so the chunking never actually protected anything. `chunkForInFilter` owns
+  // the width now and closes on whichever of count/bytes binds first.
+  //
+  // Per-chunk failures are logged and other chunks still populate the map, so a
+  // partial outage doesn't silently drop the whole batch's credential events.
   const credentialTypeByPublicId = new Map<string, string>();
   const publicIdsForLookup = eligible.map((a) => a.public_id);
-  for (let i = 0; i < publicIdsForLookup.length; i += CRED_LOOKUP_CHUNK) {
-    const chunk = publicIdsForLookup.slice(i, i + CRED_LOOKUP_CHUNK);
+  for (const { values: chunk, start: i } of chunkForInFilter(publicIdsForLookup)) {
     try {
       // PR #753 audit fix C1: org-blind query is intentional and safe here.
       // The `eligible` array (built upstream from the drain RPC's per-tx
