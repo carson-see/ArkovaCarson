@@ -264,12 +264,29 @@ describe('Cross-check: the pre-0396 baseline genuinely had both bugs (red before
     expect(sql).toMatch(/GRANT ALL ON FUNCTION "public"\."is_user_verified"\("p_user_id" "uuid"\) TO "authenticated";/);
   });
 
-  it('0396 sorts after the baseline and after every other migration, so it wins on a fresh reset', () => {
+  it('0396 is the latest migration that redefines get_user_credits/is_user_verified, so it wins on a fresh reset', () => {
+    // NOT "the last migration file in the whole directory" — that broke the
+    // moment any later, unrelated migration landed (0397/0398/0399 touch
+    // neither function). The real invariant is narrower: no migration AFTER
+    // 0396 may redefine either function, since that would silently reopen
+    // BUG 1 or BUG 2 (the exact "0376 clobber" failure mode this repo has
+    // hit before — see 0383's header). Reuses this file's own
+    // extractFunctionBlock marker convention rather than a bare filename sort.
+    const migrationsDir = path.join(process.cwd(), 'supabase/migrations');
     const files = fs
-      .readdirSync(path.join(process.cwd(), 'supabase/migrations'))
+      .readdirSync(migrationsDir)
       .filter((f) => f.endsWith('.sql'))
       .sort();
-    expect(files[files.length - 1]).toBe(path.basename(MIGRATION_PATH));
+    const redefiners = files.filter((f) => {
+      const sql = executableSql(fs.readFileSync(path.join(migrationsDir, f), 'utf8'));
+      return (
+        sql.includes(`FUNCTION "public"."${CREDITS_FN}"`) ||
+        sql.includes(`FUNCTION "public"."${VERIFIED_FN}"`) ||
+        sql.includes(`FUNCTION public.${CREDITS_FN}`) ||
+        sql.includes(`FUNCTION public.${VERIFIED_FN}`)
+      );
+    });
+    expect(redefiners[redefiners.length - 1]).toBe(path.basename(MIGRATION_PATH));
   });
 });
 
