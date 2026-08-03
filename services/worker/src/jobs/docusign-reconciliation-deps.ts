@@ -7,6 +7,7 @@
 
 import { db as defaultDb } from '../utils/db.js';
 import { refreshDocusignAccessToken } from '../integrations/oauth/docusign.js';
+import { chunkForInFilter } from '../utils/postgrest-filter.js';
 import {
   createGcpSecretManagerRefreshTokenStore,
   type DocusignRefreshTokenStore,
@@ -221,21 +222,37 @@ export function makeReconciliationDeps(
       envelopeIds: string[],
     ): Promise<Set<string>> {
       if (envelopeIds.length === 0) return new Set();
-      // tenant-isolation suppressed: docusign_webhook_nonces is a GLOBAL
-      // replay-protection nonce table with NO org_id column (schema keyed on
-      // envelope_id, event_id, generated_at — see baseline migration). There is
-      // no tenant column to filter on; the lookup is already scoped to a known,
-      // bounded set of envelope_ids derived from one integration's envelopes.
-      // eslint-disable-next-line arkova/missing-org-filter
-      const { data, error } = await db
-        .from('docusign_webhook_nonces')
-        .select('envelope_id')
-        .in('envelope_id', envelopeIds);
 
-      if (error) throw new Error(`nonce_lookup_failed: ${dbErrorMessage(error)}`);
-      return new Set((data ?? [])
-        .map((row) => row.envelope_id)
-        .filter((value): value is string => typeof value === 'string'));
+      // Chunked because up to 1,000 envelope ids arrive here and they are
+      // DocuSign-issued identifiers, not UUIDs, so the one-shot filter was over
+      // the request-line budget. Its sibling
+      // `docusign-queue-reconciliation-deps.ts:getReceivedEnvelopeIds` already
+      // chunked the byte-identical lookup and this one did not — the same
+      // one-of-a-pair divergence that left `revertClaimedAnchors` unfixed after
+      // #1795. If you touch either, touch both.
+      const received = new Set<string>();
+      for (const { values } of chunkForInFilter(envelopeIds)) {
+        // tenant-isolation suppressed: docusign_webhook_nonces is a GLOBAL
+        // replay-protection nonce table with NO org_id column (schema keyed on
+        // envelope_id, event_id, generated_at — see baseline migration). There is
+        // no tenant column to filter on; the lookup is already scoped to a known,
+        // bounded set of envelope_ids derived from one integration's envelopes.
+        // eslint-disable-next-line arkova/missing-org-filter
+        const { data, error } = await db
+          .from('docusign_webhook_nonces')
+          .select('envelope_id')
+          .in('envelope_id', values);
+
+        // Throws on the FIRST failed chunk rather than after all of them: this
+        // set drives gap detection, and a partial "received" set manufactures
+        // phantom gaps for every envelope in the missing chunk.
+        if (error) throw new Error(`nonce_lookup_failed: ${dbErrorMessage(error)}`);
+
+        for (const row of data ?? []) {
+          if (typeof row.envelope_id === 'string') received.add(row.envelope_id);
+        }
+      }
+      return received;
     },
 
     async insertGap(gap) {

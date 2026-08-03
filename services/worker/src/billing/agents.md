@@ -18,3 +18,18 @@ Billing domain logic: metered usage reporting, payment validation, and Stripe re
 - No PII in usage records (Constitution 1.4).
 - No real Stripe API calls in tests — mock everything (Constitution 1.7).
 - Payment data never logged in detail.
+
+## 2026-08-02 — `reportMeteredUsageToStripe` sandbox-exclusion filter width
+
+The `org_credits.is_test` read that keeps partner sandboxes off Stripe takes **one id per ACTIVE
+SUBSCRIPTION**, so it grows with the customer base and has no upper bound. It was sent as a single
+`.in('org_id', orgIds)` and exceeded the PostgREST request-line budget at roughly 200 subscribed orgs.
+
+Because that read is **fail-CLOSED**, the 400 did not degrade billing for the oversized part — it
+aborted the ENTIRE report, so ALL Stripe metered billing silently stopped every cycle, with an error
+log as the only signal. A width bug on a fail-closed path is an outage, not a partial.
+
+Now chunked via `chunkForInFilter` (`utils/postgrest-filter.ts`). Kept fail-CLOSED on **ANY** chunk
+error, deliberately stricter than `assertNotAllChunksFailed`: an org whose chunk failed is simply
+absent from the is_test map, which reads identically to `is_test=false`, i.e. billable. A partial map
+is not a weaker answer here, it is a wrong one that bills a partner sandbox.
