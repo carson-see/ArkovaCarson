@@ -818,10 +818,28 @@ export function SecureDocumentDialog({
               </Alert>
               <p className="text-sm text-foreground">{PRIVACY_FAIL_CLOSED_LABELS.SAFE_TO_CONTINUE}</p>
               <p className="text-xs font-medium text-muted-foreground">{PRIVACY_FAIL_CLOSED_LABELS.REASSURANCE}</p>
+              {/*
+                Button order: RETRY is primary. Reaching this screen means
+                isPiiStripFailClosedError matched in aiExtraction.ts — a real
+                on-device tool-load/run failure, never the benign "no text
+                layer" case (that routes to 'extraction-failed' instead, per
+                the SCRUM-2911 split, commit d971e55af). Most failures here are
+                transient, so retry is the recommended first action and
+                recovers full AI metadata; continuing without a retry is a
+                safe but secondary fallback.
+              */}
               <div className="flex flex-col gap-2">
                 <Button
                   variant="default"
                   className="w-full justify-start"
+                  onClick={() => handleStartExtraction()}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {PRIVACY_FAIL_CLOSED_LABELS.RETRY}
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start text-muted-foreground"
                   onClick={async () => {
                     // QUEUE-01: route to the confirm step's securing-path
                     // choice instead of inserting directly — see handleUploadContinue.
@@ -831,14 +849,6 @@ export function SecureDocumentDialog({
                 >
                   <SkipForward className="mr-2 h-4 w-4" />
                   {PRIVACY_FAIL_CLOSED_LABELS.CONTINUE_WITHOUT}
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="w-full justify-start text-muted-foreground"
-                  onClick={() => handleStartExtraction()}
-                >
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  {PRIVACY_FAIL_CLOSED_LABELS.RETRY}
                 </Button>
               </div>
             </div>
