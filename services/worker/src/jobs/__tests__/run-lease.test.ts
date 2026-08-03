@@ -28,6 +28,17 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// PR #1944 review follow-up (SCRUM-1258): runLeaseHolder() now reads
+// config.kRevision (Zod-validated, config.ts) instead of an ad-hoc
+// process.env.K_REVISION read. Mock `config` directly so the holder-identity
+// tests below control the value without depending on module-load-time
+// process.env state (config.ts's `loadConfig()` parses process.env exactly
+// once, at import time — mutating process.env afterward has no effect).
+const { mockConfig } = vi.hoisted(() => ({
+  mockConfig: { kRevision: undefined as string | undefined },
+}));
+vi.mock('../../config.js', () => ({ config: mockConfig }));
+
 const { mockLogger } = vi.hoisted(() => ({
   mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -218,8 +229,8 @@ describe('run lease — holder identity', () => {
    * exists to prevent, made self-sustaining.
    */
   it('mints a holder that cannot collide across instances of one revision', () => {
-    const original = process.env.K_REVISION;
-    process.env.K_REVISION = 'arkova-worker-01164-xux';
+    const original = mockConfig.kRevision;
+    mockConfig.kRevision = 'arkova-worker-01164-xux';
     try {
       const holder = runLeaseHolder();
       const shared = `arkova-worker-01164-xux:${process.pid}:`;
@@ -230,8 +241,17 @@ describe('run lease — holder identity', () => {
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
     } finally {
-      if (original === undefined) delete process.env.K_REVISION;
-      else process.env.K_REVISION = original;
+      mockConfig.kRevision = original;
+    }
+  });
+
+  it('falls back to "local" when config.kRevision is unset', () => {
+    const original = mockConfig.kRevision;
+    mockConfig.kRevision = undefined;
+    try {
+      expect(runLeaseHolder().startsWith(`local:${process.pid}:`)).toBe(true);
+    } finally {
+      mockConfig.kRevision = original;
     }
   });
 
