@@ -25,6 +25,7 @@ const {
   mockDrainResults,
   mockInvalidateVerificationCache,
   mockCredentialTypeSelectResult,
+  mockCaptureConfirmationTipHeightUnavailable,
 } = vi.hoisted(() => {
   const mockLogger = {
     info: vi.fn(),
@@ -40,6 +41,7 @@ const {
   const mockSendEmail = vi.fn();
   const mockBuildAnchorSecuredEmail = vi.fn();
   const mockInvalidateVerificationCache = vi.fn();
+  const mockCaptureConfirmationTipHeightUnavailable = vi.fn();
 
   // Configurable results per test
   const mockAnchorsSelectResult: { data: unknown; error: unknown } = { data: [], error: null };
@@ -78,6 +80,7 @@ const {
     mockDrainResults,
     mockInvalidateVerificationCache,
     mockCredentialTypeSelectResult,
+    mockCaptureConfirmationTipHeightUnavailable,
   };
 });
 
@@ -99,6 +102,10 @@ vi.mock('../config.js', () => ({
 
 vi.mock('../webhooks/delivery.js', () => ({
   dispatchWebhookEvent: mockDispatchWebhookEvent,
+}));
+
+vi.mock('../utils/sentry.js', () => ({
+  captureConfirmationTipHeightUnavailable: mockCaptureConfirmationTipHeightUnavailable,
 }));
 
 vi.mock('../email/index.js', () => ({
@@ -1057,6 +1064,181 @@ describe('checkSubmittedConfirmations', () => {
     } finally {
       rpcSpy.mockRestore();
     }
+  });
+});
+
+describe('SCRUM-3021 — chain tip height retry, fallback, and unavailable alert', () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    globalThis.fetch = mockFetch;
+    mockAnchorsSelectResult.data = [];
+    mockAnchorsSelectResult.error = null;
+    mockAnchorsSelectPages.splice(0, mockAnchorsSelectPages.length);
+    mockAnchorsCursorFilters.splice(0, mockAnchorsCursorFilters.length);
+    (mockAnchorsUpdateResult as Record<string, unknown>).error = null;
+    (mockAnchorsUpdateResult as Record<string, unknown>).count = 1;
+    mockAuditInsert.mockResolvedValue({ error: null });
+    mockChainIndexUpsert.mockResolvedValue({ error: null });
+    mockDispatchWebhookEvent.mockResolvedValue(undefined);
+    mockCredentialTypeSelectResult.data = [];
+    mockCredentialTypeSelectResult.error = null;
+    mockSendEmail.mockResolvedValue({ success: true, messageId: 'msg-001' });
+    mockBuildAnchorSecuredEmail.mockReturnValue({ subject: 'Test Subject', html: '<p>test</p>' });
+    mockInvalidateVerificationCache.mockResolvedValue(undefined);
+    mockDrainResults.splice(0, mockDrainResults.length, {
+      data: {
+        updated: 1,
+        capped: false,
+        anchors: [{ public_id: 'pub-001', org_id: 'org-001' }],
+      },
+      error: null,
+    });
+    resetSubmittedTxScanCursorForTests();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** Routes fetch by URL: mempool.space tip-height, blockstream.info tip-height, or tx status. */
+  function routeFetch(opts: {
+    mempoolTip?: () => Promise<unknown>;
+    blockstreamTip?: () => Promise<unknown>;
+    txStatus?: () => Promise<unknown>;
+  }) {
+    mockFetch.mockImplementation((input: unknown) => {
+      const url = String(input);
+      if (url.includes('blockstream.info') && url.endsWith('/blocks/tip/height')) {
+        return (opts.blockstreamTip ?? (() => Promise.resolve({ ok: false, status: 503 })))();
+      }
+      if (url.endsWith('/api/blocks/tip/height')) {
+        return (opts.mempoolTip ?? (() => Promise.resolve({ ok: true, text: () => Promise.resolve('200200') })))();
+      }
+      return (opts.txStatus ?? (() => Promise.resolve({ ok: true, json: () => Promise.resolve(MOCK_CONFIRMED_TX) })))();
+    });
+  }
+
+  it('retries mempool.space tip height once on a transient error before succeeding', async () => {
+    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
+    let mempoolTipCalls = 0;
+    routeFetch({
+      mempoolTip: () => {
+        mempoolTipCalls++;
+        if (mempoolTipCalls === 1) return Promise.resolve({ ok: false, status: 503 });
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('200200') });
+      },
+    });
+
+    vi.useFakeTimers();
+    try {
+      const pending = checkSubmittedConfirmations();
+      await vi.advanceTimersByTimeAsync(5000);
+      const result = await pending;
+
+      expect(mempoolTipCalls).toBe(2); // 1 failure + 1 retry — no need to reach blockstream
+      expect(result.confirmed).toBe(1);
+      expect(mockCaptureConfirmationTipHeightUnavailable).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to blockstream.info when mempool.space tip height exhausts retries', async () => {
+    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
+    let blockstreamCalls = 0;
+    routeFetch({
+      mempoolTip: () => Promise.resolve({ ok: false, status: 503 }),
+      blockstreamTip: () => {
+        blockstreamCalls++;
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('200200') });
+      },
+    });
+
+    vi.useFakeTimers();
+    try {
+      const pending = checkSubmittedConfirmations();
+      await vi.advanceTimersByTimeAsync(15000);
+      const result = await pending;
+
+      expect(blockstreamCalls).toBe(1);
+      expect(result.confirmed).toBe(1); // real height (200200) resolved via the fallback
+      expect(mockCaptureConfirmationTipHeightUnavailable).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('defers promotion and alerts once (not per-tx) when both tip-height providers fail on mainnet', async () => {
+    const { config } = await import('../config.js');
+    const originalNetwork = config.bitcoinNetwork;
+    (config as { bitcoinNetwork: string }).bitcoinNetwork = 'mainnet';
+    try {
+      // A tx that mempool.space reports as confirmed with a real, deep block
+      // height — pre-fix this was silently scored as "1 confirmation" and
+      // reported as merely "waiting", indistinguishable from a genuinely
+      // under-confirmed tx, whenever the tip fetch failed.
+      mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
+      routeFetch({
+        mempoolTip: () => Promise.resolve({ ok: false, status: 503 }),
+        blockstreamTip: () => Promise.resolve({ ok: false, status: 503 }),
+        txStatus: () => Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(MOCK_CONFIRMED_TX), // block_height 200100, deeply confirmed in reality
+        }),
+      });
+
+      vi.useFakeTimers();
+      let result: { checked: number; confirmed: number };
+      try {
+        const pending = checkSubmittedConfirmations();
+        await vi.advanceTimersByTimeAsync(15000);
+        result = await pending;
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(result.confirmed).toBe(0); // NOT promoted — depth cannot be verified, not "insufficient"
+      expect(mockCaptureConfirmationTipHeightUnavailable).toHaveBeenCalledTimes(1);
+      const [extra] = mockCaptureConfirmationTipHeightUnavailable.mock.calls[0] as [
+        { uniqueTxIds: number; minConfirmations: number },
+      ];
+      expect(extra.minConfirmations).toBe(6);
+      expect(extra.uniqueTxIds).toBeGreaterThan(0);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ minConfirmations: 6 }),
+        expect.stringMatching(/tip height unavailable/i),
+      );
+    } finally {
+      (config as { bitcoinNetwork: string }).bitcoinNetwork = originalNetwork;
+    }
+  });
+
+  it('still promotes an already-confirmed tx when tip height is unavailable on a 1-confirmation network', async () => {
+    // Default test config is `bitcoinNetwork: 'testnet4'` (getMinConfirmations() === 1).
+    // txData.status.confirmed === true already satisfies a 1-confirmation
+    // threshold on its own — this must NOT regress into the mainnet-only
+    // defer-and-alert behavior added for SCRUM-3021.
+    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
+    routeFetch({
+      mempoolTip: () => Promise.resolve({ ok: false, status: 503 }),
+      blockstreamTip: () => Promise.resolve({ ok: false, status: 503 }),
+      txStatus: () => Promise.resolve({ ok: true, json: () => Promise.resolve(MOCK_CONFIRMED_TX) }),
+    });
+
+    vi.useFakeTimers();
+    let result: { checked: number; confirmed: number };
+    try {
+      const pending = checkSubmittedConfirmations();
+      await vi.advanceTimersByTimeAsync(15000);
+      result = await pending;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(result.confirmed).toBe(1);
+    expect(mockCaptureConfirmationTipHeightUnavailable).not.toHaveBeenCalled();
   });
 });
 

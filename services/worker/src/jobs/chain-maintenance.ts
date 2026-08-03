@@ -22,6 +22,7 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
+import { resolveMempoolHostBase } from '../utils/mempool-url.js';
 import { z } from 'zod';
 import type { Json } from '../types/database.types.js';
 
@@ -78,14 +79,18 @@ const RebroadcastSubmittedAnchorUpdateSchema = z.object({
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 function getMempoolBaseUrl(): string {
-  if (config.mempoolApiUrl) return config.mempoolApiUrl;
   const paths: Record<string, string> = {
     testnet4: 'https://mempool.space/testnet4',
     testnet: 'https://mempool.space/testnet',
     signet: 'https://mempool.space/signet',
     mainnet: 'https://mempool.space',
   };
-  return paths[config.bitcoinNetwork] ?? 'https://mempool.space/signet';
+  const fallback = paths[config.bitcoinNetwork] ?? 'https://mempool.space/signet';
+  // SCRUM-3016: this file appends `/api/...` itself below (e.g.
+  // `${baseUrl}/api/tx/...`) — resolveMempoolHostBase normalizes a
+  // MEMPOOL_API_URL set WITH a trailing /api (the OTHER convention some
+  // sibling consumers expect) down to the bare host this file needs.
+  return resolveMempoolHostBase(config.mempoolApiUrl, fallback);
 }
 
 type SubmittedTxChainState = 'confirmed' | 'unconfirmed' | 'not_found' | 'unknown';
