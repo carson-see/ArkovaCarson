@@ -45,6 +45,7 @@ import {
 
 export { CreateWebhookSchema, UpdateWebhookSchema, ListWebhooksQuerySchema, VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
 import { VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
+import { chunkForInFilter } from '../../utils/postgrest-filter.js';
 
 const router = Router();
 // Keep VALID_WEBHOOK_EVENTS in scope for runtime reference elsewhere if needed.
@@ -507,27 +508,59 @@ router.get('/deliveries', async (req, res) => {
       }
     }
 
-    let query = db
-      .from('webhook_delivery_logs')
-      .select('id, endpoint_id, event_type, event_id, status, response_status, error_message, attempt_number, delivered_at, created_at, next_retry_at')
-      .order('created_at', { ascending: false })
-      .limit(limit);
+    const selectColumns =
+      'id, endpoint_id, event_type, event_id, status, response_status, error_message, attempt_number, delivered_at, created_at, next_retry_at';
+    type DeliveryLog = { created_at: string | null };
+    let logs: DeliveryLog[] = [];
 
     if (endpointId) {
-      query = query.eq('endpoint_id', endpointId);
+      const { data, error } = await db
+        .from('webhook_delivery_logs')
+        .select(selectColumns)
+        .order('created_at', { ascending: false })
+        .limit(limit)
+        .eq('endpoint_id', endpointId);
+
+      if (error) {
+        logger.error({ error }, 'Failed to fetch delivery logs');
+        errorResponse(res, 500, 'internal_error', 'Failed to fetch delivery logs');
+        return;
+      }
+      logs = (data ?? []) as DeliveryLog[];
     } else {
-      query = query.in('endpoint_id', scopedEndpointIds);
+      // One id per webhook endpoint the org owns — no upper bound in code.
+      // Each chunk still asks for the newest `limit` rows, because the global
+      // newest `limit` is necessarily contained in the union of the per-chunk
+      // newest `limit`; the merge below re-sorts and re-applies the cap so the
+      // response is identical to the one-shot query's.
+      for (const { values, start } of chunkForInFilter(scopedEndpointIds)) {
+        const { data, error } = await db
+          .from('webhook_delivery_logs')
+          .select(selectColumns)
+          .order('created_at', { ascending: false })
+          .limit(limit)
+          .in('endpoint_id', values);
+
+        if (error) {
+          logger.error(
+            { error, chunkStart: start, chunkSize: values.length },
+            'Failed to fetch delivery logs',
+          );
+          errorResponse(res, 500, 'internal_error', 'Failed to fetch delivery logs');
+          return;
+        }
+        logs = logs.concat((data ?? []) as DeliveryLog[]);
+      }
+
+      // Sort UNCONDITIONALLY, not just when trimming. Each chunk is internally
+      // newest-first but the concatenation is in chunk order, so a merged result
+      // at or under `limit` would otherwise be returned unsorted — silently
+      // dropping the global ordering the one-shot query guaranteed.
+      logs.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
+      if (logs.length > limit) logs = logs.slice(0, limit);
     }
 
-    const { data: logs, error } = await query;
-
-    if (error) {
-      logger.error({ error }, 'Failed to fetch delivery logs');
-      errorResponse(res, 500, 'internal_error', 'Failed to fetch delivery logs');
-      return;
-    }
-
-    res.json({ deliveries: logs ?? [], total: logs?.length ?? 0 });
+    res.json({ deliveries: logs, total: logs.length });
   } catch (err) {
     logger.error({ error: err }, 'Delivery logs query failed');
     errorResponse(res, 500, 'internal_error', 'Failed to fetch delivery logs');
