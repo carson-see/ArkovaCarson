@@ -49,6 +49,7 @@ import { ExplorerLink } from '@/components/ui/ExplorerLink';
 import { ComplianceBadge } from '@/components/anchor/ComplianceBadge';
 import { EvidenceLayersSection } from '@/components/verification/EvidenceLayersSection';
 import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
+import { CtdlDataLink } from '@/components/verification/CtdlDataLink';
 import { FingerprintSourceDisplay } from '@/components/verification/FingerprintSourceDisplay';
 import { LinkedInCredentialHelper } from '@/components/verification/LinkedInCredentialHelper';
 import { ArkovaBadge } from '@/components/verification/ArkovaBadge';
@@ -674,6 +675,20 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
               publicId={data.public_id}
               status={publicStatus}
             />
+          </>
+        )}
+
+        {/* ============================================================
+            SECTION 5b: CTDL Data Link (structured-data discoverability)
+            ============================================================
+            Same `hasProof` gate as Sections 3 + 5 — hasPublicVerificationProof
+            is byte-identical to the worker's own isCtdlPublishableStatus set
+            (SECURED/REVOKED/EXPIRED/SUPERSEDED), so this is never shown for a
+            status the endpoint would 404 for. */}
+        {hasProof && (
+          <>
+            <Separator />
+            <CtdlDataLink publicId={data.public_id} />
           </>
         )}
 

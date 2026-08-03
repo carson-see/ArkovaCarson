@@ -1,8 +1,33 @@
 # agents.md — services/worker/src/ai/
 
-_Last updated: 2026-07-22_
+_Last updated: 2026-08-03_
 
-## 2026-07-22 Together AI JSON parse hardening (BUG-2026-06-24-014 follow-up) + code-review fixes
+## 2026-08-03 `report-generator.ts` — discarded Supabase `error` masked as COMPLETE
+
+Same defect class as the `.in()`-filter / `chunkedRead.ts` silent-success bugs documented in
+`src/jobs/agents.md` and `src/utils/jobPostcondition.ts` (the 70-hour anchoring outage lineage), found
+here on a plain single-query read rather than a chunked one. `generateIntegritySummary`,
+`generateCredentialAnalytics`, and `generateComplianceOverview` each destructured only `data` from a
+Supabase query (`integrity_scores`, `anchors`, `audit_events` respectively) and discarded `error`.
+postgrest-js **resolves**, never rejects, on a query-level error, so `generateReport()`'s try/catch
+(lines ~98-171) never saw it — a transient DB read error produced zeroed/empty stats
+(`distribution: {HIGH:0,...}`, `totalCredentials: 0`, `recentAuditEvents.total: 0`) and the report was
+still persisted `status: 'COMPLETE'`. An org reading a failed integrity/compliance check would see
+"everything is clean" instead of a failure.
+
+Fix: check `error` at all three call sites and `throw` — this routes through the EXISTING
+`generateReport()` catch block, which already marks the report `FAILED` with a real `error_message`.
+No new helper added; this matches the file's own `default: throw new Error(...)` convention in the
+report-type switch, so the file now has one consistent "generator function throws -> caller marks
+FAILED" contract instead of two (throw for unknown type, silent-zero for a DB error).
+
+**Deliberately out of scope, flagged not fixed:** `getReviewQueueStats` (`review-queue.ts`) and
+`getExtractionAccuracy` (`feedback.ts`) — the two helper functions `generateComplianceOverview` and
+the `extraction_accuracy` report branch call into — have the same discarded-`error`-then-return-empty
+shape internally (`review-queue.ts` logs a warn per status and falls back to `count ?? 0`;
+`feedback.ts` logs an error and returns `[]`). Each has exactly one OTHER production caller
+(`api/v1/ai-review.ts`, `api/v1/ai-feedback.ts`) whose response contract would change if these started
+throwing on a DB error — that's a wider, separate call worth its own review, not folded into this fix.
 
 - `together.ts`'s `TogetherProvider.extractMetadata` did a naked `JSON.parse` on raw Together AI text output. `response_format: { type: 'json_object' }` (native JSON mode) suppresses markdown-fence wrapping but does not protect against truncated output hitting `max_tokens` mid-object — a `SyntaxError` there threw unhandled out of `extractMetadata`. Added a file-scoped `parseTogetherJson` (strip JS-style comments -> strip markdown fence -> brace-salvage/delimiter-repair), mirroring `gemini.ts`'s private `parseModelJson`. Kept file-scoped/independent per that precedent — do not extract a shared cross-provider module. Correction: an earlier version of this note (and the code comment above `parseTogetherJson`) claimed parity with a sibling `nessie-json-parse.ts` (`parseNessieJson`) as if it existed in this directory — it does not on this branch/main; it exists only on a separate, unmerged PR (#1660). Both the comment and this note now say so explicitly.
 - `strip-json-comments.ts` remains the one genuinely shared helper across `gemini.ts`, `nessie.ts`, and `together.ts`; the fence-strip/brace-salvage/delimiter-repair logic is intentionally duplicated per-file rather than centralized.

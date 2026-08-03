@@ -1,7 +1,16 @@
 # agents.md — verification
+_Last updated: 2026-08-03 (CtdlDataLink — public CTDL feed discoverability, CE demo-gap bug blitz)_
 _Last updated: 2026-07-28 (R19 fingerprint-source evidence class, advances SCRUM-2481)_
 _Last updated: 2026-07-06 (SCRUM-2501 FE-PROOF-GATE proof-availability state machine)_
 _Last updated: 2026-07-06 (SCRUM-2495 does-not-assert disclaimer)_
+
+## 2026-08-03 — CtdlDataLink: the public CTDL feed had zero UI surface
+
+`GET /api/v1/credentials/:publicId/ctdl` (`services/worker/src/api/v1/credentials-ctdl.ts`) is a mature, heavily-tested, standards-conformant public CTDL JSON-LD projection — and was linked from nowhere in the product: not the verify page, not the credential detail view, nowhere. Found while auditing Credential Engine end-to-end gaps for a founder-requested CE demo readiness pass. New `CtdlDataLink.tsx` renders a single claims-safe discoverability link ("Structured data: CTDL data (JSON-LD)", `CTDL_DATA_LINK_LABELS` in `copy.ts`) pointing at `${WORKER_URL}/api/v1/credentials/<publicId>/ctdl` — same URL-construction pattern as `useProofAvailability.ts` (own worker origin, own publicId, `encodeURIComponent`'d — never a third-party or client-supplied URL).
+
+Wired into `PublicVerification.tsx` as **Section 5b**, right after Proof Download, gated on the SAME `hasProof` boolean as Sections 3 + 5 (`hasPublicVerificationProof(status)` — byte-identical to the worker's own `isCtdlPublishableStatus` set: SECURED/REVOKED/EXPIRED/SUPERSEDED). A PENDING/SUBMITTED anchor never gets the link, because the endpoint would 404 for it.
+
+**R-7 (§1.13) / CE-06a note:** this link is NOT a Registry-listing or CE-publication-status claim — it only says "this record has a CTDL JSON-LD representation," which is true for any anchor in a CTDL-publishable status, independent of whether that anchor also carries CE Registry provenance (`registry_url`, the pre-existing `SourceProvenanceDisplay` "Registry reference" row). Do not conflate the two: `registry_url` presence means "this record's evidence traces back to a CE Registry record"; `CtdlDataLink` presence means "Arkova can serialize this record's own data as CTDL" — they are gated on unrelated conditions and can each be present or absent independently.
 
 ## 2026-07-28 R19 — FingerprintSourceDisplay (advances SCRUM-2481)
 

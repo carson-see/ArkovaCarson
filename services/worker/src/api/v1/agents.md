@@ -7,6 +7,39 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 The public `get_public_anchor` projection (migration `0385`, live) reads `anchors.metadata->>'registry_url'` to populate `SourceProvenanceDisplay`'s "Registry reference" row on the public verify page (`src/components/verification/SourceProvenanceDisplay.tsx`) — UI + projection wiring already shipped under SCRUM-2913. But `credentials-ctdl-registry-anchor.ts` (`POST /api/v1/credentials/ctdl/registry-anchor`, the `ce_registry_ctid`-keyed CE registry anchoring flow that migration `0389`'s index and the `ce-registry-drift.ts` job serve) only ever stamped the metadata key `ce_registry_url` (prefixed) — a key the public projection's allow-list does not recognize. Result: a genuinely CE-registry-anchored record's registry link never reached the verify page, even though every other layer was built. `BoundedRegistryMetadata` now also stamps the unprefixed `registry_url` key (byte-identical value to `ce_registry_url`) alongside the existing keys — purely additive, `ce_registry_ctid` (the drift job's only read key) and `ce_registry_url` (this endpoint's own response-body source) are both untouched. Regression test: `credentials-ctdl-registry-anchor.test.ts` "stamps metadata.registry_url (unprefixed)...". This is a forward-fix only — anchors created before this change keep their existing metadata as-is (no backfill).
 
 **Adversarial-review follow-up (same PR, same day):** the fix above tied the writer to the projection by nothing but a doc comment, and `services/worker/src/lib/credential-source-import.ts`'s `extractCeRegistryProvenance` is an independent SECOND writer of the same conceptual "CE registry provenance" metadata with a different key shape — nothing mechanically checked that either writer, or the projection's allow-list, stayed in agreement. `scripts/ci/check-ce-registry-key-parity.ts` now enforces this: every registered CE-registry writer must stamp `registry_url`, no unregistered file may stamp CE-registry-provenance metadata, and the live `get_public_anchor` projection must keep `registry_url` in its allow-list. Deliberately did NOT make `credential-source-import.ts` also stamp the `ce_`-prefixed keys `credentials-ctdl-registry-anchor.ts` uses (`ce_registry_ctid` etc.) — it already stamps the one key that matters (`registry_url`) and is a genuinely different feature (CSI issuer-partnership import vs. direct-by-CTID registry anchor) with a narrower, legitimately different metadata shape; forcing full key-set symmetry would extend the `ce-registry-drift.ts` job's read scope (keyed on `ce_registry_ctid`) to a cohort it was never scoped to cover, for no functional gain.
+## 2026-08-03 — `POST /credentials/ctdl/registry-anchor` created records nobody could see
+
+**Creating an anchor row is not the same as giving the user a record.** The CE registry-anchor
+route wrote `anchors.user_id` and stopped there. `get_my_credentials()` — the RPC behind
+`/my-credentials` — is a strict INNER JOIN with **no `anchors.user_id` fallback**:
+
+```sql
+FROM anchor_recipients ar JOIN anchors a ON a.id = ar.anchor_id
+WHERE ar.recipient_user_id = auth.uid() AND a.deleted_at IS NULL
+```
+
+so every record added through that route was **permanently** absent from the adder's own list.
+Not a cache/refresh bug — there was structurally no row to join through, ever. The user got a
+success toast, a working verify link, a spent credit, and nothing in their list.
+
+`anchors.user_id` and `anchor_recipients` are **not interchangeable ownership signals** on this
+surface. Anything that creates an anchor a user is meant to *see* must write both. The sibling
+self-import path (`credential-sources.ts` `linkSelfRecipient`) already did; this one was the
+outlier, and it reuses the same shared `buildSelfImportRecipientHash` so both stay compatible
+with the `link_recipient_to_anchors` claim flow.
+
+Ordering matters and is now pinned by a test: **link before the credit gate.** A record the
+caller cannot see is worse than no record, so an unlinkable anchor is rolled back rather than
+shipped — and a credit is never spent on one. The credit-rejection path unlinks (best-effort;
+the soft-delete plus the RPC's `deleted_at IS NULL` filter already make a surviving row
+invisible). Both duplicate paths re-link too, which makes the fix self-healing for anchors
+created before it.
+
+**Why it shipped:** `e2e/ctdl-registry-import.spec.ts` stubbed both worker legs and asserted
+only the in-dialog success link — it never looked at the list, so it could not have caught this.
+That spec now asserts the record appears after the dialog closes, with a docblock stating
+plainly what its stubs do and do not prove. A green E2E over a fully-mocked flow is a claim
+about the client, not about the write.
 
 ## 2026-08-02 — the silent-empty enrichment sweep (`readInChunks`)
 

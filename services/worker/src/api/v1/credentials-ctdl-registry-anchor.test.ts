@@ -22,6 +22,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import request from 'supertest';
 
 import { buildCredentialsCtdlRegistryAnchorRouter } from './credentials-ctdl-registry-anchor.js';
+import { buildSelfImportRecipientHash } from '../../lib/credential-source-import.js';
 import type { SafeFetchDeps, SafeFetchResponse } from '../../lib/safe-fetch.js';
 
 const {
@@ -33,6 +34,8 @@ const {
   mockAnchorUpdate,
   mockAnchorUpdateChain,
   mockAuditInsert,
+  mockRecipientInsert,
+  mockRecipientDeleteMatch,
   mockDeductOrgCredit,
   loggerWarn,
   loggerError,
@@ -51,6 +54,8 @@ const {
     })),
   }));
   const mockAuditInsert = vi.fn();
+  const mockRecipientInsert = vi.fn();
+  const mockRecipientDeleteMatch = vi.fn();
   const mockDeductOrgCredit = vi.fn();
 
   const mockFrom = vi.fn((table: string) => {
@@ -74,6 +79,12 @@ const {
         update: mockAnchorUpdate,
       };
     }
+    if (table === 'anchor_recipients') {
+      return {
+        insert: mockRecipientInsert,
+        delete: vi.fn(() => ({ match: mockRecipientDeleteMatch })),
+      };
+    }
     if (table === 'audit_events') {
       return { insert: mockAuditInsert };
     }
@@ -89,6 +100,8 @@ const {
     mockAnchorUpdate,
     mockAnchorUpdateChain,
     mockAuditInsert,
+    mockRecipientInsert,
+    mockRecipientDeleteMatch,
     mockDeductOrgCredit,
     loggerWarn: vi.fn(),
     loggerError: vi.fn(),
@@ -181,6 +194,8 @@ beforeEach(() => {
     })),
   }));
   mockAuditInsert.mockResolvedValue({ error: null });
+  mockRecipientInsert.mockResolvedValue({ error: null });
+  mockRecipientDeleteMatch.mockResolvedValue({ error: null });
   mockDeductOrgCredit.mockResolvedValue({ allowed: true, reason: 'feature_disabled' });
 });
 
@@ -358,6 +373,139 @@ describe('POST /credentials/ctdl/registry-anchor — upstream error mapping', ()
     const res = await request(app).post('/').send({ ctid: PROGRAM_CTID });
     expect(res.status).toBe(502);
     expect(res.body.error).toBe('registry_bad_gateway');
+  });
+});
+
+/**
+ * Recipient linkage — the bug this suite exists to pin.
+ *
+ * `get_my_credentials()` (the RPC behind `useMyCredentials` / the
+ * `/my-credentials` page) is a STRICT INNER JOIN with no `anchors.user_id`
+ * fallback:
+ *
+ *   FROM anchor_recipients ar JOIN anchors a ON a.id = ar.anchor_id
+ *   WHERE ar.recipient_user_id = auth.uid() AND a.deleted_at IS NULL
+ *
+ * so an anchor created with `user_id` alone and no `anchor_recipients` row is
+ * PERMANENTLY invisible to the user who just created it — not a cache/refresh
+ * problem, there is structurally no row to join through. This route must write
+ * the same self-recipient marker the sibling self-import path writes
+ * (`credential-sources.ts` `linkSelfRecipient`), using the SHARED
+ * `buildSelfImportRecipientHash` so both paths stay claim-compatible.
+ */
+describe('POST /credentials/ctdl/registry-anchor — recipient linkage (My Credentials visibility)', () => {
+  const SELF_HASH = buildSelfImportRecipientHash('user-123');
+
+  it('links the calling user as a recipient so the record is reachable via get_my_credentials()', async () => {
+    const { deps } = depsReturning(stubResponse({ body: NONCREDIT_RAW }));
+    const app = buildApp({ deps });
+
+    const res = await request(app).post('/').send({ ctid: PROGRAM_CTID });
+
+    expect(res.status).toBe(201);
+    expect(mockRecipientInsert).toHaveBeenCalledTimes(1);
+    expect(mockRecipientInsert).toHaveBeenCalledWith({
+      anchor_id: 'anchor-1',
+      recipient_email_hash: SELF_HASH,
+      recipient_user_id: 'user-123',
+    });
+  });
+
+  it('links the recipient BEFORE deducting a credit — never charges for an invisible record', async () => {
+    mockProfileSingle.mockResolvedValue({ data: { org_id: 'org-123' }, error: null });
+    mockDeductOrgCredit.mockResolvedValue({ allowed: true, reason: 'deducted' });
+
+    const { deps } = depsReturning(stubResponse({ body: NONCREDIT_RAW }));
+    const app = buildApp({ deps });
+    const res = await request(app).post('/').send({ ctid: PROGRAM_CTID });
+
+    expect(res.status).toBe(201);
+    expect(mockRecipientInsert.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeductOrgCredit.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('rolls back the anchor and 500s when the recipient link fails — no orphaned invisible anchor', async () => {
+    mockRecipientInsert.mockResolvedValue({ error: { code: '42501', message: 'permission denied' } });
+
+    const { deps } = depsReturning(stubResponse({ body: NONCREDIT_RAW }));
+    const app = buildApp({ deps });
+    const res = await request(app).post('/').send({ ctid: PROGRAM_CTID });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('anchor_create_failed');
+    // Soft-deleted, so it cannot linger as an anchor no user can ever see.
+    expect(mockAnchorUpdateChain).toHaveBeenCalled();
+    // And nothing was charged for it.
+    expect(mockDeductOrgCredit).not.toHaveBeenCalled();
+  });
+
+  it('treats a duplicate recipient row (23505) as already-linked and still returns 201', async () => {
+    mockRecipientInsert.mockResolvedValue({ error: { code: '23505', message: 'duplicate key' } });
+
+    const { deps } = depsReturning(stubResponse({ body: NONCREDIT_RAW }));
+    const app = buildApp({ deps });
+    const res = await request(app).post('/').send({ ctid: PROGRAM_CTID });
+
+    expect(res.status).toBe(201);
+    expect(mockAnchorUpdateChain).not.toHaveBeenCalled();
+  });
+
+  it('links the recipient on the duplicate-anchor path — self-heals anchors created before this fix', async () => {
+    mockAnchorsMaybeSingle.mockResolvedValue({
+      data: {
+        id: 'anchor-existing',
+        public_id: 'ARK-2026-EXIST001',
+        fingerprint: 'f'.repeat(64),
+        status: 'PENDING',
+        created_at: NOW.toISOString(),
+      },
+      error: null,
+    });
+
+    const { deps } = depsReturning(stubResponse({ body: NONCREDIT_RAW }));
+    const app = buildApp({ deps });
+    const res = await request(app).post('/').send({ ctid: PROGRAM_CTID });
+
+    expect(res.status).toBe(200);
+    expect(res.body.duplicate).toBe(true);
+    expect(mockRecipientInsert).toHaveBeenCalledWith({
+      anchor_id: 'anchor-existing',
+      recipient_email_hash: SELF_HASH,
+      recipient_user_id: 'user-123',
+    });
+  });
+
+  it('unlinks the recipient when the credit gate rejects the anchor', async () => {
+    mockProfileSingle.mockResolvedValue({ data: { org_id: 'org-123' }, error: null });
+    mockDeductOrgCredit.mockResolvedValue({
+      allowed: false,
+      error: 'insufficient_credits',
+      balance: 0,
+      required: 1,
+    });
+
+    const { deps } = depsReturning(stubResponse({ body: NONCREDIT_RAW }));
+    const app = buildApp({ deps });
+    const res = await request(app).post('/').send({ ctid: PROGRAM_CTID });
+
+    expect(res.status).toBe(402);
+    expect(mockRecipientDeleteMatch).toHaveBeenCalledWith({
+      anchor_id: 'anchor-1',
+      recipient_user_id: 'user-123',
+    });
+  });
+
+  it('never writes the recipient hash into any log call', async () => {
+    const { deps } = depsReturning(stubResponse({ body: NONCREDIT_RAW }));
+    const app = buildApp({ deps });
+    await request(app).post('/').send({ ctid: PROGRAM_CTID });
+
+    const allLogArgs = [...loggerWarn.mock.calls, ...loggerError.mock.calls, ...loggerInfo.mock.calls]
+      .flat()
+      .map((a) => JSON.stringify(a))
+      .join('\n');
+    expect(allLogArgs).not.toContain(SELF_HASH);
   });
 });
 

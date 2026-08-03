@@ -156,3 +156,107 @@ describe('getReport', () => {
     expect(report).toBeNull();
   });
 });
+
+// =============================================================================
+// SILENT-FAILURE GUARD: a discarded Supabase `error` must not produce a
+// COMPLETE report with fabricated-empty data (same defect class as the
+// `.in()`-filter / chunkedRead silent-success bugs documented in
+// src/jobs/agents.md and src/utils/jobPostcondition.ts).
+// =============================================================================
+describe('generateReport — Supabase read error handling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * Returns the mock chain shape for a given table's terminal call, per the
+   * exact call sites in report-generator.ts:
+   *  - integrity_scores : .select(...).eq(...)                       [terminal at .eq]
+   *  - anchors          : .select(...).eq(...).gte(...)              [terminal at .gte]
+   *  - audit_events     : .select(...).eq(...).order(...).limit(...) [terminal at .limit]
+   */
+  function tableChain(table: string, result: { data: unknown; error: unknown }) {
+    switch (table) {
+      case 'anchors':
+        return { select: () => ({ eq: () => ({ gte: () => Promise.resolve(result) }) }) };
+      case 'audit_events':
+        return {
+          select: () => ({
+            eq: () => ({ order: () => ({ limit: () => Promise.resolve(result) }) }),
+          }),
+        };
+      default: // integrity_scores
+        return { select: () => ({ eq: () => Promise.resolve(result) }) };
+    }
+  }
+
+  /**
+   * Drives generateReport() end-to-end with a real DB error surfaced on
+   * `erroringTable`, and captures every `ai_reports` update payload so the
+   * test can assert on the FINAL status write (what actually gets persisted).
+   */
+  async function runWithTableError(reportType: string, erroringTable: string) {
+    const { db } = await import('../utils/db.js');
+    const updateCalls: Array<Record<string, unknown>> = [];
+
+    const reportRow = {
+      id: 'report-err',
+      org_id: 'org-1',
+      report_type: reportType,
+      parameters: {},
+    };
+
+    const dbError = { message: 'connection terminated unexpectedly', code: '57P01' };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (db.from as any).mockImplementation((table: string) => {
+      if (table === 'ai_reports') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: () => Promise.resolve({ data: reportRow, error: null }),
+            }),
+          }),
+          update: (payload: Record<string, unknown>) => {
+            updateCalls.push(payload);
+            return { eq: () => Promise.resolve({ data: null, error: null }) };
+          },
+        };
+      }
+
+      if (table === erroringTable) {
+        return tableChain(table, { data: null, error: dbError });
+      }
+
+      return tableChain(table, { data: [], error: null });
+    });
+
+    const { generateReport } = await import('./report-generator.js');
+    const ok = await generateReport('report-err');
+    return { ok, updateCalls };
+  }
+
+  it('does not mark integrity_summary COMPLETE when integrity_scores read errors', async () => {
+    const { ok, updateCalls } = await runWithTableError('integrity_summary', 'integrity_scores');
+
+    const finalUpdate = updateCalls[updateCalls.length - 1];
+    expect(finalUpdate.status).not.toBe('COMPLETE');
+    expect(ok).toBe(false);
+  });
+
+  it('does not mark credential_analytics COMPLETE when anchors read errors', async () => {
+    const { ok, updateCalls } = await runWithTableError('credential_analytics', 'anchors');
+
+    const finalUpdate = updateCalls[updateCalls.length - 1];
+    expect(finalUpdate.status).not.toBe('COMPLETE');
+    expect(ok).toBe(false);
+  });
+
+  it('does not mark compliance_overview COMPLETE when audit_events read errors', async () => {
+    const { ok, updateCalls } = await runWithTableError('compliance_overview', 'audit_events');
+
+    const finalUpdate = updateCalls[updateCalls.length - 1];
+    expect(finalUpdate.status).not.toBe('COMPLETE');
+    expect(ok).toBe(false);
+  });
+});

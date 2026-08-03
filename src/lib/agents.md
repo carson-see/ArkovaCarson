@@ -2,6 +2,9 @@
 
 _Last updated: 2026-08-03_
 
+## 2026-08-03 CTDL data link copy (Lane 3, CE demo-gap bug blitz)
+
+`copy.ts` gained `CTDL_DATA_LINK_LABELS` (placed right after `SOURCE_PROVENANCE_LABELS`) — the public verify page's new "Structured data: CTDL data (JSON-LD)" link to the existing `GET /api/v1/credentials/:publicId/ctdl` projection (see `src/components/verification/CtdlDataLink.tsx` + that folder's `agents.md`). Copy is a data-FORMAT description only, never a Registry-membership/publication-status claim — scanned clean by `copy-claims-gate.test.ts`'s whole-file `PROHIBITED_CLAIM_PATTERNS` sweep (imports the same patterns from `services/worker/src/ctdl/ctdl-claims-guard.ts`).
 ## 2026-08-03 Invite-email VITE_WORKER_URL fix — why `workerClient.ts` was deliberately left alone
 
 Root cause of "invite created but the email never sends" (prod worker logs showed ZERO `/api/send-invitation-email` hits): several call sites read `import.meta.env.VITE_WORKER_URL || 'http://localhost:3001'` directly. `VITE_WORKER_URL` is unset in the Vercel build, so Vite bakes the localhost fallback into the production bundle — confirmed by downloading and grepping the live prod chunks (`OrgProfilePage-*.js` / `AcceptInvitePage-*.js` both contain the literal string `http://localhost:3001` next to `send-invitation-email` / `/api/invitations`). Every invite/accept-invite request was silently POSTing to the user's own machine.
