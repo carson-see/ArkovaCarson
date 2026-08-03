@@ -82,4 +82,4 @@ Applying a soaked migration to prod is the RTE's action, via MCP, followed immed
 
 ## Related
 
-`memory/feedback_migration_rules.md`, `memory/feedback_migration_number_vs_reservations.md`, `memory/feedback_rte_owns_prod_migration_apply.md`, `memory/feedback_assert_prod_state_directly.md`.
+`memory/feedback_migration_rules.md`, `memory/feedback_migration_number_vs_reservations.md`.

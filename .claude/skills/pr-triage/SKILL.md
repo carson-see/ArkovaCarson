@@ -61,4 +61,4 @@ A PR left draft usually encodes a real reservation — an unbuilt consumer, an u
 
 ## Related
 
-`.claude/skills/soak-evidence/SKILL.md`, `.claude/skills/prod-state-check/SKILL.md`, `memory/feedback_merges_go_through_mergify.md`, `memory/feedback_dont_churn_mergify_queue.md`, `memory/feedback_never_merge_without_ok.md`.
+`memory/feedback_merges_go_through_mergify.md`, `memory/feedback_never_merge_without_ok.md`.
