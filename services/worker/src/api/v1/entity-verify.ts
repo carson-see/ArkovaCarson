@@ -12,6 +12,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
+import { readInChunks } from '../../utils/chunkedRead.js';
 import { logger } from '../../utils/logger.js';
 import { monitorQuery } from '../../utils/queryMonitor.js';
 
@@ -97,14 +98,12 @@ router.get('/', async (req: Request, res: Response) => {
 
     let anchorMap = new Map();
     if (anchorIds.length > 0) {
-      const { data: anchors } = await db
-        .from('anchors')
-        .select('id, chain_tx_id, chain_block_height, chain_timestamp, status, public_id')
-        .in('id', anchorIds);
-
-      if (anchors) {
-        anchorMap = new Map(anchors.map((a) => [a.id, a]));
-      }
+      const anchors = await readInChunks('entity-verify:anchors', anchorIds, (chunk) =>
+        db
+          .from('anchors')
+          .select('id, chain_tx_id, chain_block_height, chain_timestamp, status, public_id')
+          .in('id', chunk));
+      anchorMap = new Map(anchors.map((a) => [a.id, a]));
     }
 
     const results = recordsList.map((r: Record<string, unknown>) => ({

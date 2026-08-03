@@ -2,6 +2,24 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-02 — `arkova/no-hand-rolled-in-filter-chunk` is now an ERROR in this folder
+
+The `.in()` filter-width class is no longer merely unlikely — it is **unwritable**. A hand-rolled
+chunk loop around a `.in()` call fails `npm run lint`, which IS the deploy gate (CLAUDE.md rule 9).
+
+Turning the rule on surfaced **four sites the manual census had missed**, all in this folder:
+`attestationExpiry.ts` (two `.in()` status updates — its `.insert()` webhook loop is a request-BODY
+batch and correctly still uses `CHUNK_SIZE`), `cloud-logging-drain.ts` (the retry-count fallback),
+and `docusign-queue-reconciliation-deps.ts` — **the file the previous PR cited as the sibling that
+"already chunked" correctly.** It chunked by a hand-picked `IN_CHUNK_SIZE = 100` over
+DocuSign-issued strings, so a count-only bound was never the right measure. Its constant is gone too.
+
+Two existing tests failed when the rule landed, and both were wrong in an instructive way: they
+asserted the **exact hand-picked width** (`Math.ceil(N / 100)`, `[100, 100, 50]`) rather than the
+property. Such a test fails precisely when someone *fixes* the width. Both now assert what actually
+matters — chunked rather than per-row, every chunk inside the real encoded budget, no id dropped.
+Width itself is asserted ONCE, on the helper, in `utils/postgrest-filter.test.ts`.
+
 ## 2026-08-02 — the 500-wide chunk cohort is gone (`chunkForInFilter` everywhere)
 
 Follows #1839 (`chunkForInFilter`) and #1853 (the three worst sites). This closes the *bounded but

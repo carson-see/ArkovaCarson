@@ -8,6 +8,7 @@
 
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { chunkForInFilter } from '../utils/postgrest-filter.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
@@ -124,7 +125,9 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
       // next tick. Previously, status was updated first — if webhook insert
       // then failed, those events were permanently lost (cron queries status = 'ACTIVE').
 
-      // Bulk insert webhooks in chunks (PostgREST ~8KB URL limit on .in() filters)
+      // Bulk insert webhooks in chunks. NOTE this is a request-BODY batch, not
+      // an `.in()` filter — it has no URL budget, so `CHUNK_SIZE` is the right
+      // tool here. The `.in()` status updates below use `chunkForInFilter`.
       if (webhookInserts.length > 0) {
         let webhooksFailed = false;
         for (let i = 0; i < webhookInserts.length; i += CHUNK_SIZE) {
@@ -152,8 +155,7 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
         } else {
           // Bulk status update in chunks of 100
           const expiredIds = justExpired.map((att: { id: string }) => att.id);
-          for (let i = 0; i < expiredIds.length; i += CHUNK_SIZE) {
-            const chunk = expiredIds.slice(i, i + CHUNK_SIZE);
+          for (const { values: chunk } of chunkForInFilter(expiredIds)) {
             const { error: bulkUpdateErr } = await dbAny
               .from('attestations')
               .update({ status: 'EXPIRED' })
@@ -167,8 +169,7 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
       } else {
         // No webhooks to insert but still need to mark as expired
         const expiredIds = justExpired.map((att: { id: string }) => att.id);
-        for (let i = 0; i < expiredIds.length; i += CHUNK_SIZE) {
-          const chunk = expiredIds.slice(i, i + CHUNK_SIZE);
+        for (const { values: chunk } of chunkForInFilter(expiredIds)) {
           const { error: bulkUpdateErr } = await dbAny
             .from('attestations')
             .update({ status: 'EXPIRED' })

@@ -2,6 +2,48 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-02 — the silent-empty enrichment sweep (`readInChunks`)
+
+Closes the last of the `.in()` defect class on this surface. `#1866` fixed the sites whose *width* was
+wrong; this fixes the ones whose **error handling** was, at every remaining variable-width site.
+
+Twelve reads shared one shape — `const { data } = await db.from(...).in('id', ids)` with no `error` —
+across `admin-lists.ts` (×7), `oracle.ts`, `entity-verify.ts`, `ai-provenance.ts`,
+`regulatory-alerts.ts`, `nessie-query.ts` and `ai/eval/fraud-audit.ts`. Because postgrest-js
+**resolves** a failure rather than throwing, every one of them turned a broken read into an
+enrichment that came back empty while the response still looked complete.
+
+Two are worth naming because "degraded" undersells them:
+
+- **`regulatory-alerts.ts`** compares each record's `content_hash` against its anchor fingerprint. An
+  empty anchor map means every record falls through the comparison and stops being flagged — a
+  regulatory alert endpoint silently reporting **all-clear**.
+- **`admin-lists.ts`** anchor counts and `org_credits` quota/balance are numbers an admin acts on.
+  Zero-because-the-read-failed is indistinguishable from zero-because-it-is-zero.
+
+All now route through **`utils/chunkedRead.ts`'s `readInChunks`** — one width guarantee, one error
+policy: log the failed chunk and return a partial (an enrichment miss renders as the same "unknown"
+the row already shows), but throw when EVERY chunk fails, which each handler's existing `try/catch`
+turns into a 500.
+
+**Exception — `ai/eval/fraud-audit.ts` chunks with `chunkForInFilter` directly.** It is a standalone
+eval script with its own `createClient`, and `chunkedRead.ts` imports the worker `logger`, which
+pulls in `config.ts` and throws `Invalid worker configuration` at MODULE LOAD unless the full worker
+env is present. Routing it through the shared helper would have made the script unrunnable with the
+two env vars it actually needs. `postgrest-filter.ts` is dependency-free, so it costs nothing there.
+**Check the import chain before adopting `chunkedRead` in `scripts/` or `ai/eval/`.**
+
+**One-chunk reality at the admin call sites.** `parsePagination` caps `limit` at 100 and these are
+UUID lists (~3.7 KB against an 8 KiB budget), so `admin-lists.ts` always produces exactly ONE chunk.
+`assertNotAllChunksFailed(_, 1, 1, _)` therefore fires on ANY failure: the "return a partial"
+half of the policy is unreachable there and these reads are effectively fail-closed. That is a
+deliberate trade — a wrong member count or quota is worse than a 500 — but do not read the policy
+above as "the admin list degrades gracefully". It does not; it 500s.
+
+**Left alone deliberately:** `.in()` over a literal array (`['active','trialing']`,
+`['PENDING','INVESTIGATING']`) — nine such sites still discard their error. They are width-safe by
+construction, and their failure mode is an ordinary empty read, not this class. Chunking a
+two-element literal would be noise. Worth a separate pass on error handling; not this one.
 ## 2026-08-02 — the PostgREST `.in()` filter-width class, API surface (follows #1839/#1853)
 
 `chunkForInFilter` (`utils/postgrest-filter.ts`) is the ONLY supported way to build an `.in()`
