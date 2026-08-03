@@ -1,6 +1,14 @@
 # agents.md — services/worker/src/api/v1/integrations/
 
-_Last updated: 2026-06-24_
+_Last updated: 2026-08-03 (GH #1836: Drive channel token is now high-entropy random, not the org UUID)_
+
+## 2026-08-03 — GH #1836 (SECURITY, pen-test scope): Drive `changes.watch` channel token is no longer the org UUID
+
+`drive-oauth.ts`'s OAuth callback registered every `changes.watch` channel with `token: callbackOrgId` — the org's own UUID. An org UUID is not a secret (it's in URLs, API responses, and client-side state everywhere), so anyone who learned/guessed an org UUID could forge a Drive push notification past the webhook's `X-Goog-Channel-Token` check (`api/v1/webhooks/agents.md` has the webhook-side half of this fix).
+
+Fix: a new `generateChannelToken()` helper (`randomBytes(32).toString('base64url')`, 256 bits of entropy) replaces `callbackOrgId` at BOTH the `createChangesWatch({ token: ... })` call and the `account_label.channel_token` value persisted alongside it — the two must always match, since the webhook compares the incoming header against the stored value. Backward compatible by construction: the webhook's constant-time compare already checks against whatever is STORED, so existing connections keep authenticating on their legacy org-id token until the next renewal rotates them (see GH #1835's `drive-subscription-renewal.ts`, which mints a fresh random token on every successful renewal). `connector-health.ts` (`api/agents.md`) was found leaking this same token to the org dashboard in the same audit pass and fixed alongside.
+
+Tests: `drive-oauth.test.ts`'s callback-flow test now asserts `label.channel_token` is NOT the org id, is >= 32 chars, and — critically — is the EXACT value sent as `token` in the real `changes.watch` HTTP body (catches a silent store/verify mismatch, not just "is it random").
 
 ## What This Folder Contains
 

@@ -25,6 +25,12 @@ import { runCreditConservationReconciler } from '../jobs/credit-conservation-rec
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
 import { runConnectorArtifactDrain } from '../jobs/connector-artifact-drain.js';
 import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
+import { renewDriveSubscriptions } from '../integrations/connectors/drive-subscription-renewal.js';
+import {
+  makeDriveSubscriptionRenewalDb,
+  makeDriveSubscriptionRenewalClient,
+  alertDriveSubscriptionRenewal,
+} from '../jobs/drive-subscription-renewal-deps.js';
 import { trackOperation } from './lifecycle.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 
@@ -373,6 +379,31 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
       }
     });
   }
+
+  // GH #1835: Drive changes.watch channel renewal, hourly. In-process is the
+  // dev/test BACKUP ONLY — prod runs via Cloud Scheduler -> POST
+  // /jobs/drive-subscription-renewal (node-cron is dormant under Cloud Run
+  // CPU throttling, same as every other job in this file). Unconditional
+  // (no feature flag): renewal is not an opt-in surface, it is the fix for
+  // "every Drive connection goes silent within a week."
+  scheduleInProcess('drive-subscription-renewal', '0 * * * *', async () => {
+    logger.debug('Running Drive subscription renewal sweep');
+    try {
+      const result = await trackOperation(renewDriveSubscriptions({
+        db: makeDriveSubscriptionRenewalDb(),
+        client: makeDriveSubscriptionRenewalClient(),
+        alert: alertDriveSubscriptionRenewal,
+      }));
+      if (result.renewed > 0 || result.failed > 0 || result.degraded > 0) {
+        logger.info(
+          { scanned: result.scanned, renewed: result.renewed, degraded: result.degraded, failed: result.failed },
+          'Drive subscription renewal sweep processed connections',
+        );
+      }
+    } catch (error) {
+      logger.error({ err: errMsg(error) }, 'Drive subscription renewal cron failed');
+    }
+  });
 
   logger.info('Scheduled jobs configured (including chain maintenance)');
 }

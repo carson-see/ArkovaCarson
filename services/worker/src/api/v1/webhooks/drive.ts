@@ -160,6 +160,22 @@ router.post('/', async (req: Request, res: Response) => {
     return res.status(401).json({ error: 'invalid_channel_token' });
   }
 
+  // GH #1836 (SECURITY, deprecation window): channels registered before the
+  // random-token fix stored the org's UUID as the channel_token. Those
+  // connections must keep working until their next renewal re-registers the
+  // channel with a real secret (drive-subscription-renewal.ts rotates it) —
+  // so we still ACCEPT a match here — but a stored token that equals the
+  // org's own id is definitionally the legacy weak scheme (a real random
+  // token would essentially never collide with the org's UUID), so log a
+  // bounded warning with no secret material so ops can track deprecation
+  // progress. Never logs the token value itself.
+  if (lookup.channel_token === lookup.org_id) {
+    logger.warn(
+      { channelId, orgId: lookup.org_id },
+      'drive webhook accepted a legacy org-id channel token — awaiting renewal to rotate to a random secret (GH #1836)',
+    );
+  }
+
   // SCRUM-1242 (AUDIT-0424-26): replay protection. Drive doesn't carry an
   // HMAC, so the only monotonic anti-replay signal is the per-channel
   // X-Goog-Message-Number. Dedupe on (channel_id, message_number) — Google
