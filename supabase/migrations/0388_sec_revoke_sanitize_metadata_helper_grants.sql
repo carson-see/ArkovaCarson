@@ -1,0 +1,187 @@
+-- 0388_sec_revoke_sanitize_metadata_helper_grants.sql
+-- SEC-RECON follow-up to 0377/0378 — revoke anon/authenticated EXECUTE from
+--   public.sanitize_metadata_for_public(jsonb), the internal redaction helper
+--   behind the public verification projection. Found while reviewing #1841
+--   (0385); PRE-EXISTING, not introduced by that PR.
+--
+-- =============================================================================
+-- STATUS: APPLIED TO PROD 2026-08-02 (vzwyaatejekddvltxyye) via Supabase MCP,
+--   ledger reconciled to numeric 0388 per CLAUDE.md §0 rule 10 and confirmed
+--   via list_migrations. Tier T3 (migration touching privilege grants on the
+--   anon-reachable verification surface).
+--
+--   Applied OUT OF BAND, ahead of merge (migrate-before-merge), on founder
+--   direction: the hole was a LIVE unauthenticated disclosure path on prod with
+--   an external pen test imminent, and there was no soak in flight to wait for
+--   (the two 72h 2026-08 rigs cleared 07-31). Same precedent as 0383.
+--
+--   POST-APPLY VERIFICATION on prod:
+--     - has_function_privilege sweep BOTH directions: anon=f, authenticated=f,
+--       service_role=t. 0 mismatches.
+--     - anon direct RPC -> 42501 permission denied (was HTTP 200 + oracle).
+--     - REGRESSION: public verification BYTE-IDENTICAL before vs after on two
+--       real prod records (ARK-SEC-VMQ3R8 1299 B, ARK-SEC-K2Z4RY 1286 B) and on
+--       search_public_credentials. Baselines captured before the apply.
+--   Numeric prefix 0388 is the next free above main head 0378. Claimed
+--   prefixes verified this session by scanning EVERY remote branch (not just
+--   open PRs) for supabase/migrations/03*.sql: 0379 (#1784 f3-recover, and a
+--   second 0379_scrum2904_envelope_reconciliation_indexes on an unmerged
+--   branch), 0380 (#1778), 0381 (#1782), 0382 (#1808/#1856), 0383 (#1618),
+--   0384 (#1806), 0385 (#1841), 0386 (#1854), 0387 (branch
+--   fix/public-search-learner-name-leak-0387, pushed, no PR open yet — first
+--   claim wins per the RTE protocol). See supabase/migrations/agents.md.
+-- =============================================================================
+--
+-- THE HOLE THIS CLOSES — CONFIRMED LIVE ON PROD (vzwyaatejekddvltxyye) this
+-- session by unauthenticated POST /rest/v1/rpc/sanitize_metadata_for_public
+-- using the publishable anon key, NOT inferred from the baseline grant block:
+--
+--   REQUEST  {"p_metadata":{"_raw_tx_hex":"deadbeef","dob":"1990-01-01",
+--                           "passport_number":"X1","course_name":"Ethics 101",
+--                           "nickname":"kept"}}
+--   RESPONSE HTTP 200  {"nickname":"kept","course_name":"Ethics 101"}
+--
+-- Negative control in the same session, proving the probe can observe a denial:
+-- public.check_orphaned_anchors (revoked by 0378) returned
+-- {"code":"42501","message":"permission denied for function check_orphaned_anchors"}.
+--
+-- The helper is internal redaction machinery for get_public_anchor's projection,
+-- not a user-facing RPC. The baseline grants it to anon and authenticated
+-- (00000000000000_baseline_at_main_HEAD.sql:14339-14341, `GRANT ALL ... TO
+-- anon/authenticated/service_role`), and 0334's CREATE OR REPLACE preserved
+-- those grants. 0364/0377/0378 never named it. Two problems follow:
+--
+--   1. REDACTION-RULE ORACLE. An unauthenticated caller submits arbitrary jsonb
+--      and reads back exactly which keys survive. That enumerates the entire
+--      denylist — both the named-PII set and 0334's `_`-prefixed reserved
+--      namespace rule, as the response above demonstrates — telling an attacker
+--      precisely which metadata key names are safe to hide data under, and which
+--      internal `_` fields the pipeline is trying to suppress. The redaction
+--      policy is supposed to be a server-side control, not a queryable API.
+--
+--   2. CPU AMPLIFICATION. Post-0334 the body is a jsonb_each -> jsonb_object_agg
+--      rebuild (0334 lines 63-100), so it does O(keys) work proportional to
+--      attacker-supplied input on an endpoint that needs no account. Note that
+--      §1.10's 100 req/min/IP does NOT apply here: that limiter lives in the
+--      Cloud Run worker, and this is a direct PostgREST RPC that never reaches
+--      it. The only throttles in the path are Supabase's own edge limiting and
+--      statement_timeout — neither is a per-caller budget for this function.
+--
+-- ---------------------------------------------------------------------------
+-- CALLER ENUMERATION — verified against LIVE PROD (vzwyaatejekddvltxyye) via
+-- Supabase MCP this session, then cross-checked against the tree. The prod
+-- check is the load-bearing one: this repo has a documented case of a prod body
+-- in THIS EXACT function family silently diverging from the repo (0376 was
+-- branched from an old file and reverted 0356's keyed HMAC — see the 0383 note
+-- in scripts/ci/snapshots/ledger-numeric-exemptions.json), so a repo-only
+-- enumeration would not have been sufficient evidence for this revoke.
+--
+--   SELECT n.nspname, p.oid::regprocedure, p.prosecdef, p.proowner::regrole
+--   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+--   WHERE p.prosrc LIKE '%sanitize_metadata_for_public%';
+--     -> EXACTLY ONE ROW, all schemas:
+--        public.get_public_anchor(text) | prosecdef=t | owner=postgres
+--
+--   Same session, pg_policies (qual + with_check) / pg_views / pg_matviews /
+--   pg_trigger sweep for the same string -> ZERO rows. Nothing else in prod
+--   depends on this helper.
+--
+--   Grant pre-state on prod, has_function_privilege:
+--        anon=t  authenticated=t  service_role=t
+--
+-- Tree cross-check:
+--
+--   public.get_public_anchor(text)  ......... THE ONLY CALLER (prod-confirmed).
+--     Defined in the baseline (line 3453, call site 3488) and redefined by
+--     0311, 0331, 0355, 0356, 0376 — and, in flight, by 0383 (#1618) and 0385
+--     (#1841). EVERY one of those definitions is `LANGUAGE plpgsql SECURITY
+--     DEFINER SET search_path TO 'public'`, verified by reading each file.
+--     SECURITY DEFINER means the nested call is permission-checked against the
+--     function OWNER (postgres), never the invoker, so revoking anon /
+--     authenticated CANNOT break it. get_public_anchor's own anon grant is
+--     untouched below and the public verification page keeps working.
+--
+--   services/worker/ , services/edge/ , src/  ... NO runtime call sites.
+--     The only src/ hits are tests that regex the migration SQL as text
+--     (scrum-2248, scrum-2484, scrum-2485, security/audit-08-search-path-
+--     coverage). None invoke the RPC, so none are affected by a grant change.
+--
+--   RLS policies / views  ................... NONE. Grepped the baseline: the
+--     helper appears only in its own definition, its grants, and the
+--     get_public_anchor body. No policy USING/WITH CHECK clause and no view
+--     depends on it, so no policy can start failing after the revoke.
+--
+-- ---------------------------------------------------------------------------
+-- WHY REVOKE AND NOT A MOVE TO THE `private` SCHEMA (the #1841 / 0385 pattern):
+--
+-- 0385 puts its new helpers in `private`, which is strictly stronger — `private`
+-- is absent from supabase/config.toml's `schemas = ["public","graphql_public"]`,
+-- so PostgREST never introspects it and the functions never reach
+-- database.types.ts or the browser bundle. For a NEW helper that is the right
+-- call. For THIS one it is not, and the reason is a runtime landmine rather
+-- than mere churn:
+--
+--   get_public_anchor is plpgsql and calls `sanitize_metadata_for_public(...)`
+--   UNQUALIFIED. plpgsql resolves function names at EXECUTION time, not at
+--   CREATE time. So `ALTER FUNCTION ... SET SCHEMA private` would leave every
+--   existing get_public_anchor definition compiling fine and failing at runtime
+--   with `function sanitize_metadata_for_public(jsonb) does not exist` — on the
+--   anon verification endpoint, in prod.
+--
+--   Worse, it cannot be made safe by fixing the definitions in this PR alone.
+--   Four in-flight branches (0383/#1618, 0385/#1841, 0386/#1854, 0387) carry
+--   their own `CREATE OR REPLACE FUNCTION public.get_public_anchor` bodies with
+--   the unqualified call. Whichever of them merges AFTER a schema move would
+--   silently reintroduce the broken reference — a merge-order-dependent prod
+--   outage with no CI signal, since the DDL itself succeeds.
+--
+--   The revoke has none of that coupling: it changes only the ACL, is a no-op
+--   against every CREATE OR REPLACE (which preserves existing grants), and is
+--   therefore merge-order independent. It matches the 0377/0378 precedent
+--   exactly. Re-homing the helper into `private` is worth doing as a follow-up
+--   once the in-flight get_public_anchor PRs have drained and all bodies can be
+--   schema-qualified in one atomic change.
+--
+-- service_role KEEPS EXECUTE, per 0377/0378. The worker has no direct call site
+-- today, but service_role is server-only, already bypasses RLS, and keeping it
+-- preserves ad-hoc operator/backfill use at zero attack-surface cost.
+--
+-- NOTE FOR A FUTURE AUTHOR: this ACL survives CREATE OR REPLACE but NOT
+-- DROP + CREATE. Supabase's default privileges grant functions in `public` to
+-- anon/authenticated (that is how the baseline grant arose in the first place),
+-- so any migration that DROPs and recreates this helper silently reopens the
+-- hole. The companion test pins the revoke so that regression is caught.
+--
+-- No signature change, no body change, no schema change, no data migration.
+-- No database.types.ts delta: `supabase gen types` introspects pg_proc and is
+-- not ACL-filtered — confirmed by 0364's revoked deduct_org_credit/deduct_credit
+-- still being present in src/types/database.types.ts, and by #1766 (0378)
+-- touching only its .sql.
+--
+-- ROLLBACK:
+--   -- Restore the baseline grants on the redaction helper.
+--   GRANT EXECUTE ON FUNCTION public.sanitize_metadata_for_public(jsonb) TO anon, authenticated;
+--   NOTIFY pgrst, 'reload schema';
+-- =============================================================================
+
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+
+-- Internal redaction machinery for the public verification projection. Its only
+-- caller, public.get_public_anchor(text), is SECURITY DEFINER and therefore
+-- executes this as the owner — it needs no caller-side grant.
+REVOKE ALL ON FUNCTION public.sanitize_metadata_for_public(jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.sanitize_metadata_for_public(jsonb) TO service_role;
+
+-- Deliberately NOT touched — these are anon-public by design and must keep
+-- working end to end after this migration (pinned by the companion test):
+--   public.get_public_anchor(text)
+--   public.get_public_anchor_by_fingerprint(text)
+--   public.search_public_credentials(...)
+--   public.get_public_records_page(...)
+
+-- Reload PostgREST's schema cache so the revoked grant takes effect on the API
+-- surface immediately (PostgREST caches the function catalog and its grants).
+NOTIFY pgrst, 'reload schema';
+
+COMMIT;
