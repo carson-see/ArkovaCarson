@@ -20,7 +20,7 @@
 import { useState, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Building2, ChevronLeft, ChevronRight, X, Search, Landmark, Moon, Sun, Monitor, BarChart3, Activity, Database, DollarSign, ChevronDown, ChevronUp, Users, FileCheck, ToggleRight, FileText, Settings as SettingsIcon, CreditCard, KeyRound, ShieldCheck, Award, Clock } from 'lucide-react';
+import { LayoutDashboard, Building2, ChevronLeft, ChevronRight, X, Search, Landmark, Moon, Sun, Monitor, BarChart3, Activity, Database, DollarSign, ChevronDown, ChevronUp, Users, FileCheck, ToggleRight, FileText, Settings as SettingsIcon, CreditCard, KeyRound, ShieldCheck, Award, Clock, FolderClosed } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES, destinationToRoute } from '@/lib/routes';
@@ -73,6 +73,16 @@ const ORG_NAV_ITEM: NavItem = {
 // Account section (SCRUM-2004) — destinations previously reachable only via the
 // Header user dropdown or by typing the URL. Visible to all authenticated users.
 const accountNavItems: NavItem[] = [
+  // My Records (SCRUM-2940 — founder escalation, folder-nav gap): MyRecordsPage
+  // at /records is the ONLY place the folders feature (create/rename/delete
+  // folder, move a record into one) lives — /documents has a separate, simpler
+  // "My Records" tab with no folder UI. /records shipped its own Header page
+  // title (NAV_LABELS.MY_RECORDS) and Breadcrumbs entry but was reachable only
+  // by typing the URL — no sidebar link. It is a personal (user-scoped)
+  // destination like My Credentials / Billing, gated identically to Documents
+  // (RouteGuard allow=MAIN_APP_DESTINATIONS, no role restriction), so it is
+  // visible to every authenticated user (including INDIVIDUAL).
+  { label: NAV_LABELS.MY_RECORDS, icon: FolderClosed, to: ROUTES.RECORDS },
   // My Credentials (SCRUM-2915 / [PI05-CE06]): the SCRUM-1598 recipient inbox /
   // import page shipped at /my-credentials but was reachable only by typing the
   // URL. It is a personal (user-scoped) destination, so it lives in the Account
@@ -242,14 +252,14 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName }: Reado
 
   const isNavActive = (item: NavItem) => {
     if (item.to === ROUTES.DOCUMENTS) {
-      // Documents tab is active for /documents, /records, /attestations.
-      // /my-credentials is intentionally EXCLUDED (SCRUM-2915): it now has its
-      // own Account-section entry, so lighting up Documents too would show two
-      // active items at once (same rule as Settings vs its API-Keys sub-route).
+      // Documents tab is active for /documents, /attestations.
+      // /records is intentionally EXCLUDED (SCRUM-2940): it now has its own
+      // Account-section entry ("My Records"), so lighting up Documents too
+      // would show two active items at once. /my-credentials is excluded for
+      // the same reason (SCRUM-2915) — both mirror the Settings vs its
+      // API-Keys sub-route rule.
       return location.pathname === ROUTES.DOCUMENTS
         || location.pathname.startsWith(ROUTES.DOCUMENTS + '/')
-        || location.pathname === ROUTES.RECORDS
-        || location.pathname.startsWith(ROUTES.RECORDS + '/')
         || location.pathname === ROUTES.ATTESTATIONS;
     }
     if (item.to === ROUTES.COMPLIANCE_DASHBOARD) {

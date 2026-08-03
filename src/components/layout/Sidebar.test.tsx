@@ -17,7 +17,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { ROUTES } from '@/lib/routes';
-import { MY_CREDENTIALS_LABELS } from '@/lib/copy';
+import { MY_CREDENTIALS_LABELS, NAV_LABELS } from '@/lib/copy';
 import type { RouteDestination } from '@/hooks/useProfile';
 
 // Mock ArkovaLogo
@@ -304,6 +304,67 @@ describe('Sidebar', () => {
       .getAllByRole('link')
       .find((a) => a.getAttribute('href') === ROUTES.DOCUMENTS);
     expect(docsLink?.className).not.toMatch(/border-\[#00d4ff\]/);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // SCRUM-2940 (founder escalation, folder-nav gap): PR #1657 shipped the
+  // folders data layer and a follow-up shipped the create/move UI, but both
+  // live only on MyRecordsPage at /records — which had NO sidebar link.
+  // /documents (the linked Documents item) has its own separate, simpler
+  // "My Records" tab with zero folder UI, so the folders feature was
+  // reachable only by typing /records into the URL bar. Surface /records in
+  // the Account section (a personal destination, like Billing / My
+  // Credentials), visible to every authenticated user, and stop Documents
+  // from double-lighting on /records now that it has its own entry.
+  // ──────────────────────────────────────────────────────────────────────
+
+  it('SCRUM-2940: surfaces My Records (folders) in the sidebar nav', () => {
+    renderSidebar();
+    expect(screen.getAllByText(NAV_LABELS.MY_RECORDS).length).toBeGreaterThanOrEqual(1);
+    expect(hrefSet()).toContain(ROUTES.RECORDS);
+  });
+
+  it('SCRUM-2940: My Records is visible to INDIVIDUAL users (personal document folders)', () => {
+    mockProfile.mockReturnValue({ role: 'INDIVIDUAL', org_id: null });
+    renderSidebar();
+    expect(hrefSet()).toContain(ROUTES.RECORDS);
+  });
+
+  it('SCRUM-2940: highlights the active My Records route', () => {
+    renderSidebar({}, [ROUTES.RECORDS]);
+    const link = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === ROUTES.RECORDS);
+    expect(link?.className).toMatch(/border-\[#00d4ff\]/);
+  });
+
+  it('SCRUM-2940: highlights My Records on the record detail sub-route (/records/:id)', () => {
+    renderSidebar({}, ['/records/abc-123']);
+    const link = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === ROUTES.RECORDS);
+    expect(link?.className).toMatch(/border-\[#00d4ff\]/);
+  });
+
+  it('SCRUM-2940: Documents is NOT highlighted when on /records (own entry now)', () => {
+    // With a dedicated My Records item, the Documents item must not also
+    // light up on /records — otherwise two items appear active at once
+    // (same double-highlight bug class as SCRUM-2915's /my-credentials fix).
+    renderSidebar({}, [ROUTES.RECORDS]);
+    const docsLink = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === ROUTES.DOCUMENTS);
+    expect(docsLink?.className).not.toMatch(/border-\[#00d4ff\]/);
+  });
+
+  it('SCRUM-2940: Documents is still highlighted on its own routes (/documents, /attestations)', () => {
+    // Regression guard: removing /records from the Documents active-check
+    // must not disturb the other paths that check still legitimately covers.
+    renderSidebar({}, [ROUTES.ATTESTATIONS]);
+    const docsLink = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === ROUTES.DOCUMENTS);
+    expect(docsLink?.className).toMatch(/border-\[#00d4ff\]/);
   });
 
   // ── Admin section (unchanged role gating) ──
