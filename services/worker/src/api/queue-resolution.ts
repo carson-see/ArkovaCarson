@@ -459,10 +459,19 @@ export async function handleRunOrgAnchorQueue(
     }
 
     const finishedAt = new Date();
+
+    // BUG-2026-08-01-F9 (GAP 1): processBatchAnchors does NOT throw on a
+    // definitive, fully-unwound broadcast rejection (e.g. UTXO contention
+    // with a concurrently-running org's batch) — that outcome is resolved
+    // and self-healing, not an exception. `rejectedReason` is only ever set
+    // on that exact path (batch-anchor.ts), so — mirroring the scheduler
+    // fix in this same PR — record it as a failed run, not a plain success.
+    const rejected = typeof result.rejectedReason === 'string' && result.rejectedReason.length > 0;
+
     await recordOrgQueueRunResult({
       orgId,
       trigger: 'manual',
-      status: 'succeeded',
+      status: rejected ? 'failed' : 'succeeded',
       startedAt,
       finishedAt,
       processed: result.processed,
@@ -470,15 +479,51 @@ export async function handleRunOrgAnchorQueue(
       merkleRoot: result.merkleRoot,
       txId: result.txId,
       triggeredBy: userId,
+      error: rejected ? (result.rejectedReason ?? null) : null,
     });
     await recordManualRunAudit({
       userId,
       orgId,
       relationship: auth.relationship,
-      status: 'succeeded',
+      status: rejected ? 'failed' : 'succeeded',
       processed: result.processed,
       batchId: result.batchId,
     });
+
+    if (rejected) {
+      // This is a SYNCHRONOUS human-admin caller, not a scheduled cron: they
+      // need to see the rejection NOW, not discover it later in run history.
+      // Response-shape choice (see PR body for full reasoning):
+      //   - NOT 200 { ok: true } — that is a direct lie ("your run
+      //     succeeded") about a run that reverted every claimed anchor.
+      //   - NOT a bare 5xx — the rejection is a legitimate, EXPECTED,
+      //     self-healing outcome (the node examined and refused the signed
+      //     tx; the next drain retries and typically clears). A 5xx would
+      //     misrepresent normal contention as a server fault and could
+      //     trigger on-call paging for something that isn't broken.
+      //   - 409 Conflict: the request could not complete because of a
+      //     conflict over a shared, contended resource (the treasury's
+      //     spendable inputs), and retrying later is expected to succeed —
+      //     exactly what 409's semantics describe. `ok: false` in the body
+      //     is the explicit, non-ambiguous signal (existing 400/403/500
+      //     paths on this same endpoint already return non-2xx + `{error}`,
+      //     never a 2xx-with-a-flag shape, so this keeps the response
+      //     family consistent for any caller keying off HTTP status).
+      // §1.3: this message reaches the operator verbatim (AnchorQueuePage.tsx
+      // renders `error.message` directly) — it is UI copy and must avoid the
+      // banned terminology list even though it is assembled in worker code.
+      res.status(409).json({
+        ok: false,
+        processed: result.processed,
+        error: {
+          code: 'broadcast_rejected',
+          message:
+            'This run could not complete because of a temporary conflict over shared network capacity. ' +
+            'This is expected to clear on its own — try running again shortly.',
+        },
+      });
+      return;
+    }
 
     res.json({ ok: true, ...result });
     void emitOrgAdminNotifications({
