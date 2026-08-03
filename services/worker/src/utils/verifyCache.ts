@@ -12,16 +12,22 @@ import { logger } from './logger.js';
 
 const CACHE_TTL_SECONDS = 300; // 5 minutes
 // Bumped v1 → v2 when API-RICH-01 landed 8 additive response fields (2026-04-16).
+//
 // Bumped to v4 for SCRUM-2575: the verify response now carries
 // `proof_availability` + `proof_availability_note`. A hit is served verbatim
 // without re-running buildVerificationResult, so without a bump every anchor
 // cached before the deploy would keep answering the proof-availability question
 // with silence for the whole TTL.
 //
-// v3 is skipped deliberately. PR #1800 (SCRUM-2227) takes v2 → v3 for its own
-// response-shape change; going straight to v4 here means this bump is correct
-// whichever of the two lands first, and neither can silently reuse the other's
-// namespace.
+// v3 was skipped deliberately. PR #1800 (SCRUM-2227) also needed a bump for its
+// own response-shape change (`compliance_controls_note` + retired EU-US DPF
+// control IDs stripped from stored values on read); PR #1816 (SCRUM-2575) landed
+// on main first and jumped straight from v2 to v4 so the bump would be correct
+// whichever PR merged first, and neither could silently reuse the other's
+// namespace. #1800 merges on top of that v4, so it inherits the existing bump
+// instead of introducing its own v3 — without it, every anchor cached before
+// this deploy would keep serving the retired DPF identifiers with no note for
+// the whole TTL, the exact claim this change exists to stop making.
 //
 // Bump again on any response-shape change so post-deploy cache hits don't serve stale
 // thin responses. Old keys age out naturally via TTL.
