@@ -130,7 +130,7 @@
     "jsdom": "29.1.1",
     "license-checker": "25.0.1",
     "lockfile-lint": "5.0.0",
-    "postcss": "8.5.21",
+    "postcss": "8.5.25",
     "rollup-plugin-visualizer": "7.0.1",
     "supabase": "2.109.1",
     "tailwindcss": "4.3.3",
