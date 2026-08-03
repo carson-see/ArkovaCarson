@@ -28,10 +28,16 @@ should outlast individual sessions. Each rule is enforced one of three ways:
 
 ## Current rules
 
-Every row below points at a file that exists in this directory.
+Every row below points at a file that exists in this directory — and
+`scripts/ci/check-doc-pointers.ts` now fails CI if CLAUDE.md, AGENTS.md, a
+skill, or a hook cites a `memory/` path that does not resolve. Before that
+check existed, 17 cited rule files were missing, including one named inside a
+hook's own deny message.
 
 | Memory file | Enforcement | Status |
 |---|---|---|
+| `feedback_migration_rules.md` | `.claude/hooks/check-constitution-on-edit.sh` — **BLOCK** (never-modify, `NNNN` collision, missing `-- ROLLBACK:`) + migration-drift CI gate | ✅ live |
+| `feedback_migration_number_vs_reservations.md` | `.claude/hooks/check-constitution-on-edit.sh` — **BLOCK**; named in the deny message | ✅ live |
 | `feedback_no_credit_limits_beta.md` | CI lint (`no-credit-limits-beta.ts`) | ✅ live (R0-7) |
 | `feedback_no_aws.md` | CI lint (`no-aws.ts`) | ✅ live (R0-7) |
 | `feedback_pr_target_repo.md` | CI lint (`pr-target-repo.ts`) | ✅ live (R0-7) |
