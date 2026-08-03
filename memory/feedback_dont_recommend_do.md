@@ -6,7 +6,7 @@ type: feedback
 
 When a task is executable inside the session, execute it. A PR description, handoff, or doc that says "you should update the snapshot" / "please consider adding a test" / "we recommend redeploying" has converted an agent's job into the reader's job.
 
-**Why:** The failure is invisible at review time. The PR reads as complete, the checklist looks addressed, and the actual change is a sentence describing a change. It surfaces later as a gap nobody owns — the classic form being a feature shipped with its hook and no UI (`memory/feedback_ship_the_ui_not_just_the_hook.md`), where every gate was green because every gate was measuring the part that got built. Passive phrasing is the linguistic tell that precedes it.
+**Why:** The failure is invisible at review time. The PR reads as complete, the checklist looks addressed, and the actual change is a sentence describing a change. It surfaces later as a gap nobody owns — the classic form being a feature shipped with its hook and no UI, where every gate was green because every gate was measuring the part that got built. Passive phrasing is the linguistic tell that precedes it.
 
 **How to apply:**
 - If you can run it, run it. If you can write it, write it. If you can file it, file it.
