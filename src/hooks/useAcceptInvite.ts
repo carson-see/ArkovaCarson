@@ -15,10 +15,8 @@
 
 import { useCallback, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { resolveSafeWorkerEndpoint } from '@/lib/workerUrlSafety';
+import { resolveSafeWorkerEndpoint, resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
 import { ACCEPT_INVITE_LABELS } from '@/lib/copy';
-
-const WORKER_URL = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
 
 export interface InvitationPreview {
   orgName: string;
@@ -85,8 +83,9 @@ export function useAcceptInvite(): UseAcceptInviteReturn {
     setPreviewLoading(true);
     setPreviewError(null);
     try {
+      const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
       const endpoint = resolveSafeWorkerEndpoint(
-        WORKER_URL,
+        workerUrl,
         `/api/invitations/${encodeURIComponent(inviteToken)}`,
       );
       const response = await fetch(endpoint.toString());
@@ -117,7 +116,8 @@ export function useAcceptInvite(): UseAcceptInviteReturn {
         const {
           data: { session },
         } = await supabase.auth.getSession();
-        const endpoint = resolveSafeWorkerEndpoint(WORKER_URL, '/api/invitations/accept');
+        const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
+        const endpoint = resolveSafeWorkerEndpoint(workerUrl, '/api/invitations/accept');
         const response = await fetch(endpoint.toString(), {
           method: 'POST',
           headers: {
