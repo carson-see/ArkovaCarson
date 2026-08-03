@@ -23,16 +23,22 @@
 
 import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { PUBLIC_RECORD_ANCHOR_RUN_LEASE, withRunLease } from './run-lease.js';
 import { getChainClientAsync } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config.js';
 import { upsertAnchorProofs } from '../utils/anchorProofs.js';
 import { resolveAnchorBatchSize } from './anchor-batching.js';
+// `POSTGREST_ROW_LIMIT` is deliberately NOT imported here any more. It is a
+// request width, not an observed server limit, and every use of it in this file
+// was a paging loop deriving "there are no more rows" from it — BUG-2026-08-02-002.
+// `scanAllPages` owns the width and the termination condition now.
 import {
-  POSTGREST_ROW_LIMIT,
+  PageScanError,
   assertNotAllChunksFailed,
   chunkForInFilter,
+  scanAllPages,
 } from '../utils/postgrest-filter.js';
 import type { ChainReceipt } from '../chain/types.js';
 import { captureCreditRpcFailureAlert } from '../utils/sentry.js';
@@ -113,8 +119,6 @@ interface RecordAnchorPartition {
   alreadyAnchoredItems: RecordAnchorItem[];
   pendingRecordItems: Array<{ record: PipelinePublicRecord; anchor: PipelineAnchorRow }>;
 }
-
-let publicRecordAnchoringRunning = false;
 
 /**
  * Map public record source/type to a display-friendly filename for the anchor.
@@ -446,10 +450,37 @@ async function finalizePublicRecordAnchorBatch(
   return { recordsUpdated, anchorsUpdated };
 }
 
+/**
+ * Reads the pipeline's feature flag.
+ *
+ * Fails CLOSED on an unreadable flag — an unknown flag state must never start a
+ * run that signs and broadcasts. That part is unchanged.
+ *
+ * What IS new is that a failure says so. This used to be
+ * `const { data: enabled } = await client.rpc(...)`, discarding `error`;
+ * postgrest-js RESOLVES a failed RPC as `{ data: null, error }`, so a PostgREST
+ * 5xx, a statement timeout, or a schema-cache miss right after a function
+ * deploy all collapsed to `Boolean(null)` -> false and logged
+ * "ENABLE_PUBLIC_RECORD_ANCHORING is disabled — skipping". The outcome was
+ * right and the DIAGNOSIS was wrong: a broken flag read was indistinguishable
+ * from the flag being off, so a stalled pipeline reads as an intentional one.
+ *
+ * Log the driver code only, never `error.message` — a PostgREST message can
+ * echo the offending statement back verbatim.
+ */
 async function publicRecordAnchoringEnabled(client: SupabaseClient): Promise<boolean> {
-  const { data: enabled } = await client.rpc('get_flag', {
+  const { data: enabled, error } = await client.rpc('get_flag', {
     p_flag_key: 'ENABLE_PUBLIC_RECORD_ANCHORING',
   });
+
+  if (error) {
+    logger.error(
+      { pgCode: (error as { code?: string } | null)?.code ?? null },
+      'ENABLE_PUBLIC_RECORD_ANCHORING could not be read — skipping this run (failing closed). This is NOT the flag being disabled.',
+    );
+    return false;
+  }
+
   if (!enabled) logger.info('ENABLE_PUBLIC_RECORD_ANCHORING is disabled — skipping');
   return Boolean(enabled);
 }
@@ -475,57 +506,123 @@ async function fetchPipelineOwner(client: SupabaseClient): Promise<PipelineOwner
 const PRIORITY_SOURCES = ['courtlistener', 'edgar', 'federal_register', 'dapip'];
 const PUBLIC_RECORD_SELECT = 'id, source, source_id, source_url, record_type, title, content_hash, metadata';
 
-async function fetchRecordsForSource(
+/**
+ * Page ceiling for one feeder read.
+ *
+ * `PUBLIC_RECORD_BATCH_SIZE` tops out at 10,000, which is 10 pages when the
+ * server hands back the width it is asked for. The headroom to 200 covers a
+ * deployment whose `db-max-rows` is well below `POSTGREST_ROW_LIMIT`; past it
+ * the scan gives up, logs, and lets the next run continue from where the filter
+ * leaves off.
+ */
+const MAX_FEEDER_PAGES = 200;
+
+/**
+ * Read up to `limit` unanchored `public_records` rows.
+ *
+ * BUG-2026-08-02-002. Both feeder scans used to end on
+ * `chunk.length < chunkSize` — "the server returned fewer rows than I asked
+ * for" read as "there are no more rows". `chunkSize` reaches
+ * `POSTGREST_ROW_LIMIT` on every run at the default batch size, and PostgREST's
+ * `db-max-rows` is a SERVER setting this code cannot see. Wherever it sits
+ * below that constant, the first page short-circuited the loop and the pipeline
+ * was fed a fraction of what it asked for, every run, silently.
+ *
+ * The paging rules now live in `scanAllPages` (`utils/postgrest-filter.js`) so
+ * neither this nor any future call site can pick the termination condition. See
+ * `utils/agents.md`.
+ *
+ * This is a BOUNDED read, so `row_budget_exceeded` is the ordinary outcome —
+ * the quota was filled — and `complete` means the source ran dry first. Both
+ * are success.
+ *
+ * ORDERING CAVEAT (deliberately not fixed here): `created_at` is not unique on
+ * `public_records`, so offset paging over it can reorder rows that share a
+ * timestamp and thus skip or repeat one across a page boundary. Low impact on
+ * this path — a repeat is absorbed by the downstream fingerprint dedup, and a
+ * skip is still `anchor_id IS NULL` for the next run — whereas adding an `id`
+ * tiebreaker changes the query plan on a large hot table. Worth a separate,
+ * measured change; see `jobs/agents.md`.
+ */
+async function fetchUnanchoredRecords(
+  limit: number,
+  label: string,
+  fetchPage: (
+    offset: number,
+    width: number,
+  ) => PromiseLike<{ data: PipelinePublicRecord[] | null; error: { code?: string } | null }>,
+): Promise<PipelinePublicRecord[]> {
+  let scan;
+  try {
+    scan = await scanAllPages(fetchPage, { maxRows: limit, maxPages: MAX_FEEDER_PAGES });
+  } catch (err) {
+    if (!(err instanceof PageScanError)) throw err;
+    // Log loudly, return the pages that succeeded, let the run continue.
+    //
+    // DELIBERATE, and the opposite of `api/v1/auditBatchVerify.ts`, which
+    // throws on the same failure. There a partial read is handed to an auditor
+    // as a complete answer, so it must not be returned at all. Here the records
+    // stay `anchor_id IS NULL` and the next run picks them up, so the only cost
+    // is throughput — while throwing would propagate through the `Promise.all`
+    // in `fetchUnanchoredPublicRecords` and take the other three priority
+    // sources down with this one.
+    //
+    // Driver CODE only, never `.message`: a Postgres/PostgREST message echoes
+    // the offending value back.
+    logger.error(
+      { pgCode: err.pgCode, offset: err.offset, label, fetched: err.partialRows.length },
+      'Public record feeder: page read failed — continuing with a partial batch',
+    );
+    // The pages that succeeded before the fault are good rows. Discarding them
+    // would throw away real work over one bad page; they are NOT treated as a
+    // complete set, which is what the log line above records.
+    return (err.partialRows as PipelinePublicRecord[]).slice(0, limit);
+  }
+
+  if (scan.status === 'page_budget_exhausted') {
+    logger.warn(
+      { label, limit, pages: MAX_FEEDER_PAGES, fetched: scan.rows.length },
+      'Public record feeder: page budget exhausted before the limit was reached — '
+        + 'the remainder is left for the next run',
+    );
+  }
+
+  return scan.rows.slice(0, limit);
+}
+
+export async function fetchRecordsForSource(
   client: SupabaseClient,
   source: string,
   limit: number,
 ): Promise<PipelinePublicRecord[]> {
-  const records: PipelinePublicRecord[] = [];
-  for (let offset = 0; offset < limit; offset += POSTGREST_ROW_LIMIT) {
-    const chunkSize = Math.min(POSTGREST_ROW_LIMIT, limit - offset);
-    const { data: chunk, error } = await client
+  return fetchUnanchoredRecords(limit, `source:${source}`, (offset, width) =>
+    client
       .from('public_records')
       .select(PUBLIC_RECORD_SELECT)
       .is('anchor_id', null)
       .eq('source', source)
       .order('created_at', { ascending: true })
-      .range(offset, offset + chunkSize - 1);
-
-    if (error) {
-      logger.error({ error, offset, source }, 'Failed to fetch priority records chunk');
-      break;
-    }
-    if (!chunk || chunk.length === 0) break;
-    records.push(...(chunk as PipelinePublicRecord[]));
-    if (chunk.length < chunkSize) break;
-  }
-  return records;
+      .range(offset, offset + width - 1) as PromiseLike<{
+        data: PipelinePublicRecord[] | null;
+        error: { code?: string } | null;
+      }>);
 }
 
-async function fetchNonPriorityRecords(
+export async function fetchNonPriorityRecords(
   client: SupabaseClient,
   limit: number,
 ): Promise<PipelinePublicRecord[]> {
-  const records: PipelinePublicRecord[] = [];
-  for (let offset = 0; offset < limit; offset += POSTGREST_ROW_LIMIT) {
-    const chunkSize = Math.min(POSTGREST_ROW_LIMIT, limit - offset);
-    const { data: chunk, error } = await client
+  return fetchUnanchoredRecords(limit, 'non-priority', (offset, width) =>
+    client
       .from('public_records')
       .select(PUBLIC_RECORD_SELECT)
       .is('anchor_id', null)
       .not('source', 'in', `(${PRIORITY_SOURCES.join(',')})`)
       .order('created_at', { ascending: true })
-      .range(offset, offset + chunkSize - 1);
-
-    if (error) {
-      logger.error({ error, offset }, 'Failed to fetch remaining records chunk');
-      break;
-    }
-    if (!chunk || chunk.length === 0) break;
-    records.push(...(chunk as PipelinePublicRecord[]));
-    if (chunk.length < chunkSize) break;
-  }
-  return records;
+      .range(offset, offset + width - 1) as PromiseLike<{
+        data: PipelinePublicRecord[] | null;
+        error: { code?: string } | null;
+      }>);
 }
 
 async function fetchUnanchoredPublicRecords(client: SupabaseClient): Promise<PipelinePublicRecord[]> {
@@ -799,27 +896,29 @@ export async function processPublicRecordAnchoring(
     merkleRoot: null,
     txId: null,
   };
-  if (publicRecordAnchoringRunning) {
-    logger.info('Public record anchoring skipped — already in progress');
+  const client = supabase ?? db;
+
+  // Resolved BEFORE the lease: a disabled pipeline should not write three
+  // job_queue rows on every cron tick just to discover it has nothing to do.
+  if (!(await publicRecordAnchoringEnabled(client))) {
     return empty;
   }
-  publicRecordAnchoringRunning = true;
-  try {
-    return await processPublicRecordAnchoringInner(supabase);
-  } finally {
-    publicRecordAnchoringRunning = false;
-  }
+
+  // SCRUM-3031: the guard that actually holds across Cloud Run instances. See
+  // `run-lease.ts` for the 2026-08-01 incident this closes and for why the TTL
+  // is 45 min. The same primitive guards `batch-anchor.ts` and
+  // `check-confirmations.ts`.
+  const outcome = await withRunLease({ ...PUBLIC_RECORD_ANCHOR_RUN_LEASE, client }, () =>
+    processPublicRecordAnchoringInner(client),
+  );
+  return outcome.acquired ? outcome.result : empty;
 }
 
 async function processPublicRecordAnchoringInner(
-  supabase?: SupabaseClient,
+  client: SupabaseClient,
 ): Promise<PublicRecordAnchorResult> {
-  const client = supabase ?? db;
-
-  if (!(await publicRecordAnchoringEnabled(client))) {
-    return { processed: 0, anchorsCreated: 0, batchId: null, merkleRoot: null, txId: null };
-  }
-
+  // `publicRecordAnchoringEnabled` is checked by the caller, before the run
+  // lease is claimed — see processPublicRecordAnchoring.
   const owner = await fetchPipelineOwner(client);
   if (!owner) {
     return { processed: 0, anchorsCreated: 0, batchId: null, merkleRoot: null, txId: null };

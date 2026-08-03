@@ -147,11 +147,21 @@ export interface PageScan<T> {
   readonly status: PageScanStatus;
 }
 
-/** A page read failed. Carries the offset so the caller can log where. */
-export class PageScanError extends Error {
+/**
+ * A page read failed.
+ *
+ * Carries the offset so the caller can log where, and `partialRows` — the pages
+ * that DID succeed before it. A caller must not treat those as a complete set
+ * (that is the whole bug this module exists to prevent), but a throughput job
+ * is entitled to use them rather than throw away good work over one bad page.
+ * `api/v1/auditBatchVerify.ts` deliberately ignores them and returns a 500;
+ * `jobs/publicRecordAnchor.ts` deliberately processes them and logs.
+ */
+export class PageScanError<T = unknown> extends Error {
   constructor(
     readonly offset: number,
     readonly pgCode: string | null,
+    readonly partialRows: readonly T[] = [],
   ) {
     super(`postgrest page scan failed at offset ${offset}`);
     this.name = 'PageScanError';
@@ -187,6 +197,19 @@ export class PageScanError extends Error {
  * Executes nothing itself: the caller supplies `fetchPage` and keeps ownership
  * of the query, exactly as `chunkForInFilter` leaves the `.in()` call at the
  * call site. Throws `PageScanError` on a failed page rather than swallowing it.
+ *
+ * `maxRows` serves two different callers and `status` is how they tell apart
+ * what happened:
+ *
+ *  - an **exhaustive** scan sets it as a ceiling it does not expect to reach,
+ *    so `row_budget_exceeded` is an anomaly (see `api/v1/auditBatchVerify.ts`,
+ *    which refuses the request);
+ *  - a **bounded** read ("give me up to N") sets it to N, so
+ *    `row_budget_exceeded` is the ordinary success case and the caller slices
+ *    (see `jobs/publicRecordAnchor.ts`).
+ *
+ * Either way `complete` is the ONLY status meaning "these are all the rows",
+ * and a caller that ignores `status` entirely has re-created the bug.
  */
 export async function scanAllPages<T>(
   fetchPage: (
@@ -199,8 +222,17 @@ export async function scanAllPages<T>(
   let offset = 0;
 
   for (let page = 0; page < maxPages; page += 1) {
-    const { data, error } = await fetchPage(offset, POSTGREST_ROW_LIMIT);
-    if (error) throw new PageScanError(offset, error.code ?? null);
+    // Never ask for more than one row past the budget. Two kinds of caller use
+    // this: an exhaustive scan, where `maxRows` is a ceiling it does not expect
+    // to reach, and a BOUNDED read ("give me up to N"), where reaching it is
+    // the normal outcome. Always requesting the full width would make the
+    // bounded caller pull up to a page of surplus rows it immediately discards.
+    // The `+ 1` is what still distinguishes "exactly maxRows" from "more than
+    // maxRows"; it is always >= 1 here, because a page that pushed the total
+    // past the budget returned on the previous iteration.
+    const width = Math.min(POSTGREST_ROW_LIMIT, maxRows + 1 - rows.length);
+    const { data, error } = await fetchPage(offset, width);
+    if (error) throw new PageScanError<T>(offset, error.code ?? null, rows);
 
     const batch = data ?? [];
     if (batch.length === 0) return { rows, status: 'complete' };

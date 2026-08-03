@@ -53,14 +53,16 @@ describe('runAllocationRollover', () => {
     expect(mockDb.from).not.toHaveBeenCalled();
   });
 
-  it('returns summary with error flag when list query fails', async () => {
+  // SCRUM-3050: this previously returned `{errors: 1}` and the route answered
+  // HTTP 200 — a rollover that could not even enumerate the open periods
+  // reporting success. On a monthly cadence that silence lasts until customers
+  // notice missing credits, so it now fails loudly.
+  it('THROWS when the list query fails (must not report success)', async () => {
     mockDb.from.mockImplementationOnce(() => ({
       select: vi.fn().mockReturnThis(),
       is: vi.fn().mockResolvedValueOnce({ data: null, error: { message: 'boom' } }),
     }));
-    const s = await runAllocationRollover();
-    expect(s.errors).toBe(1);
-    expect(s.total_orgs).toBe(0);
+    await expect(runAllocationRollover()).rejects.toThrow(/could not enumerate/i);
   });
 
   it('deduplicates org ids before calling RPC', async () => {
@@ -85,6 +87,17 @@ describe('runAllocationRollover', () => {
     expect(s.errors).toBe(1);
   });
 
+  it('counts a thrown RPC as an error (and still completes other orgs)', async () => {
+    mockOpenPeriods(['throws', 'good']);
+    mockDb.rpc
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockResolvedValueOnce({ data: { ok: true }, error: null });
+
+    const s = await runAllocationRollover();
+    expect(s.errors).toBe(1);
+    expect(s.rolled).toBe(1);
+  });
+
   it('alerts Sentry only for the errored org, not the rolled/skipped orgs (no fallback exists for this RPC)', async () => {
     mockOpenPeriods(['good', 'noop', 'bad']);
     mockDb.rpc
@@ -105,8 +118,14 @@ describe('runAllocationRollover', () => {
   });
 
   it('increments errors on thrown RPC and alerts Sentry', async () => {
-    mockOpenPeriods(['throws']);
-    mockDb.rpc.mockRejectedValueOnce(new Error('connection reset'));
+    // Two orgs, not one: with a single all-failing org this would hit the
+    // SCRUM-3050 postcondition throw (see the describe block below) and never
+    // return a summary to assert on. A mixed cohort keeps this test focused
+    // on the Sentry-alert content for the thrown-RPC path specifically.
+    mockOpenPeriods(['throws', 'good']);
+    mockDb.rpc
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockResolvedValueOnce({ data: { ok: true }, error: null });
 
     const s = await runAllocationRollover();
     expect(s.errors).toBe(1);
@@ -119,5 +138,47 @@ describe('runAllocationRollover', () => {
         operation: 'monthly-allocation-rollover.runAllocationRollover.thrown',
       }),
     );
+  });
+});
+
+// SCRUM-3050 — silent-failure hardening. The 70h anchoring outage shape was a
+// handler that logged every per-unit error, continued, produced nothing, and
+// answered HTTP 200. This job is the narrow, highest-risk application of the
+// postcondition assertion: it touches billing and runs monthly, so a silent
+// total failure has the worst detection latency in the fleet.
+describe('runAllocationRollover postcondition (SCRUM-3050)', () => {
+  it('THROWS when every org errored — a run that rolled nobody is not a success', async () => {
+    mockOpenPeriods(['a', 'b', 'c']);
+    mockDb.rpc.mockResolvedValue({ data: null, error: { message: 'rls' } });
+
+    await expect(runAllocationRollover()).rejects.toThrow(
+      /monthly-allocation-rollover.*completed 0/i,
+    );
+  });
+
+  it('does NOT throw when there were no open periods (an idle month is legitimate)', async () => {
+    mockOpenPeriods([]);
+    const s = await runAllocationRollover();
+    expect(s).toEqual({ total_orgs: 0, rolled: 0, skipped: 0, errors: 0 });
+  });
+
+  it('does NOT throw on partial failure — retrying would redo the orgs that rolled', async () => {
+    mockOpenPeriods(['good', 'bad']);
+    mockDb.rpc
+      .mockResolvedValueOnce({ data: { ok: true }, error: null })
+      .mockResolvedValueOnce({ data: null, error: { message: 'rls' } });
+
+    const s = await runAllocationRollover();
+    expect(s.rolled).toBe(1);
+    expect(s.errors).toBe(1);
+  });
+
+  it('treats a fully SKIPPED run as success — a no-op period is completed work, not a failure', async () => {
+    mockOpenPeriods(['a', 'b']);
+    mockDb.rpc.mockResolvedValue({ data: { ok: false, reason: 'no_current_period' }, error: null });
+
+    const s = await runAllocationRollover();
+    expect(s.skipped).toBe(2);
+    expect(s.errors).toBe(0);
   });
 });

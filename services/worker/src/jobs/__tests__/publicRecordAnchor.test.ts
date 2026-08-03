@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readMigration } from '../../test-utils/migrations.js';
-import { createMockSupabase as _createMockSupabase } from './__testHelpers.js';
+import { createMockSupabase as _createMockSupabase, grantedRunLeaseTable } from './__testHelpers.js';
 
 // ---- Hoisted mocks ----
 const {
@@ -25,7 +25,10 @@ const {
 
   const mockSingle = vi.fn();
   const mockLimit = vi.fn();
-  const mockRange = vi.fn(() => ({ data: [] as Record<string, unknown>[], error: null }));
+  // Takes (from, to) so a test can serve real pages: the feeder is a paged scan
+  // and a range mock that ignores its offsets models a server that cannot exist.
+  const mockRange = vi.fn((_from = 0, _to = 0) =>
+    Promise.resolve({ data: [] as Record<string, unknown>[], error: null }));
   const mockOrder = vi.fn(() => ({ limit: mockLimit, range: mockRange }));
   const selectChain: Record<string, unknown> = {};
   selectChain.eq = vi.fn(() => selectChain);
@@ -115,7 +118,13 @@ function makeMock(
   });
 
   mockSelectChain.limit.mockResolvedValue({ data: records, error: null });
-  mockSelectChain.range.mockResolvedValue({ data: records, error: null });
+  // Offset-aware, because the feeder is now a real paged scan
+  // (BUG-2026-08-02-002). This used to resolve the SAME record list for every
+  // `.range()` call — a server that cannot exist — which was survivable only
+  // because the old loop quit after one short page. Serve each row once and
+  // then an empty page, which is what ends the scan.
+  mockSelectChain.range.mockImplementation((from: number, to: number) =>
+    Promise.resolve({ data: records.slice(from, to + 1), error: null }));
 
   const anchorsSelectByIds = {
     in: vi.fn(() => ({
@@ -173,6 +182,11 @@ function makeMock(
           upsert: mockAnchorProofsUpsert,
         };
       }
+      // SCRUM-3031: these tests exercise the anchoring pipeline, not the
+      // cross-instance run lease — grant it and move on.
+      if (table === 'job_queue') {
+        return grantedRunLeaseTable();
+      }
       return {
         select: vi.fn(() => mockSelectChain.chain),
         insert: mockInsert,
@@ -198,6 +212,47 @@ describe('publicRecordAnchor', () => {
     expect(mockRpc).toHaveBeenCalledWith('get_flag', {
       p_flag_key: 'ENABLE_PUBLIC_RECORD_ANCHORING',
     });
+  });
+
+  /**
+   * SILENT SUCCESS. `publicRecordAnchoringEnabled` read `get_flag` as
+   * `const { data: enabled } = await client.rpc(...)`, discarding `error`.
+   * postgrest-js RESOLVES a failed RPC as `{ data: null, error }`, so a
+   * PostgREST 5xx, a statement timeout, or a schema-cache miss right after a
+   * function deploy all produced `data: null` -> `Boolean(null)` -> false, and
+   * the job logged "ENABLE_PUBLIC_RECORD_ANCHORING is disabled — skipping".
+   *
+   * The no-op is the correct FAIL-CLOSED outcome and is preserved. What was
+   * wrong is the DIAGNOSIS: a transport failure was indistinguishable from the
+   * flag genuinely being off, and the log actively asserted the wrong cause —
+   * which is how a stalled pipeline goes unexplained for days while its logs
+   * read as intentional.
+   *
+   * The guard is only moved by this PR (it now runs before the run lease is
+   * claimed), but this call site had no test for its failure mode at all.
+   */
+  it('an errored get_flag is reported as an ERROR, not as "flag disabled"', async () => {
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { code: '57014', message: 'canceling statement due to statement timeout' },
+    });
+
+    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
+    const result = await processPublicRecordAnchoring(makeMock().client);
+
+    // Fail-closed is unchanged: an unreadable flag must NOT start the pipeline.
+    expect(result.processed).toBe(0);
+    expect(result.anchorsCreated).toBe(0);
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+
+    // ...but it must say what actually happened.
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ pgCode: '57014' }),
+      expect.stringContaining('could not be read'),
+    );
+    expect(mockLogger.info).not.toHaveBeenCalledWith(
+      expect.stringContaining('is disabled'),
+    );
   });
 
   it('skips batch when no unanchored records exist', async () => {

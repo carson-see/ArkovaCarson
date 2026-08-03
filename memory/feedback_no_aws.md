@@ -10,7 +10,7 @@ Production is **GCP-only** (Cloud Run, Secret Manager, GCP KMS) plus Supabase. T
 
 **How to apply:**
 - Signing goes through the WIF / GCP KMS path in `services/worker/src/chain/`. Do not import `@aws-sdk/*` and do not select `'aws'` as a KMS provider anywhere new.
-- Two files are allow-listed as documented dead branches: `services/worker/src/chain/signing-provider.ts` and `services/worker/src/chain/aws-kms-provider.ts`. Don't extend them, and don't wire them into a new call path. Test/spec files are also exempt.
+- One file is allow-listed as a documented dead branch: `services/worker/src/chain/signing-provider.ts`. Don't extend it, and don't wire it into a new call path. Test/spec files are also exempt. (`aws-kms-provider.ts` was also allow-listed until 2026-08-02, years after it was deleted — an exemption for a path that does not exist is a standing hole, since re-creating that filename would inherit the bypass.)
 - Answer "what cloud are you on?" as GCP + Supabase. When writing residency, compliance, deployment, or sales copy, use GCP regions only — `docs/compliance/kenya/residency-options.md` and `docs/deployment/self-hosted/README.md` already carry this constraint and ask for a periodic AWS-drift re-audit.
 - **CI does not catch doc drift.** The lint only scans changed `.ts`/`.tsx` files. Prose claiming AWS is caught by human review or not at all — check it yourself when touching sales/compliance material.
 

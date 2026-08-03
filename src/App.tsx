@@ -57,6 +57,7 @@ const NotFoundPage = lazyWithRetry(() => import('@/pages/NotFoundPage').then(m =
 const AboutPage = lazyWithRetry(() => import('@/pages/AboutPage').then(m => ({ default: m.AboutPage })));
 const PrivacyPage = lazyWithRetry(() => import('@/pages/PrivacyPage').then(m => ({ default: m.PrivacyPage })));
 const TermsPage = lazyWithRetry(() => import('@/pages/TermsPage').then(m => ({ default: m.TermsPage })));
+const ThirdPartyNoticesPage = lazyWithRetry(() => import('@/pages/ThirdPartyNoticesPage').then(m => ({ default: m.ThirdPartyNoticesPage })));
 const ContactPage = lazyWithRetry(() => import('@/pages/ContactPage').then(m => ({ default: m.ContactPage })));
 const ApiKeySettingsPage = lazyWithRetry(() => import('@/pages/ApiKeySettingsPage').then(m => ({ default: m.ApiKeySettingsPage })));
 const EmbedVerifyPage = lazyWithRetry(() => import('@/pages/EmbedVerifyPage').then(m => ({ default: m.EmbedVerifyPage })));
@@ -215,6 +216,7 @@ export function App() {
           <Route path={ROUTES.ABOUT} element={<AboutPage />} />
           <Route path={ROUTES.PRIVACY} element={<PrivacyPage />} />
           <Route path={ROUTES.TERMS} element={<TermsPage />} />
+          <Route path={ROUTES.THIRD_PARTY_NOTICES} element={<ThirdPartyNoticesPage />} />
           {/* BUG-AUDIT-02 follow-up: `/contact` must resolve on the search
               subdomain too — PublicVerifyPage's footer surfaces the
               /contact link and silently 404-redirected on search.arkova.ai. */}
@@ -231,6 +233,7 @@ export function App() {
           <Route path={ROUTES.ABOUT} element={<AboutPage />} />
           <Route path={ROUTES.PRIVACY} element={<PrivacyPage />} />
           <Route path={ROUTES.TERMS} element={<TermsPage />} />
+          <Route path={ROUTES.THIRD_PARTY_NOTICES} element={<ThirdPartyNoticesPage />} />
           <Route path={ROUTES.CONTACT} element={<ContactPage />} />
           <Route path={ROUTES.EMBED_VERIFY} element={<RouteErrorBoundary section="EmbedVerify"><EmbedVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.SEARCH} element={<RouteErrorBoundary section="Search"><SearchPage /></RouteErrorBoundary>} />

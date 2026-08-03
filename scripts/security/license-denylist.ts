@@ -1,7 +1,15 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 
-export const GPL_DENYLIST = /\b(?:AGPL|GPL|SSPL)(?:[-\s]?(?:v?\d+(?:\.\d+)?(?:-only|-or-later|\+)?))?\b/i;
+// LGPL fix (engineering-counsel review, 2026-07-28): the prior pattern was
+// `\b(?:AGPL|GPL|SSPL)...` — `\b` requires a word boundary immediately before
+// the match, but in "LGPL-3.0" the character before "GPL" is "L" (a word
+// character), so no boundary exists there and the whole license string went
+// undetected. Adding `LGPL` as its own alternative (not `L?GPL`, which has
+// the identical boundary bug) fixes this: `\b` now anchors on the "L" that
+// starts "LGPL" itself. Verified against libheif-js@1.19.8's exact lockfile
+// license string ("LGPL-3.0").
+export const GPL_DENYLIST = /\b(?:AGPL|LGPL|GPL|SSPL)(?:[-\s]?(?:v?\d+(?:\.\d+)?(?:-only|-or-later|\+)?))?\b/i;
 
 interface PackageLockPackage {
   name?: string;
