@@ -23,17 +23,26 @@ vi.mock('../../middleware/errorSanitizer.js', () => ({
 }));
 
 import { db } from '../../utils/db.js';
+import { createLazyBuilderRecorder } from '../../test-utils/lazy-supabase-builder.js';
 
 const SECRET = 'test-hmac-secret';
 
+/** `last_used_at` writes whose request was actually issued (see helper docs). */
+const updates = createLazyBuilderRecorder();
+
 function mockKeyLookup(result: Record<string, unknown> | null, error: unknown = null) {
   const single = vi.fn().mockResolvedValue({ data: result, error });
-  (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+  const eq = vi.fn().mockReturnThis();
+  const chain = {
     select: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockReturnThis(),
+    eq,
     single,
-    update: vi.fn().mockReturnThis(),
-  });
+    update: vi.fn((payload: Record<string, unknown>) => ({
+      eq: vi.fn().mockReturnValue(updates.build(payload)),
+    })),
+  };
+  (db.from as ReturnType<typeof vi.fn>).mockReturnValue(chain);
+  return { eq };
 }
 
 function buildApp() {
@@ -47,6 +56,7 @@ function buildApp() {
 describe('apiKeyAuthV2', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    updates.reset();
   });
 
   it('returns problem+json when the key is missing and a scope is required', async () => {
@@ -92,25 +102,15 @@ describe('apiKeyAuthV2', () => {
   it('authenticates valid keys and updates last_used_at without blocking', async () => {
     const raw = 'ak_test_123';
     const expectedHash = hashApiKey(raw, SECRET);
-    const eq = vi.fn().mockReturnThis();
-    const single = vi.fn().mockResolvedValue({
-      data: {
-        id: 'key-1',
-        org_id: 'org-1',
-        created_by: 'user-1',
-        scopes: ['read:search'],
-        rate_limit_tier: 'paid',
-        key_prefix: 'ak_test_',
-        is_active: true,
-        expires_at: null,
-      },
-      error: null,
-    });
-    (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      eq,
-      single,
-      update: vi.fn().mockReturnThis(),
+    const { eq } = mockKeyLookup({
+      id: 'key-1',
+      org_id: 'org-1',
+      created_by: 'user-1',
+      scopes: ['read:search'],
+      rate_limit_tier: 'paid',
+      key_prefix: 'ak_test_',
+      is_active: true,
+      expires_at: null,
     });
 
     const res = await request(buildApp())
@@ -120,6 +120,8 @@ describe('apiKeyAuthV2', () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(eq).toHaveBeenCalledWith('key_hash', expectedHash);
-    expect(eq).toHaveBeenCalledWith('id', 'key-1');
+    // Fire-and-forget, but it must fire: a discarded lazy builder never runs.
+    expect(updates.executed).toHaveLength(1);
+    expect(updates.executed[0].last_used_at).toEqual(expect.any(String));
   });
 });
