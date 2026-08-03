@@ -65,6 +65,13 @@ export interface DriveProcessorDb {
     revision_id: string;
     integration_id: string;
     filename: string | null;
+    /**
+     * SCRUM-1837: resolved human folder path (e.g. `/HR/2026-Q2/file.pdf`),
+     * or null when unresolvable / no resolver was injected. Required so
+     * `folder_path_starts_with` rule conditions can ever fire — see
+     * drive-folder-resolver.ts.
+     */
+    folder_path: string | null;
   }): Promise<string | null>;
   /**
    * SCRUM-2903 (GD-PROD): enqueue the `google_drive.file_changed` job — the
@@ -98,6 +105,22 @@ export interface DriveProcessorDeps {
    *  in tests for a mocked async function returning fixture pages. */
   listChanges?: typeof listChanges;
   logger?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
+  /**
+   * SCRUM-1837: resolve a Drive file's human-readable folder path so
+   * `folder_path_starts_with` rule conditions can match. Injected — production
+   * wiring (drive-changes-runner.ts) binds this to `resolveDriveFolderPath`
+   * (drive-folder-resolver.ts) over a real `drive_folder_path_cache`-backed
+   * store. Called ONLY for a change that already matched a watched folder
+   * binding (the only case the resolved value can ever be used for) — never
+   * for a mismatched/unrelated change, so a folder nobody scoped a rule to
+   * never burns a Drive API round-trip. Omitted (undefined) -> folder_path
+   * stays null, matching the prior hardcoded-null behavior.
+   */
+  resolveFolderPath?: (args: {
+    orgId: string;
+    fileId: string;
+    accessToken: string;
+  }) => Promise<string | null>;
 }
 
 export interface ProcessChangesResult {
@@ -263,6 +286,31 @@ export async function processDriveChanges(args: {
       // Both enqueues share one compensation: any failure rolls back the
       // ledger reservation so the next pass retries the whole change.
       const mimeType = change.file?.mimeType ?? null;
+
+      // SCRUM-1837: resolve folder_path for THIS matching change only — a
+      // mismatched/unrelated change is never enqueued, so resolving its path
+      // would be a wasted Drive API round-trip. `resolveFolderPath` is a
+      // best-effort injected dependency; its production implementation
+      // (drive-folder-resolver.ts) already never throws, but we guard here
+      // too so a misbehaving test double or future implementation can never
+      // abort an otherwise-valid change over a folder-path lookup failure.
+      let folderPath: string | null = null;
+      if (args.deps?.resolveFolderPath) {
+        try {
+          folderPath = await args.deps.resolveFolderPath({
+            orgId: args.integration.org_id,
+            fileId,
+            accessToken: args.accessToken,
+          });
+        } catch (err) {
+          log?.warn?.(
+            { err, integrationId: args.integration.id, fileId },
+            'drive folder-path resolution failed — proceeding with null',
+          );
+          folderPath = null;
+        }
+      }
+
       let ruleEventId: string | null;
       let fileChangedJobId: string | null;
       try {
@@ -274,6 +322,7 @@ export async function processDriveChanges(args: {
           revision_id: revisionId,
           integration_id: args.integration.id,
           filename,
+          folder_path: folderPath,
         });
         fileChangedJobId = ruleEventId === null
           ? null

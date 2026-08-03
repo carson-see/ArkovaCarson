@@ -1,7 +1,12 @@
 # services/worker/src/
-_Last updated: 2026-07-28 (72h soak F-2 finding)_
+_Last updated: 2026-08-03 (PR #1944 review: config.workerPublicUrl + run-lease.ts K_REVISION absorption)_
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
+
+## 2026-08-03 — PR #1944 review: two SCRUM-1258 (ad-hoc process.env) closes
+
+- **`config.ts` gains `workerPublicUrl` (`WORKER_PUBLIC_URL`, optional, `z.string().url()`).** Added so `jobs/drive-subscription-renewal-deps.ts` (GH #1835) could resolve the worker's own public base URL through the Zod-validated config export instead of an ad-hoc env read. `integrations/oauth/docusign.ts`'s `requireConnectConfig` reads the SAME underlying var directly via its own `deps.env ?? process.env` passthrough (pre-existing, unaffected by this change) — reconciling that one onto `config.workerPublicUrl` too is a natural follow-up, not done here (out of scope for the PR that surfaced the gap).
+- **`jobs/run-lease.ts`'s `runLeaseHolder()` now reads `config.kRevision` instead of `process.env.K_REVISION` directly.** This was a genuinely PRE-EXISTING SCRUM-1258 violation (confirmed present on a clean `origin/main` checkout, unrelated to any Drive work) — `config.ts` already absorbed `K_REVISION` into `kRevision` (the R1-4 critical-absorption pass), `run-lease.ts` just never switched over to it. Fixed alongside the Drive PR because leaving it meant the required "Dependency Scanning" CI check would stay red regardless of anything in that PR. `run-lease.test.ts`'s holder-identity tests now mock `config.js` directly (`config` is parsed once at module-import time, so mutating `process.env.K_REVISION` mid-test no longer has any effect on it).
 
 ## 2026-07-28 SOAK FINDING F-2 — per-IP limiter shadows per-API-key limiter (HIGH, open)
 

@@ -21,6 +21,7 @@ vi.mock('../../../utils/logger.js', () => ({
   },
 }));
 
+import { logger } from '../../../utils/logger.js';
 import { driveWebhookRouter } from './drive.js';
 
 function createApp() {
@@ -186,6 +187,60 @@ describe('POST /webhooks/drive (SCRUM-1211 fail-closed channel-token)', () => {
     expect(res.status).toBe(200);
     // Critical: no rule-event enqueue on replay.
     expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  // GH #1836 (SECURITY, pen-test scope): the channel token used to be the
+  // org's UUID. Backward compatibility requires still ACCEPTING it (existing
+  // channels must keep delivering until the next renewal rotates them), but
+  // ops needs a signal that a legacy weak token is still in use — never the
+  // token value itself.
+  describe('GH #1836: legacy org-id channel-token deprecation window', () => {
+    it('accepts a legacy channel_token that equals the org id, but logs a bounded warning (no token value)', async () => {
+      dbFromMock.mockReturnValueOnce(lookupChain({
+        org_id: 'org-legacy-1',
+        integration_id: 'int-1',
+        channel_token: 'org-legacy-1', // stored token === org_id: the pre-fix scheme
+      }));
+      dbFromMock.mockReturnValueOnce(nonceInsert(null));
+
+      const res = await request(createApp())
+        .post('/webhooks/drive')
+        .set('X-Goog-Channel-ID', 'chan-1')
+        .set('X-Goog-Resource-State', 'change')
+        .set('X-Goog-Channel-Token', 'org-legacy-1')
+        .set('X-Goog-Message-Number', '1');
+
+      expect(res.status).toBe(200);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId: 'chan-1', orgId: 'org-legacy-1' }),
+        expect.stringContaining('legacy org-id channel token'),
+      );
+      // The token value itself must never appear in a logged argument.
+      const allWarnArgs = JSON.stringify((logger.warn as ReturnType<typeof vi.fn>).mock.calls);
+      expect(allWarnArgs).not.toContain('"channel_token"');
+    });
+
+    it('does NOT log the legacy-token warning for a modern random channel token', async () => {
+      dbFromMock.mockReturnValueOnce(lookupChain({
+        org_id: 'org-modern-1',
+        integration_id: 'int-1',
+        channel_token: 'xk3F9pQ7z-random-high-entropy-token',
+      }));
+      dbFromMock.mockReturnValueOnce(nonceInsert(null));
+
+      const res = await request(createApp())
+        .post('/webhooks/drive')
+        .set('X-Goog-Channel-ID', 'chan-1')
+        .set('X-Goog-Resource-State', 'change')
+        .set('X-Goog-Channel-Token', 'xk3F9pQ7z-random-high-entropy-token')
+        .set('X-Goog-Message-Number', '2');
+
+      expect(res.status).toBe(200);
+      const legacyWarnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call) => typeof call[1] === 'string' && call[1].includes('legacy org-id channel token'),
+      );
+      expect(legacyWarnCalls).toHaveLength(0);
+    });
   });
 
   it('SCRUM-1242: writes nonce row keyed on (channel_id, message_number)', async () => {

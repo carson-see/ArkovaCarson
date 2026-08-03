@@ -389,8 +389,20 @@ describe('Drive OAuth router', () => {
     expect(upsert.account_id).toBe('google-sub-1');
     const label = JSON.parse(upsert.account_label as string);
     expect(label.email).toBe('admin@example.com');
-    expect(label.channel_token).toBe(TEST_ORG_ID);
+    // GH #1836 (SECURITY): the channel token must NOT be the org UUID — an
+    // org UUID is not a secret (it appears in URLs, API responses, and
+    // client-side state), so reusing it let anyone who learned/guessed an
+    // org UUID forge a push notification past the webhook's token check.
+    // It must instead be a high-entropy random value distinct from the org id.
+    expect(label.channel_token).not.toBe(TEST_ORG_ID);
+    expect(typeof label.channel_token).toBe('string');
+    expect(label.channel_token.length).toBeGreaterThanOrEqual(32);
     expect(label.resource_id).toBe('drive-resource-1');
+    // The SAME random token must be what Drive actually verifies against —
+    // not silently mismatched from what we store.
+    const watchCall = fetchImpl.mock.calls.find(([input]) => String(input).includes('/changes/watch'));
+    const watchBody = watchCall ? JSON.parse(String((watchCall[1] as RequestInit).body)) : null;
+    expect(watchBody?.token).toBe(label.channel_token);
     expect(upsert.encrypted_tokens).toBe('\\x656e637279707465642d746f6b656e2d7061796c6f6164');
     // subscription_id must be the channel UUID we generated (not Google's resourceId)
     expect(upsert.subscription_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);

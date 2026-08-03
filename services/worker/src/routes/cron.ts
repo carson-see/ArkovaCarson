@@ -113,6 +113,12 @@ import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expi
 import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
 import { reconcileDocusignGaps } from '../jobs/docusign-reconciliation.js';
 import { makeReconciliationDeps } from '../jobs/docusign-reconciliation-deps.js';
+import { renewDriveSubscriptions } from '../integrations/connectors/drive-subscription-renewal.js';
+import {
+  makeDriveSubscriptionRenewalDb,
+  makeDriveSubscriptionRenewalClient,
+  alertDriveSubscriptionRenewal,
+} from '../jobs/drive-subscription-renewal-deps.js';
 import { reconcileDocusignQueueDrift } from '../jobs/docusign-queue-reconciliation.js';
 import { makeQueueReconciliationDeps } from '../jobs/docusign-queue-reconciliation-deps.js';
 import { pollDocusignConnectFailures } from '../jobs/docusign-connect-failures.js';
@@ -1962,6 +1968,31 @@ cronRouter.post('/docusign-reconciliation', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign reconciliation failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── GH #1835: Google Drive changes.watch channel renewal ───
+// Drive push channels expire (~7 days). Nothing renewed them before this —
+// every Drive connection went silent within a week with no error, no alert,
+// and no signal beyond the org dashboard still showing "connected". Renews
+// any org_integrations google_drive row whose subscription_expires_at falls
+// within the sweep's horizon (default 24h) OR was never registered
+// (subscription_id IS NULL — a prior bootstrap failure). Each successful
+// renewal also mints a fresh random channel_token (GH #1836 rotation) rather
+// than reusing whatever token — including a legacy org-id one — the
+// connection currently carries. Idempotent (UPDATE by row id only).
+// Production trigger: Cloud Scheduler (see scripts/gcp-setup/cloud-scheduler.sh).
+cronRouter.post('/drive-subscription-renewal', async (_req, res) => {
+  try {
+    const result = await renewDriveSubscriptions({
+      db: makeDriveSubscriptionRenewalDb(),
+      client: makeDriveSubscriptionRenewalClient(),
+      alert: alertDriveSubscriptionRenewal,
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Drive subscription renewal failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

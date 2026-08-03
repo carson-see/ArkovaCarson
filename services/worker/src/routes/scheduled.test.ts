@@ -64,6 +64,11 @@ vi.mock('../jobs/connector-artifact-drain.js', () => ({
     skipped: true, orgsProcessed: 0, orgsFailed: 0, claimed: 0, anchored: 0, failed: 0,
   }),
 }));
+vi.mock('../jobs/drive-file-changed.js', () => ({
+  runDriveFileChangedJobs: vi.fn().mockResolvedValue({
+    claimed: 0, completed: 0, failed: 0, dead: 0, updateFailed: 0, jobIds: [],
+  }),
+}));
 vi.mock('./lifecycle.js', () => ({ trackOperation: vi.fn((operation) => operation) }));
 vi.mock('../utils/sentry.js', () => ({ withCronMonitoring: vi.fn((_name, _schedule, fn) => fn) }));
 
@@ -85,6 +90,10 @@ describe('setupScheduledJobs', () => {
     // 15 = 12 pre-existing on main + anchor-expiry-sweep (SCRUM-1736)
     //      + check-stuck-anchors (SCRUM-2234)
     //      + reconcile-credit-conservation (S1-9).
+    // GH #1835's drive-subscription-renewal is deliberately NOT registered
+    // here — Cloud-Scheduler-only, same shape as docusign-reconciliation
+    // (see scheduled.ts's comment for why an in-process backup would
+    // double-fire against the Cloud Scheduler job).
     expect(mockCronSchedule).toHaveBeenCalledTimes(15);
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
