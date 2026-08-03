@@ -23,12 +23,15 @@ import {
   DriveRunnerError,
   type DriveIntegrationRow,
 } from '../integrations/connectors/drive-changes-runner.js';
-import type {
-  DriveSubscriptionRenewalDb,
-  DriveSubscriptionRenewalClient,
-  DriveSubscriptionRenewalAlert,
-  DriveSubscriptionRow,
+import {
+  renewDriveSubscriptions,
+  type DriveSubscriptionRenewalDb,
+  type DriveSubscriptionRenewalClient,
+  type DriveSubscriptionRenewalAlert,
+  type DriveSubscriptionRenewalSummary,
+  type DriveSubscriptionRow,
 } from '../integrations/connectors/drive-subscription-renewal.js';
+import { DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, withRunLease } from './run-lease.js';
 
 const GOOGLE_DRIVE_PROVIDER = 'google_drive';
 /** Renewal batch bound — matches DocuSign reconciliation's conservative pass size. */
@@ -241,3 +244,47 @@ export const alertDriveSubscriptionRenewal: DriveSubscriptionRenewalAlert = (eve
     logger.error({ error: sentryErr, event }, 'drive subscription renewal: Sentry alert failed');
   }
 };
+
+export interface DriveSubscriptionRenewalRunResult extends DriveSubscriptionRenewalSummary {
+  /**
+   * True when this invocation could NOT acquire the run lease — another
+   * trigger (Cloud Scheduler or the in-process backup) is already mid-sweep
+   * on this or another instance. NOT an error: this is the double-fire
+   * guard working as intended. `scanned`/`renewed`/`degraded`/`failed` are
+   * all 0 in this case (nothing ran).
+   */
+  skipped?: boolean;
+}
+
+const EMPTY_RENEWAL_SUMMARY: DriveSubscriptionRenewalSummary = {
+  scanned: 0, renewed: 0, degraded: 0, failed: 0,
+};
+
+/**
+ * PR #1944 review correction: the ONE entry point BOTH trigger paths call —
+ * `routes/cron.ts`'s HTTP route (Cloud Scheduler) and `routes/scheduled.ts`'s
+ * in-process backup. Wrapping the run lease HERE, not in either caller, is
+ * what makes "whichever fires first wins, the other no-ops" actually true —
+ * both paths share the exact same lease acquisition. Matches
+ * `batch-anchor.ts`'s `processBatchAnchors()` pattern (see run-lease.ts's
+ * module doc comment for the 2026-08-01 incident that pattern exists to
+ * prevent) — deleting the in-process backup entirely (an earlier, WRONG
+ * version of this fix) would have made the Cloud Scheduler job — undeployed
+ * as of this PR — the ONLY trigger, so a forgotten operator step would have
+ * silently disabled renewal (and therefore the GH #1836 legacy-token
+ * rotation) rather than merely degrading its cadence.
+ */
+export async function runDriveSubscriptionRenewal(
+  options: DriveSubscriptionRenewalDepOptions = {},
+): Promise<DriveSubscriptionRenewalRunResult> {
+  const leaseClient = options.db ?? (defaultDb as AnyDb);
+  const outcome = await withRunLease(
+    { ...DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, client: leaseClient },
+    () => renewDriveSubscriptions({
+      db: makeDriveSubscriptionRenewalDb(options),
+      client: makeDriveSubscriptionRenewalClient(options),
+      alert: alertDriveSubscriptionRenewal,
+    }),
+  );
+  return outcome.acquired ? outcome.result : { ...EMPTY_RENEWAL_SUMMARY, skipped: true };
+}

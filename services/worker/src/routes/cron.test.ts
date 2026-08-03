@@ -345,16 +345,15 @@ vi.mock('../jobs/drive-file-changed.js', () => ({
 }));
 
 // GH #1835: Drive subscription (changes.watch channel) renewal cron route.
-const mockRenewDriveSubscriptions = vi.fn().mockResolvedValue({
+// PR #1944 review correction: the route now calls the lease-guarded
+// runDriveSubscriptionRenewal() entry point (jobs/drive-subscription-renewal-deps.js)
+// directly, not the pure renewDriveSubscriptions() + the three factories —
+// see routes/scheduled.ts for the in-process backup that calls the SAME function.
+const mockRunDriveSubscriptionRenewal = vi.fn().mockResolvedValue({
   scanned: 2, renewed: 1, degraded: 0, failed: 1,
 });
-vi.mock('../integrations/connectors/drive-subscription-renewal.js', () => ({
-  renewDriveSubscriptions: (...args: unknown[]) => mockRenewDriveSubscriptions(...args),
-}));
 vi.mock('../jobs/drive-subscription-renewal-deps.js', () => ({
-  makeDriveSubscriptionRenewalDb: vi.fn(() => ({ tag: 'db' })),
-  makeDriveSubscriptionRenewalClient: vi.fn(() => ({ tag: 'client' })),
-  alertDriveSubscriptionRenewal: vi.fn(),
+  runDriveSubscriptionRenewal: (...args: unknown[]) => mockRunDriveSubscriptionRenewal(...args),
 }));
 
 // SCRUM-2234: stuck anchor monitor cron route.
@@ -972,24 +971,21 @@ describe('cron routes', () => {
   });
 
   // GH #1835: renews Drive changes.watch channels before their ~7-day expiry.
+  // PR #1944 review correction: calls the lease-guarded
+  // runDriveSubscriptionRenewal() directly (no args — it builds its own
+  // deps internally) rather than the pure function + factories.
   describe('POST /drive-subscription-renewal', () => {
-    it('runs the renewal sweep with the real DB/client/alert deps and returns its summary', async () => {
+    it('runs the lease-guarded renewal sweep and returns its summary', async () => {
       const app = createApp();
       const res = await request(app).post('/cron/drive-subscription-renewal');
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ scanned: 2, renewed: 1, degraded: 0, failed: 1 });
-      expect(mockRenewDriveSubscriptions).toHaveBeenCalledWith(
-        expect.objectContaining({
-          db: { tag: 'db' },
-          client: { tag: 'client' },
-          alert: expect.any(Function),
-        }),
-      );
+      expect(mockRunDriveSubscriptionRenewal).toHaveBeenCalledTimes(1);
     });
 
     it('returns 500 when the renewal sweep throws (Scheduler retries)', async () => {
-      mockRenewDriveSubscriptions.mockRejectedValueOnce(new Error('db unavailable'));
+      mockRunDriveSubscriptionRenewal.mockRejectedValueOnce(new Error('db unavailable'));
       const app = createApp();
       const res = await request(app).post('/cron/drive-subscription-renewal');
       expect(res.status).toBe(500);
@@ -1001,7 +997,7 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/drive-subscription-renewal');
       expect(res.status).toBe(401);
-      expect(mockRenewDriveSubscriptions).not.toHaveBeenCalled();
+      expect(mockRunDriveSubscriptionRenewal).not.toHaveBeenCalled();
     });
   });
 

@@ -41,11 +41,28 @@ vi.mock('../integrations/connectors/drive-changes-runner.js', async () => {
   };
 });
 
+// PR #1944 review correction: runDriveSubscriptionRenewal() tests want the
+// REAL withRunLease/acquireRunLease logic (so the lease test has teeth) but
+// a fully-controlled pure orchestrator — mock renewDriveSubscriptions only.
+const renewDriveSubscriptionsMock = vi.fn();
+vi.mock('../integrations/connectors/drive-subscription-renewal.js', async () => {
+  const actual = await vi.importActual<typeof import('../integrations/connectors/drive-subscription-renewal.js')>(
+    '../integrations/connectors/drive-subscription-renewal.js',
+  );
+  return {
+    ...actual,
+    renewDriveSubscriptions: (...args: unknown[]) => renewDriveSubscriptionsMock(...args),
+  };
+});
+
 import { DriveRunnerError } from '../integrations/connectors/drive-changes-runner.js';
+import { DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE } from './run-lease.js';
+import { createRunLeaseStore } from './__tests__/__testHelpers.js';
 import {
   makeDriveSubscriptionRenewalDb,
   makeDriveSubscriptionRenewalClient,
   alertDriveSubscriptionRenewal,
+  runDriveSubscriptionRenewal,
 } from './drive-subscription-renewal-deps.js';
 
 const ORG = 'org-1';
@@ -277,5 +294,75 @@ describe('alertDriveSubscriptionRenewal', () => {
     expect(() =>
       alertDriveSubscriptionRenewal({ integrationId: INT, orgId: ORG, kind: 'renewal_failed', reason: 'x' }),
     ).not.toThrow();
+  });
+});
+
+// PR #1944 review correction: renewDriveSubscriptions() is now ONLY ever
+// invoked through this lease-guarded entry point — both routes/cron.ts's
+// Cloud Scheduler route and routes/scheduled.ts's in-process backup call
+// runDriveSubscriptionRenewal() directly, never renewDriveSubscriptions()
+// itself. These tests exercise the REAL withRunLease/acquireRunLease logic
+// (createRunLeaseStore evaluates the actual CAS predicate the code emits,
+// not a restated one — see __testHelpers.ts) against a mocked pure
+// orchestrator, so the lease assertions have teeth.
+describe('runDriveSubscriptionRenewal (lease-guarded entry point, PR #1944 correction)', () => {
+  beforeEach(() => {
+    renewDriveSubscriptionsMock.mockReset();
+  });
+
+  it('acquires the lease and runs the sweep, returning its summary unchanged', async () => {
+    const store = createRunLeaseStore(DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, 'free');
+    renewDriveSubscriptionsMock.mockResolvedValueOnce({ scanned: 3, renewed: 2, degraded: 0, failed: 1 });
+
+    const result = await runDriveSubscriptionRenewal({ db: store.client });
+
+    expect(result).toEqual({ scanned: 3, renewed: 2, degraded: 0, failed: 1 });
+    expect(renewDriveSubscriptionsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns skipped:true with a zeroed summary when the lease is already held by another instance', async () => {
+    const store = createRunLeaseStore(DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, {
+      held: { holder: 'other-instance:999:nonce', expiresAt: new Date(Date.now() + 60_000).toISOString() },
+    });
+    renewDriveSubscriptionsMock.mockResolvedValueOnce({ scanned: 99, renewed: 99, degraded: 0, failed: 0 });
+
+    const result = await runDriveSubscriptionRenewal({ db: store.client });
+
+    expect(result).toEqual({ scanned: 0, renewed: 0, degraded: 0, failed: 0, skipped: true });
+    // The whole point: the sweep body never ran.
+    expect(renewDriveSubscriptionsMock).not.toHaveBeenCalled();
+  });
+
+  // The exact scenario PR #1944 review round 3 flagged: Cloud Scheduler and
+  // the in-process backup both firing. Both call THIS function — proving
+  // concurrent invocation runs the body exactly once proves the double-fire
+  // race is closed regardless of which trigger fires first.
+  it('CRITICAL: concurrent invocation (Cloud Scheduler racing the in-process backup) runs the sweep body EXACTLY ONCE', async () => {
+    const store = createRunLeaseStore(DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE, 'free');
+    renewDriveSubscriptionsMock.mockResolvedValue({ scanned: 1, renewed: 1, degraded: 0, failed: 0 });
+
+    const [first, second] = await Promise.all([
+      runDriveSubscriptionRenewal({ db: store.client }),
+      runDriveSubscriptionRenewal({ db: store.client }),
+    ]);
+
+    expect(renewDriveSubscriptionsMock).toHaveBeenCalledTimes(1);
+    const results = [first, second];
+    expect(results.filter((r) => r.skipped)).toHaveLength(1);
+    expect(results.filter((r) => !r.skipped)).toHaveLength(1);
+  });
+
+  it('a store/CAS failure fails closed to skipped (never runs the sweep on an unverifiable lease)', async () => {
+    // Simulate a broken store: every `.from()` call throws.
+    const brokenClient = {
+      from: () => { throw new Error('PostgREST unreachable'); },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    renewDriveSubscriptionsMock.mockResolvedValueOnce({ scanned: 1, renewed: 1, degraded: 0, failed: 0 });
+
+    const result = await runDriveSubscriptionRenewal({ db: brokenClient });
+
+    expect(result.skipped).toBe(true);
+    expect(renewDriveSubscriptionsMock).not.toHaveBeenCalled();
   });
 });

@@ -25,6 +25,7 @@ import { runCreditConservationReconciler } from '../jobs/credit-conservation-rec
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
 import { runConnectorArtifactDrain } from '../jobs/connector-artifact-drain.js';
 import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
+import { runDriveSubscriptionRenewal } from '../jobs/drive-subscription-renewal-deps.js';
 import { trackOperation } from './lifecycle.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 
@@ -374,19 +375,39 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
     });
   }
 
-  // GH #1835: Drive changes.watch channel renewal, hourly. Deliberately NO
-  // in-process backup here — prod runs it exclusively via Cloud Scheduler ->
-  // POST /jobs/drive-subscription-renewal (routes/cron.ts). Its sibling
-  // docusign-reconciliation (SCRUM-2042, same file-organization shape:
-  // Cloud-Scheduler-only cron.ts route, no scheduleInProcess entry) is the
-  // established precedent — when the Cloud Run instance is NOT throttled,
-  // an unconditional in-process schedule running the SAME hourly cadence
-  // would double-fire every tick: two concurrent sweeps racing to renew the
-  // same due connections, each independently stopping the other's
-  // just-registered channel. Dev/test coverage lives entirely in
-  // drive-subscription-renewal.test.ts (pure orchestrator) and
-  // drive-subscription-renewal-deps.test.ts (real wiring) instead of an
-  // in-process cron loop.
+  // GH #1835/#1836: Drive changes.watch channel renewal, hourly. RESTORED
+  // (PR #1944 review correction) after an earlier version of this fix
+  // deleted this backup outright to avoid double-firing alongside Cloud
+  // Scheduler — which traded a race for a single point of failure: the
+  // Cloud Scheduler job is declared in scripts/gcp-setup/cloud-scheduler.sh
+  // but NOT YET applied to prod as of this PR (a manual gcloud step, no CI
+  // gate), so Cloud-Scheduler-only would have meant a forgotten operator
+  // step silently disables renewal — and therefore the GH #1836 legacy
+  // channel-token rotation — entirely, with no signal. The actual fix for
+  // the double-fire race is `runDriveSubscriptionRenewal()`'s cross-instance
+  // run lease (`jobs/run-lease.ts`'s `DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE`,
+  // the same `withRunLease` primitive `processBatchAnchors()` uses for the
+  // identical shape of problem) — this in-process trigger and the Cloud
+  // Scheduler HTTP route in routes/cron.ts both call the SAME lease-guarded
+  // function, so whichever fires first wins and the other cleanly no-ops
+  // (`{ ...zeroed summary, skipped: true }`), instead of racing each
+  // other's channel registrations. A missed Cloud Scheduler deployment now
+  // degrades renewal cadence to whatever this in-process backup achieves,
+  // rather than disabling it outright.
+  scheduleInProcess('drive-subscription-renewal', '0 * * * *', async () => {
+    logger.debug('Running Drive subscription renewal sweep');
+    try {
+      const result = await trackOperation(runDriveSubscriptionRenewal());
+      if (!result.skipped && (result.renewed > 0 || result.failed > 0 || result.degraded > 0)) {
+        logger.info(
+          { scanned: result.scanned, renewed: result.renewed, degraded: result.degraded, failed: result.failed },
+          'Drive subscription renewal sweep processed connections',
+        );
+      }
+    } catch (error) {
+      logger.error({ err: errMsg(error) }, 'Drive subscription renewal cron failed');
+    }
+  });
 
   logger.info('Scheduled jobs configured (including chain maintenance)');
 }

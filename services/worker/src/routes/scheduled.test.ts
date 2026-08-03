@@ -69,6 +69,15 @@ vi.mock('../jobs/drive-file-changed.js', () => ({
     claimed: 0, completed: 0, failed: 0, dead: 0, updateFailed: 0, jobIds: [],
   }),
 }));
+// GH #1835/#1836: restored in-process backup (PR #1944 review correction),
+// unconditional (not flag-gated) and NOT part of ANCHOR_TABLE_IN_PROCESS_JOBS
+// — it's a renewal-only sweep, not an anchor-table read.
+const mockRunDriveSubscriptionRenewal = vi.fn().mockResolvedValue({
+  scanned: 0, renewed: 0, degraded: 0, failed: 0,
+});
+vi.mock('../jobs/drive-subscription-renewal-deps.js', () => ({
+  runDriveSubscriptionRenewal: (...args: unknown[]) => mockRunDriveSubscriptionRenewal(...args),
+}));
 vi.mock('./lifecycle.js', () => ({ trackOperation: vi.fn((operation) => operation) }));
 vi.mock('../utils/sentry.js', () => ({ withCronMonitoring: vi.fn((_name, _schedule, fn) => fn) }));
 
@@ -87,14 +96,13 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    // 15 = 12 pre-existing on main + anchor-expiry-sweep (SCRUM-1736)
+    // 16 = 12 pre-existing on main + anchor-expiry-sweep (SCRUM-1736)
     //      + check-stuck-anchors (SCRUM-2234)
-    //      + reconcile-credit-conservation (S1-9).
-    // GH #1835's drive-subscription-renewal is deliberately NOT registered
-    // here — Cloud-Scheduler-only, same shape as docusign-reconciliation
-    // (see scheduled.ts's comment for why an in-process backup would
-    // double-fire against the Cloud Scheduler job).
-    expect(mockCronSchedule).toHaveBeenCalledTimes(15);
+    //      + reconcile-credit-conservation (S1-9)
+    //      + drive-subscription-renewal (GH #1835/#1836, unconditional,
+    //        restored per PR #1944 review correction — lease-guarded, see
+    //        scheduled.ts's comment).
+    expect(mockCronSchedule).toHaveBeenCalledTimes(16);
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
@@ -114,7 +122,7 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    expect(mockCronSchedule).toHaveBeenCalledTimes(15);
+    expect(mockCronSchedule).toHaveBeenCalledTimes(16);
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
@@ -128,9 +136,11 @@ describe('setupScheduledJobs', () => {
     // The anchor-table allowlist holds 9 jobs (SCRUM-1736's anchor-expiry-sweep
     // + SCRUM-2234's check-stuck-anchors joined the 7 originals), so under the
     // maintenance flag 9 schedules are skipped (9 warns). S1-9's
-    // reconcile-credit-conservation is read-only and NOT on the allowlist, so
-    // it keeps running: 6 remain (5 originals + the reconciler).
-    expect(mockCronSchedule).toHaveBeenCalledTimes(6);
+    // reconcile-credit-conservation and GH #1835/#1836's
+    // drive-subscription-renewal are both NOT on the allowlist (read-only /
+    // renewal-only, no anchor-table dependency), so they keep running: 7
+    // remain (5 originals + the reconciler + the renewal sweep).
+    expect(mockCronSchedule).toHaveBeenCalledTimes(7);
     expect(mockLogger.warn).toHaveBeenCalledTimes(9);
     expect(mockLogger.warn).toHaveBeenCalledWith(
       { jobName: 'anchor-expiry-sweep', expression: '0 3 * * *' },
@@ -219,9 +229,9 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    // 15 baseline (incl. reconcile-credit-conservation, S1-9) + the gated
-    // confirmation-proof backfill job = 16.
-    expect(mockCronSchedule).toHaveBeenCalledTimes(16);
+    // 16 baseline (incl. reconcile-credit-conservation S1-9 + GH #1835/#1836's
+    // drive-subscription-renewal) + the gated confirmation-proof backfill job = 17.
+    expect(mockCronSchedule).toHaveBeenCalledTimes(17);
     const expressions = mockCronSchedule.mock.calls.map((call) => call[0] as string);
     expect(expressions).toContain('*/15 * * * *');
     expect(mockLogger.warn).not.toHaveBeenCalled();
@@ -233,9 +243,10 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    // 15 baseline jobs (incl. reconcile-credit-conservation, S1-9); the
-    // backfill job is NOT registered when the flag is off.
-    expect(mockCronSchedule).toHaveBeenCalledTimes(15);
+    // 16 baseline jobs (incl. reconcile-credit-conservation S1-9 + GH #1835/
+    // #1836's drive-subscription-renewal); the backfill job is NOT
+    // registered when the flag is off.
+    expect(mockCronSchedule).toHaveBeenCalledTimes(16);
     const expressions = mockCronSchedule.mock.calls.map((call) => call[0] as string);
     expect(expressions).not.toContain('*/15 * * * *');
   });
@@ -261,8 +272,9 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    // 15 baseline (incl. reconcile-credit-conservation, SCRUM-2349) + the gated connector-artifact drain job.
-    expect(mockCronSchedule).toHaveBeenCalledTimes(16);
+    // 16 baseline (incl. reconcile-credit-conservation SCRUM-2349 + GH #1835/
+    // #1836's drive-subscription-renewal) + the gated connector-artifact drain job.
+    expect(mockCronSchedule).toHaveBeenCalledTimes(17);
     const expressions = mockCronSchedule.mock.calls.map((call) => call[0] as string);
     expect(expressions).toContain('*/5 * * * *');
     expect(mockLogger.warn).not.toHaveBeenCalled();
@@ -270,7 +282,7 @@ describe('setupScheduledJobs', () => {
 
   it('does NOT register the drain job when the flag is off (default-OFF, zero prod impact)', async () => {
     // The drain job is the only flag-gated addition here, so with the flag off
-    // the schedule count stays at the 15-job baseline (the `*/5` expression is
+    // the schedule count stays at the 16-job baseline (the `*/5` expression is
     // shared with process-revoked-anchors, so the count — not the expression —
     // is the load-bearing signal that the gated job did NOT register).
     mockConfig.enableConnectorArtifactDrain = false;
@@ -278,7 +290,7 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    expect(mockCronSchedule).toHaveBeenCalledTimes(15);
+    expect(mockCronSchedule).toHaveBeenCalledTimes(16);
   });
 
   it('skips the drain job under the maintenance flag in production (anchor-table allowlist)', async () => {
