@@ -230,6 +230,33 @@ describe('POST /credentials/ctdl/registry-anchor — happy path', () => {
     expect(insertCall.credential_type).toBe('OTHER');
   });
 
+  // Lane 4 bug blitz (SCRUM CE-visible-work follow-up): the public
+  // `get_public_anchor` projection (migration 0385, live) reads
+  // `anchors.metadata->>'registry_url'` and `anchors.metadata->>'ce_envelope_sha256'`
+  // to populate `SourceProvenanceDisplay`'s "Registry reference" row on the
+  // public verify page. This endpoint only ever wrote `ce_registry_url`
+  // (prefixed) — a key the public projection's allow-list does not recognize
+  // — so a CE-registry-anchored record's registry link never reached the
+  // verify page even though the UI + projection wiring for it was already
+  // shipped (SCRUM-2913). This anchor is the ONLY writer of CE registry
+  // metadata for the ce_registry_ctid-keyed flow (the drift-reconciliation
+  // job in ce-registry-drift.ts only READS ce_registry_ctid; nothing else
+  // depends on ce_registry_url's exact key name), so adding the unprefixed
+  // `registry_url` key alongside it is purely additive.
+  it('stamps metadata.registry_url (unprefixed) so the public projection allow-list picks it up — SCRUM-2913 CE registry link goes live on verify', async () => {
+    const { deps } = depsReturning(stubResponse({ body: NONCREDIT_RAW }));
+    const app = buildApp({ deps });
+
+    const res = await request(app).post('/').send({ ctid: PROGRAM_CTID });
+
+    expect(res.status).toBe(201);
+    const insertCall = mockAnchorInsert.mock.calls[0][0] as {
+      metadata: Record<string, unknown>;
+    };
+    expect(insertCall.metadata.registry_url).toBe(insertCall.metadata.ce_registry_url);
+    expect(insertCall.metadata.registry_url).toContain(`/resources/${PROGRAM_CTID}`);
+  });
+
   it('never leaks the raw registry bytes into any log call (§1.6A)', async () => {
     const { deps } = depsReturning(stubResponse({ body: NONCREDIT_RAW }));
     const app = buildApp({ deps });

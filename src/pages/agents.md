@@ -17,6 +17,12 @@ item. Filtering reads `Record.folderId`, added to `useAnchors`'s select (see
 in scope for SCRUM-2940 v1. Full component-level notes live in
 `src/components/folders/agents.md`.
 
+**2026-08-03 follow-up (founder escalation — "finish the folders"):** this page
+was fully built but had no sidebar link — `Sidebar.tsx` never linked
+`ROUTES.RECORDS`, so the only way in was typing `/records` into the URL bar.
+Fixed in `src/components/layout/Sidebar.tsx` (see that folder's `agents.md`
+for the fix shape); `MyRecordsPage.tsx` itself is unchanged by that fix.
+
 ## L2-A5 — AdminOrganizationsPage credit adjust (founder admin-controls, founder rule A2)
 
 `AdminOrganizationsPage.tsx` adds a `Credits` column (mobile card + desktop table, next to the existing SCRUM-2225 free-tier cap control) showing `credit_balance` from the enriched `GET /api/admin/organizations` response, plus a per-org "Adjust credits" button opening a two-step dialog: **input step** (Add/Remove toggle, whole-number amount, mandatory reason `Textarea`, current balance shown) → **confirm step** (plain-language summary + old→new balance preview) → `POST /api/admin/organizations/:id/credits/adjust`. A fresh `crypto.randomUUID()` idempotency key is minted when the admin clicks Review (not on dialog open), so re-opening the dialog for a different adjustment never reuses a stale key, and repeated clicks on Confirm within one review screen are safe retries, not double-charges. Errors from the RPC (`insufficient_balance`, etc.) surface as a toast and leave the dialog open so the admin can correct the amount — success closes the dialog and refetches the list. All copy in `src/lib/copy.ts` `ADMIN_CREDIT_ADJUST_LABELS` (see `src/lib/agents.md`). Backend: `services/worker/src/api/admin-actions.ts` `handleAdjustOrgCredit` (see that folder's `agents.md`).

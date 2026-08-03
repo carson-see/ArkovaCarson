@@ -61,6 +61,19 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
   **not a new leak, the assertions hadn't caught up to already-shipped fixes.**
 - A pre-deploy typecheck blackout (2 TS errors in test files, unrelated to any single PR) was blocking
   every deploy regardless of branch; fixed directly on `main` (`18d33efcf`).
+- **New PR opened 2026-08-03, #1987** (`src/components/layout/Sidebar.tsx`): founder-directed fix — the
+  SCRUM-2940 folders feature (create/rename/delete folder, move a record into one) has lived entirely on
+  `MyRecordsPage.tsx` at `/records` since it shipped, but `Sidebar.tsx` never linked to it — the linked
+  "Documents" item routes to `/documents`, a separate page with a simpler "My Records" **tab** and zero
+  folder UI. Added a "My Records" link to the Account section (reused the existing
+  `NAV_LABELS.MY_RECORDS` copy constant, no new string) and removed `/records` from Documents'
+  active-state check so the two items don't double-highlight (same fix shape as SCRUM-2915's
+  `/my-credentials` exclusion). TDD: 6 new `Sidebar.test.tsx` cases written first (confirmed red), fix
+  made them green; 51/51 targeted tests pass, typecheck/eslint/lint:copy all clean. T1 — code-only, no
+  backend/API/migration surface — see the PR's own Staging Soak Evidence block for the honest disclosure
+  (no worker surface to soak; live-screenshot UAT was attempted but blocked by an unrelated local-only
+  Supabase JWKS bug, flagged separately as background task `task_3846967f` rather than chased further).
+  Opened for review, not queued toward Ready.
 
 ### Soaks
 

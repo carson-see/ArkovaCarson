@@ -1,13 +1,44 @@
 # agents.md — components/layout
 _Last updated: 2026-07-21_
 _Last updated: 2026-07-28_
+_Last updated: 2026-08-03_
 
 ## What This Folder Contains
 App-level layout components: shell, sidebar, header, breadcrumbs, error boundaries, and branding.
 
 ## Key Files
 - `AppShell.tsx` — Main layout wrapper for authenticated pages: sidebar + header + content area, responsive hamburger on mobile
-- `Sidebar.tsx` — Navigation sidebar: max 5 primary items (Dashboard, Documents, Organization, Search, Settings), an Account section (My Credentials, Billing, API Keys — personal/user-scoped destinations visible to all authenticated users incl. INDIVIDUAL), and an admin section behind a collapsible toggle. SCRUM-2915 ([PI05-CE06]): `My Credentials` (`/my-credentials`, the SCRUM-1598 recipient inbox) was route-only/unreachable and is now surfaced in the Account section; it is EXCLUDED from the Documents active-state block so only its own entry highlights. _(Bullet restored/corrected 2026-07-28 — the prior short description was stale, dropped by the union-merge-driver incident; see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`.)_
+- `Sidebar.tsx` — Navigation sidebar: max 5 primary items (Dashboard, Documents, Organization, Search, Settings), an Account section (My Records, My Credentials, Billing, API Keys — personal/user-scoped destinations visible to all authenticated users incl. INDIVIDUAL), and an admin section behind a collapsible toggle. SCRUM-2915 ([PI05-CE06]): `My Credentials` (`/my-credentials`, the SCRUM-1598 recipient inbox) was route-only/unreachable and is now surfaced in the Account section; it is EXCLUDED from the Documents active-state block so only its own entry highlights. SCRUM-2940 (2026-08-03, founder escalation): `My Records` (`/records`, the SCRUM-2940 folders UI host — see `src/pages/agents.md`) had the same gap and got the same fix — Account-section entry + EXCLUDED from the Documents active-state block. _(Bullet restored/corrected 2026-07-28 — the prior short description was stale, dropped by the union-merge-driver incident; see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`.)_
+
+## 2026-08-03 SCRUM-2940 — /records had no sidebar link (founder: "finish the folders")
+
+The folders feature (create/rename/delete folder, move a record into one — see
+`src/components/folders/agents.md`) has lived entirely on `MyRecordsPage.tsx`
+at `ROUTES.RECORDS` (`/records`) since PR #1657's UI follow-up, but `Sidebar.tsx`
+never linked to it — `ROUTES.RECORDS` appeared only inside the Documents
+active-state check, never as a nav target. `/documents` (the linked item) has
+its own separate, simpler "My Records" tab (`DocumentsPage.tsx`) with zero
+folder UI, so the two pages are NOT the same surface; porting the folder UI
+into `DocumentsPage`'s tab layout was judged out of scope for a same-day fix
+(no sidebar-shaped slot in that tab's layout, new state/dialogs to wire, no
+existing tests to lean on) and a plain nav link is the smaller, safer change.
+
+Fix: added `{ label: NAV_LABELS.MY_RECORDS, icon: FolderClosed, to:
+ROUTES.RECORDS }` to `accountNavItems` (first entry, ahead of My Credentials)
+— `/records` is gated identically to `/documents` (`RouteGuard
+allow={MAIN_APP_DESTINATIONS}`, no role restriction), so it is visible to
+every authenticated user, matching the Account-section convention. Also
+removed `/records` from the Documents `isNavActive` special case (it was
+matching both `/records` and `/records/:id`) so the two items don't
+double-highlight — same fix shape as SCRUM-2915's `/my-credentials` exclusion
+above. `NAV_LABELS.MY_RECORDS` ('My Records') already existed in `copy.ts`
+(used by `Header.tsx`'s page title and `Breadcrumbs.tsx`) and was reused
+as-is — no new copy string, so `lint:copy` needed no changes. Icon is
+`FolderClosed`, matching the icon `MoveToFolderDialog.tsx` already uses for
+the same feature. Tests: `Sidebar.test.tsx` SCRUM-2940 block (6 cases — item
+renders + href, visible to INDIVIDUAL, active-highlight on `/records` and on
+the `/records/:id` sub-route, Documents does NOT double-highlight on
+`/records`, Documents still highlights on its own `/attestations` route).
 - `Header.tsx` — Top header bar with user menu
 - `Breadcrumbs.tsx` — Route-aware breadcrumb navigation
 - `ArkovaLogo.tsx` — Arkova logo and icon components

@@ -42,6 +42,27 @@
  *    15. an org-B ORG_ADMIN still cannot touch org-A's anchor at all
  *        (cross-org denial extends to the new policy).
  *
+ *   Second trigger, same defect class (migration 0397) — this suite's own
+ *   revoke_anchor test (16) is what surfaced it: protect_anchor_fields
+ *   (baseline, unrelated to 0393/0395) independently blocks the SAME trusted
+ *   SECURITY DEFINER RPCs via its own generic status-change guard, and 0395
+ *   never touched it. Confirmed live: exactly ONE row in prod's ~2.97M
+ *   anchors has ever reached status = REVOKED (4 months old, actor != owner —
+ *   almost certainly a service_role write, not this RPC). Fixed narrowly:
+ *   only the generic catch-all trusts current_user; every other guard in the
+ *   function (owner change, direct-set to SECURED/SUBMITTED/BROADCASTING,
+ *   chain-data tamper, legal_hold tamper, lineage tamper) stays unconditional
+ *   for every caller, including trusted RPCs. Proven:
+ *    16. revoke_anchor — an org-A ORG_ADMIN CAN revoke a teammate-owned anchor;
+ *    17. supersede_anchor — an org-A ORG_ADMIN CAN supersede a teammate-owned
+ *        anchor (new child row created, old row flips to SUPERSEDED);
+ *    18. resolve_anchor_queue — an org-A ORG_ADMIN CAN resolve a
+ *        PENDING_RESOLUTION collision (kept anchor -> PENDING, rejected
+ *        sibling -> REVOKED);
+ *    19. a DIRECT client write (not through any RPC) still CANNOT set status
+ *        to REVOKED — proves 0397 did not widen the exemption beyond trusted
+ *        RPCs to client writes, which is the entire point of the guard.
+ *
  * Prerequisites: local Supabase running + seeded (see tests/rls/agents.md).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -424,6 +445,95 @@ describe('SCRUM-2940 — folders RLS (cross-tenant isolation + owner-scope join 
       .from('anchors')
       .update({ status: 'SECURED', revoked_at: null, revocation_reason: null })
       .eq('id', orgATeammateSecuredAnchorId);
+  });
+
+  it('supersede_anchor (SECURITY DEFINER RPC): an org-A ORG_ADMIN CAN supersede a TEAMMATE-owned anchor — same trigger-chain guard as revoke_anchor (0397)', async () => {
+    const oldAnchorId = await seedSecuredAnchor({ userId: orgAMember.id, orgId: ORG_A, seed: 30 });
+
+    const { error } = await orgAAdmin.client.rpc('supersede_anchor', {
+      old_anchor_id: oldAnchorId,
+      new_fingerprint: fp(31),
+      reason: 'regression guard for 0397',
+    });
+    expect(error).toBeNull();
+
+    // Server-side confirmation on both rows — never trust the client's
+    // echoed response.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: oldRow } = await (service as any)
+      .from('anchors')
+      .select('status')
+      .eq('id', oldAnchorId)
+      .single();
+    expect(oldRow.status).toBe('SUPERSEDED');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: children } = await (service as any)
+      .from('anchors')
+      .select('id, status, fingerprint')
+      .eq('parent_anchor_id', oldAnchorId);
+    expect(children ?? []).toHaveLength(1);
+    expect(children[0].status).toBe('PENDING');
+    expect(children[0].fingerprint).toBe(fp(31));
+  });
+
+  it('resolve_anchor_queue (SECURITY DEFINER RPC): an org-A ORG_ADMIN CAN resolve a PENDING_RESOLUTION collision — same trigger-chain guard (0397)', async () => {
+    const externalFileId = `folders-rls-queue-${RUN_ID}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: seeded, error: seedErr } = await (service as any)
+      .from('anchors')
+      .insert([
+        {
+          user_id: orgAMember.id,
+          org_id: ORG_A,
+          fingerprint: fp(32),
+          filename: 'folders-rls-queue-keep.pdf',
+          file_size: 1024,
+          status: 'PENDING_RESOLUTION',
+          metadata: { external_file_id: externalFileId },
+        },
+        {
+          user_id: orgAMember.id,
+          org_id: ORG_A,
+          fingerprint: fp(33),
+          filename: 'folders-rls-queue-reject.pdf',
+          file_size: 1024,
+          status: 'PENDING_RESOLUTION',
+          metadata: { external_file_id: externalFileId },
+        },
+      ])
+      .select('id');
+    if (seedErr) throw new Error(`queue seed failed: ${seedErr.message}`);
+    const [keepId, rejectId] = (seeded as { id: string }[]).map((r) => r.id);
+
+    const { error } = await orgAAdmin.client.rpc('resolve_anchor_queue', {
+      p_external_file_id: externalFileId,
+      p_selected_anchor_id: keepId,
+      p_reason: 'regression guard for 0397',
+    });
+    expect(error).toBeNull();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: verify } = await (service as any)
+      .from('anchors')
+      .select('id, status')
+      .in('id', [keepId, rejectId]);
+    const byId = Object.fromEntries((verify as { id: string; status: string }[]).map((r) => [r.id, r.status]));
+    expect(byId[keepId]).toBe('PENDING');
+    expect(byId[rejectId]).toBe('REVOKED');
+  });
+
+  it('anchors UPDATE (direct client write): an org-A ORG_ADMIN CANNOT set status to REVOKED directly, bypassing revoke_anchor\'s own authorization — 0397 narrows the exemption to trusted RPCs, not client writes', async () => {
+    const anchorId = await seedSecuredAnchor({ userId: orgAAdmin.id, orgId: ORG_A, seed: 34 });
+
+    const { error } = await orgAAdmin.client.from('anchors').update({ status: 'REVOKED' }).eq('id', anchorId);
+    expect(error).not.toBeNull();
+    expect(error?.code).toBe('42501');
+    expect(error?.message).toContain('Only the system can change anchor status');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: verify } = await (service as any).from('anchors').select('status').eq('id', anchorId).single();
+    expect(verify.status).toBe('SECURED');
   });
 
   it('anchors UPDATE (owner path): an org-B ORG_ADMIN still cannot touch org-A\'s anchor at all (cross-org denial)', async () => {

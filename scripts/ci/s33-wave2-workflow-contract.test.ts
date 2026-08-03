@@ -5,14 +5,21 @@ const workflow = readFileSync('.github/workflows/s33-wave2-batch-acceptance.yml'
 const mergify = readFileSync('.mergify.yml', 'utf8');
 
 describe('S3.3 Wave-2 trusted-main workflow contract', () => {
-  it('supports both GitHub transports and a post-merge trusted-main consumer', () => {
-    expect(workflow).toContain('issue_comment:');
+  it('supports the authenticated review transport and a post-merge trusted-main consumer', () => {
+    expect(workflow).not.toContain('issue_comment:');
     expect(workflow).toContain('pull_request_review:');
     expect(workflow).toContain("types: [closed]");
     expect(workflow).toContain('arkova-s33-wave2-authenticated-acceptance:v1');
     expect(workflow).toContain('s33-wave2-github-transport.ts verify');
     expect(workflow).toContain('s33-wave2-batch-acceptance.ts accept');
     expect(workflow).toContain('s33-wave2-batch-acceptance.ts consume-merged');
+  });
+
+  it('closes the any-commenter trigger and gates the exact-head-acceptance job to OWNER reviews only (d72ff2b06)', () => {
+    expect(workflow).not.toMatch(/github\.event_name == 'issue_comment'/u);
+    expect(workflow).not.toContain('issue_comment:');
+    expect(workflow).toContain("github.event_name == 'pull_request_review'");
+    expect(workflow).toContain("github.event.review.author_association == 'OWNER'");
   });
 
   it('installs trusted code before fetching candidate data and never checks candidate code out', () => {
