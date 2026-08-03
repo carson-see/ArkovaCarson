@@ -136,25 +136,45 @@ export function useNotifications(): UseNotificationsReturn {
   }, [refresh]);
 
   const markRead = useCallback(async (id: string) => {
+    const readAt = new Date().toISOString();
     setNotifications((prev) =>
-      prev.map((n) => (n.id === id && n.read_at === null ? { ...n, read_at: new Date().toISOString() } : n)),
+      prev.map((n) => (n.id === id && n.read_at === null ? { ...n, read_at: readAt } : n)),
     );
     // RLS policy `notifications_update_own` scopes the update to auth.uid().
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase as any)
+    const { error: updateError } = await (supabase as any)
       .from('user_notifications')
-      .update({ read_at: new Date().toISOString() })
+      .update({ read_at: readAt })
       .eq('id', id);
+
+    if (updateError) {
+      // The result used to be discarded entirely (BUG, 2026-08-03 bug
+      // sprint): a failed write left the optimistic "read" state on screen
+      // until the next 30s poll silently reverted it with no explanation.
+      // Revert immediately and surface the failure instead.
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id && n.read_at === readAt ? { ...n, read_at: null } : n)),
+      );
+      setError(updateError.message);
+    }
   }, []);
 
   const markAllRead = useCallback(async () => {
     const now = new Date().toISOString();
     setNotifications((prev) => prev.map((n) => (n.read_at === null ? { ...n, read_at: now } : n)));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase as any)
+    const { error: updateError } = await (supabase as any)
       .from('user_notifications')
       .update({ read_at: now })
       .is('read_at', null);
+
+    if (updateError) {
+      // Same silent-failure bug as markRead above — revert only the rows
+      // this call optimistically touched (matched by the exact timestamp),
+      // never a row a concurrent action already marked read differently.
+      setNotifications((prev) => prev.map((n) => (n.read_at === now ? { ...n, read_at: null } : n)));
+      setError(updateError.message);
+    }
   }, []);
 
   const unreadCount = useMemo(
