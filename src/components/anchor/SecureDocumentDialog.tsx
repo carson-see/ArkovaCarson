@@ -816,19 +816,12 @@ export function SecureDocumentDialog({
                   </p>
                 </AlertDescription>
               </Alert>
+              <p className="text-sm text-foreground">{PRIVACY_FAIL_CLOSED_LABELS.SAFE_TO_CONTINUE}</p>
               <p className="text-xs font-medium text-muted-foreground">{PRIVACY_FAIL_CLOSED_LABELS.REASSURANCE}</p>
               <div className="flex flex-col gap-2">
                 <Button
                   variant="default"
                   className="w-full justify-start"
-                  onClick={() => handleStartExtraction()}
-                >
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  {PRIVACY_FAIL_CLOSED_LABELS.RETRY}
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="w-full justify-start text-muted-foreground"
                   onClick={async () => {
                     // QUEUE-01: route to the confirm step's securing-path
                     // choice instead of inserting directly — see handleUploadContinue.
@@ -838,6 +831,14 @@ export function SecureDocumentDialog({
                 >
                   <SkipForward className="mr-2 h-4 w-4" />
                   {PRIVACY_FAIL_CLOSED_LABELS.CONTINUE_WITHOUT}
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start text-muted-foreground"
+                  onClick={() => handleStartExtraction()}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {PRIVACY_FAIL_CLOSED_LABELS.RETRY}
                 </Button>
               </div>
             </div>
