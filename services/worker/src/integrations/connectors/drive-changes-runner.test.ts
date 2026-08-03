@@ -41,6 +41,7 @@ import {
   loadDriveAccessToken,
   loadWatchedFolderIds,
   createProcessorDbAdapter,
+  createFolderPathCache,
   runDriveChanges,
   type DriveIntegrationRow,
 } from './drive-changes-runner.js';
@@ -498,6 +499,7 @@ describe('createProcessorDbAdapter', () => {
       revision_id: 'r3',
       integration_id: INT,
       filename: 'msa.pdf',
+      folder_path: null,
     });
     expect(id).toBe('evt-1');
     expect(fake.db.rpc).toHaveBeenCalledWith(
@@ -509,6 +511,52 @@ describe('createProcessorDbAdapter', () => {
         p_external_file_id: 'f3',
         p_filename: 'msa.pdf',
       }),
+    );
+  });
+
+  // SCRUM-1837 (GH #1837): folder_path was hardcoded p_folder_path: null in
+  // the RPC call. Pin that the adapter now threads the processor's resolved
+  // value through untouched.
+  it('enqueueRuleEvent threads a resolved folder_path through to p_folder_path', async () => {
+    const fake = makeFakeDb();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = createProcessorDbAdapter({ db: fake.db as any });
+    await adapter.enqueueRuleEvent({
+      org_id: ORG,
+      file_id: 'f3',
+      parent_ids: ['folder-A'],
+      actor_email: 'mercy@example.com',
+      revision_id: 'r3',
+      integration_id: INT,
+      filename: 'msa.pdf',
+      folder_path: '/HR/2026-Q2/msa.pdf',
+    });
+    expect(fake.db.rpc).toHaveBeenCalledWith(
+      'enqueue_rule_event',
+      expect.objectContaining({ p_folder_path: '/HR/2026-Q2/msa.pdf' }),
+    );
+  });
+
+  // A caller that omits folder_path entirely (undefined, not null — e.g. an
+  // older test double) must still normalize to `null`, never `''`. An empty
+  // string would make every folder_path_starts_with rule match.
+  it('enqueueRuleEvent normalizes a missing folder_path to null, never empty string', async () => {
+    const fake = makeFakeDb();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = createProcessorDbAdapter({ db: fake.db as any });
+    await adapter.enqueueRuleEvent({
+      org_id: ORG,
+      file_id: 'f3',
+      parent_ids: ['folder-A'],
+      actor_email: null,
+      revision_id: 'r3',
+      integration_id: INT,
+      filename: 'msa.pdf',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    expect(fake.db.rpc).toHaveBeenCalledWith(
+      'enqueue_rule_event',
+      expect.objectContaining({ p_folder_path: null }),
     );
   });
 
@@ -584,6 +632,7 @@ describe('createProcessorDbAdapter', () => {
       revision_id: 'r1',
       integration_id: INT,
       filename: 'invoice.pdf',
+      folder_path: null,
     });
     expect(id).toBeNull();
     // Zod failure logs a scrubbed payload.
@@ -690,6 +739,86 @@ describe('createProcessorDbAdapter', () => {
       expect(jobId).toBeNull();
       expect(log.error).toHaveBeenCalled();
     });
+  });
+});
+
+// SCRUM-1837 (GH #1837): Postgres-backed FolderPathCacheStore over
+// drive_folder_path_cache. Kept intentionally thin (read/upsert only — TTL
+// logic lives in resolveDriveFolderPath).
+describe('createFolderPathCache', () => {
+  it('get() reads folder_path + cached_at scoped by (org_id, file_id)', async () => {
+    const eqCalls: Array<[string, unknown]> = [];
+    const db = {
+      from: (table: string) => {
+        expect(table).toBe('drive_folder_path_cache');
+        return {
+          select: (_cols: string) => ({
+            eq: (c1: string, v1: unknown) => {
+              eqCalls.push([c1, v1]);
+              return {
+                eq: (c2: string, v2: unknown) => {
+                  eqCalls.push([c2, v2]);
+                  return {
+                    maybeSingle: () => Promise.resolve({
+                      data: { folder_path: '/HR/notes.pdf', cached_at: '2026-08-01T00:00:00Z' },
+                      error: null,
+                    }),
+                  };
+                },
+              };
+            },
+          }),
+        };
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cache = createFolderPathCache({ db: db as any });
+    const result = await cache.get({ orgId: ORG, fileId: 'file-1' });
+    expect(result).toEqual({ folder_path: '/HR/notes.pdf', cached_at: '2026-08-01T00:00:00Z' });
+    expect(eqCalls).toEqual([['org_id', ORG], ['file_id', 'file-1']]);
+  });
+
+  it('get() returns null on a cache miss or DB error (never throws)', async () => {
+    const db = {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({ data: null, error: null }),
+            }),
+          }),
+        }),
+      }),
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cache = createFolderPathCache({ db: db as any });
+    expect(await cache.get({ orgId: ORG, fileId: 'missing' })).toBeNull();
+  });
+
+  it('put() upserts on (org_id, file_id) and swallows a write failure (best-effort)', async () => {
+    let upsertRow: Record<string, unknown> | undefined;
+    let upsertOpts: unknown;
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const db = {
+      from: (table: string) => {
+        expect(table).toBe('drive_folder_path_cache');
+        return {
+          upsert: (row: Record<string, unknown>, opts: unknown) => {
+            upsertRow = row;
+            upsertOpts = opts;
+            return Promise.resolve({ error: { message: 'connection reset' } });
+          },
+        };
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cache = createFolderPathCache({ db: db as any, logger: log });
+    await expect(
+      cache.put({ orgId: ORG, fileId: 'file-1', folderPath: '/HR/notes.pdf' }),
+    ).resolves.toBeUndefined();
+    expect(upsertRow).toMatchObject({ org_id: ORG, file_id: 'file-1', folder_path: '/HR/notes.pdf' });
+    expect(upsertOpts).toEqual({ onConflict: 'org_id,file_id' });
+    expect(log.warn).toHaveBeenCalled();
   });
 });
 

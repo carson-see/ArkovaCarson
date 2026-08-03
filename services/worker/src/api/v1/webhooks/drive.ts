@@ -33,12 +33,14 @@ import { Router, type Request, type Response } from 'express';
 
 import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
+import { config } from '../../../config.js';
 import { GOOGLE_DRIVE_VENDOR } from '../../../constants/connectors.js';
 import {
   runDriveChanges,
   type DriveIntegrationRow,
 } from '../../../integrations/connectors/drive-changes-runner.js';
 import { createDefaultKmsClient } from '../../../integrations/oauth/crypto.js';
+import { parseDriveAccountLabel } from '../../../integrations/connectors/drive-account-label.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
@@ -91,15 +93,9 @@ async function resolveDriveChannel(channelId: string): Promise<DriveChannelLooku
     .is('revoked_at', null)
     .maybeSingle();
   if (error || !data) return null;
-  let storedToken: string | null = null;
-  try {
-    const parsed = data.account_label ? JSON.parse(data.account_label) : null;
-    if (parsed && typeof parsed.channel_token === 'string') {
-      storedToken = parsed.channel_token;
-    }
-  } catch {
-    storedToken = null;
-  }
+  // PR #1944 review: was an inline JSON.parse copy (one of 4 near-dupes
+  // across the connector) — now routed through the one canonical parser.
+  const storedToken = parseDriveAccountLabel(data.account_label)?.channel_token ?? null;
   return {
     org_id: data.org_id,
     integration_id: data.id,
@@ -158,6 +154,41 @@ router.post('/', async (req: Request, res: Response) => {
       'drive webhook channel-token mismatch — rejecting',
     );
     return res.status(401).json({ error: 'invalid_channel_token' });
+  }
+
+  // GH #1836 (SECURITY, deprecation window): channels registered before the
+  // random-token fix stored the org's UUID as the channel_token. A stored
+  // token that equals the org's own id is definitionally the legacy weak
+  // scheme (a real random token would essentially never collide with the
+  // org's UUID).
+  //
+  // IMPORTANT: the 7-day Drive channel expiry is NOT a bound on this
+  // vulnerability window. This check authenticates against the STORED
+  // token only — it never asks Google whether the channel is still live, so
+  // a forged POST carrying a known/guessed org UUID keeps authenticating
+  // regardless of Drive-side expiry. The 7-day figure bounds ROTATION
+  // LATENCY once `drive-subscription-renewal.ts`'s cron is actually running
+  // (see jobs/agents.md) — it does not bound how long a legacy connection
+  // stays forgeable if that cron is never deployed.
+  //
+  // Backstop for that gap: `config.enableDriveLegacyChannelTokenRejection`
+  // (default OFF) makes this branch REJECT (401) instead of accept-and-warn.
+  // An operator flips it on once the renewal cron has been confirmed live
+  // (so legitimate legacy connections have already had a chance to rotate)
+  // — see api/v1/integrations/agents.md for the full deprecation-window
+  // writeup and the reasoning for a code-flag over a forced-rotation script.
+  if (lookup.channel_token === lookup.org_id) {
+    if (config.enableDriveLegacyChannelTokenRejection) {
+      logger.warn(
+        { channelId, orgId: lookup.org_id },
+        'drive webhook rejected a legacy org-id channel token — ENABLE_DRIVE_LEGACY_CHANNEL_TOKEN_REJECTION is on (GH #1836)',
+      );
+      return res.status(401).json({ error: 'legacy_channel_token_rejected' });
+    }
+    logger.warn(
+      { channelId, orgId: lookup.org_id },
+      'drive webhook accepted a legacy org-id channel token — awaiting renewal to rotate to a random secret (GH #1836)',
+    );
   }
 
   // SCRUM-1242 (AUDIT-0424-26): replay protection. Drive doesn't carry an
