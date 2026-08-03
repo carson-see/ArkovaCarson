@@ -499,6 +499,7 @@ describe('createProcessorDbAdapter', () => {
       revision_id: 'r3',
       integration_id: INT,
       filename: 'msa.pdf',
+      folder_path: null,
     });
     expect(id).toBe('evt-1');
     expect(fake.db.rpc).toHaveBeenCalledWith(
@@ -631,6 +632,7 @@ describe('createProcessorDbAdapter', () => {
       revision_id: 'r1',
       integration_id: INT,
       filename: 'invoice.pdf',
+      folder_path: null,
     });
     expect(id).toBeNull();
     // Zod failure logs a scrubbed payload.

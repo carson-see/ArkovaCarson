@@ -314,7 +314,12 @@ describe('Drive OAuth router', () => {
       }),
     };
 
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    // GH #1836 review round 3 (typecheck fix): declared with a second
+    // `init?: RequestInit` param so a caller inspecting `.mock.calls[n][1]`
+    // type-checks as `RequestInit | undefined` — the mock always DID capture
+    // the real second arg at runtime (JS doesn't enforce declared arity),
+    // the original single-param signature just didn't say so.
+    const fetchImpl = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = String(input);
       if (url === 'https://oauth2.googleapis.com/token') {
         return new Response(JSON.stringify({
@@ -444,7 +449,12 @@ describe('Drive OAuth router', () => {
       }),
     };
 
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    // GH #1836 review round 3 (typecheck fix): declared with a second
+    // `init?: RequestInit` param so a caller inspecting `.mock.calls[n][1]`
+    // type-checks as `RequestInit | undefined` — the mock always DID capture
+    // the real second arg at runtime (JS doesn't enforce declared arity),
+    // the original single-param signature just didn't say so.
+    const fetchImpl = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = String(input);
       if (url === 'https://oauth2.googleapis.com/token') {
         return new Response(JSON.stringify({
@@ -539,7 +549,12 @@ describe('Drive OAuth router', () => {
     };
 
     const fetchCalls: string[] = [];
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    // GH #1836 review round 3 (typecheck fix): declared with a second
+    // `init?: RequestInit` param so a caller inspecting `.mock.calls[n][1]`
+    // type-checks as `RequestInit | undefined` — the mock always DID capture
+    // the real second arg at runtime (JS doesn't enforce declared arity),
+    // the original single-param signature just didn't say so.
+    const fetchImpl = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = String(input);
       fetchCalls.push(url);
       if (url.includes('channels/stop')) {
