@@ -1539,53 +1539,6 @@ export const NAV_POLISH_LABELS = {
 } as const;
 
 // =============================================================================
-// MFA LOGIN CHALLENGE — pre-pentest hardening
-//
-// Shown by AuthGuard when a session is aal1 but the user has a verified
-// TOTP factor (i.e. nextLevel === 'aal2'). Distinct from HIPAA_LABELS'
-// MFA_CHALLENGE_* pair below, which is scoped to the not-yet-built
-// healthcare-credential gate (REG-05/SCRUM-564) and carries
-// healthcare-specific copy — this block is the generic, always-on gate that
-// applies to any user with MFA enrolled, regardless of org or credential
-// type.
-// =============================================================================
-
-export const MFA_CHALLENGE_LABELS = {
-  TITLE: 'Enter your verification code',
-  DESCRIPTION: 'Your account has two-factor authentication enabled. Enter the 6-digit code from your authenticator app to continue.',
-  CODE_LABEL: 'Verification code',
-  SUBMIT: 'Verify',
-  VERIFYING: 'Verifying...',
-  SIGN_OUT: 'Sign out',
-  LOADING_FACTOR_ERROR: 'Unable to load your two-factor authentication settings. Please sign in again.',
-  GENERIC_ERROR: 'Verification failed. Please check the code and try again.',
-} as const;
-
-// =============================================================================
-// MFA MANDATORY ENROLLMENT — pre-pentest hardening, founder directive
-// (2026-08-03: "yes it needs to be mandatory")
-//
-// Shown by AuthGuard, in place of protected children, when the user's role
-// requires MFA (ORG_ADMIN / platform admin — see useMfaEnrollmentRequirement)
-// and they have no verified factor yet. Non-skippable: there is no "remind
-// me later" affordance, only "Sign out" (lockout safety valve — see
-// MfaEnrollmentRequired.tsx doc comment).
-// =============================================================================
-
-export const MFA_ENROLLMENT_REQUIRED_LABELS = {
-  TITLE: 'Two-factor authentication required',
-  DESCRIPTION: 'Your role has elevated access to organization data, so two-factor authentication is required before you can continue. Scan the QR code below with an authenticator app, then enter the 6-digit code it generates.',
-  SCAN_INSTRUCTION: 'Scan this QR code with your authenticator app',
-  MANUAL_ENTRY_LABEL: 'Manual entry code',
-  CODE_LABEL: 'Verification code',
-  SUBMIT: 'Verify & continue',
-  VERIFYING: 'Verifying...',
-  SIGN_OUT: 'Sign out',
-  START_ERROR: 'Unable to start two-factor authentication setup. Please sign out and sign in again.',
-  GENERIC_ERROR: 'Verification failed. Please check the code and try again.',
-} as const;
-
-// =============================================================================
 // ONBOARDING GUIDANCE (UF-10)
 // =============================================================================
 
