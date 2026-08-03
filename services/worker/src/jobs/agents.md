@@ -2,7 +2,7 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
-## 2026-08-03 — ART Lane 1 bug-bounty: SCRUM-3021 (check-confirmations tip height) + SCRUM-3017 (SUBMITTED watchdog)
+## 2026-08-03 — ART Lane 1 bug-bounty (PR #1965): SCRUM-3021 (check-confirmations tip height) + SCRUM-3017 (SUBMITTED watchdog)
 
 Two bug-tracker rows (`docs/staging/SOAK-FINDINGS-2026-08.md` F-numbered findings predate these; canonical
 rows are BUG-2026-07-26-006/SCRUM-3021 and BUG-2026-07-26-004/SCRUM-3017 in the Confluence Bug Tracker —

@@ -3,7 +3,7 @@ _Last updated: 2026-08-03 (ART Lane 1 bug-bounty: SCRUM-3016/3017/3021)_
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
-## 2026-08-03 — ART Lane 1 bug-bounty: three bug-tracker rows fixed, config.ts gains `stuckSubmittedAlertHours`
+## 2026-08-03 — ART Lane 1 bug-bounty (PR #1965): three bug-tracker rows fixed, config.ts gains `stuckSubmittedAlertHours`
 
 `config.ts` adds `stuckSubmittedAlertHours` (env `STUCK_SUBMITTED_ALERT_HOURS`, default 6, same
 `positiveNumberWithFallback` pattern as `stuckAnchorAlertHours`) for the new SUBMITTED-stage watchdog

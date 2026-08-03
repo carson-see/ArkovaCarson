@@ -2,7 +2,7 @@
 
 Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
-## 2026-08-03 — new `mempool-url.ts` (SCRUM-3016); `sentry.ts` gains two new fingerprinted alerts (SCRUM-3021, SCRUM-3017)
+## 2026-08-03 — new `mempool-url.ts` (SCRUM-3016); `sentry.ts` gains two new fingerprinted alerts (SCRUM-3021, SCRUM-3017) (PR #1965)
 
 - **`mempool-url.ts` (new).** `normalizeMempoolHostUrl` / `resolveMempoolApiBase` / `resolveMempoolHostBase`
   — the single place that resolves an operator-set `MEMPOOL_API_URL` for BOTH conventions this repo's

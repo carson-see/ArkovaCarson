@@ -6,7 +6,7 @@ _Last updated: 2026-08-03_
 
 Bitcoin chain client implementation for anchoring document fingerprints on-chain via OP_RETURN transactions.
 
-## 2026-08-03 BUG-2026-07-26-003 / SCRUM-3016 — MEMPOOL_API_URL `/api` contract, fixed
+## 2026-08-03 BUG-2026-07-26-003 / SCRUM-3016 (PR #1965) — MEMPOOL_API_URL `/api` contract, fixed
 
 `config.mempoolApiUrl` (raw `MEMPOOL_API_URL` env var) was read by five call sites split across two
 mutually-incompatible conventions, verified directly against current code (not assumed from the bug
