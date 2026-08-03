@@ -261,6 +261,42 @@ describe('runRulesEngine concurrency + retry contract (SCRUM-1590)', () => {
     });
   });
 
+  // Founder-directive investigation (2026-08-03): a hypothesis raised
+  // alongside the INSTANT_SECURE rule-action work was that the dispatch
+  // pipeline only ever acts on the FIRST rule that matches a given event,
+  // silently shadowing every other enabled rule an org configured on the
+  // same trigger. Read end to end, that is not what this function does —
+  // `buildMatchInserts` calls `evaluateRules(rules, event)` once per event
+  // with the FULL rule list and spreads every match into `inserts`, no
+  // `.find()`/first-match shortcut anywhere in the chain. This test makes
+  // that a durable guarantee: one org, two independently-enabled rules on
+  // the same trigger, one event — BOTH rules must get their own execution
+  // row, keyed by the SAME trigger_event_id but their OWN rule_id (the
+  // `(rule_id, trigger_event_id)` unique index on
+  // organization_rule_executions exists precisely so this is representable).
+  it('one event matching TWO enabled rules in the same org records BOTH executions — no first-match-wins', async () => {
+    const SECOND_RULE = {
+      ...MATCHING_RULE,
+      id: '44444444-4444-4444-8444-444444444444',
+      name: 'Queue signed contracts for review',
+      action_type: 'QUEUE_FOR_REVIEW',
+    };
+    mockRules([MATCHING_RULE, SECOND_RULE]);
+
+    const result = await runRulesEngine();
+
+    expect(result.matches_recorded).toBe(2);
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ rule_id: MATCHING_RULE.id, trigger_event_id: EVENT.id }),
+        expect.objectContaining({ rule_id: SECOND_RULE.id, trigger_event_id: EVENT.id }),
+      ]),
+      expect.objectContaining({ onConflict: 'rule_id,trigger_event_id', ignoreDuplicates: true }),
+    );
+    const upserted = mockUpsert.mock.calls[0][0] as Array<{ rule_id: string }>;
+    expect(upserted).toHaveLength(2);
+  });
+
   it('release passes the full claimed batch (not a subset) so retry attempts stay accurate', async () => {
     const EVENT_X = { ...EVENT, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' };
     mockClaim([EVENT, EVENT_X]);

@@ -2120,14 +2120,53 @@ export const RULE_TRIGGER_COPY = {
   },
 } as const;
 
+/**
+ * Labels for the two securing paths. "Add to Queue" is the default, free path;
+ * "Secure Instantly" is hidden at launch and only shown when the worker grants
+ * the capability (never a client default). See queueContract.ts.
+ *
+ * Moved above RULE_ACTION_COPY (2026-08-03, founder directive): the rule
+ * builder's AUTO_ANCHOR/INSTANT_SECURE copy now references these BY VALUE so
+ * the manual securing flow and the rule-builder flow can never say different
+ * things about the same two paths — module-evaluation order requires this
+ * declaration to precede any reference to it.
+ */
+export const SECURING_CHOICE_LABELS = {
+  queue: 'Add to Queue',
+  instant: 'Secure Instantly',
+} as const;
+
+/** Helper text for each securing path, shown under the choice when offered. */
+export const SECURING_CHOICE_HINTS = {
+  queue: 'Secured with the next batch. Free — no credits used.',
+  instant: 'Secured right away. Uses 1 credit from your plan.',
+} as const;
+
 export const RULE_ACTION_COPY = {
+  // Founder directive (2026-08-03): "The 'Auto Secure' rule doesn't secure."
+  // The old label/desc here ("Secure the document" / "Anchor it on the
+  // network automatically") implied immediacy; the dispatcher behavior only
+  // ever queues (SCRUM-1649 DS-07 — same free path as "Add to Queue"). This
+  // is now the SAME wording as the manual queue path
+  // (SECURING_CHOICE_LABELS.queue / SECURING_CHOICE_HINTS.queue), by
+  // reference so the two can never drift apart again. AUTO_ANCHOR's
+  // dispatcher behavior is unchanged — copy-only, additive.
   AUTO_ANCHOR: {
-    label: 'Secure the document',
-    desc: 'Anchor it on the network automatically.',
+    label: SECURING_CHOICE_LABELS.queue,
+    desc: SECURING_CHOICE_HINTS.queue,
   },
   FAST_TRACK_ANCHOR: {
     label: 'Fast-track secure',
     desc: 'Priority batch (paid plans only).',
+  },
+  // Founder directive (2026-08-03): the rule action that actually secures
+  // right away. Mirrors the manual "Secure Instantly" control's copy by
+  // reference (SECURING_CHOICE_LABELS.instant / SECURING_CHOICE_HINTS.instant)
+  // so a user sees the identical promise — "instant, costs 1 credit" —
+  // whether they secure a document by hand or configure a rule to do it.
+  INSTANT_SECURE: {
+    label: SECURING_CHOICE_LABELS.instant,
+    desc: SECURING_CHOICE_HINTS.instant,
   },
   QUEUE_FOR_REVIEW: {
     label: 'Queue for admin review',
@@ -3694,22 +3733,6 @@ export const CREDIT_DEBIT_DESCRIPTIONS = {
   spent: '1 credit was used to secure this document instantly.',
   pending: 'A credit is reserved for this document and will be confirmed shortly.',
   refunded: '1 credit was returned to your balance.',
-} as const;
-
-/**
- * Labels for the two securing paths. "Add to Queue" is the default, free path;
- * "Secure Instantly" is hidden at launch and only shown when the worker grants
- * the capability (never a client default). See queueContract.ts.
- */
-export const SECURING_CHOICE_LABELS = {
-  queue: 'Add to Queue',
-  instant: 'Secure Instantly',
-} as const;
-
-/** Helper text for each securing path, shown under the choice when offered. */
-export const SECURING_CHOICE_HINTS = {
-  queue: 'Secured with the next batch. Free — no credits used.',
-  instant: 'Secured right away. Uses 1 credit from your plan.',
 } as const;
 
 /**

@@ -264,29 +264,37 @@ describe('Cross-check: the pre-0396 baseline genuinely had both bugs (red before
     expect(sql).toMatch(/GRANT ALL ON FUNCTION "public"\."is_user_verified"\("p_user_id" "uuid"\) TO "authenticated";/);
   });
 
-  it('0396 is the latest migration that redefines get_user_credits/is_user_verified, so it wins on a fresh reset', () => {
-    // NOT "the last migration file in the whole directory" — that broke the
-    // moment any later, unrelated migration landed (0397/0398/0399 touch
-    // neither function). The real invariant is narrower: no migration AFTER
-    // 0396 may redefine either function, since that would silently reopen
-    // BUG 1 or BUG 2 (the exact "0376 clobber" failure mode this repo has
-    // hit before — see 0383's header). Reuses this file's own
-    // extractFunctionBlock marker convention rather than a bare filename sort.
+  // Was: 'sorts after ... every other migration, so it wins on a fresh
+  // reset' — a proxy that only held while 0396 happened to be the highest
+  // numbered file in the directory, which any unrelated later migration
+  // (e.g. 0397, adding an org_rule_action_type enum value — touches neither
+  // function) invalidates by definition. The invariant that actually matters
+  // — restored here per the `0376`-clobber lesson documented throughout
+  // supabase/migrations/agents.md ("`get_public_anchor` is redefined
+  // WHOLESALE by every migration that touches it... branching a new
+  // definition off an older migration file silently deletes every change
+  // made in between") — is that NO migration sorting after 0396 also
+  // redefines get_user_credits or is_user_verified. A same-numbered-or-later
+  // file that does would silently clobber this fix with no ledger signal,
+  // exactly like 0376 did to 0356/0362.
+  it('no migration after 0396 redefines get_user_credits or is_user_verified (anti-clobber)', () => {
     const migrationsDir = path.join(process.cwd(), 'supabase/migrations');
     const files = fs
       .readdirSync(migrationsDir)
       .filter((f) => f.endsWith('.sql'))
       .sort();
-    const redefiners = files.filter((f) => {
-      const sql = executableSql(fs.readFileSync(path.join(migrationsDir, f), 'utf8'));
-      return (
-        sql.includes(`FUNCTION "public"."${CREDITS_FN}"`) ||
-        sql.includes(`FUNCTION "public"."${VERIFIED_FN}"`) ||
-        sql.includes(`FUNCTION public.${CREDITS_FN}`) ||
-        sql.includes(`FUNCTION public.${VERIFIED_FN}`)
+    const ownIndex = files.indexOf(path.basename(MIGRATION_PATH));
+    expect(ownIndex).toBeGreaterThanOrEqual(0);
+    const later = files.slice(ownIndex + 1);
+    for (const file of later) {
+      const sql = executableSql(fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
+      expect(sql, `${file} must not redefine ${CREDITS_FN}`).not.toMatch(
+        new RegExp(`FUNCTION\\s+"public"\\."${CREDITS_FN}"`),
       );
-    });
-    expect(redefiners[redefiners.length - 1]).toBe(path.basename(MIGRATION_PATH));
+      expect(sql, `${file} must not redefine ${VERIFIED_FN}`).not.toMatch(
+        new RegExp(`FUNCTION\\s+"public"\\."${VERIFIED_FN}"`),
+      );
+    }
   });
 });
 

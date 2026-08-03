@@ -138,6 +138,34 @@ describe('getDiff two-dot vs three-dot (rebased-lane false-positive)', () => {
     expect(r.out).toMatch(/asserts prod state without verification artifact/);
   });
 
+  it('PASSES on an honest "NOT applied to prod" disclosure — the inverse of the claim this gate exists to catch (found 2026-08-03)', () => {
+    writeFileSync(resolve(dir, 'HANDOFF.md'), `# Handoff\n\nClean.\n\n${VALID_FOOTER}\n`);
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'base');
+    const base = git(dir, 'rev-parse', 'HEAD');
+
+    // PR branch: an honest disclosure that a migration is NOT yet live —
+    // the opposite of a fabricated claim, and should never need "proof" of
+    // something the sentence is actively denying.
+    git(dir, 'checkout', '-qb', 'pr');
+    writeFileSync(
+      resolve(dir, 'HANDOFF.md'),
+      `# Handoff\n\nMigration 0400 is file-only, NOT applied to prod or staging — needs an RTE apply.\n\n${VALID_FOOTER}\n`,
+    );
+    git(dir, 'commit', '-aqm', 'handoff: disclose pending migration');
+    const head = git(dir, 'rev-parse', 'HEAD');
+
+    const r = runCheck(dir, {
+      BASE_REF_SHA: base,
+      HEAD_REF_SHA: head,
+      PR_BODY: 'No verification artifact — nothing to verify, it is explicitly not live yet.',
+      PR_COMMITS_MSGS: 'handoff: disclose pending migration',
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/claims pass verification check/);
+  });
+
   it('PASSES when the PR edits HANDOFF.md and DOES provide the verification artifact', () => {
     writeFileSync(resolve(dir, 'HANDOFF.md'), `# Handoff\n\nClean.\n\n${VALID_FOOTER}\n`);
     git(dir, 'add', '.');

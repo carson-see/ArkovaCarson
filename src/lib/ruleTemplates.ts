@@ -19,6 +19,7 @@ export type TriggerType =
 export type ActionType =
   | 'AUTO_ANCHOR'
   | 'FAST_TRACK_ANCHOR'
+  | 'INSTANT_SECURE'
   | 'QUEUE_FOR_REVIEW'
   | 'FLAG_COLLISION'
   | 'NOTIFY'

@@ -7573,6 +7573,7 @@ export type Database = {
       org_rule_action_type:
         | "AUTO_ANCHOR"
         | "FAST_TRACK_ANCHOR"
+        | "INSTANT_SECURE"
         | "QUEUE_FOR_REVIEW"
         | "FLAG_COLLISION"
         | "NOTIFY"
@@ -7867,6 +7868,7 @@ export const Constants = {
       org_rule_action_type: [
         "AUTO_ANCHOR",
         "FAST_TRACK_ANCHOR",
+        "INSTANT_SECURE",
         "QUEUE_FOR_REVIEW",
         "FLAG_COLLISION",
         "NOTIFY",

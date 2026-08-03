@@ -222,6 +222,34 @@ const DOCUSIGN_PAID_FAST_TRACK_ANCHOR = {
     credit_denial_reason: null,
   },
 };
+// Founder directive (2026-08-03): an INSTANT_SECURE rule that fell back to
+// the free queue at dispatch time (insufficient credits — see
+// rule-action-dispatcher.ts dispatchInstantSecure) gets the SAME second
+// chance FAST_TRACK_ANCHOR's fallback already gets when the batch finally
+// claims it — if the org has topped up by then, charge once here instead of
+// anchoring it for free forever.
+const DOCUSIGN_INSTANT_SECURE_CREDIT_DENIED_ANCHOR = {
+  ...DOCUSIGN_QUEUE_ANCHOR,
+  id: 'anchor-docusign-instant-secure-denied',
+  fingerprint: '11'.repeat(32),
+  public_id: 'ARK-2026-INSTANTDENIED1',
+  metadata: {
+    connector_source: 'docusign',
+    rule_action_type: 'INSTANT_SECURE',
+    credit_denial_reason: 'insufficient_credits',
+  },
+};
+const DOCUSIGN_PAID_INSTANT_SECURE_ANCHOR = {
+  ...DOCUSIGN_QUEUE_ANCHOR,
+  id: 'anchor-docusign-paid-instant-secure',
+  fingerprint: '22'.repeat(32),
+  public_id: 'ARK-2026-INSTANTPAID1',
+  metadata: {
+    connector_source: 'docusign',
+    rule_action_type: 'INSTANT_SECURE',
+    credit_denial_reason: null,
+  },
+};
 
 function fastCounts(pending: number) {
   return { PENDING: pending, SUBMITTED: 0, BROADCASTING: 0, SECURED: 0, REVOKED: 0, total: pending };
@@ -631,6 +659,84 @@ describe('processBatchAnchors', () => {
     expect(mockDbRpc).not.toHaveBeenCalledWith('deduct_org_credit', expect.anything());
     expect(mockDbRpc).toHaveBeenCalledWith('submit_batch_anchors', expect.objectContaining({
       p_anchor_ids: [DOCUSIGN_PAID_FAST_TRACK_ANCHOR.id],
+    }));
+  });
+
+  // Founder directive (2026-08-03): INSTANT_SECURE fallback anchors reuse
+  // the exact same queue-run credit gate as FAST_TRACK_ANCHOR's fallback —
+  // parallel test to 'keeps credit-denied DocuSign queue items pending...'
+  // and 'does not double-charge FAST_TRACK_ANCHOR items...' above, so a
+  // future reader can see both action types are held to the same standard.
+  it('gives an INSTANT_SECURE credit-denial fallback a second charge attempt when the batch claims it', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [DOCUSIGN_INSTANT_SECURE_CREDIT_DENIED_ANCHOR], error: null }) // claim
+      .mockResolvedValueOnce({ data: { success: true, balance: 2, deducted: 1 }, error: null }) // deduct_org_credit
+      .mockResolvedValueOnce({ data: 1, error: null }); // submit_batch_anchors
+
+    const result = await processBatchAnchors({
+      force: true,
+      orgId: DOCUSIGN_INSTANT_SECURE_CREDIT_DENIED_ANCHOR.org_id,
+    });
+
+    expect(result.processed).toBe(1);
+    expect(mockDbRpc).toHaveBeenCalledWith('deduct_org_credit', expect.objectContaining({
+      p_org_id: DOCUSIGN_INSTANT_SECURE_CREDIT_DENIED_ANCHOR.org_id,
+      p_amount: 1,
+      p_reason: 'rule.instant_secure_queue_run',
+      p_reference_id: DOCUSIGN_INSTANT_SECURE_CREDIT_DENIED_ANCHOR.id,
+    }));
+    expect(mockAnchorsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({
+        credit_denial_reason: null,
+        queue_credit_source: 'org_credits',
+        queue_credit_reason: 'rule.instant_secure_queue_run',
+        queue_credit_balance_after: 2,
+      }),
+    }));
+    expect(mockSubmitFingerprint).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an INSTANT_SECURE credit-denial fallback pending (not dropped) when the batch retry is ALSO denied', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [DOCUSIGN_INSTANT_SECURE_CREDIT_DENIED_ANCHOR], error: null }) // claim
+      .mockResolvedValueOnce({
+        data: { success: false, error: 'insufficient_credits', balance: 0, required: 1 },
+        error: null,
+      }); // deduct_org_credit
+
+    const result = await processBatchAnchors({
+      force: true,
+      orgId: DOCUSIGN_INSTANT_SECURE_CREDIT_DENIED_ANCHOR.org_id,
+    });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+    expect(mockDbRpc).not.toHaveBeenCalledWith('submit_batch_anchors', expect.anything());
+    expect(mockAnchorsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'PENDING',
+      metadata: expect.objectContaining({
+        credit_denial_reason: 'insufficient_credits',
+      }),
+    }));
+  });
+
+  it('does not double-charge an already-instant-secured anchor when the batch later claims it', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [DOCUSIGN_PAID_INSTANT_SECURE_ANCHOR], error: null }) // claim
+      .mockResolvedValueOnce({ data: 1, error: null }); // submit_batch_anchors
+
+    const result = await processBatchAnchors({
+      force: true,
+      orgId: DOCUSIGN_PAID_INSTANT_SECURE_ANCHOR.org_id,
+    });
+
+    expect(result.processed).toBe(1);
+    expect(mockDbRpc).not.toHaveBeenCalledWith('deduct_org_credit', expect.anything());
+    expect(mockDbRpc).toHaveBeenCalledWith('submit_batch_anchors', expect.objectContaining({
+      p_anchor_ids: [DOCUSIGN_PAID_INSTANT_SECURE_ANCHOR.id],
     }));
   });
 

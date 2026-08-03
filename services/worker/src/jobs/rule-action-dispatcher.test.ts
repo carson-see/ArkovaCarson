@@ -9,6 +9,13 @@ const mockGetSecret = vi.fn();
 const mockSubmitJob = vi.fn();
 const mockDbRpc = vi.fn();
 const mockLoggerWarn = vi.fn();
+// INSTANT_SECURE (founder directive, 2026-08-03): after the shared credit +
+// anchor-materialization path succeeds, INSTANT_SECURE additionally kicks an
+// immediate per-org batch-anchor pass instead of only relying on the
+// standard triggers — that extra call is what makes "instant" actually true
+// rather than a same-queue rename of AUTO_ANCHOR. Mocked here so dispatcher
+// tests never pull in the real chain/treasury machinery.
+const mockProcessBatchAnchors = vi.fn();
 
 interface ExecutionRow {
   id: string;
@@ -92,6 +99,9 @@ vi.mock('../utils/secrets.js', () => ({
 }));
 vi.mock('../utils/jobQueue.js', () => ({
   submitJob: (...args: unknown[]) => mockSubmitJob(...args),
+}));
+vi.mock('./batch-anchor.js', () => ({
+  processBatchAnchors: (...args: unknown[]) => mockProcessBatchAnchors(...args),
 }));
 
 vi.mock('../utils/db.js', () => {
@@ -301,6 +311,7 @@ beforeEach(() => {
   // insufficient_credits explicitly override per-test via mockDbRpc.
   mockDbRpc.mockResolvedValue({ data: { success: true, balance: 99, deducted: 1 }, error: null });
   mockSubmitJob.mockResolvedValue('job-fast-track-1');
+  mockProcessBatchAnchors.mockResolvedValue({ processed: 1, batchId: 'batch-1', merkleRoot: 'r', txId: 't' });
   // SCRUM-2904: reset connector flags OFF between tests (declared-hash writer).
   mockConfig.enableConnectorArtifactEnqueue = false;
   mockConfig.enableConnectorArtifactDrain = false;
@@ -882,6 +893,303 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     const final = dbState.finalUpdates.get(EXEC_ID);
     expect(final?.status).toBe('FAILED');
     expect(final?.error as string).toMatch(/org_not_initialized/i);
+  });
+
+  // ─── INSTANT_SECURE — founder directive 2026-08-03 ─────────────────────
+  // "The 'Auto Secure' rule doesn't secure. ... we need to be able to
+  // instantly secure or add to queue and we need rules to work." Reuses the
+  // SAME shared credit-funded anchor path as FAST_TRACK_ANCHOR (deduct via
+  // RPC, idempotent on organization_rule_executions.id, refund-and-retry on
+  // a downstream failure after the charge) — every credit-safety assertion
+  // below mirrors the FAST_TRACK_ANCHOR suite above by design, not by
+  // coincidence. The one behavioral addition is the immediate per-org batch
+  // trigger on success and the log/notify on the insufficient-credit
+  // fallback (neither of which FAST_TRACK_ANCHOR's existing, unchanged
+  // behavior gets — this PR does not touch FAST_TRACK_ANCHOR's outcomes).
+  describe('INSTANT_SECURE (founder directive 2026-08-03)', () => {
+    it('with credits: deducts via RPC keyed on execution id, submits anchor job, and kicks an immediate org batch pass', async () => {
+      setScenario({
+        rule: { ...defaultRule, action_type: 'INSTANT_SECURE', action_config: {} },
+      });
+      const result = await runRuleActionDispatcher();
+      expect(result.succeeded).toBe(1);
+      expect(dbState.anchorInserts).toHaveLength(1);
+      expect(dbState.anchorInserts[0]).toMatchObject({
+        fingerprint: 'a'.repeat(64),
+        status: 'PENDING',
+        org_id: ORG_ID,
+        credential_type: 'CONTRACT_POSTSIGNING',
+        metadata: expect.objectContaining({
+          connector_source: 'docusign',
+          rule_action_type: 'INSTANT_SECURE',
+          credit_denial_reason: null,
+        }),
+      });
+      // Idempotency key is the STABLE execution id, never attempt_count — a
+      // dispatcher retry must reuse the same reference id so deduct_org_credit
+      // (migration 0326, UNIQUE(org_id, reference_id, reason)) can detect the
+      // replay and refuse to charge twice.
+      expect(mockDbRpc).toHaveBeenCalledWith(
+        'deduct_org_credit',
+        expect.objectContaining({
+          p_org_id: ORG_ID,
+          p_amount: 1,
+          p_reason: 'rule.instant_secure',
+          p_reference_id: EXEC_ID,
+        }),
+      );
+      expect(mockSubmitJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'anchor.fast_track',
+          payload: expect.objectContaining({
+            org_id: ORG_ID,
+            rule_id: RULE_ID,
+            execution_id: EXEC_ID,
+            anchor_public_id: 'ARK-2026-ABCD1234',
+          }),
+        }),
+      );
+      // The actual "instant" behavior: force a batch pass for THIS org now,
+      // instead of waiting on the standard triggers.
+      expect(mockProcessBatchAnchors).toHaveBeenCalledWith(
+        expect.objectContaining({ force: true, orgId: ORG_ID }),
+      );
+      const final = dbState.finalUpdates.get(EXEC_ID);
+      expect(final?.status).toBe('SUCCEEDED');
+      const out = final?.output_payload as {
+        outcome: string;
+        routed_to: string;
+        anchor_materialized?: boolean;
+        anchor_public_id?: string;
+      };
+      expect(out.outcome).toBe('anchor_dispatched');
+      expect(out.routed_to).toBe('anchor_pipeline');
+      expect(out.anchor_materialized).toBe(true);
+      expect(out.anchor_public_id).toBe('ARK-2026-ABCD1234');
+    });
+
+    it('retry after a prior success does NOT double-charge — reuses the existing job and reports idempotent', async () => {
+      mockDbRpc.mockResolvedValueOnce({
+        data: { success: true, balance: 99, deducted: 0, idempotent: true },
+        error: null,
+      });
+      setScenario({
+        executions: [{ ...defaultExec, attempt_count: 1, status: 'RETRYING' }],
+        rule: { ...defaultRule, action_type: 'INSTANT_SECURE', action_config: {} },
+      });
+      dbState.anchorInsertError = { code: '23505', message: 'duplicate key value violates unique constraint' };
+      dbState.existingAnchors = [{ public_id: 'ARK-2026-EXISTING', status: 'PENDING' }];
+      dbState.jobQueueRows = [{
+        id: 'job-existing-instant',
+        type: 'anchor.fast_track',
+        payload: { execution_id: EXEC_ID },
+        status: 'pending',
+        created_at: '2026-08-03T12:00:00.000Z',
+      }];
+
+      const result = await runRuleActionDispatcher();
+
+      expect(result.succeeded).toBe(1);
+      expect(mockSubmitJob).not.toHaveBeenCalled();
+      // The RETRY still passes the SAME reference id (the execution id, not
+      // the now-incremented attempt_count) — this is what makes the RPC's
+      // own idempotency check land on the same ledger row.
+      expect(mockDbRpc).toHaveBeenCalledWith(
+        'deduct_org_credit',
+        expect.objectContaining({ p_reference_id: EXEC_ID, p_reason: 'rule.instant_secure' }),
+      );
+      const final = dbState.finalUpdates.get(EXEC_ID);
+      expect(final?.status).toBe('SUCCEEDED');
+      const out = final?.output_payload as {
+        anchor_public_id?: string;
+        duplicate_anchor?: boolean;
+        deduction_idempotent?: boolean;
+      };
+      expect(out.anchor_public_id).toBe('ARK-2026-EXISTING');
+      expect(out.duplicate_anchor).toBe(true);
+      expect(out.deduction_idempotent).toBe(true);
+      // Still tries to accelerate the (reused) anchor on every dispatch pass —
+      // harmless/idempotent on the batch side, and correct if the first
+      // attempt's forced pass never actually ran (e.g. crashed before it).
+      expect(mockProcessBatchAnchors).toHaveBeenCalledWith(
+        expect.objectContaining({ force: true, orgId: ORG_ID }),
+      );
+    });
+
+    it('without credits: falls back to the free queue (document is never dropped) and logs + notifies the org', async () => {
+      mockDbRpc.mockResolvedValueOnce({
+        data: { success: false, error: 'insufficient_credits', balance: 0, required: 1 },
+        error: null,
+      });
+      setScenario({
+        rule: { ...defaultRule, action_type: 'INSTANT_SECURE', action_config: {} },
+      });
+      const result = await runRuleActionDispatcher();
+      expect(result.succeeded).toBe(1);
+      expect(result.failed).toBe(0);
+      expect(mockSubmitJob).not.toHaveBeenCalled();
+      // No reason to force a batch pass early — the fallback anchor is a
+      // plain free-queue item, swept by the normal triggers like any other.
+      expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
+      expect(dbState.anchorInserts).toHaveLength(1);
+      expect(dbState.anchorInserts[0]).toMatchObject({
+        status: 'PENDING',
+        org_id: ORG_ID,
+        metadata: expect.objectContaining({
+          rule_action_type: 'INSTANT_SECURE',
+          credit_denial_reason: 'insufficient_credits',
+        }),
+      });
+      const final = dbState.finalUpdates.get(EXEC_ID);
+      expect(final?.status).toBe('SUCCEEDED');
+      const out = final?.output_payload as { outcome: string; routed_to: string; credit_denial_reason: string };
+      expect(out.outcome).toBe('queued_for_anchor');
+      expect(out.routed_to).toBe('anchor_queue');
+      expect(out.credit_denial_reason).toBe('insufficient_credits');
+      // "log/notify so someone notices the fallback happened" — the founder
+      // directive's explicit non-negotiable. Someone must be able to tell
+      // this org that an INSTANT_SECURE rule silently degraded to the free
+      // queue instead of assuming "instant" always means instant.
+      expect(mockLoggerWarn).toHaveBeenCalledWith(
+        expect.objectContaining({ ruleId: RULE_ID, executionId: EXEC_ID, orgId: ORG_ID }),
+        expect.stringMatching(/insufficient.*credit/i),
+      );
+      expect(mockEmitOrgAdminNotifications).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'rule_fired',
+          organizationId: ORG_ID,
+          payload: expect.objectContaining({
+            rule_id: RULE_ID,
+            execution_id: EXEC_ID,
+            reason: 'insufficient_credits',
+          }),
+        }),
+      );
+    });
+
+    it('a throwing insufficient-credit notification does NOT turn a correctly-queued fallback into a failure', async () => {
+      // The fallback anchor is already safely queued — a notification-
+      // delivery outage is best-effort visibility on top of it, never a
+      // reason to retry (which would risk a confusing second notification
+      // attempt racing the org's own credit top-up).
+      mockDbRpc.mockResolvedValueOnce({
+        data: { success: false, error: 'insufficient_credits', balance: 0, required: 1 },
+        error: null,
+      });
+      mockEmitOrgAdminNotifications.mockRejectedValueOnce(new Error('notification service unavailable'));
+      setScenario({
+        rule: { ...defaultRule, action_type: 'INSTANT_SECURE', action_config: {} },
+      });
+      const result = await runRuleActionDispatcher();
+      expect(result.succeeded).toBe(1);
+      expect(result.failed).toBe(0);
+      const final = dbState.finalUpdates.get(EXEC_ID);
+      expect(final?.status).toBe('SUCCEEDED');
+      const out = final?.output_payload as { credit_denial_reason: string };
+      expect(out.credit_denial_reason).toBe('insufficient_credits');
+    });
+
+    it('credit RPC throw is transient — RETRYING, no anchor, no batch trigger', async () => {
+      mockDbRpc.mockRejectedValueOnce(new Error('database connection lost'));
+      setScenario({
+        rule: { ...defaultRule, action_type: 'INSTANT_SECURE', action_config: {} },
+      });
+      const result = await runRuleActionDispatcher();
+      expect(result.failed).toBe(1);
+      expect(dbState.anchorInserts).toHaveLength(0);
+      expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
+      const final = dbState.finalUpdates.get(EXEC_ID);
+      expect(final?.status).toBe('RETRYING');
+      expect(mockSubmitJob).not.toHaveBeenCalled();
+    });
+
+    it('org_not_initialized is a permanent failure (not retryable)', async () => {
+      mockDbRpc.mockResolvedValueOnce({ data: { success: false, error: 'org_not_initialized' }, error: null });
+      setScenario({
+        rule: { ...defaultRule, action_type: 'INSTANT_SECURE', action_config: {} },
+      });
+      const result = await runRuleActionDispatcher();
+      expect(result.failed).toBe(1);
+      expect(dbState.anchorInserts).toHaveLength(0);
+      const final = dbState.finalUpdates.get(EXEC_ID);
+      expect(final?.status).toBe('FAILED');
+      expect(final?.error as string).toMatch(/org_not_initialized/i);
+    });
+
+    it('anchor insert failure AFTER credit deduction refunds (compensation reason distinct from FAST_TRACK_ANCHOR) and retries', async () => {
+      setScenario({
+        rule: { ...defaultRule, action_type: 'INSTANT_SECURE', action_config: {} },
+      });
+      dbState.anchorInsertError = { message: 'database unavailable' };
+
+      const result = await runRuleActionDispatcher();
+
+      expect(result.failed).toBe(1);
+      expect(mockDbRpc).toHaveBeenCalledWith('deduct_org_credit', expect.anything());
+      expect(mockDbRpc).toHaveBeenCalledWith('refund_org_credit', {
+        p_org_id: ORG_ID,
+        p_amount: 1,
+        p_reason: 'rule.instant_secure_compensation',
+        p_reference_id: EXEC_ID,
+      });
+      expect(mockSubmitJob).not.toHaveBeenCalled();
+      expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
+      const final = dbState.finalUpdates.get(EXEC_ID);
+      expect(final?.status).toBe('RETRYING');
+      expect(final?.error as string).toMatch(/credit refunded/i);
+    });
+
+    it('submitJob failure AFTER credit deduction refunds and retries — never charges for a job that never queued', async () => {
+      mockSubmitJob.mockResolvedValueOnce(null);
+      setScenario({
+        rule: { ...defaultRule, action_type: 'INSTANT_SECURE', action_config: {} },
+      });
+      const result = await runRuleActionDispatcher();
+      expect(result.failed).toBe(1);
+      expect(mockDbRpc).toHaveBeenCalledWith('refund_org_credit', {
+        p_org_id: ORG_ID,
+        p_amount: 1,
+        p_reason: 'rule.instant_secure_compensation',
+        p_reference_id: EXEC_ID,
+      });
+      expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
+      const final = dbState.finalUpdates.get(EXEC_ID);
+      expect(final?.status).toBe('RETRYING');
+    });
+
+    it('a throwing immediate-batch trigger does NOT turn a successful dispatch into a failure (best-effort acceleration only)', async () => {
+      // The credit was charged and the anchor safely queued either way — an
+      // outage in the accelerator must never look like a lost document or a
+      // reason to retry (which would risk relying on refund/retry logic that
+      // was never meant to unwind a step this far downstream).
+      mockProcessBatchAnchors.mockRejectedValueOnce(new Error('treasury RPC unavailable'));
+      setScenario({
+        rule: { ...defaultRule, action_type: 'INSTANT_SECURE', action_config: {} },
+      });
+      const result = await runRuleActionDispatcher();
+      expect(result.succeeded).toBe(1);
+      expect(result.failed).toBe(0);
+      const final = dbState.finalUpdates.get(EXEC_ID);
+      expect(final?.status).toBe('SUCCEEDED');
+      const out = final?.output_payload as { outcome: string };
+      expect(out.outcome).toBe('anchor_dispatched');
+    });
+
+    it('DEFERS to the connector path (SCRUM-2904) and moves NO credit when both connector flags are on', async () => {
+      mockConfig.enableConnectorArtifactEnqueue = true;
+      mockConfig.enableConnectorArtifactDrain = true;
+      setScenario({ rule: { ...defaultRule, action_type: 'INSTANT_SECURE', action_config: {} } });
+
+      const result = await runRuleActionDispatcher();
+
+      expect(result.succeeded).toBe(1);
+      expect(dbState.anchorInserts).toHaveLength(0);
+      expect(mockDbRpc).not.toHaveBeenCalled();
+      expect(mockSubmitJob).not.toHaveBeenCalled();
+      expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
+      const out = dbState.finalUpdates.get(EXEC_ID)?.output_payload as { outcome: string };
+      expect(out.outcome).toBe('deferred_to_connector');
+    });
   });
 
   // ── SCRUM-2904: dual-path DocuSign reconciliation ─────────────────────────

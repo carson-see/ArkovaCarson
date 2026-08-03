@@ -9,12 +9,23 @@
  *   - QUEUE_FOR_REVIEW  → routed marker (compliance inbox queries reads it)
  *   - FLAG_COLLISION    → routed marker (compliance inbox queries reads it)
  *   - FORWARD_TO_URL    → signed outbound HTTP POST + retry on transient err
- *   - AUTO_ANCHOR / FAST_TRACK_ANCHOR / unknown → fail-closed visible failure
+ *   - AUTO_ANCHOR       → materializes a PENDING anchor into the free queue,
+ *                         no credit movement (SCRUM-1649 DS-07)
+ *   - FAST_TRACK_ANCHOR / INSTANT_SECURE → credit-funded (1 credit), share
+ *                         one implementation (`dispatchCreditFundedAnchor`);
+ *                         INSTANT_SECURE additionally forces an immediate
+ *                         per-org batch-anchor pass on success and
+ *                         logs+notifies the org on an insufficient-credit
+ *                         fallback (founder directive, 2026-08-03 — "we need
+ *                         to be able to instantly secure or add to queue")
+ *   - unknown           → fail-closed visible failure
  *
  * Idempotency starts with the `(rule_id, trigger_event_id)` unique index on
  * the executions table. Side-effecting action modes add their own retry guard;
- * FAST_TRACK_ANCHOR uses the execution id as the org-credit reference key and
- * reuses an existing anchor.fast_track job on dispatcher retry.
+ * FAST_TRACK_ANCHOR and INSTANT_SECURE use the execution id as the org-credit
+ * reference key (never attempt_count, so a retry cannot double-charge — see
+ * migration 0326's `UNIQUE(org_id, reference_id, reason)`) and reuse an
+ * existing anchor.fast_track job on dispatcher retry.
  *
  * Concurrency: the MVP runs as a single Cloud Scheduler instance. A second
  * dispatcher started in parallel would race on the SELECT-then-UPDATE step
@@ -38,6 +49,7 @@ import {
   connectorPathIsAuthoritative,
   findExistingEnvelopeAnchor,
 } from './docusign-anchor-reconciliation.js';
+import { processBatchAnchors } from './batch-anchor.js';
 
 export const MAX_DISPATCH_ATTEMPTS = 5;
 const DISPATCH_BATCH_SIZE = 50;
@@ -651,11 +663,13 @@ async function dispatchAutoAnchor(rule: RuleRow, exec: ExecutionRow): Promise<Ou
   return buildAnchorQueueOutcome({ creditDenialReason: null, materialization });
 }
 
-async function compensateFastTrackCreditFailure(args: {
+async function compensateCreditFundedAnchorFailure(args: {
   rule: RuleRow;
   exec: ExecutionRow;
   deduction: DeductionResult;
   failure: string;
+  compensationReason: string;
+  logLabel: string;
   error?: unknown;
 }): Promise<Outcome> {
   const logContext = {
@@ -666,7 +680,7 @@ async function compensateFastTrackCreditFailure(args: {
   };
 
   if (args.deduction.reason === 'feature_disabled') {
-    logger.error(logContext, `FAST_TRACK_ANCHOR: ${args.failure} — retrying without credit compensation`);
+    logger.error(logContext, `${args.logLabel}: ${args.failure} — retrying without credit compensation`);
     return {
       kind: 'transient_failure',
       error: `${args.failure}; credit enforcement disabled, retrying`,
@@ -678,12 +692,12 @@ async function compensateFastTrackCreditFailure(args: {
     const { data, error } = await (db as any).rpc('refund_org_credit', {
       p_org_id: args.rule.org_id,
       p_amount: 1,
-      p_reason: 'rule.fast_track_anchor_compensation',
+      p_reason: args.compensationReason,
       p_reference_id: args.exec.id,
     });
     const refunded = !error && (data as { success?: unknown } | null)?.success === true;
     if (refunded) {
-      logger.warn(logContext, `FAST_TRACK_ANCHOR: ${args.failure} after credit deduction — refunded and retrying`);
+      logger.warn(logContext, `${args.logLabel}: ${args.failure} after credit deduction — refunded and retrying`);
       return {
         kind: 'transient_failure',
         error: `${args.failure} AFTER credit deduction; credit refunded; retrying`,
@@ -695,12 +709,12 @@ async function compensateFastTrackCreditFailure(args: {
         refundError: error,
         refundResult: (data as { error?: unknown } | null)?.error ?? 'unexpected_refund_shape',
       },
-      `FAST_TRACK_ANCHOR: ${args.failure} after credit deduction and refund failed — marking FAILED`,
+      `${args.logLabel}: ${args.failure} after credit deduction and refund failed — marking FAILED`,
     );
   } catch (refundErr) {
     logger.error(
       { ...logContext, refundError: refundErr },
-      `FAST_TRACK_ANCHOR: ${args.failure} after credit deduction and refund threw — marking FAILED`,
+      `${args.logLabel}: ${args.failure} after credit deduction and refund threw — marking FAILED`,
     );
   }
 
@@ -710,7 +724,93 @@ async function compensateFastTrackCreditFailure(args: {
   };
 }
 
-async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> {
+// Shared by FAST_TRACK_ANCHOR (DS-06) and INSTANT_SECURE (founder directive,
+// 2026-08-03 — "we need to be able to instantly secure or add to queue").
+// Both actions charge 1 credit through the SAME deduct_org_credit helper,
+// keyed on the SAME idempotent reference (the execution row's own id, never
+// attempt_count — a dispatcher retry passes the identical id, so the RPC's
+// own UNIQUE(org_id, reference_id, reason) ledger (migration 0326) either
+// no-ops as a replay or refuses, but never double-charges), materialize the
+// SAME validated anchor-queue row, and fall back to the free queue on
+// insufficient credits WITHOUT erroring the rule or dropping the document.
+// `options` carries only the two action types' actual differences: which
+// ledger reason to stamp (so their org_credit_deductions rows stay
+// distinguishable), whether to force an immediate per-org batch pass on
+// success (INSTANT_SECURE only — see the module-level `processBatchAnchors`
+// import), and whether the insufficient-credit fallback must additionally
+// log + notify (INSTANT_SECURE only, per the founder directive's explicit
+// "so someone notices the fallback happened").
+interface CreditFundedAnchorOptions {
+  /** deduct_org_credit / refund_org_credit `p_reason` for the happy path. */
+  creditReason: string;
+  /** `p_reason` for the refund-on-downstream-failure compensation call. */
+  compensationReason: string;
+  /** Log-line label distinguishing the two actions' log/Sentry noise. */
+  logLabel: string;
+  /** INSTANT_SECURE: kick processBatchAnchors({force:true, orgId}) on success. */
+  triggerImmediateBatch: boolean;
+  /** INSTANT_SECURE: log + notify org admins when falling back to the free queue. */
+  notifyOnCreditDenial: boolean;
+}
+
+// Best-effort only — the anchor is already safely materialized (PENDING) and
+// will be picked up by the standard triggers regardless, so a failure here
+// must never change the dispatch outcome, retry the execution, or touch the
+// credit that was already (correctly) charged. This is what makes
+// INSTANT_SECURE actually faster than AUTO_ANCHOR's queue-only behavior
+// instead of just relabeling it — see rule-action-dispatcher.ts module
+// header and the founder directive this migration/PR responds to.
+async function triggerImmediateAnchorPass(rule: RuleRow, exec: ExecutionRow): Promise<void> {
+  try {
+    await processBatchAnchors({ force: true, orgId: rule.org_id });
+  } catch (err) {
+    logger.warn(
+      { error: err, ruleId: rule.id, executionId: exec.id, orgId: rule.org_id },
+      'INSTANT_SECURE: immediate per-org batch pass failed — anchor remains safely PENDING for the next standard trigger',
+    );
+  }
+}
+
+async function notifyInstantSecureCreditDenial(
+  rule: RuleRow,
+  exec: ExecutionRow,
+  denial: { balance: number | null; required: number | null },
+): Promise<void> {
+  logger.warn(
+    { ruleId: rule.id, executionId: exec.id, orgId: rule.org_id, balance: denial.balance, required: denial.required },
+    'INSTANT_SECURE: insufficient credits — falling back to the free queue instead of failing or dropping the document',
+  );
+  try {
+    await emitOrgAdminNotifications({
+      type: 'rule_fired',
+      organizationId: rule.org_id,
+      payload: {
+        rule_id: rule.id,
+        rule_name: rule.name,
+        execution_id: exec.id,
+        trigger_event_id: exec.trigger_event_id,
+        reason: 'insufficient_credits',
+        balance: denial.balance,
+        required: denial.required,
+        outcome: 'instant_secure_fell_back_to_queue',
+      },
+    });
+  } catch (err) {
+    // Never let a notification-delivery failure turn a correctly-queued
+    // anchor into a retried/failed execution — the fallback itself already
+    // succeeded; this is best-effort visibility on top of it.
+    logger.warn(
+      { error: err, ruleId: rule.id, executionId: exec.id, orgId: rule.org_id },
+      'INSTANT_SECURE: insufficient-credit notification failed to send',
+    );
+  }
+}
+
+async function dispatchCreditFundedAnchor(
+  rule: RuleRow,
+  exec: ExecutionRow,
+  options: CreditFundedAnchorOptions,
+): Promise<Outcome> {
   // SCRUM-2904: defer to the authoritative server-fetched connector path when it
   // owns this source. MUST run BEFORE deductOrgCredit — deferring means moving
   // no credit (the connector path charges once, at SECURING).
@@ -718,7 +818,7 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
     return buildDeferredToConnectorOutcome(extractConnectorSourceVendor(exec));
   }
 
-  // DS-06 instant secure: validate the future queue row before reserving
+  // DS-06 / INSTANT_SECURE: validate the future queue row before reserving
   // credit, then insert only for allowed or explicitly queued denial paths.
   // Uses the shared `deductOrgCredit` helper (SCRUM-1170-B) so
   // `config.enableOrgCreditEnforcement=false` short-circuits cleanly in
@@ -730,18 +830,20 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
     creditDenialReason: null,
   });
 
-  const result = await deductOrgCredit(db, rule.org_id, 1, 'rule.fast_track_anchor', exec.id);
+  const result = await deductOrgCredit(db, rule.org_id, 1, options.creditReason, exec.id);
 
   if (result.allowed) {
     let materialization: AnchorQueueMaterialization;
     try {
       materialization = await insertAnchorQueueItem(preparedAnchor);
     } catch (err) {
-      return compensateFastTrackCreditFailure({
+      return compensateCreditFundedAnchorFailure({
         rule,
         exec,
         deduction: result,
         failure: `anchor queue materialization insert failed: ${err instanceof Error ? err.message : 'unknown'}`,
+        compensationReason: options.compensationReason,
+        logLabel: options.logLabel,
         error: err,
       });
     }
@@ -764,21 +866,28 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
         },
       });
     } catch (err) {
-      return compensateFastTrackCreditFailure({
+      return compensateCreditFundedAnchorFailure({
         rule,
         exec,
         deduction: result,
         failure: err instanceof Error ? err.message : 'anchor.fast_track job lookup failed',
+        compensationReason: options.compensationReason,
+        logLabel: options.logLabel,
         error: err,
       });
     }
     if (!jobId) {
-      return compensateFastTrackCreditFailure({
+      return compensateCreditFundedAnchorFailure({
         rule,
         exec,
         deduction: result,
         failure: 'anchor.fast_track job enqueue failed',
+        compensationReason: options.compensationReason,
+        logLabel: options.logLabel,
       });
+    }
+    if (options.triggerImmediateBatch) {
+      await triggerImmediateAnchorPass(rule, exec);
     }
     return {
       kind: 'success',
@@ -798,8 +907,15 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
 
   // Credit denial paths — helper normalizes the RPC-shaped errors.
   if (result.error === 'insufficient_credits') {
-    // DS-06 fall-through: queue with explicit reason. NOT a failure — the
-    // promise of "queued, not anchored" is still kept for the user.
+    // Fall-through: queue with explicit reason. NOT a failure — the promise
+    // of "queued, not anchored" is still kept for the user; the document is
+    // never silently dropped.
+    if (options.notifyOnCreditDenial) {
+      await notifyInstantSecureCreditDenial(rule, exec, {
+        balance: result.balance ?? null,
+        required: result.required ?? null,
+      });
+    }
     return buildAnchorQueueOutcome({
       creditDenialReason: 'insufficient_credits',
       balance: result.balance ?? null,
@@ -827,6 +943,36 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
   };
 }
 
+async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> {
+  return dispatchCreditFundedAnchor(rule, exec, {
+    creditReason: 'rule.fast_track_anchor',
+    compensationReason: 'rule.fast_track_anchor_compensation',
+    logLabel: 'FAST_TRACK_ANCHOR',
+    // Unchanged behavior — FAST_TRACK_ANCHOR's existing outcomes/tests are
+    // not touched by this PR. Its own accelerator gap (the `anchor.fast_track`
+    // job it enqueues has no consumer anywhere in this codebase — verified by
+    // grep, `job_queue` carries zero rows of this type in prod) is a real,
+    // separate, pre-existing defect flagged for its own follow-up rather than
+    // silently repaired as a rider on the INSTANT_SECURE PR.
+    triggerImmediateBatch: false,
+    notifyOnCreditDenial: false,
+  });
+}
+
+// SCRUM-1649 DS-06's naming ("fast track") never actually meant "immediate" —
+// it enqueues the same job type AUTO_ANCHOR's queue mode ends up behind. This
+// is the action that actually secures right away: founder directive,
+// 2026-08-03 ("we need to be able to instantly secure or add to queue").
+async function dispatchInstantSecure(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> {
+  return dispatchCreditFundedAnchor(rule, exec, {
+    creditReason: 'rule.instant_secure',
+    compensationReason: 'rule.instant_secure_compensation',
+    logLabel: 'INSTANT_SECURE',
+    triggerImmediateBatch: true,
+    notifyOnCreditDenial: true,
+  });
+}
+
 async function dispatchOne(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> {
   switch (rule.action_type) {
     case 'NOTIFY':
@@ -843,6 +989,9 @@ async function dispatchOne(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> 
     case 'FAST_TRACK_ANCHOR':
       // SCRUM-1649 DS-06
       return dispatchFastTrackAnchor(rule, exec);
+    case 'INSTANT_SECURE':
+      // Founder directive 2026-08-03 — actually secures immediately.
+      return dispatchInstantSecure(rule, exec);
     default:
       // Truly unknown action types fail closed and are visible.
       return {
