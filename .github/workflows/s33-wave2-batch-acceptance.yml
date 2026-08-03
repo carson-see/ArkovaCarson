@@ -6,8 +6,6 @@ on:
     types: [opened, synchronize, reopened]
   pull_request_review:
     types: [submitted, edited]
-  issue_comment:
-    types: [created, edited]
   pull_request:
     branches: [main]
     types: [closed]
@@ -110,10 +108,9 @@ jobs:
   exact-head-acceptance:
     name: S3.3 Wave 2 Exact-Head Acceptance
     if: >-
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
-       contains(github.event.comment.body, '<!-- arkova-s33-wave2-authenticated-acceptance:v1 -->')) ||
-      (github.event_name == 'pull_request_review' &&
-       contains(github.event.review.body, '<!-- arkova-s33-wave2-authenticated-acceptance:v1 -->'))
+      github.event_name == 'pull_request_review' &&
+      github.event.review.author_association == 'OWNER' &&
+      contains(github.event.review.body, '<!-- arkova-s33-wave2-authenticated-acceptance:v1 -->')
     permissions:
       actions: read
       contents: read
