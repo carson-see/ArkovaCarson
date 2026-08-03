@@ -19,7 +19,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { GrcConnection, GrcEvidencePayload, GrcPlatform } from './types.js';
 import { createGrcAdapter, loadGrcCredentials, type GrcPlatformCredentials } from './adapters.js';
-import { getComplianceControlIds } from '../../utils/complianceMapping.js';
+import {
+  COMPLIANCE_CONTROLS_NOTE,
+  resolveComplianceControlIds,
+} from '../../utils/complianceMapping.js';
 import { createDefaultKmsClient, decryptTokens } from '../oauth/crypto.js';
 
 // Note: grc_connections and grc_sync_logs not yet in database.types.ts (migration 0139)
@@ -78,8 +81,11 @@ export async function syncAnchorToGrc(
     return [];
   }
 
-  // Build evidence payload
-  const controlIds = anchor.compliance_controls ?? getComplianceControlIds(anchor.credential_type ?? undefined);
+  // Build evidence payload. SCRUM-2227/2283: stored controls are filtered to the
+  // IDs this worker still stands behind before they reach an auditor's tooling.
+  const controlIds = resolveComplianceControlIds(anchor.compliance_controls, {
+    fallbackCredentialType: anchor.credential_type,
+  }) ?? [];
   const frameworks = [...new Set(controlIds.map(c => c.split('-')[0]))];
 
   const evidence: GrcEvidencePayload = {
@@ -92,6 +98,8 @@ export async function syncAnchorToGrc(
     block_height: anchor.chain_block_height,
     chain_timestamp: anchor.chain_timestamp,
     compliance_controls: controlIds,
+    // SCRUM-2227: the note rides with the controls, and only with them.
+    compliance_controls_note: controlIds.length > 0 ? COMPLIANCE_CONTROLS_NOTE : null,
     frameworks,
     created_at: anchor.created_at,
     secured_at: anchor.chain_timestamp,

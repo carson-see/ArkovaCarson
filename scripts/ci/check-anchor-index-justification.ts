@@ -65,7 +65,14 @@ function skipQuotedRegion(line: string, start: number, quoteChar: string): numbe
   return line.length;
 }
 
-function stripSqlLineComment(line: string): string {
+/**
+ * Drop a trailing `--` line comment, respecting quoted regions so a `--` inside
+ * a string literal is not treated as a comment start. Exported because any
+ * scanner that pattern-matches SQL DDL must strip comments first — otherwise a
+ * migration that merely DOCUMENTS a statement in its header is indistinguishable
+ * from one that executes it (see check-envelope-key-index-parity.ts).
+ */
+export function stripSqlLineComment(line: string): string {
   let index = 0;
   while (index < line.length) {
     const char = line[index];

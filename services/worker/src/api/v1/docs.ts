@@ -1772,10 +1772,29 @@ export const openApiSpec: Record<string, any> = {
               + 'and that its absence is not evidence the record is invalid.',
           },
           compliance_controls: {
-            type: 'object',
+            // SCRUM-2227: this was declared `type: object`, but the field has
+            // always been emitted as a JSON array of control-ID strings. The
+            // object form had no working consumer (both first-party SDKs
+            // dropped it), so the spec now describes only what is emitted.
+            type: 'array',
+            items: { type: 'string' },
             nullable: true,
-            additionalProperties: true,
-            description: 'API-RICH-01 regulatory control IDs mapped to this anchor.',
+            example: ['SOC2-CC6.1', 'GDPR-5.1f', 'FERPA-99.31'],
+            description:
+              'API-RICH-01 regulatory control IDs mapped to this anchor. Informational '
+              + 'metadata only — see compliance_controls_note, which is always present '
+              + 'alongside this field and states what these identifiers do NOT assert.',
+          },
+          compliance_controls_note: {
+            type: 'string',
+            description:
+              'SCRUM-2227. Omitted when not applicable, never returned as null. '
+              + 'Present whenever compliance_controls is present, absent '
+              + 'otherwise. States that control identifiers are a credential-type '
+              + 'mapping and NOT an audit, certification, conformity assessment, or '
+              + 'attestation — in particular that no identifier asserts qualified '
+              + 'status under eIDAS. Additive nullable field (Constitution 1.8); no '
+              + 'API version change.',
           },
           chain_confirmations: {
             type: 'integer',

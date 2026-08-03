@@ -9,7 +9,7 @@
  * @created 2026-03-28
  */
 
-import { test, expect, getServiceClient, createTestAnchor, deleteTestAnchor, SEED_USERS } from './fixtures';
+import { test, expect, getServiceClient, createTestAnchor, deleteTestAnchor, SEED_USERS, PUBLIC_FALLBACK_FILENAME_LABEL } from './fixtures';
 
 test.describe('Public Search Flow', () => {
   let testPublicId: string;
@@ -118,10 +118,12 @@ test.describe('Public Search Flow', () => {
         page.getByText(/Verified|Document Verified/i).first()
       ).toBeVisible({ timeout: 10000 });
 
-      // Should show the filename
+      // The public projection redacts the uploaded filename (0385/0387/0390):
+      // an anonymous viewer sees the controlled fallback label, never the raw name.
       await expect(
-        page.getByText('e2e_search_test_diploma.pdf')
+        page.getByText(PUBLIC_FALLBACK_FILENAME_LABEL).first()
       ).toBeVisible();
+      await expect(page.getByText('e2e_search_test_diploma.pdf')).toHaveCount(0);
     });
 
     test('verification link does not require authentication', async ({ page }) => {

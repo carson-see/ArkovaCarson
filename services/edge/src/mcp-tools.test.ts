@@ -218,6 +218,27 @@ describe('handleVerifyBatch (real RPC fixture)', () => {
 // results through shapeAnchorRow. Unlike public_id verification, fingerprint
 // lookup intentionally hides in-flight anchors so it cannot expose pending
 // content-hash existence globally.
+//
+// ── SCOPE OF THE TWO "filtered by RPC" TESTS BELOW (read before trusting them)
+//
+// The PENDING and SUBMITTED cases below assert that THIS EDGE LAYER maps a
+// `{error:'Record not found'}` RPC response to a `status:'UNKNOWN'` envelope.
+// They do NOT — and structurally cannot — assert that the RPC actually filters
+// those statuses: the filtering is supplied by `mockFetch`, not observed.
+//
+// That gap was not theoretical. Production drifted from migration 0339 to
+// `status IN ('SECURED','SUBMITTED','PENDING')` with no migration on main
+// recording it, making 3 PENDING + 48,149 SUBMITTED anchors confirmable by an
+// anonymous caller — while these tests stayed green, because the fixture kept
+// asserting the premise the database had stopped honouring. Migration 0386
+// restores the invariant.
+//
+// The database half is now pinned against the REAL function by
+// `tests/rls/fingerprint-lookup-secured-only.test.ts` (live anon client, live
+// Postgres). Keep both: this file owns the edge layer's mapping, that file owns
+// the SQL predicate. A mock may stand in for a collaborator, never for the
+// invariant under test — when the assertion is "the database refuses to
+// answer", the database has to be the one refusing.
 
 const FP = 'f'.repeat(64);
 
