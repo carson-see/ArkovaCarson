@@ -264,7 +264,7 @@ describe('runOrgQueueScheduler', () => {
       },
     );
 
-    expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 1, processed: 0 });
+    expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 1, processed: 0, skipped: 0 });
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({
       org_id: ORG_A,
       trigger: 'scheduled',
