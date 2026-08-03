@@ -93,7 +93,7 @@ async function resolveDriveChannel(channelId: string): Promise<DriveChannelLooku
     .is('revoked_at', null)
     .maybeSingle();
   if (error || !data) return null;
-  // PR #1944 review: was an inline JSON.parse copy (the 2nd of 5 near-dupes
+  // PR #1944 review: was an inline JSON.parse copy (one of 4 near-dupes
   // across the connector) — now routed through the one canonical parser.
   const storedToken = parseDriveAccountLabel(data.account_label)?.channel_token ?? null;
   return {

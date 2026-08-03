@@ -595,7 +595,7 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
       }
 
       // Stop the watch channel at Google if we have the required identifiers.
-      // PR #1944 review: was an inline JSON.parse copy (the 1st of 5
+      // PR #1944 review: was an inline JSON.parse copy (one of 4
       // near-dupes across the connector) — now routed through the one
       // canonical parser.
       if (accessToken && existing.subscription_id) {

@@ -65,7 +65,9 @@
  *     API error body can carry an account email or a token fragment.
  *   - `parseDriveAccountLabel` / `stringifyDriveAccountLabel`
  *     (`drive-account-label.ts`) replace an inline JSON.parse idiom that was
- *     the 3rd of 5 near-duplicate copies across the connector.
+ *     one of 4 near-duplicate copies across the connector (this file,
+ *     `api/v1/integrations/drive-oauth.ts`, `api/v1/webhooks/drive.ts`,
+ *     `api/connector-health.ts` — see that file's own doc comment).
  */
 import { randomBytes, randomUUID } from 'crypto';
 import { boundedErrorDetail } from '../../utils/byte-safety.js';
