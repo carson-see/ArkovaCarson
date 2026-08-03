@@ -18,12 +18,21 @@ import { jsPDF } from 'jspdf';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
-import { getComplianceControlIds } from '../../utils/complianceMapping.js';
+import {
+  COMPLIANCE_CONTROLS_NOTE,
+  resolveComplianceControlIds,
+} from '../../utils/complianceMapping.js';
 
 const router = Router();
 
 /** Max anchors per batch export */
 const MAX_BATCH_SIZE = 500;
+
+/**
+ * Lowest `y` (mm) a block may START at on an A4 page (297mm) and still be
+ * expected to fit. Used by addControlsNote to decide on a page break.
+ */
+const PAGE_CONTENT_BOTTOM = 275;
 
 // ─── Control metadata for PDF rendering ──────────────
 const CONTROL_LABELS: Record<string, { framework: string; label: string; description: string }> = {
@@ -85,11 +94,13 @@ function explorerUrl(txId: string): string {
 }
 
 function getControlIds(anchor: AnchorRow): string[] {
-  // Prefer stored controls (CML-02), fall back to computed
-  if (anchor.compliance_controls && Array.isArray(anchor.compliance_controls) && anchor.compliance_controls.length > 0) {
-    return anchor.compliance_controls;
-  }
-  return getComplianceControlIds(anchor.credential_type);
+  // SCRUM-2227/2283: stored controls (CML-02) win, filtered to the IDs this
+  // worker still stands behind; falls back to the computed mapping when nothing
+  // was stored or nothing survived. Shared with the GRC evidence push so the
+  // rule has one home — see resolveComplianceControlIds.
+  return resolveComplianceControlIds(anchor.compliance_controls, {
+    fallbackCredentialType: anchor.credential_type,
+  }) ?? [];
 }
 
 // ─── PDF Generation ──────────────────────────────────
@@ -212,7 +223,10 @@ function generateAuditPdf(anchor: AnchorRow, proof: ProofRow | null): Buffer {
         y = margin;
       }
     }
-    y += 2;
+
+    // SCRUM-2227: the control list never stands alone — state what it does NOT
+    // assert, immediately under it, on the same page-flow.
+    y = addControlsNote(doc, y, margin, contentWidth);
   }
 
   // ── Lifecycle Timeline ──
@@ -307,7 +321,9 @@ function generateBatchPdf(anchors: AnchorRow[]): Buffer {
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.text([...frameworkSet].sort().join(' • '), margin + 4, y);
-  y += 8;
+  y += 6;
+  // SCRUM-2227: framework coverage is a mapping, not an assessment.
+  y = addControlsNote(doc, y, margin, contentWidth);
 
   // ── Individual entries (compact) ──
   y = addSection(doc, 'Anchor Details', y, margin);
@@ -360,6 +376,12 @@ function generateAnchorCsv(anchors: AnchorRow[]): string {
     'fingerprint', 'network_receipt', 'block_height', 'network_observed_time',
     'confirmations', 'compliance_controls', 'compliance_frameworks',
     'created_at', 'issued_at', 'expires_at', 'revoked_at',
+    // SCRUM-2227: APPENDED, not inserted next to compliance_controls. Auditor
+    // tooling that ingests this export by column INDEX would silently shift
+    // created_at/issued_at/expires_at/revoked_at by one if this landed
+    // mid-row. Appending keeps the addition non-breaking for positional
+    // consumers and identical for header-keyed ones.
+    'compliance_controls_note',
   ];
 
   const rows = anchors.map(a => {
@@ -381,11 +403,25 @@ function generateAnchorCsv(anchors: AnchorRow[]): string {
       a.issued_at ?? '',
       a.expires_at ?? '',
       a.revoked_at ?? '',
+      // SCRUM-2227: present exactly when controls are. Appended last to match
+      // the header — see the note there on positional consumers. The escaped
+      // cell is hoisted (NOTE_CSV_CELL) rather than re-escaped up to 500x per
+      // export; it is repeated per row on purpose, so a row stays honest when
+      // an auditor filters or splits the sheet.
+      controlIds.length > 0 ? NOTE_CSV_CELL : '',
     ].join(',');
   });
 
   return [headers.join(','), ...rows].join('\n');
 }
+
+/**
+ * SCRUM-2227: the compliance note pre-escaped once. It is a module constant, so
+ * re-running csvEscape over it for every one of up to MAX_BATCH_SIZE rows is
+ * pure waste. Declared after csvEscape's declaration site is irrelevant —
+ * function declarations hoist.
+ */
+const NOTE_CSV_CELL = csvEscape(COMPLIANCE_CONTROLS_NOTE);
 
 function csvEscape(value: string): string {
   if (value.includes(',') || value.includes('"') || value.includes('\n')) {
@@ -398,6 +434,43 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * SCRUM-2227: render the informational-not-attestation note directly under a
+ * control list, and return the new `y`.
+ *
+ * One helper rather than a copy in each generator: the note is a legal string
+ * that is NOT yet counsel-reviewed, so it will be reworded, and it must not be
+ * possible for the two PDFs to drift in how much room they leave for it.
+ * The advance is MEASURED with splitTextToSize rather than a magic constant —
+ * `maxWidth` wraps glyphs but does not report how many lines it drew, so a
+ * hardcoded advance silently overlaps the next section when the text grows.
+ */
+function addControlsNote(
+  doc: jsPDF, y: number, margin: number, contentWidth: number,
+): number {
+  const NOTE_FONT_SIZE = 7;
+  const LINE_HEIGHT = 3;
+  doc.setFontSize(NOTE_FONT_SIZE);
+  doc.setFont('helvetica', 'italic');
+  const lines = doc.splitTextToSize(COMPLIANCE_CONTROLS_NOTE, contentWidth - 8) as string[];
+
+  // Page-break before rendering if the measured block would not fit.
+  if (y + lines.length * LINE_HEIGHT > PAGE_CONTENT_BOTTOM) {
+    doc.addPage();
+    y = margin;
+    doc.setFontSize(NOTE_FONT_SIZE);
+    doc.setFont('helvetica', 'italic');
+  }
+
+  doc.setTextColor(120, 120, 120);
+  doc.text(lines, margin + 4, y);
+  y += lines.length * LINE_HEIGHT + 4;
+
+  doc.setTextColor(0, 0, 0);
+  doc.setFont('helvetica', 'normal');
+  return y;
 }
 
 function addSection(doc: jsPDF, title: string, y: number, margin: number): number {
