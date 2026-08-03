@@ -68,6 +68,20 @@ export function redactBinaryValues<T>(value: T, depth = 0): T {
   if (isBinaryValue(value) || isSerializedBufferShape(value)) {
     return REDACTED_BYTES_TOKEN as unknown as T;
   }
+  // An Error MUST be converted here rather than walked. `message` and `stack`
+  // are NON-ENUMERABLE own properties, so the `Object.keys()` clone below would
+  // silently reduce any Error to `{}` — and because this formatter runs BEFORE
+  // pino's `error`/`err` serializers, the serializer would then receive a plain
+  // empty object and could never recover them. That is precisely the defect
+  // that made `logger.error({ error: err }, …)` emit `"error": {}` in prod and
+  // forced database archaeology to root-cause the 70h anchoring outage
+  // (2026-08-01). Converting to a serialized plain object here preserves
+  // message/stack at ANY nesting depth while keeping the SCRUM-2492 byte
+  // guarantee, because the serialized form is then walked by this same
+  // function.
+  if (value instanceof Error) {
+    return serializeErrorValue(value, depth) as unknown as T;
+  }
   if (depth >= MAX_REDACT_DEPTH || value === null || typeof value !== 'object') {
     return value;
   }
@@ -82,10 +96,40 @@ export function redactBinaryValues<T>(value: T, depth = 0): T {
   return out as unknown as T;
 }
 
-/** Sanitize a serialized error object so it can never carry a byte-bearing field. */
+/**
+ * Convert an `Error` into a plain, byte-free object that preserves `type`,
+ * `message` and `stack` (all non-enumerable on the original) plus any extra
+ * own enumerable properties, then run the byte redactor over the result.
+ *
+ * Depth is threaded through so `MAX_REDACT_DEPTH` still bounds the walk — a
+ * self-referential Error (`err.self = err`) terminates instead of recursing
+ * forever.
+ */
+function serializeErrorValue(err: Error, depth = 0): unknown {
+  const serialized = pinoSerializers?.err
+    ? pinoSerializers.err(err)
+    : { type: err.name, message: err.message, stack: err.stack };
+  return redactBinaryValues(serialized, depth);
+}
+
+/**
+ * Serializer for the `error` / `err` keys.
+ *
+ * By the time pino reaches serializers, `formatters.log` has already converted
+ * any real `Error` into its serialized plain form (see `redactBinaryValues`),
+ * so this is normally a byte-redacting passthrough. It stays Error-aware for
+ * ordering independence — both paths produce the identical result.
+ *
+ * A NON-Error value is deliberately NOT run through pino's `err` serializer:
+ * on a plain object that serializer fabricates `type: "Object"` and
+ * `stack: ""`. Those two fields are exactly what appeared in the anchoring
+ * failure log (`{message: "Bad Request", stack: "", type: "Object"}`) — noise
+ * that reads like a truncated stack trace while the genuinely actionable
+ * PostgREST fields (`code`, `details`, `hint`) survive on their own.
+ */
 function redactErrorSerializer(err: unknown): unknown {
-  const serialized = pinoSerializers?.err ? pinoSerializers.err(err as Error) : err;
-  return redactBinaryValues(serialized);
+  if (err instanceof Error) return serializeErrorValue(err);
+  return redactBinaryValues(err);
 }
 
 // Known byte-bearing field names — covered by `redact` as a belt-and-braces
@@ -110,32 +154,41 @@ const BYTE_FIELD_REDACT_PATHS = [
   '*.buffer',
 ];
 
-export const logger = pinoFn({
-  level: config.logLevel,
-  // Ensure Error objects are properly serialized (pino only auto-serializes `err`
-  // key) AND that the serialized error carries no binary field (SCRUM-2492).
-  ...(pinoSerializers ? {
-    serializers: {
-      error: redactErrorSerializer,
-      err: redactErrorSerializer,
+/**
+ * Build the worker's pino options. Exported so tests can construct a REAL pino
+ * instance over an in-memory destination and assert the emitted JSON line —
+ * `logger.test.ts` mocks pino wholesale and is therefore structurally blind to
+ * serialization defects (that blindness is how the `"error": {}` bug survived).
+ */
+export function buildLoggerOptions(
+  overrides: { level?: string; pretty?: boolean } = {},
+): pino.LoggerOptions {
+  const pretty = overrides.pretty ?? config.nodeEnv === 'development';
+  return {
+    level: overrides.level ?? config.logLevel,
+    // Ensure Error objects are properly serialized (pino only auto-serializes `err`
+    // key) AND that the serialized error carries no binary field (SCRUM-2492).
+    ...(pinoSerializers ? {
+      serializers: {
+        error: redactErrorSerializer,
+        err: redactErrorSerializer,
+      },
+    } : {}),
+    // SCRUM-2492: type-based binary redaction over every logged object. Runs on
+    // the merged log object (the `{ ... }` first arg to logger.x) regardless of
+    // key, so document bytes on any field become a token before serialization.
+    formatters: {
+      log(object: Record<string, unknown>) {
+        return redactBinaryValues(object);
+      },
     },
-  } : {}),
-  // SCRUM-2492: type-based binary redaction over every logged object. Runs on
-  // the merged log object (the `{ ... }` first arg to logger.x) regardless of
-  // key, so document bytes on any field become a token before serialization.
-  formatters: {
-    log(object: Record<string, unknown>) {
-      return redactBinaryValues(object);
+    // Belt-and-braces redaction of the known byte-bearing field names. `remove`
+    // drops the key entirely rather than printing `[Redacted]`.
+    redact: {
+      paths: BYTE_FIELD_REDACT_PATHS,
+      remove: true,
     },
-  },
-  // Belt-and-braces redaction of the known byte-bearing field names. `remove`
-  // drops the key entirely rather than printing `[Redacted]`.
-  redact: {
-    paths: BYTE_FIELD_REDACT_PATHS,
-    remove: true,
-  },
-  transport:
-    config.nodeEnv === 'development'
+    transport: pretty
       ? {
           target: 'pino-pretty',
           options: {
@@ -143,11 +196,14 @@ export const logger = pinoFn({
           },
         }
       : undefined,
-  mixin() {
-    const correlationId = getCorrelationId();
-    return correlationId ? { correlationId } : {};
-  },
-});
+    mixin() {
+      const correlationId = getCorrelationId();
+      return correlationId ? { correlationId } : {};
+    },
+  };
+}
+
+export const logger = pinoFn(buildLoggerOptions());
 
 export type Logger = PinoLogger;
 

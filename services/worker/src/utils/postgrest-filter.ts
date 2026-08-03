@@ -134,6 +134,87 @@ export function chunkForInFilter(values: readonly string[]): InFilterChunk[] {
 }
 
 /**
+ * Why a paged scan stopped.
+ *
+ * `complete` is the ONLY value that means "these are all the rows". Both others
+ * mean the scan gave up early, and a caller that presents those rows as a full
+ * set is making a claim it did not verify.
+ */
+export type PageScanStatus = 'complete' | 'row_budget_exceeded' | 'page_budget_exhausted';
+
+export interface PageScan<T> {
+  readonly rows: T[];
+  readonly status: PageScanStatus;
+}
+
+/** A page read failed. Carries the offset so the caller can log where. */
+export class PageScanError extends Error {
+  constructor(
+    readonly offset: number,
+    readonly pgCode: string | null,
+  ) {
+    super(`postgrest page scan failed at offset ${offset}`);
+    this.name = 'PageScanError';
+  }
+}
+
+/**
+ * Read every row a filter matches, one page at a time. The ONLY supported way
+ * to scan an unbounded result set over PostgREST.
+ *
+ * Same argument as `chunkForInFilter`, on the other half of the same
+ * `db-max-rows` ambiguity. That helper exists because call sites kept picking
+ * the wrong `.in()` width; this one exists because they keep picking the wrong
+ * termination condition, and it is the more dangerous mistake of the two —
+ * a too-wide filter 400s loudly, while a scan that stops early returns a
+ * plausible short answer at HTTP 200.
+ *
+ * Three rules, none of which a call site can now opt out of:
+ *
+ *  - **An empty page is the only end-of-data signal.** A SHORT page is not.
+ *    PostgREST's `db-max-rows` is a server setting this code cannot see, and it
+ *    may be lower than `POSTGREST_ROW_LIMIT`. `if (page.length < requested)
+ *    break` then stops after the first page and reports a 5,000-row result set
+ *    as 500 rows — the exact shape of the audit-sampling defect fixed in
+ *    `api/v1/auditBatchVerify.ts`. The cost of the rule is one extra request
+ *    per scan; the cost of breaking it is a wrong answer that looks right.
+ *  - **Advance by rows RETURNED, never by the width requested.** Advancing by
+ *    the requested width skips every row a short page withheld.
+ *  - **A hard page ceiling.** The other two exits depend on the server
+ *    behaving; this one does not. Exhausting it yields
+ *    `page_budget_exhausted`, never a complete read — the loop cannot hang.
+ *
+ * Executes nothing itself: the caller supplies `fetchPage` and keeps ownership
+ * of the query, exactly as `chunkForInFilter` leaves the `.in()` call at the
+ * call site. Throws `PageScanError` on a failed page rather than swallowing it.
+ */
+export async function scanAllPages<T>(
+  fetchPage: (
+    offset: number,
+    limit: number,
+  ) => PromiseLike<{ data: T[] | null; error: { code?: string } | null }>,
+  { maxRows, maxPages }: { maxRows: number; maxPages: number },
+): Promise<PageScan<T>> {
+  const rows: T[] = [];
+  let offset = 0;
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const { data, error } = await fetchPage(offset, POSTGREST_ROW_LIMIT);
+    if (error) throw new PageScanError(offset, error.code ?? null);
+
+    const batch = data ?? [];
+    if (batch.length === 0) return { rows, status: 'complete' };
+
+    for (const row of batch) rows.push(row);
+    offset += batch.length;
+
+    if (rows.length > maxRows) return { rows, status: 'row_budget_exceeded' };
+  }
+
+  return { rows, status: 'page_budget_exhausted' };
+}
+
+/**
  * Refuse to report an all-chunks-failed read as an empty result.
  *
  * A chunked `.in()` loop that logs each failure and continues returns `[]` when

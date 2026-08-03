@@ -422,13 +422,44 @@ export const PIPELINE_THROUGHPUT_FINGERPRINT = ['pipeline-throughput-monitor'] a
  *                  0 anchors secured in 24h").
  * @param extra   - Optional aggregate-only structured context (counts).
  */
+export const PIPELINE_THROUGHPUT_ALERT_SOURCE = 'pipeline-throughput-monitor';
+export const PIPELINE_THROUGHPUT_ALERT_TYPE = 'pipeline_throughput';
+
+export interface PipelineThroughputEscalation {
+  /**
+   * Duration bucket ('t24h' | 't48h' | …). Appended to the fingerprint so that
+   * crossing an escalation boundary opens a genuinely NEW Sentry issue instead
+   * of incrementing a stale one. Omit for the un-escalated default.
+   */
+  sustainedBucket?: string;
+  /** 'fatal' once the condition is sustained past 72h; 'error' otherwise. */
+  level?: 'error' | 'fatal';
+}
+
 export function capturePipelineThroughputAlert(
   message: string,
   extra?: Record<string, unknown>,
+  escalation: PipelineThroughputEscalation = {},
 ): void {
+  const bucket = escalation.sustainedBucket;
   Sentry.captureMessage(message, {
-    level: 'error',
-    fingerprint: [...PIPELINE_THROUGHPUT_FINGERPRINT],
+    level: escalation.level ?? 'error',
+    // SCRUM-3050: the bucket is part of the grouping key. Without it a 70-hour
+    // outage produced ONE issue that was created on hour zero and never
+    // notified again — the monitor got quieter as the incident got worse.
+    fingerprint: bucket
+      ? [...PIPELINE_THROUGHPUT_FINGERPRINT, bucket]
+      : [...PIPELINE_THROUGHPUT_FINGERPRINT],
+    // TAGS, not just extra: Sentry issue-alert rules filter on TAGS
+    // (`TaggedEventFilter`). This helper previously carried source/story only
+    // inside `extra`, so a tag-filtered rule could never have matched it — the
+    // alert would have been unroutable even once someone created the rule.
+    tags: {
+      source: PIPELINE_THROUGHPUT_ALERT_SOURCE,
+      story: 'SCRUM-2901',
+      alert_type: PIPELINE_THROUGHPUT_ALERT_TYPE,
+      ...(bucket ? { sustained_bucket: bucket } : {}),
+    },
     ...(extra ? { extra } : {}),
   });
 }

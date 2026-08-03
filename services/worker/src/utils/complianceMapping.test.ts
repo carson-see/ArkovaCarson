@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  controlsApplyForStatus,
   COMPLIANCE_CONTROLS_NOTE,
   RETIRED_CONTROL_IDS,
   getComplianceControlIds,
@@ -144,6 +145,41 @@ describe('sanitizeStoredComplianceControls', () => {
 
   it('drops non-string entries', () => {
     expect(sanitizeStoredComplianceControls(['SOC2-CC6.1', 42, null])).toEqual(['SOC2-CC6.1']);
+  });
+});
+
+// BUG-2026-06-24-007 (worker side). The frontend stopped rendering compliance
+// controls for REVOKED / SUPERSEDED / EXPIRED credentials on 2026-06-24, but
+// that fix was explicitly frontend-only — the worker kept serving the full
+// SOC2 / HIPAA / eIDAS set from /api/v1/verify, the audit export, and the GRC
+// push. The informational note disclaims ATTESTATION, not CURRENCY, so it does
+// not cure a stale control list presented next to a "Revoked" line.
+describe('controlsApplyForStatus — currency, not just attestation', () => {
+  it('applies to a live anchored credential', () => {
+    expect(controlsApplyForStatus('SECURED')).toBe(true);
+    expect(controlsApplyForStatus('ACTIVE')).toBe(true);
+  });
+
+  it('does NOT apply to a credential that is no longer current', () => {
+    expect(controlsApplyForStatus('REVOKED')).toBe(false);
+    expect(controlsApplyForStatus('EXPIRED')).toBe(false);
+    expect(controlsApplyForStatus('SUPERSEDED')).toBe(false);
+  });
+
+  it('does NOT apply before anchoring completes', () => {
+    expect(controlsApplyForStatus('PENDING')).toBe(false);
+    expect(controlsApplyForStatus('SUBMITTED')).toBe(false);
+  });
+
+  it('fails closed on an unknown or missing status', () => {
+    expect(controlsApplyForStatus('WAT')).toBe(false);
+    expect(controlsApplyForStatus('')).toBe(false);
+    expect(controlsApplyForStatus(null)).toBe(false);
+    expect(controlsApplyForStatus(undefined)).toBe(false);
+  });
+
+  it('is case-sensitive — statuses are enum values, not free text', () => {
+    expect(controlsApplyForStatus('secured')).toBe(false);
   });
 });
 
