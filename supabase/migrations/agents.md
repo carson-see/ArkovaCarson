@@ -167,6 +167,7 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 
 > **⚠ `get_public_anchor` is redefined WHOLESALE by every migration that touches it.** `CREATE OR REPLACE FUNCTION` overwrites the entire body, so branching a new definition off an older migration file silently deletes every change made in between — with no error, no warning, and no ledger signal. That is exactly how `0376` reverted `0356` + `0362`. **Always** base a new definition on the CURRENT one (`pg_get_functiondef` against prod, or the highest-numbered migration that redefines it) and state in your header which definition you based on. `src/tests/get-public-anchor-head-invariants.test.ts` now asserts the accumulated invariants against the highest-numbered redefining migration, so the next clobber fails CI instead of reaching production.
 | `0378` | `0378_sec_recon_revoke_deferred_security_definer_grants.sql` | #1766 | **yes** | Applied to prod `vzwyaatejekddvltxyye` 2026-07-28; ledger reconciled to numeric head **0378** per §0 rule 10. Restricts the 50 remaining deferred SECURITY DEFINER worker-only RPCs to `service_role`. Public verification endpoints, RLS helper functions, and trigger functions deliberately untouched (revoking RLS helpers would break every policy). Verified both directions via a `has_function_privilege()` sweep — 0 mismatches. **Next author claims `0379`.** Grant-level enumeration belongs in the Confluence bug tracker, not this repo. |
+| `0389` | `0389_anchors_ce_registry_ctid_partial_index.sql` | #1862 | no | FILE-ONLY / NOT APPLIED anywhere. Partial index `idx_anchors_ce_registry_created_at` unblocking the CE Registry drift job (#1838), whose `loadAnchoredCeRecords` walks all ~3M rows of `idx_anchors_active_created` because `ORDER BY created_at DESC LIMIT 100` cannot stop early when <100 rows match — the `check-confirmations.ts` shape that cost a 14-day prod anchoring gap. **Ships a different index than #1838 specifies, and the difference is the whole point:** the expression-keyed form (`ON anchors ((metadata->>'ce_registry_ctid'))`) was built and measured and the planner *never chooses it* — `examine_variable()` ignores expression stats from PARTIAL indexes, so `IS NOT NULL` keeps its 0.5%-default estimate and the pathological walk still looks free. This ships the 0342 shape instead — keyed on `created_at DESC` with the metadata test in the partial predicate — so implication is proven (no Filter node), the ORDER BY is served by index order, and selection does not depend on the estimate being right. Measured on an isolated 1M-row PG 15.8 rig: 52,734 buffers / 17,873 ms -> 3 buffers / 0.137 ms, chosen with no ANALYZE and still chosen with stale stats after a 50k-row write burst; index 16 kB and unchanged by those writes. **Renumbered `0388` -> `0389` on 2026-08-02.** This PR claimed `0388` first (opened 13:14:25Z; #1863 at 13:18:48Z) but yielded it: #1863 is a pre-pentest security revoke whose prefix is baked into two content-guard test files, their filenames and their assertions, while this migration carries the number in one filename and two doc lines. First-claim-wins exists to prevent collisions, not to make the expensive side move. `0389` re-verified free against every branch ref and every open PR at renumber time. **Next author claims `0390`.** |
 | `0379` | `0379_f3_recover_submitted_null_txid.sql` | #1784 | **yes** | F-3 soak finding. Extends `recover_stuck_broadcasts()` with a SUBMITTED + NULL `chain_tx_id` branch alongside the existing BROADCASTING one. Applied to prod ahead of merge; numeric ledger row confirmed via `list_migrations` 2026-08-01. |
 | `0380` | `0380_f5_anchor_stats_fn_ownership_guard.sql` | #1778 | **yes** | F-5 soak finding. Ownership-gates `get_org_anchor_stats` / `get_user_anchor_stats` — raises `42501` unless `get_caller_role() = 'service_role'` or the arg matches `get_user_org_id()`. Applied to prod ahead of merge; live body verified via `pg_get_functiondef` 2026-08-01. |
 | `0381` | `0381_docusign_envelope_metadata_lookup_indexes.sql` | #1782 | **yes** | DocuSign envelope→anchor metadata lookup indexes; fixes a statement timeout on the 2.97M-anchor org. Applied to prod ahead of merge. |
@@ -187,6 +188,61 @@ Confirm anything load-bearing against the live ledger (`list_migrations`) or the
 `0291`, `0298`, `0332`, `0344`, `0361`, `0369`, `0371`-`0374`. `0344` is a
 deliberate renumber to `0349`; the rest were never claimed or were released.
 Never assume a gap is free — apply the next-free rule above.
+
+## Recent migrations (PR #1862)
+
+`0389_anchors_ce_registry_ctid_partial_index.sql` — partial index
+`idx_anchors_ce_registry_created_at` unblocking the CE Registry drift job (#1838).
+
+**Durable lesson, worth more than the index itself: on `anchors`, a partial
+index keyed on a JSONB expression is a trap for `IS NOT NULL` predicates.**
+#1838 specified `ON anchors ((metadata->>'ce_registry_ctid')) WHERE deleted_at
+IS NULL AND metadata->>'ce_registry_ctid' IS NOT NULL`. It was built and
+measured, and the planner never chooses it:
+
+- The query has no equality on the key — only `IS NOT NULL`, which the partial
+  predicate already asserts — so the key does no work and selection turns
+  entirely on the row estimate.
+- `examine_variable()` (`selfuncs.c`) **deliberately ignores expression
+  statistics belonging to a PARTIAL index**, because they do not describe the
+  whole relation. So ANALYZE cannot fix the estimate: `nulltestsel` keeps its
+  0.5% default and `IS NOT NULL` is estimated at 99.5% of the table. Under
+  `ORDER BY created_at DESC LIMIT 100` the planner then stays on
+  `idx_anchors_active_created`, certain it will stop early. It does not.
+- Measured: with that index present and analyzed, the plan, the buffer count
+  (52,734) and the estimate were identical to having no index at all.
+
+**Do not misread the mechanism as "ANALYZE collects nothing."** It usually does
+collect — a second probe on a partial expression index over 50k indexed rows
+found a `pg_stats` row present *and the estimate still pinned to the 0.005
+default* (5,000 estimated / 0 actual). Rebuilding the same index **non-partial**
+dropped the estimate to 1 and the cost from 14,333 to 8.45. The stats exist; the
+planner declines to use them. So raising `statistics_target`, re-running ANALYZE,
+or waiting for autovacuum will not help — only changing the index shape will.
+(In the CE case `pg_stats` was additionally empty, because 7 qualifying rows in
+1M are unlikely to appear in a 30k-row ANALYZE sample. That is a second, smaller
+problem on top of the first.)
+
+Same family as the 2026-08-02 DocuSign finding, where `0381`'s three
+envelope-key indexes are live and `indisvalid` and the planner refuses them all
+(HANDOFF.md: *an index cannot fix a costing error*). **Lead, not a proven root
+cause:** the prod plan choice was not reproduced on the rig, but prod's 51,038
+estimate is what three OR'd branches of `DEFAULT_EQ_SEL` over ~3.15M rows
+produces (3 x 0.005 x 3.15M ~ 47k), and those three indexes are all partial —
+so the exclusion above is a strong candidate. Anyone working #1834 should test
+non-partial variants and prove it with `EXPLAIN (ANALYZE)` against org
+`40383eb2-f1cd-4a85-8099-afafff95e5cf` with a value matching nothing.
+
+**Ship the `0342` shape instead** — key on the ordering column, put the metadata
+test in the partial predicate: `ON anchors (created_at DESC) WHERE deleted_at IS
+NULL AND metadata->>'ce_registry_ctid' IS NOT NULL`. Implication is proven so no
+Filter node is emitted, and index order serves the ORDER BY, so selection does
+not depend on the estimate being right. Measured 52,734 buffers / 17,873 ms ->
+3 buffers / 0.137 ms; chosen with no ANALYZE, still chosen with stale stats
+after a 50k-row write burst; 16 kB and unchanged by those writes.
+
+Applies to any future `metadata->>'key' IS NOT NULL` + `ORDER BY ... LIMIT`
+read on this table — index the ordering column, not the key.
 
 ## Negative results worth keeping
 
