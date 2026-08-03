@@ -34,7 +34,12 @@
 export const ENV = {
   SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL || 'http://127.0.0.1:54321',
   SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY || '',
-  WORKER_URL: import.meta.env.VITE_WORKER_URL || 'http://localhost:3001',
+  // No WORKER_URL field here on purpose: this object is evaluated eagerly at
+  // module import, so a naive `|| 'http://localhost:3001'` fallback (or a
+  // fail-loud resolver) here would either silently point production traffic
+  // at the user's own machine, or crash every importer of ENV on load. Worker
+  // URL resolution is call-site-lazy — use `resolveWorkerBaseUrl` from
+  // `@/lib/workerUrlSafety` inside the function that makes the request.
   SENTRY_DSN: import.meta.env.VITE_SENTRY_DSN || '',
   APP_URL: import.meta.env.VITE_APP_URL || 'https://app.arkova.ai',
   APP_VERSION: import.meta.env.VITE_APP_VERSION || '0.1.0',
