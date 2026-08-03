@@ -54,7 +54,6 @@ const ORG_ID = '11111111-2222-3333-4444-555555555555';
 
 const CONNECTED_ROW = {
   id: 'int-1',
-  account_label: 'ops@arkova.io',
   connected_at: '2026-04-25T00:00:00Z',
   subscription_expires_at: '2026-08-01T00:00:00Z',
   scope: 'https://www.googleapis.com/auth/drive.readonly',
@@ -117,7 +116,7 @@ describe('DriveConnectorCard', () => {
     expect(screen.queryByText(/secured via drive/i)).not.toBeInTheDocument();
   });
 
-  it('renders Disconnect + account label + last-synced when connected', async () => {
+  it('renders Disconnect + last-synced when connected', async () => {
     orgIntegrationsQuery.maybeSingle.mockResolvedValue({ data: CONNECTED_ROW, error: null });
 
     render(<DriveConnectorCard orgId={ORG_ID} />);
@@ -125,13 +124,37 @@ describe('DriveConnectorCard', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
     });
-    expect(screen.getByText(/connected as ops@arkova\.io/i)).toBeInTheDocument();
     expect(screen.getByText('Connected')).toBeInTheDocument();
 
     // SCRUM-2903: last-synced line renders a formatted timestamp.
     await waitFor(() => {
       expect(screen.getByText(/last synced/i)).toBeInTheDocument();
     });
+  });
+
+  // GH #1836 review follow-up (PR #1944, SECURITY): account_label is a JSON
+  // blob carrying channel_token — a webhook-authentication secret — for
+  // google_drive rows. It must never be selected from the browser Supabase
+  // client (RLS permits any org admin to read the raw row with no
+  // column-level restriction) nor rendered as plaintext. This pins BOTH: the
+  // query never asks for the column, and the card never renders it even if a
+  // future edit accidentally reintroduces it on the row shape.
+  it('SECURITY: never selects or renders account_label, even if present on the row', async () => {
+    orgIntegrationsQuery.maybeSingle.mockResolvedValue({
+      data: { ...CONNECTED_ROW, account_label: JSON.stringify({ email: 'ops@arkova.io', channel_token: 'super-secret-webhook-token' }) },
+      error: null,
+    });
+
+    render(<DriveConnectorCard orgId={ORG_ID} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Connected.')).toBeInTheDocument();
+    });
+    expect(orgIntegrationsQuery.select).toHaveBeenCalledWith(
+      expect.not.stringContaining('account_label'),
+    );
+    expect(document.body.textContent).not.toContain('super-secret-webhook-token');
+    expect(document.body.textContent).not.toContain('channel_token');
   });
 
   // The documents-secured counter was cut from this card (see the NOTE in
@@ -175,19 +198,6 @@ describe('DriveConnectorCard', () => {
       expect(screen.getByText(/last synced/i)).toBeInTheDocument();
     });
     expect(screen.queryByText(/secured via drive/i)).not.toBeInTheDocument();
-  });
-
-  it('falls back to unlabeled "Connected." when account_label is null', async () => {
-    orgIntegrationsQuery.maybeSingle.mockResolvedValue({
-      data: { ...CONNECTED_ROW, account_label: null },
-      error: null,
-    });
-
-    render(<DriveConnectorCard orgId={ORG_ID} />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Connected.')).toBeInTheDocument();
-    });
   });
 
   it('redirects to the Google authorization URL on Connect click', async () => {
