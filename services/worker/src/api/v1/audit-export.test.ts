@@ -234,6 +234,38 @@ describe('POST /audit-export', () => {
     expect(csv).toContain('fingerprint');
     expect(csv).toContain('compliance_controls');
     expect(csv).toContain(MOCK_ANCHOR.public_id);
+    // SCRUM-2227: the control column never ships without the not-an-attestation
+    // column beside it.
+    expect(csv).toContain('compliance_controls_note');
+    expect(csv).toContain('informational metadata only');
+  });
+
+  it('never emits retired EU-US DPF control IDs in CSV (SCRUM-2283)', async () => {
+    const profileQuery = mockQuery({ data: { org_id: 'org-uuid-1' } });
+    const anchorQuery = mockQuery({
+      data: {
+        ...MOCK_ANCHOR,
+        compliance_controls: ['SOC2-CC6.1', 'DPF-NOTICE', 'DPF-ACCOUNTABILITY'],
+      },
+    });
+    const proofQuery = mockQuery({ data: MOCK_PROOF });
+
+    vi.mocked(db.from).mockImplementation((table: string) => {
+      if (table === 'profiles') return profileQuery as never;
+      if (table === 'anchors') return anchorQuery as never;
+      if (table === 'anchor_proofs') return proofQuery as never;
+      return mockQuery({ data: null }) as never;
+    });
+
+    const res = await request(app)
+      .post('/audit-export')
+      .set('x-test-user-id', 'user-1')
+      .send({ anchorId: 'pub_abc123', format: 'csv' });
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('SOC2-CC6.1');
+    expect(res.text).not.toContain('DPF-NOTICE');
+    expect(res.text).not.toContain('DPF-ACCOUNTABILITY');
   });
 
   it('includes compliance controls in PDF response', async () => {
