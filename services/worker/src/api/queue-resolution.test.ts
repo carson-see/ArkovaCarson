@@ -550,4 +550,90 @@ describe('handleRunOrgAnchorQueue', () => {
     expect(status).toHaveBeenCalledWith(400);
     expect(processBatchAnchorsMock).not.toHaveBeenCalled();
   });
+
+  // BUG-2026-08-01-F9 (GAP 1 — manual admin endpoint). processBatchAnchors
+  // does NOT throw on a definitive, fully-unwound broadcast rejection (e.g.
+  // UTXO contention with a concurrently-running org's batch) — the result
+  // just carries `rejectedReason` (batch-anchor.ts, PR #1828). Before this
+  // fix, handleRunOrgAnchorQueue only branched on thrown-vs-not-thrown, so a
+  // rejection landed in the SAME unconditional `status: 'succeeded'` /
+  // `res.json({ ok: true, ... })` path as a genuine no-op run — the exact
+  // "success indistinguishable from idleness" defect class fixed for the
+  // scheduler path, still open here for the synchronous human-admin caller.
+  it('a definitively rejected broadcast → 409 ok:false, records failed run + failed audit, no admin notification (BUG-2026-08-01-F9)', async () => {
+    const { auditInserts } = installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },
+      org_members: [{ data: { role: 'owner' } }],
+    });
+    processBatchAnchorsMock.mockResolvedValue({
+      processed: 0,
+      batchId: null,
+      merkleRoot: 'd'.repeat(64),
+      txId: null,
+      rejectedReason: 'BroadcastRejectedError: min relay fee not met (code -26)',
+    });
+
+    const { res, status, json } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq(), res);
+
+    // Synchronous human-admin caller: must see the rejection NOW, in the
+    // response, not only later in run history. A 2xx `{ ok: true }` here
+    // would actively lie ("your run succeeded") about a run that did nothing
+    // and reverted 0 anchors of new work; a bare 5xx would misrepresent a
+    // legitimate, expected, self-healing outcome as a server fault. 409
+    // (Conflict — the request couldn't complete due to contention over a
+    // shared resource, and is expected to succeed on retry) is neither.
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: 'broadcast_rejected' }),
+      }),
+    );
+    const body = json.mock.calls[0][0] as { error: { message: string } };
+    // §1.3: the response body reaches AnchorQueuePage.tsx verbatim via
+    // `setError(err.message)` — it IS user-facing UI copy, so the banned
+    // crypto/chain terminology list applies here even though this text is
+    // assembled in worker code, not JSX.
+    expect(body.error.message).not.toMatch(
+      /wallet|gas|hash|block|transaction|crypto|blockchain|bitcoin|testnet|mainnet|utxo|broadcast/i,
+    );
+
+    expect(recordOrgQueueRunResultMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: 'org-1',
+        trigger: 'manual',
+        status: 'failed',
+        triggeredBy: 'user-1',
+        error: expect.stringContaining('min relay fee not met'),
+      }),
+    );
+    // manual-run audit event must say failed, not succeeded
+    expect(auditInserts).toHaveLength(1);
+    expect(auditInserts[0]).toMatchObject({ event_type: 'QUEUE_RUN_MANUAL', org_id: 'org-1' });
+    const details = JSON.parse((auditInserts[0] as { details: string }).details);
+    expect(details.status).toBe('failed');
+    // Not a completed run from the admin's perspective — must not fire the
+    // "queue_run_completed" notification a real success would.
+    expect(emitOrgAdminNotificationsMock).not.toHaveBeenCalled();
+  });
+
+  it('a genuinely empty run (no rejectedReason) still returns 200 ok:true (unchanged happy path)', async () => {
+    installFromMock({
+      profiles: { data: { org_id: 'org-1', role: 'INDIVIDUAL', is_platform_admin: false } },
+      org_members: [{ data: { role: 'owner' } }],
+    });
+    processBatchAnchorsMock.mockResolvedValue({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+
+    const { res, status, json } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq(), res);
+
+    expect(status).not.toHaveBeenCalled();
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: true, processed: 0 }),
+    );
+    expect(recordOrgQueueRunResultMock).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'succeeded' }),
+    );
+  });
 });
