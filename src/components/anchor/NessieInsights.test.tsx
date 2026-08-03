@@ -49,7 +49,11 @@ describe('NessieInsights', () => {
     consoleError.mockRestore();
   });
 
-  it('displays the generic safe label on a failed request, never the raw server error text', async () => {
+  // The worker's OWN response body is a curated, safe-to-show business
+  // message (a tier-gate, a rate limit, ...) — it must reach the user
+  // verbatim so they can self-diagnose, exactly like it did before the
+  // VITE_WORKER_URL fix. See `src/lib/workerResponseError.ts` for why.
+  it('displays the worker\'s own response-body error message verbatim on a failed request', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
       json: () => Promise.resolve({ error: 'Nessie query endpoint is not enabled' }),
@@ -58,9 +62,9 @@ describe('NessieInsights', () => {
     renderComponent();
 
     await waitFor(() => {
-      expect(screen.getByText('Analysis unavailable')).toBeInTheDocument();
+      expect(screen.getByText('Nessie query endpoint is not enabled')).toBeInTheDocument();
     });
-    expect(screen.queryByText(/not enabled/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Analysis unavailable')).not.toBeInTheDocument();
   });
 
   it('displays the generic safe label on a network failure, never the raw exception text', async () => {
@@ -72,5 +76,28 @@ describe('NessieInsights', () => {
       expect(screen.getByText('Analysis unavailable')).toBeInTheDocument();
     });
     expect(screen.queryByText(/network error/i)).not.toBeInTheDocument();
+  });
+
+  // Reuse/security review finding: this call site must use BOTH halves of
+  // workerUrlSafety.ts's contract — resolveWorkerBaseUrl (picks the base)
+  // AND resolveSafeWorkerEndpoint (pins the request path/query to that base's
+  // origin) — not a hand-built `${workerUrl}/path` template string.
+  it('pins the request to the configured worker origin via resolveSafeWorkerEndpoint', async () => {
+    const customWorkerOrigin = 'https://custom-worker.example.test';
+    vi.stubEnv('VITE_WORKER_URL', customWorkerOrigin);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ answer: '', citations: [], confidence: 0 }),
+    });
+
+    renderComponent();
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledOnce();
+    });
+
+    const calledUrl = mockFetch.mock.calls[0][0] as string;
+    expect(new URL(calledUrl).origin).toBe(customWorkerOrigin);
+    expect(new URL(calledUrl).pathname).toBe('/api/v1/nessie/query');
   });
 });

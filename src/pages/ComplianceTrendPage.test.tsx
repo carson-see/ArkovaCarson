@@ -83,4 +83,57 @@ describe('ComplianceTrendPage', () => {
       consoleError.mockRestore();
     });
   });
+
+  // The worker's OWN response body is a curated, safe-to-show business
+  // message — it must reach the user verbatim so they can self-diagnose.
+  // See `src/lib/workerResponseError.ts` for why this must stay distinct
+  // from the generic network/misconfiguration fallback above.
+  it("displays the worker's own response-body error message verbatim on a failed request", async () => {
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'tok' } } });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: () => Promise.resolve({ error: 'Compliance trends require an active subscription.' }),
+    });
+
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(COMPLIANCE_TREND_LABELS.FETCH, 'i') }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Compliance trends require an active subscription.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(COMPLIANCE_TREND_LABELS.ERR_NETWORK)).not.toBeInTheDocument();
+  });
+
+  // Reuse/security review finding: this call site must use BOTH halves of
+  // workerUrlSafety.ts's contract — resolveWorkerBaseUrl (picks the base)
+  // AND resolveSafeWorkerEndpoint (pins the request path/query to that
+  // base's origin) — not a hand-built `${workerUrl}/path` template string.
+  it('pins the request to the configured worker origin via resolveSafeWorkerEndpoint', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'tok' } } });
+    const customWorkerOrigin = 'https://custom-worker.example.test';
+    vi.stubEnv('VITE_WORKER_URL', customWorkerOrigin);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ data: [] }),
+    });
+
+    // This file's other tests don't reset `mockFetch` between cases (it's a
+    // single shared mock for the whole describe block), so calls accumulate
+    // — take the LAST call, not index [0], to look at this test's own fetch.
+    const priorCallCount = mockFetch.mock.calls.length;
+
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(COMPLIANCE_TREND_LABELS.FETCH, 'i') }));
+
+    await waitFor(() => {
+      expect(mockFetch.mock.calls.length).toBe(priorCallCount + 1);
+    });
+
+    const calledUrl = mockFetch.mock.calls[priorCallCount][0] as string;
+    expect(new URL(calledUrl).origin).toBe(customWorkerOrigin);
+    expect(new URL(calledUrl).pathname).toBe('/api/v1/signatures/compliance-trends');
+
+    vi.unstubAllEnvs();
+  });
 });

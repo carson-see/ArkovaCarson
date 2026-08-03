@@ -101,11 +101,14 @@ describe('NessieIntelligencePanel', () => {
     expect(screen.getByText('SEC EDGAR')).toBeInTheDocument();
   });
 
-  // A thrown Error's raw `.message` is NEVER rendered verbatim (§1.4) — it can
-  // carry internal detail (e.g. resolveWorkerBaseUrl's VITE_WORKER_URL
-  // misconfiguration text, meant for console/engineer visibility only). The
-  // catch block always shows the curated, safe label instead.
-  it('displays the generic safe label on a failed request, never the raw server error text', async () => {
+  // The worker's OWN response body is a curated, safe-to-show business
+  // message (a tier-gate, a rate limit, ...) — it must reach the user
+  // verbatim so they can self-diagnose, exactly like it did before the
+  // VITE_WORKER_URL fix. This is the corrected behavior after an earlier
+  // version of that fix over-corrected to a blanket generic label for every
+  // thrown error, silently discarding this exact message (see
+  // `src/lib/workerResponseError.ts` for the full incident writeup).
+  it('displays the worker\'s own response-body error message verbatim on a failed request', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
       json: () => Promise.resolve({ error: 'Nessie query endpoint is not enabled' }),
@@ -117,9 +120,9 @@ describe('NessieIntelligencePanel', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     await waitFor(() => {
-      expect(screen.getByText('An error occurred')).toBeInTheDocument();
+      expect(screen.getByText('Nessie query endpoint is not enabled')).toBeInTheDocument();
     });
-    expect(screen.queryByText(/not enabled/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('An error occurred')).not.toBeInTheDocument();
   });
 
   it('displays the generic safe label on a network failure, never the raw exception text', async () => {
@@ -187,5 +190,31 @@ describe('NessieIntelligencePanel', () => {
     expect(url).toContain('/api/v1/nessie/query');
     expect(url).toContain('mode=context');
     expect(url).toContain('q=my+query');
+  });
+
+  // Reuse/security review finding: this call site must use BOTH halves of
+  // workerUrlSafety.ts's contract — resolveWorkerBaseUrl (picks the base)
+  // AND resolveSafeWorkerEndpoint (pins the request path/query to that base's
+  // origin) — not a hand-built `${workerUrl}/path` template string.
+  it('pins the request to the configured worker origin via resolveSafeWorkerEndpoint', async () => {
+    const customWorkerOrigin = 'https://custom-worker.example.test';
+    vi.stubEnv('VITE_WORKER_URL', customWorkerOrigin);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ answer: '', citations: [], confidence: 0 }),
+    });
+
+    renderComponent();
+    const input = screen.getByPlaceholderText(/ask a compliance question/i);
+    fireEvent.change(input, { target: { value: 'test' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledOnce();
+    });
+
+    const calledUrl = mockFetch.mock.calls[0][0] as string;
+    expect(new URL(calledUrl).origin).toBe(customWorkerOrigin);
+    expect(new URL(calledUrl).pathname).toBe('/api/v1/nessie/query');
   });
 });

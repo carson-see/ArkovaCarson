@@ -193,6 +193,13 @@ describe('useInviteMember', () => {
     expect(result.current.error).toContain('valid organization');
   });
 
+  // resolveSafeWorkerEndpoint's rejection message ("...HTTPS outside
+  // localhost...") is a structural/config validation detail — the SAME class
+  // of internal, engineer-facing text as resolveWorkerBaseUrl's VITE_WORKER_URL
+  // message (see useAsyncAction.ts's isSafeError doc). It is a plain `Error`,
+  // not an `ActionableInviteError`, so it must fall back to the generic,
+  // curated message here too — this test used to assert the raw text reached
+  // `error` state; that was the bug class this whole PR closes, not the spec.
   it('should not create an invitation or read the bearer token when the worker URL is unsafe', async () => {
     mockResolveSafeWorkerEndpoint.mockImplementation(() => {
       throw new Error('Worker endpoint must use HTTPS outside localhost.');
@@ -209,7 +216,8 @@ describe('useInviteMember', () => {
     expect(mockRpc).not.toHaveBeenCalled();
     expect(mockGetSession).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
-    expect(result.current.error).toContain('HTTPS outside localhost');
+    expect(result.current.error).toBe('Failed to send invitation. Please try again.');
+    expect(result.current.error).not.toContain('HTTPS outside localhost');
   });
 
   // Root cause of "invitation was created, but the email could not be sent" with
@@ -239,6 +247,15 @@ describe('useInviteMember', () => {
     // config Error — like the existing "unsafe worker URL" case below it — maps
     // to the generic, curated toast rather than the raw resolver message.
     expect(mockToastError).toHaveBeenCalledWith('Failed to send invitation. Please try again.');
+    // The hook's OWN `error` state (from useAsyncAction's isSafeError gate,
+    // not just the toast wrapper) must ALSO never carry the raw config
+    // detail — this is the exact surface that was latent-vulnerable until
+    // useAsyncAction defaulted to "never safe" + useInviteMember opted in
+    // ONLY isActionableInviteError. Nothing renders `error` from
+    // useInviteMember() today, but the very next caller to do so must not
+    // inherit a leak.
+    expect(result.current.error).toBe('Failed to send invitation. Please try again.');
+    expect(result.current.error).not.toContain('VITE_WORKER_URL');
   });
 
   it('should fail when the invitation email endpoint rejects after RPC success', async () => {

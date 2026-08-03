@@ -18,7 +18,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { supabase } from '@/lib/supabase';
 import { COMPLIANCE_TREND_LABELS } from '@/lib/copy';
-import { resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
+import { resolveSafeWorkerEndpoint, resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
+import { WorkerResponseError, isWorkerResponseError } from '@/lib/workerResponseError';
 
 interface TrendDataPoint {
   period: string;
@@ -70,24 +71,31 @@ export function ComplianceTrendPage() {
         from: new Date(fromDate).toISOString(),
         to: new Date(toDate).toISOString(),
       });
+      // resolveSafeWorkerEndpoint pins the path (including the query string) to
+      // the configured worker origin and enforces HTTPS outside localhost —
+      // resolveWorkerBaseUrl alone only picks the base; this is the other half
+      // of the same module's contract and must be applied to every request.
+      const endpoint = resolveSafeWorkerEndpoint(workerUrl, `/api/v1/signatures/compliance-trends?${params}`);
 
-      const resp = await fetch(`${workerUrl}/api/v1/signatures/compliance-trends?${params}`, {
+      const resp = await fetch(endpoint.toString(), {
         headers: { 'Authorization': `Bearer ${session.access_token}` },
       });
 
       if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: 'Request failed' }));
-        setError(err.error || `HTTP ${resp.status}`);
-        return;
+        const errBody = await resp.json().catch(() => ({ error: 'Request failed' }));
+        // Curated: this message came from the worker's own response body, so
+        // the worker already decided it's safe to show verbatim.
+        throw new WorkerResponseError(errBody.error || `HTTP ${resp.status}`);
       }
 
       setData(await resp.json());
-    } catch {
-      // Never surface a thrown Error's raw message here: it can be
-      // resolveWorkerBaseUrl's internal misconfiguration text (VITE_WORKER_URL
-      // detail, meant for console/engineer visibility, not end users) or any
-      // other unauthored string. Always use the curated, safe label.
-      setError(COMPLIANCE_TREND_LABELS.ERR_NETWORK);
+    } catch (err) {
+      // Only a WorkerResponseError (constructed exclusively from the worker's
+      // own response body above) is shown verbatim. Everything else — network
+      // errors, resolveWorkerBaseUrl's internal VITE_WORKER_URL
+      // misconfiguration text, or any other unauthored exception — falls back
+      // to the generic, curated label.
+      setError(isWorkerResponseError(err) ? err.message : COMPLIANCE_TREND_LABELS.ERR_NETWORK);
     } finally {
       setLoading(false);
     }

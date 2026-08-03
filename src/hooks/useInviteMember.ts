@@ -123,6 +123,13 @@ export function useInviteMember(): UseInviteMemberReturn {
   const { execute, loading, error, clearError } = useAsyncAction(
     inviteImpl,
     GENERIC_INVITE_FAILURE,
+    // Only an ActionableInviteError (curated, user-safe messages we authored
+    // — "already a member", "email could not be sent", etc.) surfaces
+    // verbatim in `error` state, mirroring the toast-safety check in
+    // `inviteMember` below. Everything else — including resolveWorkerBaseUrl's
+    // internal VITE_WORKER_URL config text — falls back to
+    // GENERIC_INVITE_FAILURE. See useAsyncAction.ts's isSafeError doc.
+    isActionableInviteError,
   );
 
   const inviteMember = useCallback(

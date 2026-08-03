@@ -95,4 +95,59 @@ describe('AuditorBatchPage', () => {
     });
     expect(screen.queryByText(/internal socket layer/)).not.toBeInTheDocument();
   });
+
+  // The worker's OWN response body is a curated, safe-to-show business
+  // message — it must reach the auditor verbatim so they can self-diagnose
+  // (the 422 sampling-population case this comment already documented at the
+  // throw site: the `message` sentence, not just the `error` machine token).
+  // See `src/lib/workerResponseError.ts` for why this must stay distinct from
+  // the generic network/misconfiguration fallback above.
+  it("displays the worker's own response-body error message verbatim on a failed request", async () => {
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'tok' } } });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      json: () => Promise.resolve({
+        error: 'population_too_large',
+        message: 'Reduce the sample percentage or provide a smaller ID list.',
+      }),
+    });
+
+    renderPage();
+    submit();
+
+    await waitFor(() => {
+      expect(screen.getByText('Reduce the sample percentage or provide a smaller ID list.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('population_too_large')).not.toBeInTheDocument();
+    expect(screen.queryByText(AUDITOR_BATCH_LABELS.ERR_NETWORK)).not.toBeInTheDocument();
+  });
+
+  // Reuse/security review finding: this call site must use BOTH halves of
+  // workerUrlSafety.ts's contract — resolveWorkerBaseUrl (picks the base)
+  // AND resolveSafeWorkerEndpoint (pins the request path to that base's
+  // origin) — not a hand-built `${workerUrl}/path` template string.
+  it('pins the request to the configured worker origin via resolveSafeWorkerEndpoint', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'tok' } } });
+    const customWorkerOrigin = 'https://custom-worker.example.test';
+    vi.stubEnv('VITE_WORKER_URL', customWorkerOrigin);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        results: [],
+        summary: { total_verified: 0, passed: 0, failed: 0, not_found: 0, anomalies_found: 0 },
+      }),
+    });
+
+    renderPage();
+    submit();
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledOnce();
+    });
+
+    const calledUrl = mockFetch.mock.calls[0][0] as string;
+    expect(new URL(calledUrl).origin).toBe(customWorkerOrigin);
+    expect(new URL(calledUrl).pathname).toBe('/api/v1/audit/batch-verify');
+  });
 });

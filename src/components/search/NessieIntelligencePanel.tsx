@@ -22,7 +22,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { NESSIE_LABELS } from '@/lib/copy';
-import { resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
+import { resolveSafeWorkerEndpoint, resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
+import { WorkerResponseError, isWorkerResponseError } from '@/lib/workerResponseError';
 
 // ---------------------------------------------------------------------------
 // Types (matching nessie-query.ts response shapes)
@@ -101,28 +102,37 @@ export function NessieIntelligencePanel() {
 
     try {
       const workerUrl = resolveWorkerBaseUrl(import.meta.env.VITE_WORKER_URL);
-      const res = await fetch(
-        `${workerUrl}/api/v1/nessie/query?${new URLSearchParams({
+      // resolveSafeWorkerEndpoint pins the path (including the query string) to
+      // the configured worker origin and enforces HTTPS outside localhost —
+      // resolveWorkerBaseUrl alone only picks the base; this is the other half
+      // of the same module's contract and must be applied to every request.
+      const endpoint = resolveSafeWorkerEndpoint(
+        workerUrl,
+        `/api/v1/nessie/query?${new URLSearchParams({
           q: query.trim(),
           mode: 'context',
           task: taskType,
           limit: '10',
         })}`,
       );
+      const res = await fetch(endpoint.toString());
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: 'Request failed' }));
-        throw new Error(body.error || `Request failed (${res.status})`);
+        // Curated: this message came from the worker's own response body, so
+        // the worker already decided it's safe to show verbatim.
+        throw new WorkerResponseError(body.error || `Request failed (${res.status})`);
       }
 
       const data: NessieContextResponse = await res.json();
       setResponse(data);
-    } catch {
-      // Never surface a thrown Error's raw message here: it can be
-      // resolveWorkerBaseUrl's internal misconfiguration text (VITE_WORKER_URL
-      // detail, meant for console/engineer visibility, not end users) or any
-      // other unauthored string. Always use the curated, safe label.
-      setError('An error occurred');
+    } catch (err) {
+      // Only a WorkerResponseError (constructed exclusively from the worker's
+      // own response body above) is shown verbatim. Everything else — network
+      // errors, resolveWorkerBaseUrl's internal VITE_WORKER_URL
+      // misconfiguration text, or any other unauthored exception — falls back
+      // to the generic, curated label.
+      setError(isWorkerResponseError(err) ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
     }
