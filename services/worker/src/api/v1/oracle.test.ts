@@ -26,10 +26,61 @@ vi.mock('../../utils/logger.js', () => ({
 }));
 
 vi.mock('../../config.js', () => ({
-  config: { bitcoinNetwork: 'mainnet', frontendUrl: 'https://app.arkova.ai' },
+  config: { bitcoinNetwork: 'mainnet', frontendUrl: 'https://app.arkova.ai', enableCredentialVerifiedWebhook: false },
+}));
+
+vi.mock('../../webhooks/delivery.js', () => ({
+  dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../../utils/concurrency.js', () => ({
+  runWithConcurrency: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../../utils/auditEvent.js', () => ({
+  recordAuditEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { buildVerificationResult } from './verify.js';
+import { oracleRouter } from './oracle.js';
+import type { Request, Response } from 'express';
+
+// ---- Route-level test helpers (mirrors ai-verify-search.test.ts's pattern:
+// pull the raw handler off the router's internal stack and invoke it
+// directly, rather than standing up a full Express app + supertest) ----
+function getOracleHandler() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const stack = (oracleRouter as any).stack;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const layer = stack.find((l: any) => l.route?.path === '/verify' && l.route?.methods?.post);
+  return layer?.route?.stack[0].handle;
+}
+
+function createOracleReqRes(
+  body: Record<string, unknown> = {},
+  apiKey?: { keyId: string; orgId: string; userId: string; scopes: string[]; rateLimitTier: string; keyPrefix: string },
+) {
+  const req = {
+    apiKey,
+    body,
+    method: 'POST',
+    url: '/verify',
+  } as unknown as Request;
+  const res = {
+    status: vi.fn().mockReturnThis(),
+    json: vi.fn().mockReturnThis(),
+  } as unknown as Response;
+  return { req, res };
+}
+
+const mockOracleApiKey = {
+  keyId: 'key-123',
+  orgId: 'org-456',
+  userId: 'user-789',
+  scopes: ['verify'],
+  rateLimitTier: 'paid' as const,
+  keyPrefix: 'ak_test',
+};
 
 describe('Oracle endpoint', () => {
   beforeEach(() => {
@@ -214,6 +265,101 @@ describe('Oracle endpoint', () => {
         public_ids: z.array(z.string().min(3).max(64)).min(1).max(25),
       });
       expect(schema.safeParse({ public_ids: ['ARK-TST-DEG-ABC123'] }).success).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /api/v1/oracle/verify — authentication (this session's finding).
+  //
+  // THE BUG: oracle.ts's own header claims this endpoint "Requires an API
+  // key (identifies the querying agent)", unlike the public anonymous
+  // GET /verify/:publicId. But it is mounted at router.ts:462 as
+  // `router.use('/oracle', requireScope('verify'), oracleRouter)` —
+  // `requireScope()` explicitly falls through for an anonymous request
+  // ("Anonymous requests are handled by other auth guards" —
+  // apiKeyAuth.ts:120), and `apiKeyAuth()` itself is mounted at router.ts:191
+  // WITHOUT `{ required: true }`, so a keyless request is explicitly allowed
+  // through (apiKeyAuth.ts:175 "Anonymous access allowed"). Unlike its
+  // closest sibling ai-verify-search.ts:36-37 (`if (!req.apiKey) { res
+  // .status(401)... }`), oracle.ts's handler reads `req.apiKey?.keyId ??
+  // null` and proceeds unconditionally — so a fully anonymous POST reaches
+  // the DB, gets a complete HMAC-"signed" OracleResult back (indistinguishable
+  // from an authenticated agent's signed response), and the audit row records
+  // `org_id: undefined` / `agent_key_id: null` — no caller identity at all.
+  // -------------------------------------------------------------------------
+  describe('POST /api/v1/oracle/verify — authentication', () => {
+    it('returns 401 without an API key and never touches the database (anonymous callers must not reach a signed result)', async () => {
+      const handler = getOracleHandler();
+      const { req, res } = createOracleReqRes({ public_ids: ['ARK-TST-DEG-ABC123'] });
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringMatching(/authentication_required|api_key/i) }),
+      );
+      // The strongest form of this assertion: the handler must short-circuit
+      // BEFORE any DB work, not merely also return 401 after querying anyway.
+      expect(mockDbFrom).not.toHaveBeenCalled();
+    });
+
+    it('still builds a signed result when a valid API key IS present (non-regression)', async () => {
+      process.env.API_KEY_HMAC_SECRET = 'test-oracle-hmac-secret';
+      mockDbFrom.mockImplementation((table: string) => {
+        if (table === 'anchors') {
+          return {
+            select: () => ({
+              in: () => ({
+                is: () =>
+                  Promise.resolve({
+                    data: [
+                      {
+                        public_id: 'ARK-TST-DEG-ABC123',
+                        fingerprint: 'abc123',
+                        status: 'SECURED',
+                        chain_tx_id: 'txid',
+                        chain_block_height: 900000,
+                        chain_timestamp: '2026-04-01T00:00:00Z',
+                        created_at: '2026-04-01T00:00:00Z',
+                        credential_type: 'DEGREE',
+                        issued_at: '2026-01-01',
+                        expires_at: null,
+                        org_id: 'org-456',
+                        description: 'Bachelor of Science',
+                        directory_info_opt_out: false,
+                      },
+                    ],
+                    error: null,
+                  }),
+              }),
+            }),
+          };
+        }
+        if (table === 'organizations') {
+          return { select: () => ({ in: () => Promise.resolve([]) }) };
+        }
+        throw new Error(`unexpected table in oracle test: ${table}`);
+      });
+
+      const handler = getOracleHandler();
+      const { req, res } = createOracleReqRes(
+        { public_ids: ['ARK-TST-DEG-ABC123'] },
+        mockOracleApiKey,
+      );
+
+      await handler(req, res);
+
+      expect(res.status).not.toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent_key_id: mockOracleApiKey.keyId,
+          signature: expect.any(String),
+          results: expect.arrayContaining([
+            expect.objectContaining({ public_id: 'ARK-TST-DEG-ABC123' }),
+          ]),
+        }),
+      );
+      delete process.env.API_KEY_HMAC_SECRET;
     });
   });
 });
