@@ -318,6 +318,19 @@ export async function acquireRunLease(
  * re-evaluates the `WHERE` after taking the row lock. The `.or(...)` is the
  * entire safety argument, which is why the test double parses and evaluates the
  * emitted expression rather than restating it.
+ *
+ * INC-2026-08-04: the returning projection MUST list every column named in the
+ * `.or(...)` filter. PostgREST resolves an UPDATE's `or=` filter against the
+ * `select=` projection, so `.select('id')` made this CAS fail closed with
+ * `42703 column job_queue.status does not exist` — a hard error, not a lost
+ * race. `withRunLease` reads that as "someone else holds it" and skips, so
+ * EVERY lease-guarded job (batch anchoring, check-confirmations, public-record
+ * anchoring, connector-artifact drain) stopped running platform-wide until the
+ * projection was widened. Verified against prod PostgREST: `select=id` and
+ * `select=id,status` both 400; `select=id,status,scheduled_for` returns 200.
+ * Only UPDATE is affected — reads and `.eq()` filters resolve fine — which is
+ * why this one call site took down the whole worker and nothing else did.
+ * Do not narrow this projection again without widening the filter to match.
  */
 async function compareAndSetLease(
   client: SupabaseClient,
@@ -337,7 +350,9 @@ async function compareAndSetLease(
     })
     .eq('id', spec.leaseId)
     .or(`status.eq.completed,scheduled_for.lt.${nowIso}`)
-    .select('id');
+    // Must include every column referenced by the `.or(...)` above — see the
+    // INC-2026-08-04 note on this function. `id` alone silently 400s.
+    .select('id, status, scheduled_for');
 
   if (error) return { matched: false, error };
   return { matched: ((data ?? []) as unknown[]).length > 0, error: null };
