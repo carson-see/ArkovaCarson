@@ -91,11 +91,17 @@ describe('run lease — compare-and-set semantics', () => {
    * bootstrap write here is thousands of no-op writes a day against `job_queue`,
    * a table the db-health monitor already tracks as hot.
    */
-  it('takes a free lease in a single round-trip, with no redundant bootstrap', async () => {
+  it('takes a free lease in two round-trips (CAS + read-back), with no redundant bootstrap', async () => {
     const store = createRunLeaseStore(SPEC, 'free');
 
     expect(await acquireRunLease(store.client, SPEC, 'instance-a', new Date())).toBe(true);
-    expect(store.callCount()).toBe(1);
+    // CAS + ownership read-back. It was one call until INC-2026-08-04: PostgREST
+    // filters an UPDATE's RETURNING rows by the same predicate, and this CAS
+    // mutates the columns it filters on, so the response is always empty and
+    // cannot answer "did I win". The extra point lookup is the price of a
+    // truthful answer; what must stay at ONE is the bootstrap upsert, which is
+    // still skipped entirely on the steady-state path.
+    expect(store.callCount()).toBe(2);
   });
 
   /**
@@ -235,27 +241,54 @@ describe('run lease — compare-and-set semantics', () => {
     expect(store.current()?.status).toBe('processing');
   });
 
-  it('fails CLOSED when a projection omits an or() filter column (guard self-test)', async () => {
+  /**
+   * INC-2026-08-04, second failure. Widening the projection cleared the 42703
+   * but left a worse bug: PostgREST filters an UPDATE's RETURNING rows by the
+   * same predicate, and this CAS mutates the columns it filters on, so a
+   * WINNING claim still comes back empty. Ownership inferred from that response
+   * is always `false` — the caller takes the lease, thinks it lost, and
+   * `withRunLease` skips the release, poisoning the lease for a full TTL.
+   *
+   * These two pin the shape of the fix rather than the symptom: the update
+   * response is empty even on a win, and acquire is nonetheless correct.
+   */
+  it('gets an EMPTY update response even when the claim WINS (prod behavior)', async () => {
     const store = createRunLeaseStore(SPEC, 'free');
-    const narrowed = {
-      from: () => {
-        const inner = store.from('job_queue') as Record<string, (...args: unknown[]) => unknown>;
-        const proxy: Record<string, unknown> = {};
-        for (const key of Object.keys(inner)) {
-          proxy[key] =
-            key === 'select'
-              ? // Re-narrow to the pre-incident projection.
-                (..._args: unknown[]) => inner.select('id')
-              : (...args: unknown[]) => {
-                  const out = inner[key](...args);
-                  return out === inner ? proxy : out;
-                };
-        }
-        return proxy;
-      },
-    } as unknown as Parameters<typeof acquireRunLease>[0];
+    const now = new Date();
+    type Chain = {
+      update: (v: unknown) => Chain;
+      eq: (c: string, v: string) => Chain;
+      or: (e: string) => PromiseLike<{ data: unknown[]; error: unknown }>;
+    };
+    const b = store.from('job_queue') as unknown as Chain;
 
-    expect(await acquireRunLease(narrowed, SPEC, 'instance-a', new Date())).toBe(false);
+    const res = await b
+      .update({
+        status: 'processing',
+        scheduled_for: new Date(now.getTime() + SPEC.ttlMs).toISOString(),
+        payload: { holder: 'instance-a' },
+      })
+      .eq('id', SPEC.leaseId)
+      .or(`status.eq.completed,scheduled_for.lt.${now.toISOString()}`);
+
+    expect(res.data).toEqual([]);          // nothing to infer ownership from …
+    expect(store.current()?.payload.holder).toBe('instance-a'); // … yet the write landed
+  });
+
+  it('still reports the win correctly, because ownership comes from the read-back', async () => {
+    const store = createRunLeaseStore(SPEC, 'free');
+    expect(await acquireRunLease(store.client, SPEC, 'instance-a', new Date())).toBe(true);
+    expect(store.current()?.payload.holder).toBe('instance-a');
+  });
+
+  it('does not false-positive when another holder owns the lease', async () => {
+    // The read-back compares holders, so a lease held by someone else must
+    // still read as a loss even though our UPDATE also returned empty.
+    const store = createRunLeaseStore(SPEC, {
+      held: { holder: 'instance-b', expiresAt: new Date(Date.now() + 60_000).toISOString() },
+    });
+    expect(await acquireRunLease(store.client, SPEC, 'instance-a', new Date())).toBe(false);
+    expect(store.current()?.payload.holder).toBe('instance-b');
   });
 });
 
@@ -564,9 +597,10 @@ describe('withRunLease', () => {
 
     expect(await first).toEqual({ acquired: true, result: 'first' });
     expect(second.acquired).toBe(false);
-    // Exactly the first run's compare-and-set + release. The racing caller
-    // performed no store operation at all.
-    expect(store.callCount()).toBe(2);
+    // Exactly the first run's compare-and-set + ownership read-back + release.
+    // The racing caller performed no store operation at all — that is what this
+    // test pins, and it is unchanged by the read-back.
+    expect(store.callCount()).toBe(3);
   });
 
   it('frees the in-process guard after a run so the next tick can proceed', async () => {
