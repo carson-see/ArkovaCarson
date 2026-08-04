@@ -192,16 +192,41 @@ export function buildSelectChain(opts: {
  * (see `run-lease.test.ts`), against a store that EVALUATES the compare-and-set
  * predicate rather than granting unconditionally.
  */
+/** Last holder written through `grantedRunLeaseTable` — see the note inside. */
+let grantedLeaseHolder: string | undefined;
+
 export function grantedRunLeaseTable(): Record<string, ReturnType<typeof vi.fn>> {
-  const granted = { data: [{ id: 'lease-row' }], error: null };
-  const chain: Record<string, ReturnType<typeof vi.fn>> = {};
-  const self = () => chain;
-  chain.eq = vi.fn(self);
-  chain.or = vi.fn(self);
-  chain.select = vi.fn(() => Promise.resolve(granted));
+  // INC-2026-08-04: acquisition is now CAS-then-read-back, so this double has
+  // to answer BOTH calls. It remembers the holder the CAS wrote and hands it
+  // back from the point lookup, which is what makes the claim read as a win.
+  // Awaiting the update chain directly (the CAS, which no longer projects) and
+  // awaiting it after `.select('id')` (the release) both resolve — the CAS
+  // inspects only `error`, the release needs a non-empty match.
+  //
+  // The holder lives at MODULE scope on purpose: callers wire this behind a
+  // `from()` that builds a fresh double per call, so the CAS and the read-back
+  // are served by different instances. Per-instance state would always read
+  // back `undefined` and report every claim as lost — the exact bug this
+  // helper exists to keep out of the way.
+  const thenable = (result: () => unknown): Record<string, ReturnType<typeof vi.fn>> => {
+    const chain: Record<string, ReturnType<typeof vi.fn>> = {};
+    const self = () => chain;
+    chain.eq = vi.fn(self);
+    chain.or = vi.fn(self);
+    chain.select = vi.fn(self);
+    chain.then = vi.fn((resolve: (v: unknown) => unknown) => Promise.resolve(resolve(result())));
+    return chain;
+  };
+
   return {
     upsert: vi.fn().mockResolvedValue({ error: null }),
-    update: vi.fn(self),
+    update: vi.fn((values: { payload?: { holder?: string } } = {}) => {
+      if (typeof values?.payload?.holder === 'string') grantedLeaseHolder = values.payload.holder;
+      return thenable(() => ({ data: [{ id: 'lease-row' }], error: null }));
+    }),
+    select: vi.fn(() =>
+      thenable(() => ({ data: [{ payload: { holder: grantedLeaseHolder } }], error: null })),
+    ),
   };
 }
 
