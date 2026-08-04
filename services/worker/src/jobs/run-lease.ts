@@ -319,18 +319,30 @@ export async function acquireRunLease(
  * entire safety argument, which is why the test double parses and evaluates the
  * emitted expression rather than restating it.
  *
- * INC-2026-08-04: the returning projection MUST list every column named in the
- * `.or(...)` filter. PostgREST resolves an UPDATE's `or=` filter against the
- * `select=` projection, so `.select('id')` made this CAS fail closed with
- * `42703 column job_queue.status does not exist` — a hard error, not a lost
- * race. `withRunLease` reads that as "someone else holds it" and skips, so
- * EVERY lease-guarded job (batch anchoring, check-confirmations, public-record
- * anchoring, connector-artifact drain) stopped running platform-wide until the
- * projection was widened. Verified against prod PostgREST: `select=id` and
- * `select=id,status` both 400; `select=id,status,scheduled_for` returns 200.
- * Only UPDATE is affected — reads and `.eq()` filters resolve fine — which is
- * why this one call site took down the whole worker and nothing else did.
- * Do not narrow this projection again without widening the filter to match.
+ * INC-2026-08-04: ownership is confirmed by a READ-BACK, never by the UPDATE's
+ * returned rows. PostgREST applies an UPDATE's filters to the RETURNING
+ * projection as well as to the WHERE clause, and this CAS mutates the very
+ * columns it filters on — after the write the row is `processing` with a future
+ * expiry, so it can never satisfy its own free-or-expired precondition. Two
+ * failure modes came out of that, in order:
+ *
+ *   1. `.select('id')` — filter columns absent from the projection, so
+ *      PostgREST 400s with `42703 column job_queue.status does not exist`.
+ *      Every claim failed hard and every lease-guarded job stopped.
+ *   2. `.select('id, status, scheduled_for')` — no error, but the returned set
+ *      is filtered by the same `or=` and comes back EMPTY. Far worse than (1):
+ *      the write LANDS, so the caller takes the lease, reads `matched === false`
+ *      and reports "another instance holds it" — then skips the release,
+ *      because `withRunLease` only releases what it believes it claimed. Every
+ *      attempt silently poisoned the lease for a full TTL while doing no work.
+ *
+ * Both were verified directly against prod PostgREST. The read-back below is
+ * immune to both: the UPDATE stays a single atomic CAS (two callers still
+ * cannot both win — Postgres re-evaluates the WHERE under the row lock), and
+ * ownership is then observed from the stored holder. That observation cannot
+ * race: if we won, the row is ours until the TTL and nobody else can take it;
+ * if we lost, it carries someone else's holder. `runLeaseHolder()` mints a
+ * fresh uuid per call, so the comparison can never false-positive across runs.
  */
 async function compareAndSetLease(
   client: SupabaseClient,
@@ -339,8 +351,10 @@ async function compareAndSetLease(
   now: Date,
 ): Promise<{ matched: boolean; error: unknown }> {
   const nowIso = now.toISOString();
+  // The CAS itself. No `.select()` — see the note above; any returning
+  // projection here is filtered by the same predicate and comes back empty.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (client as any)
+  const { error } = await (client as any)
     .from('job_queue')
     .update({
       status: 'processing',
@@ -349,13 +363,22 @@ async function compareAndSetLease(
       updated_at: nowIso,
     })
     .eq('id', spec.leaseId)
-    .or(`status.eq.completed,scheduled_for.lt.${nowIso}`)
-    // Must include every column referenced by the `.or(...)` above — see the
-    // INC-2026-08-04 note on this function. `id` alone silently 400s.
-    .select('id, status, scheduled_for');
+    .or(`status.eq.completed,scheduled_for.lt.${nowIso}`);
 
   if (error) return { matched: false, error };
-  return { matched: ((data ?? []) as unknown[]).length > 0, error: null };
+
+  // Read-back: did OUR holder land? An unfiltered point lookup, so nothing is
+  // re-evaluated against the CAS predicate.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error: readError } = await (client as any)
+    .from('job_queue')
+    .select('payload')
+    .eq('id', spec.leaseId);
+
+  if (readError) return { matched: false, error: readError };
+
+  const rows = (data ?? []) as Array<{ payload?: { holder?: string } | null }>;
+  return { matched: rows[0]?.payload?.holder === holder, error: null };
 }
 
 /**
