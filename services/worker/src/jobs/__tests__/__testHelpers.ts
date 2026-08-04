@@ -277,6 +277,15 @@ export interface RunLeaseStoreOptions {
  * PostgREST the CAS would match zero rows, acquire would fail closed, and the
  * job would silently stop running forever. Parsing the emitted expression is
  * what makes that mutation fail here.
+ *
+ * INC-2026-08-04: it also enforces PostgREST's projection rule for UPDATEs —
+ * every column named in the `or=` filter must appear in the `select=`
+ * projection, or the real server answers `42703 column job_queue.<col> does
+ * not exist`. `builder.select` used to discard its argument entirely, so
+ * `.select('id')` looked fine here while it hard-failed every CAS in prod and
+ * silently stopped every lease-guarded job. The double now returns that same
+ * error, which is what makes narrowing the projection fail in CI instead of
+ * in production.
  */
 export function createRunLeaseStore(
   spec: RunLeaseSpecLike,
@@ -300,12 +309,31 @@ export function createRunLeaseStore(
     });
   }
 
+  /**
+   * PostgREST resolves an UPDATE's `or=` filter against the `select=`
+   * projection. Return the first filter column the projection omits, so the
+   * caller can answer exactly as the server does.
+   */
+  function missingFilterColumn(
+    expression: string | undefined,
+    projection: string | undefined,
+  ): string | undefined {
+    if (expression === undefined || projection === undefined) return undefined;
+    const selected = projection.split(',').map((column) => column.trim());
+    if (selected.includes('*')) return undefined;
+    return expression
+      .split(',')
+      .map((term) => term.split('.')[0].trim())
+      .find((column) => column.length > 0 && !selected.includes(column));
+  }
+
   function from(): Record<string, unknown> {
     const filters: Record<string, string> = {};
     let pending: Partial<RunLeaseRow> | undefined;
     let orExpression: string | undefined;
     let mode: 'upsert' | 'update' | undefined;
     let releaseHolder: string | undefined;
+    let projection: string | undefined;
 
     const builder: Record<string, unknown> = {};
     builder.upsert = (values: RunLeaseRow) => {
@@ -327,9 +355,27 @@ export function createRunLeaseStore(
       orExpression = expression;
       return builder;
     };
-    builder.select = () => builder;
+    builder.select = (columns?: string) => {
+      projection = columns;
+      return builder;
+    };
     builder.then = (resolve: (v: { data: unknown; error: unknown }) => unknown) => {
       calls += 1;
+      // Real PostgREST rejects the whole statement before it matches any row.
+      const omitted = mode === 'update' ? missingFilterColumn(orExpression, projection) : undefined;
+      if (omitted !== undefined) {
+        return Promise.resolve(
+          resolve({
+            data: null,
+            error: {
+              code: '42703',
+              details: null,
+              hint: null,
+              message: `column job_queue.${omitted} does not exist`,
+            },
+          }),
+        );
+      }
       if (mode === 'upsert') {
         // `ignoreDuplicates: true` on the primary key: create once, never clobber.
         if (!row) row = pending as RunLeaseRow;

@@ -212,6 +212,51 @@ describe('run lease — compare-and-set semantics', () => {
     const client = erroringRunLeaseClient({ failOn: 'throw' });
     expect(await acquireRunLease(client, SPEC, 'instance-a', new Date())).toBe(false);
   });
+
+  /**
+   * INC-2026-08-04 — the outage this suite did NOT catch.
+   *
+   * PostgREST resolves an UPDATE's `or=` filter against the `select=`
+   * projection. The CAS emitted `.select('id')` while filtering on `status`
+   * and `scheduled_for`, so prod answered `42703 column job_queue.status does
+   * not exist` on EVERY acquisition. `withRunLease` reads a failed claim as
+   * "another instance holds it", so batch anchoring, check-confirmations,
+   * public-record anchoring and the connector drain all silently stopped —
+   * ~36h with zero anchors secured, while the suite stayed green because the
+   * store double discarded the projection argument.
+   *
+   * The first test pins the fix; the second proves the double would now catch
+   * a re-narrowing, so this guard cannot rot back into a no-op.
+   */
+  it('emits a projection covering every column its or() filter references', async () => {
+    const store = createRunLeaseStore(SPEC, 'free');
+
+    expect(await acquireRunLease(store.client, SPEC, 'instance-a', new Date())).toBe(true);
+    expect(store.current()?.status).toBe('processing');
+  });
+
+  it('fails CLOSED when a projection omits an or() filter column (guard self-test)', async () => {
+    const store = createRunLeaseStore(SPEC, 'free');
+    const narrowed = {
+      from: () => {
+        const inner = store.from('job_queue') as Record<string, (...args: unknown[]) => unknown>;
+        const proxy: Record<string, unknown> = {};
+        for (const key of Object.keys(inner)) {
+          proxy[key] =
+            key === 'select'
+              ? // Re-narrow to the pre-incident projection.
+                (..._args: unknown[]) => inner.select('id')
+              : (...args: unknown[]) => {
+                  const out = inner[key](...args);
+                  return out === inner ? proxy : out;
+                };
+        }
+        return proxy;
+      },
+    } as unknown as Parameters<typeof acquireRunLease>[0];
+
+    expect(await acquireRunLease(narrowed, SPEC, 'instance-a', new Date())).toBe(false);
+  });
 });
 
 describe('run lease — holder identity', () => {
