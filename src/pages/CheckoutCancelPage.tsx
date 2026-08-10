@@ -48,7 +48,10 @@ export function CheckoutCancelPage() {
           <CardContent className="space-y-4">
             <div className="flex flex-col gap-2 pt-2">
               <Button asChild>
-                <Link to={ROUTES.BILLING}>
+                {/* "Back to Plans" must return to plan selection so a user who
+                    cancelled can retry checkout. It pointed at /billing (the
+                    status summary), which had no working way back to plans. */}
+                <Link to={ROUTES.PRICING}>
                   <ArrowLeft className="mr-2 h-4 w-4" />
                   {BILLING_LABELS.BACK_TO_PRICING}
                 </Link>
