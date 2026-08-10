@@ -1,6 +1,12 @@
 # agents.md — lib
 
-_Last updated: 2026-08-03_
+_Last updated: 2026-08-10_
+
+## 2026-08-10 — `ACTIVATE_ACCOUNT_LABELS` + `ActivateAccountSchema` (recipient activation launch blocker)
+
+`copy.ts` gains `ACTIVATE_ACCOUNT_LABELS` for the rebuilt `/activate` page; `validators.ts` gains `ActivateAccountSchema` (token + min-8 password + optional name), mirroring `AcceptInvitationSchema`. The client check is UX only — `services/worker/src/api/activation.ts` re-validates and is the authority.
+
+Copy note (§1.5 / §1.13 R-7): the old page promised a 12-word "backup access key". No code path could ever redeem it — there is no recovery flow and no column to store the derived hash in. The new copy makes no such claim rather than restating it in softer words. Ruling and evidence in `src/pages/agents.md`.
 
 ## 2026-08-03 INSTANT_SECURE rule action — copy + ActionType union (founder directive)
 
