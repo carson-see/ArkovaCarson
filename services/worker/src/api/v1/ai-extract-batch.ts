@@ -37,6 +37,7 @@ import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
 import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
 import { submitJob } from '../../utils/jobQueue.js';
+import { AI_CREDIT_RECONCILE_JOB_TYPE } from '../../jobs/ai-credit-reconcile.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
@@ -54,8 +55,14 @@ const CONCURRENCY_LIMIT = Math.min(
 // validated + clamped to [1000, 30000] in config.ts, not read ad-hoc here.
 export const BATCH_ROW_LATENCY_BUDGET_MS = config.aiBatchRowLatencyBudgetMs;
 
-/** Job type for the credit-reconciliation queue (refund failed after a successful debit). */
-export const AI_CREDIT_RECONCILE_JOB_TYPE = 'ai_credits.reconcile_refund';
+/**
+ * Job type for the credit-reconciliation queue (refund failed after a
+ * successful debit). Declared by the CONSUMER (`jobs/ai-credit-reconcile.ts`,
+ * which drains it) and re-exported here so producer and consumer cannot drift
+ * onto two spellings of the same literal — the same producer/consumer pairing
+ * `drive-artifact-producer.ts` / `jobs/drive-file-changed.ts` uses.
+ */
+export { AI_CREDIT_RECONCILE_JOB_TYPE };
 
 const BatchRowSchema = z.object({
   text: z.string().min(1, 'Row text is required'),
