@@ -100,7 +100,9 @@ test.describe('Anchor Creation (Secure Document)', () => {
       await skipBtn.waitFor({ state: 'visible', timeout: 25_000 });
       await skipBtn.click();
     } catch {
-      // AI was off — anchor already created by Continue click
+      // AI was off — handleUploadContinue's else-branch routed straight to the
+      // confirm step (QUEUE-01). Either way we land on the securing-path choice
+      // below; neither branch creates the anchor on its own any more.
     }
 
     // QUEUE-01 / SCRUM-2894: every path (including the extraction-failed
@@ -109,10 +111,20 @@ test.describe('Anchor Creation (Secure Document)', () => {
     // created once the securing-path choice is made. This sprint only
     // "Add to Queue" is exposed (Secure Instantly is R5-dark), so that is
     // the confirm button to click here.
+    // FLAKE FIX: this step is UNCONDITIONAL, so assert it instead of probing it.
+    // Both branches above (extraction-failed Skip, and the AI-off Continue)
+    // `await autoSelectTemplate('OTHER')` — a live Supabase round-trip to
+    // `credential_templates` — BEFORE `setStep('confirm')`, and the confirm step
+    // always renders `securing-path-queue`. The previous
+    // `if (await ...isVisible({ timeout: 10_000 }).catch(() => false))` guard
+    // turned a slow round-trip into a SILENT SKIP: the click never fired, the
+    // anchor was never created, and the run failed 15s later in the poll below
+    // with a misleading "anchor row never appeared" — then passed on retry.
+    // `toBeVisible` makes Playwright WAIT for the step rather than race it, and
+    // fails at the real cause if it genuinely never arrives.
     const confirmQueueBtn = dialog.getByTestId('securing-path-queue');
-    if (await confirmQueueBtn.isVisible({ timeout: 10_000 }).catch(() => false)) {
-      await confirmQueueBtn.click();
-    }
+    await expect(confirmQueueBtn).toBeVisible({ timeout: 30_000 });
+    await confirmQueueBtn.click();
 
     let createdAnchorId: string | null = null;
     await expect.poll(async () => {
