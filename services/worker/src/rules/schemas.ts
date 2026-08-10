@@ -324,8 +324,9 @@ export const RULE_DISPATCH_OUTCOME = {
   WEBHOOK_DELIVERED: 'webhook_delivered',
   // SCRUM-1649 DS-AUTO-02 — anchor action routing (DS-06 / DS-07).
   // QUEUED_FOR_ANCHOR covers AUTO_ANCHOR's queue mode and the
-  // FAST_TRACK_ANCHOR insufficient-credits fall-through. ANCHOR_DISPATCHED
-  // is the FAST_TRACK_ANCHOR happy-path after submitJob succeeds.
+  // FAST_TRACK_ANCHOR insufficient-credits fall-through. ANCHOR_DISPATCHED is
+  // the credit-funded happy path (FAST_TRACK_ANCHOR / INSTANT_SECURE) after
+  // the credit is charged and the immediate per-org batch pass is kicked.
   QUEUED_FOR_ANCHOR: 'queued_for_anchor',
   ANCHOR_DISPATCHED: 'anchor_dispatched',
   // SCRUM-2904 — dual-path reconciliation. Emitted when the declared-hash rules
