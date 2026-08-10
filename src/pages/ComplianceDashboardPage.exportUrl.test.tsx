@@ -44,7 +44,8 @@ vi.mock('@/components/compliance/ExpiringDocumentsCard', () => ({ ExpiringDocume
 vi.mock('@/components/compliance/RecommendationsCard', () => ({ RecommendationsCard: () => null }));
 vi.mock('@/components/compliance/ProfessionalEducationExportPanel', () => ({ ProfessionalEducationExportPanel: () => null }));
 vi.mock('@/components/compliance/OrgCpeMemberDashboard', () => ({ OrgCpeMemberDashboard: () => null }));
-vi.mock('@/components/search/NessieIntelligencePanel', () => ({ NessieIntelligencePanel: () => null }));
+// (No Nessie stub: the panel was removed from this page and the component
+// deleted. Guards: ComplianceDashboardPage.test.tsx + nessie-surfaces-offline.test.ts.)
 vi.mock('@/components/layout', () => ({
   AppShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
