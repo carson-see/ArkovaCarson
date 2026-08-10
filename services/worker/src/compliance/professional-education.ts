@@ -164,11 +164,30 @@ export function normalizeCleMetadata(input: unknown): CleMetadata {
 const CPE_SIGNAL_PATTERN = /\b(?:cpe|nasba|continuing professional education|cpaacademy|udemy)\b/i;
 const CLE_SIGNAL_PATTERN = /\b(?:cle|continuing legal education|bar association|state bar|westlaw|practising law institute|pli)\b/i;
 
+/**
+ * Schedule 1 credential type warranted by DPA clause 4.7(b) never to reach an AI provider.
+ *
+ * This classifier is the ONE automatic route from an anchor row to the metadata-extraction
+ * AI provider, so the exclusion lives here as the first check — before the schema-ready
+ * feature flag, before the caller-supplied metadata keyword scan — making the guarantee
+ * architectural rather than resting on `ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY` being
+ * off in prod. Scoped to type LEGAL exactly: `CLE` (continuing legal education) is a
+ * distinct credential_type and the intended professional-education path, so it stays
+ * routable; broadening the exclusion to CLE would defeat the feature and is not warranted.
+ */
+const AI_EXCLUDED_CREDENTIAL_TYPE = 'LEGAL';
+
 export function classifyProfessionalEducationAnchor(params: {
   credentialType?: string | null;
   metadata?: Record<string, unknown> | null;
 }): ProfessionalEducationKind | null {
-  const credentialType = params.credentialType?.toUpperCase();
+  const credentialType = params.credentialType?.trim().toUpperCase();
+
+  // DPA clause 4.7(b) unconditional guard — MUST stay first. A LEGAL anchor is never
+  // professional education, independent of the feature flag and of any metadata keyword
+  // match (e.g. "bar association" / "state bar" / "continuing legal education").
+  if (credentialType === AI_EXCLUDED_CREDENTIAL_TYPE) return null;
+
   if (credentialType === 'CLE') return 'CLE';
   if (credentialType === 'CPE') return 'CPE';
 
