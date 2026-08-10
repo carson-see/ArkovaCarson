@@ -354,6 +354,20 @@ export const AcceptInvitationSchema = z.object({
 
 export type AcceptInvitationInput = z.input<typeof AcceptInvitationSchema>;
 
+/** Recipient account activation on the /activate page. Mirrors the worker's
+ *  own validation in services/worker/src/api/activation.ts — the client check
+ *  is UX only; the worker re-validates and is the authority. */
+export const ActivateAccountSchema = z.object({
+  token: z.string().trim().min(1, 'A valid activation link is required.'),
+  password: z.string().min(8, 'Choose a password of at least 8 characters.'),
+  fullName: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().trim().min(1).optional(),
+  ),
+});
+
+export type ActivateAccountInput = z.input<typeof ActivateAccountSchema>;
+
 // =============================================================================
 // AUDIT EVENT SCHEMAS
 // =============================================================================
