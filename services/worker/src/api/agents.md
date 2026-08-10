@@ -1,5 +1,20 @@
 # agents.md — services/worker/src/api/
 
+## 2026-08-10 — `activation.ts`: recipient account activation was 100% broken in production (launch blocker)
+
+A recipient issued a credential could not claim it and could not log in. Two independent, unconditional defects, both confirmed against live prod:
+
+- **Wrong signature at the call site.** `src/pages/ActivateAccountPage.tsx:44` called `supabase.rpc('activate_user', { p_token, p_claim_key })`. Prod has exactly ONE overload, `activate_user(p_token text, p_password text)`, and **PostgREST binds overloads by argument NAME** — so `p_claim_key` could never resolve and every attempt returned PGRST202. The `p_claim_key` variant exists only in `docs/migrations-archive/0175_activate_user_function.sql`: archived, never deployed. Confirmed genuinely absent rather than renamed — the live schema has no `activation_tokens` table and no `claim_key` column at all.
+- **The password was silently discarded.** The deployed body accepts `p_password` and never references it again (baseline:498-553); it only flipped `status` to `'ACTIVE'` and NULLed the token. So fixing the call site ALONE would have been strictly worse: a green "Account Activated!" screen followed by a login that can never succeed, instead of a loud PGRST202.
+
+**Why a worker endpoint and not a fixed RPC.** Setting a password means writing GoTrue-owned state (password hash, `auth.identities`, confirmation flags) via `auth.admin.updateUserById`, which needs the service_role key — barred from the browser by §1.4. A SECURITY DEFINER function hand-writing `auth.users` is the same antipattern migration 0401 rejects for `create_pending_recipient`. So `activate_user` is retired in `0402` (raises + browser grants revoked) and `completeActivation` is the one working path, mirroring `invitations.ts` (SCRUM-3012), which already solves the identical "unauthenticated holder of an emailed token needs an account provisioned" problem.
+
+**`email_confirm: true` — flagged for human confirmation.** `createPendingRecipient` (PR #2047) mints the auth user with `email_confirm: false`, and prod runs `mailer_autoconfirm=false`. Activation therefore confirms the address: the single-use token was delivered to that mailbox and nowhere else, so clicking it is the same proof of mailbox control a confirmation link provides. **Without this the recipient sets a password and still cannot sign in — the blocker would not actually be fixed.** Note this diverges from the founder ruling recorded in `invitations.ts`, which keeps a brand-new invited account unconfirmed and emails a separate signup link; that path creates an account for a self-supplied address, whereas here the address was chosen by the issuing org and already proven. Worth an explicit founder confirmation.
+
+**Token handling.** Format-validated (`^[0-9a-f]{64}$`) before any query so malformed input never reaches Postgres; `timingSafeEqual` comparison on top of the indexed lookup; expiry enforced from `activation_token_expires_at`; single-use via a **compare-and-swap UPDATE taken BEFORE the password write** — order matters, because claiming after would let anyone re-submitting an already-consumed link overwrite the account password. A failed password write best-effort-rolls-back the claim, so a GoTrue outage cannot strand a recipient ACTIVE with no password and no token. Token and password never reach logs, errors, or responses (pinned by tests).
+
+**Known follow-up (not fixed here):** `profiles.activation_token` stores the RAW token, unlike API keys which are HMAC'd per §1.4. Hashed-at-rest storage would be the stronger design, but the writer is `recipients.ts` on PR #2047's branch — changing the storage format across two in-flight PRs is a cross-PR coupling risk. Prod currently holds zero `PENDING_ACTIVATION` profiles and zero activation tokens (per 0401's header), so this can be changed later with no live tokens to migrate.
+
 _Last updated: 2026-08-03 (PR #1944 review round 3: connector-health.ts Drive watch-health reporting fix)_
 
 ## 2026-08-03 — `compliance-inbox-summary.ts`: `secured_automatically` was silently stuck at zero for every org
