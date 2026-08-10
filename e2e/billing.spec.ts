@@ -170,24 +170,100 @@ test.describe('Billing', () => {
   });
 
   test.describe('Billing Actions', () => {
-    test('Manage Billing button keeps user on billing page when portal is unavailable', async ({ individualPage }) => {
+    // These two specs previously asserted that Upgrade and Manage Billing
+    // "keep the user on the billing page" — they encoded the launch blocker as
+    // the expected contract. Both buttons were no-ops (`navigate(ROUTES.BILLING)`
+    // from /billing), so the revenue path dead-ended and CI called it correct.
+    // The contract is: Upgrade reaches plan selection, Manage Billing reaches
+    // the Stripe portal URL the worker issues.
+
+    test('Manage Billing redirects to the portal URL returned by the worker', async ({ individualPage }) => {
       await mockBillingStatus(individualPage);
+      // Stripe's real portal is off-origin and out of scope for E2E; assert the
+      // app performs the redirect to whatever URL the worker issues by pointing
+      // it at a same-origin page.
+      await individualPage.route('**/api/billing/portal', (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ url: '/billing/cancel?portal=stub' }),
+        }),
+      );
+      await openAsIndividual(individualPage, '/billing');
+      await expectBillingOverview(individualPage);
+
+      await Promise.all([
+        individualPage.waitForURL(/\/billing\/cancel\?portal=stub/, { timeout: 10000 }),
+        individualPage.getByRole('button', { name: /Manage Billing/i }).click(),
+      ]);
+    });
+
+    test('Manage Billing surfaces an error when the portal cannot be created', async ({ individualPage }) => {
+      await mockBillingStatus(individualPage);
+      await individualPage.route('**/api/billing/portal', (route) =>
+        route.fulfill({
+          status: 404,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { code: 'not_found', message: 'No active subscription found' } }),
+        }),
+      );
       await openAsIndividual(individualPage, '/billing');
       await expectBillingOverview(individualPage);
 
       await individualPage.getByRole('button', { name: /Manage Billing/i }).click();
+
+      // Must not silently do nothing — that is indistinguishable from the old
+      // dead button.
+      await expect(
+        individualPage.getByText('Could not open the billing portal. Please try again.')
+      ).toBeVisible({ timeout: 10000 });
       await expect(individualPage).toHaveURL(/\/billing$/);
-      await expectBillingOverview(individualPage);
     });
 
-    test('Upgrade Plan button keeps user on billing page when plan comparison is unavailable', async ({ individualPage }) => {
+    test('Upgrade Plan reaches the pricing page where checkout can start', async ({ individualPage }) => {
       await mockBillingStatus(individualPage);
       await openAsIndividual(individualPage, '/billing');
       await expectBillingOverview(individualPage);
 
-      await individualPage.getByRole('button', { name: /Upgrade Plan/i }).click();
-      await expect(individualPage).toHaveURL(/\/billing$/);
-      await expectBillingOverview(individualPage);
+      await Promise.all([
+        individualPage.waitForURL(/\/pricing$/, { timeout: 10000 }),
+        individualPage.getByRole('button', { name: /Upgrade Plan/i }).click(),
+      ]);
+
+      // The destination must actually offer a purchasable plan, not just exist.
+      await expect(
+        individualPage.getByRole('heading', { name: 'Billing & Plans' })
+      ).toBeVisible({ timeout: 10000 });
+      await expect(
+        individualPage.getByRole('button', { name: 'Select Plan' }).first()
+      ).toBeVisible({ timeout: 15000 });
+    });
+
+    test('selecting a plan on /pricing calls the worker checkout endpoint', async ({ individualPage }) => {
+      // Proves the CTA → route → PricingPage → startCheckout → worker chain end
+      // to end. Stripe itself is stubbed at the worker boundary (no real
+      // charges, per the Stripe-test-mode rule for this suite).
+      let checkoutBody: unknown = null;
+      await individualPage.route('**/api/checkout/session', async (route) => {
+        checkoutBody = route.request().postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ sessionId: 'cs_test_stub', url: '/billing/success?session_id=cs_test_stub' }),
+        });
+      });
+
+      await openAsIndividual(individualPage, '/pricing');
+      await expect(
+        individualPage.getByRole('heading', { name: 'Billing & Plans' })
+      ).toBeVisible({ timeout: 10000 });
+
+      await Promise.all([
+        individualPage.waitForURL(/\/billing\/success/, { timeout: 15000 }),
+        individualPage.getByRole('button', { name: 'Select Plan' }).first().click(),
+      ]);
+
+      expect(checkoutBody).toMatchObject({ planId: expect.any(String) });
     });
   });
 
@@ -224,8 +300,10 @@ test.describe('Billing', () => {
       ).toBeVisible();
     });
 
-    test('checkout cancel page navigates back to billing', async ({ individualPage }) => {
-      await mockBillingUnavailable(individualPage);
+    // Was 'checkout cancel page navigates back to billing' and asserted /billing.
+    // "Back to Plans" has to reach plan selection — a user who cancelled and
+    // wants to retry must be able to pick a plan again.
+    test('checkout cancel page navigates back to plan selection', async ({ individualPage }) => {
       await openAsIndividual(individualPage, '/billing/cancel');
 
       await expect(
@@ -233,10 +311,13 @@ test.describe('Billing', () => {
       ).toBeVisible({ timeout: 10000 });
 
       await Promise.all([
-        individualPage.waitForURL(/\/billing/, { timeout: 10000 }),
+        individualPage.waitForURL(/\/pricing$/, { timeout: 10000 }),
         individualPage.getByRole('link', { name: /Back to Plans/i }).click(),
       ]);
-      await expectBillingUnavailable(individualPage);
+
+      await expect(
+        individualPage.getByRole('button', { name: 'Select Plan' }).first()
+      ).toBeVisible({ timeout: 15000 });
     });
   });
 
