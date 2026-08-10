@@ -179,7 +179,7 @@ The scaffolding guard above only reads `copy.ts`, so its coverage equals
 
 - `PRIVACY_NOTICE_LABELS` gained per-jurisdiction `*_REGULATOR` / `*_RIGHTS`
   (readonly string arrays — the leaf-walkers recurse into them) /
-  `*_TRANSFER_BASIS` / `*_BREACH_TIMELINE` for all 14 notices, previously
+  `*_TRANSFER_BASIS` / `*_BREACH_TIMELINE` for all 13 notices, previously
   inline literals in `JurisdictionPrivacyNotices.tsx`.
 - `LEGAL_PAGE_LABELS` gained the `PRIVACY_*` page-body keys (title/meta,
   heading, effective date, sections 1–7), previously inline JSX in

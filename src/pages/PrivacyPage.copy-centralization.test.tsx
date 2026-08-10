@@ -13,7 +13,8 @@
  *
  * At the time this was written the leak surface was real, not hypothetical:
  * `JURISDICTION_NOTICES` carried `regulator` / `rights` / `transferBasis` /
- * `breachTimeline` as inline literals for 13 of 14 jurisdictions, and
+ * `breachTimeline` as inline literals across its 13 jurisdictions (only the
+ * eu-us entry's `transferBasis` had been migrated), and
  * `PrivacyPage` wrote nearly every section body as inline JSX prose. Both
  * render on /privacy.
  *
