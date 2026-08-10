@@ -34,6 +34,7 @@
  */
 
 import type { Response } from 'express';
+import { config } from '../config.js';
 import { db } from './db.js';
 import { logger } from './logger.js';
 
@@ -41,14 +42,21 @@ export const ORG_FIELD_POLICY_REJECTED_ERROR = 'field_not_permitted' as const;
 export const ORG_FIELD_POLICY_UNAVAILABLE_ERROR = 'field_policy_unavailable' as const;
 
 /**
- * Break-glass. Set to the literal string 'true' to suppress enforcement
+ * Break-glass: `DISABLE_ORG_FIELD_POLICY=true` suppresses enforcement
  * process-wide. Only exists because the unavailable-policy path fails CLOSED
  * (see loadOrgFieldPolicy) and an operator needs a lever that does not require
  * a deploy. Engaging it VOIDS the contractual control — it logs at error level
- * every time it suppresses a check, and anything other than the exact string
- * 'true' leaves enforcement on, so a typo cannot quietly disable it.
+ * every time it suppresses a check.
+ *
+ * Read through `config` rather than `process.env` directly (SCRUM-1258), so
+ * the flag is declared in one schema instead of hidden in a dynamic env lookup
+ * that no deploy-surface diff can see. `config.disableOrgFieldPolicy` coerces
+ * only the literal `'true'` to true, so a typo leaves enforcement ON — the safe
+ * direction for a kill-switch on a contractual control.
  */
-const BREAK_GLASS_ENV = 'DISABLE_ORG_FIELD_POLICY';
+function breakGlassEngaged(): boolean {
+  return config.disableOrgFieldPolicy === true;
+}
 
 /** Fresh-cache TTL. Enforcement therefore begins within this window of an operator INSERT. */
 const POLICY_TTL_MS = 60_000;
@@ -305,7 +313,7 @@ export async function enforceOrgFieldPolicy(params: {
   const { orgId, body, res, scope } = params;
   if (!orgId) return true;
 
-  if (process.env[BREAK_GLASS_ENV] === 'true') {
+  if (breakGlassEngaged()) {
     logger.error(
       { orgId, scope },
       'org_field_policy_enforcement_disabled_by_break_glass — contractual field validation is NOT running',

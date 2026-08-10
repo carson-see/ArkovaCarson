@@ -23,7 +23,15 @@ const mockLogger = vi.hoisted(() => ({
 }));
 const mockMaybeSingle = vi.hoisted(() => vi.fn());
 const mockFrom = vi.hoisted(() => vi.fn());
+// SCRUM-1258: the break-glass is read from the Zod-validated config, not from
+// process.env, so it is driven here rather than by mutating the environment.
+const mockConfig = vi.hoisted(() => ({ disableOrgFieldPolicy: false }));
 
+vi.mock('../config.js', () => ({
+  get config() {
+    return mockConfig;
+  },
+}));
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('./logger.js', () => ({ logger: mockLogger }));
 vi.mock('./db.js', () => ({
@@ -186,11 +194,11 @@ describe('enforceOrgFieldPolicy', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     clearOrgFieldPolicyCache();
-    delete process.env.DISABLE_ORG_FIELD_POLICY;
+    mockConfig.disableOrgFieldPolicy = false;
   });
 
   afterEach(() => {
-    delete process.env.DISABLE_ORG_FIELD_POLICY;
+    mockConfig.disableOrgFieldPolicy = false;
   });
 
   it('allows an org with NO policy row (regression guard for existing orgs)', async () => {
@@ -392,7 +400,7 @@ describe('enforceOrgFieldPolicy', () => {
 
   it('break-glass DISABLE_ORG_FIELD_POLICY=true suppresses enforcement entirely', async () => {
     stubPolicyRead({ data: HAKI_POLICY_ROW });
-    process.env.DISABLE_ORG_FIELD_POLICY = 'true';
+    mockConfig.disableOrgFieldPolicy = true;
     const { res, captured } = makeRes();
     const ok = await enforceOrgFieldPolicy({
       orgId: 'org-haki',
@@ -406,9 +414,14 @@ describe('enforceOrgFieldPolicy', () => {
     expect(mockLogger.error).toHaveBeenCalled();
   });
 
-  it('only the literal string "true" disables it (a typo must not silently disable the control)', async () => {
+  it('a non-true flag value leaves the control ON (a typo must not silently disable it)', async () => {
+    // config.disableOrgFieldPolicy is produced by `boolFlag`, whose preprocess
+    // is `v === 'true' || v === true`. So DISABLE_ORG_FIELD_POLICY='yes' lands
+    // here as `false` — coerced, not rejected — and enforcement stays on. This
+    // pins the fail-safe DIRECTION of that coercion, which is the property that
+    // matters for a kill-switch on a contractual control.
     stubPolicyRead({ data: HAKI_POLICY_ROW });
-    process.env.DISABLE_ORG_FIELD_POLICY = 'yes';
+    mockConfig.disableOrgFieldPolicy = false;
     const { res, captured } = makeRes();
     const ok = await enforceOrgFieldPolicy({
       orgId: 'org-haki',

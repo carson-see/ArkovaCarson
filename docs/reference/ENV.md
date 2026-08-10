@@ -78,6 +78,7 @@ API_KEY_HMAC_SECRET=
 RECIPIENT_IDENTIFIER_PEPPER=        # SCRUM-2484: server pepper for the keyed HMAC-SHA256 of recipient email identifiers (recipient_email_hash / recipient_identifier_hash). Without it, no recipient identifier hash is produced — NEVER a bare, enumerable sha256(email). Also set DB-side as the `app.recipient_pepper` GUC (e.g. `ALTER DATABASE postgres SET app.recipient_pepper='<value>'`) so get_public_anchor's recipient_identifier is keyed; unset ⇒ recipient_identifier reads '' (fail closed). Carson/RTE-provisioned in Secret Manager.
 CORS_ALLOWED_ORIGINS=*
 INTEGRATION_STATE_HMAC_SECRET=      # SCRUM-1236 / audit H1: dedicated HMAC secret for OAuth `state` signing (Drive, DocuSign org + member, GRC). Worker fails closed if unset (no fallback to SUPABASE_JWT_SECRET). Required at boot in production when ENABLE_DRIVE_OAUTH or ENABLE_DOCUSIGN_OAUTH is true.
+DISABLE_ORG_FIELD_POLICY=false      # SCRUM-3121 BREAK-GLASS. Suppresses DPA Schedule 1 / clause 4.6 per-org field rejection (migration 0405) process-wide. LEAVE UNSET. Setting it to 'true' VOIDS a contractual control and logs at error level on every suppressed check. Exists only because the unreadable-policy path fails CLOSED (503) and an operator needs a lever that does not require a deploy. Coerced by `boolFlag`: only the literal 'true' engages it, so a typo leaves enforcement ON.
 ```
 
 `/api/v1/*` and `/api/v2/*` verification routes are controlled by the

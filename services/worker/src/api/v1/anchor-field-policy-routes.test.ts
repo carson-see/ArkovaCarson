@@ -189,7 +189,6 @@ beforeEach(() => {
   mockState.profileOrgId = 'org-1';
   mockState.anchorInserts = [];
   mockState.policyReads = 0;
-  delete process.env.DISABLE_ORG_FIELD_POLICY;
 });
 
 // ─── POST /contracts/anchor-pre-signing ─────────────────────────────────────

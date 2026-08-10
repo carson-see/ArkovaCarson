@@ -141,7 +141,6 @@ beforeEach(() => {
   mockState.policyRow = null;
   mockState.inserts = [];
   mockState.policyReads = 0;
-  delete process.env.DISABLE_ORG_FIELD_POLICY;
 });
 
 describe('POST /api/v1/anchor (single) — org field policy', () => {

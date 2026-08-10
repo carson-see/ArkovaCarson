@@ -38,13 +38,19 @@
  *
  * BUILT — handler now does the real work:
  *   1. Zod-parse + canonicalize fingerprint
- *   2. Idempotency check (return existing receipt if fingerprint already
+ *   2. DPA clause 4.6 org field policy — reject a request carrying a field this
+ *      organisation may not send (migration 0405). Runs HERE, before step 3,
+ *      because the idempotency check answers 200 with a stored receipt and
+ *      would otherwise pass a prohibited field through on every retry.
+ *   3. Idempotency check (return existing receipt if fingerprint already
  *      anchored, same pattern as /api/v1/anchor)
- *   3. Org-credit deduction (1 credit per pre-signing anchor)
  *   4. Insert into `anchors` with credential_type=CONTRACT_PRESIGNING
  *      and contract_metadata + signing_workflow_metadata stored as nested
  *      keys inside anchors.metadata (jsonb)
- *   5. Return PreSigningAnchorReceipt with the generated public_id
+ *   5. Org-credit deduction (1 credit per pre-signing anchor), with a
+ *      compensating delete if it fails — see the ATOMICITY NOTE below; this is
+ *      insert-then-deduct since SCRUM-2970, not deduct-then-insert
+ *   6. Return PreSigningAnchorReceipt with the generated public_id
  *
  * SCRUM-1630 [Test] adds the integration tests (real handler against the
  * mocked supabase chain), beyond the [Spec]'s shape-pinning tests that
