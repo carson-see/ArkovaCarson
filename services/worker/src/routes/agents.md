@@ -11,6 +11,7 @@ Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test ba
 - `agents.ts`, `webhooks.ts`, `attestations.ts`, etc. — domain routers.
 
 ## Conventions
+- **Adding a `cronRouter.post` route requires a trigger decision in the same change** (PR #2067 ratchet): declare it in `scripts/gcp-setup/cloud-scheduler.sh`'s `JOBS` array or list it in `NOT_SCHEDULED` with a reason. `scripts/gcp-setup/cloud-scheduler.test.ts` fails otherwise — note it runs in the ROOT vitest suite, not the worker suite, so `cd services/worker && npm test` won't surface it locally; CI's Tests job will.
 - Every cron endpoint wraps work in `trackOperation(...)` so SIGTERM drains in-flight jobs.
 - Errors are logged with `{error, jobName}` context and never re-thrown (Cloud Scheduler treats non-200 as retry-eligible).
 - HTTP-triggered jobs are protected by `X-Cron-Secret` per AUDIT-03 (handled in middleware before this router).
