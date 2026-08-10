@@ -1,4 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+// Force the professional-education schema gate to report the pipeline LIVE, without
+// transitively loading config.ts (which needs runtime env). This lets the LEGAL-exclusion
+// suite prove the guard holds even when ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY is on.
+vi.mock('../utils/professionalEducationSchemaGate.js', () => ({
+  isProfessionalEducationSchemaReady: () => true,
+  PROFESSIONAL_EDUCATION_SCHEMA_UNAVAILABLE_ERROR: 'professional_education_schema_unavailable',
+}));
+import * as schemaGate from '../utils/professionalEducationSchemaGate.js';
 import {
   CPE_DELIVERY_METHODS,
   NASBA_FIELDS_OF_STUDY,
@@ -220,6 +228,88 @@ describe('professional education metadata schemas', () => {
       }),
     });
     expect(String(db.auditEvents[0]?.details)).not.toContain('Jamie Demo');
+  });
+});
+
+describe('LEGAL credential type is never routed to AI extraction (DPA clause 4.7(b))', () => {
+  // Schedule 1 credential type LEGAL is warranted to never reach an AI provider.
+  // The one automatic anchor -> AI route is this classifier; excluding LEGAL here
+  // makes the guarantee architectural (flag-independent, metadata-independent)
+  // rather than resting on ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY being off.
+  const barShapedMetadata = {
+    credential_title: 'Continuing Legal Education Seminar',
+    credential_issuer: 'California State Bar Association',
+    source_provider: 'State Bar of California',
+    source_url: 'https://calbar.example.org/cle/seminar',
+  };
+
+  it('classifies a LEGAL anchor with bar-association-shaped metadata as NOT professional education', () => {
+    // Without the guard, this metadata matches CLE_SIGNAL_PATTERN ("bar association",
+    // "state bar", "continuing legal education") and returns 'CLE' — routable to Gemini.
+    expect(
+      classifyProfessionalEducationAnchor({
+        credentialType: 'LEGAL',
+        metadata: barShapedMetadata,
+      }),
+    ).toBeNull();
+  });
+
+  it('excludes LEGAL defensively — case-insensitively and tolerant of surrounding whitespace', () => {
+    expect(classifyProfessionalEducationAnchor({ credentialType: 'legal', metadata: barShapedMetadata })).toBeNull();
+    expect(classifyProfessionalEducationAnchor({ credentialType: 'Legal', metadata: barShapedMetadata })).toBeNull();
+    expect(classifyProfessionalEducationAnchor({ credentialType: '  LEGAL  ', metadata: barShapedMetadata })).toBeNull();
+  });
+
+  it('excludes LEGAL even when caller-supplied metadata.credential_type claims CLE', () => {
+    expect(
+      classifyProfessionalEducationAnchor({
+        credentialType: 'LEGAL',
+        metadata: { ...barShapedMetadata, credential_type: 'CLE' },
+      }),
+    ).toBeNull();
+  });
+
+  it('builds no extraction job payload (no AI route) for a LEGAL anchor with bar-association metadata', () => {
+    expect(
+      buildProfessionalEducationJobPayload({
+        id: '550e8400-e29b-41d4-a716-446655440099',
+        public_id: 'ARK-2026-LEGAL1',
+        credential_type: 'LEGAL',
+        fingerprint: 'c'.repeat(64),
+        org_id: 'org-1',
+        user_id: 'user-1',
+        metadata: barShapedMetadata,
+      }),
+    ).toBeNull();
+  });
+
+  it('holds even if the professional-education schema flag were hypothetically enabled', () => {
+    // The gate is mocked (top of file) to report the pipeline LIVE. The classifier and
+    // payload builder take NO feature flag as input, so their output cannot change when
+    // ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY flips on — the exclusion is architectural,
+    // not merely a side effect of the flag being off in prod today.
+    expect(schemaGate.isProfessionalEducationSchemaReady()).toBe(true);
+    expect(
+      classifyProfessionalEducationAnchor({ credentialType: 'LEGAL', metadata: barShapedMetadata }),
+    ).toBeNull();
+    expect(
+      buildProfessionalEducationJobPayload({
+        id: '550e8400-e29b-41d4-a716-446655440100',
+        public_id: 'ARK-2026-LEGAL2',
+        credential_type: 'LEGAL',
+        fingerprint: 'd'.repeat(64),
+        org_id: 'org-1',
+        user_id: 'user-1',
+        metadata: barShapedMetadata,
+      }),
+    ).toBeNull();
+  });
+
+  it('keeps genuine CLE anchors routable — the guard is scoped to type LEGAL, not CLE', () => {
+    // CLE (continuing legal education) is the intended professional-education path and is
+    // a distinct credential_type from LEGAL. The DPA warrants LEGAL specifically; excluding
+    // CLE would defeat the feature and is not required.
+    expect(classifyProfessionalEducationAnchor({ credentialType: 'CLE', metadata: barShapedMetadata })).toBe('CLE');
   });
 });
 
