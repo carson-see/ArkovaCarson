@@ -122,13 +122,10 @@ describe('shipped copy carries no internal scaffolding', () => {
    * the basis is under review — it may NOT name a mechanism.
    */
   it('the EU–US transfer notice still asserts no mechanism it does not hold', () => {
-    const { DPF_DESCRIPTION, DPF_TRANSFER_BASIS } = copy.PRIVACY_NOTICE_LABELS as Record<
-      string,
-      string
-    >;
+    // Literal-key destructuring: removing either key is a compile error.
+    const { DPF_DESCRIPTION, DPF_TRANSFER_BASIS } = copy.PRIVACY_NOTICE_LABELS;
 
     for (const value of [DPF_DESCRIPTION, DPF_TRANSFER_BASIS]) {
-      expect(value).toBeDefined();
       // No claimed certification / adequacy / executed instrument.
       expect(value).not.toMatch(/self-certif/i);
       expect(value).not.toMatch(/\bdata privacy framework\b/i);

@@ -29,3 +29,14 @@ Compliance monitoring and audit UI: score cards, audit gap analysis, jurisdictio
 - 2026-07-22 SCRUM-2914 (Founder UI findings): `ComplianceScoreCard.tsx` deleted (dashboard-only, no other importer) + removed from `index.ts` and `DashboardPage.tsx`. `AuditMyOrganizationButton.tsx` kept — still used by `src/pages/ComplianceScorecardPage.tsx`; its `DashboardPage.tsx` render was removed but the component itself is not dead.
 - 2026-08-10 (public-copy leak): `JurisdictionPrivacyNotices.tsx` renders `notice.description` unsanitized at the `eu-us-transfer` card, and that card is reached from `PrivacyPage` — an UNAUTHENTICATED public route (`App.tsx`). `PRIVACY_NOTICE_LABELS.DPF_DESCRIPTION` ended with an internal drafting instruction, `[Counsel review required — do not assert a specific transfer mechanism until confirmed.]`, which shipped verbatim to anyone reading our privacy page, including EU prospects doing transfer-basis diligence. The bracketed note is removed; the instruction survives as a source comment in `copy.ts`. The transfer-basis cell, which read `...(counsel-required)`, now uses the new `PRIVACY_NOTICE_LABELS.DPF_TRANSFER_BASIS` (§1.3 — it was an inline literal) and states the position as a deliberate public disclosure: "Under legal review — no specific transfer mechanism is asserted at this time".
   **The caution is deliberate and must not be "fixed" by strengthening it.** Arkova holds no DPF self-certification (SCRUM-2283 removed that false claim) and no confirmed EU→US mechanism; naming one here is a §1.13 R-7 violation. Guards: `src/lib/copy-internal-scaffolding.test.ts` (no bracketed segments or staff-directive markers in ANY shipped copy string, plus a no-upgraded-claim assertion on both keys) and the `eu-us-transfer` case in `JurisdictionPrivacyNotices.test.tsx`. The other 13 notices still carry their `transferBasis` as inline literals — those describe third-party statutory instruments, but they are user-visible copy and should migrate to `copy.ts` when next touched.
+- 2026-08-10 (follow-up, §1.3 completion): the "other 13 notices" migration
+  flagged above is done — `JURISDICTION_NOTICES` now sources ALL of
+  `regulator` / `rights` / `transferBasis` / `breachTimeline` from the new
+  `PRIVACY_NOTICE_LABELS.*_REGULATOR/_RIGHTS/_TRANSFER_BASIS/_BREACH_TIMELINE`
+  keys (`rights` is `readonly string[]` — the copy.ts values are `as const`).
+  Only `regulatorUrl` (hrefs) remains inline (`color` was dead data — declared
+  and assigned but never rendered — and is deleted, per simplify review);
+  they are not copy. Rendered output verified byte-identical. Regression is
+  test-enforced from two sides: `src/pages/PrivacyPage.copy-centralization.test.tsx`
+  fails on any inline literal in a copy field of this table AND on any rendered
+  /privacy prose that copy.ts does not own.
