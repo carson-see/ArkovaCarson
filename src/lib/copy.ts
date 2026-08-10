@@ -2319,26 +2319,18 @@ export const NESSIE_LABELS = {
   // SCRUM-2938 S1: internal codename "Nessie" and the "compliance intelligence"
   // phrasing removed from user-facing copy (the NESSIE_LABELS identifier is
   // internal-only and unchanged per §1.3 "internal code may use technical names").
-  PANEL_TITLE: 'Document Intelligence',
-  PANEL_SUBTITLE: 'Ask compliance questions. Answers cite verified, anchored documents.',
-  INPUT_PLACEHOLDER: 'Ask a compliance question...',
-  CONFIDENCE: 'confidence',
-  CITATIONS_HEADING: 'Verified Citations',
-  VIEW_ON_CHAIN: 'On-chain proof',
-  VERIFY: 'Verify',
-  EMPTY_STATE: 'Ask a question to get answers backed by verified evidence.',
-  CACHED: 'cached',
-  RISKS_HEADING: 'Identified Risks',
-  RECOMMENDATIONS_HEADING: 'Recommendations',
-  CONFIDENCE_DETAIL_CITED: 'Documents cited',
-  CONFIDENCE_DETAIL_ANCHORED: 'Anchored citations',
-  CONFIDENCE_DETAIL_SOURCES: 'Corroborating sources',
-  CONFIDENCE_DETAIL_AUTHORITY: 'Source authority',
-  TASK_COMPLIANCE_QA: 'Compliance Q&A',
-  TASK_RISK_ANALYSIS: 'Risk Analysis',
-  TASK_DOCUMENT_SUMMARY: 'Document Summary',
-  TASK_RECOMMENDATION: 'Recommendations',
-  TASK_CROSS_REFERENCE: 'Cross-Reference',
+  //
+  // The intelligence-panel half of this vocabulary (PANEL_TITLE,
+  // PANEL_SUBTITLE, INPUT_PLACEHOLDER, EMPTY_STATE, CITATIONS_HEADING,
+  // VIEW_ON_CHAIN, VERIFY, CACHED, RISKS_HEADING, RECOMMENDATIONS_HEADING,
+  // TASK_*) is deleted along with the panel component: Nessie is OFF by founder
+  // directive and the panel was mounted, ungated, on a customer-reachable
+  // route. CONFIDENCE + CONFIDENCE_DETAIL_* go with them for the same reason
+  // SCRUM-2914 deleted CONFIDENCE_FIELD and EXTRACTION_CONFIDENCE — leaving
+  // confidence copy in the vocabulary is leaving the next surface pre-written.
+  //
+  // Only the INSIGHTS_* keys survive: they belong to `NessieInsights`
+  // (components/anchor), which renders no score.
   INSIGHTS_TITLE: 'Document Insights',
   INSIGHTS_SUBTITLE: 'AI-powered compliance analysis for this record.',
   INSIGHTS_LOADING: 'Analyzing...',
@@ -3459,7 +3451,20 @@ export const PRIVACY_NOTICE_LABELS = {
   // replacement lawful-transfer basis (e.g. executed EU Standard Contractual
   // Clauses) is COUNSEL-REQUIRED and must not be invented here — placeholder
   // pending legal review.
-  DPF_DESCRIPTION: 'The lawful basis for transatlantic personal data transfers is under review by legal counsel and will be published here once confirmed. Individuals retain the right to access, correct, or delete their data and to file a complaint with their national data protection authority. [Counsel review required — do not assert a specific transfer mechanism until confirmed.]',
+  DPF_DESCRIPTION: 'The lawful basis for transatlantic personal data transfers is under review by legal counsel and will be published here once confirmed. Individuals retain the right to access, correct, or delete their data and to file a complaint with their national data protection authority.',
+  // The bracketed drafting note that used to close DPF_DESCRIPTION ("Counsel
+  // review required — do not assert a specific transfer mechanism until
+  // confirmed.") was an instruction to us, and it rendered verbatim on the
+  // PUBLIC /privacy page. Removed. The instruction itself remains correct and
+  // lives here, in a comment, where it belongs: do not name a transfer
+  // mechanism in either string below until counsel confirms one.
+  //
+  // DPF_TRANSFER_BASIS is the "Cross-Border Transfer Basis" cell for the EU–US
+  // notice. It previously read "...(counsel-required)", which tagged a public
+  // notice as an open internal ticket. It now states the same position as a
+  // deliberate disclosure — under review, and explicitly asserting nothing —
+  // which is the §1.5 / §1.13 R-7 form: say what is NOT asserted.
+  DPF_TRANSFER_BASIS: 'Under legal review — no specific transfer mechanism is asserted at this time',
   REGULATOR_LABEL: 'Regulator',
   RIGHTS_LABEL: 'Your Rights',
   TRANSFER_BASIS_LABEL: 'Cross-Border Transfer Basis',
