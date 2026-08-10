@@ -1,6 +1,26 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-08-03 (PR #1944 review round 3: connector-health.ts Drive watch-health reporting fix)_
+_Last updated: 2026-08-10 (recipients.ts: auth-user-first provisioning, FK hotfix)_
+
+## 2026-08-10 — `recipients.ts`: recipient provisioning could never have worked (FK to `auth.users`)
+
+`createPendingRecipient` minted `const profileId = crypto.randomUUID()` and inserted it as `profiles.id`. But `profiles.id` is `FOREIGN KEY -> auth.users(id) ON DELETE CASCADE` (`profiles_id_fkey`, baseline:12085, `convalidated: true`, never dropped across 0290-0400), so a random UUID with no matching `auth.users` row **always** violated the FK. Not flaky, not conditional, not flag-gated: this endpoint 500'd for every genuinely new recipient since BETA-04 shipped.
+
+Prod proves it never once succeeded: **zero** `PENDING_ACTIVATION` profiles, **zero** profiles carrying an `activation_token`, and `auth.users` count == `profiles` count (30/30).
+
+It failed LOUDLY, not silently — `routes/anchor.ts:111-123` catches and returns HTTP 500, and `src/hooks/useBulkAnchors.ts:220-226` renders a partial-failure toast. So bulk issuance created the anchors and then failed provisioning for every new recipient, which is the user-visible symptom.
+
+- **Fix — port the `invitations.ts:473-514` pattern.** Create the auth user FIRST via `db.auth.admin.createUser({ email, email_confirm: false, user_metadata })` (§1.4: `supabase.auth.admin` never reaches the browser), key the profile row with `newUser.id`, and roll back with `db.auth.admin.deleteUser(profileId)` if anything after creation throws. A failed rollback is logged loudly as an orphaned auth user needing manual cleanup — an orphan blocks any future re-invite of that address.
+- **`email_confirm: false` is deliberate.** The activation link the recipient is about to receive is what proves mailbox control; pre-confirming the address before they click would weaken that. Same choice `invitations.ts` makes.
+- **23505 is handled differently here than in `invitations.ts` — do not "simplify" it.** The `create_profile_for_new_user` trigger on `auth.users` may already have inserted a bare profile row. In `invitations.ts` that row is equivalent to the one being inserted, so a 23505 is treated as success. Here it is NOT: the trigger's row carries no `org_id`, no `PENDING_ACTIVATION` status and no `activation_token`, so swallowing the 23505 would leave a recipient who can never be activated. The activation fields are applied by UPDATE instead.
+- **Why CI never caught it:** `recipients.test.ts` mocked the whole `db` object, so the FK boundary was never exercised and all 7 tests passed against code that could not work. The new `describe('auth-user provisioning (FK profiles.id -> auth.users.id)')` block pins the part of the constraint that CAN be asserted without a live database — the ORDER of operations (auth user created before the profile insert), that the profile is keyed by the auth user's id rather than a standalone UUID, and the rollback/no-rollback semantics. These are ordering/contract assertions, **not** proof against a real schema; no live-DB verification was run.
+
+**Two related defects found in passing, NOT fixed here** (both pre-existing and independent of this change):
+
+1. **`activate_user` never establishes a credential.** The deployed function (`activate_user(p_token text, p_password text)`, baseline:498) only flips `profiles.status` to `ACTIVE` and clears the token — it never creates an `auth.users` row and never sets a password on one. With this fix the auth user now exists, but activation still does not give the recipient a way to sign in. Establishing the password needs a worker-side `auth.admin.updateUserById` step (the browser cannot hold service_role).
+2. **`ActivateAccountPage.tsx` calls a signature that is not deployed.** It invokes `.rpc('activate_user', { p_token, p_claim_key })`, but the live signature takes `(p_token, p_password)` — confirmed via the introspected `database.types.ts` (`Args: { p_password: string; p_token: string }`). The `p_claim_key` variant only exists in `docs/migrations-archive/0175`. PostgREST resolves overloads by argument name, so this call cannot bind (PGRST202).
+
+The SQL twin `create_pending_recipient` had the identical FK bug **plus** an invalid `'MEMBER'` role literal (the `user_role` enum has only `INDIVIDUAL`/`ORG_ADMIN`/`ORG_MEMBER`, so it raised 22P02 before ever reaching the FK). It has zero runtime callers and is retired by migration `0401` — see `supabase/migrations/agents.md`.
 
 ## 2026-08-03 — `compliance-inbox-summary.ts`: `secured_automatically` was silently stuck at zero for every org
 
