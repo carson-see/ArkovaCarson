@@ -179,7 +179,7 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     regulator: 'Your national data protection authority (EU/EEA)',
     regulatorUrl: 'https://www.edpb.europa.eu/about-edpb/about-edpb/members_en',
     rights: ['Access', 'Correction', 'Deletion', 'File complaint with your DPA'],
-    transferBasis: 'Under review by legal counsel — mechanism to be confirmed (counsel-required)',
+    transferBasis: PRIVACY_NOTICE_LABELS.DPF_TRANSFER_BASIS,
     breachTimeline: 'Per applicable GDPR / national law',
     color: 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300',
   },
