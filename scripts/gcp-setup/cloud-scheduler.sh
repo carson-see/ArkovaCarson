@@ -161,11 +161,14 @@ JOBS=(
   "treasury-alert-check|0 * * * *|/jobs/treasury-alert-check|NO_RETRY"
   # Bitcoin chain maintenance (in-process schedules are dormant on Cloud Run,
   # so these never ran in prod; 0347 reorg handling shipped with no detector
-  # running). Detection results are correct findings — never retried.
-  "detect-reorgs|*/30 * * * *|/jobs/detect-reorgs|NO_RETRY"
-  "monitor-stuck-txs|*/30 * * * *|/jobs/monitor-stuck-txs|NO_RETRY"
-  # Rebroadcast is idempotent remediation; hourly is ample at ~1 batch tx/day.
-  "rebroadcast-txs|0 * * * *|/jobs/rebroadcast-txs|30s,120s,2"
+  # running). Cadences match the functions' own audit-mandated design
+  # (chain-maintenance.ts JSDoc: "Runs every 10 minutes" — REORG_CHECK_DEPTH_
+  # BLOCKS=10 (~100 min of chain) was sized for ~10 passes per anchor window;
+  # rebroadcast documents 6-hourly and self-throttles on a 24h updated_at
+  # cutoff). Detection results are correct findings — never retried.
+  "detect-reorgs|*/10 * * * *|/jobs/detect-reorgs|NO_RETRY"
+  "monitor-stuck-txs|*/10 * * * *|/jobs/monitor-stuck-txs|NO_RETRY"
+  "rebroadcast-txs|0 */6 * * *|/jobs/rebroadcast-txs|30s,120s,2"
   # P7-TS-06: prod smoke suite. The live db-health job monitors smoke
   # fail-streaks, which cannot exist without a cadence. Returns 503 on a
   # correct "smoke failed" finding → NO_RETRY so Scheduler doesn't re-drive
@@ -211,10 +214,16 @@ JOBS=(
   "fetch-kenya|0 0 * * *|/jobs/fetch-kenya|DEFAULT"
   "fetch-moh-sg|0 0 * * *|/jobs/fetch-moh-sg|DEFAULT"
   "fetch-openalex|*/30 * * * *|/jobs/fetch-openalex|DEFAULT"
+  # PAUSED (observed 2026-08-10): consistent with the parked feeder program /
+  # 259k pending-anchoring backlog. Pause actor/date not recorded at pause
+  # time — attribute in scheduler-manifest.ts before any resume.
   "fetch-state-courts-ca|*/30 * * * *|/jobs/fetch-state-courts|DEFAULT|PAUSED"
   "fetch-state-courts-ny|*/30 * * * *|/jobs/fetch-state-courts|DEFAULT|PAUSED"
   "fetch-state-courts-tx|*/30 * * * *|/jobs/fetch-state-courts|DEFAULT|PAUSED"
   "fetch-uspto|*/15 * * * *|/jobs/fetch-uspto|DEFAULT"
+  # PAUSED (observed 2026-08-10): likely follows SCRUM-3050 (~3,300 consecutive
+  # 404 failures 2026-03-16→08-01 while the route didn't exist; route exists
+  # now). Unattributed — investigate before resuming.
   "generate-reports|0 * * * *|/jobs/generate-reports|DEFAULT|PAUSED"
   "openalex-bulk|*/30 * * * *|/jobs/openalex-bulk|DEFAULT"
   "pipeline-throughput-monitor|*/30 * * * *|/jobs/pipeline-throughput-monitor|DEFAULT"
@@ -227,6 +236,8 @@ JOBS=(
   "refresh-treasury-cache|*/10 * * * *|/jobs/refresh-treasury-cache|DEFAULT"
   "rule-action-dispatcher|*/2 * * * *|/jobs/rule-action-dispatcher|DEFAULT"
   "webhook-retries|*/10 * * * *|/jobs/webhook-retries|DEFAULT"
+  # PAUSED (observed 2026-08-10): unattributed — actor/reason not recorded at
+  # pause time; investigate before resuming.
   "workspace-subscription-renewal|0 */6 * * *|/jobs/workspace-subscription-renewal|DEFAULT|PAUSED"
 )
 
@@ -234,6 +245,7 @@ JOBS=(
 # This is documentation-as-data: cloud-scheduler.test.ts fails if a cron route
 # is missing from both this list and JOBS, so adding a route forces an explicit
 # trigger decision. Never move a route here to silence the test — state why.
+# shellcheck disable=SC2034  # parsed by cloud-scheduler.test.ts, not by this script
 NOT_SCHEDULED=(
   # Flag-coupled dormant features — the binding ships in each flag's
   # activation runbook; binding now would only drain queues that cannot fill.
@@ -284,14 +296,19 @@ NOT_SCHEDULED=(
   "/jobs/fetch-ipeds|parked feeder program"
   "/jobs/regulatory-change-scan|parked feeder program"
 )
-# NOT_SCHEDULED is a registry consumed by cloud-scheduler.test.ts, not by this
-# script's loop.
-: "${NOT_SCHEDULED[@]}"
+
+# One upfront list instead of a per-job `describe` probe: at 67 jobs the
+# describes would double the API-call count, and — worse — under `set -e` a
+# single transient describe failure (auth blip, 429) would misclassify an
+# existing job as "create", fail on the duplicate, and abort the run midway.
+# (Plain string + grep, not an associative array: macOS ships bash 3.2.)
+EXISTING_JOBS="$(gcloud scheduler jobs list --project="$PROJECT_ID" --location="$REGION" --format='value(name.basename())')"
+
 for JOB in "${JOBS[@]}"; do
   IFS='|' read -r NAME SCHEDULE ENDPOINT_PATH RETRY STATE <<< "$JOB"
 
   # Idempotent — if the job already exists, update; else create.
-  if gcloud scheduler jobs describe "$NAME" --project="$PROJECT_ID" --location="$REGION" >/dev/null 2>&1; then
+  if grep -qx "$NAME" <<< "$EXISTING_JOBS"; then
     ACTION=update
   else
     ACTION=create
@@ -310,11 +327,16 @@ for JOB in "${JOBS[@]}"; do
     --attempt-deadline="$ATTEMPT_DEADLINE"
   )
 
-  # NO_RETRY and DEFAULT both pass no retry flags. The difference is intent:
-  # NO_RETRY documents "retrying would be wrong" (gcloud's create default is
-  # already no-retry); DEFAULT documents "imported from live prod — leave the
-  # job's existing retry config alone on update".
-  if [[ "$RETRY" != "NO_RETRY" && "$RETRY" != "DEFAULT" ]]; then
+  # NO_RETRY passes an explicit --max-retry-attempts=0: gcloud's create
+  # default is already no-retry, but on UPDATE omitted flags PRESERVE the
+  # job's current config, so an explicit 0 is what makes a script re-run
+  # self-heal out-of-band retry drift (several NO_RETRY jobs treat zero
+  # retries as a load-bearing safety invariant, e.g. org-queue-scheduler's
+  # claim-lock semantics). DEFAULT passes no retry flags at all — imported
+  # from live prod; a re-run must stay behavior-neutral for them.
+  if [[ "$RETRY" == "NO_RETRY" ]]; then
+    CMD+=(--max-retry-attempts=0)
+  elif [[ "$RETRY" != "DEFAULT" ]]; then
     IFS=',' read -r MIN_BACKOFF MAX_BACKOFF MAX_RETRY <<< "$RETRY"
     CMD+=(
       --min-backoff="$MIN_BACKOFF"
