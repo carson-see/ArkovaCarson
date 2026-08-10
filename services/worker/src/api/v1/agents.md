@@ -2,6 +2,53 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-10 — the field policy now covers EVERY anchor-creating route here (DPA clause 4.6, part 2)
+
+The entry below wired `enforceOrgFieldPolicy` into `anchor-submit.ts` and `anchor-bulk.ts`. Five other
+request handlers in this tree also INSERT into `anchors`, and each was a way for a policy-configured
+org to send a prohibited field and get a 2xx. All five now enforce it:
+
+| Route | Auth | Guard sits before |
+|---|---|---|
+| `POST /contracts/anchor-pre-signing` | API key (`anchor:write`) | the idempotency lookup that returns a stored 200 receipt |
+| `POST /cle/submit` | API key **or** dashboard JWT | the insert; the whole body is copied into `anchors.metadata` |
+| `POST /credentials/ctdl/registry-anchor` | dashboard JWT | the outbound CE Registry fetch, the dedup 200, and `deductOrgCredit` |
+| `POST /credential-sources/import-url/{preview,confirm}` | dashboard JWT | the source fetch and the duplicate-import 200 |
+| `POST /versions/:versionId/resolve` | dashboard JWT (org admin) | the version update + anchor create |
+
+Things worth not re-deriving:
+
+- **The census that produced this list was wrong in both directions.** Grepping for files containing
+  both `from('anchors')` and `.insert(` named four files that only ever SELECT (`batch.ts`,
+  `credentials-ctdl.ts`, `signatures.ts`, `attestations.ts`) and missed two that genuinely insert
+  (`cle-verify.ts`, `version-resolution.ts`). Only `from('anchors')` whose NEXT chained call is
+  `.insert(`/`.upsert(` is a write; the worker has ~164 other `from('anchors')` occurrences and they
+  are all reads. `scripts/ci/check-anchor-field-policy-coverage.ts` now enforces this so the next
+  route cannot miss the guard silently.
+- **Dashboard JWT routes are IN scope.** The regulated counterparty is the org, not the credential
+  type — an org admin clicking a dashboard button is that counterparty sending us a field its
+  agreement forbids. This is the same reasoning that already put `anchor-bulk-self-service.ts` in
+  scope, and it is why the CI detector keys off `services/worker/src/api/`, not off which middleware
+  a route mounts behind.
+- **`credential-sources` is guarded inside the shared `buildPreviewFromRequest`,** so `/preview` and
+  `/confirm` cannot disagree — a preview that reports a payload as importable when the confirm will
+  reject it is the same defect as `dry_run` disagreeing with the real run.
+- **`registry-anchor` resolves its org at the TOP of the handler** and reuses that value at the insert
+  site (one `profiles` read, not two), so a request that will be rejected never triggers an outbound
+  CE Registry call on the org's behalf.
+- **On `.strict()` bodies the guard is defense-in-depth for unknown keys, and the ONLY control for
+  known ones.** Every schema here is strict, so an unknown top-level key already 400s as
+  `invalid_request`. What the guard adds is rejection of fields the schema *accepts* —
+  `description` on pre-signing, `attorney_name` on CLE submit, `issuer_hint` on credential-sources,
+  `notes` on version-resolve. `anchor-field-policy-routes.test.ts` deliberately tests only those, since
+  an unknown-key test would pass with the guard removed.
+- **`cle-submit` resolves the org itself and fails CLOSED.** It takes an API key *or* a JWT; the JWT
+  path has no `orgId` on the request, so it reads `profiles`. A failed read returns 503, never
+  `orgId: null` — the latter reads as "unrestricted org" and would be a silent bypass.
+
+Out of scope, deliberately: the three anchor-creating paths under `services/worker/src/jobs/`. See
+`services/worker/src/jobs/agents.md`.
+
 ## 2026-08-10 — anchor write paths enforce a per-org field policy (DPA clause 4.6)
 
 `anchor-submit.ts` and `anchor-bulk.ts` both call `enforceOrgFieldPolicy` (`utils/orgFieldPolicy.ts`,

@@ -60,6 +60,7 @@ import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
 import { ensureAnchorCreditAvailable } from '../../../utils/anchorCreditGate.js';
 import { ensureOrgNotSuspended } from '../../../utils/orgSuspensionGuard.js';
+import { enforceOrgFieldPolicy } from '../../../utils/orgFieldPolicy.js';
 
 const router = Router();
 
@@ -268,6 +269,21 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
   const fingerprint = body.fingerprint; // already lowercased by the schema
 
   const orgId = req.apiKey.orgId ?? null;
+
+  // DPA Schedule 1 / clause 4.6 — org-scoped field rejection (migration 0405).
+  // No-op for every org without a policy row. Runs on the RAW body and BEFORE
+  // the idempotency lookup below: that lookup answers 200 with the stored
+  // receipt for an already-anchored fingerprint, so enforcing after it would
+  // let a prohibited field through on every retry — and a contract-signing
+  // integration retries by construction.
+  if (!(await enforceOrgFieldPolicy({
+    orgId,
+    body: req.body,
+    res,
+    scope: 'contracts-anchor-pre-signing',
+  }))) {
+    return;
+  }
 
   try {
     // Idempotency lookup, scoped by:
