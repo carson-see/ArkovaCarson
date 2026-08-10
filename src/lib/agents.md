@@ -171,3 +171,28 @@ _The following entries were lost off `main` by the 2026-07-28 union-merge-driver
 Note on the two `NessieIntelligencePanel.tsx` mentions in the entries above:
 that file is deleted. The `resolveWorkerBaseUrl` / curated-catch-block
 conventions those entries describe are unchanged for every other listed caller.
+
+## 2026-08-10 — /privacy copy fully centralized (follow-up to the scaffolding guard)
+
+The scaffolding guard above only reads `copy.ts`, so its coverage equals
+`copy.ts`'s coverage. The remaining inline privacy copy is now moved under it:
+
+- `PRIVACY_NOTICE_LABELS` gained per-jurisdiction `*_REGULATOR` / `*_RIGHTS`
+  (readonly string arrays — the leaf-walkers recurse into them) /
+  `*_TRANSFER_BASIS` / `*_BREACH_TIMELINE` for all 14 notices, previously
+  inline literals in `JurisdictionPrivacyNotices.tsx`.
+- `LEGAL_PAGE_LABELS` gained the `PRIVACY_*` page-body keys (title/meta,
+  heading, effective date, sections 1–7), previously inline JSX in
+  `PrivacyPage.tsx`. `PRIVACY_S1_BODY_*` is split around the `<strong>not</strong>`
+  emphasis — the JSX supplies the joining spaces via `{' '}`.
+- `SUPPORT_CONTACT_EMAIL` joins `PRIVACY_CONTACT_EMAIL` (it renders on /privacy
+  as the account-deletion route, so it is copy).
+
+The move was verified byte-identical (before/after render dump of title + meta +
+`<main>` textContent, zero diff). Every value is a legal representation or a
+statement of external law — rewording is a legal edit, and the EU–US keys must
+keep naming NO transfer mechanism (SCRUM-2283, §1.13 R-7).
+
+Coverage is enforced, not asserted: `src/pages/PrivacyPage.copy-centralization.test.tsx`
+fails if /privacy renders prose `copy.ts` does not own, or if a jurisdiction
+copy field regresses to an inline literal.

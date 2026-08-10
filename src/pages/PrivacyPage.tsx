@@ -7,14 +7,14 @@
 import { Link } from 'react-router-dom';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { JurisdictionPrivacyNotices } from '@/components/compliance/JurisdictionPrivacyNotices';
-import { LEGAL_PAGE_LABELS } from '@/lib/copy';
+import { LEGAL_PAGE_LABELS, PRIVACY_CONTACT_EMAIL, SUPPORT_CONTACT_EMAIL } from '@/lib/copy';
 
 import { usePageMeta } from '@/hooks/usePageMeta';
 
 export function PrivacyPage() {
   usePageMeta({
-    title: 'Privacy Policy — Arkova Document Verification Platform',
-    description: 'Arkova privacy policy. Documents never leave your device. Learn how we protect your data with client-side processing and cryptographic fingerprinting.',
+    title: LEGAL_PAGE_LABELS.PRIVACY_PAGE_TITLE,
+    description: LEGAL_PAGE_LABELS.PRIVACY_PAGE_DESCRIPTION,
   });
 
   return (
@@ -30,97 +30,74 @@ export function PrivacyPage() {
         </div>
       </header>
       <main className="mx-auto max-w-3xl px-6 py-12">
-        <h1 className="text-3xl font-bold tracking-tight mb-8">Privacy Policy</h1>
+        <h1 className="text-3xl font-bold tracking-tight mb-8">{LEGAL_PAGE_LABELS.PRIVACY_HEADING}</h1>
         <div className="prose prose-neutral dark:prose-invert max-w-none space-y-6 text-sm text-muted-foreground">
           <p className="text-base text-foreground">
-            <strong>Effective Date:</strong> March 2026
+            <strong>{LEGAL_PAGE_LABELS.PRIVACY_EFFECTIVE_DATE_LABEL}</strong>{' '}
+            {LEGAL_PAGE_LABELS.PRIVACY_EFFECTIVE_DATE}
           </p>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">1. Information We Collect</h2>
+            <h2 className="text-lg font-semibold text-foreground">{LEGAL_PAGE_LABELS.PRIVACY_S1_HEADING}</h2>
             <p>
-              Arkova collects only the minimum information necessary to provide our document
-              verification service. This includes your email address, organization name, and
-              account preferences. We do <strong>not</strong> collect, store, or process your
-              documents — all document fingerprinting occurs entirely within your browser.
+              {LEGAL_PAGE_LABELS.PRIVACY_S1_BODY_BEFORE_EMPHASIS}{' '}
+              <strong>{LEGAL_PAGE_LABELS.PRIVACY_S1_BODY_EMPHASIS}</strong>{' '}
+              {LEGAL_PAGE_LABELS.PRIVACY_S1_BODY_AFTER_EMPHASIS}
             </p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">2. How We Use Your Information</h2>
-            <p>
-              Your information is used to authenticate your account, manage your organization,
-              process billing, and deliver the verification service. We do not sell or share your
-              personal information with third parties for marketing purposes.
-            </p>
+            <h2 className="text-lg font-semibold text-foreground">{LEGAL_PAGE_LABELS.PRIVACY_S2_HEADING}</h2>
+            <p>{LEGAL_PAGE_LABELS.PRIVACY_S2_BODY}</p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">3. Document Privacy</h2>
-            <p>
-              Documents are processed entirely on your device. Only a cryptographic fingerprint
-              (a one-way mathematical representation) is sent to our servers. It is mathematically
-              impossible to reconstruct your document from its fingerprint. Your files never leave
-              your browser.
-            </p>
+            <h2 className="text-lg font-semibold text-foreground">{LEGAL_PAGE_LABELS.PRIVACY_S3_HEADING}</h2>
+            <p>{LEGAL_PAGE_LABELS.PRIVACY_S3_BODY}</p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">4. Data Security</h2>
-            <p>
-              We implement industry-standard security measures including encryption in transit (TLS),
-              row-level security on all database tables, and strict access controls. Our audit trail
-              is append-only and tamper-evident.
-            </p>
+            <h2 className="text-lg font-semibold text-foreground">{LEGAL_PAGE_LABELS.PRIVACY_S4_HEADING}</h2>
+            <p>{LEGAL_PAGE_LABELS.PRIVACY_S4_BODY}</p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">5. International Data Transfers</h2>
+            <h2 className="text-lg font-semibold text-foreground">{LEGAL_PAGE_LABELS.PRIVACY_S5_HEADING}</h2>
             {/*
               SCRUM-2283: removed the false "Arkova self-certifies under the EU-US
               Data Privacy Framework" claim (no active DPF self-certification held;
               R-7 claims gate). The specific EU→US lawful-transfer basis is
               counsel-required and must not be invented here — placeholder pending
-              legal review.
+              legal review. The paragraph now lives in copy.ts as
+              LEGAL_PAGE_LABELS.PRIVACY_S5_TRANSFER_BASIS, where the scaffolding
+              guard can see it; that rule is restated at the key itself.
             */}
-            <p>
-              The lawful basis for transatlantic personal data transfers is currently under review
-              by our legal counsel and will be published here once confirmed. Regardless of the
-              transfer mechanism, our client-side processing architecture minimizes cross-border
-              data flows — documents never leave your device, and only cryptographic fingerprints
-              are transmitted.
-            </p>
-            <p>
-              For transfers involving Brazilian data subjects, we use ANPD-approved Standard
-              Contractual Clauses. For Singapore, we comply with PDPA Section 26 transfer
-              requirements. For Mexico, cross-border transfers require data subject consent
-              per LFPDPPP Article 36.
-            </p>
+            <p>{LEGAL_PAGE_LABELS.PRIVACY_S5_TRANSFER_BASIS}</p>
+            <p>{LEGAL_PAGE_LABELS.PRIVACY_S5_REGIONAL_TRANSFERS}</p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">6. Data Retention</h2>
+            <h2 className="text-lg font-semibold text-foreground">{LEGAL_PAGE_LABELS.PRIVACY_S6_HEADING}</h2>
             <p>
-              Verification records are retained for as long as your account is active. You may
-              request deletion of your account and associated data by contacting us at{' '}
-              <a href="mailto:support@arkova.ai" className="text-primary hover:underline">
-                support@arkova.ai
+              {LEGAL_PAGE_LABELS.PRIVACY_S6_BODY}{' '}
+              <a href={`mailto:${SUPPORT_CONTACT_EMAIL}`} className="text-primary hover:underline">
+                {SUPPORT_CONTACT_EMAIL}
               </a>.
             </p>
             <p>
-              For detailed retention periods by data category, see our{' '}
+              {LEGAL_PAGE_LABELS.PRIVACY_S6_RETENTION_POLICY_PREFIX}{' '}
               <Link to="/privacy/data-retention" className="text-primary hover:underline">
-                Data Retention Policy
+                {LEGAL_PAGE_LABELS.PRIVACY_S6_RETENTION_POLICY_LINK}
               </Link>.
             </p>
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">7. Contact</h2>
+            <h2 className="text-lg font-semibold text-foreground">{LEGAL_PAGE_LABELS.PRIVACY_S7_HEADING}</h2>
             <p>
-              For privacy-related inquiries, contact us at{' '}
-              <a href="mailto:privacy@arkova.ai" className="text-primary hover:underline">
-                privacy@arkova.ai
+              {LEGAL_PAGE_LABELS.PRIVACY_S7_BODY}{' '}
+              <a href={`mailto:${PRIVACY_CONTACT_EMAIL}`} className="text-primary hover:underline">
+                {PRIVACY_CONTACT_EMAIL}
               </a>.
             </p>
           </section>

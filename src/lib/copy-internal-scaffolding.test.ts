@@ -122,10 +122,11 @@ describe('shipped copy carries no internal scaffolding', () => {
    * the basis is under review — it may NOT name a mechanism.
    */
   it('the EU–US transfer notice still asserts no mechanism it does not hold', () => {
-    const { DPF_DESCRIPTION, DPF_TRANSFER_BASIS } = copy.PRIVACY_NOTICE_LABELS as Record<
-      string,
-      string
-    >;
+    // Direct destructuring (no Record cast): since the labels object now also
+    // carries readonly rights ARRAYS, a string-record cast no longer typechecks
+    // — and the literal keys make removal of either string a compile error,
+    // which is a stronger pin than the runtime toBeDefined it replaces.
+    const { DPF_DESCRIPTION, DPF_TRANSFER_BASIS } = copy.PRIVACY_NOTICE_LABELS;
 
     for (const value of [DPF_DESCRIPTION, DPF_TRANSFER_BASIS]) {
       expect(value).toBeDefined();
