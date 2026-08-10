@@ -181,3 +181,23 @@ Prod REQUIRES email confirmation — verified live against `vzwyaatejekddvltxyye
 on 2026-08-01 (signup returns HTTP 200 with `confirmation_sent_at` set and NO
 session). `supabase/config.toml` and the signup E2E spec previously encoded the
 opposite; both are corrected.
+
+## 2026-08-10 — ComplianceDashboardPage no longer mounts the Nessie panel
+
+`ComplianceDashboardPage.tsx` rendered `<NessieIntelligencePanel />`
+unconditionally. `/organization/compliance` is guarded by `AuthGuard` +
+`RouteGuard` only (NOT `PlatformAdminRoute`, `App.tsx`), so any authenticated
+customer reached it by URL and saw a query box for a backend that is switched
+off, plus a confidence readout SCRUM-2914 had ordered removed. Import + render
+are gone and the component is deleted.
+
+Two things to carry forward when editing this page:
+
+- **A page test that stubs a child cannot see the child.** This suite carried
+  `vi.mock('@/components/search/NessieIntelligencePanel', ...)`, so it stayed
+  green whether or not the page mounted the panel — the stub is why nobody
+  noticed. Stub a child to cut a dependency (a QueryClientProvider, a network
+  hook), never to silence a surface you have not decided is supposed to be there.
+- **"The backend flag is off" is not a reachability argument.** Reachability is
+  the JSX mount plus the route's guards. `src/lib/nessie-surfaces-offline.test.ts`
+  now enforces the mount half.
