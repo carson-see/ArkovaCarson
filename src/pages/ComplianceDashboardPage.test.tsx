@@ -10,9 +10,10 @@ vi.mock('@/components/layout', () => ({
   AppShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
-vi.mock('@/components/search/NessieIntelligencePanel', () => ({
-  NessieIntelligencePanel: () => null,
-}));
+// NOTE: the Nessie intelligence panel is deliberately NOT stubbed here. It used
+// to be, which is precisely how it stayed mounted unnoticed — the stub made the
+// page suite green whether or not the page rendered it. See the
+// "Nessie stays OFF" describe block at the bottom of this file.
 
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ user: { id: 'admin-1', email: 'admin@example.test' }, signOut: vi.fn() }),
@@ -294,5 +295,75 @@ describe('SCRUM-1862 org CPE dashboard', () => {
     renderPage();
 
     expect(screen.getByRole('status')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Nessie stays OFF (founder directive, 2026-08-01) + no confidence scores in
+ * the UI (SCRUM-2914, 2026-07-22).
+ *
+ * `/organization/compliance` is guarded by `AuthGuard` + `RouteGuard` only —
+ * NOT `PlatformAdminRoute` — so this page is reachable by URL by any
+ * authenticated customer. It mounted `<NessieIntelligencePanel />` with no flag
+ * gate of any kind, putting a query box and a confidence-percentage readout in
+ * front of customers, backed by a service that is switched off.
+ *
+ * These assertions use the panel's literal former copy rather than a
+ * `NESSIE_LABELS` key, on purpose: the keys are gone, and pinning the literals
+ * means re-introducing the same UI under a NEW key still fails here.
+ */
+describe('Nessie stays OFF — the compliance dashboard renders no Nessie UI', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-06-21T00:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not render the document-intelligence query panel', async () => {
+    renderPage();
+
+    // The page itself must have rendered — otherwise these are vacuous.
+    await screen.findByTestId('org-cpe-dashboard');
+
+    expect(screen.queryByText('Document Intelligence')).toBeNull();
+    expect(
+      screen.queryByText('Ask compliance questions. Answers cite verified, anchored documents.'),
+    ).toBeNull();
+    expect(screen.queryByPlaceholderText('Ask a compliance question...')).toBeNull();
+    expect(
+      screen.queryByText('Ask a question to get answers backed by verified evidence.'),
+    ).toBeNull();
+  });
+
+  it('does not render the task-type selector that fronted the Nessie query API', async () => {
+    renderPage();
+    await screen.findByTestId('org-cpe-dashboard');
+
+    for (const taskLabel of [
+      'Compliance Q&A',
+      'Risk Analysis',
+      'Document Summary',
+      'Cross-Reference',
+    ]) {
+      expect(screen.queryByText(taskLabel)).toBeNull();
+    }
+  });
+
+  it('renders no confidence readout or confidence decomposition (SCRUM-2914)', async () => {
+    renderPage();
+    await screen.findByTestId('org-cpe-dashboard');
+
+    expect(screen.queryByText('confidence')).toBeNull();
+    for (const detailLabel of [
+      /Documents cited/,
+      /Anchored citations/,
+      /Corroborating sources/,
+      /Source authority/,
+    ]) {
+      expect(screen.queryByText(detailLabel)).toBeNull();
+    }
   });
 });
