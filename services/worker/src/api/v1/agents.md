@@ -2,6 +2,34 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-10 — anchor write paths enforce a per-org field policy (DPA clause 4.6)
+
+`anchor-submit.ts` and `anchor-bulk.ts` both call `enforceOrgFieldPolicy` (`utils/orgFieldPolicy.ts`,
+migration `0405`) immediately after their Zod parse. For every org without a policy row this is a
+no-op; for a configured org, a request carrying a prohibited field is **rejected with 400**
+(`error: 'field_not_permitted'`, RFC 7807 + the house `details[]` shape), never silently stripped.
+
+Placement is load-bearing on both routes and should not be moved:
+
+- **`anchor-submit.ts`: before the duplicate-fingerprint lookup.** That lookup answers **200** for an
+  already-anchored fingerprint. Enforcing after it would let a prohibited field through on every
+  re-submission of an existing document — the most likely shape of a real integration retry.
+- **`anchor-bulk.ts`: before the `dry_run` short-circuit** (a validation run that reports
+  `validated: 1` for a batch the real run rejects is worse than no dry-run) **and before quota and
+  credit consumption** (a rejected request must not bill).
+- **Whole-batch rejection on bulk, not per-row errors.** Queueing the compliant rows and reporting
+  the rest would mean accepting a payload that carried prohibited data; the data has already been
+  transmitted at that point, and a 201 tells the partner the shipment was fine.
+
+`anchor-bulk-self-service.ts` inherits the guard through its unmodified fall-through into
+`anchorBulkRouter` — so the dashboard is not a way around a restriction the org is subject to. That
+is pinned by a test, because the fall-through is the only reason it holds.
+
+**§1.8 note:** no published response shape changed and no previously-valid request became invalid for
+any org that has no policy row. For a configured org, requests that previously succeeded now 400 —
+which is the point of the control and is what that org contracted for. New error codes on an existing
+status class are additive; this needs no `v2` prefix.
+
 ## 2026-08-03 — `openapi-ciba.ts` ActionType doc gained `INSTANT_SECURE` + a drift guard
 
 Founder directive (rule-action-dispatcher/schemas.ts wiring — see `services/worker/src/jobs/agents.md` and `services/worker/src/rules/agents.md` for the full writeup). `ActionType`'s `enum` array here is a hand-copied literal that had **no test pinning it against the actual Zod source of truth** (`rules/schemas.ts` `CreateOrgRuleInput.action_type`) — `openapi-ciba.test.ts` gained `'ActionType enum matches CreateOrgRuleInput.action_type exactly (no doc drift)'`, asserting the two sorted arrays are equal, so a future new action_type can't ship in the schema and silently miss this doc again. `enum` now reads `['AUTO_ANCHOR', 'FAST_TRACK_ANCHOR', 'INSTANT_SECURE', 'QUEUE_FOR_REVIEW', 'FLAG_COLLISION', 'NOTIFY', 'FORWARD_TO_URL']`.
