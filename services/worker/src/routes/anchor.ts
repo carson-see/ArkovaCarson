@@ -27,6 +27,12 @@ import {
   InvitationError,
   type InvitationErrorCode,
 } from '../api/invitations.js';
+import {
+  getActivationPreview,
+  completeActivation,
+  ActivationError,
+  type ActivationErrorCode,
+} from '../api/activation.js';
 
 export const anchorRouter = Router();
 
@@ -301,6 +307,79 @@ anchorRouter.post('/invitations/accept', invitationLimiter, async (req, res) => 
     }
     logger.error({ error }, 'Invitation accept failed');
     sendError(res, 500, 'internal_error', 'Failed to accept invitation');
+  }
+});
+
+// ─── Recipient account activation ──────────────────────────────────────────
+
+const ACTIVATION_ERROR_STATUS: Record<ActivationErrorCode, number> = {
+  invalid_input: 400,
+  not_found: 404,
+  expired: 410,
+  already_used: 410,
+  internal_error: 500,
+};
+
+const activationDeps = { db, logger };
+
+/** Its OWN namespaced bucket, for the reason spelled out on `invitationLimiter`
+ *  above: an unscoped bucket shares one IP counter with `index.ts`'s
+ *  `apiIpShadowGuard`, which runs for EVERY `/api/*` request. Tighter than the
+ *  invitation limiter because this endpoint consumes a single-use credential:
+ *  10/min/IP still allows retries and a shared office NAT, while bounding
+ *  automated guessing well below anything useful against a 256-bit token. */
+const activationLimiter = rateLimit({ windowMs: 60_000, maxRequests: 10, scope: 'activation' });
+
+/**
+ * GET /api/activation/:token
+ * Public preview for the /activate page — invited email + org name + validity.
+ * No auth by design: the recipient has no account yet, and the single-use
+ * token IS the proof of access (same contract as GET /api/invitations/:token).
+ */
+anchorRouter.get('/activation/:token', activationLimiter, async (req, res) => {
+  try {
+    const token = Array.isArray(req.params.token) ? req.params.token[0] : req.params.token;
+    res.json(await getActivationPreview(activationDeps, token ?? ''));
+  } catch (error) {
+    if (error instanceof ActivationError) {
+      sendError(res, ACTIVATION_ERROR_STATUS[error.code], error.code, error.message);
+      return;
+    }
+    logger.error({ error }, 'Activation preview failed');
+    sendError(res, 500, 'internal_error', 'Failed to load this activation link');
+  }
+});
+
+/**
+ * POST /api/activation/complete
+ * Consumes the activation token, sets the recipient's password via the
+ * Supabase admin API (service_role — never the browser, Constitution §1.4)
+ * and marks the profile ACTIVE. Unauthenticated by design: the caller cannot
+ * have a session yet, which is the whole point of activation.
+ */
+anchorRouter.post('/activation/complete', activationLimiter, async (req, res) => {
+  const { token, password, fullName } = req.body as {
+    token?: string;
+    password?: string;
+    fullName?: string;
+  };
+
+  if (!token || !password) {
+    sendError(res, 400, 'invalid_request', 'token and password are required');
+    return;
+  }
+
+  try {
+    const result = await completeActivation(activationDeps, { token, password, fullName });
+    res.json({ success: true, email: result.email, orgId: result.orgId, orgName: result.orgName });
+  } catch (error) {
+    if (error instanceof ActivationError) {
+      sendError(res, ACTIVATION_ERROR_STATUS[error.code], error.code, error.message);
+      return;
+    }
+    // Never echo the thrown error: it may carry the token or the password.
+    logger.error({ error }, 'Activation failed');
+    sendError(res, 500, 'internal_error', 'Failed to activate your account');
   }
 });
 
