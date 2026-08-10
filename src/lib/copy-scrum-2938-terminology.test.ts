@@ -59,16 +59,30 @@ describe('SCRUM-2938 S1 — killed compliance-intelligence / Nessie / compliance
     expect(COMPLIANCE_LABELS.PAGE_TITLE.toLowerCase()).not.toContain('intelligence');
   });
 
-  it('Nessie codename + "compliance intelligence" gone from the intelligence panel', () => {
-    expect(NESSIE_LABELS.PANEL_TITLE).toBe('Document Intelligence');
+  // The intelligence-PANEL keys this used to assert over (PANEL_TITLE,
+  // EMPTY_STATE, TASK_*, CONFIDENCE*) no longer exist: the panel was mounted
+  // ungated on a customer-reachable route while Nessie is OFF by founder
+  // directive, so the component and its vocabulary were deleted rather than
+  // rescrubbed. The S1 terminology contract is not weakened by that — copy that
+  // does not exist cannot carry the codename. It is now enforced two ways:
+  // structurally by src/lib/nessie-surfaces-offline.test.ts (nothing may mount
+  // a Nessie surface), and for the surviving keys below.
+  it('Nessie codename + "compliance intelligence" gone from the surviving insights copy', () => {
     expect(NESSIE_LABELS.INSIGHTS_TITLE).toBe('Document Insights');
-    for (const v of [
-      NESSIE_LABELS.PANEL_TITLE,
-      NESSIE_LABELS.INSIGHTS_TITLE,
-      NESSIE_LABELS.EMPTY_STATE,
-    ]) {
+    for (const v of Object.values(NESSIE_LABELS)) {
       expect(v.toLowerCase()).not.toContain('nessie');
       expect(v.toLowerCase()).not.toContain('compliance intelligence');
+    }
+  });
+
+  it('the deleted intelligence-panel copy has not crept back into the vocabulary', () => {
+    const keys = Object.keys(NESSIE_LABELS);
+    // Every surviving key belongs to NessieInsights (components/anchor).
+    expect(keys.every((k) => k.startsWith('INSIGHTS_'))).toBe(true);
+    // No confidence vocabulary survives anywhere in this export (SCRUM-2914).
+    for (const [k, v] of Object.entries(NESSIE_LABELS)) {
+      expect(k.toLowerCase()).not.toContain('confidence');
+      expect(v.toLowerCase()).not.toContain('confidence');
     }
   });
 
