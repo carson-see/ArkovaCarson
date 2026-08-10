@@ -14,8 +14,20 @@ SCHEDULER_SERVICE_ACCOUNT="${SCHEDULER_SERVICE_ACCOUNT:-270018525501-compute@dev
 TIME_ZONE="${TIME_ZONE:-UTC}"
 ATTEMPT_DEADLINE="${ATTEMPT_DEADLINE:-600s}"
 
-# Format: NAME|SCHEDULE|ENDPOINT_PATH|RETRY
-# RETRY is either NO_RETRY or "MIN_BACKOFF,MAX_BACKOFF,MAX_RETRY_ATTEMPTS"
+# Format: NAME|SCHEDULE|ENDPOINT_PATH|RETRY[|PAUSED]
+# RETRY is NO_RETRY, DEFAULT (pass no retry flags: create gets gcloud defaults,
+# update leaves the job's existing retry config untouched — used for entries
+# imported from live prod so a script re-run is behavior-neutral), or
+# "MIN_BACKOFF,MAX_BACKOFF,MAX_RETRY_ATTEMPTS".
+# A 5th field PAUSED records that the job is deliberately paused in prod: a
+# fresh `create` is immediately paused to match (DR-faithful); `update` never
+# touches pause state either way.
+#
+# COVERAGE CONTRACT (pinned by cloud-scheduler.test.ts): every cronRouter.post
+# route in services/worker/src/routes/cron.ts must appear either here in JOBS
+# or in NOT_SCHEDULED below with a reason. A route in neither set has NO
+# trigger in production (in-process node-cron is dormant on Cloud Run —
+# PROOF-03) and the test fails.
 JOBS=(
   "monthly-allocation-rollover|0 0 1 * *|/jobs/monthly-allocation-rollover|NO_RETRY"
   "grace-expiry-sweep|*/15 * * * *|/jobs/grace-expiry-sweep|NO_RETRY"
@@ -32,7 +44,8 @@ JOBS=(
   # services/worker/src/routes/cron.ts. Watermark-driven; failure does not
   # advance, so the next slot retries the same window. Tight retry — a
   # transient BQ outage should not stack delays beyond a few minutes.
-  "bq-export-incremental|*/5 * * * *|/jobs/bq-export-incremental|30s,120s,2"
+  # PAUSED live in prod (observed 2026-08-10) — preserved on rebuild.
+  "bq-export-incremental|*/5 * * * *|/jobs/bq-export-incremental|30s,120s,2|PAUSED"
   # SCRUM-1724: BigQuery export — daily snapshot of organizations + api_keys
   # at 02:00 UTC. Idempotent partition replace (DELETE WHERE snapshot_date=
   # today, then INSERT). NO_RETRY because re-running same day repeats the
@@ -136,17 +149,166 @@ JOBS=(
   # fresh random channel_token (GH #1836), rotating any connection still on
   # the legacy org-id-as-token scheme.
   "drive-subscription-renewal|0 * * * *|/jobs/drive-subscription-renewal|30s,120s,2"
+  # ── 2026-08-10 CTO-decision bindings (scheduler-binding audit) ─────────────
+  # SCRUM-1872: drain for docusign.notarization_completed job_queue rows. The
+  # producer (webhooks/docusign.ts enqueueNotarizationJob) is UNGATED and live
+  # in prod; without this binding the first notarized envelope enqueues a row
+  # nothing ever drains. Idempotent claim semantics → retry safe.
+  "docusign-notarization-completed|*/15 * * * *|/jobs/docusign-notarization-completed|30s,120s,2"
+  # ARK-103: treasury low-balance alert. Had no binding AND no in-process
+  # backup — the alert could never fire. NO_RETRY: re-fires hourly anyway and
+  # a retried alert decision risks double-paging.
+  "treasury-alert-check|0 * * * *|/jobs/treasury-alert-check|NO_RETRY"
+  # Bitcoin chain maintenance (in-process schedules are dormant on Cloud Run,
+  # so these never ran in prod; 0347 reorg handling shipped with no detector
+  # running). Cadences match the functions' own audit-mandated design
+  # (chain-maintenance.ts JSDoc: "Runs every 10 minutes" — REORG_CHECK_DEPTH_
+  # BLOCKS=10 (~100 min of chain) was sized for ~10 passes per anchor window;
+  # rebroadcast documents 6-hourly and self-throttles on a 24h updated_at
+  # cutoff). Detection results are correct findings — never retried.
+  "detect-reorgs|*/10 * * * *|/jobs/detect-reorgs|NO_RETRY"
+  "monitor-stuck-txs|*/10 * * * *|/jobs/monitor-stuck-txs|NO_RETRY"
+  "rebroadcast-txs|0 */6 * * *|/jobs/rebroadcast-txs|30s,120s,2"
+  # P7-TS-06: prod smoke suite. The live db-health job monitors smoke
+  # fail-streaks, which cannot exist without a cadence. Returns 503 on a
+  # correct "smoke failed" finding → NO_RETRY so Scheduler doesn't re-drive
+  # it (and doesn't double-write the audit_events history row). :30 offset
+  # avoids the :00 hourly herd.
+  "smoke-test|30 * * * *|/jobs/smoke-test|NO_RETRY"
+  # RECON-1: Stripe↔anchors reconciliation, read+report. Daily, offset from
+  # docusign-reconciliation (06:00).
+  "reconcile-stripe|0 7 * * *|/jobs/reconcile-stripe|NO_RETRY"
+  # GDPR retention: cleanup_expired_data() RPC verified NOT covered by prod
+  # pg_cron (2026-08-10: cron.job = vacuum-anchors + dashboard-cache refresh
+  # only) — the retention policy had no executor. First run deletes 0 rows
+  # (oldest audit row 2026-03-21); it becomes load-bearing gradually.
+  "cleanup-retention|30 5 * * *|/jobs/cleanup-retention|30s,120s,2"
+  # ── Imported from live prod 2026-08-10 (SCRUM-2900 reconciliation) ─────────
+  # These jobs were created out of band and existed only in GCP; schedules are
+  # copied verbatim from `gcloud scheduler jobs list`. RETRY=DEFAULT keeps a
+  # script re-run behavior-neutral for them (no retry flags passed).
+  "anchor-attestations|*/5 * * * *|/jobs/anchor-attestations|DEFAULT"
+  "anchor-expiry-sweep|0 3 * * *|/jobs/anchor-expiry-sweep|DEFAULT"
+  "anchor-public-records|*/10 * * * *|/jobs/anchor-public-records|DEFAULT"
+  "arkova-worker-rules-engine|*/2 * * * *|/jobs/rules-engine|DEFAULT"
+  "batch-anchors|*/30 * * * *|/jobs/batch-anchors|DEFAULT"
+  "check-confirmations|*/30 * * * *|/jobs/check-confirmations|DEFAULT"
+  "credit-expiry|0 0 1 * *|/jobs/credit-expiry|DEFAULT"
+  # OIDC audience MUST stay the bare host for this one — the path-with-query
+  # audience is exactly what broke daily-anchor-flush for ~6 weeks in 2026-06.
+  "daily-anchor-flush|0 3 * * *|/jobs/batch-anchors?force=true|DEFAULT"
+  "docusign-envelope-completed|*/5 * * * *|/jobs/docusign-envelope-completed|DEFAULT"
+  "edgar-bulk|*/30 * * * *|/jobs/edgar-bulk|DEFAULT"
+  "embed-public-records|*/2 * * * *|/jobs/embed-public-records|DEFAULT"
+  "fetch-acra-sg|0 0 * * *|/jobs/fetch-acra-sg|DEFAULT"
+  "fetch-australia|0 0 * * *|/jobs/fetch-australia|DEFAULT"
+  "fetch-cnpj-br|0 0 * * *|/jobs/fetch-cnpj-br|DEFAULT"
+  "fetch-continuing-education|0 */12 * * *|/jobs/fetch-continuing-education|DEFAULT"
+  "fetch-courtlistener|*/15 * * * *|/jobs/fetch-courtlistener|DEFAULT"
+  "fetch-dapip|*/10 * * * *|/jobs/fetch-dapip|DEFAULT"
+  "fetch-ecfr|0 */12 * * *|/jobs/fetch-ecfr|DEFAULT"
+  "fetch-edgar-form-adv|0 3 * * *|/jobs/fetch-edgar-form-adv|DEFAULT"
+  "fetch-edgar|0 */6 * * *|/jobs/fetch-edgar|DEFAULT"
+  "fetch-enforcement|0 */12 * * *|/jobs/fetch-enforcement|DEFAULT"
+  "fetch-federal-register|*/15 * * * *|/jobs/fetch-federal-register|DEFAULT"
+  "fetch-kenya|0 0 * * *|/jobs/fetch-kenya|DEFAULT"
+  "fetch-moh-sg|0 0 * * *|/jobs/fetch-moh-sg|DEFAULT"
+  "fetch-openalex|*/30 * * * *|/jobs/fetch-openalex|DEFAULT"
+  # PAUSED (observed 2026-08-10): consistent with the parked feeder program /
+  # 259k pending-anchoring backlog. Pause actor/date not recorded at pause
+  # time — attribute in scheduler-manifest.ts before any resume.
+  "fetch-state-courts-ca|*/30 * * * *|/jobs/fetch-state-courts|DEFAULT|PAUSED"
+  "fetch-state-courts-ny|*/30 * * * *|/jobs/fetch-state-courts|DEFAULT|PAUSED"
+  "fetch-state-courts-tx|*/30 * * * *|/jobs/fetch-state-courts|DEFAULT|PAUSED"
+  "fetch-uspto|*/15 * * * *|/jobs/fetch-uspto|DEFAULT"
+  # PAUSED (observed 2026-08-10): likely follows SCRUM-3050 (~3,300 consecutive
+  # 404 failures 2026-03-16→08-01 while the route didn't exist; route exists
+  # now). Unattributed — investigate before resuming.
+  "generate-reports|0 * * * *|/jobs/generate-reports|DEFAULT|PAUSED"
+  "openalex-bulk|*/30 * * * *|/jobs/openalex-bulk|DEFAULT"
+  "pipeline-throughput-monitor|*/30 * * * *|/jobs/pipeline-throughput-monitor|DEFAULT"
+  "populate-confirmation-proofs|*/15 * * * *|/jobs/populate-confirmation-proofs|DEFAULT"
+  "process-anchors|*/30 * * * *|/jobs/process-anchors|DEFAULT"
+  "process-revocations|*/5 * * * *|/jobs/process-revocations|DEFAULT"
+  "reconcile-credit-conservation|0 9 * * *|/jobs/reconcile-credit-conservation|DEFAULT"
+  "recover-broadcasts|*/15 * * * *|/jobs/recover-broadcasts|DEFAULT"
+  "refresh-stats|*/5 * * * *|/jobs/refresh-stats|DEFAULT"
+  "refresh-treasury-cache|*/10 * * * *|/jobs/refresh-treasury-cache|DEFAULT"
+  "rule-action-dispatcher|*/2 * * * *|/jobs/rule-action-dispatcher|DEFAULT"
+  "webhook-retries|*/10 * * * *|/jobs/webhook-retries|DEFAULT"
+  # PAUSED (observed 2026-08-10): unattributed — actor/reason not recorded at
+  # pause time; investigate before resuming.
+  "workspace-subscription-renewal|0 */6 * * *|/jobs/workspace-subscription-renewal|DEFAULT|PAUSED"
 )
-# SCRUM-1727 (one-shot historical backfill) is INTENTIONALLY NOT in JOBS.
-# It's a manual operator endpoint at /jobs/bq-export-backfill?table=<name>.
-# Run once per backfillable table; the next 5-min incremental cron picks
-# up new rows from the watermark the backfill leaves behind.
+
+# Routes deliberately WITHOUT a Cloud Scheduler binding. Format: PATH|REASON.
+# This is documentation-as-data: cloud-scheduler.test.ts fails if a cron route
+# is missing from both this list and JOBS, so adding a route forces an explicit
+# trigger decision. Never move a route here to silence the test — state why.
+# shellcheck disable=SC2034  # parsed by cloud-scheduler.test.ts, not by this script
+NOT_SCHEDULED=(
+  # Flag-coupled dormant features — the binding ships in each flag's
+  # activation runbook; binding now would only drain queues that cannot fill.
+  "/jobs/professional-education-extraction|ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY unset in prod; producer and consumer both no-op (PR #841); bind when the flag flips"
+  "/jobs/queue-digest|ENABLE_QUEUE_DIGEST off; user-facing digest emails are a product call (QUEUE-07)"
+  "/jobs/check-credential-expiry|switchboard ENABLE_EXPIRY_ALERTS=false since 2026-04-18 (NCE-09); user-facing alerts are a product call"
+  "/jobs/docusign-queue-reconciliation|ENABLE_DOCUSIGN_QUEUE_RECONCILIATION off (DS-05); bind when the flag flips"
+  # Product-gated notifications — enabling is a product decision, not ops.
+  "/jobs/queue-reminders|sends user-facing reminder emails (ARK-107); product call before any cadence"
+  "/jobs/check-attestation-expiry|sends user-facing expiry notifications (ATT-08); product call before any cadence"
+  # Operator-only / one-shot — running these on a schedule would be wrong.
+  "/jobs/bq-export-backfill|manual one-shot historical backfill (SCRUM-1727); incremental cron resumes from its watermark"
+  "/jobs/edgar-backfill|manual one-shot backfill"
+  "/jobs/mainnet-migration|one-time operator migration"
+  "/jobs/classify-proof-backcatalog|manual operator census (S3-A); write mode Carson-gated"
+  "/jobs/materialize-proof-backcatalog|manual operator T3 run (SCRUM-2917); write mode Carson-gated"
+  "/jobs/calibration-refit|QA/eval operator run (GME7.3)"
+  "/jobs/consolidate-utxos|spends treasury funds; operator-only (chain/treasury T3 surface)"
+  # Held pending CTO/product revisit (2026-08-10 decision).
+  "/jobs/payment-recovery|mutates payment state; hold until billing GA and Stripe key rotation complete"
+  "/jobs/financial-report|no consumer identified; hold until billing GA"
+  "/jobs/report-metered-usage|no metered SKUs in the fee model (PAY-02 dormant)"
+  "/jobs/monitor-fees|no consumer identified; mempool.space dependency — revisit with sovereignty work"
+  "/jobs/pipeline-health|superseded by pipeline-throughput-monitor (SCRUM-2901), which is scheduled"
+  # Public-records feeder program is PARKED (259k pending-anchoring backlog;
+  # feeder reconciliation is SCRUM-2900's surface). Do not bind any of these
+  # without a program-level decision to resume ingestion.
+  "/jobs/fetch-acnc|parked feeder program"
+  "/jobs/fetch-all-state-bills|parked feeder program"
+  "/jobs/fetch-state-bills|parked feeder program"
+  "/jobs/fetch-brazil-compliance|parked feeder program"
+  "/jobs/fetch-singapore-compliance|parked feeder program"
+  "/jobs/fetch-mexico-compliance|parked feeder program"
+  "/jobs/fetch-calbar|parked feeder program"
+  "/jobs/fetch-finra|parked feeder program"
+  "/jobs/fetch-sec-iapd|parked feeder program"
+  "/jobs/fetch-npi|parked feeder program"
+  "/jobs/fetch-cms-physicians|parked feeder program"
+  "/jobs/fetch-medical-boards|parked feeder program"
+  "/jobs/fetch-sam-entities|parked feeder program"
+  "/jobs/fetch-sam-exclusions|parked feeder program"
+  "/jobs/fetch-fcc|parked feeder program"
+  "/jobs/fetch-sos|parked feeder program"
+  "/jobs/fetch-licensing-board|parked feeder program"
+  "/jobs/fetch-insurance-licenses|parked feeder program"
+  "/jobs/fetch-cle|parked feeder program"
+  "/jobs/fetch-certifications|parked feeder program"
+  "/jobs/fetch-ipeds|parked feeder program"
+  "/jobs/regulatory-change-scan|parked feeder program"
+)
+
+# One upfront list instead of a per-job `describe` probe: at 67 jobs the
+# describes would double the API-call count, and — worse — under `set -e` a
+# single transient describe failure (auth blip, 429) would misclassify an
+# existing job as "create", fail on the duplicate, and abort the run midway.
+# (Plain string + grep, not an associative array: macOS ships bash 3.2.)
+EXISTING_JOBS="$(gcloud scheduler jobs list --project="$PROJECT_ID" --location="$REGION" --format='value(name.basename())')"
 
 for JOB in "${JOBS[@]}"; do
-  IFS='|' read -r NAME SCHEDULE ENDPOINT_PATH RETRY <<< "$JOB"
+  IFS='|' read -r NAME SCHEDULE ENDPOINT_PATH RETRY STATE <<< "$JOB"
 
   # Idempotent — if the job already exists, update; else create.
-  if gcloud scheduler jobs describe "$NAME" --project="$PROJECT_ID" --location="$REGION" >/dev/null 2>&1; then
+  if grep -qx "$NAME" <<< "$EXISTING_JOBS"; then
     ACTION=update
   else
     ACTION=create
@@ -165,7 +327,16 @@ for JOB in "${JOBS[@]}"; do
     --attempt-deadline="$ATTEMPT_DEADLINE"
   )
 
-  if [[ "$RETRY" != "NO_RETRY" ]]; then
+  # NO_RETRY passes an explicit --max-retry-attempts=0: gcloud's create
+  # default is already no-retry, but on UPDATE omitted flags PRESERVE the
+  # job's current config, so an explicit 0 is what makes a script re-run
+  # self-heal out-of-band retry drift (several NO_RETRY jobs treat zero
+  # retries as a load-bearing safety invariant, e.g. org-queue-scheduler's
+  # claim-lock semantics). DEFAULT passes no retry flags at all — imported
+  # from live prod; a re-run must stay behavior-neutral for them.
+  if [[ "$RETRY" == "NO_RETRY" ]]; then
+    CMD+=(--max-retry-attempts=0)
+  elif [[ "$RETRY" != "DEFAULT" ]]; then
     IFS=',' read -r MIN_BACKOFF MAX_BACKOFF MAX_RETRY <<< "$RETRY"
     CMD+=(
       --min-backoff="$MIN_BACKOFF"
@@ -175,4 +346,11 @@ for JOB in "${JOBS[@]}"; do
   fi
 
   "${CMD[@]}"
+
+  # A job marked PAUSED is deliberately paused in prod. Pause it right after a
+  # fresh create so a rebuild is DR-faithful; never touch pause state on
+  # update (gcloud update does not resume paused jobs).
+  if [[ "$ACTION" == "create" && "${STATE:-}" == "PAUSED" ]]; then
+    gcloud scheduler jobs pause "$NAME" --project="$PROJECT_ID" --location="$REGION"
+  fi
 done
