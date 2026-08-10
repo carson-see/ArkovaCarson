@@ -30,7 +30,6 @@ import { isPlatformAdmin } from '@/lib/platform';
 import { ROUTES } from '@/lib/routes';
 import { resolveSafeWorkerEndpoint, resolveWorkerBaseUrl } from '@/lib/workerUrlSafety';
 import { COMPLIANCE_LABELS } from '@/lib/copy';
-import { NessieIntelligencePanel } from '@/components/search/NessieIntelligencePanel';
 import { cn } from '@/lib/utils';
 import { COMPLIANCE_CONTROLS, ALL_FRAMEWORKS, getComplianceControls } from '@/lib/complianceMapping';
 import type { Database } from '@/types/database.types';
@@ -756,8 +755,11 @@ export function ComplianceDashboardPage() {
           />
         )}
 
-        {/* Section 0: Nessie Intelligence Query */}
-        <NessieIntelligencePanel />
+        {/* The Nessie intelligence query panel was mounted here, ungated, on a
+            route any authenticated customer can reach. Removed: Nessie is OFF
+            by founder directive, and the panel rendered a confidence score
+            SCRUM-2914 ordered removed from the UI. Do not re-add — the guard
+            is src/lib/nessie-surfaces-offline.test.ts. */}
 
         {/* SCRUM-1862: Organization CPE dashboard */}
         <Card className="bg-card border-border" data-testid="org-cpe-dashboard">
