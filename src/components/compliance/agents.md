@@ -34,7 +34,8 @@ Compliance monitoring and audit UI: score cards, audit gap analysis, jurisdictio
   `regulator` / `rights` / `transferBasis` / `breachTimeline` from the new
   `PRIVACY_NOTICE_LABELS.*_REGULATOR/_RIGHTS/_TRANSFER_BASIS/_BREACH_TIMELINE`
   keys (`rights` is `readonly string[]` — the copy.ts values are `as const`).
-  Only `regulatorUrl` (hrefs) and `color` (Tailwind classes) remain inline;
+  Only `regulatorUrl` (hrefs) remains inline (`color` was dead data — declared
+  and assigned but never rendered — and is deleted, per simplify review);
   they are not copy. Rendered output verified byte-identical. Regression is
   test-enforced from two sides: `src/pages/PrivacyPage.copy-centralization.test.tsx`
   fails on any inline literal in a copy field of this table AND on any rendered

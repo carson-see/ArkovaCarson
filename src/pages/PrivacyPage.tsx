@@ -7,7 +7,8 @@
 import { Link } from 'react-router-dom';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { JurisdictionPrivacyNotices } from '@/components/compliance/JurisdictionPrivacyNotices';
-import { LEGAL_PAGE_LABELS, PRIVACY_CONTACT_EMAIL, SUPPORT_CONTACT_EMAIL } from '@/lib/copy';
+import { DATA_RETENTION_LABELS, LEGAL_PAGE_LABELS, PRIVACY_CONTACT_EMAIL, SUPPORT_CONTACT_EMAIL } from '@/lib/copy';
+import { ROUTES } from '@/lib/routes';
 
 import { usePageMeta } from '@/hooks/usePageMeta';
 
@@ -63,15 +64,8 @@ export function PrivacyPage() {
 
           <section className="space-y-3">
             <h2 className="text-lg font-semibold text-foreground">{LEGAL_PAGE_LABELS.PRIVACY_S5_HEADING}</h2>
-            {/*
-              SCRUM-2283: removed the false "Arkova self-certifies under the EU-US
-              Data Privacy Framework" claim (no active DPF self-certification held;
-              R-7 claims gate). The specific EU→US lawful-transfer basis is
-              counsel-required and must not be invented here — placeholder pending
-              legal review. The paragraph now lives in copy.ts as
-              LEGAL_PAGE_LABELS.PRIVACY_S5_TRANSFER_BASIS, where the scaffolding
-              guard can see it; that rule is restated at the key itself.
-            */}
+            {/* S5 transfer basis is counsel-gated (SCRUM-2283) — the rule lives at
+                LEGAL_PAGE_LABELS.PRIVACY_S5_TRANSFER_BASIS in copy.ts. */}
             <p>{LEGAL_PAGE_LABELS.PRIVACY_S5_TRANSFER_BASIS}</p>
             <p>{LEGAL_PAGE_LABELS.PRIVACY_S5_REGIONAL_TRANSFERS}</p>
           </section>
@@ -86,8 +80,8 @@ export function PrivacyPage() {
             </p>
             <p>
               {LEGAL_PAGE_LABELS.PRIVACY_S6_RETENTION_POLICY_PREFIX}{' '}
-              <Link to="/privacy/data-retention" className="text-primary hover:underline">
-                {LEGAL_PAGE_LABELS.PRIVACY_S6_RETENTION_POLICY_LINK}
+              <Link to={ROUTES.DATA_RETENTION} className="text-primary hover:underline">
+                {DATA_RETENTION_LABELS.PAGE_TITLE}
               </Link>.
             </p>
           </section>

@@ -222,3 +222,11 @@ scope (it scans `<main>` only).
 When editing this page: add strings to `LEGAL_PAGE_LABELS` first, then render
 the key. The S5 transfer-basis paragraph must keep naming NO EU→US transfer
 mechanism (SCRUM-2283, §1.13 R-7) — the rule is restated at the key itself.
+
+Deferred scope, on the record: `TermsPage` / `AboutPage` / `ContactPage` /
+`DevelopersPage` (all public routes in `App.tsx`) carry the same §1.3 +
+scaffolding-guard-reach exposure — their prose is inline JSX the guard cannot
+see. `TermsPage` is structurally identical to pre-migration `PrivacyPage` and
+is the cheapest next target; migrating it is also the moment to extract
+`renderPrivacyMain` / `residueAfterRemovingCopy` from the copy-centralization
+test into a shared helper (rule of three not yet met — this is the first).

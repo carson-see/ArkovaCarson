@@ -44,6 +44,18 @@ import { PrivacyPage } from './PrivacyPage';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * 4th private copy.ts leaf walker in the repo — the siblings are
+ * copy-internal-scaffolding.test.ts (path-tracking), copy-scrum-2938-
+ * terminology-s2.test.ts (path-tracking, skips function exports), and
+ * copy-professional-education-overclaim.test.ts (values-only, INVOKES function
+ * exports with sample counts). This one neither skips nor invokes: it silently
+ * drops function-valued exports, which is deliberate here — a formatter-
+ * produced string on /privacy SHOULD surface as residue, because a function's
+ * output is not a static value the scaffolding guard can scan. Extract a shared
+ * walker only with those semantics reconciled (rule of three is met; the
+ * semantic split is why it hasn't happened).
+ */
 function collectStringValues(value: unknown, out: string[]): void {
   if (typeof value === 'string') {
     out.push(value);
@@ -75,12 +87,7 @@ function renderPrivacyMain(): string {
 
 /** Strip every copy.ts value from `text`; what survives came from somewhere else. */
 function residueAfterRemovingCopy(text: string): string {
-  let residue = text;
-  for (const value of COPY_VALUES) {
-    if (!residue.includes(value)) continue;
-    residue = residue.split(value).join(' ');
-  }
-  return residue;
+  return COPY_VALUES.reduce((residue, value) => residue.replaceAll(value, ' '), text);
 }
 
 describe('public /privacy copy is centralized in copy.ts (§1.3)', () => {
@@ -119,10 +126,12 @@ describe('public /privacy copy is centralized in copy.ts (§1.3)', () => {
 
     const start = source.indexOf('const JURISDICTION_NOTICES');
     expect(start).toBeGreaterThan(-1);
-    const table = source.slice(start, source.indexOf('\n];', start));
+    const end = source.indexOf('\n];', start);
+    expect(end).toBeGreaterThan(start); // -1 would silently widen the slice to EOF
+    const table = source.slice(start, end);
 
-    // `regulatorUrl` (an href) and `color` (Tailwind classes) are not copy and
-    // are deliberately absent from this list.
+    // `regulatorUrl` (an href) is not copy and is deliberately absent from
+    // this list.
     const COPY_FIELDS = /^\s*(regulator|rights|transferBasis|breachTimeline):\s*(.+?),?\s*$/gm;
 
     const inlineLiterals = [...table.matchAll(COPY_FIELDS)]

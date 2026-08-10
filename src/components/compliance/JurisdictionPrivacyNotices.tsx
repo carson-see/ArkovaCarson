@@ -21,7 +21,6 @@ interface JurisdictionNotice {
   rights: readonly string[];
   transferBasis: string;
   breachTimeline: string;
-  color: string;
   informationOfficer?: string;
 }
 
@@ -35,7 +34,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.FERPA_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.FERPA_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.FERPA_BREACH_TIMELINE,
-    color: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
   },
   {
     id: 'hipaa',
@@ -46,7 +44,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.HIPAA_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.HIPAA_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.HIPAA_BREACH_TIMELINE,
-    color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
   },
   {
     id: 'kenya',
@@ -57,7 +54,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.KENYA_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.KENYA_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.KENYA_BREACH_TIMELINE,
-    color: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
   {
@@ -69,7 +65,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.AUSTRALIA_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.AUSTRALIA_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.AUSTRALIA_BREACH_TIMELINE,
-    color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
   },
   {
     id: 'south-africa',
@@ -80,7 +75,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.SOUTH_AFRICA_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.SOUTH_AFRICA_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.SOUTH_AFRICA_BREACH_TIMELINE,
-    color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
   {
@@ -92,7 +86,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.NIGERIA_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.NIGERIA_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.NIGERIA_BREACH_TIMELINE,
-    color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
   {
@@ -104,7 +97,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.BRAZIL_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.BRAZIL_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.BRAZIL_BREACH_TIMELINE,
-    color: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
   {
@@ -116,7 +108,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.SINGAPORE_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.SINGAPORE_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.SINGAPORE_BREACH_TIMELINE,
-    color: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300',
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
   {
@@ -128,7 +119,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.MEXICO_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.MEXICO_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.MEXICO_BREACH_TIMELINE,
-    color: 'bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300',
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
   {
@@ -140,7 +130,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.COLOMBIA_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.COLOMBIA_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.COLOMBIA_BREACH_TIMELINE,
-    color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
   {
@@ -152,7 +141,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.THAILAND_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.THAILAND_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.THAILAND_BREACH_TIMELINE,
-    color: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
   {
@@ -164,15 +152,11 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.MALAYSIA_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.MALAYSIA_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.MALAYSIA_BREACH_TIMELINE,
-    color: 'bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/30 dark:text-fuchsia-300',
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
-  // SCRUM-2283: this notice previously asserted "EU-US Data Privacy Framework
-  // self-certification" as the transfer basis. Arkova does NOT hold an active DPF
-  // self-certification, so that claim is removed (R-7 claims gate). The specific
-  // EU→US lawful-transfer basis is counsel-required and must not be invented
-  // here — placeholder pending legal review. The regulator/DPF-panel references
-  // are removed with it since they only apply to a certified organization.
+  // SCRUM-2283 / R-7: the EU→US transfer basis is counsel-gated — no DPF
+  // self-certification is held and no transfer mechanism may be named. The
+  // rule lives at the DPF_* keys in copy.ts.
   {
     id: 'eu-us-transfer',
     title: PRIVACY_NOTICE_LABELS.DPF_TITLE,
@@ -182,7 +166,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     rights: PRIVACY_NOTICE_LABELS.DPF_RIGHTS,
     transferBasis: PRIVACY_NOTICE_LABELS.DPF_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.DPF_BREACH_TIMELINE,
-    color: 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300',
   },
 ];
 

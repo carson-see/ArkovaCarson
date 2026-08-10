@@ -3022,7 +3022,10 @@ export const LEGAL_PAGE_LABELS = {
   PRIVACY_S6_BODY:
     'Verification records are retained for as long as your account is active. You may request deletion of your account and associated data by contacting us at',
   PRIVACY_S6_RETENTION_POLICY_PREFIX: 'For detailed retention periods by data category, see our',
-  PRIVACY_S6_RETENTION_POLICY_LINK: 'Data Retention Policy',
+  // The link text is DATA_RETENTION_LABELS.PAGE_TITLE — the link names the page
+  // it opens, so the page's own title key is the single source. No separate
+  // *_LINK key: a half-done rename must not ship link text that disagrees with
+  // the page it opens.
 
   PRIVACY_S7_HEADING: '7. Contact',
   PRIVACY_S7_BODY: 'For privacy-related inquiries, contact us at',
