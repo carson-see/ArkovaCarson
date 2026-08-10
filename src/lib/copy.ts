@@ -2319,26 +2319,18 @@ export const NESSIE_LABELS = {
   // SCRUM-2938 S1: internal codename "Nessie" and the "compliance intelligence"
   // phrasing removed from user-facing copy (the NESSIE_LABELS identifier is
   // internal-only and unchanged per §1.3 "internal code may use technical names").
-  PANEL_TITLE: 'Document Intelligence',
-  PANEL_SUBTITLE: 'Ask compliance questions. Answers cite verified, anchored documents.',
-  INPUT_PLACEHOLDER: 'Ask a compliance question...',
-  CONFIDENCE: 'confidence',
-  CITATIONS_HEADING: 'Verified Citations',
-  VIEW_ON_CHAIN: 'On-chain proof',
-  VERIFY: 'Verify',
-  EMPTY_STATE: 'Ask a question to get answers backed by verified evidence.',
-  CACHED: 'cached',
-  RISKS_HEADING: 'Identified Risks',
-  RECOMMENDATIONS_HEADING: 'Recommendations',
-  CONFIDENCE_DETAIL_CITED: 'Documents cited',
-  CONFIDENCE_DETAIL_ANCHORED: 'Anchored citations',
-  CONFIDENCE_DETAIL_SOURCES: 'Corroborating sources',
-  CONFIDENCE_DETAIL_AUTHORITY: 'Source authority',
-  TASK_COMPLIANCE_QA: 'Compliance Q&A',
-  TASK_RISK_ANALYSIS: 'Risk Analysis',
-  TASK_DOCUMENT_SUMMARY: 'Document Summary',
-  TASK_RECOMMENDATION: 'Recommendations',
-  TASK_CROSS_REFERENCE: 'Cross-Reference',
+  //
+  // The intelligence-panel half of this vocabulary (PANEL_TITLE,
+  // PANEL_SUBTITLE, INPUT_PLACEHOLDER, EMPTY_STATE, CITATIONS_HEADING,
+  // VIEW_ON_CHAIN, VERIFY, CACHED, RISKS_HEADING, RECOMMENDATIONS_HEADING,
+  // TASK_*) is deleted along with the panel component: Nessie is OFF by founder
+  // directive and the panel was mounted, ungated, on a customer-reachable
+  // route. CONFIDENCE + CONFIDENCE_DETAIL_* go with them for the same reason
+  // SCRUM-2914 deleted CONFIDENCE_FIELD and EXTRACTION_CONFIDENCE — leaving
+  // confidence copy in the vocabulary is leaving the next surface pre-written.
+  //
+  // Only the INSIGHTS_* keys survive: they belong to `NessieInsights`
+  // (components/anchor), which renders no score.
   INSIGHTS_TITLE: 'Document Insights',
   INSIGHTS_SUBTITLE: 'AI-powered compliance analysis for this record.',
   INSIGHTS_LOADING: 'Analyzing...',
@@ -2978,6 +2970,65 @@ export const LEGAL_PAGE_LABELS = {
     'We may update this policy from time to time. Material changes will be posted here, and registered users will receive notice when required.',
   TERMS_UPDATE_NOTICE:
     'We may update these terms from time to time. Material changes will be posted here, and registered users will receive notice when required.',
+
+  // ── Privacy Policy page body (public, unauthenticated /privacy) ─────────────
+  // These were inline JSX prose in PrivacyPage.tsx. They are here for §1.3, and
+  // because copy-internal-scaffolding.test.ts only scans copy.ts — a privacy
+  // paragraph written inline is a paragraph no guard reads before a stranger
+  // does. PrivacyPage.copy-centralization.test.tsx fails if one moves back.
+  //
+  // Every statement below is a privacy REPRESENTATION to the public. Rewording
+  // one is a legal edit. In particular PRIVACY_S5_TRANSFER_BASIS must keep
+  // naming no EU→US transfer mechanism: Arkova holds no DPF self-certification
+  // (SCRUM-2283) and §1.13 R-7 forbids asserting external status we do not hold
+  // — the same rule that governs PRIVACY_NOTICE_LABELS.DPF_TRANSFER_BASIS.
+
+  PRIVACY_PAGE_TITLE: 'Privacy Policy — Arkova Document Verification Platform',
+  PRIVACY_PAGE_DESCRIPTION:
+    'Arkova privacy policy. Documents never leave your device. Learn how we protect your data with client-side processing and cryptographic fingerprinting.',
+  PRIVACY_HEADING: 'Privacy Policy',
+  PRIVACY_EFFECTIVE_DATE_LABEL: 'Effective Date:',
+  PRIVACY_EFFECTIVE_DATE: 'March 2026',
+
+  PRIVACY_S1_HEADING: '1. Information We Collect',
+  // Split across the <strong>not</strong> the paragraph has always carried. The
+  // emphasis is the load-bearing word in a data-collection representation, so it
+  // is preserved rather than flattened; the surrounding JSX supplies the spaces.
+  PRIVACY_S1_BODY_BEFORE_EMPHASIS:
+    'Arkova collects only the minimum information necessary to provide our document verification service. This includes your email address, organization name, and account preferences. We do',
+  PRIVACY_S1_BODY_EMPHASIS: 'not',
+  PRIVACY_S1_BODY_AFTER_EMPHASIS:
+    'collect, store, or process your documents — all document fingerprinting occurs entirely within your browser.',
+
+  PRIVACY_S2_HEADING: '2. How We Use Your Information',
+  PRIVACY_S2_BODY:
+    'Your information is used to authenticate your account, manage your organization, process billing, and deliver the verification service. We do not sell or share your personal information with third parties for marketing purposes.',
+
+  PRIVACY_S3_HEADING: '3. Document Privacy',
+  PRIVACY_S3_BODY:
+    'Documents are processed entirely on your device. Only a cryptographic fingerprint (a one-way mathematical representation) is sent to our servers. It is mathematically impossible to reconstruct your document from its fingerprint. Your files never leave your browser.',
+
+  PRIVACY_S4_HEADING: '4. Data Security',
+  PRIVACY_S4_BODY:
+    'We implement industry-standard security measures including encryption in transit (TLS), row-level security on all database tables, and strict access controls. Our audit trail is append-only and tamper-evident.',
+
+  PRIVACY_S5_HEADING: '5. International Data Transfers',
+  PRIVACY_S5_TRANSFER_BASIS:
+    'The lawful basis for transatlantic personal data transfers is currently under review by our legal counsel and will be published here once confirmed. Regardless of the transfer mechanism, our client-side processing architecture minimizes cross-border data flows — documents never leave your device, and only cryptographic fingerprints are transmitted.',
+  PRIVACY_S5_REGIONAL_TRANSFERS:
+    'For transfers involving Brazilian data subjects, we use ANPD-approved Standard Contractual Clauses. For Singapore, we comply with PDPA Section 26 transfer requirements. For Mexico, cross-border transfers require data subject consent per LFPDPPP Article 36.',
+
+  PRIVACY_S6_HEADING: '6. Data Retention',
+  PRIVACY_S6_BODY:
+    'Verification records are retained for as long as your account is active. You may request deletion of your account and associated data by contacting us at',
+  PRIVACY_S6_RETENTION_POLICY_PREFIX: 'For detailed retention periods by data category, see our',
+  // The link text is DATA_RETENTION_LABELS.PAGE_TITLE — the link names the page
+  // it opens, so the page's own title key is the single source. No separate
+  // *_LINK key: a half-done rename must not ship link text that disagrees with
+  // the page it opens.
+
+  PRIVACY_S7_HEADING: '7. Contact',
+  PRIVACY_S7_BODY: 'For privacy-related inquiries, contact us at',
 } as const;
 
 // =============================================================================
@@ -3428,30 +3479,106 @@ export const AUDIT_MY_ORG_LABELS = {
 export const PRIVACY_NOTICE_LABELS = {
   TITLE: 'Privacy & Data Protection',
   DESCRIPTION: 'Information about how your data is protected under applicable laws.',
+  // ── Per-jurisdiction notices ────────────────────────────────────────────────
+  // Each block is the full public notice for one jurisdiction: title, summary,
+  // and the four cells JurisdictionPrivacyNotices renders (regulator, rights,
+  // cross-border transfer basis, breach-notification timeline).
+  //
+  // These four used to be inline literals in the component's JURISDICTION_NOTICES
+  // table. They render on the PUBLIC, unauthenticated /privacy page, so §1.3 puts
+  // them here — and living here is also what puts them under
+  // copy-internal-scaffolding.test.ts, which is the guard that catches an
+  // internal drafting note before it reaches a reader. A jurisdiction string
+  // written back inline is outside that guard; PrivacyPage.copy-centralization
+  // .test.tsx fails if one ever is.
+  //
+  // Every value below is a statement of external law or of a regulator's name.
+  // Changing one is a legal edit, not a copy edit.
+
   FERPA_TITLE: 'FERPA (Family Educational Rights and Privacy Act)',
   FERPA_DESCRIPTION: 'Applies to education records. Your records are protected under 34 CFR Part 99. You have the right to access, amend, and control disclosure of your education records.',
+  FERPA_REGULATOR: 'U.S. Department of Education',
+  FERPA_RIGHTS: ['Access education records', 'Request amendments', 'Control disclosure', 'Opt out of directory information'],
+  FERPA_TRANSFER_BASIS: 'N/A (domestic)',
+  FERPA_BREACH_TIMELINE: 'N/A (funding withdrawal mechanism)',
+
   HIPAA_TITLE: 'HIPAA (Health Insurance Portability and Accountability Act)',
   HIPAA_DESCRIPTION: 'Applies to healthcare records. Protected health information is handled per 45 CFR Part 164 with technical safeguards including encryption, access controls, and audit logging.',
+  HIPAA_REGULATOR: 'HHS Office for Civil Rights (OCR)',
+  HIPAA_RIGHTS: ['Access PHI', 'Request amendments', 'Accounting of disclosures', 'Request restrictions', 'Confidential communications'],
+  HIPAA_TRANSFER_BASIS: 'Business Associate Agreement (BAA)',
+  HIPAA_BREACH_TIMELINE: '60 calendar days (BA to CE)',
+
   KENYA_TITLE: 'Kenya Data Protection Act 2019',
   KENYA_DESCRIPTION: 'Applies to data subjects in Kenya. Your personal data is processed lawfully under Sections 25-38. You have rights of access, correction, and erasure. Contact the ODPC for complaints.',
+  KENYA_REGULATOR: 'Office of the Data Protection Commissioner (ODPC)',
+  KENYA_RIGHTS: ['Access', 'Rectification', 'Erasure', 'Data portability', 'Object to processing'],
+  KENYA_TRANSFER_BASIS: 'Standard Contractual Clauses (Section 48)',
+  KENYA_BREACH_TIMELINE: '72 hours (controller to ODPC)',
+
   AUSTRALIA_TITLE: 'Australian Privacy Act 1988',
   AUSTRALIA_DESCRIPTION: 'Applies to data subjects in Australia. Your personal information is handled per the Australian Privacy Principles (APPs). You have rights of access and correction under APP 12-13.',
+  AUSTRALIA_REGULATOR: 'Office of the Australian Information Commissioner (OAIC)',
+  AUSTRALIA_RIGHTS: ['Access (APP 12)', 'Correction (APP 13)'],
+  AUSTRALIA_TRANSFER_BASIS: 'APP 8 assessment + contractual provisions',
+  AUSTRALIA_BREACH_TIMELINE: '30-day assessment window (NDB scheme)',
+
   SOUTH_AFRICA_TITLE: 'POPIA (Protection of Personal Information Act)',
   SOUTH_AFRICA_DESCRIPTION: 'Applies to data subjects in South Africa. Your personal information is processed per POPIA Sections 19-22. You have rights of access, correction, and objection.',
+  SOUTH_AFRICA_REGULATOR: 'Information Regulator',
+  SOUTH_AFRICA_RIGHTS: ['Access (Section 23)', 'Correction/deletion (Section 24)', 'Object to processing (Section 11)'],
+  SOUTH_AFRICA_TRANSFER_BASIS: 'Section 72 binding agreement (SCCs)',
+  SOUTH_AFRICA_BREACH_TIMELINE: 'As soon as reasonably possible',
+
   NIGERIA_TITLE: 'Nigeria Data Protection Act 2023',
   NIGERIA_DESCRIPTION: 'Applies to data subjects in Nigeria. Your personal data is protected under the NDPA. You have rights of access, rectification, and erasure.',
+  NIGERIA_REGULATOR: 'Nigeria Data Protection Commission (NDPC)',
+  NIGERIA_RIGHTS: ['Access', 'Rectification', 'Erasure', 'Data portability', 'Object', 'Restrict processing'],
+  NIGERIA_TRANSFER_BASIS: 'Standard Contractual Clauses',
+  NIGERIA_BREACH_TIMELINE: '72 hours (controller to NDPC)',
+
   BRAZIL_TITLE: 'LGPD (Lei Geral de Proteção de Dados)',
   BRAZIL_DESCRIPTION: 'Applies to data subjects in Brazil. Your personal data is processed lawfully under LGPD Articles 6-10. You have rights of access, correction, anonymization, portability, and deletion. Contact the ANPD for complaints.',
+  BRAZIL_REGULATOR: 'Autoridade Nacional de Proteção de Dados (ANPD)',
+  BRAZIL_RIGHTS: ['Access (Art. 18-I)', 'Correction (Art. 18-III)', 'Anonymization/deletion (Art. 18-IV)', 'Data portability (Art. 18-V)', 'Revoke consent (Art. 18-IX)'],
+  BRAZIL_TRANSFER_BASIS: 'ANPD Standard Contractual Clauses (mandatory template)',
+  BRAZIL_BREACH_TIMELINE: 'Reasonable time (ANPD determines specific deadline per incident)',
+
   SINGAPORE_TITLE: 'PDPA (Personal Data Protection Act 2012)',
   SINGAPORE_DESCRIPTION: 'Applies to data subjects in Singapore. Your personal data is protected under the PDPA. You have rights of access and correction. Organizations must obtain consent and provide notification before collecting data.',
+  SINGAPORE_REGULATOR: 'Personal Data Protection Commission (PDPC)',
+  SINGAPORE_RIGHTS: ['Access (§21)', 'Correction (§22)', 'Withdraw consent (§16)', 'Data portability (§26H)'],
+  SINGAPORE_TRANSFER_BASIS: 'Comparable protection standard or ASEAN Model Contractual Clauses',
+  SINGAPORE_BREACH_TIMELINE: '3 calendar days once classified as notifiable (500+ individuals)',
+
   MEXICO_TITLE: 'LFPDPPP (Ley Federal de Protección de Datos Personales en Posesión de los Particulares)',
   MEXICO_DESCRIPTION: 'Applies to data subjects in Mexico. Your personal data is protected under the LFPDPPP (2025 reform). You have ARCO rights: access, rectification, cancellation, and opposition. Consent is required for cross-border transfers.',
+  MEXICO_REGULATOR: 'Secretaría de Anticorrupción y Buen Gobierno (SABG)',
+  MEXICO_RIGHTS: ['Access (ARCO)', 'Rectification (ARCO)', 'Cancellation (ARCO)', 'Opposition (ARCO)'],
+  MEXICO_TRANSFER_BASIS: 'Consent-based (must specify countries, recipients, purposes)',
+  MEXICO_BREACH_TIMELINE: 'Without delay (no specific statutory timeline)',
+
   COLOMBIA_TITLE: 'Colombia Law 1581 of 2012 (Personal Data Protection)',
   COLOMBIA_DESCRIPTION: 'Applies to data subjects in Colombia. Your personal data is protected under Law 1581 + Decree 1377. You have rights of access, rectification, erasure, and consent revocation. US transfers rely on the SIC adequacy list.',
+  COLOMBIA_REGULATOR: 'Superintendencia de Industria y Comercio (SIC)',
+  COLOMBIA_RIGHTS: ['Access (Art. 8(a))', 'Rectification (Art. 8(c))', 'Deletion (Art. 8(e))', 'Consent revocation (Art. 8(d))', 'Complaint to SIC'],
+  COLOMBIA_TRANSFER_BASIS: 'SIC adequacy list (US included) + SIC Model Contractual Clauses (Dec 2025)',
+  COLOMBIA_BREACH_TIMELINE: '15 business days (controller to SIC)',
+
   THAILAND_TITLE: 'Thailand PDPA (Personal Data Protection Act 2019)',
   THAILAND_DESCRIPTION: 'Applies to data subjects in Thailand. Your personal data is protected under the PDPA. You have access, portability, objection, deletion, restriction, and rectification rights. Cross-border transfers use SCCs aligned with ASEAN MCCs or GDPR SCCs referencing Thai law.',
+  THAILAND_REGULATOR: 'Personal Data Protection Committee (PDPC)',
+  THAILAND_RIGHTS: ['Access (§30)', 'Portability (§31)', 'Object (§32)', 'Deletion (§33)', 'Restriction (§34)', 'Rectification (§35)', 'Withdraw consent (§19)'],
+  THAILAND_TRANSFER_BASIS: 'SCCs aligned with ASEAN MCCs or GDPR SCCs referencing Thai PDPA',
+  THAILAND_BREACH_TIMELINE: '72 hours (controller to PDPC)',
+
   MALAYSIA_TITLE: 'Malaysia PDPA 2010 (as amended 2024)',
   MALAYSIA_DESCRIPTION: 'Applies to data subjects in Malaysia. Your personal data is protected under the PDPA as amended in 2024. You have access, correction, consent withdrawal, and (from 2025) data portability rights. Cross-border transfers use a risk-based Transfer Impact Assessment framework.',
+  MALAYSIA_REGULATOR: 'Personal Data Protection Commissioner (PDP Malaysia)',
+  MALAYSIA_RIGHTS: ['Access (§30)', 'Correction (§34)', 'Withdraw consent (§38)', 'Prevent processing (§42)', 'Prevent direct marketing (§43)', 'Data portability (§43A)'],
+  MALAYSIA_TRANSFER_BASIS: 'Risk-based Transfer Impact Assessment (§129 as amended 2024) + SCC-style contract terms',
+  MALAYSIA_BREACH_TIMELINE: '72 hours (data user to PDP Commissioner, 2025 regulations)',
+
   DPF_TITLE: 'EU–US Personal Data Transfers',
   // SCRUM-2283: the prior copy falsely asserted "Arkova self-certifies under the
   // EU-US Data Privacy Framework". Arkova does NOT hold an active DPF
@@ -3459,7 +3586,27 @@ export const PRIVACY_NOTICE_LABELS = {
   // replacement lawful-transfer basis (e.g. executed EU Standard Contractual
   // Clauses) is COUNSEL-REQUIRED and must not be invented here — placeholder
   // pending legal review.
-  DPF_DESCRIPTION: 'The lawful basis for transatlantic personal data transfers is under review by legal counsel and will be published here once confirmed. Individuals retain the right to access, correct, or delete their data and to file a complaint with their national data protection authority. [Counsel review required — do not assert a specific transfer mechanism until confirmed.]',
+  DPF_DESCRIPTION: 'The lawful basis for transatlantic personal data transfers is under review by legal counsel and will be published here once confirmed. Individuals retain the right to access, correct, or delete their data and to file a complaint with their national data protection authority.',
+  // The bracketed drafting note that used to close DPF_DESCRIPTION ("Counsel
+  // review required — do not assert a specific transfer mechanism until
+  // confirmed.") was an instruction to us, and it rendered verbatim on the
+  // PUBLIC /privacy page. Removed. The instruction itself remains correct and
+  // lives here, in a comment, where it belongs: do not name a transfer
+  // mechanism in either string below until counsel confirms one.
+  //
+  // DPF_TRANSFER_BASIS is the "Cross-Border Transfer Basis" cell for the EU–US
+  // notice. It previously read "...(counsel-required)", which tagged a public
+  // notice as an open internal ticket. It now states the same position as a
+  // deliberate disclosure — under review, and explicitly asserting nothing —
+  // which is the §1.5 / §1.13 R-7 form: say what is NOT asserted.
+  DPF_TRANSFER_BASIS: 'Under legal review — no specific transfer mechanism is asserted at this time',
+  // The regulator for this notice is the reader's OWN supervisory authority, not
+  // a body Arkova is certified by or answerable to — the same SCRUM-2283
+  // reasoning that removed the DPF claim removed the DPF-panel reference here.
+  DPF_REGULATOR: 'Your national data protection authority (EU/EEA)',
+  DPF_RIGHTS: ['Access', 'Correction', 'Deletion', 'File complaint with your DPA'],
+  DPF_BREACH_TIMELINE: 'Per applicable GDPR / national law',
+
   REGULATOR_LABEL: 'Regulator',
   RIGHTS_LABEL: 'Your Rights',
   TRANSFER_BASIS_LABEL: 'Cross-Border Transfer Basis',
@@ -3536,6 +3683,13 @@ export const BADGE_LABELS = {
 
 /** DPO/Information Officer contact — single source for all jurisdictions (REG-28) */
 export const PRIVACY_CONTACT_EMAIL = 'privacy@arkova.ai';
+
+/**
+ * General support contact. Rendered as the account/data-deletion route on the
+ * public /privacy page, so it is copy, not config — an address that reaches
+ * nobody is a broken privacy representation, not a broken link.
+ */
+export const SUPPORT_CONTACT_EMAIL = 'support@arkova.ai';
 
 // ─── Evidence Level Labels (CSI-03 / SCRUM-1599) ─────────────────────────────
 
