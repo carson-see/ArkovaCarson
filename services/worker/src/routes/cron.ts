@@ -92,6 +92,7 @@ import { runOrgQueueScheduler } from '../jobs/org-queue-scheduler.js';
 import { runConnectorArtifactDrain } from '../jobs/connector-artifact-drain.js';
 import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
+import { runAiCreditReconcileJobs } from '../jobs/ai-credit-reconcile.js';
 import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-completed.js';
 import { runDocusignNotarizationCompletedJobs } from '../jobs/docusign-notarization-completed.js';
 import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
@@ -860,6 +861,37 @@ cronRouter.post('/docusign-notarization-completed', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign notarization-completed queue pass failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── AI credit refund reconciliation queue ───
+//
+// Drains `ai_credits.reconcile_refund`, the queue `api/v1/ai-extract-batch.ts`
+// writes when a per-row refund fails AFTER a successful debit. That producer
+// shipped with NO consumer, so every "surfaced" overcharge sat `pending`
+// forever — the exact opposite of the module's own stated contract. This
+// endpoint is that consumer; a failed reconciliation retries with backoff and
+// dead-letters with a Sentry event on the final attempt.
+//
+// PRODUCTION TRIGGER: Cloud Scheduler (`ai-credit-reconcile`, every 15 min —
+// see scripts/gcp-setup/cloud-scheduler.sh). In-process node-cron is NOT used:
+// it is dormant under Cloud Run CPU throttling (PROOF-03 finding), which is
+// precisely how a "wired" drain can silently never run.
+cronRouter.post('/ai-credit-reconcile', async (req, res) => {
+  try {
+    const rawLimit = req.query.limit ?? req.body?.limit;
+    const parsedLimit = rawLimit === undefined
+      ? undefined
+      : DocusignEnvelopeCompletedLimitSchema.safeParse(rawLimit);
+    if (parsedLimit && !parsedLimit.success) {
+      res.status(400).json({ error: 'Invalid request', details: parsedLimit.error.flatten() });
+      return;
+    }
+    const result = await runAiCreditReconcileJobs({ limit: parsedLimit?.data });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'AI credit reconciliation queue pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

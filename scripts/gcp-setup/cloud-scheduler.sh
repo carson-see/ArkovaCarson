@@ -136,6 +136,16 @@ JOBS=(
   # fresh random channel_token (GH #1836), rotating any connection still on
   # the legacy org-id-as-token scheme.
   "drive-subscription-renewal|0 * * * *|/jobs/drive-subscription-renewal|30s,120s,2"
+  # BILLING INTEGRITY: drains ai_credits.reconcile_refund — the queue
+  # api/v1/ai-extract-batch.ts writes when a per-row AI-credit refund fails
+  # AFTER a successful debit. That producer shipped with NO consumer, so every
+  # row it wrote to "surface" an overcharge sat `pending` forever and the
+  # customer stayed overcharged with zero signal. Endpoint at
+  # services/worker/src/routes/cron.ts. Every 15 min is well inside any
+  # billing-dispute window and the queue is normally empty. Retries are safe:
+  # the drain claims per job, and a refund that fails again re-enters the
+  # shared backoff/dead-letter policy (Sentry event on the final attempt).
+  "ai-credit-reconcile|*/15 * * * *|/jobs/ai-credit-reconcile|30s,120s,2"
 )
 # SCRUM-1727 (one-shot historical backfill) is INTENTIONALLY NOT in JOBS.
 # It's a manual operator endpoint at /jobs/bq-export-backfill?table=<name>.
