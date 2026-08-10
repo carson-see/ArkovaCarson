@@ -149,3 +149,25 @@ _The following entries were lost off `main` by the 2026-07-28 union-merge-driver
 **Known gap (2026-07-06) — CLOSED (UX-03 follow-up):** the blanket `copy.ts` exclusion was a blind spot — most strings in `copy.ts` are shipped user-facing copy, so a banned term there reached users while `lint:copy` stayed green. This let "worker service" ship in `USAGE_UNAVAILABLE` (fixed, UX-03/SCRUM-1029). **Fix shipped:** `copy.ts` is removed from `EXCLUDE_PATTERNS` and now scanned; the 4 sanctioned SCRUM-1672 "Issue Credential" hits (`CREDENTIAL_ISSUE_FAILED`, `ISSUE_CREDENTIAL_LABELS.GATE_*`) pass via a dedicated `scripts/ci/snapshots/copy-terms-allowlist.json` (permanent §1.3 carve-out, `(file, term)`-keyed → drift-immune, fail-closed to the tiny `ALLOWLISTABLE_TERMS` set), and the 4 COMP-03 `INDEPENDENT_VERIFY_LABELS` gray-area hits were **reworded** at source ("SHA-256 hash" → "SHA-256 fingerprint"; "public block explorer" → "public network explorer"; `{hash}` token → `{fingerprint}`). A shared `isNonSuppressibleTerm` guard means neither the allowlist nor the baseline can ever silence a secret leak (`service_role`/`postgrest`), the infra leak `worker service`, or a launch-blocker. `shouldCheck('src/lib/copy.ts')` now returns `true`. See `scripts/agents.md` → "Copy-term sanctioned allowlist".
 - 2026-07-28 L3-A6: `copy.ts` gained `CE_REGISTRY_IMPORT_LABELS` (new section, "PUBLIC REGISTRY IMPORT") + `MY_CREDENTIALS_LABELS.ADD_FROM_REGISTRY` — append-only, no existing keys touched. §1.3-safe: "Fingerprint" not "Hash", no chain terminology, "Add Record" (not "Issue Credential" — SCRUM-1672 restricts that phrase to the verified-org issuance flow, which this is not). Backs `CtdlRegistryImportDialog.tsx` (`src/components/credentials/`), the CE Noncredit Data Taxonomy 3.0 anchoring POC UI entry point.
 - 2026-06-29 PROOF-04 second-pass (Carson P1 #1352): new `src/lib/sourceProofInput.ts` — `sourceProofInput(supabase, anchor)` assembles the embedded `ProofInput` AND **sources `leaf_count`**, the field that arms the CVE-2012-2459 guard. The old download path never set it (anchor_proofs has no `leaf_count` column), so every embedded packet shipped `leaf_count: null` and the cert couldn't run the full offline guard for any **batch** proof. Now derived the way the server does (PROOF-05): an RLS-scoped exact head-count over `anchor_proofs` filtered by the indexed `batch_id` — a number, no rows/PII (§1.6). That exact-head-count call site is registered against the R0-8 baseline (`check-count-exact-baseline.ts`) via the sanctioned `count-exact-allowed` PR label: the count is bounded per-batch over an indexed column, not a scan of the hot `anchors` table the guardrail targets, and it mirrors the server (#1354). Single-leaf / un-batched SECURED rows → `leaf_count = 1`. If a batch member's count can't be sourced, the result is `{ proof, complete:false }` — the page passes `proofComplete:false` to `buildAuditReport`, which swaps the offline-verify intro to `OFFLINE_VERIFY_INTRO_INCOMPLETE` (drops the "complete proof" claim, §1.5) and warns the user; the packet still embeds for inspection. Tests: `sourceProofInput.test.ts` (6) + 2 incomplete-cert cases in `generateAuditReport.test.ts`.
+
+## 2026-08-10 — two shipped-surface guards live here
+
+- `nessie-surfaces-offline.test.ts` — scans every non-test `.tsx` under `src/`
+  and fails if any of them JSX-mounts a `Nessie*` component. Nessie is OFF by
+  founder directive; this replaces the prose claim in
+  `src/components/anchor/agents.md` that these surfaces were "unreachable",
+  which was false — `ComplianceDashboardPage` mounted the intelligence panel
+  ungated on a customer-reachable route. The mount regex deliberately rejects
+  TYPE positions (`useState<NessieContextResponse>`), matching only JSX.
+- `copy-internal-scaffolding.test.ts` — walks every string VALUE exported from
+  `copy.ts` and fails on square-bracketed editorial segments or staff-directive
+  markers (`TODO`, `(counsel-required)`, `do not assert`, …). Source COMMENTS
+  are out of scope on purpose: the engineering rationale for a counsel-required
+  string belongs in the file, just not in the string. Prompted by
+  `PRIVACY_NOTICE_LABELS.DPF_DESCRIPTION` shipping `[Counsel review required —
+  do not assert a specific transfer mechanism until confirmed.]` to the public
+  `/privacy` page.
+
+Note on the two `NessieIntelligencePanel.tsx` mentions in the entries above:
+that file is deleted. The `resolveWorkerBaseUrl` / curated-catch-block
+conventions those entries describe are unchanged for every other listed caller.
