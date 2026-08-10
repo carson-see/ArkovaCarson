@@ -2,7 +2,7 @@
   "mcpServers": {
     "arize-tracing-assistant": {
       "command": "uvx",
-      "args": ["arize-tracing-assistant@latest"]
+      "args": ["--with", "mcp[cli]<2", "arize-tracing-assistant@latest"]
     },
     "arize-ax-docs": {
       "type": "http",
