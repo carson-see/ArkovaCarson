@@ -105,7 +105,7 @@ export function UsageWidget({ compact = false }: Readonly<UsageWidgetProps>) {
           </div>
         )}
         {isNearLimit && !isUnlimited && (
-          <Link to={ROUTES.BILLING}>
+          <Link to={ROUTES.PRICING}>
             <Button variant="link" size="sm" className="h-auto p-0 text-xs text-primary">
               {USAGE_LABELS.UPGRADE_CTA}
               <ArrowUpRight className="ml-1 h-3 w-3" />
@@ -176,7 +176,7 @@ export function UsageWidget({ compact = false }: Readonly<UsageWidgetProps>) {
                   : ENTITLEMENT_LABELS.QUOTA_NEAR_LIMIT}
               </span>
             </div>
-            <Link to={ROUTES.BILLING}>
+            <Link to={ROUTES.PRICING}>
               <Button variant="outline" size="sm" className="h-6 text-xs">
                 {USAGE_LABELS.UPGRADE_CTA}
               </Button>

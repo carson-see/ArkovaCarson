@@ -46,7 +46,12 @@ describe('UpgradePrompt', () => {
     expect(getByText(/Individual Plan/)).toBeInTheDocument();
   });
 
-  it('should navigate to billing on upgrade click', () => {
+  // This modal fires at exactly the moment the user is blocked by their quota —
+  // the highest-intent upgrade CTA in the product. It navigated to /billing (a
+  // summary page with its own dead "Upgrade Plan" button), so the buy path
+  // terminated here. Its own docblock always claimed it "directs them to
+  // upgrade via the pricing page"; now it does.
+  it('should navigate to the pricing/checkout page on upgrade click', () => {
     const onOpenChange = vi.fn();
 
     const { getByText } = render(
@@ -62,7 +67,8 @@ describe('UpgradePrompt', () => {
     fireEvent.click(getByText('Upgrade Plan'));
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
-    expect(mockNavigate).toHaveBeenCalledWith('/billing');
+    expect(mockNavigate).toHaveBeenCalledWith('/pricing');
+    expect(mockNavigate).not.toHaveBeenCalledWith('/billing');
   });
 
   it('should close on cancel click', () => {
