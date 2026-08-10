@@ -2567,6 +2567,44 @@ export const ACCEPT_INVITE_LABELS = {
 } as const;
 
 /**
+ * Copy for /activate — the recipient's account-activation page.
+ *
+ * Wording note (§1.5 / §1.13 R-7): this page previously promised a 12-word
+ * "backup access key" that no code path could ever redeem — there is no
+ * recovery flow and no column to store it in. That claim is gone rather than
+ * restated; see src/pages/agents.md for the ruling.
+ */
+export const ACTIVATE_ACCOUNT_LABELS = {
+  PAGE_TITLE: 'Activate your account',
+  LOADING: 'Checking your activation link…',
+  INVITED_BY: 'You have been added to',
+  SUBTITLE: 'Choose a password to finish setting up your account.',
+
+  INVALID_TITLE: 'Activation link is invalid',
+  INVALID_DESCRIPTION:
+    'This activation link is invalid or has already been used. Ask your organization administrator to send a new one.',
+
+  EXPIRED_TITLE: 'This activation link has expired',
+  EXPIRED_DESCRIPTION: 'Ask your organization administrator to send a new one.',
+
+  EMAIL_LABEL: 'Email address',
+  PASSWORD_LABEL: 'Choose a password',
+  PASSWORD_PLACEHOLDER: 'At least 8 characters',
+  PASSWORD_TOO_SHORT: 'Choose a password of at least 8 characters.',
+  FULL_NAME_LABEL: 'Full name',
+
+  SUBMIT: 'Activate my account',
+  SUBMITTING: 'Activating your account…',
+
+  SUCCESS_TITLE: 'Your account is ready',
+  SUCCESS_DESCRIPTION: 'You can now sign in with your email address and the password you just chose.',
+  GO_TO_SIGN_IN: 'Go to sign in',
+
+  ERROR_GENERIC: 'Something went wrong activating your account. Please try again.',
+  TRY_AGAIN: 'Try again',
+} as const;
+
+/**
  * SCRUM-2907 — copy for a confirmation link that did not work.
  *
  * Supabase signals a dead link with `error`/`error_code` on the redirect hash
