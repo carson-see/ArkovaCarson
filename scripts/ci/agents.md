@@ -8,6 +8,20 @@ actionable message when a guardrail trips. Run via
 
 ## Live findings an agent must know before touching this code
 
+- **`auditStaleExemptions()` in `check-ledger-numeric-integrity.ts` is WARN-ONLY
+  on purpose — do not "promote" it to a blocking check.** It reports exemptions
+  in `snapshots/ledger-numeric-exemptions.json` that are already reconciled
+  (present in the prod ledger AND their `.sql` on `main`). It exists because the
+  orphan audit returns early on `exemptPrefixes.has(version)` *before* it reaches
+  the `localPrefixes` check, so a reconciled-but-still-exempt prefix is skipped
+  silently and forever — every stale entry to date (`0404`, `0401`, `0407`,
+  `0406`, plus 15 on 2026-08-02) was caught by a human reading the file. It stays
+  warn-only because this check runs against the WHOLE ledger on EVERY PR, so a
+  fatal version would red the entire board at once for hygiene debt. That is not
+  hypothetical: on 2026-08-11 two orphan rows (`0401`/`0402`) deadlocked every
+  open PR for most of a day, because each owning PR carried one of the two and
+  was held red by the other. `main()` keeps these violations out of `blocking`;
+  a unit test pins that contract.
 - **A gate is only real if it is wired.** Several scripts here were written but
   never made required — check `ci.yml` (and branch protection) before assuming
   a script gates anything. `evidence-identity-report` is deliberately
