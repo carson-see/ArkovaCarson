@@ -561,6 +561,13 @@ export const BILLING_LABELS = {
   CURRENT_PLAN_BADGE: 'Current Plan',
   DOWNGRADE_NOTE: 'Changes take effect at the end of your current billing period.',
   CANCELLATION_SCHEDULED: 'Your subscription is set to cancel at the end of the current period.',
+  // `useBilling.startCheckout` / `openBillingPortal` swallow failures and
+  // resolve null (worker 400 when a plan has no stripe_price_id configured,
+  // 401, 409, network error...). Without these the button would silently do
+  // nothing — the same "is it broken or did I misclick?" dead end as the
+  // no-op Upgrade button this release fixes.
+  CHECKOUT_UNAVAILABLE: 'Could not start checkout for this plan. Please try again or contact support.',
+  PORTAL_UNAVAILABLE: 'Could not open the billing portal. Please try again.',
 } as const;
 
 // =============================================================================
@@ -2853,6 +2860,11 @@ export const BILLING_PAGE_LABELS = {
   DATA_UNAVAILABLE_TITLE: 'Unable to load billing data',
   DATA_UNAVAILABLE_DESC: 'We could not confirm your billing status. Refresh the page or try again.',
   RETRY: 'Retry',
+  // `useBilling.openBillingPortal` swallows failures and resolves null (e.g. a
+  // free-tier user with no Stripe customer yet → worker 404). Without this the
+  // button would silently do nothing, which is exactly what the old dead
+  // no-op did — the user cannot tell a broken button from a working one.
+  PORTAL_UNAVAILABLE: 'Could not open the billing portal. Please try again.',
 } as const;
 
 export const SYSTEM_HEALTH_LABELS = {

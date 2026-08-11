@@ -39,8 +39,16 @@ Arkova's client-side processing boundary materially reduces audit scope: no PII 
 |---|-----------|---------|-------------------|-------------|-----------|
 | CC3.1 | Objectives specified | Product roadmap, security objectives | `docs/BACKLOG.md` | CEO | Quarterly |
 | CC3.2 | Risks identified and assessed | Risk register, DPIA | `trust-framework-roadmap.md`, Kenya `dpia.md` | Engineering | Semi-annual |
-| CC3.3 | Fraud risk considered | Fraud detection (Nessie), abuse monitoring | `fraud-audit.ts`, `complianceMapping.ts` | Engineering | Continuous |
+| CC3.3 | Fraud risk considered | Documented fraud-risk assessment + abuse monitoring (API rate limiting per Constitution §1.10). Automated fraud detection is **not operating** — see note ‡ | `complianceMapping.ts`, rate-limit configuration | Engineering | Continuous for risk assessment + abuse monitoring. Automated fraud detection: **not operating — no operating history to test** |
 | CC3.4 | Changes identified | Change management process | `change-management.md` | Engineering | Continuous |
+
+> **‡ CC3.3 — what is and is not asserted (Constitution §1.5).**
+>
+> **Asserted as operating:** the documented fraud-risk assessment, and abuse monitoring via API rate limiting (anonymous 100 req/min/IP, API key 1,000 req/min, batch 10 req/min).
+>
+> **NOT asserted:** automated AI fraud detection does not operate, and has no operating history in the target audit period. The `ENABLE_AI_FRAUD` switchboard flag has been `false` in production since 2026-05-03, and `ENABLE_FRAUD_DETECTION` since 2026-07-17 — verified by direct query against the production `switchboard_flags` table on 2026-08-11. A Type II opinion tests operating effectiveness *over* a period, so this control must not be relied upon until it has actually run for the period tested. If it is enabled, record the activation date here and start the operating-history clock from that date; do not backdate it.
+>
+> The "Nessie" fraud model named in earlier revisions of this row is decommissioned and is not scheduled to return, so `fraud-audit.ts` is no longer cited as evidence for an operating control.
 
 ### CC4 — Monitoring Activities
 

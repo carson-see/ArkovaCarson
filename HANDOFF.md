@@ -23,10 +23,28 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 - Worker `git_sha 18d33efcfb5366d121baf77f132fad545bf1f3cb` (short `18d33efcf`); deploy-worker run
   succeeded 2026-08-03T02:49Z (canary→full), `/health` verified live: `status: healthy`,
   `database/anchoring/kms: ok`.
-- **Migration ledger is fully reconciled — `scripts/ci/snapshots/ledger-numeric-exemptions.json`
-  `exemptPrefixes` is `[]`.** Every migration applied to prod now has its source `.sql` on `main`. This
-  is the first time today the orphan-row set has been empty; verified by reading the file directly, not
-  assumed.
+- **Migration ledger is NOT fully reconciled (supersedes the 2026-08-03 `exemptPrefixes is []` claim
+  in this bullet).** As of **2026-08-11**, `scripts/ci/snapshots/ledger-numeric-exemptions.json`
+  `exemptPrefixes` is **`["0401", "0402", "0405"]`** — read from `origin/main` after PR
+  [#2136](https://github.com/carson-see/ArkovaCarson/pull/2136) merged, not assumed. Prod ledger head
+  is `0405`; `0401_fix_create_pending_recipient_rpc_fk_and_role` and `0402_retire_activate_user_rpc`
+  are present in prod with numeric versions — **verified this session via Supabase MCP
+  `list_migrations` on `vzwyaatejekddvltxyye`**, not inferred from PR prose.
+  - **Why it drifted:** `0401`/`0402` were applied to prod ahead of their owning PRs (migrate-before-
+    merge), which put the `Check supabase/migrations vs prod` gate into a **mutual deadlock** that
+    reddened *every* open PR at once, including PRs touching no migrations. #2047 carries `0401` so
+    only `0402` fired on it; #2062 carries `0402` so only `0401` fired on it. Each PR fixed its own
+    orphan and was held red by the other, so neither could merge and neither file could reach `main`.
+    "Merge the owning PR" was therefore not reachable from that state.
+  - **Fix:** #2136 exempted both prefixes (the in-flight enabler, not a substitute for landing the
+    source) and dropped the now-stale `0404` — `0404_dpa_redact_raw_querying_ip_and_correct_ip_hash_
+    comment.sql` is on `main` via #2068, so its exemption was masking future drift on that prefix.
+    Gate confirmed green post-merge on fresh runs (queue branches + `claude/frosty-colden-9799e7` +
+    dependabot PR, GH Actions workflow `migration-drift.yml`, 2026-08-11 ~16:41–16:44Z).
+  - **Open follow-up — do not let these rot:** remove `0401` when [#2047](https://github.com/carson-see/ArkovaCarson/pull/2047)
+    merges and lands `0401_*.sql`; remove `0402` when [#2062](https://github.com/carson-see/ArkovaCarson/pull/2062)
+    merges; remove `0405` when [#2081](https://github.com/carson-see/ArkovaCarson/pull/2081) merges.
+    A stale exemption is worse than no exemption — it masks a real future drift on that prefix.
 - Migrations applied to prod and reconciled today (2026-08-02/03): `0382`, `0383`, `0384`, `0385`,
   `0386`, `0387`, `0388`, `0389`, `0390`, `0391`, `0392` — all verified live via `pg_get_functiondef` /
   `pg_index` / direct query at apply time; see the exemption file's `_comment` history for the per-row
@@ -146,6 +164,95 @@ bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
 
 Newest first, one entry per session. Each entry's own `_Last refreshed:_` footer is that entry's
 record at the time it was written — it is not a claim about the current state of this file.
+
+### 2026-08-11 — P0: `/api/v1/verify` down 11m39s (FIFO lock-queue barrier on `organizations`)
+
+**Impact.** `GET /api/v1/verify/{id}` returned `service_unavailable` and `/health` reported
+`degraded` (`checks.database=error`) from 16:40:11Z to 16:51:49Z UTC. **Zero customer-visible
+failures:** every request to `/api/v1/verify*` in the window came from `curl/8.7.1` (operator
+probing). The only real-browser hit all day was 13:06:44Z, pre-outage, returning 404. Verified via
+Cloud Run request logs; user-agent census 12:00Z–17:00Z was Google-Cloud-Scheduler 813, curl 157,
+APIs-Google 30, and no customer or SDK traffic.
+
+**Root cause.** A FIFO lock-queue barrier on `public.organizations` (oid 25344). Two MCP census
+`SELECT`s (15:53:58Z, 15:56:46Z) with correlated subqueries seq-scanning 3.55M anchors held
+`AccessShareLock` for 49.5 and 55.3 minutes. An `apply_migration` for 0407 issued
+`ALTER TABLE public.organizations` at 16:35:09.29Z (retried 16:37:25.95Z) requesting
+`AccessExclusiveLock` and queued behind them. Postgres lock queues are FIFO, so every subsequent
+lock request queued behind that ALTER — including PostgREST's schema-cache introspection, whose
+`AccessShareLock` was itself perfectly compatible with the running reads
+(`process 3136488 still waiting for AccessShareLock on relation 25344`; PID 3136488 is the
+`authenticator`/`postgrest` backend). Introspection hit its ~10s `lock_timeout`, PostgREST entered a
+`PGRST002` retry loop, and with no valid schema cache it serves nothing. `get_flag(
+'ENABLE_VERIFICATION_API')` then failed and `verificationApiGate` fail-closed. The flag itself was
+`true` throughout.
+
+The asymmetry that made it persist: the readers had a `lock_timeout` and died repeatedly, while the
+`mgmt-api` DDL sessions had none and camped the queue for 15+ minutes. `NOTIFY pgrst, 'reload
+schema'` could not help — a reload re-runs the very introspection that was blocked.
+
+**Resolution — not self-recovery.** `pg_cancel_backend` on PIDs 3135399, 3135446 and 3135492 at
+16:51:21.257–.259Z; Postgres logged exactly three `canceling statement due to user request` in that
+microsecond cluster. First HTTP 200 followed 28.5s later at 16:51:49.80Z. The long census query did
+not finish until 16:52:06.14Z — 17 seconds *after* service was restored — so the recovery tracked the
+cancel, not the read draining. Only the `AccessExclusiveLock` requests were removed; the long reads
+were deliberately left running.
+
+**Investigated and disproved.** (a) Migrations 0401/0402/0405 `REVOKE`/grant changes breaking the
+schema cache — they committed cleanly hours earlier. (b) `ERR_JOSE_ALG_NOT_ALLOWED` in
+`verifyJwtLocally` — the project JWKS does serve ES256 and `services/worker/src/auth.ts` does pin
+HS256, but `cronAuth` returns 401 on failure and structurally cannot 500, and `verifyCronAuth`
+Method 3 verifies Cloud Scheduler tokens against Google's JWKS with issuer and audience pinned. Cron
+was 21/21, 33/33 and 47/47 green in the three buckets before the outage *while that warning fired*;
+the pin is unchanged since `603d047e9` (2026-05-26). Benign happy-path noise.
+
+**Prod state after.** Worker rev `arkova-worker-01286-dam`, git_sha `2de4e4e34`, ledger head `0405`
+(confirmed via `supabase_migrations.schema_migrations`), `ENABLE_VERIFICATION_API=true`, ungranted
+locks on `organizations` = 0, zero 5xx and zero `PGRST002` since 16:51:30Z. **Migration 0407 never
+applied** and will re-wedge prod if retried under a long read.
+
+**Detection is the real defect — nothing paged anyone for 11+ minutes.** Corrected on investigation:
+project `arkova1` had **zero alert policies, zero notification channels, zero uptime checks and zero
+log-based metrics**. There was no alert-fatigue problem to cut through — no alerting existed at all.
+(The "~25k alerts" figure that circulated earlier was a count of Cloud Scheduler failure *log
+entries*, not alerts; nothing was configured to page on them.) `scripts/gcp-setup/agents.md` has
+carried that warning since 2026-08-01, unactioned.
+
+**This was a RECURRENCE, not a first occurrence.** A 30-day `PGRST002` census found 341 entries in
+exactly two clusters: **128 on 2026-08-02, 16:26–16:45Z**, and 213 today. The same failure mode took
+production down nine days earlier and also paged nobody, and went unrecorded. Every other day in the
+window is zero, so the signal is still clean — but it recurs, which raises this from "one bad day"
+to an established, undetected failure mode.
+
+Four alarms are now **live and each verified to have actually fired** (incident payloads captured off
+a Pub/Sub channel, since creating a policy is not evidence it works): `PGRST002` > 0 over 5 min; an
+uptime check asserting the `/health` **body** contains `"status":"healthy"` rather than merely
+HTTP 200; any `public`-relation lock wait > 60s, which would have fired ~16:36, before user impact;
+and an `arkova-worker` 5xx burst > 5 per 5 min. Routing is email to carson@arkova.io —
+`notificationChannels/17147566240859145353`, the first notification channel this project has ever
+had. The lock-wait alarm is **inert in prod until migration 0409 is applied**, the worker redeployed,
+and a Cloud Scheduler job created for `/jobs/lock-wait`; it also goes blind once `PGRST002` starts,
+since it reaches Postgres through PostgREST — which is why PGRST002 is the backstop behind it.
+
+**Separately found and not yet explained:** a standing ~1 5xx roughly every 20 minutes, around the
+clock — 496 of 510 non-zero 5-minute buckets across 7 days. The 5xx threshold was set at >5
+specifically because every bucket above 5 in that week fell inside today's incident window. That
+baseline drip needs its own investigation; it is not a paging matter but it is not nothing.
+
+**Prevention, worth more than any alert.** DDL on hot tables must `SET lock_timeout = '5s'` first so
+a blocked `ALTER` fails fast instead of forming a barrier, and unbounded correlated-subquery census
+reads against `organizations` are banned (these cost 49–55 minutes each). The reproducer is one
+sentence: *apply a migration via MCP while any long read is running against the same table.*
+
+**Follow-up:** PR #2171 (draft, T3, unsoaked, not merged) moves the non-Supabase-issuer short-circuit
+ahead of the HMAC attempt to kill the misleading warn, and adds issuer-pinned ES256/RS256 JWKS
+verification for Supabase user tokens. It deliberately does **not** widen the HMAC allow-list and does
+**not** point local verification at Google's JWKS — that would authenticate any Google OIDC token
+from any GCP project as a platform user. Separately, `main` carries 95 pre-existing `TS2883`
+typecheck errors (express-types portability) unrelated to this incident; given the deploy-typecheck
+blackout behaviour they warrant their own ticket.
+
+_Last refreshed: 2026-08-11 by carson — claims verified against gcloud/MCP/CI output._
 
 ### 2026-08-01/02 (CTO session) — pre-pentest PII/security hardening wave, DocuSign timeout investigation, soak findings F-1..F-10
 

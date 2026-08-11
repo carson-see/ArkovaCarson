@@ -33,6 +33,7 @@ import {
 } from './lib/runtimeParity.js';
 import { runProviderSpofCheck } from './config-drift/providerSpof.js';
 import { runFlagSpofCheck, type FlagSpofFinding } from './config-drift/flagSpof.js';
+import { loadFlagInventory, runFlagInventoryCheck } from './config-drift/flagInventory.js';
 
 export interface ConfigState {
   /** Feature-flag name → expected/observed enabled state. */
@@ -276,10 +277,18 @@ function main(): void {
   // flag is asserted ON, everything else asserted here is the effective value.
   const assertedFlagsForSpof: Record<string, boolean> = { ...asserted.flags };
   for (const f of asserted.launchRequiredFlags ?? []) assertedFlagsForSpof[f] = true;
-  const flagSpof = runFlagSpofCheck(assertedFlagsForSpof, {
-    deployYmlPath: resolve(repoRoot, '.github/workflows/deploy-worker.yml'),
-    flagRegistryPath: resolve(repoRoot, 'services/worker/src/middleware/flagRegistry.ts'),
-  });
+  // The launch-required SET is passed explicitly so `launch-flag-off` fires only
+  // for flags whose ON-ness genuinely depends on the deploy env var. Without it,
+  // every honestly-pinned true flag held ON by a switchboard row would red-line
+  // the gate — the reason this manifest could only ever assert 6 of ~51 flags.
+  const flagSpof = runFlagSpofCheck(
+    assertedFlagsForSpof,
+    {
+      deployYmlPath: resolve(repoRoot, '.github/workflows/deploy-worker.yml'),
+      flagRegistryPath: resolve(repoRoot, 'services/worker/src/middleware/flagRegistry.ts'),
+    },
+    new Set(asserted.launchRequiredFlags ?? []),
+  );
   // Two-tier calibration (mirrors providerSpof's masked-latent precedent):
   //  - launch-flag-off / env-flag-on-no-db-guard → always blocking (no DB kill switch can
   //    save a launch flag that is off, nor an env-on flag that has no DB guard at all);
@@ -294,14 +303,35 @@ function main(): void {
     console.warn(`::warning::S1 flag-SPOF [${w.code}] (acknowledged) ${w.message}`);
   }
 
+  // Flag reconciliation (flagInventory.ts). Where flagSpof reasons about the
+  // handful of flags pinned in `flags` and only about the row-ABSENT fail-open,
+  // this reconciles the WHOLE flag surface — every ENV_FLAG_GETTERS / DB_FLAGS /
+  // frontend FLAGS / deploy env flag — against the declared inventory, and
+  // catches the inverse hazard: a row that is PRESENT makes the deploy env var
+  // inert, so `deploy-worker.yml` can state the opposite of the effective value
+  // (live today for ENABLE_SEMANTIC_SEARCH + ENABLE_AI_FRAUD). It also enforces
+  // the per-flag soak posture so a soak cannot silently skip a feature.
+  const flagInventory = runFlagInventoryCheck(loadFlagInventory(resolve(CONFIG_DIR, 'flag-inventory.json')), {
+    deployYmlPath: resolve(repoRoot, '.github/workflows/deploy-worker.yml'),
+    flagRegistryPath: resolve(repoRoot, 'services/worker/src/middleware/flagRegistry.ts'),
+    frontendSwitchboardPath: resolve(repoRoot, 'src/lib/switchboard.ts'),
+    repoRoot,
+  });
+  const inventoryErrors = flagInventory.filter((f) => f.severity === 'error');
+  const inventoryWarnings = flagInventory.filter((f) => f.severity === 'warn');
+  for (const w of inventoryWarnings) {
+    console.warn(`::warning::flag-inventory [${w.code}] ${w.flag}: ${w.message}`);
+  }
+
   if (
     drift.length === 0 &&
     parity.length === 0 &&
     spofErrors.length === 0 &&
-    flagSpofErrors.length === 0
+    flagSpofErrors.length === 0 &&
+    inventoryErrors.length === 0
   ) {
     console.log(
-      '✅ config↔reality: no drift; cross-runtime parity intact; provider-SPOF + flag-SPOF clear.',
+      '✅ config↔reality: no drift; cross-runtime parity intact; provider-SPOF + flag-SPOF clear; flag inventory reconciled.',
     );
     return;
   }
@@ -323,6 +353,10 @@ function main(): void {
   if (flagSpofErrors.length > 0) {
     console.error(`::error::S1 flag-SPOF (env↔DB fail-open): ${flagSpofErrors.length} issue(s):`);
     for (const s of flagSpofErrors) console.error(`  [${s.code}] ${s.flag}: ${s.message}`);
+  }
+  if (inventoryErrors.length > 0) {
+    console.error(`::error::flag-inventory reconciliation: ${inventoryErrors.length} issue(s):`);
+    for (const s of inventoryErrors) console.error(`  [${s.code}] ${s.flag}: ${s.message}`);
   }
   process.exit(1);
 }
