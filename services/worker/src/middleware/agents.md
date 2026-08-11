@@ -122,3 +122,17 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - `errorSanitizer` must be registered BEFORE the global error handler.
 - No raw API keys in logs or DB — HMAC-SHA256 only.
 - `paymentTierRouter.ts` `tryCredits()`: a `deduct_unified_credits` RPC failure falls through to Stripe metered billing (fail OPEN — the org gets charged instead of a credit it already paid for being consumed) and now calls `captureCreditRpcFailureAlert({ failMode: 'open', ... })` from `utils/sentry.ts` — previously only a `logger.warn`, no alert. Fail-open behavior itself is unchanged (product decision); this only adds observability.
+
+## 2026-08-11 BUG-2026-08-11 — x402 anchor pricing billed MAINNET fees on non-mainnet (fixed)
+
+`x402PaymentGate`'s dynamic anchor pricing derives `estimatedFeeUsd` from a live sat/vB reading.
+It constructed `MempoolFeeEstimator` directly with no base, and the constructor defaulted to the
+MAINNET explorer — so a non-mainnet deployment priced requests off mainnet congestion.
+
+Concretely on signet: `satPerVbyte` came back as mainnet's rate rather than 1, and at
+`estimatedVbytes = 250` the caller was charged for a fee the network in use does not charge. This
+gate is wired into 6+ `/api/v1` routes, so it was live, not theoretical.
+
+Now passes `network: config.bitcoinNetwork`. Rule: **never construct `MempoolFeeEstimator` without
+`network`** — see `../chain/agents.md`. Note the neighbouring `btcPriceUsd = 60000` hardcode is a
+separate pre-existing approximation (its own comment flags it), untouched here.
