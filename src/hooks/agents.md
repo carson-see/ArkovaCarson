@@ -1,5 +1,13 @@
 # agents.md — hooks
-_Last updated: 2026-08-03_
+_Last updated: 2026-08-10_
+
+## 2026-08-10 — `useActivateAccount.ts` (recipient activation launch blocker)
+
+New hook driving `/activate` against `GET /api/activation/:token` and `POST /api/activation/complete`. Shaped exactly like `useAcceptInvite` (SCRUM-3012), including the `code`-carrying error class so the page can branch on `expired` / `not_found` / `already_used` while only ever rendering the worker's own curated message.
+
+Talks to the WORKER, not Supabase, and this is load-bearing rather than stylistic: activation must write the `auth.users` password via the admin API, which needs service_role — barred from the browser by §1.4. The previous implementation called `supabase.rpc('activate_user', …)` directly, which could not bind (no such overload in prod) and could not have set a password even if it had. See `services/worker/src/api/agents.md`.
+
+Unlike `workerFetch`, no session is ever attached — the recipient has no account to sign into yet, which is the entire point of activation.
 
 ## What This Folder Contains
 

@@ -7167,6 +7167,13 @@ export type Database = {
         }
         Returns: Json
       }
+      proof_coverage_window: {
+        Args: { p_hours?: number }
+        Returns: {
+          secured: number
+          with_proof: number
+        }[]
+      }
       record_msgraph_nonce_and_enqueue: {
         Args: {
           p_change_type: string

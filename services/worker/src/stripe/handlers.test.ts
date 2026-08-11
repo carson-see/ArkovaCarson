@@ -721,44 +721,79 @@ describe('handleCheckoutComplete', () => {
     );
   });
 
-  it('SCRUM-1218: does NOT flip verification_status to VERIFIED when org KYB is REJECTED', async () => {
-    profilesMaybeSingle.mockResolvedValueOnce({ data: { org_id: 'org-rejected' } });
-    organizationsMaybeSingle.mockResolvedValueOnce({ data: { verification_status: 'REJECTED' } });
+  // -----------------------------------------------------------------
+  // AUDIT-0424-10 — checkout must NOT write KYB state.
+  //
+  // `organizations.verification_status` is the authoritative KYB gate read by
+  // `requireVerifiedOrg` (docusign-oauth / drive-oauth), `orgSubOrgs`, and the
+  // `useCanIssueCredential` UI hook. It is NOT an "is paying" flag.
+  //
+  // The superseded SCRUM-1218 shape guarded only `currentStatus === 'REJECTED'`
+  // and flipped every other state to VERIFIED. That guard was dead code in
+  // production: the live CHECK constraint
+  // `organizations_verification_status_valid` admits only
+  // UNVERIFIED/PENDING/VERIFIED, so `'REJECTED'` was never storable and the
+  // comparison could never be true — 100% of completed checkouts took the
+  // self-grant branch. Paying for a subscription is not KYB evidence.
+  //
+  // `verification_status` and `profiles.is_verified` are now written ONLY by
+  // the provider paths (Middesk webhook / Stripe Identity). Checkout writes
+  // subscription + entitlement state and nothing else.
+  // -----------------------------------------------------------------
+  describe('AUDIT-0424-10: checkout does not write KYB / identity state', () => {
+    // Every state the column can hold in prod today, plus the two the Middesk
+    // handler writes once the CHECK constraint is widened (migration 0407),
+    // plus the null/missing-row cases. None of them may produce a write.
+    const STATES = ['UNVERIFIED', 'PENDING', 'VERIFIED', 'REJECTED', 'REQUIRES_INPUT', null];
 
-    await handleCheckoutComplete(CHECKOUT_EVENT);
+    for (const state of STATES) {
+      it(`does not touch organizations or profiles.is_verified when status is ${state ?? 'null'}`, async () => {
+        profilesMaybeSingle.mockResolvedValueOnce({ data: { org_id: 'org-001' } });
+        organizationsMaybeSingle.mockResolvedValueOnce({ data: { verification_status: state } });
 
-    // organizations.update is NOT called for the verification flip.
-    expect(organizationsUpdate).not.toHaveBeenCalled();
-    // ORG_VERIFIED_VIA_SUBSCRIPTION audit event is NOT emitted.
-    expect(auditInsert).not.toHaveBeenCalledWith(
-      expect.objectContaining({ event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION' }),
-    );
-    // CHECKOUT_BLOCKED_BY_KYB_REJECTION audit event IS emitted.
-    expect(auditInsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event_type: 'CHECKOUT_BLOCKED_BY_KYB_REJECTION',
-        org_id: 'org-rejected',
-        actor_id: 'user-001',
-      }),
-    );
-    expect(mockLogger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ orgId: 'org-rejected', currentStatus: 'REJECTED' }),
-      expect.stringContaining('REJECTED'),
-    );
-  });
+        await handleCheckoutComplete(CHECKOUT_EVENT);
 
-  it('SCRUM-1218: still flips to VERIFIED when current status is null/PENDING/etc.', async () => {
-    profilesMaybeSingle.mockResolvedValueOnce({ data: { org_id: 'org-pending' } });
-    organizationsMaybeSingle.mockResolvedValueOnce({ data: { verification_status: null } });
+        // No write to organizations at all — not VERIFIED, not anything else.
+        expect(organizationsUpdate).not.toHaveBeenCalled();
+        // profiles.is_verified is the Stripe Identity signal; paying is not it.
+        expect(profilesUpdate).not.toHaveBeenCalledWith(
+          expect.objectContaining({ is_verified: true }),
+        );
+        // The self-grant audit row is gone with the write it recorded.
+        expect(auditInsert).not.toHaveBeenCalledWith(
+          expect.objectContaining({ event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION' }),
+        );
+      });
+    }
 
-    await handleCheckoutComplete(CHECKOUT_EVENT);
+    it('does not read organizations.verification_status at all (no KYB decision to make)', async () => {
+      profilesMaybeSingle.mockResolvedValueOnce({ data: { org_id: 'org-001' } });
 
-    expect(organizationsUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ verification_status: 'VERIFIED' }),
-    );
-    expect(auditInsert).toHaveBeenCalledWith(
-      expect.objectContaining({ event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION' }),
-    );
+      await handleCheckoutComplete(CHECKOUT_EVENT);
+
+      expect(organizationsMaybeSingle).not.toHaveBeenCalled();
+    });
+
+    it('still records the subscription and its audit row (billing path unaffected)', async () => {
+      profilesMaybeSingle.mockResolvedValueOnce({ data: { org_id: 'org-001' } });
+
+      await handleCheckoutComplete(CHECKOUT_EVENT);
+
+      expect(subscriptionsUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 'user-001',
+          stripe_subscription_id: 'sub_test_001',
+          status: 'active',
+        }),
+        { onConflict: 'stripe_subscription_id' },
+      );
+      expect(auditInsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event_type: 'payment.subscription_created',
+          org_id: 'org-001',
+        }),
+      );
+    });
   });
 
   // -----------------------------------------------------------------
