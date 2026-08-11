@@ -10,7 +10,7 @@
  * These tests pin the guard's pure decision function, then run it against the
  * real worker tree so the invariant is a live ratchet, not a unit-test toy.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import {
   QUEUE_INTERNALS_ALLOWLIST,
@@ -223,8 +223,21 @@ describe('runJobQueueParityCheck', () => {
 });
 
 describe('live worker tree', () => {
+  // Walking and regex-scanning the whole worker tree (~1,200 files, ~16 MB) is
+  // real work that grows with the repo, so scan ONCE for the block instead of
+  // per-test, and give it an explicit budget.
+  //
+  // Vitest's 5s default is a repo-size tripwire, not a correctness signal: this
+  // block passed in isolation but timed out in CI under full-suite parallelism
+  // (426 files) once `main` grew. The assertions below are unchanged — only the
+  // time allowance is, so a genuine parity break still fails the build.
+  let scan: ReturnType<typeof scanJobQueueUsage>;
+
+  beforeAll(() => {
+    scan = scanJobQueueUsage(loadWorkerSources());
+  }, 60_000);
+
   it('every enqueued job_queue type has a real consumer', () => {
-    const scan = scanJobQueueUsage(loadWorkerSources());
     const result = runJobQueueParityCheck(scan);
 
     // Print the guard's own diagnosis on failure — the assertion message alone
@@ -234,7 +247,6 @@ describe('live worker tree', () => {
   });
 
   it('finds the known job types (guard is reading the real tree, not an empty set)', () => {
-    const scan = scanJobQueueUsage(loadWorkerSources());
     const produced = new Set(scan.producers.map((p) => p.type));
 
     expect(produced).toContain('docusign.envelope_completed');

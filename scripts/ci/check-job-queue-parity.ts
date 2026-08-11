@@ -339,8 +339,12 @@ export function runJobQueueParityCheck(scan: JobQueueScan): CheckResult {
   const producedTypes = new Set(scan.producers.map((p) => p.type).filter((t): t is string => t !== null));
   const consumedTypes = new Set(scan.consumers.map((c) => c.type).filter((t): t is string => t !== null));
 
-  const orphanProducers = [...producedTypes].filter((t) => !consumedTypes.has(t)).sort();
-  const orphanConsumers = [...consumedTypes].filter((t) => !producedTypes.has(t)).sort();
+  // Explicit comparator: a bare `.sort()` orders by UTF-16 code unit, which is
+  // not reliable alphabetical ordering for the failure listing below (S2871).
+  const byName = (a: string, b: string): number => a.localeCompare(b);
+
+  const orphanProducers = [...producedTypes].filter((t) => !consumedTypes.has(t)).sort(byName);
+  const orphanConsumers = [...consumedTypes].filter((t) => !producedTypes.has(t)).sort(byName);
 
   if (orphanProducers.length > 0) {
     lines.push(
