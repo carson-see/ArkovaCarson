@@ -18,6 +18,7 @@ import { config } from '../../config.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit, type DeductionResult } from '../../utils/orgCredits.js';
+import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
 
 const router = Router();
 
@@ -177,8 +178,38 @@ async function buildPreviewFromRequest(req: Request, res: Response) {
     return null;
   }
 
+  // DPA Schedule 1 / clause 4.6 — org-scoped field rejection (migration 0405).
+  // No-op for every org without a policy row. Placed in the SHARED helper so it
+  // covers `/import-url/preview` as well as `/import-url/confirm`: the two take
+  // the same body, and a preview that reports a payload as importable when the
+  // confirm will reject it is the same defect as a `dry_run` disagreeing with
+  // the real run (see anchor-bulk.ts). It also runs before
+  // `buildCredentialSourceImportPreview` fetches the source URL, so a rejected
+  // request never causes an outbound call, and before `/confirm`'s duplicate
+  // lookup, which answers 200 for an already-imported source.
+  //
+  // `loadUserOrgId` throws on a failed read; both callers catch and return 500,
+  // so an unresolvable org fails CLOSED rather than defaulting to "no policy".
+  //
+  // The resolved org is RETURNED to the caller, and `/confirm` inserts and bills
+  // under this exact value rather than re-reading `profiles`. Two reads would
+  // straddle the outbound source fetch below, so a `profiles.org_id` that
+  // changed mid-request would let us enforce the OLD org's policy while
+  // persisting the anchor under the NEW org — whose policy would then never
+  // have been checked on this request. One read, one org, no such window.
+  const orgId = req.authUserId ? await loadUserOrgId(req.authUserId) : null;
+  if (!(await enforceOrgFieldPolicy({
+    orgId,
+    body: req.body,
+    res,
+    scope: 'credential-sources-import-url',
+  }))) {
+    return null;
+  }
+
   return {
     input: parsed.data,
+    orgId,
     result: await buildCredentialSourceImportPreview(parsed.data, {
       fetchFn: credentialSourceFetch(),
       urlGuard: isPrivateUrlResolved,
@@ -665,7 +696,10 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
       return;
     }
 
-    const orgId = await loadUserOrgId(userId);
+    // Reuse the org the field policy was enforced against (see
+    // buildPreviewFromRequest) — re-reading `profiles` here would let the
+    // enforced org and the billed/inserted org diverge.
+    const { orgId } = result;
     const existing = await findExistingImport(userId, preview);
     if (existing) {
       await linkSelfRecipient(existing.id, userId);
