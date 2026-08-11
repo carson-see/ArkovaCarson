@@ -225,8 +225,16 @@ the pin is unchanged since `603d047e9` (2026-05-26). Benign happy-path noise.
 
 **Prod state after.** Worker rev `arkova-worker-01286-dam`, git_sha `2de4e4e34`, ledger head `0405`
 (confirmed via `supabase_migrations.schema_migrations`), `ENABLE_VERIFICATION_API=true`, ungranted
-locks on `organizations` = 0, zero 5xx and zero `PGRST002` since 16:51:30Z. **Migration 0407 never
-applied** and will re-wedge prod if retried under a long read.
+locks on `organizations` = 0, zero 5xx and zero `PGRST002` since 16:51:30Z. At that moment migration
+0407 was **not** applied, and retrying it under a long read would have re-wedged prod.
+
+**Superseded later the same day — do not read the line above as current.** The RTE has since applied
+0406 and 0407 to prod, each with `SET lock_timeout = '5s'` as the first statement in the same session
+as the DDL, so a blocked `ALTER` fails fast instead of forming a barrier, and each behind a preflight
+showing zero queries older than 30s and zero ungranted locks on `public.organizations`. **Prod
+numeric ledger head is now `0407`** — verified this session by `list_migrations` against
+`vzwyaatejekddvltxyye`, listing `0401`–`0407` present under numeric versions. `0408` (PR #2140) and
+`0409` (this PR) are still file-only and unapplied.
 
 **Detection is the real defect — nothing paged anyone for 11+ minutes.** The reason is not alert
 fatigue: an API census on 2026-08-11 confirmed project `arkova1` had **zero alert policies, zero
