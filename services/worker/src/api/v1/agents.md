@@ -131,6 +131,55 @@ That spec now asserts the record appears after the dialog closes, with a docbloc
 plainly what its stubs do and do not prove. A green E2E over a fully-mocked flow is a claim
 about the client, not about the write.
 
+## 2026-08-11 — `POST /cle/submit` stays deliberately unlinked from `anchor_recipients` (DECISION)
+
+The entry above establishes "anything that creates an anchor a user is meant to *see* must
+write both `anchors.user_id` and `anchor_recipients`". `cle-verify.ts`'s submit route looks
+like the same defect — it inserts into `anchors` only, so a CLE credit never appears in any
+`/my-credentials` list — but it is **not**, and the disposition is the opposite: **do not link.**
+Pinned by `cle-submit-recipient-semantics.test.ts`; a recipient write on this route fails CI.
+
+Why this route is different from registry-anchor:
+
+- **The holder is not the caller, and is not a platform account.** The credit belongs to the
+  attorney identified by `bar_number` + `jurisdiction` in the request body — a professional
+  identifier with **no bar_number↔user mapping anywhere in the schema** (checked baseline +
+  all migrations, 2026-08-11). Registry-anchor was self-import: the caller was the holder by
+  construction. Here there is nobody to correctly link.
+- **Every caller shape is on-behalf.** The API-key path is a CLE provider submitting for an
+  attorney (`req.apiKey.userId` is the provider). The JWT path serves the same shape: the only
+  built dashboard caller, `src/components/upload/CleBulkImport.tsx` (exported but not yet
+  rendered anywhere), is a bulk CSV importer with a **per-row** `bar_number` — one uploader,
+  many attorneys, one `/cle/submit` call per row, indistinguishable from self-submission at the
+  endpoint. Linking the caller puts other people's CLE credits into the submitter's own
+  credentials list — misattribution of holdership, worse than absence.
+- **The record is fully visible on its intended surface.** CLE credits are consumed through
+  `GET /cle/verify` and `GET /cle/credits`, which key on `metadata->>bar_number` and do not
+  touch `anchor_recipients`. The registry-anchor bug hid a record from the person meant to see
+  it; this route's audience (attorney / state bar / provider) sees everything it should.
+- **A speculative unclaimed row would be a regression, not future-proofing.** A
+  `sha256(bar_number)`-keyed `recipient_email_hash` recreates the offline-enumeration surface
+  SCRUM-2484 closed for emails (bar numbers are short, public, sequential — strictly easier to
+  enumerate), and `link_recipient_to_anchors` matches email hashes only, so nothing could ever
+  claim it.
+
+Prod context at decision time: **zero** `anchors` rows with `credential_type = 'CLE'`
+(verified 2026-08-11 against `vzwyaatejekddvltxyye`), so this is forward-looking only — no
+backfill question exists.
+
+**Sanctioned future paths** if product later wants CLE credits in an attorney's
+`/my-credentials` (either works without touching today's rows beyond a backfill):
+
+1. Additive optional `attorney_email` on `CleSubmitSchema` (allowed under the frozen-schema
+   rules as additive-nullable) → HMAC-hashed via `hashRecipientEmail` → **unclaimed**
+   `anchor_recipients` row → the existing `link_recipient_to_anchors` claim flow. This is the
+   platform's established mechanism for "recipient is not the caller".
+2. A verified bar_number↔user mapping (attorney-verification feature), then link/backfill from
+   `anchors.metadata->>'bar_number'` — the metadata already carries everything needed, which is
+   exactly why deferring loses nothing.
+
+Never the third option: linking the caller. That is the one the pin test exists to stop.
+
 ## 2026-08-02 — the silent-empty enrichment sweep (`readInChunks`)
 
 Closes the last of the `.in()` defect class on this surface. `#1866` fixed the sites whose *width* was
