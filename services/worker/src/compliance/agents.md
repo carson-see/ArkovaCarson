@@ -44,6 +44,23 @@ persistence.
 
 ## Recent Changes
 
+- **2026-08-10 — DPA clause 4.7(b) LEGAL guard** (`professional-education.ts`):
+  `classifyProfessionalEducationAnchor()` now returns `null` (NOT professional
+  education) as its FIRST check for any anchor whose `credential_type` normalizes
+  to `LEGAL`. This is the ONE automatic anchor -> AI-provider route (the CLE/CPE
+  metadata-extraction job), so the exclusion is architectural: it holds
+  independent of `ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY` and independent of
+  any caller-supplied metadata keyword match (`bar association` / `state bar` /
+  `continuing legal education` previously fell through to the CLE keyword scan and
+  returned `CLE` — routable to Gemini). Scoped to type `LEGAL` **exactly**: `CLE`
+  (continuing legal education) is a distinct credential_type and the intended
+  professional-education path, so it stays routable — broadening to CLE would
+  defeat the feature and is not warranted by the DPA. `credentialType` is now
+  `trim()`-ed before `toUpperCase()` so `legal`/` Legal ` are excluded just as
+  firmly. Covered by the `professional-education.test.ts` "LEGAL credential type
+  is never routed to AI extraction (DPA clause 4.7(b))" suite, including a
+  flag-enabled assertion.
+
 - **2026-06-24 — compliance audit owner-org gate** (`auth-helpers.ts`):
   `getCallerOrgId` resolved the caller's org via `org_members` ONLY, so org
   OWNERS — linked via `profiles.org_id` (the "Managing X" header source) and not

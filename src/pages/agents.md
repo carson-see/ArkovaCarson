@@ -221,3 +221,51 @@ and `CheckoutCancelPage.test.tsx` asserted the back link's href was `/billing`.
 `PricingPage.test.tsx` passed throughout because it renders the component
 directly — it cannot see reachability, and now says so in a comment.
 Reachability is guarded structurally by `src/tests/pages/route-reachability.test.ts`.
+## 2026-08-10 — ComplianceDashboardPage no longer mounts the Nessie panel
+
+`ComplianceDashboardPage.tsx` rendered `<NessieIntelligencePanel />`
+unconditionally. `/organization/compliance` is guarded by `AuthGuard` +
+`RouteGuard` only (NOT `PlatformAdminRoute`, `App.tsx`), so any authenticated
+customer reached it by URL and saw a query box for a backend that is switched
+off, plus a confidence readout SCRUM-2914 had ordered removed. Import + render
+are gone and the component is deleted.
+
+Two things to carry forward when editing this page:
+
+- **A page test that stubs a child cannot see the child.** This suite carried
+  `vi.mock('@/components/search/NessieIntelligencePanel', ...)`, so it stayed
+  green whether or not the page mounted the panel — the stub is why nobody
+  noticed. Stub a child to cut a dependency (a QueryClientProvider, a network
+  hook), never to silence a surface you have not decided is supposed to be there.
+- **"The backend flag is off" is not a reachability argument.** Reachability is
+  the JSX mount plus the route's guards. `src/lib/nessie-surfaces-offline.test.ts`
+  now enforces the mount half.
+
+## 2026-08-10 — PrivacyPage body copy moved to copy.ts (§1.3)
+
+Every user-visible string inside `PrivacyPage`'s `<main>` — page title/meta,
+heading, effective date, all seven section bodies, the mailto addresses —
+now comes from `LEGAL_PAGE_LABELS.PRIVACY_*` / `PRIVACY_CONTACT_EMAIL` /
+`SUPPORT_CONTACT_EMAIL` in `src/lib/copy.ts`. Rendered text is byte-identical
+to the inline version it replaces (verified by render-dump diff).
+
+Why: `src/lib/copy-internal-scaffolding.test.ts` (the guard that catches
+internal drafting notes before they ship) only scans `copy.ts` — inline JSX
+prose on a public legal page is exactly the surface it cannot see, and exactly
+where the /privacy counsel-note leak lived. `PrivacyPage.copy-centralization.test.tsx`
+enforces the coverage: it strips every copy.ts value from the rendered `<main>`
+text and fails on any word left over, so new inline prose cannot land silently.
+The page's header/footer nav chrome is shared navigation and out of that test's
+scope (it scans `<main>` only).
+
+When editing this page: add strings to `LEGAL_PAGE_LABELS` first, then render
+the key. The S5 transfer-basis paragraph must keep naming NO EU→US transfer
+mechanism (SCRUM-2283, §1.13 R-7) — the rule is restated at the key itself.
+
+Deferred scope, on the record: `TermsPage` / `AboutPage` / `ContactPage` /
+`DevelopersPage` (all public routes in `App.tsx`) carry the same §1.3 +
+scaffolding-guard-reach exposure — their prose is inline JSX the guard cannot
+see. `TermsPage` is structurally identical to pre-migration `PrivacyPage` and
+is the cheapest next target; migrating it is also the moment to extract
+`renderPrivacyMain` / `residueAfterRemovingCopy` from the copy-centralization
+test into a shared helper (rule of three not yet met — this is the first).

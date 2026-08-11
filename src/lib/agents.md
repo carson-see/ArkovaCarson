@@ -150,3 +150,50 @@ _The following entries were lost off `main` by the 2026-07-28 union-merge-driver
 - 2026-07-28 L3-A6: `copy.ts` gained `CE_REGISTRY_IMPORT_LABELS` (new section, "PUBLIC REGISTRY IMPORT") + `MY_CREDENTIALS_LABELS.ADD_FROM_REGISTRY` — append-only, no existing keys touched. §1.3-safe: "Fingerprint" not "Hash", no chain terminology, "Add Record" (not "Issue Credential" — SCRUM-1672 restricts that phrase to the verified-org issuance flow, which this is not). Backs `CtdlRegistryImportDialog.tsx` (`src/components/credentials/`), the CE Noncredit Data Taxonomy 3.0 anchoring POC UI entry point.
 - 2026-06-29 PROOF-04 second-pass (Carson P1 #1352): new `src/lib/sourceProofInput.ts` — `sourceProofInput(supabase, anchor)` assembles the embedded `ProofInput` AND **sources `leaf_count`**, the field that arms the CVE-2012-2459 guard. The old download path never set it (anchor_proofs has no `leaf_count` column), so every embedded packet shipped `leaf_count: null` and the cert couldn't run the full offline guard for any **batch** proof. Now derived the way the server does (PROOF-05): an RLS-scoped exact head-count over `anchor_proofs` filtered by the indexed `batch_id` — a number, no rows/PII (§1.6). That exact-head-count call site is registered against the R0-8 baseline (`check-count-exact-baseline.ts`) via the sanctioned `count-exact-allowed` PR label: the count is bounded per-batch over an indexed column, not a scan of the hot `anchors` table the guardrail targets, and it mirrors the server (#1354). Single-leaf / un-batched SECURED rows → `leaf_count = 1`. If a batch member's count can't be sourced, the result is `{ proof, complete:false }` — the page passes `proofComplete:false` to `buildAuditReport`, which swaps the offline-verify intro to `OFFLINE_VERIFY_INTRO_INCOMPLETE` (drops the "complete proof" claim, §1.5) and warns the user; the packet still embeds for inspection. Tests: `sourceProofInput.test.ts` (6) + 2 incomplete-cert cases in `generateAuditReport.test.ts`.
 - 2026-08-10 launch blocker (checkout unreachable): `routes.ts` gained `PRICING: '/pricing'` in the Billing block. It is DISTINCT from `BILLING` on purpose — `/billing` is the read-only status summary, `/pricing` (PricingPage) is the only surface that can start a purchase (`startCheckout` → worker `POST /api/checkout/session` → Stripe). Every upgrade/buy CTA must target `ROUTES.PRICING`; targeting `ROUTES.BILLING` is what dead-ended the revenue path (an "Upgrade" button on `/billing` that navigated to `/billing`). `src/tests/pages/route-reachability.test.ts` now fails CI if a `ROUTES` constant is never rendered in `App.tsx` or a `src/pages/` module is never imported there. `copy.ts` gained `BILLING_PAGE_LABELS.PORTAL_UNAVAILABLE` and `BILLING_LABELS.CHECKOUT_UNAVAILABLE` / `PORTAL_UNAVAILABLE`: `useBilling.startCheckout` / `openBillingPortal` swallow all failures and resolve `null` (notably the worker's 400 when a plan has no `stripe_price_id` for the environment), so every call site must surface one of these on the null branch rather than silently doing nothing. §1.3-clean.
+
+## 2026-08-10 — two shipped-surface guards live here
+
+- `nessie-surfaces-offline.test.ts` — scans every non-test `.tsx` under `src/`
+  and fails if any of them JSX-mounts a `Nessie*` component. Nessie is OFF by
+  founder directive; this replaces the prose claim in
+  `src/components/anchor/agents.md` that these surfaces were "unreachable",
+  which was false — `ComplianceDashboardPage` mounted the intelligence panel
+  ungated on a customer-reachable route. The mount regex deliberately rejects
+  TYPE positions (`useState<NessieContextResponse>`), matching only JSX.
+- `copy-internal-scaffolding.test.ts` — walks every string VALUE exported from
+  `copy.ts` and fails on square-bracketed editorial segments or staff-directive
+  markers (`TODO`, `(counsel-required)`, `do not assert`, …). Source COMMENTS
+  are out of scope on purpose: the engineering rationale for a counsel-required
+  string belongs in the file, just not in the string. Prompted by
+  `PRIVACY_NOTICE_LABELS.DPF_DESCRIPTION` shipping `[Counsel review required —
+  do not assert a specific transfer mechanism until confirmed.]` to the public
+  `/privacy` page.
+
+Note on the two `NessieIntelligencePanel.tsx` mentions in the entries above:
+that file is deleted. The `resolveWorkerBaseUrl` / curated-catch-block
+conventions those entries describe are unchanged for every other listed caller.
+
+## 2026-08-10 — /privacy copy fully centralized (follow-up to the scaffolding guard)
+
+The scaffolding guard above only reads `copy.ts`, so its coverage equals
+`copy.ts`'s coverage. The remaining inline privacy copy is now moved under it:
+
+- `PRIVACY_NOTICE_LABELS` gained per-jurisdiction `*_REGULATOR` / `*_RIGHTS`
+  (readonly string arrays — the leaf-walkers recurse into them) /
+  `*_TRANSFER_BASIS` / `*_BREACH_TIMELINE` for all 13 notices, previously
+  inline literals in `JurisdictionPrivacyNotices.tsx`.
+- `LEGAL_PAGE_LABELS` gained the `PRIVACY_*` page-body keys (title/meta,
+  heading, effective date, sections 1–7), previously inline JSX in
+  `PrivacyPage.tsx`. `PRIVACY_S1_BODY_*` is split around the `<strong>not</strong>`
+  emphasis — the JSX supplies the joining spaces via `{' '}`.
+- `SUPPORT_CONTACT_EMAIL` joins `PRIVACY_CONTACT_EMAIL` (it renders on /privacy
+  as the account-deletion route, so it is copy).
+
+The move was verified byte-identical (before/after render dump of title + meta +
+`<main>` textContent, zero diff). Every value is a legal representation or a
+statement of external law — rewording is a legal edit, and the EU–US keys must
+keep naming NO transfer mechanism (SCRUM-2283, §1.13 R-7).
+
+Coverage is enforced, not asserted: `src/pages/PrivacyPage.copy-centralization.test.tsx`
+fails if /privacy renders prose `copy.ts` does not own, or if a jurisdiction
+copy field regresses to an inline literal.
