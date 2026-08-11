@@ -230,3 +230,39 @@ see. `TermsPage` is structurally identical to pre-migration `PrivacyPage` and
 is the cheapest next target; migrating it is also the moment to extract
 `renderPrivacyMain` / `residueAfterRemovingCopy` from the copy-centralization
 test into a shared helper (rule of three not yet met — this is the first).
+
+## 2026-08-11 — WebhookSettingsPage tests: never gate on the endpoint URL text
+
+`WebhookSettingsPage` composes two components that render the SAME string:
+`WebhookSettings` prints `endpoint.url` in the endpoint row (only after the
+async `webhook_endpoints` fetch resolves), and `WebhookDeliveryLog` prints
+`delivery.endpoint_url` in the history table — synchronously, straight from the
+mocked hook, on the very first commit.
+
+So `await waitFor(() => expect(screen.getByText('https://example.com/webhooks'))
+.toBeInTheDocument())` is **not** a gate on "endpoints have loaded". It resolves
+against the delivery-log cell immediately, and once the fetch does land it
+matches *both* nodes and starts throwing "found multiple elements". Any
+synchronous `getBy*` placed after it races the fetch. That is exactly how
+`wires the test-ping action to sendWebhookTestPing (WH-02)` failed in CI
+(PR #2140; PR #2143 run 93815479911) with `Unable to find an accessible element
+with the role "button" and name /Send test event/` — while passing 12/12 locally
+and on `main`, because the race only opens under CI load. The delete test had
+already hit the same trap in 2026-07-26 and fixed it in isolation; the fix is now
+folder-wide.
+
+Rules for this page's tests:
+
+- To wait for the endpoint row, call the local `findEndpointRow()` helper. It
+  keys off the delete button's aria-label (`Delete endpoint: <url>`), which is
+  unique to the endpoint row and carries the URL.
+- Anything that mounts with the endpoint row — the test-ping button, the
+  toggle, the delete button — must be reached with `findBy*`, never a `getBy*`
+  sitting after some other `waitFor`.
+- Generally: a `waitFor` gate only proves the element *it queried* is present.
+  If the next query targets a different element that can arrive in a later React
+  commit, make that query `findBy*` too. Sibling assertions inside one
+  synchronous subtree (a dialog's title + its buttons) are fine as `getBy*`.
+
+`WebhookSettings.test.tsx` and `WebhookDeliveryLog.test.tsx` are unaffected —
+both render from props with no async source, so nothing can arrive late.

@@ -96,10 +96,14 @@ Object.assign(navigator, {
   clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
 });
 
+// Deliberately the SAME url the mocked delivery-log row above carries — that
+// collision is the point of `findEndpointRow` below.
+const ENDPOINT_URL = 'https://example.com/webhooks';
+
 const mockEndpoints = [
   {
     id: 'ep-1',
-    url: 'https://example.com/webhooks',
+    url: ENDPOINT_URL,
     events: ['anchor.secured', 'anchor.revoked'],
     is_active: true,
     created_at: '2026-03-10T12:00:00Z',
@@ -112,6 +116,23 @@ function renderPage() {
       <WebhookSettingsPage />
     </MemoryRouter>
   );
+}
+
+/**
+ * Resolve the endpoint row produced by the async `webhook_endpoints` fetch.
+ *
+ * Never gate on the row's URL *text*: WebhookDeliveryLog renders the SAME
+ * `endpoint_url` synchronously from the mocked hook, so
+ * `getByText(ENDPOINT_URL)` matches that delivery cell on the FIRST commit —
+ * before the endpoint row exists — making the gate a no-op, and then matches
+ * BOTH nodes once the fetch lands. The delete button's aria-label
+ * ("Delete endpoint: <url>") is unique to the endpoint row and carries the URL,
+ * so it is the only unambiguous "endpoints have loaded" signal on this page.
+ */
+function findEndpointRow(url = ENDPOINT_URL) {
+  return screen.findByRole('button', {
+    name: `${WEBHOOK_LABELS.DELETE_CONFIRM_ACTION}: ${url}`,
+  });
 }
 
 // =========================================================================
@@ -160,9 +181,9 @@ describe('WebhookSettingsPage', () => {
     it('renders fetched endpoints', async () => {
       renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText('https://example.com/webhooks')).toBeInTheDocument();
-      });
+      // Asserted via the endpoint row's own control, not the URL text — the
+      // delivery-log cell renders that same URL without the fetch ever landing.
+      expect(await findEndpointRow()).toBeInTheDocument();
     });
 
     it('shows loading state initially', () => {
@@ -190,9 +211,7 @@ describe('WebhookSettingsPage', () => {
     it('calls create_webhook_endpoint RPC with correct params', async () => {
       renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText('https://example.com/webhooks')).toBeInTheDocument();
-      });
+      await findEndpointRow();
 
       await userEvent.click(screen.getByText('Add Endpoint'));
 
@@ -214,9 +233,7 @@ describe('WebhookSettingsPage', () => {
     it('shows server-generated secret after creation', async () => {
       renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText('https://example.com/webhooks')).toBeInTheDocument();
-      });
+      await findEndpointRow();
 
       await userEvent.click(screen.getByText('Add Endpoint'));
 
@@ -241,9 +258,7 @@ describe('WebhookSettingsPage', () => {
 
       renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText('https://example.com/webhooks')).toBeInTheDocument();
-      });
+      await findEndpointRow();
 
       await userEvent.click(screen.getByText('Add Endpoint'));
 
@@ -362,11 +377,7 @@ describe('WebhookSettingsPage', () => {
     it('calls direct update for toggle', async () => {
       renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText('Disable')).toBeInTheDocument();
-      });
-
-      await userEvent.click(screen.getByText('Disable'));
+      await userEvent.click(await screen.findByText('Disable'));
 
       await waitFor(() => {
         expect(mockFrom).toHaveBeenCalledWith('webhook_endpoints');
@@ -389,11 +400,7 @@ describe('WebhookSettingsPage', () => {
 
       renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText('Disable')).toBeInTheDocument();
-      });
-
-      await userEvent.click(screen.getByText('Disable'));
+      await userEvent.click(await screen.findByText('Disable'));
 
       // State persists: the button now reads "Enable".
       await waitFor(() => {
@@ -416,11 +423,7 @@ describe('WebhookSettingsPage', () => {
 
       renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText('Disable')).toBeInTheDocument();
-      });
-
-      await userEvent.click(screen.getByText('Disable'));
+      await userEvent.click(await screen.findByText('Disable'));
 
       // An error toast is shown with the user-facing copy — and it must NOT
       // leak the raw RLS/Postgres message ("row-level security policy …").
@@ -460,11 +463,7 @@ describe('WebhookSettingsPage', () => {
 
       renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText('Disable')).toBeInTheDocument();
-      });
-
-      await userEvent.click(screen.getByText('Disable'));
+      await userEvent.click(await screen.findByText('Disable'));
 
       // Optimistic: the label flips to "Enable" while the update is still in
       // flight (no await on the server round-trip).
@@ -522,18 +521,14 @@ describe('WebhookSettingsPage', () => {
     it('renders the event catalog (WH-01)', async () => {
       renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText(WEBHOOK_LABELS.CATALOG_TITLE)).toBeInTheDocument();
-      });
+      expect(await screen.findByText(WEBHOOK_LABELS.CATALOG_TITLE)).toBeInTheDocument();
       expect(screen.getByText(WEBHOOK_LABELS.CATALOG_REDACTION_NOTE)).toBeInTheDocument();
     });
 
     it('renders the delivery history + failed deliveries sections (WH-03)', async () => {
       renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText(WEBHOOK_LABELS.DELIVERIES_TITLE)).toBeInTheDocument();
-      });
+      expect(await screen.findByText(WEBHOOK_LABELS.DELIVERIES_TITLE)).toBeInTheDocument();
       expect(screen.getByText(WEBHOOK_LABELS.FAILED_TITLE)).toBeInTheDocument();
       // Delivery row from the mocked hook is rendered.
       expect(screen.getByTestId('delivery-row-log-1')).toBeInTheDocument();
@@ -544,12 +539,17 @@ describe('WebhookSettingsPage', () => {
 
       renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText('https://example.com/webhooks')).toBeInTheDocument();
-      });
-
+      // findByRole, not getByRole: the test button mounts with the endpoint row
+      // from the async endpoints fetch, which can land in a LATER React commit
+      // than anything the delivery log renders. The old gate — waitFor on the
+      // URL text — was satisfied by the delivery-log cell carrying that same
+      // URL synchronously, so it never waited for the fetch and the sync
+      // getByRole below raced it (CI: PR #2140; PR #2143 run 93815479911).
+      // Same trap as the delete test above.
       await userEvent.click(
-        screen.getByRole('button', { name: new RegExp(WEBHOOK_LABELS.TEST_PING_ACTION) }),
+        await screen.findByRole('button', {
+          name: new RegExp(WEBHOOK_LABELS.TEST_PING_ACTION),
+        }),
       );
 
       await waitFor(() => {
