@@ -173,6 +173,16 @@ jobs:
       - name: Block API scope vocabulary drift (SCRUM-1581)
         run: npm run ci:api-scope-vocabulary
 
+      # The worker has no central job dispatcher: a job_queue type runs only if
+      # some file calls claimJob/processNextJob with that same literal. An
+      # enqueued type with no consumer produces NO error — the row sits
+      # `pending` forever, indistinguishable from an empty queue. That class
+      # shipped twice, both times as billing defects (anchor.fast_track charged
+      # a credit for acceleration that never happened; ai_credits.reconcile_
+      # refund silently dropped a customer overcharge it existed to surface).
+      - name: Block orphaned job_queue producers/consumers
+        run: npm run ci:job-queue-parity
+
       - name: Block credential type enum drift (SCRUM-2013)
         run: node_modules/.bin/tsx scripts/ci/check-credential-type-drift.ts
 
@@ -180,6 +190,11 @@ jobs:
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: node_modules/.bin/tsx scripts/ci/check-views-security-invoker.ts
+
+      - name: Block hot-table DDL without a bounded lock_timeout (2026-08-11 P0)
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node_modules/.bin/tsx scripts/ci/check-hot-table-ddl-lock-timeout.ts
 
       - name: Block bare auth.uid() in new RLS policies (SCRUM-1278)
         env:
@@ -200,6 +215,19 @@ jobs:
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: node_modules/.bin/tsx scripts/ci/check-webhook-hmac-consolidation.ts
+
+      - name: Require the org field policy on anchor-creating routes (DPA clause 4.6)
+        # A request handler under services/worker/src/api/ that inserts into
+        # `anchors` must call enforceOrgFieldPolicy (migration 0405). The
+        # control has to reject a contractually prohibited field independently
+        # of the counterparty agreeing to stop sending it, so it only holds if
+        # EVERY write path enforces it — and the hand-built census that found
+        # the first five gaps had four false positives and two false negatives.
+        # Service-originated anchor creation (services/worker/src/jobs/) is out
+        # of scope by directory, not by allowlist.
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node_modules/.bin/tsx scripts/ci/check-anchor-field-policy-coverage.ts
 
       - name: Enforce container-image CVE scan gate (TVM/IVS)
         # deploy-worker.yml must keep a Trivy base-image CVE scan gating the
@@ -264,7 +292,7 @@ jobs:
         # step is skipped entirely (see "Skip Sonatype Lifecycle notice"
         # below). When secrets ARE set, real findings should fail the PR.
         if: env.SONATYPE_LIFECYCLE_URL != '' && env.SONATYPE_LIFECYCLE_USERNAME != '' && env.SONATYPE_LIFECYCLE_PASSWORD != '' && env.SONATYPE_LIFECYCLE_APPLICATION_ID != ''
-        uses: sonatype/actions/evaluate@207984d4ff92b2f2aee69821a233fa086080794e # v1
+        uses: sonatype/actions/evaluate@18335e91b476ad0f0a7c68bec3f1445e70d8f5fc # v1
         with:
           iq-server-url: ${{ env.SONATYPE_LIFECYCLE_URL }}
           username: ${{ env.SONATYPE_LIFECYCLE_USERNAME }}
@@ -1079,7 +1107,16 @@ jobs:
           # must re-run this job. Without them a PR touching only the runner
           # skips every step here and the formal-verification gate goes green
           # while verifying nothing.
-          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(machines/.*\.(ts|tla|cfg)$|scripts/verify-machines\.sh$|package\.json$|services/worker/src/jobs/anchor\.ts|services/worker/src/chain/)'; then
+          #
+          # vendor/tla/** and THIS WORKFLOW FILE are in the set for the same
+          # reason. Until 2026-08-11 they were not, so a change to the model
+          # checker itself — the jar, its integrity check, or the step that
+          # runs it — could not trigger the job that consumes it. The four
+          # tla2tools re-pins all shipped without the pin change ever being
+          # exercised; they were only proven by the NEXT machines/ PR to come
+          # along. A verification gate whose own configuration is outside its
+          # trigger set cannot self-test.
+          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(machines/.*\.(ts|tla|cfg)$|scripts/verify-machines\.sh$|package\.json$|vendor/tla/|\.github/workflows/ci\.yml$|services/worker/src/jobs/anchor\.ts|services/worker/src/chain/)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -1104,65 +1141,45 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install TLA+ tools (tla2tools.jar)
-        if: steps.tla-changed.outputs.changed == 'true'
-        # `tla-precheck setup` prompts "Download TLC tla2tools.jar? (Y/n)"
-        # and "Install skill to Claude Code + Codex? (Y/n)"; piping `yes`
-        # keeps CI non-interactive.
-        run: yes | node_modules/.bin/tla-precheck setup || true
-
-      - name: Pin TLA2TOOLS_JAR (workaround tla-precheck checksum bug)
-        # SCRUM-1248 (R0-2): tla-precheck@0.1.7 has a hard-coded expected
-        # SHA256 for the v1.8.0 jar that no longer matches upstream. We
-        # download the jar directly from the official tlaplus/tlaplus
-        # release, verify SHA256 against a pinned value (SEC-004 baseline:
-        # supply-chain integrity for every external download), and point
-        # tla-precheck at it via TLA2TOOLS_JAR env. Remove this step when
-        # tla-precheck ships a fix.
+      # NOTE: `tla-precheck setup` is deliberately NOT run here. Its only job
+      # was downloading tla2tools.jar, which is now vendored — and running it
+      # would be actively harmful: it populates the ~/.tla-precheck cache that
+      # `resolveTlcJarPath()` silently falls back to when TLA2TOOLS_JAR is unset
+      # or points at a missing file (tla-precheck dist/core/tooling.js). With no
+      # cache present, a broken TLA2TOOLS_JAR fails loudly instead of quietly
+      # model-checking against some other build. See vendor/tla/agents.md.
+      - name: Verify vendored tla2tools.jar (supply-chain integrity)
+        # SCRUM-1248 (R0-2), superseding the download-and-pin step.
         #
-        # Code-review #2 (PR #562): the SHA256 below is computed with
-        # `curl ... | sha256sum` against the official release asset only after
-        # the release body's SHA1 checksum matches the downloaded jar. The
-        # v1.8.0 GitHub release is a mutable pre-release; do not update this
-        # pin unless the official tlaplus/tlaplus release body also changed.
+        # The jar is committed at vendor/tla/tla2tools.jar. Upstream v1.8.0 is a
+        # MUTABLE pre-release tag that was re-cut four times in ~5 weeks
+        # (2026-07-09, 07-18/21, 07-31, 08-11); each re-cut broke the old
+        # download-time SHA256 pin, reddened this job on every machines/ PR, and
+        # SKIPPED the model check. Vendoring removes the network and the mutable
+        # tag from the critical path entirely.
+        #
+        # This step is still an integrity gate (SEC-004 baseline): it pins the
+        # committed bytes, so in-repo corruption or an unreviewed swap of the jar
+        # fails CI. Updating the jar means updating this constant too — see
+        # vendor/tla/agents.md for the three-anchor upstream protocol.
         if: steps.tla-changed.outputs.changed == 'true'
         env:
-          # Pin updated 2026-08-01 - upstream RE-CUT the mutable v1.8.0
-          # pre-release assets AGAIN on 2026-07-31T18:54:20Z (jar bytes changed;
-          # size 4485995 -> 4486015), which is why the prior pin started failing
-          # the supply-chain check and turned this job red on every PR touching
-          # machines/ (observed on PR #1784: the "Pin TLA2TOOLS_JAR" step failed
-          # and "Run TLA+ PreCheck verification" never ran). This is the THIRD
-          # re-cut of the same tag; the mismatch is upstream tag mutability, not
-          # a compromised artifact.
-          #
-          # Verified per the protocol above against all THREE independent
-          # anchors on 2026-08-01: (1) release-body SHA1 checksum table now
-          # reads feffd16994db963ad945628cfd03d154c195a468|tla2tools.jar and
-          # matches the downloaded jar's SHA1, (2) GitHub release API asset
-          # digest is
-          # sha256:e22f8ffb4bacdea0a871f444dd94fe5fb0d8013b3388ae39e82e26f852c735d5
-          # (asset updated_at 2026-07-31T18:54:20Z, size 4486015), (3) direct
-          # `curl --proto '=https' | shasum -a 256` of the official release URL
-          # matches, size 4486015. Previous pins, now stale:
-          #   2026-07-21 (07-18 re-cut): cc4803dce2a8ffaf0f5920a9dc39df4b5ee34ab4cb53fb58ac557277a7e516b3
-          #   2026-07-09:                33de7da9ce1b7fffb9d1c184021178dbb051747be48504e65c584c423721a32e
-          TLA2TOOLS_SHA256: e22f8ffb4bacdea0a871f444dd94fe5fb0d8013b3388ae39e82e26f852c735d5
+          TLA2TOOLS_SHA256: ab323b79802aedc3203b3f9af37c6aca3ed43f4e0225b36f2aa77b26de46c05f
         run: |
-          mkdir -p "$HOME/.tla"
-          # SCRUM-3018 / Sonar S6506: enforce HTTPS on the fetch and on any
-          # redirect (GitHub release assets redirect to an https objects host).
-          curl --proto '=https' --proto-redir '=https' -fsSL -o "$HOME/.tla/tla2tools.jar" \
-            "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
-          ACTUAL=$(sha256sum "$HOME/.tla/tla2tools.jar" | awk '{print $1}')
+          JAR="$GITHUB_WORKSPACE/vendor/tla/tla2tools.jar"
+          if [ ! -f "$JAR" ]; then
+            echo "::error::vendored tla2tools.jar missing at $JAR"
+            exit 1
+          fi
+          ACTUAL=$(sha256sum "$JAR" | awk '{print $1}')
           if [ "$ACTUAL" != "$TLA2TOOLS_SHA256" ]; then
-            echo "::error::tla2tools.jar SHA256 mismatch — supply-chain integrity check failed"
+            echo "::error::vendored tla2tools.jar SHA256 mismatch — integrity check failed"
             echo "  expected: $TLA2TOOLS_SHA256"
             echo "  actual:   $ACTUAL"
             exit 1
           fi
-          echo "✅ tla2tools.jar SHA256 verified ($ACTUAL)"
-          echo "TLA2TOOLS_JAR=$HOME/.tla/tla2tools.jar" >> "$GITHUB_ENV"
+          echo "✅ vendored tla2tools.jar SHA256 verified ($ACTUAL)"
+          echo "TLA2TOOLS_JAR=$JAR" >> "$GITHUB_ENV"
 
       - name: Run TLA+ PreCheck verification
         # SCRUM-1248 (R0-2): continue-on-error stripped. Per CLAUDE.md §1.7

@@ -119,6 +119,12 @@ export const ROUTES = {
 
   // Billing routes
   BILLING: '/billing',
+  // Plan selection + Stripe Checkout entry point. DISTINCT from BILLING:
+  // /billing is the read-only status summary, /pricing is the only surface that
+  // can start a purchase (PricingPage → startCheckout → worker
+  // POST /api/checkout/session). Every "Upgrade" CTA must target this route —
+  // pointing them at BILLING dead-ends the buy path.
+  PRICING: '/pricing',
   BILLING_SUCCESS: '/billing/success',
   BILLING_CANCEL: '/billing/cancel',
 

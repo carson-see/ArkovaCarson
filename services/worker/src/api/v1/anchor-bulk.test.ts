@@ -70,6 +70,15 @@ interface Builder {
   eq: ReturnType<typeof vi.fn>;
   in: ReturnType<typeof vi.fn>;
   single: ReturnType<typeof vi.fn>;
+  /**
+   * Terminal of the `organization_field_policies` read added by the DPA
+   * clause-4.6 guard (migration 0405). Every case in this file is an org with
+   * NO policy row, so it resolves empty and the guard is a no-op — which is
+   * the point: adding an org-scoped field policy must not change behaviour for
+   * any org that does not have one. Rejection cases live in
+   * `anchor-field-policy.test.ts`.
+   */
+  maybeSingle: ReturnType<typeof vi.fn>;
 }
 
 function makeBuilder(state: {
@@ -84,6 +93,8 @@ function makeBuilder(state: {
   builder.eq = vi.fn(chain);
   builder.insert = vi.fn(chain);
   builder.single = vi.fn(() => Promise.resolve({ data: state.insertedRow ?? null, error: null })) as unknown as Builder['single'];
+  // No org field policy configured — see the Builder docblock.
+  builder.maybeSingle = vi.fn(() => Promise.resolve({ data: null, error: null })) as unknown as Builder['maybeSingle'];
   return builder;
 }
 
@@ -428,6 +439,9 @@ describe('POST /api/v1/anchor/bulk — DB duplicate check width + failure policy
       builder.select = vi.fn(chain);
       builder.eq = vi.fn(chain);
       builder.insert = vi.fn(chain);
+      // No org field policy configured — see the Builder docblock.
+      builder.maybeSingle = vi.fn(() =>
+        Promise.resolve({ data: null, error: null })) as unknown as Builder['maybeSingle'];
       builder.single = vi.fn(() => Promise.resolve({
         data: {
           id: '550e8400-e29b-41d4-a716-446655440001',

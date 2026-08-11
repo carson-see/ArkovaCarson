@@ -1,0 +1,27 @@
+{
+  "name": "worker_db_lock_wait",
+  "description": "A lock request against a public relation has been waiting longer than the alert threshold, as observed by the worker's lock-wait monitor (services/worker/src/jobs/lock-wait-monitor.ts, cron /cron/lock-wait). This is the EARLY signal for the 2026-08-11 P0: the barrier on public.organizations formed at ~16:35 and user impact did not start until 16:40, so a lock-wait alarm buys ~4 minutes of lead time over the PGRST002 alarm. Emitted as a structured log line rather than a metric because the worker reaches Postgres through PostgREST and has no Cloud Monitoring metric surface of its own.",
+  "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"arkova-worker\" AND jsonPayload.alert_type=\"db_lock_wait\"",
+  "metricDescriptor": {
+    "metricKind": "DELTA",
+    "valueType": "INT64",
+    "unit": "1",
+    "displayName": "Worker-observed Postgres lock waits over threshold",
+    "labels": [
+      {
+        "key": "relation",
+        "valueType": "STRING",
+        "description": "Fully-qualified relation the blocked request is waiting on, e.g. public.organizations."
+      },
+      {
+        "key": "lock_mode",
+        "valueType": "STRING",
+        "description": "Lock mode requested by the blocked backend, e.g. AccessExclusiveLock. AccessExclusiveLock on a hot table is the barrier-forming shape."
+      }
+    ]
+  },
+  "labelExtractors": {
+    "relation": "EXTRACT(jsonPayload.relation)",
+    "lock_mode": "EXTRACT(jsonPayload.lock_mode)"
+  }
+}

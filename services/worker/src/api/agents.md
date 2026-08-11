@@ -1,6 +1,57 @@
 # agents.md — services/worker/src/api/
 
+## 2026-08-10 — `activation.ts`: recipient account activation was 100% broken in production (launch blocker)
+
+A recipient issued a credential could not claim it and could not log in. Two independent, unconditional defects, both confirmed against live prod:
+
+- **Wrong signature at the call site.** `src/pages/ActivateAccountPage.tsx:44` called `supabase.rpc('activate_user', { p_token, p_claim_key })`. Prod has exactly ONE overload, `activate_user(p_token text, p_password text)`, and **PostgREST binds overloads by argument NAME** — so `p_claim_key` could never resolve and every attempt returned PGRST202. The `p_claim_key` variant exists only in `docs/migrations-archive/0175_activate_user_function.sql`: archived, never deployed. Confirmed genuinely absent rather than renamed — the live schema has no `activation_tokens` table and no `claim_key` column at all.
+- **The password was silently discarded.** The deployed body accepts `p_password` and never references it again (baseline:498-553); it only flipped `status` to `'ACTIVE'` and NULLed the token. So fixing the call site ALONE would have been strictly worse: a green "Account Activated!" screen followed by a login that can never succeed, instead of a loud PGRST202.
+
+**Why a worker endpoint and not a fixed RPC.** Setting a password means writing GoTrue-owned state (password hash, `auth.identities`, confirmation flags) via `auth.admin.updateUserById`, which needs the service_role key — barred from the browser by §1.4. A SECURITY DEFINER function hand-writing `auth.users` is the same antipattern migration 0401 rejects for `create_pending_recipient`. So `activate_user` is retired in `0402` (raises + browser grants revoked) and `completeActivation` is the one working path, mirroring `invitations.ts` (SCRUM-3012), which already solves the identical "unauthenticated holder of an emailed token needs an account provisioned" problem.
+
+**`email_confirm: true` — flagged for human confirmation.** `createPendingRecipient` (PR #2047) mints the auth user with `email_confirm: false`, and prod runs `mailer_autoconfirm=false`. Activation therefore confirms the address: the single-use token was delivered to that mailbox and nowhere else, so clicking it is the same proof of mailbox control a confirmation link provides. **Without this the recipient sets a password and still cannot sign in — the blocker would not actually be fixed.** Note this diverges from the founder ruling recorded in `invitations.ts`, which keeps a brand-new invited account unconfirmed and emails a separate signup link; that path creates an account for a self-supplied address, whereas here the address was chosen by the issuing org and already proven. Worth an explicit founder confirmation.
+
+**Token handling.** Format-validated (`^[0-9a-f]{64}$`) before any query so malformed input never reaches Postgres; `timingSafeEqual` comparison on top of the indexed lookup; expiry enforced from `activation_token_expires_at`; single-use via a **compare-and-swap UPDATE taken BEFORE the password write** — order matters, because claiming after would let anyone re-submitting an already-consumed link overwrite the account password. A failed password write best-effort-rolls-back the claim, so a GoTrue outage cannot strand a recipient ACTIVE with no password and no token. Token and password never reach logs, errors, or responses (pinned by tests).
+
+**Known follow-up (not fixed here):** `profiles.activation_token` stores the RAW token, unlike API keys which are HMAC'd per §1.4. Hashed-at-rest storage would be the stronger design, but the writer is `recipients.ts` on PR #2047's branch — changing the storage format across two in-flight PRs is a cross-PR coupling risk. Prod currently holds zero `PENDING_ACTIVATION` profiles and zero activation tokens (per 0401's header), so this can be changed later with no live tokens to migrate.
+
 _Last updated: 2026-08-03 (PR #1944 review round 3: connector-health.ts Drive watch-health reporting fix)_
+_Last updated: 2026-08-10 (recipients.ts: auth-user-first provisioning, FK hotfix)_
+
+## 2026-08-10 — `recipients.ts`: recipient provisioning could never have worked (FK to `auth.users`)
+
+`createPendingRecipient` minted `const profileId = crypto.randomUUID()` and inserted it as `profiles.id`. But `profiles.id` is `FOREIGN KEY -> auth.users(id) ON DELETE CASCADE` (`profiles_id_fkey`, baseline:12085, `convalidated: true`, never dropped across 0290-0400), so a random UUID with no matching `auth.users` row **always** violated the FK. Not flaky, not conditional, not flag-gated: this endpoint 500'd for every genuinely new recipient since BETA-04 shipped.
+
+Prod proves it never once succeeded: **zero** `PENDING_ACTIVATION` profiles, **zero** profiles carrying an `activation_token`, and `auth.users` count == `profiles` count (30/30).
+
+It failed LOUDLY, not silently — `routes/anchor.ts:111-123` catches and returns HTTP 500, and `src/hooks/useBulkAnchors.ts:220-226` renders a partial-failure toast. So bulk issuance created the anchors and then failed provisioning for every new recipient, which is the user-visible symptom.
+
+- **Fix — port the `invitations.ts:473-514` pattern.** Create the auth user FIRST via `db.auth.admin.createUser({ email, email_confirm: false, user_metadata })` (§1.4: `supabase.auth.admin` never reaches the browser), key the profile row with `newUser.id`, and roll back with `db.auth.admin.deleteUser(profileId)` if anything after creation throws. A failed rollback is logged loudly as an orphaned auth user needing manual cleanup — an orphan blocks any future re-invite of that address.
+- **`email_confirm: false` is deliberate.** The activation link the recipient is about to receive is what proves mailbox control; pre-confirming the address before they click would weaken that. Same choice `invitations.ts` makes.
+- **23505 is handled differently here than in `invitations.ts` — do not "simplify" it.** The `create_profile_for_new_user` trigger on `auth.users` may already have inserted a bare profile row. In `invitations.ts` that row is equivalent to the one being inserted, so a 23505 is treated as success. Here it is NOT: the trigger's row carries no `org_id`, no `PENDING_ACTIVATION` status and no `activation_token`, so swallowing the 23505 would leave a recipient who can never be activated. The activation fields are applied by UPDATE instead.
+- **Why CI never caught it:** `recipients.test.ts` mocked the whole `db` object, so the FK boundary was never exercised and all 7 tests passed against code that could not work. The new `describe('auth-user provisioning (FK profiles.id -> auth.users.id)')` block pins the part of the constraint that CAN be asserted without a live database — the ORDER of operations (auth user created before the profile insert), that the profile is keyed by the auth user's id rather than a standalone UUID, and the rollback/no-rollback semantics. These are ordering/contract assertions, **not** proof against a real schema; no live-DB verification was run.
+
+**Two related defects found in passing, NOT fixed here** (both pre-existing and independent of this change):
+
+1. **`activate_user` never establishes a credential.** The deployed function (`activate_user(p_token text, p_password text)`, baseline:498) only flips `profiles.status` to `ACTIVE` and clears the token — it never creates an `auth.users` row and never sets a password on one. With this fix the auth user now exists, but activation still does not give the recipient a way to sign in. Establishing the password needs a worker-side `auth.admin.updateUserById` step (the browser cannot hold service_role).
+2. **`ActivateAccountPage.tsx` calls a signature that is not deployed.** It invokes `.rpc('activate_user', { p_token, p_claim_key })`, but the live signature takes `(p_token, p_password)` — confirmed via the introspected `database.types.ts` (`Args: { p_password: string; p_token: string }`). The `p_claim_key` variant only exists in `docs/migrations-archive/0175`. PostgREST resolves overloads by argument name, so this call cannot bind (PGRST202).
+
+The SQL twin `create_pending_recipient` had the identical FK bug **plus** an invalid `'MEMBER'` role literal (the `user_role` enum has only `INDIVIDUAL`/`ORG_ADMIN`/`ORG_MEMBER`, so it raised 22P02 before ever reaching the FK). It has zero runtime callers and is retired by migration `0401` — see `supabase/migrations/agents.md`.
+
+## 2026-08-10 — `version-resolution.ts` enforces the org field policy (DPA clause 4.6)
+
+`handleResolveVersion` creates an anchor on `decision: 'approve'`, which puts it under the rule that
+every anchor-creating request handler enforces `enforceOrgFieldPolicy` (migration `0405`), pinned by
+`scripts/ci/check-anchor-field-policy-coverage.ts`.
+
+This route is the weakest case for the guard and is still covered on purpose: `ResolveVersionInput`
+is `.strict()` with only `decision` and `notes`, and the anchor's metadata comes from the stored
+`external_document_versions` row rather than from the request — so nothing the caller sends here is
+persisted. It is guarded anyway because the control is about what the counterparty TRANSMITS (a
+prohibited field in `notes` has already been sent to us whether or not we store it), because
+`.strict()` is a property of a schema someone may relax, and because a uniform rule is what lets the
+CI detector run with no per-file exemption list.
+
 
 ## 2026-08-03 — `compliance-inbox-summary.ts`: `secured_automatically` was silently stuck at zero for every org
 
@@ -211,3 +262,20 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 - **DO** scope every cross-tenant write by `org_id` using `_org-auth.ts` helpers
 - **DO NOT** expose `user_id`, `org_id`, or `anchors.id` publicly — use `public_id` only
 - **DO NOT** set `anchor.status = 'SECURED'` from client code — worker-only via service_role
+
+## `treasury.ts` — health endpoint price validation (BUG-2026-08-11)
+
+`handleTreasuryHealth` gated on `btc_price_usd == null`, so a `-1` row (what mempool.space's
+non-mainnet explorers return from `/v1/prices` with HTTP 200) produced a NEGATIVE `balance_usd`
+reported as a genuine reading, with `below_threshold` true. The gate is now "usable price":
+non-null, finite, and > 0. `jobs/treasury-cache.ts` no longer writes such a row, and
+`jobs/treasury-alert.ts` applies the same guard — this endpoint additionally refuses to trust a
+row it merely reads, so a stale row or a future writer cannot poison it.
+
+Unchanged and still correct: the wallet leg's `createUtxoProvider({ network: config.bitcoinNetwork })`
+was always per-network.
+
+**Known gap, not fixed here:** the fee leg calls `createFeeEstimator()` without a network, and
+`chain/fee-estimator.ts`'s `DEFAULT_MEMPOOL_URL` is the mainnet base — so a non-mainnet deployment
+reports MAINNET fee rates. Same defect class, but the fix lands in `services/worker/src/chain/`,
+which the path detector rates T3. Tracked separately rather than folded into a T2 PR.

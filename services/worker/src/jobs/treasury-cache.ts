@@ -14,7 +14,11 @@ import { createUtxoProvider } from '../chain/utxo-provider.js';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { fetchAnchorStats } from '../utils/anchor-stats.js';
-import { resolveMempoolApiBase } from '../utils/mempool-url.js';
+import {
+  MEMPOOL_API_BASES,
+  mempoolApiBaseForNetwork,
+  resolveMempoolApiBase,
+} from '../utils/mempool-url.js';
 
 export interface TreasuryCacheData {
   balance_confirmed_sats: number;
@@ -36,13 +40,52 @@ export interface TreasuryCacheData {
   error: string | null;
 }
 
+/**
+ * Base for the NETWORK-SCOPED lookups (`/address/…`, `/v1/fees/recommended`).
+ *
+ * SCRUM-3016: this job builds requests as `${apiBase}/address/${address}` —
+ * it never appends /api itself, so the base must already carry it.
+ * resolveMempoolApiBase normalizes a MEMPOOL_API_URL set WITHOUT a
+ * trailing /api (the OTHER convention some sibling consumers expect — see
+ * mempool-url.ts) up to the form this job needs.
+ *
+ * BUG-2026-08-11: the fallback used to be the mainnet base verbatim, so every
+ * non-mainnet deployment asked the mainnet explorer about its own address and
+ * silently recorded a zero balance. It now selects per-network exactly as
+ * `createUtxoProvider` does — the provider built below already did, which is
+ * why utxo_count and block_height were right while the balance was 0.
+ */
 function mempoolApiUrl(): string {
-  // SCRUM-3016: this job builds requests as `${apiBase}/address/${address}` —
-  // it never appends /api itself, so the base must already carry it.
-  // resolveMempoolApiBase normalizes a MEMPOOL_API_URL set WITHOUT a
-  // trailing /api (the OTHER convention some sibling consumers expect — see
-  // mempool-url.ts) up to the form this job needs.
-  return resolveMempoolApiBase(config.mempoolApiUrl, 'https://mempool.space/api');
+  return resolveMempoolApiBase(
+    config.mempoolApiUrl,
+    mempoolApiBaseForNetwork(config.bitcoinNetwork),
+  );
+}
+
+/**
+ * Base for the GLOBAL BTC/USD quote (`/v1/prices`).
+ *
+ * Deliberately NOT per-network: signet/testnet explorers serve this endpoint
+ * with HTTP 200 and a `-1` sentinel for every currency, so selecting it by
+ * network would replace the zero-balance bug with a negative-price one (see
+ * mempoolApiBaseForNetwork's docstring). An operator-set MEMPOOL_API_URL
+ * still wins — pointing at a private mempool instance is an explicit choice,
+ * and `normalizeBtcPrice` validates whatever comes back either way.
+ */
+function priceApiUrl(): string {
+  return resolveMempoolApiBase(config.mempoolApiUrl, MEMPOOL_API_BASES.mainnet);
+}
+
+/**
+ * A usable BTC/USD quote, or null when the oracle answered but the answer is
+ * not a price. mempool.space signals "no price data for this network" as
+ * `-1` (HTTP 200), and a negative or zero price silently corrupts every
+ * downstream USD figure — `decideTreasuryAlert` would multiply it by the
+ * balance and read the negative result as below every threshold. Null routes
+ * to the existing, honest `price_unknown` path instead.
+ */
+function normalizeBtcPrice(raw: unknown): number | null {
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : null;
 }
 
 /**
@@ -118,8 +161,8 @@ export async function refreshTreasuryCache(): Promise<TreasuryCacheData> {
             mempool_stats: { funded_txo_sum: number; spent_txo_sum: number };
           }> : null)
       : Promise.resolve(null),
-    // 2. BTC price
-    fetch(`${apiBase}/v1/prices`, { signal: AbortSignal.timeout(10_000) })
+    // 2. BTC price — global quote, pinned base (see priceApiUrl)
+    fetch(`${priceApiUrl()}/v1/prices`, { signal: AbortSignal.timeout(10_000) })
       .then(res => res.ok ? res.json() as Promise<{ USD: number }> : null),
     // 3. Fee rates
     fetch(`${apiBase}/v1/fees/recommended`, { signal: AbortSignal.timeout(10_000) })
@@ -143,7 +186,14 @@ export async function refreshTreasuryCache(): Promise<TreasuryCacheData> {
   }, 'failed to fetch balance');
 
   handleSettled(priceResult, (priceData) => {
-    data.btc_price_usd = priceData.USD;
+    const price = normalizeBtcPrice(priceData.USD);
+    if (price == null) {
+      logger.warn(
+        { reported: priceData.USD, base: priceApiUrl() },
+        'Treasury cache: BTC price oracle returned a non-price value — recording null',
+      );
+    }
+    data.btc_price_usd = price;
   }, 'failed to fetch BTC price');
 
   handleSettled(feeResult, (fees) => {

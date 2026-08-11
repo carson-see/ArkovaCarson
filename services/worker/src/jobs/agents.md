@@ -2,6 +2,30 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-10 — why the DPA clause 4.6 field policy does NOT apply in this directory
+
+Three files here create anchors: `connector-artifact-drain.ts`, `publicRecordAnchor.ts`, and
+`rule-action-dispatcher.ts` (`AUTO_ANCHOR` / `INSTANT_SECURE`). None of them calls
+`enforceOrgFieldPolicy`, and `scripts/ci/check-anchor-field-policy-coverage.ts` exempts this whole
+directory rather than listing these three files — so a NEW job inherits the exemption correctly and a
+new route under `services/worker/src/api/` inherits the requirement correctly.
+
+The exemption is structural, not an oversight:
+
+- **There is no inbound request to reject.** These run from a cron tick, a queue drain, or an org-rule
+  match. `enforceOrgFieldPolicy` takes an express `Response` and answers a caller with a 400; there is
+  no caller and no response here, so it cannot be applied at all.
+- **A 400 is the wrong semantic anyway.** Rejecting a queued connector artifact means deciding what
+  happens to the job — dead-letter, quarantine, skip-and-alert — which is a different control with
+  different operational consequences, not a one-line guard call.
+
+**This is a real gap, not a proof of absence.** A connector-fetched DocuSign or Drive document can
+carry third-party metadata containing a field the org's DPA forbids, and nothing currently stops it
+from reaching `anchors.metadata` on that path. Closing it needs a policy-aware quarantine step in the
+drain with its own disposition semantics. Anyone extending the clause 4.6 control should start here,
+and should not read the green CI gate as covering it — the gate asserts coverage of REQUEST paths only.
+
+
 ## 2026-08-03 — `INSTANT_SECURE` rule action + dead-rule investigation (founder directive)
 
 Founder, verbatim: *"The 'Auto Secure' rule doesn't secure. ... we need to be able to instantly secure or add to queue and we need rules to work."* `AUTO_ANCHOR`'s UI label ("Secure the document" / "Anchor it on the network automatically") implies immediacy; `dispatchAutoAnchor` (SCRUM-1649 DS-07) only ever creates a PENDING anchor that joins the normal free batch queue. Migration `0400` (renumbered from `0397`; **not yet applied to prod**) adds a 7th `org_rule_action_type` value, `INSTANT_SECURE`, that actually secures right away.
@@ -772,6 +796,22 @@ depends on supabase-js `.eq()` path-string tolerance and warrants its own verifi
 - `docusign-notarization-completed.ts` (SCRUM-1872) — `processDocusignNotarizationCompletedJob()` handles queued `docusign.notarization_completed` jobs. Looks up `legally_binding_attestations` by `docusign_envelope_id`, validates org match (cross-tenant guard) and status (`pending_notarization`), updates row to `notarized` with notary metadata, writes NOTARIZATION_COMPLETED audit event. `runDocusignNotarizationCompletedJobs()` is the queue runner. Handler throws on processor failure so `processNextJob` correctly marks the job as failed (not completed).
 - **`anchorExpirySweep.ts` (SCRUM-1736)** — daily 03:00 UTC sweep that flips `anchors.status` from SECURED to EXPIRED past `expires_at` and dispatches `anchor.expired` outbound webhook. Compare-and-set on UPDATE guards against concurrent revocation. Sentinel `anchor.expired_dispatch_failed` audit row written if dispatch throws so manual recovery is possible (per CodeRabbit PR #734 review). Adapter validates every write via Zod (`AnchorIdSchema`, `AuditEventRowSchema`).
 - **`treasury-cache.ts`** — `refreshTreasuryCache()`. Fetches treasury balance, BTC price, fee rates, UTXO count, network info, and anchor stats (via `../utils/anchor-stats.ts`), then upserts into `treasury_cache` singleton. SCRUM-1786: sentinel guard prevents -1 from overwriting last-good cached values.
+  - **BUG-2026-08-11 — two mempool bases, deliberately.** `mempoolApiUrl()` resolves the
+    NETWORK-SCOPED endpoints (`/address/…`, `/v1/fees/recommended`) via
+    `mempoolApiBaseForNetwork(config.bitcoinNetwork)`; `priceApiUrl()` pins `/v1/prices` to the
+    MAINNET base. Do not "simplify" these back into one. The fallback used to be the mainnet base
+    verbatim, so a signet deployment asked the mainnet explorer about a signet address — that
+    answers `HTTP 400 Address on invalid network`, the `res.ok ? … : null` ladder turned it into a
+    silent null, and the job booked `balance_confirmed_sats = 0` with `error: null`. treasury-alert
+    then fired every 5 minutes. But routing `/v1/prices` per-network is NOT the fix: the non-mainnet
+    explorers serve it with HTTP 200 and a `-1` sentinel, and a negative price makes every
+    USD balance negative, i.e. below every threshold. `normalizeBtcPrice` rejects non-positive /
+    non-finite quotes so a bad oracle reads as `price_unknown` rather than a fake low balance.
+    The UTXO provider built in the same function was always per-network, which is why
+    `utxo_count` and `block_height` stayed correct while the balance read zero.
+- **`treasury-alert.ts`** — `usableBtcPrice()` is the last line of the same defence: a stored or
+  stale non-positive price is treated as an oracle outage, never multiplied into `balance_usd`.
+  Mirrored in `../api/treasury.ts`'s health endpoint.
 - **`stuck-anchor-monitor.ts` (SCRUM-2234 / 2026-06-01 incident)** — pipeline-stall watchdog. `decideStuckAnchorAlert()` is a pure, clock-injectable decision fn; `runStuckAnchorCheck(db)` is the cron glue. Measures the AGE of the oldest non-deleted PENDING anchor (`select created_at from anchors where status='PENDING' and deleted_at is null order by created_at asc limit 1` — index-backed LIMIT 1, NOT count(*)) and, when it exceeds `STUCK_ANCHOR_ALERT_HOURS` (default 24h), logs at error level + calls `captureStuckAnchorAlert()` so hourly re-fires share the stable `stuck-anchor-monitor` Sentry fingerprint. Alert context stays aggregate-only (age, pending count, threshold; read from `pipeline_dashboard_cache`, never counted). Distinct from `pipeline-health.ts`: that keys off `updated_at`/30-min + emails; the daily-flush 401 blackout left a *fresh* `updated_at` but *stale* `created_at`, so this is the missed signal. The oldest-PENDING query throws on DB error (cron route → 500, Scheduler retries); a detected stall returns 200 (a correct detection, no retry). Pure fn + cron-glue shape mirrors `connector-health-alert.ts` / `treasury-alert.ts`.
 
 ## Conventions
@@ -895,3 +935,86 @@ Removing the ORDER BY is **not** sufficient: it trades a backward index walk for
 - **A swallowed reporting failure is COUNTED, not just logged (PR #1838, review round 2).** `reportSafely` returning `void` meant a pass that persisted three drift findings and a pass that lost all three returned byte-identical results at HTTP 200 — the same success-indistinguishable-from-nothing shape as `loadFailed`, one layer down, and only visible in a stray error log. It now returns a boolean and the caller counts `CeRegistryDriftResult.reportFailures`. Mutation-verified: zeroing the increment kills two tests.
 - **`loadFailed` answers HTTP 500 on the cron route, not 200 (PR #1838, review round 2).** Carrying the flag in a 200 body throws the distinction away at the only layer that acts on it — Cloud Scheduler banks a success and never retries a pass that reconciled nothing. Matches the `/reconcile-credit-conservation` precedent (200 for a correct detection, 500 for a broken probe). Mutation-verified.
 - **Known direction of error on `truncated`.** It is computed from the POST-filter record count, so a saturated query whose rows were then dropped for malformed metadata reads as not-truncated. Under-reporting only, and retired by the cursor follow-up — recorded rather than assumed away.
+
+## lock-wait-monitor.ts (added 2026-08-11)
+
+Early-warning signal for the FIFO lock-barrier P0. Calls `get_lock_waits()`
+(migration `0409`) every minute from `/jobs/lock-wait` and emits ONE structured
+log line per waiting lock.
+
+**The log line is a contract, not a log line.** `alert_type="db_lock_wait"`,
+`relation` and `lock_mode` are matched and label-extracted by the Cloud
+Monitoring log-based metric `worker_db_lock_wait`
+(`scripts/gcp-setup/log-metrics/db-lock-wait.json`). Rename any of those fields
+and the alarm stops matching — silently. `scripts/ci/check-p0-alert-contract.test.ts`
+pins both sides.
+
+Runs every minute rather than every 5 because the 2026-08-11 barrier formed at
+~16:35Z and user impact began at 16:40:11Z; a 5-minute cadence can spend that
+entire window between ticks.
+
+Known blind spot, deliberately not papered over: this job reaches Postgres
+through PostgREST, so once a barrier degrades PostgREST into `PGRST002` the
+monitor reports `degraded` rather than a lock wait. The PGRST002 alarm is the
+backstop for that window. The RPC-failure path deliberately does NOT emit
+`alert_type="db_lock_wait"` — "the monitor is broken" and "a lock is stuck" are
+different incidents and must not share a signal.
+## 2026-08-10 — Orphaned job_queue producers: `anchor.fast_track` removed, `ai_credits.reconcile_refund` given a consumer
+
+Closes the gap this file flagged on 2026-08-03 ("Found in passing, NOT fixed here"), and its twin in `api/v1/`. Both were the SAME defect class: **the worker has no central job dispatcher, so a `job_queue` type is handled if and only if some file calls `claimJob`/`processNextJob` with that literal string.** An enqueued type with no such call inserts as `pending, attempts:0` and is then never claimed, retried, dead-lettered, or counted — it is indistinguishable from an empty queue. There is no error surface at all, which is why both instances survived review, tests, and a soak.
+
+### (A) `FAST_TRACK_ANCHOR` — charged a credit for acceleration that never happened
+
+`dispatchCreditFundedAnchor` debited 1 credit and then enqueued `anchor.fast_track` as the entire acceleration. Nothing consumed it, so the document was anchored by the ordinary nightly batch — **exactly what the FREE `AUTO_ANCHOR` queue path gets.** Meanwhile the shipped rule template `law-firm-contract` (`api/rule-templates-data.ts`, `action_type: 'FAST_TRACK_ANCHOR'`) promises *"Instantly secure fully-signed contracts as soon as all parties complete e-signature."* Latent only because prod `organization_rules` held no such rule yet; it goes live the moment a customer picks that template.
+
+**Decision: routed through the direct `processBatchAnchors({force, orgId})` call, and DELETED the job type — deliberately NOT the `/jobs/anchor-fast-track` cron consumer the 2026-08-03 entry above proposed.** The reasoning, since this reverses that suggestion:
+
+- A consumer's only sensible body is `processBatchAnchors({force:true, orgId})` — the identical call `dispatchInstantSecure` already makes. Going through the queue to reach it adds a scheduler interval of latency to the one action whose entire product promise is *immediacy*, and buys nothing.
+- A consumer is only real once it has a Cloud Scheduler binding. In-process node-cron is dormant under Cloud Run CPU throttling (PROOF-03), and this repo already ships two drains — `professional_education.metadata_extraction` and `docusign.notarization_completed` — that have cron ROUTES but no entry in `scripts/gcp-setup/cloud-scheduler.sh`. Shipping a consumer without that binding would have reproduced the original defect (credit charged, nothing accelerates) behind more code and a green test suite.
+- `INSTANT_SECURE` is the working precedent, in prod, with its own test coverage. Reusing a proven path beats standing up a second mechanism for the same effect.
+- **The credit debit remains correct** and is now honest: the customer is charged for an acceleration that is actually attempted. Idempotency is unchanged and never depended on the job row — `deduct_org_credit` is keyed on `exec.id` (`UNIQUE(org_id, reference_id, reason)`, migration `0326`), the anchor insert de-duplicates on `23505`, and `processBatchAnchors` is itself idempotent under a global run lease. `queueRunCreditReason` in `batch-anchor.ts` still returns `null` for a `credit_denial_reason: null` FAST_TRACK anchor, so there is no second charge at batch time.
+
+Consequences: `findExistingFastTrackJob` and the `submitJob` import are gone (the dispatcher no longer touches `job_queue` at all); `triggerImmediateAnchorPass` is parameterized by `logLabel` and now returns a boolean; the outcome payload drops `fast_track_job_id` / `reused_fast_track_job` (internal `output_payload` JSONB, no frontend or API reader — grep-verified) and gains `immediate_batch_triggered`. `CreditFundedAnchorOptions.triggerImmediateBatch` is deleted: both credit-funded actions charge for acceleration, so both must accelerate. The compensation branch that refunded on a failed enqueue is gone with the enqueue; the anchor-insert failure branch (the remaining post-charge failure) is unchanged and still tested.
+
+**Known limitation, pre-existing and unchanged:** the batch pass runs inside the dispatcher's `DISPATCH_CONCURRENCY=8` fan-out, and `processBatchAnchors` holds a GLOBAL run lease — so in a pass with several credit-funded executions only one acquires it and the rest no-op. Every anchor is already PENDING, and the run that does acquire claims the whole org cohort, so nothing is lost; a straggler waits for the next standard trigger. This is exactly `INSTANT_SECURE`'s existing behavior, not a regression introduced here.
+
+### (B) `ai_credits.reconcile_refund` — a consumer, plus a real trigger
+
+New `ai-credit-reconcile.ts` drains the queue `api/v1/ai-extract-batch.ts` writes when an AI-credit refund fails AFTER a successful debit. It re-applies the refund via the same `deductAICredits(org, user, -amount)` helper that failed inline (a retry of the exact operation, not a divergent second path), and on the FINAL attempt (`job.attempts >= job.max_attempts`, mirroring `failJob`'s own DLQ condition) emits a Sentry event before throwing — so a permanently unreconciled overcharge produces an operator-visible signal instead of one more silent `dead` row.
+
+- **Zod-validated before any balance moves.** This job MINTS credits, so a malformed payload must fail loudly rather than issue an unattributable or unbounded one: bounded positive integer `amount` (`MAX_RECONCILABLE_AMOUNT = 1000`; the producer only ever enqueues 1), and at least one of `orgId`/`userId`.
+- **Never logs the document fingerprint** the producer puts in the payload (CLAUDE.md §1.1 — no Sentry events containing document fingerprints). The schema is deliberately non-`.strict()` so the field passes through unread, and a test asserts no log call contains it.
+- Wired at `POST /jobs/ai-credit-reconcile` **and** `scripts/gcp-setup/cloud-scheduler.sh` (`ai-credit-reconcile`, every 15 min, retry `30s,120s,2`) — a route without a scheduler binding would have been the same defect wearing a consumer's clothes.
+
+### (C) The class is now CI-enforced
+
+`scripts/ci/check-job-queue-parity.ts` (npm `ci:job-queue-parity`, wired into the `policy-lints` job) fails the build on any `submitJob` type with no consumer, any consumer with no producer, any unresolvable type expression, and any `.from('job_queue')` write outside the allow-listed queue internals (`utils/jobQueue.ts`, `run-lease.ts`, `proofJobCheckpoint.ts` — leases and checkpoints are not queued work). Verified against `origin/main` (`25e1d32`): it names both defects at `ai-extract-batch.ts:173` and `rule-action-dispatcher.ts:856`.
+## 2026-08-11 — SCRUM-3188 supplementary proof anchor (`supplementary-proof-anchor.ts`)
+
+Operator-triggered job that gives the 2,969,630 SECURED anchors with no per-document proof a verifiable branch, by committing their fingerprints into a NEW Bitcoin transaction whose leaf order IS recorded. `POST /jobs/supplementary-proof-anchor`. **Not on any Cloud Scheduler manifest — spending money stays a human decision.**
+
+The job is pure policy over an injected `SupplementaryPorts` interface; `supplementary-proof-anchor.adapter.ts` is the only file that touches db/chain/treasury. Four properties, each with tests:
+
+1. **The original attestation is never touched.** `anchors.chain_tx_id` / `chain_timestamp` / `chain_block_height` / `chain_block_hash` stay as they are. Structural: `SupplementaryPorts` contains **no capability to write to `anchors`** (a test asserts the absence), and `insert_supplementary_proofs` (0408) only INSERTs into `anchor_proofs` and re-derives the supplemented txid from `anchors.chain_tx_id` instead of trusting the caller.
+2. **Never broadcasts twice.** Sign → journal → broadcast, never reordered (pinned by test). `supplementary_anchor_journal`'s partial unique indexes make a live txid/batch unrepeatable; `EXACT_REPLAY` ⇒ defer without broadcasting. An ambiguous broadcast (timeout/5xx) **HOLDs and stops the run** — never REVERTs, because "we do not know" is not "it did not happen".
+3. **Never writes an unverified proof.** The committed root is read back from the tx's OP_RETURN on-chain via `extractAnchorFingerprint`, and `buildVerifiedSupplementaryProofRows` re-verifies EVERY branch against it before any row is built. Batch-of-1 is not exempt.
+4. **Never drains the treasury.** Fee ceiling (default 5 sat/vB) + treasury reserve (default 100,000 sats), re-checked before every batch; halts at the reserve floor with partial progress.
+
+Armed by three independent things and inert by default: `dryRun` defaults **true**; a live run also needs `SUPPLEMENTARY_ANCHOR_CONFIRM=EXECUTE`; and the spend guards. Batch size is 10,000 and is **independent of** `config.batchAnchorMaxSize` — widening that production Zod boot-gate to use 50k batches would save ~111k sats (~$120) across the whole backlog and risk the live producer, so it is deliberately not touched.
+
+Modelled in `machines/bitcoinAnchor.machine.ts` (`supplementaryProof`, invariant `supplementaryRequiresOriginalAttestation`). Runbook: `docs/runbooks/ops/supplementary-proof-anchor.md`. Complements PR #2130, which recovers the 608 records whose original leaf order IS searchable.
+
+### `batch-anchor.leaf-order-roundtrip.test.ts` — the ratchet
+
+Pins that the leaf order the producer PERSISTS (`anchor_txid_journal.leaf_order`) rebuilds the EXACT root it COMMITTED, driving the real `processBatchAnchors` and the real (now exported) `sortAnchorsForBatch` rather than copies. Includes a negative control asserting the raw claim-arrival order does NOT reproduce the root — i.e. that the recorded order is load-bearing, which is precisely what the Mar/Apr producer lacked.
+## proof-coverage-monitor.ts (SCRUM-3187)
+
+- **Guards the product's headline promise.** Offline-forever verification requires a per-document inclusion proof on every SECURED anchor. This is the standing alarm on that invariant, and it exists because the gap was found by hand, not by an alert: prod held 3,474,760 SECURED anchors against 505,357 proof rows (85.5% uncovered) with nothing watching.
+- **Windowed on purpose — measures the FORWARD path, not lifetime coverage.** Lifetime coverage is dominated by the ~2.97M pre-2026-08 backlog, most of which is provably unrecoverable, so a lifetime metric would hold this alarm permanently red and a permanently red alarm is one nobody reads. The window (default 24h, clamped 1..168 in the RPC) answers the only actionable question: is the pipeline that works today still working?
+- **The backlog is NOT a regression and must not be alerted as one.** It is tracked in `docs/runbooks/ops/proof-coverage-backfill.md`. Conflating them is how a real regression gets lost in known noise.
+- **`evaluateProofCoverage` is pure and total** — no DB, no clock — so every threshold, the escalation boundary, and the clamps are unit-testable. `runProofCoverageCheck` is thin DI'd glue. Same convention as `stuck-anchor-monitor.ts`.
+- **HTTP contract: a correct detection returns 200 with `healthy:false`; only a broken probe 500s.** Cloud Scheduler must not retry a true finding. Matches `/check-stuck-anchors` and `/reconcile-credit-conservation`.
+- **Guard rails against false alarms:** zero anchors in the window is `no_anchors_in_window` (nothing to cover is not a failure), fewer than `DEFAULT_MIN_SAMPLE` is `insufficient_sample`, and a proof count exceeding the anchor count (a transient mid-write read) clamps to ratio 1 rather than reporting a negative deficit. Each is pinned by a test.
+- **Real trigger is Cloud Scheduler, never in-process node-cron** (dormant under Cloud Run CPU throttling — PROOF-03). Declared in `scripts/gcp-setup/cloud-scheduler.sh`; the coverage-contract test in `scripts/gcp-setup/cloud-scheduler.test.ts` fails the build if a route is declared in neither JOBS nor NOT_SCHEDULED. **Not** added to `scheduler-manifest.ts` yet — per `scripts/gcp-setup/agents.md`, a job joins the dead-man only once its binding is live in prod, or the dead-man treats a not-yet-created job as a stall.
+- **Sentry is the sink that actually pages.** `captureProofCoverageAlert` carries a stable fingerprint (re-fires collapse) and TAGS (`alert_type:proof_coverage_regression`) because Sentry issue-alert rules filter on tags, not `extra`. `scripts/gcp-setup/alert-policies/` are declared-only — as of 2026-08-01 `arkova1` had zero live alert policies and zero notification channels; do not cite them as proof an alarm exists.
+- **Aggregate metrics only in the alert payload** — ratios and counts, never a fingerprint or filename (§1.1: no document fingerprints in Sentry).

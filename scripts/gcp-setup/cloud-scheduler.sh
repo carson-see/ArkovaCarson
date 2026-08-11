@@ -39,6 +39,13 @@ JOBS=(
   # creation is not script-automatable). Tight retry policy so a transient
   # error doesn't suppress the next 5-min slot.
   "db-health-monitor|*/5 * * * *|/jobs/db-health|30s,120s,2"
+  # 2026-08-11 P0 (FIFO lock-queue barrier on public.organizations): fires every
+  # MINUTE, deliberately not every 5. The barrier formed at ~16:35Z and user
+  # impact began at 16:40:11Z, so a 5-minute cadence can spend the whole
+  # detection window between two ticks. Emits the `db_lock_wait` structured log
+  # line consumed by the Cloud Monitoring log-based metric `worker_db_lock_wait`.
+  # Endpoint at services/worker/src/routes/cron.ts.
+  "lock-wait-monitor|* * * * *|/jobs/lock-wait|15s,60s,1"
   # SCRUM-1723: BigQuery export — incremental sync every 5 min for the three
   # append-only tables (anchors, verifications, audit_events). Endpoint at
   # services/worker/src/routes/cron.ts. Watermark-driven; failure does not
@@ -107,6 +114,13 @@ JOBS=(
   # reconciliation found it missing. A DETECTED stall returns 200 (a correct
   # finding must not be retried); only a broken DB probe 500s, hence the retry.
   "check-stuck-anchors|0 * * * *|/jobs/check-stuck-anchors|30s,120s,2"
+
+  # SCRUM-3187: forward-path proof-coverage regression monitor. Guards the
+  # offline-verification promise — every newly SECURED anchor must get a
+  # per-document inclusion proof. Hourly, windowed 24h so the known pre-2026-08
+  # backlog does not hold the alarm permanently red. Returns 200 with
+  # healthy:false on a true finding, so retries only chase a broken probe.
+  "proof-coverage-monitor|15 * * * *|/jobs/proof-coverage-monitor|30s,120s,2"
   # SCRUM-1130: durable 24-hour per-organization queue scheduler. Claims due orgs
   # via the claim_due_org_queue_runs RPC (migration 0294) and runs
   # processBatchAnchors({ force: true, orgId }) for each. This is the ONLY driver
@@ -149,6 +163,16 @@ JOBS=(
   # fresh random channel_token (GH #1836), rotating any connection still on
   # the legacy org-id-as-token scheme.
   "drive-subscription-renewal|0 * * * *|/jobs/drive-subscription-renewal|30s,120s,2"
+  # BILLING INTEGRITY: drains ai_credits.reconcile_refund — the queue
+  # api/v1/ai-extract-batch.ts writes when a per-row AI-credit refund fails
+  # AFTER a successful debit. That producer shipped with NO consumer, so every
+  # row it wrote to "surface" an overcharge sat `pending` forever and the
+  # customer stayed overcharged with zero signal. Endpoint at
+  # services/worker/src/routes/cron.ts. Every 15 min is well inside any
+  # billing-dispute window and the queue is normally empty. Retries are safe:
+  # the drain claims per job, and a refund that fails again re-enters the
+  # shared backoff/dead-letter policy (Sentry event on the final attempt).
+  "ai-credit-reconcile|*/15 * * * *|/jobs/ai-credit-reconcile|30s,120s,2"
   # ── 2026-08-10 CTO-decision bindings (scheduler-binding audit) ─────────────
   # SCRUM-1872: drain for docusign.notarization_completed job_queue rows. The
   # producer (webhooks/docusign.ts enqueueNotarizationJob) is UNGATED and live
@@ -264,6 +288,7 @@ NOT_SCHEDULED=(
   "/jobs/materialize-proof-backcatalog|manual operator T3 run (SCRUM-2917); write mode Carson-gated"
   "/jobs/calibration-refit|QA/eval operator run (GME7.3)"
   "/jobs/consolidate-utxos|spends treasury funds; operator-only (chain/treasury T3 surface)"
+  "/jobs/supplementary-proof-anchor|spends real mainnet BTC across the 2.97M-record backlog (SCRUM-3188); operator-only, dryRun defaults true and a live run needs SUPPLEMENTARY_ANCHOR_CONFIRM=EXECUTE — binding a schedule would auto-spend treasury funds"
   # Held pending CTO/product revisit (2026-08-10 decision).
   "/jobs/payment-recovery|mutates payment state; hold until billing GA and Stripe key rotation complete"
   "/jobs/financial-report|no consumer identified; hold until billing GA"

@@ -110,6 +110,7 @@ The repo `memory/` corpus is the **durable, versioned** copy of these rules and 
 - Define DB schema + RLS before UI. Once a table exists, never use mock data or `useState` arrays — query Supabase.
 - Schema changes require migration + rollback comment + regenerated `database.types.ts` + seed update + Confluence page update.
 - Never modify an existing migration — write a compensating one.
+- **DDL on a hot table (`organizations`, `anchors`, `profiles`) must be preceded by `SET LOCAL lock_timeout = '5s'` — including ad-hoc DDL issued through the Supabase MCP.** Postgres lock queues are FIFO, so an unbounded `ALTER TABLE` / `CREATE POLICY` / `CREATE TRIGGER` / `CREATE INDEX` / `GRANT` that blocks on a long reader becomes a barrier in front of **every** later lock request — including PostgREST's schema-cache introspection, whose lock mode was compatible with what was actually running. That is the 2026-08-11 P0 mechanism: 11m39s of `service_unavailable` on `/api/v1/verify` from one `ALTER TABLE`. Migration files are CI-enforced (`scripts/ci/check-hot-table-ddl-lock-timeout.ts`, override label `hot-table-ddl-lock-timeout-reviewed`); **the MCP path is knowingly unenforceable and is on the operator** — and it is the path that caused the outage.
 
 ### 1.3 Terminology (UI copy only)
 Banned in user-visible strings: Wallet, Gas, Hash, Block, Transaction, Crypto, Blockchain, Bitcoin, Testnet, Mainnet, UTXO, Broadcast.

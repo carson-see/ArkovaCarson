@@ -67,10 +67,13 @@ describe('CheckoutCancelPage', () => {
     expect(screen.getByText(BILLING_LABELS.GO_TO_DASHBOARD)).toBeInTheDocument();
   });
 
-  it('links back to billing route', () => {
+  // Was 'links back to billing route' / href '/billing'. The label is
+  // "Back to Plans" and the user just abandoned a purchase — the link has to
+  // return to plan selection so they can retry, not to the status summary.
+  it('links back to plan selection so a cancelled purchase can be retried', () => {
     renderPage();
     const backLink = screen.getByText(BILLING_LABELS.BACK_TO_PRICING).closest('a');
-    expect(backLink).toHaveAttribute('href', '/billing');
+    expect(backLink).toHaveAttribute('href', '/pricing');
   });
 
   it('links to dashboard route', () => {

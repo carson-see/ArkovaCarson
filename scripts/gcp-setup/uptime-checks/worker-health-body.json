@@ -1,0 +1,31 @@
+{
+  "displayName": "Prod worker /health — body asserts healthy",
+  "monitoredResource": {
+    "type": "uptime_url",
+    "labels": {
+      "project_id": "arkova1",
+      "host": "arkova-worker-270018525501.us-central1.run.app"
+    }
+  },
+  "httpCheck": {
+    "requestMethod": "GET",
+    "path": "/health",
+    "port": 443,
+    "useSsl": true,
+    "validateSsl": true,
+    "acceptedResponseStatusCodes": [
+      {
+        "statusClass": "STATUS_CLASS_2XX"
+      }
+    ]
+  },
+  "period": "60s",
+  "timeout": "10s",
+  "contentMatchers": [
+    {
+      "content": "\"status\":\"healthy\"",
+      "matcher": "CONTAINS_STRING"
+    }
+  ],
+  "checkerType": "STATIC_IP_CHECKERS"
+}
