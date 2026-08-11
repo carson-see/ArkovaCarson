@@ -17,7 +17,7 @@ import {
   resolveMempoolHostBase,
 } from './mempool-url.js';
 import { createUtxoProvider } from '../chain/utxo-provider.js';
-import { createFeeEstimator } from '../chain/fee-estimator.js';
+import { createFeeEstimator, MempoolFeeEstimator } from '../chain/fee-estimator.js';
 
 // The parity test imports the REAL createUtxoProvider; stub its logging and
 // Sentry edges the same way src/chain/utxo-provider.test.ts does, so the test
@@ -253,4 +253,62 @@ describe('parity with the real createFeeEstimator (BUG-2026-08-11 ratchet)', () 
       );
     },
   );
+});
+
+/**
+ * The ratchet that was missing, and the reason four call sites survived the
+ * first pass of this fix.
+ *
+ * Both ratchets above drive FACTORIES. But `MempoolFeeEstimator` is also
+ * constructed directly — `jobs/anchor.ts` (ECON-1 fee ceiling),
+ * `jobs/feeAwareScheduler.ts` (submit/defer gate, x2) and
+ * `middleware/x402PaymentGate.ts` (anchor pricing) all do it. Fixing only
+ * `createFeeEstimator` left every one of those pinned to mainnet while the
+ * factory ratchet stayed green, which is exactly the false assurance a
+ * ratchet is supposed to prevent.
+ *
+ * So: assert the CLASS default too, not just the factory's.
+ */
+describe('parity with a directly-constructed MempoolFeeEstimator (BUG-2026-08-11)', () => {
+  it.each(['signet', 'testnet4', 'testnet', 'mainnet'])(
+    'new MempoolFeeEstimator({ network: %s }) requests the shared base',
+    async (network) => {
+      const seen: string[] = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (url: string) => {
+        seen.push(String(url));
+        return { ok: true, json: async () => ({ halfHourFee: 7 }) };
+      }) as unknown as typeof fetch;
+
+      try {
+        await new MempoolFeeEstimator({ network }).estimateFee();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toBe(
+        `${mempoolApiBaseForNetwork(network)}/v1/fees/recommended`,
+      );
+    },
+  );
+});
+
+/**
+ * Guard the shared map itself: it is exported and reachable from several
+ * modules, so an accidental write would silently repoint every consumer at
+ * once. Frozen at the source; this pins that.
+ */
+describe('MEMPOOL_API_BASES is immutable', () => {
+  it('cannot be repointed by a consumer', () => {
+    expect(Object.isFrozen(MEMPOOL_API_BASES)).toBe(true);
+
+    const before = MEMPOOL_API_BASES.signet;
+    try {
+      (MEMPOOL_API_BASES as Record<string, string>).signet = 'https://evil.test/api';
+    } catch {
+      // strict-mode TypeError is an acceptable outcome; silent no-op is too.
+    }
+    expect(MEMPOOL_API_BASES.signet).toBe(before);
+  });
 });

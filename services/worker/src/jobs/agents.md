@@ -911,3 +911,25 @@ Removing the ORDER BY is **not** sufficient: it trades a backward index walk for
 - **A swallowed reporting failure is COUNTED, not just logged (PR #1838, review round 2).** `reportSafely` returning `void` meant a pass that persisted three drift findings and a pass that lost all three returned byte-identical results at HTTP 200 — the same success-indistinguishable-from-nothing shape as `loadFailed`, one layer down, and only visible in a stray error log. It now returns a boolean and the caller counts `CeRegistryDriftResult.reportFailures`. Mutation-verified: zeroing the increment kills two tests.
 - **`loadFailed` answers HTTP 500 on the cron route, not 200 (PR #1838, review round 2).** Carrying the flag in a 200 body throws the distinction away at the only layer that acts on it — Cloud Scheduler banks a success and never retries a pass that reconciled nothing. Matches the `/reconcile-credit-conservation` precedent (200 for a correct detection, 500 for a broken probe). Mutation-verified.
 - **Known direction of error on `truncated`.** It is computed from the POST-filter record count, so a saturated query whose rows were then dropped for malformed metadata reads as not-truncated. Under-reporting only, and retired by the cursor follow-up — recorded rather than assumed away.
+
+## 2026-08-11 BUG-2026-08-11 — two jobs read MAINNET fee rates on non-mainnet (fixed)
+
+`MempoolFeeEstimator`'s constructor defaulted to the mainnet base, and both fee-reading jobs
+constructed it directly (via lazy `await import()`), so neither went through the factory that
+BUG-2026-08-11's first pass fixed.
+
+- **`anchor.ts` ECON-1 fee ceiling (LIVE).** Compared MAINNET sat/vB against `BITCOIN_MAX_FEE_RATE`
+  on every non-mainnet deployment. With mainnet congested above the ceiling, the gate logs
+  "Anchor deferred — fee rate exceeds ceiling" and calls `revertToPending()` — stalling anchors
+  indefinitely on a chain whose real rate is 1 sat/vB. Now passes `network: config.bitcoinNetwork`.
+- **`feeAwareScheduler.ts` submit/defer gate ×2 (LATENT).** Same defect; would withhold every batch
+  until `deadline_exceeded`, degrading fee-aware scheduling to a plain 24h timer. Currently has **no
+  non-test caller** — `checkDynamicFeeConditions`' own docstring calls wire-up a "post-#1417-merge
+  integration handoff" — so this was latent, not live. Fixed anyway, before wire-up makes it live.
+
+`network` is threaded into `feeAwareScheduler` as a **parameter**, not read from `config`: that
+module deliberately avoids the config import chain (it duplicates the `FeeEstimator` interface for
+exactly that reason). Whoever wires it up must pass `config.bitcoinNetwork` — an omitted `network`
+silently falls back to mainnet, which is the original defect.
+
+Rule: **never construct `MempoolFeeEstimator` without `network`.** See `../chain/agents.md`.

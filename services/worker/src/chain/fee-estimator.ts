@@ -13,7 +13,6 @@
 
 import { logger } from '../utils/logger.js';
 import {
-  MEMPOOL_API_BASES,
   mempoolApiBaseForNetwork,
   resolveMempoolApiBase,
 } from '../utils/mempool-url.js';
@@ -56,8 +55,24 @@ export class StaticFeeEstimator implements FeeEstimator {
 const DEFAULT_TIMEOUT_MS = 5000;
 
 export interface MempoolFeeEstimatorConfig {
-  /** Base URL for Mempool API (e.g., https://mempool.space/api) */
+  /**
+   * Explicit Mempool API base, already carrying the `/api` segment (e.g.
+   * `https://mempool.space/signet/api`). Wins over `network` when both are
+   * set. Leave unset and pass `network` instead unless you have an
+   * operator-supplied override.
+   */
   baseUrl?: string;
+  /**
+   * Bitcoin network. Selects the per-network base via
+   * `mempoolApiBaseForNetwork()` when `baseUrl` is not given. Pass
+   * `config.bitcoinNetwork`.
+   *
+   * BUG-2026-08-11: this used to not exist, and the constructor defaulted to
+   * the mainnet base unconditionally. `/v1/fees/recommended` is
+   * network-scoped, so every direct construction on a non-mainnet deployment
+   * silently read mainnet's rates.
+   */
+  network?: string;
   /** Fallback rate in sat/vbyte if the API call fails */
   fallbackRate?: number;
   /** Target speed: 'fastest' | 'halfHour' | 'hour' | 'economy'. Default: 'halfHour' */
@@ -69,13 +84,11 @@ export interface MempoolFeeEstimatorConfig {
 export type MempoolFeeTarget = 'fastest' | 'halfHour' | 'hour' | 'economy';
 
 /**
- * Default Mempool.space API endpoint when no network is supplied (mainnet).
- *
- * Sourced from the shared map rather than re-typed as a literal — a private
- * copy of a base URL is exactly what caused BUG-2026-08-11 (see
- * `utils/mempool-url.ts`).
+ * No module-level default base any more. The mainnet fallback lives in
+ * `mempoolApiBaseForNetwork()` alone (BUG-2026-08-11) — a private constant
+ * here is precisely what let this file drift onto a mainnet-only default
+ * while `chain/utxo-provider.ts` was already per-network.
  */
-const DEFAULT_MEMPOOL_URL = MEMPOOL_API_BASES.mainnet;
 
 /** Default fallback fee rate in sat/vbyte */
 const DEFAULT_FALLBACK_RATE = 5;
@@ -91,8 +104,14 @@ const TARGET_FIELD_MAP: Record<MempoolFeeTarget, string> = {
 /**
  * Fee estimator backed by the mempool.space `/v1/fees/recommended` API.
  *
- * Fetches live fee rates for Bitcoin mainnet (or Signet/testnet with
- * custom baseUrl). Falls back to a static rate on API failure.
+ * Fetches live fee rates for the configured network. Pass `network` (or an
+ * explicit `baseUrl`); with neither, it defaults to mainnet. Falls back to a
+ * static rate on API failure.
+ *
+ * `/v1/fees/recommended` is network-scoped — signet reports a flat 1 sat/vB
+ * while mainnet reports real congestion — so a mainnet default read on a
+ * signet deployment is not a cosmetic error: it drives fee-ceiling and
+ * submit/defer gates off the wrong chain (BUG-2026-08-11).
  *
  * API docs: https://mempool.space/docs/api/rest#get-recommended-fees
  */
@@ -104,7 +123,14 @@ export class MempoolFeeEstimator implements FeeEstimator {
   private readonly timeoutMs: number;
 
   constructor(config: MempoolFeeEstimatorConfig = {}) {
-    this.baseUrl = (config.baseUrl ?? DEFAULT_MEMPOOL_URL).replace(/\/$/, '');
+    // BUG-2026-08-11: the default is per-network, not a static mainnet base.
+    // It has to be correct HERE and not only in createFeeEstimator — four
+    // call sites construct this class directly (jobs/anchor.ts fee ceiling,
+    // jobs/feeAwareScheduler.ts submit gate x2, middleware/x402PaymentGate.ts
+    // pricing), and the factory-level parity ratchet cannot see any of them.
+    this.baseUrl = (
+      config.baseUrl ?? mempoolApiBaseForNetwork(config.network)
+    ).replace(/\/$/, '');
     const fallback = config.fallbackRate ?? DEFAULT_FALLBACK_RATE;
     if (typeof fallback !== 'number' || !Number.isFinite(fallback) || fallback < 1) {
       throw new Error(`Fallback fee rate must be a finite number >= 1, got: ${fallback}`);

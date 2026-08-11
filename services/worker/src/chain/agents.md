@@ -25,9 +25,34 @@ Fixed by adding `network?: string` to the factory and resolving through the shar
 the mainnet branch, where the default was already correct but an implicit network is exactly the
 shape of the defect.
 
+### The fix had to land on the CLASS, not just the factory (caught in review)
+
+The first pass fixed `createFeeEstimator` only. That was **not enough** — four call sites construct
+`MempoolFeeEstimator` directly and never touch the factory:
+
+| Site | Consequence of the mainnet default | Live? |
+|---|---|---|
+| `jobs/anchor.ts` — ECON-1 fee ceiling | Mainnet congestion > ceiling ⇒ `revertToPending()`, anchors stall on a chain whose real rate is 1 sat/vB | **yes** |
+| `middleware/x402PaymentGate.ts` — anchor pricing | Bills callers for mainnet fees the network in use never charges | **yes** (6+ routes) |
+| `jobs/feeAwareScheduler.ts` ×2 — submit/defer gate | Withholds every batch until `deadline_exceeded` | latent — module has no non-test caller yet |
+
+So `MempoolFeeEstimatorConfig` now takes `network` too, and the constructor defaults through
+`mempoolApiBaseForNetwork()`. There is no module-level default base in this file any more.
+
+**Why the ratchet did not catch it:** the parity ratchet drove `createFeeEstimator` only, so it
+stayed green while four constructor sites were still mainnet-pinned — a ratchet giving false
+assurance is worse than no ratchet. `mempool-url.test.ts` now ratchets the **class** default too.
+Any new consumer of a mempool.space URL needs a ratchet case, not just a code review.
+
+`feeAwareScheduler.ts` takes `network` as an injected parameter rather than importing `config` —
+that module deliberately avoids the config import chain (it duplicates the `FeeEstimator` interface
+for the same reason). Don't "simplify" that into a config import.
+
 Rules:
 - **Never introduce a base-URL literal in this folder.** `MEMPOOL_URLS` here is now an alias of the
-  shared `MEMPOOL_API_BASES`; a private copy is the root cause of this whole bug class.
+  shared `MEMPOOL_API_BASES` (frozen at the source); a private copy is the root cause of this bug class.
+- **Fix the class, not just the factory.** A factory-level default cannot protect direct `new`
+  construction, and this codebase does plenty of it via lazy `await import()`.
 - The alias is deliberately *not* `mempoolApiBaseForNetwork()` at every use in `utxo-provider.ts`:
   that helper defaults to **mainnet** for an unset network, but two of the three sites there default
   to **testnet4**. Shared values, per-site defaults — silently flipping an unset-network deployment

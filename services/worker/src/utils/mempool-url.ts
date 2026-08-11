@@ -55,12 +55,12 @@
  * fee-scoped endpoints, which are all per-network. They are NOT correct for
  * `/v1/prices` — see {@link mempoolApiBaseForNetwork}.
  */
-export const MEMPOOL_API_BASES: Record<string, string> = {
+export const MEMPOOL_API_BASES: Readonly<Record<string, string>> = Object.freeze({
   signet: 'https://mempool.space/signet/api',
   testnet4: 'https://mempool.space/testnet4/api',
   testnet: 'https://mempool.space/testnet/api',
   mainnet: 'https://mempool.space/api',
-};
+});
 
 /**
  * The mempool.space REST base for a deployment's Bitcoin network, for
