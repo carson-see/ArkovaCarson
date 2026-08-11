@@ -167,6 +167,23 @@ Rules:
   `MEMPOOL_API_BASES.mainnet` and validate the value; selecting it per-network replaces a
   zero-balance bug with a negative-price one that looks like a real reading.
 - `mempool-url.test.ts` carries a **parity ratchet**: for every network it drives the real
-  `createUtxoProvider` and asserts the URL it actually requests matches
-  `mempoolApiBaseForNetwork()`. If either side's map changes alone, that test fails. A human
-  census of "who builds a mempool URL" is what missed this bug for the life of the job.
+  `createUtxoProvider` **and the real `createFeeEstimator`** and asserts the URL each actually
+  requests matches `mempoolApiBaseForNetwork()`. If either side's map changes alone, that test
+  fails. A human census of "who builds a mempool URL" is what missed this bug for the life of the
+  job — and it missed it twice: the fee estimator was still resolving against a private mainnet
+  literal after the UTXO provider had already been made per-network (BUG-2026-08-11, second half).
+  Add a ratchet case here for every new consumer.
+
+### Still-duplicated: the *host*-convention explorer map (open follow-up)
+
+`MEMPOOL_API_BASES` covers the **`/api` convention** only. A second, distinct per-network map — the
+bare-host form used to build human-facing explorer links (`https://mempool.space/signet` +
+`/tx/{txid}`) — is currently copy-pasted across at least eight sites: `api/v1/verify.ts`,
+`api/v1/attestations.ts` (twice), `api/v1/anchor-evidence.ts`, `api/v1/verify/attestation.ts`,
+`api/v1/audit-export.ts`, `api/v1/nessie-query.ts`, `jobs/chain-maintenance.ts`,
+`jobs/check-confirmations.ts`. Two of those additionally default to **signet** on an unknown
+network while others default to mainnet.
+
+Not collapsed here deliberately: it is a different convention (no `/api`), it is link-rendering
+rather than request-routing, and folding `api/v1/**` into a chain-tier PR would widen the blast
+radius. It is the same latent bug class though — worth a dedicated `MEMPOOL_EXPLORER_BASES` pass.

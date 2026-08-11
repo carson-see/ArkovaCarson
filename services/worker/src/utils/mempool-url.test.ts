@@ -17,6 +17,7 @@ import {
   resolveMempoolHostBase,
 } from './mempool-url.js';
 import { createUtxoProvider } from '../chain/utxo-provider.js';
+import { createFeeEstimator } from '../chain/fee-estimator.js';
 
 // The parity test imports the REAL createUtxoProvider; stub its logging and
 // Sentry edges the same way src/chain/utxo-provider.test.ts does, so the test
@@ -215,6 +216,40 @@ describe('parity with the real createUtxoProvider (BUG-2026-08-11 ratchet)', () 
       expect(seen).toHaveLength(1);
       expect(seen[0]).toBe(
         `${mempoolApiBaseForNetwork(network)}/address/tb1qexampleaddress/utxo`,
+      );
+    },
+  );
+});
+
+/**
+ * The same ratchet for the fee path. `createFeeEstimator` was the last
+ * consumer still resolving against a private hardcoded mainnet constant with
+ * no `network` input at all (BUG-2026-08-11, second half), so a signet
+ * deployment on `strategy: 'mempool'` read MAINNET fee rates. Asserting it
+ * behaviourally here — rather than trusting a reading of the factory — is
+ * what keeps the two maps from drifting apart again.
+ */
+describe('parity with the real createFeeEstimator (BUG-2026-08-11 ratchet)', () => {
+  it.each(['signet', 'testnet4', 'testnet', 'mainnet'])(
+    'createFeeEstimator requests the shared %s base',
+    async (network) => {
+      const seen: string[] = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (url: string) => {
+        seen.push(String(url));
+        return { ok: true, json: async () => ({ halfHourFee: 7 }) };
+      }) as unknown as typeof fetch;
+
+      try {
+        const estimator = createFeeEstimator({ strategy: 'mempool', network });
+        await estimator.estimateFee();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toBe(
+        `${mempoolApiBaseForNetwork(network)}/v1/fees/recommended`,
       );
     },
   );

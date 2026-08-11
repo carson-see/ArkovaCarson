@@ -1,10 +1,40 @@
 # agents.md — services/worker/src/chain/
 
-_Last updated: 2026-08-03_
+_Last updated: 2026-08-11_
 
 ## What This Folder Contains
 
 Bitcoin chain client implementation for anchoring document fingerprints on-chain via OP_RETURN transactions.
+
+## 2026-08-11 BUG-2026-08-11 — `createFeeEstimator` was network-blind (fixed)
+
+`fee-estimator.ts` defined its own `DEFAULT_MEMPOOL_URL = 'https://mempool.space/api'` (mainnet) and
+`FeeEstimatorFactoryConfig` accepted **no `network` field at all**. Every non-mainnet deployment
+running `strategy: 'mempool'` therefore read **mainnet** fee rates from
+`/v1/fees/recommended` — that endpoint is network-scoped (signet reports a flat 1 sat/vB; mainnet
+reports real congestion).
+
+Worst affected was the INEFF-5 `FORCE_DYNAMIC_FEE_ESTIMATION` path in `client.ts`, whose stated
+purpose is to "use mempool.space fee estimator even on signet/testnet to validate the full fee path
+pre-mainnet". Because the default was mainnet, that rehearsal was validating against the wrong
+chain — the one thing it existed to avoid.
+
+Fixed by adding `network?: string` to the factory and resolving through the shared
+`mempoolApiBaseForNetwork()` (see `../utils/agents.md`). All four call sites now pass
+`config.bitcoinNetwork`: `api/treasury.ts`, `index.ts`, and **both** `client.ts` sites — including
+the mainnet branch, where the default was already correct but an implicit network is exactly the
+shape of the defect.
+
+Rules:
+- **Never introduce a base-URL literal in this folder.** `MEMPOOL_URLS` here is now an alias of the
+  shared `MEMPOOL_API_BASES`; a private copy is the root cause of this whole bug class.
+- The alias is deliberately *not* `mempoolApiBaseForNetwork()` at every use in `utxo-provider.ts`:
+  that helper defaults to **mainnet** for an unset network, but two of the three sites there default
+  to **testnet4**. Shared values, per-site defaults — silently flipping an unset-network deployment
+  onto mainnet would re-create the bug in a new place.
+- Severity note, honestly: wrong fee rates on a network whose fees are meaningless is a low-impact
+  defect. The value of this fix is restoring the pre-mainnet validation path and removing the last
+  duplicated copy of the base map.
 
 ## 2026-08-03 BUG-2026-07-26-003 / SCRUM-3016 (PR #1965) — MEMPOOL_API_URL `/api` contract, fixed
 

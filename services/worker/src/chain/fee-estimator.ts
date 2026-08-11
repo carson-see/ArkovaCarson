@@ -12,7 +12,11 @@
  */
 
 import { logger } from '../utils/logger.js';
-import { resolveMempoolApiBase } from '../utils/mempool-url.js';
+import {
+  MEMPOOL_API_BASES,
+  mempoolApiBaseForNetwork,
+  resolveMempoolApiBase,
+} from '../utils/mempool-url.js';
 
 // ─── Interface ──────────────────────────────────────────────────────────
 
@@ -64,8 +68,14 @@ export interface MempoolFeeEstimatorConfig {
 
 export type MempoolFeeTarget = 'fastest' | 'halfHour' | 'hour' | 'economy';
 
-/** Default Mempool.space API endpoint (mainnet) */
-const DEFAULT_MEMPOOL_URL = 'https://mempool.space/api';
+/**
+ * Default Mempool.space API endpoint when no network is supplied (mainnet).
+ *
+ * Sourced from the shared map rather than re-typed as a literal — a private
+ * copy of a base URL is exactly what caused BUG-2026-08-11 (see
+ * `utils/mempool-url.ts`).
+ */
+const DEFAULT_MEMPOOL_URL = MEMPOOL_API_BASES.mainnet;
 
 /** Default fallback fee rate in sat/vbyte */
 const DEFAULT_FALLBACK_RATE = 5;
@@ -225,6 +235,13 @@ export interface FeeEstimatorFactoryConfig {
   target?: MempoolFeeTarget;
   /** Request timeout in milliseconds for mempool strategy. Default: 5000 */
   timeoutMs?: number;
+  /**
+   * Bitcoin network, used to pick the per-network mempool.space base when
+   * strategy is 'mempool' and no explicit `mempoolApiUrl` is set. Pass
+   * `config.bitcoinNetwork`. Defaults to mainnet when omitted, matching the
+   * factory's historical behaviour.
+   */
+  network?: string;
 }
 
 /**
@@ -248,10 +265,21 @@ export function createFeeEstimator(
     // resolveMempoolApiBase normalizes a MEMPOOL_API_URL set WITHOUT a
     // trailing /api (the OTHER convention some sibling consumers expect —
     // see mempool-url.ts) up to the form this estimator needs.
-    const baseUrl = resolveMempoolApiBase(factoryConfig.mempoolApiUrl, DEFAULT_MEMPOOL_URL);
+    //
+    // BUG-2026-08-11: the fallback used to be the hardcoded mainnet base, so
+    // a signet/testnet deployment on this strategy read MAINNET fee rates.
+    // `/v1/fees/recommended` is network-scoped — signet reports a flat
+    // 1 sat/vB while mainnet reports real congestion — so the INEFF-5
+    // FORCE_DYNAMIC_FEE_ESTIMATION rehearsal in chain/client.ts was
+    // validating the fee path against the wrong chain entirely.
+    const baseUrl = resolveMempoolApiBase(
+      factoryConfig.mempoolApiUrl,
+      mempoolApiBaseForNetwork(factoryConfig.network),
+    );
     logger.info(
       {
         strategy: 'mempool',
+        network: factoryConfig.network ?? 'mainnet',
         baseUrl,
         target: factoryConfig.target ?? 'halfHour',
       },
