@@ -264,5 +264,11 @@ Rules for this page's tests:
   commit, make that query `findBy*` too. Sibling assertions inside one
   synchronous subtree (a dialog's title + its buttons) are fine as `getBy*`.
 
-`WebhookSettings.test.tsx` and `WebhookDeliveryLog.test.tsx` are unaffected —
-both render from props with no async source, so nothing can arrive late.
+`WebhookSettings.test.tsx` and `WebhookDeliveryLog.test.tsx` needed no changes —
+but *not* because they are async-free. Both hold a deferred promise open in
+their double-click-guard tests (`onTestPing` / `onReplay`) and assert the
+re-enabled button after resolving it, and those resolutions do land in a later
+commit. They are safe because each has exactly one async transition in flight at
+a time, gated by its own `waitFor` at the point it matters. Run the same "can
+this element arrive in a later commit?" check there anyway; today the answer is
+just always handled.

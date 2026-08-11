@@ -277,11 +277,11 @@ describe('WebhookSettingsPage', () => {
     it('refetches endpoints after successful creation', async () => {
       renderPage();
 
-      await waitFor(() => {
-        expect(screen.getByText('https://example.com/webhooks')).toBeInTheDocument();
-      });
+      await findEndpointRow();
 
-      // Clear call count after initial fetch
+      // Baseline taken only once the mount fetch has actually landed — the old
+      // URL-text gate did not prove that, so this count could be sampled early
+      // and the "refetched" assertion below would pass without proving anything.
       const initialCallCount = mockFrom.mock.calls.length;
 
       await userEvent.click(screen.getByText('Add Endpoint'));
@@ -314,19 +314,16 @@ describe('WebhookSettingsPage', () => {
     it('calls delete_webhook_endpoint RPC after confirming the dialog', async () => {
       renderPage();
 
-      // Gate on the row's Trash (delete) button itself, via findByRole — it
-      // mounts only after the async endpoints fetch resolves. The old gate
-      // (`getByText(url)` + a one-shot `.text-destructive` query) raced that
-      // fetch: the delivery-log table renders the SAME endpoint_url
-      // synchronously from the mocked hook, so `getByText(url)` could resolve
-      // against that cell while the endpoint row — and its delete button —
-      // did not exist yet, leaving the one-shot query `undefined` (flake:
-      // "expected undefined to be truthy", 4 CI runs 2026-07-26). The button's
-      // aria-label ("Delete endpoint: <url>") is the stable async signal.
-      const deleteBtn = await screen.findByRole('button', {
-        name: new RegExp(`^${WEBHOOK_LABELS.DELETE_CONFIRM_ACTION}: `),
-      });
-      await userEvent.click(deleteBtn);
+      // Gate on the row's Trash (delete) button itself — it mounts only after
+      // the async endpoints fetch resolves. The old gate (`getByText(url)` +
+      // a one-shot `.text-destructive` query) raced that fetch: the delivery-log
+      // table renders the SAME endpoint_url synchronously from the mocked hook,
+      // so `getByText(url)` could resolve against that cell while the endpoint
+      // row — and its delete button — did not exist yet, leaving the one-shot
+      // query `undefined` (flake: "expected undefined to be truthy", 4 CI runs
+      // 2026-07-26). `findEndpointRow` is that same aria-label signal, shared
+      // so this query and the rest of the file cannot drift apart.
+      await userEvent.click(await findEndpointRow());
 
       // No RPC yet — the confirm dialog is open.
       expect(mockRpc).not.toHaveBeenCalledWith('delete_webhook_endpoint', {
