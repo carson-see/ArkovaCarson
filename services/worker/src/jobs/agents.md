@@ -959,6 +959,27 @@ monitor reports `degraded` rather than a lock wait. The PGRST002 alarm is the
 backstop for that window. The RPC-failure path deliberately does NOT emit
 `alert_type="db_lock_wait"` — "the monitor is broken" and "a lock is stuck" are
 different incidents and must not share a signal.
+## 2026-08-11 BUG-2026-08-11 — two jobs read MAINNET fee rates on non-mainnet (fixed)
+
+`MempoolFeeEstimator`'s constructor defaulted to the mainnet base, and both fee-reading jobs
+constructed it directly (via lazy `await import()`), so neither went through the factory that
+BUG-2026-08-11's first pass fixed.
+
+- **`anchor.ts` ECON-1 fee ceiling (LIVE).** Compared MAINNET sat/vB against `BITCOIN_MAX_FEE_RATE`
+  on every non-mainnet deployment. With mainnet congested above the ceiling, the gate logs
+  "Anchor deferred — fee rate exceeds ceiling" and calls `revertToPending()` — stalling anchors
+  indefinitely on a chain whose real rate is 1 sat/vB. Now passes `network: config.bitcoinNetwork`.
+- **`feeAwareScheduler.ts` submit/defer gate ×2 (LATENT).** Same defect; would withhold every batch
+  until `deadline_exceeded`, degrading fee-aware scheduling to a plain 24h timer. Currently has **no
+  non-test caller** — `checkDynamicFeeConditions`' own docstring calls wire-up a "post-#1417-merge
+  integration handoff" — so this was latent, not live. Fixed anyway, before wire-up makes it live.
+
+`network` is threaded into `feeAwareScheduler` as a **parameter**, not read from `config`: that
+module deliberately avoids the config import chain (it duplicates the `FeeEstimator` interface for
+exactly that reason). Whoever wires it up must pass `config.bitcoinNetwork` — an omitted `network`
+silently falls back to mainnet, which is the original defect.
+
+Rule: **never construct `MempoolFeeEstimator` without `network`.** See `../chain/agents.md`.
 ## 2026-08-10 — Orphaned job_queue producers: `anchor.fast_track` removed, `ai_credits.reconcile_refund` given a consumer
 
 Closes the gap this file flagged on 2026-08-03 ("Found in passing, NOT fixed here"), and its twin in `api/v1/`. Both were the SAME defect class: **the worker has no central job dispatcher, so a `job_queue` type is handled if and only if some file calls `claimJob`/`processNextJob` with that literal string.** An enqueued type with no such call inserts as `pending, attempts:0` and is then never claimed, retried, dead-lettered, or counted — it is indistinguishable from an empty queue. There is no error surface at all, which is why both instances survived review, tests, and a soak.
