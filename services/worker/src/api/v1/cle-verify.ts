@@ -21,6 +21,7 @@ import { logger } from '../../utils/logger.js';
 import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
 import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
+import { getCallerOrgIdResult } from '../_org-auth.js';
 
 const router = Router();
 
@@ -347,21 +348,15 @@ async function resolveSubmitOrgId(
 ): Promise<{ ok: true; orgId: string | null } | { ok: false }> {
   if (req.apiKey) return { ok: true, orgId: req.apiKey.orgId ?? null };
 
-  let data: { org_id: string | null } | null = null;
-  let failure: string | null;
-  try {
-    // postgrest-js RESOLVES most failures into `error`, but a transport error
-    // still throws — both have to land on the same fail-closed branch.
-    const result = await dbAny.from('profiles').select('org_id').eq('id', userId).maybeSingle();
-    data = (result.data ?? null) as { org_id: string | null } | null;
-    failure = result.error ? (result.error.code ?? 'unknown') : null;
-  } catch (err) {
-    failure = err instanceof Error ? err.name : 'unknown';
-  }
+  // `getCallerOrgIdResult` is the shared org-resolution helper and already draws
+  // the distinction this guard depends on: `{ value: null, error: false }` is a
+  // caller who genuinely has no org, `{ value: null, error: true }` is a failed
+  // lookup. Collapsing those two into a bare null is exactly the silent bypass
+  // this function exists to prevent, so the shared Result form is used rather
+  // than the plain `getCallerOrgId`.
+  const { value: orgId, error } = await getCallerOrgIdResult(userId);
 
-  if (failure) {
-    // Code/name only — never the message, which can echo the row back.
-    logger.error({ pgCode: failure }, 'cle-submit: org lookup failed, failing closed');
+  if (error) {
     res.status(503).json({
       error: 'field_policy_unavailable',
       message:
@@ -370,7 +365,7 @@ async function resolveSubmitOrgId(
     return { ok: false };
   }
 
-  return { ok: true, orgId: data?.org_id ?? null };
+  return { ok: true, orgId };
 }
 
 router.post('/submit', async (req: Request, res: Response) => {

@@ -47,9 +47,28 @@ const mockState = vi.hoisted(() => ({
   anchorInserts: [] as unknown[],
   /** Reads of the policy table, proving the guard actually consulted it. */
   policyReads: 0,
+  /** Force the shared org-auth helper's operational-failure branch. */
+  orgLookupErrors: false,
 }));
 
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
+// cle/submit resolves the caller's org through the shared org-auth helper on the
+// JWT path. `orgLookupErrors` forces the operational-failure branch so the
+// fail-closed 503 can be tested directly rather than inferred.
+vi.mock('../_org-auth.js', () => ({
+  getCallerOrgIdResult: vi.fn(async () =>
+    mockState.orgLookupErrors
+      ? { value: null, error: true }
+      : { value: mockState.profileOrgId, error: false },
+  ),
+  getCallerOrgId: vi.fn(async () => mockState.profileOrgId),
+  getCallerProfile: vi.fn(async () => ({ org_id: mockState.profileOrgId, role: 'ORG_ADMIN', is_platform_admin: false })),
+  isCallerOrgAdmin: vi.fn(async () => true),
+  isCallerOrgAdminResult: vi.fn(async () => ({ value: true, error: false })),
+}));
+vi.mock('../../auth.js', () => ({
+  verifyAuthToken: vi.fn(async () => 'user-1'),
+}));
 vi.mock('../../config.js', () => ({
   get config() {
     return { enableOrgCreditEnforcement: false, recipientIdentifierPepper: null };
@@ -189,6 +208,7 @@ beforeEach(() => {
   mockState.profileOrgId = 'org-1';
   mockState.anchorInserts = [];
   mockState.policyReads = 0;
+  mockState.orgLookupErrors = false;
 });
 
 // ─── POST /contracts/anchor-pre-signing ─────────────────────────────────────
@@ -353,6 +373,33 @@ describe('POST /api/v1/cle/submit — org field policy', () => {
       .send(validSubmission())
       .expect(400);
     expect(mockState.anchorInserts).toHaveLength(0);
+  });
+
+  it('FAILS CLOSED with 503 when the caller org cannot be resolved (JWT path)', async () => {
+    // The silent-bypass shape this guards against: a failed `profiles` read
+    // yielding a bare null orgId, which enforceOrgFieldPolicy would read as
+    // "unrestricted org" and wave through. A caller with genuinely no org is a
+    // different case and is allowed (covered by the no-policy test above).
+    mockState.policyRow = policyRow(['attorney_name']);
+    mockState.orgLookupErrors = true;
+
+    const jwtApp = express();
+    jwtApp.use(express.json());
+    // No apiKey — a Bearer JWT, so the route resolves org via `profiles`.
+    jwtApp.use((req, _res, next) => {
+      req.headers.authorization = 'Bearer not-an-ak-token';
+      next();
+    });
+    jwtApp.use('/api/v1/cle', cleVerifyRouter);
+
+    const res = await request(jwtApp)
+      .post('/api/v1/cle/submit')
+      .send(validSubmission({ attorney_name: 'Grace Wanjiku' }))
+      .expect(503);
+
+    expect(res.body.error).toBe('field_policy_unavailable');
+    expect(mockState.anchorInserts).toHaveLength(0);
+    expect(JSON.stringify(res.body)).not.toContain('Grace Wanjiku');
   });
 });
 
