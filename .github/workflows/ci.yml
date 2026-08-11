@@ -211,6 +211,19 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: node_modules/.bin/tsx scripts/ci/check-webhook-hmac-consolidation.ts
 
+      - name: Require the org field policy on anchor-creating routes (DPA clause 4.6)
+        # A request handler under services/worker/src/api/ that inserts into
+        # `anchors` must call enforceOrgFieldPolicy (migration 0405). The
+        # control has to reject a contractually prohibited field independently
+        # of the counterparty agreeing to stop sending it, so it only holds if
+        # EVERY write path enforces it — and the hand-built census that found
+        # the first five gaps had four false positives and two false negatives.
+        # Service-originated anchor creation (services/worker/src/jobs/) is out
+        # of scope by directory, not by allowlist.
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node_modules/.bin/tsx scripts/ci/check-anchor-field-policy-coverage.ts
+
       - name: Enforce container-image CVE scan gate (TVM/IVS)
         # deploy-worker.yml must keep a Trivy base-image CVE scan gating the
         # deploy on fixable HIGH/CRITICAL OS CVEs. This guard fails the PR if
