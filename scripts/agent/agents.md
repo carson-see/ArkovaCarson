@@ -3,7 +3,7 @@
 Local agent bootstrap helpers. These scripts are guardrails for agent behavior only; they must not mutate production, staging, Jira, Confluence, GitHub PR bodies, or audit evidence unless a script name and help text explicitly says so.
 
 - `ack-claude-bootstrap.sh` records the current `CLAUDE.md` SHA-256 in git-local state after an agent has read the file. It then runs `check-git-merge-config.sh` and exits non-zero if that guard trips.
-- `block-pr-merge.test.sh` is the pure-bash test for the `gh pr merge` / force-push / `--no-verify` PreToolUse hook (77 cases: the three rule families firing, legitimate work still allowed, 17 git global-option bypasses, 13 `+`-refspec force-push bypasses, 24 over-match cases that keep both fixes honest, the normalizer's presence, and wall-clocked pathological inputs).
+- `block-pr-merge.test.sh` is the pure-bash test for the `gh pr merge` / force-push / `--no-verify` PreToolUse hook (90 cases: the three rule families firing, legitimate work still allowed, 17 git global-option bypasses, 17 `+`-refspec force-push bypasses including wildcard destinations, 6 backslash-newline continuation bypasses, 24 over-match cases that keep the fixes honest, 3 known over-blocks pinned at their current wrong value so a later fix must flip them deliberately, the normalizer's presence, and wall-clocked pathological inputs).
 - `check-claude-bootstrap.test.sh` is the pure-bash test for the Claude PreToolUse bootstrap hook (29 cases).
 - `check-constitution-on-edit.test.sh` is the pure-bash test for the Edit/Write constitution hook (20 cases).
 - `check-git-merge-config.sh` refuses a `merge.<builtin>.driver` config entry (`union`/`text`/`binary`) or a no-op driver command at any config scope. Read-only against git config. A no-op is matched on the command WORD, not the whole string, because drivers are conventionally written with `gitattributes(5)` placeholders — `true %O %A %B` is the same silent no-op as bare `true`. `cat %A` counts too: it prints ours and leaves `%A` untouched.
@@ -119,7 +119,7 @@ change rather than this bug class:
   `echo` mentioning `.git push --force origin main` are both BLOCKED. That
   direction over-blocks and is harmless, so it is left alone.
 
-## 2026-08-11 — the refspec force-push residual, closed (rule 2b)
+## 2026-08-11 — the refspec force-push residual (rule 2b), and two holes found reviewing it
 
 The first residual listed above is now a rule. `git push origin +main`,
 `+main:main` and `+HEAD:master` were ALLOWED by the hook, confirmed by probe;
@@ -166,6 +166,45 @@ loosening of a security control, which is precisely where a guard starts
 failing open silently, and it needs its own red-first cases in both directions
 — including an override placed AFTER a heredoc, which must still be denied.
 
+**The first version of rule 2b shipped with two holes of its own.** Both were
+found by adversarially probing the new rule immediately after writing it, and
+both are fixed in the same PR. Neither would have been caught by the 27 cases
+the rule shipped with, which is the point: a matcher written against the forms
+you already know about is tested against the forms you already know about.
+
+- **A wildcard destination covers main without spelling it.**
+  `+refs/heads/*:refs/heads/*` and `+refs/*:refs/*` returned exit 0 — rule 2b
+  required a literal `main`/`master` destination component. The destination
+  alternation now also matches a glob. This deliberately over-blocks a glob
+  that provably cannot reach main (`+docs/*`), pinned as such in the suite: the
+  rule cannot know which refs a glob covers, and over-blocking a destructive
+  push costs one question, under-blocking costs main.
+- **A backslash-newline walked past every rule in the file.** grep is
+  LINE-oriented, so `.*` never spans a newline, and every rule here is shaped
+  `git…push.*<thing>`. `git push origin \<newline> +main`, `git push
+  \<newline> --force origin main` and `git commit -m x \<newline> --no-verify`
+  all returned exit 0. `$cmd` now joins backslash-newlines before anything
+  reads it. **DO NOT** widen that to bare newlines: `.*` would then reach
+  across independent commands, so an unrelated later line mentioning `main`
+  would arm a rule an earlier `git push` line started.
+
+**DO** probe a new matcher adversarially before believing it, and probe it for
+the shapes it does NOT enumerate. Both holes above are in the same family as
+the bug the rule was written to fix — a force-push to main that the regex does
+not recognise as one — and both survived a red-first suite that only pinned the
+forms already known.
+
 Still open from the list above, both unchanged: the user-alias resolution
 (`-c alias.p=push p --force origin main`) and the missing word boundary before
 `git` (which over-blocks, harmlessly).
+
+Also still open, and NOT closed by rule 2b: `git push --force --all origin` and
+`git push --mirror origin` both return exit 0. Each force-updates main without
+naming a branch, so rule 2's `\b(main|master)\b` requirement never fires. These
+are rule 2's gaps, older than rule 2b and left for their own change — recorded
+here so the next reader does not have to rediscover them. Together with the
+wildcard case they are the argument for eventually replacing three
+shape-specific regexes with one parse of the push command: the normalizer
+sibling already tokenizes the line and could return `{flags, refspecs}` for a
+single destination check, instead of each new force syntax costing another
+regex and another set of boundary-class edge cases.

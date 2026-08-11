@@ -25,6 +25,23 @@ except: pass' 2>/dev/null || true)"
 
 [ -z "$cmd" ] && exit 0
 
+# Join backslash-newline continuations before anything looks at the command.
+#
+# grep is LINE-oriented: `.*` never spans a newline. Every rule below is shaped
+# `git…push.*<thing>`, so a backslash-newline between the two halves -- one
+# command to bash, two lines to grep -- walked past all of them. Confirmed by
+# probe 2026-08-11: `git push origin \<newline>  +main`, `git push \<newline>
+# --force origin main` and `git commit -m x \<newline> --no-verify` all returned
+# exit 0. Same "the token run got split" family as the global-option bypass,
+# reached by a different route.
+#
+# ONLY backslash-newline is joined, never a bare newline. Collapsing real
+# newlines would let `.*` reach across independent commands, so an unrelated
+# later line mentioning `main` would arm a rule that an earlier `git push` line
+# started -- turning a fail-open into a noisy fail-closed. Bash itself treats
+# exactly this sequence as a line continuation, so this matches what will run.
+cmd="${cmd//\\$'\n'/ }"
+
 # Strip git's *global* options so the sub-command sits adjacent to `git` again.
 #
 # Every rule below anchors on adjacency (`git[[:space:]]+(push|commit)`), but
@@ -107,6 +124,14 @@ fi
 # from the whole token when there is not, with `refs/heads/` allowed as a
 # longhand prefix on either side.
 #
+# A WILDCARD destination also matches, because a glob covers main without ever
+# spelling it: `+refs/heads/*:refs/heads/*` and `+refs/*:refs/*` are force-
+# pushes to main that the literal-destination form missed (probed, exit 0).
+# This over-blocks a glob that provably cannot reach main, e.g. `+docs/*` --
+# deliberate, and pinned as such in the test suite. The rule cannot know which
+# refs a glob covers; over-blocking a destructive push costs one question to
+# Carson, under-blocking costs main.
+#
 # Boundaries are spelled as explicit character classes rather than `\b`, because
 # \b treats `-`, `.` and `/` as word boundaries: `\bmain\b` matches inside
 # `+docs/main-page` and `+main-page`, which would block legitimate forced pushes
@@ -118,7 +143,7 @@ fi
 # cases there are as load-bearing as the bypass cases.
 #
 # Matches on "$norm" so a global option before `push` cannot split the run.
-if printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push.*[^-_./A-Za-z0-9]\+([^[:space:]:]*:)?(refs/heads/)?(main|master)([^-_./:A-Za-z0-9]|$)'; then
+if printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push.*[^-_./A-Za-z0-9]\+([^[:space:]:]*:)?(refs/heads/)?(main|master|[^[:space:]:]*\*)([^-_./:A-Za-z0-9]|$)'; then
   printf 'BLOCKED: forced refspec push to main/master -- a leading `+` on a refspec forces the update with no --force flag. CLAUDE.md forbids destructive git ops without explicit approval.\n' >&2
   exit 2
 fi
