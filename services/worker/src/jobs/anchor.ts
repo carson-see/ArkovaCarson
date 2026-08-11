@@ -150,7 +150,15 @@ export async function processAnchor(anchor: ClaimedAnchor): Promise<boolean> {
     if (config.bitcoinMaxFeeRate) {
       try {
         const { MempoolFeeEstimator } = await import('../chain/fee-estimator.js');
-        const estimator = new MempoolFeeEstimator({ target: 'halfHour', timeoutMs: 3000 });
+        // BUG-2026-08-11: `network` is load-bearing here. Without it this
+        // compared MAINNET fee rates against the ceiling on every non-mainnet
+        // deployment, so a congested mainnet could defer signet anchors
+        // indefinitely while signet's real rate was 1 sat/vB.
+        const estimator = new MempoolFeeEstimator({
+          target: 'halfHour',
+          timeoutMs: 3000,
+          network: config.bitcoinNetwork,
+        });
         const currentFeeRate = await estimator.estimateFee();
         if (currentFeeRate > config.bitcoinMaxFeeRate) {
           logger.info(

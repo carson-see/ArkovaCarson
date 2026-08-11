@@ -49,6 +49,7 @@ export async function checkFeeConditions(
   maxFeeThreshold?: number,
   queuedSince?: number | null,
   estimator?: FeeEstimator,
+  network?: string,
 ): Promise<FeeCheckResult> {
   const threshold = maxFeeThreshold ?? DEFAULT_MAX_FEE;
 
@@ -66,7 +67,17 @@ export async function checkFeeConditions(
     let feeEstimator = estimator;
     if (!feeEstimator) {
       const { MempoolFeeEstimator } = await import('../chain/fee-estimator.js');
-      feeEstimator = new MempoolFeeEstimator({ target: 'halfHour', timeoutMs: 5000 });
+      // BUG-2026-08-11: `network` must be threaded in. Defaulting to mainnet
+      // made this submit/defer gate compare MAINNET rates against the
+      // threshold on non-mainnet deployments, withholding every batch until
+      // deadline_exceeded. Passed as a parameter rather than read from
+      // config — this module deliberately avoids the config import chain
+      // (see the duplicated FeeEstimator interface above).
+      feeEstimator = new MempoolFeeEstimator({
+        target: 'halfHour',
+        timeoutMs: 5000,
+        network,
+      });
     }
     const currentFee = await feeEstimator.estimateFee();
 
@@ -113,6 +124,12 @@ export interface DynamicFeeConditionsInput {
   queuedSince?: number | null;
   /** Optional injected fee estimator (for testing). */
   estimator?: FeeEstimator;
+  /**
+   * Bitcoin network, used for the fallback estimator's per-network base
+   * (BUG-2026-08-11). Injected by the caller rather than read from config —
+   * this module avoids the config import chain on purpose.
+   */
+  network?: string;
 }
 
 /**
@@ -153,7 +170,12 @@ export async function checkDynamicFeeConditions(
     let feeEstimator = input.estimator;
     if (!feeEstimator) {
       const { MempoolFeeEstimator } = await import('../chain/fee-estimator.js');
-      feeEstimator = new MempoolFeeEstimator({ target: 'halfHour', timeoutMs: 5000 });
+      // BUG-2026-08-11 — same defect as checkFeeConditions above.
+      feeEstimator = new MempoolFeeEstimator({
+        target: 'halfHour',
+        timeoutMs: 5000,
+        network: input.network,
+      });
     }
     const currentFee = await feeEstimator.estimateFee();
 
