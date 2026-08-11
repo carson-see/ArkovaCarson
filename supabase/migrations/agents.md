@@ -448,3 +448,28 @@ Numeric head at authoring time is `0378` (PROD-APPLIED, per the row above — "n
 | `0408` | `feat/supplementary-proof-anchor` (PR #2140) | SCRUM-3188 | `0408_supplementary_proof_anchor.sql` | RESERVED — file-only, NOT applied to prod/staging. T3 (migration + chain + treasury). **Renumbered `0407` -> `0408` by the RTE on 2026-08-11** to clear a two-way collision: this PR and PR #2134 (`fix/checkout-kyb-self-grant`, `0407_widen_org_verification_status_for_kyb_rejection.sql`) had both independently claimed `0407`. #2134 keeps `0407` (claimed first, and it is the AUDIT-0424-10 KYB fix that was already being applied to prod); this PR moves to `0408`. `0408` verified free at renumber time against: `origin/main` head (`0404`), the prod ledger head (`0405`, `vzwyaatejekddvltxyye`), every open PR's file list (`gh pr list --json files`: `0401` #2047, `0402` #2062, `0405` #2081, `0406` #2130, `0407` #2134), and the reservation rows in this file. |
 
 - **0408_supplementary_proof_anchor.sql** (FILE-ONLY / NOT APPLIED): schema for the SUPPLEMENTARY PROOF ANCHOR — a SECOND Bitcoin transaction that re-commits the fingerprints of the 2,969,630 SECURED anchors whose committed leaf ORDER is unrecoverable, in a RECORDED order, so they can finally carry a per-document branch. **Adds no backfill and writes no proof.** Contents: (a) `anchor_proofs.is_supplementary` + `supplements_chain_tx_id` discriminator columns (metadata-only ALTERs; the CHECK is added `NOT VALID` then `VALIDATE`d so neither takes a long lock on the 505k-row table) — required because `anchor_proofs.anchor_id` is UNIQUE, so a supplementary row IS the anchor's only proof row and without a discriminator the verify API would read a 2026-08 tx as the record's FIRST attestation; (b) `supplementary_anchor_runs` durable progress; (c) `supplementary_anchor_journal` — the anti-double-broadcast barrier, **deliberately a separate table from `anchor_txid_journal` (0358)** because that table's `reconcileTxidJournals()` sweep WRITES `anchors.chain_tx_id` on ADOPT, which must never happen to an already-SECURED anchor; (d) `persist_supplementary_journal` / `resolve_supplementary_journal` / `claim_supplementary_proof_cohort` / `insert_supplementary_proofs` / `supplementary_proof_backlog_count`, all SECURITY DEFINER + `SET search_path = public` + `service_role`-only + bounded. **`insert_supplementary_proofs` never touches `anchors`** and re-derives `supplements_chain_tx_id` from `anchors.chain_tx_id` rather than trusting the caller, and uses `ON CONFLICT (anchor_id) DO NOTHING` so a genuine existing proof is never clobbered. Extends the 0354/0406 `proof_completeness_class` vocabulary with `supplementary_anchored`. Operator procedure: `docs/runbooks/ops/supplementary-proof-anchor.md`.
+
+**Grant correction (2026-08-11, pre-apply).** The five functions above were
+described as `service_role`-only but were not: each carried only
+`REVOKE ALL ... FROM PUBLIC;`. On Supabase that does **not** remove the EXECUTE
+grants `ALTER DEFAULT PRIVILEGES` gives `anon` and `authenticated` **directly**
+at CREATE time, so on apply all five would have been callable by `anon` over
+PostgREST — and all five are SECURITY DEFINER, so all five bypass RLS. The two
+TABLES in the same migration already revoked `anon, authenticated` correctly;
+only the functions were missed, which is the signature of this defect class
+(0364, 0377, 0378, 0388, 0406).
+
+Caught before 0408 was ever applied — none of the five existed in prod when this
+was found (checked via MCP against `vzwyaatejekddvltxyye`). Every function REVOKE
+now names `PUBLIC, anon, authenticated`, and the migration ends with
+`NOTIFY pgrst, 'reload schema'` because all five are reached through `db.rpc()`.
+
+Why it mattered beyond hygiene: `persist_supplementary_journal` /
+`resolve_supplementary_journal` are the anti-double-broadcast journal primitives
+(sign -> journal -> broadcast, never reordered) and
+`claim_supplementary_proof_cohort` claims work units, for a backfill that spends
+real mainnet BTC from the production treasury.
+
+Guarded by `src/tests/sec-0408-supplementary-proof-anchor-revokes.test.ts`,
+`tests/rls/supplementary-proof-anchor-revokes.test.ts` (live ACL), and repo-wide
+by `scripts/ci/feedback-rules/secdef-function-grants.ts` (lands with PR #2130).

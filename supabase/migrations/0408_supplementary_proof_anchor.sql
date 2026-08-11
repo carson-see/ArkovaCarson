@@ -319,7 +319,27 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.persist_supplementary_journal(text, text, text, uuid[], jsonb, uuid) FROM PUBLIC;
+-- service_role ONLY -- for this and every function below.
+--
+-- `FROM PUBLIC` alone is NOT sufficient on Supabase. ALTER DEFAULT PRIVILEGES
+-- grants anon and authenticated EXECUTE *directly* at CREATE time, and a revoke
+-- from PUBLIC never removes a direct role grant. Naming the roles is what closes
+-- it. Every function in this migration is SECURITY DEFINER and bypasses RLS, and
+-- CREATE OR REPLACE re-triggers default privileges on EVERY replay, so these
+-- REVOKEs must stay adjacent to their definitions.
+--
+-- This is not hygiene. persist_/resolve_supplementary_journal are the
+-- anti-double-broadcast journal primitives (sign -> journal -> broadcast, never
+-- reordered) and claim_supplementary_proof_cohort claims work units, for a
+-- backfill that spends real mainnet BTC from the production treasury. An anon
+-- caller reaching these over PostgREST could starve the run by pre-claiming
+-- cohorts, or perturb the state that decides whether we re-sign and re-broadcast.
+--
+-- Note the two tables above already got this right; the functions did not. That
+-- asymmetry is the signature of this defect class (0364, 0377, 0378, 0388, 0406).
+-- Guarded by src/tests/sec-0408-supplementary-proof-anchor-revokes.test.ts and,
+-- repo-wide, scripts/ci/feedback-rules/secdef-function-grants.ts (PR #2130).
+REVOKE ALL ON FUNCTION public.persist_supplementary_journal(text, text, text, uuid[], jsonb, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.persist_supplementary_journal(text, text, text, uuid[], jsonb, uuid) TO service_role;
 
 -- ---------------------------------------------------------------------------
@@ -361,7 +381,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.resolve_supplementary_journal(uuid, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.resolve_supplementary_journal(uuid, text, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.resolve_supplementary_journal(uuid, text, text) TO service_role;
 
 -- ---------------------------------------------------------------------------
@@ -404,7 +424,7 @@ AS $$
   LIMIT least(greatest(coalesce(p_limit, 10000), 1), 10000);
 $$;
 
-REVOKE ALL ON FUNCTION public.claim_supplementary_proof_cohort(integer, uuid[], text[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.claim_supplementary_proof_cohort(integer, uuid[], text[]) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.claim_supplementary_proof_cohort(integer, uuid[], text[]) TO service_role;
 
 -- ---------------------------------------------------------------------------
@@ -484,7 +504,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.insert_supplementary_proofs(jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.insert_supplementary_proofs(jsonb) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.insert_supplementary_proofs(jsonb) TO service_role;
 
 COMMENT ON FUNCTION public.insert_supplementary_proofs(jsonb) IS
@@ -524,5 +544,14 @@ AS $$
   );
 $$;
 
-REVOKE ALL ON FUNCTION public.supplementary_proof_backlog_count(integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.supplementary_proof_backlog_count(integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.supplementary_proof_backlog_count(integer) TO service_role;
+
+-- ---------------------------------------------------------------------------
+-- Reload the PostgREST schema cache
+-- ---------------------------------------------------------------------------
+--
+-- All five functions above are called through PostgREST via db.rpc() from
+-- services/worker/src/jobs/supplementary-proof-anchor.adapter.ts, so a fresh
+-- apply must reload the cache or every RPC 404s until the next reload.
+NOTIFY pgrst, 'reload schema';

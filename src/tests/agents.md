@@ -32,3 +32,15 @@ Integration and infrastructure test suites that cross-cut the codebase: migratio
 ## Do / Don't Rules
 - DO: Use `queryTestUtils.tsx` when testing hooks that depend on React Query
 - DON'T: Call real Supabase in unit tests — use mocks or the local dev instance for RLS tests only
+
+## Migration grant guards (`sec-NNNN-*.test.ts`)
+Static content-guards over migration SQL, one per incident. They run in ordinary
+CI with **no database**, so a PR that drops a revoke goes red without needing a
+seeded DB. The live half lives in `tests/rls/` under `npm run test:rls`.
+
+- `sec-0388-sanitize-metadata-helper-revoke.test.ts`
+- `sec-0408-supplementary-proof-anchor-revokes.test.ts`
+
+DO assert the roles BY NAME: `REVOKE ... FROM PUBLIC` does not remove the direct
+`anon`/`authenticated` EXECUTE grants `ALTER DEFAULT PRIVILEGES` adds at CREATE
+time. That has now shipped five times (0364, 0377, 0378, 0388, 0406).
