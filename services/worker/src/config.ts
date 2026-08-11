@@ -522,6 +522,18 @@ const ConfigSchema = z.object({
    * Optional — unset means dry-run-only (safe default).
    */
   proofMaterializerConfirm: z.string().optional(),
+
+  // Supplementary proof anchor (SCRUM-3188)
+  /**
+   * SUPPLEMENTARY_ANCHOR_CONFIRM — arming token for the only job in this repo
+   * that spends REAL mainnet BTC on a backlog of 2.97M records. The job is
+   * DRY-RUN by default (reports what it would spend and commit, signs nothing);
+   * a live run additionally requires this token to equal the literal `EXECUTE`
+   * AND the caller to pass `dryRun: false`. Deliberately SEPARATE from every
+   * other proof-job confirm token so arming one never arms this one.
+   * Optional — unset means dry-run-only (safe default).
+   */
+  supplementaryAnchorConfirm: z.string().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -936,6 +948,7 @@ function loadConfig(): Config {
     // `|| undefined` so an empty string is treated as unset (dry-run-only).
     proofClassifierConfirm: process.env.PROOF_CLASSIFIER_CONFIRM || undefined,
     proofMaterializerConfirm: process.env.PROOF_MATERIALIZER_CONFIRM || undefined,
+    supplementaryAnchorConfirm: process.env.SUPPLEMENTARY_ANCHOR_CONFIRM || undefined,
   });
 
   if (!result.success) {

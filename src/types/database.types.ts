@@ -377,6 +377,8 @@ export type Database = {
           merkle_index: number | null
           merkle_root: string | null
           op_return_payload: string | null
+          is_supplementary: boolean
+          supplements_chain_tx_id: string | null
           proof_completeness_class: string | null
           proof_path: Json | null
           proof_schema_version: number
@@ -396,6 +398,8 @@ export type Database = {
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
+          is_supplementary?: boolean
+          supplements_chain_tx_id?: string | null
           proof_completeness_class?: string | null
           proof_path?: Json | null
           proof_schema_version?: number
@@ -415,6 +419,8 @@ export type Database = {
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
+          is_supplementary?: boolean
+          supplements_chain_tx_id?: string | null
           proof_completeness_class?: string | null
           proof_path?: Json | null
           proof_schema_version?: number

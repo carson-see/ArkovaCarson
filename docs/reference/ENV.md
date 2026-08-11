@@ -526,6 +526,7 @@ METADATA_HASH_BYTES=                # bytes of metadata included in fingerprint 
 ```bash
 PROOF_BACKFILL_CONFIRM=             # 'EXECUTE' arms writes for the SCRUM-2491 completeness backfill; unset = dry-run only
 PROOF_CLASSIFIER_CONFIRM=           # 'EXECUTE' arms write mode for the S3-A back-catalogue classifier; unset = dry-run census only (separate token on purpose — arming one write job never arms the other)
+SUPPLEMENTARY_ANCHOR_CONFIRM=       # SCRUM-3188. 'EXECUTE' arms the supplementary proof anchor for REAL mainnet spend; unset = dry-run only. The only job here that broadcasts Bitcoin, so its token is separate from every other proof-job token — arming one never arms this. A live run ALSO needs dryRun:false in the request body, and still obeys its fee ceiling + treasury reserve.
 ```
 
 ### Cloud logging sink (SCRUM-1093)
