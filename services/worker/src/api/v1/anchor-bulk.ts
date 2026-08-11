@@ -25,6 +25,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit } from '../../utils/orgCredits.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
+import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
 import { requireOrgQuota } from '../../middleware/perOrgRateLimit.js';
 import { submitJob } from '../../utils/jobQueue.js';
 import { buildProfessionalEducationJobPayload } from '../../compliance/professional-education.js';
@@ -170,6 +171,22 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   const body: BulkAnchorRequest = parsed.data;
+
+  // DPA Schedule 1 / clause 4.6 — org-scoped field rejection (migration 0405).
+  // This is the endpoint a DPA-restricted partner actually integrates against,
+  // so the control has to live here and not only on the single-anchor route.
+  // Runs on the RAW body, so it sees every row of `anchors` (and anything
+  // nested inside a row) rather than only top-level keys, and runs BEFORE the
+  // dry-run short-circuit: a validation run that reports "validated: 1" for a
+  // batch the real run would reject is worse than no dry-run at all.
+  //
+  // Whole-batch rejection is deliberate. Queueing the compliant rows and
+  // reporting the rest as row errors would mean accepting a payload that
+  // carried prohibited data — the data has already been transmitted at that
+  // point, and a 201 tells the partner the shipment was fine.
+  if (!(await enforceOrgFieldPolicy({ orgId, body: req.body, res, scope: 'anchor-bulk' }))) {
+    return;
+  }
 
   if (!isProfessionalEducationSchemaReady() && body.anchors.some((row) => row.credential_type === 'CPE')) {
     res.status(503).json(professionalEducationSchemaUnavailableBody('anchor-bulk:cpe'));

@@ -377,6 +377,8 @@ export type Database = {
           merkle_index: number | null
           merkle_root: string | null
           op_return_payload: string | null
+          is_supplementary: boolean
+          supplements_chain_tx_id: string | null
           proof_completeness_class: string | null
           proof_path: Json | null
           proof_schema_version: number
@@ -396,6 +398,8 @@ export type Database = {
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
+          is_supplementary?: boolean
+          supplements_chain_tx_id?: string | null
           proof_completeness_class?: string | null
           proof_path?: Json | null
           proof_schema_version?: number
@@ -415,6 +419,8 @@ export type Database = {
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
+          is_supplementary?: boolean
+          supplements_chain_tx_id?: string | null
           proof_completeness_class?: string | null
           proof_path?: Json | null
           proof_schema_version?: number
@@ -4303,6 +4309,51 @@ export type Database = {
           },
           {
             foreignKeyName: "organization_queue_run_state_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organization_field_policies: {
+        Row: {
+          contract_reference: string | null
+          created_at: string
+          disallowed_fields: string[]
+          enabled: boolean
+          org_id: string
+          policy_reason: string | null
+          updated_at: string
+        }
+        Insert: {
+          contract_reference?: string | null
+          created_at?: string
+          disallowed_fields?: string[]
+          enabled?: boolean
+          org_id: string
+          policy_reason?: string | null
+          updated_at?: string
+        }
+        Update: {
+          contract_reference?: string | null
+          created_at?: string
+          disallowed_fields?: string[]
+          enabled?: boolean
+          org_id?: string
+          policy_reason?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_field_policies_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_field_policies_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: true
             referencedRelation: "public_org_profiles"

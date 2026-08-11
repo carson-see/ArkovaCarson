@@ -225,6 +225,76 @@ export function auditLedgerVsRepo(
   return violations;
 }
 
+/**
+ * Flag exemptions that have outlived their purpose (2026-08-11).
+ *
+ * WHY: `auditLedgerVsRepo` returns early on `exemptPrefixes.has(version)` BEFORE
+ * it reaches the `localPrefixes` check, so once an owning PR merges and lands
+ * `NNNN_*.sql` on main, the now-redundant exemption entry is skipped silently
+ * and forever. Nothing ever says "you can delete this line." Every stale entry
+ * to date was caught by a human reading the file: `0404` on the morning of
+ * 2026-08-11, `0401`/`0407` that afternoon, `0406` within MINUTES of that
+ * cleanup, and fifteen in one sweep on 2026-08-02.
+ *
+ * That matters because a stale exemption is not inert — it is a live hole. It
+ * suppresses `ledger-orphan-prod-row` for its prefix, so if that migration is
+ * ever reverted from main, or a FUTURE out-of-band apply reuses the number, the
+ * orphan audit stays green on a real drift. The exemption file says so itself:
+ * "a stale exemption is worse than no exemption."
+ *
+ * DELIBERATELY WARN-ONLY, never blocking. A stale exemption is hygiene debt, not
+ * a live defect, and this check is evaluated against the whole ledger on every
+ * PR — so making it fatal would red the entire board at once for a condition
+ * nobody needs to fix this minute. That is precisely the pathology that cost a
+ * day on 2026-08-11, when two orphan rows deadlocked every open PR. Visibility
+ * without a merge block is the right trade; `main()` never adds these to
+ * `blocking`.
+ */
+export function auditStaleExemptions(
+  rows: LedgerRow[],
+  files: string[],
+  exemptPrefixes: Set<string> = new Set(),
+): Violation[] {
+  if (exemptPrefixes.size === 0) return [];
+
+  const localPrefixes = new Set<string>();
+  for (const raw of files) {
+    const file = raw.endsWith('.sql') ? raw : `${raw}.sql`;
+    if (file === BASELINE_FILE) continue;
+    const m = file.match(LOCAL_NUMERIC_RE);
+    if (m) localPrefixes.add(m[1]);
+  }
+
+  // Only prefixes actually present in the ledger are considered: an exemption
+  // for a prefix that is in neither prod nor the repo is a different (and much
+  // rarer) kind of dead entry, and flagging it here would misreport the reason.
+  const ledgerPrefixes = new Set<string>();
+  for (const row of rows) {
+    const version = row.version ?? '';
+    if (NUMERIC_VERSION_RE.test(version)) ledgerPrefixes.add(version);
+  }
+
+  const violations: Violation[] = [];
+  // Explicit comparator, not a bare .sort() (Sonar S2871) and not localeCompare:
+  // prefixes are zero-padded ASCII digit strings, so a plain relational compare is
+  // both correct and locale-independent — CI output must not vary with the runner's
+  // locale, or the warning order would churn between machines.
+  const sortedPrefixes = [...exemptPrefixes].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const prefix of sortedPrefixes) {
+    if (!ledgerPrefixes.has(prefix) || !localPrefixes.has(prefix)) continue;
+    violations.push({
+      code: 'ledger-stale-exemption',
+      message:
+        `${prefix} is listed in ledger-numeric-exemptions.json but is now RECONCILED — it is ` +
+        `present in the prod ledger AND its source supabase/migrations/${prefix}_*.sql is on main. ` +
+        `The exemption no longer suppresses anything real; it only hides a future drift on ${prefix} ` +
+        `(a revert, or a later out-of-band apply reusing the number). Remove ${prefix} from ` +
+        `exemptPrefixes and record the removal in the file's _comment.`,
+    });
+  }
+  return violations;
+}
+
 /** Read a string[] under `key` from a snapshot JSON into a Set (missing/bad → empty). */
 function loadStringSet(path: string, key: string): Set<string> {
   if (!existsSync(path)) return new Set();
@@ -267,6 +337,8 @@ function main(): void {
   // 2. Prod-ledger integrity (when a payload is supplied).
   //    --ledger <path>, LEDGER_JSON env, or LEDGER_JSON_PATH env.
   let ledgerViolations: Violation[] = [];
+  // Hygiene-only, never blocking — see auditStaleExemptions' header for why.
+  let staleExemptions: Violation[] = [];
   let ledgerChecked = false;
   const ledgerArgIdx = process.argv.indexOf('--ledger');
   const ledgerPath =
@@ -285,6 +357,8 @@ function main(): void {
         // Orphan-prod-row cross-check: prod ledger ahead of repo (0347 incident class).
         ...auditLedgerVsRepo(ledgerRows, localFiles, exempt),
       ];
+      // Reported separately from ledgerViolations so it can never reach `blocking`.
+      staleExemptions = auditStaleExemptions(ledgerRows, localFiles, exempt);
       ledgerChecked = true;
     }
   } catch (err) {
@@ -314,7 +388,16 @@ function main(): void {
   const warnOnly = reportOnly ? ledgerViolations : [];
 
   for (const v of warnOnly) console.warn(`::warning::${v.code}: ${v.message}`);
+  for (const v of staleExemptions) console.warn(`::warning::${v.code}: ${v.message}`);
   for (const v of blocking) console.error(`::error::${v.code}: ${v.message}`);
+
+  if (staleExemptions.length > 0) {
+    console.warn(
+      `::warning title=Stale ledger exemptions (${staleExemptions.length})::` +
+        `${staleExemptions.length} exemption(s) are reconciled and can be deleted from ` +
+        'scripts/ci/snapshots/ledger-numeric-exemptions.json. Not blocking — hygiene only.',
+    );
+  }
 
   if (warnOnly.length > 0) {
     console.warn(

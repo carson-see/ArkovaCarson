@@ -210,6 +210,40 @@ run_case "refspec: -c global option then +main" $BLOCKED \
   'git -c user.name=x push origin +main'
 run_case "refspec: -C global option then +main" $BLOCKED \
   'git -C /some/path push origin +HEAD:master'
+# Single- and double-quoted forms both rely on the leading-boundary class
+# accepting a quote character. Pin both, so a later tightening of that class
+# cannot re-open one while the other keeps passing.
+run_case "refspec: single-quoted"               $BLOCKED "git push origin '+main'"
+# A WILDCARD destination covers main, so `+refs/heads/*:refs/heads/*` is a
+# force-push to main that never spells the word. Found by adversarial probe
+# after the first version of this rule shipped: it required a literal
+# `main`/`master` destination and returned exit 0 for every form below.
+run_case "refspec: wildcard refs/heads/*"       $BLOCKED \
+  'git push origin "+refs/heads/*:refs/heads/*"'
+run_case "refspec: wildcard refs/*"             $BLOCKED 'git push origin +refs/*:refs/*'
+run_case "refspec: bare wildcard"               $BLOCKED 'git push origin "+*:*"'
+
+echo ""
+echo "--- BYPASS: a line continuation splits the command ------------"
+# grep is LINE-oriented, so `.*` cannot span a newline. A backslash-newline is
+# one command to bash but two lines to grep, and every rule in this hook is
+# written as `git…push.*<thing>`. Found by adversarial probe after the refspec
+# rule shipped; all three returned exit 0, i.e. the push would have executed.
+# The fix joins backslash-newlines ONLY -- collapsing real newlines would let
+# `.*` reach across independent commands and block unrelated lines.
+run_case "continuation: refspec on next line"   $BLOCKED 'git push origin \
+  +main'
+run_case "continuation: --force on next line"   $BLOCKED 'git push \
+  --force origin main'
+run_case "continuation: branch on next line"    $BLOCKED 'git push --force \
+  origin main'
+run_case "continuation: --no-verify next line"  $BLOCKED 'git commit -m x \
+  --no-verify'
+# A REAL newline separates commands and must keep doing so.
+run_case "newline: separate commands stay separate" $ALLOWED 'git push origin feature
+echo "main"'
+run_case "newline: own-line force-push blocked"  $BLOCKED 'set -e
+git push origin +main'
 
 echo ""
 echo "--- the fix must not over-match --------------------------------"
@@ -258,6 +292,28 @@ run_case "refspec: unforced HEAD:main"      $ALLOWED 'git push origin HEAD:main'
 # `+` outside a push refspec position must not trip it.
 run_case "refspec: + in a pathspec"         $ALLOWED 'git add "src/a+main.ts"'
 run_case "refspec: + in a log range"        $ALLOWED 'git log --grep="+main" --oneline'
+
+echo ""
+echo "--- KNOWN over-blocks, pinned so a later fix must flip them -----"
+# These are WRONG-but-current. They are asserted at their present value, not
+# their desired one, because the fix is heredoc/quote stripping -- a loosening
+# of a security control, which is where a guard silently starts failing open
+# and so needs its own change with its own red-first cases in both directions.
+# Pinning them here means that change has to flip an assertion deliberately
+# instead of discovering the behaviour by accident. Documented in the
+# 2026-08-11 section of scripts/agent/agents.md.
+#
+# Cost is real, not theoretical: the commit message for the rule these cases
+# cover had to be reworded to land, and a probe script written during review
+# was blocked by the rule it was probing.
+run_case "over-block: quoting the cmd in a message" $BLOCKED \
+  'git commit -m "never git push origin +main"'
+run_case "over-block: echo after a legit push"      $BLOCKED \
+  'git push origin feature && echo "use +main here"'
+# A wildcard destination is blocked even when it cannot reach main. Deliberate:
+# the rule cannot know which refs a glob covers, and over-blocking a
+# destructive op costs a question to Carson, while under-blocking costs main.
+run_case "over-block: wildcard dst under docs/"     $BLOCKED 'git push origin +docs/*'
 
 echo ""
 echo "--- the normalizer itself is present and parses -----------------"
