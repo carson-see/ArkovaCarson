@@ -108,10 +108,15 @@ middeskWebhookRouter.post('/', async (req: Request, res: Response) => {
    * `webhook_event_claims` compensating delete in stripe/handlers.ts.
    */
   async function releaseNonce(reason: string): Promise<void> {
+    // Filter on BOTH primary-key columns. `kyb_webhook_nonces` is keyed
+    // `PRIMARY KEY (provider, nonce)`, so deleting by `nonce` alone would drop
+    // any other provider's row carrying the same event id — silently disarming
+    // that provider's replay protection. Mirrors the insert's key shape above.
     // eslint-disable-next-line arkova/missing-org-filter -- webhook ingress: nonce is provider-scoped, not org-scoped
     const { error: releaseErr } = await dbUntyped
       .from('kyb_webhook_nonces')
       .delete()
+      .eq('provider', 'middesk')
       .eq('nonce', event.id);
     if (releaseErr) {
       // Nothing further we can do — log loudly. The event is now stuck and

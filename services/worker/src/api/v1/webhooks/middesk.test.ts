@@ -298,12 +298,29 @@ describe('POST /webhooks/middesk', () => {
     };
 
     /**
+     * `kyb_webhook_nonces` has a COMPOSITE primary key `(provider, nonce)`, so
+     * the release must filter on BOTH columns. Deleting by `nonce` alone would
+     * drop any other provider's row that happened to carry the same event id —
+     * silently disarming that provider's replay protection. This helper records
+     * the full filter chain so the tests can assert both.
+     *
      * @param failAt which write fails after the nonce is committed
-     * @returns the nonce-delete spy so the caller can assert compensation
+     * @returns `filters`, the ordered [column, value] pairs of the delete chain
      */
     function mockFlowFailingAt(failAt: 'kyb_events' | 'organizations') {
-      const nonceDeleteEq = vi.fn().mockResolvedValue({ error: null });
-      const nonceDelete = vi.fn(() => ({ eq: nonceDeleteEq }));
+      const filters: Array<[string, unknown]> = [];
+      // Chainable eq: records each filter and is itself awaitable, so the same
+      // mock serves a one-eq or two-eq chain.
+      const makeEq = (): ((col: string, val: unknown) => unknown) =>
+        vi.fn((col: string, val: unknown) => {
+          filters.push([col, val]);
+          const thenable = Promise.resolve({ error: null }) as Promise<{ error: unknown }> & {
+            eq: unknown;
+          };
+          thenable.eq = makeEq();
+          return thenable;
+        });
+      const nonceDelete = vi.fn(() => ({ eq: makeEq() }));
 
       mockDb.from.mockImplementation((table: string) => {
         if (table === 'kyb_webhook_nonces') {
@@ -342,7 +359,7 @@ describe('POST /webhooks/middesk', () => {
         return {};
       });
 
-      return { nonceDeleteEq };
+      return { filters };
     }
 
     async function postRejection() {
@@ -356,23 +373,30 @@ describe('POST /webhooks/middesk', () => {
     }
 
     it('releases the nonce when the organizations update fails', async () => {
-      const { nonceDeleteEq } = mockFlowFailingAt('organizations');
+      const { filters } = mockFlowFailingAt('organizations');
 
       const res = await postRejection();
 
       expect(res.status).toBe(500);
       // Without this, the Middesk retry short-circuits as a duplicate and the
-      // rejection is lost forever.
-      expect(nonceDeleteEq).toHaveBeenCalledWith('nonce', 'evt_reject');
+      // rejection is lost forever. Both PK columns must be filtered — see the
+      // composite-key note on mockFlowFailingAt.
+      expect(filters).toEqual([
+        ['provider', 'middesk'],
+        ['nonce', 'evt_reject'],
+      ]);
     });
 
     it('releases the nonce when the kyb_events insert fails', async () => {
-      const { nonceDeleteEq } = mockFlowFailingAt('kyb_events');
+      const { filters } = mockFlowFailingAt('kyb_events');
 
       const res = await postRejection();
 
       expect(res.status).toBe(500);
-      expect(nonceDeleteEq).toHaveBeenCalledWith('nonce', 'evt_reject');
+      expect(filters).toEqual([
+        ['provider', 'middesk'],
+        ['nonce', 'evt_reject'],
+      ]);
     });
 
     it('does NOT release the nonce on success (replay protection intact)', async () => {
