@@ -185,4 +185,45 @@ describe('COMPLIANCE_CONTROLS', () => {
     expect(COMPLIANCE_CONTROLS['HIPAA-164.312-AUDIT']).toBeDefined();
     expect(COMPLIANCE_CONTROLS['HIPAA-164.312-SESSION']).toBeDefined();
   });
+
+  /**
+   * R-7 claims gate (CLAUDE.md §1.13) / §1.5.
+   *
+   * A control *description* is a factual statement about Arkova's control
+   * environment, unlike the control ID itself — which `COMPLIANCE_CONTROLS_NOTE`
+   * explicitly disclaims as an informational credential-type mapping and NOT an
+   * attestation. So a description may describe the control's subject matter, but
+   * it may not assert that we operate the control unless we actually do.
+   *
+   * MFA is NOT enforced: the login-challenge enforcement shipped in PR #1973 was
+   * reverted in 6d10032b4 after an MFA lockout incident, there is no `aal2` check
+   * anywhere in the app or worker, and `useHipaaMfaGate` has zero non-test
+   * importers. Enrollment is *available* (TwoFactorSetup is wired into
+   * SettingsPage) but opt-in and unenforced.
+   *
+   * Automatic logoff is NOT enforced either: `useIdleTimeout` has zero non-test
+   * importers, so `organizations.session_timeout_minutes` is stored and never
+   * acted on.
+   *
+   * This pins the wording so a future edit cannot silently reintroduce the claim.
+   */
+  it('does not assert unimplemented controls as enforced (R-7 claims gate)', () => {
+    const mfa = COMPLIANCE_CONTROLS['HIPAA-164.312-MFA'].description;
+    expect(mfa).not.toMatch(/enforced/i);
+    expect(mfa).toMatch(/not enforced|available|opt-in/i);
+
+    const session = COMPLIANCE_CONTROLS['HIPAA-164.312-SESSION'].description;
+    expect(session).not.toMatch(/\benforced\b/i);
+    expect(session).toMatch(/not enforced|configurable|not currently/i);
+  });
+
+  it('no control description claims enforcement language we cannot evidence', () => {
+    // Blanket ratchet: a detector beats a human census (memory: lint-rule-beats-
+    // human-census). Any NEW control added with "enforced"/"guaranteed" wording
+    // must be justified here deliberately rather than slipping in unreviewed.
+    const offenders = Object.values(COMPLIANCE_CONTROLS)
+      .filter((c) => /\b(enforced|guaranteed|certified|accredited)\b/i.test(c.description))
+      .map((c) => c.id);
+    expect(offenders).toEqual([]);
+  });
 });
