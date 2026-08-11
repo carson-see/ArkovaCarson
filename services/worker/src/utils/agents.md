@@ -147,3 +147,26 @@ Rules:
 - Fire-and-forget is deliberate (an audit write must not fail an anonymous public verify request),
   but the returned promise is awaitable. Whether API-key lifecycle events should be awaited — so a
   key is never reported created without its audit row — is an open decision, not an oversight.
+
+## `mempool-url.ts` — one answer per network (BUG-2026-08-11)
+
+SCRUM-3016 unified the `/api` **convention** across mempool.space consumers but left each one
+owning its own **default**. `chain/utxo-provider.ts` picked its default per-network from a private
+`MEMPOOL_URLS` map; `jobs/treasury-cache.ts` hardcoded the mainnet entry. On signet the treasury
+job therefore queried the mainnet explorer for a signet address, got `HTTP 400`, and silently
+recorded a zero balance — driving continuous false low-balance alerts.
+
+`MEMPOOL_API_BASES` + `mempoolApiBaseForNetwork()` now live here so "which base for this network"
+has exactly one answer.
+
+Rules:
+- New consumers select their default through `mempoolApiBaseForNetwork(config.bitcoinNetwork)` —
+  never a hardcoded base literal. A per-file default is what drifted.
+- **`/v1/prices` is the exception.** BTC/USD is a single global market quote and the non-mainnet
+  explorers answer it with HTTP 200 + a `-1` sentinel, not a 404. Pin it to
+  `MEMPOOL_API_BASES.mainnet` and validate the value; selecting it per-network replaces a
+  zero-balance bug with a negative-price one that looks like a real reading.
+- `mempool-url.test.ts` carries a **parity ratchet**: for every network it drives the real
+  `createUtxoProvider` and asserts the URL it actually requests matches
+  `mempoolApiBaseForNetwork()`. If either side's map changes alone, that test fails. A human
+  census of "who builds a mempool URL" is what missed this bug for the life of the job.

@@ -34,6 +34,56 @@
  */
 
 /**
+ * Per-network mempool.space REST API bases, in the "base already carries
+ * /api" convention (the `resolveMempoolApiBase` side of the contract above).
+ *
+ * BUG-2026-08-11: SCRUM-3016 unified the /api CONVENTION but left every
+ * consumer owning its own DEFAULT. `chain/utxo-provider.ts` picked its
+ * default per-network from a private copy of this map;
+ * `jobs/treasury-cache.ts` hardcoded the mainnet entry. On a signet
+ * deployment the treasury job therefore asked the MAINNET explorer about a
+ * signet address — mempool.space answers `HTTP 400 Address on invalid
+ * network`, which the job's `res.ok ? … : null` ladder turned into a silent
+ * null, so it booked `balance_confirmed_sats = 0` with no error and
+ * treasury-alert fired "oracle unavailable / below_threshold" every 5
+ * minutes. Reproduced live on arkova-worker-fullsoak-2026-08-staging against
+ * an address holding ~749k sats that the anchoring path was spending from.
+ *
+ * The map lives here so "which base for this network" has ONE answer.
+ *
+ * NOTE for consumers: these bases are correct for address-, block-, tx- and
+ * fee-scoped endpoints, which are all per-network. They are NOT correct for
+ * `/v1/prices` — see {@link mempoolApiBaseForNetwork}.
+ */
+export const MEMPOOL_API_BASES: Record<string, string> = {
+  signet: 'https://mempool.space/signet/api',
+  testnet4: 'https://mempool.space/testnet4/api',
+  testnet: 'https://mempool.space/testnet/api',
+  mainnet: 'https://mempool.space/api',
+};
+
+/**
+ * The mempool.space REST base for a deployment's Bitcoin network, for
+ * endpoints whose answer is network-scoped (`/address/…`, `/tx/…`,
+ * `/blocks/…`, `/v1/fees/recommended`).
+ *
+ * Do NOT use this for `/v1/prices`. BTC/USD is a single global market quote,
+ * and the non-mainnet explorers do not serve it: they return `HTTP 200` with
+ * a `-1` sentinel for every currency rather than a 404. Routing the price
+ * fetch per-network would therefore store `-1`, and a negative price makes
+ * every USD-denominated balance negative — i.e. below every alert threshold.
+ * Price consumers pin {@link MEMPOOL_API_BASES}.mainnet and validate the
+ * value they get back.
+ *
+ * Falls back to mainnet for an unrecognised network, matching the existing
+ * `createUtxoProvider` behaviour. `config.bitcoinNetwork` is a 4-value zod
+ * enum, so that fallback is unreachable from real config.
+ */
+export function mempoolApiBaseForNetwork(network: string | undefined): string {
+  return MEMPOOL_API_BASES[network ?? 'mainnet'] ?? MEMPOOL_API_BASES.mainnet;
+}
+
+/**
  * Normalize an operator-supplied mempool.space-compatible base URL to a bare
  * host: no trailing `/api` segment, no trailing slash. Returns `undefined`
  * for an unset/empty value so callers can apply their own default.
