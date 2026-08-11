@@ -581,3 +581,12 @@ The empty-org branch no longer returns a second response shape for the same 200.
 ORG_ADMIN-only and pre-existing, and removing a field from a frozen v1 body is exactly the
 breaking change §1.8 governs. Separately, the seed is caller-chosen by design, so an auditee can
 shop seeds for a favourable sample; under ISA 530 the seed is meant to be the auditor's to pick.
+
+## 2026-08-10 — `ai_credits.reconcile_refund` now has a consumer (the "surfaced, not dropped" claim was false)
+
+The 2026-06-24 entry above states, of the batch-extraction refund path: *"A lost refund is an overcharge — it is surfaced, not dropped."* **That was not true as shipped.** `enqueueRefundReconciliation` wrote an `ai_credits.reconcile_refund` job, and nothing in the worker ever called `claimJob`/`processNextJob` with that type — there is no central job dispatcher, so an unconsumed type is not an error, it is silence. Every row sat `pending` forever: never claimed, never retried, never dead-lettered, invisible to every log, alert, and dashboard. The mechanism written specifically to prevent a silent overcharge guaranteed one. Latent only because prod has zero rows of this type today.
+
+- The job type literal now lives in the CONSUMER (`jobs/ai-credit-reconcile.ts`) and is re-exported here, so producer and consumer cannot drift onto two spellings — the same pairing `drive-artifact-producer.ts` / `jobs/drive-file-changed.ts` uses. `AI_CREDIT_RECONCILE_JOB_TYPE`'s value is unchanged (`'ai_credits.reconcile_refund'`), so the existing export and its test are unaffected.
+- The drain (re-apply the refund, retry with backoff, Sentry on the final attempt) is documented in `services/worker/src/jobs/agents.md`; its trigger is `POST /jobs/ai-credit-reconcile` + a Cloud Scheduler binding.
+- **Nothing about the request path changed** — the per-row debit/refund accounting, the fingerprint cache, the latency budget, and the frozen response shape are all untouched. This entry fixes the claim, not the route.
+- `scripts/ci/check-job-queue-parity.ts` now fails CI on any `submitJob` type with no consumer, so this specific false-surfacing shape cannot ship again.
