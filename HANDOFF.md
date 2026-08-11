@@ -23,28 +23,45 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 - Worker `git_sha 18d33efcfb5366d121baf77f132fad545bf1f3cb` (short `18d33efcf`); deploy-worker run
   succeeded 2026-08-03T02:49Z (canary→full), `/health` verified live: `status: healthy`,
   `database/anchoring/kms: ok`.
-- **Migration ledger is NOT fully reconciled (supersedes the 2026-08-03 `exemptPrefixes is []` claim
-  in this bullet).** As of **2026-08-11**, `scripts/ci/snapshots/ledger-numeric-exemptions.json`
-  `exemptPrefixes` is **`["0401", "0402", "0405"]`** — read from `origin/main` after PR
-  [#2136](https://github.com/carson-see/ArkovaCarson/pull/2136) merged, not assumed. Prod ledger head
-  is `0405`; `0401_fix_create_pending_recipient_rpc_fk_and_role` and `0402_retire_activate_user_rpc`
-  are present in prod with numeric versions — **verified this session via Supabase MCP
-  `list_migrations` on `vzwyaatejekddvltxyye`**, not inferred from PR prose.
+- **Migration ledger is NOT fully reconciled — supersedes the 2026-08-03 `exemptPrefixes is []` claim
+  that previously occupied this bullet.** _(Sub-block dated **2026-08-11**; the block header above is
+  as-of 2026-08-03 and its other claims were NOT re-verified on the 11th.)_
+
+  **Do not read a prefix list out of this bullet — it goes stale within hours.** The authoritative
+  set is `exemptPrefixes` in
+  [`scripts/ci/snapshots/ledger-numeric-exemptions.json`](scripts/ci/snapshots/ledger-numeric-exemptions.json)
+  on `main`; the authoritative prod ledger is the `list_migrations` MCP tool against
+  `vzwyaatejekddvltxyye`. On 2026-08-11 that pair moved four times in one afternoon
+  (`[]` → `0401,0402,0405` → `+0406,0407` → `0405,0406`), which is exactly why this bullet now
+  records the **invariant and the mechanism** rather than a snapshot of the values.
+
+  **The invariant:** a prefix belongs in `exemptPrefixes` if and only if it is present in the prod
+  ledger AND its source `.sql` is absent from `main`. Present in both = stale, and a stale exemption
+  is worse than none because it masks a future real drift on that prefix.
   - **Why it drifted:** `0401`/`0402` were applied to prod ahead of their owning PRs (migrate-before-
     merge), which put the `Check supabase/migrations vs prod` gate into a **mutual deadlock** that
     reddened *every* open PR at once, including PRs touching no migrations. #2047 carries `0401` so
     only `0402` fired on it; #2062 carries `0402` so only `0401` fired on it. Each PR fixed its own
     orphan and was held red by the other, so neither could merge and neither file could reach `main`.
-    "Merge the owning PR" was therefore not reachable from that state.
-  - **Fix:** #2136 exempted both prefixes (the in-flight enabler, not a substitute for landing the
-    source) and dropped the now-stale `0404` — `0404_dpa_redact_raw_querying_ip_and_correct_ip_hash_
-    comment.sql` is on `main` via #2068, so its exemption was masking future drift on that prefix.
-    Gate confirmed green post-merge on fresh runs (queue branches + `claude/frosty-colden-9799e7` +
-    dependabot PR, GH Actions workflow `migration-drift.yml`, 2026-08-11 ~16:41–16:44Z).
-  - **Open follow-up — do not let these rot:** remove `0401` when [#2047](https://github.com/carson-see/ArkovaCarson/pull/2047)
-    merges and lands `0401_*.sql`; remove `0402` when [#2062](https://github.com/carson-see/ArkovaCarson/pull/2062)
-    merges; remove `0405` when [#2081](https://github.com/carson-see/ArkovaCarson/pull/2081) merges.
-    A stale exemption is worse than no exemption — it masks a real future drift on that prefix.
+    "Merge the owning PR" — the gate's own first remedy — was therefore not reachable from that state,
+    and exempting both (#2136) was the only exit.
+  - **Resolution:** #2047 landed `0401_*.sql`, #2062 landed `0402_*.sql`, #2134 landed `0407_*.sql`,
+    so all three reconciled and #2177 removes them. #2136 had also dropped a stale `0404`, whose
+    source reached `main` via #2068. Gate confirmed green post-merge on fresh runs (queue branches,
+    `claude/frosty-colden-9799e7`, dependabot PR; workflow `migration-drift.yml`, 2026-08-11
+    ~16:41–16:44Z).
+  - **Known gap (not yet fixed):** the audit cannot detect a stale exemption on its own —
+    `scripts/ci/check-ledger-numeric-integrity.ts` short-circuits on `exemptPrefixes.has(version)`
+    *before* it checks `localPrefixes`, so a reconciled-but-still-exempt prefix is skipped silently
+    and forever. Every stale entry so far (`0404`, then `0401`/`0407`, and 15 more on 2026-08-02) was
+    caught by a human. Until that check is inverted, removal is a manual discipline.
+  - **Open follow-up — do not let these rot.** Still legitimately exempt as of 2026-08-11:
+    `0405` (owning PR [#2081](https://github.com/carson-see/ArkovaCarson/pull/2081)) and `0406`
+    (branch `feat/proof-coverage-permanent-fix`) — both in the prod ledger, neither source on `main`.
+    Remove each the moment its owning PR merges. **Re-derive this list from the invariant above
+    rather than trusting these two entries** — the previous version of this bullet listed only
+    `0401`/`0402`/`0405` and silently omitted `0406`/`0407`, which #2174 had added the same day; a
+    checklist that omits an entry is worse than none, because it terminates the search.
 - Migrations applied to prod and reconciled today (2026-08-02/03): `0382`, `0383`, `0384`, `0385`,
   `0386`, `0387`, `0388`, `0389`, `0390`, `0391`, `0392` — all verified live via `pg_get_functiondef` /
   `pg_index` / direct query at apply time; see the exemption file's `_comment` history for the per-row
