@@ -224,7 +224,12 @@ row it merely reads, so a stale row or a future writer cannot poison it.
 Unchanged and still correct: the wallet leg's `createUtxoProvider({ network: config.bitcoinNetwork })`
 was always per-network.
 
-**Known gap, not fixed here:** the fee leg calls `createFeeEstimator()` without a network, and
-`chain/fee-estimator.ts`'s `DEFAULT_MEMPOOL_URL` is the mainnet base — so a non-mainnet deployment
-reports MAINNET fee rates. Same defect class, but the fix lands in `services/worker/src/chain/`,
-which the path detector rates T3. Tracked separately rather than folded into a T2 PR.
+**~~Known gap, not fixed here:~~ CLOSED 2026-08-11 (BUG-2026-08-11, T3 follow-up PR).** The fee leg
+called `createFeeEstimator()` without a network, and `chain/fee-estimator.ts`'s
+`DEFAULT_MEMPOOL_URL` was the mainnet base — so a non-mainnet deployment reported MAINNET fee
+rates. The factory now takes `network?`, and this endpoint passes `network: config.bitcoinNetwork`.
+Both legs of the treasury status response are per-network again.
+
+Rule for this folder: **any `create*` factory that builds a mempool.space URL must be handed
+`config.bitcoinNetwork` explicitly.** The two defects here — the wallet leg's balance bug and the
+fee leg's rate bug — were both "call site omitted the network, factory defaulted to something".
