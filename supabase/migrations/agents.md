@@ -442,3 +442,30 @@ Numeric head at authoring time is `0378` (PROD-APPLIED, per the row above — "n
 | `0379` | `fix/f3-submitted-null-txid-recovery` (this PR) | F-3 (docs/staging/SOAK-FINDINGS-2026-08.md) | `0379_f3_recover_submitted_null_txid.sql` | RESERVED — pre-soak, file-only, NOT applied to prod/rig. T3 (touches `supabase/migrations/`, anchor lifecycle recovery path). Consumes the `0379` numeric slot next-free per the `0378` entry above ("Numeric ledger head is now 0378 — next migration author claims `0379`"). |
 
 - **0379_f3_recover_submitted_null_txid.sql** (FILE-ONLY / PRE-SOAK / NOT APPLIED): `CREATE OR REPLACE` of `recover_stuck_broadcasts()` (0358's definition) widening its WHERE clause from `status = 'BROADCASTING'` to `status IN ('BROADCASTING', 'SUBMITTED')`, keeping every existing guard identical for both branches: `chain_tx_id IS NULL`, `deleted_at IS NULL`, the SCRUM-2692 `anchor_txid_journal` PENDING/HELD protection, and `FOR UPDATE SKIP LOCKED`. Fixes F-3: a `SUBMITTED` anchor with a NULL `chain_tx_id` had structurally no recovery path (every scheduled job's WHERE clause skipped it), proven live during the launch-72h-2026-08 soak (fixture `5eed0000-...-c1` sat unrecovered for days). `RETURNS TABLE` shape deliberately unchanged (a bare `CREATE OR REPLACE` cannot alter OUT-parameter row type without `DROP FUNCTION` first — kept the diff minimal instead); per-row branch provenance is stamped into `anchors.metadata->>'_recovered_from_status'` on every recovered row instead. `legal_hold` deliberately not checked (matches the pre-existing BROADCASTING branch — legal hold blocks delete/revoke/supersede, not re-queuing a broadcast that never happened). Forward → rollback → verify (bug reproduces) → re-apply rehearsed clean against a local Postgres stack. Worker-side `services/worker/src/jobs/broadcast-recovery.ts` `manualRecovery()` JS fallback (used only when the RPC itself is unavailable) extended in parallel with per-row previous-status tracking so a mixed BROADCASTING+SUBMITTED cohort is never cross-tagged or cross-filtered.
+
+## Recent migrations (PR #2130)
+
+- **`0406_proof_coverage_window_and_reconstruction_classes.sql`** — adds the
+  bounded `public.proof_coverage_window(integer)` RPC + the reconstruction
+  outcome vocabulary on `anchor_proofs.proof_completeness_class`.
+
+  **Grant gotcha, read this before writing another SECURITY DEFINER function.**
+  `REVOKE ALL ... FROM PUBLIC` does **not** make a function service_role-only on
+  Supabase. `ALTER DEFAULT PRIVILEGES` grants `anon` and `authenticated` EXECUTE
+  **directly** at CREATE time, and revoking `PUBLIC` never removes a direct role
+  grant. 0406 shipped with only the PUBLIC revoke and the post-apply prod ACL was
+  `{postgres=X,anon=X,authenticated=X,service_role=X}` — a SECURITY DEFINER
+  function that bypasses RLS, callable by `anon` over PostgREST. Revoked in prod
+  2026-08-11; live ACL is now `{postgres=X,service_role=X}`.
+
+  Always write, adjacent to the definition (CREATE OR REPLACE re-triggers default
+  privileges on every replay):
+
+  ```sql
+  REVOKE ALL ON FUNCTION public.fn(args) FROM PUBLIC, anon, authenticated;
+  GRANT EXECUTE ON FUNCTION public.fn(args) TO service_role;
+  ```
+
+  Fifth occurrence of the class (0364, 0377, 0378, 0388, 0406), so it is now a
+  detector rather than a review habit: `scripts/ci/feedback-rules/secdef-function-grants.ts`
+  (ratchet + burn-down baseline) and `src/tests/sec-0406-proof-coverage-window-revoke.test.ts`.

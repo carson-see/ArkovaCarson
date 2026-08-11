@@ -19,6 +19,7 @@
 --
 -- ROLLBACK:
 --   DROP FUNCTION IF EXISTS public.proof_coverage_window(integer);
+--   -- (dropping the function removes its ACL with it; no separate grant revert)
 --   -- the comment below is metadata only; to fully revert:
 --   COMMENT ON COLUMN public.anchor_proofs.proof_completeness_class IS NULL;
 
@@ -53,7 +54,19 @@ COMMENT ON FUNCTION public.proof_coverage_window(integer) IS
   'Deliberately window-bounded: lifetime coverage is dominated by the known pre-2026-08 '
   'backlog and would keep the coverage alarm permanently red.';
 
-REVOKE ALL ON FUNCTION public.proof_coverage_window(integer) FROM PUBLIC;
+-- service_role ONLY.
+--
+-- `FROM PUBLIC` alone is NOT sufficient on Supabase. ALTER DEFAULT PRIVILEGES
+-- grants anon and authenticated EXECUTE *directly* at CREATE time, and a revoke
+-- from PUBLIC never removes a direct role grant. Naming the roles is what
+-- actually closes it. This function is SECURITY DEFINER and bypasses RLS, so an
+-- anon-reachable grant would expose whole-table counts over PostgREST to the
+-- internet. CREATE OR REPLACE above re-triggers default privileges on EVERY
+-- replay, so these REVOKEs must stay adjacent to the definition.
+--
+-- Guarded by src/tests/sec-0406-proof-coverage-window-revoke.test.ts and, as a
+-- repo-wide ratchet, scripts/ci/feedback-rules/secdef-function-grants.ts.
+REVOKE ALL ON FUNCTION public.proof_coverage_window(integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.proof_coverage_window(integer) TO service_role;
 
 -- ---------------------------------------------------------------------------
@@ -92,3 +105,12 @@ COMMENT ON COLUMN public.anchor_proofs.proof_completeness_class IS
   'unreconstructible_no_root | rejected_stored_branch. '
   'unreconstructible_* is a TERMINAL, truthful state: the record cannot be verified offline. '
   'It must be surfaced to the caller, never presented as a pending or transient condition.';
+
+-- ---------------------------------------------------------------------------
+-- 3. Reload the PostgREST schema cache
+-- ---------------------------------------------------------------------------
+--
+-- The worker calls this through PostgREST (db.rpc('proof_coverage_window') in
+-- services/worker/src/routes/cron.ts), so a fresh replay must reload the cache
+-- or the RPC 404s until the next reload.
+NOTIFY pgrst, 'reload schema';
