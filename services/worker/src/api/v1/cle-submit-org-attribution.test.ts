@@ -79,7 +79,16 @@ vi.mock('../../utils/db.js', () => {
   }
 
   return {
-    db: { from: vi.fn((table: string) => (table === 'profiles' ? profilesQuery() : anchorsQuery())) },
+    // Route by EXACT table name and throw on anything unexpected, so a regression
+    // that inserts into the wrong table (e.g. 'anchor') can't be absorbed by a
+    // catch-all that still records the payload and passes every assertion.
+    db: {
+      from: vi.fn((table: string) => {
+        if (table === 'profiles') return profilesQuery();
+        if (table === 'anchors') return anchorsQuery();
+        throw new Error(`unexpected table in mock: ${table}`);
+      }),
+    },
   };
 });
 
@@ -150,6 +159,25 @@ describe('POST /cle/submit — anchor org attribution', () => {
 
     expect(state.insertedPayload).toHaveProperty('org_id', 'org-dashboard-9');
     expect(state.insertedPayload).toHaveProperty('user_id', 'user-jwt-1');
+  });
+
+  it('with both a JWT and an API key present, resolves org from the JWT principal, not the key', async () => {
+    // A single request can carry BOTH credentials (apiKeyAuth attaches req.apiKey
+    // from X-API-Key regardless of the JWT). user_id comes from the JWT, so org_id
+    // MUST come from the JWT user's profile — using the unrelated key's org would
+    // cross-attribute the row and expose it to the key's org via anchors_select.
+    state.profileRow = { org_id: 'org-jwt-A' };
+
+    await request(createApp({ orgId: 'org-key-B', userId: 'user-key-svc' }))
+      .post('/api/v1/cle/submit')
+      .set('Authorization', 'Bearer jwt-test')
+      .send(VALID_SUBMISSION)
+      .expect(201);
+
+    expect(state.insertedPayload).toHaveProperty('user_id', 'user-jwt-1');
+    expect(state.insertedPayload).toHaveProperty('org_id', 'org-jwt-A');
+    // The key's org must never land on a JWT-authenticated row.
+    expect(state.insertedPayload).not.toMatchObject({ org_id: 'org-key-B' });
   });
 
   it('records a null org for an individual attorney with no org, and still anchors', async () => {

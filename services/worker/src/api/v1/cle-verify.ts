@@ -330,11 +330,18 @@ router.get('/credits', async (req: Request, res: Response) => {
 // ─── POST /cle/submit — Submit CLE completion for anchoring ─────────────────
 
 /**
- * Organisation to attribute the created anchor to.
+ * Organisation to attribute the created anchor to — ALWAYS the same principal
+ * whose id became `user_id`, never a different one.
  *
- * An API key carries its org directly (`apiKeyAuth` populates it from
- * `api_keys.org_id`); a dashboard JWT does not, so the caller's `profiles` row
- * is read via the canonical `_org-auth` helper.
+ * `usedApiKey` (not merely `req.apiKey` being set) chooses the source. A single
+ * request can carry BOTH a JWT `Authorization` header AND an `X-API-Key`
+ * (`apiKeyAuth` attaches `req.apiKey` from the key regardless of the JWT). In
+ * that case the handler takes `user_id` from the JWT, so the org MUST come from
+ * that JWT user's `profiles` row — using the unrelated key's org here would
+ * stamp `user_id` and `org_id` from different principals, and `anchors_select`
+ * (`org_id = get_user_org_id()`) would then expose the JWT user's submission
+ * (bar number, attorney name) to the key's org. Resolving org from the same
+ * principal that produced `user_id` is the whole point.
  *
  * WHY `profiles.org_id` AND NOT the `org_members` fallback used by
  * `compliance/auth-helpers.ts`: the `anchors_select` RLS policy's org branch is
@@ -352,25 +359,30 @@ router.get('/credits', async (req: Request, res: Response) => {
 async function resolveSubmitOrgId(
   req: Request,
   userId: string,
+  usedApiKey: boolean,
   res: Response,
 ): Promise<{ ok: true; orgId: string | null } | { ok: false }> {
-  if (req.apiKey) return { ok: true, orgId: req.apiKey.orgId ?? null };
+  if (usedApiKey && req.apiKey) return { ok: true, orgId: req.apiKey.orgId ?? null };
 
+  // getCallerOrgIdResult returns { value, error }; postgrest-js resolves fetch
+  // faults into `error` rather than throwing (throwOnError is unset worker-wide),
+  // so `result.error` — not an exception — is the fail-closed signal. The
+  // try/catch is one-line defence-in-depth against an unexpected escaped throw.
   let orgId: string | null = null;
-  let failed: string | null;
+  let failed: boolean;
   try {
-    // postgrest-js RESOLVES most failures into `error`, but a transport-level
-    // fault still throws — both have to reach the same fail-closed branch.
     const result = await getCallerOrgIdResult(userId);
     orgId = result.value;
-    failed = result.error ? 'lookup_error' : null;
-  } catch (err) {
-    failed = err instanceof Error ? err.name : 'unknown';
+    failed = result.error;
+  } catch {
+    failed = true;
   }
 
   if (failed) {
-    // Reason only — never the message, which can echo the submission back.
-    logger.error({ reason: failed }, 'cle-submit: org lookup failed, failing closed');
+    // Fixed reason token only — never the Supabase error/message, which can
+    // carry row context. (`_org-auth` logs the detail at warn; this is the
+    // caller-facing fail-closed line.)
+    logger.error({ scope: 'cle-submit' }, 'org lookup failed, failing closed');
     res.status(503).json({
       error: 'org_attribution_unavailable',
       message: 'Could not confirm your organization. No record was created. Please retry.',
@@ -382,15 +394,19 @@ async function resolveSubmitOrgId(
 }
 
 router.post('/submit', async (req: Request, res: Response) => {
-  // Requires authentication (JWT or API key)
+  // Requires authentication (JWT or API key). Track WHICH principal produced
+  // userId: a request can carry both a JWT and an X-API-Key, and org must be
+  // resolved from the same principal (see resolveSubmitOrgId).
   const authHeader = req.headers.authorization;
   let userId: string | null = null;
+  let usedApiKey = false;
 
   if (authHeader?.startsWith('Bearer ') && !authHeader.startsWith('Bearer ak_')) {
     const token = authHeader.slice(7);
     userId = await verifyAuthToken(token, config, logger);
   } else if (req.apiKey) {
     userId = req.apiKey.userId ?? null;
+    usedApiKey = true;
   }
 
   if (!userId) {
@@ -407,7 +423,7 @@ router.post('/submit', async (req: Request, res: Response) => {
   const data = parsed.data;
 
   // Resolve BEFORE the insert: a failure here must prevent the row, not follow it.
-  const orgLookup = await resolveSubmitOrgId(req, userId, res);
+  const orgLookup = await resolveSubmitOrgId(req, userId, usedApiKey, res);
   if (!orgLookup.ok) return;
 
   try {

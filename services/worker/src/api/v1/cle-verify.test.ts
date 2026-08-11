@@ -361,7 +361,11 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
     expect(payload).not.toContain('anchor-internal-submit');
     expect(payload).not.toContain('BAR-123');
     expect(payload).not.toContain('Ada Counsel');
+    // The resolved org id is now an internal value flowing through the handler
+    // (mock profiles.org_id) — pin that it never reaches the response body.
+    expect(payload).not.toContain('org-cle-1');
     expect(res.body).not.toHaveProperty('id');
+    expect(res.body).not.toHaveProperty('org_id');
     expect(res.body.credit).not.toHaveProperty('bar_number');
 
     expect(mockLoggerInfo).toHaveBeenCalledTimes(1);
@@ -370,6 +374,7 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
     expect(logPayload).not.toContain('Ada Counsel');
     expect(logPayload).not.toContain('anchor-internal-submit');
     expect(logPayload).not.toContain('anchor_id');
+    expect(logPayload).not.toContain('org-cle-1');
 
     expect(String(mockTables.insertedPayload?.filename)).toMatch(
       /^CLE_[A-Za-z0-9_-]+_\d{4}-\d{2}-\d{2}_[a-f0-9]{12}\.json$/,

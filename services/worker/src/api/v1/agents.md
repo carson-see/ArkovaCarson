@@ -54,11 +54,28 @@ purely forward-looking. The `as any` casts on `credential_type` in this file are
 Do NOT read the surviving `org_id IS NULL` anchors in prod as this bug's residue — they are
 individual-user records from other routes, where null is the correct value.
 
-**Known, NOT fixed here (flagged separately):** this route also never writes `anchor_recipients`,
-so a CLE submission cannot appear in `/my-credentials` — structurally the same gap the
-`registry-anchor` entry below describes. Left out because the recipient here is genuinely ambiguous:
-the attorney is identified by `bar_number` and is often *not* the API caller, so linking the caller
-as recipient may be wrong. That needs a product answer, not a mechanical fix.
+**Org is resolved from the SAME principal that produced `user_id`, not merely `req.apiKey`.** A
+request can carry both a JWT `Authorization` header and an `X-API-Key` (`apiKeyAuth` attaches
+`req.apiKey` regardless of the JWT). The handler takes `user_id` from the JWT in that case, so
+`resolveSubmitOrgId` is passed a `usedApiKey` flag and reads the JWT user's `profiles.org_id` —
+using the unrelated key's org would stamp `user_id` and `org_id` from different principals and
+expose the JWT user's submission (bar number, attorney name) to the key's org via `anchors_select`.
+Regression-pinned by the "both a JWT and an API key" case in `cle-submit-org-attribution.test.ts`.
+
+**Known, NOT fixed here (each needs a decision, not a mechanical change) — surfaced by the
+multi-agent review of this PR:**
+- **`anchor_recipients` is never written**, so a CLE submission cannot appear in `/my-credentials`
+  — structurally the same gap the `registry-anchor` entry below describes. The recipient here is
+  genuinely ambiguous: the attorney is identified by `bar_number` and is often *not* the API caller.
+- **This route enforces none of the org create-gates its siblings do** (`anchor-submit.ts`): no
+  `requireScope('anchor:write')`, no per-org create quota, no sandbox `anchor_quota` 402. Inert
+  while rows were org-null; now that they carry `org_id`, a read-scope key or a quota-exhausted
+  sandbox org can mint org-attributed anchors that bypass those gates. Adding the gates is a
+  product/scope call (should CLE submission require `anchor:write`?), deliberately not done here.
+- **Org-scoped drains now claim these rows** (`claim_pending_anchors(p_org_id)` has no
+  `credential_type` filter) and **org webhook endpoints now receive `credential_type:'CLE'` events**
+  — both previously impossible for org-null rows. Arguably the correct consequence of attribution,
+  but a behavior change for org integrations, so flagged rather than silently shipped.
 
 ## 2026-08-10 — raw caller IPs were persisted into `audit_events` (DPA defect, FIXED)
 
