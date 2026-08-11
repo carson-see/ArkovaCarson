@@ -4,6 +4,7 @@ import {
   auditLedgerRows,
   auditLedgerVsRepo,
   auditLocalFiles,
+  auditStaleExemptions,
   parseLedgerPayload,
   type LedgerRow,
 } from './check-ledger-numeric-integrity.ts';
@@ -173,6 +174,71 @@ describe('auditLedgerVsRepo — prod-ahead-of-repo orphan rows (0347 incident, 2
   it('matches a lettered-suffix repo file (0055b_) against a 0055_ ledger prefix', () => {
     const rows: LedgerRow[] = [{ version: '0055', name: '0055_seed_alignment' }];
     expect(auditLedgerVsRepo(rows, [BASELINE, '0055b_seed_alignment_idempotent.sql'])).toEqual([]);
+  });
+});
+
+describe('auditStaleExemptions — exemptions that outlived their purpose (2026-08-11)', () => {
+  const BASE_ROWS: LedgerRow[] = [
+    { version: '0405', name: '0405_org_field_policies_dpa_clause_4_6' },
+    { version: '0406', name: '0406_proof_coverage_window_and_reconstruction_classes' },
+  ];
+
+  it('returns nothing when there are no exemptions at all', () => {
+    expect(auditStaleExemptions(BASE_ROWS, [BASELINE, '0406_x.sql'], new Set())).toEqual([]);
+  });
+
+  it('stays silent on a LEGITIMATE exemption — in prod, source not yet on main', () => {
+    // 0405 is in the ledger but its .sql has not landed; this is the whole point
+    // of an exemption and must never be reported.
+    const files = [BASELINE, '0406_proof_coverage_window_and_reconstruction_classes.sql'];
+    expect(auditStaleExemptions(BASE_ROWS, files, new Set(['0405']))).toEqual([]);
+  });
+
+  it('FLAGS a reconciled exemption — in prod AND on main (the 0406 shape, stale within minutes)', () => {
+    const files = [BASELINE, '0406_proof_coverage_window_and_reconstruction_classes.sql'];
+    const v = auditStaleExemptions(BASE_ROWS, files, new Set(['0405', '0406']));
+    expect(v).toHaveLength(1);
+    expect(v[0].code).toBe('ledger-stale-exemption');
+    expect(v[0].message).toContain('0406');
+    expect(v[0].message).not.toContain('0405'); // the legitimate one is untouched
+  });
+
+  it('does NOT flag an exempt prefix that is absent from the prod ledger', () => {
+    // Exempt + on main + never applied to prod is a different kind of dead entry;
+    // reporting it here would state a false reason ("present in the prod ledger").
+    const files = [BASELINE, '0999_never_applied.sql'];
+    expect(auditStaleExemptions(BASE_ROWS, files, new Set(['0999']))).toEqual([]);
+  });
+
+  it('matches a lettered local variant (0055b_) against its numeric exemption', () => {
+    const rows: LedgerRow[] = [{ version: '0055', name: '0055_seed' }];
+    const v = auditStaleExemptions(rows, [BASELINE, '0055b_seed_alignment_idempotent.sql'], new Set(['0055']));
+    expect(v).toHaveLength(1);
+  });
+
+  it('ignores the Path-C baseline file so it can never self-report', () => {
+    const rows: LedgerRow[] = [{ version: '0000', name: 'baseline' }];
+    expect(auditStaleExemptions(rows, [BASELINE], new Set(['0000']))).toEqual([]);
+  });
+
+  it('reports deterministically sorted output for a stable diff', () => {
+    const rows: LedgerRow[] = [
+      { version: '0401', name: '0401_a' },
+      { version: '0402', name: '0402_b' },
+      { version: '0407', name: '0407_c' },
+    ];
+    const files = [BASELINE, '0407_c.sql', '0401_a.sql', '0402_b.sql'];
+    const v = auditStaleExemptions(rows, files, new Set(['0407', '0401', '0402']));
+    expect(v.map((x) => x.message.slice(0, 4))).toEqual(['0401', '0402', '0407']);
+  });
+
+  it('is invisible to auditLedgerVsRepo — a stale exemption must not become an orphan error', () => {
+    // Guards the warn-only contract at the unit level: the same input that
+    // produces a stale-exemption warning must produce ZERO blocking violations.
+    const files = [BASELINE, '0406_proof_coverage_window_and_reconstruction_classes.sql'];
+    const exempt = new Set(['0405', '0406']);
+    expect(auditStaleExemptions(BASE_ROWS, files, exempt)).toHaveLength(1);
+    expect(auditLedgerVsRepo(BASE_ROWS, files, exempt)).toEqual([]);
   });
 });
 
