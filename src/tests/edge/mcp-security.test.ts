@@ -32,7 +32,7 @@ declare global {
 
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { Buffer } from 'node:buffer';
-import { webcrypto } from 'node:crypto';
+import { webcrypto, createHash, createHmac } from 'node:crypto';
 
 // Polyfill globalThis.crypto.subtle for Node test environment
 // (Cloudflare Workers provide this natively at runtime)
@@ -250,11 +250,22 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     vi.restoreAllMocks();
   });
 
-  function makeEnv(): Env {
+  const IP_PEPPER = 'test-edge-ip-pepper-0123456789ab';
+
+  function makeEnv(overrides: Partial<Env> = {}): Env {
     return {
       SUPABASE_URL: 'https://stub.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+      MCP_IP_HASH_PEPPER: IP_PEPPER,
+      ...overrides,
     } as unknown as Env;
+  }
+
+  /** Parse the `details` blob out of the single audit POST the mock captured. */
+  function capturedDetails(fetchMock: ReturnType<typeof vi.fn>): Record<string, unknown> {
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    return JSON.parse(body.details) as Record<string, unknown>;
   }
 
   it('posts a MCP_TOOL_CALL event with hashed args + hashed ip', async () => {
@@ -310,6 +321,65 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
 
     expect(err).toHaveBeenCalled();
     err.mockRestore();
+    globalThis.fetch = origFetch;
+  });
+
+  // ---- DPA: "hashed IP addresses" must mean KEYED, not bare sha256 ----
+  //
+  // The edge audit log hashed IPs from day one, but with an unsalted
+  // SHA-256. The whole IPv4 space is ~4.3e9 addresses, so that digest is a
+  // rainbow-table lookup away from the raw address — it is an encoding, not a
+  // pseudonymisation control, and does not back the DPA warranty.
+
+  it('ip_hash is a KEYED digest, not the bare sha256 an attacker precomputes', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 201 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await logMcpToolCall(makeEnv(), {
+      apiKeyId: 'ak-1',
+      userId: 'u-1',
+      toolName: 'verify_credential',
+      argsJson: '{}',
+      outcome: 'success',
+      latencyMs: 1,
+      clientIp: '203.0.113.7',
+    });
+
+    const details = capturedDetails(fetchMock);
+    expect(details.ip_hash).toBe(
+      createHmac('sha256', IP_PEPPER).update('203.0.113.7', 'utf8').digest('hex'),
+    );
+    expect(details.ip_hash).not.toBe(
+      createHash('sha256').update('203.0.113.7', 'utf8').digest('hex'),
+    );
+
+    globalThis.fetch = origFetch;
+  });
+
+  it('records null rather than an enumerable bare sha256 when the pepper is unset', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => new Response(null, { status: 201 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await logMcpToolCall(makeEnv({ MCP_IP_HASH_PEPPER: undefined }), {
+      apiKeyId: 'ak-1',
+      userId: 'u-1',
+      toolName: 'verify_credential',
+      argsJson: '{}',
+      outcome: 'success',
+      latencyMs: 1,
+      clientIp: '203.0.113.7',
+    });
+
+    const details = capturedDetails(fetchMock);
+    expect(details.ip_hash).toBeNull();
+    expect(details.ip_hash).not.toBe(
+      createHash('sha256').update('203.0.113.7', 'utf8').digest('hex'),
+    );
+    // and never the raw address
+    expect(JSON.stringify(details)).not.toContain('203.0.113.7');
+
+    warn.mockRestore();
     globalThis.fetch = origFetch;
   });
 

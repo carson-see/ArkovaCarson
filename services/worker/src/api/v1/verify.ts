@@ -36,6 +36,7 @@ import { isEducationCredentialType } from '../../ctdl/ctdl-pii-guard.js';
 // drift the contract exists to prevent.
 import { publicFreeTextOrNull } from './public-projection-text.js';
 import { recordAuditEvent } from '../../utils/auditEvent.js';
+import { auditIpHash } from '../../lib/ip-hash.js';
 
 const router = Router();
 
@@ -575,7 +576,12 @@ function logVerificationAudit(
       verified: result.verified,
       status: result.status,
       credential_type: result.credential_type ?? null,
-      querying_ip: req.ip ?? null,
+      // NEVER the raw address. This is an anonymous public endpoint, so an
+      // IP-derived value is the only actor identifier available for
+      // enumeration/scraping investigation — but the DPA warrants hashed IPs,
+      // so it is a KEYED HMAC (bare sha256 of an IPv4 is brute-forceable over
+      // the whole address space). `null` when the pepper is unavailable.
+      querying_ip_hash: auditIpHash(req.ip, config.ipHashPepper),
       querying_agent: req.headers?.['user-agent']?.substring(0, 200) ?? null,
       api_key_id: (req as unknown as Record<string, unknown>).apiKeyId ?? null,
       ...(cacheHit && { cache_hit: true }),
