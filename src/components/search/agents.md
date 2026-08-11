@@ -14,7 +14,6 @@ Search and discovery components: semantic search, credential cards, issuer profi
 - `SemanticSearch.tsx` — Natural language search across org credentials using AI embeddings. `SemanticSearch` is presentational; `SemanticSearchPanel` is the flag-gated mount (use the panel on pages)
 - `CredentialCard.tsx` — Displays a credential in an issuer's public registry (type, filename, date, verify link)
 - `IssuerCard.tsx` — Issuer profile card in search results
-- `NessieIntelligencePanel.tsx` — Nessie compliance intelligence: task-type selector, confidence decomposition, risks/recommendations, verified citations
 - `index.ts` — Barrel exports
 
 ## Dependencies
@@ -29,6 +28,23 @@ Search and discovery components: semantic search, credential cards, issuer profi
 - DO: Show match strength as a friendly percentage/label, never the raw similarity score
 - DON'T: Add a filters sidebar until SCRUM-1958 subtask-3 wires server-side filter params (no dead/fake controls)
 - DON'T: POST audit/usage events from the browser — the worker logs AI usage server-side (§1.6)
+- DON'T: add a Nessie surface to this folder. Nessie is OFF by founder directive; `src/lib/nessie-surfaces-offline.test.ts` fails on any non-test file under `src/` that mounts a `Nessie*` component
+
+## 2026-08-10 — `NessieIntelligencePanel.tsx` deleted
+
+The panel was mounted ungated at `ComplianceDashboardPage.tsx:760` on
+`/organization/compliance`, a route behind `AuthGuard` + `RouteGuard` only — so
+every authenticated customer could reach a query box for a service that is
+switched off, and a confidence percentage plus confidence-decomposition panel
+that SCRUM-2914 had ordered removed from the UI. `src/components/anchor/agents.md`
+claimed these surfaces were "unreachable because Nessie is off"; that claim was
+false and is corrected there.
+
+Deleted rather than left unrendered: an unmounted component with no flag gate is
+exactly what got re-mounted here, and the SCRUM-2914 directive means a revived
+copy would need its confidence UI rewritten anyway. `git log` holds it. Its
+`NESSIE_LABELS` copy keys went with it; only `INSIGHTS_*` survive, for
+`NessieInsights` in `components/anchor`.
 
 ## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
 
