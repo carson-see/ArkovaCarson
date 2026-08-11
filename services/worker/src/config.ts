@@ -218,6 +218,15 @@ const ConfigSchema = z.object({
    * logged. VALUE is Carson/RTE-provisioned in Secret Manager.
    */
   recipientIdentifierPepper: z.string().min(16).optional(),
+  /**
+   * Server pepper for keyed HMAC-SHA256 of caller IPs in audit logs
+   * (`audit_events.details.querying_ip_hash`). The DPA warrants "hashed IP
+   * addresses"; a bare sha256 of an IPv4 is enumerable over the whole ~4.3e9
+   * space, so only a KEYED digest earns that warranty. Never logged. VALUE is
+   * Carson/RTE-provisioned in Secret Manager + deploy-worker.yml — production
+   * refuses to boot without it (see the superRefine guard below).
+   */
+  ipHashPepper: z.string().min(16).optional(),
   /** CORS origins for /api/v1/* endpoints (comma-separated) */
   corsAllowedOrigins: z.string().optional(),
 
@@ -551,6 +560,22 @@ const ConfigSchema = z.object({
     });
   }
 
+  // DPA Schedules 1 + 2 warrant that caller IPs are processed in HASHED form.
+  // The public verify + CTDL audit writers pseudonymise `req.ip` with a keyed
+  // HMAC; without the pepper they degrade to recording NO caller identifier at
+  // all (never a raw IP, never an enumerable bare sha256). That degraded state
+  // is acceptable in dev but is a silently-missing security control in prod, so
+  // production fails at boot — same posture as API_KEY_HMAC_SECRET above.
+  if (cfg.nodeEnv === 'production' && !cfg.ipHashPepper) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'Production requires IP_HASH_PEPPER — audit-log IP pseudonymisation would be '
+        + 'unavailable and the DPA "hashed IP addresses" warranty unbacked without it',
+      path: ['ipHashPepper'],
+    });
+  }
+
   // SCRUM-534: frontendUrl defaults to http://localhost:5173 for dev convenience,
   // but that default would generate broken user-facing links (verify URLs, invite
   // emails, GRC evidence URLs) if it ever reached production. Require FRONTEND_URL
@@ -820,6 +845,7 @@ function loadConfig(): Config {
     disableInProcessAnchorCron: process.env.DISABLE_IN_PROCESS_ANCHOR_CRON,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
     recipientIdentifierPepper: process.env.RECIPIENT_IDENTIFIER_PEPPER,
+    ipHashPepper: process.env.IP_HASH_PEPPER,
     geminiApiKey: process.env.GEMINI_API_KEY,
     geminiModel: process.env.GEMINI_MODEL,
     geminiEmbeddingModel: process.env.GEMINI_EMBEDDING_MODEL,

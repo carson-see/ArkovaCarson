@@ -184,7 +184,24 @@ test.describe('Public Verification', () => {
         await expect(page.getByRole('heading', { name: statusCase.title })).toBeVisible({ timeout: 10000 });
         await expect(page.getByText(statusCase.badge, { exact: true }).first()).toBeVisible();
         await expect(page.getByText(statusCase.subtitle, { exact: true })).toBeVisible();
-        await expect(page.getByText(statusCase.filename)).toBeVisible();
+
+        // The public projection WITHHOLDS the uploaded filename here — this is
+        // the contract, not a rendering gap. 0385 suppresses issuer-authored
+        // free text for records the academic gate cannot positively classify as
+        // safe, and 0390 (SCRUM-3102) flipped that gate to FAIL CLOSED on an
+        // ABSENT credential_type: `is_academic_record_credential_type(NULL)` is
+        // now TRUE, so `filename` projects
+        // `academic_record_public_label(NULL)` — the controlled fallback label.
+        // `createTestAnchor` never sets credential_type, so EVERY fixture in
+        // this matrix is NULL-typed and must render the label, never the raw
+        // upload name (which in prod is frequently the learner's own name).
+        //
+        // Assert BOTH directions, matching the SECURED case above: the negative
+        // alone would pass on a blank card, and the positive alone would pass
+        // while the raw name still leaked somewhere else on the page.
+        await expect(page.getByText(PUBLIC_FALLBACK_FILENAME_LABEL).first()).toBeVisible();
+        await expect(page.getByText(statusCase.filename)).toHaveCount(0);
+
         await expect(page.getByText(`Verification ID: ${anchor.public_id}`)).toBeVisible();
 
         if (statusCase.showsProof) {
