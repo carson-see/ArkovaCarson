@@ -56,10 +56,17 @@ vi.mock('../../utils/db.js', () => {
       return query;
     });
     query.single = vi.fn(() => Promise.resolve({ data: mockTables.insertedAnchor, error: null }));
-    // `/cle/submit` resolves the caller's org from `profiles` to attribute the
-    // anchor row. Org attribution itself is covered by
-    // `cle-submit-org-attribution.test.ts`; here the org is simply present so
-    // the submit path reaches the sanitizer assertions this suite is about.
+    // Two `.maybeSingle()` readers sit on the `/cle/submit` path and they need
+    // DIFFERENT answers, so this double is table-aware rather than blanket-null:
+    //   - `profiles` MUST return a row. `resolveSubmitOrgId` feeds both the
+    //     clause 4.6 screen and the anchor's `org_id`, and it fails CLOSED (503)
+    //     on a lookup error — a blanket null here would 503 every submit and
+    //     these tests would never reach the sanitizer assertions they exist for.
+    //     Org attribution itself is covered by `cle-submit-org-attribution.test.ts`.
+    //   - `organization_field_policies` MUST return null — the default-permissive
+    //     state, so the DPA clause 4.6 guard (migration 0405) is a no-op here and
+    //     this suite keeps testing the sanitizer it was written for. Enforcement
+    //     is covered in `anchor-field-policy-routes.test.ts`.
     query.maybeSingle = vi.fn(() =>
       Promise.resolve({
         data: table === 'profiles' ? { org_id: 'org-cle-1', role: null, is_platform_admin: false } : null,

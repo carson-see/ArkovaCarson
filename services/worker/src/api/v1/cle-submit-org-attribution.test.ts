@@ -78,6 +78,22 @@ vi.mock('../../utils/db.js', () => {
     return q;
   }
 
+  /**
+   * DPA clause 4.6 field policy (`enforceOrgFieldPolicy`, migration 0405) runs
+   * on the same path, keyed on the org this suite is asserting. It resolves to
+   * NO row here — the default-permissive state — so the guard is a no-op and
+   * these tests keep measuring attribution rather than field rejection.
+   * Rejection itself is covered by `anchor-field-policy-routes.test.ts`.
+   */
+  function fieldPolicyQuery() {
+    const q: Record<string, unknown> = {};
+    const chain = () => q;
+    q.select = vi.fn(chain);
+    q.eq = vi.fn(chain);
+    q.maybeSingle = vi.fn(() => Promise.resolve({ data: null, error: null }));
+    return q;
+  }
+
   return {
     // Route by EXACT table name and throw on anything unexpected, so a regression
     // that inserts into the wrong table (e.g. 'anchor') can't be absorbed by a
@@ -86,6 +102,7 @@ vi.mock('../../utils/db.js', () => {
       from: vi.fn((table: string) => {
         if (table === 'profiles') return profilesQuery();
         if (table === 'anchors') return anchorsQuery();
+        if (table === 'organization_field_policies') return fieldPolicyQuery();
         throw new Error(`unexpected table in mock: ${table}`);
       }),
     },
@@ -220,7 +237,13 @@ describe('POST /cle/submit — anchor org attribution', () => {
       .expect(503);
 
     expect(state.insertedPayload).toBeNull();
-    expect(res.body.error).toBe('org_attribution_unavailable');
+    // Token is `field_policy_unavailable`, inherited from the clause 4.6 change
+    // that landed first and deliberately NOT renamed by this merge — one org
+    // lookup now gates both the field screen and attribution, and renaming a
+    // caller-visible error token is its own contract decision. The name
+    // under-describes the failure; the behaviour (503, no row) is what this
+    // test pins.
+    expect(res.body.error).toBe('field_policy_unavailable');
     // Never echo the caller's submission back in the failure body.
     expect(JSON.stringify(res.body)).not.toContain('BAR-123');
     expect(JSON.stringify(res.body)).not.toContain('Ada Counsel');

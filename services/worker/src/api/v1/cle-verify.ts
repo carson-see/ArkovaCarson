@@ -20,6 +20,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
+import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
 import { getCallerOrgIdResult } from '../_org-auth.js';
 
 const router = Router();
@@ -330,8 +331,12 @@ router.get('/credits', async (req: Request, res: Response) => {
 // ─── POST /cle/submit — Submit CLE completion for anchoring ─────────────────
 
 /**
- * Organisation to attribute the created anchor to — ALWAYS the same principal
- * whose id became `user_id`, never a different one.
+ * Organisation for this submission, serving TWO consumers that must agree:
+ * the clause 4.6 field policy applied to the request body, and the `org_id`
+ * stamped on the anchor row. One lookup, one answer — a request whose body is
+ * screened against org A must not create a row owned by org B.
+ *
+ * ALWAYS the same principal whose id became `user_id`, never a different one.
  *
  * `usedApiKey` (not merely `req.apiKey` being set) chooses the source. A single
  * request can carry BOTH a JWT `Authorization` header AND an `X-API-Key`
@@ -354,7 +359,16 @@ router.get('/credits', async (req: Request, res: Response) => {
  * organisation), so it cannot be used to signal failure: coercing a failed
  * lookup into `org_id: null` would persist an anchor its owning org can never
  * see and can never be billed for — a silent and permanent data-integrity
- * defect. A retryable 503 before any row is written is strictly better.
+ * defect. A retryable 503 before any row is written is strictly better. The
+ * same null-is-not-failure rule independently protects the field policy:
+ * `enforceOrgFieldPolicy` reads a null orgId as "unrestricted", so a failed
+ * lookup collapsed to null would be a silent policy bypass.
+ *
+ * NOTE ON THE ERROR TOKEN: `field_policy_unavailable` is inherited from the
+ * clause 4.6 change that landed first and is kept verbatim so this merge
+ * renames nothing caller-visible. It now under-describes its own scope — the
+ * same failure also blocks org attribution. Renaming it is a deliberate
+ * contract change, not a drive-by.
  */
 async function resolveSubmitOrgId(
   req: Request,
@@ -364,10 +378,15 @@ async function resolveSubmitOrgId(
 ): Promise<{ ok: true; orgId: string | null } | { ok: false }> {
   if (usedApiKey && req.apiKey) return { ok: true, orgId: req.apiKey.orgId ?? null };
 
-  // getCallerOrgIdResult returns { value, error }; postgrest-js resolves fetch
-  // faults into `error` rather than throwing (throwOnError is unset worker-wide),
-  // so `result.error` — not an exception — is the fail-closed signal. The
-  // try/catch is one-line defence-in-depth against an unexpected escaped throw.
+  // `getCallerOrgIdResult` is the shared org-resolution helper and already draws
+  // the distinction both consumers depend on: `{ value: null, error: false }` is
+  // a caller who genuinely has no org, `{ value: null, error: true }` is a failed
+  // lookup. Collapsing those two into a bare null is exactly the silent bypass
+  // this function exists to prevent, so the shared Result form is used rather
+  // than the plain `getCallerOrgId`. postgrest-js resolves fetch faults into
+  // `error` rather than throwing (throwOnError is unset worker-wide), so
+  // `result.error` — not an exception — is the fail-closed signal; the try/catch
+  // is one-line defence-in-depth against an unexpected escaped throw.
   let orgId: string | null = null;
   let failed: boolean;
   try {
@@ -384,8 +403,9 @@ async function resolveSubmitOrgId(
     // caller-facing fail-closed line.)
     logger.error({ scope: 'cle-submit' }, 'org lookup failed, failing closed');
     res.status(503).json({
-      error: 'org_attribution_unavailable',
-      message: 'Could not confirm your organization. No record was created. Please retry.',
+      error: 'field_policy_unavailable',
+      message:
+        'Could not confirm your organization\'s permitted-field policy. No record was created. Please retry.',
     });
     return { ok: false };
   }
@@ -422,9 +442,27 @@ router.post('/submit', async (req: Request, res: Response) => {
 
   const data = parsed.data;
 
-  // Resolve BEFORE the insert: a failure here must prevent the row, not follow it.
+  // Resolve BEFORE the insert: a failure here must prevent the row, not follow
+  // it. One resolution feeds both the clause 4.6 screen below and the `org_id`
+  // stamped on the row, so the body screened and the row created can never be
+  // attributed to different orgs.
   const orgLookup = await resolveSubmitOrgId(req, userId, usedApiKey, res);
   if (!orgLookup.ok) return;
+
+  // DPA Schedule 1 / clause 4.6 — org-scoped field rejection (migration 0405).
+  // No-op for every org without a policy row. This route matters more than most:
+  // every field of the submission body (`bar_number`, `attorney_name`,
+  // `course_title`, `provider_name`, ...) is copied verbatim into
+  // `anchors.metadata`, so a prohibited field here is persisted personal data,
+  // not just transmitted. Runs BEFORE the insert and on the RAW body.
+  if (!(await enforceOrgFieldPolicy({
+    orgId: orgLookup.orgId,
+    body: req.body,
+    res,
+    scope: 'cle-submit',
+  }))) {
+    return;
+  }
 
   try {
     const fingerprint = buildCleSubmissionFingerprint(data);

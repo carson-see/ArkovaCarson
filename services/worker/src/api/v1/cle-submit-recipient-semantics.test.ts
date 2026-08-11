@@ -40,17 +40,19 @@
  * pin needs per-table call recording (which `makeBuilder` does not provide)
  * and because the minimal surface IS the ratchet.
  *
- * Two chains are modelled, per table:
+ * Three chains are modelled, per table:
  *   - `anchors`  → insert → select → single (the route's own write).
  *   - `profiles` → select → eq → maybeSingle (`_org-auth.ts`'s
  *     `loadCallerProfile`, reached via `resolveSubmitOrgId` on the JWT path
  *     only — the API-key path takes the key's own `orgId` and never queries).
- * The `profiles` chain was added when PR #2129 (org attribution for
- * `POST /cle/submit`) landed: the ratchet fired exactly as designed — the new
- * `.eq()` threw in the then-anchors-only mock and the JWT case went 503 — and
- * this is the reviewed, deliberate widening rather than a silent loosening.
- * `profiles` returning a non-null `org_id` also keeps the JWT case on the
- * success path, so the recipient assertions below still run against a 201.
+ *   - `organization_field_policies` → select → eq → maybeSingle (the DPA
+ *     clause 4.6 loader, migration 0405), answering null = default-permissive.
+ * Both lookup chains were added by merges that the ratchet caught exactly as
+ * designed — the new `.eq()` threw in the then-anchors-only mock and the case
+ * went 503 — so each is a reviewed, deliberate widening rather than a silent
+ * loosening. Both also fail CLOSED in the route, so returning a usable profile
+ * row and a permissive (null) policy is what keeps the recipient assertions
+ * below running against a 201 instead of a 503.
  *
  * Note this file pins EXISTING behavior — there was no red-first phase
  * against production code because the disposition is "no code change".
@@ -87,18 +89,18 @@ vi.mock('../../utils/db.js', () => {
     return query;
   }
 
-  // `_org-auth.ts`'s loadCallerProfile: select → eq → maybeSingle. Kept as a
-  // SEPARATE shape (rather than bolting `.eq`/`.maybeSingle` onto the anchors
-  // builder) so the anchors write keeps its original narrow chain — widening
-  // one table must not silently widen the other.
-  function createProfileQuery() {
+  // `_org-auth.ts`'s loadCallerProfile and the clause 4.6 policy loader both use
+  // select → eq → maybeSingle. Kept as a SEPARATE shape (rather than bolting
+  // `.eq`/`.maybeSingle` onto the anchors builder) so the anchors write keeps
+  // its original narrow chain — widening one table must not silently widen
+  // the other. `row` differs per table: a profile row (so org resolution
+  // succeeds and the route reaches its insert) vs null (so the field policy is
+  // default-permissive and this pin keeps measuring recipients, not rejection).
+  function createLookupQuery(row: Record<string, unknown> | null) {
     const query = {
       select: vi.fn(() => query),
       eq: vi.fn(() => query),
-      maybeSingle: vi.fn(() => Promise.resolve({
-        data: { org_id: 'org-attorney-1', role: 'USER', is_platform_admin: false },
-        error: null,
-      })),
+      maybeSingle: vi.fn(() => Promise.resolve({ data: row, error: null })),
     };
     return query;
   }
@@ -107,7 +109,11 @@ vi.mock('../../utils/db.js', () => {
     db: {
       from: vi.fn((table: string) => {
         mockState.fromCalls.push(table);
-        return table === 'profiles' ? createProfileQuery() : createQuery();
+        if (table === 'profiles') {
+          return createLookupQuery({ org_id: 'org-attorney-1', role: 'USER', is_platform_admin: false });
+        }
+        if (table === 'organization_field_policies') return createLookupQuery(null);
+        return createQuery();
       }),
     },
   };
