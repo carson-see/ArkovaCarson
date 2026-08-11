@@ -275,7 +275,12 @@ export function auditStaleExemptions(
   }
 
   const violations: Violation[] = [];
-  for (const prefix of [...exemptPrefixes].sort()) {
+  // Explicit comparator, not a bare .sort() (Sonar S2871) and not localeCompare:
+  // prefixes are zero-padded ASCII digit strings, so a plain relational compare is
+  // both correct and locale-independent — CI output must not vary with the runner's
+  // locale, or the warning order would churn between machines.
+  const sortedPrefixes = [...exemptPrefixes].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const prefix of sortedPrefixes) {
     if (!ledgerPrefixes.has(prefix) || !localPrefixes.has(prefix)) continue;
     violations.push({
       code: 'ledger-stale-exemption',
