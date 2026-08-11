@@ -34,6 +34,7 @@ vi.mock('../../utils/db.js', () => {
     limit: MockMethod;
     insert: MockMethod;
     single: MockMethod;
+    maybeSingle: MockMethod;
   };
 
   function createQuery(table: string): MockQuery {
@@ -55,6 +56,16 @@ vi.mock('../../utils/db.js', () => {
       return query;
     });
     query.single = vi.fn(() => Promise.resolve({ data: mockTables.insertedAnchor, error: null }));
+    // `/cle/submit` resolves the caller's org from `profiles` to attribute the
+    // anchor row. Org attribution itself is covered by
+    // `cle-submit-org-attribution.test.ts`; here the org is simply present so
+    // the submit path reaches the sanitizer assertions this suite is about.
+    query.maybeSingle = vi.fn(() =>
+      Promise.resolve({
+        data: table === 'profiles' ? { org_id: 'org-cle-1', role: null, is_platform_admin: false } : null,
+        error: null,
+      }),
+    );
 
     return query;
   }

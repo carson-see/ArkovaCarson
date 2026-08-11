@@ -2,6 +2,60 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-11 — `POST /cle/submit` created anchors attributed to no organisation
+
+Same defect family as the `registry-anchor` entry below ("creating an anchor row is not the same
+as giving the user a record"), one axis over: this route wrote `anchors.user_id` and **omitted
+`org_id` entirely**. The worker is service_role and bypasses RLS, so the insert always succeeded —
+the row was simply created unattributed. Found reviewing PR #2081 (SCRUM-3121), which added
+org-scoped DPA clause 4.6 field-policy enforcement to this same route: the org whose contractual
+field policy was *enforced* on the request was not recorded on the row the request *created*.
+Pre-existing, so deliberately out of scope there and fixed here instead.
+
+**What it cost.** `anchors_select` is
+`user_id = auth.uid() OR org_id = get_user_org_id() OR is_platform_admin()`:
+
+- **Not invisible to the creator** — the `user_id` branch still matched. That is why this was
+  silent rather than an obvious "my record vanished", and why it survived review.
+- **Invisible at org scope.** The route is reachable with a partner API key, where `user_id` is
+  the key's owning service user — so no teammate, no ORG_ADMIN, and no org-scoped dashboard query
+  (`.eq('org_id', orgId)`) could see the record at all.
+- **Never over-visible.** `NULL = get_user_org_id()` is NULL, not true, so a null-org row leaks to
+  nobody. The defect is strictly under-attribution; there is no exposure half to this bug.
+- Quota, credit and billing attribution all key on `org_id` (`anchor-submit.ts`), so these anchors
+  were unattributable for entitlement or billing purposes.
+
+**Why `profiles.org_id` and not the `org_members` fallback.** `compliance/auth-helpers.ts` layers an
+`org_members` fallback on top; that is wrong *here*. The RLS org branch is `get_user_org_id()`, which
+is exactly `SELECT org_id FROM profiles WHERE id = auth.uid()`. An org sourced only from
+`org_members` would write a value that branch never matches — the row would still be org-invisible,
+which is the bug. So this uses `_org-auth.ts`'s `getCallerOrgIdResult` (the canonical `profiles`
+read) and the API key's own `orgId` when present.
+
+**Fails closed, because null is a real answer.** A solo attorney with no organisation is a
+first-class caller and `org_id IS NULL` is correct and meaningful for them — prod carries such rows
+from other routes. That means null cannot double as the failure signal: coercing a failed lookup
+into `org_id: null` would persist a row the owning org can never see and can never be billed for.
+The lookup 503s **before** the insert instead (`org_attribution_unavailable`), covering both the
+postgrest-resolved `error` and the transport-level throw.
+
+**No backfill, and that is a finding rather than a decision deferred.** Verified against prod
+(`vzwyaatejekddvltxyye`) on 2026-08-11: **zero** `anchors` rows carry `credential_type = 'CLE'`,
+counted exactly over index-served `created_at` windows spanning the whole table from the oldest
+anchor (2026-03-21) forward. `'CLE'` **is** a valid `credential_type` enum member (baseline), so
+this is "the endpoint has never been used in production", not "writes were failing". There is no
+affected row to repair, and the fix is purely forward-looking. The `as any` casts on
+`credential_type` in this file are `database.types.ts` drift, not a runtime constraint.
+
+Do NOT read the surviving `org_id IS NULL` anchors in prod as this bug's residue — they are
+individual-user records from other routes, where null is the correct value.
+
+**Known, NOT fixed here (flagged separately):** this route also never writes `anchor_recipients`,
+so a CLE submission cannot appear in `/my-credentials` — structurally the same gap the
+`registry-anchor` entry below describes. Left out because the recipient here is genuinely ambiguous:
+the attorney is identified by `bar_number` and is often *not* the API caller, so linking the caller
+as recipient may be wrong. That needs a product answer, not a mechanical fix.
+
 ## 2026-08-10 — raw caller IPs were persisted into `audit_events` (DPA defect, FIXED)
 
 Arkova's DPA Schedules 1 and 2 both warrant that IP addresses are processed in **hashed** form. Two audit writers on this surface serialised `req.ip` **verbatim** into `details.querying_ip`: `verify.ts` (`VERIFICATION_QUERIED`) and `credentials-ctdl.ts` (`ctdl.requested`). 16 prod rows held literal IPv4/IPv6 addresses. Signing the DPA unchanged would have made a contractual warranty false.

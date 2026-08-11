@@ -20,6 +20,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
+import { getCallerOrgIdResult } from '../_org-auth.js';
 
 const router = Router();
 
@@ -328,6 +329,58 @@ router.get('/credits', async (req: Request, res: Response) => {
 
 // ─── POST /cle/submit — Submit CLE completion for anchoring ─────────────────
 
+/**
+ * Organisation to attribute the created anchor to.
+ *
+ * An API key carries its org directly (`apiKeyAuth` populates it from
+ * `api_keys.org_id`); a dashboard JWT does not, so the caller's `profiles` row
+ * is read via the canonical `_org-auth` helper.
+ *
+ * WHY `profiles.org_id` AND NOT the `org_members` fallback used by
+ * `compliance/auth-helpers.ts`: the `anchors_select` RLS policy's org branch is
+ * `org_id = get_user_org_id()`, and that SQL helper is exactly
+ * `SELECT org_id FROM profiles WHERE id = auth.uid()`. Stamping an org sourced
+ * only from `org_members` would write a value that branch never matches — the
+ * row would still be org-invisible, which is the very bug being fixed here.
+ *
+ * FAILS CLOSED. A null org is a real, supported answer (a solo attorney with no
+ * organisation), so it cannot be used to signal failure: coercing a failed
+ * lookup into `org_id: null` would persist an anchor its owning org can never
+ * see and can never be billed for — a silent and permanent data-integrity
+ * defect. A retryable 503 before any row is written is strictly better.
+ */
+async function resolveSubmitOrgId(
+  req: Request,
+  userId: string,
+  res: Response,
+): Promise<{ ok: true; orgId: string | null } | { ok: false }> {
+  if (req.apiKey) return { ok: true, orgId: req.apiKey.orgId ?? null };
+
+  let orgId: string | null = null;
+  let failed: string | null;
+  try {
+    // postgrest-js RESOLVES most failures into `error`, but a transport-level
+    // fault still throws — both have to reach the same fail-closed branch.
+    const result = await getCallerOrgIdResult(userId);
+    orgId = result.value;
+    failed = result.error ? 'lookup_error' : null;
+  } catch (err) {
+    failed = err instanceof Error ? err.name : 'unknown';
+  }
+
+  if (failed) {
+    // Reason only — never the message, which can echo the submission back.
+    logger.error({ reason: failed }, 'cle-submit: org lookup failed, failing closed');
+    res.status(503).json({
+      error: 'org_attribution_unavailable',
+      message: 'Could not confirm your organization. No record was created. Please retry.',
+    });
+    return { ok: false };
+  }
+
+  return { ok: true, orgId };
+}
+
 router.post('/submit', async (req: Request, res: Response) => {
   // Requires authentication (JWT or API key)
   const authHeader = req.headers.authorization;
@@ -353,6 +406,10 @@ router.post('/submit', async (req: Request, res: Response) => {
 
   const data = parsed.data;
 
+  // Resolve BEFORE the insert: a failure here must prevent the row, not follow it.
+  const orgLookup = await resolveSubmitOrgId(req, userId, res);
+  if (!orgLookup.ok) return;
+
   try {
     const fingerprint = buildCleSubmissionFingerprint(data);
     // Create anchor with CLE metadata
@@ -360,6 +417,9 @@ router.post('/submit', async (req: Request, res: Response) => {
       .from('anchors')
       .insert({
         user_id: userId,
+        // Null ONLY for a caller with genuinely no organisation — never as the
+        // residue of a failed lookup, which `resolveSubmitOrgId` 503s instead.
+        org_id: orgLookup.orgId,
         fingerprint,
         filename: `CLE_${safeFilenameSegment(data.jurisdiction)}_${data.completion_date}_${fingerprint.slice(0, 12)}.json`,
         file_size: 0,
