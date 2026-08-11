@@ -15,7 +15,7 @@
 
 import { logger } from '../utils/logger.js';
 import { emitRpcFallback } from '../utils/sentry.js';
-import { resolveMempoolApiBase } from '../utils/mempool-url.js';
+import { MEMPOOL_API_BASES, resolveMempoolApiBase } from '../utils/mempool-url.js';
 
 // ─── HttpError ──────────────────────────────────────────────────────────
 
@@ -635,12 +635,19 @@ export interface MempoolProviderConfig {
   baseUrl?: string;
 }
 
-const MEMPOOL_URLS: Record<string, string> = {
-  signet: 'https://mempool.space/signet/api',
-  testnet4: 'https://mempool.space/testnet4/api',
-  testnet: 'https://mempool.space/testnet/api',
-  mainnet: 'https://mempool.space/api',
-};
+/**
+ * Per-network bases now come from the shared map in `utils/mempool-url.ts`
+ * (BUG-2026-08-11). This module used to keep a private copy; the duplicate
+ * is what let `chain/fee-estimator.ts` and `jobs/treasury-cache.ts` drift
+ * onto a mainnet-only default while this file was already per-network.
+ *
+ * NOTE: the alias is deliberately NOT `mempoolApiBaseForNetwork()` at every
+ * use below. That helper falls back to MAINNET for an unset network, but two
+ * of the three sites here default to **testnet4** instead, and silently
+ * flipping an unset-network deployment onto mainnet is the very bug class
+ * this change exists to close. Shared values, per-site defaults.
+ */
+const MEMPOOL_URLS = MEMPOOL_API_BASES;
 
 export class MempoolUtxoProvider implements UtxoProvider {
   readonly name = 'Mempool.space REST API';

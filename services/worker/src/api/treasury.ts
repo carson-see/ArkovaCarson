@@ -168,6 +168,7 @@ export async function handleTreasuryStatus(
         const feeEstimator = createFeeEstimator({
           strategy: useMempoolFees ? 'mempool' : 'static',
           mempoolApiUrl: config.mempoolApiUrl,
+          network: config.bitcoinNetwork,
           staticRate: 1,
         });
         return { rate: await feeEstimator.estimateFee(), name: feeEstimator.name };

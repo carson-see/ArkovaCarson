@@ -67,7 +67,14 @@ export async function getDynamicPrice(endpoint: string): Promise<{
   // Dynamic pricing for anchor endpoints: base + estimated Bitcoin fee
   try {
     const { MempoolFeeEstimator } = await import('../chain/fee-estimator.js');
-    const estimator = new MempoolFeeEstimator({ target: 'halfHour', timeoutMs: 3000 });
+    // BUG-2026-08-11: without `network` this priced anchor requests off
+    // MAINNET congestion on every non-mainnet deployment — billing callers
+    // for a fee the network in use does not charge.
+    const estimator = new MempoolFeeEstimator({
+      target: 'halfHour',
+      timeoutMs: 3000,
+      network: config.bitcoinNetwork,
+    });
     const satPerVbyte = await estimator.estimateFee();
     const estimatedVbytes = 250; // typical OP_RETURN TX size
     const estimatedFeeSats = satPerVbyte * estimatedVbytes;
