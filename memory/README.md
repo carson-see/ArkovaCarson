@@ -47,6 +47,7 @@ hook's own deny message.
 | `feedback_jira_user_story_format.md` | Atlassian Automation (SCRUM project rules; see CLAUDE.md §5.1). CI file `feedback_jira_user_story_format.ts` is a no-op stub. | ✅ live (SCRUM-1306) |
 | `feedback_confluence_every_story.md` | Atlassian Automation R4 (Done-transition DoD gate) + CI drift guard `scripts/ci/check-confluence-coverage.ts` (warn-only) | ✅ live (R0-5 / SCRUM-1207) |
 | `feedback_never_merge_without_ok.md` | Agent hook `.claude/hooks/block-pr-merge.sh` (exit 2 on `gh pr merge`) + Mergify queue policy in `.mergify.yml`. *Not* Atlassian R5 — that rule gates Jira Done on red checks. | ✅ live |
+| `feedback_git_merge_driver_override.md` | Agent hook `.claude/hooks/check-git-merge-driver-flag.sh` (exit 2 on a transient `-c merge.*.driver=` override) + bootstrap config scan `scripts/agent/check-git-merge-config.sh` + cause-agnostic CI backstop `scripts/ci/check-agents-md-append-only.ts`. No override label — a no-op driver is never intentional. | ✅ live |
 | `feedback_merges_go_through_mergify.md` | `.mergify.yml` queue rules + `.github/workflows/merge-authority.yml` tier marker | 📖 docs only (policy) |
 | `feedback_confluence_is_the_doc.md` | Documentation only (CLAUDE.md §0 rule 4, §3 gate 3, §4 Doc Update Matrix) | 📖 docs only |
 | `feedback_vertex_endpoint_hygiene.md` | Documentation only (CLAUDE.md §0 rule 7 + §7 end-of-sprint infra sweep) | 📖 docs only |
