@@ -86,6 +86,7 @@ const feeEstimatorInstance = createFeeEstimator({
   strategy: config.bitcoinFeeStrategy ?? 'static',
   staticRate: config.bitcoinStaticFeeRate,
   mempoolApiUrl: config.mempoolApiUrl,
+  network: config.bitcoinNetwork,
   fallbackRate: config.bitcoinFallbackFeeRate,
 });
 

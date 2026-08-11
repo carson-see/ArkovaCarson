@@ -3,6 +3,17 @@ _Last updated: 2026-08-03 (merge: PR #1944 Drive review rounds 2-3 create-then-s
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
+## 2026-08-11 BUG-2026-08-11 — `index.ts` fee-estimator singleton was network-blind
+
+The module-level `feeEstimatorInstance` (the `/health` fee estimator, created once at boot to avoid
+a dynamic import per request) called `createFeeEstimator()` without a network. The factory's default
+base was the mainnet mempool.space endpoint, so on any non-mainnet deployment `/health` reported
+**mainnet** fee rates. Now passes `network: config.bitcoinNetwork`.
+
+This was one of four call sites with the same omission — see `chain/agents.md` for the full writeup
+and `utils/agents.md` for the shared `mempoolApiBaseForNetwork()` contract. The rule that prevents
+the next one: **never call a mempool.space factory without an explicit network.**
+
 ## 2026-08-03 — PR #1944 (GH #1835/#1836/#1837 Drive fixes) review rounds 2-3 summary
 
 Multiple adversarial review passes on the same PR found real, escalating issues after the initial fix landed. Full detail lives in each touched folder's own `agents.md` (`integrations/connectors/agents.md`, `jobs/agents.md`, `api/agents.md`, `api/v1/integrations/agents.md`, `api/v1/webhooks/agents.md`, `routes/agents.md`, `src/components/integrations/agents.md`); this is the cross-cutting index:
