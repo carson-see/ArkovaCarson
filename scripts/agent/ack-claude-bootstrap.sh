@@ -93,3 +93,17 @@ merge_config_check="${repo_root}/scripts/agent/check-git-merge-config.sh"
 if [[ -x "$merge_config_check" ]]; then
   "$merge_config_check" || exit 1
 fi
+
+# That guard reads CONFIG, so it is structurally blind to the one-off form of
+# the same thing — `git -c merge.union.driver=true merge origin/main` writes
+# nothing anywhere, and dropped 100 lines of main's agents.md on PR #2060
+# minutes after the check above printed OK. `.githooks/pre-merge-commit` re-runs
+# the guard as a subprocess of git, which is where the flag IS visible, and
+# aborts the merge. Installing it here means it is live from the first session
+# in a fresh clone rather than depending on someone reading a setup doc.
+#
+# Never fatal: hook installation must not be able to brick session bootstrap.
+merge_hook_install="${repo_root}/scripts/agent/install-git-merge-hooks.sh"
+if [[ -x "$merge_hook_install" ]]; then
+  "$merge_hook_install" || true
+fi

@@ -19,6 +19,11 @@
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/block-pr-merge.sh",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/block-unsafe-git-merge.sh",
+            "timeout": 30
           }
         ]
       },

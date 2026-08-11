@@ -290,6 +290,7 @@ For confluence audit pages, see [Confluence space A](https://arkova.atlassian.ne
 | `.md` file as "documentation" | Confluence page, with the `.md` either deleted or demoted to internal notes |
 | Pushing to / editing a PR while it's in the Mergify queue | Check it's not queued first — a push resets queue progress + re-runs speculative checks (pure churn). Dequeue deliberately if a change is truly needed |
 | Appending `## Recent migrations` at EOF of `supabase/migrations/agents.md` (two PRs collide → loser dequeued from Mergify) | Title each block `## Recent migrations (PR #NNNN)` in PR-number order, not blindly at EOF; union-resolve as doc-only (no re-soak). Prefer per-PR notes in the PR description |
+| Passing a merge driver to sync a branch — `git -c merge.union.driver=true merge origin/main` (likewise `--config-env`, `GIT_CONFIG_PARAMETERS`, or writing it to config) | **Plain `git merge origin/main`.** `.gitattributes` (`agents.md merge=union`) + git's BUILT-IN union driver already keep both sides. ANY `merge.union.driver` value shadows that built-in with a no-op, so every conflicting `agents.md` merge silently keeps "ours" and discards "theirs" at exit 0 — no markers, no error. It makes the merge worse, never better. Cost so far: 86 lines off `main` (2026-07-28, config form) + 100 lines on PR #2060 (2026-08-11, `-c` form) |
 
 ---
 

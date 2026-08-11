@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#
+# Pre-merge-commit hook: refuse a merge that is running under an injected merge
+# driver, BEFORE the merge commit is recorded.
+#
+# Install: scripts/agent/install-git-merge-hooks.sh (run for you by
+#          scripts/agent/ack-claude-bootstrap.sh every session)
+#
+# This closes the hole `scripts/agent/check-git-merge-config.sh` cannot reach on
+# its own. That guard reads git CONFIG, so a one-off
+#
+#     git -c merge.union.driver=true merge origin/main
+#
+# is invisible to it — nothing is written anywhere — even though the effect is
+# identical to the persisted `.git/config` entry behind the 2026-07-28 incident:
+# git's BUILT-IN union driver (requested by `.gitattributes` for ~200 agents.md
+# files) is shadowed by the shell no-op `true`, so every conflicting agents.md
+# merge silently keeps "ours" and discards "theirs" at exit 0. PR #2060 lost 100
+# lines of main's agents.md that way on 2026-08-11, with the session-start guard
+# reporting "OK" minutes earlier.
+#
+# What makes this position work: git EXPORTS `-c` / `--config-env` settings to
+# its own subprocesses as GIT_CONFIG_PARAMETERS, so `git config` run from inside
+# a hook reports them with origin `command line:`. The guard is unchanged — it
+# is simply being asked at the one moment the answer is complete.
+#
+# Scope, stated plainly rather than assumed:
+#   * Runs only when a merge is about to auto-commit. `--no-commit`, `--squash`,
+#     and a conflicted merge finished by hand run `pre-commit` instead, and a
+#     fast-forward invokes no merge driver at all.
+#   * Non-zero here leaves the merged content in the working tree with MERGE_HEAD
+#     set and NO commit recorded. Recover with `git merge --abort`.
+#   * `scripts/ci/check-agents-md-append-only.ts` remains the backstop for
+#     everything this position cannot see. It is not weakened by this hook.
+#
+# THE CORRECT COMMAND IS A PLAIN `git merge origin/main`. `.gitattributes` plus
+# git's built-in union driver already combine both sides; any
+# `merge.union.driver` value — config or `-c` — makes it worse, never better.
+
+set -uo pipefail
+
+if [[ -n "${ARKOVA_SKIP_MERGE_GUARD:-}" ]]; then
+  echo "pre-merge-commit: SKIPPED via ARKOVA_SKIP_MERGE_GUARD." >&2
+  echo "  Re-run 'node_modules/.bin/tsx scripts/ci/check-agents-md-append-only.ts'" >&2
+  echo "  against this merge before pushing — nothing else checked it." >&2
+  exit 0
+fi
+
+root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+guard="${root}/scripts/agent/check-git-merge-config.sh"
+
+# Fails CLOSED. A guard that quietly no-ops when it cannot find itself produces
+# no error, which is exactly how the original hole survived for months
+# (scripts/agent/agents.md, 2026-08-02). The named escape hatch above is the
+# supported way out, so nobody reaches for --no-verify and turns off every hook
+# at once.
+if [[ -z "$root" || ! -f "$guard" ]]; then
+  echo "pre-merge-commit: cannot find scripts/agent/check-git-merge-config.sh." >&2
+  echo "  Refusing the merge rather than passing unchecked." >&2
+  echo "  If this checkout genuinely predates the guard, re-run with:" >&2
+  echo "      ARKOVA_SKIP_MERGE_GUARD=1 git merge <ref>" >&2
+  exit 1
+fi
+
+if ! output=$(bash "$guard" 2>&1); then
+  printf '%s\n' "$output" >&2
+  cat >&2 <<'EOF'
+
+pre-merge-commit: MERGE REFUSED — this merge is running under a merge driver
+that shadows git's built-in algorithm. No commit was recorded.
+
+  git merge --abort          # discard the merged working tree
+  git merge origin/main      # then re-run WITHOUT the driver
+
+An origin of `command line:` above means the driver came from a `git -c` /
+`--config-env` flag or GIT_CONFIG_PARAMETERS in this command — there is nothing
+to unset; drop the flag.
+EOF
+  exit 1
+fi
+
+exit 0

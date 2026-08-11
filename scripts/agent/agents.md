@@ -2,11 +2,13 @@
 
 Local agent bootstrap helpers. These scripts are guardrails for agent behavior only; they must not mutate production, staging, Jira, Confluence, GitHub PR bodies, or audit evidence unless a script name and help text explicitly says so.
 
-- `ack-claude-bootstrap.sh` records the current `CLAUDE.md` SHA-256 in git-local state after an agent has read the file. It then runs `check-git-merge-config.sh` and exits non-zero if that guard trips.
+- `ack-claude-bootstrap.sh` records the current `CLAUDE.md` SHA-256 in git-local state after an agent has read the file. It then runs `check-git-merge-config.sh` and exits non-zero if that guard trips, and finally runs `install-git-merge-hooks.sh` (never fatal) so `.githooks/pre-merge-commit` is live from the first session in a fresh clone.
 - `check-claude-bootstrap.test.sh` is the pure-bash test for the Claude PreToolUse bootstrap hook (29 cases).
 - `check-constitution-on-edit.test.sh` is the pure-bash test for the Edit/Write constitution hook (20 cases).
 - `check-git-merge-config.sh` refuses a `merge.<builtin>.driver` config entry (`union`/`text`/`binary`) or a no-op driver command at any config scope. Read-only against git config. A no-op is matched on the command WORD, not the whole string, because drivers are conventionally written with `gitattributes(5)` placeholders — `true %O %A %B` is the same silent no-op as bare `true`. `cat %A` counts too: it prints ours and leaves `%A` untouched.
-- `check-git-merge-config.test.sh` is the pure-bash test for that guard (15 cases: built-in shadowing, no-op forms with and without placeholders, and legitimate custom drivers that must still pass).
+- `check-git-merge-config.test.sh` is the pure-bash test for that guard (22 cases: built-in shadowing, no-op forms with and without placeholders, legitimate custom drivers that must still pass, and the env-injected `GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_COUNT` forms that reach the guard only from inside a git hook).
+- `install-git-merge-hooks.sh` installs a shim for `.githooks/pre-merge-commit` into whatever hooks directory the checkout resolves to (`git rev-parse --git-path hooks`, so one install covers every worktree). Called by `ack-claude-bootstrap.sh`. Never clobbers a hook it did not write, and always exits 0 — hook installation must not be able to brick session bootstrap.
+- `check-unsafe-git-merge.test.sh` is the pure-bash test for the whole merge-driver vector (73 cases across five sections: what the two merge commands actually do, the config guard's structural blind spot, the git hook, the Claude PreToolUse hook, and the installer).
 
 ## 2026-07-28 — union merge-driver guard (silent agents.md data loss)
 
@@ -67,3 +69,50 @@ this work the segment loop itself briefly failed open (`printf '%s'` emits no
 trailing newline, so `read` hit EOF and the loop body never executed, reporting
 every command as non-sensitive). It was caught only because the baseline cases
 were run before and after.
+
+## 2026-08-11 — the same driver, passed on the command line (PR #2060)
+
+`check-git-merge-config.sh` reads git CONFIG. `git -c merge.union.driver=true
+merge origin/main` writes nothing to config and has **exactly** the effect of
+the 2026-07-28 entry. An agent merging main into PR #2060 was instructed to run
+that command, ran it, and dropped 100 lines of main's `agents.md` content across
+`src/lib/agents.md` and `src/pages/agents.md`. The session-start guard had
+printed "OK" minutes earlier and was not wrong — it cannot see a flag passed to
+a different process. `scripts/ci/check-agents-md-append-only.ts` caught it, but
+only after the merge was committed and pushed.
+
+**The correct command is a plain `git merge origin/main`.** `.gitattributes`
+(`agents.md merge=union`) plus git's BUILT-IN union driver already combine both
+sides. Any `merge.union.driver` value — config, `-c`, `--config-env`,
+`GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_KEY_n` — makes it worse, never better. The
+built-in needs no driver config to work; that is the whole point of a built-in.
+
+Nothing about the guard's LOGIC was wrong, so nothing about it changed. What
+changed is where the question gets asked:
+
+- **`.githooks/pre-merge-commit`** runs the same guard as a SUBPROCESS OF GIT.
+  Git exports `-c` / `--config-env` settings to its subprocesses as
+  `GIT_CONFIG_PARAMETERS`, so `git config --show-origin` there reports them with
+  origin `command line:` — visible at last. Non-zero aborts before the merge
+  commit exists. Installed by `install-git-merge-hooks.sh` from
+  `ack-claude-bootstrap.sh`, because `.githooks/` is inert in this checkout:
+  `core.hooksPath` points at `.git/hooks`, which holds only git's `.sample`
+  files. (Repointing `core.hooksPath` was rejected — it would silently switch on
+  `.githooks/pre-commit`, a full `tsc --noEmit` + lint on every commit for
+  everyone, as a side effect of a merge fix.)
+- **`.claude/hooks/block-unsafe-git-merge.sh`** refuses the command outright, so
+  the working tree is never touched. This is the only layer that would have
+  stopped PR #2060, because the failure was an agent following an instruction.
+  It also blocks `git config` WRITES to `merge.<x>.driver` — catching the
+  2026-07-28 config a session earlier than the session-start guard can.
+
+**DO NOT** weaken `scripts/ci/check-agents-md-append-only.ts`. It is the only
+thing that caught either incident, it is cause-agnostic, and none of the above
+replaces it — they move detection earlier, they do not make it redundant.
+
+**DO** note what `pre-merge-commit` does not cover, rather than assuming: it
+fires only when a merge is about to auto-commit, so `--no-commit`, `--squash`,
+and a conflicted merge finished by hand run `pre-commit` instead, and a
+fast-forward invokes no merge driver at all. `ARKOVA_SKIP_MERGE_GUARD=1` is the
+named escape hatch, so nobody reaches for `--no-verify` and turns off every hook
+at once; the Claude hook blocks that variable too.
