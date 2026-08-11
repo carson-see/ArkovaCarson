@@ -123,6 +123,15 @@ const {
   };
 });
 
+// This suite reaches `utils/orgFieldPolicy.js` (the DPA clause 4.6 guard) via
+// the SUT, and that module reads its break-glass from the Zod-validated config
+// (SCRUM-1258). Importing the real config.ts throws under a test env that does
+// not populate every required var, so it is stubbed here — `disableOrgFieldPolicy:
+// false` keeps enforcement ON, which is the production default.
+vi.mock('../../config.js', () => ({
+  config: { disableOrgFieldPolicy: false },
+}));
+
 vi.mock('../../utils/db.js', () => ({
   db: { from: mockFrom },
 }));
