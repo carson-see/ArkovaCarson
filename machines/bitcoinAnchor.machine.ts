@@ -29,6 +29,7 @@ const credentialTypeLocked = variable("credentialTypeLocked");
 const actor = variable("actor");
 const intentPersisted = variable("intentPersisted");
 const journalRecovery = variable("journalRecovery");
+const supplementaryProof = variable("supplementaryProof");
 
 export const bitcoinAnchorMachine = defineMachine({
   version: 2,
@@ -98,6 +99,38 @@ export const bitcoinAnchorMachine = defineMachine({
     journalRecovery: mapVar(
       "Anchors",
       enumType("NONE", "PENDING", "HELD"),
+      lit("NONE")
+    ),
+
+    // SCRUM-3188: SUPPLEMENTARY PROOF ANCHOR state.
+    //
+    // 2,969,630 SECURED anchors carry a REAL first attestation (chain_tx_id,
+    // chain_timestamp, chain_block_height, chain_block_hash) but no per-document
+    // Merkle branch, because the Mar/Apr producer never persisted the committed
+    // leaf ORDER. That order is unrecoverable for batches >8 leaves, so those
+    // records can never be given an offline branch against their ORIGINAL tx.
+    //
+    // The remedy is a SECOND, additive Bitcoin transaction that re-commits the
+    // same fingerprints in a RECORDED order. It does NOT re-attest and does NOT
+    // replace anything:
+    //
+    //   NONE      - no supplementary anchor
+    //   JOURNALED - a supplementary tx is signed and its txid + cohort + leaf
+    //               order are durably journaled (anchor_txid_journal), but no
+    //               proof row is written yet. Crash-safe: recovery ADOPTs the
+    //               exact txid or REVERTs on affirmative absence — it never
+    //               rebroadcasts blind.
+    //   ANCHORED  - a chain-VERIFIED supplementary proof row exists.
+    //
+    // The whole point of modeling this is the integrity constraint: NO action
+    // below writes `status`, `chainTxId`, `metadataLocked`, or any other
+    // attestation field. The original attestation is read-only to this entire
+    // subsystem (invariant supplementaryRequiresOriginalAttestation), so a
+    // supplementary anchor can never backdate-shift a record to today or be
+    // mistaken for a re-SECURE.
+    supplementaryProof: mapVar(
+      "Anchors",
+      enumType("NONE", "JOURNALED", "ANCHORED"),
       lit("NONE")
     )
   },
@@ -373,7 +406,15 @@ export const bitcoinAnchorMachine = defineMachine({
         setMap("chainTxId", param("a"), lit(null)),
         setMap("actor", param("a"), lit("client")),
         setMap("fingerprintLocked", param("a"), lit(false)),
-        setMap("credentialTypeLocked", param("a"), lit(false))
+        setMap("credentialTypeLocked", param("a"), lit(false)),
+        // SCRUM-3188: a SECURED anchor carrying a supplementary proof can reach
+        // SUBMITTED via reorgDetected and then be abandoned here, which CLEARS
+        // the original attestation. A supplementary proof must never outlive
+        // the attestation it supplements (else it would silently become the
+        // anchor's only chain evidence, i.e. exactly the backdate-shift this
+        // design forbids), so the flag is cleared with it. The engine re-runs
+        // the record from scratch after re-anchoring.
+        setMap("supplementaryProof", param("a"), lit("NONE"))
       ]
     },
 
@@ -403,7 +444,11 @@ export const bitcoinAnchorMachine = defineMachine({
         setMap("chainTxId", param("a"), lit(null)),
         setMap("actor", param("a"), lit("client")),
         setMap("fingerprintLocked", param("a"), lit(false)),
-        setMap("credentialTypeLocked", param("a"), lit(false))
+        setMap("credentialTypeLocked", param("a"), lit(false)),
+        // SCRUM-3188: same reasoning as chainSubmitFail — the NET-1/NET-3
+        // abandon path also discards the original attestation, so it must
+        // discard the supplementary flag with it.
+        setMap("supplementaryProof", param("a"), lit("NONE"))
       ]
     },
 
@@ -523,6 +568,75 @@ export const bitcoinAnchorMachine = defineMachine({
       updates: [
         setMap("status", param("a"), lit("SUBMITTED")),
         setMap("metadataLocked", param("a"), lit(false))
+      ]
+    },
+
+    // ── SCRUM-3188: supplementary proof anchor ──────────────────────────────
+    //
+    // Maps to: jobs/supplementary-proof-anchor.ts Phase 2 — sign the new
+    // OP_RETURN tx committing a Merkle root over the RECORDED leaf order, then
+    // persist the txid journal (persist_anchor_txid_journal) BEFORE any bytes
+    // reach the network. Identical anti-double-broadcast barrier as the primary
+    // producer: a crash between sign and broadcast leaves a journaled txid that
+    // recovery resolves by exact-txid ADOPT or affirmative-absence REVERT.
+    //
+    // Requires SECURED: a supplementary anchor supplements a COMPLETED first
+    // attestation. It can never run against an in-flight anchor, so it can
+    // never race the primary producer for the same row.
+    // Requires journalRecovery=NONE: never start a second broadcast for a row
+    // whose primary cohort still has an unresolved journal.
+    // Deliberately NOT guarded on legalHold: this action writes no existing
+    // field — it only ADDS independently verifiable evidence, which serves an
+    // audit-retention hold rather than threatening it.
+    supplementaryJournal: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("SECURED")),
+        eq(index(actor, param("a")), lit("worker")),
+        eq(index(chainTxId, param("a")), lit("has_tx")),
+        eq(index(journalRecovery, param("a")), lit("NONE")),
+        eq(index(supplementaryProof, param("a")), lit("NONE"))
+      ),
+      updates: [
+        setMap("supplementaryProof", param("a"), lit("JOURNALED"))
+      ]
+    },
+
+    // The supplementary tx is confirmed on-chain AND every emitted branch
+    // re-verified against the root committed by THAT tx; only then is the
+    // anchor_proofs row written. Note this action writes NOTHING but the
+    // supplementary flag — status stays SECURED, chainTxId keeps the ORIGINAL
+    // txid. That is the backdate-shift protection, stated as a transition.
+    //
+    // Admitted from REVOKED/SUPERSEDED too: once the supplementary tx is on the
+    // network we have already spent the fee, and revoking a credential does not
+    // un-commit its bytes. Refusing to record the proof would strand a paid-for
+    // journal rather than protect anything.
+    supplementaryAnchorConfirm: {
+      params: { a: "Anchors" },
+      guard: and(
+        isin(index(status, param("a")), setOf(lit("SECURED"), lit("REVOKED"), lit("SUPERSEDED"))),
+        eq(index(actor, param("a")), lit("worker")),
+        eq(index(chainTxId, param("a")), lit("has_tx")),
+        eq(index(supplementaryProof, param("a")), lit("JOURNALED"))
+      ),
+      updates: [
+        setMap("supplementaryProof", param("a"), lit("ANCHORED"))
+      ]
+    },
+
+    // Affirmative absence after the bounded ambiguity window: the supplementary
+    // tx provably never relayed, so the cohort is safe to re-sign next run.
+    // Mirrors journalRevert — time alone is never evidence of absence.
+    supplementaryRevert: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(actor, param("a")), lit("worker")),
+        eq(index(chainTxId, param("a")), lit("has_tx")),
+        eq(index(supplementaryProof, param("a")), lit("JOURNALED"))
+      ),
+      updates: [
+        setMap("supplementaryProof", param("a"), lit("NONE"))
       ]
     }
   },
@@ -720,6 +834,57 @@ export const bitcoinAnchorMachine = defineMachine({
       )
     },
 
+    // ── SCRUM-3188: supplementary proof anchor invariants ──────────────────
+
+    // INV-8 (THE integrity constraint, formally). A supplementary proof may
+    // only exist alongside a LIVE original attestation. This is what makes
+    // "the original attestation is preserved" a checked property rather than a
+    // code-review promise: no reachable state has a supplementary proof and a
+    // cleared chain_tx_id, so the supplementary tx can never silently become a
+    // record's only chain evidence — which is precisely the backdate-shift
+    // failure mode (a 2026-08 tx masquerading as a 2026-06 attestation).
+    //
+    // It is also what forced supplementaryProof to be cleared on the
+    // chainSubmitFail / chainSubmitAbandon reorg-abandon edges: without that,
+    // TLC finds the counterexample SECURED+ANCHORED → (reorg) SUBMITTED →
+    // (abandon) PENDING, chainTxId=null, supplementary=ANCHORED.
+    supplementaryRequiresOriginalAttestation: {
+      description: "A supplementary proof never outlives the original attestation it supplements",
+      formula: forall("Anchors", "a",
+        or(
+          eq(index(supplementaryProof, param("a")), lit("NONE")),
+          eq(index(chainTxId, param("a")), lit("has_tx"))
+        )
+      )
+    },
+
+    // Only the worker (service_role) can journal or record a supplementary
+    // anchor — mirrors onlyWorkerSecures / intentRequiresWorkerActor (§1.4).
+    supplementaryRequiresWorkerActor: {
+      description: "A supplementary proof implies the worker actor",
+      formula: forall("Anchors", "a",
+        or(
+          eq(index(supplementaryProof, param("a")), lit("NONE")),
+          eq(index(actor, param("a")), lit("worker"))
+        )
+      )
+    },
+
+    // A supplementary anchor supplements a COMPLETED attestation; it must
+    // never attach to a pre-broadcast anchor. This is the "cannot be mistaken
+    // for a re-SECURE" property: the supplementary path has no reachable state
+    // overlapping the primary producer's claim/broadcast window, so it can
+    // never be the transition that carries an anchor toward SECURED.
+    supplementaryNeverOnPreBroadcastAnchor: {
+      description: "A supplementary proof never exists on a PENDING or BROADCASTING anchor",
+      formula: forall("Anchors", "a",
+        or(
+          eq(index(supplementaryProof, param("a")), lit("NONE")),
+          not(isin(index(status, param("a")), setOf(lit("PENDING"), lit("BROADCASTING"))))
+        )
+      )
+    },
+
     // INV-6: Legal hold blocks revocation transition
     legalHoldPreventsSecuredToRevoked: {
       description: "SECURED anchors under legal hold remain SECURED (guard blocks revoke)",
@@ -739,15 +904,16 @@ export const bitcoinAnchorMachine = defineMachine({
         domains: {
           Anchors: ids({ prefix: "a", size: 2 })
         },
-        // SCRUM-2692 adds a 3-valued journal state to the prior 768 raw
-        // per-anchor combinations: 768 × 3 = 2,304; size=2 gives
-        // 2,304^2 = 5,308,416 raw states (reachable set is far smaller,
-        // but the estimator budgets against the raw product). Budget raised
-        // from 200k accordingly. graphEquivalence stays off (pre-existing:
-        // the raw product exceeds the 100k equivalence cap).
+        // SCRUM-2692 added a 3-valued journal state to the prior 768 raw
+        // per-anchor combinations (768 × 3 = 2,304). SCRUM-3188 adds the
+        // 3-valued supplementaryProof state: 2,304 × 3 = 6,912; size=2 gives
+        // 6,912^2 = 47,775,744 raw states. The estimator budgets against that
+        // raw product; the REACHABLE set stays small (see agents.md for the
+        // measured generated/distinct counts). graphEquivalence stays off
+        // (pre-existing: the raw product exceeds the 100k equivalence cap).
         graphEquivalence: false,
         budgets: {
-          maxEstimatedStates: 6_000_000,
+          maxEstimatedStates: 50_000_000,
           maxEstimatedBranching: 10_000
         }
       },
@@ -757,8 +923,9 @@ export const bitcoinAnchorMachine = defineMachine({
         },
         graphEquivalence: false,
         budgets: {
-          // size=3 → 2,304^3 = 12,230,590,464 raw states.
-          maxEstimatedStates: 15_000_000_000,
+          // SCRUM-3188: size=3 → 6,912^3 = 330,225,942,528 raw states
+          // (was 2,304^3 = 12,230,590,464 before supplementaryProof).
+          maxEstimatedStates: 350_000_000_000,
           maxEstimatedBranching: 1_000_000
         }
       }

@@ -2,6 +2,30 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-10 — why the DPA clause 4.6 field policy does NOT apply in this directory
+
+Three files here create anchors: `connector-artifact-drain.ts`, `publicRecordAnchor.ts`, and
+`rule-action-dispatcher.ts` (`AUTO_ANCHOR` / `INSTANT_SECURE`). None of them calls
+`enforceOrgFieldPolicy`, and `scripts/ci/check-anchor-field-policy-coverage.ts` exempts this whole
+directory rather than listing these three files — so a NEW job inherits the exemption correctly and a
+new route under `services/worker/src/api/` inherits the requirement correctly.
+
+The exemption is structural, not an oversight:
+
+- **There is no inbound request to reject.** These run from a cron tick, a queue drain, or an org-rule
+  match. `enforceOrgFieldPolicy` takes an express `Response` and answers a caller with a 400; there is
+  no caller and no response here, so it cannot be applied at all.
+- **A 400 is the wrong semantic anyway.** Rejecting a queued connector artifact means deciding what
+  happens to the job — dead-letter, quarantine, skip-and-alert — which is a different control with
+  different operational consequences, not a one-line guard call.
+
+**This is a real gap, not a proof of absence.** A connector-fetched DocuSign or Drive document can
+carry third-party metadata containing a field the org's DPA forbids, and nothing currently stops it
+from reaching `anchors.metadata` on that path. Closing it needs a policy-aware quarantine step in the
+drain with its own disposition semantics. Anyone extending the clause 4.6 control should start here,
+and should not read the green CI gate as covering it — the gate asserts coverage of REQUEST paths only.
+
+
 ## 2026-08-03 — `INSTANT_SECURE` rule action + dead-rule investigation (founder directive)
 
 Founder, verbatim: *"The 'Auto Secure' rule doesn't secure. ... we need to be able to instantly secure or add to queue and we need rules to work."* `AUTO_ANCHOR`'s UI label ("Secure the document" / "Anchor it on the network automatically") implies immediacy; `dispatchAutoAnchor` (SCRUM-1649 DS-07) only ever creates a PENDING anchor that joins the normal free batch queue. Migration `0400` (renumbered from `0397`; **not yet applied to prod**) adds a 7th `org_rule_action_type` value, `INSTANT_SECURE`, that actually secures right away.
@@ -942,6 +966,24 @@ New `ai-credit-reconcile.ts` drains the queue `api/v1/ai-extract-batch.ts` write
 ### (C) The class is now CI-enforced
 
 `scripts/ci/check-job-queue-parity.ts` (npm `ci:job-queue-parity`, wired into the `policy-lints` job) fails the build on any `submitJob` type with no consumer, any consumer with no producer, any unresolvable type expression, and any `.from('job_queue')` write outside the allow-listed queue internals (`utils/jobQueue.ts`, `run-lease.ts`, `proofJobCheckpoint.ts` — leases and checkpoints are not queued work). Verified against `origin/main` (`25e1d32`): it names both defects at `ai-extract-batch.ts:173` and `rule-action-dispatcher.ts:856`.
+## 2026-08-11 — SCRUM-3188 supplementary proof anchor (`supplementary-proof-anchor.ts`)
+
+Operator-triggered job that gives the 2,969,630 SECURED anchors with no per-document proof a verifiable branch, by committing their fingerprints into a NEW Bitcoin transaction whose leaf order IS recorded. `POST /jobs/supplementary-proof-anchor`. **Not on any Cloud Scheduler manifest — spending money stays a human decision.**
+
+The job is pure policy over an injected `SupplementaryPorts` interface; `supplementary-proof-anchor.adapter.ts` is the only file that touches db/chain/treasury. Four properties, each with tests:
+
+1. **The original attestation is never touched.** `anchors.chain_tx_id` / `chain_timestamp` / `chain_block_height` / `chain_block_hash` stay as they are. Structural: `SupplementaryPorts` contains **no capability to write to `anchors`** (a test asserts the absence), and `insert_supplementary_proofs` (0408) only INSERTs into `anchor_proofs` and re-derives the supplemented txid from `anchors.chain_tx_id` instead of trusting the caller.
+2. **Never broadcasts twice.** Sign → journal → broadcast, never reordered (pinned by test). `supplementary_anchor_journal`'s partial unique indexes make a live txid/batch unrepeatable; `EXACT_REPLAY` ⇒ defer without broadcasting. An ambiguous broadcast (timeout/5xx) **HOLDs and stops the run** — never REVERTs, because "we do not know" is not "it did not happen".
+3. **Never writes an unverified proof.** The committed root is read back from the tx's OP_RETURN on-chain via `extractAnchorFingerprint`, and `buildVerifiedSupplementaryProofRows` re-verifies EVERY branch against it before any row is built. Batch-of-1 is not exempt.
+4. **Never drains the treasury.** Fee ceiling (default 5 sat/vB) + treasury reserve (default 100,000 sats), re-checked before every batch; halts at the reserve floor with partial progress.
+
+Armed by three independent things and inert by default: `dryRun` defaults **true**; a live run also needs `SUPPLEMENTARY_ANCHOR_CONFIRM=EXECUTE`; and the spend guards. Batch size is 10,000 and is **independent of** `config.batchAnchorMaxSize` — widening that production Zod boot-gate to use 50k batches would save ~111k sats (~$120) across the whole backlog and risk the live producer, so it is deliberately not touched.
+
+Modelled in `machines/bitcoinAnchor.machine.ts` (`supplementaryProof`, invariant `supplementaryRequiresOriginalAttestation`). Runbook: `docs/runbooks/ops/supplementary-proof-anchor.md`. Complements PR #2130, which recovers the 608 records whose original leaf order IS searchable.
+
+### `batch-anchor.leaf-order-roundtrip.test.ts` — the ratchet
+
+Pins that the leaf order the producer PERSISTS (`anchor_txid_journal.leaf_order`) rebuilds the EXACT root it COMMITTED, driving the real `processBatchAnchors` and the real (now exported) `sortAnchorsForBatch` rather than copies. Includes a negative control asserting the raw claim-arrival order does NOT reproduce the root — i.e. that the recorded order is load-bearing, which is precisely what the Mar/Apr producer lacked.
 ## proof-coverage-monitor.ts (SCRUM-3187)
 
 - **Guards the product's headline promise.** Offline-forever verification requires a per-document inclusion proof on every SECURED anchor. This is the standing alarm on that invariant, and it exists because the gap was found by hand, not by an alert: prod held 3,474,760 SECURED anchors against 505,357 proof rows (85.5% uncovered) with nothing watching.

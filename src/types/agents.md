@@ -1,5 +1,17 @@
 # agents.md — types
-_Last updated: 2026-07-28_
+_Last updated: 2026-08-10_
+
+## 2026-08-10 — organization_field_policies (manual patch, not a live regen)
+
+Migration `0405` (file-only, unapplied) adds `public.organization_field_policies`. Hand-patched into
+`Tables` in BOTH copies (`src/types/database.types.ts` and
+`services/worker/src/types/database.types.ts`) in alphabetical position, with the `org_id` FK
+Relationships entries the codegen emits for an `organizations` reference. Done by hand for the same
+reason the `0400` row in `supabase/migrations/agents.md` gives: the shared local Supabase stack is
+concurrently mutated by other worktree sessions, so no schema-changing apply was made against it.
+**Regenerate for real** (`npm run gen:types`) once `0405` lands on a reachable project — note that
+`folders` (migration `0365`, merged) is still missing from these files, so a regen will correct more
+than this table.
 
 ## 2026-07-28 R19 — anchors.fingerprint_source (manual patch, not a live regen)
 
