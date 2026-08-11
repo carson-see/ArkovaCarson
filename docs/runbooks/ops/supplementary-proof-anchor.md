@@ -84,7 +84,7 @@ own independent batch cap and does not touch the production constant.
 
 ## 3. Preconditions
 
-1. Migration `0407_supplementary_proof_anchor.sql` applied to **staging first**,
+1. Migration `0408_supplementary_proof_anchor.sql` applied to **staging first**,
    then prod, then the ledger reconciled to the numeric prefix (CLAUDE.md §0
    rule 10).
 2. Worker deployed at or after the merge commit — confirm via `/health`

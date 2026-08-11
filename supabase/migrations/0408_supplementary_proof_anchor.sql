@@ -1,4 +1,4 @@
--- 0407: SUPPLEMENTARY PROOF ANCHOR (SCRUM-3188)
+-- 0408: SUPPLEMENTARY PROOF ANCHOR (SCRUM-3188)
 --
 -- WHY
 --   2,969,630 SECURED anchors hold a REAL first attestation on Bitcoin but no
@@ -90,7 +90,7 @@ COMMENT ON COLUMN public.anchor_proofs.proof_completeness_class IS
   'Honest per-record proof state. 0354: already_complete | batch_provable | direct_anchored | ambiguous. '
   '0406 (SCRUM-3187): recovered_branch | recovered_single_leaf | unreconstructible_order | '
   'unreconstructible_no_root | rejected_stored_branch. '
-  '0407 (SCRUM-3188): supplementary_anchored - the ORIGINAL attestation stands and is authoritative for '
+  '0408 (SCRUM-3188): supplementary_anchored - the ORIGINAL attestation stands and is authoritative for '
   'FIRST-COMMITTED time, and a per-document branch is available from a LATER supplementary transaction '
   '(see is_supplementary / supplements_chain_tx_id). Both facts must be stated; neither may be presented as the other. '
   'unreconstructible_* remains a TERMINAL, truthful state until a supplementary anchor supersedes it.';
