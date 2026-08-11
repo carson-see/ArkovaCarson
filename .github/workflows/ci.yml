@@ -1140,27 +1140,37 @@ jobs:
         # pin unless the official tlaplus/tlaplus release body also changed.
         if: steps.tla-changed.outputs.changed == 'true'
         env:
-          # Pin updated 2026-08-01 - upstream RE-CUT the mutable v1.8.0
-          # pre-release assets AGAIN on 2026-07-31T18:54:20Z (jar bytes changed;
-          # size 4485995 -> 4486015), which is why the prior pin started failing
+          # Pin updated 2026-08-11 - upstream RE-CUT the mutable v1.8.0
+          # pre-release assets AGAIN on 2026-08-11T12:59:18Z (jar bytes changed;
+          # size 4486015 -> 4486193), which is why the prior pin started failing
           # the supply-chain check and turned this job red on every PR touching
-          # machines/ (observed on PR #1784: the "Pin TLA2TOOLS_JAR" step failed
-          # and "Run TLA+ PreCheck verification" never ran). This is the THIRD
+          # machines/ (observed on PR #2140: the "Pin TLA2TOOLS_JAR" step failed
+          # and "Run TLA+ PreCheck verification" never ran). This is the FOURTH
           # re-cut of the same tag; the mismatch is upstream tag mutability, not
           # a compromised artifact.
           #
+          # STANDING FOLLOW-UP (no ticket yet - raise one): this is silent in the
+          # wrong direction — a re-cut turns the pin step red and SKIPS the
+          # verification step, so the model stops being checked while the job
+          # merely looks like an infra hiccup. Four occurrences in ~5 weeks.
+          # Fix the class, not the instance: vendor the jar (or mirror it to a
+          # write-once bucket / GHCR artifact) and pin to that immutable copy,
+          # so upstream re-cutting a pre-release tag can no longer disable TLA+
+          # verification. Until that lands, re-pin per the protocol below.
+          #
           # Verified per the protocol above against all THREE independent
-          # anchors on 2026-08-01: (1) release-body SHA1 checksum table now
-          # reads feffd16994db963ad945628cfd03d154c195a468|tla2tools.jar and
+          # anchors on 2026-08-11: (1) release-body SHA1 checksum table now
+          # reads 5288dcb2c48ece915768f61eaa1f117fd71044c6|tla2tools.jar and
           # matches the downloaded jar's SHA1, (2) GitHub release API asset
           # digest is
-          # sha256:e22f8ffb4bacdea0a871f444dd94fe5fb0d8013b3388ae39e82e26f852c735d5
-          # (asset updated_at 2026-07-31T18:54:20Z, size 4486015), (3) direct
+          # sha256:ab323b79802aedc3203b3f9af37c6aca3ed43f4e0225b36f2aa77b26de46c05f
+          # (asset updated_at 2026-08-11T12:59:18Z, size 4486193), (3) direct
           # `curl --proto '=https' | shasum -a 256` of the official release URL
-          # matches, size 4486015. Previous pins, now stale:
+          # matches, size 4486193. Previous pins, now stale:
+          #   2026-08-01 (07-31 re-cut): e22f8ffb4bacdea0a871f444dd94fe5fb0d8013b3388ae39e82e26f852c735d5
           #   2026-07-21 (07-18 re-cut): cc4803dce2a8ffaf0f5920a9dc39df4b5ee34ab4cb53fb58ac557277a7e516b3
           #   2026-07-09:                33de7da9ce1b7fffb9d1c184021178dbb051747be48504e65c584c423721a32e
-          TLA2TOOLS_SHA256: e22f8ffb4bacdea0a871f444dd94fe5fb0d8013b3388ae39e82e26f852c735d5
+          TLA2TOOLS_SHA256: ab323b79802aedc3203b3f9af37c6aca3ed43f4e0225b36f2aa77b26de46c05f
         run: |
           mkdir -p "$HOME/.tla"
           # SCRUM-3018 / Sonar S6506: enforce HTTPS on the fetch and on any
