@@ -75,12 +75,62 @@ export interface Finding {
 /**
  * Strip `//` and block comments so a commented-out insert, or an insert quoted
  * in a doc comment explaining this very rule, does not register as real code.
- * Replaces with spaces to keep byte offsets (and therefore line numbers) exact.
+ * Replaces comment bytes with spaces to keep offsets (and line numbers) exact.
+ *
+ * STRING-AWARE, and that is load-bearing. The first version was two regexes,
+ * and its /code-review found both false-negative classes that implies: a `/*`
+ * inside a string literal started a fake block comment that blanked every
+ * insert up to the next `*​/` anywhere in the file, and a `//` inside a string
+ * (any URL) erased the rest of that physical line. Either one silently hides
+ * an unguarded insert from a security gate. So this walks the source with a
+ * five-state scanner — code, line comment, block comment, quote ('/"/`),
+ * escape-aware — and only blanks bytes it saw OPEN as a comment from code
+ * state. String contents are preserved untouched: `.from('anchors')` is
+ * itself a string argument and must survive.
+ *
+ * Known residual blind spot, accepted: a regex literal containing `//` or `/*`
+ * inside a character class (e.g. /[/]{2}/) can still open a fake comment.
+ * Unlike URLs-in-strings this shape is rare, lintable, and reviewable.
  */
 function stripComments(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/\/\/[^\n]*/g, (m) => ' '.repeat(m.length));
+  const out = src.split('');
+  const n = src.length;
+  let i = 0;
+  let state: 'code' | 'line' | 'block' | 'single' | 'double' | 'template' = 'code';
+  while (i < n) {
+    const c = src[i];
+    const d = i + 1 < n ? src[i + 1] : '';
+    if (state === 'code') {
+      if (c === '/' && d === '/') { out[i] = ' '; out[i + 1] = ' '; state = 'line'; i += 2; continue; }
+      if (c === '/' && d === '*') { out[i] = ' '; out[i + 1] = ' '; state = 'block'; i += 2; continue; }
+      if (c === "'") state = 'single';
+      else if (c === '"') state = 'double';
+      else if (c === '`') state = 'template';
+      i += 1;
+    } else if (state === 'line') {
+      if (c === '\n') state = 'code';
+      else out[i] = ' ';
+      i += 1;
+    } else if (state === 'block') {
+      if (c === '*' && d === '/') { out[i] = ' '; out[i + 1] = ' '; state = 'code'; i += 2; continue; }
+      if (c !== '\n') out[i] = ' ';
+      i += 1;
+    } else {
+      // Inside a string literal. Honour escapes; a newline also terminates the
+      // two quote forms (a syntactically broken file must not wedge the state
+      // machine into "string" for the rest of the scan).
+      if (c === '\\') { i += 2; continue; }
+      if (
+        (state === 'single' && (c === "'" || c === '\n')) ||
+        (state === 'double' && (c === '"' || c === '\n')) ||
+        (state === 'template' && c === '`')
+      ) {
+        state = 'code';
+      }
+      i += 1;
+    }
+  }
+  return out.join('');
 }
 
 function lineNumber(text: string, idx: number): number {
@@ -113,10 +163,51 @@ export function findAnchorInserts(src: string): number[] {
   return offsets;
 }
 
-/** True when the file calls the guard (not merely mentions it in prose). */
-export function callsFieldPolicyGuard(src: string): boolean {
+export interface GuardUsage {
+  /** At least one real call site (not an import, not prose). */
+  called: boolean;
+  /** Offsets of calls whose boolean result is NOT consumed. */
+  discardedAt: number[];
+}
+
+/**
+ * How the file uses the guard — not merely WHETHER it calls it.
+ *
+ * `enforceOrgFieldPolicy` returns false after it has already written the HTTP
+ * response, and the caller must return immediately. A call whose result is
+ * discarded therefore passes a "was it called?" check while the handler sails
+ * past the rejection, inserts the anchor anyway, and then double-sends —
+ * exactly the copy-paste mistake this gate exists to catch, and (per this
+ * gate's own /code-review) the first version was blind to it.
+ *
+ * A call counts as CONSUMED when the ~40 chars before it end in one of the
+ * shapes that use the return value:
+ *   `if (!(await enforceOrgFieldPolicy(`   — the house form, all current sites
+ *   `= await enforceOrgFieldPolicy(`       — assignment
+ *   `return await enforceOrgFieldPolicy(`  — delegation
+ * Anything else — a bare `await enforceOrgFieldPolicy(...)` statement — is a
+ * discard and fails the gate with its own message.
+ */
+export function analyzeGuardUsage(src: string): GuardUsage {
   const code = stripComments(src);
-  return new RegExp(`\\b${GUARD_FN}\\s*\\(`).test(code);
+  const call = new RegExp(`\\b${GUARD_FN}\\s*\\(`, 'g');
+  const consumedTail =
+    /(?:!\s*\(\s*await\s+|=\s*await\s+|\breturn\s+await\s+|!\s*\(?\s*)$/;
+  const usage: GuardUsage = { called: false, discardedAt: [] };
+  let match: RegExpExecArray | null;
+  while ((match = call.exec(code)) !== null) {
+    // Skip the import specifier: `import { enforceOrgFieldPolicy }` never has
+    // `(` directly after the identifier, so it does not match this regex.
+    usage.called = true;
+    const before = code.slice(Math.max(0, match.index - 40), match.index);
+    if (!consumedTail.test(before)) usage.discardedAt.push(match.index);
+  }
+  return usage;
+}
+
+/** Back-compat shim for existing tests: does the file call the guard at all? */
+export function callsFieldPolicyGuard(src: string): boolean {
+  return analyzeGuardUsage(src).called;
 }
 
 export function scan(): Finding[] {
@@ -132,14 +223,27 @@ export function scan(): Finding[] {
     const src = readFileSync(resolve(REPO, file), 'utf8');
     const inserts = findAnchorInserts(src);
     if (inserts.length === 0) continue;
-    if (callsFieldPolicyGuard(src)) continue;
-    // Report the first insert only — one finding per file keeps the failure
-    // message about the file that needs the guard, not each statement in it.
-    findings.push({
-      file,
-      line: lineNumber(src, inserts[0]),
-      context: lineContext(src, inserts[0]),
-    });
+    const usage = analyzeGuardUsage(src);
+    if (!usage.called) {
+      // Report the first insert only — one finding per file keeps the failure
+      // message about the file that needs the guard, not each statement in it.
+      findings.push({
+        file,
+        line: lineNumber(src, inserts[0]),
+        context: lineContext(src, inserts[0]),
+      });
+      continue;
+    }
+    // Called, but at least one call site throws the verdict away. That is
+    // WORSE than not calling it: the 400 is written, the handler keeps going,
+    // the anchor is inserted anyway, and the second send crashes the request.
+    for (const at of usage.discardedAt) {
+      findings.push({
+        file,
+        line: lineNumber(src, at),
+        context: `${lineContext(src, at)}  ← guard called but its result is DISCARDED; use \`if (!(await ${GUARD_FN}(...))) return;\``,
+      });
+    }
   }
   return findings;
 }

@@ -278,7 +278,15 @@ async function loadOrgFieldPolicy(orgId: string): Promise<PolicyLoad> {
   }
 
   const policy = toPolicy(orgId, data);
-  if (policyCache.size >= POLICY_CACHE_MAX_ENTRIES) policyCache.clear();
+  // Bounded by FIFO eviction of the single oldest entry (Map preserves
+  // insertion order), NOT by clearing the whole map: on a deployment with
+  // more than POLICY_CACHE_MAX_ENTRIES active orgs, a wholesale clear would
+  // stampede every org's next request into a policy re-read at once — a cache
+  // that degrades to a passthrough exactly when it is busiest.
+  if (policyCache.size >= POLICY_CACHE_MAX_ENTRIES) {
+    const oldest = policyCache.keys().next().value;
+    if (oldest !== undefined) policyCache.delete(oldest);
+  }
   policyCache.set(orgId, { policy, fetchedAt: now });
   return { status: 'ok', policy };
 }

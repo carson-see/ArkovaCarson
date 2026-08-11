@@ -574,11 +574,22 @@ describe('POST /api/v1/versions/:versionId/resolve — org field policy', () => 
     // `notes` is a real field on ResolveVersionInput, so Zod accepts it and the
     // guard is the only thing that can refuse it.
     mockState.policyRow = policyRow(['notes']);
-    const { res, status } = mockRes();
+    const { res, status, json } = mockRes();
 
     await handleResolveVersion(mockReq({ decision: 'approve', notes: 'client matter note' }), res);
 
     expect(status).toHaveBeenCalledWith(400);
+    // Pin that the 400 came from THE FIELD POLICY, not some earlier validation:
+    // a future schema change that 400s before the guard would otherwise keep
+    // this test green while the control silently stopped being what rejects.
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: ORG_FIELD_POLICY_REJECTED_ERROR,
+        details: [
+          expect.objectContaining({ path: 'notes', code: ORG_FIELD_POLICY_REJECTED_ERROR }),
+        ],
+      }),
+    );
     expect(mockState.anchorInserts).toHaveLength(0);
     expect(mockState.policyReads).toBeGreaterThan(0);
   });

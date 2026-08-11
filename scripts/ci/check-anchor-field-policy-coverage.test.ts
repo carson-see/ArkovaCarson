@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   findAnchorInserts,
   callsFieldPolicyGuard,
+  analyzeGuardUsage,
   scan,
 } from './check-anchor-field-policy-coverage.js';
 
@@ -77,6 +78,68 @@ describe('findAnchorInserts', () => {
       db.from('anchors').insert(b);
     `;
     expect(findAnchorInserts(src)).toHaveLength(2);
+  });
+
+  // The false-NEGATIVE classes this detector's own /code-review found. Each of
+  // these hid a real insert from the first (regex-only) comment stripper.
+  it('still sees an insert after a "//" inside a string on the same line', () => {
+    expect(
+      findAnchorInserts(`const u = 'http://x.test'; await db.from('anchors').insert(p);`),
+    ).toHaveLength(1);
+  });
+
+  it('still sees an insert between "/*" and "*/" that appear inside strings', () => {
+    expect(
+      findAnchorInserts(`const s = "/*"; db.from('anchors').insert(p); const e = "*/";`),
+    ).toHaveLength(1);
+  });
+
+  it('still sees an insert after a template literal containing "//"', () => {
+    expect(
+      findAnchorInserts('const u = `https://x.test/${id}`; db.from(\'anchors\').insert(p);'),
+    ).toHaveLength(1);
+  });
+
+  it('still ignores a genuinely commented-out insert (string-awareness did not overcorrect)', () => {
+    expect(findAnchorInserts(`// db.from('anchors').insert(p)`)).toHaveLength(0);
+    expect(findAnchorInserts(`/* db.from('anchors').insert(p) */`)).toHaveLength(0);
+  });
+});
+
+describe('analyzeGuardUsage — a discarded return must not count as guarded', () => {
+  it('accepts the house form: if (!(await enforceOrgFieldPolicy(...))) return', () => {
+    const usage = analyzeGuardUsage(
+      `if (!(await enforceOrgFieldPolicy({ orgId, body: req.body, res, scope: 's' }))) { return; }`,
+    );
+    expect(usage.called).toBe(true);
+    expect(usage.discardedAt).toHaveLength(0);
+  });
+
+  it('accepts assignment and return-delegation forms', () => {
+    expect(
+      analyzeGuardUsage(`const ok = await enforceOrgFieldPolicy({ orgId });`).discardedAt,
+    ).toHaveLength(0);
+    expect(
+      analyzeGuardUsage(`return await enforceOrgFieldPolicy({ orgId });`).discardedAt,
+    ).toHaveLength(0);
+  });
+
+  it('FLAGS a bare await whose boolean verdict is thrown away', () => {
+    // The copy-paste mistake: guard runs, writes its 400, and the handler
+    // sails on to insert the anchor anyway. Must fail the gate.
+    const usage = analyzeGuardUsage(
+      `await enforceOrgFieldPolicy({ orgId, body: req.body, res, scope: 's' });\n` +
+        `await db.from('anchors').insert(p);`,
+    );
+    expect(usage.called).toBe(true);
+    expect(usage.discardedAt).toHaveLength(1);
+  });
+
+  it('does not treat the import specifier as a call', () => {
+    const usage = analyzeGuardUsage(
+      `import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';`,
+    );
+    expect(usage.called).toBe(false);
   });
 });
 
