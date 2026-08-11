@@ -176,7 +176,10 @@ export function BillingOverview({
                   )}
                 </div>
               </div>
-              <Button variant="ghost" size="sm">
+              {/* Card details are held by Stripe and can only be changed in the
+                  customer portal, so "Update" is a portal action. It shipped
+                  with no onClick at all. */}
+              <Button variant="ghost" size="sm" onClick={onManageBilling}>
                 Update
               </Button>
             </div>
@@ -197,7 +200,9 @@ export function BillingOverview({
             </p>
           </div>
         </div>
-        <Button variant="ghost" size="sm">
+        {/* Invoices/receipts live in the Stripe portal — the ExternalLink icon
+            already promised that destination while the button had no onClick. */}
+        <Button variant="ghost" size="sm" onClick={onManageBilling}>
           View History
           <ExternalLink className="ml-2 h-3 w-3" />
         </Button>

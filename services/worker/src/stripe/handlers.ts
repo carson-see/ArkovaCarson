@@ -381,53 +381,33 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
     details: `Subscription created: ${session.subscription}`,
   });
 
-  if (adminProfile?.org_id) {
-    const orgId = adminProfile.org_id;
-
-    // Read current KYB state first. Paying must NOT clear a prior Middesk
-    // rejection — letting checkout flip REJECTED → VERIFIED would let any org
-    // bypass KYB by subscribing.
-    const { data: orgRow } = await db
-      .from('organizations')
-      .select('verification_status')
-      .eq('id', orgId)
-      .maybeSingle();
-    const currentStatus = orgRow?.verification_status as string | null | undefined;
-
-    if (currentStatus === 'REJECTED') {
-      logger.warn(
-        { userId, orgId, currentStatus, subscriptionId: session.subscription },
-        'Stripe checkout completed for org with REJECTED KYB status — leaving verification_status unchanged',
-      );
-      await db.from('audit_events').insert({
-        event_type: 'CHECKOUT_BLOCKED_BY_KYB_REJECTION',
-        event_category: 'ORG',
-        actor_id: userId,
-        org_id: orgId,
-        details: `Subscription ${session.subscription} processed but verification_status left REJECTED (Middesk KYB)`,
-      });
-    } else {
-      await db
-        .from('organizations')
-        .update({ verification_status: 'VERIFIED', updated_at: new Date().toISOString() })
-        .eq('id', orgId);
-
-      await db
-        .from('profiles')
-        .update({ is_verified: true })
-        .eq('id', userId);
-
-      await db.from('audit_events').insert({
-        event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION',
-        event_category: 'ORG',
-        actor_id: userId,
-        org_id: orgId,
-        details: `Organization verification_status set to VERIFIED on checkout completion (subscription: ${session.subscription})`,
-      });
-
-      logger.info({ userId, orgId }, 'Org verification_status set to VERIFIED on checkout');
-    }
-  }
+  // AUDIT-0424-10: checkout deliberately writes NO KYB or identity state.
+  //
+  // `organizations.verification_status` is the authoritative KYB gate — read by
+  // `requireVerifiedOrg` (api/v1/integrations/docusign-oauth.ts,
+  // drive-oauth.ts) and api/v1/orgSubOrgs.ts, and surfaced to the UI via the
+  // `useCanIssueCredential` hook. It is not an "is paying" flag, and completing
+  // a Stripe checkout is not evidence that a business passed KYB.
+  //
+  // The previous code read the current status, guarded only
+  // `currentStatus === 'REJECTED'`, and in every other case set
+  // `verification_status = 'VERIFIED'` + `profiles.is_verified = true`. That
+  // guard could never fire in production: the live CHECK constraint
+  // `organizations_verification_status_valid` admits only
+  // UNVERIFIED/PENDING/VERIFIED, so `'REJECTED'` is not a storable value and
+  // the comparison was dead code — every completed checkout self-granted KYB
+  // verification and the DocuSign/Drive connect gates with it. The old comment
+  // on that guard named the exact risk ("would let any org bypass KYB by
+  // subscribing"); the else-branch was that bypass, one state removed.
+  //
+  // Verification state is now written ONLY by the provider paths:
+  //   - `organizations.verification_status` ← api/v1/webhooks/middesk.ts
+  //   - `profiles.is_verified`              ← handleIdentityVerified (Stripe Identity)
+  // Subscription entitlement is expressed by the `subscriptions` row and
+  // `profiles.subscription_tier` written above — that is checkout's whole job.
+  //
+  // If a paid plan should ever imply an entitlement, add it to that tier
+  // mapping. Do not reintroduce a write to `verification_status` here.
 
   logger.info({ userId, subscriptionId: session.subscription, planId }, 'Subscription activated');
 }

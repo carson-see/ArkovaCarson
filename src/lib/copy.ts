@@ -561,6 +561,13 @@ export const BILLING_LABELS = {
   CURRENT_PLAN_BADGE: 'Current Plan',
   DOWNGRADE_NOTE: 'Changes take effect at the end of your current billing period.',
   CANCELLATION_SCHEDULED: 'Your subscription is set to cancel at the end of the current period.',
+  // `useBilling.startCheckout` / `openBillingPortal` swallow failures and
+  // resolve null (worker 400 when a plan has no stripe_price_id configured,
+  // 401, 409, network error...). Without these the button would silently do
+  // nothing — the same "is it broken or did I misclick?" dead end as the
+  // no-op Upgrade button this release fixes.
+  CHECKOUT_UNAVAILABLE: 'Could not start checkout for this plan. Please try again or contact support.',
+  PORTAL_UNAVAILABLE: 'Could not open the billing portal. Please try again.',
 } as const;
 
 // =============================================================================
@@ -2552,6 +2559,44 @@ export const ACCEPT_INVITE_LABELS = {
 } as const;
 
 /**
+ * Copy for /activate — the recipient's account-activation page.
+ *
+ * Wording note (§1.5 / §1.13 R-7): this page previously promised a 12-word
+ * "backup access key" that no code path could ever redeem — there is no
+ * recovery flow and no column to store it in. That claim is gone rather than
+ * restated; see src/pages/agents.md for the ruling.
+ */
+export const ACTIVATE_ACCOUNT_LABELS = {
+  PAGE_TITLE: 'Activate your account',
+  LOADING: 'Checking your activation link…',
+  INVITED_BY: 'You have been added to',
+  SUBTITLE: 'Choose a password to finish setting up your account.',
+
+  INVALID_TITLE: 'Activation link is invalid',
+  INVALID_DESCRIPTION:
+    'This activation link is invalid or has already been used. Ask your organization administrator to send a new one.',
+
+  EXPIRED_TITLE: 'This activation link has expired',
+  EXPIRED_DESCRIPTION: 'Ask your organization administrator to send a new one.',
+
+  EMAIL_LABEL: 'Email address',
+  PASSWORD_LABEL: 'Choose a password',
+  PASSWORD_PLACEHOLDER: 'At least 8 characters',
+  PASSWORD_TOO_SHORT: 'Choose a password of at least 8 characters.',
+  FULL_NAME_LABEL: 'Full name',
+
+  SUBMIT: 'Activate my account',
+  SUBMITTING: 'Activating your account…',
+
+  SUCCESS_TITLE: 'Your account is ready',
+  SUCCESS_DESCRIPTION: 'You can now sign in with your email address and the password you just chose.',
+  GO_TO_SIGN_IN: 'Go to sign in',
+
+  ERROR_GENERIC: 'Something went wrong activating your account. Please try again.',
+  TRY_AGAIN: 'Try again',
+} as const;
+
+/**
  * SCRUM-2907 — copy for a confirmation link that did not work.
  *
  * Supabase signals a dead link with `error`/`error_code` on the redirect hash
@@ -2815,6 +2860,11 @@ export const BILLING_PAGE_LABELS = {
   DATA_UNAVAILABLE_TITLE: 'Unable to load billing data',
   DATA_UNAVAILABLE_DESC: 'We could not confirm your billing status. Refresh the page or try again.',
   RETRY: 'Retry',
+  // `useBilling.openBillingPortal` swallows failures and resolves null (e.g. a
+  // free-tier user with no Stripe customer yet → worker 404). Without this the
+  // button would silently do nothing, which is exactly what the old dead
+  // no-op did — the user cannot tell a broken button from a working one.
+  PORTAL_UNAVAILABLE: 'Could not open the billing portal. Please try again.',
 } as const;
 
 export const SYSTEM_HEALTH_LABELS = {

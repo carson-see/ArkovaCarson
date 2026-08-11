@@ -393,6 +393,43 @@ export function captureStuckAnchorAlert(
 }
 
 // ---------------------------------------------------------------------------
+// Proof-coverage-monitor fingerprinting (SCRUM-3187)
+// ---------------------------------------------------------------------------
+//
+// Guards the offline-verification promise: every newly SECURED anchor must get
+// a per-document inclusion proof. Fires on the FORWARD path only — the ~2.97M
+// historical backlog is tracked separately and would otherwise pin this alarm
+// permanently red.
+export const PROOF_COVERAGE_FINGERPRINT = ['proof-coverage-monitor'] as const;
+export const PROOF_COVERAGE_ALERT_SOURCE = 'proof-coverage-monitor';
+export const PROOF_COVERAGE_ALERT_TYPE = 'proof_coverage_regression';
+
+/**
+ * Capture a proof-coverage regression with a stable fingerprint so repeated
+ * hourly fires collapse into one issue. Tags (not just `extra`) are set because
+ * Sentry issue-alert rules filter on tags.
+ *
+ * @param extra - Aggregate metrics only (ratios, counts). Never per-document
+ *                data: fingerprints and filenames must not reach Sentry (§1.1).
+ */
+export function captureProofCoverageAlert(
+  message: string,
+  extra?: Record<string, unknown>,
+  level: 'warning' | 'error' = 'error',
+): void {
+  Sentry.captureMessage(message, {
+    level,
+    fingerprint: [...PROOF_COVERAGE_FINGERPRINT],
+    tags: {
+      source: PROOF_COVERAGE_ALERT_SOURCE,
+      story: 'SCRUM-3187',
+      alert_type: PROOF_COVERAGE_ALERT_TYPE,
+    },
+    ...(extra ? { extra } : {}),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Stuck-SUBMITTED-monitor fingerprinting (SCRUM-3017 / BUG-2026-07-26-004)
 // ---------------------------------------------------------------------------
 //

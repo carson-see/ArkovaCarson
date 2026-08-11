@@ -9,6 +9,7 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 // useNavigate still needed for settings back button
 import { CreditCard, Loader2, ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
@@ -73,13 +74,20 @@ export function PricingPage() {
         const url = await openBillingPortal();
         if (url) {
           window.location.href = url;
+          return;
         }
+        toast.error(BILLING_LABELS.PORTAL_UNAVAILABLE);
       } else {
         // New subscriber — create checkout session
         const url = await startCheckout(planId);
         if (url) {
           window.location.href = url;
+          return;
         }
+        // startCheckout resolves null on ANY failure (e.g. the worker's 400
+        // when the plan has no stripe_price_id configured for this
+        // environment). Silence here reads as a broken button.
+        toast.error(BILLING_LABELS.CHECKOUT_UNAVAILABLE);
       }
     } finally {
       setCheckoutLoading(null);
@@ -90,7 +98,9 @@ export function PricingPage() {
     const url = await openBillingPortal();
     if (url) {
       window.location.href = url;
+      return;
     }
+    toast.error(BILLING_LABELS.PORTAL_UNAVAILABLE);
   };
 
   const handleSignOut = async () => {
