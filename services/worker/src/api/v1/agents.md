@@ -2,16 +2,33 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
-## 2026-08-10 — raw caller IPs were persisted into `audit_events` (DPA defect, FIXED)
+## 2026-08-10 — anchor write paths enforce a per-org field policy (DPA clause 4.6)
 
-Arkova's DPA Schedules 1 and 2 both warrant that IP addresses are processed in **hashed** form. Two audit writers on this surface serialised `req.ip` **verbatim** into `details.querying_ip`: `verify.ts` (`VERIFICATION_QUERIED`) and `credentials-ctdl.ts` (`ctdl.requested`). 16 prod rows held literal IPv4/IPv6 addresses. Signing the DPA unchanged would have made a contractual warranty false.
+`anchor-submit.ts` and `anchor-bulk.ts` both call `enforceOrgFieldPolicy` (`utils/orgFieldPolicy.ts`,
+migration `0405`) immediately after their Zod parse. For every org without a policy row this is a
+no-op; for a configured org, a request carrying a prohibited field is **rejected with 400**
+(`error: 'field_not_permitted'`, RFC 7807 + the house `details[]` shape), never silently stripped.
 
-Both now emit **`querying_ip_hash`** via `auditIpHash(req.ip, config.ipHashPepper)` (`services/worker/src/lib/ip-hash.ts`) — a keyed HMAC-SHA256, `null` when the pepper is unavailable, never the raw address. The field was **renamed**, not just re-valued: `querying_ip` holding a digest would keep inviting the next reader to treat it as an address.
+Placement is load-bearing on both routes and should not be moved:
 
-- **Hashed, not dropped, and that was a deliberate call.** Nothing in either repo reads `querying_ip` — by consumer count alone, dropping wins. But both routes are anon-reachable (`router.ts` lets unauthenticated GETs through) and `api_key_id` is null for exactly the scraping/enumeration traffic these logs exist to investigate, so the IP-derived value is the ONLY actor identifier available. A keyed digest keeps "one caller hit 10k public_ids in a minute" answerable while making "which human" unanswerable from the log.
-- **The contract test is `audit-ip-pseudonymisation.test.ts`**, and its load-bearing assertion is `JSON.stringify(details)` never containing the address — not a check on one field name. A future rename cannot quietly reintroduce the leak. It covers both writers, IPv4 and IPv6, the keyed-vs-bare-sha256 distinction, and the pepper-missing path.
-- **Historical rows**: migration `0404` redacts `details.querying_ip` from existing rows and leaves a `querying_ip_redacted: true` marker. Not re-hashed — that would require the pepper inside a migration file.
-- `IP_HASH_PEPPER` must exist in Secret Manager + `deploy-worker.yml` **before the next worker deploy**; production fails to boot without it.
+- **`anchor-submit.ts`: before the duplicate-fingerprint lookup.** That lookup answers **200** for an
+  already-anchored fingerprint. Enforcing after it would let a prohibited field through on every
+  re-submission of an existing document — the most likely shape of a real integration retry.
+- **`anchor-bulk.ts`: before the `dry_run` short-circuit** (a validation run that reports
+  `validated: 1` for a batch the real run rejects is worse than no dry-run) **and before quota and
+  credit consumption** (a rejected request must not bill).
+- **Whole-batch rejection on bulk, not per-row errors.** Queueing the compliant rows and reporting
+  the rest would mean accepting a payload that carried prohibited data; the data has already been
+  transmitted at that point, and a 201 tells the partner the shipment was fine.
+
+`anchor-bulk-self-service.ts` inherits the guard through its unmodified fall-through into
+`anchorBulkRouter` — so the dashboard is not a way around a restriction the org is subject to. That
+is pinned by a test, because the fall-through is the only reason it holds.
+
+**§1.8 note:** no published response shape changed and no previously-valid request became invalid for
+any org that has no policy row. For a configured org, requests that previously succeeded now 400 —
+which is the point of the control and is what that org contracted for. New error codes on an existing
+status class are additive; this needs no `v2` prefix.
 
 ## 2026-08-03 — `openapi-ciba.ts` ActionType doc gained `INSTANT_SECURE` + a drift guard
 
