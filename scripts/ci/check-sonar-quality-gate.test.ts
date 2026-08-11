@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
-import { shouldFailOnMissingToken, verifyGate, verifyNewCodeDefinition } from './check-sonar-quality-gate.js';
+import { shouldFailOnMissingToken, verifyGate, verifyNewCodeDefinition, SonarAuthError, isAuthStatus } from './check-sonar-quality-gate.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WAVE_2_HELDOUT_SOURCE_PATHS = [
@@ -189,5 +189,47 @@ describe('.sonarcloud.properties Wave 2 held-out corpus policy', () => {
     expect(fullExclusions.some((path) => path.includes('golden-dataset-s33-wave2-top15'))).toBe(
       false,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SCRUM-1304/SCRUM-1681 — an expired SonarCloud credential must not block merges
+//
+// 2026-08-11: the token's only Secret Manager version was created 2026-05-05,
+// past SonarCloud's 90-day expiry. `/api/settings/values` began returning a bare
+// 401, the gate exited 2, and EVERY PR in the repo went red — including the DPA
+// clause 4.6 control. A credential we cannot authenticate with means the gate was
+// not evaluated; that is the same epistemic state as an unset token, which this
+// script already treats as skip-with-notice. It must NOT read as a gate failure.
+//
+// The paired assertion is the one that matters: every NON-auth failure must still
+// block, so this cannot become a blanket "ignore SonarCloud" switch.
+// ---------------------------------------------------------------------------
+describe('SonarAuthError / isAuthStatus', () => {
+  it('classifies 401 and 403 as credential failures', () => {
+    expect(isAuthStatus(401)).toBe(true);
+    expect(isAuthStatus(403)).toBe(true);
+  });
+
+  it('does NOT classify real failures as credential failures', () => {
+    // 404 = project/gate genuinely missing; 500 = SonarCloud broken;
+    // 200 = fine. None of these may take the non-blocking path.
+    for (const status of [200, 400, 404, 429, 500, 502, 503]) {
+      expect(isAuthStatus(status)).toBe(false);
+    }
+  });
+
+  it('carries the status and a name that main() can branch on', () => {
+    const err = new SonarAuthError(401, '');
+    expect(err).toBeInstanceOf(Error);
+    expect(err.status).toBe(401);
+    expect(err.name).toBe('SonarAuthError');
+    // The message must not be empty even when SonarCloud returns a bare 401
+    // with no body — which is exactly what it did on 2026-08-11.
+    expect(err.message).toContain('401');
+  });
+
+  it('is distinguishable from a plain Error so non-auth paths still exit non-zero', () => {
+    expect(new Error('SonarCloud settings 500: boom') instanceof SonarAuthError).toBe(false);
   });
 });
