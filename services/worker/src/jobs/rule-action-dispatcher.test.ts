@@ -596,7 +596,48 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     expect(JSON.stringify(dbState.anchorInserts[0].metadata)).not.toContain('acct-1');
   });
 
-  it('FAST_TRACK_ANCHOR (DS-06) with credits: deducts via RPC and submits anchor job', async () => {
+  // ─── Billing integrity: the charged credit must buy real acceleration ────
+  //
+  // FAST_TRACK_ANCHOR debits 1 credit and its shipped UI template
+  // (`rule-templates-data.ts` `law-firm-contract`) promises "Instantly secure
+  // fully-signed contracts as soon as all parties complete e-signature."
+  // Before this fix the ONLY thing the debit bought was an `anchor.fast_track`
+  // job_queue row that NO code claims — no consumer, so no retry, no
+  // dead-letter, no error surface. The document was anchored by the nightly
+  // batch anyway (exactly what free AUTO_ANCHOR gets), so the customer paid a
+  // credit for zero acceleration. These two tests pin the invariant in both
+  // directions: the acceleration happens, and no orphan job is produced.
+  it('FAST_TRACK_ANCHOR (billing integrity): the charged credit buys a real immediate per-org batch pass', async () => {
+    setScenario({
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+
+    const result = await runRuleActionDispatcher();
+
+    expect(result.succeeded).toBe(1);
+    expect(mockDbRpc).toHaveBeenCalledWith(
+      'deduct_org_credit',
+      expect.objectContaining({ p_amount: 1, p_reason: 'rule.fast_track_anchor' }),
+    );
+    // The credit was charged, so acceleration must actually be attempted.
+    expect(mockProcessBatchAnchors).toHaveBeenCalledWith(
+      expect.objectContaining({ force: true, orgId: ORG_ID }),
+    );
+  });
+
+  it('FAST_TRACK_ANCHOR (billing integrity): produces no unconsumed anchor.fast_track job', async () => {
+    setScenario({
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+
+    await runRuleActionDispatcher();
+
+    // `anchor.fast_track` has no claimJob/processNextJob consumer anywhere in
+    // the worker. Enqueuing it writes a row that stays `pending` forever.
+    expect(mockSubmitJob).not.toHaveBeenCalled();
+  });
+
+  it('FAST_TRACK_ANCHOR (DS-06) with credits: deducts via RPC and materializes the anchor', async () => {
     setScenario({
       rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
     });
@@ -621,18 +662,6 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
         p_reason: 'rule.fast_track_anchor',
       }),
     );
-    expect(mockSubmitJob).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'anchor.fast_track',
-        payload: expect.objectContaining({
-          org_id: ORG_ID,
-          rule_id: RULE_ID,
-          execution_id: EXEC_ID,
-          trigger_event_id: 'evt-1',
-          anchor_public_id: 'ARK-2026-ABCD1234',
-        }),
-      }),
-    );
     const final = dbState.finalUpdates.get(EXEC_ID);
     expect(final?.status).toBe('SUCCEEDED');
     const out = final?.output_payload as {
@@ -640,14 +669,21 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
       routed_to: string;
       anchor_materialized?: boolean;
       anchor_public_id?: string;
+      immediate_batch_triggered?: boolean;
     };
     expect(out.outcome).toBe('anchor_dispatched');
     expect(out.routed_to).toBe('anchor_pipeline');
     expect(out.anchor_materialized).toBe(true);
     expect(out.anchor_public_id).toBe('ARK-2026-ABCD1234');
+    expect(out.immediate_batch_triggered).toBe(true);
   });
 
-  it('FAST_TRACK_ANCHOR (DS-06): retry after prior enqueue reuses the existing job', async () => {
+  // Replaces the old "retry reuses the existing anchor.fast_track job" test.
+  // The retry guard was never the job row: the credit RPC is idempotent on
+  // `exec.id` (migration 0326 `UNIQUE(org_id, reference_id, reason)`) and the
+  // anchor insert de-duplicates on 23505. With the orphan job gone, THOSE are
+  // what a dispatcher retry must lean on — so that is what this pins.
+  it('FAST_TRACK_ANCHOR (DS-06): a dispatcher retry re-charges nothing and inserts no duplicate anchor', async () => {
     mockDbRpc.mockResolvedValueOnce({
       data: { success: true, balance: 99, deducted: 0, idempotent: true },
       error: null,
@@ -657,13 +693,6 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     });
     dbState.anchorInsertError = { code: '23505', message: 'duplicate key value violates unique constraint' };
     dbState.existingAnchors = [{ public_id: 'ARK-2026-EXISTING', status: 'PENDING' }];
-    dbState.jobQueueRows = [{
-      id: 'job-existing-fast-track',
-      type: 'anchor.fast_track',
-      payload: { execution_id: EXEC_ID },
-      status: 'pending',
-      created_at: '2026-05-30T12:00:00.000Z',
-    }];
 
     const result = await runRuleActionDispatcher();
 
@@ -674,15 +703,14 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     const out = final?.output_payload as {
       anchor_public_id?: string;
       duplicate_anchor?: boolean;
-      fast_track_job_id?: string;
-      reused_fast_track_job?: boolean;
       deduction_idempotent?: boolean;
+      immediate_batch_triggered?: boolean;
     };
     expect(out.anchor_public_id).toBe('ARK-2026-EXISTING');
     expect(out.duplicate_anchor).toBe(true);
-    expect(out.fast_track_job_id).toBe('job-existing-fast-track');
-    expect(out.reused_fast_track_job).toBe(true);
+    // `deducted: 0, idempotent: true` — the replay moved no credit.
     expect(out.deduction_idempotent).toBe(true);
+    expect(out.immediate_batch_triggered).toBe(true);
   });
 
   it('FAST_TRACK_ANCHOR (DS-06): recomputes invalid sender_email_sha256 input before anchor metadata', async () => {
@@ -858,25 +886,28 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     expect(mockSubmitJob).not.toHaveBeenCalled();
   });
 
-  it('FAST_TRACK_ANCHOR (Codex P1): submitJob failure AFTER credit deduction refunds and retries', async () => {
-    // deduct_org_credit succeeds (default mock) but the queue refuses the
-    // anchor job. The dispatcher compensates with refund_org_credit before
-    // retrying so the retry loop cannot double-charge the org.
-    mockSubmitJob.mockResolvedValueOnce(null);
+  // Replaces the old "submitJob returned null → refund and retry" test. That
+  // compensation branch guarded the enqueue of a job nothing consumed, so it
+  // is gone with the job. The remaining downstream failure that must still
+  // unwind the charge — the anchor insert — is pinned by the "paid anchor
+  // insert failure ... refunds and retries" test above. What is NEW and needs
+  // its own pin is the accelerator itself failing: the document is safely
+  // PENDING, so this must NOT retry or unwind the charge, but the outcome has
+  // to say so rather than silently claiming acceleration happened.
+  it('FAST_TRACK_ANCHOR: a throwing immediate-batch pass stays SUCCEEDED but records immediate_batch_triggered=false', async () => {
+    mockProcessBatchAnchors.mockRejectedValueOnce(new Error('treasury RPC unavailable'));
     setScenario({
       rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
     });
+
     const result = await runRuleActionDispatcher();
-    expect(result.failed).toBe(1);
-    expect(mockDbRpc).toHaveBeenCalledWith('refund_org_credit', {
-      p_org_id: ORG_ID,
-      p_amount: 1,
-      p_reason: 'rule.fast_track_anchor_compensation',
-      p_reference_id: EXEC_ID,
-    });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockDbRpc).not.toHaveBeenCalledWith('refund_org_credit', expect.anything());
     const final = dbState.finalUpdates.get(EXEC_ID);
-    expect(final?.status).toBe('RETRYING');
-    expect(final?.error as string).toMatch(/credit refunded/i);
+    expect(final?.status).toBe('SUCCEEDED');
+    const out = final?.output_payload as { immediate_batch_triggered?: boolean };
+    expect(out.immediate_batch_triggered).toBe(false);
   });
 
   it('FAST_TRACK_ANCHOR (DS-06): org_not_initialized is permanent failure (not retryable)', async () => {
@@ -907,7 +938,7 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
   // fallback (neither of which FAST_TRACK_ANCHOR's existing, unchanged
   // behavior gets — this PR does not touch FAST_TRACK_ANCHOR's outcomes).
   describe('INSTANT_SECURE (founder directive 2026-08-03)', () => {
-    it('with credits: deducts via RPC keyed on execution id, submits anchor job, and kicks an immediate org batch pass', async () => {
+    it('with credits: deducts via RPC keyed on execution id and kicks an immediate org batch pass', async () => {
       setScenario({
         rule: { ...defaultRule, action_type: 'INSTANT_SECURE', action_config: {} },
       });
@@ -938,17 +969,9 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
           p_reference_id: EXEC_ID,
         }),
       );
-      expect(mockSubmitJob).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'anchor.fast_track',
-          payload: expect.objectContaining({
-            org_id: ORG_ID,
-            rule_id: RULE_ID,
-            execution_id: EXEC_ID,
-            anchor_public_id: 'ARK-2026-ABCD1234',
-          }),
-        }),
-      );
+      // No orphan `anchor.fast_track` row: nothing in the worker claims that
+      // type, so enqueuing it was a write nobody would ever read.
+      expect(mockSubmitJob).not.toHaveBeenCalled();
       // The actual "instant" behavior: force a batch pass for THIS org now,
       // instead of waiting on the standard triggers.
       expect(mockProcessBatchAnchors).toHaveBeenCalledWith(
@@ -961,11 +984,13 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
         routed_to: string;
         anchor_materialized?: boolean;
         anchor_public_id?: string;
+        immediate_batch_triggered?: boolean;
       };
       expect(out.outcome).toBe('anchor_dispatched');
       expect(out.routed_to).toBe('anchor_pipeline');
       expect(out.anchor_materialized).toBe(true);
       expect(out.anchor_public_id).toBe('ARK-2026-ABCD1234');
+      expect(out.immediate_batch_triggered).toBe(true);
     });
 
     it('retry after a prior success does NOT double-charge — reuses the existing job and reports idempotent', async () => {
@@ -1137,24 +1162,6 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
       const final = dbState.finalUpdates.get(EXEC_ID);
       expect(final?.status).toBe('RETRYING');
       expect(final?.error as string).toMatch(/credit refunded/i);
-    });
-
-    it('submitJob failure AFTER credit deduction refunds and retries — never charges for a job that never queued', async () => {
-      mockSubmitJob.mockResolvedValueOnce(null);
-      setScenario({
-        rule: { ...defaultRule, action_type: 'INSTANT_SECURE', action_config: {} },
-      });
-      const result = await runRuleActionDispatcher();
-      expect(result.failed).toBe(1);
-      expect(mockDbRpc).toHaveBeenCalledWith('refund_org_credit', {
-        p_org_id: ORG_ID,
-        p_amount: 1,
-        p_reason: 'rule.instant_secure_compensation',
-        p_reference_id: EXEC_ID,
-      });
-      expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
-      const final = dbState.finalUpdates.get(EXEC_ID);
-      expect(final?.status).toBe('RETRYING');
     });
 
     it('a throwing immediate-batch trigger does NOT turn a successful dispatch into a failure (best-effort acceleration only)', async () => {
