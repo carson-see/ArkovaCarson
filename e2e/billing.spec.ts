@@ -45,6 +45,77 @@ async function mockBillingUnavailable(page: import('@playwright/test').Page) {
   );
 }
 
+/**
+ * Put the browser in the state Stripe Checkout actually exists for: a signed-in
+ * user with NO subscription, looking at a catalogue that contains a purchasable
+ * plan.
+ *
+ * Both halves are required, and neither is reachable through
+ * `mockBillingStatus` — `PricingPage` gets its plans and subscription from
+ * `useBilling`, which reads PostgREST directly (`from('plans')` /
+ * `from('subscriptions')`), never `/api/billing/status`:
+ *
+ *  1. The seeded `individual` user (demo-user) already holds an ACTIVE
+ *     `individual` subscription (`seed.sql`), and `handleSelectPlan` sends any
+ *     non-canceled subscriber to the billing PORTAL instead of opening a new
+ *     checkout. That routing is correct product behaviour — proration and plan
+ *     changes belong to Stripe's portal — so the checkout path simply cannot be
+ *     reached as that user.
+ *  2. `seed.sql` ships `free` / `individual` / `professional` / `organization`,
+ *     but `PricingPage.BILLING_PLAN_ORDER` only renders `free` and the
+ *     `individual_verified_*` pair. Those two exist in prod and are absent
+ *     locally, so the seeded catalogue's only rendered card is the $0 `free`
+ *     one — clicking "Select Plan" on it would prove nothing about paying.
+ *
+ * `maybeSingle()` in postgrest-js fetches as a list and enforces cardinality
+ * client-side, so an empty ARRAY (not `null`) is what reads back as "no row".
+ */
+async function mockNewSubscriberWithPurchasablePlan(page: import('@playwright/test').Page) {
+  await page.route('**/rest/v1/plans*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 'free',
+          name: 'Free',
+          description: 'Get started with Arkova',
+          price_cents: 0,
+          billing_period: 'month',
+          records_per_month: 3,
+          stripe_price_id: null,
+        },
+        {
+          id: 'individual_verified_monthly',
+          name: 'Verified Individual',
+          description: 'For a trusted personal profile',
+          price_cents: 1200,
+          billing_period: 'month',
+          records_per_month: 10,
+          stripe_price_id: 'price_stub_monthly',
+        },
+        {
+          id: 'individual_verified_annual',
+          name: 'Verified Individual (Annual)',
+          description: 'Same verified tier, paid yearly',
+          price_cents: 12000,
+          billing_period: 'year',
+          records_per_month: 10,
+          stripe_price_id: 'price_stub_annual',
+        },
+      ]),
+    });
+  });
+
+  await page.route('**/rest/v1/subscriptions*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    });
+  });
+}
+
 async function expectBillingOverview(page: import('@playwright/test').Page) {
   await expect(
     page.getByRole('heading', { name: 'Billing & Subscription' })
@@ -252,18 +323,24 @@ test.describe('Billing', () => {
           body: JSON.stringify({ sessionId: 'cs_test_stub', url: '/billing/success?session_id=cs_test_stub' }),
         });
       });
+      await mockNewSubscriberWithPurchasablePlan(individualPage);
 
       await openAsIndividual(individualPage, '/pricing');
       await expect(
         individualPage.getByRole('heading', { name: 'Billing & Plans' })
       ).toBeVisible({ timeout: 10000 });
 
+      // `free` is the fallback current plan, so its card renders a disabled
+      // "Current Plan" — the first "Select Plan" is the recommended paid card.
       await Promise.all([
         individualPage.waitForURL(/\/billing\/success/, { timeout: 15000 }),
         individualPage.getByRole('button', { name: 'Select Plan' }).first().click(),
       ]);
 
-      expect(checkoutBody).toMatchObject({ planId: expect.any(String) });
+      // Pin the plan id, not just "a string": the whole point of the bug was a
+      // CTA that reached the wrong destination, and `expect.any(String)` would
+      // pass even if the click started checkout for the $0 free plan.
+      expect(checkoutBody).toMatchObject({ planId: 'individual_verified_monthly' });
     });
   });
 
