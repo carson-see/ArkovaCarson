@@ -2,6 +2,30 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-10 — why the DPA clause 4.6 field policy does NOT apply in this directory
+
+Three files here create anchors: `connector-artifact-drain.ts`, `publicRecordAnchor.ts`, and
+`rule-action-dispatcher.ts` (`AUTO_ANCHOR` / `INSTANT_SECURE`). None of them calls
+`enforceOrgFieldPolicy`, and `scripts/ci/check-anchor-field-policy-coverage.ts` exempts this whole
+directory rather than listing these three files — so a NEW job inherits the exemption correctly and a
+new route under `services/worker/src/api/` inherits the requirement correctly.
+
+The exemption is structural, not an oversight:
+
+- **There is no inbound request to reject.** These run from a cron tick, a queue drain, or an org-rule
+  match. `enforceOrgFieldPolicy` takes an express `Response` and answers a caller with a 400; there is
+  no caller and no response here, so it cannot be applied at all.
+- **A 400 is the wrong semantic anyway.** Rejecting a queued connector artifact means deciding what
+  happens to the job — dead-letter, quarantine, skip-and-alert — which is a different control with
+  different operational consequences, not a one-line guard call.
+
+**This is a real gap, not a proof of absence.** A connector-fetched DocuSign or Drive document can
+carry third-party metadata containing a field the org's DPA forbids, and nothing currently stops it
+from reaching `anchors.metadata` on that path. Closing it needs a policy-aware quarantine step in the
+drain with its own disposition semantics. Anyone extending the clause 4.6 control should start here,
+and should not read the green CI gate as covering it — the gate asserts coverage of REQUEST paths only.
+
+
 ## 2026-08-03 — `INSTANT_SECURE` rule action + dead-rule investigation (founder directive)
 
 Founder, verbatim: *"The 'Auto Secure' rule doesn't secure. ... we need to be able to instantly secure or add to queue and we need rules to work."* `AUTO_ANCHOR`'s UI label ("Secure the document" / "Anchor it on the network automatically") implies immediacy; `dispatchAutoAnchor` (SCRUM-1649 DS-07) only ever creates a PENDING anchor that joins the normal free batch queue. Migration `0400` (renumbered from `0397`; **not yet applied to prod**) adds a 7th `org_rule_action_type` value, `INSTANT_SECURE`, that actually secures right away.

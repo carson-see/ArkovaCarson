@@ -4235,6 +4235,51 @@ export type Database = {
           },
         ]
       }
+      organization_field_policies: {
+        Row: {
+          contract_reference: string | null
+          created_at: string
+          disallowed_fields: string[]
+          enabled: boolean
+          org_id: string
+          policy_reason: string | null
+          updated_at: string
+        }
+        Insert: {
+          contract_reference?: string | null
+          created_at?: string
+          disallowed_fields?: string[]
+          enabled?: boolean
+          org_id: string
+          policy_reason?: string | null
+          updated_at?: string
+        }
+        Update: {
+          contract_reference?: string | null
+          created_at?: string
+          disallowed_fields?: string[]
+          enabled?: boolean
+          org_id?: string
+          policy_reason?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_field_policies_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_field_policies_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_queue_runs: {
         Row: {
           batch_id: string | null
