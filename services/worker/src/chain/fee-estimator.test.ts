@@ -360,6 +360,115 @@ describe('createFeeEstimator', () => {
       createFeeEstimator({ strategy: 'unknown' as 'static' }),
     ).toThrow('Unknown fee strategy');
   });
+
+  // ─── BUG-2026-08-11: network-blind default ────────────────────────────
+  //
+  // The factory resolved its base against a hardcoded mainnet constant and
+  // accepted no `network` at all, so every non-mainnet deployment running
+  // `strategy: 'mempool'` asked the MAINNET explorer for fee rates. That is
+  // most damaging on the INEFF-5 `FORCE_DYNAMIC_FEE_ESTIMATION` path in
+  // chain/client.ts, whose stated purpose is to exercise the real fee path
+  // on signet "to validate the full fee path pre-mainnet" — validating
+  // against the wrong network defeats the point. Verified live: signet
+  // reports a flat 1 sat/vB while mainnet reports real (much higher) rates,
+  // so the pre-mainnet rehearsal was silently reading numbers its own
+  // network would never produce.
+
+  it.each([
+    ['signet', 'https://mempool.space/signet/api'],
+    ['testnet4', 'https://mempool.space/testnet4/api'],
+    ['testnet', 'https://mempool.space/testnet/api'],
+    ['mainnet', 'https://mempool.space/api'],
+  ])('requests %s fee rates from that network\'s explorer', async (network, base) => {
+    mockFetch.mockResolvedValueOnce(okFeeResponse());
+
+    const estimator = createFeeEstimator({ strategy: 'mempool', network });
+    await estimator.estimateFee();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][0]).toBe(`${base}/v1/fees/recommended`);
+  });
+
+  it('still defaults to mainnet when no network is supplied', async () => {
+    mockFetch.mockResolvedValueOnce(okFeeResponse());
+
+    const estimator = createFeeEstimator({ strategy: 'mempool' });
+    await estimator.estimateFee();
+
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      'https://mempool.space/api/v1/fees/recommended',
+    );
+  });
+
+  // ─── BUG-2026-08-11 (second pass): the CLASS, not just the factory ────
+  //
+  // Fixing only `createFeeEstimator` left the defect wide open: four live
+  // call sites construct `MempoolFeeEstimator` directly with no baseUrl —
+  // `jobs/anchor.ts` (ECON-1 fee ceiling), `jobs/feeAwareScheduler.ts` (x2,
+  // the submit/defer gate) and `middleware/x402PaymentGate.ts` (anchor
+  // pricing). Those are hotter paths than the factory sites: a mainnet rate
+  // read on signet makes the fee ceiling defer anchors forever and makes
+  // x402 bill for fees that do not exist on the network in use.
+  //
+  // The factory-level parity ratchet cannot see any of that, so the default
+  // has to be correct at the constructor.
+
+  it.each([
+    ['signet', 'https://mempool.space/signet/api'],
+    ['testnet4', 'https://mempool.space/testnet4/api'],
+    ['testnet', 'https://mempool.space/testnet/api'],
+    ['mainnet', 'https://mempool.space/api'],
+  ])('MempoolFeeEstimator constructed directly uses the %s base', async (network, base) => {
+    mockFetch.mockResolvedValueOnce(okFeeResponse());
+
+    const estimator = new MempoolFeeEstimator({ network });
+    await estimator.estimateFee();
+
+    expect(mockFetch.mock.calls[0][0]).toBe(`${base}/v1/fees/recommended`);
+  });
+
+  it('MempoolFeeEstimator still defaults to mainnet with no network', async () => {
+    mockFetch.mockResolvedValueOnce(okFeeResponse());
+
+    const estimator = new MempoolFeeEstimator();
+    await estimator.estimateFee();
+
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      'https://mempool.space/api/v1/fees/recommended',
+    );
+  });
+
+  it('an explicit baseUrl still wins over network on the class', async () => {
+    mockFetch.mockResolvedValueOnce(okFeeResponse());
+
+    const estimator = new MempoolFeeEstimator({
+      network: 'signet',
+      baseUrl: 'https://mempool.example.test/api',
+    });
+    await estimator.estimateFee();
+
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      'https://mempool.example.test/api/v1/fees/recommended',
+    );
+  });
+
+  it('lets an explicit mempoolApiUrl still override the per-network base', async () => {
+    mockFetch.mockResolvedValueOnce(okFeeResponse());
+
+    // Operator-set value in the "bare host" convention; resolveMempoolApiBase
+    // normalizes it up to the /api shape this estimator needs, and it must
+    // win over the network-derived default.
+    const estimator = createFeeEstimator({
+      strategy: 'mempool',
+      network: 'signet',
+      mempoolApiUrl: 'https://mempool.example.test',
+    });
+    await estimator.estimateFee();
+
+    expect(mockFetch.mock.calls[0][0]).toBe(
+      'https://mempool.example.test/api/v1/fees/recommended',
+    );
+  });
 });
 
 // ─── SCRUM-2592: batch fee-ceiling primitive ────────────────────────────────

@@ -242,6 +242,11 @@ export async function createChainClient(): Promise<ChainClient> {
 
     // INEFF-5: When FORCE_DYNAMIC_FEE_ESTIMATION is enabled, use mempool.space
     // fee estimator even on signet/testnet to validate the full fee path pre-mainnet
+    //
+    // BUG-2026-08-11: `network` is what makes that rehearsal honest. Without
+    // it the factory fell back to the mainnet explorer, so this path — whose
+    // entire purpose is exercising the real fee path on signet before
+    // mainnet — was reading mainnet's rates while anchoring on signet.
     const feeStrategy = config.forceDynamicFeeEstimation
       ? 'mempool'
       : (config.bitcoinFeeStrategy ?? 'static');
@@ -250,6 +255,7 @@ export async function createChainClient(): Promise<ChainClient> {
       staticRate: config.bitcoinStaticFeeRate,
       fallbackRate: config.bitcoinFallbackFeeRate,
       mempoolApiUrl: config.mempoolApiUrl,
+      network: config.bitcoinNetwork,
     });
 
     logger.info(
@@ -325,9 +331,14 @@ export async function createChainClient(): Promise<ChainClient> {
       signingLabel = useGcpKms ? 'GCP KMS' : 'AWS KMS';
     }
 
+    // Inside the `bitcoinNetwork === 'mainnet'` branch, so this is provably
+    // mainnet and the factory default would already be right. Passed
+    // explicitly anyway: the defect being fixed here was a call site relying
+    // on an implicit network, and leaving one behind invites the next one.
     const feeEstimator = createFeeEstimator({
       strategy: config.bitcoinFeeStrategy ?? 'mempool',
       fallbackRate: config.bitcoinFallbackFeeRate,
+      network: config.bitcoinNetwork,
     });
 
     logger.info(

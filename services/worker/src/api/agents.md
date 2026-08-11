@@ -279,3 +279,18 @@ was always per-network.
 `chain/fee-estimator.ts`'s `DEFAULT_MEMPOOL_URL` is the mainnet base — so a non-mainnet deployment
 reports MAINNET fee rates. Same defect class, but the fix lands in `services/worker/src/chain/`,
 which the path detector rates T3. Tracked separately rather than folded into a T2 PR.
+
+## 2026-08-11 — that gap is now CLOSED (BUG-2026-08-11)
+
+The "Known gap" recorded directly above is fixed. `createFeeEstimator` now takes `network?`, and
+this endpoint passes `network: config.bitcoinNetwork`, so both legs of the treasury status response
+are per-network again.
+
+The paragraph above is left intact rather than edited: `agents.md` is **append-only**
+(`scripts/ci/check-agents-md-append-only.ts`), and rewriting it in place is what failed that gate on
+the PR carrying this fix. Correcting the record means appending the correction, not erasing the
+thing that was true at the time.
+
+Rule for this folder: **any `create*` factory that builds a mempool.space URL must be handed
+`config.bitcoinNetwork` explicitly.** The two defects here — the wallet leg's balance bug and the
+fee leg's rate bug — were both "call site omitted the network, factory defaulted to something".
