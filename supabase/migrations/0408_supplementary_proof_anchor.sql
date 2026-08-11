@@ -127,6 +127,9 @@ CREATE TABLE IF NOT EXISTS public.supplementary_anchor_runs (
 ALTER TABLE public.supplementary_anchor_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.supplementary_anchor_runs FORCE ROW LEVEL SECURITY;
 
+-- Every other object in this migration is IF NOT EXISTS; CREATE POLICY has no
+-- such form, so drop-then-create keeps a re-apply idempotent like the rest.
+DROP POLICY IF EXISTS supplementary_anchor_runs_deny_clients ON public.supplementary_anchor_runs;
 CREATE POLICY supplementary_anchor_runs_deny_clients
   ON public.supplementary_anchor_runs FOR ALL TO anon, authenticated
   USING (false) WITH CHECK (false);
@@ -204,6 +207,9 @@ CREATE INDEX IF NOT EXISTS supp_journal_unresolved_idx
 ALTER TABLE public.supplementary_anchor_journal ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.supplementary_anchor_journal FORCE ROW LEVEL SECURITY;
 
+-- Every other object in this migration is IF NOT EXISTS; CREATE POLICY has no
+-- such form, so drop-then-create keeps a re-apply idempotent like the rest.
+DROP POLICY IF EXISTS supplementary_anchor_journal_deny_clients ON public.supplementary_anchor_journal;
 CREATE POLICY supplementary_anchor_journal_deny_clients
   ON public.supplementary_anchor_journal FOR ALL TO anon, authenticated
   USING (false) WITH CHECK (false);
@@ -418,8 +424,16 @@ AS $$
     )
   ORDER BY
     (p_priority_org_ids IS NOT NULL AND a.org_id = ANY(p_priority_org_ids)) DESC,
+    -- `::text` is REQUIRED, not stylistic. public.anchors.credential_type is an
+    -- ENUM (27 labels in prod) and p_deprioritized_credential_types is text[];
+    -- Postgres has no implicit enum<->text operator, so the uncast form raises
+    --   ERROR: 42883: operator does not exist: credential_type = text
+    -- and because this function is LANGUAGE sql its body is validated at CREATE
+    -- time, so the uncast form fails THE MIGRATION APPLY, not the first call.
+    -- It aborted a prod apply of this file on 2026-08-11.
+    -- Guarded by src/tests/migration-enum-text-comparison.test.ts.
     (p_deprioritized_credential_types IS NOT NULL
-      AND a.credential_type = ANY(p_deprioritized_credential_types)) ASC,
+      AND a.credential_type::text = ANY(p_deprioritized_credential_types)) ASC,
     a.created_at ASC
   LIMIT least(greatest(coalesce(p_limit, 10000), 1), 10000);
 $$;

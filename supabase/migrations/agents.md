@@ -473,3 +473,38 @@ real mainnet BTC from the production treasury.
 Guarded by `src/tests/sec-0408-supplementary-proof-anchor-revokes.test.ts`,
 `tests/rls/supplementary-proof-anchor-revokes.test.ts` (live ACL), and repo-wide
 by `scripts/ci/feedback-rules/secdef-function-grants.ts` (lands with PR #2130).
+
+**Prod apply FAILED 2026-08-11 on a type error — fixed in-file, prod untouched.**
+The first attempt to apply `0408` to prod aborted and rolled back clean (ledger
+stayed `0407`, `/health` healthy, no barrier formed). Two defects, both now fixed
+in this PR rather than worked around at apply time — patching a local copy would
+have put SQL in prod that no PR contains, which is exactly the file/prod
+divergence the drift gate exists to catch, and would have left the shipped file
+still unable to apply anywhere.
+
+1. **`claim_supplementary_proof_cohort` compared an ENUM to `text[]` uncast.**
+   `public.anchors.credential_type` is an enum (27 labels in prod, including the
+   `PUBLICATION` / `SEC_FILING` values the function's own comment deprioritizes),
+   and `p_deprioritized_credential_types` is `text[]`. Postgres has no implicit
+   enum<->text operator:
+   `ERROR: 42883: operator does not exist: credential_type = text`.
+   Because the function is `LANGUAGE sql`, the body is parsed and validated at
+   **CREATE** time, so this fails the **apply**, not the first call. Fixed with
+   `a.credential_type::text = ANY(...)`; cast form confirmed to resolve against
+   prod with a zero-row probe. Comparisons to string *literals*
+   (`a.status = 'SECURED'`) were never affected — an unknown literal coerces to
+   the enum; only a `text`-typed **parameter** breaks.
+
+   The gap was that nothing exercised the function against a schema where
+   `credential_type` is an enum. Now guarded repo-wide by
+   `src/tests/migration-enum-text-comparison.test.ts` (zero-tolerance, no
+   baseline — this was the only instance in the whole migration set).
+
+2. **`CREATE POLICY` was the only non-idempotent object in the file.** Every
+   other object uses `IF NOT EXISTS`, but `CREATE POLICY` has no such form, so a
+   re-apply errored partway. Both policies now get `DROP POLICY IF EXISTS` first.
+
+If any environment ever reported `0408` applying cleanly, that environment's
+`anchors.credential_type` has drifted to `text` and its evidence is not
+representative of prod. This PR claims no staging apply: its evidence block
+states "no soak evidence... no staging deploy, no staging Supabase project".
