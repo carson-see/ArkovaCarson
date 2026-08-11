@@ -40,12 +40,16 @@ The lookup 503s **before** the insert instead (`org_attribution_unavailable`), c
 postgrest-resolved `error` and the transport-level throw.
 
 **No backfill, and that is a finding rather than a decision deferred.** Verified against prod
-(`vzwyaatejekddvltxyye`) on 2026-08-11: **zero** `anchors` rows carry `credential_type = 'CLE'`,
-counted exactly over index-served `created_at` windows spanning the whole table from the oldest
-anchor (2026-03-21) forward. `'CLE'` **is** a valid `credential_type` enum member (baseline), so
-this is "the endpoint has never been used in production", not "writes were failing". There is no
-affected row to repair, and the fix is purely forward-looking. The `as any` casts on
-`credential_type` in this file are `database.types.ts` drift, not a runtime constraint.
+(`vzwyaatejekddvltxyye`) on 2026-08-11: **zero** live `anchors` rows carry
+`credential_type = 'CLE'` — a single exact count served by the partial index
+`idx_anchors_credential_type_status` (`(credential_type, status) WHERE deleted_at IS NULL`).
+Query note for the next person: a bare `credential_type` filter does NOT qualify for that index
+— without `deleted_at IS NULL` in the predicate it seq-scans 22 GB into the statement timeout,
+which is why naive PostgREST counts on this column hang. `'CLE'` **is** a valid
+`credential_type` enum member (baseline), so this is "the endpoint has never been used in
+production", not "writes were failing". There is no affected row to repair, and the fix is
+purely forward-looking. The `as any` casts on `credential_type` in this file are
+`database.types.ts` drift, not a runtime constraint.
 
 Do NOT read the surviving `org_id IS NULL` anchors in prod as this bug's residue — they are
 individual-user records from other routes, where null is the correct value.
