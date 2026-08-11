@@ -165,6 +165,74 @@ bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
 Newest first, one entry per session. Each entry's own `_Last refreshed:_` footer is that entry's
 record at the time it was written — it is not a claim about the current state of this file.
 
+### 2026-08-11 — P0: `/api/v1/verify` down 11m39s (FIFO lock-queue barrier on `organizations`)
+
+**Impact.** `GET /api/v1/verify/{id}` returned `service_unavailable` and `/health` reported
+`degraded` (`checks.database=error`) from 16:40:11Z to 16:51:49Z UTC. **Zero customer-visible
+failures:** every request to `/api/v1/verify*` in the window came from `curl/8.7.1` (operator
+probing). The only real-browser hit all day was 13:06:44Z, pre-outage, returning 404. Verified via
+Cloud Run request logs; user-agent census 12:00Z–17:00Z was Google-Cloud-Scheduler 813, curl 157,
+APIs-Google 30, and no customer or SDK traffic.
+
+**Root cause.** A FIFO lock-queue barrier on `public.organizations` (oid 25344). Two MCP census
+`SELECT`s (15:53:58Z, 15:56:46Z) with correlated subqueries seq-scanning 3.55M anchors held
+`AccessShareLock` for 49.5 and 55.3 minutes. An `apply_migration` for 0407 issued
+`ALTER TABLE public.organizations` at 16:35:09.29Z (retried 16:37:25.95Z) requesting
+`AccessExclusiveLock` and queued behind them. Postgres lock queues are FIFO, so every subsequent
+lock request queued behind that ALTER — including PostgREST's schema-cache introspection, whose
+`AccessShareLock` was itself perfectly compatible with the running reads
+(`process 3136488 still waiting for AccessShareLock on relation 25344`; PID 3136488 is the
+`authenticator`/`postgrest` backend). Introspection hit its ~10s `lock_timeout`, PostgREST entered a
+`PGRST002` retry loop, and with no valid schema cache it serves nothing. `get_flag(
+'ENABLE_VERIFICATION_API')` then failed and `verificationApiGate` fail-closed. The flag itself was
+`true` throughout.
+
+The asymmetry that made it persist: the readers had a `lock_timeout` and died repeatedly, while the
+`mgmt-api` DDL sessions had none and camped the queue for 15+ minutes. `NOTIFY pgrst, 'reload
+schema'` could not help — a reload re-runs the very introspection that was blocked.
+
+**Resolution — not self-recovery.** `pg_cancel_backend` on PIDs 3135399, 3135446 and 3135492 at
+16:51:21.257–.259Z; Postgres logged exactly three `canceling statement due to user request` in that
+microsecond cluster. First HTTP 200 followed 28.5s later at 16:51:49.80Z. The long census query did
+not finish until 16:52:06.14Z — 17 seconds *after* service was restored — so the recovery tracked the
+cancel, not the read draining. Only the `AccessExclusiveLock` requests were removed; the long reads
+were deliberately left running.
+
+**Investigated and disproved.** (a) Migrations 0401/0402/0405 `REVOKE`/grant changes breaking the
+schema cache — they committed cleanly hours earlier. (b) `ERR_JOSE_ALG_NOT_ALLOWED` in
+`verifyJwtLocally` — the project JWKS does serve ES256 and `services/worker/src/auth.ts` does pin
+HS256, but `cronAuth` returns 401 on failure and structurally cannot 500, and `verifyCronAuth`
+Method 3 verifies Cloud Scheduler tokens against Google's JWKS with issuer and audience pinned. Cron
+was 21/21, 33/33 and 47/47 green in the three buckets before the outage *while that warning fired*;
+the pin is unchanged since `603d047e9` (2026-05-26). Benign happy-path noise.
+
+**Prod state after.** Worker rev `arkova-worker-01286-dam`, git_sha `2de4e4e34`, ledger head `0405`
+(confirmed via `supabase_migrations.schema_migrations`), `ENABLE_VERIFICATION_API=true`, ungranted
+locks on `organizations` = 0, zero 5xx and zero `PGRST002` since 16:51:30Z. **Migration 0407 never
+applied** and will re-wedge prod if retried under a long read.
+
+**Detection is the real defect — nothing paged anyone for 11+ minutes.** Three gaps, being closed
+before the 7-day soak: a log-based metric on `PGRST002` count > 0 over 5 min (it occurred zero times
+before and zero times after the incident, so it carries no false-positive tax and cannot drown in the
+~25k cron-alert noise); an uptime check asserting the `/health` **body** contains `"status":
+"healthy"` rather than merely HTTP 200; and an alert on any `public`-relation lock wait > 60s, which
+would have fired at ~16:36, before user impact.
+
+**Prevention, worth more than any alert.** DDL on hot tables must `SET lock_timeout = '5s'` first so
+a blocked `ALTER` fails fast instead of forming a barrier, and unbounded correlated-subquery census
+reads against `organizations` are banned (these cost 49–55 minutes each). The reproducer is one
+sentence: *apply a migration via MCP while any long read is running against the same table.*
+
+**Follow-up:** PR #2171 (draft, T3, unsoaked, not merged) moves the non-Supabase-issuer short-circuit
+ahead of the HMAC attempt to kill the misleading warn, and adds issuer-pinned ES256/RS256 JWKS
+verification for Supabase user tokens. It deliberately does **not** widen the HMAC allow-list and does
+**not** point local verification at Google's JWKS — that would authenticate any Google OIDC token
+from any GCP project as a platform user. Separately, `main` carries 95 pre-existing `TS2883`
+typecheck errors (express-types portability) unrelated to this incident; given the deploy-typecheck
+blackout behaviour they warrant their own ticket.
+
+_Last refreshed: 2026-08-11 by carson — claims verified against gcloud/MCP/CI output._
+
 ### 2026-08-01/02 (CTO session) — pre-pentest PII/security hardening wave, DocuSign timeout investigation, soak findings F-1..F-10
 
 _Archived verbatim from the "Now" block this entry superseded — preserved as the dated record of that
