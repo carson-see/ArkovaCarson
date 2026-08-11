@@ -39,6 +39,7 @@
     "supabase/migrations/0376_r19_anchor_fingerprint_source.sql",
     "supabase/migrations/0384_scrum2481_anchor_evidence_claim_authority.sql",
     "supabase/migrations/0393_scrum2940_anchors_folder_update_org_admin.sql",
-    "supabase/migrations/0394_sec_ce_provenance_key_authority.sql"
+    "supabase/migrations/0394_sec_ce_provenance_key_authority.sql",
+    "supabase/migrations/0407_widen_org_verification_status_for_kyb_rejection.sql"
   ]
 }
