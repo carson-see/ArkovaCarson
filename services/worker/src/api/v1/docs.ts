@@ -1366,6 +1366,7 @@ export const openApiSpec: Record<string, any> = {
           '401': { $ref: '#/components/responses/Unauthorized' },
           '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
           '429': { $ref: '#/components/responses/RateLimited' },
+          '503': { description: 'Organization attribution unavailable — the submitter\'s organization could not be confirmed; no record was created; retryable', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
         },
       },
     },

@@ -2,6 +2,98 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-11 — `POST /cle/submit` created anchors attributed to no organisation
+
+Same defect family as the `registry-anchor` entry below ("creating an anchor row is not the same
+as giving the user a record"), one axis over: this route wrote `anchors.user_id` and **omitted
+`org_id` entirely**. The worker is service_role and bypasses RLS, so the insert always succeeded —
+the row was simply created unattributed. Found reviewing PR #2081 (SCRUM-3121), which added
+org-scoped DPA clause 4.6 field-policy enforcement to this same route: the org whose contractual
+field policy was *enforced* on the request was not recorded on the row the request *created*.
+Pre-existing, so deliberately out of scope there and fixed here instead.
+
+**What it cost.** `anchors_select` is
+`user_id = auth.uid() OR org_id = get_user_org_id() OR is_platform_admin()`:
+
+- **Not invisible to the creator** — the `user_id` branch still matched. That is why this was
+  silent rather than an obvious "my record vanished", and why it survived review.
+- **Invisible at org scope.** The route is reachable with a partner API key, where `user_id` is
+  the key's owning service user — so no teammate, no ORG_ADMIN, and no org-scoped dashboard query
+  (`.eq('org_id', orgId)`) could see the record at all.
+- **Never over-visible.** `NULL = get_user_org_id()` is NULL, not true, so a null-org row leaks to
+  nobody. The defect is strictly under-attribution; there is no exposure half to this bug.
+- Quota, credit and billing attribution all key on `org_id` (`anchor-submit.ts`), so these anchors
+  were unattributable for entitlement or billing purposes.
+
+**Why `profiles.org_id` and not the `org_members` fallback.** `compliance/auth-helpers.ts` layers an
+`org_members` fallback on top; that is wrong *here*. The RLS org branch is `get_user_org_id()`, which
+is exactly `SELECT org_id FROM profiles WHERE id = auth.uid()`. An org sourced only from
+`org_members` would write a value that branch never matches — the row would still be org-invisible,
+which is the bug. So this uses `_org-auth.ts`'s `getCallerOrgIdResult` (the canonical `profiles`
+read) and the API key's own `orgId` when present.
+
+**Fails closed, because null is a real answer.** A solo attorney with no organisation is a
+first-class caller and `org_id IS NULL` is correct and meaningful for them — prod carries such rows
+from other routes. That means null cannot double as the failure signal: coercing a failed lookup
+into `org_id: null` would persist a row the owning org can never see and can never be billed for.
+The lookup 503s **before** the insert instead, covering both the postgrest-resolved `error` and the
+transport-level throw.
+
+**One resolution, two consumers — and the error token is PR #2081's, deliberately.** PR #2081
+(clause 4.6) landed first and put a `resolveSubmitOrgId` on this same route to pick the org whose
+field policy screens the body; this change reuses that one resolution to also stamp `org_id`, so the
+org a request is *screened against* and the org its row is *attributed to* cannot diverge. The
+fail-closed 503 therefore keeps #2081's `field_policy_unavailable` token verbatim rather than
+introducing a second one — it now under-describes its own scope (the same failure blocks attribution
+too), and renaming it is a caller-visible contract change that belongs in its own PR, not in a merge
+resolution. What #2081's version did NOT have, and this one does, is the `usedApiKey` distinction:
+#2081 branched on `req.apiKey` being present, which on a request carrying BOTH a JWT and an
+`X-API-Key` resolves the org from a different principal than the one that produced `user_id`. That
+was a policy-evaluation mismatch there; once `org_id` is persisted it becomes the cross-tenant
+exposure described below, so the principal-matched form is now load-bearing for both.
+
+**No backfill, and that is a finding rather than a decision deferred.** Verified against prod
+(`vzwyaatejekddvltxyye`) on 2026-08-11: **zero** live `anchors` rows carry
+`credential_type = 'CLE'` — a single exact count served by the partial index
+`idx_anchors_credential_type_status` (`(credential_type, status) WHERE deleted_at IS NULL`).
+Query note for the next person: a bare `credential_type` filter does NOT qualify for that index
+— without `deleted_at IS NULL` in the predicate it seq-scans 22 GB into the statement timeout,
+which is why naive PostgREST counts on this column hang. `'CLE'` **is** a valid
+`credential_type` enum member (baseline), so this is "the endpoint has never been used in
+production", not "writes were failing". There is no affected row to repair, and the fix is
+purely forward-looking. The `as any` casts on `credential_type` in this file are
+`database.types.ts` drift, not a runtime constraint.
+
+Do NOT read the surviving `org_id IS NULL` anchors in prod as this bug's residue — they are
+individual-user records from other routes, where null is the correct value.
+
+**Org is resolved from the SAME principal that produced `user_id`, not merely `req.apiKey`.** A
+request can carry both a JWT `Authorization` header and an `X-API-Key` (`apiKeyAuth` attaches
+`req.apiKey` regardless of the JWT). The handler takes `user_id` from the JWT in that case, so
+`resolveSubmitOrgId` is passed a `usedApiKey` flag and reads the JWT user's `profiles.org_id` —
+using the unrelated key's org would stamp `user_id` and `org_id` from different principals and
+expose the JWT user's submission (bar number, attorney name) to the key's org via `anchors_select`.
+Regression-pinned by the "both a JWT and an API key" case in `cle-submit-org-attribution.test.ts`.
+
+**Known, NOT fixed here (each needs a decision, not a mechanical change) — surfaced by the
+multi-agent review of this PR:**
+- **`anchor_recipients` is never written**, so a CLE submission cannot appear in `/my-credentials`
+  — structurally the same gap the `registry-anchor` entry below describes. The recipient here is
+  genuinely ambiguous: the attorney is identified by `bar_number` and is often *not* the API caller.
+  **Since decided, and the disposition is "never link"** — see "`POST /cle/submit` stays
+  deliberately unlinked from `anchor_recipients` (DECISION)" below, pinned by
+  `cle-submit-recipient-semantics.test.ts`. Read this bullet as the open question that entry
+  answers, not as work still outstanding.
+- **This route enforces none of the org create-gates its siblings do** (`anchor-submit.ts`): no
+  `requireScope('anchor:write')`, no per-org create quota, no sandbox `anchor_quota` 402. Inert
+  while rows were org-null; now that they carry `org_id`, a read-scope key or a quota-exhausted
+  sandbox org can mint org-attributed anchors that bypass those gates. Adding the gates is a
+  product/scope call (should CLE submission require `anchor:write`?), deliberately not done here.
+- **Org-scoped drains now claim these rows** (`claim_pending_anchors(p_org_id)` has no
+  `credential_type` filter) and **org webhook endpoints now receive `credential_type:'CLE'` events**
+  — both previously impossible for org-null rows. Arguably the correct consequence of attribution,
+  but a behavior change for org integrations, so flagged rather than silently shipped.
+
 ## 2026-08-10 — the field policy now covers EVERY anchor-creating route here (DPA clause 4.6, part 2)
 
 The entry below wired `enforceOrgFieldPolicy` into `anchor-submit.ts` and `anchor-bulk.ts`. Five other

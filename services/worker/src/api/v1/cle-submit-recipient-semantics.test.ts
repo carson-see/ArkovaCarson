@@ -32,14 +32,27 @@
  * linker (cron, job, backfill) would not trip it — any such future code
  * must be reviewed against the agents.md entry directly.
  *
- * Mock note: the query-builder mock is DELIBERATELY minimal — insert →
- * select → single is the only chain the handler uses. Any other query
- * shape a future change introduces throws in the mock → the handler's
- * catch returns 500 ≠ 201 → the change surfaces here for review. App
- * scaffolding reuses `__testHelpers.ts`'s `buildApp`; the builder mock
- * stays local because the pin needs per-table call recording (which
- * `makeBuilder` does not provide) and because the minimal surface IS the
- * ratchet.
+ * Mock note: the query-builder mock is DELIBERATELY minimal — exactly the
+ * chains the handler uses and no more. Any other query shape a future change
+ * introduces throws in the mock → the handler's catch returns 500 ≠ 201 → the
+ * change surfaces here for review. App scaffolding reuses
+ * `__testHelpers.ts`'s `buildApp`; the builder mock stays local because the
+ * pin needs per-table call recording (which `makeBuilder` does not provide)
+ * and because the minimal surface IS the ratchet.
+ *
+ * Three chains are modelled, per table:
+ *   - `anchors`  → insert → select → single (the route's own write).
+ *   - `profiles` → select → eq → maybeSingle (`_org-auth.ts`'s
+ *     `loadCallerProfile`, reached via `resolveSubmitOrgId` on the JWT path
+ *     only — the API-key path takes the key's own `orgId` and never queries).
+ *   - `organization_field_policies` → select → eq → maybeSingle (the DPA
+ *     clause 4.6 loader, migration 0405), answering null = default-permissive.
+ * Both lookup chains were added by merges that the ratchet caught exactly as
+ * designed — the new `.eq()` threw in the then-anchors-only mock and the case
+ * went 503 — so each is a reviewed, deliberate widening rather than a silent
+ * loosening. Both also fail CLOSED in the route, so returning a usable profile
+ * row and a permissive (null) policy is what keeps the recipient assertions
+ * below running against a 201 instead of a 503.
  *
  * Note this file pins EXISTING behavior — there was no red-first phase
  * against production code because the disposition is "no code change".
@@ -60,6 +73,7 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock('../../utils/db.js', () => {
   // Minimal on purpose — see the mock note in the file docblock.
+  // The route's own write: insert → select → single.
   //
   // 2026-08-11: `eq` + `maybeSingle` added after this suite black-holed the
   // prod deploy gate. The DPA clause 4.6 guard (PR #2081) reads
@@ -71,6 +85,10 @@ vi.mock('../../utils/db.js', () => {
   // the default-permissive state, so this suite keeps testing the recipient
   // semantics it was written for. Guard ENFORCEMENT is covered by
   // anchor-field-policy-routes.test.ts, not here.
+  //
+  // This branch additionally splits the lookup chain into its own
+  // `createLookupQuery` shape below; the note there explains why the two are
+  // kept separate rather than sharing one widened builder.
   function createQuery() {
     const query = {
       insert: vi.fn((payload: Record<string, unknown>) => {
@@ -88,10 +106,30 @@ vi.mock('../../utils/db.js', () => {
     return query;
   }
 
+  // `_org-auth.ts`'s loadCallerProfile and the clause 4.6 policy loader both use
+  // select → eq → maybeSingle. Kept as a SEPARATE shape (rather than bolting
+  // `.eq`/`.maybeSingle` onto the anchors builder) so the anchors write keeps
+  // its original narrow chain — widening one table must not silently widen
+  // the other. `row` differs per table: a profile row (so org resolution
+  // succeeds and the route reaches its insert) vs null (so the field policy is
+  // default-permissive and this pin keeps measuring recipients, not rejection).
+  function createLookupQuery(row: Record<string, unknown> | null) {
+    const query = {
+      select: vi.fn(() => query),
+      eq: vi.fn(() => query),
+      maybeSingle: vi.fn(() => Promise.resolve({ data: row, error: null })),
+    };
+    return query;
+  }
+
   return {
     db: {
       from: vi.fn((table: string) => {
         mockState.fromCalls.push(table);
+        if (table === 'profiles') {
+          return createLookupQuery({ org_id: 'org-attorney-1', role: 'USER', is_platform_admin: false });
+        }
+        if (table === 'organization_field_policies') return createLookupQuery(null);
         return createQuery();
       }),
     },

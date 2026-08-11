@@ -56,14 +56,23 @@ vi.mock('../../utils/db.js', () => {
       return query;
     });
     query.single = vi.fn(() => Promise.resolve({ data: mockTables.insertedAnchor, error: null }));
-    // DPA clause 4.6 guard (migration 0405) reads `organization_field_policies`
-    // and the submitter's `profiles.org_id` via `.maybeSingle()`. Both resolve
-    // to no row here — the default-permissive state, so the guard is a no-op
-    // and this suite keeps testing the sanitizer it was written for. Both reads
-    // fail CLOSED (503) if the double omits them, which is correct behaviour
-    // but not what these tests assert. Enforcement is covered in
-    // anchor-field-policy-routes.test.ts.
-    query.maybeSingle = vi.fn(() => Promise.resolve({ data: null, error: null }));
+    // Two `.maybeSingle()` readers sit on the `/cle/submit` path and they need
+    // DIFFERENT answers, so this double is table-aware rather than blanket-null:
+    //   - `profiles` MUST return a row. `resolveSubmitOrgId` feeds both the
+    //     clause 4.6 screen and the anchor's `org_id`, and it fails CLOSED (503)
+    //     on a lookup error — a blanket null here would 503 every submit and
+    //     these tests would never reach the sanitizer assertions they exist for.
+    //     Org attribution itself is covered by `cle-submit-org-attribution.test.ts`.
+    //   - `organization_field_policies` MUST return null — the default-permissive
+    //     state, so the DPA clause 4.6 guard (migration 0405) is a no-op here and
+    //     this suite keeps testing the sanitizer it was written for. Enforcement
+    //     is covered in `anchor-field-policy-routes.test.ts`.
+    query.maybeSingle = vi.fn(() =>
+      Promise.resolve({
+        data: table === 'profiles' ? { org_id: 'org-cle-1', role: null, is_platform_admin: false } : null,
+        error: null,
+      }),
+    );
 
     return query;
   }
@@ -359,7 +368,11 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
     expect(payload).not.toContain('anchor-internal-submit');
     expect(payload).not.toContain('BAR-123');
     expect(payload).not.toContain('Ada Counsel');
+    // The resolved org id is now an internal value flowing through the handler
+    // (mock profiles.org_id) — pin that it never reaches the response body.
+    expect(payload).not.toContain('org-cle-1');
     expect(res.body).not.toHaveProperty('id');
+    expect(res.body).not.toHaveProperty('org_id');
     expect(res.body.credit).not.toHaveProperty('bar_number');
 
     expect(mockLoggerInfo).toHaveBeenCalledTimes(1);
@@ -368,6 +381,7 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
     expect(logPayload).not.toContain('Ada Counsel');
     expect(logPayload).not.toContain('anchor-internal-submit');
     expect(logPayload).not.toContain('anchor_id');
+    expect(logPayload).not.toContain('org-cle-1');
 
     expect(String(mockTables.insertedPayload?.filename)).toMatch(
       /^CLE_[A-Za-z0-9_-]+_\d{4}-\d{2}-\d{2}_[a-f0-9]{12}\.json$/,
