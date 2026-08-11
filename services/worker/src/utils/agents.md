@@ -2,6 +2,39 @@
 
 Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
+## 2026-08-10 — new `orgFieldPolicy.ts`: org-scoped request-field rejection (DPA Schedule 1 / clause 4.6)
+
+The first per-org *request shape* control in the worker. `switchboard_flags` is global (no `org_id`)
+and the only pre-existing per-org write gate was whole-org suspension, so there was no way to say
+"this one organisation may not send field X". A DPA can oblige Arkova to reject a prohibited field
+**independently of the counterparty agreeing to stop sending it**, which is a control, not a promise —
+`enforceOrgFieldPolicy` reads `public.organization_field_policies` (migration `0405`) and 400s the
+request. Wired into `api/v1/anchor-submit.ts`, `api/v1/anchor-bulk.ts`, and therefore also the
+dashboard `anchor-bulk-self-service.ts` fall-through.
+
+Four decisions worth not re-litigating:
+
+- **It walks the RAW body, not the Zod output.** Both anchor schemas are `.strict()` today, so an
+  unknown top-level key already 400s — but that is a property of a schema someone can relax, not a
+  guarantee, and `metadata` is `z.record(..., z.unknown())`, which passes a nested `description`
+  through untouched. Walking the raw body makes the control independent of another module's
+  strictness and catches `metadata.description` and `anchors[3].description` as well as top-level.
+- **Rejects on key PRESENCE, whatever the value.** `description: null` still sends a field the
+  agreement does not permit.
+- **`truncated` is a rejection, not a pass.** A payload past the depth/node budget is one we could
+  not certify; "we could not check" must never render as "it is fine".
+- **Failure semantics are asymmetric on purpose.** Table missing ⇒ `0405` is not deployed ⇒ no org
+  can have a policy ⇒ permissive (same shape as `professionalEducationSchemaGate`). Read fails with
+  a recent cached answer ⇒ serve the stale one, so a DB blip cannot switch a contractual control
+  off. Read fails cold ⇒ **fail closed** with 503, matching `anchor-bulk.ts`'s own
+  `duplicate_check_unavailable` precedent on the same route; the read hits the same Postgres as the
+  insert that would follow, so the availability cost is close to zero. `DISABLE_ORG_FIELD_POLICY=true`
+  is the break-glass for that path and logs at error level every time it suppresses a check.
+
+Policy is cached per org for 60s (negative results too, so orgs without a policy cost ~1 read/min).
+`clearOrgFieldPolicyCache()` is exported for tests — a test that configures a policy for an org an
+earlier test already resolved must call it, or it reads the earlier answer.
+
 ## 2026-08-03 — new `mempool-url.ts` (SCRUM-3016); `sentry.ts` gains two new fingerprinted alerts (SCRUM-3021, SCRUM-3017) (PR #1965)
 
 - **`mempool-url.ts` (new).** `normalizeMempoolHostUrl` / `resolveMempoolApiBase` / `resolveMempoolHostBase`

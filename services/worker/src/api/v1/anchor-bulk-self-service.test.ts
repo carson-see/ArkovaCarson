@@ -40,6 +40,7 @@ vi.mock('../../utils/jobQueue.js', () => ({
 import { anchorBulkSelfServiceRouter } from './anchor-bulk-self-service.js';
 import { db } from '../../utils/db.js';
 import { deductOrgCredit } from '../../utils/orgCredits.js';
+import { clearOrgFieldPolicyCache } from '../../utils/orgFieldPolicy.js';
 
 const FP = (n: number) => n.toString(16).padStart(64, '0');
 
@@ -57,6 +58,14 @@ interface AnchorsBuilder {
   eq: ReturnType<typeof vi.fn>;
   in: ReturnType<typeof vi.fn>;
   single: ReturnType<typeof vi.fn>;
+  /**
+   * Terminal of the `organization_field_policies` read (migration 0405).
+   * Because this route falls through into the unmodified `anchorBulkRouter`,
+   * the DPA clause-4.6 field guard applies to the dashboard path too — an org
+   * cannot sidestep its own contractual field restriction by switching from
+   * the API to the browser. These cases model an org with no policy row.
+   */
+  maybeSingle: ReturnType<typeof vi.fn>;
 }
 
 function makeAnchorsBuilder(state: { selectData?: unknown; insertedRow?: unknown } = {}): AnchorsBuilder {
@@ -67,6 +76,8 @@ function makeAnchorsBuilder(state: { selectData?: unknown; insertedRow?: unknown
   builder.eq = vi.fn(chain);
   builder.insert = vi.fn(chain);
   builder.single = vi.fn(() => Promise.resolve({ data: state.insertedRow ?? null, error: null })) as unknown as AnchorsBuilder['single'];
+  // No org field policy configured — see the AnchorsBuilder docblock.
+  builder.maybeSingle = vi.fn(() => Promise.resolve({ data: null, error: null })) as unknown as AnchorsBuilder['maybeSingle'];
   return builder;
 }
 
@@ -87,6 +98,10 @@ describe('anchorBulkSelfServiceRouter (SCRUM-2911 W1)', () => {
     mockQuotaDeltas.length = 0;
     mockConfig.enableProfessionalEducationSchemaReady = true;
     vi.mocked(deductOrgCredit).mockResolvedValue({ allowed: true });
+    // The field policy is cached per org for 60s, so a case that configures a
+    // policy for an org an earlier case already resolved would otherwise read
+    // the earlier (absent) answer.
+    clearOrgFieldPolicyCache();
   });
 
   it('401s when no Supabase session is present', async () => {
@@ -181,5 +196,50 @@ describe('anchorBulkSelfServiceRouter (SCRUM-2911 W1)', () => {
     expect(res.body.queued).toBe(1);
     expect(res.body.anchors).toHaveLength(1);
     expect(mockQuotaDeltas).toEqual([1]);
+  });
+
+  it('inherits the org field policy — the dashboard is not a way around clause 4.6', async () => {
+    // A contractual field restriction that only covers the API key path is not
+    // a restriction on the organisation; it is a restriction on one client.
+    // This route falls through into the same `anchorBulkRouter`, so the guard
+    // applies here too. Pinned because the fall-through is the only reason it
+    // does, and a future refactor could quietly split the paths.
+    const inserts: unknown[] = [];
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      if (table === 'profiles') return mockProfileQuery({ data: { org_id: 'org-dash' } }) as never;
+      if (table === 'organization_field_policies') {
+        const chain: Record<string, unknown> = {};
+        chain.select = vi.fn().mockReturnValue(chain);
+        chain.eq = vi.fn().mockReturnValue(chain);
+        chain.maybeSingle = vi.fn().mockResolvedValue({
+          data: {
+            org_id: 'org-dash',
+            disallowed_fields: ['description'],
+            enabled: true,
+            policy_reason: 'DPA Schedule 1 permits three fields only.',
+            contract_reference: 'DPA Schedule 1 / clause 4.6',
+          },
+          error: null,
+        });
+        return chain as never;
+      }
+      const builder = makeAnchorsBuilder();
+      builder.insert = vi.fn((payload: unknown) => {
+        inserts.push(payload);
+        return builder;
+      });
+      return builder as unknown as never;
+    });
+
+    const res = await request(createApp())
+      .post('/anchor/bulk/self-service')
+      .set('x-test-user-id', 'user-3')
+      .send({ anchors: [{ fingerprint: FP(3), description: 'client matter note' }] })
+      .expect(400);
+
+    expect(res.body.error).toBe('field_not_permitted');
+    expect(res.body.details[0].path).toBe('anchors.0.description');
+    expect(inserts).toHaveLength(0);
+    expect(deductOrgCredit).not.toHaveBeenCalled();
   });
 });

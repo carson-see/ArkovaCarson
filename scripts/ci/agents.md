@@ -6,6 +6,27 @@ CI gate scripts. Each one fails the build with a structured exit code + an
 actionable message when a guardrail trips. Run via
 `npx tsx scripts/ci/<name>.ts` from a CI workflow.
 
+## 2026-08-10 — `check-anchor-field-policy-coverage.ts` (new, wired into ci.yml)
+
+Requires every request handler under `services/worker/src/api/` that inserts into `anchors` to call
+`enforceOrgFieldPolicy` (DPA Schedule 1 / clause 4.6, migration `0405`). Override label:
+`anchor-field-policy-exempt`.
+
+Written because the manual census it replaces was wrong in both directions — four files named as gaps
+only ever SELECT from `anchors`, and two real insert sites were missed. The detector only counts a
+`from('anchors')` whose NEXT chained call is `.insert(`/`.upsert(`; the other ~164 occurrences in the
+worker are reads.
+
+Two design points to preserve if you touch it:
+
+- **The exemption is a DIRECTORY, not an allowlist.** `services/worker/src/jobs/` is out of scope
+  because a service-originated anchor has no request body and no `Response` to 400 (see
+  `services/worker/src/jobs/agents.md`). An allowlist of filenames would have to be maintained by the
+  same person who forgot the guard, which is the failure mode this gate exists to remove.
+- **It is deliberately narrow.** A dynamic table name or a raw RPC insert would not be caught. Those
+  are rare and reviewable; a conventional route silently missing the guard is neither.
+
+
 ## Live findings an agent must know before touching this code
 
 - **`auditStaleExemptions()` in `check-ledger-numeric-integrity.ts` is WARN-ONLY
