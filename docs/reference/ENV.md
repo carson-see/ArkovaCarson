@@ -79,6 +79,7 @@ RECIPIENT_IDENTIFIER_PEPPER=        # SCRUM-2484: server pepper for the keyed HM
 IP_HASH_PEPPER=                     # Server pepper for the keyed HMAC-SHA256 of caller IPs in audit_events.details.querying_ip_hash (public /verify + /credentials/:id/ctdl writers). REQUIRED IN PRODUCTION — the worker refuses to boot without it, same as API_KEY_HMAC_SECRET. Min 16 chars. Without it the writers record ip_hash=null; they NEVER fall back to a raw IP or to a bare, brute-forceable sha256(ip). Needed because the DPA warrants "hashed IP addresses" and unsalted SHA-256 of an IPv4 is reversible over the whole ~4.3e9 space. Carson/RTE-provisioned in Secret Manager + deploy-worker.yml.
 CORS_ALLOWED_ORIGINS=*
 INTEGRATION_STATE_HMAC_SECRET=      # SCRUM-1236 / audit H1: dedicated HMAC secret for OAuth `state` signing (Drive, DocuSign org + member, GRC). Worker fails closed if unset (no fallback to SUPABASE_JWT_SECRET). Required at boot in production when ENABLE_DRIVE_OAUTH or ENABLE_DOCUSIGN_OAUTH is true.
+DISABLE_ORG_FIELD_POLICY=false      # SCRUM-3121 BREAK-GLASS. Suppresses DPA Schedule 1 / clause 4.6 per-org field rejection (migration 0405) process-wide. LEAVE UNSET. Setting it to 'true' VOIDS a contractual control and logs at error level on every suppressed check. Exists only because the unreadable-policy path fails CLOSED (503) and an operator needs a lever that does not require a deploy. Coerced by `boolFlag`: only the literal 'true' engages it, so a typo leaves enforcement ON.
 ```
 
 `/api/v1/*` and `/api/v2/*` verification routes are controlled by the

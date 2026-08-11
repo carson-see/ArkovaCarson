@@ -2,6 +2,14 @@
 
 Shared TypeScript type definitions for the worker service.
 
+## 2026-08-10 — organization_field_policies (manual patch, not a live regen)
+
+Migration `0405` (file-only, unapplied) adds `public.organization_field_policies`; hand-patched into
+`database.types.ts` here and in `src/types/` so `db.from('organization_field_policies')` in
+`utils/orgFieldPolicy.ts` type-checks against real column names rather than an `as any` escape.
+Same manual-patch caveat as the R19 note below — regenerate with `npm run gen:types` once `0405`
+reaches a project this can generate against.
+
 ## 2026-07-28 R19 — anchors.fingerprint_source (manual patch, not a live regen)
 
 Same manual patch as `src/types/agents.md` — migration `0376` (unmerged, file-only) adds `anchors.fingerprint_source`. Regenerate for real once `0376` lands on a reachable project.
