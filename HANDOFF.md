@@ -20,9 +20,23 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 
 ### Prod
 
-- Worker `git_sha 18d33efcfb5366d121baf77f132fad545bf1f3cb` (short `18d33efcf`); deploy-worker run
-  succeeded 2026-08-03T02:49Z (canary→full), `/health` verified live: `status: healthy`,
-  `database/anchoring/kms: ok`.
+- Worker `git_sha 1d12f0d39f650e634c1a381efe40c2fed5dde39a` (short `1d12f0d39`); deploy-worker run
+  31533160150 succeeded 2026-08-11 (canary→full), `/health` verified live: `status: healthy`,
+  `database/anchoring/kms: ok`, `network: mainnet`. _(2026-08-11 sub-block; supersedes the
+  2026-08-03 `18d33efcf` claim.)_ Two deploy runs earlier the same hour FAILED at Pre-deploy
+  Quality Gates — a semantic merge collision (#2081's clause 4.6 guard vs the new
+  `cle-submit-recipient-semantics.test.ts`, each green alone, red together) blacked out ALL prod
+  deploys until hotfix #2191 (T0, test-double fix) merged as `49b8ae3c2`.
+- **DPA Schedule 1 / clause 4.6 field policy is LIVE on all 7 anchor-creating request routes**
+  (SCRUM-3121, PR #2081, merge `b2f171ed8`; deployed SHA above is its descendant). Migration `0405`
+  (`organization_field_policies`) verified in prod: RLS enabled+forced, **0 rows — armed for no
+  org**; arming HakiChain is a deliberate operator INSERT, not a deploy side-effect. Break-glass
+  `DISABLE_ORG_FIELD_POLICY` documented in `docs/reference/ENV.md`, default off. CI detector
+  `check-anchor-field-policy-coverage.ts` (string-aware, rejects discarded guard verdicts) polices
+  the invariant. Known residual: `services/worker/src/jobs/` service-originated anchors have NO
+  field-policy control — tracked as SCRUM-3131 (quarantine semantics, not a 400). #2066 is
+  superseded (its content reached main via #2081's shared commit) — recommended close, Carson's
+  call.
 - **Migration ledger is NOT fully reconciled — supersedes the 2026-08-03 `exemptPrefixes is []` claim
   that previously occupied this bullet.** _(Sub-block dated **2026-08-11**; the block header above is
   as-of 2026-08-03 and its other claims were NOT re-verified on the 11th.)_
