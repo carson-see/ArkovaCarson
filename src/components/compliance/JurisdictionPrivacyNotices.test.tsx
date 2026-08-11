@@ -124,6 +124,40 @@ describe('JurisdictionPrivacyNotices — REG-14', () => {
     expect(allText).toContain('Data portability (§43A)');
   });
 
+  /**
+   * The EU–US notice renders on the PUBLIC, unauthenticated /privacy page.
+   * It shipped with an internal drafting instruction inside the description
+   * ("[Counsel review required — do not assert a specific transfer mechanism
+   * until confirmed.]") and a "(counsel-required)" tag on the transfer-basis
+   * cell. Both are staff scaffolding and neither may reach a reader.
+   *
+   * The underlying caution is correct and stays: Arkova holds no DPF
+   * self-certification (SCRUM-2283) and asserts no transfer mechanism
+   * (§1.13 R-7). This test pins BOTH halves — no scaffolding, and no upgraded
+   * claim.
+   */
+  it('EU–US notice shows no internal counsel instruction and asserts no transfer mechanism', () => {
+    render(<JurisdictionPrivacyNotices jurisdictions={['eu-us-transfer']} />);
+
+    const allText = document.body.textContent ?? '';
+
+    // No leaked scaffolding.
+    expect(allText).not.toMatch(/\[[^\]]*\]/);
+    expect(allText.toLowerCase()).not.toContain('counsel-required');
+    expect(allText.toLowerCase()).not.toContain('counsel review required');
+    expect(allText.toLowerCase()).not.toContain('do not assert');
+
+    // No claim we do not hold.
+    expect(allText).not.toMatch(/self-certif/i);
+    expect(allText).not.toMatch(/data privacy framework/i);
+    expect(allText).not.toMatch(/standard contractual clauses/i);
+
+    // The honest position still reaches the reader.
+    expect(allText).toContain('under review by legal counsel');
+    expect(allText).toContain('no specific transfer mechanism is asserted');
+    expect(allText).toContain('file a complaint');
+  });
+
   it('shows cross-border transfer basis for all jurisdictions', () => {
     render(<JurisdictionPrivacyNotices />);
 

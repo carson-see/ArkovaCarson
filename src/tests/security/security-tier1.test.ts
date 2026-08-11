@@ -38,6 +38,54 @@ function baseline(): string {
   return baselineCache;
 }
 
+const MIGRATIONS_DIR = path.join(process.cwd(), 'supabase/migrations');
+
+/**
+ * Return the body of the HIGHEST-numbered migration that (re)defines a
+ * Postgres function. The baseline sorts first, so a later compensating
+ * `CREATE OR REPLACE` wins — mirroring what actually runs in the database.
+ * Without this, a contract test would forever read the stale baseline body
+ * and never see a fix. Handles both pg_dump's quoted `"public"."fn"` and a
+ * hand-written `public.fn` form.
+ */
+function latestFunctionBlock(fnName: string): string {
+  const files = fs
+    .readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+  let latest: string | null = null;
+  for (const file of files) {
+    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8');
+    const quoted = sql.indexOf(`FUNCTION "public"."${fnName}"`);
+    const unquotedMatch = sql.match(new RegExp(`FUNCTION\\s+public\\.${fnName}\\b`));
+    const unquoted = unquotedMatch?.index ?? -1;
+    const candidates = [quoted, unquoted].filter((i) => i >= 0);
+    if (candidates.length === 0) continue;
+    const start = Math.min(...candidates);
+    const end = sql.indexOf('$$;', start);
+    if (end < 0) continue;
+    latest = sql.slice(start, end + 3);
+  }
+  if (latest === null) {
+    throw new Error(`No migration defines function ${fnName}`);
+  }
+  return latest;
+}
+
+/** Real column set of a table, parsed from its baseline CREATE TABLE block. */
+function tableColumns(tableName: string): Set<string> {
+  const sql = baseline();
+  const start = sql.indexOf(`CREATE TABLE IF NOT EXISTS "public"."${tableName}"`);
+  if (start < 0) throw new Error(`No CREATE TABLE for ${tableName}`);
+  const end = sql.indexOf(');', start);
+  const block = sql.slice(start, end);
+  const cols = new Set<string>();
+  // Column lines look like `    "id" "uuid" DEFAULT ...`; CONSTRAINT lines
+  // start with the keyword, not a quoted identifier, so they are excluded.
+  for (const m of block.matchAll(/^\s{2,}"([a-z_]+)"\s/gm)) cols.add(m[1]);
+  return cols;
+}
+
 // ===========================================================================
 // PII-01: audit_events PII protection
 // ===========================================================================
@@ -89,6 +137,63 @@ describe('PII-02: Right-to-erasure infrastructure', () => {
     expect(block).toContain('SET "search_path"');
     // Must be service_role only
     expect(block).toContain("'service_role'");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Regression: GDPR Art. 17 erasure aborted on non-existent columns.
+  //
+  // The prod `anonymize_user_data` (called by delete_own_account() AND the
+  // worker's DELETE /api/account) ended with:
+  //     UPDATE verification_events SET details = NULL
+  //     WHERE user_id = p_user_id AND details IS NOT NULL;
+  // `verification_events` is a PII-free analytics table with NEITHER a
+  // `user_id` NOR a `details` column, so the statement raised 42703
+  // (undefined_column) and aborted the whole erasure transaction — every
+  // account deletion failed. The only prior coverage MOCKED the RPC, so it
+  // was never caught. These contract tests read the real column set and the
+  // latest function definition (no mock), so a re-break fails CI.
+  // ---------------------------------------------------------------------------
+  it('anonymize_user_data() writes only to columns that exist on verification_events', () => {
+    const body = latestFunctionBlock('anonymize_user_data');
+    const realCols = tableColumns('verification_events');
+
+    // The defect's two columns are genuinely absent from the analytics table.
+    expect(realCols.has('user_id')).toBe(false);
+    expect(realCols.has('details')).toBe(false);
+
+    // Every write statement that targets verification_events must reference
+    // only real columns. (A correct fix that removes the statement entirely
+    // leaves nothing to check — also passing.)
+    const writes = [
+      ...body.matchAll(
+        /\b(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+"?verification_events"?\b[\s\S]*?;/gi,
+      ),
+    ].map((m) => m[0]);
+    for (const stmt of writes) {
+      const referenced = new Set<string>();
+      for (const m of stmt.matchAll(/\bSET\s+"?([a-z_]+)"?\s*=/gi)) referenced.add(m[1]);
+      for (const m of stmt.matchAll(/"?([a-z_]+)"?\s*=\s*p_user_id\b/gi)) referenced.add(m[1]);
+      for (const m of stmt.matchAll(/"?([a-z_]+)"?\s+IS\s+(?:NOT\s+)?NULL\b/gi))
+        referenced.add(m[1]);
+      for (const col of referenced) {
+        expect(
+          realCols.has(col),
+          `anonymize_user_data references verification_events.${col}, which does not exist`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('anonymize_user_data() still guards service_role and actually scrubs ai_usage_events PII', () => {
+    const body = latestFunctionBlock('anonymize_user_data');
+    // Authorization posture preserved.
+    expect(body).toContain('SECURITY DEFINER');
+    expect(body).toMatch(/SET\s+"?search_path"?/i);
+    expect(body).toContain("'service_role'");
+    // The document-derived PII in the covered table is nulled — both the
+    // fingerprint and the cached extracted result fields (result_json).
+    expect(body).toMatch(/UPDATE\s+ai_usage_events[\s\S]*?fingerprint\s*=\s*NULL/i);
+    expect(body).toMatch(/UPDATE\s+ai_usage_events[\s\S]*?result_json\s*=\s*NULL/i);
   });
 
   it('profiles table has deleted_at timestamptz column (was migration 0065)', () => {

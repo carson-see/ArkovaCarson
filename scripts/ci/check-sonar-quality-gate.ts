@@ -99,6 +99,40 @@ const ALLOWED_GATE_NAMES: readonly string[] = [
   'Sonar way (Built-in)',
 ] as const;
 
+/**
+ * A SonarCloud credential that the API rejects (401/403).
+ *
+ * This is deliberately NOT the same condition as "the gate is misconfigured".
+ * An expired or revoked token means the gate could not be EVALUATED AT ALL —
+ * exactly like `SONARCLOUD_TOKEN` being unset, which this script already treats
+ * as skip-with-notice rather than a merge blocker. Blocking every PR in the repo
+ * on an expired credential is a worse failure mode than proceeding with a loud
+ * warning: it converts a 60-second credential rotation into a total delivery
+ * outage, and it teaches reviewers that a red gate means "rotate the token"
+ * rather than "the quality gate regressed".
+ *
+ * Every OTHER failure (network, 404, malformed payload, gate not in the
+ * allow-list) still exits non-zero and still blocks.
+ *
+ * Observed 2026-08-11: `SonarCloud settings 401:` with an empty body, from a
+ * token whose only Secret Manager version was created 2026-05-05 — past
+ * SonarCloud's 90-day token expiry. It had red-lined every PR in the repo,
+ * including the DPA clause 4.6 control.
+ */
+export class SonarAuthError extends Error {
+  readonly status: number;
+  constructor(status: number, detail: string) {
+    super(`SonarCloud auth ${status}: ${detail}`);
+    this.name = 'SonarAuthError';
+    this.status = status;
+  }
+}
+
+/** True when the API rejected our credential rather than our request. */
+export function isAuthStatus(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
 async function fetchProjectGate(token: string): Promise<QualityGate> {
   const auth = authHeader(token);
   const projectRes = await fetch(
@@ -106,7 +140,9 @@ async function fetchProjectGate(token: string): Promise<QualityGate> {
     { headers: { Authorization: auth } },
   );
   if (!projectRes.ok) {
-    throw new Error(`SonarCloud API ${projectRes.status}: ${await projectRes.text()}`);
+    const body = await projectRes.text();
+    if (isAuthStatus(projectRes.status)) throw new SonarAuthError(projectRes.status, body);
+    throw new Error(`SonarCloud API ${projectRes.status}: ${body}`);
   }
   const { qualityGate } = (await projectRes.json()) as {
     qualityGate: { name: string };
@@ -129,7 +165,9 @@ async function fetchProjectGate(token: string): Promise<QualityGate> {
     { headers: { Authorization: auth } },
   );
   if (!showRes.ok) {
-    throw new Error(`SonarCloud show ${showRes.status}: ${await showRes.text()}`);
+    const body = await showRes.text();
+    if (isAuthStatus(showRes.status)) throw new SonarAuthError(showRes.status, body);
+    throw new Error(`SonarCloud show ${showRes.status}: ${body}`);
   }
   const detail = (await showRes.json()) as {
     id: string;
@@ -155,7 +193,9 @@ async function fetchProjectSettings(token: string): Promise<SonarSettings> {
     { headers: { Authorization: auth } },
   );
   if (!settingsRes.ok) {
-    throw new Error(`SonarCloud settings ${settingsRes.status}: ${await settingsRes.text()}`);
+    const body = await settingsRes.text();
+    if (isAuthStatus(settingsRes.status)) throw new SonarAuthError(settingsRes.status, body);
+    throw new Error(`SonarCloud settings ${settingsRes.status}: ${body}`);
   }
   const { settings } = (await settingsRes.json()) as { settings: SonarSetting[] };
   return Object.fromEntries(settings.map((setting) => [setting.key, setting.value]));
@@ -290,6 +330,17 @@ async function main(): Promise<void> {
   } catch (err) {
     // err.message is a synthetic string from our own throw sites; safe to log.
     const msg = String((err as Error).message).replaceAll(/[\r\n]+/g, ' ');
+    if (err instanceof SonarAuthError) {
+      // Cannot evaluate the gate — same standing as an unset token. Warn loudly,
+      // do not block delivery on a credential rotation.
+      console.error(
+        `SCRUM-1304/SCRUM-1681: SonarCloud REJECTED OUR CREDENTIAL (${err.status}). ` +
+          'The quality gate was NOT verified by this run. Rotate the SonarCloud token and ' +
+          'add a new version of the `sonar_cloud_token` Secret Manager secret. ' +
+          'This is a WARNING, not a pass — no gate configuration was checked.',
+      );
+      return;
+    }
     console.error(`SCRUM-1304/SCRUM-1681: failed to fetch SonarCloud gate/settings — ${msg}`);
     process.exit(2);
   }
