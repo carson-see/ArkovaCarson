@@ -96,6 +96,25 @@ describe('BillingOverview', () => {
     expect(onManage).toHaveBeenCalled();
   });
 
+  // The payment-method "Update" and billing-history "View History" buttons both
+  // shipped with NO onClick at all — inert controls, with "View History" even
+  // rendering an ExternalLink icon promising a portal that never opened. Both
+  // are Stripe-portal actions (update card / download invoices), so both route
+  // through onManageBilling.
+  it('opens the billing portal from the payment-method Update button', () => {
+    const onManageBilling = vi.fn();
+    render(<BillingOverview billingInfo={mockBillingInfo} onManageBilling={onManageBilling} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }));
+    expect(onManageBilling).toHaveBeenCalled();
+  });
+
+  it('opens the billing portal from the View History button', () => {
+    const onManageBilling = vi.fn();
+    render(<BillingOverview billingInfo={mockBillingInfo} onManageBilling={onManageBilling} />);
+    fireEvent.click(screen.getByRole('button', { name: /View History/ }));
+    expect(onManageBilling).toHaveBeenCalled();
+  });
+
   it('calls onUpgrade when button clicked', () => {
     const onUpgrade = vi.fn();
     render(<BillingOverview billingInfo={mockBillingInfo} onUpgrade={onUpgrade} />);

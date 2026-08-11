@@ -11,7 +11,9 @@
  * required rows via React Query and delegates to the resolver.
  *
  * Source-of-truth columns:
- *   organizations.verification_status    — 'UNVERIFIED' | 'PENDING' | 'VERIFIED'
+ *   organizations.verification_status    — 'UNVERIFIED' | 'PENDING' | 'VERIFIED' | 'REJECTED' | 'REQUIRES_INPUT'
+ *                                          (the last two added by migration 0407; this gate is
+ *                                          `!== 'VERIFIED'`, so both correctly deny — AUDIT-0424-10)
  *   organizations.suspended              — boolean (migration 0289)
  *   organizations.parent_org_id          — uuid | null
  *   organizations.parent_approval_status — 'PENDING' | 'APPROVED' | 'REVOKED' | null (migration 0128)
