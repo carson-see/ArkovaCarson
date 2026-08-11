@@ -28,16 +28,29 @@
  * verified bar↔user mapping → link/backfill from `metadata->>bar_number`).
  * Never link the caller.
  *
+ * Scope note: this pin covers the submit HANDLER only. An out-of-route
+ * linker (cron, job, backfill) would not trip it — any such future code
+ * must be reviewed against the agents.md entry directly.
+ *
+ * Mock note: the query-builder mock is DELIBERATELY minimal — insert →
+ * select → single is the only chain the handler uses. Any other query
+ * shape a future change introduces throws in the mock → the handler's
+ * catch returns 500 ≠ 201 → the change surfaces here for review. App
+ * scaffolding reuses `__testHelpers.ts`'s `buildApp`; the builder mock
+ * stays local because the pin needs per-table call recording (which
+ * `makeBuilder` does not provide) and because the minimal surface IS the
+ * ratchet.
+ *
  * Note this file pins EXISTING behavior — there was no red-first phase
  * against production code because the disposition is "no code change".
  * The positive assertions (201 + anchors insert observed) keep it from
  * passing vacuously.
  */
 
-import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApiKeyMeta } from '../../middleware/apiKeyAuth.js';
+import { buildApp } from './__testHelpers.js';
 import { cleVerifyRouter } from './cle-verify.js';
 
 const mockState = vi.hoisted(() => ({
@@ -46,42 +59,19 @@ const mockState = vi.hoisted(() => ({
 }));
 
 vi.mock('../../utils/db.js', () => {
-  type QueryResult = { data: Record<string, unknown> | null; error: null };
-  type MockMethod = ReturnType<typeof vi.fn>;
-  type MockQuery = Promise<{ data: Array<Record<string, unknown>>; error: null }> & {
-    select: MockMethod;
-    eq: MockMethod;
-    in: MockMethod;
-    ilike: MockMethod;
-    order: MockMethod;
-    gte: MockMethod;
-    lte: MockMethod;
-    limit: MockMethod;
-    insert: MockMethod;
-    single: () => Promise<QueryResult>;
-  };
-
-  function createQuery(): MockQuery {
-    const query = Promise.resolve({
-      data: [] as Array<Record<string, unknown>>,
-      error: null,
-    }) as MockQuery;
-    query.select = vi.fn(() => query);
-    query.eq = vi.fn(() => query);
-    query.in = vi.fn(() => query);
-    query.ilike = vi.fn(() => query);
-    query.order = vi.fn(() => query);
-    query.gte = vi.fn(() => query);
-    query.lte = vi.fn(() => query);
-    query.limit = vi.fn(() => query);
-    query.insert = vi.fn((payload: Record<string, unknown>) => {
-      mockState.insertedPayload = payload;
-      return query;
-    });
-    query.single = vi.fn(() => Promise.resolve({
-      data: { id: 'anchor-internal-1', public_id: 'ARK-2026-CLE-PIN-1' },
-      error: null,
-    }));
+  // Minimal on purpose — see the mock note in the file docblock.
+  function createQuery() {
+    const query = {
+      insert: vi.fn((payload: Record<string, unknown>) => {
+        mockState.insertedPayload = payload;
+        return query;
+      }),
+      select: vi.fn(() => query),
+      single: vi.fn(() => Promise.resolve({
+        data: { id: 'anchor-internal-1', public_id: 'ARK-2026-CLE-PIN-1' },
+        error: null,
+      })),
+    };
     return query;
   }
 
@@ -117,22 +107,29 @@ const PROVIDER_API_KEY: ApiKeyMeta = {
   keyId: 'key-provider-1',
   orgId: 'org-provider-1',
   userId: 'user-provider-1',
-  scopes: ['cle:submit'],
+  // Empty on purpose: the route never reads `scopes` — any valid key's
+  // userId passes its auth check. Do not read this fixture as evidence of
+  // per-route scope enforcement.
+  scopes: [],
   rateLimitTier: 'paid',
   keyPrefix: 'ak_test',
 };
 
-function createApp(apiKey?: ApiKeyMeta) {
-  const app = express();
-  app.use(express.json());
-  if (apiKey) {
-    app.use((req, _res, next) => {
-      req.apiKey = apiKey;
-      next();
-    });
-  }
-  app.use('/api/v1/cle', cleVerifyRouter);
-  return app;
+const MOUNT = '/api/v1/cle';
+
+/** JWT-shaped caller: no injected apiKey; Authorization header per test. */
+function jwtApp() {
+  return buildApp(cleVerifyRouter, MOUNT);
+}
+
+/** API-key-shaped caller: upstream middleware has populated `req.apiKey`. */
+function apiKeyApp() {
+  return buildApp(cleVerifyRouter, MOUNT, {
+    userId: PROVIDER_API_KEY.userId,
+    injectUserId: (req) => {
+      req.apiKey = PROVIDER_API_KEY;
+    },
+  });
 }
 
 const VALID_SUBMISSION = {
@@ -152,7 +149,7 @@ describe('POST /cle/submit recipient semantics (deliberately unlinked)', () => {
   });
 
   it('JWT submission writes anchors only — never anchor_recipients', async () => {
-    const res = await request(createApp())
+    const res = await request(jwtApp())
       .post('/api/v1/cle/submit')
       .set('Authorization', 'Bearer jwt-token-attorney')
       .send(VALID_SUBMISSION);
@@ -164,7 +161,7 @@ describe('POST /cle/submit recipient semantics (deliberately unlinked)', () => {
   });
 
   it('API-key (provider on-behalf) submission writes anchors only — never anchor_recipients', async () => {
-    const res = await request(createApp(PROVIDER_API_KEY))
+    const res = await request(apiKeyApp())
       .post('/api/v1/cle/submit')
       .send(VALID_SUBMISSION);
 
@@ -181,7 +178,7 @@ describe('POST /cle/submit recipient semantics (deliberately unlinked)', () => {
     // jurisdiction) — this is the record's intended visibility surface, and
     // the identity a future verified bar↔user mapping would link/backfill
     // from. If these fields move, that future path breaks silently.
-    const res = await request(createApp(PROVIDER_API_KEY))
+    const res = await request(apiKeyApp())
       .post('/api/v1/cle/submit')
       .send(VALID_SUBMISSION);
 

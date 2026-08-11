@@ -62,7 +62,9 @@ The entry above establishes "anything that creates an anchor a user is meant to 
 write both `anchors.user_id` and `anchor_recipients`". `cle-verify.ts`'s submit route looks
 like the same defect — it inserts into `anchors` only, so a CLE credit never appears in any
 `/my-credentials` list — but it is **not**, and the disposition is the opposite: **do not link.**
-Pinned by `cle-submit-recipient-semantics.test.ts`; a recipient write on this route fails CI.
+Pinned by `cle-submit-recipient-semantics.test.ts`; a recipient write in this route's handler
+fails CI. The pin covers the handler only — a future out-of-route linker (cron, job, backfill)
+is not mechanically guarded and must be reviewed against this entry directly.
 
 Why this route is different from registry-anchor:
 
@@ -85,12 +87,16 @@ Why this route is different from registry-anchor:
 - **A speculative unclaimed row would be a regression, not future-proofing.** A
   `sha256(bar_number)`-keyed `recipient_email_hash` recreates the offline-enumeration surface
   SCRUM-2484 closed for emails (bar numbers are short, public, sequential — strictly easier to
-  enumerate), and `link_recipient_to_anchors` matches email hashes only, so nothing could ever
-  claim it.
+  enumerate), and nothing in the system would ever claim it: `link_recipient_to_anchors` is
+  itself hash-agnostic (it matches whatever `p_email_hash` a caller passes — it does not
+  validate hash provenance), but every current caller derives that hash from a verified email
+  or the namespaced self-import marker. Which is also the warning for path 1 below: keep that
+  provenance discipline (keyed HMAC via `hashRecipientEmail`, namespaced markers) so
+  differently-sourced hashes can never collide in the same column.
 
 Prod context at decision time: **zero** `anchors` rows with `credential_type = 'CLE'`
-(verified 2026-08-11 against `vzwyaatejekddvltxyye`), so this is forward-looking only — no
-backfill question exists.
+(verified 2026-08-11 against `vzwyaatejekddvltxyye` via MCP `execute_sql`:
+`cle_total=0, cle_live=0`), so this is forward-looking only — no backfill question exists.
 
 **Sanctioned future paths** if product later wants CLE credits in an attorney's
 `/my-credentials` (either works without touching today's rows beyond a backfill):
