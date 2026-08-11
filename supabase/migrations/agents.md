@@ -369,6 +369,7 @@ _Rollback rehearsed: 2026-05-16 on staging (ujtlwnoqfhtitcmsnrpq). Both tables d
 ## Recent migrations (SCRUM-1847 / SCRUM-1869)
 
 - **0331_scrum1847_1869_public_anchor_cpe_cle_metadata.sql**: `CREATE OR REPLACE get_public_anchor` — adds additive-nullable `cpe_metadata` / `cle_metadata` keys built from an **explicit public allowlist** (`jsonb_build_object` + `jsonb_strip_nulls`, sourced from the `anchors` jsonb columns with `->`). Only public display keys are projected — CPE: `credit_hours`, `field_of_study`, `delivery_method`, `nasba_status`, `nasba_lookup_date`, `requires_manual_review`; CLE: `credit_hours`, `ethics_hours`, `jurisdiction`, `approved_provider_name`, `provider_approval_status`, `provider_lookup_date`, `delivery_format`, `course_title`, `requires_manual_review`. Internal fields (`sponsor_id`/`course_id`/`reporting_period_*`/`extraction_confidence`/`extraction_source`, and any FUTURE internal field) are excluded by default — the allowlist mirrors the worker `Cpe`/`CleMetadataSchema` and the frontend `cpe`/`cleMetadataView` allowlists (#1023/#1025). Replaced the original 2-key denylist (`a.cpe_metadata - 'extraction_confidence' - 'extraction_source'`) which under-stripped and would have leaked `sponsor_id`/`course_id`/`reporting_period_*` to anonymous callers (MEDIUM data-exposure fix). Body otherwise unchanged from the prod/0311 definition — preserves SECURITY DEFINER + `search_path` + status filter + `deleted_at` guard + recipient SHA-256 hash; only the two additive keys are new. §1.8 additive — no API version bump. (Renumbered 0329→0331 to resolve a cross-session 0327 collision; the agreed order above main HEAD 0326 is: 0327 #1047 → 0328 #971 → 0329 #1038 → 0330 #1022 → 0331 this PR, taking the top slot to stay collision-proof.)
+
 ## Recent migrations (SCRUM-1611 CSI-04A)
 
 - **0329_member_integrations_credential_providers.sql**: Widens the `member_integrations.provider` CHECK constraint from `{'docusign'}` to `{'docusign', 'credly', 'accredible', 'udemy'}` so the same table can hold credential-source provider tokens for the SCRUM-1596 epic. Adds `kek_version smallint NOT NULL DEFAULT 1` for KMS key-rotation tracking (RFC 9700). No new RLS policies — the policies established by 0320 apply to all providers polymorphically. Tier T2 (CHECK widening + additive column). Rollback rehearsal pending on staging.
@@ -428,6 +429,7 @@ All rows above are Draft/`do-not-merge`, pre-soak, and NOT applied to prod excep
 ## Recent migrations (PR endpoint-reachability audit)
 
 - **0367_worker_rpc_caller_identity_supersede_queue_resolve.sql** (FILE-ONLY / PRE-SOAK / NOT APPLIED): fixes `POST /api/anchor/:id/supersede` and `POST /api/queue/resolve` always-403 (SCRUM-2213 bug class — RPC resolved caller via `auth.uid()`, NULL under the worker's service_role client). Adds `service_role`-only 4-arg overloads of `supersede_anchor()` / `resolve_anchor_queue_by_public_id()` with an explicit required `p_caller_user_id` param; every existing authorization check (profile exists, role = ORG_ADMIN, org match) is preserved verbatim, just resolved from the explicit param instead of session context. 3-arg `auth.uid()`-based overloads are untouched (still granted anon/authenticated/service_role) for any real-session caller. Worker call sites (`services/worker/src/api/anchor-lineage.ts`, `services/worker/src/api/queue-resolution.ts`) now thread the JWT-verified caller id into the RPC call instead of discarding it. Tier T3. Rollback in file header.
+
 ## Recent migrations (PR #1766)
 
 - **0378_sec_recon_revoke_deferred_security_definer_grants.sql** (PROD-APPLIED 2026-07-28): restricts the remaining unguarded SECURITY DEFINER worker-only RPCs to `service_role` (follow-up to `0377`, which guarded 6 functions and explicitly deferred the rest). 50 functions restricted. Public verification endpoints, RLS helper functions, and trigger functions deliberately left untouched. Applied directly to prod `vzwyaatejekddvltxyye`; ledger reconciled to numeric head **0378** per §0 rule 10. **Numeric ledger head is now 0378 — next migration author claims `0379`.** Full detail (grant-level enumeration, verification methodology) belongs in the Confluence bug tracker, not this repo.
@@ -439,6 +441,7 @@ All rows above are Draft/`do-not-merge`, pre-soak, and NOT applied to prod excep
 Numeric head at authoring time is `0378` (PROD-APPLIED, per the row above — "next migration author claims `0379`"). This PR claims **`0381`**, not `0379`: `0379`/`0380` are presumed claimed by other concurrent worktree sessions not yet visible in this branch's copy of this file (same situation as the documented `0367`–`0369` gap above — checked `git log --all --diff-filter=A -- 'supabase/migrations/0379*' 'supabase/migrations/0380*'` and open PRs reachable from this session; neither turned up a claim, but per the standing convention this is not proof the slot is free from a not-yet-pushed parallel session). If `0379`/`0380` turn out to be free at merge time, renumber down and update this row rather than leave a numbering gap.
 
 | `0381` | `fix/docusign-envelope-lookup-index` (PR #1782) | SCRUM-2904 (follow-up perf fix) | `0381_docusign_envelope_metadata_lookup_indexes.sql` | **PROD-APPLIED 2026-08-01** (all three `CREATE INDEX CONCURRENTLY` statements applied standalone via Supabase MCP against `vzwyaatejekddvltxyye`; `indisvalid=t` verified x3; ledger reconciled to numeric `0381`). T3 (touches `supabase/migrations/`). Three `CREATE INDEX CONCURRENTLY` partial expression indexes (`metadata->>'source_envelope_id'` / `'envelope_id'` / `'external_ref'`, each `WHERE ... IS NOT NULL`) on `public.anchors`, split into a bare no-txn file per the 0366 convention (no other DDL alongside — pure index add, no companion transactional file needed). Fixes the `findExistingEnvelopeAnchor` (`docusign-anchor-reconciliation.ts`) unindexed `.or()`-across-three-JSONB-keys query that deterministically exceeds `statement_timeout` for the org owning ~2.974M of prod's ~2.97M anchors — proven twice in prod (DLQ'd rule-dispatcher execution `3e947424` 2026-07-27; connector_artifact `921347cc-…` stuck `failed` at materialize 2026-08-01). **Merge note (2026-08-02):** this PR's own application-code restructure of `findExistingEnvelopeAnchor` (three targeted `.eq('metadata->>KEY', ...)` lookups unioned in JS) was superseded end-to-end by PR #1834, which landed an equivalent-but-improved version (parallel `Promise.all` instead of sequential per-key round trips, `LIMIT 50` array-terminal query instead of `ORDER BY ... LIMIT 1` — the SQL `ORDER BY` was itself defeating the planner) directly on `main` before this PR merged. The #1834 version was kept as-is on merge; only this migration file (the actual index DDL, which #1834 assumed existed but never carried as a `.sql` file) was net-new from this PR. `0381`'s ledger exemption removed from `scripts/ci/snapshots/ledger-numeric-exemptions.json` in this merge — the file is no longer an orphan.
+
 ## Recent migrations (F-3 soak-fix, PR #NNNN)
 
 | `0379` | `fix/f3-submitted-null-txid-recovery` (this PR) | F-3 (docs/staging/SOAK-FINDINGS-2026-08.md) | `0379_f3_recover_submitted_null_txid.sql` | RESERVED — pre-soak, file-only, NOT applied to prod/rig. T3 (touches `supabase/migrations/`, anchor lifecycle recovery path). Consumes the `0379` numeric slot next-free per the `0378` entry above ("Numeric ledger head is now 0378 — next migration author claims `0379`"). |
@@ -471,8 +474,75 @@ Numeric head at authoring time is `0378` (PROD-APPLIED, per the row above — "n
   Fifth occurrence of the class (0364, 0377, 0378, 0388, 0406), so it is now a
   detector rather than a review habit: `scripts/ci/feedback-rules/secdef-function-grants.ts`
   (ratchet + burn-down baseline) and `src/tests/sec-0406-proof-coverage-window-revoke.test.ts`.
+
 ## Recent migrations (AUDIT-0424-10, PR #2134)
 
 | `0407` | `fix/checkout-kyb-self-grant` (PR #2134) | AUDIT-0424-10 | `0407_widen_org_verification_status_for_kyb_rejection.sql` | RESERVED — pre-soak, file-only, NOT applied to prod/rig. T3 (touches `supabase/migrations/` + billing + auth surface). Number derived as `max(main head, prod ledger head, agents.md reservations, open-PR claims) + 1`: main head file is `0404`, the **prod numeric ledger head is `0405`** (`0405_org_field_policies_dpa_clause_4_6`, applied ahead of its owning PR #2081), `0401`/`0402` are claimed by open PRs #2047/#2062, `0406` by open PR #2130, and this file's reservation table tops out at `0405` — so `0407` is the next free slot. |
 
 - **0407_widen_org_verification_status_for_kyb_rejection.sql** (FILE-ONLY / PRE-SOAK / NOT APPLIED): widens `organizations_verification_status_valid` from `ARRAY['UNVERIFIED','PENDING','VERIFIED']` to additionally admit `'REJECTED'` and `'REQUIRES_INPUT'`, plus a `COMMENT ON COLUMN` recording that the column is provider-owned. `api/v1/webhooks/middesk.ts` has always written those two literals on `business.rejected` / `business.requires_review`, but the constraint never admitted them, so every KYB rejection raised SQLSTATE 23514 — **a KYB rejection could not be recorded at all**, and the checkout handler's `currentStatus === 'REJECTED'` guard was unreachable dead code (which is what let every completed checkout self-grant `VERIFIED`). Verified against live prod `vzwyaatejekddvltxyye` before authoring: the constraint admits only the three original values and no migration ever widened it (sole definition is the baseline, `00000000000000_baseline_at_main_HEAD.sql:8803`). Widening only — no existing row changes value, so the `ALTER` validates without a table rewrite. **Not a privilege widening:** every consumer gates on `verification_status !== 'VERIFIED'` and therefore denies both new states — audited across `api/v1/integrations/docusign-oauth.ts` (`requireVerifiedOrg`), `api/v1/integrations/drive-oauth.ts`, `integrations/connectors/drive-connect-eligibility.ts`, `api/v1/orgSubOrgs.ts` (x2), and the frontend `src/hooks/useCanIssueCredential.ts` (x2). No `database.types.ts` regeneration required: `verification_status` is a `text` column with a CHECK, not a Postgres enum, so the generated type is `string` both before and after. Rollback in file header, with a pre-flight count guard (narrowing is unsafe once a row holds one of the new values).
+
+## Recent migrations (PR #2140)
+
+| `0408` | `feat/supplementary-proof-anchor` (PR #2140) | SCRUM-3188 | `0408_supplementary_proof_anchor.sql` | RESERVED — file-only, NOT applied to prod/staging. T3 (migration + chain + treasury). **Renumbered `0407` -> `0408` by the RTE on 2026-08-11** to clear a two-way collision: this PR and PR #2134 (`fix/checkout-kyb-self-grant`, `0407_widen_org_verification_status_for_kyb_rejection.sql`) had both independently claimed `0407`. #2134 keeps `0407` (claimed first, and it is the AUDIT-0424-10 KYB fix that was already being applied to prod); this PR moves to `0408`. `0408` verified free at renumber time against: `origin/main` head (`0404`), the prod ledger head (`0405`, `vzwyaatejekddvltxyye`), every open PR's file list (`gh pr list --json files`: `0401` #2047, `0402` #2062, `0405` #2081, `0406` #2130, `0407` #2134), and the reservation rows in this file. |
+
+- **0408_supplementary_proof_anchor.sql** (FILE-ONLY / NOT APPLIED): schema for the SUPPLEMENTARY PROOF ANCHOR — a SECOND Bitcoin transaction that re-commits the fingerprints of the 2,969,630 SECURED anchors whose committed leaf ORDER is unrecoverable, in a RECORDED order, so they can finally carry a per-document branch. **Adds no backfill and writes no proof.** Contents: (a) `anchor_proofs.is_supplementary` + `supplements_chain_tx_id` discriminator columns (metadata-only ALTERs; the CHECK is added `NOT VALID` then `VALIDATE`d so neither takes a long lock on the 505k-row table) — required because `anchor_proofs.anchor_id` is UNIQUE, so a supplementary row IS the anchor's only proof row and without a discriminator the verify API would read a 2026-08 tx as the record's FIRST attestation; (b) `supplementary_anchor_runs` durable progress; (c) `supplementary_anchor_journal` — the anti-double-broadcast barrier, **deliberately a separate table from `anchor_txid_journal` (0358)** because that table's `reconcileTxidJournals()` sweep WRITES `anchors.chain_tx_id` on ADOPT, which must never happen to an already-SECURED anchor; (d) `persist_supplementary_journal` / `resolve_supplementary_journal` / `claim_supplementary_proof_cohort` / `insert_supplementary_proofs` / `supplementary_proof_backlog_count`, all SECURITY DEFINER + `SET search_path = public` + `service_role`-only + bounded. **`insert_supplementary_proofs` never touches `anchors`** and re-derives `supplements_chain_tx_id` from `anchors.chain_tx_id` rather than trusting the caller, and uses `ON CONFLICT (anchor_id) DO NOTHING` so a genuine existing proof is never clobbered. Extends the 0354/0406 `proof_completeness_class` vocabulary with `supplementary_anchored`. Operator procedure: `docs/runbooks/ops/supplementary-proof-anchor.md`.
+
+**Grant correction (2026-08-11, pre-apply).** The five functions above were
+described as `service_role`-only but were not: each carried only
+`REVOKE ALL ... FROM PUBLIC;`. On Supabase that does **not** remove the EXECUTE
+grants `ALTER DEFAULT PRIVILEGES` gives `anon` and `authenticated` **directly**
+at CREATE time, so on apply all five would have been callable by `anon` over
+PostgREST — and all five are SECURITY DEFINER, so all five bypass RLS. The two
+TABLES in the same migration already revoked `anon, authenticated` correctly;
+only the functions were missed, which is the signature of this defect class
+(0364, 0377, 0378, 0388, 0406).
+
+Caught before 0408 was ever applied — none of the five existed in prod when this
+was found (checked via MCP against `vzwyaatejekddvltxyye`). Every function REVOKE
+now names `PUBLIC, anon, authenticated`, and the migration ends with
+`NOTIFY pgrst, 'reload schema'` because all five are reached through `db.rpc()`.
+
+Why it mattered beyond hygiene: `persist_supplementary_journal` /
+`resolve_supplementary_journal` are the anti-double-broadcast journal primitives
+(sign -> journal -> broadcast, never reordered) and
+`claim_supplementary_proof_cohort` claims work units, for a backfill that spends
+real mainnet BTC from the production treasury.
+
+Guarded by `src/tests/sec-0408-supplementary-proof-anchor-revokes.test.ts`,
+`tests/rls/supplementary-proof-anchor-revokes.test.ts` (live ACL), and repo-wide
+by `scripts/ci/feedback-rules/secdef-function-grants.ts` (lands with PR #2130).
+
+**Prod apply FAILED 2026-08-11 on a type error — fixed in-file, prod untouched.**
+The first attempt to apply `0408` to prod aborted and rolled back clean (ledger
+stayed `0407`, `/health` healthy, no barrier formed). Two defects, both now fixed
+in this PR rather than worked around at apply time — patching a local copy would
+have put SQL in prod that no PR contains, which is exactly the file/prod
+divergence the drift gate exists to catch, and would have left the shipped file
+still unable to apply anywhere.
+
+1. **`claim_supplementary_proof_cohort` compared an ENUM to `text[]` uncast.**
+   `public.anchors.credential_type` is an enum (27 labels in prod, including the
+   `PUBLICATION` / `SEC_FILING` values the function's own comment deprioritizes),
+   and `p_deprioritized_credential_types` is `text[]`. Postgres has no implicit
+   enum<->text operator:
+   `ERROR: 42883: operator does not exist: credential_type = text`.
+   Because the function is `LANGUAGE sql`, the body is parsed and validated at
+   **CREATE** time, so this fails the **apply**, not the first call. Fixed with
+   `a.credential_type::text = ANY(...)`; cast form confirmed to resolve against
+   prod with a zero-row probe. Comparisons to string *literals*
+   (`a.status = 'SECURED'`) were never affected — an unknown literal coerces to
+   the enum; only a `text`-typed **parameter** breaks.
+
+   The gap was that nothing exercised the function against a schema where
+   `credential_type` is an enum. Now guarded repo-wide by
+   `src/tests/migration-enum-text-comparison.test.ts` (zero-tolerance, no
+   baseline — this was the only instance in the whole migration set).
+
+2. **`CREATE POLICY` was the only non-idempotent object in the file.** Every
+   other object uses `IF NOT EXISTS`, but `CREATE POLICY` has no such form, so a
+   re-apply errored partway. Both policies now get `DROP POLICY IF EXISTS` first.
+
+If any environment ever reported `0408` applying cleanly, that environment's
+`anchors.credential_type` has drifted to `text` and its evidence is not
+representative of prod. This PR claims no staging apply: its evidence block
+states "no soak evidence... no staging deploy, no staging Supabase project".

@@ -181,6 +181,13 @@ Rules:
   but the returned promise is awaitable. Whether API-key lifecycle events should be awaited — so a
   key is never reported created without its audit row — is an open decision, not an oversight.
 
+## 2026-08-11 — SCRUM-3188 `supplementaryProof.ts`
+
+Pure core for the supplementary proof anchor. `orderSupplementaryLeaves` (deterministic `(fingerprint asc, anchorId asc)` — the same rule as the live producer's `sortAnchorsForBatch`), `planSupplementaryBatch` (order + tree, keeping the order that produced the root), `buildVerifiedSupplementaryProofRows`, `assessSupplementarySpend`, `estimateSupplementaryRun`.
+
+`buildVerifiedSupplementaryProofRows` is the ONLY way to construct a supplementary proof row, and it throws `UnverifiedSupplementaryProofError` unless (1) the planned root is byte-equal to the root the CHAIN committed and (2) EVERY emitted branch independently re-verifies via `verifyMerkleProof` against that root. No best-effort mode, no skip flag — same invariant PR #2130 established for reconstruction. It additionally refuses any row that cannot name the original attestation it supplements, and any row whose supplementary txid equals that attestation.
+
+`SUPPLEMENTARY_TX_VSIZE = 156.25` is measured from a real prod anchoring tx (`c86c3927…`, block 961,982), not estimated.
 ## proofReconstruction.ts (SCRUM-3187)
 
 - **The one rule: never emit a proof that has not been verified against the on-chain root.** `reconstructBatch` is the ONLY constructor of proof rows in this module, and it builds them solely after (a) the rebuilt root is byte-equal to the OP_RETURN-committed root and (b) every branch independently re-verifies via `verifyMerkleProof`. There is no best-effort mode and no skip flag — the check is inside the constructor precisely so no caller can forget it. A proof that does not verify is a false integrity claim; returning nothing is always correct, returning something plausible never is.
