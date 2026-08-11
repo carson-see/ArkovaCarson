@@ -376,6 +376,8 @@ export type Database = {
           merkle_index: number | null
           merkle_root: string | null
           op_return_payload: string | null
+          is_supplementary: boolean
+          supplements_chain_tx_id: string | null
           proof_completeness_class: string | null
           proof_path: Json | null
           proof_schema_version: number
@@ -394,6 +396,8 @@ export type Database = {
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
+          is_supplementary?: boolean
+          supplements_chain_tx_id?: string | null
           proof_completeness_class?: string | null
           proof_path?: Json | null
           proof_schema_version?: number
@@ -412,6 +416,8 @@ export type Database = {
           merkle_index?: number | null
           merkle_root?: string | null
           op_return_payload?: string | null
+          is_supplementary?: boolean
+          supplements_chain_tx_id?: string | null
           proof_completeness_class?: string | null
           proof_path?: Json | null
           proof_schema_version?: number
@@ -4235,6 +4241,51 @@ export type Database = {
           },
         ]
       }
+      organization_field_policies: {
+        Row: {
+          contract_reference: string | null
+          created_at: string
+          disallowed_fields: string[]
+          enabled: boolean
+          org_id: string
+          policy_reason: string | null
+          updated_at: string
+        }
+        Insert: {
+          contract_reference?: string | null
+          created_at?: string
+          disallowed_fields?: string[]
+          enabled?: boolean
+          org_id: string
+          policy_reason?: string | null
+          updated_at?: string
+        }
+        Update: {
+          contract_reference?: string | null
+          created_at?: string
+          disallowed_fields?: string[]
+          enabled?: boolean
+          org_id?: string
+          policy_reason?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_field_policies_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_field_policies_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_queue_runs: {
         Row: {
           batch_id: string | null
@@ -6625,6 +6676,42 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      claim_supplementary_proof_cohort: {
+        Args: {
+          p_deprioritized_credential_types?: string[]
+          p_limit?: number
+          p_priority_org_ids?: string[]
+        }
+        Returns: {
+          anchor_id: string
+          chain_tx_id: string
+          fingerprint: string
+          org_id: string
+        }[]
+      }
+      insert_supplementary_proofs: {
+        Args: { p_rows: Json }
+        Returns: number
+      }
+      persist_supplementary_journal: {
+        Args: {
+          p_anchor_ids: string[]
+          p_batch_id: string
+          p_fingerprint_root: string
+          p_leaf_order: Json
+          p_run_id?: string
+          p_txid: string
+        }
+        Returns: Json
+      }
+      resolve_supplementary_journal: {
+        Args: { p_action: string; p_journal_id: string; p_reason?: string }
+        Returns: boolean
+      }
+      supplementary_proof_backlog_count: {
+        Args: { p_max?: number }
+        Returns: Json
       }
       claim_pending_anchors: {
         Args: {

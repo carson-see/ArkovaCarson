@@ -389,6 +389,24 @@ const ConfigSchema = z.object({
 
   /** ENABLE_AI_FALLBACK — toggles Cloudflare AI fallback when Gemini fails. CLAUDE.md §1.1. Default false. */
   enableAiFallback: boolFlag(false),
+  /**
+   * DISABLE_ORG_FIELD_POLICY — break-glass that suppresses DPA clause 4.6
+   * field-policy enforcement process-wide (utils/orgFieldPolicy.ts, migration
+   * 0405). Default FALSE: enforcement is on, and it exists only because the
+   * unreadable-policy path fails closed and an operator needs a lever that
+   * does not require a deploy.
+   *
+   * Engaging it VOIDS a contractual control, so it is declared here rather
+   * than read ad hoc from process.env (SCRUM-1258): the flag is discoverable
+   * in one place and every deploy surface can be diffed against this schema.
+   *
+   * `boolFlag` coerces rather than rejects — only the literal `'true'` engages
+   * the break-glass and ANY other value, typo included, leaves enforcement ON.
+   * That is the safe direction for a kill-switch on a compliance control, but
+   * note it is coercion, not boot-time validation: a misspelled value will not
+   * raise at startup, it will simply fail to disable anything.
+   */
+  disableOrgFieldPolicy: boolFlag(false),
   /** ENABLE_VERIFICATION_API — gates /api/v1/* surface. CLAUDE.md §1.9. Default true so customer keys work. */
   enableVerificationApi: boolFlag(true),
   /** ENABLE_VERTEX_AI — Gemini calls go through Vertex AI when true; Google AI Studio when false. */
@@ -522,6 +540,18 @@ const ConfigSchema = z.object({
    * Optional — unset means dry-run-only (safe default).
    */
   proofMaterializerConfirm: z.string().optional(),
+
+  // Supplementary proof anchor (SCRUM-3188)
+  /**
+   * SUPPLEMENTARY_ANCHOR_CONFIRM — arming token for the only job in this repo
+   * that spends REAL mainnet BTC on a backlog of 2.97M records. The job is
+   * DRY-RUN by default (reports what it would spend and commit, signs nothing);
+   * a live run additionally requires this token to equal the literal `EXECUTE`
+   * AND the caller to pass `dryRun: false`. Deliberately SEPARATE from every
+   * other proof-job confirm token so arming one never arms this one.
+   * Optional — unset means dry-run-only (safe default).
+   */
+  supplementaryAnchorConfirm: z.string().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -886,6 +916,7 @@ function loadConfig(): Config {
 
     // SCRUM-1258 batch 2 — feature flags + observability + treasury
     enableAiFallback: process.env.ENABLE_AI_FALLBACK,
+    disableOrgFieldPolicy: process.env.DISABLE_ORG_FIELD_POLICY,
     enableVerificationApi: process.env.ENABLE_VERIFICATION_API,
     enableVertexAi: process.env.ENABLE_VERTEX_AI,
     enableRulesEngine: process.env.ENABLE_RULES_ENGINE,
@@ -936,6 +967,7 @@ function loadConfig(): Config {
     // `|| undefined` so an empty string is treated as unset (dry-run-only).
     proofClassifierConfirm: process.env.PROOF_CLASSIFIER_CONFIRM || undefined,
     proofMaterializerConfirm: process.env.PROOF_MATERIALIZER_CONFIRM || undefined,
+    supplementaryAnchorConfirm: process.env.SUPPLEMENTARY_ANCHOR_CONFIRM || undefined,
   });
 
   if (!result.success) {

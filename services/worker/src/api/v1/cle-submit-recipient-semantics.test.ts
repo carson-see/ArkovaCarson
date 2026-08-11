@@ -60,6 +60,17 @@ const mockState = vi.hoisted(() => ({
 
 vi.mock('../../utils/db.js', () => {
   // Minimal on purpose — see the mock note in the file docblock.
+  //
+  // 2026-08-11: `eq` + `maybeSingle` added after this suite black-holed the
+  // prod deploy gate. The DPA clause 4.6 guard (PR #2081) reads
+  // `organization_field_policies` (and, on the JWT path, `profiles` via
+  // api/_org-auth) with `.select().eq().maybeSingle()`. Without these two
+  // methods the policy read failed CLOSED (503 — correct guard behaviour,
+  // wrong test env) and the profiles read threw a TypeError into the route's
+  // catch-all (500). Both resolve `{data:null}`: no policy row and no org —
+  // the default-permissive state, so this suite keeps testing the recipient
+  // semantics it was written for. Guard ENFORCEMENT is covered by
+  // anchor-field-policy-routes.test.ts, not here.
   function createQuery() {
     const query = {
       insert: vi.fn((payload: Record<string, unknown>) => {
@@ -67,6 +78,8 @@ vi.mock('../../utils/db.js', () => {
         return query;
       }),
       select: vi.fn(() => query),
+      eq: vi.fn(() => query),
+      maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null })),
       single: vi.fn(() => Promise.resolve({
         data: { id: 'anchor-internal-1', public_id: 'ARK-2026-CLE-PIN-1' },
         error: null,

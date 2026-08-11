@@ -87,6 +87,7 @@ import { buildSelfImportRecipientHash } from '../../lib/credential-source-import
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit, type DeductionResult } from '../../utils/orgCredits.js';
+import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 
 export interface CredentialsCtdlRegistryAnchorRouterOptions {
@@ -394,6 +395,34 @@ export function buildCredentialsCtdlRegistryAnchorRouter(
       return;
     }
 
+    // DPA Schedule 1 / clause 4.6 — org-scoped field rejection (migration 0405).
+    // No-op for every org without a policy row. Resolved and enforced HERE, at
+    // the top of the handler, rather than next to the insert:
+    //   - before the outbound CE Registry fetch below, so a request we are
+    //     going to reject never causes a third-party call on the org's behalf;
+    //   - before `findExistingRegistryAnchor`, which answers 200 for an
+    //     already-anchored ctid and would otherwise pass a prohibited field on
+    //     every repeat call;
+    //   - before `deductOrgCredit`, so a rejected request is never billed.
+    // The resolved orgId is reused at the insert site — one `profiles` read.
+    let orgId: string | null;
+    try {
+      orgId = await loadUserOrgId(userId);
+    } catch (error) {
+      logger.error({ error, userId }, 'Failed to load org for CE registry anchor');
+      res.status(500).json({ error: 'internal_error' });
+      return;
+    }
+
+    if (!(await enforceOrgFieldPolicy({
+      orgId,
+      body: req.body,
+      res,
+      scope: 'credentials-ctdl-registry-anchor',
+    }))) {
+      return;
+    }
+
     const url = buildRegistryGraphUrl(ctid);
     const retrievedAt = now();
 
@@ -515,14 +544,8 @@ export function buildCredentialsCtdlRegistryAnchorRouter(
 
     const fingerprint = buildRegistryAnchorFingerprint(ctid, envelopeSha256);
 
-    let orgId: string | null;
-    try {
-      orgId = await loadUserOrgId(userId);
-    } catch (error) {
-      logger.error({ error, userId }, 'Failed to load org for CE registry anchor');
-      res.status(500).json({ error: 'internal_error' });
-      return;
-    }
+    // `orgId` was resolved at the top of the handler for the clause 4.6 field
+    // policy; reused here rather than re-reading `profiles`.
 
     try {
       const existing = await findExistingRegistryAnchor(userId, fingerprint);
