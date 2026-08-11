@@ -796,6 +796,22 @@ depends on supabase-js `.eq()` path-string tolerance and warrants its own verifi
 - `docusign-notarization-completed.ts` (SCRUM-1872) — `processDocusignNotarizationCompletedJob()` handles queued `docusign.notarization_completed` jobs. Looks up `legally_binding_attestations` by `docusign_envelope_id`, validates org match (cross-tenant guard) and status (`pending_notarization`), updates row to `notarized` with notary metadata, writes NOTARIZATION_COMPLETED audit event. `runDocusignNotarizationCompletedJobs()` is the queue runner. Handler throws on processor failure so `processNextJob` correctly marks the job as failed (not completed).
 - **`anchorExpirySweep.ts` (SCRUM-1736)** — daily 03:00 UTC sweep that flips `anchors.status` from SECURED to EXPIRED past `expires_at` and dispatches `anchor.expired` outbound webhook. Compare-and-set on UPDATE guards against concurrent revocation. Sentinel `anchor.expired_dispatch_failed` audit row written if dispatch throws so manual recovery is possible (per CodeRabbit PR #734 review). Adapter validates every write via Zod (`AnchorIdSchema`, `AuditEventRowSchema`).
 - **`treasury-cache.ts`** — `refreshTreasuryCache()`. Fetches treasury balance, BTC price, fee rates, UTXO count, network info, and anchor stats (via `../utils/anchor-stats.ts`), then upserts into `treasury_cache` singleton. SCRUM-1786: sentinel guard prevents -1 from overwriting last-good cached values.
+  - **BUG-2026-08-11 — two mempool bases, deliberately.** `mempoolApiUrl()` resolves the
+    NETWORK-SCOPED endpoints (`/address/…`, `/v1/fees/recommended`) via
+    `mempoolApiBaseForNetwork(config.bitcoinNetwork)`; `priceApiUrl()` pins `/v1/prices` to the
+    MAINNET base. Do not "simplify" these back into one. The fallback used to be the mainnet base
+    verbatim, so a signet deployment asked the mainnet explorer about a signet address — that
+    answers `HTTP 400 Address on invalid network`, the `res.ok ? … : null` ladder turned it into a
+    silent null, and the job booked `balance_confirmed_sats = 0` with `error: null`. treasury-alert
+    then fired every 5 minutes. But routing `/v1/prices` per-network is NOT the fix: the non-mainnet
+    explorers serve it with HTTP 200 and a `-1` sentinel, and a negative price makes every
+    USD balance negative, i.e. below every threshold. `normalizeBtcPrice` rejects non-positive /
+    non-finite quotes so a bad oracle reads as `price_unknown` rather than a fake low balance.
+    The UTXO provider built in the same function was always per-network, which is why
+    `utxo_count` and `block_height` stayed correct while the balance read zero.
+- **`treasury-alert.ts`** — `usableBtcPrice()` is the last line of the same defence: a stored or
+  stale non-positive price is treated as an oracle outage, never multiplied into `balance_usd`.
+  Mirrored in `../api/treasury.ts`'s health endpoint.
 - **`stuck-anchor-monitor.ts` (SCRUM-2234 / 2026-06-01 incident)** — pipeline-stall watchdog. `decideStuckAnchorAlert()` is a pure, clock-injectable decision fn; `runStuckAnchorCheck(db)` is the cron glue. Measures the AGE of the oldest non-deleted PENDING anchor (`select created_at from anchors where status='PENDING' and deleted_at is null order by created_at asc limit 1` — index-backed LIMIT 1, NOT count(*)) and, when it exceeds `STUCK_ANCHOR_ALERT_HOURS` (default 24h), logs at error level + calls `captureStuckAnchorAlert()` so hourly re-fires share the stable `stuck-anchor-monitor` Sentry fingerprint. Alert context stays aggregate-only (age, pending count, threshold; read from `pipeline_dashboard_cache`, never counted). Distinct from `pipeline-health.ts`: that keys off `updated_at`/30-min + emails; the daily-flush 401 blackout left a *fresh* `updated_at` but *stale* `created_at`, so this is the missed signal. The oldest-PENDING query throws on DB error (cron route → 500, Scheduler retries); a detected stall returns 200 (a correct detection, no retry). Pure fn + cron-glue shape mirrors `connector-health-alert.ts` / `treasury-alert.ts`.
 
 ## Conventions
