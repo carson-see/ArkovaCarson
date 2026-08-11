@@ -50,6 +50,15 @@ export interface Env {
   // --name arkova-edge`.
   R2_REPORT_DOWNLOAD_SECRET?: string;
 
+  // Server pepper for the keyed HMAC-SHA256 of caller IPs written to
+  // `audit_events.details.ip_hash` by `mcp-audit-log.ts`. The DPA warrants
+  // "hashed IP addresses"; the previous bare `sha256(ip)` did not earn that
+  // for IPv4 (the whole ~4.3e9 space is enumerable in seconds), so the digest
+  // is now keyed. When unset the audit row records `ip_hash: null` rather than
+  // falling back to the enumerable digest — fail closed, never downgrade.
+  // Provision via `wrangler secret put MCP_IP_HASH_PEPPER --name arkova-edge`.
+  MCP_IP_HASH_PEPPER?: string;
+
   // Environment variables
   ENABLE_AI_FALLBACK: string;
   CF_AI_MODEL: string;

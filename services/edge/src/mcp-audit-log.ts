@@ -2,7 +2,9 @@
  * MCP Tool-Call Audit Logging (SCRUM-924 MCP-SEC-06)
  *
  * Fire-and-forget insert into `audit_events` for every MCP tool invocation.
- * No raw PII: args + IP are SHA-256 hashed before writing.
+ * No raw PII: args are SHA-256 hashed and the caller IP is HMAC-SHA256 keyed
+ * with `MCP_IP_HASH_PEPPER` before writing (see `pseudonymizeIp` below for why
+ * the IP needs a key and the args digest does not).
  *
  * The log is what makes every other security control investigable — without
  * it a compromised API key is a black hole. Insert failures are swallowed
@@ -10,7 +12,35 @@
  */
 
 import type { Env } from './env';
-import { sha256Hex } from './mcp-crypto-utils';
+import { sha256Hex, hmacSha256Hex } from './mcp-crypto-utils';
+
+/** One-time warning latch — a per-request log line would flood Logpush. */
+let warnedMissingIpPepper = false;
+
+/**
+ * Keyed digest of the caller IP, or null.
+ *
+ * NEVER a bare sha256: the DPA warrants "hashed IP addresses", and an unsalted
+ * SHA-256 of an IPv4 is reversible by enumerating the ~4.3e9 address space, so
+ * it is an encoding rather than a pseudonymisation control. Without the pepper
+ * the honest record is "no caller identifier" (null), not a digest that only
+ * looks protective.
+ */
+async function pseudonymizeIp(env: Env, clientIp: string | null): Promise<string | null> {
+  if (!clientIp) return null;
+  const pepper = env.MCP_IP_HASH_PEPPER;
+  if (!pepper) {
+    if (!warnedMissingIpPepper) {
+      warnedMissingIpPepper = true;
+      console.warn(
+        '[mcp-audit-log] MCP_IP_HASH_PEPPER unset — recording ip_hash=null. '
+          + 'Provision it with `wrangler secret put MCP_IP_HASH_PEPPER --name arkova-edge`.',
+      );
+    }
+    return null;
+  }
+  return hmacSha256Hex(clientIp, pepper);
+}
 
 export type McpOutcome = 'success' | 'rate_limited' | 'tool_error' | 'auth_failed';
 
@@ -40,7 +70,7 @@ function safeErrLine(err: unknown): string {
 export async function logMcpToolCall(env: Env, entry: McpAuditEntry): Promise<void> {
   try {
     const argsHash = await sha256Hex(entry.argsJson);
-    const ipHash = entry.clientIp ? await sha256Hex(entry.clientIp) : null;
+    const ipHash = await pseudonymizeIp(env, entry.clientIp);
 
     const body = {
       event_type: 'MCP_TOOL_CALL',
