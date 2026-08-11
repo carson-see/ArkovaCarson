@@ -181,6 +181,11 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: node_modules/.bin/tsx scripts/ci/check-views-security-invoker.ts
 
+      - name: Block hot-table DDL without a bounded lock_timeout (2026-08-11 P0)
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node_modules/.bin/tsx scripts/ci/check-hot-table-ddl-lock-timeout.ts
+
       - name: Block bare auth.uid() in new RLS policies (SCRUM-1278)
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}

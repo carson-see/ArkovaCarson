@@ -895,3 +895,27 @@ Removing the ORDER BY is **not** sufficient: it trades a backward index walk for
 - **A swallowed reporting failure is COUNTED, not just logged (PR #1838, review round 2).** `reportSafely` returning `void` meant a pass that persisted three drift findings and a pass that lost all three returned byte-identical results at HTTP 200 — the same success-indistinguishable-from-nothing shape as `loadFailed`, one layer down, and only visible in a stray error log. It now returns a boolean and the caller counts `CeRegistryDriftResult.reportFailures`. Mutation-verified: zeroing the increment kills two tests.
 - **`loadFailed` answers HTTP 500 on the cron route, not 200 (PR #1838, review round 2).** Carrying the flag in a 200 body throws the distinction away at the only layer that acts on it — Cloud Scheduler banks a success and never retries a pass that reconciled nothing. Matches the `/reconcile-credit-conservation` precedent (200 for a correct detection, 500 for a broken probe). Mutation-verified.
 - **Known direction of error on `truncated`.** It is computed from the POST-filter record count, so a saturated query whose rows were then dropped for malformed metadata reads as not-truncated. Under-reporting only, and retired by the cursor follow-up — recorded rather than assumed away.
+
+## lock-wait-monitor.ts (added 2026-08-11)
+
+Early-warning signal for the FIFO lock-barrier P0. Calls `get_lock_waits()`
+(migration `0409`) every minute from `/jobs/lock-wait` and emits ONE structured
+log line per waiting lock.
+
+**The log line is a contract, not a log line.** `alert_type="db_lock_wait"`,
+`relation` and `lock_mode` are matched and label-extracted by the Cloud
+Monitoring log-based metric `worker_db_lock_wait`
+(`scripts/gcp-setup/log-metrics/db-lock-wait.json`). Rename any of those fields
+and the alarm stops matching — silently. `scripts/ci/check-p0-alert-contract.test.ts`
+pins both sides.
+
+Runs every minute rather than every 5 because the 2026-08-11 barrier formed at
+~16:35Z and user impact began at 16:40:11Z; a 5-minute cadence can spend that
+entire window between ticks.
+
+Known blind spot, deliberately not papered over: this job reaches Postgres
+through PostgREST, so once a barrier degrades PostgREST into `PGRST002` the
+monitor reports `degraded` rather than a lock wait. The PGRST002 alarm is the
+backstop for that window. The RPC-failure path deliberately does NOT emit
+`alert_type="db_lock_wait"` — "the monitor is broken" and "a lock is stuck" are
+different incidents and must not share a signal.

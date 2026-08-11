@@ -1,0 +1,42 @@
+{
+  "displayName": "PAGE — arkova-worker 5xx burst",
+  "documentation": {
+    "content": "The prod worker returned more than 5 HTTP 5xx responses in a 5-minute window.\n\nTHRESHOLD IS MEASURED, NOT GUESSED. A 7-day census of `run.googleapis.com/request_count` at `response_code_class=5xx` on 2026-08-11 gave this distribution of 5-minute buckets: 496 buckets with exactly 1, three with 2, two with 3, one with 4, then 7/8/8/12/7. **Every bucket above 5 fell inside the 2026-08-11 P0 window (16:10Z-16:55Z). Zero on any other day in 7 days.** So `>5 per 5 min` is a zero-false-positive threshold against real history and still fires on the real incident.\n\nKNOWN BACKGROUND, DELIBERATELY UNDER THE THRESHOLD: the service emits a steady ~1 5xx every ~20 minutes around the clock (496 of the 510 non-zero buckets in 7 days). That drip is NOT alerted here on purpose -- it would page ~70 times a week and drown this signal. It is a real open question worth its own investigation, not something to page on.\n\nTRIAGE: check the PGRST002 and lock-wait alerts first -- a database-layer barrier surfaces here as a 5xx burst, and those two alarms name the cause directly. Then Cloud Run logs and Sentry for the same window.",
+    "mimeType": "text/markdown"
+  },
+  "userLabels": {
+    "story": "p0_2026_08_11",
+    "surface": "worker_api",
+    "class": "availability"
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "More than 5 5xx responses in 5 min",
+      "conditionThreshold": {
+        "filter": "metric.type=\"run.googleapis.com/request_count\" AND resource.type=\"cloud_run_revision\" AND resource.label.service_name=\"arkova-worker\" AND metric.label.response_code_class=\"5xx\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_DELTA",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 5,
+        "duration": "0s",
+        "trigger": {
+          "count": 1
+        }
+      }
+    }
+  ],
+  "alertStrategy": {
+    "autoClose": "1800s"
+  },
+  "notificationChannels": [
+    "${SLACK_OPS_ALERTS_CHANNEL}"
+  ],
+  "severity": "CRITICAL",
+  "enabled": true
+}

@@ -211,12 +211,39 @@ the pin is unchanged since `603d047e9` (2026-05-26). Benign happy-path noise.
 locks on `organizations` = 0, zero 5xx and zero `PGRST002` since 16:51:30Z. **Migration 0407 never
 applied** and will re-wedge prod if retried under a long read.
 
-**Detection is the real defect — nothing paged anyone for 11+ minutes.** Three gaps, being closed
-before the 7-day soak: a log-based metric on `PGRST002` count > 0 over 5 min (it occurred zero times
-before and zero times after the incident, so it carries no false-positive tax and cannot drown in the
-~25k cron-alert noise); an uptime check asserting the `/health` **body** contains `"status":
-"healthy"` rather than merely HTTP 200; and an alert on any `public`-relation lock wait > 60s, which
-would have fired at ~16:36, before user impact.
+**Detection is the real defect — nothing paged anyone for 11+ minutes.** The reason is not alert
+fatigue: an API census on 2026-08-11 confirmed project `arkova1` had **zero alert policies, zero
+notification channels, zero uptime checks and zero log-based metrics**. There were no duplicate
+monitors because there were no monitors; the "~25,000 alerts" were Cloud Scheduler *log entries* that
+nothing was configured to page on. `scripts/gcp-setup/agents.md` had carried exactly this warning
+since 2026-08-01 and it went unactioned. **This is a SOC 2 CC7.2 gap, not only an ops gap**, with a
+customer launch ~6 days out.
+
+**Closed 2026-08-11 (branch `ops/lock-barrier-detection`; GCP resources are live now, code is not).**
+Four alarms exist in prod, each fired at least once in a synthetic test and each verified to have
+dispatched to a notification channel — Cloud Monitoring has no public incidents API, so delivery was
+proven by a Pub/Sub proof channel carrying the incident payload:
+
+| Alarm | Live id | Proof |
+|---|---|---|
+| PGRST002 count > 0 / 5 min | `alertPolicies/14098359722825658198` | incident `0.obbeois2rn7x` open 17:27:10Z, closed 17:36:41Z |
+| `/health` **body** lacks `"status":"healthy"` for 3 min | `alertPolicies/18090367980587783155` | negative-control clone opened 17:44:18Z; the real check reads `fraction_true=1.0` against live prod, so the matcher is correct |
+| Postgres lock wait > 60s on a `public` relation | `alertPolicies/2958285134242840887` | opened 17:42:22Z, closed 17:46:35Z |
+| `arkova-worker` 5xx burst (> 5 / 5 min) | `alertPolicies/7452330596875115509` | same-shape clone opened 17:48:50Z |
+
+Notifications route to **`notificationChannels/17147566240859145353` (email, carson@arkova.io)** — the
+first notification channel this project has ever had — plus a Pub/Sub channel kept as the standing
+verification harness.
+
+**Correction to this entry's own earlier claim:** PGRST002 did **not** occur "zero times before" the
+incident. A 30-day log census found 341 entries in exactly two clusters — 128 on **2026-08-02
+16:26:04Z–16:45:17Z** and 213 on 2026-08-11. The same failure had already happened nine days earlier
+and also paged nobody. Zero entries on any other day, so the alarm still carries no false-positive
+tax; but it is a recurring failure mode, not a one-off.
+
+Also measured while setting the 5xx threshold: the worker emits a steady **~1 5xx every ~20 minutes,
+around the clock** (496 of 510 non-zero 5-minute buckets in 7 days). Deliberately left under the
+threshold rather than alerted on — it needs its own investigation, not a page.
 
 **Prevention, worth more than any alert.** DDL on hot tables must `SET lock_timeout = '5s'` first so
 a blocked `ALTER` fails fast instead of forming a barrier, and unbounded correlated-subquery census
