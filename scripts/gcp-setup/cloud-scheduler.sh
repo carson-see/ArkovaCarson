@@ -107,6 +107,13 @@ JOBS=(
   # reconciliation found it missing. A DETECTED stall returns 200 (a correct
   # finding must not be retried); only a broken DB probe 500s, hence the retry.
   "check-stuck-anchors|0 * * * *|/jobs/check-stuck-anchors|30s,120s,2"
+
+  # SCRUM-3187: forward-path proof-coverage regression monitor. Guards the
+  # offline-verification promise — every newly SECURED anchor must get a
+  # per-document inclusion proof. Hourly, windowed 24h so the known pre-2026-08
+  # backlog does not hold the alarm permanently red. Returns 200 with
+  # healthy:false on a true finding, so retries only chase a broken probe.
+  "proof-coverage-monitor|15 * * * *|/jobs/proof-coverage-monitor|30s,120s,2"
   # SCRUM-1130: durable 24-hour per-organization queue scheduler. Claims due orgs
   # via the claim_due_org_queue_runs RPC (migration 0294) and runs
   # processBatchAnchors({ force: true, orgId }) for each. This is the ONLY driver

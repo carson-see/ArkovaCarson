@@ -32,6 +32,7 @@ import {
   createDbGucReader as createMaterializerGucReader,
   createDbLocker as createMaterializerLocker,
 } from '../jobs/proof-materializer.js';
+import { runProofCoverageCheck } from '../jobs/proof-coverage-monitor.js';
 import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
@@ -80,7 +81,7 @@ import { fetchCnpjBrCompanies } from '../jobs/brazilFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { runRegulatoryChangeScan } from '../jobs/regulatory-change-scan.js';
 import { runCalibrationRefit } from '../jobs/calibration-refit.js';
-import { withCronMonitoring } from '../utils/sentry.js';
+import { captureProofCoverageAlert, withCronMonitoring } from '../utils/sentry.js';
 import {
   isProfessionalEducationSchemaReady,
   professionalEducationSchemaUnavailableBody,
@@ -593,6 +594,47 @@ cronRouter.post('/supplementary-proof-anchor', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Supplementary proof anchor run failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+/**
+ * SCRUM-3187: forward-path proof-coverage regression monitor.
+ *
+ * Standing alarm on the offline-verification promise — every newly SECURED
+ * anchor must get a per-document inclusion proof. Windowed (default 24h) so the
+ * known pre-2026-08 backlog does not hold it permanently red.
+ *
+ * HTTP contract (matches the other monitors): a CORRECT detection of a
+ * regression returns 200 with `healthy:false`, so Cloud Scheduler does not
+ * retry a true finding. Only a BROKEN probe returns 500.
+ */
+cronRouter.post('/proof-coverage-monitor', async (req, res) => {
+  try {
+    const parsedHours = Number.parseInt(String(req.query.window_hours ?? ''), 10);
+    const windowHours = Number.isFinite(parsedHours) ? parsedHours : undefined;
+
+    const result = await runProofCoverageCheck(
+      {
+        fetchWindowCoverage: async (hours) => {
+          const { data, error } = await db.rpc('proof_coverage_window', { p_hours: hours });
+          if (error) {
+            throw new Error(`proof_coverage_window failed: ${error.message ?? 'unknown'}`);
+          }
+          const row = Array.isArray(data) ? data[0] : data;
+          return {
+            secured: Number(row?.secured ?? 0),
+            withProof: Number(row?.with_proof ?? 0),
+          };
+        },
+        alert: captureProofCoverageAlert,
+        logger,
+      },
+      { windowHours },
+    );
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Proof coverage monitor failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

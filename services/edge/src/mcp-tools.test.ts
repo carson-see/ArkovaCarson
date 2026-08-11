@@ -17,6 +17,10 @@ import {
   handleVerifyDocument,
   handleAgentVerify,
   handleNessieQuery,
+  handleSearchCredentials,
+  SEARCH_MODE_SEMANTIC,
+  SEARCH_MODE_LEXICAL,
+  TOOL_DEFINITIONS,
   type SupabaseConfig,
 } from './mcp-tools.js';
 import {
@@ -704,5 +708,196 @@ describe('handleNessieQuery worker proxy (BUG-3a)', () => {
     errSpy.mockRestore();
     logSpy.mockRestore();
     warnSpy.mockRestore();
+  });
+});
+
+// ── search_credentials: real semantic path + truthful mode label ──────────
+//
+// The tool advertised "semantic similarity matching" on six public surfaces
+// while BOTH code paths were lexical: the `search_public_credentials` RPC is
+// an ILIKE `%query%` scan, and its fallback is a direct-table ILIKE on
+// filename/description. Nothing was gated by ENABLE_SEMANTIC_SEARCH, so
+// flipping that flag could not have made the claim true.
+//
+// The fix mirrors the nessie BUG-3a discipline: proxy the vector path to the
+// worker's single Gemini embedder (the model that actually built
+// `credential_embeddings`) and NEVER embed at the edge. Every payload now
+// carries `search_mode` so a lexical substring hit can no longer masquerade
+// as a vector match.
+
+describe('handleSearchCredentials — semantic path + search_mode labelling', () => {
+  const SEARCH_PROXY_CONFIG: SupabaseConfig = {
+    ...CONFIG,
+    workerBaseUrl: 'https://worker.test.internal',
+    callerApiKey: 'ak_live_search_caller_secret',
+  };
+
+  const workerHit = {
+    verified: true,
+    status: 'SECURED',
+    issuer_name: 'University of Michigan',
+    credential_type: 'DEGREE',
+    issued_date: '2026-01-02',
+    expiry_date: null,
+    anchor_timestamp: '2026-02-03T10:00:00Z',
+    record_uri: 'https://app.arkova.ai/verify/ARK-DEG-001',
+    similarity: 0.88,
+  };
+
+  it('(a) proxies to the worker /api/v1/verify/search with the caller X-API-Key and reports semantic_vector', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ results: [workerHit], count: 1, query: 'michigan cs degree' }),
+    });
+
+    const result = await handleSearchCredentials(
+      { query: 'michigan cs degree' },
+      SEARCH_PROXY_CONFIG,
+    );
+
+    const url = String(mockFetch.mock.calls[0][0]);
+    expect(url).toContain('/api/v1/verify/search');
+    const init = mockFetch.mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>)['X-API-Key']).toBe(
+      'ak_live_search_caller_secret',
+    );
+    // Never the service-role/supabase key.
+    expect(JSON.stringify(init.headers)).not.toContain('test-key');
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.search_mode).toBe(SEARCH_MODE_SEMANTIC);
+    expect(parsed.total).toBe(1);
+    expect(parsed.results[0].similarity).toBe(0.88);
+    expect(parsed.results[0].public_id).toBe('ARK-DEG-001');
+    expect(parsed.results[0].issuer_name).toBe('University of Michigan');
+  });
+
+  it('(b) a zero-hit semantic response stays semantic and does NOT fall through to lexical', async () => {
+    // An empty embeddings index returns count:0. That is a real semantic
+    // answer of "no matches" — silently re-running a substring scan would
+    // relabel a lexical result as semantic.
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ results: [], count: 0, query: 'nothing' }),
+    });
+
+    const result = await handleSearchCredentials({ query: 'nothing' }, SEARCH_PROXY_CONFIG);
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.search_mode).toBe(SEARCH_MODE_SEMANTIC);
+    expect(parsed.total).toBe(0);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('(c) worker 503 (ENABLE_SEMANTIC_SEARCH gate closed) → lexical fallback, labelled lexical_substring', async () => {
+    mockFetch.mockReset();
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'service_unavailable' })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            public_id: 'ARK-DEG-002',
+            title: 'transcript.pdf',
+            credential_type: 'DEGREE',
+            status: 'SECURED',
+            created_at: '2026-02-03T10:00:00Z',
+          },
+        ],
+      });
+
+    const result = await handleSearchCredentials({ query: 'transcript' }, SEARCH_PROXY_CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.search_mode).toBe(SEARCH_MODE_LEXICAL);
+    expect(parsed.total).toBe(1);
+    // No fabricated relevance score on the lexical path.
+    expect(parsed.results[0].similarity).toBeUndefined();
+    expect(String(mockFetch.mock.calls[1][0])).toContain('/rest/v1/rpc/search_public_credentials');
+  });
+
+  it('(d) unconfigured worker (no base URL / key) goes straight to lexical and never claims semantic', async () => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [] });
+
+    const result = await handleSearchCredentials({ query: 'anything' }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.search_mode).toBe(SEARCH_MODE_LEXICAL);
+    // Only the Supabase RPC was called — no worker round-trip attempted.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(String(mockFetch.mock.calls[0][0])).toContain('/rest/v1/rpc/');
+  });
+
+  it('(e) REGRESSION: the direct-table ILIKE fallback is never labelled semantic', async () => {
+    // RPC fails → direct-table ILIKE on filename/description. This is the
+    // path the claims audit flagged; it must self-identify as lexical.
+    mockFetch.mockReset();
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'gate closed' })
+      .mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'statement timeout' })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            public_id: 'ARK-DEG-003',
+            filename: 'michigan-degree.pdf',
+            credential_type: 'DEGREE',
+            status: 'SECURED',
+            created_at: '2026-02-03T10:00:00Z',
+          },
+        ],
+      });
+
+    const result = await handleSearchCredentials({ query: 'michigan' }, SEARCH_PROXY_CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.search_mode).toBe(SEARCH_MODE_LEXICAL);
+    expect(parsed.search_mode).not.toBe(SEARCH_MODE_SEMANTIC);
+    expect(String(mockFetch.mock.calls[2][0])).toContain('/rest/v1/anchors?');
+  });
+
+  it('(f) clamps max_results to the worker limit ceiling of 20', async () => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ results: [], count: 0 }),
+    });
+
+    await handleSearchCredentials({ query: 'q', max_results: 50 }, SEARCH_PROXY_CONFIG);
+
+    const url = decodeURIComponent(String(mockFetch.mock.calls[0][0]));
+    expect(url).toContain('limit=20');
+  });
+
+  it('(g) never logs the caller API key on the fallback path', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    mockFetch.mockReset();
+    mockFetch
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce({ ok: true, json: async () => [] });
+
+    await handleSearchCredentials({ query: 'q' }, SEARCH_PROXY_CONFIG);
+
+    const allLogged = [...errSpy.mock.calls, ...warnSpy.mock.calls]
+      .flat()
+      .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
+      .join(' ');
+    expect(allLogged).not.toContain('ak_live_search_caller_secret');
+
+    errSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it('(h) the advertised tool description documents search_mode instead of promising semantic unconditionally', async () => {
+    const def = TOOL_DEFINITIONS.find((t) => t.name === 'search_credentials');
+    expect(def).toBeDefined();
+    // The description must tell an agent how to tell the two modes apart.
+    expect(def!.description).toContain('search_mode');
+    expect(def!.description).toContain('lexical_substring');
+    expect(def!.description).toContain('semantic_vector');
   });
 });

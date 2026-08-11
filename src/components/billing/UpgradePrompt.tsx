@@ -42,7 +42,10 @@ export function UpgradePrompt({
 
   const handleUpgrade = () => {
     onOpenChange(false);
-    navigate(ROUTES.BILLING);
+    // ROUTES.PRICING, not ROUTES.BILLING: this modal fires at the moment the
+    // user is blocked by their quota, so it must land on the page that can
+    // actually take payment. /billing is a status summary.
+    navigate(ROUTES.PRICING);
   };
 
   const percentUsed = recordsLimit
