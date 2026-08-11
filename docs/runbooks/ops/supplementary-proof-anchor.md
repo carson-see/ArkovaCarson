@@ -111,7 +111,7 @@ It reports exactly what a real run would spend and commit.
 curl -s -X POST "$WORKER_URL/jobs/supplementary-proof-anchor" \
   -H "X-Cron-Secret: $CRON_SECRET" \
   -H 'content-type: application/json' \
-  -d '{"dryRun": true, "batchSize": 10000}' | jq
+  -d '{"dryRun": true, "batchSize": 20000}' | jq
 ```
 
 Expected output shape:
@@ -122,12 +122,12 @@ Expected output shape:
   "remaining": 2969630,
   "estimate": {
     "anchorCount": 2969630,
-    "batchSize": 10000,
-    "transactions": 297,
+    "batchSize": 20000,
+    "transactions": 149,
     "feeRateSatVb": 3,
     "satsPerTx": 469,
-    "totalSats": 139293,
-    "totalBtc": 0.00139293
+    "totalSats": 69881,
+    "totalBtc": 0.00069881
   },
   "previewRoot": "<the root batch 1 WOULD commit>",
   "batchesCompleted": 0,
@@ -153,7 +153,7 @@ curl -s -X POST "$WORKER_URL/jobs/supplementary-proof-anchor" \
   -H 'content-type: application/json' \
   -d '{
         "dryRun": false,
-        "batchSize": 10000,
+        "batchSize": 20000,
         "maxBatches": 5,
         "feeCeilingSatVb": 5,
         "treasuryReserveSats": 100000,

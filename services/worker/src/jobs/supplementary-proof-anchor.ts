@@ -138,13 +138,27 @@ export interface SupplementaryRunResult {
   stoppedReason: string;
 }
 
-export const DEFAULT_SUPPLEMENTARY_BATCH_SIZE = 10_000;
+export const DEFAULT_SUPPLEMENTARY_BATCH_SIZE = 20_000;
 /**
  * Deliberately NOT wired to `config.batchAnchorMaxSize`. That value is a Zod
- * `.max(10000)` boot gate on the PRODUCTION anchoring path — widening it to
- * make this job cheaper would risk the live producer to save roughly 111k sats
- * (~$120) across the entire backlog, because cost is per-TRANSACTION. Not worth
- * it. See the runbook for the arithmetic.
+ * `.max(10000)` boot gate on the PRODUCTION anchoring path; this constant is
+ * this job's own ceiling, so changing it cannot affect the live producer.
+ *
+ * 20,000 (CTO, 2026-08-11). Cost is per-TRANSACTION — the Merkle root is 32
+ * bytes in OP_RETURN regardless of leaf count, and the measured tx is 156.25 vB
+ * (1-in/2-out, from real prod tx c86c3927). So halving the transaction count
+ * halves the spend: 2,969,630 anchors is 297 txs at 10k (139,293 sats @3 sat/vB)
+ * versus 149 txs at 20k (69,881 sats) — about $76 saved for a one-line change to
+ * an isolated constant.
+ *
+ * Going further to 50k would save only a further ~$46 and WOULD require widening
+ * the production Zod gate, whose failure mode is the worker refusing to boot.
+ * That trade is not worth it and is filed as backlog rather than taken here.
+ *
+ * A larger batch is not free of risk: one failed run leaves more anchors
+ * unproven for longer. That is bounded by the journal (a batch is replayable and
+ * cannot double-broadcast) and by `maxBatches`, so run `maxBatches: 1` first and
+ * verify the emitted proofs against the on-chain root before opening the tap.
  */
 export const DEFAULT_FEE_CEILING_SAT_VB = 5;
 export const DEFAULT_TREASURY_RESERVE_SATS = 100_000;
