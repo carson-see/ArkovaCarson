@@ -3,6 +3,7 @@
 Local agent bootstrap helpers. These scripts are guardrails for agent behavior only; they must not mutate production, staging, Jira, Confluence, GitHub PR bodies, or audit evidence unless a script name and help text explicitly says so.
 
 - `ack-claude-bootstrap.sh` records the current `CLAUDE.md` SHA-256 in git-local state after an agent has read the file. It then runs `check-git-merge-config.sh` and exits non-zero if that guard trips.
+- `block-pr-merge.test.sh` is the pure-bash test for the `gh pr merge` / force-push / `--no-verify` PreToolUse hook (50 cases: the three rule families firing, legitimate work still allowed, 17 git global-option bypasses, 10 over-match cases that keep the fix honest, the normalizer's presence, and wall-clocked pathological inputs).
 - `check-claude-bootstrap.test.sh` is the pure-bash test for the Claude PreToolUse bootstrap hook (29 cases).
 - `check-constitution-on-edit.test.sh` is the pure-bash test for the Edit/Write constitution hook (20 cases).
 - `check-git-merge-config.sh` refuses a `merge.<builtin>.driver` config entry (`union`/`text`/`binary`) or a no-op driver command at any config scope. Read-only against git config. A no-op is matched on the command WORD, not the whole string, because drivers are conventionally written with `gitattributes(5)` placeholders — `true %O %A %B` is the same silent no-op as bare `true`. `cat %A` counts too: it prints ours and leaves `%A` untouched.
@@ -67,3 +68,52 @@ this work the segment loop itself briefly failed open (`printf '%s'` emits no
 trailing newline, so `read` hit EOF and the loop body never executed, reporting
 every command as non-sensitive). It was caught only because the baseline cases
 were run before and after.
+
+## 2026-08-11 — `block-pr-merge.sh` had the same global-flag hole, in all three rules
+
+The audit above probed two hooks. `block-pr-merge.sh` was the third and was
+never probed, and it carried the identical defect: every rule required the
+sub-command to sit IMMEDIATELY after `git`
+(`git[[:space:]]+(push|commit).*--no-verify`), and git accepts its global
+options in between. Observed empirically, not theorised —
+`git -c user.email=a@b.c -c user.name=x commit -q -m probe --no-verify` ran to
+completion in a live session with the hook active.
+
+17 bypass forms are now pinned in `block-pr-merge.test.sh`, each verified to
+return exit 0 against the pre-fix hook: `-c k=v`, `-C <path>`, the attached
+short forms `-ck=v` and `-C/path`, `--git-dir=` / `--work-tree=` / `--namespace=`
+/ `--config-env=` / `--exec-path=` / `--attr-source=` in both attached and
+separated form, `--no-pager`, stacked combinations, the same flags after `&&`,
+and a quoted value containing a space (`-c user.name="Claude Bot"` — the
+realistic shape of a bot identity, and the one a naive `\S+` value matcher stops
+short of). Only one of the 17 blocked before the fix, and it blocked by
+accident: `git --git-dir .git push …` matched the `git ` inside `.git `.
+
+- **DO** normalize, never drop the adjacency anchor. `.claude/hooks/normalize-git-command.py`
+  strips git's leading global options so the sub-command is adjacent again, then
+  the hook applies its rule regexes unchanged. It is a committed sibling file
+  rather than an inline heredoc for a reason: nested inside `$( )` it is one
+  stray character away from making bash consume to EOF, which takes down every
+  Bash tool call in the session the hook exists to protect.
+  An anchorless regex would block every line that merely
+  MENTIONS `push --force … main` — commit messages, docs, echoes. The ten
+  over-match cases are as load-bearing as the bypass cases; they are what stops
+  the "fix" from being a different bug.
+- **DO** keep the normalizer failing closed. An unrecognized leading `-flag` is
+  treated as boolean and stripped, so a global option added to git in future
+  cannot re-open the hole, and if `python3` is unavailable `norm` falls back to
+  the raw command so the rules still run at pre-fix strength.
+
+Known residuals, each confirmed by probe on 2026-08-11 and each a distinct rule
+change rather than this bug class:
+
+- **Refspec force-push is not caught at all.** `git push origin +main`,
+  `+main:main` and `+HEAD:master` are ALLOWED — the leading `+` forces the
+  update and no `--force` flag appears, which is the only thing rule 2 looks
+  for. This is a real hole in the force-push guard and predates this change.
+- **A user alias resolves after the guard has read the line.**
+  `git -c alias.p=push p --force origin main` is ALLOWED; `p` only becomes
+  `push` inside git.
+- **No word boundary before `git`.** `legit push --force origin main` and an
+  `echo` mentioning `.git push --force origin main` are both BLOCKED. That
+  direction over-blocks and is harmless, so it is left alone.
