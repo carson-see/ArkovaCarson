@@ -44,6 +44,89 @@ REVOKE ALL ON FUNCTION public.widget_count(integer) FROM PUBLIC, anon, authentic
 GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO service_role;
 `;
 
+/**
+ * The revoke is correct SQL but lands BEFORE the definition. `CREATE OR
+ * REPLACE` re-runs ALTER DEFAULT PRIVILEGES, so the re-grant to anon and
+ * authenticated happens AFTER this revoke and the hole is open on disk.
+ */
+const REVOKE_BEFORE_CREATE = `
+REVOKE ALL ON FUNCTION public.widget_count(integer) FROM PUBLIC, anon, authenticated;
+${SECDEF}
+GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO service_role;
+`;
+
+/** Correct revoke, then an explicit re-grant that puts anon straight back. */
+const REVOKE_THEN_REGRANT_ANON = `
+${SECDEF}
+${REVOKE_NAMED}
+GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO anon;
+`;
+
+const REVOKE_THEN_REGRANT_AUTHENTICATED = `
+${SECDEF}
+${REVOKE_NAMED}
+GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO authenticated;
+`;
+
+describe('statement ORDER matters (CREATE OR REPLACE re-grants)', () => {
+  it('flags a revoke that precedes the CREATE OR REPLACE it is meant to close', () => {
+    // The whole point of the rule: a revoke the CREATE later undoes is not a
+    // revoke. Position, not mere presence, is what makes the ACL correct.
+    expect(hasExplicitRevoke(REVOKE_BEFORE_CREATE, 'public', 'widget_count')).toBe(false);
+    const v = findViolations([{ file: '9999_order.sql', sql: REVOKE_BEFORE_CREATE }]);
+    expect(v.map((x) => x.name)).toEqual(['widget_count']);
+  });
+
+  it('still accepts the revoke when it follows the definition', () => {
+    expect(hasExplicitRevoke(`${SECDEF}${REVOKE_NAMED}`, 'public', 'widget_count')).toBe(true);
+    expect(findViolations([{ file: '9999_ok.sql', sql: `${SECDEF}${REVOKE_NAMED}` }])).toEqual([]);
+  });
+
+  it('accepts a revoke after the LAST of several CREATE OR REPLACE statements', () => {
+    const sql = `${SECDEF}${REVOKE_NAMED}${SECDEF}${REVOKE_NAMED}`;
+    expect(findViolations([{ file: '9999_twice.sql', sql }])).toEqual([]);
+  });
+
+  it('flags when a re-definition follows the only revoke', () => {
+    // revoke closes the first CREATE, then a second CREATE re-opens it.
+    const sql = `${SECDEF}${REVOKE_NAMED}${SECDEF}`;
+    expect(findViolations([{ file: '9999_reopen.sql', sql }]).map((x) => x.name)).toEqual([
+      'widget_count',
+    ]);
+  });
+});
+
+describe('a later GRANT re-opens the function', () => {
+  it('flags an explicit re-grant of EXECUTE to anon after the revoke', () => {
+    expect(hasExplicitRevoke(REVOKE_THEN_REGRANT_ANON, 'public', 'widget_count')).toBe(false);
+    expect(
+      findViolations([{ file: '9999_regrant.sql', sql: REVOKE_THEN_REGRANT_ANON }]).map(
+        (x) => x.name,
+      ),
+    ).toEqual(['widget_count']);
+  });
+
+  it('flags an explicit re-grant to authenticated after the revoke', () => {
+    expect(
+      findViolations([
+        { file: '9999_regrant2.sql', sql: REVOKE_THEN_REGRANT_AUTHENTICATED },
+      ]).map((x) => x.name),
+    ).toEqual(['widget_count']);
+  });
+
+  it('does NOT flag the service_role grant the rule itself prescribes', () => {
+    // REVOKE_NAMED already ends with `GRANT ... TO service_role` — the shape the
+    // rule's own error message tells authors to write must stay clean.
+    expect(findViolations([{ file: '9999_ok2.sql', sql: `${SECDEF}${REVOKE_NAMED}` }])).toEqual([]);
+  });
+
+  it('does NOT flag a grant to anon on a DIFFERENT function', () => {
+    const sql = `${SECDEF}${REVOKE_NAMED}
+GRANT EXECUTE ON FUNCTION public.other_thing(integer) TO anon;`;
+    expect(findViolations([{ file: '9999_other.sql', sql }])).toEqual([]);
+  });
+});
+
 describe('parseSecurityDefinerFunctions', () => {
   it('finds a SECURITY DEFINER function', () => {
     const found = parseSecurityDefinerFunctions('x.sql', SECDEF);
