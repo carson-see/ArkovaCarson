@@ -469,6 +469,13 @@ describe('WebhookSettingsPage', () => {
       });
 
       resolveUpdate({ error: null });
+
+      // Settle the tail: resolving the update lets `handleToggle` run its
+      // `fetchEndpoints()` reconcile, whose setState would otherwise land after
+      // this test returns — an act(...) warning and state bleed into the next
+      // test. The refetch returns the row unchanged (still active), so the
+      // label snapping back to "Disable" is the reconcile completing.
+      await screen.findByText('Disable');
     });
   });
 
