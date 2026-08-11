@@ -173,3 +173,65 @@ describe('flag-SPOF on the real tree (current-state smoke)', () => {
     expect(names.has('ENABLE_AI_EXTRACTION')).toBe(true);
   });
 });
+
+// `launchRequiredFlags` scoping (2026-08-11). Before this, `checkFlagSpof` treated
+// EVERY asserted-true flag as launch-required, so honestly pinning a DB-backed flag
+// held ON by its `switchboard_flags` row — the normal, correct configuration — fired a
+// spurious `launch-flag-off` ERROR because the deploy omits the env var. That made the
+// asserted manifest unable to describe the real flag surface without turning CI red,
+// which is why it only ever pinned 6 of a ~51-flag surface.
+describe('launchRequiredFlags scoping', () => {
+  const dbFlagNames = new Set(['ENABLE_DB_BACKED']);
+
+  it('does NOT fire launch-flag-off for an asserted-true flag outside the launch-required set', () => {
+    const findings = checkFlagSpof({
+      assertedFlags: { ENABLE_DB_BACKED: true },
+      deployedFlags: {}, // deploy omits it — the switchboard row holds it ON, correctly
+      dbFlagNames,
+      launchRequiredFlags: new Set(),
+    });
+    expect(findings).toEqual([]);
+  });
+
+  it('STILL fires launch-flag-off for a flag that IS launch-required', () => {
+    const findings = checkFlagSpof({
+      assertedFlags: { ENABLE_DB_BACKED: true },
+      deployedFlags: {},
+      dbFlagNames,
+      launchRequiredFlags: new Set(['ENABLE_DB_BACKED']),
+    });
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe('launch-flag-off');
+  });
+
+  it('still fires launch-flag-off for a launch-required flag the deploy sets false', () => {
+    const findings = checkFlagSpof({
+      assertedFlags: { ENABLE_DB_BACKED: true },
+      deployedFlags: { ENABLE_DB_BACKED: false },
+      dbFlagNames,
+      launchRequiredFlags: new Set(['ENABLE_DB_BACKED']),
+    });
+    expect(findings.map((f) => f.code)).toEqual(['launch-flag-off']);
+  });
+
+  it('omitting the set preserves the legacy behaviour (every asserted-true flag is launch-required)', () => {
+    const findings = checkFlagSpof({
+      assertedFlags: { ENABLE_DB_BACKED: true },
+      deployedFlags: {},
+      dbFlagNames,
+    });
+    expect(findings.map((f) => f.code)).toEqual(['launch-flag-off']);
+  });
+
+  it('scoping does not weaken the asserted-OFF fail-open checks', () => {
+    // The regression that matters: narrowing the launch check must not let an
+    // asserted-OFF / env-ON flag stop failing.
+    const findings = checkFlagSpof({
+      assertedFlags: { ENABLE_DB_BACKED: false },
+      deployedFlags: { ENABLE_DB_BACKED: true },
+      dbFlagNames,
+      launchRequiredFlags: new Set(),
+    });
+    expect(findings.map((f) => f.code)).toEqual(['fail-open-flag']);
+  });
+});

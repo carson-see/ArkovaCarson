@@ -107,6 +107,13 @@ JOBS=(
   # reconciliation found it missing. A DETECTED stall returns 200 (a correct
   # finding must not be retried); only a broken DB probe 500s, hence the retry.
   "check-stuck-anchors|0 * * * *|/jobs/check-stuck-anchors|30s,120s,2"
+
+  # SCRUM-3187: forward-path proof-coverage regression monitor. Guards the
+  # offline-verification promise — every newly SECURED anchor must get a
+  # per-document inclusion proof. Hourly, windowed 24h so the known pre-2026-08
+  # backlog does not hold the alarm permanently red. Returns 200 with
+  # healthy:false on a true finding, so retries only chase a broken probe.
+  "proof-coverage-monitor|15 * * * *|/jobs/proof-coverage-monitor|30s,120s,2"
   # SCRUM-1130: durable 24-hour per-organization queue scheduler. Claims due orgs
   # via the claim_due_org_queue_runs RPC (migration 0294) and runs
   # processBatchAnchors({ force: true, orgId }) for each. This is the ONLY driver
@@ -149,6 +156,16 @@ JOBS=(
   # fresh random channel_token (GH #1836), rotating any connection still on
   # the legacy org-id-as-token scheme.
   "drive-subscription-renewal|0 * * * *|/jobs/drive-subscription-renewal|30s,120s,2"
+  # BILLING INTEGRITY: drains ai_credits.reconcile_refund — the queue
+  # api/v1/ai-extract-batch.ts writes when a per-row AI-credit refund fails
+  # AFTER a successful debit. That producer shipped with NO consumer, so every
+  # row it wrote to "surface" an overcharge sat `pending` forever and the
+  # customer stayed overcharged with zero signal. Endpoint at
+  # services/worker/src/routes/cron.ts. Every 15 min is well inside any
+  # billing-dispute window and the queue is normally empty. Retries are safe:
+  # the drain claims per job, and a refund that fails again re-enters the
+  # shared backoff/dead-letter policy (Sentry event on the final attempt).
+  "ai-credit-reconcile|*/15 * * * *|/jobs/ai-credit-reconcile|30s,120s,2"
   # ── 2026-08-10 CTO-decision bindings (scheduler-binding audit) ─────────────
   # SCRUM-1872: drain for docusign.notarization_completed job_queue rows. The
   # producer (webhooks/docusign.ts enqueueNotarizationJob) is UNGATED and live

@@ -53,6 +53,21 @@ export interface FlagSpofInputs {
   deployedFlags: Record<string, boolean>;
   /** The set of flag names `flagRegistry.ts` treats as DB-backed (its `DB_FLAGS` array). */
   dbFlagNames: Set<string>;
+  /**
+   * The flags that are genuinely LAUNCH-REQUIRED (the manifest's
+   * `launchRequiredFlags`). Only these can produce `launch-flag-off`.
+   *
+   * WHY THIS EXISTS. The original model equated "asserted effective=true" with
+   * "launch-required", so pinning ANY true flag whose value is held ON by a live
+   * `switchboard_flags` row — rather than by a deploy env var — fired a spurious
+   * `launch-flag-off` ERROR. That is the normal, correct configuration for a
+   * DB-backed flag: the row wins and the deploy has no business restating it.
+   * The gate therefore punished honest pinning, which is exactly why
+   * `expected-prod-config.json` asserted only 6 flags out of a ~51-flag surface
+   * and why its hand-written notes drifted. Omit this field to preserve the old
+   * behaviour (every asserted-true flag is treated as launch-required).
+   */
+  launchRequiredFlags?: Set<string>;
 }
 
 /**
@@ -71,8 +86,11 @@ export interface FlagSpofInputs {
  * caught by `diffConfigState`'s reverse-flag check; this module does not duplicate it.)
  */
 export function checkFlagSpof(input: FlagSpofInputs): FlagSpofFinding[] {
-  const { assertedFlags, deployedFlags, dbFlagNames } = input;
+  const { assertedFlags, deployedFlags, dbFlagNames, launchRequiredFlags } = input;
   const findings: FlagSpofFinding[] = [];
+  // Omitted → every asserted-true flag is launch-required (legacy behaviour).
+  const isLaunchRequired = (flag: string) =>
+    launchRequiredFlags === undefined || launchRequiredFlags.has(flag);
 
   for (const [flag, assertedValue] of Object.entries(assertedFlags)) {
     const deployHasFlag = Object.prototype.hasOwnProperty.call(deployedFlags, flag);
@@ -108,8 +126,10 @@ export function checkFlagSpof(input: FlagSpofInputs): FlagSpofFinding[] {
       }
       // else: asserted OFF and the deploy env is false/omitted → fails safe.
     } else {
-      // Asserted ON (launch-required). Danger is the deploy env being OFF or omitted.
-      if (deployValue === false || !deployHasFlag) {
+      // Asserted ON. Danger is the deploy env being OFF or omitted — but only
+      // for a genuinely launch-required flag. A DB-backed flag held ON by its
+      // switchboard row does not need (and should not have) a deploy env line.
+      if (isLaunchRequired(flag) && (deployValue === false || !deployHasFlag)) {
         findings.push({
           severity: 'error',
           code: 'launch-flag-off',
@@ -182,8 +202,9 @@ export interface FlagSpofSources {
 export function runFlagSpofCheck(
   assertedFlags: Record<string, boolean>,
   sources: FlagSpofSources,
+  launchRequiredFlags?: Set<string>,
 ): FlagSpofFinding[] {
   const deployedFlags = parseDeployedFlags(readFileSync(sources.deployYmlPath, 'utf8'));
   const dbFlagNames = parseDbFlagNames(readFileSync(sources.flagRegistryPath, 'utf8'));
-  return checkFlagSpof({ assertedFlags, deployedFlags, dbFlagNames });
+  return checkFlagSpof({ assertedFlags, deployedFlags, dbFlagNames, launchRequiredFlags });
 }

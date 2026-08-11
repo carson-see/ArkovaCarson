@@ -35,6 +35,8 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 
 - **DO** verify HMAC signatures before processing any webhook payload
 - **DO** use nonce/idempotency tables to prevent replay attacks
+- **DO** release the nonce before returning any post-nonce 5xx (AUDIT-0424-10). The nonce is committed before the downstream writes, so an un-compensated failure is unrecoverable, not retryable: the provider re-presents the same event id, hits the UNIQUE violation, and is answered `200 {duplicate:true}` — the event is dropped *and* the provider is told it succeeded. `middesk.ts::releaseNonce` is the reference implementation (mirrors the `webhook_event_claims` compensating delete in `stripe/handlers.ts`). Never release on the success path.
+- **DO** keep the set of status literals a handler writes in parity with the DB CHECK constraint that admits them. `middesk.ts` wrote `'REJECTED'`/`'REQUIRES_INPUT'` into `organizations.verification_status` for months while the constraint admitted only `UNVERIFIED/PENDING/VERIFIED`, so every KYB rejection raised SQLSTATE 23514 and was silently lost. Mocked-DB unit tests cannot catch this — `middesk.test.ts` carries a parity test that reads the migration set directly.
 - **DO NOT** persist raw webhook payloads — only sanitized canonical events reach the database
 - **DO NOT** log webhook bodies that may contain PII (EIN, addresses, etc.)
 
