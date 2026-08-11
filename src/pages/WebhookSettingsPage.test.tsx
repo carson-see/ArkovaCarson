@@ -21,6 +21,15 @@ import { WEBHOOK_LABELS } from '@/lib/copy';
 // Mocks
 // =========================================================================
 
+// The endpoint row and the mocked delivery-log row deliberately carry the SAME
+// url — that collision is the whole reason `findEndpointRow` exists, so it has
+// to be one value, not two hand-synced literals. `vi.hoisted` is what makes it
+// reachable from the `useWebhookDeliveries` factory below, since vi.mock
+// factories are lifted above this file's ordinary top-level consts.
+const { ENDPOINT_URL } = vi.hoisted(() => ({
+  ENDPOINT_URL: 'https://example.com/webhooks',
+}));
+
 // Mock sonner toast — assert the toggle surfaces RLS/permission failures.
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -73,7 +82,8 @@ vi.mock('@/hooks/useWebhookDeliveries', () => ({
         attempt_number: 5,
         created_at: '2026-07-01T00:00:00Z',
         delivered_at: null,
-        endpoint_url: 'https://example.com/webhooks',
+        // Same url as the endpoint row — see ENDPOINT_URL above.
+        endpoint_url: ENDPOINT_URL,
       },
     ],
     loading: false,
@@ -95,10 +105,6 @@ vi.mock('@/hooks/useWebhookDeliveries', () => ({
 Object.assign(navigator, {
   clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
 });
-
-// Deliberately the SAME url the mocked delivery-log row above carries — that
-// collision is the point of `findEndpointRow` below.
-const ENDPOINT_URL = 'https://example.com/webhooks';
 
 const mockEndpoints = [
   {
@@ -129,9 +135,9 @@ function renderPage() {
  * ("Delete endpoint: <url>") is unique to the endpoint row and carries the URL,
  * so it is the only unambiguous "endpoints have loaded" signal on this page.
  */
-function findEndpointRow(url = ENDPOINT_URL) {
+function findEndpointRow() {
   return screen.findByRole('button', {
-    name: `${WEBHOOK_LABELS.DELETE_CONFIRM_ACTION}: ${url}`,
+    name: `${WEBHOOK_LABELS.DELETE_CONFIRM_ACTION}: ${ENDPOINT_URL}`,
   });
 }
 
@@ -314,15 +320,8 @@ describe('WebhookSettingsPage', () => {
     it('calls delete_webhook_endpoint RPC after confirming the dialog', async () => {
       renderPage();
 
-      // Gate on the row's Trash (delete) button itself — it mounts only after
-      // the async endpoints fetch resolves. The old gate (`getByText(url)` +
-      // a one-shot `.text-destructive` query) raced that fetch: the delivery-log
-      // table renders the SAME endpoint_url synchronously from the mocked hook,
-      // so `getByText(url)` could resolve against that cell while the endpoint
-      // row — and its delete button — did not exist yet, leaving the one-shot
-      // query `undefined` (flake: "expected undefined to be truthy", 4 CI runs
-      // 2026-07-26). `findEndpointRow` is that same aria-label signal, shared
-      // so this query and the rest of the file cannot drift apart.
+      // See findEndpointRow's JSDoc for the race this avoids. It first bit here:
+      // flake "expected undefined to be truthy", 4 CI runs 2026-07-26.
       await userEvent.click(await findEndpointRow());
 
       // No RPC yet — the confirm dialog is open.
@@ -543,13 +542,9 @@ describe('WebhookSettingsPage', () => {
 
       renderPage();
 
-      // findByRole, not getByRole: the test button mounts with the endpoint row
-      // from the async endpoints fetch, which can land in a LATER React commit
-      // than anything the delivery log renders. The old gate — waitFor on the
-      // URL text — was satisfied by the delivery-log cell carrying that same
-      // URL synchronously, so it never waited for the fetch and the sync
-      // getByRole below raced it (CI: PR #2140; PR #2143 run 93815479911).
-      // Same trap as the delete test above.
+      // findByRole, not getByRole — same race findEndpointRow's JSDoc documents:
+      // this button mounts with the endpoint row, in a later commit than the
+      // delivery log. CI: PR #2140; PR #2143 run 93815479911.
       await userEvent.click(
         await screen.findByRole('button', {
           name: new RegExp(WEBHOOK_LABELS.TEST_PING_ACTION),
