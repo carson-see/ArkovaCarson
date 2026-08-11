@@ -1,5 +1,5 @@
 {
-  "_comment": "SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `execute_sql`/`list_tables` after a known-good prod schema window. Last refreshed: 2026-07-27 \u2014 resynced after migration 0365 (SCRUM-2940 folders) applied to prod via MCP in-session; verified 112 base tables live.",
+  "_comment": "SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `execute_sql`/`list_tables` after a known-good prod schema window. Last refreshed: 2026-08-11 — added organization_field_policies after migration 0405 (DPA Schedule 1 / clause 4.6 per-org request-field denylist) was applied to prod in the founder-authorized DPA remediation batch of 2026-08-10. Verified live against prod vzwyaatejekddvltxyye via MCP execute_sql BEFORE editing this file, not inferred from the migration or from the ledger-exemption note: pg_class shows relrowsecurity=true, relforcerowsecurity=true, 0 rows (inert on apply, no org has a policy row), and the public base-table count moved 112 -> 113, i.e. exactly this one table. Owning PR for the migration is #2066; this refresh landed via #2081, which extends the same control to the remaining five anchor-creating routes and needs the same lint green. Prior: 2026-07-27 — resynced after migration 0365 (SCRUM-2940 folders) applied to prod via MCP in-session; verified 112 base tables live.",
   "_source": "Supabase Management API read-only SQL (POST /v1/projects/vzwyaatejekddvltxyye/database/query) on 2026-07-06: SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' (110 rows); ledger head verified numeric 0353; drive_watch_state + connector_artifact presence confirmed via to_regclass on the same project. Prior: supabase MCP execute_sql(project_id=vzwyaatejekddvltxyye) on 2026-06-29 (108 rows; ledger head 0348; connector_artifact absence confirmed via to_regclass('public.connector_artifact') IS NULL). Prior provenance: MCP list_tables on 2026-04-27 + delta-verified 2026-05-04; reconciled to pg_dump baseline on 2026-05-05; microsoft_graph_webhook_nonces / organization_queue_run_state / organization_queue_runs verified via Supabase Management API read-only SQL on 2026-05-06; org_credit_deductions verified via Supabase Management API read-only SQL on 2026-05-30.",
   "tables": [
     {
@@ -303,6 +303,10 @@
       "schema": "public"
     },
     {
+      "name": "organization_field_policies",
+      "schema": "public"
+    },
+    {
       "name": "organization_queue_run_state",
       "schema": "public"
     },
@@ -455,19 +459,19 @@
     "in_migrations_only": [
       {
         "name": "activation_tokens",
-        "reason": "created in 0023, evidently dropped out-of-band \u2014 verified absent in prod (to_regclass NULL) 2026-06-29; needs investigation"
+        "reason": "created in 0023, evidently dropped out-of-band — verified absent in prod (to_regclass NULL) 2026-06-29; needs investigation"
       },
       {
         "name": "merkle_batches",
-        "reason": "created in 0113, dropped out-of-band \u2014 verified absent in prod (to_regclass NULL) 2026-06-29; needs investigation"
+        "reason": "created in 0113, dropped out-of-band — verified absent in prod (to_regclass NULL) 2026-06-29; needs investigation"
       },
       {
         "name": "training_metrics",
-        "reason": "created in 0114, dropped out-of-band \u2014 verified absent in prod (to_regclass NULL) 2026-06-29; needs investigation"
+        "reason": "created in 0114, dropped out-of-band — verified absent in prod (to_regclass NULL) 2026-06-29; needs investigation"
       },
       {
         "name": "webhook_idempotency",
-        "reason": "created in 0116, dropped out-of-band \u2014 verified absent in prod (to_regclass NULL) 2026-06-29; needs investigation"
+        "reason": "created in 0116, dropped out-of-band — verified absent in prod (to_regclass NULL) 2026-06-29; needs investigation"
       }
     ],
     "in_prod_only": [
@@ -481,7 +485,7 @@
       },
       {
         "name": "stats_cache",
-        "reason": "created in prod out-of-band; needs a backfill migration to capture in source \u2014 tracked separately"
+        "reason": "created in prod out-of-band; needs a backfill migration to capture in source — tracked separately"
       }
     ]
   }
