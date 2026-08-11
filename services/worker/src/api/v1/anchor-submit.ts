@@ -23,6 +23,7 @@ import { logger } from '../../utils/logger.js';
 import { ensureAnchorCreditAvailable } from '../../utils/anchorCreditGate.js';
 import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
+import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
 import { requireOrgQuota } from '../../middleware/perOrgRateLimit.js';
 import { submitJob } from '../../utils/jobQueue.js';
 import { buildProfessionalEducationJobPayload } from '../../compliance/professional-education.js';
@@ -93,6 +94,20 @@ async function handleAnchorSubmit(req: Request, res: Response) {
     return;
   }
   const body: AnchorSubmitRequest = parsed.data;
+
+  // DPA Schedule 1 / clause 4.6 — org-scoped field rejection (migration 0405).
+  // No-op for every org without a policy row. Runs on the RAW body (so a field
+  // nested in `metadata` cannot slip past) and BEFORE the duplicate lookup:
+  // that lookup answers 200 for an existing fingerprint, which would otherwise
+  // let a prohibited field through on any re-submission.
+  if (!(await enforceOrgFieldPolicy({
+    orgId: req.apiKey.orgId ?? null,
+    body: req.body,
+    res,
+    scope: 'anchor-submit',
+  }))) {
+    return;
+  }
 
   if (body.credential_type === 'CPE' && !isProfessionalEducationSchemaReady()) {
     res.status(503).json(professionalEducationSchemaUnavailableBody('anchor-submit:cpe'));
