@@ -20,8 +20,12 @@
  * NOTE: this is the critical-set source of truth, not an exhaustive mirror of
  * every /jobs/* endpoint. Adding a job here opts it into dead-man monitoring.
  *
- * DRIFT WARNING (Architect review): this manifest is hand-maintained and has NO
- * automated reconciliation against the actual Cloud Scheduler jobs. A new
+ * DRIFT WARNING (Architect review): this manifest is hand-maintained; the
+ * repo-side half of reconciliation is now automated (PR #2067:
+ * scripts/gcp-setup/cloud-scheduler.test.ts asserts every manifest entry
+ * matches the JOBS declaration in cloud-scheduler.sh on schedule, path, and
+ * pause state), but there is still NO automated reconciliation against the
+ * LIVE Cloud Scheduler API. A new
  * critical scheduler job that is never added here is simply never monitored, and
  * a schedule/enabled value that diverges from Cloud Scheduler is never caught —
  * the same untracked-state failure mode this module exists to prevent, moved up
@@ -80,7 +84,9 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
   {
     id: 'batch-anchors',
     category: 'anchor-pipeline',
-    schedule: '*/10 * * * *',
+    // Live-verified */30 via `gcloud scheduler jobs list` 2026-08-10 (PR #2067
+    // reconciliation); the earlier */10 here predated that read-back.
+    schedule: '*/30 * * * *',
     targetPath: '/jobs/batch-anchors',
     method: 'POST',
     owner: 'lane-1',
@@ -90,7 +96,8 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
   {
     id: 'check-confirmations',
     category: 'anchor-pipeline',
-    schedule: '*/2 * * * *',
+    // Live-verified */30 via gcloud 2026-08-10 (PR #2067 reconciliation).
+    schedule: '*/30 * * * *',
     targetPath: '/jobs/check-confirmations',
     method: 'POST',
     owner: 'lane-1',
@@ -100,7 +107,8 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
   {
     id: 'recover-broadcasts',
     category: 'anchor-pipeline',
-    schedule: '*/2 * * * *',
+    // Live-verified */15 via gcloud 2026-08-10 (PR #2067 reconciliation).
+    schedule: '*/15 * * * *',
     targetPath: '/jobs/recover-broadcasts',
     method: 'POST',
     owner: 'lane-1',
@@ -143,9 +151,10 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
   // channel_token security fix. `enabled: true` records INTENT (this SHOULD
   // be scheduled hourly), which is what the dead-man's silence-based
   // alarming needs to catch a forgotten/failed Cloud Scheduler creation —
-  // the job is declared in scripts/gcp-setup/cloud-scheduler.sh but NOT YET
-  // applied to prod as of this PR. maxSilenceMs matches check-stuck-anchors
-  // (identical hourly cadence).
+  // the job is declared in scripts/gcp-setup/cloud-scheduler.sh and was
+  // verified LIVE in prod (hourly, ENABLED) via gcloud on 2026-08-10 — the
+  // earlier "NOT YET applied" state here is resolved. maxSilenceMs matches
+  // check-stuck-anchors (identical hourly cadence).
   //
   // HONESTY NOTE (verified against this exact head — do not assume this
   // note stays accurate without re-checking): registering here makes this
@@ -203,7 +212,8 @@ export const SCHEDULER_MANIFEST: ScheduledJobSpec[] = [
   {
     id: 'anchor-public-records',
     category: 'feeder',
-    schedule: '*/30 * * * *',
+    // Live-verified */10 via gcloud 2026-08-10 (PR #2067 reconciliation).
+    schedule: '*/10 * * * *',
     targetPath: '/jobs/anchor-public-records',
     method: 'POST',
     owner: 'lane-3',

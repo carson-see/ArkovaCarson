@@ -14,7 +14,7 @@ Source: live audit of project `arkova1` on 2026-07-14 (IAM + Service Accounts + 
 | # | Identity | Problem |
 |---|----------|---------|
 | P0-a | `arkova-cli@arkova1.iam.gserviceaccount.com` | 2 downloadable JSON keys (`cea7e00…`, Mar 26; `00548b6…`, Apr 15) **+** Cloud KMS Admin + Secret Manager Admin + Cloud Run Admin → a home-laptop key that can read `BITCOIN_TREASURY_WIF` + Stripe keys. |
-| P0-b | `scripts/staging/pr927-soak.sh` (git history) | `CRON_SECRET="arkova-cron-2026-prod"` hardcoded since 2026-05-27. **If this equals the live prod `X-Cron-Secret`, prod `/jobs/*` are exposed to anyone with repo read.** |
+| P0-b | `scripts/staging/pr927-soak.sh` + `.github/workflows/worker-deploy.yml` (git history) | ~~Hardcoded prod `CRON_SECRET` since 2026-03-24.~~ **RESOLVED 2026-08-10 — see below. The leaked literal has been redacted from this runbook; do not re-introduce it.** The check below was executed and the answer was YES: the hardcoded value *was* the live prod secret, so prod `/jobs/*` were reachable by anyone with repo read for ~4.5 months. |
 | P1-a | `270018525501-compute@developer.gserviceaccount.com` (Compute default SA) | Holds **Owner** (13,210/13,323 excess perms) **+** a downloadable key (`fd2b466…`, Mar 25). Actively drives CI deploys, so Owner must be replaced with narrow roles, not just removed. |
 | P1-b | Org policy | `iam.disableServiceAccountKeyCreation` not enforced (only `…KeyUpload` is), so keys can regress. |
 
@@ -22,16 +22,33 @@ Source: live audit of project `arkova1` on 2026-07-14 (IAM + Service Accounts + 
 
 ---
 
-## P0-b FIRST (2 minutes) — verify/rotate the prod cron secret
+## P0-b — DONE (rotated 2026-08-10 by CTO session)
 
-```bash
-# Is the hardcoded value the live prod secret? (agent cannot read secret values)
-gcloud secrets versions access latest --secret="cron-secret" --project=arkova1 | head -c 40; echo
-# If it prints "arkova-cron-2026-prod" -> it is LIVE and exposed. Rotate now:
-NEW=$(openssl rand -hex 24)
-printf '%s' "$NEW" | gcloud secrets versions add cron-secret --data-file=- --project=arkova1
-# Redeploy worker (or let next revision pick it up), then discard $NEW from your shell history.
-```
+**Executed, not pending.** The verification this runbook asked for was run and the leaked literal
+*did* equal the live prod secret — `cron-secret` still had only version 1, created 2026-03-26 and
+never rotated. Remediation performed and verified:
+
+1. `cron-secret` version **2** added (`openssl rand -hex 32`).
+2. Prod worker moved onto revision `arkova-worker-00965-4nd` so the new value was actually loaded
+   (the secret is mounted as `cron-secret:latest`, which resolves at container start — adding a
+   version alone does **not** rotate running instances).
+3. Verified closed: `POST /jobs/check-stuck-anchors` with the old literal now returns **401**.
+   `/health` stayed `healthy` (`database`/`anchoring`/`kms` all `ok`) on the same `git_sha`.
+4. Version **1 disabled**.
+
+Blast radius during the exposure window: every prod `/jobs/*` endpoint, which includes destructive
+operations (`daily-anchor-flush`, `process-revocations`, `monthly-allocation-rollover`,
+`reconcile-credit-conservation`). No evidence of abuse was searched for — **an audit-log review over
+2026-03-26 → 2026-08-10 for `/jobs/*` calls not originating from Cloud Scheduler is still owed.**
+
+Why rotation was safe to do unattended: all **prod** schedulers authenticate with OIDC
+(`CRON_OIDC_AUDIENCE` is set), not the header — only the now-defunct 2026-08 soak-rig scheduler jobs
+used `X-Cron-Secret`, and those point at deleted databases.
+
+**Follow-up worth doing:** `services/worker/src/routes/cron.ts` accepts the header *or* OIDC. Since
+prod uses OIDC exclusively, dropping `CRON_SECRET` from the prod env would remove this attack surface
+entirely rather than leaving a rotated-but-still-present shared secret. `config.ts` already permits
+`CRON_OIDC_AUDIENCE` alone, so this is a `deploy-worker.yml` change, not a code change.
 
 ## P0-a — kill the exportable treasury-capable key (do NOT delete keys first)
 
