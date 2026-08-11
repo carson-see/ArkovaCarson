@@ -7,9 +7,11 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { z } from 'zod';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { useBilling } from '@/hooks/useBilling';
 import { AppShell } from '@/components/layout';
 import { BillingOverview, type BillingInfo } from '@/components/billing/BillingOverview';
 import { Button } from '@/components/ui/button';
@@ -58,6 +60,7 @@ export function BillingPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
+  const { openBillingPortal } = useBilling();
   const [billingInfo, setBillingInfo] = useState<BillingInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -121,13 +124,30 @@ export function BillingPage() {
     navigate(ROUTES.LOGIN);
   };
 
-  const handleManageBilling = () => {
-    // Opens Stripe customer portal when available
-    navigate(ROUTES.BILLING);
+  /**
+   * Open the Stripe customer portal (update card, view invoices, cancel).
+   *
+   * Was `navigate(ROUTES.BILLING)` — a no-op that reloaded this same page.
+   * `openBillingPortal()` resolves null on failure rather than throwing, so the
+   * null branch MUST surface an error; a silent return is indistinguishable
+   * from the dead button this replaces.
+   */
+  const handleManageBilling = async () => {
+    const url = await openBillingPortal();
+    if (url) {
+      window.location.href = url;
+      return;
+    }
+    toast.error(BILLING_PAGE_LABELS.PORTAL_UNAVAILABLE);
   };
 
+  /**
+   * Send the user to plan selection — the only surface that can start a
+   * purchase. Was `navigate(ROUTES.BILLING)`, i.e. this page, so a user at
+   * their plan limit had no reachable way to pay.
+   */
   const handleUpgrade = () => {
-    navigate(ROUTES.BILLING);
+    navigate(ROUTES.PRICING);
   };
 
   return (

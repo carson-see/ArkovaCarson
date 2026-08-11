@@ -13,19 +13,36 @@
  *                         no credit movement (SCRUM-1649 DS-07)
  *   - FAST_TRACK_ANCHOR / INSTANT_SECURE → credit-funded (1 credit), share
  *                         one implementation (`dispatchCreditFundedAnchor`);
- *                         INSTANT_SECURE additionally forces an immediate
- *                         per-org batch-anchor pass on success and
+ *                         BOTH force an immediate per-org batch-anchor pass on
+ *                         success (that direct call is the acceleration the
+ *                         credit pays for). INSTANT_SECURE additionally
  *                         logs+notifies the org on an insufficient-credit
  *                         fallback (founder directive, 2026-08-03 — "we need
  *                         to be able to instantly secure or add to queue")
  *   - unknown           → fail-closed visible failure
  *
+ * BILLING-INTEGRITY FIX: FAST_TRACK_ANCHOR used to debit 1 credit and then
+ * enqueue an `anchor.fast_track` job_queue row as its only "acceleration".
+ * Nothing in the worker ever claimed that type — there is no central job
+ * dispatcher, so a type is handled only if some file calls claimJob /
+ * processNextJob with that literal. The row sat `pending` forever: never
+ * claimed, never retried, never dead-lettered, no error surface anywhere. The
+ * document was anchored by the ordinary nightly batch, i.e. exactly what the
+ * FREE AUTO_ANCHOR path gets, so the customer paid a credit for zero
+ * acceleration — while the shipped `law-firm-contract` UI template promised
+ * "Instantly secure fully-signed contracts as soon as all parties complete
+ * e-signature." FAST_TRACK_ANCHOR now takes the same proven direct
+ * `processBatchAnchors({force,orgId})` call INSTANT_SECURE already used, and
+ * the orphan job type is gone rather than left as an unconsumed producer.
+ *
  * Idempotency starts with the `(rule_id, trigger_event_id)` unique index on
  * the executions table. Side-effecting action modes add their own retry guard;
  * FAST_TRACK_ANCHOR and INSTANT_SECURE use the execution id as the org-credit
  * reference key (never attempt_count, so a retry cannot double-charge — see
- * migration 0326's `UNIQUE(org_id, reference_id, reason)`) and reuse an
- * existing anchor.fast_track job on dispatcher retry.
+ * migration 0326's `UNIQUE(org_id, reference_id, reason)`), the anchor insert
+ * de-duplicates on 23505, and `processBatchAnchors` is itself idempotent
+ * (it claims PENDING rows under a global run lease), so a dispatcher retry
+ * repeats no charge and creates no duplicate work.
  *
  * Concurrency: the MVP runs as a single Cloud Scheduler instance. A second
  * dispatcher started in parallel would race on the SELECT-then-UPDATE step
@@ -41,7 +58,6 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 import { resolveSecretHandle } from '../utils/secrets.js';
-import { submitJob } from '../utils/jobQueue.js';
 import { deductOrgCredit, type DeductionResult } from '../utils/orgCredits.js';
 import { RULE_DISPATCH_OUTCOME, RULE_ROUTED_TO } from '../rules/schemas.js';
 import { config } from '../config.js';
@@ -533,24 +549,6 @@ async function materializeAnchorQueueItem(args: {
   return insertAnchorQueueItem(await buildAnchorInsertPayload(args));
 }
 
-async function findExistingFastTrackJob(executionId: string): Promise<string | null> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (db as any)
-    .from('job_queue')
-    .select('id')
-    .eq('type', 'anchor.fast_track')
-    .eq('payload->>execution_id', executionId)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`anchor.fast_track job lookup failed: ${(error as { message?: string }).message ?? 'unknown'}`);
-  }
-
-  return readString((data as { id?: unknown } | null)?.id);
-}
-
 // SCRUM-1649 DS-AUTO-02 — Anchor action routing.
 // Two outcome shapes share `routed_to=anchor_queue`: (a) AUTO_ANCHOR (DS-07,
 // queue mode) emits one with credit_denial_reason=null, no credit movement;
@@ -735,11 +733,11 @@ async function compensateCreditFundedAnchorFailure(args: {
 // insufficient credits WITHOUT erroring the rule or dropping the document.
 // `options` carries only the two action types' actual differences: which
 // ledger reason to stamp (so their org_credit_deductions rows stay
-// distinguishable), whether to force an immediate per-org batch pass on
-// success (INSTANT_SECURE only — see the module-level `processBatchAnchors`
-// import), and whether the insufficient-credit fallback must additionally
-// log + notify (INSTANT_SECURE only, per the founder directive's explicit
-// "so someone notices the fallback happened").
+// distinguishable), and whether the insufficient-credit fallback must
+// additionally log + notify (INSTANT_SECURE only, per the founder directive's
+// explicit "so someone notices the fallback happened"). The immediate batch
+// pass is NOT a difference any more: both actions charge a credit for
+// acceleration, so both must actually accelerate.
 interface CreditFundedAnchorOptions {
   /** deduct_org_credit / refund_org_credit `p_reason` for the happy path. */
   creditReason: string;
@@ -747,8 +745,6 @@ interface CreditFundedAnchorOptions {
   compensationReason: string;
   /** Log-line label distinguishing the two actions' log/Sentry noise. */
   logLabel: string;
-  /** INSTANT_SECURE: kick processBatchAnchors({force:true, orgId}) on success. */
-  triggerImmediateBatch: boolean;
   /** INSTANT_SECURE: log + notify org admins when falling back to the free queue. */
   notifyOnCreditDenial: boolean;
 }
@@ -756,18 +752,26 @@ interface CreditFundedAnchorOptions {
 // Best-effort only — the anchor is already safely materialized (PENDING) and
 // will be picked up by the standard triggers regardless, so a failure here
 // must never change the dispatch outcome, retry the execution, or touch the
-// credit that was already (correctly) charged. This is what makes
-// INSTANT_SECURE actually faster than AUTO_ANCHOR's queue-only behavior
-// instead of just relabeling it — see rule-action-dispatcher.ts module
-// header and the founder directive this migration/PR responds to.
-async function triggerImmediateAnchorPass(rule: RuleRow, exec: ExecutionRow): Promise<void> {
+// credit that was already (correctly) charged. This is what makes the
+// credit-funded actions actually faster than AUTO_ANCHOR's queue-only
+// behavior instead of just relabeling it — see the module header.
+//
+// Returns whether the pass was attempted without throwing, so the outcome
+// payload can state plainly whether the charged acceleration ran.
+async function triggerImmediateAnchorPass(
+  rule: RuleRow,
+  exec: ExecutionRow,
+  logLabel: string,
+): Promise<boolean> {
   try {
     await processBatchAnchors({ force: true, orgId: rule.org_id });
+    return true;
   } catch (err) {
     logger.warn(
       { error: err, ruleId: rule.id, executionId: exec.id, orgId: rule.org_id },
-      'INSTANT_SECURE: immediate per-org batch pass failed — anchor remains safely PENDING for the next standard trigger',
+      `${logLabel}: immediate per-org batch pass failed — anchor remains safely PENDING for the next standard trigger`,
     );
+    return false;
   }
 }
 
@@ -847,48 +851,13 @@ async function dispatchCreditFundedAnchor(
         error: err,
       });
     }
-    let reusedFastTrackJob: boolean;
-    let jobId: string | null;
-    try {
-      const existingJobId = await findExistingFastTrackJob(exec.id);
-      reusedFastTrackJob = existingJobId != null;
-      jobId = existingJobId ?? await submitJob({
-        type: 'anchor.fast_track',
-        max_attempts: 5,
-        priority: 5,
-        payload: {
-          org_id: rule.org_id,
-          rule_id: rule.id,
-          execution_id: exec.id,
-          trigger_event_id: exec.trigger_event_id,
-          anchor_public_id: materialization.anchorPublicId,
-          duplicate_anchor: materialization.duplicate,
-        },
-      });
-    } catch (err) {
-      return compensateCreditFundedAnchorFailure({
-        rule,
-        exec,
-        deduction: result,
-        failure: err instanceof Error ? err.message : 'anchor.fast_track job lookup failed',
-        compensationReason: options.compensationReason,
-        logLabel: options.logLabel,
-        error: err,
-      });
-    }
-    if (!jobId) {
-      return compensateCreditFundedAnchorFailure({
-        rule,
-        exec,
-        deduction: result,
-        failure: 'anchor.fast_track job enqueue failed',
-        compensationReason: options.compensationReason,
-        logLabel: options.logLabel,
-      });
-    }
-    if (options.triggerImmediateBatch) {
-      await triggerImmediateAnchorPass(rule, exec);
-    }
+    // The credit has now been charged and the anchor exists as PENDING. This
+    // direct call is the acceleration the credit paid for — it is what makes
+    // the charge honest. Best-effort by design: a failure here leaves the
+    // anchor PENDING for the next standard trigger (same place the FREE queue
+    // path lands), so it never unwinds a correct charge or retries the
+    // execution, but it IS recorded in the outcome rather than assumed.
+    const immediateBatchTriggered = await triggerImmediateAnchorPass(rule, exec, options.logLabel);
     return {
       kind: 'success',
       output: {
@@ -897,8 +866,7 @@ async function dispatchCreditFundedAnchor(
         anchor_materialized: materialization.materialized,
         anchor_public_id: materialization.anchorPublicId,
         duplicate_anchor: materialization.duplicate,
-        fast_track_job_id: jobId,
-        reused_fast_track_job: reusedFastTrackJob,
+        immediate_batch_triggered: immediateBatchTriggered,
         deduction_idempotent: result.idempotent === true,
         ...(result.balance != null ? { balance: result.balance } : {}),
       },
@@ -948,27 +916,25 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
     creditReason: 'rule.fast_track_anchor',
     compensationReason: 'rule.fast_track_anchor_compensation',
     logLabel: 'FAST_TRACK_ANCHOR',
-    // Unchanged behavior — FAST_TRACK_ANCHOR's existing outcomes/tests are
-    // not touched by this PR. Its own accelerator gap (the `anchor.fast_track`
-    // job it enqueues has no consumer anywhere in this codebase — verified by
-    // grep, `job_queue` carries zero rows of this type in prod) is a real,
-    // separate, pre-existing defect flagged for its own follow-up rather than
-    // silently repaired as a rider on the INSTANT_SECURE PR.
-    triggerImmediateBatch: false,
+    // The insufficient-credit fallback stays quiet for FAST_TRACK_ANCHOR: the
+    // notify-on-denial behavior is an explicit founder directive scoped to
+    // INSTANT_SECURE, and the fallback is already recorded on the execution
+    // row (credit_denial_reason) either way. No credit is charged on that
+    // path, so it is not a billing-integrity concern.
     notifyOnCreditDenial: false,
   });
 }
 
-// SCRUM-1649 DS-06's naming ("fast track") never actually meant "immediate" —
-// it enqueues the same job type AUTO_ANCHOR's queue mode ends up behind. This
-// is the action that actually secures right away: founder directive,
-// 2026-08-03 ("we need to be able to instantly secure or add to queue").
+// SCRUM-1649 DS-06's naming ("fast track") originally did not mean "immediate"
+// — it only enqueued a job type nothing consumed, so the paid action landed in
+// the same nightly batch the FREE queue mode uses. Both credit-funded actions
+// now take this same direct path; INSTANT_SECURE remains distinct only in its
+// ledger reason and its founder-directed credit-denial notification.
 async function dispatchInstantSecure(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> {
   return dispatchCreditFundedAnchor(rule, exec, {
     creditReason: 'rule.instant_secure',
     compensationReason: 'rule.instant_secure_compensation',
     logLabel: 'INSTANT_SECURE',
-    triggerImmediateBatch: true,
     notifyOnCreditDenial: true,
   });
 }

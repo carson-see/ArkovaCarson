@@ -27,7 +27,14 @@ docs, not prod-state assertions** — every live rig / soak / ledger fact defers
   housekeeping, then new sprint PRs. Covers `covered_main_shas` manifest
   maintenance and Mergify batch discipline (batch_size 10, don't touch a
   queued PR, refresh doesn't reliably force embark, a CANCELLED check on a
-  queued PR is usually a superseded speculative run).
+  queued PR is usually a superseded speculative run). §4 carries the
+  `agents.md` verification procedure: run
+  `git diff origin/main HEAD -- '*agents.md' | grep -E '^-[^-]'` after **any**
+  merge touching an `agents.md` (empty output = nothing dropped), in both
+  directions — after merging `origin/main` into a PR branch and after a PR
+  lands on `main`. Amended 2026-08-11 after the union-driver loss recurred via
+  a transient `git -c merge.union.driver=true merge`; rule of record is
+  `memory/feedback_git_merge_driver_override.md`.
 
 ## Editing rules
 - Keep tier tables + required-field lists in sync with

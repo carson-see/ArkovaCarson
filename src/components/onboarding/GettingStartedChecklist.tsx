@@ -69,7 +69,11 @@ const orgAdminItems: ChecklistItem[] = [
     label: ONBOARDING_GUIDANCE_LABELS.STEP_BILLING,
     description: ONBOARDING_GUIDANCE_LABELS.STEP_BILLING_DESC,
     icon: CreditCard,
-    route: ROUTES.BILLING,
+    // Its own description is "Choose a plan to unlock more records", and
+    // `checkFn: hasBillingPlan` completes only once the user is ON a plan —
+    // so this onboarding step must land on plan selection, not the /billing
+    // status summary, which cannot start a purchase.
+    route: ROUTES.PRICING,
     checkFn: (ctx) => ctx.hasBillingPlan,
   },
 ];
