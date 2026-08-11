@@ -1,5 +1,10 @@
 # Dependencies
+# NOTE: both forms are required. `node_modules/` matches only a DIRECTORY;
+# it does not match a SYMLINK named node_modules, which is how an absolute
+# symlink into a session scratchpad was committed onto two branches and
+# broke worker module resolution in CI (PR #2168 / #2180, 2026-08-11).
 node_modules/
+node_modules
 .pnp
 .pnp.js
 
