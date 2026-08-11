@@ -88,6 +88,20 @@ const {
     if (table === 'audit_events') {
       return { insert: mockAuditInsert };
     }
+    if (table === 'organization_field_policies') {
+      // DPA clause 4.6 guard (migration 0405). This suite's org has no policy
+      // row, which is the default-permissive state — the guard is a no-op and
+      // every expectation below is about the credit/recipient behaviour it
+      // sits in front of. Modelled explicitly rather than left to the
+      // fallthrough because the guard fails CLOSED (503) when it cannot read
+      // the table, which is correct behaviour but not what these tests assert.
+      // Policy ENFORCEMENT is covered in anchor-field-policy-routes.test.ts.
+      return {
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({ maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null })) })),
+        })),
+      };
+    }
     return { select: vi.fn() };
   });
 
@@ -108,6 +122,15 @@ const {
     loggerInfo: vi.fn(),
   };
 });
+
+// This suite reaches `utils/orgFieldPolicy.js` (the DPA clause 4.6 guard) via
+// the SUT, and that module reads its break-glass from the Zod-validated config
+// (SCRUM-1258). Importing the real config.ts throws under a test env that does
+// not populate every required var, so it is stubbed here — `disableOrgFieldPolicy:
+// false` keeps enforcement ON, which is the production default.
+vi.mock('../../config.js', () => ({
+  config: { disableOrgFieldPolicy: false },
+}));
 
 vi.mock('../../utils/db.js', () => ({
   db: { from: mockFrom },
