@@ -236,17 +236,26 @@ describe('SCRUM-1862 org CPE dashboard', () => {
   it('summarizes org CPE records for a reporting period without exposing member PII', async () => {
     renderPage();
 
-    const panel = await screen.findByTestId('org-cpe-dashboard');
+    // `org-cpe-dashboard` is on the <Card> SHELL, which paints before the CPE
+    // query resolves — only CardContent is behind the fetch — so findByTestId
+    // gates nothing and every aggregate assertion below is post-fetch. Gate on
+    // the card SETTLING rather than on a matcher: an earlier revision awaited
+    // `findAllByText('2')`, which BOTH the CPE Records tile and the Providers
+    // tile satisfy with this fixture, so it could unblock on (and be asserted
+    // by) the wrong tile.
+    const panel = await findSettledCpePanel();
 
     expect(within(panel).getByRole('heading', { name: /CPE Dashboard/i })).toBeInTheDocument();
     expect(within(panel).getByLabelText(/Reporting period/i)).toHaveValue('year-to-date');
 
-    // `org-cpe-dashboard` is on the <Card> SHELL, which paints before the CPE
-    // query resolves — only CardContent is behind the fetch. So findByTestId
-    // above gates nothing, and every aggregate assertion below is post-fetch.
-    // Await the first of them; the rest land in the same commit and stay sync.
-    expect((await within(panel).findAllByText('2')).length).toBeGreaterThanOrEqual(1);
-    expect(within(panel).getByText('6.5')).toBeInTheDocument();
+    // Read each tile through its own label and take the adjacent value node,
+    // so one tile can never be asserted by another tile's identical number.
+    const tileValue = (label: string) =>
+      within(panel).getByText(label).nextElementSibling?.textContent;
+    expect(tileValue('CPE Records')).toBe('2');
+    expect(tileValue('Credits Logged')).toBe('6.5');
+    expect(tileValue('Providers')).toBe('2');
+
     expect(within(panel).getByText('Secured')).toBeInTheDocument();
     expect(within(panel).getByText('Needs Review')).toBeInTheDocument();
     expect(within(panel).getByText('Accounting')).toBeInTheDocument();
@@ -302,7 +311,28 @@ describe('SCRUM-1862 org CPE dashboard', () => {
   });
 
   it('shows an empty state without exposing member PII when no records match', async () => {
-    cpeRows.current = [];
+    // A PII-bearing row that falls OUTSIDE the year-to-date window. The
+    // component therefore HOLDS member PII while rendering the empty state,
+    // which is what makes the two assertions below falsifiable. An earlier
+    // revision used `cpeRows.current = []`, so there was no PII in the data at
+    // all and "without exposing member PII" could not fail for any code change.
+    cpeRows.current = [
+      {
+        id: 'anchor-cpe-out-of-window',
+        public_id: 'pub-cpe-out-of-window',
+        status: 'SECURED',
+        issued_at: '2025-03-01T12:00:00Z',
+        cpe_metadata: {
+          provider: 'AICPA',
+          field_of_study: 'Accounting',
+          credit_hours: 4,
+          completion_date: '2025-03-01',
+          status: 'eligible',
+          participant_name: 'Pat Private',
+          license_number: 'CPA-12345',
+        },
+      },
+    ];
 
     renderPage();
 
@@ -358,6 +388,14 @@ describe('Nessie stays OFF — the compliance dashboard renders no Nessie UI', (
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date('2026-06-21T00:00:00Z'));
+    // Same fixture reset as the suite above. These tests wait for the CPE
+    // query to SETTLE, so unlike the old mount-only gate they are sensitive to
+    // whatever row/error state the previous describe left behind.
+    cpeQueryState.failCpeRecords = false;
+    cpeRows.current = initialCpeRows.map((row) => ({
+      ...row,
+      cpe_metadata: { ...row.cpe_metadata },
+    }));
   });
 
   afterEach(() => {
@@ -367,8 +405,12 @@ describe('Nessie stays OFF — the compliance dashboard renders no Nessie UI', (
   it('does not render the document-intelligence query panel', async () => {
     renderPage();
 
-    // The page itself must have rendered AND settled — otherwise these are
-    // vacuous. Mounting alone is not enough; see findSettledCpePanel.
+    // The org CPE card must have rendered AND settled — otherwise these are
+    // vacuous. Mounting alone is not enough; see findSettledCpePanel. Note the
+    // scope: this settles ONE card while the assertions below are page-wide, so
+    // a re-added Nessie panel with its own async path would still need its own
+    // gate. The mount half is guarded structurally by
+    // src/lib/nessie-surfaces-offline.test.ts.
     await findSettledCpePanel();
 
     expect(screen.queryByText('Document Intelligence')).toBeNull();
