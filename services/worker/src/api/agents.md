@@ -2,6 +2,21 @@
 
 _Last updated: 2026-08-03 (PR #1944 review round 3: connector-health.ts Drive watch-health reporting fix)_
 
+## 2026-08-10 — `version-resolution.ts` enforces the org field policy (DPA clause 4.6)
+
+`handleResolveVersion` creates an anchor on `decision: 'approve'`, which puts it under the rule that
+every anchor-creating request handler enforces `enforceOrgFieldPolicy` (migration `0405`), pinned by
+`scripts/ci/check-anchor-field-policy-coverage.ts`.
+
+This route is the weakest case for the guard and is still covered on purpose: `ResolveVersionInput`
+is `.strict()` with only `decision` and `notes`, and the anchor's metadata comes from the stored
+`external_document_versions` row rather than from the request — so nothing the caller sends here is
+persisted. It is guarded anyway because the control is about what the counterparty TRANSMITS (a
+prohibited field in `notes` has already been sent to us whether or not we store it), because
+`.strict()` is a property of a schema someone may relax, and because a uniform rule is what lets the
+CI detector run with no per-file exemption list.
+
+
 ## 2026-08-03 — `compliance-inbox-summary.ts`: `secured_automatically` was silently stuck at zero for every org
 
 Found in passing while wiring the founder-directive INSTANT_SECURE rule action (`services/worker/src/jobs/agents.md`). `loadCounts()`'s `secured_automatically` bucket queried `organization_rule_executions` for `output_payload->>routed_to = RULE_ROUTED_TO.AUTO_ANCHOR` (`'auto_anchor'`) — but **no dispatcher code path has emitted that value since SCRUM-1649 DS-AUTO-02 shipped**. `rule-action-dispatcher.ts` routes every successful automatic-anchor outcome (AUTO_ANCHOR's free-queue path, and FAST_TRACK_ANCHOR/INSTANT_SECURE's credit-funded path) through `RULE_ROUTED_TO.ANCHOR_QUEUE` (`'anchor_queue'`) or `RULE_ROUTED_TO.ANCHOR_PIPELINE` (`'anchor_pipeline'`) — `RULE_ROUTED_TO.AUTO_ANCHOR` is a stale constant nothing writes. So this dashboard counter was pinned at zero on every org **regardless of how many documents rules had actually secured** — the exact "doesn't look like anything is working" symptom the founder directive responds to, on the one surface built to prove otherwise. Fixed to `.in(ROUTED_TO_FIELD, [RULE_ROUTED_TO.ANCHOR_QUEUE, RULE_ROUTED_TO.ANCHOR_PIPELINE])`. No existing test asserted the query shape for this bucket (unlike `needs_review`, which does pin `review_queue`) — added `compliance-inbox-summary.test.ts`'s `'secured_automatically counts SUCCEEDED executions routed to the anchor pipeline...'` case, TDD red→green.

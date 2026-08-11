@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getCallerProfile, isCallerOrgAdmin } from './_org-auth.js';
+import { enforceOrgFieldPolicy } from '../utils/orgFieldPolicy.js';
 
 // ─── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -226,6 +227,27 @@ export async function handleResolveVersion(
   }
   const versionId = versionIdParsed.data;
   const { decision, notes } = parsed.data;
+
+  // DPA Schedule 1 / clause 4.6 — org-scoped field rejection (migration 0405).
+  // No-op for every org without a policy row. This body is small and `.strict()`
+  // today, and the anchor created on `approve` takes its metadata from the
+  // stored version row rather than from this request — so unlike the other
+  // write paths, nothing the caller sends here is persisted. The guard is still
+  // applied, for two reasons: the control is about what the counterparty
+  // TRANSMITS (a prohibited field in `notes` has already been sent to us
+  // whether or not we store it), and `.strict()` is a property of a schema
+  // someone may relax, not a guarantee. Keeping every anchor-creating request
+  // handler on the same rule is also what lets
+  // `scripts/ci/check-anchor-field-policy-coverage.ts` hold the invariant with
+  // no per-file exemptions.
+  if (!(await enforceOrgFieldPolicy({
+    orgId,
+    body: req.body,
+    res,
+    scope: 'version-resolution',
+  }))) {
+    return;
+  }
 
   try {
     // Look up the version — filter by org_id ensures cross-tenant isolation.
