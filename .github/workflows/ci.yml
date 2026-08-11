@@ -173,6 +173,16 @@ jobs:
       - name: Block API scope vocabulary drift (SCRUM-1581)
         run: npm run ci:api-scope-vocabulary
 
+      # The worker has no central job dispatcher: a job_queue type runs only if
+      # some file calls claimJob/processNextJob with that same literal. An
+      # enqueued type with no consumer produces NO error — the row sits
+      # `pending` forever, indistinguishable from an empty queue. That class
+      # shipped twice, both times as billing defects (anchor.fast_track charged
+      # a credit for acceleration that never happened; ai_credits.reconcile_
+      # refund silently dropped a customer overcharge it existed to surface).
+      - name: Block orphaned job_queue producers/consumers
+        run: npm run ci:job-queue-parity
+
       - name: Block credential type enum drift (SCRUM-2013)
         run: node_modules/.bin/tsx scripts/ci/check-credential-type-drift.ts
 
