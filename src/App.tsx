@@ -50,6 +50,7 @@ const PublicVerifyPage = lazyWithRetry(() => import('@/components/public/PublicV
 const WebhookSettingsPage = lazyWithRetry(() => import('@/pages/WebhookSettingsPage').then(m => ({ default: m.WebhookSettingsPage })));
 const CredentialTemplatesPage = lazyWithRetry(() => import('@/pages/CredentialTemplatesPage').then(m => ({ default: m.CredentialTemplatesPage })));
 const BillingPage = lazyWithRetry(() => import('@/pages/BillingPage').then(m => ({ default: m.BillingPage })));
+const PricingPage = lazyWithRetry(() => import('@/pages/PricingPage').then(m => ({ default: m.PricingPage })));
 const CheckoutSuccessPage = lazyWithRetry(() => import('@/pages/CheckoutSuccessPage').then(m => ({ default: m.CheckoutSuccessPage })));
 const CheckoutCancelPage = lazyWithRetry(() => import('@/pages/CheckoutCancelPage').then(m => ({ default: m.CheckoutCancelPage })));
 const VerifyMyRecordPage = lazyWithRetry(() => import('@/pages/VerifyMyRecordPage').then(m => ({ default: m.VerifyMyRecordPage })));
@@ -330,6 +331,14 @@ export function App() {
 
           {/* Billing routes */}
           <Route path={ROUTES.BILLING} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Billing"><BillingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          {/* Plan selection / Stripe Checkout. Auth-required, guarded exactly like
+              ROUTES.BILLING: PricingPage cannot function anonymously — useBilling
+              gates on `user`, startCheckout returns null without one, workerFetch
+              throws without a session, and the worker's POST /api/checkout/session
+              401s. Serving it publicly would render an empty AppShell with a
+              Select Plan button that silently no-ops — a second dead end. Public
+              plan marketing belongs on the marketing site, not this route. */}
+          <Route path={ROUTES.PRICING} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Pricing"><PricingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.BILLING_SUCCESS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><CheckoutSuccessPage /></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.BILLING_CANCEL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><CheckoutCancelPage /></RouteGuard></AuthGuard>} />
 

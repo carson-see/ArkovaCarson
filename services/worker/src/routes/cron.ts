@@ -32,6 +32,7 @@ import {
   createDbGucReader as createMaterializerGucReader,
   createDbLocker as createMaterializerLocker,
 } from '../jobs/proof-materializer.js';
+import { runProofCoverageCheck } from '../jobs/proof-coverage-monitor.js';
 import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
@@ -78,7 +79,7 @@ import { fetchCnpjBrCompanies } from '../jobs/brazilFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { runRegulatoryChangeScan } from '../jobs/regulatory-change-scan.js';
 import { runCalibrationRefit } from '../jobs/calibration-refit.js';
-import { withCronMonitoring } from '../utils/sentry.js';
+import { captureProofCoverageAlert, withCronMonitoring } from '../utils/sentry.js';
 import {
   isProfessionalEducationSchemaReady,
   professionalEducationSchemaUnavailableBody,
@@ -92,6 +93,7 @@ import { runOrgQueueScheduler } from '../jobs/org-queue-scheduler.js';
 import { runConnectorArtifactDrain } from '../jobs/connector-artifact-drain.js';
 import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
+import { runAiCreditReconcileJobs } from '../jobs/ai-credit-reconcile.js';
 import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-completed.js';
 import { runDocusignNotarizationCompletedJobs } from '../jobs/docusign-notarization-completed.js';
 import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
@@ -528,6 +530,47 @@ cronRouter.post('/materialize-proof-backcatalog', async (req, res) => {
   }
 });
 
+/**
+ * SCRUM-3187: forward-path proof-coverage regression monitor.
+ *
+ * Standing alarm on the offline-verification promise — every newly SECURED
+ * anchor must get a per-document inclusion proof. Windowed (default 24h) so the
+ * known pre-2026-08 backlog does not hold it permanently red.
+ *
+ * HTTP contract (matches the other monitors): a CORRECT detection of a
+ * regression returns 200 with `healthy:false`, so Cloud Scheduler does not
+ * retry a true finding. Only a BROKEN probe returns 500.
+ */
+cronRouter.post('/proof-coverage-monitor', async (req, res) => {
+  try {
+    const parsedHours = Number.parseInt(String(req.query.window_hours ?? ''), 10);
+    const windowHours = Number.isFinite(parsedHours) ? parsedHours : undefined;
+
+    const result = await runProofCoverageCheck(
+      {
+        fetchWindowCoverage: async (hours) => {
+          const { data, error } = await db.rpc('proof_coverage_window', { p_hours: hours });
+          if (error) {
+            throw new Error(`proof_coverage_window failed: ${error.message ?? 'unknown'}`);
+          }
+          const row = Array.isArray(data) ? data[0] : data;
+          return {
+            secured: Number(row?.secured ?? 0),
+            withProof: Number(row?.with_proof ?? 0),
+          };
+        },
+        alert: captureProofCoverageAlert,
+        logger,
+      },
+      { windowHours },
+    );
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Proof coverage monitor failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
 // QUEUE-07 (SCRUM-2353): daily review digest to org admins.
 //
 // PRODUCTION TRIGGER (Cloud Scheduler → HTTP; node-cron is dormant under Cloud
@@ -861,6 +904,37 @@ cronRouter.post('/docusign-notarization-completed', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign notarization-completed queue pass failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── AI credit refund reconciliation queue ───
+//
+// Drains `ai_credits.reconcile_refund`, the queue `api/v1/ai-extract-batch.ts`
+// writes when a per-row refund fails AFTER a successful debit. That producer
+// shipped with NO consumer, so every "surfaced" overcharge sat `pending`
+// forever — the exact opposite of the module's own stated contract. This
+// endpoint is that consumer; a failed reconciliation retries with backoff and
+// dead-letters with a Sentry event on the final attempt.
+//
+// PRODUCTION TRIGGER: Cloud Scheduler (`ai-credit-reconcile`, every 15 min —
+// see scripts/gcp-setup/cloud-scheduler.sh). In-process node-cron is NOT used:
+// it is dormant under Cloud Run CPU throttling (PROOF-03 finding), which is
+// precisely how a "wired" drain can silently never run.
+cronRouter.post('/ai-credit-reconcile', async (req, res) => {
+  try {
+    const rawLimit = req.query.limit ?? req.body?.limit;
+    const parsedLimit = rawLimit === undefined
+      ? undefined
+      : DocusignEnvelopeCompletedLimitSchema.safeParse(rawLimit);
+    if (parsedLimit && !parsedLimit.success) {
+      res.status(400).json({ error: 'Invalid request', details: parsedLimit.error.flatten() });
+      return;
+    }
+    const result = await runAiCreditReconcileJobs({ limit: parsedLimit?.data });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'AI credit reconciliation queue pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

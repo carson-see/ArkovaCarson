@@ -334,6 +334,49 @@ For every merge that touches a shared `agents.md` (which, per the union merge
 driver, auto-resolves rather than conflicts — meaning it can silently drop
 content instead of failing loudly):
 
+**Step 1 — the mechanical check (run this every time, it is one command):**
+
+```bash
+git diff origin/main HEAD -- '*agents.md' | grep -E '^-[^-]'
+```
+
+**Empty output = clean, and that is the normal result after a merge.**
+
+If it prints lines, it is one of two things, and you must tell them apart:
+
+- **A merge drop** — the content is simply gone. Redo the merge cleanly. Do not
+  hand-patch the missing lines back: whatever dropped one section dropped
+  others, and you will not guess which.
+- **A deliberate in-place edit your branch made** — you rewrote an existing
+  bullet or table row, so the old text shows as a `-` and the new text as a `+`
+  right next to it. This is a legitimate, common edit and is *not* a drop.
+
+The grep is a fast screen, not the adjudicator: it cannot distinguish the two,
+so treat any output as "go look", not "you broke it". The authoritative check is
+the CI gate, which does keyed and containment matching precisely to avoid that
+false positive (it produced real ones on PRs #1736, #1749 and #1755 before those
+filters existed). Run it locally:
+
+```bash
+BASE_REF_SHA=$(git rev-parse origin/main) \
+  npx tsx scripts/ci/check-agents-md-append-only.ts
+```
+
+`No dropped agents.md content.` = clean, including across in-place edits.
+
+This covers **every** `agents.md` in one shot, so it does not depend on
+correctly enumerating the touched paths first. Run it in both directions of the
+workflow:
+
+- after merging `origin/main` **into a PR branch** (the 2026-08-11 case — the
+  damage lands on the branch, before anything reaches `main`), and
+- after a PR merges **to `main`**, as the post-merge confirmation §2 step 5
+  requires.
+
+Requires an up-to-date remote ref — `git fetch origin main` first.
+
+**Step 2 — confirm the intended addition actually arrived:**
+
 ```bash
 git fetch origin main
 git show origin/main:supabase/migrations/agents.md | tail -50
@@ -341,12 +384,27 @@ git show origin/main:supabase/migrations/agents.md | tail -50
 # not silently unioned-away or truncated
 ```
 
-Repeat for every `agents.md` path the merged PR touched (check via
+Repeat step 2 for every `agents.md` path the merged PR touched (check via
 `gh pr diff <N> --name-only | grep agents.md` before merging so you know what
-to verify after). If content is missing, this is the exact failure mode
-`CLAUDE.md` §6 already logged an incident for (#1031 behind #1022) — do not
-assume a "config fix" makes this check skippable; verify anyway, every time,
-for this wave.
+to verify after). Step 1 catches *deletions*; step 2 catches an addition that
+never landed. They are not redundant.
+
+If content is missing, this is the exact failure mode `CLAUDE.md` §6 already
+logged an incident for (#1031 behind #1022) — do not assume a "config fix"
+makes this check skippable; verify anyway, every time, for this wave.
+
+> **Amendment 2026-08-11 (PR #2061):** step 1 was added after the union-driver
+> data loss recurred with a **clean `.git/config`**. The merge had been run as
+> `git -c merge.union.driver=true merge origin/main`; `-c` overrides the
+> built-in union driver with the no-op `true` for that one invocation, so git
+> reported a clean merge and discarded the incoming side. It dropped the
+> 2026-08-10 DPA/IP-hashing section from
+> `services/worker/src/api/v1/agents.md` and the cron-route trigger-decision
+> rule from `services/worker/src/routes/agents.md`, and only the append-only CI
+> check caught it. **To union-merge here, just run `git merge origin/main`** —
+> `.gitattributes` already declares `agents.md merge=union`. Never pass a
+> `merge.*.driver` override. Rule and enforcement:
+> [`memory/feedback_git_merge_driver_override.md`](../../memory/feedback_git_merge_driver_override.md).
 
 ---
 

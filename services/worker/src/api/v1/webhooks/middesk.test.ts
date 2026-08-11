@@ -8,6 +8,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 vi.mock('../../../utils/db.js', () => ({
   db: {
@@ -264,6 +267,168 @@ describe('POST /webhooks/middesk', () => {
     expect(capturedOrgUpdate).toMatchObject({ verification_status: 'VERIFIED' });
   });
 
+  /**
+   * AUDIT-0424-10 (durability half): the replay nonce is committed BEFORE the
+   * kyb_events insert and the organizations update. So when a downstream write
+   * fails the handler returns 500 — but Middesk's retry re-presents the same
+   * event.id, hits the nonce UNIQUE violation, and is answered
+   * `200 {duplicate:true}`. The rejection is then permanently lost AND the
+   * provider is told everything succeeded.
+   *
+   * That is what made the CHECK-constraint defect silent rather than noisy: the
+   * 23514 did not produce an endless retry, it produced one 500 and then a
+   * cheerful 200. Widening the constraint (migration 0407) fixes the specific
+   * write, but any transient failure would still swallow a rejection. The
+   * handler must release the nonce on every post-nonce failure path so the
+   * retry can genuinely reprocess — the same compensating-delete pattern
+   * stripe/handlers.ts uses for `webhook_event_claims`.
+   */
+  describe('AUDIT-0424-10: releases the replay nonce on post-nonce failure', () => {
+    const REJECTION_EVENT = {
+      ...VALID_EVENT,
+      id: 'evt_reject',
+      type: 'business.rejected',
+      data: {
+        object: {
+          id: 'biz_999',
+          external_id: '10000000-1000-4000-8000-000000000001',
+          status: 'rejected',
+        },
+      },
+    };
+
+    /**
+     * `kyb_webhook_nonces` has a COMPOSITE primary key `(provider, nonce)`, so
+     * the release must filter on BOTH columns. Deleting by `nonce` alone would
+     * drop any other provider's row that happened to carry the same event id —
+     * silently disarming that provider's replay protection. This helper records
+     * the full filter chain so the tests can assert both.
+     *
+     * @param failAt which write fails after the nonce is committed
+     * @returns `filters`, the ordered [column, value] pairs of the delete chain
+     */
+    function mockFlowFailingAt(failAt: 'kyb_events' | 'organizations') {
+      const filters: Array<[string, unknown]> = [];
+      // Chainable eq: records each filter and is itself awaitable, so the same
+      // mock serves a one-eq or two-eq chain.
+      const makeEq = (): ((col: string, val: unknown) => unknown) =>
+        vi.fn((col: string, val: unknown) => {
+          filters.push([col, val]);
+          const thenable = Promise.resolve({ error: null }) as Promise<{ error: unknown }> & {
+            eq: unknown;
+          };
+          thenable.eq = makeEq();
+          return thenable;
+        });
+      const nonceDelete = vi.fn(() => ({ eq: makeEq() }));
+
+      mockDb.from.mockImplementation((table: string) => {
+        if (table === 'kyb_webhook_nonces') {
+          return {
+            insert: vi.fn().mockResolvedValue({ error: null }),
+            delete: nonceDelete,
+          };
+        }
+        if (table === 'kyb_events') {
+          return {
+            insert: vi.fn().mockResolvedValue({
+              error: failAt === 'kyb_events' ? { code: '23503', message: 'boom' } : null,
+            }),
+          };
+        }
+        if (table === 'organizations') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'org-001' }, error: null }),
+            // The real 23514 the un-widened CHECK constraint raised.
+            update: vi.fn(() => ({
+              eq: vi.fn().mockResolvedValue({
+                error:
+                  failAt === 'organizations'
+                    ? {
+                        code: '23514',
+                        message:
+                          'new row violates check constraint "organizations_verification_status_valid"',
+                      }
+                    : null,
+              }),
+            })),
+          };
+        }
+        return {};
+      });
+
+      return { filters };
+    }
+
+    async function postRejection() {
+      const app = createApp();
+      const body = JSON.stringify(REJECTION_EVENT);
+      return request(app)
+        .post('/webhooks/middesk')
+        .set('Content-Type', 'application/json')
+        .set('x-middesk-signature', signBody(body))
+        .send(body);
+    }
+
+    it('releases the nonce when the organizations update fails', async () => {
+      const { filters } = mockFlowFailingAt('organizations');
+
+      const res = await postRejection();
+
+      expect(res.status).toBe(500);
+      // Without this, the Middesk retry short-circuits as a duplicate and the
+      // rejection is lost forever. Both PK columns must be filtered — see the
+      // composite-key note on mockFlowFailingAt.
+      expect(filters).toEqual([
+        ['provider', 'middesk'],
+        ['nonce', 'evt_reject'],
+      ]);
+    });
+
+    it('releases the nonce when the kyb_events insert fails', async () => {
+      const { filters } = mockFlowFailingAt('kyb_events');
+
+      const res = await postRejection();
+
+      expect(res.status).toBe(500);
+      expect(filters).toEqual([
+        ['provider', 'middesk'],
+        ['nonce', 'evt_reject'],
+      ]);
+    });
+
+    it('does NOT release the nonce on success (replay protection intact)', async () => {
+      const nonceDeleteEq = vi.fn().mockResolvedValue({ error: null });
+      mockDb.from.mockImplementation((table: string) => {
+        if (table === 'kyb_webhook_nonces') {
+          return {
+            insert: vi.fn().mockResolvedValue({ error: null }),
+            delete: vi.fn(() => ({ eq: nonceDeleteEq })),
+          };
+        }
+        if (table === 'kyb_events') {
+          return { insert: vi.fn().mockResolvedValue({ error: null }) };
+        }
+        if (table === 'organizations') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'org-001' }, error: null }),
+            update: vi.fn(() => ({ eq: vi.fn().mockResolvedValue({ error: null }) })),
+          };
+        }
+        return {};
+      });
+
+      const res = await postRejection();
+
+      expect(res.status).toBe(200);
+      expect(nonceDeleteEq).not.toHaveBeenCalled();
+    });
+  });
+
   it('returns 400 on malformed body', async () => {
     mockDb.from.mockImplementationOnce(() => ({
       insert: vi.fn().mockResolvedValueOnce({ error: null }),
@@ -278,5 +443,73 @@ describe('POST /webhooks/middesk', () => {
       .send(body);
     // Signature verifies (body is bytes), then JSON parse fails → 400
     expect(res.status).toBe(400);
+  });
+});
+
+/**
+ * AUDIT-0424-10 — code/constraint parity for `organizations.verification_status`.
+ *
+ * The original defect was not that the Middesk handler wrote the wrong value:
+ * it wrote exactly the right one. `REJECTED` and `REQUIRES_INPUT` were simply
+ * not admitted by the live CHECK constraint
+ * `organizations_verification_status_valid`, so the UPDATE raised SQLSTATE
+ * 23514 and a real KYB rejection could not be recorded at all. The same gap
+ * made the checkout handler's `currentStatus === 'REJECTED'` guard dead code.
+ *
+ * A unit test with a mocked DB cannot see that — the mock accepts any string.
+ * So this asserts the invariant directly against the migration set: every value
+ * the worker can write must be admitted by the effective constraint. A census
+ * of call sites would miss the next one; this does not.
+ */
+describe('AUDIT-0424-10: verification_status code/constraint parity', () => {
+  const migrationsDir = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../../../../../supabase/migrations',
+  );
+
+  /**
+   * Effective allow-list = the LAST definition of the constraint across the
+   * migration set in applied (filename) order. The baseline sorts first, so a
+   * later widening migration correctly wins.
+   */
+  function effectiveAllowedStatuses(): string[] {
+    const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
+    let allowed: string[] | null = null;
+
+    for (const file of files) {
+      const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+      // Match each CHECK body attached to the named constraint, taking the last
+      // occurrence within the file as well (a file may drop then re-add).
+      const re = /organizations_verification_status_valid[\s\S]{0,400}?ARRAY\s*\[([^\]]*)\]/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(sql)) !== null) {
+        allowed = [...m[1].matchAll(/'([A-Z_]+)'/g)].map((x) => x[1]);
+      }
+    }
+    return allowed ?? [];
+  }
+
+  it('finds the constraint definition in the migration set', () => {
+    // Guards the regex itself: a silent no-match would make every assertion
+    // below vacuously... loud, but for the wrong reason.
+    expect(effectiveAllowedStatuses().length).toBeGreaterThan(0);
+  });
+
+  it('admits every status the Middesk webhook can write', () => {
+    const allowed = effectiveAllowedStatuses();
+    // The three terminal outcomes middesk.ts maps from mapMiddeskEventToStatus.
+    // Kept as literals on purpose: this test is the independent statement of
+    // what the code writes, so importing the module under test would let both
+    // sides drift together.
+    for (const status of ['VERIFIED', 'REJECTED', 'REQUIRES_INPUT']) {
+      expect(allowed, `constraint must admit ${status}`).toContain(status);
+    }
+  });
+
+  it('still admits the pre-KYB lifecycle states', () => {
+    const allowed = effectiveAllowedStatuses();
+    for (const status of ['UNVERIFIED', 'PENDING']) {
+      expect(allowed, `constraint must still admit ${status}`).toContain(status);
+    }
   });
 });

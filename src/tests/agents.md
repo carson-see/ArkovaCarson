@@ -32,3 +32,42 @@ Integration and infrastructure test suites that cross-cut the codebase: migratio
 ## Do / Don't Rules
 - DO: Use `queryTestUtils.tsx` when testing hooks that depend on React Query
 - DON'T: Call real Supabase in unit tests — use mocks or the local dev instance for RLS tests only
+
+## Migration grant guards (`sec-NNNN-*.test.ts`)
+Static content-guards over migration SQL, one per incident. They run in ordinary
+CI with **no database**, so a PR that quietly drops a revoke goes red without
+needing a seeded DB. The live half lives in `tests/rls/` under `npm run test:rls`
+— same two-layer convention as 0388 / SCRUM-2905.
+
+- `sec-0388-sanitize-metadata-helper-revoke.test.ts`
+- `sec-0406-proof-coverage-window-revoke.test.ts` — plus the repo-wide ratchet
+  `scripts/ci/feedback-rules/secdef-function-grants.test.ts`.
+
+DO write the targeted guard *and* leave the ratchet to catch the next one:
+`REVOKE ... FROM PUBLIC` does not remove the direct `anon`/`authenticated`
+EXECUTE grants `ALTER DEFAULT PRIVILEGES` adds at CREATE time, and that has now
+shipped five times (0364, 0377, 0378, 0388, 0406).
+## `pages/route-reachability.test.ts` (2026-08-10) — the "built but unreachable" guard
+
+A component test cannot detect an unroutable page **by construction**: it mounts
+the component itself, so "can a user get here?" is never asked. That blind spot
+cost us the checkout path — `PricingPage` was complete and green while having no
+route, no `ROUTES` key, and no importers, so no CTA could reach Stripe.
+
+This guard asserts two structural invariants by reading `App.tsx` and
+`routes.ts` as text:
+
+1. every `ROUTES` constant is referenced in `App.tsx` (no route constant that
+   nothing renders);
+2. every module in `src/pages/` is imported by `App.tsx` (no orphan page).
+
+Both were at zero violations for 78 route keys and 76 pages once PricingPage was
+routed, so the exception lists (`INTENTIONALLY_UNROUTED_PAGES` /
+`INTENTIONALLY_UNROUTED_CONSTANTS`) start EMPTY. Keep them that way where you
+can: adding an entry is a deliberate, reviewed edit and must carry a reason,
+which is the point — silent drift is what shipped the bug.
+
+The two self-check cases ("guard self-check") exist because the parser is a
+regex over a source file: if the `ROUTES` literal is reformatted and the regex
+matches nothing, the real assertions would pass vacuously. They pin a floor on
+what the parser must find.

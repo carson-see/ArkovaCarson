@@ -1,0 +1,512 @@
+{
+  "_note": "AUTHORITATIVE flag inventory — every flag any Arkova runtime exposes, with the resolver that actually decides its value, the value prod resolves through that resolver, whether a customer can reach it, and what the soak needs from it. Read by scripts/ci/config-drift/flagInventory.ts, wired into check-config-drift.ts. `prodDbRow` is the live switchboard_flags row ('absent' = NO row, which is NOT the same as a row set false). `prodResolved` is the value the REAL runtime resolver returns — for an env flag not listed in deploy-worker.yml --set-env-vars that is the config.ts Zod default, because --set-env-vars replaces the container's whole env set.",
+  "_resolverNote": "There is no single flag system. SIX independent resolvers exist, with DIFFERENT fail directions for the SAME flag name: (1) flagRegistry.init() — a BOOT-TIME snapshot; DB row if present else process.env; refreshDbFlag() has zero callers so the snapshot never refreshes; only TWO flags are actually gated on it (ENABLE_BATCH_ANCHORING in jobs/batch-anchor.ts, ENABLE_EXPIRY_ALERTS in routes/cron.ts) — every other registry entry is startup logging only. (2) featureGate.ts — get_flag RPC, 60s TTL, fails CLOSED. (3) aiFeatureGate.ts — direct switchboard read, 60s TTL, last-known-good then per-flag fail default; kill-switchable flags fail CLOSED and deliberately ignore env (SCRUM-2247), ENABLE_AI_EXTRACTION falls back to env. (4) adesFeatureGate.ts / grcFeatureGate.ts — read then fall back to process.env (fail OPEN if the env var were ever set). (5) integrationKillSwitch.ts — raw process.env at module-factory time, never the DB. (6) frontend src/lib/switchboard.ts getFlag() — get_flag RPC with the code default as fallback. Consequence: flagRegistry and aiFeatureGate resolve ENABLE_SEMANTIC_SEARCH differently the moment the switchboard row is missing (registry -> env -> true, gate -> false).",
+  "_healthNote": "GET /health does NOT expose the flag registry (verified live 2026-08-11: it returns status/version/git_sha/uptime/network/checks only). The Sprint-1 plan in config-drift/README.md item 2 — 'a read-only cron capture of GET /health + the flag registry' — cannot be built against today's /health without first adding a flag block to it.",
+  "observedProd": {
+    "projectRef": "vzwyaatejekddvltxyye",
+    "capturedAt": "2026-08-11",
+    "workerGitSha": "2de4e4e344f3749a09c52d7411831b7d2735528c"
+  },
+  "acknowledgedInertEnvFlags": ["ENABLE_SEMANTIC_SEARCH", "ENABLE_AI_FRAUD"],
+  "acknowledgedClaimContradictions": ["ENABLE_SEMANTIC_SEARCH", "ENABLE_AI_FRAUD"],
+  "_claimsNote": "R-7 (CLAUDE.md §1.13). Two capabilities are OFF in prod while public and auditor-facing surfaces state they are available. Acknowledged so the gate stays green for unrelated PRs, but they are printed loudly on every run and flagInventory.test.ts pins the exact pair — a NEW contradiction is a hard CI error. FIXING THEM IS A COPY/DOCS CHANGE, NOT A FLAG FLIP: do not enable a feature to make a marketing claim true. ENABLE_SEMANTIC_SEARCH is the more serious of the two — src/pages/DevelopersPage.tsx:65 lists POST /ai/search at $0.010/call, which is a priced commercial offer for an endpoint that 503s.",
+  "_acknowledgedNote": "Both are DB-backed with a live switchboard row set FALSE while deploy-worker.yml sets them =true. The env var is inert (the row wins) AND states the opposite of the truth. Acknowledged as warnings rather than hard errors because editing deploy-worker.yml is a deploy-surface change owned by release-ops/Carson, not by this gate's PR. FIX: set both =false in deploy-worker.yml so they fail SAFE and read true, then delete them from this list — flagInventory.test.ts pins the current pair, so the fix forces the test to be updated deliberately.",
+  "flags": {
+    "USE_MOCKS": {
+      "sources": ["env"],
+      "resolvers": ["config.ts useMocks", "flagRegistry ENV_FLAG_GETTERS (log-only)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "must-be-off",
+      "why": "Mocks replace the chain client and external calls. ON, every anchor the soak produces is fabricated and the entire evidence set is void. This is the single most damaging flag for soak integrity."
+    },
+    "ENABLE_PROD_NETWORK_ANCHORING": {
+      "sources": ["env", "frontend"],
+      "resolvers": ["config.ts enableProdNetworkAnchoring", "frontend isProdAnchoringEnabled()"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Gates real Bitcoin calls (CLAUDE.md §1.9). OFF, the soak anchors nothing and proves nothing. Worker reads the ENV var; the switchboard row is read only by the frontend."
+    },
+    "ENABLE_BATCH_ANCHORING": {
+      "sources": ["db"],
+      "resolvers": ["flagRegistry.getFlag in jobs/batch-anchor.ts:622"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "The nightly 3am batch drain — the primary anchoring path under load. NOTE: resolved through the BOOT-TIME flagRegistry snapshot, so flipping this switchboard row mid-soak has NO effect until the worker restarts."
+    },
+    "ENABLE_ATTESTATION_ANCHORING": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["get_flag via featureGate-style read", "frontend FLAGS"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Attestation anchor lifecycle is in the soak's T3 surface."
+    },
+    "ENABLE_VERIFICATION_API": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["featureGate.ts isVerificationApiEnabled() — get_flag, fails CLOSED"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Gates all of /api/v1 (CLAUDE.md §1.9). OFF, every public API request 503s and the soak measures nothing. The deploy env var is inert here — featureGate never consults env."
+    },
+    "ENABLE_AI_EXTRACTION": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["aiFeatureGate.ts readAIFlag — DB, env-backed fail default", "frontend isAIExtractionEnabled()"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Launch-required per CLAUDE.md §1.6. Unlike the other AI flags its fail default is the env value, not closed, because a DB blip must not 503 the launch path."
+    },
+    "ENABLE_RULES_ENGINE": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableRulesEngine (default true)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Rule evaluation for org automation. OFF, no rule fires and the rule fan-out path is untested."
+    },
+    "ENABLE_RULE_ACTION_DISPATCHER": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableRuleActionDispatcher (default true)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Rule action fan-out. Paired with ENABLE_RULES_ENGINE; either OFF silences the automation path."
+    },
+    "ENABLE_WEBHOOK_HMAC": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableWebhookHmac (default true)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Inbound webhook signature verification. A soak run with this OFF exercises an insecure configuration and its security evidence would be worthless."
+    },
+    "ENABLE_OUTBOUND_WEBHOOKS": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["get_flag", "frontend isOutboundWebhooksEnabled()"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Webhook delivery kill switch. LIVE since 2026-08-01 — expected-prod-config.json still listed it as dark in pendingLaunchFlags, which was stale."
+    },
+    "ENABLE_DOCUSIGN_OAUTH": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableDocusignOauth", "integrationKillSwitch.ts (raw process.env)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "DocuSign account connection. Connector paths are the PI-0.5 'built vs proven-live' gap the soak exists to close."
+    },
+    "ENABLE_DOCUSIGN_WEBHOOK": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableDocusignWebhook", "integrationKillSwitch.ts (raw process.env)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "DocuSign completed-envelope automation — a primary connector ingest path for the soak."
+    },
+    "ENABLE_DRIVE_OAUTH": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableDriveOauth", "integrationKillSwitch.ts (raw process.env)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Google Drive account connection. Flipped on in deploy-worker.yml 2026-08-03 after the connector code fixes had shipped dark."
+    },
+    "ENABLE_DRIVE_WEBHOOK": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableDriveWebhook", "integrationKillSwitch.ts (raw process.env)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Drive watched-folder push notifications — the Drive ingest trigger."
+    },
+    "ENABLE_DRIVE_CHANGES_RUNNER": {
+      "sources": ["env"],
+      "resolvers": ["raw process.env in api/v1/webhooks/drive.ts:247"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Processes the Drive changes feed. Read by a raw process.env check — absent from config.ts AND from flagRegistry, so it appears in no startup log and no /health output."
+    },
+    "ENABLE_CONNECTOR_ARTIFACT_ENQUEUE": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableConnectorArtifactEnqueue"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Connector artifact producer. Not in flagRegistry, so it is invisible in the startup flag log despite being live."
+    },
+    "ENABLE_CONNECTOR_ARTIFACT_DRAIN": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableConnectorArtifactDrain"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Connector artifact consumer. Pairs with the enqueue flag; both must be on or artifacts accumulate undrained."
+    },
+    "ENABLE_PUBLIC_RECORDS_INGESTION": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["get_flag", "frontend FLAGS"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Public-records ingest. Relevant to the ~259k pending-anchoring backlog the soak should observe."
+    },
+    "ENABLE_PUBLIC_RECORD_ANCHORING": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["get_flag", "frontend FLAGS"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Public-record anchor path — anchor lifecycle surface (T3)."
+    },
+    "ENABLE_PUBLIC_RECORD_EMBEDDINGS": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["get_flag", "frontend FLAGS"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": false,
+      "soak": "either",
+      "why": "Embedding generation for public records. Backend-only enrichment; the soak does not depend on it."
+    },
+    "ENABLE_NEW_CHECKOUTS": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["get_flag", "frontend isCheckoutsEnabled()"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Stripe checkout creation. Billing is a T2 soak surface."
+    },
+    "ENABLE_REPORTS": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["get_flag", "frontend isReportsEnabled()"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Report surfaces in the product UI."
+    },
+    "ENABLE_AI_REPORTS": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["aiFeatureGate.ts readAIFlag — fails CLOSED", "frontend FLAGS"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "AI report generation. deploy-worker.yml sets ENABLE_AI_REPORTS=true, but that env var is inert — aiFeatureGate reads the switchboard row and never consults env for this flag."
+    },
+    "ENABLE_X402_PAYMENTS": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["get_flag", "frontend FLAGS"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Agentic payment enforcement on the x402 rail (a payment rail only — never an anchoring path)."
+    },
+    "ENABLE_QUEUE_REMINDERS": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableQueueReminders (default true)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "Queue reminder/digest behaviour — a cron surface the soak should observe across daily cycles."
+    },
+    "ENABLE_TREASURY_ALERTS": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableTreasuryAlerts (default true)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": false,
+      "soak": "must-be-on",
+      "why": "Treasury/spend alerting. OFF, a treasury drain during a 7-day soak would go unannounced."
+    },
+    "ENABLE_GRC_INTEGRATIONS": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableGrcIntegrations (default false)", "grcFeatureGate.ts (raw process.env)", "integrationKillSwitch.ts (raw process.env)"],
+      "prodDbRow": true,
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "SPLIT-BRAIN, LIVE: the switchboard row says true, but every worker resolver reads process.env, which the deploy never sets — so /api/integrations/grc* returns 503 while the switchboard (and anything reading get_flag) reports the feature as enabled. Kill-switched since the 2026-04-24 audit finding (OAuth tokens stored cleartext)."
+    },
+    "ENABLE_SEMANTIC_SEARCH": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["aiFeatureGate.ts readAIFlag — fails CLOSED, ignores env", "frontend isSemanticSearchEnabled()"],
+      "prodDbRow": false,
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "SOAK BLIND SPOT. deploy-worker.yml sets ENABLE_SEMANTIC_SEARCH=true but the switchboard row is false and the row wins — the feature is OFF and the soak cannot exercise it. Held dark pending the credential_embeddings backfill (SCRUM-1958).",
+      "claimedBy": [
+        {
+          "path": "src/pages/DevelopersPage.tsx",
+          "surface": "public-marketing",
+          "claim": "POST /ai/search listed at $0.010 per call as 'AI semantic search' — a priced commercial offer for an endpoint that 503s"
+        },
+        {
+          "path": "src/pages/DevelopersPage.tsx",
+          "surface": "public-marketing",
+          "claim": "'Semantic search and integrity scoring' advertised as a shipped capability"
+        }
+      ]
+    },
+    "ENABLE_AI_FRAUD": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["aiFeatureGate.ts readAIFlag — fails CLOSED, ignores env", "frontend isAIFraudEnabled()"],
+      "prodDbRow": false,
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "SOAK BLIND SPOT. deploy-worker.yml sets ENABLE_AI_FRAUD=true but the switchboard row is false and the row wins. Note the frontend code default is true, so a get_flag failure in the browser would show fraud UI for a feature the worker 503s.",
+      "claimedBy": [
+        {
+          "path": "docs/compliance/soc2-type2-evidence-matrix.md",
+          "surface": "compliance",
+          "claim": "CC3.3 'Fraud risk considered' asserts fraud detection as a Continuous control to a SOC 2 auditor — and cites Nessie, which is separately OFF by standing founder directive"
+        }
+      ]
+    },
+    "ENABLE_FRAUD_DETECTION": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["get_flag", "frontend isFraudDetectionEnabled()"],
+      "prodDbRow": false,
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "SOAK BLIND SPOT. Client-only fraud detection (SCRUM-1955), default off until the worker path is enabled."
+    },
+    "ENABLE_VISUAL_FRAUD_DETECTION": {
+      "sources": ["env"],
+      "resolvers": ["aiFeatureGate.ts readAIFlag — fails CLOSED", "config.ts enableVisualFraudDetection"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "SOAK BLIND SPOT. Legacy /api/v1/ai/fraud/visual is deliberately 410-dark; SCRUM-1955 moved visual fraud analysis client-side. Listed in ENV_FLAG_GETTERS but resolved by aiFeatureGate against the DB — a resolver mismatch with no row to read."
+    },
+    "ENABLE_COMPLIANCE_ENGINE": {
+      "sources": ["db"],
+      "resolvers": [],
+      "prodDbRow": false,
+      "prodResolved": false,
+      "customerReachable": false,
+      "soak": "either",
+      "why": "GATES NOTHING — RECOMMEND DELETION. Its only occurrence in the entire tree is the DB_FLAGS array at flagRegistry.ts:69. No gate middleware, no route guard, no consumer. /compliance/check is gated by x402PaymentGate alone, so it serves regardless of this flag. Reading 'ENABLE_COMPLIANCE_ENGINE = false' invites the exact wrong conclusion — that the compliance surface is dark — when it is in fact live and gated only by payment. A flag that reads OFF while gating nothing is worse than no flag: it is a false sense of a kill switch. Either wire a real gate or drop the flag and its switchboard row."
+    },
+    "ENABLE_EXPIRY_ALERTS": {
+      "sources": ["db"],
+      "resolvers": ["flagRegistry.getFlag in routes/cron.ts:1248"],
+      "prodDbRow": false,
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "SOAK BLIND SPOT. Credential expiry alerting is off. One of only two flags actually gated on the boot-time flagRegistry snapshot."
+    },
+    "ENABLE_ADES_SIGNATURES": {
+      "sources": ["db", "env"],
+      "resolvers": ["adesFeatureGate.ts — DB read, then process.env fallback"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "SOAK BLIND SPOT, and a LATENT FAIL-OPEN: with no switchboard row, adesFeatureGate falls back to process.env.ENABLE_ADES_SIGNATURES. It is unset today so the surface is dark, but adding that env var to deploy-worker.yml would enable AdES signatures with NO DB kill switch able to hold it off."
+    },
+    "ENABLE_PARTNER_PROVISIONING": {
+      "sources": ["db"],
+      "resolvers": ["partnerProvisioningGate.ts — get_flag, fails CLOSED, NO env fallback"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "SOAK BLIND SPOT with product consequence: no switchboard row exists, get_flag returns its false default, and /api/partner-provisioning is 404-dark. This is the HakiChain partner onboarding path. Seeding the row is release-ops-owned."
+    },
+    "ENABLE_ORG_CREDIT_ENFORCEMENT": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableOrgCreditEnforcement (default false)", "flagRegistry ENV_FLAG_GETTERS"],
+      "prodDbRow": false,
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "Bitcoin cost-control credits. Deliberately off until HakiChain funding (G3, founder-owned). The 0363 switchboard row is an audit mirror the worker never reads, not the gate."
+    },
+    "ENABLE_ALLOCATION_ROLLOVER": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableAllocationRollover (default false)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "Monthly credit rollover policy. Off; paired with credit enforcement, which is also off."
+    },
+    "ENABLE_CONFIRMATION_PROOF_BACKFILL": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableConfirmationProofBackfill (default false)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": false,
+      "soak": "either",
+      "why": "Backfills proof material on confirmation. Off. Related to the known proof-materialization gap (~2.97M SECURED vs ~6.1k STORED proofs) but turning it on mid-soak would change write volume, so it stays out of scope."
+    },
+    "ENABLE_AI_FALLBACK": {
+      "sources": ["env", "edge"],
+      "resolvers": ["config.ts enableAiFallback (default false)", "edge ai-fallback.ts (env.ENABLE_AI_FALLBACK)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "must-be-off",
+      "why": "Cloudflare AI fallback, default false per CLAUDE.md §1.1. ON, a Gemini outage would be silently papered over and the soak would not observe the real failure mode. Also the only flag asserted per-runtime in the worker/edge parity check."
+    },
+    "ENABLE_VERTEX_AI": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableVertexAi (default false)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": false,
+      "soak": "must-be-off",
+      "why": "Routes AI calls to Vertex endpoints. ON during a 7-day soak it would hold endpoints deployed continuously, violating the CLAUDE.md §0 rule 7 endpoint-hygiene target and adding cost."
+    },
+    "ENABLE_NESSIE_RAG_RECOMMENDATIONS": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableNessieRagRecommendations (default false)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "must-be-off",
+      "why": "Standing founder directive (2026-08-01): Nessie stays OFF. Never plan or run work that activates it."
+    },
+    "ENABLE_DEMO_INJECTOR": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableDemoInjector (default false)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "must-be-off",
+      "why": "Injects demo records. ON, the soak's anchor and queue counts include fabricated rows and the evidence is not merge-grade."
+    },
+    "ENABLE_SYNTHETIC_DATA": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableSyntheticData (default false)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "must-be-off",
+      "why": "Generates synthetic records. Same contamination hazard as the demo injector — staging-honesty-preflight treats fixture-seeded data as disqualifying for merge-grade evidence."
+    },
+    "MAINTENANCE_MODE": {
+      "sources": ["db", "frontend"],
+      "resolvers": ["get_flag", "frontend isMaintenanceMode()"],
+      "prodDbRow": false,
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "must-be-off",
+      "why": "Global maintenance banner/lockout. ON, the product is unusable and the soak measures a maintenance page."
+    },
+    "ENABLE_MULTIMODAL_EMBEDDINGS": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableMultimodalEmbeddings (default false)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": false,
+      "soak": "either",
+      "why": "Roadmap embedding path, off."
+    },
+    "ENABLE_CLOUD_LOGGING_SINK": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableCloudLoggingSink (default false)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": false,
+      "soak": "either",
+      "why": "Structured log export to Cloud Logging. Off. Worth a deliberate decision before the soak — ON would improve observability, but it changes log volume and cost."
+    },
+    "ENABLE_WORKSPACE_RENEWAL": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableWorkspaceRenewal (default false)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": false,
+      "soak": "either",
+      "why": "MISLEADING NAME — despite sitting beside the Drive flags in flagRegistry it does NOT gate the drive-subscription-renewal job (that job is unconditional, run-lease-guarded). It gates a permanently-stubbed SCRUM-1147 job with no scheduler trigger. Drive watch renewal is unaffected by its state."
+    },
+    "ENABLE_ATS_WEBHOOK": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableAtsWebhook", "integrationKillSwitch.ts (raw process.env)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "Kill-switched since the 2026-04-24 audit (multi-secret iteration = tenant isolation bypass). Must stay off until that finding is fixed."
+    },
+    "ENABLE_VEREMARK_WEBHOOK": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableVeremarkWebhook"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "Veremark partner webhook, dark."
+    },
+    "ENABLE_MICROSOFT_GRAPH_WEBHOOK": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableMicrosoftGraphWebhook", "integrationKillSwitch.ts (raw process.env)"],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "Kill-switched pending SCRUM-1138 R2 closeout (clientState shared secret + handshake)."
+    },
+    "ENABLE_ISSUE_CREDENTIAL_SPLIT": {
+      "sources": ["frontend"],
+      "resolvers": ["frontend isIssueCredentialSplitEnabled() — getFlagStrict, rejects on lookup failure"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "Splits the universal 'Secure Document' action from restricted 'Issue Credential' (CLAUDE.md §1.3 / SCRUM-1672). LIVE in prod (row true) while the frontend code default is false — a frontend-only flag with no worker registry entry."
+    },
+    "ENABLE_MCP_SERVER": {
+      "sources": ["edge", "db"],
+      "resolvers": ["services/edge/src/mcp-kill-switch.ts — get_flag RPC from the Cloudflare edge worker"],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "either",
+      "why": "Kill switch for the edge MCP server at edge.arkova.ai — a Cloudflare Worker, NOT the Cloud Run worker. Deliberately absent from flagRegistry: the Cloud Run worker neither reads nor should read it."
+    },
+    "ENABLE_ZK_PROOFS": {
+      "sources": ["db-orphan"],
+      "resolvers": [],
+      "prodDbRow": true,
+      "prodResolved": true,
+      "customerReachable": false,
+      "soak": "either",
+      "why": "ORPHAN ROW — RECOMMEND DELETION. Set true in prod since 2026-03-30 with ZERO code references anywhere in the tree: no worker, frontend or edge reader. The only ZK mentions in the repo are snarkjs dependency-license entries. It gates nothing, and being ON it reads to anyone inspecting the switchboard as 'ZK proofs are enabled' — a capability claim we do not hold (R-7). Declared here so it cannot stay invisible; the correct fix is to delete the switchboard row."
+    }
+  }
+}
