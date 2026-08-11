@@ -21,7 +21,17 @@
     "Postgres lock queues are FIFO it became a barrier in front of PostgREST's",
     "schema-cache introspection. /api/v1/verify served service_unavailable for",
     "11m39s. Baseline at creation: 151 violations across 16 files (117 of them in",
-    "the pg_dump-shaped baseline migration, which is not hand-written SQL)."
+    "the pg_dump-shaped baseline migration, which is not hand-written SQL).",
+    "",
+    "2026-08-11 addendum \u2014 0407 added. NOT to shrink a red build for its own PR:",
+    "0407 merged (a3e3d6e26) in the same window this guard shipped (352e74967) and",
+    "raced the baseline snapshot, so it was never eligible to be caught pre-merge.",
+    "It is merged AND applied to prod (ledger version 0407, verified via MCP), which",
+    "makes it immutable under CLAUDE.md 1.2 and the migration-edit hook \u2014 the",
+    "one-line guard CANNOT be added to it. Left unlisted it failed this gate on",
+    "EVERY open PR including ones touching no SQL at all (e.g. #2171, auth.ts only).",
+    "That is precisely the 'would only block unrelated PRs' case this list exists for.",
+    "The ratchet is unchanged for new files."
   ],
   "grandfathered": [
     "supabase/migrations/00000000000000_baseline_at_main_HEAD.sql",
@@ -39,6 +49,7 @@
     "supabase/migrations/0376_r19_anchor_fingerprint_source.sql",
     "supabase/migrations/0384_scrum2481_anchor_evidence_claim_authority.sql",
     "supabase/migrations/0393_scrum2940_anchors_folder_update_org_admin.sql",
-    "supabase/migrations/0394_sec_ce_provenance_key_authority.sql"
+    "supabase/migrations/0394_sec_ce_provenance_key_authority.sql",
+    "supabase/migrations/0407_widen_org_verification_status_for_kyb_rejection.sql"
   ]
 }
