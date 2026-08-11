@@ -2,6 +2,19 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-11 — two-grade org verification (CTO decision; sibling of AUDIT-0424-10 / PR #2134)
+
+`organizations.verification_status = 'VERIFIED'` has TWO legitimate writers, and that is now a **decision, not a drift**:
+
+1. **Self-serve** (`orgVerification.ts` confirm-domain): domain-control email + self-attested EIN (length-checked only, never verified) → `VERIFIED`. Deliberate IDT WS4 launch-tier onboarding with a live UI (`src/components/org/OrgVerification.tsx` on OrgProfilePage). **This is not KYB** — do not describe it as KYB-passed anywhere (§1.13 R-7).
+2. **Provider KYB** (`webhooks/middesk.ts`): Middesk terminal event → `VERIFIED` + `kyb_completed_at`; `kyb_provider`/`kyb_submitted_at` via `org-kyb.ts`'s `start_kyb_verification` RPC.
+
+**Why keep the self-serve grant:** as of 2026-08-11 the provider path is inert in prod — `MIDDESK_API_KEY`/`MIDDESK_WEBHOOK_SECRET` are not in `deploy-worker.yml`'s secret set (both routes 503), `org-kyb` has zero frontend callers, and `kyb_events` has 0 rows ever. Removing the self-serve write would make `VERIFIED` unreachable and dead-end connector onboarding (DocuSign/Drive `requireVerifiedOrg`), affiliate creation (`orgSubOrgs.ts`), and Issue Credential (`useCanIssueCredential`). Verified against prod read-only: 10 orgs, exactly 1 `VERIFIED` (Arkova's own, granted via `dev-verify` on 2026-03-27 — audit event "verified via dev bypass"), zero self-serve grants ever (no `ORG_EIN_SUBMITTED`/`ORG_DOMAIN_VERIFIED` audit events exist).
+
+**The load-bearing invariant: self-serve writes NEVER stamp `kyb_*` columns.** A `VERIFIED` row with `kyb_completed_at IS NULL` is a self-serve (or dev/seed) grant; `kyb_completed_at IS NOT NULL` is provider-KYB. That predicate is the ratchet point for strong gates once Middesk is provisioned (planned: Issue Credential, optionally affiliate creation; connectors stay self-serve-OK). Pinned prefix-wide by the "KYB provenance ratchet" suite in `orgVerification.test.ts` (mutation-verified). Do not "backfill" `kyb_*` for self-serve orgs, and do not add a third writer of `verification_status` — the Stripe-checkout one was a live KYB bypass, removed in PR #2134.
+
+Open follow-ups (separate PRs): ORG_ADMIN-gate `verify-ein`/`verify-domain`/`confirm-domain` (today any org **member** can write legal identifiers; `org-kyb.ts` already requires ORG_ADMIN for the analogous action); EIN stays loose-format deliberately (international tax IDs — a `^\d{9}$` pin would break non-US orgs) but deserves a length cap.
+
 ## 2026-08-10 — raw caller IPs were persisted into `audit_events` (DPA defect, FIXED)
 
 Arkova's DPA Schedules 1 and 2 both warrant that IP addresses are processed in **hashed** form. Two audit writers on this surface serialised `req.ip` **verbatim** into `details.querying_ip`: `verify.ts` (`VERIFICATION_QUERIED`) and `credentials-ctdl.ts` (`ctdl.requested`). 16 prod rows held literal IPv4/IPv6 addresses. Signing the DPA unchanged would have made a contractual warranty false.

@@ -534,3 +534,112 @@ describe('GET /verification-status', () => {
     expect(res.status).toBe(500);
   });
 });
+
+// ─── KYB provenance ratchet (two-grade verification decision, 2026-08-11) ───
+
+/**
+ * CTO decision 2026-08-11 (sibling of AUDIT-0424-10 / PR #2134): Arkova runs
+ * TWO grades of org verification, both writing `organizations.verification_status`:
+ *
+ *   - self-serve (this file): domain-control email + self-attested EIN → 'VERIFIED'.
+ *     Deliberate IDT WS4 launch-tier onboarding, NOT provider KYB.
+ *   - provider KYB (`api/v1/webhooks/middesk.ts`): Middesk terminal event →
+ *     'VERIFIED' + `kyb_completed_at` stamped (`kyb_provider`/`kyb_submitted_at`
+ *     via the `start_kyb_verification` RPC in `org-kyb.ts`).
+ *
+ * The ONLY durable discriminator between the two grades is that self-serve rows
+ * keep every `kyb_*` column NULL. Strong gates (Issue Credential, affiliate
+ * creation) ratchet onto `kyb_completed_at IS NOT NULL` once Middesk is
+ * provisioned in prod. If any write in THIS file ever stamps a `kyb_*` column,
+ * the two grades become permanently indistinguishable and that ratchet is dead —
+ * prod forensics too (a VERIFIED row's NULL `kyb_*` is how we proved no org was
+ * provider-verified as of 2026-08-11).
+ *
+ * The assertion is prefix-based (`kyb_*`), not a column census, so a future
+ * provenance column is covered without editing this suite.
+ *
+ * Mutation-verified: adding `kyb_completed_at` to the confirm-domain update
+ * turns the first test red.
+ */
+describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns', () => {
+  const app = createApp('user-123');
+
+  /** Collects every payload passed to organizations.update() during a request. */
+  function captureOrgUpdates(orgSelectData: Record<string, unknown>) {
+    const captured: Record<string, unknown>[] = [];
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return mockQuery({ data: { org_id: 'org-abc' } });
+      }
+      if (table === 'organizations') {
+        const chain = mockQuery({ data: orgSelectData, error: null });
+        (chain.update as ReturnType<typeof vi.fn>).mockImplementation(
+          (payload: Record<string, unknown>) => {
+            captured.push(payload);
+            return chain;
+          },
+        );
+        return chain;
+      }
+      return mockQuery({ data: null });
+    });
+    return captured;
+  }
+
+  function kybKeysOf(payloads: Record<string, unknown>[]): string[] {
+    return payloads.flatMap((p) => Object.keys(p).filter((k) => k.startsWith('kyb_')));
+  }
+
+  it('confirm-domain full verification (EIN present) grants VERIFIED without any kyb_* column', async () => {
+    const updates = captureOrgUpdates({
+      domain_verification_token: '123456:abcdef',
+      domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+      ein_tax_id: '12-3456789',
+      domain_verified: false,
+    });
+
+    const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
+    expect(res.status).toBe(200);
+
+    // The self-grant itself must have happened (otherwise this suite is
+    // vacuously green against a rewritten handler that stopped writing).
+    const grant = updates.find((p) => p.verification_status === 'VERIFIED');
+    expect(grant).toBeDefined();
+    expect(kybKeysOf(updates)).toEqual([]);
+  });
+
+  it('confirm-domain partial verification (no EIN) writes no kyb_* column', async () => {
+    const updates = captureOrgUpdates({
+      domain_verification_token: '123456:abcdef',
+      domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+      ein_tax_id: null,
+      domain_verified: false,
+    });
+
+    const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
+    expect(res.status).toBe(200);
+    expect(updates.length).toBeGreaterThan(0);
+    expect(kybKeysOf(updates)).toEqual([]);
+  });
+
+  it('verify-ein PENDING write stamps no kyb_* column', async () => {
+    // organizations is hit twice: duplicate-EIN check (maybeSingle → null), then update.
+    const updates = captureOrgUpdates(null as unknown as Record<string, unknown>);
+
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    expect(res.status).toBe(200);
+    const pending = updates.find((p) => p.verification_status === 'PENDING');
+    expect(pending).toBeDefined();
+    expect(kybKeysOf(updates)).toEqual([]);
+  });
+
+  it('dev-verify grants VERIFIED without any kyb_* column', async () => {
+    const updates = captureOrgUpdates(null as unknown as Record<string, unknown>);
+
+    const res = await request(app).post('/org/dev-verify').send({});
+    expect(res.status).toBe(200);
+    const grant = updates.find((p) => p.verification_status === 'VERIFIED');
+    expect(grant).toBeDefined();
+    expect(kybKeysOf(updates)).toEqual([]);
+  });
+});
