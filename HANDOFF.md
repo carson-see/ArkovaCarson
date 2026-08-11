@@ -211,12 +211,33 @@ the pin is unchanged since `603d047e9` (2026-05-26). Benign happy-path noise.
 locks on `organizations` = 0, zero 5xx and zero `PGRST002` since 16:51:30Z. **Migration 0407 never
 applied** and will re-wedge prod if retried under a long read.
 
-**Detection is the real defect — nothing paged anyone for 11+ minutes.** Three gaps, being closed
-before the 7-day soak: a log-based metric on `PGRST002` count > 0 over 5 min (it occurred zero times
-before and zero times after the incident, so it carries no false-positive tax and cannot drown in the
-~25k cron-alert noise); an uptime check asserting the `/health` **body** contains `"status":
-"healthy"` rather than merely HTTP 200; and an alert on any `public`-relation lock wait > 60s, which
-would have fired at ~16:36, before user impact.
+**Detection is the real defect — nothing paged anyone for 11+ minutes.** Corrected on investigation:
+project `arkova1` had **zero alert policies, zero notification channels, zero uptime checks and zero
+log-based metrics**. There was no alert-fatigue problem to cut through — no alerting existed at all.
+(The "~25k alerts" figure that circulated earlier was a count of Cloud Scheduler failure *log
+entries*, not alerts; nothing was configured to page on them.) `scripts/gcp-setup/agents.md` has
+carried that warning since 2026-08-01, unactioned.
+
+**This was a RECURRENCE, not a first occurrence.** A 30-day `PGRST002` census found 341 entries in
+exactly two clusters: **128 on 2026-08-02, 16:26–16:45Z**, and 213 today. The same failure mode took
+production down nine days earlier and also paged nobody, and went unrecorded. Every other day in the
+window is zero, so the signal is still clean — but it recurs, which raises this from "one bad day"
+to an established, undetected failure mode.
+
+Four alarms are now **live and each verified to have actually fired** (incident payloads captured off
+a Pub/Sub channel, since creating a policy is not evidence it works): `PGRST002` > 0 over 5 min; an
+uptime check asserting the `/health` **body** contains `"status":"healthy"` rather than merely
+HTTP 200; any `public`-relation lock wait > 60s, which would have fired ~16:36, before user impact;
+and an `arkova-worker` 5xx burst > 5 per 5 min. Routing is email to carson@arkova.io —
+`notificationChannels/17147566240859145353`, the first notification channel this project has ever
+had. The lock-wait alarm is **inert in prod until migration 0409 is applied**, the worker redeployed,
+and a Cloud Scheduler job created for `/jobs/lock-wait`; it also goes blind once `PGRST002` starts,
+since it reaches Postgres through PostgREST — which is why PGRST002 is the backstop behind it.
+
+**Separately found and not yet explained:** a standing ~1 5xx roughly every 20 minutes, around the
+clock — 496 of 510 non-zero 5-minute buckets across 7 days. The 5xx threshold was set at >5
+specifically because every bucket above 5 in that week fell inside today's incident window. That
+baseline drip needs its own investigation; it is not a paging matter but it is not nothing.
 
 **Prevention, worth more than any alert.** DDL on hot tables must `SET lock_timeout = '5s'` first so
 a blocked `ALTER` fails fast instead of forming a barrier, and unbounded correlated-subquery census
