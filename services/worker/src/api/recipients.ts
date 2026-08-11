@@ -60,23 +60,94 @@ export async function createPendingRecipient(
   // Generate activation token
   const { randomBytes } = await import('node:crypto');
   const activationToken = randomBytes(32).toString('hex');
-  const profileId = crypto.randomUUID();
 
-  // Create pending profile
-  const { error: insertError } = await db.from('profiles').insert({
-    id: profileId,
+  // ── Create the auth user FIRST. ──
+  // `profiles.id` is FOREIGN KEY -> `auth.users(id)` ON DELETE CASCADE
+  // (constraint `profiles_id_fkey`, convalidated in prod and never dropped).
+  // Minting a standalone `crypto.randomUUID()` for `profiles.id` therefore
+  // ALWAYS violated that FK — the insert could not succeed for any genuinely
+  // new recipient, so bulk issuance created the anchors and then 500'd on
+  // every recipient provisioning. Same worker-side account-creation pattern as
+  // `invitations.ts` (Constitution §1.4: `supabase.auth.admin` never reaches
+  // the browser).
+  //
+  // `email_confirm: false` deliberately: the activation link the recipient is
+  // about to receive is what proves mailbox control, so we must not mark the
+  // address confirmed before they have clicked it.
+  const { data: created, error: createError } = await db.auth.admin.createUser({
     email,
-    full_name: request.fullName ?? null,
-    org_id: request.orgId,
-    role: 'ORG_MEMBER',
-    status: 'PENDING_ACTIVATION',
-    activation_token: activationToken,
-    activation_token_expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    email_confirm: false,
+    user_metadata: request.fullName ? { full_name: request.fullName } : undefined,
   });
 
-  if (insertError) {
-    logger.error({ email, error: insertError }, 'Failed to create pending profile');
-    throw new Error(`Failed to create pending recipient: ${insertError.message}`);
+  const newUser = (created as { user?: { id: string } } | null)?.user;
+  if (createError || !newUser) {
+    logger.error({ email, error: createError }, 'Failed to create recipient auth user');
+    throw new Error(
+      `Failed to create pending recipient: ${createError?.message ?? 'auth user creation returned no user'}`,
+    );
+  }
+
+  // The profile row MUST be keyed by the auth user's id to satisfy the FK.
+  const profileId = newUser.id;
+
+  const activationFields = {
+    org_id: request.orgId,
+    role: 'ORG_MEMBER' as const,
+    status: 'PENDING_ACTIVATION' as const,
+    activation_token: activationToken,
+    activation_token_expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+
+  try {
+    const { error: insertError } = await db.from('profiles').insert({
+      id: profileId,
+      email,
+      full_name: request.fullName ?? null,
+      ...activationFields,
+    });
+
+    if (insertError) {
+      // 23505 = unique_violation. The `create_profile_for_new_user` trigger on
+      // `auth.users` may already have inserted a bare profile row for the user
+      // we just created. That row carries NO org, NO PENDING_ACTIVATION status
+      // and NO activation token, so — unlike `invitations.ts`, where the
+      // trigger's row is equivalent to the one being inserted — swallowing the
+      // 23505 as success here would leave a recipient who can never be
+      // activated. Apply the activation fields to the existing row instead.
+      if ((insertError as { code?: string }).code !== '23505') {
+        throw insertError;
+      }
+
+      const { error: updateError } = await db
+        .from('profiles')
+        .update({
+          ...activationFields,
+          ...(request.fullName ? { full_name: request.fullName } : {}),
+        })
+        .eq('id', profileId);
+
+      if (updateError) {
+        throw updateError;
+      }
+    }
+  } catch (err) {
+    logger.error(
+      { email, profileId, error: err },
+      'Failed to create pending profile — rolling back the new auth user',
+    );
+    const { error: deleteError } = await db.auth.admin.deleteUser(profileId);
+    if (deleteError) {
+      // Rollback itself failed — this IS a real orphaned auth user that will
+      // block any future re-invite of this address. Loud log, no PII beyond
+      // what is already logged above.
+      logger.error(
+        { error: deleteError, profileId },
+        'Recipient rollback deleteUser failed — orphaned auth user, needs manual cleanup',
+      );
+    }
+    const message = err instanceof Error ? err.message : ((err as { message?: string })?.message ?? String(err));
+    throw new Error(`Failed to create pending recipient: ${message}`, { cause: err });
   }
 
   // Log audit event
