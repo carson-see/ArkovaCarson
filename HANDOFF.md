@@ -50,18 +50,19 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
     source reached `main` via #2068. Gate confirmed green post-merge on fresh runs (queue branches,
     `claude/frosty-colden-9799e7`, dependabot PR; workflow `migration-drift.yml`, 2026-08-11
     ~16:41–16:44Z).
-  - **Known gap (not yet fixed):** the audit cannot detect a stale exemption on its own —
-    `scripts/ci/check-ledger-numeric-integrity.ts` short-circuits on `exemptPrefixes.has(version)`
-    *before* it checks `localPrefixes`, so a reconciled-but-still-exempt prefix is skipped silently
-    and forever. Every stale entry so far (`0404`, then `0401`/`0407`, and 15 more on 2026-08-02) was
-    caught by a human. Until that check is inverted, removal is a manual discipline.
-  - **Open follow-up — do not let these rot.** Still legitimately exempt as of 2026-08-11:
-    `0405` (owning PR [#2081](https://github.com/carson-see/ArkovaCarson/pull/2081)) and `0406`
-    (branch `feat/proof-coverage-permanent-fix`) — both in the prod ledger, neither source on `main`.
-    Remove each the moment its owning PR merges. **Re-derive this list from the invariant above
-    rather than trusting these two entries** — the previous version of this bullet listed only
-    `0401`/`0402`/`0405` and silently omitted `0406`/`0407`, which #2174 had added the same day; a
-    checklist that omits an entry is worse than none, because it terminates the search.
+  - **Closed 2026-08-11 — the ledger is fully reconciled and CI now polices it.** `exemptPrefixes`
+    is `[]`; prod ledger head is `0407` and `main` carries `0400`–`0407` inclusive, so every prod row
+    has its source. Verified with the `list_migrations` MCP tool against `vzwyaatejekddvltxyye` plus
+    a listing of `origin/main`, not assumed. `0405` landed via #2081 and `0406` via its own PR.
+  - **No manual checklist here any more, on purpose.** This bullet twice carried an enumeration of
+    exempt prefixes and both times it was wrong within hours — the first listed
+    `["0401","0402","0405"]` and went stale in two hours; the second omitted `0406`/`0407` entirely.
+    [#2182](https://github.com/carson-see/ArkovaCarson/pull/2182) removes the need for one:
+    `auditStaleExemptions()` in `scripts/ci/check-ledger-numeric-integrity.ts` now reports any
+    exemption that is present in prod AND already on `main`, on every PR. It is **warn-only by
+    design** — it evaluates the whole ledger on every PR, so a fatal version would red the entire
+    board for hygiene debt, which is exactly the failure this section documents. Read the file and
+    the CI warning; do not maintain a prefix list in prose.
 - Migrations applied to prod and reconciled today (2026-08-02/03): `0382`, `0383`, `0384`, `0385`,
   `0386`, `0387`, `0388`, `0389`, `0390`, `0391`, `0392` — all verified live via `pg_get_functiondef` /
   `pg_index` / direct query at apply time; see the exemption file's `_comment` history for the per-row
