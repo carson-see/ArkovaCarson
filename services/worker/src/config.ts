@@ -389,6 +389,24 @@ const ConfigSchema = z.object({
 
   /** ENABLE_AI_FALLBACK — toggles Cloudflare AI fallback when Gemini fails. CLAUDE.md §1.1. Default false. */
   enableAiFallback: boolFlag(false),
+  /**
+   * DISABLE_ORG_FIELD_POLICY — break-glass that suppresses DPA clause 4.6
+   * field-policy enforcement process-wide (utils/orgFieldPolicy.ts, migration
+   * 0405). Default FALSE: enforcement is on, and it exists only because the
+   * unreadable-policy path fails closed and an operator needs a lever that
+   * does not require a deploy.
+   *
+   * Engaging it VOIDS a contractual control, so it is declared here rather
+   * than read ad hoc from process.env (SCRUM-1258): the flag is discoverable
+   * in one place and every deploy surface can be diffed against this schema.
+   *
+   * `boolFlag` coerces rather than rejects — only the literal `'true'` engages
+   * the break-glass and ANY other value, typo included, leaves enforcement ON.
+   * That is the safe direction for a kill-switch on a compliance control, but
+   * note it is coercion, not boot-time validation: a misspelled value will not
+   * raise at startup, it will simply fail to disable anything.
+   */
+  disableOrgFieldPolicy: boolFlag(false),
   /** ENABLE_VERIFICATION_API — gates /api/v1/* surface. CLAUDE.md §1.9. Default true so customer keys work. */
   enableVerificationApi: boolFlag(true),
   /** ENABLE_VERTEX_AI — Gemini calls go through Vertex AI when true; Google AI Studio when false. */
@@ -886,6 +904,7 @@ function loadConfig(): Config {
 
     // SCRUM-1258 batch 2 — feature flags + observability + treasury
     enableAiFallback: process.env.ENABLE_AI_FALLBACK,
+    disableOrgFieldPolicy: process.env.DISABLE_ORG_FIELD_POLICY,
     enableVerificationApi: process.env.ENABLE_VERIFICATION_API,
     enableVertexAi: process.env.ENABLE_VERTEX_AI,
     enableRulesEngine: process.env.ENABLE_RULES_ENGINE,

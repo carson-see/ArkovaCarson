@@ -34,6 +34,7 @@ vi.mock('../../utils/db.js', () => {
     limit: MockMethod;
     insert: MockMethod;
     single: MockMethod;
+    maybeSingle: MockMethod;
   };
 
   function createQuery(table: string): MockQuery {
@@ -55,6 +56,14 @@ vi.mock('../../utils/db.js', () => {
       return query;
     });
     query.single = vi.fn(() => Promise.resolve({ data: mockTables.insertedAnchor, error: null }));
+    // DPA clause 4.6 guard (migration 0405) reads `organization_field_policies`
+    // and the submitter's `profiles.org_id` via `.maybeSingle()`. Both resolve
+    // to no row here — the default-permissive state, so the guard is a no-op
+    // and this suite keeps testing the sanitizer it was written for. Both reads
+    // fail CLOSED (503) if the double omits them, which is correct behaviour
+    // but not what these tests assert. Enforcement is covered in
+    // anchor-field-policy-routes.test.ts.
+    query.maybeSingle = vi.fn(() => Promise.resolve({ data: null, error: null }));
 
     return query;
   }
