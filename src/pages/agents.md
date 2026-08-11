@@ -327,3 +327,49 @@ commit. They are safe because each has exactly one async transition in flight at
 a time, gated by its own `waitFor` at the point it matters. Run the same "can
 this element arrive in a later commit?" check there anyway; today the answer is
 just always handled.
+
+## 2026-08-11 — ComplianceDashboardPage: an async gate that resolved on the wrong component
+
+`ComplianceDashboardPage.test.tsx`'s empty-state case flaked in CI (run
+31514378348) with `Unable to find an element with the text: CPE summaries
+appear after secured CPE records are available for the selected period.` The
+line above it already awaited `findByText('No CPE records in this period')`,
+so by the #2148 rule at the end of this file it looked correctly gated.
+
+It was not. **Two components on this page render that identical string** — the
+org CPE card here, and `OrgCpeMemberDashboard` via
+`ORG_CPE_MEMBER_LABELS.EMPTY` in `copy.ts`. The member card runs off a hook
+this suite stubs, so it paints synchronously at first paint. The unscoped
+`findByText` therefore satisfied its very first check against the *member*
+card while the card under test was still a loading skeleton, and the sibling
+paragraph existed only because RTL's `asyncAct` happened to flush the pending
+commit on its way out. Probe at the moment the gate resolved:
+
+```
+[PROBE:after-render] {"emptyMatches":1,"orgCardLoading":true,"desc":0}
+[PROBE:after-findBy]  {"emptyMatches":2,"orgCardLoading":false,"desc":1}
+```
+
+The same defect sat undetected in the summary case:
+`data-testid="org-cpe-dashboard"` is on the `<Card>` **shell** — only
+`CardContent` is behind the fetch — so `findByTestId` also resolves at first
+paint. Eight aggregate assertions after it were equally unsynchronized.
+
+Two things to carry forward when editing this page's tests:
+
+- **The #2148 rule is necessary, not sufficient.** "Use `findBy*` for anything
+  that can arrive in a later commit" assumes the gate matches the element you
+  meant. Before trusting a gate, grep the string: if a sibling component on the
+  same page renders it too, scope the query with `within(panel)`. Shared copy
+  constants make this collision easy to create and invisible to review.
+- **A testid on a card shell is not a fetch gate.** `findByTestId` on a
+  wrapper whose *content* is conditional resolves before the fetch. Gate on a
+  post-fetch node inside the panel, or on the loading skeleton clearing —
+  `findSettledCpePanel()` in that suite does the latter, and the "Nessie stays
+  OFF" negative assertions now use it so their non-vacuity comment holds.
+
+Reproduce this class locally by settling the mocked query one macrotask later
+(`setTimeout(..., 0)` instead of `Promise.resolve`) rather than by adding CPU
+load — the variable is event-loop ordering, not CPU. Under that injection the
+pre-fix suite failed 2/7 with the verbatim CI error; CPU contention alone
+(24 busy cores, 8 concurrent vitest processes) never reproduced it.
