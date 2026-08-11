@@ -1,0 +1,11 @@
+{
+  "name": "worker_postgrest_schema_cache_failure",
+  "description": "PGRST002 — PostgREST could not query the database for the schema cache. With no valid cache PostgREST serves NOTHING: every RPC and table read fails, get_flag() fails, and the /api/v1 gate fails closed. Sole precise signal for the 2026-08-11 P0 (11m39s of service_unavailable on /api/v1/verify, nothing paged). Measured false-positive budget: a 30-day census on 2026-08-11 found 341 matching entries in exactly two clusters (128 on 2026-08-02, 213 on 2026-08-11) and zero on every other day.",
+  "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"arkova-worker\" AND (jsonPayload.error.code=\"PGRST002\" OR \"PGRST002\")",
+  "metricDescriptor": {
+    "metricKind": "DELTA",
+    "valueType": "INT64",
+    "unit": "1",
+    "displayName": "Worker PostgREST schema-cache failures (PGRST002)"
+  }
+}

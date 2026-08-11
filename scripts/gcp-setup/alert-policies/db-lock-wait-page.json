@@ -1,0 +1,41 @@
+{
+  "displayName": "PAGE — Postgres lock wait > 60s on a public relation",
+  "documentation": {
+    "content": "The worker's lock-wait monitor observed a lock request waiting more than 60 seconds on a `public` relation.\n\nWHY THIS IS THE EARLY SIGNAL: on 2026-08-11 the barrier on `public.organizations` formed at ~16:35 and user impact did not start until 16:40:11Z. This alarm fires in the gap. The PGRST002 alarm is the backstop and fires ~4 minutes later, after PostgREST has already stopped serving.\n\nWHY A LOCK WAIT IS NOT MERELY SLOW: Postgres lock queues are FIFO. A single blocked `AccessExclusiveLock` request (any `ALTER TABLE`, `CREATE POLICY`, `CREATE TRIGGER`, `CREATE INDEX`, `GRANT`/`REVOKE` on the table) parks itself at the head of the queue, and every LATER request queues behind it -- including requests whose lock mode is perfectly compatible with whatever is actually running. PostgREST's schema-cache introspection is one of those later requests. That is how one ALTER on one table takes down the entire API.\n\nTRIAGE (`metric.label.relation` names the table, `metric.label.lock_mode` the requested mode):\n1. Identify the blocked request and, more importantly, the transaction it is queued behind.\n2. If a DDL statement is waiting: cancel it (`pg_cancel_backend`). The barrier clears the instant the DDL stops waiting -- on 2026-08-11 the first HTTP 200 followed 28.5s after the cancel, while the long reads were deliberately left running and did not finish until 17 seconds AFTER service was restored.\n3. Do NOT reach for `NOTIFY pgrst, 'reload schema'`. A reload re-runs the very introspection that is blocked.\n4. Only cancel the long readers if they are themselves the problem; they are usually not.\n\nPREVENTION (enforced in CI by `scripts/ci/check-hot-table-ddl-lock-timeout.ts`): DDL on `organizations` / `anchors` / `profiles` must be preceded by `SET LOCAL lock_timeout = '5s'` so a blocked statement fails fast instead of forming a barrier.",
+    "mimeType": "text/markdown"
+  },
+  "userLabels": {
+    "story": "p0_2026_08_11",
+    "surface": "postgres",
+    "class": "lock_contention"
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "Any lock wait over threshold in 5 min",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/worker_db_lock_wait\" AND resource.type=\"cloud_run_revision\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_SUM",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "groupByFields": ["metric.label.relation"]
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "trigger": {
+          "count": 1
+        }
+      }
+    }
+  ],
+  "alertStrategy": {
+    "autoClose": "1800s"
+  },
+  "notificationChannels": ["${SLACK_OPS_ALERTS_CHANNEL}"],
+  "severity": "CRITICAL",
+  "enabled": true
+}

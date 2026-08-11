@@ -248,36 +248,69 @@ the pin is unchanged since `603d047e9` (2026-05-26). Benign happy-path noise.
 
 **Prod state after.** Worker rev `arkova-worker-01286-dam`, git_sha `2de4e4e34`, ledger head `0405`
 (confirmed via `supabase_migrations.schema_migrations`), `ENABLE_VERIFICATION_API=true`, ungranted
-locks on `organizations` = 0, zero 5xx and zero `PGRST002` since 16:51:30Z. **Migration 0407 never
-applied** and will re-wedge prod if retried under a long read.
+locks on `organizations` = 0, zero 5xx and zero `PGRST002` since 16:51:30Z. At that moment migration
+0407 was **not** applied, and retrying it under a long read would have re-wedged prod.
 
-**Detection is the real defect — nothing paged anyone for 11+ minutes.** Corrected on investigation:
-project `arkova1` had **zero alert policies, zero notification channels, zero uptime checks and zero
-log-based metrics**. There was no alert-fatigue problem to cut through — no alerting existed at all.
-(The "~25k alerts" figure that circulated earlier was a count of Cloud Scheduler failure *log
-entries*, not alerts; nothing was configured to page on them.) `scripts/gcp-setup/agents.md` has
-carried that warning since 2026-08-01, unactioned.
+**Superseded later the same day — do not read the line above as current.** The RTE has since applied
+0406 and 0407 to prod, each with `SET lock_timeout = '5s'` as the first statement in the same session
+as the DDL, so a blocked `ALTER` fails fast instead of forming a barrier, and each behind a preflight
+showing zero queries older than 30s and zero ungranted locks on `public.organizations`. **Prod
+numeric ledger head is now `0407`** — verified this session by `list_migrations` against
+`vzwyaatejekddvltxyye`, listing `0401`–`0407` present under numeric versions. `0408` (PR #2140) and
+`0409` (this PR) are still file-only and unapplied.
 
-**This was a RECURRENCE, not a first occurrence.** A 30-day `PGRST002` census found 341 entries in
-exactly two clusters: **128 on 2026-08-02, 16:26–16:45Z**, and 213 today. The same failure mode took
-production down nine days earlier and also paged nobody, and went unrecorded. Every other day in the
-window is zero, so the signal is still clean — but it recurs, which raises this from "one bad day"
-to an established, undetected failure mode.
+**Detection is the real defect — nothing paged anyone for 11+ minutes.** The reason is not alert
+fatigue: an API census on 2026-08-11 confirmed project `arkova1` had **zero alert policies, zero
+notification channels, zero uptime checks and zero log-based metrics**. There were no duplicate
+monitors because there were no monitors; the "~25,000 alerts" were Cloud Scheduler *log entries* that
+nothing was configured to page on. `scripts/gcp-setup/agents.md` had carried exactly this warning
+since 2026-08-01 and it went unactioned. **This is a SOC 2 CC7.2 gap, not only an ops gap**, with a
+customer launch ~6 days out.
 
-Four alarms are now **live and each verified to have actually fired** (incident payloads captured off
-a Pub/Sub channel, since creating a policy is not evidence it works): `PGRST002` > 0 over 5 min; an
-uptime check asserting the `/health` **body** contains `"status":"healthy"` rather than merely
-HTTP 200; any `public`-relation lock wait > 60s, which would have fired ~16:36, before user impact;
-and an `arkova-worker` 5xx burst > 5 per 5 min. Routing is email to carson@arkova.io —
-`notificationChannels/17147566240859145353`, the first notification channel this project has ever
-had. The lock-wait alarm is **inert in prod until migration 0409 is applied**, the worker redeployed,
-and a Cloud Scheduler job created for `/jobs/lock-wait`; it also goes blind once `PGRST002` starts,
-since it reaches Postgres through PostgREST — which is why PGRST002 is the backstop behind it.
+**Closed 2026-08-11 (branch `ops/lock-barrier-detection`; GCP resources are live now, code is not).**
+Four alarms exist in prod, each fired at least once in a synthetic test and each verified to have
+dispatched to a notification channel — Cloud Monitoring has no public incidents API, so delivery was
+proven by a Pub/Sub proof channel carrying the incident payload:
 
-**Separately found and not yet explained:** a standing ~1 5xx roughly every 20 minutes, around the
-clock — 496 of 510 non-zero 5-minute buckets across 7 days. The 5xx threshold was set at >5
-specifically because every bucket above 5 in that week fell inside today's incident window. That
-baseline drip needs its own investigation; it is not a paging matter but it is not nothing.
+| Alarm | Live id | Proof |
+|---|---|---|
+| PGRST002 count > 0 / 5 min | `alertPolicies/14098359722825658198` | incident `0.obbeois2rn7x` open 17:27:10Z, closed 17:36:41Z |
+| `/health` **body** lacks `"status":"healthy"` for 3 min | `alertPolicies/18090367980587783155` | negative-control clone opened 17:44:18Z; the real check reads `fraction_true=1.0` against live prod, so the matcher is correct |
+| Postgres lock wait > 60s on a `public` relation | `alertPolicies/2958285134242840887` | opened 17:42:22Z, closed 17:46:35Z |
+| `arkova-worker` 5xx burst (> 5 / 5 min) | `alertPolicies/7452330596875115509` | same-shape clone opened 17:48:50Z |
+
+Notifications route to **`notificationChannels/17147566240859145353` (email, carson@arkova.io)** — the
+first notification channel this project has ever had — plus a Pub/Sub channel kept as the standing
+verification harness.
+
+**What each alarm is worth, stated honestly.** The lock-wait alarm would have fired ~16:36Z, before
+any user impact — but it is **inert in prod until migration 0409 is applied, the worker redeployed,
+and a Cloud Scheduler job created for `/jobs/lock-wait`**, and it goes blind once `PGRST002` starts,
+because it reaches Postgres through PostgREST. That is exactly why `PGRST002` is the backstop behind
+it. The `/health` alarm asserts the response **body** contains `"status":"healthy"` rather than merely
+HTTP 200, which is the distinction that made the outage invisible.
+
+**Correction to this entry's own earlier claim:** PGRST002 did **not** occur "zero times before" the
+incident. A 30-day log census found 341 entries in exactly two clusters — 128 on **2026-08-02
+16:26:04Z–16:45:17Z** and 213 on 2026-08-11. The same failure had already happened nine days earlier
+and also paged nobody. Zero entries on any other day, so the alarm still carries no false-positive
+tax; but it is a recurring failure mode, not a one-off.
+
+Also measured while setting the 5xx threshold: the worker emits a steady **~1 5xx every ~20 minutes,
+around the clock** (496 of 510 non-zero 5-minute buckets in 7 days). The threshold was set at >5
+precisely because every 5-minute bucket above 5 in that week fell inside this incident's window, so
+the drip stays under it. Deliberately left un-alerted rather than tuned away — it needs its own
+investigation, not a page, but it is not nothing.
+
+<!--
+Merge note (2026-08-11, merge-of-main on PR #2176): main carried a second, independently written
+draft of this same block — same incident, same census, same four alarms, same notification channel.
+Union-appending it would have printed the incident twice. Resolved by keeping this branch's version
+(it carries the live alertPolicy ids and per-alarm incident proof) and folding in the three facts
+only main's draft had: the lock-wait alarm's ~16:36Z would-have-fired time, its inert-until-0409 /
+blind-under-PGRST002 caveat, and the reason the 5xx threshold sits at >5. No fact from either side
+was dropped.
+-->
 
 **Prevention, worth more than any alert.** DDL on hot tables must `SET lock_timeout = '5s'` first so
 a blocked `ALTER` fails fast instead of forming a barrier, and unbounded correlated-subquery census

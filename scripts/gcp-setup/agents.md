@@ -30,7 +30,35 @@ One-shot GCP infrastructure provisioning scripts. Idempotent; safe to re-run.
 - `alert-policies/cloud-scheduler-job-failure-page.json` OR-combines two conditions, both grouped by `job_id`: failures in every hourly bucket for 3h (covers >=hourly jobs) and >2 failures in 24h (covers 6-hourly and daily jobs, which never fill 3 consecutive hourly buckets). Replayed against the same 24h of real data, this fires on 10 jobs including `generate-reports` and correctly ignores the single-blip jobs.
 - Contract pinned by `scripts/ci/check-scheduler-failure-alert-contract.test.ts`.
 
-**HONESTY / DECLARED-ONLY WARNING.** Verified 2026-08-01 via the Monitoring + Logging REST APIs: project `arkova1` has **ZERO alert policies, ZERO notification channels, and ZERO log-based metrics**. Every JSON in this directory — the SCRUM-1064 SLO burn policies included — is declared-only and has never been applied. `apply-monitoring.sh` hard-fails without `SLACK_OPS_ALERTS_CHANNEL`, and no notification channel exists to point it at. **Do not cite a file here as evidence that an alarm exists.** Wiring it requires a founder-side action: create a notification channel, export it as `SLACK_OPS_ALERTS_CHANNEL`, run `apply-monitoring.sh`, then capture a live delivery (a real page) as proof — the SCRUM-2902 runbook standard.
+**MONITORING STATUS — read this before citing any file here as evidence.**
+
+Until 2026-08-11 this section carried a blanket "ZERO alert policies, ZERO notification channels, ZERO log-based metrics" warning, verified 2026-08-01. That was accurate, and it stayed accurate right through the 2026-08-11 P0: `/api/v1/verify` was down 11m39s and **nothing paged anyone, because no alerting existed in this project at all**. Not alert fatigue — no alerts. (The "~25,000 alerts" that circulated during triage were Cloud Scheduler *log entries*; nothing was ever configured to page on them.) That is a SOC 2 CC7.2 gap, not merely an ops gap.
+
+**What is LIVE as of 2026-08-11 (verified by API read-back, and each one fired at least once in a synthetic test):**
+
+| Resource | Live id | Fired at |
+|---|---|---|
+| Notification channel (email, carson@arkova.io) | `notificationChannels/17147566240859145353` | — |
+| Notification channel (Pub/Sub, delivery proof) | `notificationChannels/2310628978387136093` | — |
+| Log metric `worker_postgrest_schema_cache_failure` | live | — |
+| Log metric `worker_db_lock_wait` | live | — |
+| Uptime check, `/health` **body** assertion | `uptimeCheckConfigs/prod-worker-health-body-asserts-healthy-XarKp-dYAi0` | — |
+| `PAGE — Worker PostgREST schema-cache failure (PGRST002)` | `alertPolicies/14098359722825658198` | incident `0.obbeois2rn7x`, open 17:27:10Z, closed 17:36:41Z |
+| `PAGE — Prod worker /health not healthy (body assertion)` | `alertPolicies/18090367980587783155` | proven via negative-control clone, open 17:44:18Z |
+| `PAGE — Postgres lock wait > 60s on a public relation` | `alertPolicies/2958285134242840887` | open 17:42:22Z, closed 17:46:35Z |
+| `PAGE — arkova-worker 5xx burst` | `alertPolicies/7452330596875115509` | proven via same-shape clone, open 17:48:50Z |
+
+**What is still declared-only:** every SCRUM-1064 SLO burn policy in this directory, and `cloud-scheduler-job-failure-page.json` (SCRUM-3050). Those have never been applied. **Do not cite them as evidence that an alarm exists** — the four rows above are the entire live alerting posture.
+
+**The `${SLACK_OPS_ALERTS_CHANNEL}` variable name is now a misnomer.** `apply-monitoring.sh` still substitutes it verbatim, and the channel it should be pointed at is the *email* one:
+
+```
+export SLACK_OPS_ALERTS_CHANNEL=projects/arkova1/notificationChannels/17147566240859145353
+```
+
+Renaming the variable is a follow-up; pointing it at a channel that exists mattered more than the name.
+
+**Verification standard for anything added here.** Creating an alert policy is not evidence it works — that is the same mistake in a new costume. Cloud Monitoring exposes no public incidents API, so the way to prove delivery is the Pub/Sub channel above: trigger the condition (write a matching log line via `logging.googleapis.com/v2/entries:write`, or stand up a negative-control clone of the policy), then pull `alert-delivery-proof-sub` and read the incident payload. If a policy cannot be shown to have opened an incident and dispatched, it does not count.
 
 ## Conventions
 

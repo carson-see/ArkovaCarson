@@ -100,6 +100,7 @@ import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-comp
 import { runDocusignNotarizationCompletedJobs } from '../jobs/docusign-notarization-completed.js';
 import { runDriveFileChangedJobs } from '../jobs/drive-file-changed.js';
 import { runDbHealthMonitor } from '../jobs/db-health-monitor.js';
+import { runLockWaitMonitor } from '../jobs/lock-wait-monitor.js';
 import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
@@ -1989,6 +1990,32 @@ cronRouter.post('/db-health', async (_req, res) => {
   } catch (error) {
     logger.error({ error }, 'db-health-monitor failed');
     res.status(500).json({ error: 'db-health-monitor failed' });
+  }
+});
+
+// ─── Lock-wait monitor (2026-08-11 P0 early warning) ───
+//
+// Runs every MINUTE, not every 5. The barrier that took /api/v1/verify down on
+// 2026-08-11 formed at ~16:35Z and user impact began at 16:40:11Z; a 5-minute
+// cadence could burn that entire window on a single missed tick. See
+// services/worker/src/jobs/lock-wait-monitor.ts for the log-line contract the
+// Cloud Monitoring alarm depends on.
+
+cronRouter.post('/lock-wait', async (_req, res) => {
+  const monitor = withCronMonitoring('lock-wait-monitor', '* * * * *', async () => {
+    return runLockWaitMonitor();
+  });
+  try {
+    const snapshot = await monitor();
+    res.json({
+      ok: snapshot.waits.length === 0 && !snapshot.degraded,
+      degraded: snapshot.degraded,
+      waitCount: snapshot.waits.length,
+      waits: snapshot.waits,
+    });
+  } catch (error) {
+    logger.error({ error }, 'lock-wait-monitor failed');
+    res.status(500).json({ error: 'lock-wait-monitor failed' });
   }
 });
 

@@ -1,0 +1,45 @@
+{
+  "displayName": "PAGE — Prod worker /health not healthy (body assertion)",
+  "documentation": {
+    "content": "The prod worker's /health endpoint stopped returning a body containing \"status\":\"healthy\" for ~3 consecutive minutes.\n\nWHY BODY AND NOT STATUS CODE: on 2026-08-11 /health returned HTTP 200 with a \"degraded\" body for 11m39s while /api/v1/verify served service_unavailable, and nothing noticed. A 200-only uptime check is blind to exactly this failure.\n\nTRIAGE:\n1. curl https://arkova-worker-270018525501.us-central1.run.app/health -- read checks.database / checks.anchoring / checks.kms to see which subsystem is down.\n2. If checks.database is not ok, check for a PostgREST schema-cache failure (see the PGRST002 alert) and for blocked DDL on hot public tables.\n3. Check Cloud Run revision health and recent deploys.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "/health body missing status:healthy for 3 min",
+      "conditionThreshold": {
+        "filter": "metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND resource.type=\"uptime_url\" AND metric.label.check_id=\"prod-worker-health-body-asserts-healthy-XarKp-dYAi0\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "60s",
+            "perSeriesAligner": "ALIGN_FRACTION_TRUE",
+            "crossSeriesReducer": "REDUCE_MEAN",
+            "groupByFields": [
+              "resource.label.host"
+            ]
+          }
+        ],
+        "comparison": "COMPARISON_LT",
+        "thresholdValue": 0.4,
+        "duration": "180s",
+        "trigger": {
+          "count": 1
+        }
+      }
+    }
+  ],
+  "alertStrategy": {
+    "autoClose": "1800s"
+  },
+  "notificationChannels": [
+    "${SLACK_OPS_ALERTS_CHANNEL}"
+  ],
+  "severity": "CRITICAL",
+  "enabled": true,
+  "userLabels": {
+    "story": "p0_2026_08_11",
+    "surface": "worker_api",
+    "class": "silent_failure"
+  }
+}

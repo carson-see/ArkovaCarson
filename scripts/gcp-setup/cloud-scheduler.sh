@@ -39,6 +39,13 @@ JOBS=(
   # creation is not script-automatable). Tight retry policy so a transient
   # error doesn't suppress the next 5-min slot.
   "db-health-monitor|*/5 * * * *|/jobs/db-health|30s,120s,2"
+  # 2026-08-11 P0 (FIFO lock-queue barrier on public.organizations): fires every
+  # MINUTE, deliberately not every 5. The barrier formed at ~16:35Z and user
+  # impact began at 16:40:11Z, so a 5-minute cadence can spend the whole
+  # detection window between two ticks. Emits the `db_lock_wait` structured log
+  # line consumed by the Cloud Monitoring log-based metric `worker_db_lock_wait`.
+  # Endpoint at services/worker/src/routes/cron.ts.
+  "lock-wait-monitor|* * * * *|/jobs/lock-wait|15s,60s,1"
   # SCRUM-1723: BigQuery export — incremental sync every 5 min for the three
   # append-only tables (anchors, verifications, audit_events). Endpoint at
   # services/worker/src/routes/cron.ts. Watermark-driven; failure does not
