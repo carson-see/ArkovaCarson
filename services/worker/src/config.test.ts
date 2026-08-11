@@ -103,6 +103,7 @@ describe('loadConfig validation', () => {
     // gitleaks:allow — test fixture, satisfies min-length validator only
     process.env.CRON_SECRET = 'test-cron-secret';
     process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
+    process.env.IP_HASH_PEPPER = 'test-ip-hash-pepper-0123456789';
     delete process.env.FRONTEND_URL;
 
     vi.resetModules();
@@ -124,6 +125,7 @@ describe('loadConfig validation', () => {
     // gitleaks:allow — test fixture, satisfies min-length validator only
     process.env.CRON_SECRET = 'test-cron-secret';
     process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
+    process.env.IP_HASH_PEPPER = 'test-ip-hash-pepper-0123456789';
     process.env.FRONTEND_URL = 'https://app.arkova.ai';
 
     vi.resetModules();
@@ -192,6 +194,7 @@ const PROD_BASE_ENV = {
   CRON_SECRET: 'test-cron-secret-1234',
   API_KEY_HMAC_SECRET: 'test-hmac-secret',
   FRONTEND_URL: 'https://app.arkova.ai',
+  IP_HASH_PEPPER: 'test-ip-hash-pepper-0123456789',
 } as const;
 
 const PROD_MAINNET_ENV = {
@@ -243,6 +246,52 @@ async function withConfig<T>(
     return assertions(mod);
   });
 }
+
+/**
+ * IP_HASH_PEPPER — DPA Schedules 1 + 2 warrant that caller IPs are processed in
+ * HASHED form. The public verify + CTDL audit writers pseudonymise `req.ip`
+ * with a keyed HMAC; without the pepper they record no caller identifier at
+ * all. That is acceptable in dev but is a silently-absent security control in
+ * production, so boot must fail — the same posture as API_KEY_HMAC_SECRET.
+ *
+ * These tests are the reason the secret cannot be quietly dropped from the
+ * deploy: removing it turns the whole prod config red, not one audit field.
+ */
+describe('IP_HASH_PEPPER production guard (DPA IP pseudonymisation)', () => {
+  it('rejects production when IP_HASH_PEPPER is unset', async () => {
+    await expectConfigToReject({
+      ...PROD_BASE_ENV,
+      NODE_ENV: 'production',
+      IP_HASH_PEPPER: undefined,
+    });
+  });
+
+  it('rejects production when IP_HASH_PEPPER is too short to be a real secret', async () => {
+    await expectConfigToReject({
+      ...PROD_BASE_ENV,
+      NODE_ENV: 'production',
+      IP_HASH_PEPPER: 'short',
+    });
+  });
+
+  it('accepts production when IP_HASH_PEPPER is set, and exposes it on config', async () => {
+    await withConfig(
+      { ...PROD_BASE_ENV, NODE_ENV: 'production' },
+      (mod) => {
+        expect(mod.config.ipHashPepper).toBe('test-ip-hash-pepper-0123456789');
+      },
+    );
+  });
+
+  it('does NOT require the pepper outside production (dev/test boot stays green)', async () => {
+    await withConfig(
+      { NODE_ENV: 'test', IP_HASH_PEPPER: undefined },
+      (mod) => {
+        expect(mod.config.ipHashPepper).toBeUndefined();
+      },
+    );
+  });
+});
 
 /**
  * SCRUM-1257 (R1-3) — kmsProvider default 'aws' → 'gcp' + fail-loud production guard.

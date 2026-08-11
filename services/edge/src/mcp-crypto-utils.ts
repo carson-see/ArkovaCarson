@@ -16,6 +16,28 @@ export async function sha256Hex(input: string): Promise<string> {
 }
 
 /**
+ * Keyed HMAC-SHA256, hex-encoded.
+ *
+ * Use this — not {@link sha256Hex} — for any low-entropy input whose digest we
+ * persist. An IPv4 address has ~4.3e9 possible values, so a bare sha256 of one
+ * is a rainbow-table lookup away from the plaintext and is an encoding rather
+ * than a pseudonymisation control. Keying with a server-held secret is what
+ * makes the mapping non-invertible off-box.
+ */
+export async function hmacSha256Hex(input: string, key: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(key),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(input));
+  return toHex(signature);
+}
+
+/**
  * Constant-time comparison for two hex strings of equal expected length.
  * Prevents timing side-channel leakage of HMAC signatures.
  */

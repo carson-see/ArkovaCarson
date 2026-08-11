@@ -11,6 +11,8 @@ import { buildCtdlJsonLd, containsHighConfidencePii, CtdlPiiSafetyError, normali
 import { ProhibitedClaimError } from '../../ctdl/ctdl-claims-guard.js';
 import { isCtdlPublishableStatus } from '../../ctdl/ctdl-type-map.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
+import { auditIpHash } from '../../lib/ip-hash.js';
+import { config } from '../../config.js';
 import { db } from '../../utils/db.js';
 import { getCorrelationId } from '../../utils/correlationId.js';
 import { logger } from '../../utils/logger.js';
@@ -74,7 +76,11 @@ function logCtdlRequested(args: AuditArgs): void {
       credential_status: args.credentialStatus ?? null,
       credential_type: args.credentialType ?? null,
       request_id: requestId(args.req),
-      querying_ip: args.req.ip ?? null,
+      // NEVER the raw address — keyed HMAC only, `null` when the pepper is
+      // unavailable. Same reasoning as the verify writer: anonymous public
+      // endpoint, so this is the only actor identifier for abuse
+      // investigation, and the DPA warrants hashed IPs. See lib/ip-hash.ts.
+      querying_ip_hash: auditIpHash(args.req.ip, config.ipHashPepper),
       querying_agent: userAgent(args.req),
       api_key_id: args.req.apiKey?.keyId ?? null,
     }),
