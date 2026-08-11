@@ -538,34 +538,38 @@ describe('GET /verification-status', () => {
 // ─── KYB provenance ratchet (two-grade verification decision, 2026-08-11) ───
 
 /**
- * CTO decision 2026-08-11 (sibling of AUDIT-0424-10 / PR #2134): Arkova runs
- * TWO grades of org verification, both writing `organizations.verification_status`:
+ * Two-grade org verification decision (self-serve vs provider KYB): see this
+ * folder's agents.md, 2026-08-11 entry, for the full record. The invariant this
+ * suite pins: self-serve handlers in THIS file never stamp a `kyb_*` column, so
+ * `kyb_completed_at IS NULL` stays meaningful as the column-level discriminator
+ * (`kyb_completed_at` is the only webhook-exclusive `kyb_*` column — see
+ * agents.md on why `kyb_provider`/`kyb_submitted_at` are weaker signals).
  *
- *   - self-serve (this file): domain-control email + self-attested EIN → 'VERIFIED'.
- *     Deliberate IDT WS4 launch-tier onboarding, NOT provider KYB.
- *   - provider KYB (`api/v1/webhooks/middesk.ts`): Middesk terminal event →
- *     'VERIFIED' + `kyb_completed_at` stamped (`kyb_provider`/`kyb_submitted_at`
- *     via the `start_kyb_verification` RPC in `org-kyb.ts`).
+ * Scope, stated precisely so nobody over-trusts it:
+ *   - Covers ALL FIVE organizations write sites in this file's handlers
+ *     (verify-ein, verify-domain, confirm-domain ×2 branches, dev-verify),
+ *     via BOTH `.update()` and `.insert()` payload capture. A future `.upsert()`
+ *     or `db.rpc()` fails loudly (unmocked → 500 → status assert goes red).
+ *   - Prefix-based (`kyb_*`) over captured payload keys — a future kyb-prefixed
+ *     column is covered, but only for writes that actually FIRE under these
+ *     fixtures. The full-verification fixture deliberately carries
+ *     `kyb_provider`/`kyb_submitted_at` state so a state-conditional stamp
+ *     (the `...(cond ? {...} : {})` house idiom) fires and is caught.
+ *   - This file's handlers ONLY. Writers elsewhere (middesk.ts, stripe
+ *     handlers until PR #2134 lands) are outside this suite — see agents.md
+ *     follow-ups for the repo-wide writer lint.
  *
- * The ONLY durable discriminator between the two grades is that self-serve rows
- * keep every `kyb_*` column NULL. Strong gates (Issue Credential, affiliate
- * creation) ratchet onto `kyb_completed_at IS NOT NULL` once Middesk is
- * provisioned in prod. If any write in THIS file ever stamps a `kyb_*` column,
- * the two grades become permanently indistinguishable and that ratchet is dead —
- * prod forensics too (a VERIFIED row's NULL `kyb_*` is how we proved no org was
- * provider-verified as of 2026-08-11).
- *
- * The assertion is prefix-based (`kyb_*`), not a column census, so a future
- * provenance column is covered without editing this suite.
- *
- * Mutation-verified: adding `kyb_completed_at` to the confirm-domain update
- * turns the first test red.
+ * Mutation-verified: adding `kyb_completed_at` to the confirm-domain update, or
+ * `kyb_submitted_at` to the verify-domain token update, turns exactly one test
+ * red. Payload capture happens at call time; that the writes actually execute
+ * is pinned separately by each route's pre-existing "returns 500 when update
+ * fails" test (a dropped await would break those, not this suite).
  */
 describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns', () => {
   const app = createApp('user-123');
 
-  /** Collects every payload passed to organizations.update() during a request. */
-  function captureOrgUpdates(orgSelectData: Record<string, unknown>) {
+  /** Collects every payload passed to organizations.update()/.insert() during a request. */
+  function captureOrgUpdates(orgSelectData: Record<string, unknown> | null) {
     const captured: Record<string, unknown>[] = [];
     mockFrom.mockImplementation((table: string) => {
       if (table === 'profiles') {
@@ -573,12 +577,14 @@ describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns
       }
       if (table === 'organizations') {
         const chain = mockQuery({ data: orgSelectData, error: null });
-        (chain.update as ReturnType<typeof vi.fn>).mockImplementation(
-          (payload: Record<string, unknown>) => {
-            captured.push(payload);
-            return chain;
-          },
-        );
+        const capture = (payload: Record<string, unknown>) => {
+          // Snapshot, not reference: a handler that mutated the payload object
+          // after the call must not be able to rewrite what we captured.
+          captured.push({ ...payload });
+          return chain;
+        };
+        (chain.update as ReturnType<typeof vi.fn>).mockImplementation(capture);
+        (chain.insert as ReturnType<typeof vi.fn>).mockImplementation(capture);
         return chain;
       }
       return mockQuery({ data: null });
@@ -596,6 +602,11 @@ describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns
       domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
       ein_tax_id: '12-3456789',
       domain_verified: false,
+      // Provider-KYB state present on the row on purpose: a future conditional
+      // "carry-forward" stamp (`...(org.kyb_provider ? { kyb_… } : {})`) must
+      // fire under this fixture so the ratchet catches it.
+      kyb_provider: 'middesk',
+      kyb_submitted_at: new Date(Date.now() - 3600_000).toISOString(),
     });
 
     const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
@@ -622,9 +633,22 @@ describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns
     expect(kybKeysOf(updates)).toEqual([]);
   });
 
+  it('verify-domain token write stamps no kyb_* column', async () => {
+    // The 4th update site in this file — the token write that starts domain
+    // verification. `kyb_submitted_at` is the realistic bad stamp here ("record
+    // when self-serve verification started"), so this route must be pinned too.
+    const updates = captureOrgUpdates({ domain: 'example.com', domain_verified: false });
+
+    const res = await request(app).post('/org/verify-domain').send({});
+    expect(res.status).toBe(200);
+    const tokenWrite = updates.find((p) => 'domain_verification_token' in p);
+    expect(tokenWrite).toBeDefined();
+    expect(kybKeysOf(updates)).toEqual([]);
+  });
+
   it('verify-ein PENDING write stamps no kyb_* column', async () => {
     // organizations is hit twice: duplicate-EIN check (maybeSingle → null), then update.
-    const updates = captureOrgUpdates(null as unknown as Record<string, unknown>);
+    const updates = captureOrgUpdates(null);
 
     const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
     expect(res.status).toBe(200);
@@ -634,7 +658,7 @@ describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns
   });
 
   it('dev-verify grants VERIFIED without any kyb_* column', async () => {
-    const updates = captureOrgUpdates(null as unknown as Record<string, unknown>);
+    const updates = captureOrgUpdates(null);
 
     const res = await request(app).post('/org/dev-verify').send({});
     expect(res.status).toBe(200);
