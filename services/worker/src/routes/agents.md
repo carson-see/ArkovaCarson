@@ -41,3 +41,13 @@ Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test ba
 ## Open work
 - SCRUM-1736 (PR #734) — `scheduled.ts` test counts updated for the new entry (3/3 tests pass after counter bump from 13/8/5 to 14/9/5).
 - Billing integrity (2026-08-10): added `POST /jobs/ai-credit-reconcile` → `runAiCreditReconcileJobs({ limit })` (`../jobs/ai-credit-reconcile.js`), same limit-schema validation / JSON-result / 500-on-error shape as `/docusign-envelope-completed` and `/drive-file-changed` beside it. It drains `ai_credits.reconcile_refund`, the queue `api/v1/ai-extract-batch.ts` writes when an AI-credit refund fails AFTER a successful debit — a producer that shipped with **no consumer at all**, so every "surfaced" overcharge sat `pending` forever. **Production trigger is Cloud Scheduler** (`ai-credit-reconcile`, `*/15 * * * *`, retry `30s,120s,2`, added to `scripts/gcp-setup/cloud-scheduler.sh`); no in-process `scheduled.ts` entry, deliberately — in-process node-cron is dormant under Cloud Run CPU throttling (PROOF-03), and a route whose only "trigger" is dormant cron reproduces the exact defect being fixed. Note for anyone auditing this folder: `/professional-education-extraction` and `/docusign-notarization-completed` are cron routes with **no** scheduler binding, i.e. having a route is not the same as being drained in prod.
+
+## 2026-08-11 — SCRUM-3188 `POST /jobs/supplementary-proof-anchor`
+
+Operator-triggered supplementary proof anchoring (`jobs/supplementary-proof-anchor.ts`). The only route in this service that can spend real mainnet BTC, so it is inert by default and armed by three independent things:
+
+1. `dryRun` defaults **true** — a caller that omits it gets a cost report, not a transaction;
+2. a live run (`dryRun: false`) additionally requires `SUPPLEMENTARY_ANCHOR_CONFIRM === 'EXECUTE'` on the worker, else **403**;
+3. the job re-checks a fee ceiling and a treasury reserve before every batch.
+
+Body params are all validated positive-int / string-array or dropped — an out-of-range `batchSize` falls back to the default rather than being clamped silently to something the operator did not ask for. Deliberately **not** registered in any Cloud Scheduler manifest.

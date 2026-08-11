@@ -288,6 +288,7 @@ NOT_SCHEDULED=(
   "/jobs/materialize-proof-backcatalog|manual operator T3 run (SCRUM-2917); write mode Carson-gated"
   "/jobs/calibration-refit|QA/eval operator run (GME7.3)"
   "/jobs/consolidate-utxos|spends treasury funds; operator-only (chain/treasury T3 surface)"
+  "/jobs/supplementary-proof-anchor|spends real mainnet BTC across the 2.97M-record backlog (SCRUM-3188); operator-only, dryRun defaults true and a live run needs SUPPLEMENTARY_ANCHOR_CONFIRM=EXECUTE — binding a schedule would auto-spend treasury funds"
   # Held pending CTO/product revisit (2026-08-10 decision).
   "/jobs/payment-recovery|mutates payment state; hold until billing GA and Stripe key rotation complete"
   "/jobs/financial-report|no consumer identified; hold until billing GA"

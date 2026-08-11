@@ -50,18 +50,19 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
     source reached `main` via #2068. Gate confirmed green post-merge on fresh runs (queue branches,
     `claude/frosty-colden-9799e7`, dependabot PR; workflow `migration-drift.yml`, 2026-08-11
     ~16:41–16:44Z).
-  - **Known gap (not yet fixed):** the audit cannot detect a stale exemption on its own —
-    `scripts/ci/check-ledger-numeric-integrity.ts` short-circuits on `exemptPrefixes.has(version)`
-    *before* it checks `localPrefixes`, so a reconciled-but-still-exempt prefix is skipped silently
-    and forever. Every stale entry so far (`0404`, then `0401`/`0407`, and 15 more on 2026-08-02) was
-    caught by a human. Until that check is inverted, removal is a manual discipline.
-  - **Open follow-up — do not let these rot.** Still legitimately exempt as of 2026-08-11:
-    `0405` (owning PR [#2081](https://github.com/carson-see/ArkovaCarson/pull/2081)) and `0406`
-    (branch `feat/proof-coverage-permanent-fix`) — both in the prod ledger, neither source on `main`.
-    Remove each the moment its owning PR merges. **Re-derive this list from the invariant above
-    rather than trusting these two entries** — the previous version of this bullet listed only
-    `0401`/`0402`/`0405` and silently omitted `0406`/`0407`, which #2174 had added the same day; a
-    checklist that omits an entry is worse than none, because it terminates the search.
+  - **Closed 2026-08-11 — the ledger is fully reconciled and CI now polices it.** `exemptPrefixes`
+    is `[]`; prod ledger head is `0407` and `main` carries `0400`–`0407` inclusive, so every prod row
+    has its source. Verified with the `list_migrations` MCP tool against `vzwyaatejekddvltxyye` plus
+    a listing of `origin/main`, not assumed. `0405` landed via #2081 and `0406` via its own PR.
+  - **No manual checklist here any more, on purpose.** This bullet twice carried an enumeration of
+    exempt prefixes and both times it was wrong within hours — the first listed
+    `["0401","0402","0405"]` and went stale in two hours; the second omitted `0406`/`0407` entirely.
+    [#2182](https://github.com/carson-see/ArkovaCarson/pull/2182) removes the need for one:
+    `auditStaleExemptions()` in `scripts/ci/check-ledger-numeric-integrity.ts` now reports any
+    exemption that is present in prod AND already on `main`, on every PR. It is **warn-only by
+    design** — it evaluates the whole ledger on every PR, so a fatal version would red the entire
+    board for hygiene debt, which is exactly the failure this section documents. Read the file and
+    the CI warning; do not maintain a prefix list in prose.
 - Migrations applied to prod and reconciled today (2026-08-02/03): `0382`, `0383`, `0384`, `0385`,
   `0386`, `0387`, `0388`, `0389`, `0390`, `0391`, `0392` — all verified live via `pg_get_functiondef` /
   `pg_index` / direct query at apply time; see the exemption file's `_comment` history for the per-row
@@ -109,6 +110,28 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
   (no worker surface to soak; live-screenshot UAT was attempted but blocked by an unrelated local-only
   Supabase JWKS bug, flagged separately as background task `task_3846967f` rather than chased further).
   Opened for review, not queued toward Ready.
+- **New PR opened 2026-08-11** (`services/worker/src/jobs/treasury-cache.ts`,
+  `utils/mempool-url.ts`, `jobs/treasury-alert.ts`, `api/treasury.ts`): treasury-cache built its
+  mempool.space base from a hardcoded MAINNET literal while `createUtxoProvider` selected
+  per-network, so every non-mainnet deployment asked the mainnet explorer about its own address.
+  mempool.space answers `HTTP 400 Address on invalid network`; the job's `res.ok ? … : null` ladder
+  turned that into a silent null and it booked `balance_confirmed_sats = 0` with `error: null` —
+  which is why treasury-alert fired "oracle unavailable / below_threshold" continuously.
+  Reproduced live on the 2026-08 full-soak rig (signet) against an address holding ~749k sats that
+  the anchoring path was concurrently spending from. Fixed by moving the per-network base map into
+  `utils/mempool-url.ts` as the single source of truth. **Found while fixing:** routing `/v1/prices`
+  per-network the same way would NOT have been correct — the non-mainnet explorers serve it with
+  HTTP 200 and a `-1` sentinel, and a negative price makes every USD balance negative, i.e. below
+  every threshold, so the false alert would have become a worse one that looks like a real reading;
+  the price leg stays pinned to mainnet and non-positive quotes are now rejected at all three
+  consumers. TDD failing-test-first (20 red → green); local typecheck/lint clean, 94 targeted tests
+  green, plus a parity ratchet that drives the real `createUtxoProvider` per network so the two
+  maps cannot silently drift again. T2 by path rule (`services/worker/src/jobs|api|utils`); opened
+  for review only, not queued toward Ready — no staging soak was run, see the PR's own evidence
+  block for the honest disclosure and the `SOAK_GATE_DISABLED` state checked at open time.
+  **Flagged, not fixed:** `chain/fee-estimator.ts` has the same mainnet-only default, so a
+  non-mainnet deployment reports mainnet fee rates — that fix is T3 (`chain/`) and is tracked
+  separately rather than folded in.
 
 ### Soaks
 
@@ -1116,4 +1139,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-03 by CTO session — claims verified against gcloud/MCP/CI output, not asserted from prior-session prose._
+_Last refreshed: 2026-08-11 by CTO session — claims verified against gcloud/MCP/CI output, not asserted from prior-session prose._

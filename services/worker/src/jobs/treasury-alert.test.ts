@@ -135,6 +135,48 @@ describe('decideTreasuryAlert — fail-closed on oracle outage', () => {
     });
     expect(d.should_fire).toBe(false);
   });
+
+  /**
+   * BUG-2026-08-11: mempool.space's non-mainnet explorers answer /v1/prices
+   * with HTTP 200 and a `-1` sentinel rather than a 404. treasury-cache now
+   * rejects that before it is stored, but this decision function is the last
+   * line: a non-positive price multiplied by the balance yields a negative
+   * balance_usd, which is below EVERY threshold — so a bad oracle reading
+   * would masquerade as a genuine low-balance alert with a real-looking
+   * number attached. Treat it as an outage instead.
+   */
+  it.each([-1, 0, Number.NaN, Number.POSITIVE_INFINITY])(
+    'treats a %s price as an oracle outage, not a real quote',
+    (badPrice) => {
+      const d = decideTreasuryAlert({
+        balance_confirmed_sats: 50_000_000,
+        btc_price_usd: badPrice,
+        last_alert_at: null,
+      });
+      expect(d.price_unknown).toBe(true);
+      expect(d.balance_usd).toBe(null);
+      expect(d.reason).toBe('Price or balance oracle unavailable');
+    },
+  );
+
+  it('never reports a negative balance_usd', () => {
+    const d = decideTreasuryAlert({
+      balance_confirmed_sats: 749_062,
+      btc_price_usd: -1,
+      last_alert_at: null,
+    });
+    expect(d.balance_usd === null || d.balance_usd >= 0).toBe(true);
+  });
+
+  it('still accepts a small but genuine price', () => {
+    const d = decideTreasuryAlert({
+      balance_confirmed_sats: 100_000_000,
+      btc_price_usd: 0.5,
+      last_alert_at: null,
+    });
+    expect(d.price_unknown).toBe(false);
+    expect(d.balance_usd).toBe(0.5);
+  });
 });
 
 describe('buildSlackAlertPayload', () => {

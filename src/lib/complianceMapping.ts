@@ -71,9 +71,19 @@ export const COMPLIANCE_CONTROLS: Record<string, ComplianceControl> = {
   'eIDAS-25': ctrl('eIDAS-25', 'eIDAS', 'eIDAS Art. 25', 'Electronic signatures and seals — timestamped cryptographic proof of document state'),
   'eIDAS-35': ctrl('eIDAS-35', 'eIDAS', 'eIDAS Art. 35', 'Qualified electronic time stamps — network-observed timestamp via public anchoring'),
   'HIPAA-164.312': ctrl('HIPAA-164.312', 'HIPAA', 'HIPAA §164.312', 'Technical safeguards — integrity controls and audit controls for electronic PHI'),
-  'HIPAA-164.312-MFA': ctrl('HIPAA-164.312-MFA', 'HIPAA', 'HIPAA §164.312(d) MFA', 'Person or entity authentication — multi-factor authentication enforced for PHI access'),
+  // SCRUM/R-7 claims gate: these two descriptions previously asserted that MFA
+  // and automatic logoff were ENFORCED. Neither is. MFA login enforcement shipped
+  // in PR #1973 and was reverted in 6d10032b4 after a lockout incident; there is
+  // no `aal2` check anywhere in the app or worker, and `useHipaaMfaGate` has zero
+  // non-test importers. Enrollment is available via TwoFactorSetup (wired into
+  // SettingsPage) but is opt-in. Likewise `useIdleTimeout` has zero non-test
+  // importers, so `organizations.session_timeout_minutes` is stored and never
+  // acted on. Asserting either as enforced is a false control claim on a
+  // regulated surface — the same defect class as the SCRUM-2283 DPF removal
+  // above. Do not restore "enforced" wording without a wired, tested control.
+  'HIPAA-164.312-MFA': ctrl('HIPAA-164.312-MFA', 'HIPAA', 'HIPAA §164.312(d) MFA', 'Person or entity authentication — multi-factor authentication is available as an opt-in account setting; it is not required for access to this record'),
   'HIPAA-164.312-AUDIT': ctrl('HIPAA-164.312-AUDIT', 'HIPAA', 'HIPAA §164.312(b) Audit', 'Audit controls — hardware, software, and procedural mechanisms to record PHI access'),
-  'HIPAA-164.312-SESSION': ctrl('HIPAA-164.312-SESSION', 'HIPAA', 'HIPAA §164.312(a)(2)(iii) Session', 'Automatic logoff — session timeout for inactive PHI access sessions'),
+  'HIPAA-164.312-SESSION': ctrl('HIPAA-164.312-SESSION', 'HIPAA', 'HIPAA §164.312(a)(2)(iii) Session', 'Automatic logoff — session timeout is configurable per organization but is not currently applied to active sessions'),
   // International frameworks (REG-27)
   'KENYA-DPA-25': ctrl('KENYA-DPA-25', 'Kenya DPA', 'Kenya DPA §25', 'Data protection principles — lawful, fair, and transparent processing of personal data'),
   'KENYA-DPA-48': ctrl('KENYA-DPA-48', 'Kenya DPA', 'Kenya DPA §48', 'Cross-border transfer controls — Standard Contractual Clauses for international transfers'),

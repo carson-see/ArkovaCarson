@@ -796,6 +796,22 @@ depends on supabase-js `.eq()` path-string tolerance and warrants its own verifi
 - `docusign-notarization-completed.ts` (SCRUM-1872) — `processDocusignNotarizationCompletedJob()` handles queued `docusign.notarization_completed` jobs. Looks up `legally_binding_attestations` by `docusign_envelope_id`, validates org match (cross-tenant guard) and status (`pending_notarization`), updates row to `notarized` with notary metadata, writes NOTARIZATION_COMPLETED audit event. `runDocusignNotarizationCompletedJobs()` is the queue runner. Handler throws on processor failure so `processNextJob` correctly marks the job as failed (not completed).
 - **`anchorExpirySweep.ts` (SCRUM-1736)** — daily 03:00 UTC sweep that flips `anchors.status` from SECURED to EXPIRED past `expires_at` and dispatches `anchor.expired` outbound webhook. Compare-and-set on UPDATE guards against concurrent revocation. Sentinel `anchor.expired_dispatch_failed` audit row written if dispatch throws so manual recovery is possible (per CodeRabbit PR #734 review). Adapter validates every write via Zod (`AnchorIdSchema`, `AuditEventRowSchema`).
 - **`treasury-cache.ts`** — `refreshTreasuryCache()`. Fetches treasury balance, BTC price, fee rates, UTXO count, network info, and anchor stats (via `../utils/anchor-stats.ts`), then upserts into `treasury_cache` singleton. SCRUM-1786: sentinel guard prevents -1 from overwriting last-good cached values.
+  - **BUG-2026-08-11 — two mempool bases, deliberately.** `mempoolApiUrl()` resolves the
+    NETWORK-SCOPED endpoints (`/address/…`, `/v1/fees/recommended`) via
+    `mempoolApiBaseForNetwork(config.bitcoinNetwork)`; `priceApiUrl()` pins `/v1/prices` to the
+    MAINNET base. Do not "simplify" these back into one. The fallback used to be the mainnet base
+    verbatim, so a signet deployment asked the mainnet explorer about a signet address — that
+    answers `HTTP 400 Address on invalid network`, the `res.ok ? … : null` ladder turned it into a
+    silent null, and the job booked `balance_confirmed_sats = 0` with `error: null`. treasury-alert
+    then fired every 5 minutes. But routing `/v1/prices` per-network is NOT the fix: the non-mainnet
+    explorers serve it with HTTP 200 and a `-1` sentinel, and a negative price makes every
+    USD balance negative, i.e. below every threshold. `normalizeBtcPrice` rejects non-positive /
+    non-finite quotes so a bad oracle reads as `price_unknown` rather than a fake low balance.
+    The UTXO provider built in the same function was always per-network, which is why
+    `utxo_count` and `block_height` stayed correct while the balance read zero.
+- **`treasury-alert.ts`** — `usableBtcPrice()` is the last line of the same defence: a stored or
+  stale non-positive price is treated as an oracle outage, never multiplied into `balance_usd`.
+  Mirrored in `../api/treasury.ts`'s health endpoint.
 - **`stuck-anchor-monitor.ts` (SCRUM-2234 / 2026-06-01 incident)** — pipeline-stall watchdog. `decideStuckAnchorAlert()` is a pure, clock-injectable decision fn; `runStuckAnchorCheck(db)` is the cron glue. Measures the AGE of the oldest non-deleted PENDING anchor (`select created_at from anchors where status='PENDING' and deleted_at is null order by created_at asc limit 1` — index-backed LIMIT 1, NOT count(*)) and, when it exceeds `STUCK_ANCHOR_ALERT_HOURS` (default 24h), logs at error level + calls `captureStuckAnchorAlert()` so hourly re-fires share the stable `stuck-anchor-monitor` Sentry fingerprint. Alert context stays aggregate-only (age, pending count, threshold; read from `pipeline_dashboard_cache`, never counted). Distinct from `pipeline-health.ts`: that keys off `updated_at`/30-min + emails; the daily-flush 401 blackout left a *fresh* `updated_at` but *stale* `created_at`, so this is the missed signal. The oldest-PENDING query throws on DB error (cron route → 500, Scheduler retries); a detected stall returns 200 (a correct detection, no retry). Pure fn + cron-glue shape mirrors `connector-health-alert.ts` / `treasury-alert.ts`.
 
 ## Conventions
@@ -973,6 +989,24 @@ New `ai-credit-reconcile.ts` drains the queue `api/v1/ai-extract-batch.ts` write
 ### (C) The class is now CI-enforced
 
 `scripts/ci/check-job-queue-parity.ts` (npm `ci:job-queue-parity`, wired into the `policy-lints` job) fails the build on any `submitJob` type with no consumer, any consumer with no producer, any unresolvable type expression, and any `.from('job_queue')` write outside the allow-listed queue internals (`utils/jobQueue.ts`, `run-lease.ts`, `proofJobCheckpoint.ts` — leases and checkpoints are not queued work). Verified against `origin/main` (`25e1d32`): it names both defects at `ai-extract-batch.ts:173` and `rule-action-dispatcher.ts:856`.
+## 2026-08-11 — SCRUM-3188 supplementary proof anchor (`supplementary-proof-anchor.ts`)
+
+Operator-triggered job that gives the 2,969,630 SECURED anchors with no per-document proof a verifiable branch, by committing their fingerprints into a NEW Bitcoin transaction whose leaf order IS recorded. `POST /jobs/supplementary-proof-anchor`. **Not on any Cloud Scheduler manifest — spending money stays a human decision.**
+
+The job is pure policy over an injected `SupplementaryPorts` interface; `supplementary-proof-anchor.adapter.ts` is the only file that touches db/chain/treasury. Four properties, each with tests:
+
+1. **The original attestation is never touched.** `anchors.chain_tx_id` / `chain_timestamp` / `chain_block_height` / `chain_block_hash` stay as they are. Structural: `SupplementaryPorts` contains **no capability to write to `anchors`** (a test asserts the absence), and `insert_supplementary_proofs` (0408) only INSERTs into `anchor_proofs` and re-derives the supplemented txid from `anchors.chain_tx_id` instead of trusting the caller.
+2. **Never broadcasts twice.** Sign → journal → broadcast, never reordered (pinned by test). `supplementary_anchor_journal`'s partial unique indexes make a live txid/batch unrepeatable; `EXACT_REPLAY` ⇒ defer without broadcasting. An ambiguous broadcast (timeout/5xx) **HOLDs and stops the run** — never REVERTs, because "we do not know" is not "it did not happen".
+3. **Never writes an unverified proof.** The committed root is read back from the tx's OP_RETURN on-chain via `extractAnchorFingerprint`, and `buildVerifiedSupplementaryProofRows` re-verifies EVERY branch against it before any row is built. Batch-of-1 is not exempt.
+4. **Never drains the treasury.** Fee ceiling (default 5 sat/vB) + treasury reserve (default 100,000 sats), re-checked before every batch; halts at the reserve floor with partial progress.
+
+Armed by three independent things and inert by default: `dryRun` defaults **true**; a live run also needs `SUPPLEMENTARY_ANCHOR_CONFIRM=EXECUTE`; and the spend guards. Batch size is 10,000 and is **independent of** `config.batchAnchorMaxSize` — widening that production Zod boot-gate to use 50k batches would save ~111k sats (~$120) across the whole backlog and risk the live producer, so it is deliberately not touched.
+
+Modelled in `machines/bitcoinAnchor.machine.ts` (`supplementaryProof`, invariant `supplementaryRequiresOriginalAttestation`). Runbook: `docs/runbooks/ops/supplementary-proof-anchor.md`. Complements PR #2130, which recovers the 608 records whose original leaf order IS searchable.
+
+### `batch-anchor.leaf-order-roundtrip.test.ts` — the ratchet
+
+Pins that the leaf order the producer PERSISTS (`anchor_txid_journal.leaf_order`) rebuilds the EXACT root it COMMITTED, driving the real `processBatchAnchors` and the real (now exported) `sortAnchorsForBatch` rather than copies. Includes a negative control asserting the raw claim-arrival order does NOT reproduce the root — i.e. that the recorded order is load-bearing, which is precisely what the Mar/Apr producer lacked.
 ## proof-coverage-monitor.ts (SCRUM-3187)
 
 - **Guards the product's headline promise.** Offline-forever verification requires a per-document inclusion proof on every SECURED anchor. This is the standing alarm on that invariant, and it exists because the gap was found by hand, not by an alert: prod held 3,474,760 SECURED anchors against 505,357 proof rows (85.5% uncovered) with nothing watching.

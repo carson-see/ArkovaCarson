@@ -530,6 +530,72 @@ describe('handleTreasuryHealth — DB error 500', () => {
   });
 });
 
+/**
+ * BUG-2026-08-11: the health endpoint gated on `btc_price_usd == null`, so a
+ * `-1` sentinel row (what mempool.space's non-mainnet explorers return from
+ * /v1/prices with HTTP 200) produced a NEGATIVE balance_usd reported as a
+ * real reading, with below_threshold true. treasury-cache no longer writes
+ * such a row, but the endpoint must not trust one it happens to read.
+ */
+async function runHealthWithCachedPrice(
+  btcPriceUsd: number | null,
+  balanceSats: number | null = 749_062,
+): Promise<Response> {
+  const { db } = await import('../utils/db.js');
+
+  vi.mocked(db.from).mockImplementation(((table: string) => {
+    if (table === 'profiles') {
+      return buildChain('select.eq.single', {
+        data: { is_platform_admin: true },
+        error: null,
+      });
+    }
+    if (table === 'treasury_cache') {
+      return buildChain('select.limit.maybeSingle', {
+        data: {
+          balance_confirmed_sats: balanceSats,
+          btc_price_usd: btcPriceUsd,
+          updated_at: '2026-08-11T00:00:00Z',
+        },
+        error: null,
+      });
+    }
+    if (table === 'treasury_alert_state') {
+      return buildChain('select.eq.maybeSingle', { data: null, error: null });
+    }
+    throw new Error(`Unexpected db.from('${table}')`);
+  }) as never);
+
+  const res = createMockRes();
+  await handleTreasuryHealth('admin-123', {} as Request, res);
+  return res;
+}
+
+describe('handleTreasuryHealth — price sentinel (BUG-2026-08-11)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([-1, 0, Number.NaN])(
+    'reports price_unknown for a %s cached price instead of a negative balance',
+    async (sentinel) => {
+      const res = await runHealthWithCachedPrice(sentinel);
+
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ price_unknown: true, balance_usd: null }),
+      );
+    },
+  );
+
+  it('still reports a real balance for a valid cached price', async () => {
+    const res = await runHealthWithCachedPrice(65_000, 100_000_000);
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ price_unknown: false, balance_usd: 65_000 }),
+    );
+  });
+});
+
 // ─── CIBA-HARDEN-03: parseThresholdUsd ────────────────────────────────────────
 describe('parseThresholdUsd', () => {
   // Dynamic import so vitest doesn't pre-evaluate the db mock block above for
