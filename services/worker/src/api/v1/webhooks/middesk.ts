@@ -24,6 +24,7 @@ import {
   parseMiddeskWebhookPayload,
   mapMiddeskEventToStatus,
 } from '../../../integrations/kyb/middesk.js';
+import type { MiddeskWebhookEventT } from '../../../integrations/kyb/middesk.js';
 
 export const middeskWebhookRouter = Router();
 
@@ -57,8 +58,10 @@ middeskWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  // Parse + validate the envelope.
-  let event;
+  // Parse + validate the envelope. Explicitly typed rather than left to
+  // control-flow inference: `releaseNonce` below closes over `event`, and an
+  // untyped `let` widens to `any` inside a closure (TS7034/TS7005).
+  let event: MiddeskWebhookEventT;
   try {
     event = parseMiddeskWebhookPayload(rawBody);
   } catch (err) {
@@ -86,6 +89,42 @@ middeskWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
+  /**
+   * AUDIT-0424-10 — release the replay nonce before returning any post-nonce
+   * 5xx.
+   *
+   * The nonce row is committed above, before the kyb_events insert and the
+   * organizations update. Without this compensation a downstream failure is
+   * unrecoverable rather than retryable: Middesk re-presents the same
+   * `event.id`, the insert hits the UNIQUE violation, and the handler answers
+   * `200 {duplicate:true}` — so the KYB outcome is dropped AND the provider is
+   * told it succeeded. That is why the un-widened CHECK constraint lost
+   * rejections silently instead of retrying loudly.
+   *
+   * Deleting the nonce restores exactly-once-on-success semantics: the row is
+   * the claim on in-flight work, so it is released only when that work did not
+   * happen. The success path never calls this, so replay protection for
+   * genuinely duplicate deliveries is unchanged. Mirrors the
+   * `webhook_event_claims` compensating delete in stripe/handlers.ts.
+   */
+  async function releaseNonce(reason: string): Promise<void> {
+    // eslint-disable-next-line arkova/missing-org-filter -- webhook ingress: nonce is provider-scoped, not org-scoped
+    const { error: releaseErr } = await dbUntyped
+      .from('kyb_webhook_nonces')
+      .delete()
+      .eq('nonce', event.id);
+    if (releaseErr) {
+      // Nothing further we can do — log loudly. The event is now stuck and
+      // needs manual replay from the Middesk dashboard.
+      logger.error(
+        { releaseErr, reason, nonce: event.id },
+        'Failed to release Middesk webhook nonce — event will not be reprocessed on retry',
+      );
+      return;
+    }
+    logger.warn({ reason, nonce: event.id }, 'Released Middesk webhook nonce so retry can reprocess');
+  }
+
   // Never use PostgREST `.or()` with payload-derived strings — even though
   // the envelope is HMAC-verified, `external_id` is attacker-influenced
   // (we set it when registering the business and Middesk echoes it back).
@@ -104,6 +143,7 @@ middeskWebhookRouter.post('/', async (req: Request, res: Response) => {
 
   if (orgErr) {
     logger.error({ orgErr }, 'Middesk webhook: org lookup failed');
+    await releaseNonce('org_lookup_failed');
     res.status(500).json({ error: { code: 'org_lookup_failed' } });
     return;
   }
@@ -131,7 +171,9 @@ middeskWebhookRouter.post('/', async (req: Request, res: Response) => {
 
   if (eventErr) {
     logger.error({ eventErr }, 'Failed to insert kyb_events row');
-    // Middesk will retry — return 5xx intentionally.
+    // Middesk will retry — return 5xx intentionally. The nonce must be released
+    // first or that retry is answered as a duplicate and the event is lost.
+    await releaseNonce('event_insert_failed');
     res.status(500).json({ error: { code: 'event_insert_failed' } });
     return;
   }
@@ -153,6 +195,13 @@ middeskWebhookRouter.post('/', async (req: Request, res: Response) => {
       .eq('id', org.id);
     if (updErr) {
       logger.error({ updErr }, 'Failed to update org verification status');
+      // A KYB outcome that cannot be written must stay retryable — releasing
+      // the nonce is what makes the next delivery reprocess instead of being
+      // dismissed as a duplicate. The kyb_events row already inserted above is
+      // the durable record that the event arrived; the retry re-inserts it,
+      // which is acceptable (append-only provider log, distinct row per
+      // delivery) and strictly better than losing the transition.
+      await releaseNonce('org_update_failed');
       res.status(500).json({ error: { code: 'org_update_failed' } });
       return;
     }
