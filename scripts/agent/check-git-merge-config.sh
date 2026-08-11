@@ -64,6 +64,158 @@ fix_hint() {
 EOF
 }
 
+# ---------------------------------------------------------------------------
+# Command-string mode: `check-git-merge-config.sh --command "<shell command>"`
+#
+# 2026-08-11, PR #2061: the SAME data loss recurred with a clean `.git/config`.
+# The merge was run as
+#
+#     git -c merge.union.driver=true merge origin/main
+#
+# `-c` sets config for ONE invocation only — it writes no config file, so the
+# config scan below sees nothing and passes, and the PreToolUse hook is not a
+# child of that git process so `GIT_CONFIG_PARAMETERS` is not in its environment
+# either. The override is invisible to every config-based check by construction.
+# It dropped main's DPA/IP-hashing section from
+# `services/worker/src/api/v1/agents.md` and the cron-route trigger-decision rule
+# from `services/worker/src/routes/agents.md`; only the append-only CI gate
+# caught it.
+#
+# Verified in a scratch repo: with `agents.md merge=union` in `.gitattributes`,
+# `git -c merge.union.driver=true merge theirs` exits 0, prints "Auto-merging"
+# and "Merge made by the 'ort' strategy", and the line unique to "theirs" is
+# simply absent afterwards. Plain `git merge theirs` keeps it.
+#
+# Rule: a TRANSIENT driver override is rejected under any name. Legitimate
+# custom drivers are configured persistently alongside `.gitattributes`, where
+# the config scan below already adjudicates them on their merits (a real custom
+# driver passes there). Nothing needs a one-shot driver override, so there is no
+# false-positive case to protect.
+#
+# Deliberately NOT flagged: `git config <non-builtin>.driver <real command>`,
+# which is how a legitimate driver is installed. Persisting a BUILT-IN name is
+# flagged, because that is never right whatever the command does.
+scan_command_string() {
+  local raw="$1" cmd offenders
+
+  [[ -z "$raw" ]] && return 0
+
+  # A heredoc BODY is data being written, not a command being run. Writing about
+  # this bug — a commit message, a runbook, an incident note that quotes the
+  # offending command — must not be blocked by the guard against it, or people
+  # route around the guard and it stops protecting anything. Found by
+  # dogfooding: the commit that introduced this hook was blocked by its own
+  # commit message. Everything OUTSIDE a heredoc, before or after, is still
+  # scanned, so an override that actually executes is still caught.
+  raw=$(printf '%s\n' "$raw" | awk '
+    !inhd {
+      if (match($0, /<<-?[ \t]*[^ \t;&|<>()]+/)) {
+        tag = substr($0, RSTART, RLENGTH)
+        sub(/^<<-?[ \t]*/, "", tag)
+        gsub(/[\047"]/, "", tag)          # \047 = single quote
+        if (tag ~ /^[A-Za-z_][A-Za-z0-9_]*$/) { inhd = 1; hdtag = tag }
+      }
+      print; next
+    }
+    {
+      t = $0
+      sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+      if (t == hdtag) { inhd = 0; hdtag = "" }
+      next
+    }
+  ')
+
+  # Normalize shell quoting so `-c 'merge.union.driver=true'`, `-c
+  # merge.union.driver='true %O %A %B'` and the bare form all match alike.
+  cmd=$(printf '%s' "$raw" | tr -d "\"'")
+
+  # 1. Transient per-invocation override: -c / --config-env / the env var git
+  #    itself uses to pass -c down to subprocesses.
+  # `--` terminates grep's own option parsing: BSD grep reads a pattern that
+  # starts with `--config-env` as a (bogus) long flag and aborts otherwise.
+  if printf '%s' "$cmd" | grep -qE -- '(^|[[:space:]])-c[[:space:]]*merge\.[A-Za-z0-9._-]+\.driver' \
+     || printf '%s' "$cmd" | grep -qE -- '--config-env[=[:space:]]merge\.[A-Za-z0-9._-]+\.driver' \
+     || printf '%s' "$cmd" | grep -qE -- 'GIT_CONFIG_PARAMETERS=.*merge\.[A-Za-z0-9._-]+\.driver'; then
+    offenders=$(printf '%s' "$cmd" | grep -oE -- 'merge\.[A-Za-z0-9._-]+\.driver[^[:space:]]*' | sort -u | tr '\n' ' ')
+    echo "ERROR: transient merge-driver override on the command line: ${offenders}" >&2
+    echo "  A per-invocation driver override REPLACES git's algorithm for every" >&2
+    echo "  path with a matching 'merge=' attribute (this repo: agents.md, ~200" >&2
+    echo "  files). If the command is a no-op such as 'true', git records a clean" >&2
+    echo "  merge, keeps \"ours\", and silently discards \"theirs\" — no conflict," >&2
+    echo "  no warning, exit 0. This is the 2026-08-11 PR #2061 content loss." >&2
+    cat >&2 <<'EOF'
+
+  To union-merge in this repo, just run the merge with NO override:
+
+      git merge origin/main
+
+  `.gitattributes` already declares `agents.md merge=union`, so git's BUILT-IN
+  union driver is applied automatically. The flag does not enable union
+  merging — it disables it.
+
+  After any merge that touched an agents.md, confirm nothing was dropped:
+
+      git diff origin/main HEAD -- '*agents.md' | grep -E '^-[^-]'
+
+  Empty output = no content lost. Output means "go look", not "you broke it" —
+  an in-place edit shows the old line as '-' too. The adjudicator, which does
+  keyed/containment matching to avoid that false positive:
+
+      BASE_REF_SHA=$(git rev-parse origin/main) \
+        npx tsx scripts/ci/check-agents-md-append-only.ts
+EOF
+    return 1
+  fi
+
+  # 2. Persisting a BUILT-IN driver name via `git config`. Reads and unsets are
+  #    explicitly allowed — fix_hint() tells the operator to run exactly those.
+  if printf '%s' "$cmd" | grep -qE -- 'git[[:space:]]+config' \
+     && printf '%s' "$cmd" | grep -qE -- 'merge\.(union|text|binary)\.driver' \
+     && ! printf '%s' "$cmd" | grep -qE -- '(--unset|--get|--list|--show-origin|--edit|[[:space:]]-e[[:space:]])'; then
+    echo "ERROR: this defines a git BUILT-IN merge driver in config." >&2
+    echo "  'union', 'text' and 'binary' are built into git and need NO driver" >&2
+    echo "  config. Defining one OVERRIDES the real algorithm for every path with" >&2
+    echo "  that merge attribute — the 2026-07-28 incident, in persistent form." >&2
+    echo "  Remove the driver name, or pick a name that is not a built-in." >&2
+    return 1
+  fi
+
+  return 0
+}
+
+mode="config"
+command_string=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --command)
+      mode="command"
+      command_string="${2:-}"
+      shift
+      [[ $# -gt 0 ]] && shift
+      ;;
+    --command=*)
+      mode="command"
+      command_string="${1#--command=}"
+      shift
+      ;;
+    -h | --help)
+      echo "usage: check-git-merge-config.sh [--command '<shell command>']"
+      echo "  no args    scan git config at every scope (session bootstrap)"
+      echo "  --command  scan one shell command for transient driver overrides"
+      exit 0
+      ;;
+    *)
+      echo "ERROR: unknown argument '$1'" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ "$mode" == "command" ]]; then
+  scan_command_string "$command_string"
+  exit $?
+fi
+
 violations=0
 
 # --show-origin so the operator knows WHICH config file to edit (local/global/system).
