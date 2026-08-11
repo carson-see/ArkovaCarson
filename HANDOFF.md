@@ -23,10 +23,28 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 - Worker `git_sha 18d33efcfb5366d121baf77f132fad545bf1f3cb` (short `18d33efcf`); deploy-worker run
   succeeded 2026-08-03T02:49Z (canary→full), `/health` verified live: `status: healthy`,
   `database/anchoring/kms: ok`.
-- **Migration ledger is fully reconciled — `scripts/ci/snapshots/ledger-numeric-exemptions.json`
-  `exemptPrefixes` is `[]`.** Every migration applied to prod now has its source `.sql` on `main`. This
-  is the first time today the orphan-row set has been empty; verified by reading the file directly, not
-  assumed.
+- **Migration ledger is NOT fully reconciled (supersedes the 2026-08-03 `exemptPrefixes is []` claim
+  in this bullet).** As of **2026-08-11**, `scripts/ci/snapshots/ledger-numeric-exemptions.json`
+  `exemptPrefixes` is **`["0401", "0402", "0405"]`** — read from `origin/main` after PR
+  [#2136](https://github.com/carson-see/ArkovaCarson/pull/2136) merged, not assumed. Prod ledger head
+  is `0405`; `0401_fix_create_pending_recipient_rpc_fk_and_role` and `0402_retire_activate_user_rpc`
+  are present in prod with numeric versions — **verified this session via Supabase MCP
+  `list_migrations` on `vzwyaatejekddvltxyye`**, not inferred from PR prose.
+  - **Why it drifted:** `0401`/`0402` were applied to prod ahead of their owning PRs (migrate-before-
+    merge), which put the `Check supabase/migrations vs prod` gate into a **mutual deadlock** that
+    reddened *every* open PR at once, including PRs touching no migrations. #2047 carries `0401` so
+    only `0402` fired on it; #2062 carries `0402` so only `0401` fired on it. Each PR fixed its own
+    orphan and was held red by the other, so neither could merge and neither file could reach `main`.
+    "Merge the owning PR" was therefore not reachable from that state.
+  - **Fix:** #2136 exempted both prefixes (the in-flight enabler, not a substitute for landing the
+    source) and dropped the now-stale `0404` — `0404_dpa_redact_raw_querying_ip_and_correct_ip_hash_
+    comment.sql` is on `main` via #2068, so its exemption was masking future drift on that prefix.
+    Gate confirmed green post-merge on fresh runs (queue branches + `claude/frosty-colden-9799e7` +
+    dependabot PR, GH Actions workflow `migration-drift.yml`, 2026-08-11 ~16:41–16:44Z).
+  - **Open follow-up — do not let these rot:** remove `0401` when [#2047](https://github.com/carson-see/ArkovaCarson/pull/2047)
+    merges and lands `0401_*.sql`; remove `0402` when [#2062](https://github.com/carson-see/ArkovaCarson/pull/2062)
+    merges; remove `0405` when [#2081](https://github.com/carson-see/ArkovaCarson/pull/2081) merges.
+    A stale exemption is worse than no exemption — it masks a real future drift on that prefix.
 - Migrations applied to prod and reconciled today (2026-08-02/03): `0382`, `0383`, `0384`, `0385`,
   `0386`, `0387`, `0388`, `0389`, `0390`, `0391`, `0392` — all verified live via `pg_get_functiondef` /
   `pg_index` / direct query at apply time; see the exemption file's `_comment` history for the per-row
