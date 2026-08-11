@@ -36,6 +36,16 @@ describe('route path helpers', () => {
     expect(ROUTES.PROFILE).toBe('/profile');
     expect(ROUTES.PROFILE).not.toBe(ROUTES.PUBLIC_PROFILE);
   });
+
+  // LAUNCH BLOCKER: the upgrade path had no destination. Every "Upgrade" CTA
+  // navigated to ROUTES.BILLING — the page the user was already on — because
+  // PricingPage (the only surface that calls startCheckout → Stripe) had no
+  // route constant at all. A named PRICING route that is DISTINCT from BILLING
+  // is the precondition for a reachable checkout.
+  it('defines a pricing/checkout route distinct from the billing summary page', () => {
+    expect(ROUTES.PRICING).toBe('/pricing');
+    expect(ROUTES.PRICING).not.toBe(ROUTES.BILLING);
+  });
 });
 
 describe('getAppBaseUrl', () => {

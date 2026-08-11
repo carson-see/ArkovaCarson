@@ -176,3 +176,17 @@ If a checked-in proof artifact is ever wanted, tracking alone is not enough: it 
 deterministic (strip `checkedAt`, pid, seed, TLC banner, absolute paths) **and** paired with a CI check
 that fails when a certificate's `machineSha256` does not match its machine file. Without that check the
 staleness above simply recurs, invisibly. The TLA+ verification itself is unchanged and still mandatory.
+
+## 2026-08-11 — SCRUM-3188 supplementary proof anchor
+
+`bitcoinAnchor.machine.ts` gains the three-valued per-anchor `supplementaryProof` state (`NONE | JOURNALED | ANCHORED`) modelling a SECOND, additive Bitcoin transaction that gives an already-SECURED anchor a per-document Merkle branch it could never have against its ORIGINAL transaction (the Mar/Apr producer never persisted the committed leaf order; unrecoverable above 8 leaves).
+
+New actions: **`supplementaryJournal`** (SECURED + worker + has_tx + no live primary journal → JOURNALED; models persisting the signed txid/cohort/leaf-order barrier BEFORE broadcast), **`supplementaryAnchorConfirm`** (JOURNALED → ANCHORED, admitted from SECURED/REVOKED/SUPERSEDED because a broadcast fee is already spent and revocation does not un-commit bytes), **`supplementaryRevert`** (JOURNALED → NONE on affirmative absence). None of the three writes `status`, `chainTxId`, or `metadataLocked` — that absence is the backdate-shift protection expressed as a transition.
+
+New invariants: **`supplementaryRequiresOriginalAttestation`** (supp ≠ NONE ⇒ chainTxId = has_tx), `supplementaryRequiresWorkerActor`, `supplementaryNeverOnPreBroadcastAnchor`.
+
+**The model earned its keep.** TLC found a real counterexample: a SECURED+ANCHORED anchor can reach SUBMITTED via `reorgDetected` and then PENDING via `chainSubmitFail`/`chainSubmitAbandon`, which CLEAR `chain_tx_id` — orphaning the supplementary proof so it would silently become the record's only chain evidence, i.e. exactly the backdate-shift the design forbids. Fixed by clearing `supplementaryProof` on both abandon edges. Confirmed load-bearing by negative control: removing the clear from `chainSubmitAbandon` reproduces `Invariant supplementaryRequiresOriginalAttestation is violated`; restoring it passes.
+
+Budgets raised for the added 3-valued variable: pr `2,304 × 3 = 6,912` per-anchor combos → `6,912² = 47,775,744` raw (budget 50M, was 6M); nightly `6,912³ = 330,225,942,528` (budget 350B, was 15B). `graphEquivalence` stays off on both (pre-existing — over the 100k cap).
+
+`check` results (`npm run verify:machines`, TLC2 2026.03.16.234659): **pr** proofPassed=true, **17 invariants** (was 14), **8,363 generated / 1,369 distinct** (was 3,221 / 529), deadlock checked, "No error has been found". **nightly** proofPassed=true, 464,092 / 50,653 distinct. `PASSED 4/4` across all machines.

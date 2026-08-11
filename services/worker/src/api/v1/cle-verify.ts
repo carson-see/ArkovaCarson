@@ -20,6 +20,8 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
+import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
+import { getCallerOrgIdResult } from '../_org-auth.js';
 
 const router = Router();
 
@@ -328,6 +330,44 @@ router.get('/credits', async (req: Request, res: Response) => {
 
 // ─── POST /cle/submit — Submit CLE completion for anchoring ─────────────────
 
+/**
+ * Organisation the submitting caller belongs to, for the clause 4.6 field
+ * policy. An API key carries its org directly; a dashboard JWT does not, so
+ * the caller's `profiles` row is read.
+ *
+ * FAILS CLOSED. `enforceOrgFieldPolicy` treats a null orgId as "unrestricted",
+ * which is correct for a caller who genuinely has no org but would be a silent
+ * bypass if a failed `profiles` read also produced null. A read error therefore
+ * gets the same 503 the policy loader itself uses when it cannot confirm a
+ * policy, rather than being coerced into "no org, carry on".
+ */
+async function resolveSubmitOrgId(
+  req: Request,
+  userId: string,
+  res: Response,
+): Promise<{ ok: true; orgId: string | null } | { ok: false }> {
+  if (req.apiKey) return { ok: true, orgId: req.apiKey.orgId ?? null };
+
+  // `getCallerOrgIdResult` is the shared org-resolution helper and already draws
+  // the distinction this guard depends on: `{ value: null, error: false }` is a
+  // caller who genuinely has no org, `{ value: null, error: true }` is a failed
+  // lookup. Collapsing those two into a bare null is exactly the silent bypass
+  // this function exists to prevent, so the shared Result form is used rather
+  // than the plain `getCallerOrgId`.
+  const { value: orgId, error } = await getCallerOrgIdResult(userId);
+
+  if (error) {
+    res.status(503).json({
+      error: 'field_policy_unavailable',
+      message:
+        'Could not confirm your organization\'s permitted-field policy. No record was created. Please retry.',
+    });
+    return { ok: false };
+  }
+
+  return { ok: true, orgId };
+}
+
 router.post('/submit', async (req: Request, res: Response) => {
   // Requires authentication (JWT or API key)
   const authHeader = req.headers.authorization;
@@ -352,6 +392,23 @@ router.post('/submit', async (req: Request, res: Response) => {
   }
 
   const data = parsed.data;
+
+  // DPA Schedule 1 / clause 4.6 — org-scoped field rejection (migration 0405).
+  // No-op for every org without a policy row. This route matters more than most:
+  // every field of the submission body (`bar_number`, `attorney_name`,
+  // `course_title`, `provider_name`, ...) is copied verbatim into
+  // `anchors.metadata`, so a prohibited field here is persisted personal data,
+  // not just transmitted. Runs BEFORE the insert and on the RAW body.
+  const orgLookup = await resolveSubmitOrgId(req, userId, res);
+  if (!orgLookup.ok) return;
+  if (!(await enforceOrgFieldPolicy({
+    orgId: orgLookup.orgId,
+    body: req.body,
+    res,
+    scope: 'cle-submit',
+  }))) {
+    return;
+  }
 
   try {
     const fingerprint = buildCleSubmissionFingerprint(data);

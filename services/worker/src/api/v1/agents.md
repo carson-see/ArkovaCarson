@@ -2,6 +2,107 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-10 — the field policy now covers EVERY anchor-creating route here (DPA clause 4.6, part 2)
+
+The entry below wired `enforceOrgFieldPolicy` into `anchor-submit.ts` and `anchor-bulk.ts`. Five other
+request handlers in this tree also INSERT into `anchors`, and each was a way for a policy-configured
+org to send a prohibited field and get a 2xx. All five now enforce it:
+
+| Route | Auth | Guard sits before |
+|---|---|---|
+| `POST /contracts/anchor-pre-signing` | API key (`anchor:write`) | the idempotency lookup that returns a stored 200 receipt |
+| `POST /cle/submit` | API key **or** dashboard JWT | the insert; the whole body is copied into `anchors.metadata` |
+| `POST /credentials/ctdl/registry-anchor` | dashboard JWT | the outbound CE Registry fetch, the dedup 200, and `deductOrgCredit` |
+| `POST /credential-sources/import-url/{preview,confirm}` | dashboard JWT | the source fetch and the duplicate-import 200 |
+| `POST /versions/:versionId/resolve` | dashboard JWT (org admin) | the version update + anchor create |
+
+Things worth not re-deriving:
+
+- **The census that produced this list was wrong in both directions.** Grepping for files containing
+  both `from('anchors')` and `.insert(` named four files that only ever SELECT (`batch.ts`,
+  `credentials-ctdl.ts`, `signatures.ts`, `attestations.ts`) and missed two that genuinely insert
+  (`cle-verify.ts`, `version-resolution.ts`). Only `from('anchors')` whose NEXT chained call is
+  `.insert(`/`.upsert(` is a write; the worker has ~164 other `from('anchors')` occurrences and they
+  are all reads. `scripts/ci/check-anchor-field-policy-coverage.ts` now enforces this so the next
+  route cannot miss the guard silently.
+- **Dashboard JWT routes are IN scope.** The regulated counterparty is the org, not the credential
+  type — an org admin clicking a dashboard button is that counterparty sending us a field its
+  agreement forbids. This is the same reasoning that already put `anchor-bulk-self-service.ts` in
+  scope, and it is why the CI detector keys off `services/worker/src/api/`, not off which middleware
+  a route mounts behind.
+- **`credential-sources` is guarded inside the shared `buildPreviewFromRequest`,** so `/preview` and
+  `/confirm` cannot disagree — a preview that reports a payload as importable when the confirm will
+  reject it is the same defect as `dry_run` disagreeing with the real run.
+- **`registry-anchor` resolves its org at the TOP of the handler** and reuses that value at the insert
+  site (one `profiles` read, not two), so a request that will be rejected never triggers an outbound
+  CE Registry call on the org's behalf.
+- **On `.strict()` bodies the guard is defense-in-depth for unknown keys, and the ONLY control for
+  known ones.** Every schema here is strict, so an unknown top-level key already 400s as
+  `invalid_request`. What the guard adds is rejection of fields the schema *accepts* —
+  `description` on pre-signing, `attorney_name` on CLE submit, `issuer_hint` on credential-sources,
+  `notes` on version-resolve. `anchor-field-policy-routes.test.ts` deliberately tests only those, since
+  an unknown-key test would pass with the guard removed.
+- **`cle-submit` resolves the org itself and fails CLOSED.** It takes an API key *or* a JWT; the JWT
+  path has no `orgId` on the request, so it reads `profiles`. A failed read returns 503, never
+  `orgId: null` — the latter reads as "unrestricted org" and would be a silent bypass.
+
+Out of scope, deliberately: the three anchor-creating paths under `services/worker/src/jobs/`. See
+`services/worker/src/jobs/agents.md`.
+
+## 2026-08-10 — anchor write paths enforce a per-org field policy (DPA clause 4.6)
+
+`anchor-submit.ts` and `anchor-bulk.ts` both call `enforceOrgFieldPolicy` (`utils/orgFieldPolicy.ts`,
+migration `0405`) immediately after their Zod parse. For every org without a policy row this is a
+no-op; for a configured org, a request carrying a prohibited field is **rejected with 400**
+(`error: 'field_not_permitted'`, RFC 7807 + the house `details[]` shape), never silently stripped.
+
+Placement is load-bearing on both routes and should not be moved:
+
+- **`anchor-submit.ts`: before the duplicate-fingerprint lookup.** That lookup answers **200** for an
+  already-anchored fingerprint. Enforcing after it would let a prohibited field through on every
+  re-submission of an existing document — the most likely shape of a real integration retry.
+- **`anchor-bulk.ts`: before the `dry_run` short-circuit** (a validation run that reports
+  `validated: 1` for a batch the real run rejects is worse than no dry-run) **and before quota and
+  credit consumption** (a rejected request must not bill).
+- **Whole-batch rejection on bulk, not per-row errors.** Queueing the compliant rows and reporting
+  the rest would mean accepting a payload that carried prohibited data; the data has already been
+  transmitted at that point, and a 201 tells the partner the shipment was fine.
+
+`anchor-bulk-self-service.ts` inherits the guard through its unmodified fall-through into
+`anchorBulkRouter` — so the dashboard is not a way around a restriction the org is subject to. That
+is pinned by a test, because the fall-through is the only reason it holds.
+
+**§1.8 note:** no published response shape changed and no previously-valid request became invalid for
+any org that has no policy row. For a configured org, requests that previously succeeded now 400 —
+which is the point of the control and is what that org contracted for. New error codes on an existing
+status class are additive; this needs no `v2` prefix.
+## 2026-08-11 — two-grade org verification (CTO decision; sibling of AUDIT-0424-10 / PR #2134)
+
+`organizations.verification_status = 'VERIFIED'` has two **sanctioned** grant paths, by decision (not drift):
+
+1. **Self-serve** (`orgVerification.ts` confirm-domain): domain-control email + self-attested EIN (length-checked only, never verified) → `VERIFIED`. Deliberate IDT WS4 launch-tier onboarding with a live UI (`src/components/org/OrgVerification.tsx` on OrgProfilePage). **This is not KYB** — do not describe it as KYB-passed anywhere (§1.13 R-7).
+2. **Provider KYB** (`webhooks/middesk.ts`): Middesk terminal event → `VERIFIED`/`REJECTED`/`REQUIRES_INPUT`, stamping `kyb_completed_at` on **every** terminal outcome (completion ≠ success); `kyb_provider`/`kyb_submitted_at` via `org-kyb.ts`'s `start_kyb_verification` RPC.
+
+**Census honesty (verify before trusting, this dates fast):** as of 2026-08-11 two MORE writers of `'VERIFIED'` exist in code: `stripe/handlers.ts` still self-grants on checkout completion — a live KYB bypass whose removal is **in flight in PR #2134 (draft, unmerged as of 2026-08-11)**; do not treat it as gone until that merges — and `dev-verify` in `orgVerification.ts` (isDev-gated; it produced prod's only VERIFIED row, 2026-03-27). The rule is: **do not add a NEW writer of `= 'VERIFIED'`**. PENDING/UNVERIFIED writers (verify-ein, sub-org creation, the RPC) are legitimate and out of that rule's scope.
+
+**Why keep the self-serve grant:** as of 2026-08-11 the provider path is inert in prod — `MIDDESK_API_KEY`/`MIDDESK_WEBHOOK_SECRET` are not in `deploy-worker.yml`'s secret set (both routes 503), `org-kyb` has zero frontend callers, and `kyb_events` has 0 rows ever. Removing the self-serve write would make `VERIFIED` unreachable via any sanctioned path and dead-end connector onboarding (DocuSign/Drive `requireVerifiedOrg`), affiliate creation (`orgSubOrgs.ts`), and Issue Credential (`useCanIssueCredential`). Verified against prod read-only: 10 orgs, exactly 1 `VERIFIED` (Arkova's own), zero self-serve grants ever — the **sole `ORG_VERIFIED` audit event in prod is the dev-bypass row** ("verified via dev bypass", 2026-03-27; that census covers all grant shapes, since a full self-serve grant also emits `ORG_VERIFIED`), and no `ORG_EIN_SUBMITTED`/`ORG_DOMAIN_VERIFIED` events exist either.
+
+**The load-bearing invariant: self-serve writes NEVER stamp `kyb_*` columns.** Precision matters here:
+
+* `kyb_completed_at` is the only **webhook-exclusive** `kyb_*` column. The `start_kyb_verification` RPC is EXECUTE-granted to `authenticated` and accepts `p_provider = 'manual'`, so `kyb_provider`/`kyb_submitted_at` are **org-admin-forgeable via direct PostgREST RPC** — never treat them as provider proof (RPC grant review is a follow-up below).
+* `kyb_completed_at IS NOT NULL` means "provider KYB **concluded**", not "passed" — middesk stamps it on `rejected`/`requires_review` too. A future strong gate MUST key on provider **success** (latest `kyb_events` terminal row `= 'verified'`, or a success-only timestamp), **not** bare `kyb_completed_at IS NOT NULL`: today `confirm-domain` never reads `verification_status` and `verify-ein` unconditionally resets it to `PENDING`, so once 0407 lands a provider-REJECTED org could self-serve back to `VERIFIED` and would pass the naive predicate.
+* This is the **column-level** discriminator; `audit_events`/`kyb_events` rows carry the same provenance durably (that is how prod forensics worked above).
+* Pinned (`kyb_*`-prefix-wide, **`orgVerification.ts` handlers only**) by the "KYB provenance ratchet" suite in `orgVerification.test.ts`, mutation-verified. Do not "backfill" `kyb_*` for self-serve orgs — that erases provenance irreversibly.
+
+**Open follow-ups (separate PRs):**
+
+* ORG_ADMIN-gate `verify-ein`/`verify-domain`/`confirm-domain` (today any org **member** can write legal identifiers; `org-kyb.ts` requires ORG_ADMIN for the analogous action).
+* Provider-status stickiness: `verify-ein` must not clobber a provider-granted status (any member POSTing it flips `VERIFIED → PENDING` with **no self-serve recovery** once the domain is verified — confirm-domain 400s "already verified"), and `confirm-domain` must not promote out of a provider-terminal status.
+* Domain-first dead-end: `confirm-domain` is the **only** promoter and checks `ein_tax_id` at confirm time — an API caller who confirms the domain before submitting an EIN is stuck `PENDING` with no self-serve path forward (the UI happens to order EIN first, so this is browser-latent, API-live).
+* EIN normalization, not just a length cap: the duplicate check is exact-string `eq()`, so `12-3456789` vs `123456789` evades the 409. Format stays loose for international tax IDs, but note `org-kyb.ts` pins `^\d{9}$` (US-only) — international self-serve orgs cannot upgrade to the provider grade as-is.
+* Repo-wide writer allow-list lint `scripts/ci/check-verification-status-writers.ts` (idiom: `check-ce-registry-key-parity.ts`) — the census rule above is prose-only until it exists; plus a one-line cross-ref in `supabase/migrations/agents.md` so a backfill author sees the no-backfill rule.
+* Pin the provider half: `middesk.test.ts` has no assertion that terminal events stamp `kyb_completed_at` (that file is owned by draft PR #2134 — land the assertion there or immediately after it merges; same for a `stripe/agents.md` note about its still-live write).
+
 ## 2026-08-10 — raw caller IPs were persisted into `audit_events` (DPA defect, FIXED)
 
 Arkova's DPA Schedules 1 and 2 both warrant that IP addresses are processed in **hashed** form. Two audit writers on this surface serialised `req.ip` **verbatim** into `details.querying_ip`: `verify.ts` (`VERIFICATION_QUERIED`) and `credentials-ctdl.ts` (`ctdl.requested`). 16 prod rows held literal IPv4/IPv6 addresses. Signing the DPA unchanged would have made a contractual warranty false.
@@ -55,6 +156,61 @@ only the in-dialog success link — it never looked at the list, so it could not
 That spec now asserts the record appears after the dialog closes, with a docblock stating
 plainly what its stubs do and do not prove. A green E2E over a fully-mocked flow is a claim
 about the client, not about the write.
+
+## 2026-08-11 — `POST /cle/submit` stays deliberately unlinked from `anchor_recipients` (DECISION)
+
+The entry above establishes "anything that creates an anchor a user is meant to *see* must
+write both `anchors.user_id` and `anchor_recipients`". `cle-verify.ts`'s submit route looks
+like the same defect — it inserts into `anchors` only, so a CLE credit never appears in any
+`/my-credentials` list — but it is **not**, and the disposition is the opposite: **do not link.**
+Pinned by `cle-submit-recipient-semantics.test.ts`; a recipient write in this route's handler
+fails CI. The pin covers the handler only — a future out-of-route linker (cron, job, backfill)
+is not mechanically guarded and must be reviewed against this entry directly.
+
+Why this route is different from registry-anchor:
+
+- **The holder is not the caller, and is not a platform account.** The credit belongs to the
+  attorney identified by `bar_number` + `jurisdiction` in the request body — a professional
+  identifier with **no bar_number↔user mapping anywhere in the schema** (checked baseline +
+  all migrations, 2026-08-11). Registry-anchor was self-import: the caller was the holder by
+  construction. Here there is nobody to correctly link.
+- **Every caller shape is on-behalf.** The API-key path is a CLE provider submitting for an
+  attorney (`req.apiKey.userId` is the provider). The JWT path serves the same shape: the only
+  built dashboard caller, `src/components/upload/CleBulkImport.tsx` (exported but not yet
+  rendered anywhere), is a bulk CSV importer with a **per-row** `bar_number` — one uploader,
+  many attorneys, one `/cle/submit` call per row, indistinguishable from self-submission at the
+  endpoint. Linking the caller puts other people's CLE credits into the submitter's own
+  credentials list — misattribution of holdership, worse than absence.
+- **The record is fully visible on its intended surface.** CLE credits are consumed through
+  `GET /cle/verify` and `GET /cle/credits`, which key on `metadata->>bar_number` and do not
+  touch `anchor_recipients`. The registry-anchor bug hid a record from the person meant to see
+  it; this route's audience (attorney / state bar / provider) sees everything it should.
+- **A speculative unclaimed row would be a regression, not future-proofing.** A
+  `sha256(bar_number)`-keyed `recipient_email_hash` recreates the offline-enumeration surface
+  SCRUM-2484 closed for emails (bar numbers are short, public, sequential — strictly easier to
+  enumerate), and nothing in the system would ever claim it: `link_recipient_to_anchors` is
+  itself hash-agnostic (it matches whatever `p_email_hash` a caller passes — it does not
+  validate hash provenance), but every current caller derives that hash from a verified email
+  or the namespaced self-import marker. Which is also the warning for path 1 below: keep that
+  provenance discipline (keyed HMAC via `hashRecipientEmail`, namespaced markers) so
+  differently-sourced hashes can never collide in the same column.
+
+Prod context at decision time: **zero** `anchors` rows with `credential_type = 'CLE'`
+(verified 2026-08-11 against `vzwyaatejekddvltxyye` via MCP `execute_sql`:
+`cle_total=0, cle_live=0`), so this is forward-looking only — no backfill question exists.
+
+**Sanctioned future paths** if product later wants CLE credits in an attorney's
+`/my-credentials` (either works without touching today's rows beyond a backfill):
+
+1. Additive optional `attorney_email` on `CleSubmitSchema` (allowed under the frozen-schema
+   rules as additive-nullable) → HMAC-hashed via `hashRecipientEmail` → **unclaimed**
+   `anchor_recipients` row → the existing `link_recipient_to_anchors` claim flow. This is the
+   platform's established mechanism for "recipient is not the caller".
+2. A verified bar_number↔user mapping (attorney-verification feature), then link/backfill from
+   `anchors.metadata->>'bar_number'` — the metadata already carries everything needed, which is
+   exactly why deferring loses nothing.
+
+Never the third option: linking the caller. That is the one the pin test exists to stop.
 
 ## 2026-08-02 — the silent-empty enrichment sweep (`readInChunks`)
 
@@ -581,3 +737,12 @@ The empty-org branch no longer returns a second response shape for the same 200.
 ORG_ADMIN-only and pre-existing, and removing a field from a frozen v1 body is exactly the
 breaking change §1.8 governs. Separately, the seed is caller-chosen by design, so an auditee can
 shop seeds for a favourable sample; under ISA 530 the seed is meant to be the auditor's to pick.
+
+## 2026-08-10 — `ai_credits.reconcile_refund` now has a consumer (the "surfaced, not dropped" claim was false)
+
+The 2026-06-24 entry above states, of the batch-extraction refund path: *"A lost refund is an overcharge — it is surfaced, not dropped."* **That was not true as shipped.** `enqueueRefundReconciliation` wrote an `ai_credits.reconcile_refund` job, and nothing in the worker ever called `claimJob`/`processNextJob` with that type — there is no central job dispatcher, so an unconsumed type is not an error, it is silence. Every row sat `pending` forever: never claimed, never retried, never dead-lettered, invisible to every log, alert, and dashboard. The mechanism written specifically to prevent a silent overcharge guaranteed one. Latent only because prod has zero rows of this type today.
+
+- The job type literal now lives in the CONSUMER (`jobs/ai-credit-reconcile.ts`) and is re-exported here, so producer and consumer cannot drift onto two spellings — the same pairing `drive-artifact-producer.ts` / `jobs/drive-file-changed.ts` uses. `AI_CREDIT_RECONCILE_JOB_TYPE`'s value is unchanged (`'ai_credits.reconcile_refund'`), so the existing export and its test are unaffected.
+- The drain (re-apply the refund, retry with backoff, Sentry on the final attempt) is documented in `services/worker/src/jobs/agents.md`; its trigger is `POST /jobs/ai-credit-reconcile` + a Cloud Scheduler binding.
+- **Nothing about the request path changed** — the per-row debit/refund accounting, the fingerprint cache, the latency budget, and the frozen response shape are all untouched. This entry fixes the claim, not the route.
+- `scripts/ci/check-job-queue-parity.ts` now fails CI on any `submitJob` type with no consumer, so this specific false-surfacing shape cannot ship again.

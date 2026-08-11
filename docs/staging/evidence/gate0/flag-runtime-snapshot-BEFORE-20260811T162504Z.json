@@ -1,0 +1,218 @@
+[
+  {
+    "insertId": "6a7b4ce00008d7dcd99b36f1",
+    "jsonPayload": {
+      "flags": {
+        "ENABLE_ADES_SIGNATURES": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_AI_EXTRACTION": {
+          "source": "db",
+          "value": true
+        },
+        "ENABLE_AI_FALLBACK": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_AI_FRAUD": {
+          "source": "db",
+          "value": false
+        },
+        "ENABLE_AI_REPORTS": {
+          "source": "db",
+          "value": true
+        },
+        "ENABLE_ALLOCATION_ROLLOVER": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_ATS_WEBHOOK": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_ATTESTATION_ANCHORING": {
+          "source": "db",
+          "value": true
+        },
+        "ENABLE_BATCH_ANCHORING": {
+          "source": "db",
+          "value": true
+        },
+        "ENABLE_CLOUD_LOGGING_SINK": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_COMPLIANCE_ENGINE": {
+          "source": "db",
+          "value": false
+        },
+        "ENABLE_CONFIRMATION_PROOF_BACKFILL": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_DEMO_INJECTOR": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_DOCUSIGN_OAUTH": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_DOCUSIGN_WEBHOOK": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_DRIVE_OAUTH": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_DRIVE_WEBHOOK": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_EXPIRY_ALERTS": {
+          "source": "db",
+          "value": false
+        },
+        "ENABLE_FRAUD_DETECTION": {
+          "source": "db",
+          "value": false
+        },
+        "ENABLE_GRC_INTEGRATIONS": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_MICROSOFT_GRAPH_WEBHOOK": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_MULTIMODAL_EMBEDDINGS": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_NESSIE_RAG_RECOMMENDATIONS": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_NEW_CHECKOUTS": {
+          "source": "db",
+          "value": true
+        },
+        "ENABLE_ORG_CREDIT_ENFORCEMENT": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_OUTBOUND_WEBHOOKS": {
+          "source": "db",
+          "value": true
+        },
+        "ENABLE_PARTNER_PROVISIONING": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_PROD_NETWORK_ANCHORING": {
+          "source": "env",
+          "value": true
+        },
+        "ENABLE_PUBLIC_RECORDS_INGESTION": {
+          "source": "db",
+          "value": true
+        },
+        "ENABLE_PUBLIC_RECORD_ANCHORING": {
+          "source": "db",
+          "value": true
+        },
+        "ENABLE_PUBLIC_RECORD_EMBEDDINGS": {
+          "source": "db",
+          "value": true
+        },
+        "ENABLE_QUEUE_REMINDERS": {
+          "source": "env",
+          "value": true
+        },
+        "ENABLE_REPORTS": {
+          "source": "db",
+          "value": true
+        },
+        "ENABLE_RULES_ENGINE": {
+          "source": "env",
+          "value": true
+        },
+        "ENABLE_RULE_ACTION_DISPATCHER": {
+          "source": "env",
+          "value": true
+        },
+        "ENABLE_SEMANTIC_SEARCH": {
+          "source": "db",
+          "value": false
+        },
+        "ENABLE_SYNTHETIC_DATA": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_TREASURY_ALERTS": {
+          "source": "env",
+          "value": true
+        },
+        "ENABLE_VEREMARK_WEBHOOK": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_VERIFICATION_API": {
+          "source": "db",
+          "value": true
+        },
+        "ENABLE_VERTEX_AI": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_VISUAL_FRAUD_DETECTION": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_WEBHOOK_HMAC": {
+          "source": "env",
+          "value": true
+        },
+        "ENABLE_WORKSPACE_RENEWAL": {
+          "source": "env",
+          "value": false
+        },
+        "ENABLE_X402_PAYMENTS": {
+          "source": "db",
+          "value": true
+        },
+        "MAINTENANCE_MODE": {
+          "source": "db",
+          "value": false
+        },
+        "USE_MOCKS": {
+          "source": "env",
+          "value": false
+        }
+      },
+      "hostname": "localhost",
+      "level": 30,
+      "msg": "Feature flag registry initialized",
+      "pid": 1,
+      "time": 1786465504578
+    },
+    "labels": {
+      "instanceId": "001548f7295c0f459dcb2810134f692c79db702ed763457a8ae893f85a4fd79f17f3bb2fbd24413b6502a00a0d453607bf25c6c918974f30988902ecc42f2060e8ddc951ac91ecf4b1b709957bde78fc"
+    },
+    "logName": "projects/arkova1/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2026-08-11T16:25:04.586746723Z",
+    "resource": {
+      "labels": {
+        "configuration_name": "arkova-worker-fullsoak-2026-08-staging",
+        "location": "us-central1",
+        "project_id": "arkova1",
+        "revision_name": "arkova-worker-fullsoak-2026-08-staging-00007-rzs",
+        "service_name": "arkova-worker-fullsoak-2026-08-staging"
+      },
+      "type": "cloud_run_revision"
+    },
+    "timestamp": "2026-08-11T16:25:04.579548Z"
+  }
+]

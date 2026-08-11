@@ -1,5 +1,21 @@
 # agents.md — pages
-_Last updated: 2026-07-28_
+_Last updated: 2026-08-10_
+
+## 2026-08-10 — `ActivateAccountPage.tsx` rebuilt; the recovery-phrase ruling
+
+The page could never activate anyone: it called an `activate_user(p_token, p_claim_key)` overload that does not exist in prod (PGRST202 — PostgREST binds overloads by argument NAME), and it never collected a password at all. Full root-cause writeup in `services/worker/src/api/agents.md`. Now: preview the link via `GET /api/activation/:token`, collect a password, `POST /api/activation/complete`. The password write needs service_role, which must never reach the browser (§1.4), so it is worker-side; the SQL function is retired in migration `0402`.
+
+**Recovery-phrase ruling — abandoned scaffolding, removed from the activation path, NOT deleted.** Evidence it was never a live feature:
+
+- Its storage was `activation_tokens.claim_key`, defined only in `docs/migrations-archive/0175_activate_user_function.sql` — archived, never deployed. There is no `activation_tokens` table and no `claim_key` column anywhere in the live schema, so the derived hash had nowhere to go.
+- Nothing in the repo ever *verified* a claim key. There is no recovery flow, no "sign in with your phrase" path, no consumer of any kind — `deriveClaimKeyHash` had exactly two callers: this page and an orphaned second modal.
+- `src/components/onboarding/RecoveryPhraseModal.tsx` is imported by nothing (the page used the `auth/` one), i.e. the feature was already half-abandoned.
+
+So it protected nothing, and keeping it on the critical path was itself defect (A). Worse, the copy told recipients the 12 words were "your backup access key" — a claim no code path could honour, which is exactly what §1.5 / §1.13 R-7 forbid. That claim is gone rather than restated.
+
+**Deliberately NOT done:** adding a `claim_key_hash` column to store it. That would resurrect a dead archived migration and ship schema with no reader — the pattern already flagged as a problem elsewhere in this codebase. `src/lib/recoveryPhrase.ts` and both modals are left in place, unmodified, so a future *real* recovery feature (with storage, verification, and its own product decision) can pick them up. **If the recovery phrase is in fact a live product requirement, this is the decision to revisit — it is a deliberate, documented removal, not an oversight.**
+
+Note the local is named `activationToken`, not `token`: `npm run lint:copy` bans the bare word in shipped files and exempts only the `searchParams.get('token')` line itself. Same convention as `AcceptInvitePage`'s `inviteToken`.
 
 ## SCRUM-2940 — Folders UI (founder escalation, PR #1657 follow-up)
 
@@ -182,6 +198,45 @@ on 2026-08-01 (signup returns HTTP 200 with `confirmation_sent_at` set and NO
 session). `supabase/config.toml` and the signup E2E spec previously encoded the
 opposite; both are corrected.
 
+## 2026-08-10 — PricingPage was built, tested, and unreachable (launch blocker)
+
+`PricingPage.tsx` is the ONLY surface that can take money: it calls
+`startCheckout` → worker `POST /api/checkout/session` → Stripe. It had **no
+`ROUTES` key, no `<Route>` in `App.tsx`, and zero importers** — `/pricing`
+appeared nowhere in `src/` or `e2e/`. The note in the 2026-06-24 entry below
+("currently an unrouted/standalone component") recorded this as a fact without
+treating it as the revenue outage it was. Meanwhile `BillingPage.tsx`'s
+`handleUpgrade` was `navigate(ROUTES.BILLING)` — the page the user was already
+on — and `handleManageBilling` was the same no-op carrying a
+`// Opens Stripe customer portal when available` comment. A customer who hit
+their plan limit could not give us money.
+
+Fixed: `ROUTES.PRICING = '/pricing'`, routed in `App.tsx` behind
+`AuthGuard` + `RouteGuard allow={MAIN_APP_DESTINATIONS}` — the same guard as
+`ROUTES.BILLING`. **Auth is required deliberately**: `useBilling` gates on
+`user`, `startCheckout` returns null without one, `workerFetch` throws without a
+session, and the worker 401s. A public `/pricing` would render an empty
+`AppShell` with a Select Plan button that silently no-ops — a second dead end.
+Public plan marketing belongs on the marketing site.
+
+`BillingPage` now navigates to `ROUTES.PRICING` and calls
+`useBilling().openBillingPortal()`, redirecting to the returned Stripe URL.
+`CheckoutCancelPage`'s "Back to Plans" pointed at `/billing`; it now returns to
+`/pricing` so an abandoned purchase can actually be retried.
+
+**Silent-failure rule (same bug class):** `startCheckout` / `openBillingPortal`
+swallow every failure and resolve `null` — including the worker's 400 when a
+plan has no `stripe_price_id` configured for the environment. Any call site MUST
+surface an error on the null branch (`BILLING_LABELS.CHECKOUT_UNAVAILABLE` /
+`PORTAL_UNAVAILABLE`); a silent return is indistinguishable from the dead
+buttons this release removed.
+
+Two unit tests had pinned the broken behaviour as correct and were rewritten:
+`e2e/billing.spec.ts` asserted `toHaveURL(/\/billing$/)` after clicking Upgrade,
+and `CheckoutCancelPage.test.tsx` asserted the back link's href was `/billing`.
+`PricingPage.test.tsx` passed throughout because it renders the component
+directly — it cannot see reachability, and now says so in a comment.
+Reachability is guarded structurally by `src/tests/pages/route-reachability.test.ts`.
 ## 2026-08-10 — ComplianceDashboardPage no longer mounts the Nessie panel
 
 `ComplianceDashboardPage.tsx` rendered `<NessieIntelligencePanel />`
@@ -230,3 +285,91 @@ see. `TermsPage` is structurally identical to pre-migration `PrivacyPage` and
 is the cheapest next target; migrating it is also the moment to extract
 `renderPrivacyMain` / `residueAfterRemovingCopy` from the copy-centralization
 test into a shared helper (rule of three not yet met — this is the first).
+
+## 2026-08-11 — WebhookSettingsPage tests: never gate on the endpoint URL text
+
+`WebhookSettingsPage` composes two components that render the SAME string:
+`WebhookSettings` prints `endpoint.url` in the endpoint row (only after the
+async `webhook_endpoints` fetch resolves), and `WebhookDeliveryLog` prints
+`delivery.endpoint_url` in the history table — synchronously, straight from the
+mocked hook, on the very first commit.
+
+So `await waitFor(() => expect(screen.getByText('https://example.com/webhooks'))
+.toBeInTheDocument())` is **not** a gate on "endpoints have loaded". It resolves
+against the delivery-log cell immediately, and once the fetch does land it
+matches *both* nodes and starts throwing "found multiple elements". Any
+synchronous `getBy*` placed after it races the fetch. That is exactly how
+`wires the test-ping action to sendWebhookTestPing (WH-02)` failed in CI
+(PR #2140; PR #2143 run 93815479911) with `Unable to find an accessible element
+with the role "button" and name /Send test event/` — while passing 12/12 locally
+and on `main`, because the race only opens under CI load. The delete test had
+already hit the same trap in 2026-07-26 and fixed it in isolation; the fix is now
+folder-wide.
+
+Rules for this page's tests:
+
+- To wait for the endpoint row, call the local `findEndpointRow()` helper. It
+  keys off the delete button's aria-label (`Delete endpoint: <url>`), which is
+  unique to the endpoint row and carries the URL.
+- Anything that mounts with the endpoint row — the test-ping button, the
+  toggle, the delete button — must be reached with `findBy*`, never a `getBy*`
+  sitting after some other `waitFor`.
+- Generally: a `waitFor` gate only proves the element *it queried* is present.
+  If the next query targets a different element that can arrive in a later React
+  commit, make that query `findBy*` too. Sibling assertions inside one
+  synchronous subtree (a dialog's title + its buttons) are fine as `getBy*`.
+
+`WebhookSettings.test.tsx` and `WebhookDeliveryLog.test.tsx` needed no changes —
+but *not* because they are async-free. Both hold a deferred promise open in
+their double-click-guard tests (`onTestPing` / `onReplay`) and assert the
+re-enabled button after resolving it, and those resolutions do land in a later
+commit. They are safe because each has exactly one async transition in flight at
+a time, gated by its own `waitFor` at the point it matters. Run the same "can
+this element arrive in a later commit?" check there anyway; today the answer is
+just always handled.
+
+## 2026-08-11 — ComplianceDashboardPage: an async gate that resolved on the wrong component
+
+`ComplianceDashboardPage.test.tsx`'s empty-state case flaked in CI (run
+31514378348) with `Unable to find an element with the text: CPE summaries
+appear after secured CPE records are available for the selected period.` The
+line above it already awaited `findByText('No CPE records in this period')`,
+so by the #2148 rule at the end of this file it looked correctly gated.
+
+It was not. **Two components on this page render that identical string** — the
+org CPE card here, and `OrgCpeMemberDashboard` via
+`ORG_CPE_MEMBER_LABELS.EMPTY` in `copy.ts`. The member card runs off a hook
+this suite stubs, so it paints synchronously at first paint. The unscoped
+`findByText` therefore satisfied its very first check against the *member*
+card while the card under test was still a loading skeleton, and the sibling
+paragraph existed only because RTL's `asyncAct` happened to flush the pending
+commit on its way out. Probe at the moment the gate resolved:
+
+```
+[PROBE:after-render] {"emptyMatches":1,"orgCardLoading":true,"desc":0}
+[PROBE:after-findBy]  {"emptyMatches":2,"orgCardLoading":false,"desc":1}
+```
+
+The same defect sat undetected in the summary case:
+`data-testid="org-cpe-dashboard"` is on the `<Card>` **shell** — only
+`CardContent` is behind the fetch — so `findByTestId` also resolves at first
+paint. Eight aggregate assertions after it were equally unsynchronized.
+
+Two things to carry forward when editing this page's tests:
+
+- **The #2148 rule is necessary, not sufficient.** "Use `findBy*` for anything
+  that can arrive in a later commit" assumes the gate matches the element you
+  meant. Before trusting a gate, grep the string: if a sibling component on the
+  same page renders it too, scope the query with `within(panel)`. Shared copy
+  constants make this collision easy to create and invisible to review.
+- **A testid on a card shell is not a fetch gate.** `findByTestId` on a
+  wrapper whose *content* is conditional resolves before the fetch. Gate on a
+  post-fetch node inside the panel, or on the loading skeleton clearing —
+  `findSettledCpePanel()` in that suite does the latter, and the "Nessie stays
+  OFF" negative assertions now use it so their non-vacuity comment holds.
+
+Reproduce this class locally by settling the mocked query one macrotask later
+(`setTimeout(..., 0)` instead of `Promise.resolve`) rather than by adding CPU
+load — the variable is event-loop ordering, not CPU. Under that injection the
+pre-fix suite failed 2/7 with the verbatim CI error; CPU contention alone
+(24 busy cores, 8 concurrent vitest processes) never reproduced it.

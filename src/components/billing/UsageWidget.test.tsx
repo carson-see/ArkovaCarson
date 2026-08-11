@@ -143,6 +143,27 @@ describe('UsageWidget', () => {
     expect(screen.getByText('Upgrade Plan')).toBeInTheDocument();
   });
 
+  // Both upgrade CTAs linked to /billing, whose own "Upgrade Plan" button
+  // re-navigated to /billing. The widget's whole job is to convert a
+  // near-limit user, so it must land on the page that can take payment.
+  it('points the compact upgrade CTA at the pricing/checkout route', () => {
+    mockEntitlements.recordsUsed = 9;
+    mockEntitlements.remaining = 1;
+    mockEntitlements.percentUsed = 90;
+    mockEntitlements.isNearLimit = true;
+    renderWidget(true);
+    expect(screen.getByRole('link', { name: /Upgrade Plan/ })).toHaveAttribute('href', '/pricing');
+  });
+
+  it('points the full-mode upgrade CTA at the pricing/checkout route', () => {
+    mockEntitlements.recordsUsed = 10;
+    mockEntitlements.remaining = 0;
+    mockEntitlements.percentUsed = 100;
+    mockEntitlements.isNearLimit = true;
+    renderWidget();
+    expect(screen.getByRole('link', { name: /Upgrade Plan/ })).toHaveAttribute('href', '/pricing');
+  });
+
   it('fires toast warning at 80% usage', async () => {
     const { toast } = await import('sonner');
     mockEntitlements.percentUsed = 80;

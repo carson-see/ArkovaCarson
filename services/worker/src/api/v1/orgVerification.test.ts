@@ -534,3 +534,136 @@ describe('GET /verification-status', () => {
     expect(res.status).toBe(500);
   });
 });
+
+// ─── KYB provenance ratchet (two-grade verification decision, 2026-08-11) ───
+
+/**
+ * Two-grade org verification decision (self-serve vs provider KYB): see this
+ * folder's agents.md, 2026-08-11 entry, for the full record. The invariant this
+ * suite pins: self-serve handlers in THIS file never stamp a `kyb_*` column, so
+ * `kyb_completed_at IS NULL` stays meaningful as the column-level discriminator
+ * (`kyb_completed_at` is the only webhook-exclusive `kyb_*` column — see
+ * agents.md on why `kyb_provider`/`kyb_submitted_at` are weaker signals).
+ *
+ * Scope, stated precisely so nobody over-trusts it:
+ *   - Covers ALL FIVE organizations write sites in this file's handlers
+ *     (verify-ein, verify-domain, confirm-domain ×2 branches, dev-verify),
+ *     via BOTH `.update()` and `.insert()` payload capture. A future `.upsert()`
+ *     or `db.rpc()` fails loudly (unmocked → 500 → status assert goes red).
+ *   - Prefix-based (`kyb_*`) over captured payload keys — a future kyb-prefixed
+ *     column is covered, but only for writes that actually FIRE under these
+ *     fixtures. The full-verification fixture deliberately carries
+ *     `kyb_provider`/`kyb_submitted_at` state so a state-conditional stamp
+ *     (the `...(cond ? {...} : {})` house idiom) fires and is caught.
+ *   - This file's handlers ONLY. Writers elsewhere (middesk.ts, stripe
+ *     handlers until PR #2134 lands) are outside this suite — see agents.md
+ *     follow-ups for the repo-wide writer lint.
+ *
+ * Mutation-verified: adding `kyb_completed_at` to the confirm-domain update, or
+ * `kyb_submitted_at` to the verify-domain token update, turns exactly one test
+ * red. Payload capture happens at call time; that the writes actually execute
+ * is pinned separately by each route's pre-existing "returns 500 when update
+ * fails" test (a dropped await would break those, not this suite).
+ */
+describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns', () => {
+  const app = createApp('user-123');
+
+  /** Collects every payload passed to organizations.update()/.insert() during a request. */
+  function captureOrgUpdates(orgSelectData: Record<string, unknown> | null) {
+    const captured: Record<string, unknown>[] = [];
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return mockQuery({ data: { org_id: 'org-abc' } });
+      }
+      if (table === 'organizations') {
+        const chain = mockQuery({ data: orgSelectData, error: null });
+        const capture = (payload: Record<string, unknown>) => {
+          // Snapshot, not reference: a handler that mutated the payload object
+          // after the call must not be able to rewrite what we captured.
+          captured.push({ ...payload });
+          return chain;
+        };
+        (chain.update as ReturnType<typeof vi.fn>).mockImplementation(capture);
+        (chain.insert as ReturnType<typeof vi.fn>).mockImplementation(capture);
+        return chain;
+      }
+      return mockQuery({ data: null });
+    });
+    return captured;
+  }
+
+  function kybKeysOf(payloads: Record<string, unknown>[]): string[] {
+    return payloads.flatMap((p) => Object.keys(p).filter((k) => k.startsWith('kyb_')));
+  }
+
+  it('confirm-domain full verification (EIN present) grants VERIFIED without any kyb_* column', async () => {
+    const updates = captureOrgUpdates({
+      domain_verification_token: '123456:abcdef',
+      domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+      ein_tax_id: '12-3456789',
+      domain_verified: false,
+      // Provider-KYB state present on the row on purpose: a future conditional
+      // "carry-forward" stamp (`...(org.kyb_provider ? { kyb_… } : {})`) must
+      // fire under this fixture so the ratchet catches it.
+      kyb_provider: 'middesk',
+      kyb_submitted_at: new Date(Date.now() - 3600_000).toISOString(),
+    });
+
+    const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
+    expect(res.status).toBe(200);
+
+    // The self-grant itself must have happened (otherwise this suite is
+    // vacuously green against a rewritten handler that stopped writing).
+    const grant = updates.find((p) => p.verification_status === 'VERIFIED');
+    expect(grant).toBeDefined();
+    expect(kybKeysOf(updates)).toEqual([]);
+  });
+
+  it('confirm-domain partial verification (no EIN) writes no kyb_* column', async () => {
+    const updates = captureOrgUpdates({
+      domain_verification_token: '123456:abcdef',
+      domain_verification_token_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+      ein_tax_id: null,
+      domain_verified: false,
+    });
+
+    const res = await request(app).post('/org/confirm-domain').send({ code: '123456' });
+    expect(res.status).toBe(200);
+    expect(updates.length).toBeGreaterThan(0);
+    expect(kybKeysOf(updates)).toEqual([]);
+  });
+
+  it('verify-domain token write stamps no kyb_* column', async () => {
+    // The 4th update site in this file — the token write that starts domain
+    // verification. `kyb_submitted_at` is the realistic bad stamp here ("record
+    // when self-serve verification started"), so this route must be pinned too.
+    const updates = captureOrgUpdates({ domain: 'example.com', domain_verified: false });
+
+    const res = await request(app).post('/org/verify-domain').send({});
+    expect(res.status).toBe(200);
+    const tokenWrite = updates.find((p) => 'domain_verification_token' in p);
+    expect(tokenWrite).toBeDefined();
+    expect(kybKeysOf(updates)).toEqual([]);
+  });
+
+  it('verify-ein PENDING write stamps no kyb_* column', async () => {
+    // organizations is hit twice: duplicate-EIN check (maybeSingle → null), then update.
+    const updates = captureOrgUpdates(null);
+
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    expect(res.status).toBe(200);
+    const pending = updates.find((p) => p.verification_status === 'PENDING');
+    expect(pending).toBeDefined();
+    expect(kybKeysOf(updates)).toEqual([]);
+  });
+
+  it('dev-verify grants VERIFIED without any kyb_* column', async () => {
+    const updates = captureOrgUpdates(null);
+
+    const res = await request(app).post('/org/dev-verify').send({});
+    expect(res.status).toBe(200);
+    const grant = updates.find((p) => p.verification_status === 'VERIFIED');
+    expect(grant).toBeDefined();
+    expect(kybKeysOf(updates)).toEqual([]);
+  });
+});

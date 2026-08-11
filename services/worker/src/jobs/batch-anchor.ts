@@ -94,7 +94,7 @@ interface PendingTriggerProbe {
   batchSizeCrossed: boolean;
 }
 
-interface ClaimedAnchor {
+export interface ClaimedAnchor {
   id: string;
   fingerprint: string;
   metadata: unknown;
@@ -750,8 +750,15 @@ export interface TxidJournalReconcileResult {
 
 type JournalResolutionAction = 'ADOPT' | 'REVERT' | 'HOLD' | 'PERSISTED';
 
-/** Deterministic batch leaf ordering: (fingerprint asc, anchor id asc). */
-function sortAnchorsForBatch(anchors: ClaimedAnchor[]): ClaimedAnchor[] {
+/**
+ * Deterministic batch leaf ordering: (fingerprint asc, anchor id asc).
+ *
+ * EXPORTED so the leaf-order round-trip ratchet
+ * (`batch-anchor.leaf-order-roundtrip.test.ts`) can pin THIS function rather
+ * than a copy of it. The Mar/Apr producer had no such rule, which is how
+ * 2,969,630 anchors ended up with an unreproducible committed leaf order.
+ */
+export function sortAnchorsForBatch(anchors: ClaimedAnchor[]): ClaimedAnchor[] {
   return [...anchors].sort((a, b) => {
     const fp = a.fingerprint.toLowerCase().localeCompare(b.fingerprint.toLowerCase());
     if (fp !== 0) return fp;

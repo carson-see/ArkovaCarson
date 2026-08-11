@@ -38,13 +38,19 @@
  *
  * BUILT — handler now does the real work:
  *   1. Zod-parse + canonicalize fingerprint
- *   2. Idempotency check (return existing receipt if fingerprint already
+ *   2. DPA clause 4.6 org field policy — reject a request carrying a field this
+ *      organisation may not send (migration 0405). Runs HERE, before step 3,
+ *      because the idempotency check answers 200 with a stored receipt and
+ *      would otherwise pass a prohibited field through on every retry.
+ *   3. Idempotency check (return existing receipt if fingerprint already
  *      anchored, same pattern as /api/v1/anchor)
- *   3. Org-credit deduction (1 credit per pre-signing anchor)
  *   4. Insert into `anchors` with credential_type=CONTRACT_PRESIGNING
  *      and contract_metadata + signing_workflow_metadata stored as nested
  *      keys inside anchors.metadata (jsonb)
- *   5. Return PreSigningAnchorReceipt with the generated public_id
+ *   5. Org-credit deduction (1 credit per pre-signing anchor), with a
+ *      compensating delete if it fails — see the ATOMICITY NOTE below; this is
+ *      insert-then-deduct since SCRUM-2970, not deduct-then-insert
+ *   6. Return PreSigningAnchorReceipt with the generated public_id
  *
  * SCRUM-1630 [Test] adds the integration tests (real handler against the
  * mocked supabase chain), beyond the [Spec]'s shape-pinning tests that
@@ -60,6 +66,7 @@ import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
 import { ensureAnchorCreditAvailable } from '../../../utils/anchorCreditGate.js';
 import { ensureOrgNotSuspended } from '../../../utils/orgSuspensionGuard.js';
+import { enforceOrgFieldPolicy } from '../../../utils/orgFieldPolicy.js';
 
 const router = Router();
 
@@ -268,6 +275,21 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
   const fingerprint = body.fingerprint; // already lowercased by the schema
 
   const orgId = req.apiKey.orgId ?? null;
+
+  // DPA Schedule 1 / clause 4.6 — org-scoped field rejection (migration 0405).
+  // No-op for every org without a policy row. Runs on the RAW body and BEFORE
+  // the idempotency lookup below: that lookup answers 200 with the stored
+  // receipt for an already-anchored fingerprint, so enforcing after it would
+  // let a prohibited field through on every retry — and a contract-signing
+  // integration retries by construction.
+  if (!(await enforceOrgFieldPolicy({
+    orgId,
+    body: req.body,
+    res,
+    scope: 'contracts-anchor-pre-signing',
+  }))) {
+    return;
+  }
 
   try {
     // Idempotency lookup, scoped by:

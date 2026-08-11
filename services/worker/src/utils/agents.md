@@ -2,6 +2,39 @@
 
 Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
+## 2026-08-10 — new `orgFieldPolicy.ts`: org-scoped request-field rejection (DPA Schedule 1 / clause 4.6)
+
+The first per-org *request shape* control in the worker. `switchboard_flags` is global (no `org_id`)
+and the only pre-existing per-org write gate was whole-org suspension, so there was no way to say
+"this one organisation may not send field X". A DPA can oblige Arkova to reject a prohibited field
+**independently of the counterparty agreeing to stop sending it**, which is a control, not a promise —
+`enforceOrgFieldPolicy` reads `public.organization_field_policies` (migration `0405`) and 400s the
+request. Wired into `api/v1/anchor-submit.ts`, `api/v1/anchor-bulk.ts`, and therefore also the
+dashboard `anchor-bulk-self-service.ts` fall-through.
+
+Four decisions worth not re-litigating:
+
+- **It walks the RAW body, not the Zod output.** Both anchor schemas are `.strict()` today, so an
+  unknown top-level key already 400s — but that is a property of a schema someone can relax, not a
+  guarantee, and `metadata` is `z.record(..., z.unknown())`, which passes a nested `description`
+  through untouched. Walking the raw body makes the control independent of another module's
+  strictness and catches `metadata.description` and `anchors[3].description` as well as top-level.
+- **Rejects on key PRESENCE, whatever the value.** `description: null` still sends a field the
+  agreement does not permit.
+- **`truncated` is a rejection, not a pass.** A payload past the depth/node budget is one we could
+  not certify; "we could not check" must never render as "it is fine".
+- **Failure semantics are asymmetric on purpose.** Table missing ⇒ `0405` is not deployed ⇒ no org
+  can have a policy ⇒ permissive (same shape as `professionalEducationSchemaGate`). Read fails with
+  a recent cached answer ⇒ serve the stale one, so a DB blip cannot switch a contractual control
+  off. Read fails cold ⇒ **fail closed** with 503, matching `anchor-bulk.ts`'s own
+  `duplicate_check_unavailable` precedent on the same route; the read hits the same Postgres as the
+  insert that would follow, so the availability cost is close to zero. `DISABLE_ORG_FIELD_POLICY=true`
+  is the break-glass for that path and logs at error level every time it suppresses a check.
+
+Policy is cached per org for 60s (negative results too, so orgs without a policy cost ~1 read/min).
+`clearOrgFieldPolicyCache()` is exported for tests — a test that configures a policy for an org an
+earlier test already resolved must call it, or it reads the earlier answer.
+
 ## 2026-08-03 — new `mempool-url.ts` (SCRUM-3016); `sentry.ts` gains two new fingerprinted alerts (SCRUM-3021, SCRUM-3017) (PR #1965)
 
 - **`mempool-url.ts` (new).** `normalizeMempoolHostUrl` / `resolveMempoolApiBase` / `resolveMempoolHostBase`
@@ -147,3 +180,20 @@ Rules:
 - Fire-and-forget is deliberate (an audit write must not fail an anonymous public verify request),
   but the returned promise is awaitable. Whether API-key lifecycle events should be awaited — so a
   key is never reported created without its audit row — is an open decision, not an oversight.
+
+## 2026-08-11 — SCRUM-3188 `supplementaryProof.ts`
+
+Pure core for the supplementary proof anchor. `orderSupplementaryLeaves` (deterministic `(fingerprint asc, anchorId asc)` — the same rule as the live producer's `sortAnchorsForBatch`), `planSupplementaryBatch` (order + tree, keeping the order that produced the root), `buildVerifiedSupplementaryProofRows`, `assessSupplementarySpend`, `estimateSupplementaryRun`.
+
+`buildVerifiedSupplementaryProofRows` is the ONLY way to construct a supplementary proof row, and it throws `UnverifiedSupplementaryProofError` unless (1) the planned root is byte-equal to the root the CHAIN committed and (2) EVERY emitted branch independently re-verifies via `verifyMerkleProof` against that root. No best-effort mode, no skip flag — same invariant PR #2130 established for reconstruction. It additionally refuses any row that cannot name the original attestation it supplements, and any row whose supplementary txid equals that attestation.
+
+`SUPPLEMENTARY_TX_VSIZE = 156.25` is measured from a real prod anchoring tx (`c86c3927…`, block 961,982), not estimated.
+## proofReconstruction.ts (SCRUM-3187)
+
+- **The one rule: never emit a proof that has not been verified against the on-chain root.** `reconstructBatch` is the ONLY constructor of proof rows in this module, and it builds them solely after (a) the rebuilt root is byte-equal to the OP_RETURN-committed root and (b) every branch independently re-verifies via `verifyMerkleProof`. There is no best-effort mode and no skip flag — the check is inside the constructor precisely so no caller can forget it. A proof that does not verify is a false integrity claim; returning nothing is always correct, returning something plausible never is.
+- **Trying candidate leaf orderings is not guessing.** The chain is the judge: an ordering either reproduces the committed root or it does not, and passing falsely would require a second-preimage on double-SHA256. The search only recovers what the chain already pins down. Adding an ordering strategy is therefore safe; removing the verification is not.
+- **Batch-of-1 is NOT exempt.** The degenerate case (`root == fingerprint`, empty branch) is where fabrication is easiest, so it goes through the same chain check. `reconstructBatch([solo], wrongRoot)` must fail, and a test pins it.
+- **`storedBranch` (legacy `anchors.metadata.merkle_proof`) is UNTRUSTED INPUT.** It is a claim about a branch, not evidence of one. Prod batch `8f62259b…` (2026-03-26) carries stored branches whose root matches the chain but which fail verification under as-is, position-flipped, level-reversed, and reversed-and-flipped readings. ~29% of sampled March anchors carry this field. Copying it into `anchor_proofs` unchecked would have manufactured false proofs at scale — that exact prod branch is pinned as a regression test. One bad branch rejects the WHOLE batch: a partially-true batch is not something we can honestly serve.
+- **Leaf ORDER, not leaf SET, is what was lost.** Prod has zero soft-deleted anchors with a `chain_tx_id`, so no batch has a hole; for backlog tx `606b7eec…` exactly 1 of 720 permutations reproduces the real on-chain root, which proves the set is exact. The March/April producer took rows straight from `claim_pending_anchors` (`UPDATE … RETURNING`, no ordering guarantee), so the committed order is a query-plan artifact. `id asc`, `fingerprint asc`, `created_at asc/desc`, and `ctid` order are all empirically ruled out against real chain roots.
+- **`MAX_PERMUTATION_SEARCH_LEAVES = 8` is a cost bound, not a safety bound.** Raising it trades CPU for coverage and changes no safety property. It is why ~2.97M records in >8-leaf batches are honestly `unreconstructible_order` rather than silently "pending".
+- **`merkle.ts:55-59` documents an ordering contract prod contradicts** — it claims `(fingerprint asc, id asc)`, but 2026-08 batches reconstruct under `id asc`. `sortAnchorsForBatch` only landed 2026-07-06. Do not treat that docstring as the historical contract.

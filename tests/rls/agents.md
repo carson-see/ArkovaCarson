@@ -60,3 +60,26 @@ Two shapes worth copying when you write one:
   The disclosure is the *difference* between the two answers, so compare the
   bodies (`toEqual`) rather than checking each says "not found" — otherwise a
   distinguishable error path, timing, or envelope shape still leaks.
+
+## Function ACLs, not just row policies
+`supplementary-proof-anchor-revokes.test.ts` asserts the *grant* surface of five
+SECURITY DEFINER functions, not an RLS policy. It exists because SQL that reads
+as "service_role only" can compute the opposite ACL: `ALTER DEFAULT PRIVILEGES`
+grants `anon`/`authenticated` EXECUTE directly at CREATE time and
+`REVOKE ... FROM PUBLIC` does not remove a direct role grant.
+
+- **Assert the computed ACL, not the statements you think produce it** —
+  `has_function_privilege('anon', fn, 'EXECUTE')` must be false.
+- **Pass the exact identity arguments** so the right overload resolves.
+`proof-coverage-window-revoke.test.ts` asserts the *grant* surface of a
+SECURITY DEFINER function, not an RLS policy. It exists because SQL that reads
+as "service_role only" can compute the opposite ACL: `ALTER DEFAULT PRIVILEGES`
+grants `anon`/`authenticated` EXECUTE directly at CREATE time and
+`REVOKE ... FROM PUBLIC` does not remove a direct role grant. 0406 shipped that
+way and was anon-callable in prod until revoked on 2026-08-11.
+
+- **Assert the computed ACL, not the statements you think produce it** —
+  `has_function_privilege('anon', fn, 'EXECUTE')` must be false.
+- **Keep the positive case in the same suite.** If `service_role` also lost
+  EXECUTE the function is merely broken, and "anon cannot call it" would pass
+  for the wrong reason.

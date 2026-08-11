@@ -1,11 +1,38 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { ROUTES } from '@/lib/routes';
+import { BILLING_PAGE_LABELS } from '@/lib/copy';
 import { BillingPage } from './BillingPage';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 const mockSignOut = vi.hoisted(() => vi.fn());
+const mockNavigate = vi.hoisted(() => vi.fn());
+const mockOpenBillingPortal = vi.hoisted(() => vi.fn());
+const mockToastError = vi.hoisted(() => vi.fn());
+
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
+vi.mock('@/hooks/useBilling', () => ({
+  useBilling: () => ({
+    subscription: null,
+    plan: null,
+    plans: [],
+    loading: false,
+    error: null,
+    startCheckout: vi.fn(),
+    openBillingPortal: mockOpenBillingPortal,
+    refresh: vi.fn(),
+  }),
+}));
+
+vi.mock('sonner', () => ({
+  toast: { error: mockToastError, success: vi.fn(), warning: vi.fn() },
+}));
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
@@ -34,9 +61,22 @@ vi.mock('@/components/layout', () => ({
 }));
 
 vi.mock('@/components/billing/BillingOverview', () => ({
-  BillingOverview: ({ billingInfo, loading }: { billingInfo: { plan?: { name?: string } } | null; loading?: boolean }) => (
+  BillingOverview: ({
+    billingInfo,
+    loading,
+    onUpgrade,
+    onManageBilling,
+  }: {
+    billingInfo: { plan?: { name?: string } } | null;
+    loading?: boolean;
+    onUpgrade?: () => void;
+    onManageBilling?: () => void;
+  }) => (
     <div data-testid="billing-overview" data-loading={String(Boolean(loading))}>
       {billingInfo?.plan?.name ?? 'no billing info'}
+      {/* The page owns what these callbacks DO; the stub only has to fire them. */}
+      <button type="button" onClick={onUpgrade}>Upgrade Plan</button>
+      <button type="button" onClick={onManageBilling}>Manage Billing</button>
     </div>
   ),
 }));
@@ -235,5 +275,68 @@ describe('BillingPage', () => {
 
     expect(screen.getByText('Individual')).toBeInTheDocument();
     expect(screen.queryByText('Enterprise')).not.toBeInTheDocument();
+  });
+
+  // =========================================================================
+  // LAUNCH BLOCKER — the upgrade path must reach checkout, not itself.
+  //
+  // `handleUpgrade` used to be `navigate(ROUTES.BILLING)`: clicking "Upgrade
+  // Plan" on /billing re-navigated to /billing. A user at their plan limit had
+  // no reachable way to pay. `handleManageBilling` was the same no-op with a
+  // `// Opens Stripe customer portal when available` comment.
+  // =========================================================================
+  describe('upgrade + portal paths', () => {
+    let originalLocation: Location;
+
+    beforeEach(() => {
+      mockFetch.mockResolvedValue({ ok: true, json: async () => billingStatus('Free') });
+      originalLocation = window.location;
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: { ...originalLocation, href: '' },
+      });
+    });
+
+    afterEach(() => {
+      Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
+    });
+
+    it('sends "Upgrade Plan" to the pricing/checkout route, never back to billing', async () => {
+      const user = userEvent.setup();
+      renderBillingPage();
+
+      await user.click(await screen.findByRole('button', { name: 'Upgrade Plan' }));
+
+      expect(mockNavigate).toHaveBeenCalledWith(ROUTES.PRICING);
+      expect(mockNavigate).not.toHaveBeenCalledWith(ROUTES.BILLING);
+    });
+
+    it('redirects "Manage Billing" to the Stripe portal URL the worker returns', async () => {
+      const user = userEvent.setup();
+      mockOpenBillingPortal.mockResolvedValue('https://billing.stripe.test/session/abc');
+      renderBillingPage();
+
+      await user.click(await screen.findByRole('button', { name: 'Manage Billing' }));
+
+      await waitFor(() => {
+        expect(window.location.href).toBe('https://billing.stripe.test/session/abc');
+      });
+      expect(mockOpenBillingPortal).toHaveBeenCalled();
+    });
+
+    it('surfaces an error when the portal session cannot be created', async () => {
+      const user = userEvent.setup();
+      // useBilling.openBillingPortal swallows failures and resolves null, so a
+      // silent no-op here is indistinguishable from the old dead button.
+      mockOpenBillingPortal.mockResolvedValue(null);
+      renderBillingPage();
+
+      await user.click(await screen.findByRole('button', { name: 'Manage Billing' }));
+
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith(BILLING_PAGE_LABELS.PORTAL_UNAVAILABLE);
+      });
+      expect(window.location.href).toBe('');
+    });
   });
 });
