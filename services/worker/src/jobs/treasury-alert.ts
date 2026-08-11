@@ -45,6 +45,23 @@ export interface TreasuryAlertDecision {
 }
 
 /**
+ * A BTC/USD quote we can actually value a balance with, or null.
+ *
+ * BUG-2026-08-11: "no price" is not only null. mempool.space's signet and
+ * testnet explorers answer /v1/prices with HTTP 200 and a `-1` sentinel, and
+ * a non-positive (or non-finite) price is worse here than a missing one:
+ * `balance_usd` goes negative, lands below every threshold, and reports as a
+ * genuine low-balance alert carrying a real-looking number. treasury-cache
+ * rejects the sentinel before storing it; this is the last line, so the
+ * decision can never be poisoned by a stale row or a future writer.
+ *
+ * Returns the value (not a boolean) so the caller's null check narrows it.
+ */
+function usableBtcPrice(raw: number | null | undefined): number | null {
+  return raw != null && Number.isFinite(raw) && raw > 0 ? raw : null;
+}
+
+/**
  * Pure decision function — no I/O. Easily testable, deterministic, clock-
  * injectable. The worker glue code in `runTreasuryAlertCheck` wraps this
  * with DB reads/writes and Slack/email dispatch.
@@ -53,9 +70,12 @@ export function decideTreasuryAlert(input: TreasuryAlertInput): TreasuryAlertDec
   const threshold = input.threshold_usd ?? DEFAULT_THRESHOLD_USD;
   const now = input.now ?? new Date();
 
-  // Oracle outage: no BTC/USD price → fail closed. Always alert with
-  // "price unknown" unless we already alerted in the last window.
-  if (input.btc_price_usd == null || input.balance_confirmed_sats == null) {
+  // Oracle outage: no USABLE BTC/USD price → fail closed. Always alert with
+  // "price unknown" unless we already alerted in the last window. See
+  // usableBtcPrice for why null is not the only unusable value.
+  const price = usableBtcPrice(input.btc_price_usd);
+
+  if (price == null || input.balance_confirmed_sats == null) {
     const lastAlertAgo = input.last_alert_at
       ? now.getTime() - new Date(input.last_alert_at).getTime()
       : Infinity;
@@ -68,8 +88,7 @@ export function decideTreasuryAlert(input: TreasuryAlertInput): TreasuryAlertDec
     };
   }
 
-  const balanceUsd =
-    (input.balance_confirmed_sats / SATS_PER_BTC) * input.btc_price_usd;
+  const balanceUsd = (input.balance_confirmed_sats / SATS_PER_BTC) * price;
   const belowThreshold = balanceUsd < threshold;
 
   if (!belowThreshold) {

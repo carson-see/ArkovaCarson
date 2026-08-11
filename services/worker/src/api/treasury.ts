@@ -409,7 +409,17 @@ export async function handleTreasuryHealth(
     // alerts on a healthy treasury. Fall back to DEFAULT on any non-finite
     // or non-positive parse.
     const thresholdUsd = parseThresholdUsd(process.env.TREASURY_LOW_BALANCE_USD);
-    const priceUnknown = cache?.btc_price_usd == null || cache?.balance_confirmed_sats == null;
+    // BUG-2026-08-11: "unknown price" is not only null. mempool.space's
+    // non-mainnet explorers answer /v1/prices with HTTP 200 and a `-1`
+    // sentinel; a non-positive or non-finite price yields a NEGATIVE
+    // balance_usd that reads as a genuine low-balance figure and trips
+    // below_threshold. treasury-cache no longer writes such a row — this
+    // endpoint additionally refuses to trust one it reads.
+    const priceUsable =
+      cache?.btc_price_usd != null &&
+      Number.isFinite(cache.btc_price_usd) &&
+      cache.btc_price_usd > 0;
+    const priceUnknown = !priceUsable || cache?.balance_confirmed_sats == null;
     const balanceUsd = priceUnknown
       ? null
       : (cache!.balance_confirmed_sats! / SATS_PER_BTC) * (cache!.btc_price_usd as number);

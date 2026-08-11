@@ -262,3 +262,20 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 - **DO** scope every cross-tenant write by `org_id` using `_org-auth.ts` helpers
 - **DO NOT** expose `user_id`, `org_id`, or `anchors.id` publicly — use `public_id` only
 - **DO NOT** set `anchor.status = 'SECURED'` from client code — worker-only via service_role
+
+## `treasury.ts` — health endpoint price validation (BUG-2026-08-11)
+
+`handleTreasuryHealth` gated on `btc_price_usd == null`, so a `-1` row (what mempool.space's
+non-mainnet explorers return from `/v1/prices` with HTTP 200) produced a NEGATIVE `balance_usd`
+reported as a genuine reading, with `below_threshold` true. The gate is now "usable price":
+non-null, finite, and > 0. `jobs/treasury-cache.ts` no longer writes such a row, and
+`jobs/treasury-alert.ts` applies the same guard — this endpoint additionally refuses to trust a
+row it merely reads, so a stale row or a future writer cannot poison it.
+
+Unchanged and still correct: the wallet leg's `createUtxoProvider({ network: config.bitcoinNetwork })`
+was always per-network.
+
+**Known gap, not fixed here:** the fee leg calls `createFeeEstimator()` without a network, and
+`chain/fee-estimator.ts`'s `DEFAULT_MEMPOOL_URL` is the mainnet base — so a non-mainnet deployment
+reports MAINNET fee rates. Same defect class, but the fix lands in `services/worker/src/chain/`,
+which the path detector rates T3. Tracked separately rather than folded into a T2 PR.
