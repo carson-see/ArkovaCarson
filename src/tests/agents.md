@@ -47,3 +47,27 @@ DO write the targeted guard *and* leave the ratchet to catch the next one:
 `REVOKE ... FROM PUBLIC` does not remove the direct `anon`/`authenticated`
 EXECUTE grants `ALTER DEFAULT PRIVILEGES` adds at CREATE time, and that has now
 shipped five times (0364, 0377, 0378, 0388, 0406).
+## `pages/route-reachability.test.ts` (2026-08-10) — the "built but unreachable" guard
+
+A component test cannot detect an unroutable page **by construction**: it mounts
+the component itself, so "can a user get here?" is never asked. That blind spot
+cost us the checkout path — `PricingPage` was complete and green while having no
+route, no `ROUTES` key, and no importers, so no CTA could reach Stripe.
+
+This guard asserts two structural invariants by reading `App.tsx` and
+`routes.ts` as text:
+
+1. every `ROUTES` constant is referenced in `App.tsx` (no route constant that
+   nothing renders);
+2. every module in `src/pages/` is imported by `App.tsx` (no orphan page).
+
+Both were at zero violations for 78 route keys and 76 pages once PricingPage was
+routed, so the exception lists (`INTENTIONALLY_UNROUTED_PAGES` /
+`INTENTIONALLY_UNROUTED_CONSTANTS`) start EMPTY. Keep them that way where you
+can: adding an entry is a deliberate, reviewed edit and must carry a reason,
+which is the point — silent drift is what shipped the bug.
+
+The two self-check cases ("guard self-check") exist because the parser is a
+regex over a source file: if the `ROUTES` literal is reformatted and the regex
+matches nothing, the real assertions would pass vacuously. They pin a floor on
+what the parser must find.

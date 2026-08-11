@@ -28,6 +28,23 @@ const SUPABASE_FETCH_TIMEOUT_MS = 10_000;
 /** Request timeout for worker-proxied Nessie context generation (ms). */
 const NESSIE_WORKER_FETCH_TIMEOUT_MS = 30_000;
 
+/** Request timeout for the worker-proxied semantic credential search (ms). */
+const SEARCH_WORKER_FETCH_TIMEOUT_MS = 15_000;
+
+/**
+ * Search mode reported on every `search_credentials` result payload.
+ *
+ * The tool historically advertised "semantic similarity matching" while the
+ * only code path was an ILIKE substring scan (`search_public_credentials`
+ * RPC + the direct-table fallback). Callers had no way to tell the two apart,
+ * so a lexical substring hit was indistinguishable from a vector match.
+ *
+ * `search_mode` is now emitted on EVERY payload so an agent can tell what it
+ * actually got. Same discipline as the nessie tool's `text_fallback`.
+ */
+export const SEARCH_MODE_SEMANTIC = 'semantic_vector';
+export const SEARCH_MODE_LEXICAL = 'lexical_substring';
+
 /**
  * Embedding model used by the edge nessie vector-search path.
  *
@@ -237,8 +254,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: 'search_credentials',
     description:
       'Search for credentials using natural language queries. ' +
-      'Uses semantic similarity matching to find relevant credentials. ' +
-      'Returns ranked results with verification status and relevance scores.',
+      'Uses semantic (vector) similarity matching against anchored public ' +
+      'credentials, returning ranked results with verification status and a ' +
+      '`similarity` relevance score. ' +
+      'Every result reports `search_mode`: "semantic_vector" for vector ' +
+      'matching, or "lexical_substring" when the service falls back to ' +
+      'substring matching on title/description (no similarity score). ' +
+      'Check `search_mode` before presenting results as semantically ranked.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -587,6 +609,23 @@ export async function handleVerifyCredential(
 
 /**
  * Search credentials using natural language.
+ *
+ * Resolution order (BUG-3a discipline — the edge NEVER embeds):
+ *   1. Worker semantic path (`GET {workerBaseUrl}/api/v1/verify/search`) when
+ *      the worker base URL + caller API key are both configured. The worker
+ *      owns the SINGLE Gemini embedder (`gemini-embedding-001`) that built the
+ *      `credential_embeddings` index, so this is the only path that can return
+ *      a true vector match. Emits `search_mode: 'semantic_vector'`.
+ *   2. Lexical fallback (`search_public_credentials` RPC, then a direct-table
+ *      ILIKE query) when the worker is unconfigured, unreachable, or the
+ *      `ENABLE_SEMANTIC_SEARCH` gate returns 503. Emits
+ *      `search_mode: 'lexical_substring'`.
+ *
+ * Do NOT "fix" step 2 by embedding the query at the edge with Workers AI: the
+ * edge model (`NESSIE_EMBEDDING_MODEL`, bge-base 768-dim) is a different
+ * family from the Gemini-space index, and querying across the two returns
+ * meaningless neighbours. That is the exact regression BUG-3a documents on the
+ * nessie path.
  */
 export async function handleSearchCredentials(
   input: SearchInput,
@@ -597,6 +636,14 @@ export async function handleSearchCredentials(
   }
 
   const maxResults = Math.min(input.max_results ?? 10, 50);
+
+  // 1. Real semantic search via the worker's Gemini embedder.
+  const semantic = await searchCredentialsWorkerSemantic(
+    input.query,
+    maxResults,
+    config,
+  );
+  if (semantic) return semantic;
 
   try {
     // INJ-01: Use RPC with bound parameters instead of URL interpolation
@@ -620,11 +667,17 @@ export async function handleSearchCredentials(
     const results = await response.json() as Array<Record<string, unknown>>;
 
     if (!Array.isArray(results) || results.length === 0) {
-      return textResult({ query: input.query, total: 0, results: [] });
+      return textResult({
+        query: input.query,
+        search_mode: SEARCH_MODE_LEXICAL,
+        total: 0,
+        results: [],
+      });
     }
 
     return textResult({
       query: input.query,
+      search_mode: SEARCH_MODE_LEXICAL,
       total: results.length,
       results: results.map((r, i) => ({
         rank: i + 1,
@@ -645,9 +698,12 @@ export async function handleSearchCredentials(
 }
 
 /**
- * Fallback search when the search_public_credentials RPC fails.
- * Queries the anchors table directly via PostgREST with ILIKE on filename.
- * Scoped to non-deleted SECURED/SUBMITTED anchors.
+ * LEXICAL fallback search when the search_public_credentials RPC fails.
+ *
+ * Queries the anchors table directly via PostgREST with ILIKE on filename /
+ * description — a substring match, NOT semantic similarity. Callers are told
+ * so via `search_mode: 'lexical_substring'`; never describe this path as
+ * semantic. Scoped to non-deleted SECURED/SUBMITTED anchors.
  */
 async function searchCredentialsFallback(
   query: string,
@@ -675,11 +731,17 @@ async function searchCredentialsFallback(
 
     const rows = await resp.json() as Array<Record<string, unknown>>;
     if (!Array.isArray(rows) || rows.length === 0) {
-      return textResult({ query, total: 0, results: [] });
+      return textResult({
+        query,
+        search_mode: SEARCH_MODE_LEXICAL,
+        total: 0,
+        results: [],
+      });
     }
 
     return textResult({
       query,
+      search_mode: SEARCH_MODE_LEXICAL,
       total: rows.length,
       results: rows.map((r, i) => ({
         rank: i + 1,
@@ -695,6 +757,125 @@ async function searchCredentialsFallback(
     console.error('[search_credentials] fallback failed:', err);
     return errorResult(`Search failed: both RPC and fallback query failed — ${err instanceof Error ? err.message : 'unknown'}`);
   }
+}
+
+/** One worker `/api/v1/verify/search` hit (mirror of aiVerifySearchRouter). */
+interface WorkerVerifySearchResult {
+  verified: boolean;
+  status: string;
+  issuer_name: string | null;
+  credential_type: string | null;
+  issued_date: string | null;
+  expiry_date: string | null;
+  anchor_timestamp: string;
+  record_uri: string;
+  similarity: number;
+}
+
+/**
+ * TRUE semantic credential search, proxied to the worker (BUG-3a discipline).
+ *
+ * Issues `GET {workerBaseUrl}/api/v1/verify/search?q=&limit=` with the
+ * caller's raw API key forwarded as `X-API-Key` (never the service-role key),
+ * so the worker enforces the caller's org-scoping, credit deduction and
+ * per-caller rate limits. The worker embeds the query with the same Gemini
+ * model that built `credential_embeddings` and runs a real cosine-similarity
+ * search via the `search_public_credential_embeddings` RPC.
+ *
+ * Returns `null` — never a thrown error and never a fabricated empty result —
+ * on ANY condition that means "semantic search did not actually run":
+ * unconfigured worker/key, 503 from the `ENABLE_SEMANTIC_SEARCH` gate,
+ * any other non-2xx, a network/timeout failure, or an unrecognised body shape.
+ * `null` makes the caller degrade to the labelled lexical path. A zero-hit
+ * semantic response is NOT null — that is a real semantic answer of "no
+ * matches" and is returned as such.
+ *
+ * NEVER logs `config.callerApiKey`.
+ */
+async function searchCredentialsWorkerSemantic(
+  query: string,
+  maxResults: number,
+  config: SupabaseConfig,
+): Promise<ToolResult | null> {
+  let base = config.workerBaseUrl ?? '';
+  while (base.endsWith('/')) base = base.slice(0, -1);
+  const callerKey = config.callerApiKey;
+  if (!base || !callerKey) return null;
+
+  // Worker caps `limit` at 20 (VerifySearchSchema); clamp here so a larger
+  // max_results degrades to the worker's ceiling instead of a 400.
+  const limit = Math.min(maxResults, 20);
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  const url = `${base}/api/v1/verify/search?${params.toString()}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SEARCH_WORKER_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        // Forward the CALLER's key. Do NOT log this value.
+        'X-API-Key': callerKey,
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      // 503 = ENABLE_SEMANTIC_SEARCH gate closed. Status only — never the key
+      // or the full URL with params.
+      console.warn(
+        `[search_credentials] worker semantic proxy HTTP ${response.status}; falling back to lexical search`,
+      );
+      return null;
+    }
+
+    const body = (await response.json()) as {
+      results?: WorkerVerifySearchResult[];
+      count?: number;
+    };
+
+    // Unrecognised shape — treat as "semantic did not run" rather than
+    // reporting a misleading total:0 under a semantic label.
+    if (!Array.isArray(body.results)) {
+      console.warn('[search_credentials] worker semantic proxy returned an unexpected shape; falling back to lexical search');
+      return null;
+    }
+
+    return textResult({
+      query,
+      search_mode: SEARCH_MODE_SEMANTIC,
+      total: body.results.length,
+      results: body.results.map((r, i) => ({
+        rank: i + 1,
+        public_id: extractPublicIdFromUri(r.record_uri),
+        title: r.credential_type,
+        credential_type: r.credential_type,
+        issuer_name: r.issuer_name,
+        status: mapStatus(r.status),
+        anchor_timestamp: r.anchor_timestamp,
+        record_uri: r.record_uri,
+        // The `relevance scores` the tool description advertises. Only ever
+        // present on the semantic path — the lexical path has no score.
+        similarity: r.similarity,
+      })),
+    });
+  } catch (err) {
+    const reason = err instanceof Error ? err.name : 'unknown';
+    console.warn(
+      `[search_credentials] worker semantic proxy failed (${reason}); falling back to lexical search`,
+    );
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Last non-empty path segment of a verify URI, e.g. `/verify/ARK-1` → `ARK-1`. */
+function extractPublicIdFromUri(uri: string): string | null {
+  if (typeof uri !== 'string' || uri.length === 0) return null;
+  const segments = uri.split('?')[0].split('/').filter(Boolean);
+  return segments.length > 0 ? segments[segments.length - 1] : null;
 }
 
 function parseToolJson(result: ToolResult): Record<string, unknown> | null {

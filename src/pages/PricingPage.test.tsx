@@ -54,8 +54,13 @@ vi.mock('@/hooks/useProfile', () => ({
   }),
 }));
 
+vi.mock('sonner', () => ({
+  toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
+}));
+
 import { PricingPage } from './PricingPage';
 import { BILLING_LABELS } from '@/lib/copy';
+import { toast } from 'sonner';
 
 // =========================================================================
 // Helpers
@@ -192,6 +197,12 @@ describe('PricingPage', () => {
     expect(screen.getAllByText('Verified Individual').length).toBeGreaterThanOrEqual(1);
   });
 
+  // NOTE ON SCOPE: this file renders PricingPage directly, so it proves the
+  // page's own behaviour only — it CANNOT prove the page is reachable. It
+  // passed green for months while the page had no route at all and no CTA in
+  // the product led here. Reachability is asserted structurally in
+  // `src/tests/pages/route-reachability.test.ts`, and end-to-end in
+  // `e2e/billing.spec.ts`. Do not treat a green run here as "checkout works".
   it('calls startCheckout when selecting a plan', async () => {
     mockStartCheckout.mockResolvedValue(null);
     renderPage();
@@ -201,6 +212,73 @@ describe('PricingPage', () => {
     await waitFor(() => {
       expect(mockStartCheckout).toHaveBeenCalledWith('individual_verified_monthly');
     });
+  });
+
+  it('redirects to the Stripe Checkout URL returned for the selected plan', async () => {
+    // The previous test resolved null, so nothing ever asserted the redirect —
+    // the one step that actually takes the customer's money.
+    const originalLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...originalLocation, href: '' },
+    });
+    try {
+      mockStartCheckout.mockResolvedValue('https://checkout.stripe.test/c/pay/cs_test_123');
+      renderPage();
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Select Plan' })[1]);
+
+      await waitFor(() => {
+        expect(window.location.href).toBe('https://checkout.stripe.test/c/pay/cs_test_123');
+      });
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
+    }
+  });
+
+  // The exact user-visible error IS asserted below (toast.error called with the
+  // specific BILLING_LABELS.CHECKOUT_UNAVAILABLE constant). There is no status
+  // or error code to assert: useBilling.startCheckout deliberately collapses
+  // every failure to `null` before this layer sees it — which is precisely why
+  // the null branch must not stay silent.
+  // eslint-disable-next-line arkova/require-error-code-assertion -- see above
+  it('surfaces an error instead of silently doing nothing when checkout cannot start', async () => {
+    // startCheckout resolves null on any failure — notably the worker's 400
+    // when a plan has no stripe_price_id configured for the environment. A
+    // silent no-op is indistinguishable from a broken button.
+    mockStartCheckout.mockResolvedValue(null);
+    renderPage();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Select Plan' })[1]);
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(BILLING_LABELS.CHECKOUT_UNAVAILABLE);
+    });
+  });
+
+  it('routes an existing subscriber to the billing portal instead of a new checkout', async () => {
+    const originalLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...originalLocation, href: '' },
+    });
+    try {
+      mockBillingDefaults({
+        subscription: { status: 'active', current_period_end: '2026-04-01' },
+        plan: { id: 'individual_verified_monthly', name: 'Verified Individual', records_per_month: 10 },
+      });
+      mockOpenBillingPortal.mockResolvedValue('https://billing.stripe.test/session/xyz');
+      renderPage();
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Select Plan' })[0]);
+
+      await waitFor(() => {
+        expect(window.location.href).toBe('https://billing.stripe.test/session/xyz');
+      });
+      expect(mockStartCheckout).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
+    }
   });
 
   it('navigates to Settings when back button clicked', () => {

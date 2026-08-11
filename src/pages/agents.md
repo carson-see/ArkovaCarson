@@ -182,6 +182,45 @@ on 2026-08-01 (signup returns HTTP 200 with `confirmation_sent_at` set and NO
 session). `supabase/config.toml` and the signup E2E spec previously encoded the
 opposite; both are corrected.
 
+## 2026-08-10 — PricingPage was built, tested, and unreachable (launch blocker)
+
+`PricingPage.tsx` is the ONLY surface that can take money: it calls
+`startCheckout` → worker `POST /api/checkout/session` → Stripe. It had **no
+`ROUTES` key, no `<Route>` in `App.tsx`, and zero importers** — `/pricing`
+appeared nowhere in `src/` or `e2e/`. The note in the 2026-06-24 entry below
+("currently an unrouted/standalone component") recorded this as a fact without
+treating it as the revenue outage it was. Meanwhile `BillingPage.tsx`'s
+`handleUpgrade` was `navigate(ROUTES.BILLING)` — the page the user was already
+on — and `handleManageBilling` was the same no-op carrying a
+`// Opens Stripe customer portal when available` comment. A customer who hit
+their plan limit could not give us money.
+
+Fixed: `ROUTES.PRICING = '/pricing'`, routed in `App.tsx` behind
+`AuthGuard` + `RouteGuard allow={MAIN_APP_DESTINATIONS}` — the same guard as
+`ROUTES.BILLING`. **Auth is required deliberately**: `useBilling` gates on
+`user`, `startCheckout` returns null without one, `workerFetch` throws without a
+session, and the worker 401s. A public `/pricing` would render an empty
+`AppShell` with a Select Plan button that silently no-ops — a second dead end.
+Public plan marketing belongs on the marketing site.
+
+`BillingPage` now navigates to `ROUTES.PRICING` and calls
+`useBilling().openBillingPortal()`, redirecting to the returned Stripe URL.
+`CheckoutCancelPage`'s "Back to Plans" pointed at `/billing`; it now returns to
+`/pricing` so an abandoned purchase can actually be retried.
+
+**Silent-failure rule (same bug class):** `startCheckout` / `openBillingPortal`
+swallow every failure and resolve `null` — including the worker's 400 when a
+plan has no `stripe_price_id` configured for the environment. Any call site MUST
+surface an error on the null branch (`BILLING_LABELS.CHECKOUT_UNAVAILABLE` /
+`PORTAL_UNAVAILABLE`); a silent return is indistinguishable from the dead
+buttons this release removed.
+
+Two unit tests had pinned the broken behaviour as correct and were rewritten:
+`e2e/billing.spec.ts` asserted `toHaveURL(/\/billing$/)` after clicking Upgrade,
+and `CheckoutCancelPage.test.tsx` asserted the back link's href was `/billing`.
+`PricingPage.test.tsx` passed throughout because it renders the component
+directly — it cannot see reachability, and now says so in a comment.
+Reachability is guarded structurally by `src/tests/pages/route-reachability.test.ts`.
 ## 2026-08-10 — ComplianceDashboardPage no longer mounts the Nessie panel
 
 `ComplianceDashboardPage.tsx` rendered `<NessieIntelligencePanel />`
