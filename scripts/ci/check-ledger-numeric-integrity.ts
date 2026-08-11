@@ -289,7 +289,7 @@ export function auditStaleExemptions(
         `present in the prod ledger AND its source supabase/migrations/${prefix}_*.sql is on main. ` +
         `The exemption no longer suppresses anything real; it only hides a future drift on ${prefix} ` +
         `(a revert, or a later out-of-band apply reusing the number). Remove ${prefix} from ` +
-        `exemptPrefixes and record the removal in the file's _comment.`,
+        `exemptPrefixes and record the removal in the file's _history array.`,
     });
   }
   return violations;
