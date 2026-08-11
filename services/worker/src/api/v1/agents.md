@@ -77,6 +77,17 @@ any org that has no policy row. For a configured org, requests that previously s
 which is the point of the control and is what that org contracted for. New error codes on an existing
 status class are additive; this needs no `v2` prefix.
 
+## 2026-08-10 — raw caller IPs were persisted into `audit_events` (DPA defect, FIXED)
+
+Arkova's DPA Schedules 1 and 2 both warrant that IP addresses are processed in **hashed** form. Two audit writers on this surface serialised `req.ip` **verbatim** into `details.querying_ip`: `verify.ts` (`VERIFICATION_QUERIED`) and `credentials-ctdl.ts` (`ctdl.requested`). 16 prod rows held literal IPv4/IPv6 addresses. Signing the DPA unchanged would have made a contractual warranty false.
+
+Both now emit **`querying_ip_hash`** via `auditIpHash(req.ip, config.ipHashPepper)` (`services/worker/src/lib/ip-hash.ts`) — a keyed HMAC-SHA256, `null` when the pepper is unavailable, never the raw address. The field was **renamed**, not just re-valued: `querying_ip` holding a digest would keep inviting the next reader to treat it as an address.
+
+- **Hashed, not dropped, and that was a deliberate call.** Nothing in either repo reads `querying_ip` — by consumer count alone, dropping wins. But both routes are anon-reachable (`router.ts` lets unauthenticated GETs through) and `api_key_id` is null for exactly the scraping/enumeration traffic these logs exist to investigate, so the IP-derived value is the ONLY actor identifier available. A keyed digest keeps "one caller hit 10k public_ids in a minute" answerable while making "which human" unanswerable from the log.
+- **The contract test is `audit-ip-pseudonymisation.test.ts`**, and its load-bearing assertion is `JSON.stringify(details)` never containing the address — not a check on one field name. A future rename cannot quietly reintroduce the leak. It covers both writers, IPv4 and IPv6, the keyed-vs-bare-sha256 distinction, and the pepper-missing path.
+- **Historical rows**: migration `0404` redacts `details.querying_ip` from existing rows and leaves a `querying_ip_redacted: true` marker. Not re-hashed — that would require the pepper inside a migration file.
+- `IP_HASH_PEPPER` must exist in Secret Manager + `deploy-worker.yml` **before the next worker deploy**; production fails to boot without it.
+
 ## 2026-08-03 — `openapi-ciba.ts` ActionType doc gained `INSTANT_SECURE` + a drift guard
 
 Founder directive (rule-action-dispatcher/schemas.ts wiring — see `services/worker/src/jobs/agents.md` and `services/worker/src/rules/agents.md` for the full writeup). `ActionType`'s `enum` array here is a hand-copied literal that had **no test pinning it against the actual Zod source of truth** (`rules/schemas.ts` `CreateOrgRuleInput.action_type`) — `openapi-ciba.test.ts` gained `'ActionType enum matches CreateOrgRuleInput.action_type exactly (no doc drift)'`, asserting the two sorted arrays are equal, so a future new action_type can't ship in the schema and silently miss this doc again. `enum` now reads `['AUTO_ANCHOR', 'FAST_TRACK_ANCHOR', 'INSTANT_SECURE', 'QUEUE_FOR_REVIEW', 'FLAG_COLLISION', 'NOTIFY', 'FORWARD_TO_URL']`.
