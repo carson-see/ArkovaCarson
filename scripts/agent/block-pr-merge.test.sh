@@ -180,6 +180,38 @@ run_case "bypass: global flags after &&"        $BLOCKED \
   'npm test && git -c a=b push --force origin main'
 
 echo ""
+echo "--- BYPASS: a leading + on a refspec forces with no flag -------"
+# Rule 2 looks for a force FLAG (--force / -f / --force-with-lease). A leading
+# `+` on a refspec is the OTHER way to force an update -- it is per-refspec and
+# needs no flag anywhere on the line -- so every case below returned exit 0
+# against the hook as it stood on 2026-08-11 (probed, not theorised). This is a
+# distinct rule gap from the global-option bypasses above, not another instance
+# of them: normalizing the line does not help, because there is no flag to find.
+run_case "refspec: +main"                       $BLOCKED 'git push origin +main'
+run_case "refspec: +main:main"                  $BLOCKED 'git push origin +main:main'
+run_case "refspec: +HEAD:master"                $BLOCKED 'git push origin +HEAD:master'
+run_case "refspec: +HEAD:main"                  $BLOCKED 'git push origin +HEAD:main'
+run_case "refspec: +master"                     $BLOCKED 'git push origin +master'
+# The destination is what makes it destructive; the source can be anything.
+run_case "refspec: +feature:main"               $BLOCKED 'git push origin +feature:main'
+# Fully-qualified refs are the same push, spelled longhand.
+run_case "refspec: +refs/heads/main"            $BLOCKED 'git push origin +refs/heads/main'
+run_case "refspec: +refs/heads/x:refs/heads/main" $BLOCKED \
+  'git push origin +refs/heads/x:refs/heads/main'
+# A safe refspec first must not launder an unsafe one after it.
+run_case "refspec: safe one then +main"         $BLOCKED \
+  'git push origin +feature:feature +main'
+run_case "refspec: quoted"                      $BLOCKED 'git push origin "+main"'
+run_case "refspec: in a compound command"       $BLOCKED \
+  'npm test && git push origin +main'
+# Composes with the global-option normalization: the `-c` splits the token run
+# AND there is no force flag, so this needs both fixes to be caught.
+run_case "refspec: -c global option then +main" $BLOCKED \
+  'git -c user.name=x push origin +main'
+run_case "refspec: -C global option then +main" $BLOCKED \
+  'git -C /some/path push origin +HEAD:master'
+
+echo ""
 echo "--- the fix must not over-match --------------------------------"
 # Normalizing must only remove git's own leading global options. It must never
 # turn a line that merely *mentions* a forbidden operation into a blocked one,
@@ -196,6 +228,36 @@ run_case "--no-pager log naming main"       $ALLOWED 'git --no-pager log --forma
 run_case "-C then diff naming main"         $ALLOWED 'git -C . diff main --stat'
 run_case "fetch from main"                  $ALLOWED 'git fetch origin main'
 run_case "rebase onto main"                 $ALLOWED 'git -c a=b rebase origin/main'
+
+echo ""
+echo "--- the refspec rule must not over-match ------------------------"
+# The refspec rule is the one place in this hook where a ref NAME decides the
+# verdict, so `\b(main|master)\b` is the wrong tool: \b treats `-`, `.` and `/`
+# as word boundaries, which makes `\bmain\b` match inside `+docs/main-page`,
+# `+main-page` and `+release/main-v2`. Every case below is a legitimate forced
+# push to somewhere that is not main, and each one is what a naive \b matcher
+# would have broken.
+run_case "refspec: +feature:feature"        $ALLOWED 'git push origin +feature:feature'
+run_case "refspec: branch named +main-page" $ALLOWED 'git push origin +main-page'
+run_case "refspec: path containing main"    $ALLOWED 'git push origin +docs/main-page'
+run_case "refspec: dst path containing main" $ALLOWED \
+  'git push origin +feature:docs/main-page'
+run_case "refspec: dotted name w/ main"     $ALLOWED 'git push origin +release.main.v2'
+run_case "refspec: main as a substring"     $ALLOWED 'git push origin +mainline'
+run_case "refspec: main as a suffix"        $ALLOWED 'git push origin +remainder'
+run_case "refspec: master as a prefix"      $ALLOWED 'git push origin +masterclass'
+# Source main, destination a feature branch. This force-updates `feature` FROM
+# `main` and does nothing to main's history, so it is not what rule 2 guards.
+# It is also the exact case a "does the line contain +...main" matcher gets
+# wrong, which is why the destination is read after the colon.
+run_case "refspec: +main:feature"           $ALLOWED 'git push origin +main:feature'
+run_case "refspec: +master:feature"         $ALLOWED 'git push origin +master:feature'
+# A plain (non-forced) push has no `+` and is not this rule's business.
+run_case "refspec: unforced push to main"   $ALLOWED 'git push origin main'
+run_case "refspec: unforced HEAD:main"      $ALLOWED 'git push origin HEAD:main'
+# `+` outside a push refspec position must not trip it.
+run_case "refspec: + in a pathspec"         $ALLOWED 'git add "src/a+main.ts"'
+run_case "refspec: + in a log range"        $ALLOWED 'git log --grep="+main" --oneline'
 
 echo ""
 echo "--- the normalizer itself is present and parses -----------------"

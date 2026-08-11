@@ -94,6 +94,35 @@ if printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push.*\b(main|master)
   exit 2
 fi
 
+# 2b. Forced refspec push to main / master. The two rules above only look for a
+# force FLAG, but a leading `+` on a refspec forces the update per-refspec with
+# no flag anywhere on the line. Confirmed by probe 2026-08-11: `git push origin
+# +main`, `+main:main` and `+HEAD:master` all returned exit 0 from this hook.
+# Independent of the global-option bypass class above -- normalizing the line
+# cannot help when there is no flag to find -- so it is its own rule.
+#
+# The DESTINATION decides. `+feature:main` overwrites main and must block;
+# `+main:feature` force-updates `feature` FROM main, leaves main's history
+# alone, and must not. So the ref is read after the colon when there is one and
+# from the whole token when there is not, with `refs/heads/` allowed as a
+# longhand prefix on either side.
+#
+# Boundaries are spelled as explicit character classes rather than `\b`, because
+# \b treats `-`, `.` and `/` as word boundaries: `\bmain\b` matches inside
+# `+docs/main-page` and `+main-page`, which would block legitimate forced pushes
+# to branches that merely contain the substring. Ref-name characters (alnum plus
+# . _ - /) are excluded on both sides so only an exact `main`/`master`
+# destination matches, and `:` is excluded from the trailing class as well --
+# that one exclusion is the whole of what keeps `+main:feature` allowed. Both
+# directions are pinned by scripts/agent/block-pr-merge.test.sh; the over-match
+# cases there are as load-bearing as the bypass cases.
+#
+# Matches on "$norm" so a global option before `push` cannot split the run.
+if printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push.*[^-_./A-Za-z0-9]\+([^[:space:]:]*:)?(refs/heads/)?(main|master)([^-_./:A-Za-z0-9]|$)'; then
+  printf 'BLOCKED: forced refspec push to main/master -- a leading `+` on a refspec forces the update with no --force flag. CLAUDE.md forbids destructive git ops without explicit approval.\n' >&2
+  exit 2
+fi
+
 # 3. push/commit --no-verify (skipping hooks). CLAUDE.md mandate.
 # Matches on "$norm" — see rule 2.
 if printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+(push|commit).*--no-verify\b'; then
