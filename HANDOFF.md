@@ -146,6 +146,27 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
   **Flagged, not fixed:** `chain/fee-estimator.ts` has the same mainnet-only default, so a
   non-mainnet deployment reports mainnet fee rates — that fix is T3 (`chain/`) and is tracked
   separately rather than folded in.
+- **New PR opened 2026-08-12** (`services/worker/src/utils/rateLimit.ts`, comment-only in
+  `services/worker/src/index.ts`): `apiIpShadowGuard` is mounted twice — `index.ts:418` under `/api`
+  and `index.ts:446` unprefixed — and Express runs every mount a request matches, so one request was
+  counted twice by the same limiter instance. **The documented 60 req/min per IP (§1.10) was really
+  30/min.** Path-dependent, which is why it hid: `/api/badge/:id` is answered by `badgeRouter` and
+  never reaches mount 446 (counted once, looks correct), while anonymous `/api/v1/*` is answered by
+  neither and falls through to 446 (counted twice). Matches the side-rig's `x-ratelimit-remaining`
+  48 → 46 → 44 stride, which one correctly-mounted limiter cannot produce. **Neither mount could be
+  deleted** — the unprefixed one serves did:web paths outside `/api` and must carry the same skip
+  predicate (F-2, #1768). Fixed by stamping the request with the limiter's own `Symbol` and counting
+  at most once per limiter INSTANCE; deliberately per-instance, not global, because `index.ts` shares
+  one per-IP bucket across different limiters and each must still charge it. Also fixes
+  `rateLimiters.api`, which double-counted on overlapping prefixes (`/api/v1/org` at :470 vs
+  `/api/v1/org/sub-orgs` at :471). TDD: 7 tests written first, **4 confirmed red**
+  (`expected [8, 6, 4] to deeply equal [9, 8, 7]`); all adjacent rate-limit suites pass, worker
+  typecheck + `npm run lint` clean. **This LOOSENS enforcement** (30/min → the intended 60/min) — it
+  changes enforcement numbers, so it is not a cleanup. T2 by path rule; opened in DRAFT, **not**
+  queued toward Ready — the full-soak rig is occupied by `pr-2195` and frozen and
+  `arkova-worker-staging` is dead, so no soak was run; `SOAK_GATE_DISABLED` read `false` at open
+  time, so its Staging Soak Evidence Gate is expected to fail. Independent of, and additive to,
+  the F-1 store fix in #2223 — until both land, each `/api/*` request costs two Upstash round trips.
 
 ### Soaks
 
