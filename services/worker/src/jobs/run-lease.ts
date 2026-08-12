@@ -593,10 +593,32 @@ export function resetRunLeaseSkipTrackingForTests(): void {
 }
 
 /**
- * Records a refused claim and warns when the streak has outlived a full TTL.
- * Returns the current consecutive-skip count.
+ * Why a run was skipped. Both count toward the SAME streak, and that is the
+ * point: during the F-D0-5 incident the instance holding the hung run answered
+ * every forced POST from the `in-process` branch, never the `lease-held` one.
+ * Tracking only the latter would leave the instance operators were actually
+ * probing as the one instance that never warns.
  */
-function recordRunLeaseSkip(spec: RunLeaseSpec, holder: string): number {
+type RunLeaseSkipReason = 'in-process' | 'lease-held';
+
+const SKIP_MESSAGES: Record<RunLeaseSkipReason, string> = {
+  'in-process': 'Run skipped — already in progress on this instance',
+  'lease-held': 'Run skipped — another instance holds the run lease',
+};
+
+/**
+ * Records a skipped run and warns when the streak has outlived a full TTL.
+ *
+ * One skip is unremarkable — it is what healthy overlap looks like. A streak
+ * spanning more than a full TTL is not: by then the TTL should have expired a
+ * dead holder, so continued refusal means an ACTIVE run is renewing without
+ * finishing. That is the incident's signature, and it is what earns a warn.
+ */
+function recordRunLeaseSkip(
+  spec: RunLeaseSpec,
+  reason: RunLeaseSkipReason,
+  holder?: string,
+): number {
   const nowMs = Date.now();
   const previous = skipStreaks.get(spec.leaseId);
   const streak = previous
@@ -610,16 +632,18 @@ function recordRunLeaseSkip(spec: RunLeaseSpec, holder: string): number {
       {
         holder,
         lease: spec.label,
+        reason,
         consecutiveSkips: streak.count,
         blockedForMs,
         ttlMs: spec.ttlMs,
+        maxRunMs: spec.maxRunMs,
       },
-      'Run lease has been continuously unavailable for longer than a full TTL — the holder is renewing but not finishing; SUBMITTED work for this job is not progressing',
+      'Run lease has been continuously unavailable for longer than a full TTL — the holder is renewing but not finishing; work for this job is not progressing',
     );
   } else {
     logger.info(
-      { holder, lease: spec.label, consecutiveSkips: streak.count },
-      'Run skipped — another instance holds the run lease',
+      { holder, lease: spec.label, reason, consecutiveSkips: streak.count },
+      SKIP_MESSAGES[reason],
     );
   }
   return streak.count;
@@ -651,7 +675,7 @@ export async function withRunLease<T>(
   const { client, ...spec } = options;
 
   if (inFlight.has(spec.leaseId)) {
-    logger.info({ lease: spec.label }, 'Run skipped — already in progress on this instance');
+    recordRunLeaseSkip(spec, 'in-process');
     return { acquired: false };
   }
   // Claimed SYNCHRONOUSLY, before the first await — exactly where the
@@ -667,7 +691,7 @@ export async function withRunLease<T>(
   try {
     claimed = await acquireRunLease(client, spec, holder);
     if (!claimed) {
-      recordRunLeaseSkip(spec, holder);
+      recordRunLeaseSkip(spec, 'lease-held', holder);
       return { acquired: false };
     }
     skipStreaks.delete(spec.leaseId);

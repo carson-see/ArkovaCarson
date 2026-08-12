@@ -188,6 +188,61 @@ describe('run lease skip observability (F-D0-5 / F-D0-2)', () => {
     );
   });
 
+  /**
+   * THE INSTANCE OPERATORS ACTUALLY PROBE.
+   *
+   * During F-D0-5 the hung run's own instance answered every forced POST from
+   * the `inFlight` short-circuit, never the lease-refused branch — `inFlight`
+   * is checked before the store. Tracking only lease-refused skips would leave
+   * that one instance permanently silent, which is precisely the instance a
+   * responder is hitting when they re-trigger the job by hand.
+   */
+  it('warns on a same-process skip streak too, not only a lease-refused one', async () => {
+    const fastSpec = { ...SPEC, ttlMs: 80, maxRunMs: 10_000 };
+    const store = createRunLeaseStore(fastSpec, 'free');
+    let release!: () => void;
+    let started!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const isRunning = new Promise<void>((resolve) => { started = resolve; });
+
+    // A long run holds the in-process guard; every concurrent local call is
+    // refused by `inFlight` WITHOUT reaching the store.
+    const running = withRunLease({ ...fastSpec, client: store.client }, async () => {
+      started();
+      await held;
+      return 'long';
+    });
+
+    // Wait until the body is actually executing. A successful acquisition
+    // RESETS the streak (a run that completes means the job is progressing),
+    // so probing before the acquire round-trip lands would have the reset
+    // race the first skip and silently restart the count at 1.
+    await isRunning;
+
+    try {
+      // The streak is anchored at the FIRST skip, not at the run's start — we
+      // are measuring "this job has been continuously refused for longer than
+      // a TTL", which is the same question in both branches. So the skips have
+      // to span the TTL, not merely follow a long-running body.
+      await withRunLease({ ...fastSpec, client: store.client }, async () => 'blocked');
+      expect(mockLogger.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('continuously unavailable'),
+      );
+
+      await sleep(100); // > ttlMs
+      await withRunLease({ ...fastSpec, client: store.client }, async () => 'blocked');
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ lease: fastSpec.label, reason: 'in-process', consecutiveSkips: 2 }),
+        expect.stringContaining('continuously unavailable'),
+      );
+    } finally {
+      release();
+    }
+    await running;
+  });
+
   it('resets the streak after a successful acquisition', async () => {
     const fastSpec = { ...SPEC, ttlMs: 200, maxRunMs: 400 };
     const store = createRunLeaseStore(fastSpec, {
