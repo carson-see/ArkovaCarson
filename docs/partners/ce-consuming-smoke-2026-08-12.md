@@ -20,7 +20,7 @@
 | Authenticated Search API, 3 queries | **3/3 HTTP 200** |
 | CTID → public graph resolution, 5 CTIDs | **5/5 HTTP 200, 5/5 round-trip CTID match** |
 | Fabricated CTID (honesty check) | **HTTP 404**, no fabricated status |
-| Course-code → CTID resolution | **Works, but only with an exact-match operator.** See §4 — this is the substantive finding. |
+| Course-code → CTID resolution | **Works, but only via the documented `search:exactMatch` operator.** See §4 — a correctness requirement for our resolver, not a CE defect. |
 
 **The trial key is valid and authenticating as of 2026-08-12.** This had never been verified before this run.
 
@@ -61,7 +61,7 @@ Request shape that works (the `Sort` field is required — omitting it produced 
 
 ---
 
-## 4. Course ID → CTID — the actual use case, and the finding
+## 4. Course ID → CTID — the actual use case
 
 This is the flow CE asked about and the one Jeff Grann described as the "wand problem": given a provider's course identifier, find the Registry CTID.
 
