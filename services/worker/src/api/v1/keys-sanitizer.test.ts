@@ -14,17 +14,18 @@
  * ORG_ADMIN-scoped surface and is not a secret; it stays.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
-// Re-implement the contract here so the test pins shape, not implementation.
-// If keys.ts toPublicKey() drifts, the flow tests in keys-revocation.test.ts
-// will fail; this file pins the public-shape invariant.
-function publicKeyShape(row: Record<string, unknown>): Record<string, unknown> {
-  const sanitized = { ...row };
-  delete sanitized.org_id;
-  delete sanitized.key_hash;
-  return sanitized;
-}
+vi.mock('../../utils/db.js', () => ({ db: { from: vi.fn() } }));
+vi.mock('../../utils/logger.js', () => ({
+  logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
+// Pin the REAL exported sanitizer, not a local re-implementation. The
+// pre-FD-P7 version of this file re-implemented toPublicKey and asserted
+// against its own copy — it could not fail regardless of what keys.ts did,
+// which is one of the reasons FD-P7 shipped unnoticed.
+import { toPublicKey as publicKeyShape } from './keys.js';
 
 describe('keys.ts public shape (SCRUM-1271-D + FD-P7)', () => {
   const fullRow = {

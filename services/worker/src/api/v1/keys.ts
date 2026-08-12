@@ -36,7 +36,7 @@ import { recordAuditEvent } from '../../utils/auditEvent.js';
  * visible hex chars of entropy. This surface is ORG_ADMIN-only and org-scoped,
  * and the row's own id is not a secret.
  */
-function toPublicKey<T extends Record<string, unknown>>(row: T | null | undefined): Partial<T> {
+export function toPublicKey<T extends Record<string, unknown>>(row: T | null | undefined): Partial<T> {
   if (!row) return {};
   const sanitized = { ...row };
   delete (sanitized as Record<string, unknown>).org_id;
