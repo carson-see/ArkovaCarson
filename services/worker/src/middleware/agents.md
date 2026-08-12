@@ -92,7 +92,7 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 
 ## Files
 
-- **apiKeyAuth.ts** — API key authentication via HMAC-SHA256 hash comparison. Raw keys never stored (Constitution 1.4).
+- **apiKeyAuth.ts** — API key authentication via HMAC-SHA256 hash comparison. Raw keys never stored (Constitution 1.4). Rejects on `!is_active` **OR** `revoked_at` being set (FD-P7): the `/api/v1/keys` PATCH revoke path stamps both, and checking only the flag would let a row whose two signals disagree keep authenticating here while migration 0382's `validate_api_key` — which tests `revoked_at IS NULL` — rejects the same key on the edge/MCP path. Both paths must fail the same way.
 - **featureGate.ts** — Gates `/api/v1/*` behind `ENABLE_VERIFICATION_API` switchboard flag. TTL-cached (60s). Fails closed on DB read errors.
 - **flagRegistry.ts** — Centralized feature flag registry combining env-based and DB-backed flags. Call `init()` once at startup. PROOF-03 (SCRUM-2336) registers the `ENABLE_CONFIRMATION_PROOF_BACKFILL` getter → `config.enableConfirmationProofBackfill` (default OFF) — gates the confirmation-proof backfill in-process schedule (`routes/scheduled.ts`) and the `POST /jobs/populate-confirmation-proofs` HTTP trigger.
 - **errorSanitizer.ts** — Strips provider names, API versions, and stack details from error responses before they reach clients (CISO THREAT-4).

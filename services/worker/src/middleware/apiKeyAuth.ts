@@ -184,7 +184,7 @@ export function apiKeyAuth(hmacSecret: string, options: { required?: boolean } =
     try {
       // eslint-disable-next-line arkova/missing-org-filter -- auth: org unknown until key resolved
       const { data: apiKey, error } = await db.from('api_keys')
-        .select('id, org_id, created_by, scopes, rate_limit_tier, key_prefix, is_active, expires_at')
+        .select('id, org_id, created_by, scopes, rate_limit_tier, key_prefix, is_active, expires_at, revoked_at')
         .eq('key_hash', keyHash)
         .single();
 
@@ -197,7 +197,12 @@ export function apiKeyAuth(hmacSecret: string, options: { required?: boolean } =
         return;
       }
 
-      if (!apiKey.is_active) {
+      // Either signal means revoked. `is_active` is the flag the UI toggles;
+      // `revoked_at` is the timestamp the PATCH revoke path stamps (FD-P7).
+      // Checking only the flag would let a row whose two signals disagree keep
+      // authenticating here while migration 0382's `validate_api_key` — which
+      // tests `revoked_at IS NULL` — rejects the same key on the edge/MCP path.
+      if (!apiKey.is_active || apiKey.revoked_at) {
         res.status(401).json({
           error: 'api_key_revoked',
           message: 'This API key has been revoked.',

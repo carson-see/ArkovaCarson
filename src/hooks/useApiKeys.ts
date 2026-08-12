@@ -14,6 +14,12 @@ import { queryKeys } from '@/lib/queryClient';
 import { useAuth } from './useAuth';
 
 export interface ApiKeyMasked {
+  /**
+   * The handle `revokeKey`/`deleteKey` address. FD-P7 (BUG-2026-08-12): the
+   * worker briefly stripped this from its responses, so this field was typed
+   * `string` while arriving `undefined` — the Revoke button silently 404'd.
+   * A response cast can't catch that; `keys-sanitizer.test.ts` pins it instead.
+   */
   id: string;
   key_prefix: string;
   name: string;
@@ -23,6 +29,8 @@ export interface ApiKeyMasked {
   created_at: string;
   expires_at: string | null;
   last_used_at: string | null;
+  revoked_at?: string | null;
+  revocation_reason?: string | null;
 }
 
 export interface ApiKeyCreated extends ApiKeyMasked {

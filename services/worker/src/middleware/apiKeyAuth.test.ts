@@ -273,6 +273,42 @@ describe('apiKeyAuth middleware', () => {
     );
   });
 
+  /**
+   * FD-P7 / BUG-2026-08-12 — `revoked_at` must be load-bearing, not decorative.
+   *
+   * The PATCH revoke path now stamps `revoked_at` alongside `is_active=false`.
+   * If auth consults only `is_active`, a row whose two signals disagree (a
+   * direct DB stamp, an admin path, a partially-applied write) still
+   * authenticates, and migration 0382 — which adds `revoked_at IS NULL` to
+   * `validate_api_key` — would reject that same key on the edge/MCP path while
+   * the worker accepted it. Fail the same way on both paths.
+   */
+  it('rejects a key stamped revoked_at even when is_active is still true', async () => {
+    mockKeyLookup({
+      id: 'key-stamped-revoked',
+      org_id: 'org-1',
+      scopes: ['verify'],
+      rate_limit_tier: 'free',
+      key_prefix: 'ak_live_stmp',
+      is_active: true,
+      expires_at: null,
+      revoked_at: '2026-08-01T12:00:00Z',
+    });
+
+    const req = createMockReq({ authorization: 'Bearer ak_live_stampedrevoked01' });
+    const res = createMockRes();
+    const next = vi.fn();
+
+    const middleware = apiKeyAuth(TEST_HMAC_SECRET);
+    await middleware(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'api_key_revoked' }),
+    );
+  });
+
   it('rejects expired key', async () => {
     mockKeyLookup({
       id: 'key-expired',

@@ -2,6 +2,50 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-12 — `keys.ts` sanitized away the identifier its own revoke route needs (FD-P7)
+
+**A response field and a path parameter are one contract, and nothing in the type system says so.**
+
+SCRUM-1271-D read CLAUDE.md §6 as a blanket ban on UUIDs and stripped `id` from the
+`POST /api/v1/keys` response and every `GET /api/v1/keys` row. `PATCH`/`DELETE` address a key by
+`:keyId` — which *is* `api_keys.id`. So an org admin could list their keys and had nothing to name
+the one they wanted revoked. `ApiKeySettings.tsx` passes `apiKey.id`; that became `undefined`, and
+Revoke issued `PATCH /api/v1/keys/undefined` → 404. SOC 2 CC6.8 had no customer-operable path.
+Found in the fullsoak-2026-08 Day-0 audit; it was live in prod.
+
+**Why review and CI both missed it:**
+
+- **The two halves live apart.** The serializer was reviewed as a *removal* ("this field is no
+  longer emitted"), which reads as strictly safe. The addressing scheme that consumed the field is
+  70 lines down and in a different handler.
+- **TypeScript was structurally blind.** The frontend declares `ApiKeyMasked.id: string` and fills
+  it from `await res.json()` — an `any` cast. A field vanishing from the wire is invisible to
+  `tsc`, forever. Every other guard here is compile-time, so the absence of a squawk read as safe.
+- **The ratchet tested a copy of itself.** `keys-sanitizer.test.ts` re-implemented `toPublicKey`
+  locally and asserted against its own re-implementation — its comment said so out loud ("pins
+  shape, not implementation"). It could not fail no matter what `keys.ts` did. It now imports the
+  real exported function; that is the only reason it is evidence of anything.
+
+Separately, the revoke path set `is_active=false` and never stamped `revoked_at`, so even a
+successful revocation left no timestamp — the column existed, unused, and migration 0382's header
+had already predicted "a future code path which stamps `revoked_at`". This was it.
+
+**Standing rules for this route:**
+
+- `id` stays in the response. `org_id` (tenant) and `key_hash` (secret) stay stripped. See the
+  carve-out in `docs/runbooks/v1-uuid-leak-deprecation.md` before touching the serializer — the
+  precondition for removing `id` is that `public_id` exists, is backfilled, and the routes resolve
+  against it. Removing an identifier before its replacement ships is what caused this.
+- **Revocation is terminal.** `PATCH {is_active: true}` on a key with `revoked_at` set returns 409.
+  Un-revoking hands back a key that was pulled *because* it leaked, and it splits the two auth
+  paths: migration 0382 adds `revoked_at IS NULL` to `validate_api_key`, so `is_active=true` with
+  `revoked_at` set would authenticate on the worker and fail on the edge/MCP path.
+- **Re-revoking never restamps.** The first `revoked_at` is the one that says when access actually
+  ended. Keys revoked before this fix carry NULL, so a re-revoke backfills them.
+- A generalisation worth carrying: when a sanitizer and a route parameter reference the same
+  column, the test that proves it has to traverse both — hence the list → take the id → revoke
+  loop in `keys.test.ts` rather than two independent shape assertions.
+
 ## 2026-08-11 — `POST /cle/submit` created anchors attributed to no organisation
 
 Same defect family as the `registry-anchor` entry below ("creating an anchor row is not the same
