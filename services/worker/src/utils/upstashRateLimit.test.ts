@@ -128,47 +128,19 @@ describe('UpstashRateLimitStore', () => {
     });
   });
 
-  describe('syncFromRedis', () => {
-    it('populates local cache from Redis', async () => {
-      const entry = { count: 3, resetAt: Date.now() + 60000 };
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ result: JSON.stringify(entry) }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      await store.syncFromRedis(['rate:sync-key']);
-      expect(store.get('rate:sync-key')).toEqual(entry);
-
-      vi.unstubAllGlobals();
-    });
-
-    it('skips expired entries from Redis', async () => {
-      const expiredEntry = { count: 3, resetAt: Date.now() - 1000 };
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ result: JSON.stringify(expiredEntry) }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      await store.syncFromRedis(['rate:expired']);
-      expect(store.get('rate:expired')).toBeUndefined();
-
-      vi.unstubAllGlobals();
-    });
-
-    it('skips keys that fail to fetch', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: false,
-      });
-      vi.stubGlobal('fetch', mockFetch);
-
-      await store.syncFromRedis(['rate:missing']);
-      expect(store.get('rate:missing')).toBeUndefined();
-
-      vi.unstubAllGlobals();
-    });
-  });
+  // F-1 (2026-08-12): `syncFromRedis` and its tests were REMOVED, not fixed.
+  //
+  // It warm-loaded the local cache from Redis at startup, and was the third
+  // leg of the defect: it was never called from non-test code, so the only
+  // thing keeping it alive was this suite. Under the current design it would
+  // also be actively wrong — enforcement is a server-side INCR, so seeding a
+  // local mirror could only double-count or let local expiry race the server
+  // TTL. The local map is now the fail-open bucket and nothing else.
+  //
+  // Cross-instance behaviour is covered by upstashRateLimit.distributed.test.ts.
+  // Note what this suite could NOT have caught: every assertion above is a
+  // single store round-tripping its own cache, which stays green whether or
+  // not Redis is ever consulted.
 });
 
 describe('initUpstashRateLimiting', () => {
