@@ -14,15 +14,26 @@
 
 ## Now
 
-**State as of 2026-08-03T02:49Z, verified live.** This block is the only current-state claim in this
+**State as of 2026-08-12T14:00Z, verified live.** (Prod worker/anchor sub-block refreshed 2026-08-12;
+the remainder of this block still carries its 2026-08-03T02:49Z reading unless a sub-block says
+otherwise.) This block is the only current-state claim in this
 file; everything under `## History` is the dated record and is not re-asserted here. Canonical soak
 findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md).
 
 ### Prod
 
-- Worker `git_sha 1d12f0d39f650e634c1a381efe40c2fed5dde39a` (short `1d12f0d39`); deploy-worker run
+- Worker `git_sha f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58` (short `f5d1070fc`, merge of #2209),
+  revision `arkova-worker-01310-god`. **Verified live 2026-08-12 ~14:00Z** by direct `/health` read:
+  `{"status":"healthy","git_sha":"f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58","network":"mainnet",
+  "checks":{"database":"ok","anchoring":"ok","kms":"ok"}}`, cross-checked against
+  `gcloud run services describe arkova-worker --region=us-central1`. Prod anchor counts at the same
+  reading: **3,485,148 total / 3,485,077 SECURED**, newest `2026-08-12 13:40:12Z`.
+  _(2026-08-12 sub-block; supersedes the 2026-08-11 `1d12f0d39` claim, which is its ancestor —
+  `git merge-base --is-ancestor` confirms `f5d1070fc` is the newer head.)_
+- _(superseded, 2026-08-11)_ Worker `git_sha 1d12f0d39f650e634c1a381efe40c2fed5dde39a` (short
+  `1d12f0d39`); deploy-worker run
   31533160150 succeeded 2026-08-11 (canary→full), `/health` verified live: `status: healthy`,
-  `database/anchoring/kms: ok`, `network: mainnet`. _(2026-08-11 sub-block; supersedes the
+  `database/anchoring/kms: ok`, `network: mainnet`. _(2026-08-11 sub-block; superseded the
   2026-08-03 `18d33efcf` claim.)_ Two deploy runs earlier the same hour FAILED at Pre-deploy
   Quality Gates — a semantic merge collision (#2081's clause 4.6 guard vs the new
   `cle-submit-recipient-semantics.test.ts`, each green alone, red together) blacked out ALL prod

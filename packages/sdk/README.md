@@ -383,7 +383,7 @@ For a complete reference (with Express, Flask, and Go examples), see [docs/api/w
 
 ## Nessie semantic search
 
-Arkova maintains an embedding corpus of 1.4M+ verified public records (SEC filings, court documents, regulatory data). Nessie lets you search and ask questions over them — every result is provably anchored.
+Arkova maintains an embedding corpus of 3.48M+ verified public records (SEC filings, court documents, regulatory data). Nessie lets you search and ask questions over them — every result is provably anchored.
 
 ### `arkova.query(q, options?)` — retrieval mode
 
