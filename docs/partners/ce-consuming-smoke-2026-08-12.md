@@ -82,11 +82,11 @@ Three query forms against `ceterms:codedNotation`, all HTTP 200:
 | B. Quoted phrase | `"\"WELD 207\""` | 10 | **9th** |
 | C. Exact-match operator | `{"search:value":"WELD 207","search:matchType":"search:exactMatch"}` | **1** | **1st** |
 
-**Finding: `codedNotation` matching is tokenized full-text with relevance ranking, not exact matching.** Form A returned `WELD 108`, `EN 207` and `CIS 207` ahead of the exact match — it is matching the tokens `WELD` and `207` independently. In an earlier `Take: 3` run the correct record did not appear at all.
+**This is documented CE behaviour, not a defect.** The Search API handbook states that "by default, all string-based fields allow for case-insensitive partial matches," and documents `search:matchType` with `search:exactMatch` ("will only match if the string is an exact match, case-insensitive") alongside `contains`, `startsWith` and `endsWith`. Forms A and B were us using the API incorrectly; Form C is the documented, intended mechanism.
 
-**Consequence for any integration:** a naive `codedNotation` lookup will silently resolve to the *wrong course*. Course-ID → CTID resolution is only safe with `search:matchType: search:exactMatch`, which returned exactly one result and the right one.
+**Consequence for our integration:** a naive `codedNotation` lookup silently resolves to the *wrong course* rather than returning nothing. Identifier-based resolution must use `search:matchType: search:exactMatch`. This is a correctness requirement for SCRUM-1921, and it is the thing this smoke was actually worth running for — we would otherwise have shipped a resolver that looks like it works and quietly returns the wrong record.
 
-This is the single most useful thing this smoke produced, and it is worth raising with CE directly — both to confirm the operator is the intended mechanism for identifier resolution, and because it is an easy trap for any other consumer building the same flow.
+**Do not present this to Credential Engine as a finding about their API.** It is documented behaviour and their team designed it deliberately. The only mildly non-obvious parts, worth at most a passing question rather than a headline: identifier-style lookup is not covered in the handbook's examples, and default partial matching on a two-token value like "WELD 207" appears to match records containing *either* token, which is broader than "partial match" suggests.
 
 ---
 
@@ -144,7 +144,7 @@ A non-existent CTID returns a clean 404. No fabricated status, no empty-but-succ
 
 | Item | Owner |
 |---|---|
-| Ask CE to confirm `search:exactMatch` is the intended mechanism for identifier-based resolution (§4) | Carson, CE meeting |
+| Optional, low priority: ask CE whether `search:exactMatch` is the recommended mechanism for identifier-based resolution, since the handbook's examples do not cover it (§4) | Carson, CE meeting |
 | Ask CE whether documented rate limits exist for the Search and Assistant APIs | Carson, CE meeting |
 | Encode the exact-match requirement in any course-ID → CTID implementation (SCRUM-1921) | Engineering |
 | Confirm sandbox access (SCRUM-1938) before any publish work | Carson, CE meeting |
