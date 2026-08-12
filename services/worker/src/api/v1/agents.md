@@ -192,7 +192,7 @@ status class are additive; this needs no `v2` prefix.
 
 **Open follow-ups (separate PRs):**
 
-* ~~ORG_ADMIN-gate `verify-ein`/`verify-domain`/`confirm-domain`~~ — **done 2026-08-12** (see entry above), including the EIN length cap. EIN **normalization** (next bullet's dup-check half) remains open.
+* ORG_ADMIN-gate `verify-ein`/`verify-domain`/`confirm-domain` (today any org **member** can write legal identifiers; `org-kyb.ts` requires ORG_ADMIN for the analogous action). — **Done 2026-08-12** (see the 2026-08-12 entry above), including the EIN length cap; EIN **normalization** remains open under the bullet below.
 * Provider-status stickiness: `verify-ein` must not clobber a provider-granted status (any member POSTing it flips `VERIFIED → PENDING` with **no self-serve recovery** once the domain is verified — confirm-domain 400s "already verified"), and `confirm-domain` must not promote out of a provider-terminal status.
 * Domain-first dead-end: `confirm-domain` is the **only** promoter and checks `ein_tax_id` at confirm time — an API caller who confirms the domain before submitting an EIN is stuck `PENDING` with no self-serve path forward (the UI happens to order EIN first, so this is browser-latent, API-live).
 * EIN normalization, not just a length cap: the duplicate check is exact-string `eq()`, so `12-3456789` vs `123456789` evades the 409. Format stays loose for international tax IDs, but note `org-kyb.ts` pins `^\d{9}$` (US-only) — international self-serve orgs cannot upgrade to the provider grade as-is.
