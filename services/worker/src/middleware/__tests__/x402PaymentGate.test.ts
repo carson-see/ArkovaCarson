@@ -9,7 +9,15 @@ import { createHmac } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---- Hoisted mocks ----
-const { mockRpc, mockInsert, mockSelect, mockLogger, mockConfig } = vi.hoisted(() => {
+const {
+  mockRpc,
+  mockInsert,
+  mockSelect,
+  mockLogger,
+  mockConfig,
+  mockGetCachedBtcPriceUsd,
+  mockEstimateFee,
+} = vi.hoisted(() => {
   const mockRpc = vi.fn();
   const mockInsert = vi.fn();
   const mockSelect = vi.fn();
@@ -25,9 +33,20 @@ const { mockRpc, mockInsert, mockSelect, mockLogger, mockConfig } = vi.hoisted((
     x402Network: 'eip155:84532',
     baseRpcUrl: undefined as string | undefined,
     apiKeyHmacSecret: 'payer-hmac-test-secret' as string | undefined,
+    bitcoinNetwork: 'mainnet',
     nodeEnv: 'test',
   };
-  return { mockRpc, mockInsert, mockSelect, mockLogger, mockConfig };
+  const mockGetCachedBtcPriceUsd = vi.fn();
+  const mockEstimateFee = vi.fn();
+  return {
+    mockRpc,
+    mockInsert,
+    mockSelect,
+    mockLogger,
+    mockConfig,
+    mockGetCachedBtcPriceUsd,
+    mockEstimateFee,
+  };
 });
 
 vi.mock('../../utils/db.js', () => ({
@@ -52,6 +71,19 @@ vi.mock('../../utils/logger.js', () => ({
   logger: mockLogger,
 }));
 
+// SCRUM-3128: anchor pricing reads the cron-populated BTC/USD quote. Mocked
+// here so the pricing arithmetic is asserted against a known oracle value —
+// btc-price.ts has its own tests for the read/validate/memo behavior.
+vi.mock('../../utils/btc-price.js', () => ({
+  getCachedBtcPriceUsd: mockGetCachedBtcPriceUsd,
+}));
+
+vi.mock('../../chain/fee-estimator.js', () => ({
+  MempoolFeeEstimator: class {
+    estimateFee = mockEstimateFee;
+  },
+}));
+
 // Mock fetch for on-chain validation
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -66,7 +98,10 @@ beforeEach(() => {
   mockConfig.x402Network = 'eip155:84532';
   mockConfig.baseRpcUrl = undefined;
   mockConfig.apiKeyHmacSecret = 'payer-hmac-test-secret';
+  mockConfig.bitcoinNetwork = 'mainnet';
   mockConfig.nodeEnv = 'test';
+  mockGetCachedBtcPriceUsd.mockResolvedValue(100_000);
+  mockEstimateFee.mockResolvedValue(10);
   mockInsert.mockResolvedValue({ error: null });
   mockSelect.mockResolvedValue({ data: null }); // No existing payment
   mockFetch.mockResolvedValue({
@@ -429,6 +464,124 @@ describe('x402PaymentGate', () => {
     await middleware(req, res, next);
     // Invalid txHash → no payment parsed → 402
     expect(res.status).toHaveBeenCalledWith(402);
+  });
+});
+
+/**
+ * SCRUM-3128 / BUG-2026-08-11: anchor pricing used a hardcoded
+ * `btcPriceUsd = 60000`, so the fee component was mis-scaled by exactly the
+ * BTC/USD ratio on every request, and the whole block fell back to base price
+ * with no log at all. These tests pin both.
+ */
+describe('getDynamicPrice', () => {
+  const ANCHOR = '/api/v1/anchor';
+  /** basePrice for an endpoint absent from X402_PRICING. */
+  const ANCHOR_BASE = 0.01;
+
+  async function priceFor(endpoint: string) {
+    const { getDynamicPrice } = await import('../x402PaymentGate.js');
+    return getDynamicPrice(endpoint);
+  }
+
+  it('returns static pricing for a read endpoint without consulting the oracle', async () => {
+    const result = await priceFor('/api/v1/verify');
+
+    expect(result).toEqual({ price: 0.002 });
+    expect(mockGetCachedBtcPriceUsd).not.toHaveBeenCalled();
+    expect(mockEstimateFee).not.toHaveBeenCalled();
+  });
+
+  it('prices the anchor fee component off the cached BTC/USD quote', async () => {
+    mockGetCachedBtcPriceUsd.mockResolvedValue(100_000);
+    mockEstimateFee.mockResolvedValue(10);
+
+    const result = await priceFor(ANCHOR);
+
+    // 10 sat/vB * 250 vB = 2500 sats = 0.000025 BTC = $2.50 at $100k.
+    expect(result.feeEstimate).toEqual({
+      satPerVbyte: 10,
+      estimatedFeeSats: 2_500,
+      estimatedFeeUsd: expect.closeTo(2.5, 6),
+    });
+    // base + fee * 1.2 margin
+    expect(result.price).toBeCloseTo(ANCHOR_BASE + 2.5 * 1.2, 6);
+    // The old hardcode would have produced $1.81 — undercharging by ~40% of
+    // the fee component at $100k BTC.
+    expect(result.price).not.toBeCloseTo(0.01 + (2_500 / 1e8) * 60_000 * 1.2, 6);
+  });
+
+  it('scales with the oracle rather than a constant when BTC moves', async () => {
+    mockEstimateFee.mockResolvedValue(10);
+
+    mockGetCachedBtcPriceUsd.mockResolvedValue(30_000);
+    const cheap = await priceFor(ANCHOR);
+
+    vi.resetModules();
+    mockGetCachedBtcPriceUsd.mockResolvedValue(120_000);
+    const dear = await priceFor(ANCHOR);
+
+    expect(cheap.feeEstimate?.estimatedFeeUsd).toBeCloseTo(0.75, 6);
+    expect(dear.feeEstimate?.estimatedFeeUsd).toBeCloseTo(3, 6);
+    // 4x the BTC price → 4x the fee component (base price is the only offset).
+    expect(dear.price - ANCHOR_BASE).toBeCloseTo((cheap.price - ANCHOR_BASE) * 4, 6);
+  });
+
+  it('falls back to base price and warns when no usable BTC/USD quote exists', async () => {
+    mockGetCachedBtcPriceUsd.mockResolvedValue(null);
+
+    const result = await priceFor(ANCHOR);
+
+    expect(result).toEqual({ price: ANCHOR_BASE });
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: ANCHOR, reason: 'no_usable_btc_price' }),
+      expect.stringContaining('base price'),
+    );
+  });
+
+  it('does not pay for a fee-estimator round trip when the quote is unusable', async () => {
+    mockGetCachedBtcPriceUsd.mockResolvedValue(null);
+
+    await priceFor(ANCHOR);
+
+    expect(mockEstimateFee).not.toHaveBeenCalled();
+  });
+
+  it('logs before falling back when fee estimation throws', async () => {
+    mockEstimateFee.mockRejectedValue(new Error('mempool unreachable'));
+
+    const result = await priceFor(ANCHOR);
+
+    expect(result).toEqual({ price: ANCHOR_BASE });
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: ANCHOR,
+        reason: 'fee_estimation_failed',
+        errorName: 'Error',
+      }),
+      expect.stringContaining('base price'),
+    );
+  });
+
+  it('logs before falling back when the price read throws', async () => {
+    mockGetCachedBtcPriceUsd.mockRejectedValue(new Error('cache read failed'));
+
+    const result = await priceFor(ANCHOR);
+
+    expect(result).toEqual({ price: ANCHOR_BASE });
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: ANCHOR, errorName: 'Error' }),
+      expect.stringContaining('base price'),
+    );
+  });
+
+  it('keeps the operator URL out of the fallback log', async () => {
+    mockEstimateFee.mockRejectedValue(
+      new Error('fetch failed: https://user:secret@mempool.internal/api'),
+    );
+
+    await priceFor(ANCHOR);
+
+    expect(JSON.stringify(mockLogger.warn.mock.calls)).not.toContain('secret');
   });
 });
 

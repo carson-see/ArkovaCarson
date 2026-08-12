@@ -27,6 +27,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { db } from '../utils/db.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { getCachedBtcPriceUsd } from '../utils/btc-price.js';
 
 // x402_payments table from migration 0080 — not yet in generated types
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -53,6 +54,11 @@ const ANCHOR_ENDPOINTS = new Set(['/api/v1/anchor']);
  * Get dynamic price for an endpoint.
  * Read endpoints use static pricing. Anchor endpoints add estimated Bitcoin fee.
  * ECON-2: Prevents negative margin on anchoring operations.
+ *
+ * SCRUM-3128: falling back to `basePrice` drops the ENTIRE fee component, and
+ * for an anchor endpoint that component is the price — base is $0.01 against a
+ * fee that runs to dollars. Every fallback path therefore logs; a silent
+ * `catch` here is indistinguishable in prod from correct pricing.
  */
 export async function getDynamicPrice(endpoint: string): Promise<{
   price: number;
@@ -66,6 +72,22 @@ export async function getDynamicPrice(endpoint: string): Promise<{
 
   // Dynamic pricing for anchor endpoints: base + estimated Bitcoin fee
   try {
+    // SCRUM-3128 / BUG-2026-08-11: this was `const btcPriceUsd = 60000`, so
+    // the USD fee component was mis-scaled by exactly the BTC/USD ratio —
+    // ~40% undercharge at $100k, 2x overcharge at $30k. The 20% margin below
+    // is noise against that. Read the cron-populated quote instead; the reader
+    // never issues an HTTP call, which matters because this gate fronts 6+
+    // routes. Checked BEFORE the fee estimator so an unusable quote does not
+    // also cost a mempool round trip.
+    const btcPriceUsd = await getCachedBtcPriceUsd();
+    if (btcPriceUsd == null) {
+      logger.warn(
+        { endpoint, basePrice, reason: 'no_usable_btc_price' },
+        'x402 dynamic pricing: no usable BTC/USD quote — charging base price, anchor fee component dropped',
+      );
+      return { price: basePrice };
+    }
+
     const { MempoolFeeEstimator } = await import('../chain/fee-estimator.js');
     // BUG-2026-08-11: without `network` this priced anchor requests off
     // MAINNET congestion on every non-mainnet deployment — billing callers
@@ -78,8 +100,6 @@ export async function getDynamicPrice(endpoint: string): Promise<{
     const satPerVbyte = await estimator.estimateFee();
     const estimatedVbytes = 250; // typical OP_RETURN TX size
     const estimatedFeeSats = satPerVbyte * estimatedVbytes;
-    // Rough BTC/USD conversion — in production, fetch from price oracle
-    const btcPriceUsd = 60000;
     const estimatedFeeUsd = (estimatedFeeSats / 100_000_000) * btcPriceUsd;
     const dynamicPrice = basePrice + estimatedFeeUsd * 1.2; // 20% margin
 
@@ -87,8 +107,19 @@ export async function getDynamicPrice(endpoint: string): Promise<{
       price: dynamicPrice,
       feeEstimate: { satPerVbyte, estimatedFeeSats, estimatedFeeUsd },
     };
-  } catch {
-    // Fallback to base price if fee estimation fails
+  } catch (error) {
+    // Only the coarse error class is logged. Fee-estimator and DB errors can
+    // embed the configured upstream URL (and any credential in it) in their
+    // message/cause — same reasoning as validateOnChain below.
+    logger.warn(
+      {
+        endpoint,
+        basePrice,
+        reason: 'fee_estimation_failed',
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+      },
+      'x402 dynamic pricing failed — charging base price, anchor fee component dropped',
+    );
     return { price: basePrice };
   }
 }
