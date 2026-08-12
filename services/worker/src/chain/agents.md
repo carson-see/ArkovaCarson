@@ -6,6 +6,44 @@ _Last updated: 2026-08-11_
 
 Bitcoin chain client implementation for anchoring document fingerprints on-chain via OP_RETURN transactions.
 
+## 2026-08-11 SCRUM-3128 — `estimateFee()` is lossy; gates must use `estimateFeeDetailed()`
+
+`MempoolFeeEstimator.estimateFee()` catches every API failure and returns
+`DEFAULT_FALLBACK_RATE = 5` instead of throwing. The number is indistinguishable at the call site
+from a real reading of 5 sat/vB, so **every consumer that treats a low rate as permission to spend
+gets that permission for free the moment mempool.space is unreachable.** That is not hypothetical:
+mempool.space rate-limits Cloud Run (SCRUM-547 — the reason treasury balance is cached).
+
+`FeeEstimator` now requires a second method:
+
+```ts
+estimateFeeDetailed(): Promise<{ rate: number; source: 'live' | 'fallback'; reason?: ... }>
+```
+
+- `source: 'live'` — the estimator KNOWS the rate. A real API reading, **or** a `StaticFeeEstimator`
+  rate: signet's flat 1 sat/vB is the configured truth for that network, not a degraded substitute.
+  Reporting static rates as `fallback` would make every fail-closed gate defer signet forever.
+- `source: 'fallback'` — the rate is UNKNOWN and a default was substituted. `reason` is one of
+  `http_error | invalid_rate | timeout | network_error`.
+
+`estimateFee()` is retained as a thin wrapper over the detailed form and is still correct for
+advisory uses (logging, display, pricing hints). **It is wrong for any gate whose degraded mode must
+not be "allow."**
+
+**Required, not optional, on purpose.** An optional method is one a call site can silently forget,
+and forgetting reinstates the exact fail-open this fixes. Making it required means every current and
+future estimator has to answer the question, and the compiler finds the ones that don't — it
+immediately caught the stub estimator in `signet.test.ts`.
+
+**Sibling call sites still on the lossy form — same defect class, NOT fixed here (SCRUM-3128
+follow-up).** Fixed in this pass: `jobs/anchor.ts` only.
+
+| Site | Degraded behaviour | Assessment |
+|---|---|---|
+| `signet.ts:~739` (PERF-7 ceiling, `submitFingerprint`) | fallback 5 clears the ceiling → builds + broadcasts | **Same treasury-spend fail-open.** Narrowed but not closed by the `anchor.ts` fix: `anchor.ts` now defers on unknown, but `signet.ts` re-estimates independently, and batch paths reach it without passing through `anchor.ts` at all. |
+| `jobs/feeAwareScheduler.ts:~82`, `~180` | fallback 5 → `shouldSubmit: true, reason: 'below_threshold'` | Same mechanism, but the `catch` there is a **documented policy** ("submit anyway, don't block anchoring") with a `FEE_HARD_DEADLINE_MS` escape. Flipping it is a batch-scheduling product decision, not a bug fix — needs its own tier + soak. The reported `reason` is a lie either way: it claims the fee was measured below threshold when it was substituted. |
+| `middleware/x402PaymentGate.ts:~78` | fallback 5 underprices the anchor endpoint | Revenue leak, not treasury drain. Lower severity, different remedy. |
+
 ## 2026-08-11 BUG-2026-08-11 — `createFeeEstimator` was network-blind (fixed)
 
 `fee-estimator.ts` defined its own `DEFAULT_MEMPOOL_URL = 'https://mempool.space/api'` (mainnet) and

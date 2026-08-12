@@ -744,6 +744,9 @@ describe('BitcoinChainClient.submitFingerprint', () => {
     const feeEstimator: FeeEstimator = {
       name: 'Test',
       estimateFee: vi.fn().mockResolvedValue(10),
+      // SCRUM-3128: required on the interface so no estimator can leave a
+      // cost gate unable to tell a reading from a substitution.
+      estimateFeeDetailed: vi.fn().mockResolvedValue({ rate: 10, source: 'live' }),
     };
     const broadcastTx = vi.fn().mockResolvedValue({ txid: 'broadcast_fee_test' });
     const provider = createMockProvider({

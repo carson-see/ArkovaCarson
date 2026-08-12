@@ -2,6 +2,49 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-11 SCRUM-3128 / BUG-2026-08-11 — the ECON-1 fee ceiling now fails CLOSED (`anchor.ts`)
+
+The ECON-1 ceiling in `processAnchor` had **two fail-opens stacked on one path**, and both resolved
+to "broadcast anyway":
+
+1. It called `estimator.estimateFee()`, which swallows API failures and substitutes
+   `DEFAULT_FALLBACK_RATE = 5`. The gate then evaluated `5 > config.bitcoinMaxFeeRate` — false for
+   any realistic ceiling — and proceeded. Concretely: mainnet at 300 sat/vB, `BITCOIN_MAX_FEE_RATE=50`,
+   mempool.space rate-limiting Cloud Run (SCRUM-547), gate reads 5, passes, anchor broadcasts at peak.
+   The exact outcome ECON-1 exists to prevent.
+2. The surrounding `catch { /* Non-fatal: proceed if fee check fails */ }` did the same thing for any
+   other error — including, because `revertToPending` was called *inside* that `try`, a failure to
+   defer an anchor the gate had just ruled over the ceiling.
+
+**Fix.** The decision moved into `evaluateFeeCeiling()`, which cannot throw and returns a verdict;
+`processAnchor` acts on it *outside* the try, so a throwing `revertToPending` can no longer be
+mistaken for "fee check failed." The gate defers on three conditions: live rate over ceiling,
+`source: 'fallback'` (rate unknown), or an internal error.
+
+**Why fail closed instead of a pessimistic `fallbackRate`.** Passing `fallbackRate: ceiling + 1`
+also trips the gate, and it was the cheaper diff — but it fabricates a fee rate and writes it into
+the anchor's metadata as `_deferred_fee_rate`, a permanent evidentiary claim that the network charged
+a fee it never charged. §1.5 requires proof records to distinguish measured from asserted. It is also
+action-at-a-distance: raising `BITCOIN_MAX_FEE_RATE` without raising the fallback in lockstep silently
+re-opens the gate. Deferral is cheap and reversible (back to PENDING, re-claimed next pass); a
+broadcast at an unknown fee is neither — it spends treasury.
+
+**Metadata contract.** A genuine over-ceiling defer still records `_deferred_fee_rate: <measured>`.
+An unknown-rate defer records `_fee_rate_unknown: true` + `_fee_unknown_reason` and **no**
+`_deferred_fee_rate` — there is no measurement to record. Pinned by a test that asserts the absence.
+
+**Availability trade-off, accepted deliberately.** A sustained mempool.space outage now stalls
+fee-gated anchoring rather than draining the treasury at peak fees. The operator lever is to unset
+`BITCOIN_MAX_FEE_RATE`, which disables the ceiling as an explicit decision instead of by accident.
+Deferrals are tagged so this is distinguishable in logs from a real over-ceiling defer.
+
+Sibling gates on the same lossy `estimateFee()` (`chain/signet.ts` PERF-7, `feeAwareScheduler.ts` x2,
+`x402PaymentGate.ts`) are **not** changed here — see the table in `../chain/agents.md`.
+
+Tests: `anchor-coverage.test.ts` "processAnchor fee ceiling (ECON-1)" — the suite previously pinned
+the fail-open as correct (`'proceeds when fee estimator throws (non-fatal)'`); that test is inverted
+and five added. T3 (anchoring hot path).
+
 ## 2026-08-10 — why the DPA clause 4.6 field policy does NOT apply in this directory
 
 Three files here create anchors: `connector-artifact-drain.ts`, `publicRecordAnchor.ts`, and
