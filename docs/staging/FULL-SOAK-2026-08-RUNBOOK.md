@@ -264,6 +264,12 @@ automation and steps 1–2 are done. Remaining: secrets → Cloud Run → Schedu
 
 ### 2.3 Bind Scheduler jobs for ALL cron routes — including the 52 with no prod job
 
+> **[Corrected 2026-08-12 — see §4.5 and FD-13.]** This section is the *plan*; it was **not** executed as written.
+> The rig binds **25 of 109 code routes (22.9%)**, not "all". DEG-1 added exactly two jobs (`anchor-expiry-sweep`,
+> `anchor-public-records`) and re-timed four to prod cadence; the 5 Bitcoin safety loops are among the 25 bound.
+> The remaining **84 routes are DECLARED-UNTESTED** (force-run-testable, not continuously scheduled) — family
+> breakdown in §4.5. Read the numbered procedure below as the intended method, not as an achieved state.
+
 105 cron endpoints exist in code; **52 have no prod Cloud Scheduler job**, including every Bitcoin safety loop
 (`detect-reorgs`, `monitor-stuck-txs`, `rebroadcast-txs`, `consolidate-utxos`, `monitor-fees`) and both
 proof-backfill jobs. Live prod has 58 prod-targeted jobs against 105 defined routes.
@@ -290,6 +296,10 @@ gcloud scheduler jobs run <job> --project=arkova1 --location=us-central1
 
 Every cron route in code gets a rig Scheduler job for the soak, **including all 52 currently unscheduled ones**.
 That is the only way the dormant Bitcoin safety loops get any operating-effectiveness evidence at all.
+
+> **[Corrected 2026-08-12 — §4.5 / FD-13.]** This did not happen. The rig ended Day 0 with **25 of 109 routes
+> bound (22.9%)** — the 5 Bitcoin safety loops among them — and **84 routes DECLARED-UNTESTED**. The Day-7 report
+> must carry FD-13's fraction, never this paragraph's "all".
 
 ### 2.4 Re-enable the soak evidence gate
 
@@ -472,16 +482,18 @@ footnotes.
 
 ### 4.1 Coverage, stated honestly
 
-**At least 301 of 401 LIVE features (75.1%) are IN-SCOPE with a named per-feature assertion.** Ledger arithmetic:
+**[Corrected 2026-08-12 — see §4.5.]** **At least ~~301~~ 298 of 401 LIVE features (~~75.1%~~ 74.3%) are IN-SCOPE
+with a named per-feature assertion.** Ledger arithmetic:
 the checklist's 400 LIVE, plus 1 for the `search.arkova.ai` hostname-gated mode the inventory never listed;
-in-scope = 278 (checklist plan) + 13 recovered by Gate 0 flag seeding (BL-3, agent-owned Day-0 work) + 3
-recovered by binding the unbound credit-cron routes (§2.3) + 6 edge route families now probed as the live
-deployment + 1 search-hostname mode = 301. This is a **floor**: the grouped mechanical sweeps below (the 258-
+in-scope = 278 (checklist plan) + 13 recovered by Gate 0 flag seeding (BL-3, agent-owned Day-0 work) + ~~3
+recovered by binding the unbound credit-cron routes (§2.3)~~ **0 — the credit crons were never bound (§4.5)** +
+6 edge route families now probed as the live
+deployment + 1 search-hostname mode = **298**. This is a **floor**: the grouped mechanical sweeps below (the 258-
 function RPC deny-sweep, the storage anon-deny probes, the security-trigger negative tests) give per-item
-assertions to an unknown-weight portion of the remaining ≤100 ledger items, but because the missing inventory's
+assertions to an unknown-weight portion of the remaining ≤103 ledger items, but because the missing inventory's
 weighting is unrecoverable we do not claim the higher figure. Every one of the remaining items appears in §4.2
 either under a grouped sweep or as an explicit DECLARED-UNTESTED row with a written reason — none is silent.
-**Do not present any number in this section as 100%, and do not present 75.1% without its floor caveat.**
+**Do not present any number in this section as 100%, and do not present 74.3% without its floor caveat.**
 
 **The largest exclusions, named:** the production Bitcoin rail as production runs it (GetBlock broadcast + UTXO
 listing, mainnet signing, the GCP KMS signing path — the rig anchors real signet through WIF + mempool.space);
@@ -508,7 +520,7 @@ the surface groups used by §5, §7 and §12 (S24–S26 are new; §12's evidence
 |---|---|---|---|---|
 | S1 | Signet anchoring end-to-end (WIF sign → broadcast → confirm → SECURED) | IN | BL-2 PASS criterion verbatim: post-final-revision anchor reaches `status='SECURED'`; txid `confirmed:true` **with block height** on BOTH mempool.space/signet and blockstream.info/signet; `anchor_proofs.block_header` is 80 raw bytes (`bytea`, `\x` hex); boot log names the fee estimator. Daily: SECURED count rises monotonically excluding the frozen baseline (BTC8) | — |
 | S1 | Dynamic fee estimation (mempool.space estimator, ceiling, fallback) | IN | Conditional on `FORCE_DYNAMIC_FEE_ESTIMATION=true` on the final rig revision (BL-2 fix): boot log reads `fee=Mempool`; per-broadcast fee rate recorded and > 1.005 sat/vB relay floor | — |
-| S1 | GetBlock broadcast + UTXO listing (prod's rail) | DU | — (daily env assertion that the rig provider remains `mempool`) | Mainnet-only provider config; unreachable on a signet rig (pre-mortem §5.2). Prod runs it; this soak does not, and the pack must say so (DEG-2 caveat verbatim) |
+| S1 | GetBlock RPC broadcast + RPC inclusion proofs (prod's rail) **[Corrected 2026-08-12 DU→IN — §4.5 / FD-3]** | IN | FD-3 provider flip: the authorised pre-clock freeze-break deploy to `00013-mrw` (**2026-08-12T15:09:40Z**) set `BITCOIN_UTXO_PROVIDER=getblock` over the `fullsoak-btc-rpc` VPC connector, so the rig runs **prod's exact hybrid chain architecture** — RPC broadcast + RPC `gettxoutproof` inclusion proofs + mempool.space UTXO/fees. `fullsoak-daily-check.sh` A17/A17b assert the RPC node VM is RUNNING and within 2 blocks of the public signet tip | — (was DU as "mainnet-only, unreachable on a signet rig"; that is now **stale** — the flip put RPC broadcast + RPC inclusion-proof under soak. mempool.space still serves UTXO listing + fees, matching prod) |
 | S1 | Mainnet signing + broadcast | DU | BTC9: zero mainnet broadcasts attributable to the rig, checked daily | Deliberately out of scope; the rig must never touch mainnet. PR #2140 backfill must not run in the window |
 | S1 | GCP KMS signing path | DU | `/health` `kms` field captured daily (config-presence only, per DEG-8 caveat) | Rig sets no `GCP_KMS_KEY_RESOURCE_NAME`; WIF is the active signer. DEG-8 caveat applies verbatim |
 | S1 | Treasury balance + `ENABLE_TREASURY_ALERTS` | IN | Balance read from a signet explorer directly (not `treasury-cache.ts`, BTC4); alert flag probe produces a named row delta. Note: the mainnet-explorer bug fix `e3ac0e928` enters the rig with the BL-1 rebuild | — |
@@ -521,7 +533,7 @@ the surface groups used by §5, §7 and §12 (S24–S26 are new; §12's evidence
 
 | S# | Feature | State | Assertion (named, mechanical) | Reason if out |
 |---|---|---|---|---|
-| S10 | All **110** cron routes (`origin/main` count; prod's build) | IN | §2.3 procedure: every route bound on the rig; per-job forced run asserts non-404 AND a named DB row-count delta (C4/F5) — a 200 is never a PASS. Jobs whose payload is gated by a must-stay-OFF flag are asserted as 200-no-op **with the rationale written in the flag matrix** | — |
+| S10 | ~~All **110**~~ **25 of 109** cron routes Scheduler-bound **[Corrected 2026-08-12 — §4.5 / FD-13]** (`origin/main` = 109 distinct routes; 25 bound = 22.9%) | IN (25 bound) · DU (84 unbound) | §2.3 procedure *as executed*: the 25 bound routes get per-job forced runs asserting non-404 AND a named DB row-count delta (C4/F5) — a 200 is never a PASS. The **84 unbound routes are DECLARED-UNTESTED** (force-run-testable, not continuously scheduled), by family in §4.5: 42 public-record feeders, 13 ops, 9 connector, 8 credit/billing, 6 expiry, 4 proof-backfill, 3 BigQuery | 84 unbound: live-external-registry / OAuth-tenant / CE-credential / BigQuery-dataset dependencies, or must-never-run-on-a-signet-rig (`mainnet-migration`) — enumerated §4.5 |
 | S10 | Cron payloads gated by must-stay-OFF flags (Nessie, demo-injector, synthetic-data, maintenance) | DU | Binding + response class asserted; flag asserted OFF on the running revision daily | Flags must stay off (pre-mortem §5.3); enabling them fabricates soak data or tests a maintenance page |
 | S11 | `org-queue-scheduler` | IN | DEG-5 rule: INTERNAL(13) failure tracked daily against prod finding F-1; root cause named or acceptance recorded in writing before Day 0 | — |
 | S10 | Job queue: every job type, retry/backoff, `last_error`, lease CAS | IN | Induced-failure job shows retry/backoff rows and bounded `last_error`; lease-CAS contention probed under pgbench concurrency; queue depth sampled daily | — |
@@ -666,6 +678,59 @@ KEEP / RETRACT / HEDGE and no row may end the soak "not demonstrated and not ret
 offers (`/ai/search`, `/nessie/query`) are marked RETRACT-recommended pending founder sign-off; the fraud
 "Continuous" claim is HEDGE-recommended (correct the matrix before the auditor sees it); the remainder are HEDGE
 with caveat-language pointers into pre-mortem §4/§5.
+
+### 4.5 Post-Day-0 audit corrections (2026-08-12)
+
+A founder coverage audit (`docs/staging/fullsoak-2026-08/founder-coverage-checklist.md`), run against the live
+rig (`gnkuaywlpmsaezwvlvhk`) and prod (`vzwyaatejekddvltxyye`) on 2026-08-12, found overclaims in §2.3 / §4.1 /
+§4.2 and two prod-exposed defects. Each correction is recorded here rather than silently rewritten, so the
+change is auditable; every corrected §2.3/§4 line now carries a `[Corrected 2026-08-12 — §4.5]` marker pointing
+here. **Understating coverage is safe; overstating is the cardinal sin — these move numbers only downward.**
+
+| # | Location | Claimed | Corrected | Basis |
+|---|---|---|---|---|
+| C-1 | §2.3 heading + body; §4.2 S10 | "all **110** (or all 52 unscheduled) cron routes bound on the rig" | **25 of 109 code routes Scheduler-bound (22.9%); 84 DECLARED-UNTESTED** (force-run-testable, not continuously scheduled) | `cron.ts` on `origin/main` = 109 distinct routes; `gcloud scheduler jobs list … --format='value(httpTarget.uri)'` = 26 fullsoak jobs / 25 distinct routes (`batch-anchors` + `batch-anchors-forced-flush` share `/jobs/batch-anchors`); checklist §1; FD-13 |
+| C-2 | §4.1 coverage floor | "**301** of 401 LIVE (**75.1%**)", incl. "+3 recovered by binding the unbound credit-cron routes (§2.3)" | **298 of 401 LIVE (74.3%)**; the "+3 credit-cron" credit is **withdrawn — those crons were never bound** | 278 + 13 (Gate 0 flag seed) + **0** (credit crons unbound) + 6 (edge families) + 1 (search-hostname) = 298; checklist §1 |
+| C-3 | §4.2 S1 "GetBlock broadcast + UTXO listing" | **DECLARED-UNTESTED** ("mainnet-only, unreachable on a signet rig") | **IN-SCOPE** — RPC broadcast + RPC inclusion proofs now under soak | FD-3: the authorised freeze-break deploy to `00013-mrw` at **2026-08-12T15:09:40Z** set `BITCOIN_UTXO_PROVIDER=getblock` over the `fullsoak-btc-rpc` VPC connector, putting the rig on prod's exact hybrid chain architecture; `fullsoak-daily-check.sh` A17/A17b |
+
+**The 84 DECLARED-UNTESTED cron routes, by family** (each force-run-testable, none continuously scheduled, none
+silently passing — the Day-7 report lists them as declared-untested with a reason, never as covered):
+
+| n | Family | Why unbound |
+|---|---|---|
+| **42** | Public-record / registry feeders (`fetch-*` ×38, `edgar-backfill`, `edgar-bulk`, `openalex-bulk`, `embed-public-records`, `regulatory-change-scan`) | Each hits a live external registry; binding `anchor-public-records` on a populated table converts an unbounded fetch batch into PENDING anchors and contaminates the controlled cohort. Prod's feeders are paused (259k pending-anchoring backlog) |
+| **13** | Ops / observability / reporting (`db-health`†, `pipeline-health`, `pipeline-throughput-monitor`, `lock-wait`, `migration-status`, `smoke-test`, `financial-report`, `generate-reports`, `queue-digest`, `queue-reminders`, `calibration-refit`, `professional-education-extraction`, `mainnet-migration`) | Mostly no-ops on a small rig; `queue-digest` needs email channels; `mainnet-migration` must **never** run on a signet rig. †`db-health` **is** bound (job `db-health-monitor`) — it appears here only because job name ≠ route name |
+| **9** | Connector jobs (`docusign-*` ×6, `drive-*` ×2, `connector-health-check`) | Need real OAuth tenants; the vendor-fetch leg is structurally unreachable without credentials |
+| **8** | Credit / billing / metering (`ai-credit-reconcile`, `credit-expiry`, `monthly-allocation-rollover`, `payment-recovery`, `reconcile-credit-conservation`, `reconcile-stripe`, `report-metered-usage`, `workspace-subscription-renewal`) | **These are the crons §4.1 wrongly credited as "+3 recovered". None is bound.** `reconcile-credit-conservation`, named in §4.2 S16's assertion, is not bound |
+| **6** | Expiry / lifecycle (`check-credential-expiry`, `check-attestation-expiry`, `ce-key-expiry-check`, `ce-registry-drift-check`, `cleanup-retention`, `treasury-alert-check`) | `check-credential-expiry` is **FD-2**, a prod-exposed 500 (queries non-existent `anchors.not_after` / `anchors.document_title`); the CE jobs need CE credentials |
+| **4** | Proof backfill / coverage (`classify-proof-backcatalog`, `materialize-proof-backcatalog`, `proof-coverage-monitor`, `supplementary-proof-anchor`) | The 2.97M-record proof gap is a founder decision (G8), not a soak item; no prod schedule either (§9 CC7.1) |
+| **3** | BigQuery export (`bq-export-backfill`, `bq-export-incremental`, `bq-export-snapshot`) | No BigQuery dataset wired to the rig |
+
+**Two prod-exposed defects surfaced by the audit** (both carried in the manifest findings register, §11):
+
+- **FD-P7 — API-key revocation/deletion unreachable from any client (prod-exposed, CC6.8 control gap).**
+  `toPublicKey()` (`services/worker/src/api/v1/keys.ts:36`) strips `id` from **both** the create response (`:163`)
+  and every list row (`:214`), but `PATCH /api/v1/keys/:keyId` (revoke, `:224`) and `DELETE /api/v1/keys/:keyId`
+  (`:302`) are addressed by that id. A customer therefore **cannot revoke a leaked API key through the product**,
+  and `PATCH` sets only `is_active:false` — `revoked_at` / `revocation_reason` stay NULL. Verified live: `GET
+  /api/v1/keys` → 200 with no `id` field. Filed **BUG-2026-08-12-004**; fix task `task_3e97fc2e` spawned.
+- **FD-17 — rig anon-grant fidelity caveat (rig-provisioning artifact, prod NOT affected).** CTO ruling boxed
+  below; manifest FD-17. Filed **BUG-2026-08-12-005** (migration-hygiene; prod clean, any rebuilt env is not).
+
+> **CTO ruling — rig anon-grant fidelity caveat (recorded verbatim; also manifest FD-17).**
+>
+> MEASURED: the rig has 282 anon-executable functions vs prod's 262; 20 SECURITY DEFINER functions are
+> anon-callable on the rig that are correctly revoked in prod (incl. admin_set_platform_admin,
+> anonymize_user_data). ROOT CAUSE: the rig was built from a squashed baseline that emits only
+> `REVOKE ... FROM PUBLIC`; the `anon`/`authenticated` REVOKEs live in docs/migrations-archive/ and never replay
+> on a squashed rebuild (the known [[supabase-revoke-from-public-is-not-enough]] class). ASSERTED: prod's
+> anon-RPC posture is clean, verified directly against prod (vzwyaatejekddvltxyye). NOT ASSERTED: that the rig's
+> anon-RPC security sweep certifies prod's posture — it cannot; prod is certified directly. RULING (CTO): this is
+> a rig-provisioning artifact, not a prod defect and not a clock-reset — anchoring/queue/DB-schema/uptime
+> evidence is unaffected. The rig is declared NOT a faithful mirror for the anon-grant surface; that surface is
+> evidenced against prod directly. The rig is NOT patched mid-soak (freeze discipline outranks faithfulness). A
+> migration-hygiene fix (replay archive revokes into the squashed baseline) is filed for any future rebuilt
+> environment.
 
 ---
 

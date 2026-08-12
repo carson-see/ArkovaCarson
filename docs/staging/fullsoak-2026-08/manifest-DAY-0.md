@@ -1076,6 +1076,13 @@ replaced is preserved (not deleted) under `day0-snapshots/superseded-by-00013/`,
 | **FD-14** | **AI-credit gating is inconsistent.** With `ai_credits` empty, `/ai/embed` and `/ai/search` fail **closed** (402) but `/ai/extract` proceeded and returned `creditsRemaining: null` — extraction is effectively **un-gated** when no allocation row exists. Fail-open on a metered surface. | Open — needs a ticket | probes `F-D0-4` | probes §2.4 |
 | **FD-15** | **Worker validators apply strict Zod `uuid()` to DB-sourced ids.** Zod 4 enforces RFC 9562 version/variant nibbles, so `claimDueOrganizations` rejected the seed fixtures' hand-crafted UUIDs and `org-queue-scheduler` returned INTERNAL 500 once per claim cycle — **one bad row DoSes an entire job pass**. 57 call sites share the pattern. The rig side was fixed pre-clock, **data-only, image untouched** (7 entities re-keyed in one transaction, digest parity preserved); the seed-side repo fix is PR **#2215** (T1, draft, held for the window). **The validator-side defect is untouched and open.** | Open — validator side | deg5 triage; probes §2 (via #21) | `deg5-org-queue-triage.md`, `day0-uuid-surgery-evidence.md` |
 | **FD-16** | **`flag-seed-plan.md`'s probe recipes carry four route/table errors** found by executing them: verify is `/api/v1/verify/:publicId` (not a fingerprint) and writes `audit_events(VERIFICATION_QUERIED)` (not `verification_events`); the DocuSign webhook is `/webhooks/docusign` (not `/api/v1/...`); Drive channel state lives in `org_integrations.subscription_id`/`account_label` (there is no `drive_watch_state` table); AI search logs `event_type='embedding'` (there is no `'search'` type). A future session running the plan verbatim would mis-read all four as failures. | Informational — doc correction | probes `F-D0-3` | probes §2.3 |
+| **FD-17** | **Rig anon-grant fidelity caveat — the rig is NOT a faithful mirror for the anon-RPC grant surface; prod is clean, certified directly.** MEASURED: the rig has **282 anon-executable functions vs prod's 262**; **20 SECURITY DEFINER functions are anon-callable on the rig that are correctly revoked in prod** (incl. `admin_set_platform_admin`, `anonymize_user_data`). ROOT CAUSE: the rig was built from a squashed baseline that emits only `REVOKE … FROM PUBLIC`; the `anon`/`authenticated` REVOKEs live in `docs/migrations-archive/` (`0062`, `0061`, `0160`, `0170`, `0179`) and never replay on a squashed rebuild (the known [[supabase-revoke-from-public-is-not-enough]] class). ASSERTED: prod's anon-RPC posture is clean, verified directly against prod (`vzwyaatejekddvltxyye`). NOT ASSERTED: that the rig's anon-RPC security sweep certifies prod's posture — it cannot; prod is certified directly. **RULING (CTO):** a rig-provisioning artifact, **not a prod defect and not a clock-reset** — anchoring/queue/DB-schema/uptime evidence is unaffected. The rig is declared NOT a faithful mirror for the anon-grant surface; that surface is evidenced against prod directly. The rig is **NOT patched mid-soak** (freeze discipline outranks faithfulness). A migration-hygiene fix (replay archive revokes into the squashed baseline) is filed for any future rebuilt environment. | Open — rig-provenance / migration-hygiene; **prod NOT affected**. BUG-2026-08-12-005 | coverage-audit §14a (post-close-out 2026-08-12) | `founder-coverage-checklist.md` §14a; probes P8; `anon-rpc-rig-only-*.txt` |
+| **FD-P7** | **API-key revocation/deletion unreachable from any client — prod-exposed, defeats the CC6.8 revocation control.** `toPublicKey()` (`services/worker/src/api/v1/keys.ts:36`) strips `id` from **both** the create response (`:163`) and every list row (`:214`), but revoke `PATCH /api/v1/keys/:keyId` (`:224`) and `DELETE /api/v1/keys/:keyId` (`:302`) are addressed by that id — so a customer **cannot revoke a leaked API key through the product**, and there is no revoked key on the rig to assert against. `PATCH` also sets only `is_active:false`; `revoked_at`/`revocation_reason` stay NULL. Verified live: `GET /api/v1/keys` → 200 with no `id` field. | Open — defect, **prod-exposed**. BUG-2026-08-12-004; fix task `task_3e97fc2e` | coverage-audit §17 / P7 (post-close-out 2026-08-12) | `founder-coverage-checklist.md` §17 (FD-P7); probes P7d/P7f |
+
+> **FD-17 and FD-P7 were added by the 2026-08-12 coverage-audit addendum, after this manifest's Day-0 close-out.**
+> Both are recorded here to keep this the single canonical register. FD-P7 is prod-exposed; FD-17 is a
+> rig-provisioning artifact with **prod NOT affected**. Neither is a clock-reset event (§9.4 freeze discipline
+> stands; no rig object was mutated to record them).
 
 ### Closed on Day 0, before the clock
 
@@ -1086,11 +1093,13 @@ replaced is preserved (not deleted) under `day0-snapshots/superseded-by-00013/`,
 
 ### Findings that are prod-exposed, stated plainly
 
-**FD-2** and **FD-4** are defects in code that is running in production on the identical image digest. FD-4 is
-the serious one: it silently disables anchor promotion with a 200 response and no alarm, and prod runs
+**FD-2**, **FD-4** and **FD-P7** are defects in code that is running in production on the identical image digest.
+FD-4 is the serious one: it silently disables anchor promotion with a 200 response and no alarm, and prod runs
 `minScale=2`. A remediation session for FD-4 is already underway (founder-started background task
-`task_ce0c8fb8`). Neither is a rig artifact, and neither may be described as "found on staging" in a way that
-implies prod is unaffected.
+`task_ce0c8fb8`). FD-P7 (added by the 2026-08-12 coverage-audit addendum) defeats the CC6.8 API-key revocation
+control on the customer path and is filed as BUG-2026-08-12-004 with fix task `task_3e97fc2e`. None is a rig
+artifact, and none may be described as "found on staging" in a way that implies prod is unaffected. **FD-17, by
+contrast, is a rig-provisioning artifact with prod NOT affected** — do not conflate it with this class.
 
 ### Parity checks that PASSED with no mismatch
 
