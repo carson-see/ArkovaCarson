@@ -176,6 +176,17 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
   they each need their own soak before merge — the tag-URL pattern above is the template, but note that
   **a Cloud Run tag isolates the revision only, never the Supabase project**, so two PRs that touch
   schema/queue/cron state cannot share this rig concurrently (CLAUDE.md §1.11A).
+  - **x402 BTC price → [#2208](https://github.com/carson-see/ArkovaCarson/pull/2208), open in DRAFT
+    awaiting its soak** (head `8ffcdb4be8d37b61fec96bc176c39cd675200c18`, base `382cddd97`, T2).
+    Code + tests complete and green locally (typecheck, worker lint, `lint:copy`, 24 new tests); the
+    PR body carries a T2 evidence block with every soak field explicitly marked NOT RUN. Do not
+    promote it out of draft on a green gate alone — `SOAK_GATE_DISABLED` is still `true`, so its
+    Staging Soak Evidence Gate will go green without reading the body.
+    **Needs a rig:** the full-soak rig above is occupied by `pr-2195` and `arkova-worker-staging` is
+    dead, so it needs either the full-soak rig once #2195 releases it, or a fresh isolated one.
+    It touches **no** migration/RLS/schema/cron/queue state — worker code only (`middleware/`,
+    `utils/`, plus a pure function move in `jobs/treasury-cache.ts`) — so on §1.11A grounds it is a
+    candidate to share a clean rig rather than requiring its own Supabase project.
 
 - ~~**No soak is running.** Founder ruling holds: no interim soaks for the open PR queue through the
   pen-test window; green-CI PRs merge and deploy now. Both rigs and loadgens remain up for the
@@ -1181,4 +1192,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-11 by CTO session — claims verified against gcloud/MCP/CI output, not asserted from prior-session prose._
+_Last refreshed: 2026-08-12 by CTO session — claims verified against gcloud/MCP/CI output, not asserted from prior-session prose._
