@@ -277,7 +277,8 @@ fires on total silence — a trickling or wedged socket outlives any request dea
 That is the suspected mechanism behind the 2026-08-12 fullsoak hang: one parked `.json()` in
 `jobs/check-confirmations.ts` suspended a run inside `withRunLease`, whose heartbeat then renewed
 the lease forever, disabling SUBMITTED→SECURED promotion for every tenant with zero logs. See
-`jobs/agents.md` (F-D0-5) and `docs/staging/fullsoak-2026-08/day0-bl2-secured-e2e-evidence.md` §2.6a.
+`jobs/agents.md` (F-D0-5) and the Day-0 BL-2 secured-E2E write-up §2.6a (under
+`docs/staging/fullsoak-2026-08/`).
 
 - **`readJsonBounded` / `readTextBounded` ALWAYS settle by their deadline.** The `Promise.race` is
   what guarantees it — deliberately independent of whether the runtime honors an abort mid-body-read,

@@ -14,8 +14,11 @@
 ## Why
 
 F-D0-5, found 2026-08-12 on the fullsoak rig running **prod's image digest** (revision
-`arkova-worker-fullsoak-2026-08-staging-00012-f45`). Evidence:
-`docs/staging/fullsoak-2026-08/day0-bl2-secured-e2e-evidence.md` §2.6a / §4. Fixed in PR #2216.
+`arkova-worker-fullsoak-2026-08-staging-00012-f45`). Fixed in PR #2216, which carries the
+full mechanism write-up. The primary evidence is the Day-0 BL-2 secured-E2E write-up
+(§2.6a / §4) under `docs/staging/fullsoak-2026-08/`; it is authored by the soak close-out
+session and was not yet on `main` when this rule landed, so it is named rather than linked
+— a pointer that does not resolve fails at the exact moment someone is trying to use it.
 
 A `check-confirmations` run parked on an awaited provider body and never returned.
 `SUBMITTED → SECURED` promotion was disabled for **every tenant** for 35+ minutes, with

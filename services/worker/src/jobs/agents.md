@@ -1096,7 +1096,8 @@ component. It was previously only feeding display and alerting.
 ## 2026-08-12 — F-D0-5: the run lease could not bound a HUNG run (`run-lease.ts`, `check-confirmations.ts`)
 
 Found on the fullsoak rig running prod's image digest (revision `…-00012-f45`), evidence in
-`docs/staging/fullsoak-2026-08/day0-bl2-secured-e2e-evidence.md` §2.6a/§4. A `check-confirmations`
+the Day-0 BL-2 secured-E2E write-up §2.6a/§4 (under `docs/staging/fullsoak-2026-08/`; authored
+by the soak close-out session, not on `main` when this landed). A `check-confirmations`
 run started at 14:16:00Z logged "Checking SUBMITTED anchors grouped by tx_id" and never logged
 "Confirmation check complete". SUBMITTED→SECURED promotion was disabled for **every tenant** for
 35+ minutes, with **zero warn/error logs**, and 31 forced POSTs all answered
