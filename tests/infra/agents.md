@@ -6,6 +6,7 @@ Infrastructure integration tests. Verify operational scripts, edge workers, and 
 - **`healthcheck.test.ts`** — tests for the healthcheck runner (SCRUM-1056): result ordering, timing, error capture.
 - **`batch-queue.test.ts`** — tests for batch queue processing infrastructure.
 - **`crawler.test.ts`** — tests for web crawler/indexing behavior.
+- **`cross-tenant-assertions.test.ts`** — DEG-4 (SOAK-PREMORTEM-SOC2-2026-08-11 §4): pins the hardened blocked/positive-access semantics of `e2e/helpers/cross-tenant-assertions.ts`. A /login redirect must evaluate NOT-blocked (the old spec's hollow-pass), record content rendering is a leak not a block, and precondition failures carry the distinct `precondition: <label> session not authenticated` message. This is the local RED proof that an expired accessor session makes `e2e/cross-tenant.spec.ts` fail.
 - **`dlp-verification.test.ts`** — tests for DLP (Data Loss Prevention) policy enforcement.
 - **`llms-txt.test.ts`** — tests for `llms.txt` AI crawler discovery file.
 - **`mcp-server.test.ts`** — tests for the MCP server edge deployment.
