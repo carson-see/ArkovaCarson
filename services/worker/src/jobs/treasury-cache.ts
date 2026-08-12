@@ -77,13 +77,11 @@ function priceApiUrl(): string {
   return resolveMempoolApiBase(config.mempoolApiUrl, MEMPOOL_API_BASES.mainnet);
 }
 
-/**
- * `normalizeBtcPrice` now lives in `utils/btc-price.ts` (SCRUM-3128) — the
- * same predicate guards the READ side, which `middleware/x402PaymentGate.ts`
- * uses to price anchor requests. One definition, because a second copy of a
- * money-validation predicate is exactly the thing that drifts. Its docstring
- * explains the `-1` sentinel this guard exists for.
- */
+// `normalizeBtcPrice` lives in utils/btc-price.ts (SCRUM-3128 de-dup) — the same
+// predicate guards the READ side, which middleware/x402PaymentGate.ts uses to
+// price anchor requests. One definition, because a second copy of a
+// money-validation predicate is exactly the thing that drifts. Its docstring
+// explains the `-1` sentinel this guard exists for.
 
 /**
  * Handle a PromiseSettledResult by running `onSuccess` on a fulfilled non-nullish
