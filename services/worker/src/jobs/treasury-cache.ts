@@ -19,6 +19,7 @@ import {
   mempoolApiBaseForNetwork,
   resolveMempoolApiBase,
 } from '../utils/mempool-url.js';
+import { normalizeBtcPrice } from '../utils/btc-price.js';
 
 export interface TreasuryCacheData {
   balance_confirmed_sats: number;
@@ -76,17 +77,11 @@ function priceApiUrl(): string {
   return resolveMempoolApiBase(config.mempoolApiUrl, MEMPOOL_API_BASES.mainnet);
 }
 
-/**
- * A usable BTC/USD quote, or null when the oracle answered but the answer is
- * not a price. mempool.space signals "no price data for this network" as
- * `-1` (HTTP 200), and a negative or zero price silently corrupts every
- * downstream USD figure — `decideTreasuryAlert` would multiply it by the
- * balance and read the negative result as below every threshold. Null routes
- * to the existing, honest `price_unknown` path instead.
- */
-function normalizeBtcPrice(raw: unknown): number | null {
-  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : null;
-}
+// `normalizeBtcPrice` lives in utils/btc-price.ts (SCRUM-3128 de-dup) — the same
+// predicate guards the READ side, which middleware/x402PaymentGate.ts uses to
+// price anchor requests. One definition, because a second copy of a
+// money-validation predicate is exactly the thing that drifts. Its docstring
+// explains the `-1` sentinel this guard exists for.
 
 /**
  * Handle a PromiseSettledResult by running `onSuccess` on a fulfilled non-nullish

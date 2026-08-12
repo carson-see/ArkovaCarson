@@ -136,3 +136,32 @@ gate is wired into 6+ `/api/v1` routes, so it was live, not theoretical.
 Now passes `network: config.bitcoinNetwork`. Rule: **never construct `MempoolFeeEstimator` without
 `network`** — see `../chain/agents.md`. Note the neighbouring `btcPriceUsd = 60000` hardcode is a
 separate pre-existing approximation (its own comment flags it), untouched here.
+
+## 2026-08-11 SCRUM-3128 — x402 anchor pricing used a hardcoded BTC/USD constant (fixed)
+
+`getDynamicPrice` computed the USD fee component from `const btcPriceUsd = 60000`, so the charge was
+mis-scaled by exactly the BTC/USD ratio: ~40% undercharge at $100k, 2x overcharge at $30k. The 20%
+margin on the next line is noise against an error that size. The comment above it
+("in production, fetch from price oracle") had been there since the block was written.
+
+It now reads `getCachedBtcPriceUsd()` from `../utils/btc-price.ts`, which serves the quote the
+treasury-cache cron already persists to `treasury_cache.btc_price_usd`.
+
+**Rule: never fetch a price from this gate.** It is mounted on 6+ `/api/v1` routes; a per-request
+call to `mempool.space/api/v1/prices` puts a third-party round trip in front of every gated request.
+The reader is DB-backed and memoized — it must stay that way.
+
+**Rule: every fallback in `getDynamicPrice` logs.** For an anchor endpoint the fee component IS the
+price ($0.01 base against a fee that runs to dollars), so falling back to `basePrice` is close to a
+100% revenue loss on that call. It used to be a bare `catch { return { price: basePrice }; }` — in
+prod that is indistinguishable from correct pricing. Two distinct `reason` codes are emitted
+(`no_usable_btc_price`, `fee_estimation_failed`) so the two causes are separable in logs.
+
+**Only the coarse error class is logged** (`errorName`, not the error), matching `validateOnChain`
+directly below: fee-estimator and DB errors can carry the configured upstream URL, and an
+operator-set `MEMPOOL_API_URL` may embed a credential. A test greps the logged output for it.
+
+**Not currently reachable through `api/v1/router.ts`.** `ANCHOR_ENDPOINTS` holds only
+`/api/v1/anchor`, and that route mounts `anchorAnonAllow` / `requireScope('anchor:write')` — not
+this gate. The defect was latent, and it arms itself the moment an anchor route is added to the
+gate. Fixed ahead of that, not after.

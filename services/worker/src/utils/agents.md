@@ -240,3 +240,29 @@ Pure core for the supplementary proof anchor. `orderSupplementaryLeaves` (determ
 - **Leaf ORDER, not leaf SET, is what was lost.** Prod has zero soft-deleted anchors with a `chain_tx_id`, so no batch has a hole; for backlog tx `606b7eec…` exactly 1 of 720 permutations reproduces the real on-chain root, which proves the set is exact. The March/April producer took rows straight from `claim_pending_anchors` (`UPDATE … RETURNING`, no ordering guarantee), so the committed order is a query-plan artifact. `id asc`, `fingerprint asc`, `created_at asc/desc`, and `ctid` order are all empirically ruled out against real chain roots.
 - **`MAX_PERMUTATION_SEARCH_LEAVES = 8` is a cost bound, not a safety bound.** Raising it trades CPU for coverage and changes no safety property. It is why ~2.97M records in >8-leaf batches are honestly `unreconstructible_order` rather than silently "pending".
 - **`merkle.ts:55-59` documents an ordering contract prod contradicts** — it claims `(fingerprint asc, id asc)`, but 2026-08 batches reconstruct under `id asc`. `sortAnchorsForBatch` only landed 2026-07-06. Do not treat that docstring as the historical contract.
+
+## 2026-08-11 — SCRUM-3128 `btc-price.ts`
+
+The only sanctioned way for a REQUEST-PATH caller to get a BTC/USD figure. There is exactly one
+oracle call in this service and `jobs/treasury-cache.ts` owns it (every 10 min →
+`treasury_cache.btc_price_usd`); everything else reads the cached value through here.
+
+- **Never issues an HTTP request, and a test pins that.** Its first consumer is
+  `middleware/x402PaymentGate.ts`, mounted on 6+ `/api/v1` routes — a per-request oracle fetch would
+  rate-limit us out of our own pricing under load.
+- **Returns `null`, never a default.** This value multiplies a charge. Absent row, `-1` non-mainnet
+  sentinel, zero, non-finite, unparseable/absent `updated_at`, stale beyond
+  `BTC_PRICE_MAX_AGE_MS`, DB error, DB throw — all null, so the caller degrades to a price it can
+  defend. A default here would recreate the exact defect this module was written to remove
+  (`const btcPriceUsd = 60000`).
+- **`normalizeBtcPrice` lives here now, moved out of `jobs/treasury-cache.ts`.** One definition on
+  purpose: the write side validates on the way in, this validates on the way out, so a row written
+  before the guard existed cannot poison a charge. A second copy of a money-validation predicate is
+  the thing that drifts. Note `api/treasury.ts` and `jobs/treasury-alert.ts` still carry their own
+  inline equivalents — folding those in is a separate, wider change.
+- **`BTC_PRICE_MAX_AGE_MS` (6 h) is a money bound, not a cache bound.** The cron refreshes every
+  10 min, so 6 h is ~36 consecutive failures — past "a blip", into "the cron is dead". Beyond it the
+  quote could be arbitrarily far from spot.
+- **`BTC_PRICE_MEMO_TTL_MS` (60 s) must stay well under the cron's 10-minute period**, or the memo
+  becomes staler than the row it caches. Failures memoize too, and concurrent callers share one
+  in-flight read — an outage must not turn every gated request into a DB round trip.

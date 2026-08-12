@@ -1039,3 +1039,13 @@ Pins that the leaf order the producer PERSISTS (`anchor_txid_journal.leaf_order`
 - **Real trigger is Cloud Scheduler, never in-process node-cron** (dormant under Cloud Run CPU throttling — PROOF-03). Declared in `scripts/gcp-setup/cloud-scheduler.sh`; the coverage-contract test in `scripts/gcp-setup/cloud-scheduler.test.ts` fails the build if a route is declared in neither JOBS nor NOT_SCHEDULED. **Not** added to `scheduler-manifest.ts` yet — per `scripts/gcp-setup/agents.md`, a job joins the dead-man only once its binding is live in prod, or the dead-man treats a not-yet-created job as a stall.
 - **Sentry is the sink that actually pages.** `captureProofCoverageAlert` carries a stable fingerprint (re-fires collapse) and TAGS (`alert_type:proof_coverage_regression`) because Sentry issue-alert rules filter on tags, not `extra`. `scripts/gcp-setup/alert-policies/` are declared-only — as of 2026-08-01 `arkova1` had zero live alert policies and zero notification channels; do not cite them as proof an alarm exists.
 - **Aggregate metrics only in the alert payload** — ratios and counts, never a fingerprint or filename (§1.1: no document fingerprints in Sentry).
+
+## 2026-08-11 — SCRUM-3128 `treasury-cache.ts` `normalizeBtcPrice` moved
+
+`normalizeBtcPrice` now lives in `../utils/btc-price.ts` and is imported here. Behavior is
+unchanged — the `-1` non-mainnet sentinel guard and its `priceApiUrl` reasoning are untouched.
+
+What changed is who else depends on it: `middleware/x402PaymentGate.ts` now prices anchor requests
+off the `btc_price_usd` this job writes. **This cron is on a money path.** If it stops running, the
+quote goes stale, the reader rejects it past 6 h, and anchor pricing silently loses its entire fee
+component. It was previously only feeding display and alerting.
