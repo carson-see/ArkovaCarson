@@ -18,6 +18,7 @@ import {
   BroadcastRejectedError, isBroadcastRejectedError, isBroadcastRejectText,
 } from './utxo-provider.js';
 import { logger } from '../utils/logger.js';
+import { BodyReadTimeoutError } from '../utils/body-read-timeout.js';
 
 function rpcOk(result: unknown) {
   return { ok: true, json: () => Promise.resolve({ result, error: null }) };
@@ -311,6 +312,11 @@ describe('isRetryableError', () => {
     expect(isRetryableError(new TypeError('x.map is not a function'))).toBe(false);
   });
   it('retries AbortError', () => { expect(isRetryableError(new DOMException('aborted', 'AbortError'))).toBe(true); });
+  it('retries a parked-body-read timeout (F-D0-5 sweep)', () => {
+    // A provider that sends headers and then stalls the body is transient by
+    // definition — the bounded read turns the park into a retryable failure.
+    expect(isRetryableError(new BodyReadTimeoutError('https://mempool.space/api/tx/x', 10_000))).toBe(true);
+  });
   it('retries ECONNREFUSED', () => { expect(isRetryableError(new Error('connect ECONNREFUSED'))).toBe(true); });
   it('retries ECONNRESET', () => { expect(isRetryableError(new Error('read ECONNRESET'))).toBe(true); });
   it('retries ETIMEDOUT', () => { expect(isRetryableError(new Error('connect ETIMEDOUT'))).toBe(true); });

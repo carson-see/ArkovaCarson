@@ -236,3 +236,20 @@ Only `listUnspent` has a mempool fallback on `GetBlockHybridProvider`; `broadcas
 - `../config.js` — environment config (WIF, KMS key, RPC URL, fee strategy, feature flags)
 - `../utils/logger.js` — structured logging (pino)
 - `../utils/db.js` — Supabase service_role client (for `SupabaseChainIndexLookup`)
+
+## 2026-08-12 — F-D0-5: bounded body reads (`utxo-provider.ts`, `fee-estimator.ts`)
+
+Every `fetch(...)` here now reads its body through `utils/body-read-timeout.ts`
+(`readJsonBounded` / `readTextBounded`), including the RPC error-envelope path in
+`tryParseRpcErrorBody` — a stalled body inside failure handling is the least observable place a
+hang can occur. `createTimeoutSignal()` bounds only the REQUEST; `await response.json()` had no
+deadline of its own, which is how one wedged provider socket parked a whole job on the 2026-08-12
+fullsoak rig (see `jobs/agents.md` F-D0-5).
+
+- **DO** route new external `fetch` calls in this folder through the bounded readers. A bounded
+  request with an unbounded body read is the hazard.
+- `BodyReadTimeoutError` is **retryable** in `isRetryableError` — a body that stalled after its
+  headers arrived is transient by the same argument as an `AbortError`, and `retryWithBackoff`
+  should treat it as one rather than surfacing a hard failure.
+- `MempoolFeeEstimator` reports a stalled body as `reason: 'timeout'`, not `'network_error'` — the
+  fallback-reason metric exists to surface provider stalls, so it must not hide one.

@@ -16,6 +16,11 @@
 import { logger } from '../utils/logger.js';
 import { emitRpcFallback } from '../utils/sentry.js';
 import { MEMPOOL_API_BASES, resolveMempoolApiBase } from '../utils/mempool-url.js';
+import {
+  BodyReadTimeoutError,
+  readJsonBounded,
+  readTextBounded,
+} from '../utils/body-read-timeout.js';
 
 // ─── HttpError ──────────────────────────────────────────────────────────
 
@@ -236,6 +241,19 @@ function createTimeoutSignal(timeoutMs: number = DEFAULT_REQUEST_TIMEOUT_MS): Ab
   return AbortSignal.timeout(timeoutMs);
 }
 
+/**
+ * F-D0-5 (fullsoak 2026-08-12): deadline on the BODY read, which
+ * `createTimeoutSignal` above does NOT cover — a provider that sends headers
+ * and then stalls leaves `await response.json()` parked with no timer of its
+ * own. `retryWithBackoff` turns the resulting `BodyReadTimeoutError` into a
+ * normal transient retry (see `isRetryableError`), so a wedged socket costs a
+ * retry instead of hanging the caller's whole job.
+ *
+ * Matched to the request timeout: a body that has not arrived within the same
+ * budget the request itself gets is not worth waiting on.
+ */
+const DEFAULT_BODY_READ_TIMEOUT_MS = DEFAULT_REQUEST_TIMEOUT_MS;
+
 /** Network-related TypeError message patterns that indicate transient failures */
 const NETWORK_TYPE_ERROR_PATTERNS = [
   'fetch failed',
@@ -312,6 +330,15 @@ export function isRetryableError(error: unknown): boolean {
     error instanceof DOMException &&
     error.name === 'AbortError'
   ) {
+    return true;
+  }
+
+  // F-D0-5: a body that stalled after its headers arrived is transient by the
+  // same argument as an AbortError — the request was well-formed and the
+  // provider simply did not finish delivering. Retrying is exactly right, and
+  // NOT retrying it would silently downgrade a wedged provider into a hard
+  // failure for callers that previously just waited forever.
+  if (error instanceof BodyReadTimeoutError) {
     return true;
   }
 
@@ -500,10 +527,20 @@ export interface RpcProviderConfig {
  */
 async function tryParseRpcErrorBody(
   response: { text?: () => Promise<string> },
+  rpcUrl: string,
 ): Promise<{ message: string; code?: number } | null> {
   try {
     if (typeof response.text !== 'function') return null;
-    const parsed = JSON.parse(await response.text()) as {
+    // F-D0-5: bounded even on the ERROR path. A stalled body here would park
+    // the caller inside its own failure handling — the least observable place
+    // a hang can happen. The `catch` below already degrades to a bare
+    // HttpError, which is exactly the right answer for an unreadable body.
+    const bodyText = await readTextBounded(
+      response as { text(): Promise<string> },
+      rpcUrl,
+      DEFAULT_BODY_READ_TIMEOUT_MS,
+    );
+    const parsed = JSON.parse(bodyText) as {
       error?: { message?: unknown; code?: unknown } | null;
     };
     if (
@@ -540,7 +577,7 @@ async function rpcCall(
     // failure and must reach the transient-vs-definitive classifier and
     // isDuplicateTxError. Only a body with no parseable envelope stays a bare
     // HttpError (retryable on 5xx — fail-safe unchanged).
-    const appError = await tryParseRpcErrorBody(response);
+    const appError = await tryParseRpcErrorBody(response, rpcUrl);
     if (appError) {
       throw new RpcApplicationError(
         `RPC ${method} error: ${appError.message} (code ${appError.code ?? 'unknown'}) [HTTP ${response.status}]`,
@@ -551,7 +588,7 @@ async function rpcCall(
     throw new HttpError(`RPC ${method} failed: HTTP ${response.status}`, response.status);
   }
 
-  const json = (await response.json()) as { result?: unknown; error?: { message: string; code: number } };
+  const json = (await readJsonBounded(response, rpcUrl, DEFAULT_BODY_READ_TIMEOUT_MS)) as { result?: unknown; error?: { message: string; code: number } };
   if (json.error) {
     throw new RpcApplicationError(
       `RPC ${method} error: ${json.error.message} (code ${json.error.code})`,
@@ -662,7 +699,7 @@ export class MempoolUtxoProvider implements UtxoProvider {
       const url = `${this.baseUrl}/address/${address}/utxo`;
       const response = await fetch(url, { signal: createTimeoutSignal() });
       if (!response.ok) throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
-      const mempoolUtxos = (await response.json()) as Array<{ txid: string; vout: number; value: number; status: { confirmed: boolean; block_height?: number } }>;
+      const mempoolUtxos = (await readJsonBounded(response, url, DEFAULT_BODY_READ_TIMEOUT_MS)) as Array<{ txid: string; vout: number; value: number; status: { confirmed: boolean; block_height?: number } }>;
       // Include all UTXOs (confirmed + unconfirmed) on all networks.
       // Our own change outputs are safe to spend unconfirmed (child-pays-for-parent).
       // This prevents the treasury from getting stuck waiting for confirmations between batches.
@@ -679,7 +716,7 @@ export class MempoolUtxoProvider implements UtxoProvider {
       const url = `${this.baseUrl}/tx`;
       const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: txHex, signal: createTimeoutSignal() });
       if (!response.ok) {
-        const errorText = await response.text();
+        const errorText = await readTextBounded(response, url, DEFAULT_BODY_READ_TIMEOUT_MS);
         if (isDuplicateTxError(errorText)) {
           logger.info({ operation: 'MempoolUtxoProvider.broadcastTx', httpStatus: response.status }, 'Transaction already in mempool/chain — treating as success');
           return { txid: '' };
@@ -697,7 +734,7 @@ export class MempoolUtxoProvider implements UtxoProvider {
         }
         throw new HttpError(`Mempool API broadcast failed: HTTP ${response.status} — ${errorText}`, response.status);
       }
-      const txid = (await response.text()).trim();
+      const txid = (await readTextBounded(response, url, DEFAULT_BODY_READ_TIMEOUT_MS)).trim();
       return { txid };
     }, { name: 'MempoolUtxoProvider.broadcastTx' });
   }
@@ -707,7 +744,7 @@ export class MempoolUtxoProvider implements UtxoProvider {
       const heightUrl = `${this.baseUrl}/blocks/tip/height`;
       const heightResp = await fetch(heightUrl, { signal: createTimeoutSignal() });
       if (!heightResp.ok) throw new HttpError(`Mempool API GET ${heightUrl} failed: HTTP ${heightResp.status}`, heightResp.status);
-      const blocks = Number.parseInt(await heightResp.text(), 10);
+      const blocks = Number.parseInt(await readTextBounded(heightResp, heightUrl, DEFAULT_BODY_READ_TIMEOUT_MS), 10);
       const isSignet = this.baseUrl.includes('/signet');
       const isTestnet4 = this.baseUrl.includes('/testnet4');
       const isTestnet = !isTestnet4 && this.baseUrl.includes('/testnet');
@@ -720,7 +757,7 @@ export class MempoolUtxoProvider implements UtxoProvider {
       const url = `${this.baseUrl}/tx/${txid}`;
       const response = await fetch(url, { signal: createTimeoutSignal() });
       if (!response.ok) throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
-      const mempoolTx = (await response.json()) as { txid: string; status: { confirmed: boolean; block_height?: number; block_hash?: string; block_time?: number }; vout: Array<{ scriptpubkey: string; scriptpubkey_asm: string; value: number }> };
+      const mempoolTx = (await readJsonBounded(response, url, DEFAULT_BODY_READ_TIMEOUT_MS)) as { txid: string; status: { confirmed: boolean; block_height?: number; block_hash?: string; block_time?: number }; vout: Array<{ scriptpubkey: string; scriptpubkey_asm: string; value: number }> };
       return {
         txid: mempoolTx.txid,
         confirmations: mempoolTx.status.confirmed ? 1 : 0,
@@ -736,7 +773,7 @@ export class MempoolUtxoProvider implements UtxoProvider {
       const url = `${this.baseUrl}/block/${blockhash}`;
       const response = await fetch(url, { signal: createTimeoutSignal() });
       if (!response.ok) throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
-      const block = (await response.json()) as { height: number };
+      const block = (await readJsonBounded(response, url, DEFAULT_BODY_READ_TIMEOUT_MS)) as { height: number };
       return { height: block.height };
     }, { name: 'MempoolUtxoProvider.getBlockHeader' });
   }
@@ -751,7 +788,7 @@ export class MempoolUtxoProvider implements UtxoProvider {
       const url = `${this.baseUrl}/block/${blockhash}/header`;
       const response = await fetch(url, { signal: createTimeoutSignal() });
       if (!response.ok) throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
-      return (await response.text()).trim();
+      return (await readTextBounded(response, url, DEFAULT_BODY_READ_TIMEOUT_MS)).trim();
     }, { name: 'MempoolUtxoProvider.getBlockHeaderHex' });
   }
 
@@ -790,7 +827,7 @@ export class MempoolUtxoProvider implements UtxoProvider {
       retryWithBackoff(async () => {
         const response = await fetch(url, { signal: createTimeoutSignal() });
         if (!response.ok) throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
-        return (await response.json()) as MempoolTx[];
+        return (await readJsonBounded(response, url, DEFAULT_BODY_READ_TIMEOUT_MS)) as MempoolTx[];
       }, { name: 'MempoolUtxoProvider.getAddressTxs' });
 
     // First page: mempool + most-recent 25 confirmed (newest first).
@@ -814,7 +851,7 @@ export class MempoolUtxoProvider implements UtxoProvider {
     const url = `${this.baseUrl}/tx/${txid}/hex`;
     const response = await fetch(url, { signal: createTimeoutSignal() });
     if (!response.ok) throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
-    return (await response.text()).trim();
+    return (await readTextBounded(response, url, DEFAULT_BODY_READ_TIMEOUT_MS)).trim();
   }
 }
 

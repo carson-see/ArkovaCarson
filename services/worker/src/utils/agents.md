@@ -266,3 +266,27 @@ oracle call in this service and `jobs/treasury-cache.ts` owns it (every 10 min �
 - **`BTC_PRICE_MEMO_TTL_MS` (60 s) must stay well under the cron's 10-minute period**, or the memo
   becomes staler than the row it caches. Failures memoize too, and concurrent callers share one
   in-flight read — an outage must not turn every gated request into a DB round trip.
+
+## 2026-08-12 — F-D0-5 `body-read-timeout.ts`
+
+**`AbortSignal.timeout(...)` passed to `fetch()` does NOT bound `await response.json()`.** The
+request signal covers the request; the body read is its own await with no timer, so a provider that
+sends headers and then stalls parks the caller indefinitely (undici's default `bodyTimeout` only
+fires on total silence — a trickling or wedged socket outlives any request deadline).
+
+That is the suspected mechanism behind the 2026-08-12 fullsoak hang: one parked `.json()` in
+`jobs/check-confirmations.ts` suspended a run inside `withRunLease`, whose heartbeat then renewed
+the lease forever, disabling SUBMITTED→SECURED promotion for every tenant with zero logs. See
+`jobs/agents.md` (F-D0-5) and `docs/staging/fullsoak-2026-08/day0-bl2-secured-e2e-evidence.md` §2.6a.
+
+- **`readJsonBounded` / `readTextBounded` ALWAYS settle by their deadline.** The `Promise.race` is
+  what guarantees it — deliberately independent of whether the runtime honors an abort mid-body-read,
+  because that is precisely the property the incident called into question. Stream `cancel()` is
+  attempted as best-effort socket hygiene only, and a stream locked by the pending read rejects it
+  per WHATWG, so that rejection is swallowed.
+- **The abandoned read is observed** (`.then(noop, noop)`) before the timeout rejects, so a body
+  that dies minutes later cannot surface as an unhandled rejection and take down the worker.
+- **Structural response type, not `Response`.** Test doubles across this repo mock responses as
+  plain `{ ok, json }` objects; requiring a real `Response` would force every one of them to change.
+- **Use it at EVERY `fetch(...)` → `.json()`/`.text()` against an external provider.** A bounded
+  request with an unbounded body read is the hazard, not a slow provider.
