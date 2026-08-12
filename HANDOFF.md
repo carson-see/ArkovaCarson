@@ -14,11 +14,19 @@
 
 ## Now
 
-**State as of 2026-08-12T14:00Z, verified live.** (Prod worker/anchor sub-block refreshed 2026-08-12;
-the remainder of this block still carries its 2026-08-03T02:49Z reading unless a sub-block says
+**State as of 2026-08-12T16:00Z, verified live.** (`### Soaks` and `### PR board` refreshed 2026-08-12
+at the soak clock start; the prod worker/anchor sub-block was refreshed earlier the same day; the
+remainder of this block still carries its 2026-08-03T02:49Z reading unless a sub-block says
 otherwise.) This block is the only current-state claim in this
 file; everything under `## History` is the dated record and is not re-asserted here. Canonical soak
-findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md).
+findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md); the
+2026-08 full-functionality soak has its own canonical register — `FD-1`…`FD-16` in
+[docs/staging/fullsoak-2026-08/manifest-DAY-0.md](docs/staging/fullsoak-2026-08/manifest-DAY-0.md) §11.
+
+> ⚠️ **A 7-day SOC 2 Type 2 soak is RUNNING (clock started 2026-08-12T15:51:30Z, closes
+> 2026-08-19T15:51:30Z). Read `### Soaks` before touching anything.** Do not deploy, redeploy, or
+> change any env var, secret, scheduler job, flag or GitHub variable on the rig — the clock is rig
+> uptime, and a revision change ends the window.
 
 ### Prod
 
@@ -95,6 +103,27 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 
 ### PR board
 
+**FROZEN for the soak window (2026-08-12T15:51:30Z → 2026-08-19T15:51:30Z).** `DEPLOY_WORKER_PAUSED=true`,
+so worker deploys do not run and `deferred_consolidated_soak` is gated — merging worker code now would put
+main ahead of a build that cannot deploy, and touching the rig to soak anything would end the window.
+
+- **Held until Day 7, deliberately, both in DRAFT:**
+  [#2211](https://github.com/carson-see/ArkovaCarson/pull/2211) (ORG_ADMIN-gate the self-serve verification
+  writers, **T2** — needs a rig it cannot have this week) and
+  [#2215](https://github.com/carson-see/ArkovaCarson/pull/2215) (RFC-9562-compliant seed fixture UUIDs,
+  **T1** — the seed-side half of FD-15; the worker-validator half, 57 strict `z.string().uuid()` call sites
+  on DB-sourced ids, is still open and unfiled as code).
+- **Landed pre-freeze**, inside the documented 13:08:54–13:23:42Z drain window opened for exactly this:
+  [#2208](https://github.com/carson-see/ArkovaCarson/pull/2208) (x402 BTC price oracle) and
+  [#2209](https://github.com/carson-see/ArkovaCarson/pull/2209) (ECON-1 fee ceiling fails closed) — the
+  latter is the `f5d1070fc` the soak and prod both run.
+- **Landed as T0 docs/test-only during Day 0:**
+  [#2210](https://github.com/carson-see/ArkovaCarson/pull/2210) (premortem + Day-0 artifacts),
+  [#2213](https://github.com/carson-see/ArkovaCarson/pull/2213) (cross-tenant E2E hardening).
+- **`SOAK_GATE_DISABLED` is now `false`.** A green Staging Soak Evidence Gate finally means the evidence
+  block was read — but that also means every prod-affecting PR opened from now on must carry a real one, and
+  T2/T3 PRs cannot get merge-grade evidence while the only clean rig is under a 7-day window.
+
 - **~73 PRs merged to main since 2026-08-02T12:00.** Two remain open: **#1864** and **#1813**, both
   **superseded, not defective** — #1864's outbound PII gate on `verify.ts` is already live on main via
   #1898's shared `public-projection-text.ts` module (confirmed: `provenance.ts` now calls
@@ -160,48 +189,88 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 
 ### Soaks
 
-- **SOAK RUNNING as of 2026-08-12T01:15:13Z — the "no interim soaks" ruling below is REVERSED.**
-  Founder directive 2026-08-11 (verbatim intent): every piece of code should be soaking. The prior
-  ruling is kept struck-through underneath because it is what every session read for the last week,
-  and deleting it would make the reversal invisible.
-  - **Service:** `arkova-worker-fullsoak-2026-08-staging`, tag `pr-2195`
-  - **Tag URL:** `https://pr-2195---arkova-worker-fullsoak-2026-08-staging-kvojbeutfa-uc.a.run.app`
-  - **Revision:** `arkova-worker-fullsoak-2026-08-staging-00011-bif` (created 2026-08-12T01:15:13Z — this is the soak clock; clock = Cloud Run revision uptime, not a probe loop)
-  - **Image digest:** `sha256:f5acf9e1b22d0d58a3b09a39769c6484cd4fa293fb22dd7c7e98ebcb87ededa6`
-  - **Head SHA:** `f354975aea1f0a819c61902ecd25518bcb5eae16` (= `origin/main` at start)
-  - **Supabase project:** `gnkuaywlpmsaezwvlvhk` — ledger head `0409`, 111 rows, **matches prod exactly**;
-    the single non-numeric row is `00000000000000 / baseline_at_main_HEAD`, which prod also has. Clean mirror.
-  - **Network:** signet, `ENABLE_PROD_NETWORK_ANCHORING=true` (real chain, real broadcasts)
-  - **`MEMPOOL_API_URL` is UNSET** — deliberately. Setting it froze two prior soaks ~24h each (BUG-2026-07-26-003).
-  - **Health at start:** `status: healthy`, database/anchoring/kms all `ok`
-  - **Why this head:** the fee-estimator network fix (BUG-2026-08-11 / SCRUM-3128) shipped to prod with
-    **zero** soak. The rig was burning hours on `1d12f0d39`, which predates it — 0 occurrences of
-    `mempoolApiBaseForNetwork` versus 5 on the soaked head. Verified by content, not by SHA comparison.
+**RUNNING — 7-day SOC 2 Type 2 full-functionality soak. Clock start `2026-08-12T15:51:30Z`,
+Day-7 close `2026-08-19T15:51:30Z`.** This supersedes the `pr-2195` / `00011-bif` entry that
+previously occupied this block (that revision no longer serves; the rig moved to the full-functionality
+build the same day). Every claim below is traceable to
+[docs/staging/fullsoak-2026-08/manifest-DAY-0.md](docs/staging/fullsoak-2026-08/manifest-DAY-0.md).
+
+- **Clock start = LATER of the two legs**, per premortem §6.3 / BL-4 — manifest §9.1:
+  - rig revision `Ready` = `2026-08-12T15:10:05.965578Z`
+  - `SOAK_GATE_DISABLED=false` echo = `2026-08-12T15:51:30Z` (variable `updatedAt` `15:51:29Z`)
+  - ⇒ **clock start `2026-08-12T15:51:30Z`**. The clock is **rig uptime**, not a probe loop.
+- **Rig:** Cloud Run `arkova-worker-fullsoak-2026-08-staging`, revision
+  **`arkova-worker-fullsoak-2026-08-staging-00013-mrw`**, 100% traffic, project `arkova1`/`us-central1`.
+- **Image digest `sha256:8ace89d483484c40ea2022f7f21361effbfd6e0ab4d61ac4707f54e2ed1c1e18` — byte-identical
+  to prod** `arkova-worker-01310-god`; `git_sha f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58` on both.
+  Manifest §2.
+- **Supabase:** isolated rig `gnkuaywlpmsaezwvlvhk` — ledger head `0409`, 111 rows, **exact parity with
+  prod** `vzwyaatejekddvltxyye`. `staging-honesty-preflight.ts` returned `environment_type=clean_mirror`
+  twice (13:36Z main session, 13:50:06.151Z independent re-run). Manifest §2.4, §7.
+- **Chain:** signet, `ENABLE_PROD_NETWORK_ANCHORING=true`, real broadcasts. `BITCOIN_UTXO_PROVIDER=getblock`
+  ⇒ **GetBlock Hybrid = prod's exact architecture** (RPC broadcast + RPC inclusion proofs, mempool.space for
+  UTXO listing and fees), dynamic fee estimation (`FORCE_DYNAMIC_FEE_ESTIMATION=true`). RPC node is our own
+  GCE VM `arkova-s33-rig-b1-bitcoin-core-signet` over VPC connector `fullsoak-btc-rpc`. Manifest §9.4.
+- **`MEMPOOL_API_URL` is UNSET** — deliberately. Setting it froze two prior soaks ~24 h each
+  (BUG-2026-07-26-003).
+- **Gate 0 result: BL-1…BL-7 ALL PASS.** BL-2 closed on this revision — **12/12 anchors SECURED, 12/12
+  proofs with `octet_length(block_header)=80`, 6 txids × 2 independent explorers, all agreeing**
+  ([day0-bl2-secured-e2e-evidence.md](docs/staging/fullsoak-2026-08/day0-bl2-secured-e2e-evidence.md) §4.10).
+  Behavioural probes: **15 PASS / 1 FAIL (a real defect, FD-2) / 4 PARTIAL / 5 NOT-RUN**, each with a written
+  rationale ([day0-behavioral-probes.md](docs/staging/fullsoak-2026-08/day0-behavioral-probes.md)).
+  Monitoring: 4 uptime checks + 3 SOAK alert policies, **all fire-tested and armed**, two with Pub/Sub
+  delivery proof (manifest §4).
+
+**NEVER-DISTURB RULES — these hold for the whole window, no exceptions without the founder:**
+
+- **No deploy, no redeploy, no revision change** to `arkova-worker-fullsoak-2026-08-staging`. The clock is
+  revision uptime; a new revision ends the window and the seven days restart.
+- **No env var, secret, Cloud Scheduler, alert-policy, uptime-check or `switchboard_flags` change** on the rig.
+  The flag registry is a **boot-time snapshot with no TTL** — changing an env flag requires a deploy, which is
+  the same as ending the soak.
+- **Both GitHub variables must hold all week:** `DEPLOY_WORKER_PAUSED=true` (set 13:23:42Z) and
+  `SOAK_GATE_DISABLED=false` (set 15:51:29Z). `DEPLOY_WORKER_PAUSED` also gates
+  `deferred_consolidated_soak`, so it changes **merge semantics**, not just deploy timing.
+- **Three load-bearing resources that look disposable and are not:**
+  - Secret `treasury-wif-legacy-soak-2026-08-staging` — named for a deleted service, but it is the rig's live
+    signet treasury WIF. Deleting it in a hygiene sweep stops the worker and costs soak days.
+    (Runbook §2.1 carries the same warning.)
+  - GCE VM `arkova-s33-rig-b1-bitcoin-core-signet` (`us-central1-a`) — the Bitcoin Core node the rig's
+    inclusion proofs come from. It is on the critical path since the provider flip.
+  - VPC connector `fullsoak-btc-rpc` — the only path from the rig to that node.
+- **Do not run a second soak on this Supabase project.** A Cloud Run tag isolates the revision only, never the
+  database (CLAUDE.md §1.11A).
+
+**Daily ops:**
+
+- `scripts/staging/fullsoak-daily-check.sh` — 28 assertions (git_sha ×3, revision/traffic/serving ×3, digest
+  ×3, uptime monotonic, both GitHub variables, env dump, flag hash, scheduler census, alert policies, uptime
+  checks, ledger parity, gated detailed health ×5, RPC-node liveness ×2, `/health.status` ×2). Read-only.
+  Last line is exactly `DAILY_PARITY: PASS` or `DAILY_PARITY: FAIL — <ids>`.
+- Scheduled via crontab **09:07 local, daily**; a manual run is a plain invocation of the same script.
+  Evidence appends to `docs/staging/evidence/fullsoak-2026-08/<UTC-date>/`; Day-0 frozen baselines live in
+  `docs/staging/evidence/fullsoak-2026-08/day0-snapshots/` (the superseded `00012`-era set is preserved
+  under `day0-snapshots/superseded-by-00013/` with a `REGENERATION-DIFF.md`, not deleted).
+- **Expected and NOT a failure:** preflight Check 5 (`submitted_anchors > 0`) will start failing once anchors
+  confirm — that is DEG-6, it is the pipeline working, and the `clean_mirror` capture is taken **once** at
+  Day 0 and never re-greened. Never hand-insert a SUBMITTED row.
+
+**Two prod-exposed defects found during Gate 0** (same image digest as prod, so these are not rig artifacts):
+
+- **FD-4 — a hung `check-confirmations` run deadlocks SUBMITTED→SECURED promotion fleet-wide.** The lease
+  heartbeat renews forever so the TTL never fires, `inFlight` self-blocks the holding instance, every call
+  returns HTTP 200 `{"checked":0,"confirmed":0}`, and nothing alarms. Prod runs `minScale=2` and is exposed
+  identically. Founder-started remediation session `task_ce0c8fb8`.
+- **FD-2 — `check-credential-expiry` 500s on every run**: it selects `anchors.not_after` and
+  `anchors.document_title`, neither of which exists. Prod-exposed whenever `ENABLE_EXPIRY_ALERTS` is on.
 
 - **`arkova-worker-staging` is DEAD, not idle.** Last image `pr-1459-f053a99a` from **2026-07-09** — a
   month stale, and `/health` returns nothing. Do not cite it as a soak target or as evidence of
   anything until it is rebuilt.
 
-- **Not yet soaking:** the two in-flight follow-up fixes (x402 hardcoded BTC price; ECON-1 fee ceiling
-  failing open on a mempool outage) are being developed in separate sessions. Under the new directive
-  they each need their own soak before merge — the tag-URL pattern above is the template, but note that
-  **a Cloud Run tag isolates the revision only, never the Supabase project**, so two PRs that touch
-  schema/queue/cron state cannot share this rig concurrently (CLAUDE.md §1.11A).
-  - **x402 BTC price → [#2208](https://github.com/carson-see/ArkovaCarson/pull/2208), open in DRAFT
-    awaiting its soak** (head `bb26e824fcc7bd05dc579313b2517dbd1a25b21e`, base `382cddd97`, T2).
-    Code + tests complete and green locally (typecheck, worker lint, `lint:copy`, 24 new tests); the
-    PR body carries a T2 evidence block with every soak field explicitly marked NOT RUN. Do not
-    promote it out of draft on a green gate alone — `SOAK_GATE_DISABLED` is still `true`, so its
-    Staging Soak Evidence Gate will go green without reading the body.
-    **Needs a rig:** the full-soak rig above is occupied by `pr-2195` and `arkova-worker-staging` is
-    dead, so it needs either the full-soak rig once #2195 releases it, or a fresh isolated one.
-    It touches **no** migration/RLS/schema/cron/queue state — worker code only (`middleware/`,
-    `utils/`, plus a pure function move in `jobs/treasury-cache.ts`) — so on §1.11A grounds it is a
-    candidate to share a clean rig rather than requiring its own Supabase project.
-
 - ~~**No soak is running.** Founder ruling holds: no interim soaks for the open PR queue through the
   pen-test window; green-CI PRs merge and deploy now. Both rigs and loadgens remain up for the
-  post-pentest week-long consolidated soak.~~ **(superseded 2026-08-12)**
+  post-pentest week-long consolidated soak.~~ **(superseded 2026-08-12 — see the running soak above)**
 
 ### Jira / Confluence sync (2026-08-02/03, this session)
 
@@ -261,6 +330,8 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 
 `gcloud` on the dev Mac needs `CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14`; the
 bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
+
+_Last refreshed: 2026-08-12 by CTO session — claims verified against gcloud/MCP/CI output._
 
 ---
 

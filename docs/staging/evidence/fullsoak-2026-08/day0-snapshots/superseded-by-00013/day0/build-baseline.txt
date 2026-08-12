@@ -1,0 +1,26 @@
+# Day-0 build baseline — fullsoak-2026-08 (captured 2026-08-12T13:53:30Z)
+rig_git_sha=f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58
+prod_git_sha=f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58
+rig_revision=arkova-worker-fullsoak-2026-08-staging-00012-f45
+prod_revision=arkova-worker-01310-god
+rig_image_digest=sha256:8ace89d483484c40ea2022f7f21361effbfd6e0ab4d61ac4707f54e2ed1c1e18
+prod_revision_image_digest=sha256:8ace89d483484c40ea2022f7f21361effbfd6e0ab4d61ac4707f54e2ed1c1e18
+prod_tag_resolved_digest=sha256:8ace89d483484c40ea2022f7f21361effbfd6e0ab4d61ac4707f54e2ed1c1e18
+rig_network=signet
+deploy_worker_paused=true
+soak_gate_disabled=true
+ledger_head_rig=<skipped>
+ledger_head_prod=<skipped>
+
+# ── ADDENDUM, captured post-hoc 2026-08-12T14:03:55Z ──────────────
+# The Day-0 capture above recorded ledger_head_* as <skipped>: the Supabase
+# Management API PAT (Secret Manager arkova1/supabase_access) was wired into the
+# checker AFTER that capture. Re-read directly, both refs agree:
+ledger_head_rig_posthoc=0409
+ledger_head_prod_posthoc=0409
+ledger_head_source=Supabase Management API POST /v1/projects/<ref>/database/query
+ledger_head_query=select max(version) from supabase_migrations.schema_migrations where version ~ '^[0-9]{4}$'
+# The original <skipped> lines are left intact — they are the true record of
+# what the Day-0 run could observe. This addendum does not alter any hash in
+# hashes.txt (build-baseline.txt is not hashed) and A15 compares live rig vs
+# live prod, not against this file.

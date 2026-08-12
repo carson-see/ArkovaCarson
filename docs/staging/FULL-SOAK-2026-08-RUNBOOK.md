@@ -240,6 +240,12 @@ gcloud scheduler jobs list --project=arkova1 --location=us-central1 \
 If either check fails, delete the stragglers before proceeding — a 5xx-ing service with live Scheduler jobs
 pollutes exactly the error-rate signal the soak depends on.
 
+> **DEG-7 protection (do not delete this secret).** Secret `treasury-wif-legacy-soak-2026-08-staging` is named
+> for the deleted legacy rig but is **load-bearing for the fullsoak rig**: it is the rig's live signet treasury
+> WIF binding. Deleting it during teardown hygiene stops the worker, and since the soak clock is rig uptime,
+> that costs soak days. Do NOT delete it, and do NOT re-point the rig to a renamed secret mid-window — that
+> forces a new revision and a different derived treasury address, and voids the clock.
+
 ### 2.2 Finish rig provisioning (steps 3–6)
 
 The rig exists with the canonical baseline; `scripts/staging/provision-isolated-rig.sh` is complete 6-step
@@ -313,6 +319,17 @@ npx tsx scripts/ci/staging-honesty-preflight.ts --project-ref gnkuaywlpmsaezwvlv
 legitimately ships `0302_` and `0303_` with the same descriptive name. A faithful rig replays both. This is a
 preflight bug (dedup by `name` instead of `version`), not contamination — record it as a known exception rather
 than "fixing" the rig to hide it.
+
+**DEG-6 re-certification rule (decided at Day 0, before it is needed).** Preflight Check 5 requires
+`submitted_anchors > 0` and the classifier returns `clean_mirror` only when no check fails — so the moment the
+soak *works* (a SUBMITTED anchor confirms to SECURED), Check 5 fails and the environment reclassifies away from
+`clean_mirror`. The rule for this window: `environment_type = clean_mirror` is captured **once, at Day 0**, and
+hashed into `manifest-DAY-0`. Check 5 failing after the clock starts because anchors are confirming is
+**expected healthy behaviour and is not contamination**; it must be recorded as such on the day it first occurs
+and never "repaired". Under no circumstance may a SUBMITTED row be hand-inserted to re-green the preflight —
+that is the fabricated-anchor class Gate 0 removed. If a Day-7 re-certification is wanted, fix the check
+(`submitted_anchors > 0 OR secured_anchors_created_after_clock_start > 0`) in a post-window PR, not the
+environment.
 
 ---
 
@@ -417,45 +434,238 @@ claim,surface_path,flag,effective_value,demonstrated(Y/N),artifact,decision(KEEP
 
 ---
 
-## 4. Complete surface inventory (coverage checklist)
+## 4. Reconciled coverage — every LIVE feature in exactly one state
 
-**This section is driven by the external feature-inventory workflow.** When that inventory lands, it becomes the
-authoritative checklist and every row below is reconciled against it. Any feature in the inventory but absent
-here is a coverage gap; **any feature absent from the inventory is untested, and that absence is itself a
-finding.**
+> **Reconciled 2026-08-12 under the founder's ruling that the 7-day soak covers the ENTIRE application:** the rig
+> worker, `app.arkova.ai` (React frontend, full mode), `search.arkova.ai` (same frontend, hostname-gated
+> search-only mode — `src/App.tsx` `isSearchSubdomain()`, ~line 159), and the `edge.arkova.ai` Cloudflare Worker.
+> Standard: SOC 2 Type 2, no hollow soak. **Every LIVE feature is in exactly one of two states: IN-SCOPE with a
+> named, mechanical assertion, or DECLARED-UNTESTED with a written reason. Zero features in neither state. A
+> Day-7 report implying 100% coverage is an automatic NO-GO (G13).**
+
+### 4.0 Provenance — the inventory file is missing, and this table says so
+
+The feature-inventory workflow this section was waiting for produced numbers that survive in two documents
+(~1,151 features across 7 domains per the pre-mortem BL-7; 596 features / **400 LIVE** after the checklist's
+`MISSED_BY_INVENTORY` correction, §8.1–8.2 of `PRE-SOAK-CHECKLIST-AND-PREMORTEM.md`), **but the inventory file
+itself is not in the repository.** A full-tree search on 2026-08-12 found no artifact under `docs/` (or anywhere
+else in the working tree) containing the per-feature rows; only the two documents' citations of its totals
+survive. Consequently:
+
+- The **400-LIVE ledger** is carried from the checklist's reconciliation and cannot be re-derived row-by-row.
+- The internal decomposition of its **106 unplanned LIVE items** is unrecoverable, except where the checklist
+  names weights in prose (the edge Worker = "6 route families").
+- The denominator below is therefore **reconstructed from code evidence** captured live on 2026-08-12:
+  `services/worker/src/routes/` (110 cron routes in `cron.ts` on `origin/main`; 106 on this working branch —
+  the soak tests prod's build, so 110 governs), `services/worker/src/api/v1/` (75 non-test modules),
+  `services/worker/src/api/v2/` (8 non-test modules), `admin.ts` (40 routes), `anchor.ts` (7), `billing.ts` (3),
+  8 inbound webhook families in `index.ts` (stripe, middesk, docusign, adobe-sign, ats, checkr, veremark,
+  microsoft-graph), `src/App.tsx` (92 `<Route>` elements; 10 named routes + catch-all in search-only mode),
+  `src/pages/` (109 page components), `services/edge/src/` (7 route families: `/health`, `/report`,
+  `/reports/dl/`, `/ai-fallback`, `/crawl`, `/x402`, `/mcp`; 16 MCP tools in `mcp-tools.ts`), the migration-greppable
+  RPC surface (239 distinct `CREATE FUNCTION` names: 60 in `supabase/migrations/`, 179 in
+  `docs/migrations-archive/` — against the checklist's live-prod measurement of **258 anon-executable
+  functions**), and `sdks/` (3 packages: `mcp-server`, `langchain-ts`, `langchain`).
+
+Missing-inventory items that could not be classified at all are listed in §4.3 — they are findings, not
+footnotes.
+
+### 4.1 Coverage, stated honestly
+
+**At least 301 of 401 LIVE features (75.1%) are IN-SCOPE with a named per-feature assertion.** Ledger arithmetic:
+the checklist's 400 LIVE, plus 1 for the `search.arkova.ai` hostname-gated mode the inventory never listed;
+in-scope = 278 (checklist plan) + 13 recovered by Gate 0 flag seeding (BL-3, agent-owned Day-0 work) + 3
+recovered by binding the unbound credit-cron routes (§2.3) + 6 edge route families now probed as the live
+deployment + 1 search-hostname mode = 301. This is a **floor**: the grouped mechanical sweeps below (the 258-
+function RPC deny-sweep, the storage anon-deny probes, the security-trigger negative tests) give per-item
+assertions to an unknown-weight portion of the remaining ≤100 ledger items, but because the missing inventory's
+weighting is unrecoverable we do not claim the higher figure. Every one of the remaining items appears in §4.2
+either under a grouped sweep or as an explicit DECLARED-UNTESTED row with a written reason — none is silent.
+**Do not present any number in this section as 100%, and do not present 75.1% without its floor caveat.**
+
+**The largest exclusions, named:** the production Bitcoin rail as production runs it (GetBlock broadcast + UTXO
+listing, mainnet signing, the GCP KMS signing path — the rig anchors real signet through WIF + mempool.space);
+the nine advertised-but-inoperable capabilities of pre-mortem §5.1, including the two **priced** dead offers
+`/ai/search` and `/nessie/query` on the public `/developers` page; Stripe checkout end-to-end (every UI-wired
+plan has `stripe_price_id = NULL`, #2049); Upstash rate limiting (the rig runs the in-memory limiter);
+the prod-environmental fault class (the 2026-08-11 `PGRST002` schema-cache outage — the rig is structurally
+incapable of reproducing it, G15); prod-only pg_cron jobs and Storage write-path RLS (prod is change-frozen);
+per-trigger assertions for ~66 of 76 DB triggers (exercised incidentally, not individually asserted); and the
+**2,967,774-anchor historical proof gap** (85.4% of SECURED anchors have no per-document proof — not a test
+item; a founder decision under G8, where a recorded decision either way is the PASS and silence is the FAIL).
+
+### 4.2 The coverage table
 
 Structural rule, derived from the repo's own failure pattern: **inventory by code evidence, not by navigation.**
-A page reachable only by typing its URL passes a screenshot test and is still unreachable by customers. For every
-feature the checklist records **both** "does it work" **and** "can a customer get to it."
+For every feature the table records both "does it work" and "can a customer get to it" (the S23 reachability
+discipline). States: **IN** = IN-SCOPE, **DU** = DECLARED-UNTESTED. Assertions are mechanical — a query, spec,
+or probe with a pass condition a second person can evaluate; "works" is not an assertion. `S#` cross-references
+the surface groups used by §5, §7 and §12 (S24–S26 are new; §12's evidence layout extends to them).
 
-| # | Surface group | Includes | Reachability check required |
-|---|---|---|---|
-| S1 | Bitcoin anchoring end-to-end | WIF signing → GetBlock broadcast → mempool.space UTXO/fees → confirmation → proof materialization | n/a (backend) |
-| S2 | Bitcoin safety loops | detect-reorgs, monitor-stuck-txs, rebroadcast-txs, consolidate-utxos, monitor-fees | **all 5 unscheduled in prod** |
-| S3 | Batch anchoring | Trigger A (`*/30` batch-anchors), Trigger B (`0 3 * * *` forced flush), daily flush | n/a |
-| S4 | Proof materialization + backfill | `anchor_proofs`, `populate-confirmation-proofs`, both backfill jobs | **backfills unscheduled** |
-| S5 | Every dashboard | 1280px + 375px | **yes** |
-| S6 | Auth | signup, login, activation, invite, password reset | **yes** |
-| S7 | DocuSign connector | OAuth, webhook, reconciliation, drift, failure poll | **yes** |
-| S8 | Google Drive connector | OAuth, webhook, changes runner, subscription renewal | **yes** |
-| S9 | Folders | | **yes** |
-| S10 | Job queue | every job type, retry/backoff, `last_error`, lease CAS | n/a |
-| S11 | Pipeline + controls | throughput monitor, org-queue-scheduler | **yes** |
-| S12 | MCP server | 16 tools | **yes** |
-| S13 | Both SDKs | JS (never published) + Python (live, ships internal notes) | **yes** |
-| S14 | Public API | v1 + v2 operations | **yes** |
-| S15 | Webhooks | delivery, retries, failure handling | n/a |
-| S16 | Billing / credits / checkout | incl. `PricingPage` (**on no route**), `paymentTierRouter` (**never mounted**) | **yes — known broken** |
-| S17 | Public verification + search | incl. `/.well-known/arkova-keys.json` (**404s — `proof-keys.ts` never imported**) | **yes — known broken** |
-| S18 | Revocation | `process-revocations` | **yes** |
-| S19 | Attestations | `anchor-attestations` | **yes** |
-| S20 | Admin surfaces | every admin page + admin API | **yes** |
-| S21 | Cross-tenant isolation | two real orgs (§5) | n/a |
-| S22 | Claims integrity | §3 | n/a |
-| S23 | **Orphaned/unreachable features** | 11 unlinked routes, 8 zero-importer hooks incl. 2 HIPAA controls (inactivity timeout, MFA gate) | **this IS the test** |
+#### A. Rig worker — Bitcoin anchoring and chain (S1–S4)
 
-S23 is not a footnote. Two HIPAA controls marked Done are wired to nothing. For SOC 2 that is the same class of
-defect as §3.3: a control asserted as operating that does not operate.
+| S# | Feature | State | Assertion (named, mechanical) | Reason if out |
+|---|---|---|---|---|
+| S1 | Signet anchoring end-to-end (WIF sign → broadcast → confirm → SECURED) | IN | BL-2 PASS criterion verbatim: post-final-revision anchor reaches `status='SECURED'`; txid `confirmed:true` **with block height** on BOTH mempool.space/signet and blockstream.info/signet; `anchor_proofs.block_header` is 80 raw bytes (`bytea`, `\x` hex); boot log names the fee estimator. Daily: SECURED count rises monotonically excluding the frozen baseline (BTC8) | — |
+| S1 | Dynamic fee estimation (mempool.space estimator, ceiling, fallback) | IN | Conditional on `FORCE_DYNAMIC_FEE_ESTIMATION=true` on the final rig revision (BL-2 fix): boot log reads `fee=Mempool`; per-broadcast fee rate recorded and > 1.005 sat/vB relay floor | — |
+| S1 | GetBlock broadcast + UTXO listing (prod's rail) | DU | — (daily env assertion that the rig provider remains `mempool`) | Mainnet-only provider config; unreachable on a signet rig (pre-mortem §5.2). Prod runs it; this soak does not, and the pack must say so (DEG-2 caveat verbatim) |
+| S1 | Mainnet signing + broadcast | DU | BTC9: zero mainnet broadcasts attributable to the rig, checked daily | Deliberately out of scope; the rig must never touch mainnet. PR #2140 backfill must not run in the window |
+| S1 | GCP KMS signing path | DU | `/health` `kms` field captured daily (config-presence only, per DEG-8 caveat) | Rig sets no `GCP_KMS_KEY_RESOURCE_NAME`; WIF is the active signer. DEG-8 caveat applies verbatim |
+| S1 | Treasury balance + `ENABLE_TREASURY_ALERTS` | IN | Balance read from a signet explorer directly (not `treasury-cache.ts`, BTC4); alert flag probe produces a named row delta. Note: the mainnet-explorer bug fix `e3ac0e928` enters the rig with the BL-1 rebuild | — |
+| S2 | 5 Bitcoin safety loops (detect-reorgs, monitor-stuck-txs, rebroadcast-txs, consolidate-utxos, monitor-fees) | IN | Forced daily, 7/7: non-404 AND a named observation/row delta per loop (G5). First operating-effectiveness evidence these controls have ever had; prod scheduling remains follow-on work (CC7.1 note) | — |
+| S3 | Batch anchoring — Trigger A, Trigger B, forced flush | IN | Queue depth before/after each flush recorded; PENDING falls; one flush observed end-to-end before clock start (§2.2 open question). DEG-1 cadence caveat applies verbatim (rig cadence ≠ prod cadence) | — |
+| S4 | Proof materialization + both backfill jobs | IN | Every soak-window SECURED anchor gains an `anchor_proofs` row with an 80-raw-byte header; backfill jobs forced with named row deltas | — |
+| S4 | **Historical proof backlog: 2,967,774 SECURED anchors (85.4%) with no per-document proof** | DU | — | Not closeable by any soak (pre-mortem §5.4). G8: founder decision recorded — backfill before launch, or publish the limitation. A recorded decision is the PASS; silence is the FAIL |
+
+#### B. Rig worker — cron, jobs, queue (S2/S3/S10/S11)
+
+| S# | Feature | State | Assertion (named, mechanical) | Reason if out |
+|---|---|---|---|---|
+| S10 | All **110** cron routes (`origin/main` count; prod's build) | IN | §2.3 procedure: every route bound on the rig; per-job forced run asserts non-404 AND a named DB row-count delta (C4/F5) — a 200 is never a PASS. Jobs whose payload is gated by a must-stay-OFF flag are asserted as 200-no-op **with the rationale written in the flag matrix** | — |
+| S10 | Cron payloads gated by must-stay-OFF flags (Nessie, demo-injector, synthetic-data, maintenance) | DU | Binding + response class asserted; flag asserted OFF on the running revision daily | Flags must stay off (pre-mortem §5.3); enabling them fabricates soak data or tests a maintenance page |
+| S11 | `org-queue-scheduler` | IN | DEG-5 rule: INTERNAL(13) failure tracked daily against prod finding F-1; root cause named or acceptance recorded in writing before Day 0 | — |
+| S10 | Job queue: every job type, retry/backoff, `last_error`, lease CAS | IN | Induced-failure job shows retry/backoff rows and bounded `last_error`; lease-CAS contention probed under pgbench concurrency; queue depth sampled daily | — |
+| S11 | Throughput monitor + pipeline controls | IN | Monitor row advances daily; forced run row delta | — |
+
+#### C. Rig worker — APIs, auth, billing, webhooks (S6/S14/S15/S16/S18/S19/S20)
+
+| S# | Feature | State | Assertion (named, mechanical) | Reason if out |
+|---|---|---|---|---|
+| S14 | Public API v1 — 75 modules, excluding the named-dead rows below | IN | Per-module smoke asserting response schema + at least one auth-negative (401/403) per authenticated module; hourly availability + p95; scope enforcement + revoked-key refusal daily (K6/K7, CC6.8) | — |
+| S14 | `/ai/search` (semantic search, **priced $0.010**) | DU | Claims probe A-3.1a/b runs anyway and records the lexical-vs-semantic outcome | `credential_embeddings` = 0 rows; edge fallback is literal `ILIKE %query%`; flag off in prod. Priced dead offer → claims register row 2, RETRACT-recommended |
+| S14 | `/nessie/query` (**priced $0.010**) + all Nessie surfaces | DU | Daily probe asserts fail-closed | Founder directive 2026-08-01: Nessie stays OFF, permanently. Priced dead offer → claims register row 4, RETRACT-recommended |
+| S14 | Visual fraud detection (`ai-fraud-visual`) | DU | Probe asserts the documented 410 daily | Returns HTTP 410 unconditionally (pre-mortem §5.1) |
+| S14 | AI fraud scoring (`ai-integrity` / `computeIntegrityScore`) | DU | — | No caller in code (pre-mortem §5.1) |
+| S14 | Fraud detection | DU | Claims probe A-3.3 daily with flags ON on the rig; DB rows sampled | Results filtered out of all six display surfaces; asserted "Continuous" to the SOC 2 auditor (`soc2-type2-evidence-matrix.md:42`) → claims register rows 6–7 |
+| S14 | AdES signatures | DU | Claims probe A-3.2 from clean installs of both published SDKs, verdict recorded | Defaults to `aws_kms`; no AWS account exists. Ships in published npm packages — a false claim needs a corrective release (claims register row 9) |
+| S14 | Compliance engine | DU | `get_flag` probe recorded | Flag gates nothing (pre-mortem §5.1) |
+| S14 | Partner provisioning (**the HakiChain onboarding path**) | DU | Flag seeded at Gate 0 and `get_flag` probe recorded; forced run recorded if it produces a delta | Pre-mortem §5.1 classifies it cannot-be-exercised; flag seeding alone is not a demonstration. Do not promise it to partners |
+| S14 | Public API v2 — 8 modules (agentTools, auth, openapi, problem, rateLimit, resourceDetails, scopeGuard, search, router) | IN | Same per-module discipline as v1 + the `mcpParity` spec green against the rig | — |
+| S14 | Public verify (`GET /api/v1/verify/{id}`) | IN | Known public id → 200 with verification body; unknown id → 404 (not 503); hourly | — |
+| S17 | `/.well-known/arkova-keys.json` | IN | GET asserted 200 + valid key material. **Currently 404 (`proof-keys.ts` never imported): recorded as a reachability FINDING, never converted to a pass by softening the assertion** | — |
+| S6 | Auth: signup, login, activation, invite, password reset | IN | Daily Playwright E2E; recipient activation gets an explicit spec (launch-blocker fix `225dbfc04` enters with the BL-1 rebuild) | — |
+| S16 | Credits: ledger, enforcement, conservation | IN | Charge → 201; exhaustion → 402 `insufficient_credits` (proven at Gate 0); `reconcile-credit-conservation` cron bound and row-delta asserted; conservation invariant checked daily | — |
+| S16 | **Stripe checkout end-to-end (purchase → credits land)** | DU | Daily probe records the `stripe_price_id IS NULL` state of every UI-wired plan | 100% dead: all plans NULL (#2049, founder-blocked). §5.1 S16 worked example cannot run as written. Claims register row 12 |
+| S16 | Stripe webhook signature handling | IN | Synthetic events: valid signature → row delta; invalid → 400/401 via `constructEvent()` | — |
+| S15 | Inbound webhooks ×8 (stripe, middesk, docusign, adobe-sign, ats, checkr, veremark, microsoft-graph) | IN | Per family: valid-signature synthetic → named row delta; invalid signature → 400/401. docusign/drive/microsoft-graph flag-gated — Gate 0 turns them ON. Middesk: signature-rejection assertion only (provider inert in prod) | — |
+| S15 | Outbound webhook delivery, retries, failure handling | IN | Forced-failure endpoint shows the retry schedule rows and terminal failure state | — |
+| S18/S19 | Revocation + attestations | IN | `process-revocations` and `anchor-attestations` forced with row deltas; a revoked API key refused daily | — |
+| S20 | Admin API (40 routes in `admin.ts`) + admin pages | IN | Every route: anon → 401/403; authenticated functional smoke; mutating routes exercised against rig fixtures only | — |
+| S7/S8 | Connectors: DocuSign + Drive (OAuth, webhooks, changes runner, artifact enqueue/drain, renewal) | IN | Conditional on Gate 0 seeding all connector flags: connection loss + recovery exercised (Day 2); `drain-connector-artifacts` row delta — never a 200 | — |
+| — | Rules engine, rule-action dispatcher, queue reminders, expiry alerts | IN | Conditional on Gate 0 (BL-3): env-path flags set on the revision (a `switchboard_flags` row cannot reach an env-backed flag — PM-D); forced run per job produces a named row delta | — |
+| S14 | Rate limiting as production runs it (Upstash) | DU | The rig's in-memory limiter IS asserted: 429 + `Retry-After` + limit headers on every response (K7) | Prod uses Upstash; no management credential exists (pre-mortem §5.2). Open shadow finding F-2 noted |
+| — | `/health` + `/health?detailed=true` | IN | DEG-3 mitigation: `HEALTH_DETAIL_TOKEN` set on the rig; hourly detailed probe asserts `drainStalled=false`, `pendingCount`, `lastSecuredAt` advances daily, `feeRateSatVb` non-null. The undetailed `checks.anchoring` constant is never cited as anchoring evidence | — |
+| — | Prod-environmental fault class (PGRST002 schema-cache) | DU | Prod `/health` monitored throughout the window; any degradation is a material finding about prod | The rig runs a different database and PostgREST and is structurally incapable of reproducing it (pre-mortem §5.2). G15 residual-risk statement mandatory |
+
+#### D. `app.arkova.ai` — React frontend, full mode (S5/S6/S17/S23)
+
+The frontend deploys via Vercel, separately from the rig. Two complementary tracks, both honest about what they
+test: **(1) rig-wired E2E** — a build of the frozen soak head with `VITE_*` env pointed at the rig, driven by
+**daily Playwright E2E against the rig-wired stack** (the full 46-spec suite plus the assertions below), which
+tests the frontend code at the pinned SHA against real rig behaviour; **(2) as-deployed probes** — daily
+read-only synthetic requests against the live Vercel deployment, which test what customers actually receive but
+cannot be pinned to the rig's head. Evidence artifacts label which track produced them.
+
+| S# | Feature | State | Assertion (named, mechanical) | Reason if out |
+|---|---|---|---|---|
+| S5 | All 92 `<Route>` targets / 109 page components, full mode | IN | Daily Playwright E2E against the rig-wired stack at 1280px + 375px: per-page render assertion + one named interaction per page; zero console-error budget; screenshots archived per §5.0 | — |
+| S6 | Client-side boundary: fingerprint, OCR, PII strip | IN | E2E upload spec asserts fingerprint computed in-browser and the network log contains **no document bytes** leaving the device (§1.6 guarantee, asserted not assumed) | — |
+| S21 | Cross-tenant isolation via UI | IN | DEG-4-fixed spec daily: positive-access precondition (Org B reads its own data first), explicit blocked-state assertion (403/404/`Record Not Found`), **FAIL on `/login` redirect**, no service-role SECURED fixtures | — |
+| S23 | Orphaned/unreachable features: 11 unlinked routes, `PricingPage` (no route), `paymentTierRouter` (never mounted), 8 zero-importer hooks incl. 2 HIPAA controls (inactivity timeout, MFA gate) | IN — **reachability IS the test** | Nav-graph crawl: every route proven reachable from rendered navigation or recorded as an orphan finding; each of the 8 hooks grepped for importers with the zero-importer result recorded | — |
+| S5 | Auditor mode (VAI-04), theming, route prefetch | IN | E2E toggle assertions in the daily run | — |
+| S17 | Live `app.arkova.ai` as deployed | IN | Daily read-only probes: `GET /` + key public routes → 200 + expected app shell; deployed bundle identity captured daily and any change during the freeze logged as an R7-class event | — |
+
+#### E. `search.arkova.ai` — hostname-gated search-only mode (S24, new)
+
+The same frontend bundle, gated by `isSearchSubdomain()` (`src/App.tsx`, ~line 159): 10 named routes (SEARCH,
+ISSUER_REGISTRY, PUBLIC_PROFILE, VERIFY, VERIFY_FORM, ABOUT, PRIVACY, TERMS, THIRD_PARTY_NOTICES, CONTACT) plus
+a catch-all redirect to SEARCH. This mode was **absent from the feature inventory** (+1 to the denominator).
+
+| S# | Feature | State | Assertion (named, mechanical) | Reason if out |
+|---|---|---|---|---|
+| S24 | Search-only route gating | IN | Daily Playwright E2E against the rig-wired stack served under a `search.arkova.ai` host alias: exactly the 10 routes render; an app-only route (e.g. `/dashboard`) is NOT served; `*` redirects to SEARCH | — |
+| S24 | Public search behaviour (lexical, as shipped) | IN | Known-match query → asserted **result-set contents** and p95 < 2 s (G12 — today 6.5 s, currently failing) + the RPC's own error rate; never the HTTP envelope (the §5.1 S17 trap) | — |
+| S24 | Live `search.arkova.ai` as deployed | IN | Daily read-only probe of the live host: same query assertion + p95, recorded as as-deployed evidence | — |
+| S24 | **Semantic** search on this surface | DU | A-3.1a records the semantic-vs-lexical outcome | Same root cause as `/ai/search`: 0 embeddings, `ILIKE` fallback. The claim, not the page, is what fails — see claims register rows 1–2 |
+
+#### F. `edge.arkova.ai` — Cloudflare Worker (S12/S25)
+
+**Honesty note, stated plainly:** the edge Worker is a separate deployment target (`wrangler`), not part of the
+rig, and nothing in this soak pins it to a head SHA. It is therefore tested **as the live deployment**: synthetic
+probes of each route family, daily, against `edge.arkova.ai` itself, with the deployment version captured at
+every probe (`wrangler deployments list` id or response version header) so evidence names exactly what was probed.
+Evidence from these probes describes the live edge at probe time — it does not describe a rig-pinned build, and
+the Day-7 report must not imply otherwise. This supersedes pre-mortem §5.2's "cannot be exercised" row for the
+edge: probing the live deployment is exercise; head-pinned certification remains out of reach and is said so.
+
+| S# | Feature | State | Assertion (named, mechanical) | Reason if out |
+|---|---|---|---|---|
+| S25 | `/health` | IN | Daily GET with body assertion (never status-code-only) | — |
+| S12 | `/mcp` — all 16 tools (anchor_document, get_anchor, get_document, get_fingerprint, get_organization, get_record, list_agents, list_orgs, nessie_query, oracle_batch_verify, search, search_credentials, verify, verify_batch, verify_credential, verify_document) | IN | Driven daily from a real MCP client; per-tool observable effect asserted; `search_credentials` runs the semantic-vs-lexical claims probe A-3.1b; `nessie_query` asserted fail-closed | — |
+| S25 | `/report` + `/reports/dl/` (R2 signed URLs) | IN | Generate → download via signed URL → content assertion; expired/invalid signature → 403 | — |
+| S25 | `/ai-fallback` | IN | Response-class probe; `ENABLE_AI_FALLBACK` default-false asserted (fallback OFF is the expected state) | — |
+| S25 | `/crawl` (cloudflare-crawler) | IN | Probe with a fixture target; response schema asserted | — |
+| S25 | `/x402` facilitator | IN (validation-only) | Negative/validation probes only: malformed payment → rejection asserted. **No funds move** — x402/Base is a payment rail, never anchoring, and the soak must not execute payments | — |
+| S25 | Edge middleware: HMAC, JWT verify, origin allowlist, rate limit, prompt safety, anomaly detection, audit log | IN | Negative probes: bad HMAC → 401; disallowed origin → 403; malformed JWT → 401; audit-log row observed for a probe call | — |
+| S25 | Edge kill-switch behaviour under a live flip | DU | Current kill-switch state asserted daily (read-only) | Flipping the kill switch on the **live** edge during the freeze is a prod mutation; the flip path is untested and said so |
+
+#### G. Database surface (S21/S26)
+
+| S# | Feature | State | Assertion (named, mechanical) | Reason if out |
+|---|---|---|---|---|
+| S21 | RLS + cross-tenant isolation, all four planes (UI, public API with Org B's key, MCP, direct PostgREST with Org B's JWT) | IN | §6 daily, 7/7: positive access proven immediately before every negative assertion; any leak = immediate hard stop (automatic NO-GO) | — |
+| S26 | Anon-executable RPC surface — **258 functions live in prod** (checklist measurement); 239 names reconstructable from migrations | IN (grouped) | Scripted sweep on the rig: `POST /rest/v1/rpc/<fn>` as `anon` for every function; response class asserted against a deny-by-default allowlist; result diffed against the Day-0 baseline daily. The 258-vs-239 delta (~19 functions with no surviving migration source) is itself recorded as a finding | — |
+| S26 | DB triggers — security-critical subset (~10: anchor immutability, SECURED-write guard, ledger guards, the Gate-0 anti-reseed triggers) | IN | Negative-test fixtures: each forbidden write attempted and the trigger's rejection asserted by error class | — |
+| S26 | DB triggers — remaining ~66 of 76 | DU | Exercised incidentally by all soak DML; no per-trigger assertion | Enumerating and fixture-testing 76 triggers exceeds the Day-0 budget; risk accepted in writing here rather than silently |
+| S26 | pg_cron jobs that exist only in prod (no repo migration creates them) | DU | — | Prod-only infrastructure; prod is change-frozen for the window and the rig cannot host jobs whose definitions are unrecoverable from the repo (§4.3 unclassifiable) |
+| S26 | Storage buckets + storage RLS (prod-only) — read plane | IN (read-only) | Anon-deny probes against prod: unauthenticated GET per bucket path → 400/403 asserted (non-mutating) | — |
+| S26 | Storage buckets — write plane + authenticated storage RLS | DU | — | Buckets exist only in prod; writing to prod during the freeze is prohibited. Bucket inventory itself is unrecoverable from the repo (§4.3) |
+
+#### H. SDKs and published packages (S13)
+
+| S# | Feature | State | Assertion (named, mechanical) | Reason if out |
+|---|---|---|---|---|
+| S13 | `sdks/mcp-server` (published npm) | IN | Installed **from the registry** (never the working tree — the §5.1 S12/S13 trap), suite run against the rig; installed version recorded; AdES tool probed per A-3.2 | — |
+| S13 | `sdks/langchain-ts` (published npm) | IN | Same discipline; AdES claim probe A-3.2 | — |
+| S13 | `sdks/langchain` (Python) | IN | Installed from the published PyPI artifact, suite vs rig; the internal-engineering-notes shipping defect recorded as a finding | — |
+| S13 | The never-published JS SDK | DU | Registry lookup asserting absence, recorded | No customer can install it; its absence from the registry is the reachability finding, and repo-tree testing would be the exact false-pass §5.1 warns about |
+
+#### I. Flags that must stay OFF (pre-mortem §5.3) — declared, not skipped
+
+| S# | Feature | State | Assertion (named, mechanical) | Reason if out |
+|---|---|---|---|---|
+| S22 | `MAINTENANCE_MODE`, Replicate/QA-only AI providers, `DEMO_INJECTOR`, `SYNTHETIC_DATA`, `ENABLE_NESSIE_RAG_RECOMMENDATIONS` | DU | Asserted OFF on the running revision daily (flag matrix rationale column) | Enabling any of them fabricates soak data or tests a maintenance page |
+| S22 | `ENABLE_ORG_CREDIT_ENFORCEMENT` in **production** semantics | DU | Rig code path exercised (Gate 0 behavioural proof stands); the prod-semantics gap asserted only as the open defect | #2050: the flag gates on balance while ignoring `anchor_quota`; enabling in prod would 402 HakiChain immediately. Code fix + founder decision required — the soak cannot resolve it |
+| S22 | `ENABLE_PROD_NETWORK_ANCHORING` at mainnet scope | DU | `BITCOIN_NETWORK=signet` asserted daily | Signet-scoped by design |
+
+### 4.3 Unclassifiable — the honest remainder
+
+Items that could not be placed in either state because the evidence to classify them does not exist in the
+repository. Each is a finding in its own right:
+
+1. **The feature-inventory file itself** (~1,151 features / 7 domains; 596 / 400-LIVE corrected ledger) — absent
+   from the repo. Its per-feature rows, its 7-domain decomposition, and the internal weighting of the 106
+   unplanned LIVE items are unrecoverable. This table reconstructs the denominator from code; the two cannot be
+   proven equivalent.
+2. **The prod-only pg_cron job set** — asserted to exist by the checklist (§8.1); not enumerable from any repo
+   artifact. Count and identity unknown until queried live in prod.
+3. **The prod-only Storage bucket + storage-RLS inventory** — same status.
+4. **The ~19-function gap between prod's 258 anon-executable RPCs and the 239 reconstructable from
+   migrations** — functions live in prod with no surviving migration source. Identity unknown docs-side.
+5. **Which package "the JS SDK (never published)" (old S13) denotes** — `sdks/` holds `mcp-server`,
+   `langchain-ts` (both published npm) and `langchain` (Python); the never-published JS SDK named by the prior
+   inventory is not identifiable from the repo tree alone.
+
+### 4.4 Claims register (pre-seeded)
+
+The §3.5 register is pre-seeded at **`docs/staging/fullsoak-2026-08/claims-register.csv`** — one row per
+pre-mortem §5.1 advertised capability (all nine), plus the two priced offers as separate commercial-representation
+rows, the SOC 2 evidence-matrix "Continuous" fraud-detection claim (`docs/compliance/soc2-type2-evidence-matrix.md:42`,
+CC3.3), and the historical proof gap (G8). Reviewed **daily** during the soak per §3.5; decisions are
+KEEP / RETRACT / HEDGE and no row may end the soak "not demonstrated and not retracted". The two priced dead
+offers (`/ai/search`, `/nessie/query`) are marked RETRACT-recommended pending founder sign-off; the fraud
+"Continuous" claim is HEDGE-recommended (correct the matrix before the auditor sees it); the remainder are HEDGE
+with caveat-language pointers into pre-mortem §4/§5.
 
 ---
 
