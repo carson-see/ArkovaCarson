@@ -1,6 +1,13 @@
 # agents.md — e2e/
 
-_Last updated: 2026-07-28 (newest dated entry in this file; stamp was stale at 2026-05-30)._
+_Last updated: 2026-08-12 (newest dated entry in this file)._
+
+## 2026-08-12 — api-keys.spec.ts now covers revoke + delete (FD-P7 / CC6.8)
+
+The create-key test's success branch continues into revoke-with-confirmation (badge flips to
+Revoked, Revoke button disappears) and then deletes the key so e2e runs do not accrete keys. This
+flow was unreachable before the FD-P7 fix (server stripped `id` from key responses); if the revoke
+step starts failing with a 404 on `/api/v1/keys/undefined`, the id-strip regressed server-side.
 
 Playwright E2E test specs and shared fixtures for the Arkova application.
 

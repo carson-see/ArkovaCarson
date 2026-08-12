@@ -1,5 +1,12 @@
 # agents.md — components/api
-_Last updated: 2026-07-21_
+_Last updated: 2026-08-12_
+
+## 2026-08-12 — revoke/delete buttons work now (FD-P7, no component change)
+
+`ApiKeySettings.tsx` always addressed keys by `apiKey.id`, but the server stripped `id` from every
+response, so Revoke/Delete silently hit `/api/v1/keys/undefined`. Fixed server-side (worker returns
+`id` again); this component was already correct. E2E now exercises the full create → revoke →
+delete path in `e2e/api-keys.spec.ts`.
 
 ## What This Folder Contains
 Developer-facing API management components: key CRUD, usage dashboard, scope display, and interactive sandbox.

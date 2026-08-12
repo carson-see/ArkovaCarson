@@ -23,6 +23,10 @@ export interface ApiKeyMasked {
   created_at: string;
   expires_at: string | null;
   last_used_at: string | null;
+  // CC6.8 revocation designation, stamped server-side on revoke (FD-P7).
+  // Optional: a worker predating the FD-P7 fix omits them.
+  revoked_at?: string | null;
+  revocation_reason?: string | null;
 }
 
 export interface ApiKeyCreated extends ApiKeyMasked {

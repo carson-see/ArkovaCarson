@@ -14,7 +14,7 @@ Confirmed leak sites (snapshot 2026-04-27):
 | `services/worker/src/api/v1/anchor-lifecycle.ts` | already fixed (uses `actor_public_id`) | — | resolved |
 | `services/worker/src/api/v1/attestations.ts` | 228, 325-326 | `attestation_id`, evidence `id` | HIGH |
 | `services/worker/src/api/v1/webhooks.ts` | 183, 283, 506, 561 | endpoint `id`, delivery `endpoint_id` | HIGH |
-| `services/worker/src/api/v1/keys.ts` | 130, 143-146, 184, 258 | api_keys `id` | HIGH |
+| `services/worker/src/api/v1/keys.ts` | 130, 143-146, 184, 258 | api_keys `id` | HIGH — **deliberately re-exposed 2026-08-12 (FD-P7)**: SCRUM-1271-D's strip made revocation/deletion unreachable (v1 PATCH/DELETE are addressed by `:keyId`, and `key_prefix` has no unique constraint), defeating the CC6.8 control. Consistent with Phase 3 below (v1 carries the UUID until v2 ships). `org_id`/`key_hash` remain stripped. |
 | `services/worker/src/api/v1/jobs.ts` | 67 | `job_id` (frozen — defer) | MEDIUM |
 
 The `scripts/ci/check-v1-uuid-leaks.ts` lint script flags these patterns at PR time (warn-only initially; will flip to fail once §1.8 cutover completes).
