@@ -1,0 +1,198 @@
+{
+  "rig_name": "fullsoak-2026-08",
+  "status": "READY_FOR_SOAK",
+  "generated_at": "2026-08-11T16:30:00Z",
+  "profile": "chain (signet)",
+  "purpose": "7-day full-functionality soak, 2026-08 release candidate",
+
+  "supabase": {
+    "project_name": "arkova-fullsoak-2026-08",
+    "project_ref": "gnkuaywlpmsaezwvlvhk",
+    "region": "us-east-2",
+    "created_at": "2026-08-10T13:31:00Z",
+    "ledger_head": "0405",
+    "ledger_rows": 107,
+    "non_numeric_rows": 1,
+    "non_numeric_row_note": "canonical squashed baseline 00000000000000_baseline_at_main_HEAD only",
+    "migrations_applied_this_session": [
+      "0401_fix_create_pending_recipient_rpc_fk_and_role",
+      "0402_retire_activate_user_rpc",
+      "0403_fix_anonymize_user_data_verification_events_columns",
+      "0404_dpa_redact_raw_querying_ip_and_correct_ip_hash_comment",
+      "0405_org_field_policies_dpa_clause_4_6"
+    ],
+    "ledger_reconciliation": "MCP timestamp versions rewritten to NNNN numeric prefixes per CLAUDE.md §0 rule 10",
+    "migration_sources": {
+      "0401": "origin/fix/create-pending-recipient-fk (prod-ahead, not yet on main)",
+      "0402": "origin/fix/account-activation-flow (prod-ahead, not yet on main)",
+      "0403": "origin/main",
+      "0404": "origin/main",
+      "0405": "origin/fix/dpa-c1-org-field-policy (prod-ahead, not yet on main)"
+    }
+  },
+
+  "cloud_run": {
+    "service": "arkova-worker-fullsoak-2026-08-staging",
+    "region": "us-central1",
+    "gcp_project": "arkova1",
+    "revision": "arkova-worker-fullsoak-2026-08-staging-00007-rzs",
+    "url": "https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app",
+    "url_alt": "https://arkova-worker-fullsoak-2026-08-staging-kvojbeutfa-uc.a.run.app",
+    "image_digest": "sha256:a5231f21aef77c05b6ce0b9cda306bcacea8a2d2e72f09da5369bbb50612764f",
+    "image_git_sha": "2de4e4e344f3749a09c52d7411831b7d2735528c",
+    "image_note": "exact image prod is running — rig is a true prod mirror (same code + same 0405 schema)",
+    "sizing": "cpu=2, memory=2Gi, min-instances=1, max-instances=5, port=3001",
+    "ingress_auth": "no-allow-unauthenticated (OIDC via compute SA)",
+    "health": {
+      "status": "healthy",
+      "network": "signet",
+      "checks": { "database": "ok", "anchoring": "ok", "kms": "ok" }
+    }
+  },
+
+  "chain": {
+    "network": "signet",
+    "treasury_secret": "treasury-wif-legacy-soak-2026-08-staging",
+    "treasury_address": "tb1qrjarsqj0ewqh3u9fdcu7yfyl0sx78k4savtmv7",
+    "treasury_balance_sats_at_provision": 749062,
+    "utxo_provider": "mempool",
+    "mempool_api_url_set": false,
+    "mempool_api_url_note": "NEVER set — signet base resolves correctly from MEMPOOL_URLS[network]",
+    "end_to_end_proof": {
+      "txid": "f4a461d93f6b72a1f3fb2bc6fe9c79c85c935278c2c6d82c4a0eb55008b7779b",
+      "merkle_root": "b178b092881bd3b5e41acad568366a66b4d5f83b7706a022342818684de81720",
+      "op_return_prefix": "41524b56 (ARKV)",
+      "anchors_in_batch": 4,
+      "fee_sats": 157,
+      "verified_on": "https://mempool.space/signet/api/tx/f4a461d9...",
+      "note": "claim -> merkle -> build -> sign -> broadcast -> on-chain OP_RETURN verified"
+    }
+  },
+
+  "switchboard_flags": {
+    "total": 24,
+    "enabled": 17,
+    "parity_with_prod": "EXACT (diffed key-by-key against vzwyaatejekddvltxyye)",
+    "warning": "supabase/seed.sql OVERWRITES this table — it set ENABLE_PROD_NETWORK_ANCHORING=false. Always re-assert prod parity AFTER any seed replay, then restart the worker to reload the flag cache."
+  },
+
+  "preflight": {
+    "script": "scripts/ci/staging-honesty-preflight.ts",
+    "project_ref": "gnkuaywlpmsaezwvlvhk",
+    "environment_type": "clean_mirror",
+    "exit_code": 0,
+    "checks_passed": "7/7",
+    "run_at": "2026-08-11T16:29Z"
+  },
+
+  "scheduler_jobs": {
+    "count": 24,
+    "auth": "OIDC (audience = service URL, SA 270018525501-compute@developer.gserviceaccount.com)",
+    "verification": "ALL 24 force-run and confirmed HTTP 200 in Cloud Run request logs — no silent 404s",
+    "anchoring": [
+      "batch-anchors (*/5)",
+      "batch-anchors?force=true (0 */8)",
+      "check-confirmations (*/5)",
+      "populate-confirmation-proofs (*/5)",
+      "recover-broadcasts (*/10)",
+      "process-anchors (*/10)",
+      "org-queue-scheduler (*/5)",
+      "anchor-attestations (*/10)"
+    ],
+    "bitcoin_safety": [
+      "detect-reorgs (*/10)",
+      "monitor-stuck-txs (*/15)",
+      "rebroadcast-txs (*/15)",
+      "monitor-fees (*/30)",
+      "check-stuck-anchors (hourly)",
+      "refresh-treasury-cache (*/10)",
+      "nonce-sweep (0 4 * * *)",
+      "consolidate-utxos (0 5 * * *)"
+    ],
+    "platform": [
+      "webhook-retries (*/10)",
+      "process-revocations (*/5)",
+      "db-health-monitor (*/5)",
+      "refresh-stats (*/5)",
+      "rule-action-dispatcher (*/5)",
+      "rules-engine (*/5)",
+      "drain-connector-artifacts (*/5)",
+      "grace-expiry-sweep (*/15)"
+    ],
+    "deliberately_not_scheduled": {
+      "treasury-alert-check": "fires a FALSE below_threshold/price_unknown alert every run on any non-mainnet deploy (see known_issues.treasury_balance_mainnet_hardcode). Scheduling it would reintroduce exactly the monitoring noise this session removed."
+    }
+  },
+
+  "e2e": {
+    "spec_files": 47,
+    "tests_enumerated": 1713,
+    "env_required": {
+      "E2E_SUPABASE_URL": "https://gnkuaywlpmsaezwvlvhk.supabase.co",
+      "E2E_SUPABASE_SERVICE_KEY": "Supabase legacy service_role key for gnkuaywlpmsaezwvlvhk",
+      "E2E_SEED_PASSWORD": "secret arkova-fullsoak-2026-08-e2e-seed-password"
+    },
+    "seed_users_verified": [
+      "demo-admin@arkova.local (ORG_ADMIN @ Acme Corp) — auth token OK",
+      "demo-user@arkova.local (INDIVIDUAL) — auth token OK",
+      "sarah@arkova.ai (ORG_ADMIN @ Arkova) — auth token OK"
+    ],
+    "negative_check": "with the env unset, playwright --list fails loudly: 'Missing required environment variable: E2E_SUPABASE_SERVICE_KEY'"
+  },
+
+  "api_keys": {
+    "storage": "GCP Secret Manager, project arkova1 — raw values never logged, printed, or committed",
+    "org": "Acme Corp (bbbbbbbb-0000-0000-0000-000000000001)",
+    "rate_limit_tier": "paid",
+    "keys": [
+      {
+        "secret": "arkova-fullsoak-2026-08-apikey-soak-public-api",
+        "prefix": "ak_live_a7f3",
+        "scopes": ["verify", "verify:batch", "read:records", "read:orgs", "read:search", "usage:read"]
+      },
+      {
+        "secret": "arkova-fullsoak-2026-08-apikey-soak-mcp",
+        "prefix": "ak_live_2a54",
+        "scopes": ["read:records", "read:orgs", "read:search", "verify", "agents:manage"]
+      },
+      {
+        "secret": "arkova-fullsoak-2026-08-apikey-soak-sdk-write",
+        "prefix": "ak_live_4be8",
+        "scopes": ["write:anchors", "anchor:write", "anchor:read", "attestations:write", "attestations:read", "webhooks:manage", "read:search"]
+      }
+    ],
+    "verified": {
+      "no_key": "GET /api/v1/usage -> 401 authentication_required",
+      "wrong_scope": "MCP key on /api/v1/usage -> 403 insufficient_scope",
+      "valid_key": "public-api key on /api/v1/usage -> 200",
+      "write_path": "sdk-write key on POST /api/v1/anchor -> 201, created ARK-2026-9E74FF50"
+    }
+  },
+
+  "secrets_created": [
+    "supabase-url-fullsoak-2026-08-staging",
+    "supabase-service-role-key-fullsoak-2026-08-staging",
+    "supabase-anon-key-fullsoak-2026-08-staging",
+    "ip-hash-pepper-fullsoak-2026-08-staging",
+    "arkova-fullsoak-2026-08-apikey-soak-public-api",
+    "arkova-fullsoak-2026-08-apikey-soak-mcp",
+    "arkova-fullsoak-2026-08-apikey-soak-sdk-write",
+    "arkova-fullsoak-2026-08-e2e-seed-password"
+  ],
+
+  "known_issues": {
+    "treasury_balance_mainnet_hardcode": {
+      "severity": "medium",
+      "file": "services/worker/src/jobs/treasury-cache.ts:45",
+      "detail": "resolveMempoolApiBase(config.mempoolApiUrl, 'https://mempool.space/api') hardcodes the MAINNET default instead of selecting per-network like createUtxoProvider does via MEMPOOL_URLS[network]. On any non-mainnet deploy the job queries the mainnet explorer for a signet address and records balance 0.",
+      "observed": "refresh-treasury-cache returns balance:0 while the address demonstrably holds 749062 sats and anchoring spends from it successfully",
+      "downstream": "treasury-alert-check then fires 'Price or balance oracle unavailable / below_threshold' on every run",
+      "workaround": "none that is safe — the only override is MEMPOOL_API_URL, which is prohibited on rigs (froze two prior soaks ~24h each). Needs a code fix.",
+      "mitigation_applied": "treasury-alert-check left unscheduled on this rig"
+    },
+    "private_rpc_node_terminated": {
+      "severity": "informational",
+      "detail": "arkova-s33-rig-b1-bitcoin-core-signet (10.33.10.10) is TERMINATED and there is no VPC connector, so secrets arkova-s33-rig-b1-bitcoin-core-signet-rpc-{url,auth} are unreachable from Cloud Run. Broadcast via that path failed with 'outcome unknown -> durable journal HOLD'. Resolved by switching BITCOIN_UTXO_PROVIDER from getblock to mempool."
+    }
+  }
+}
