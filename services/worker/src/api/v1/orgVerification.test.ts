@@ -8,6 +8,8 @@
  *   - POST /dev-verify: Dev-only bypass
  *   - GET /verification-status: Status retrieval
  *   - Auth + org membership guards on all routes
+ *   - ORG_ADMIN gate on the three write routes (2026-08-12)
+ *   - KYB provenance ratchet (see the final describe block)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -151,7 +153,10 @@ describe('POST /verify-ein', () => {
     const callIdx = { current: 0 };
     mockFrom.mockImplementation((table: string) => {
       if (table === 'profiles') {
-        return mockQuery({ data: { org_id: opts.orgId ?? 'org-abc' } });
+        // role: 'ORG_ADMIN' — the route is ORG_ADMIN-gated (2026-08-12); the
+        // caller here is an admin via the _org-auth profile fallback
+        // (org_members hits the default null branch below).
+        return mockQuery({ data: { org_id: opts.orgId ?? 'org-abc', role: 'ORG_ADMIN' } });
       }
       if (table === 'organizations') {
         callIdx.current++;
@@ -180,7 +185,26 @@ describe('POST /verify-ein', () => {
     setupMocks({});
     const res = await request(app).post('/org/verify-ein').send({ ein: '123' });
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain('minimum 5');
+    expect(res.body.error).toContain('5');
+  });
+
+  it('rejects EIN longer than 32 characters', async () => {
+    // Upper bound added 2026-08-12: ein_tax_id is an unbounded text column
+    // (prod CHECK is length >= 5 only) and the value is L3 Confidential —
+    // an unbounded client-supplied string has no business being stored.
+    // Format stays deliberately loose (international tax IDs — e.g. Kenyan
+    // KRA PINs are 11 alphanumerics — must keep working; no ^\d{9}$ pin).
+    setupMocks({});
+    const res = await request(app).post('/org/verify-ein').send({ ein: 'A'.repeat(33) });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('32');
+  });
+
+  it('accepts a 32-character EIN (boundary)', async () => {
+    setupMocks({});
+    const res = await request(app).post('/org/verify-ein').send({ ein: 'A'.repeat(32) });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('PENDING');
   });
 
   it('returns 409 when EIN is already registered', async () => {
@@ -218,7 +242,8 @@ describe('POST /verify-domain', () => {
     const orgCallIdx = { current: 0 };
     mockFrom.mockImplementation((table: string) => {
       if (table === 'profiles') {
-        return mockQuery({ data: { org_id: opts.orgId ?? 'org-abc' } });
+        // ORG_ADMIN via the _org-auth profile fallback (route is admin-gated).
+        return mockQuery({ data: { org_id: opts.orgId ?? 'org-abc', role: 'ORG_ADMIN' } });
       }
       if (table === 'organizations') {
         orgCallIdx.current++;
@@ -291,7 +316,8 @@ describe('POST /confirm-domain', () => {
     const orgCallIdx = { current: 0 };
     mockFrom.mockImplementation((table: string) => {
       if (table === 'profiles') {
-        return mockQuery({ data: { org_id: 'org-abc' } });
+        // ORG_ADMIN via the _org-auth profile fallback (route is admin-gated).
+        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
       }
       if (table === 'organizations') {
         orgCallIdx.current++;
@@ -573,7 +599,11 @@ describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns
     const captured: Record<string, unknown>[] = [];
     mockFrom.mockImplementation((table: string) => {
       if (table === 'profiles') {
-        return mockQuery({ data: { org_id: 'org-abc' } });
+        // ORG_ADMIN via the _org-auth profile fallback: the three self-serve
+        // routes are ORG_ADMIN-gated (2026-08-12). This does NOT weaken the
+        // ratchet — the invariant under test is payload shape, and the routes
+        // must authorize before any payload is written at all.
+        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_ADMIN' } });
       }
       if (table === 'organizations') {
         const chain = mockQuery({ data: orgSelectData, error: null });
@@ -665,5 +695,129 @@ describe('KYB provenance ratchet — self-serve writes never stamp kyb_* columns
     const grant = updates.find((p) => p.verification_status === 'VERIFIED');
     expect(grant).toBeDefined();
     expect(kybKeysOf(updates)).toEqual([]);
+  });
+});
+
+// ─── ORG_ADMIN gate (self-serve verification routes, 2026-08-12) ───
+
+/**
+ * The three self-serve verification writers (verify-ein, verify-domain,
+ * confirm-domain) are ORG_ADMIN-gated: submitting a legal identifier and
+ * driving the org toward the VERIFIED grant is a significant, org-level
+ * action — the same rationale org-kyb.ts states for its ORG_ADMIN gate on
+ * the analogous Middesk submission. Follows the _org-auth.ts precedence
+ * (org_members owner/admin → profile ORG_ADMIN of THIS org → platform
+ * admin) and its 500-vs-403 error split: an operational failure during the
+ * admin lookup must surface as 500, never masquerade as a 403.
+ *
+ * GET /verification-status stays member-level (read-only, no PII in the
+ * response); POST /dev-verify stays as-is (isDev-gated, unreachable in prod).
+ */
+describe('ORG_ADMIN gate — self-serve verification routes', () => {
+  const app = createApp('user-123');
+
+  function setupGateMocks(opts: {
+    memberRow?: { role: string } | null;
+    memberError?: unknown;
+    profileRole?: string | null;
+    platformAdmin?: boolean;
+  }) {
+    const tablesTouched: string[] = [];
+    mockFrom.mockImplementation((table: string) => {
+      tablesTouched.push(table);
+      if (table === 'profiles') {
+        return mockQuery({
+          data: {
+            org_id: 'org-abc',
+            role: opts.profileRole ?? null,
+            is_platform_admin: opts.platformAdmin ?? false,
+          },
+        });
+      }
+      if (table === 'org_members') {
+        return mockQuery({ data: opts.memberRow ?? null, error: opts.memberError ?? null });
+      }
+      if (table === 'organizations') {
+        // Benign default for the admin-success paths: duplicate-check misses,
+        // selects return a workable org row, updates succeed.
+        return mockQuery({ data: null, error: null });
+      }
+      return mockQuery({ data: null });
+    });
+    return tablesTouched;
+  }
+
+  const GATED_ROUTES = [
+    { path: '/org/verify-ein', body: { ein: '12-3456789' } },
+    { path: '/org/verify-domain', body: {} },
+    { path: '/org/confirm-domain', body: { code: '123456' } },
+  ] as const;
+
+  it.each(GATED_ROUTES)('returns 403 for a plain org member on POST $path', async ({ path, body }) => {
+    const tablesTouched = setupGateMocks({ memberRow: { role: 'member' }, profileRole: 'ORG_MEMBER' });
+    const res = await request(app).post(path).send(body);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain('admin');
+    // The gate must sit BEFORE any organizations read/write.
+    expect(tablesTouched).not.toContain('organizations');
+  });
+
+  it('grants via org_members role admin (verify-ein 200, no profile-role needed)', async () => {
+    setupGateMocks({ memberRow: { role: 'admin' }, profileRole: null });
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    expect(res.status).toBe(200);
+  });
+
+  it('grants via profile ORG_ADMIN fallback when no org_members row exists', async () => {
+    setupGateMocks({ memberRow: null, profileRole: 'ORG_ADMIN' });
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    expect(res.status).toBe(200);
+  });
+
+  it('grants via platform admin', async () => {
+    setupGateMocks({ memberRow: null, profileRole: null, platformAdmin: true });
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    expect(res.status).toBe(200);
+  });
+
+  it('returns 500 (not 403) when the admin lookup hits a DB error', async () => {
+    setupGateMocks({ memberError: { message: 'db down' }, profileRole: 'ORG_MEMBER' });
+    const res = await request(app).post('/org/verify-ein').send({ ein: '12-3456789' });
+    expect(res.status).toBe(500);
+  });
+
+  it('dev-verify stays member-level (not admin-gated)', async () => {
+    setupGateMocks({ memberRow: { role: 'member' }, profileRole: 'ORG_MEMBER' });
+    const res = await request(app).post('/org/dev-verify').send({});
+    expect(res.status).toBe(200);
+  });
+
+  it('verification-status stays member-level (not admin-gated)', async () => {
+    const tablesTouched: string[] = [];
+    mockFrom.mockImplementation((table: string) => {
+      tablesTouched.push(table);
+      if (table === 'profiles') {
+        return mockQuery({ data: { org_id: 'org-abc', role: 'ORG_MEMBER', is_platform_admin: false } });
+      }
+      if (table === 'org_members') {
+        return mockQuery({ data: { role: 'member' } });
+      }
+      if (table === 'organizations') {
+        return mockQuery({
+          data: {
+            verification_status: 'PENDING',
+            domain: 'example.com',
+            domain_verified: false,
+            domain_verification_method: null,
+            domain_verified_at: null,
+            ein_tax_id: null,
+          },
+        });
+      }
+      return mockQuery({ data: null });
+    });
+    const res = await request(app).get('/org/verification-status');
+    expect(res.status).toBe(200);
+    expect(res.body.verificationStatus).toBe('PENDING');
   });
 });
