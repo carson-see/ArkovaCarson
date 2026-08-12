@@ -177,7 +177,7 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
   **a Cloud Run tag isolates the revision only, never the Supabase project**, so two PRs that touch
   schema/queue/cron state cannot share this rig concurrently (CLAUDE.md §1.11A).
   - **x402 BTC price → [#2208](https://github.com/carson-see/ArkovaCarson/pull/2208), open in DRAFT
-    awaiting its soak** (head `8ffcdb4be8d37b61fec96bc176c39cd675200c18`, base `382cddd97`, T2).
+    awaiting its soak** (head `bb26e824fcc7bd05dc579313b2517dbd1a25b21e`, base `382cddd97`, T2).
     Code + tests complete and green locally (typecheck, worker lint, `lint:copy`, 24 new tests); the
     PR body carries a T2 evidence block with every soak field explicitly marked NOT RUN. Do not
     promote it out of draft on a green gate alone — `SOAK_GATE_DISABLED` is still `true`, so its
