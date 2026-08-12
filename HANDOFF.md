@@ -149,9 +149,37 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 
 ### Soaks
 
-- **No soak is running.** Founder ruling holds: no interim soaks for the open PR queue through the
+- **SOAK RUNNING as of 2026-08-12T01:15:13Z — the "no interim soaks" ruling below is REVERSED.**
+  Founder directive 2026-08-11 (verbatim intent): every piece of code should be soaking. The prior
+  ruling is kept struck-through underneath because it is what every session read for the last week,
+  and deleting it would make the reversal invisible.
+  - **Service:** `arkova-worker-fullsoak-2026-08-staging`, tag `pr-2195`
+  - **Tag URL:** `https://pr-2195---arkova-worker-fullsoak-2026-08-staging-kvojbeutfa-uc.a.run.app`
+  - **Revision:** `arkova-worker-fullsoak-2026-08-staging-00011-bif` (created 2026-08-12T01:15:13Z — this is the soak clock; clock = Cloud Run revision uptime, not a probe loop)
+  - **Image digest:** `sha256:f5acf9e1b22d0d58a3b09a39769c6484cd4fa293fb22dd7c7e98ebcb87ededa6`
+  - **Head SHA:** `f354975aea1f0a819c61902ecd25518bcb5eae16` (= `origin/main` at start)
+  - **Supabase project:** `gnkuaywlpmsaezwvlvhk` — ledger head `0409`, 111 rows, **matches prod exactly**;
+    the single non-numeric row is `00000000000000 / baseline_at_main_HEAD`, which prod also has. Clean mirror.
+  - **Network:** signet, `ENABLE_PROD_NETWORK_ANCHORING=true` (real chain, real broadcasts)
+  - **`MEMPOOL_API_URL` is UNSET** — deliberately. Setting it froze two prior soaks ~24h each (BUG-2026-07-26-003).
+  - **Health at start:** `status: healthy`, database/anchoring/kms all `ok`
+  - **Why this head:** the fee-estimator network fix (BUG-2026-08-11 / SCRUM-3128) shipped to prod with
+    **zero** soak. The rig was burning hours on `1d12f0d39`, which predates it — 0 occurrences of
+    `mempoolApiBaseForNetwork` versus 5 on the soaked head. Verified by content, not by SHA comparison.
+
+- **`arkova-worker-staging` is DEAD, not idle.** Last image `pr-1459-f053a99a` from **2026-07-09** — a
+  month stale, and `/health` returns nothing. Do not cite it as a soak target or as evidence of
+  anything until it is rebuilt.
+
+- **Not yet soaking:** the two in-flight follow-up fixes (x402 hardcoded BTC price; ECON-1 fee ceiling
+  failing open on a mempool outage) are being developed in separate sessions. Under the new directive
+  they each need their own soak before merge — the tag-URL pattern above is the template, but note that
+  **a Cloud Run tag isolates the revision only, never the Supabase project**, so two PRs that touch
+  schema/queue/cron state cannot share this rig concurrently (CLAUDE.md §1.11A).
+
+- ~~**No soak is running.** Founder ruling holds: no interim soaks for the open PR queue through the
   pen-test window; green-CI PRs merge and deploy now. Both rigs and loadgens remain up for the
-  post-pentest week-long consolidated soak.
+  post-pentest week-long consolidated soak.~~ **(superseded 2026-08-12)**
 
 ### Jira / Confluence sync (2026-08-02/03, this session)
 
