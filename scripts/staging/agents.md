@@ -235,3 +235,54 @@ cron/launchd entry is a deliberate act by the session that owns the soak clock.
   value goes to curl via a mode-0600 `--config` file. If no PAT resolves the assertion reports **SKIP**, never PASS.
   An errored or non-numeric response **fails** rather than satisfying the equality — two `<error>` values are equal to
   each other, and that must not read as parity. First verified run: rig `0409` == prod `0409`.
+
+## `fullsoak-daily-probes.sh` — daily BEHAVIOURAL probes for the 2026-08 7-day soak (2026-08-12)
+
+Complement to `fullsoak-daily-check.sh`, not a replacement. **Run both, every soak day.**
+
+- **Why it exists.** `fullsoak-daily-check.sh` is a parity/integrity checker (`A1`–`A19`): frozen SHA, image digest,
+  env hash, flag hash, scheduler census, ledger head, `/health`. It proves the rig has not *drifted*. It contains
+  **zero product-behaviour assertions**. Every runbook §4 row promising "daily" for a *feature* — cross-tenant
+  isolation, the anon-RPC deny sweep, revoked-key refusal, webhook HMAC rejection — had no instrument behind it.
+  This script is that instrument.
+- **Probes.** `P1` login (both orgs mint real JWTs) · `P2` cross-tenant, 4 planes · `P3` invitations · `P4` folders +
+  anchor filing · `P5` DPA org field policies (0405 write-lock) · `P6` QR verification target · `P7` API-key scope +
+  revocation · `P8` anon-RPC deny sweep · `P9` inbound webhook HMAC rejection · `P10` dashboards, data-level.
+  `--list` prints the inventory; `--read-only` drops `P3/P4/P7` (the only mutating groups); `--only P8` runs one.
+- **Constitutional limits.** Traffic only — every mutation goes through a real product flow authenticated by a
+  Supabase user JWT or an Arkova API key; **no service-role write anywhere in the file**. Reads may use the
+  Management API (a SELECT is not a write) for row-delta verification and the `pg_proc` grant census. It never writes
+  `anchors` / `anchor_proofs`, never changes env/flags/secrets/scheduler/revisions, and cannot restart the worker —
+  so it cannot void the soak clock.
+- **`P2` proves positive access before every denial.** An isolation assertion whose counterparty never authenticated
+  is void (runbook §6c — the vendor's exact failure). `P2a` fails the whole group if Org B cannot read its own rows.
+- **`P8` is side-effect-free by construction.** Zero-argument and known-mutating functions listed in `$NEVER_INVOKE`
+  are **census-only, never invoked**. Argument-taking functions are called with a *type-invalid* argument so the cast
+  fails before the function body runs: `permission denied` = denied, `invalid input syntax` = grant live and
+  reachable, and any 2xx is an immediate FAIL. The census leg is the only leg that may speak about **prod**, which is
+  change-frozen and must not be probed with traffic.
+- **Baselines pinned in the config block** (2026-08-12): rig anon-executable functions **282**, prod **262**, and the
+  **20** functions anon-executable on the rig but revoked in prod. Growth in any of the three is a FAIL. That 20-set
+  is a rebuild-provenance finding: the squashed baseline emits only `REVOKE … FROM PUBLIC`, while the explicit
+  `REVOKE … FROM anon, authenticated` statements live in `docs/migrations-archive/` and are never replayed, so any
+  environment rebuilt from `supabase/migrations/` comes up with `admin_set_platform_admin` anon-callable. Prod is
+  clean; a rig sweep therefore **cannot** certify prod's deny posture.
+- **A 429 is never a pass.** The rig runs the in-memory limiter and will 429 a probe run under ordinary load. `P10`
+  retries with backoff and then records **SKIP with the 429 named** — a rate-limited request is evidence about the
+  limiter, not about the payload and not about authorization.
+- **`P7` currently FAILs on a real prod-exposed defect (FD-P7).** `toPublicKey()` (`api/v1/keys.ts:36`) strips `id`
+  from the create response *and* every list row, while revoke/delete are addressed by `:keyId` — so API-key
+  revocation is unreachable from any client, and the CC6.8 "a revoked key is refused" control cannot be exercised.
+  The probe records it mechanically instead of skipping past it. Consequence: `P7` cannot delete its own key, so it
+  leaves one behind per run and self-caps at `PROBE_KEY_CAP` (default 8).
+- **Evidence.** Fresh file per run (never reuse a path — `curl` does not truncate on failure), transport status
+  recorded separately from the body, timestamped at capture, written append-only to
+  `docs/staging/evidence/fullsoak-2026-08/<UTC-date>/probes-<HHMMSSZ>.{txt,json}` plus the `P8` set-diff artifacts.
+- **Three probe defects were found by running it, not by reading it,** and the fixes are the useful part:
+  `invite_member`'s role argument is `ORG_MEMBER` (not `MEMBER`); `folders_insert_own` requires
+  `created_by = auth.uid()`, so the probe must send the JWT's own `sub` rather than a hardcoded seed uuid; and the
+  Drive rejection path keys off a **known** channel with a wrong token — a made-up channel id acks 200 and proves
+  nothing. A fourth apparent failure was correct product behaviour: `get_public_anchor` answers an unknown id with
+  HTTP 200 `{"error":"Record not found"}`, so the assertion tests the payload, not the status.
+- First full run 2026-08-12T16:26:33Z against rev `00013-mrw`: **35 PASS · 2 FAIL (both FD-P7) · 2 SKIP**.
+  Coverage narrative and the founder-lever list: `docs/staging/fullsoak-2026-08/founder-coverage-checklist.md`.

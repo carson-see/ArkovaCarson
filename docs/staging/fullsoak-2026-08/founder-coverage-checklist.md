@@ -61,10 +61,48 @@ channel with a wrong token — a made-up channel id acks with 200 and proves not
 
 ## 1. All cron jobs — the honest fraction
 
-**State: PARTIALLY SOAKING-CONTINUOUS — 25 of 109 routes (22.9%). 84 routes are DECLARED-UNTESTED.**
+**State (updated 2026-08-12T17:00Z): 25 of 110 routes SOAKING-CONTINUOUS + 31 now DAILY-EXERCISED = 56 of 110
+(50.9%) reached. 51 remain uninvoked, and every one of them is uninvoked BY A WRITTEN POLICY, not by omission.**
 
-**Receipt.** `cron.ts` on `origin/main` declares **109 unique routes** (`cronRouter.get|post`, 115 declarations,
-109 distinct paths). Cloud Scheduler binds **26 fullsoak jobs** covering **25 distinct routes** —
+**The instrument that changed this row: `scripts/staging/fullsoak-cron-exerciser.sh` (new).** It enumerates
+routes from the SHA the rig is actually running (`git show f5d1070fc:…/cron.ts` — 110 declarations), diffs
+against the live Scheduler census, and force-runs the unbound set that a per-route policy table permits. Every
+route it will not invoke carries a deny code (D1–D8) or a live precondition guard (G1–G5); a route present in
+`cron.ts` but absent from the table is denied as `unclassified`, so adding a route can never silently cause an
+unreviewed invocation. Anchor-cohort integrity is asserted before and after every run.
+
+**First run, 2026-08-12T16:58Z — `CRON_EXERCISER: 31 ok / 3 findings / 51 denied`**, cohort `anchors 12 → 12 ·
+anchor_proofs 12 → 12` **intact**. Artifact: `docs/staging/evidence/fullsoak-2026-08/2026-08-12/cron-exerciser.md`.
+
+| Finding | Route | What it is |
+|---|---|---|
+| **FD-2 reproduced independently** | `/jobs/check-credential-expiry` | HTTP 500. Rig log: `42703 column anchors.document_title does not exist`. Confirmed **prod-exposed** — neither `document_title` nor `not_after` exists in prod's `anchors` either. |
+| **FD-C1 (new)** | `/jobs/calibration-refit` | HTTP 500. Rig log: `PGRST205 Could not find the table 'public.calibration_features'`. The view **does not exist in prod either** (`information_schema.tables` count = 0 on `vzwyaatejekddvltxyye`). Same shape as FD-2: an unbound route that 500s on its first line the moment anyone schedules it or triggers it from the admin dashboard. |
+| **FD-C2 (new)** | `/jobs/smoke-test` | HTTP 503 — `passed 5, failed 1`. The failing check is `anchor-count: "0 total anchors"` while the rig holds 12. Root cause: `refresh_cache_anchor_status_counts()` derives its total from `pg_class.reltuples` (a planner estimate) and its SECURED bucket by subtraction, so on any environment whose `anchors` statistics are stale or never analysed it publishes **0** — passed through as a real zero, with no staleness sentinel (the function has a `-1` sentinel for the *absent-cache* case but none for the *stale-estimate* case). Live: rig cache `{"total":0,"SECURED":0}` refreshed 16:52:16Z while `anchor_type_counts`, computed by direct `count(*)` on the same table in the same pass, correctly reports 12. Prod reads 3,492,637 only because autovacuum keeps a 3.5M-row table's estimate warm. **Consequence: the platform/pipeline admin dashboards report 0 anchors on the rig for the whole soak, and daily probe P10 cannot catch it** — P10a/P10b assert a populated payload shape, never a correct number. |
+
+`/jobs/professional-education-extraction` returns 503 and is recorded **BY-DESIGN**, not as a finding: it is the
+`ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY` gate answering exactly as designed.
+
+**The 51 uninvoked, by policy code:** D1 external-registry ingestion ×42 · D2 retention purge ×1
+(`cleanup-retention`) · D3 mainnet ×1 · D4 real BTC spend ×1 · D5 writes `anchor_proofs` ×1 · D6 advances a
+durable census checkpoint even in dry-run ×1 · D7 unbounded backfill export ×1 · D8 mutates the Drive
+connection row P9b depends on ×1 · **G2 guard failed** (`report-metered-usage`: 2 active/trialing subscriptions
+on the rig — invoking it would fire real Stripe meter events) · **G4 guard failed** (`queue-reminders`: 1 enabled
+`SCHEDULED_CRON`/`QUEUE_DIGEST` rule — invoking it would queue a PENDING execution the BOUND
+`rule-action-dispatcher` then really delivers). The three guards that passed (`credit-expiry`,
+`monthly-allocation-rollover`, `payment-recovery`) were each proven inert by a live read first, then invoked.
+
+**D1 is the one a human should re-examine** — it is 42 of the 51. Those routes are denied because
+`/jobs/anchor-public-records` **is** Scheduler-bound on this rig (`*/10`) and converts unlinked `public_records`
+rows into PENDING anchors, so fetching even one page mutates the 12-anchor BL-2 cohort the Day-7 offline proof
+verification depends on. Exercising them needs either the `anchor-public-records` job paused for the duration
+(a scheduler change — not available mid-soak) or a separate rig. That is a deliberate trade, not a gap in the
+instrument.
+
+**Receipt (original census).** `cron.ts` on `origin/main` declares **109 unique routes** (`cronRouter.get|post`,
+115 declarations, 109 distinct paths); the exerciser's own parse of the frozen SHA counts **110** distinct paths,
+the extra being the `GET /jobs/smoke-test/history` sub-path. Cloud Scheduler binds **26 fullsoak jobs** covering
+**25 distinct routes** —
 `batch-anchors` and `batch-anchors-forced-flush` both target `/jobs/batch-anchors`, and `db-health-monitor`
 targets `/jobs/db-health` (verified live: `gcloud scheduler jobs list … --format='value(httpTarget.uri)'`).
 Job list and force-run proof: `docs/staging/fullsoak-2026-08/deg1-cron-parity-evidence.md` §4.
@@ -117,6 +155,25 @@ tip. **Update the §4 S1 GetBlock row from DU to IN before Day 7.**
 **Still DECLARED-UNTESTED, correctly:** mainnet signing/broadcast (BTC9, by design — the rig must never touch
 mainnet); the GCP KMS signing path (no `GCP_KMS_KEY_RESOURCE_NAME`; WIF is the active signer, config-presence
 only per DEG-8).
+
+**Mainnet — SUPPLEMENTARY prod observation added 2026-08-12, and it does NOT convert the row above.**
+`scripts/staging/fullsoak-prod-mainnet-evidence.sh` (new, read-only on prod) captures, daily, what production's
+own mainnet operation looked like during the soak window. First run 17:04Z — **`PROD_MAINNET_EVIDENCE: 10 pass /
+0 fail`**; artifact `docs/staging/evidence/fullsoak-2026-08/2026-08-12/prod-mainnet-evidence.md`.
+
+*Measured:* prod `/health` `status=healthy`, `network=mainnet`, `git_sha f5d1070fc…` (identical to the rig's),
+`checks {database, anchoring, kms} = ok`; **6,553 anchors created in prod in the last 24 h, 6,553 of them
+SECURED**; latest mainnet txid `69b0b0d193cf132f15edceea513d2e5dbf2646bc5b6f47660b0d39307ee95dab` at block
+**962,153** (network observed time 2026-08-12T14:15:50Z, anchor `ARK-FED-T8CCPC`); and that txid independently
+confirmed by **two** mainnet explorers — mempool.space and blockstream.info — both resolving it to block 962,153,
+matching the Arkova database. Neither explorer shares infrastructure with Arkova and neither was told what height
+to expect. The height also defeats the mock detector by construction (MockChainClient seeds 800,000).
+
+*NOT asserted, and no reading in that artifact may be presented as it:* that the **rig** tested mainnet. It did
+not and must not. The artifact carries its own counter-assertion (M10): the rig holds **zero** anchors above
+height 850,000. Mainnet signing and broadcast remain DECLARED-UNTESTED for this soak. Also not asserted: that
+prod is under test — prod is change-frozen for the window and every access in that script is a SELECT or a
+public GET; and that prod's volume and the rig's controlled cohort are comparable.
 
 **OPEN, blocking, prod-exposed — FD-4.** A hung `check-confirmations` run deadlocks SUBMITTED→SECURED promotion
 fleet-wide: `startRunLeaseHeartbeat` renews forever so the TTL never expires, `withRunLease`'s in-process
@@ -279,11 +336,66 @@ happy path, disconnect, callback/worker/Supabase error states, mobile, non-admin
 | `/api/v1/verify/{id}` | IN | §4 S14; Day-0 #5 (`audit_events(VERIFICATION_QUERIED)` +1). **FD-16:** the route takes `:publicId`, not a fingerprint, and writes `audit_events`, not `verification_events`. |
 | `/.well-known/arkova-keys.json` | IN — **currently 404** | §4 S17. `proof-keys.ts` is never imported. Recorded as a reachability FINDING; must never be converted to a pass by softening the assertion. |
 | MCP — 16 edge tools | IN (live deployment) | §4 S12/S25. **Honesty note stands:** the edge Worker is a separate `wrangler` target and **nothing in this soak pins it to a head SHA**. Evidence describes the live edge at probe time. |
-| SDKs — `mcp-server`, `langchain-ts` (npm), `langchain` (PyPI) | IN | §4 S13 — installed **from the registry**, never the working tree (the §5.1 S12/S13 false-pass trap). |
-| The "never-published JS SDK" | DU | §4 S13 + §4.3 item 5: **which package this denotes is not identifiable from the repo tree.** `sdks/` holds only the three above. |
+| SDKs — see the corrected block below | **CORRECTED 2026-08-12** | §4 S13's "installed from the registry" is **not satisfiable for the npm packages: none of the three is published.** Live census + a live-API smoke now run daily — `scripts/staging/fullsoak-sdk-integration.sh`. |
+| The "never-published JS SDK" | **RESOLVED — it is all three of them** | §4.3 item 5 said the package "is not identifiable from the repo tree". It is now identified by measurement, not inference: `@carsonarkova/sdk`, `@arkova/mcp-server` and `@arkova/langchain` all return **HTTP 404** from the npm registry, and an npm text search for `arkova` returns **zero packages**. |
 | Inbound webhooks ×8 | IN | §4 S15. DocuSign + Drive rejection legs now daily (P9). Middesk is signature-rejection-only (provider inert in prod). ATS / Veremark / Microsoft-Graph are **OFF and un-turn-on-able** (see item 9). |
 | Outbound webhook delivery + retries | IN | Day-0 #16: endpoint created via real API, 3 real HMAC-signed deliveries logged (2 failed on a flaky sink + 1 success). Endpoint `e9b82469` left ACTIVE so soak-week lifecycle events accrue. **Registrable event types are anchor/credential lifecycle only** — `compliance.document_expiring` is rejected by the create schema, which is half of FD-2. |
 | Rate limiting as prod runs it (Upstash) | DU | §4 S14. The rig's in-memory limiter **is** asserted and is demonstrably live: P10 hit http 429 twice today under ordinary probe load. |
+
+### SDK live-API integration — wired 2026-08-12, and it corrects this row
+
+**Can the SDK test suites be pointed at a base URL + API key? No.** All three TypeScript suites stub the
+transport and say so in their own headers — `packages/sdk/src/client.test.ts:13` is literally
+`vi.stubGlobal('fetch', mockFetch)` under *"Tests SDK methods with mocked fetch. No real API calls."* There is
+no env var, no integration mode and no conditional live path in `packages/sdk`, `sdks/mcp-server` or
+`sdks/langchain-ts`. Pointing `npm test` at the rig would exercise the mock and report green whether or not the
+rig existed. So the suites were **not** run against the rig; `scripts/staging/fullsoak-sdk-integration.sh`
+exercises each SDK's **public surface** against it instead, which is the assertion the suites cannot make.
+
+First run 2026-08-12T17:09Z — **`SDK_INTEGRATION: 22 pass / 7 fail`**. Artifact:
+`docs/staging/evidence/fullsoak-2026-08/2026-08-12/sdk-integration.md`.
+
+| Registry census (live) | result |
+|---|---|
+| `@carsonarkova/sdk` (npm) | **HTTP 404 — not published**, despite `.github/workflows/publish-sdk.yml` existing for it |
+| `@arkova/mcp-server` (npm) | **HTTP 404 — not published**, and no publish workflow exists |
+| `@arkova/langchain` (npm) | **HTTP 404 — not published**, and no publish workflow exists |
+| `arkova` (PyPI) | **200 — published, v2.2.0**, matching `packages/arkova-py` |
+
+**SDK-1 (new, prod-exposed, customer-facing).** `arkova` 2.2.0 — the **only** published Arkova SDK — **cannot
+verify a real production record.** Its `VerificationResult` model types `compliance_controls` as a dict; the
+live `/api/v1/verify/{id}` returns a **list**. Reproduced against prod, not just the rig: prod record
+`ARK-2026-C3A718D0` (`credential_type=LEGAL`) returns `compliance_controls: ['SOC2-CC6.1', 'SOC2-CC6.7',
+'GDPR-5.1f', …]` and the published model raises `Input should be a valid dictionary`. `verify()` is the SDK's
+headline method. The model *does* set `extra='allow'`, so the newer `proof_availability` /
+`proof_availability_note` / `compliance_controls_note` fields are tolerated — the break is a **type** mismatch
+on a pre-existing field, which is precisely the compatibility §1.8 promises ("additive nullable fields are
+allowed without versioning") being defeated by a client that cannot absorb them. Records whose
+`compliance_controls` is null parse fine, which is why this was never noticed.
+
+**SDK-2 (new, and it belongs in the claims register).** **Nessie does not fail closed.**
+`GET /api/v1/nessie/query` is mounted **unconditionally** in `services/worker/src/api/v1/router.ts:542` — there
+is no `ENABLE_NESSIE_RAG_RECOMMENDATIONS` check on the route, and the flag is not even a row in the rig's
+`switchboard_flags`. Through the SDK (`Arkova.query()`) it answers **HTTP 200** with
+`{"results":[],"count":0}`; through the MCP tool (`nessie_ask`) it answers with a synthesized
+`{"answer":"No relevant verified documents were found for your query.","citations":[],"confidence":0}`.
+Item 9 records the founder directive as *"the daily assertion is that it fails closed"* — **it does not**. A
+paying integrator cannot distinguish "permanently disabled by directive" from "no matching records", and
+`/nessie/query` is a **priced** offer on `/developers` (claims-register rows 2 and 4). This strengthens the
+retraction case from "the capability does not function" to "the capability returns a success shape while off".
+
+**Not a defect, but it will cost an integrator an afternoon:** the two SDKs do not share a `base_url` contract.
+The TS client takes a bare origin and builds `/api/v1|v2/…` itself; the Python client's `DEFAULT_BASE_URL` is
+`https://api.arkova.ai/v2`, its v1 methods rewrite that trailing version segment, and `search` / `get_record` /
+`list_orgs` / `get_organization` / `get_fingerprint` / `get_document` send **bare** paths relative to it. Hand
+the Python client a bare origin and every v2 read method 404s with the worker's generic *"The requested endpoint
+does not exist"*, which reads exactly like a broken SDK. The script pins the correct value per SDK rather than
+reporting the mismatch as four false findings.
+
+**What the smoke does not do:** it exercises no SDK write method for effect. `anchor()` appears once per SDK as
+a scope-negative assertion (a verify-scoped key must be refused — it is, in both). The BL-2 cohort is untouched.
+The API key is the Day-0 `soak-public-api` key from Secret Manager, reused rather than re-minted daily, because
+**FD-P7** makes every minted key permanent litter on the rig; `--mint` exists for when a fresh one is wanted.
 
 ---
 
@@ -717,6 +829,23 @@ than skipping past it. It is not in §4's table in any form.
   revoke.
 - **Fix FD-4** before launch (the `check-confirmations` lease deadlock — prod-exposed, no self-heal, no alarm,
   HTTP 200 throughout) and **FD-2** (`check-credential-expiry` 500s on every run in prod).
+- **Fix SDK-1** — republish `arkova` with `compliance_controls` typed as a list. Until then the only published
+  Arkova SDK cannot `verify()` a production record whose credential type maps to controls. Add a contract test
+  that validates the published models against a **live** `/api/v1/verify/{id}` payload; the current suites mock
+  the transport, so no amount of green in them could have caught this.
+- **Decide SDK-2** — either gate `/api/v1/nessie/query` behind `ENABLE_NESSIE_RAG_RECOMMENDATIONS` so it fails
+  closed with an explicit disabled response (the route is currently mounted unconditionally at
+  `api/v1/router.ts:542`), or retract the priced `/nessie/query` offer on `/developers`. Returning 200 with an
+  empty result set while the feature is permanently off is the worst of the three options.
+- **Fix FD-C1** — `/jobs/calibration-refit` 500s on a missing `public.calibration_features` view in **both** the
+  rig and prod. Either ship the 0222 view or delete the route.
+- **Fix FD-C2** — `refresh_cache_anchor_status_counts()` publishes `total=0` from a stale `pg_class.reltuples`
+  estimate with no staleness sentinel, so the admin dashboards read 0 anchors on any low-write or freshly
+  restored environment. Give the estimate path the same `-1` sentinel the absent-cache path already has, or
+  fall back to `count(*)` below a row threshold. Also strengthen probe P10 to assert a *number*, not a shape —
+  it currently cannot catch this class at all.
+- **Publish or retire the three npm SDKs.** All three are 404 on the registry; two have no publish workflow at
+  all. Every claim that they are "installed from the registry" is unsatisfiable until this is resolved.
 - **Update §4 S1's GetBlock row from DU to IN** — FD-3's provider flip made it prod-parity-true.
 
 ### Cannot convert, regardless of what anyone supplies
@@ -724,7 +853,7 @@ than skipping past it. It is not in §4's table in any form.
 | Item | Why |
 |---|---|
 | **Nessie** — `/nessie/query`, `ENABLE_NESSIE_RAG_RECOMMENDATIONS`, `ENABLE_CONSTRAINED_DECODING`, the `nessie_query` MCP tool | Founder directive 2026-08-01: permanently OFF. The daily assertion is that it **fails closed**. The priced `/nessie/query` offer on `/developers` is a retraction decision, not a coverage gap. |
-| **Mainnet signing / broadcast** | By design (BTC9). The rig must never touch mainnet; PR #2140's backfill must not run in the window. |
+| **Mainnet signing / broadcast** | By design (BTC9). The rig must never touch mainnet; PR #2140's backfill must not run in the window. **Partially compensated, not converted:** `fullsoak-prod-mainnet-evidence.sh` records prod's own mainnet operation during the window (6,553 SECURED in 24 h; one txid confirmed on two independent explorers at block 962,153) as clearly-labelled SUPPLEMENTARY evidence. The rig's own mainnet path stays DECLARED-UNTESTED and the artifact asserts the rig holds zero mainnet-height anchors. |
 | **Upstash rate limiting as prod runs it** | No management credential exists. The rig's in-memory limiter is asserted instead — and is demonstrably live (two 429s today). Open shadow finding F-2. |
 | **The prod-environmental fault class** (the 2026-08-11 `PGRST002` schema-cache outage) | The rig runs a different database and PostgREST and is **structurally incapable** of reproducing it (G15). Prod `/health` is monitored throughout instead. |
 | **Prod-only pg_cron jobs; Storage write plane + bucket inventory** | Prod is change-frozen for the window, and neither is enumerable from any repo artifact (§4.3 items 2–3). |
@@ -745,7 +874,13 @@ than skipping past it. It is not in §4's table in any form.
    RPC node height, both `/health` statuses).
 2. `scripts/staging/fullsoak-daily-probes.sh` — P1–P10 behaviour (login, cross-tenant, invitations, folders, DPA
    write-lock, QR target, API-key scope + revocation, anon-RPC deny sweep, webhook HMAC, dashboards).
-3. Runbook §7 standing items not covered by either script and still **manual**: the 03:00 UTC forced-flush
+3. `scripts/staging/fullsoak-cron-exerciser.sh` — the 85 unbound cron routes: policy-gated force-run, per-route
+   status/latency/body/row-delta, anchor-cohort integrity before and after. *(new 2026-08-12)*
+4. `scripts/staging/fullsoak-sdk-integration.sh` — registry census + live-API smoke over all four SDK artifacts'
+   public surfaces. *(new 2026-08-12)*
+5. `scripts/staging/fullsoak-prod-mainnet-evidence.sh` — read-only prod mainnet observation + two-explorer
+   confirmation. SUPPLEMENTARY; never converts a rig row. *(new 2026-08-12)*
+6. Runbook §7 standing items not covered by any script and still **manual**: the 03:00 UTC forced-flush
    observation with queue depth before/after; all 5 Bitcoin safety loops forced with a named observation; alert
    review with the count recorded; the `sha256sum` manifest commit.
 
@@ -764,3 +899,13 @@ _Compiled 2026-08-12 by the coverage-audit session. Every count in items 14 and 
 `gnkuaywlpmsaezwvlvhk` and `vzwyaatejekddvltxyye` on that date; every probe result is reproducible from
 `docs/staging/evidence/fullsoak-2026-08/2026-08-12/probes-162633Z.json`. No rig env, flag, secret, scheduler
 job, revision, or traffic split was modified; the soak clock was not touched._
+
+_Amended 2026-08-12T17:15Z (coverage-gap-closure session): rows 1 (cron), 8 (SDK) and the mainnet rows in item 2
+and §Levers rewritten against three new daily instruments — `fullsoak-cron-exerciser.sh`,
+`fullsoak-sdk-integration.sh`, `fullsoak-prod-mainnet-evidence.sh` — each executed live before the row was
+written. New findings: **FD-C1** (`calibration-refit` 500, missing view in rig AND prod), **FD-C2**
+(`refresh_cache_anchor_status_counts` publishes 0 from a stale planner estimate; admin dashboards read 0 anchors),
+**SDK-1** (published PyPI `arkova` 2.2.0 cannot `verify()` a prod record — `compliance_controls` typed dict, API
+returns list), **SDK-2** (`/api/v1/nessie/query` is mounted ungated and answers 200-with-empty instead of failing
+closed). FD-2 independently reproduced. No rig env, flag, secret, scheduler job, revision or traffic split was
+modified; the soak clock was not touched; the BL-2 cohort measured 12 anchors / 12 proofs before and after._
