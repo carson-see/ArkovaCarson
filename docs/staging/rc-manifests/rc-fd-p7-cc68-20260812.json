@@ -13,12 +13,12 @@
   "included_prs": [
     {
       "number": 2220,
-      "head_sha": "f9e5074f3e343b8eb8f14710f8aec45dd522b1c8",
+      "head_sha": "ffa0ea04138b3df23b987f2805021d6bbb3a3a9d",
       "base_sha": "49358d607b47217cfe81caf44d17b5e4a595cc88",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
       "ci_summary": "FD-P7 CC6.8 fix: key revocation/deletion reachable, revoked_at designation stamped. TDD supertest lifecycle suite (create->list->revoke->refused 401->delete) over real router + real apiKeyAuth; worker suite set-diff vs HEAD baseline shows zero new failures; worker lint clean; frontend tsc 0 errors; lint:copy compliant.",
-      "rollback_note": "Single revert of f9e5074f3 — no schema, no data backfill, no flag. Revert restores pre-fix behavior (revocation unreachable): safe operationally but re-opens the FD-P7 SOC 2 CC6.8 finding.",
+      "rollback_note": "Single revert of the PR merge \u2014 no schema, no data backfill, no flag. Revert restores pre-fix behavior (revocation unreachable): safe operationally but re-opens the FD-P7 SOC 2 CC6.8 finding.",
       "migration_files": []
     }
   ],
