@@ -2,11 +2,19 @@
  * Organization Verification API (IDT WS4)
  *
  * Endpoints for org EIN verification and domain verification:
- *   POST /api/v1/org/verify-ein          — Submit EIN for verification
- *   POST /api/v1/org/verify-domain       — Start domain verification (email-based)
- *   POST /api/v1/org/confirm-domain      — Confirm domain with verification token
+ *   POST /api/v1/org/verify-ein          — Submit EIN for verification (ORG_ADMIN)
+ *   POST /api/v1/org/verify-domain       — Start domain verification (email-based) (ORG_ADMIN)
+ *   POST /api/v1/org/confirm-domain      — Confirm domain with verification token (ORG_ADMIN)
  *   POST /api/v1/org/dev-verify          — Dev-only: auto-verify org for testing
- *   GET  /api/v1/org/verification-status — Get current verification status
+ *   GET  /api/v1/org/verification-status — Get current verification status (org member)
+ *
+ * The three write routes are ORG_ADMIN-gated (2026-08-12, follow-up to the
+ * two-grade verification decision — see this folder's agents.md, 2026-08-11
+ * entry): submitting a legal identifier onto the org and driving the
+ * self-serve VERIFIED grant is a significant org-level action, the same
+ * rationale org-kyb.ts states for gating the analogous Middesk submission.
+ * The org is always resolved from the caller's own profiles row — no
+ * client-supplied org id is ever trusted on this surface.
  *
  * Constitution 1.4: EIN is L3 Confidential — never logged.
  */
@@ -18,6 +26,7 @@ import { logger } from '../../utils/logger.js';
 import { db as _db } from '../../utils/db.js';
 import { sendEmail } from '../../email/sender.js';
 import { buildDomainVerificationEmail } from '../../email/templates.js';
+import { getCallerOrgIdResult, isCallerOrgAdminResult } from '../_org-auth.js';
 
 // IDT WS4 columns (domain_verified, ein_tax_id, etc.) are in the DB via migration 0128
 // but not yet in generated types. Use untyped client for org verification queries.
@@ -44,6 +53,62 @@ async function getUserOrgId(userId: string): Promise<string | null> {
 }
 
 /**
+ * ein_tax_id upper bound. The column is unbounded text with a `length >= 5`
+ * CHECK only, and the value is L3 Confidential — an unbounded client string
+ * has no business being stored. Format stays deliberately loose beyond the
+ * length range: international tax IDs (e.g. Kenyan KRA PINs, 11 alphanumerics)
+ * must keep working, so there is NO `^\d{9}$` pin here (that US-only shape
+ * lives in org-kyb.ts, which submits to a US KYB vendor).
+ */
+const MAX_EIN_LENGTH = 32;
+
+/**
+ * Auth gate for the three self-serve verification writers: resolve the
+ * caller's org from their OWN profiles row (never a client-supplied org id),
+ * then require ORG_ADMIN via the shared _org-auth.ts precedence
+ * (org_members owner/admin → profile ORG_ADMIN of this org → platform admin).
+ *
+ * Error split per _org-auth.ts's *Result contract: an operational failure in
+ * either lookup is a 500, never a masked 403/400 — a transient DB fault must
+ * not read as "not authorized".
+ *
+ * Writes the error response itself and returns null on any failure; returns
+ * the caller's { userId, orgId } when the gate passes.
+ */
+async function requireAdminCaller(
+  req: Request,
+  res: Response,
+): Promise<{ userId: string; orgId: string } | null> {
+  const userId = getUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return null;
+  }
+
+  const { value: orgId, error: orgLookupError } = await getCallerOrgIdResult(userId);
+  if (orgLookupError) {
+    res.status(500).json({ error: 'Failed to verify permissions' });
+    return null;
+  }
+  if (!orgId) {
+    res.status(400).json({ error: 'You must belong to an organization' });
+    return null;
+  }
+
+  const { value: isAdmin, error: adminLookupError } = await isCallerOrgAdminResult(userId, orgId);
+  if (adminLookupError) {
+    res.status(500).json({ error: 'Failed to verify permissions' });
+    return null;
+  }
+  if (!isAdmin) {
+    res.status(403).json({ error: 'Organization admin access required' });
+    return null;
+  }
+
+  return { userId, orgId };
+}
+
+/**
  * POST /api/v1/org/verify-ein
  *
  * Submit EIN/Tax ID for organization verification.
@@ -51,21 +116,13 @@ async function getUserOrgId(userId: string): Promise<string | null> {
  */
 orgVerificationRouter.post('/verify-ein', async (req: Request, res: Response) => {
   try {
-    const userId = getUserId(req);
-    if (!userId) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
-    const orgId = await getUserOrgId(userId);
-    if (!orgId) {
-      res.status(400).json({ error: 'You must belong to an organization' });
-      return;
-    }
+    const caller = await requireAdminCaller(req, res);
+    if (!caller) return;
+    const { userId, orgId } = caller;
 
     const { ein } = req.body as { ein?: string };
-    if (!ein || ein.trim().length < 5) {
-      res.status(400).json({ error: 'Valid EIN/Tax ID is required (minimum 5 characters)' });
+    if (!ein || ein.trim().length < 5 || ein.trim().length > MAX_EIN_LENGTH) {
+      res.status(400).json({ error: 'Valid EIN/Tax ID is required (5–32 characters)' });
       return;
     }
 
@@ -129,17 +186,9 @@ orgVerificationRouter.post('/verify-ein', async (req: Request, res: Response) =>
  */
 orgVerificationRouter.post('/verify-domain', async (req: Request, res: Response) => {
   try {
-    const userId = getUserId(req);
-    if (!userId) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
-    const orgId = await getUserOrgId(userId);
-    if (!orgId) {
-      res.status(400).json({ error: 'You must belong to an organization' });
-      return;
-    }
+    const caller = await requireAdminCaller(req, res);
+    if (!caller) return;
+    const { userId, orgId } = caller;
 
     // Get org domain
     const { data: org, error: orgError } = await db
@@ -234,17 +283,9 @@ orgVerificationRouter.post('/verify-domain', async (req: Request, res: Response)
  */
 orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response) => {
   try {
-    const userId = getUserId(req);
-    if (!userId) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
-    const orgId = await getUserOrgId(userId);
-    if (!orgId) {
-      res.status(400).json({ error: 'You must belong to an organization' });
-      return;
-    }
+    const caller = await requireAdminCaller(req, res);
+    if (!caller) return;
+    const { userId, orgId } = caller;
 
     const { code } = req.body as { code?: string };
     if (!code || code.trim().length < 6) {
