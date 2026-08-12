@@ -17,6 +17,7 @@ const {
   mockSubmitFingerprint,
   mockHasFunds,
   mockEstimateFee,
+  mockEstimateFeeDetailed,
   mockCheckPaymentGuard,
   mockIsFreeTierUser,
   mockIsWithinBatchWindow,
@@ -38,6 +39,7 @@ const {
   const mockSubmitFingerprint = vi.fn();
   const mockHasFunds = vi.fn();
   const mockEstimateFee = vi.fn();
+  const mockEstimateFeeDetailed = vi.fn();
   const mockCheckPaymentGuard = vi.fn();
   const mockIsFreeTierUser = vi.fn();
   const mockIsWithinBatchWindow = vi.fn();
@@ -95,6 +97,7 @@ const {
     mockSubmitFingerprint,
     mockHasFunds,
     mockEstimateFee,
+    mockEstimateFeeDetailed,
     mockCheckPaymentGuard,
     mockIsFreeTierUser,
     mockIsWithinBatchWindow,
@@ -148,6 +151,7 @@ vi.mock('../chain/client.js', () => ({
 vi.mock('../chain/fee-estimator.js', () => ({
   MempoolFeeEstimator: class {
     estimateFee = mockEstimateFee;
+    estimateFeeDetailed = mockEstimateFeeDetailed;
   },
   createFeeEstimator: vi.fn(),
 }));
@@ -251,6 +255,7 @@ beforeEach(() => {
   mockSubmitFingerprint.mockResolvedValue(RECEIPT_OK);
   mockHasFunds.mockResolvedValue(true);
   mockEstimateFee.mockResolvedValue(10);
+  mockEstimateFeeDetailed.mockResolvedValue({ rate: 10, source: 'live' });
 
   mockCheckPaymentGuard.mockResolvedValue({
     authorized: true,
@@ -370,7 +375,7 @@ describe('processAnchor invalid fingerprint', () => {
 describe('processAnchor fee ceiling (ECON-1)', () => {
   it('defers when current fee rate exceeds bitcoinMaxFeeRate', async () => {
     mockConfig.bitcoinMaxFeeRate = 5;
-    mockEstimateFee.mockResolvedValueOnce(50);
+    mockEstimateFeeDetailed.mockResolvedValueOnce({ rate: 50, source: 'live' });
 
     const result = await processAnchor(BASE_ANCHOR);
 
@@ -378,18 +383,86 @@ describe('processAnchor fee ceiling (ECON-1)', () => {
     expect(mockSubmitFingerprint).not.toHaveBeenCalled();
   });
 
-  it('proceeds when fee estimator throws (non-fatal)', async () => {
-    mockConfig.bitcoinMaxFeeRate = 5;
-    mockEstimateFee.mockRejectedValueOnce(new Error('estimator down'));
+  it('proceeds when a LIVE rate is at or below the ceiling', async () => {
+    mockConfig.bitcoinMaxFeeRate = 50;
+    mockEstimateFeeDetailed.mockResolvedValueOnce({ rate: 12, source: 'live' });
 
     const result = await processAnchor(BASE_ANCHOR);
+
     expect(result).toBe(true);
-    expect(mockEstimateFee).toHaveBeenCalledOnce();
     expect(mockSubmitFingerprint).toHaveBeenCalledOnce();
-    expect(manifestLimit).toHaveBeenCalledOnce();
     expect(mockAnchorsUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'SUBMITTED' }),
     );
+  });
+
+  /**
+   * SCRUM-3128 / BUG-2026-08-11 — THE fail-open this suite previously pinned
+   * as correct ("proceeds when fee estimator throws (non-fatal)").
+   *
+   * mempool.space rate-limits Cloud Run (SCRUM-547 — the reason treasury
+   * balance is cached). The estimator swallowed that and returned
+   * DEFAULT_FALLBACK_RATE = 5. The gate then evaluated `5 > 50` = false and
+   * broadcast — at whatever mainnet was actually charging, which is the exact
+   * outcome ECON-1 exists to prevent. A cost-control gate whose degraded mode
+   * is "always allow" inverts its own purpose.
+   */
+  it('defers when the rate is a SUBSTITUTED fallback, even though it is below the ceiling', async () => {
+    mockConfig.bitcoinMaxFeeRate = 50;
+    mockEstimateFeeDetailed.mockResolvedValueOnce({
+      rate: 5,
+      source: 'fallback',
+      reason: 'http_error',
+    });
+
+    const result = await processAnchor(BASE_ANCHOR);
+
+    expect(result).toBe(false);
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+  });
+
+  it('records the deferral as unknown-rate, NOT as a measured 5 sat/vB', async () => {
+    mockConfig.bitcoinMaxFeeRate = 50;
+    mockEstimateFeeDetailed.mockResolvedValueOnce({
+      rate: 5,
+      source: 'fallback',
+      reason: 'network_error',
+    });
+
+    await processAnchor(BASE_ANCHOR);
+
+    // The audit trail must not claim the network charged 5 sat/vB — it was
+    // never measured. §1.5: state what is measured vs asserted.
+    const updates = mockAnchorsUpdate.mock.calls as unknown as Array<
+      [Record<string, unknown>]
+    >;
+    const deferUpdate = updates.find(([payload]) => payload?.status === 'PENDING');
+    expect(deferUpdate).toBeDefined();
+    const meta = deferUpdate![0].metadata as Record<string, unknown>;
+    expect(meta._fee_deferred).toBe(true);
+    expect(meta._fee_rate_unknown).toBe(true);
+    expect(meta._fee_unknown_reason).toBe('network_error');
+    expect(meta).not.toHaveProperty('_deferred_fee_rate');
+  });
+
+  it('defers when the estimator throws outright (second fail-open)', async () => {
+    mockConfig.bitcoinMaxFeeRate = 50;
+    mockEstimateFeeDetailed.mockRejectedValueOnce(new Error('estimator down'));
+
+    const result = await processAnchor(BASE_ANCHOR);
+
+    expect(result).toBe(false);
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+  });
+
+  it('skips the gate entirely when no ceiling is configured', async () => {
+    mockConfig.bitcoinMaxFeeRate = undefined;
+
+    const result = await processAnchor(BASE_ANCHOR);
+
+    expect(result).toBe(true);
+    expect(mockEstimateFeeDetailed).not.toHaveBeenCalled();
+    expect(mockSubmitFingerprint).toHaveBeenCalledOnce();
   });
 });
 

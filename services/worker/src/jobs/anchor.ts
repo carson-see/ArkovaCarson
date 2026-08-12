@@ -41,6 +41,108 @@ export interface ClaimedAnchor {
   credential_type: string | null;
 }
 
+/** Outcome of the ECON-1 fee-ceiling check. */
+interface FeeCeilingVerdict {
+  defer: boolean;
+  /** Metadata merged onto the anchor when deferring. Empty when proceeding. */
+  meta: Record<string, unknown>;
+}
+
+/**
+ * ECON-1 fee ceiling — decide whether to broadcast at the current fee rate.
+ *
+ * **Fails CLOSED (SCRUM-3128 / BUG-2026-08-11).** This gate exists to stop the
+ * treasury broadcasting at peak fees, so its degraded mode cannot be "allow" —
+ * a cost-control gate that opens when it stops working inverts its own purpose.
+ *
+ * The old version asked `estimateFee()`, which silently substitutes
+ * `DEFAULT_FALLBACK_RATE = 5` on any API failure. When mempool.space
+ * rate-limited Cloud Run (SCRUM-547 — the reason treasury balance is cached),
+ * the gate evaluated `5 > BITCOIN_MAX_FEE_RATE`, which is false for every
+ * realistic ceiling, and the anchor broadcast into a 300 sat/vB mainnet.
+ *
+ * Two decisions worth keeping visible:
+ *
+ * 1. **Fail closed rather than passing a pessimistic `fallbackRate`.** Setting
+ *    `fallbackRate: ceiling + 1` would also trip the gate, but it fabricates a
+ *    fee rate and writes it into the anchor's metadata as `_deferred_fee_rate`
+ *    — a permanent evidentiary claim that the network charged a fee it never
+ *    charged. §1.5 requires proof records to state what is measured vs merely
+ *    asserted. It is also action-at-a-distance: raising the ceiling without
+ *    raising the fallback in lockstep silently re-opens the gate.
+ * 2. **Deferral is cheap and reversible.** The anchor returns to PENDING and is
+ *    re-claimed on the next pass; nothing is lost but latency. Broadcasting at
+ *    an unknown fee is neither cheap nor reversible — it spends treasury.
+ *
+ * Availability note: a sustained mempool.space outage now stalls fee-gated
+ * anchoring instead of draining the treasury. The operator lever is to unset
+ * `BITCOIN_MAX_FEE_RATE`, which disables the ceiling deliberately rather than
+ * by accident. Deferrals are tagged `_fee_rate_unknown` so this is
+ * distinguishable in logs and metadata from a genuine over-ceiling defer.
+ */
+async function evaluateFeeCeiling(
+  maxFeeRate: number,
+  anchorId: string,
+): Promise<FeeCeilingVerdict> {
+  try {
+    const { MempoolFeeEstimator } = await import('../chain/fee-estimator.js');
+    // BUG-2026-08-11: `network` is load-bearing here. Without it this
+    // compared MAINNET fee rates against the ceiling on every non-mainnet
+    // deployment, so a congested mainnet could defer signet anchors
+    // indefinitely while signet's real rate was 1 sat/vB.
+    const estimator = new MempoolFeeEstimator({
+      target: 'halfHour',
+      timeoutMs: 3000,
+      network: config.bitcoinNetwork,
+    });
+
+    const estimate = await estimator.estimateFeeDetailed();
+
+    if (estimate.source === 'fallback') {
+      logger.warn(
+        { anchorId, maxFeeRate, reason: estimate.reason },
+        'Anchor deferred — fee rate UNKNOWN (estimator fell back), releasing claim',
+      );
+      return {
+        defer: true,
+        meta: {
+          _fee_deferred: true,
+          _fee_rate_unknown: true,
+          _fee_unknown_reason: estimate.reason,
+        },
+      };
+    }
+
+    if (estimate.rate > maxFeeRate) {
+      logger.info(
+        { anchorId, currentFeeRate: estimate.rate, maxFeeRate },
+        'Anchor deferred — fee rate exceeds ceiling, releasing claim',
+      );
+      return {
+        defer: true,
+        meta: { _fee_deferred: true, _deferred_fee_rate: estimate.rate },
+      };
+    }
+
+    return { defer: false, meta: {} };
+  } catch (error) {
+    // Fail closed. Previously a bare `catch {}` that fell through to broadcast
+    // — the second fail-open on this path.
+    logger.warn(
+      { anchorId, maxFeeRate, error },
+      'Anchor deferred — fee ceiling check errored, releasing claim',
+    );
+    return {
+      defer: true,
+      meta: {
+        _fee_deferred: true,
+        _fee_rate_unknown: true,
+        _fee_unknown_reason: 'check_error',
+      },
+    };
+  }
+}
+
 /**
  * Process a single anchor that has already been claimed (status = BROADCASTING).
  *
@@ -148,32 +250,14 @@ export async function processAnchor(anchor: ClaimedAnchor): Promise<boolean> {
 
     // ECON-1 / Item #7: Check fee ceiling — defer anchor if fee rate exceeds MAX_FEE_SAT_PER_VBYTE
     if (config.bitcoinMaxFeeRate) {
-      try {
-        const { MempoolFeeEstimator } = await import('../chain/fee-estimator.js');
-        // BUG-2026-08-11: `network` is load-bearing here. Without it this
-        // compared MAINNET fee rates against the ceiling on every non-mainnet
-        // deployment, so a congested mainnet could defer signet anchors
-        // indefinitely while signet's real rate was 1 sat/vB.
-        const estimator = new MempoolFeeEstimator({
-          target: 'halfHour',
-          timeoutMs: 3000,
-          network: config.bitcoinNetwork,
-        });
-        const currentFeeRate = await estimator.estimateFee();
-        if (currentFeeRate > config.bitcoinMaxFeeRate) {
-          logger.info(
-            { anchorId, currentFeeRate, maxFeeRate: config.bitcoinMaxFeeRate },
-            'Anchor deferred — fee rate exceeds ceiling, releasing claim',
-          );
-          await revertToPending(anchorId, {
-            ...anchorMeta,
-            _fee_deferred: true,
-            _deferred_fee_rate: currentFeeRate,
-          });
-          return false;
-        }
-      } catch {
-        // Non-fatal: proceed if fee check fails
+      const verdict = await evaluateFeeCeiling(config.bitcoinMaxFeeRate, anchorId);
+      if (verdict.defer) {
+        // The revert is deliberately OUTSIDE the evaluator's try/catch. It used
+        // to sit inside one, so a throwing revertToPending was swallowed by the
+        // same `catch` that meant "fee check failed" — and the anchor then
+        // broadcast despite having just been ruled over the ceiling.
+        await revertToPending(anchorId, { ...anchorMeta, ...verdict.meta });
+        return false;
       }
     }
 

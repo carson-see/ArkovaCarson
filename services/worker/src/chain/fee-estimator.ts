@@ -19,9 +19,55 @@ import {
 
 // ─── Interface ──────────────────────────────────────────────────────────
 
+/**
+ * Where an estimate's number actually came from.
+ *
+ * - `live`     — the estimator KNOWS this rate. A real API reading, or a
+ *                statically-configured rate (signet's flat 1 sat/vB is the
+ *                truth for that network, not a degraded substitute).
+ * - `fallback` — the estimator does NOT know the rate. The API failed and a
+ *                configured default was substituted so the caller had a
+ *                number to work with.
+ */
+export type FeeEstimateSource = 'live' | 'fallback';
+
+/** Why a fallback was substituted. Present only when source is 'fallback'. */
+export type FeeFallbackReason =
+  | 'http_error'
+  | 'invalid_rate'
+  | 'timeout'
+  | 'network_error';
+
+export interface FeeEstimate {
+  /** Fee rate in sat/vbyte. */
+  rate: number;
+  /** Whether `rate` is known or substituted. */
+  source: FeeEstimateSource;
+  /** Populated only when `source === 'fallback'`. */
+  reason?: FeeFallbackReason;
+}
+
 export interface FeeEstimator {
-  /** Estimate the current fee rate in sat/vbyte. */
+  /**
+   * Estimate the current fee rate in sat/vbyte.
+   *
+   * SCRUM-3128: this form is LOSSY — it cannot distinguish "the API said 5"
+   * from "the API failed and we substituted 5". Safe for advisory/display
+   * uses (logging, pricing hints, dashboards). **Any gate whose degraded
+   * mode must not be "allow" has to use `estimateFeeDetailed()` instead** —
+   * see the fee ceiling in `jobs/anchor.ts`.
+   */
   estimateFee(): Promise<number>;
+
+  /**
+   * Estimate the fee rate AND report whether the number is a real reading or
+   * a substituted fallback (SCRUM-3128 / BUG-2026-08-11).
+   *
+   * Required on the interface, deliberately: this is the question every cost
+   * gate has to ask, and an optional method is one a call site can silently
+   * forget — which is precisely how the ECON-1 fail-open survived.
+   */
+  estimateFeeDetailed(): Promise<FeeEstimate>;
 
   /** Estimator display name for logging. */
   readonly name: string;
@@ -46,6 +92,16 @@ export class StaticFeeEstimator implements FeeEstimator {
 
   async estimateFee(): Promise<number> {
     return this.rate;
+  }
+
+  /**
+   * Always `live`. A static rate is a KNOWN rate — it is the configured truth
+   * for the network, not a substitute for a reading that failed. Reporting it
+   * as `fallback` would make a fail-closed cost gate defer every signet/dev
+   * anchor forever.
+   */
+  async estimateFeeDetailed(): Promise<FeeEstimate> {
+    return { rate: this.rate, source: 'live' };
   }
 }
 
@@ -144,7 +200,16 @@ export class MempoolFeeEstimator implements FeeEstimator {
     this.timeoutMs = timeout;
   }
 
+  /**
+   * Lossy form — see the note on `FeeEstimator.estimateFee`. Kept as a thin
+   * wrapper so advisory callers are unchanged; gates must use the detailed
+   * form.
+   */
   async estimateFee(): Promise<number> {
+    return (await this.estimateFeeDetailed()).rate;
+  }
+
+  async estimateFeeDetailed(): Promise<FeeEstimate> {
     const url = `${this.baseUrl}/v1/fees/recommended`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -157,7 +222,7 @@ export class MempoolFeeEstimator implements FeeEstimator {
           { status: response.status, url },
           'Mempool fee API returned non-OK status — using fallback',
         );
-        return this.fallbackRate;
+        return this.fallback('http_error');
       }
 
       const data = (await response.json()) as Record<string, number>;
@@ -169,27 +234,31 @@ export class MempoolFeeEstimator implements FeeEstimator {
           { field, rate, data },
           'Mempool fee API returned invalid rate — using fallback',
         );
-        return this.fallbackRate;
+        return this.fallback('invalid_rate');
       }
 
       logger.debug({ target: this.target, rate }, 'Mempool fee estimate');
-      return rate;
+      return { rate, source: 'live' };
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         logger.warn(
           { url, timeoutMs: this.timeoutMs },
           'Mempool fee API request timed out — using fallback',
         );
-      } else {
-        logger.warn(
-          { error, url },
-          'Mempool fee API request failed — using fallback',
-        );
+        return this.fallback('timeout');
       }
-      return this.fallbackRate;
+      logger.warn(
+        { error, url },
+        'Mempool fee API request failed — using fallback',
+      );
+      return this.fallback('network_error');
     } finally {
       clearTimeout(timeoutId);
     }
+  }
+
+  private fallback(reason: FeeFallbackReason): FeeEstimate {
+    return { rate: this.fallbackRate, source: 'fallback', reason };
   }
 }
 

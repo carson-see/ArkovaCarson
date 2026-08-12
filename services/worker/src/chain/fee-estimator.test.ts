@@ -268,6 +268,7 @@ describe('MempoolFeeEstimator', () => {
       );
     });
 
+
     it('throws on timeoutMs of 0', () => {
       expect(() => new MempoolFeeEstimator({ timeoutMs: 0 })).toThrow(
         'timeoutMs must be a positive finite number',
@@ -304,6 +305,102 @@ describe('MempoolFeeEstimator', () => {
         'https://example.com/api/v1/fees/recommended',
         expect.any(Object),
       );
+    });
+  });
+
+  /**
+   * SCRUM-3128 / BUG-2026-08-11: `estimateFee()` collapses "the API said 5"
+   * and "the API failed and we substituted 5" into the same number. Cost
+   * gates downstream cannot tell them apart, so a dead API reads as a cheap
+   * network. `estimateFeeDetailed()` is the provenance-preserving form.
+   */
+  describe('estimateFeeDetailed provenance (SCRUM-3128)', () => {
+    it('reports source "live" for a real API reading', async () => {
+      mockFetch.mockResolvedValueOnce(okFeeResponse({ halfHourFee: 12 }));
+
+      const estimate = await new MempoolFeeEstimator().estimateFeeDetailed();
+
+      expect(estimate).toEqual({ rate: 12, source: 'live' });
+    });
+
+    it('reports source "fallback" with reason on non-OK response', async () => {
+      mockFetch.mockResolvedValueOnce(new Response('error', { status: 500 }));
+
+      const estimate = await new MempoolFeeEstimator({
+        fallbackRate: 7,
+      }).estimateFeeDetailed();
+
+      expect(estimate).toEqual({
+        rate: 7,
+        source: 'fallback',
+        reason: 'http_error',
+      });
+    });
+
+    it('reports source "fallback" with reason on network error', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+
+      const estimate = await new MempoolFeeEstimator().estimateFeeDetailed();
+
+      expect(estimate).toEqual({
+        rate: 5,
+        source: 'fallback',
+        reason: 'network_error',
+      });
+    });
+
+    it('reports source "fallback" with reason on timeout', async () => {
+      mockFetch.mockImplementationOnce(
+        (_url: string, init?: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(
+                new DOMException('The operation was aborted.', 'AbortError'),
+              ),
+            );
+          }),
+      );
+
+      const pending = new MempoolFeeEstimator({
+        timeoutMs: 3000,
+      }).estimateFeeDetailed();
+      vi.advanceTimersByTime(3000);
+
+      expect(await pending).toEqual({
+        rate: 5,
+        source: 'fallback',
+        reason: 'timeout',
+      });
+    });
+
+    it('reports source "fallback" with reason on invalid rate in response', async () => {
+      mockFetch.mockResolvedValueOnce(okFeeResponse({ halfHourFee: -1 }));
+
+      const estimate = await new MempoolFeeEstimator().estimateFeeDetailed();
+
+      expect(estimate).toEqual({
+        rate: 5,
+        source: 'fallback',
+        reason: 'invalid_rate',
+      });
+    });
+
+    /**
+     * A static rate is a KNOWN rate, not a degraded substitute — signet's flat
+     * 1 sat/vB is the truth for that network. Reporting it as 'fallback' would
+     * make a fail-closed cost gate defer every signet anchor forever.
+     */
+    it('StaticFeeEstimator reports its configured rate as "live"', async () => {
+      const estimate = await new StaticFeeEstimator(3).estimateFeeDetailed();
+
+      expect(estimate).toEqual({ rate: 3, source: 'live' });
+    });
+
+    it('estimateFee stays the thin wrapper — same number, no provenance', async () => {
+      mockFetch.mockResolvedValueOnce(okFeeResponse({ halfHourFee: 12 }));
+      const estimator = new MempoolFeeEstimator();
+
+      expect(await estimator.estimateFee()).toBe(12);
     });
   });
 
