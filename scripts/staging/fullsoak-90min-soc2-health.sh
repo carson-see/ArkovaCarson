@@ -89,8 +89,8 @@ command -v gh >/dev/null 2>&1 && GH_OK=1 || GH_OK=0
 
 # ── CC6.1: change-management freeze gates ───────────────────────────────────
 if [ "$GH_OK" = 1 ]; then
-  DWP="$(gh variable get DEPLOY_WORKER_PAUSED 2>/dev/null | tr -d '\r\n')"
-  SGD="$(gh variable get SOAK_GATE_DISABLED 2>/dev/null | tr -d '\r\n')"
+  DWP="$(gh variable get DEPLOY_WORKER_PAUSED --repo "${GH_REPO_SLUG:-carson-see/ArkovaCarson}" 2>/dev/null | tr -d '\r\n')"
+  SGD="$(gh variable get SOAK_GATE_DISABLED --repo "${GH_REPO_SLUG:-carson-see/ArkovaCarson}" 2>/dev/null | tr -d '\r\n')"
   [ "$DWP" = "true" ] && check "CC6.1 DEPLOY_WORKER_PAUSED" PASS "true" || check "CC6.1 DEPLOY_WORKER_PAUSED" FAIL "got '$DWP', expected true"
   [ "$SGD" = "false" ] && check "CC6.1 SOAK_GATE_DISABLED" PASS "false" || check "CC6.1 SOAK_GATE_DISABLED" FAIL "got '$SGD', expected false"
 else
