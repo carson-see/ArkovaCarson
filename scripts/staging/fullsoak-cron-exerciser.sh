@@ -35,7 +35,7 @@
 # ── THE DENYLIST, AND WHY EACH ENTRY IS ON IT ────────────────────────────────
 # Every DENY carries a code. Codes, not adjectives, so the list is auditable:
 #
-#  D1  EXTERNAL-REGISTRY INGESTION (43 routes). Each writes `public_records`.
+#  D1  EXTERNAL-REGISTRY INGESTION (42 routes). Each writes `public_records`.
 #      `/jobs/anchor-public-records` IS Scheduler-bound on this rig (*/10) and
 #      converts unlinked public_records rows into PENDING anchors. Fetching even
 #      one page therefore mutates the controlled anchor cohort that BL-2's
@@ -44,6 +44,19 @@
 #      hits a live third-party registry from a soak rig, and this family is where
 #      the 259k pending-anchoring backlog came from (prod's feeders are PAUSED).
 #      Day-0 probe #26 declined them for the same reason. See RECONSIDER below.
+#
+#      *** D1 IS NOW COVERED ELSEWHERE — 2026-08-13. *** All 42 D1 routes were
+#      force-run on the CONNECTOR SIDE-RIG (arkova-worker-connector-sidecar-
+#      2026-08-staging / Supabase ehqqearcitrgloibtjqx), which runs the SAME
+#      image digest but has NO Scheduler binding at all — so the anchor-public-
+#      records cascade that motivates this DENY cannot happen there. 26,100
+#      public_records were ingested across 15 registries with ZERO rows linked to
+#      an anchor. Evidence + per-route root causes:
+#        docs/staging/fullsoak-2026-08/side-rig-cron-coverage.md
+#      The DENY below is STILL CORRECT for THIS frozen rig and must not be
+#      relaxed: the cohort objection is specific to the Scheduler-bound rig, and
+#      the frozen rig stayed at 12 anchors / 12 proofs / 0 public_records
+#      throughout that exercise. Do not "re-enable" D1 here.
 #  D2  RETENTION / PURGE. Deletes rows the soak is measuring.
 #  D3  MAINNET. The rig must never touch mainnet (BTC9, checklist item 2).
 #  D4  REAL BTC SPEND / RE-ANCHOR BACKFILL across the 2.97M backlog.
@@ -59,6 +72,17 @@
 #      That row's channel token is the exact credential daily probe P9b addresses
 #      when it proves a forged Drive channel token is rejected. Renewing it would
 #      quietly invalidate another instrument's evidence.
+#
+#  *** D2 / D5 / D6 / D7 / D8 ARE NOW COVERED ELSEWHERE — 2026-08-13. *** Each was
+#  force-run once on the connector side-rig (same image digest, disposable DB) and
+#  all five returned 2xx: D5 in ARMED write mode inserted 9 anchor_proofs rows,
+#  D6's dry-run checkpoint claim was empirically confirmed (job_queue +1 with zero
+#  writes applied), D7 succeeded when bounded with ?table=audit_events, D8 was
+#  inert there (no google_drive row to rotate), D2 deleted 0 rows. The two GUARD
+#  routes whose preconditions fail on this rig (G2 report-metered-usage, G4
+#  queue-reminders) were also run there. D3 and D4 remain DENIED EVERYWHERE and
+#  were never invoked on any rig. Same evidence doc as D1 above. These DENY codes
+#  remain correct for THIS frozen rig — do not relax them here.
 #
 # GUARDED routes (Gn) are neither allow nor deny standing: a read-only
 # precondition is evaluated live each run, and the route is invoked ONLY if that
