@@ -140,10 +140,15 @@ fi
 if [ "$GCLOUD_OK" = 1 ]; then
   TOKEN="$(gcloud auth print-access-token 2>/dev/null)"
   POLICIES_JSON="$(curl -sS -m 20 -H "Authorization: Bearer $TOKEN" "https://monitoring.googleapis.com/v3/projects/$GCP_PROJECT/alertPolicies" 2>/dev/null)"
+  # Count only LIVE soak policies. A policy renamed to start with "RETIRED"
+  # is deliberately disabled and superseded (e.g. the boot-line detector that
+  # fired on autoscaling cold starts rather than revision changes) — counting
+  # it would make this check report a permanent false FAIL.
   SOAK_POLICIES_ON="$(printf '%s' "$POLICIES_JSON" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
-pols=[p for p in d.get('alertPolicies',[]) if 'SOAK' in p.get('displayName','')]
+pols=[p for p in d.get('alertPolicies',[])
+      if 'SOAK' in p.get('displayName','') and not p.get('displayName','').startswith('RETIRED')]
 on=[p for p in pols if p.get('enabled')]
 print(f'{len(on)}/{len(pols)}')" 2>/dev/null)"
   SOAK_POLICIES_COUNT_OK="$(printf '%s' "$SOAK_POLICIES_ON" | python3 -c "import sys; s=sys.stdin.read().strip(); a,b=s.split('/'); print('1' if a==b and int(b)>=3 else '0')" 2>/dev/null)"
