@@ -25,11 +25,20 @@ Registry drift job against live Credential Engine infrastructure for the first t
 
 | | |
 |---|---|
-| Side-rig Cloud Run | `arkova-worker-connector-sidecar-2026-08-staging`, revision **`00008-jnj`** |
+| Side-rig Cloud Run | `arkova-worker-connector-sidecar-2026-08-staging`, revision **`00008-jnj`** during this work |
 | Image digest | `sha256:8ace89d483484c40ea2022f7f21361effbfd6e0ab4d61ac4707f54e2ed1c1e18` (identical to prod + soak rig) |
 | Worker `git_sha` | `f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58` |
 | Side-rig Supabase | `ehqqearcitrgloibtjqx` |
 | Service URL used | `https://arkova-worker-connector-sidecar-2026-08-staging-270018525501.us-central1.run.app` |
+
+> **Revision moved after this evidence was captured.** All results below were produced on
+> `00008-jnj`. The concurrent session (see the concurrency disclosure) subsequently redeployed the
+> service to **`00010-8vb`** — same image digest, same `git_sha`, and `ENABLE_CE_REGISTRY_DRIFT_CHECK=true`
+> preserved (`gcloud run services update` merges env rather than replacing it). The drift job was
+> re-run on `00010-8vb` as a control and returned the identical
+> `checked:5, match:5, drifted:0, withdrawn:0, unreachable:0`. Stated rather than glossed, because
+> a revision number in an evidence doc that does not match the live service is exactly the kind of
+> discrepancy that costs a later reader an hour.
 
 The **`-270018525501`** hostname spelling matters. `buildRedirectUri` derives the OAuth
 `redirect_uri` from the inbound `Host` header, and only that spelling is registered on the Google
@@ -494,7 +503,7 @@ touched.
 
 | Change | Detail | Reversible |
 |---|---|---|
-| Cloud Run env | `+ENABLE_CE_REGISTRY_DRIFT_CHECK=true` → revision `00008-jnj` | yes |
+| Cloud Run env | `+ENABLE_CE_REGISTRY_DRIFT_CHECK=true` → revision `00008-jnj`, carried forward to `00010-8vb` | yes |
 | `organizations` | org `40383eb2-…` → `verification_status='VERIFIED'`, `kyb_completed_at=now()` | yes (was `UNVERIFIED`) |
 | `org_credits` | balance 0 → 50, `anchor_quota` 10 → 100 (now 49; see §3.2) | yes |
 | `switchboard_flags` | `+ENABLE_VERIFICATION_API=true` | yes |
