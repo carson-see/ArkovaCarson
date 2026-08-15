@@ -404,6 +404,35 @@ under Cloud Run CPU throttling (node-cron does not fire on a throttled instance)
 See the activating PR's body for the exact command and a post-deploy verification
 runbook.
 
+## Edge worker suite wired into `Tests` (2026-08-15)
+
+`services/edge/vitest.config.ts` had existed since 2026-06-05 and **no CI job ever ran it**. The
+only edge step in `ci.yml` was `TypeScript check (edge workers)` in `typecheck-lint` — `tsc
+--noEmit`, which compiles the tests but never executes them. The root `Tests` job could not collect
+them either: root `vitest.config.ts` globs `tests/**`, `src/**`, `scripts/**` from the repo root,
+and `services/edge/` matches none of those. So `services/edge/src/mcp-tools.test.ts` (36 assertions)
+was a suite that ran nowhere and blocked nothing.
+
+Added to the **`test` job** (`Tests`), after "Run worker tests with coverage":
+
+- `Install edge dependencies` (id `edge-deps`) — `npm ci --ignore-scripts` in `services/edge`, with
+  the same 3-attempt retry loop as `Install worker dependencies`. `services/edge` carries its own
+  `package-lock.json` and is not in the root workspace, so this install is mandatory.
+- `Run edge worker tests` (id `edge-tests`) — `npm test`, gated on `edge-deps` succeeding.
+- Both ids added to the `Aggregate test suite results` map **and** its iteration list, and
+  `services/edge/package-lock.json` added to the job's `cache-dependency-path`.
+
+**Why a step here and not a new job.** `Tests` is already a required status check and appears as
+`check-success = Tests` in `.mergify.yml` five times. A new top-level job would not be in branch
+protection or those merge conditions, so it could go red while Mergify merged anyway — reproducing
+the very bug this fixes. Adding a *new required check* is a branch-protection change (Carson/admin),
+not something a PR can do to itself.
+
+Follows the job's existing `if: always()` convention — see the long comment above "Run tests with
+coverage" for why (the 2026 silent-skip bug where a single early failure skipped the whole worker
+suite with no signal). Baseline at wiring time: **36/36 green**, verified locally on `main` before
+the gate was added — a gate must not be merged red.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
