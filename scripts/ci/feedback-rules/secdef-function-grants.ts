@@ -301,37 +301,50 @@ export const SQUASHED_BASELINE = '00000000000000_baseline_at_main_HEAD.sql';
  *   a genuinely unsafe sibling is not. Signature-level enforcement needs a live
  *   ACL sweep against a rebuilt environment, not static SQL parsing.
  */
-export function hasReplayPathRevoke(files: FileSql[], schema: string, name: string): boolean {
+/** True when this prepared SQL (re)defines `schema.name`. */
+function definesFunction(sql: string, schema: string, name: string): boolean {
   const qualified = `${schema}.${name}`;
+  for (const m of sql.matchAll(CREATE_FN)) {
+    const target = m[1].toLowerCase();
+    if (target === qualified || target === name) return true;
+  }
+  return false;
+}
 
+/** True when this prepared SQL revokes `schema.name` from BOTH roles by name. */
+function revokesBothRoles(sql: string, schema: string, name: string): boolean {
+  for (const stmt of sql.matchAll(/\bREVOKE\b[^;]*;/gi)) {
+    const text = stmt[0];
+    if (!statementTargets(text, schema, name)) continue;
+    if (/\banon\b/i.test(text) && /\bauthenticated\b/i.test(text)) return true;
+  }
+  return false;
+}
+
+/** True when this prepared SQL grants `schema.name` back to either role. */
+function grantsEitherRole(sql: string, schema: string, name: string): boolean {
+  for (const stmt of sql.matchAll(/\bGRANT\b[^;]*;/gi)) {
+    const text = stmt[0];
+    if (!statementTargets(text, schema, name)) continue;
+    if (/\banon\b/i.test(text) || /\bauthenticated\b/i.test(text)) return true;
+  }
+  return false;
+}
+
+export function hasReplayPathRevoke(files: FileSql[], schema: string, name: string): boolean {
   let lastDefineIdx = -1;
   let lastRevokeIdx = -1;
   let lastRegrantIdx = -1;
 
   for (let i = 0; i < files.length; i++) {
     const sql = prepare(files[i].sql);
-
-    for (const m of sql.matchAll(CREATE_FN)) {
-      const target = m[1].toLowerCase();
-      if (target === qualified || target === name) lastDefineIdx = i;
-    }
-
-    for (const stmt of sql.matchAll(/\bREVOKE\b[^;]*;/gi)) {
-      const text = stmt[0];
-      if (!statementTargets(text, schema, name)) continue;
-      if (!/\banon\b/i.test(text) || !/\bauthenticated\b/i.test(text)) continue;
-      lastRevokeIdx = i;
-    }
-
-    for (const stmt of sql.matchAll(/\bGRANT\b[^;]*;/gi)) {
-      const text = stmt[0];
-      if (!statementTargets(text, schema, name)) continue;
-      if (/\banon\b/i.test(text) || /\bauthenticated\b/i.test(text)) lastRegrantIdx = i;
-    }
+    if (definesFunction(sql, schema, name)) lastDefineIdx = i;
+    if (revokesBothRoles(sql, schema, name)) lastRevokeIdx = i;
+    if (grantsEitherRole(sql, schema, name)) lastRegrantIdx = i;
   }
 
-  // The revoke must be the last word: after the final definition, and not
-  // undone by a re-grant in the same file or any later one.
+  // The revoke must be the last word: at or after the final definition, and not
+  // undone by a re-grant in a later file.
   if (lastRevokeIdx < 0) return false;
   if (lastRevokeIdx < lastDefineIdx) return false;
   return lastRegrantIdx < lastRevokeIdx;
@@ -397,7 +410,7 @@ export function run(): { ok: boolean; message: string } {
   // so that running this rule directly — the obvious way to check your work —
   // cannot report a false all-clear on a rotted baseline.
   const live = new Set(all.map((v) => v.key));
-  const stale = [...baseline].filter((k) => !live.has(k)).sort();
+  const stale = [...baseline].filter((k) => !live.has(k)).sort((a, b) => a.localeCompare(b));
 
   if (fresh.length === 0 && stale.length === 0) {
     return {
