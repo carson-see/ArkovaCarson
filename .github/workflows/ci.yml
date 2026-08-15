@@ -752,6 +752,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             services/worker/package-lock.json
+            services/edge/package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -897,6 +898,49 @@ jobs:
         working-directory: services/worker
         run: npm run test:coverage
 
+      # services/edge has had a working vitest harness (services/edge/vitest.config.ts,
+      # `include: ['src/**/*.test.ts', 'tests/**/*.test.ts']`) since Story D PR-1, but
+      # NOTHING in CI ever invoked it — the only edge step was the `tsc --noEmit` check in
+      # typecheck-lint. The root suite cannot pick these up either: root vitest.config.ts
+      # globs only `tests/**`, `src/**`, `scripts/**` from the repo root, so
+      # services/edge/src/*.test.ts matched no pattern in any runner. Net effect:
+      # services/edge/src/mcp-tools.test.ts (36 assertions covering the MCP tool surface)
+      # gated nothing and could sit red indefinitely without failing a PR. Discovered while
+      # fixing BUG-2026-08-13-016 (PR #2232), where the P0 fix's tests had to be parked in
+      # the ROOT suite (src/tests/edge/, tests/infra/) purely to be certain CI would run them.
+      #
+      # These live in this job (not a new one) on purpose: `Tests` is already an enumerated
+      # merge condition in .mergify.yml (5 occurrences) and a required status check. A new
+      # top-level job would need branch-protection + .mergify.yml changes to gate anything,
+      # and until those landed it would reproduce exactly the bug being fixed here — a suite
+      # that runs, goes red, and blocks no one.
+      - name: Install edge dependencies
+        id: edge-deps
+        if: always()
+        working-directory: services/edge
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci --ignore-scripts; then
+              break
+            else
+              status=$?
+            fi
+
+            if [ "$attempt" = "3" ]; then
+              exit "$status"
+            fi
+
+            echo "::warning::Edge npm ci failed on attempt ${attempt}; retrying after transient registry/network failure."
+            npm cache verify || true
+            sleep $((attempt * 15))
+          done
+
+      - name: Run edge worker tests
+        id: edge-tests
+        if: always() && steps.edge-deps.outcome == 'success'
+        working-directory: services/edge
+        run: npm test
+
       # Explicit aggregate gate (defense-in-depth, see comment above "Run
       # tests with coverage"). Treats 'skipped' as fine (e.g. the circom
       # install/build steps deliberately skip on a cache hit) but fails the
@@ -916,10 +960,12 @@ jobs:
             [build-zk-circuit]="${{ steps.build-zk-circuit.outcome }}"
             [verify-zk-artifacts]="${{ steps.verify-zk-artifacts.outcome }}"
             [worker-coverage]="${{ steps.worker-coverage.outcome }}"
+            [edge-deps]="${{ steps.edge-deps.outcome }}"
+            [edge-tests]="${{ steps.edge-tests.outcome }}"
           )
           failed=0
           echo "== Test suite step outcomes =="
-          for name in db-reset root-coverage rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage; do
+          for name in db-reset root-coverage rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage edge-deps edge-tests; do
             outcome="${results[$name]}"
             echo "  ${name}: ${outcome}"
             if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
@@ -928,7 +974,7 @@ jobs:
             fi
           done
           if [ "$failed" -eq 1 ]; then
-            echo "::error::One or more required test suites failed — see outcomes above. Both the root suite and the worker suite are required; a failure in either fails this job regardless of step ordering."
+            echo "::error::One or more required test suites failed — see outcomes above. The root suite, the worker suite and the edge suite are all required; a failure in any of them fails this job regardless of step ordering."
             exit 1
           fi
           echo "All required test suite steps passed (or were intentionally skipped, e.g. zk cache hit)."
