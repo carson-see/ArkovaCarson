@@ -70,6 +70,48 @@ describe('isMcpEnabled', () => {
     expect(result).toBe(true);
   });
 
+  // ── BUG-021 ────────────────────────────────────────────────────────────
+  // `get_flag(p_flag_key text, p_default boolean DEFAULT false)` returns
+  // `p_default` when the row is absent — it never returns NULL for a missing
+  // row. So the `data === null → fail-open` branch below could not be reached
+  // from a real DB: a fresh environment with an empty `switchboard_flags`
+  // resolved to FALSE and the MCP surface served `mcp_disabled` to everyone.
+  // The documented fail-open only exists if this caller asks for it.
+  it('asks get_flag for p_default: true so an ABSENT row fail-opens', async () => {
+    const fetchSpy = vi.fn(
+      async () => new Response(JSON.stringify(true), { status: 200 }),
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = fetchSpy;
+
+    await isMcpEnabled({ env: BASE_ENV });
+
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      p_flag_key: 'ENABLE_MCP_SERVER',
+      p_default: true,
+    });
+  });
+
+  it('serves traffic on a fresh environment where the flag row does not exist', async () => {
+    // With p_default: true the DB answers `true` for a missing row.
+    const fetchSpy = vi.fn(
+      async () => new Response(JSON.stringify(true), { status: 200 }),
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = fetchSpy;
+    await expect(isMcpEnabled({ env: BASE_ENV })).resolves.toBe(true);
+  });
+
+  it('still trips when an operator explicitly sets the flag to false', async () => {
+    const fetchSpy = vi.fn(
+      async () => new Response(JSON.stringify(false), { status: 200 }),
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = fetchSpy;
+    await expect(isMcpEnabled({ env: BASE_ENV })).resolves.toBe(false);
+  });
+
   it('fail-opens on null flag value', async () => {
     const fetchSpy = vi.fn(
       async () => new Response(JSON.stringify(null), { status: 200 }),

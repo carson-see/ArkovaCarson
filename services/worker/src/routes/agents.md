@@ -17,6 +17,50 @@ Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test ba
 - HTTP-triggered jobs are protected by `X-Cron-Secret` per AUDIT-03 (handled in middleware before this router).
 - In-process schedules are conditional: `chainInitialized` guard for chain-touching jobs; `disableInProcessAnchorCron` guard for `anchors`-table jobs.
 
+## The ingestion response contract (`ingestionResponse.ts`) — read before touching a `/fetch-*` route
+
+`cron.ts`'s 41 public-record ingestion routes do **not** use the `try { res.json(result) } catch { 500 }`
+shape the rest of this router uses. They go through `runIngestionRoute()`. If you add a fetcher route,
+use it too — the plain shape is the bug.
+
+**Why (BUG-020).** The 2026-08 connector side-rig force-ran 42 previously-untested ingestion routes
+(`docs/staging/fullsoak-2026-08/side-rig-cron-coverage.md`) and found the whole family reports failure
+as HTTP 200: `/fetch-ipeds` `{"inserted":0,"errors":30}`, `/fetch-fcc` `errors:26`, `/fetch-sec-iapd`
+`errors:26`, and worst, `/fetch-uspto` returning a hard upstream 403 as
+`{"status":"download_failed","errors":0}`. Each fetcher catches its own transport failure internally and
+resolves, so the route's catch block — which only fires on a *throw* — never ran. A Cloud Scheduler job
+bound to any of them was green forever and no HTTP-status monitor could see it.
+
+| condition | HTTP | `ingestion_status` |
+|---|---|---|
+| flag row ABSENT | 503 (+ `Retry-After`) | `flag_not_configured` |
+| switchboard unreadable | 503 | `flag_unreadable` |
+| flag present and false | 200 | `disabled` |
+| nothing failed | 200 | *(body forwarded verbatim, no added keys)* |
+| some landed, some failed | 207 | `partial_failure` |
+| nothing landed, something failed | 502 | `total_failure` |
+
+502 rather than 500 because these fail on a third-party registry (403/404/422/429), not on us — still
+non-2xx, so Scheduler retries and alerts. 207 is still 2xx so a run that made real progress is not
+retry-stormed, but the code says it was not clean. `skipped` counts as progress (an already-ingested
+static statute set legitimately inserts 0). A clean run is byte-for-byte unchanged, so existing consumers
+of a healthy response are untouched.
+
+**The flag gate runs BEFORE the fetcher (BUG-021 / FD-S1).** On a fresh rig `switchboard_flags` held one
+unrelated row, `get_flag('ENABLE_PUBLIC_RECORDS_INGESTION')` returned its `p_default` (false), and every
+fetcher no-opped at `200 {"inserted":0,"skipped":0,"errors":0}` — identical to a healthy run with nothing
+new upstream. A blind exerciser scores 100% false coverage against that state. `runIngestionRoute` reads
+`switchboard_flags` **directly** (service-role, RLS-exempt) precisely because `get_flag` cannot tell
+"absent" from "explicitly off", and refuses to run at all when the row is missing.
+
+`/embed-public-records` passes its own `flagKey` (`ENABLE_PUBLIC_RECORD_EMBEDDINGS`). Fetchers that give
+up before reaching upstream (missing credential, dead endpoint) must return one of the
+`INGESTION_FAILURE_STATUSES` from `utils/pipeline.ts` so a zeroed error counter cannot mask them.
+
+Pinned by `routes/ingestionResponse.test.ts` (the contract) and the `ingestion response contract` block in
+`cron.test.ts` (the three named routes end to end, plus all four flag states). Note `cron.test.ts`'s `db`
+double now answers a `switchboard_flags` read — every other table still returns `undefined` as before.
+
 ## Recent changes
 
 - **2026-08-10 (`anchor.ts`) — recipient activation launch blocker.** Added `GET /activation/:token` (public preview) and `POST /activation/complete` (unauthenticated by design — the caller cannot have a session yet, which is the point of activation), both delegating to `../api/activation.js`. `ActivationError.code` → HTTP status via the local `ACTIVATION_ERROR_STATUS` map (`expired`/`already_used` → 410 so the page can offer a re-send). Mounted here, not under `/api/v1`, for the same reason the invitation routes are: that surface is the frozen API-key-scoped public contract, this is a token-proves-identity internal flow. **Uses a `scope: 'activation'` limiter at 10/min** — unscoped buckets share one IP counter with `index.ts`'s `apiIpShadowGuard` (see the SCRUM-3012 note below for the full bug class); tighter than the invitation limiter because this endpoint consumes a single-use credential, but still loose enough for retries and a shared office NAT. Wiring is pinned by `anchor-activation.test.ts`, which uses the router-stack `getHandler` harness so the route PATHS are asserted (it throws if a path is not registered) and checks that neither the token nor the password can escape in a response body. Root cause + architecture rationale: `services/worker/src/api/agents.md`.

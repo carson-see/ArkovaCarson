@@ -1,18 +1,46 @@
 /**
  * USPTO Patent Fetcher Job
  *
- * Fetches patent grants from PatentsView bulk TSV download (S3).
- * The PatentsView REST API was shut down March 2026 — this uses the
- * bulk data files which are still available on S3.
- *
- * Source: https://s3.amazonaws.com/data.patentsview.org/download/g_patent.tsv.zip
- * Updated weekly (Tuesdays). ~230MB compressed, ~4M patents.
- *
  * Strategy: Download ZIP, stream-extract TSV, parse line-by-line,
  * insert in batches. Resumable via last patent_date in DB.
  * Capped at MAX_PER_RUN to avoid Cloud Run timeouts.
  *
  * Gated by ENABLE_PUBLIC_RECORDS_INGESTION switchboard flag.
+ *
+ * ═══════════════════════════════════════════════════════════════════════
+ * ROUTE STATUS: DECLARED-UNTESTED — no reachable bulk source (BUG-023)
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * This fetcher previously hardcoded the PatentsView bulk file at
+ * `s3.amazonaws.com/data.patentsview.org/download/g_patent.tsv.zip`. That
+ * bucket now returns `<Error><Code>AccessDenied</Code></Error>` (HTTP 403).
+ * Confirmed 2026-08-15 from a NON-CLOUD residential IP, so it is not blocked
+ * Cloud Run egress — the bucket access was revoked.
+ *
+ * Cause: PatentsView migrated to the USPTO Open Data Portal on 2026-03-20
+ * (`https://data.uspto.gov/support/transition-guide/patentsview`). The
+ * replacement is NOT reachable without a new credential:
+ *
+ *   - `https://api.uspto.gov/api/v1/datasets/…` → HTTP 401 without an ODP
+ *     API key (verified 2026-08-15).
+ *   - Since 2026-06-18 an ODP API key additionally requires a USPTO.gov
+ *     account with MFA, and from 2026-08-18 extra profile fields on pain of
+ *     losing key access.
+ *
+ * Arkova holds no such credential, so there is no endpoint this fetcher can
+ * be pointed at today and no way to prove a replacement works. Rather than
+ * ship a speculative, unexercised ODP code path that would "look fixed", the
+ * source URL is now EXPLICIT CONFIGURATION (`USPTO_BULK_TSV_URL`, or the
+ * `sourceUrl` option) and the job REFUSES TO RUN when it is unset — returning
+ * `status: 'source_unavailable'` with a non-zero error count so
+ * `routes/ingestionResponse.ts` answers non-2xx instead of the old
+ * `200 {"status":"download_failed","errors":0}`.
+ *
+ * To re-enable: obtain an ODP API key, confirm a bulk TSV/ZIP URL that this
+ * streaming parser can consume unauthenticated (or extend it to send the key),
+ * set `USPTO_BULK_TSV_URL`, and only then delete this banner. The TSV column
+ * contract below (`patent_id`, `patent_date`, `patent_title`,
+ * `patent_abstract`, `patent_type`) is unverified against any ODP product.
  */
 
 import { createHash } from 'node:crypto';
@@ -22,8 +50,14 @@ import unzipper from 'unzipper';
 import { logger } from '../utils/logger.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-/** PatentsView bulk data S3 URL */
-const PATENT_TSV_URL = 'https://s3.amazonaws.com/data.patentsview.org/download/g_patent.tsv.zip';
+/**
+ * Bulk patent TSV/ZIP source. There is deliberately NO default — see the
+ * DECLARED-UNTESTED banner above. Supplying a URL is an explicit operator act.
+ */
+function resolveSourceUrl(override?: string): string | undefined {
+  const url = override ?? process.env.USPTO_BULK_TSV_URL;
+  return url && url.trim().length > 0 ? url.trim() : undefined;
+}
 
 /** Max patents to insert per run (Cloud Run has ~10min timeout) */
 const MAX_PER_RUN = 5000;
@@ -92,7 +126,7 @@ export async function fetchWithConnectTimeout(url: string, timeoutMs: number): P
  */
 export async function fetchUsptoPAtents(
   supabase: SupabaseClient,
-  options: { connectTimeoutMs?: number } = {},
+  options: { connectTimeoutMs?: number; sourceUrl?: string } = {},
 ): Promise<FetchResult> {
   const connectTimeoutMs = options.connectTimeoutMs ?? USPTO_CONNECT_TIMEOUT_MS;
   // Check switchboard flag
@@ -102,6 +136,18 @@ export async function fetchUsptoPAtents(
   if (!enabled) {
     logger.info('ENABLE_PUBLIC_RECORDS_INGESTION is disabled — skipping USPTO fetch');
     return { status: 'disabled', inserted: 0, skipped: 0, errors: 0, resumeDate: '' };
+  }
+
+  // BUG-023: no bulk source is reachable without an ODP credential we do not
+  // hold. Fail loudly and make no request rather than re-attempting a bucket
+  // that has been 403 since the 2026-03-20 PatentsView → USPTO ODP migration.
+  const patentTsvUrl = resolveSourceUrl(options.sourceUrl);
+  if (!patentTsvUrl) {
+    logger.error(
+      { envVar: 'USPTO_BULK_TSV_URL' },
+      'USPTO bulk source is not configured — the legacy PatentsView S3 bucket returns 403 AccessDenied and its USPTO ODP replacement requires an API key Arkova does not hold. Route is DECLARED-UNTESTED.',
+    );
+    return { status: 'source_unavailable', inserted: 0, skipped: 0, errors: 1, resumeDate: '' };
   }
 
   // Determine resume point
@@ -120,31 +166,34 @@ export async function fetchUsptoPAtents(
 
   // Download the ZIP (single retry on transient TCP errors). Each attempt is
   // bounded to connectTimeoutMs — see fetchWithConnectTimeout / USPTO_CONNECT_TIMEOUT_MS.
+  // BUG-020: every `download_failed` return below now carries `errors: 1`. It
+  // used to report `errors: 0`, which made a hard 403 indistinguishable from a
+  // clean run to anything reading the counters.
   let response: Response;
   try {
-    response = await fetchWithConnectTimeout(PATENT_TSV_URL, connectTimeoutMs);
+    response = await fetchWithConnectTimeout(patentTsvUrl, connectTimeoutMs);
   } catch (err) {
     if (err instanceof TypeError && /terminated|socket hang up|ECONNRESET/i.test(err.message)) {
       logger.warn({ error: err }, 'Transient download failure — retrying once');
       await new Promise((r) => setTimeout(r, 2000));
       try {
-        response = await fetchWithConnectTimeout(PATENT_TSV_URL, connectTimeoutMs);
+        response = await fetchWithConnectTimeout(patentTsvUrl, connectTimeoutMs);
       } catch (retryErr) {
-        logger.error({ error: retryErr }, 'Failed to download PatentsView bulk data after retry');
-        return { status: 'download_failed', inserted: 0, skipped: 0, errors: 0, resumeDate };
+        logger.error({ error: retryErr }, 'Failed to download patent bulk data after retry');
+        return { status: 'download_failed', inserted: 0, skipped: 0, errors: 1, resumeDate };
       }
     } else {
       logger.error(
         { error: err, timedOut: err instanceof Error && err.name === 'AbortError' },
-        'Failed to download PatentsView bulk data',
+        'Failed to download patent bulk data',
       );
-      return { status: 'download_failed', inserted: 0, skipped: 0, errors: 0, resumeDate };
+      return { status: 'download_failed', inserted: 0, skipped: 0, errors: 1, resumeDate };
     }
   }
 
   if (!response.ok || !response.body) {
-    logger.error({ status: response.status }, 'PatentsView bulk data HTTP error');
-    return { status: 'download_failed', inserted: 0, skipped: 0, errors: 0, resumeDate };
+    logger.error({ status: response.status }, 'Patent bulk data HTTP error');
+    return { status: 'download_failed', inserted: 0, skipped: 0, errors: 1, resumeDate };
   }
 
   let totalInserted = 0;

@@ -10,7 +10,24 @@ Cloudflare Worker (`arkova-edge`) — Zero-Trust edge layer for x402 facilitator
 - `mcp-anomaly-detection.ts` — heuristics for unusual MCP tool-call patterns.
 - `mcp-tools.ts`, `mcp-tool-schemas.ts` — tool catalog and schemas.
 - `mcp-audit-log.ts` — fire-and-forget audit log writer via `ctx.waitUntil(...)`. Caller IPs are **keyed** HMAC-SHA256 (`MCP_IP_HASH_PEPPER`), not bare sha256 — see below.
-- `mcp-kill-switch.ts` — checks switchboard flag `ENABLE_MCP_SERVER`.
+- `mcp-kill-switch.ts` — checks switchboard flag `ENABLE_MCP_SERVER`. **It must pass `p_default: true` to `get_flag` — see below.**
+
+## The kill switch's fail-open was unreachable until 2026-08 (BUG-021)
+
+`get_flag(p_flag_key text, p_default boolean DEFAULT false)` returns `p_default` when the row is absent —
+it does **not** return NULL for a missing row. This file called it with only `p_flag_key`, so a fresh,
+never-seeded `switchboard_flags` resolved to `false` and the gate served `mcp_disabled` (503) to every
+caller. The `data === null → fail-open` branch documented in the file header could not fire from a real
+database; it only ever covered a malformed response. Fixed by sending
+`{ p_flag_key: 'ENABLE_MCP_SERVER', p_default: true }`.
+
+The rule this generalises to: **`get_flag` collapses "absent" into `p_default`, so the fail direction is
+the caller's declaration, not the function's.** The fail-CLOSED gates (`featureGate.ts`,
+`partnerProvisioningGate.ts`) correctly keep the `false` default — absent means off for those surfaces.
+A caller that must tell "absent" from "explicitly false" cannot use this RPC at all and has to read
+`switchboard_flags` directly; `services/worker/src/routes/ingestionResponse.ts` is the worked example.
+Pinned by `services/worker/src/mcp-kill-switch.test.ts` (which asserts the request body, not just the
+resolved boolean — the old tests passed while the behaviour was wrong).
 
 ## Nessie worker proxy timeout (2026-06-07)
 
