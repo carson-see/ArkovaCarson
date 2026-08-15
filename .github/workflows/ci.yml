@@ -440,6 +440,14 @@ jobs:
       - name: Config↔reality drift + cross-runtime parity gate (S0-5.2)
         run: node_modules/.bin/tsx scripts/ci/check-config-drift.ts
 
+      # BUG-026 class: the MCP tool descriptions are published on five surfaces
+      # and nothing compared the description TEXT between them, so one false
+      # claim survived on all of them at once. Parity + declared claim rules.
+      - name: MCP tool-claim parity (BUG-026)
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node_modules/.bin/tsx scripts/ci/check-mcp-claim-parity.ts
+
       - name: HANDOFF.md verification lint
         env:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
