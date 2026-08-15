@@ -545,6 +545,16 @@ GEMINI_LITE_MODEL=                  # GEM lite/cheaper model for low-latency cal
 GEMINI_VISION_MODEL=                # vision-capable Gemini model for image extraction
 ENABLE_MULTIMODAL_EMBEDDINGS=false  # multimodal (text+image) embedding gate
 ENABLE_NESSIE_RAG_RECOMMENDATIONS=false  # Nessie RAG recommendation experiment gate
+# BUG-008/027 (CTO ruling R-1, 2026-08-12). Capability gate for
+# GET /api/v1/nessie/query AND the edge MCP `nessie_query` tool. Nessie is
+# permanently disabled by standing founder directive — LEAVE THIS UNSET/false in
+# every environment. Deliberately env-backed, NOT a switchboard_flags row: a
+# capability disabled by founder directive must not be re-enablable by a DB
+# write. With it off, both surfaces fail CLOSED with 503 + code=nessie_disabled
+# and enabled=false, carrying no results/count/answer/confidence key, so a
+# disabled capability cannot be mistaken for an empty result. Set the SAME var on
+# the Cloudflare edge worker (services/edge) — it gates the MCP tool there.
+ENABLE_NESSIE_QUERY=false           # Nessie query capability gate — keep OFF (founder directive)
 ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY=false # PR #841 CPE/CLE runtime paths; keep false until prod schema + ledger reconciliation is complete
 ENABLE_DEMO_INJECTOR=false          # synthetic demo data injector for sales/QA
 EVAL_VERBOSE=false                  # extra logging in eval scripts (test-only)

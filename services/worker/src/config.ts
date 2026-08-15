@@ -437,6 +437,15 @@ const ConfigSchema = z.object({
   enableSyntheticData: boolFlag(false),
   /** ENABLE_NESSIE_RAG_RECOMMENDATIONS — Nessie post-extraction recommendation surfaces. */
   enableNessieRagRecommendations: boolFlag(false),
+  /**
+   * ENABLE_NESSIE_QUERY — gate for `/api/v1/nessie/query` (BUG-008/BUG-027,
+   * CTO ruling R-1 STRENGTHENED). Nessie is permanently disabled by standing
+   * founder directive, so this defaults FALSE and the route fails closed with
+   * an explicit disabled response. Deliberately an ENV flag rather than a
+   * `switchboard_flags` row: a capability disabled by founder directive must
+   * not be re-enablable by a DB write. See middleware/nessieCapabilityGate.ts.
+   */
+  enableNessieQuery: boolFlag(false),
   /** ENABLE_MULTIMODAL_EMBEDDINGS — opt-in path for image-aware embeddings. Default false. */
   enableMultimodalEmbeddings: boolFlag(false),
   /** ENABLE_CLOUD_LOGGING_SINK — mirror logs into Cloud Logging. Default false outside prod. */
@@ -932,6 +941,7 @@ function loadConfig(): Config {
     enableDemoInjector: process.env.ENABLE_DEMO_INJECTOR,
     enableSyntheticData: process.env.ENABLE_SYNTHETIC_DATA,
     enableNessieRagRecommendations: process.env.ENABLE_NESSIE_RAG_RECOMMENDATIONS,
+    enableNessieQuery: process.env.ENABLE_NESSIE_QUERY,
     enableMultimodalEmbeddings: process.env.ENABLE_MULTIMODAL_EMBEDDINGS,
     enableCloudLoggingSink: process.env.ENABLE_CLOUD_LOGGING_SINK,
     enableWorkspaceRenewal: process.env.ENABLE_WORKSPACE_RENEWAL,

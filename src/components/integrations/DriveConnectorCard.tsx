@@ -13,6 +13,30 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/lib/supabase';
 import { workerFetch } from '@/lib/workerClient';
+import { CONNECTIONS_LABELS } from '@/lib/copy';
+
+/**
+ * Worker connect-denial `code` → user-facing copy (§1.3: all user-visible
+ * strings live in copy.ts).
+ *
+ * The worker sends a specific `code` alongside a deliberately generic `error`
+ * ("Not eligible to connect Google Drive"). Rendering only the generic string
+ * is how a denied user learns nothing — the failure mode FD-D3 spent a live
+ * founder OAuth consent diagnosing, and the reason FD-D1's new denial would
+ * otherwise be just as opaque as the one it replaced.
+ *
+ * Unmapped codes fall through to the worker's `error` string, so a future
+ * server-side reason degrades to something readable rather than a blank box.
+ */
+const DRIVE_DENIAL_COPY: Record<string, string> = {
+  not_authorized: CONNECTIONS_LABELS.DRIVE_NOT_ADMIN,
+  not_admin: CONNECTIONS_LABELS.DRIVE_NOT_ADMIN,
+  org_scope_required: CONNECTIONS_LABELS.DRIVE_ORG_SCOPE_REQUIRED,
+  individual_scope_unsupported: CONNECTIONS_LABELS.DRIVE_INDIVIDUAL_SCOPE_UNSUPPORTED,
+  org_unverified: CONNECTIONS_LABELS.DRIVE_ORG_NOT_VERIFIED,
+  org_suspended: CONNECTIONS_LABELS.DRIVE_ORG_SUSPENDED,
+  lookup_failed: CONNECTIONS_LABELS.DRIVE_GATE_UNAVAILABLE,
+};
 
 interface DriveConnectorCardProps {
   orgId: string;
@@ -109,10 +133,12 @@ export function DriveConnectorCard({ orgId }: DriveConnectorCardProps) {
         authorizationUrl?: string;
         url?: string;
         error?: string;
+        code?: string;
       };
 
       if (!response.ok) {
-        setError(body.error ?? 'Failed to start Google Drive connection.');
+        const mapped = body.code ? DRIVE_DENIAL_COPY[body.code] : undefined;
+        setError(mapped ?? body.error ?? 'Failed to start Google Drive connection.');
         return;
       }
 

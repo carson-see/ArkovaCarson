@@ -41,6 +41,9 @@ const ENV_FLAG_GETTERS = {
   ENABLE_DEMO_INJECTOR: () => config.enableDemoInjector,
   ENABLE_SYNTHETIC_DATA: () => config.enableSyntheticData,
   ENABLE_NESSIE_RAG_RECOMMENDATIONS: () => config.enableNessieRagRecommendations,
+  // BUG-008/027: env-backed on purpose — a capability disabled by founder
+  // directive must not be re-enablable by a switchboard_flags DB write.
+  ENABLE_NESSIE_QUERY: () => config.enableNessieQuery,
   ENABLE_MULTIMODAL_EMBEDDINGS: () => config.enableMultimodalEmbeddings,
   ENABLE_CLOUD_LOGGING_SINK: () => config.enableCloudLoggingSink,
   ENABLE_WORKSPACE_RENEWAL: () => config.enableWorkspaceRenewal,

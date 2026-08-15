@@ -378,8 +378,17 @@ paths:
   /nessie/query:
     post:
       operationId: nessieQuery
-      summary: Ask Nessie a compliance question
-      description: RAG-powered compliance Q&A using regulatory records.
+      summary: "DISABLED — Nessie compliance query is not served"
+      description: >-
+        DISABLED (CTO ruling R-1, 2026-08-12). Nessie is permanently disabled by
+        standing founder directive and this endpoint fails CLOSED: it answers
+        503 with
+        {"error":"capability_disabled","code":"nessie_disabled","capability":"nessie","enabled":false}.
+        That response is NOT an empty result — no query is executed, so it must
+        not be read as "no matching records exist". The endpoint is documented
+        only so existing integrations can recognise the disabled response; it is
+        no longer a priced offer and the /developers price row was withdrawn.
+      deprecated: true
       tags: [Nessie]
       requestBody:
         required: true
@@ -394,10 +403,16 @@ paths:
                 context:
                   type: string
       responses:
+        "503":
+          description: >-
+            Capability disabled. The ONLY response this endpoint currently
+            returns. Body carries code=nessie_disabled and enabled=false, and
+            deliberately carries no results/count/answer/confidence key, so a
+            disabled capability cannot be mistaken for an empty result.
         "200":
-          description: Nessie response
-        "402":
-          description: Payment required
+          description: >-
+            Nessie response. Not currently reachable — retained for the frozen
+            schema contract (§1.8) only.
 
   /compliance/check:
     post:

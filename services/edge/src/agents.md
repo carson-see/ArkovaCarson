@@ -66,8 +66,44 @@ Net effect: `src/mcp-tools.test.ts` (36 assertions over the MCP tool surface, in
 - `CLAIM_RULES` in the gate declares assertions a description may not make about a given tool, with a qualifier that makes the claim honest — `search_credentials` may not claim semantic/vector retrieval unless the same text also discloses `search_mode` or the lexical/substring fallback, and `nessie_query` may not be described in the present tense without a DISABLED marker. Adding a rule is the intended way to close the next instance; deleting one asserts the behaviour changed, and needs the code that changed it.
 - Known outstanding, in `scripts/ci/mcp-claim-parity-baseline.json`: this file's `nessie_query` description still makes a present-tense capability claim (owned by PR #2236), and `oracle_batch_verify` / `list_agents` carry one-word hand-copy drift against the manifest that is UNOWNED. The gate could not fix them — every published surface is above T0.
 - The gate scopes text by tool NAME. A module-header comment that names no tool is out of scope; `mcp-tools.ts`'s own header was one of BUG-026's six surfaces and would not be caught.
+## 2026-08-15 BUG-008/027 — `nessie_query` fails CLOSED; BUG-026 — `search_credentials` describes itself honestly
+
+**`nessie_query`.** Gated on `SupabaseConfig.nessieEnabled`, sourced from the `ENABLE_NESSIE_QUERY`
+edge var (`env.ENABLE_NESSIE_QUERY === 'true'`). **Absent means disabled** — Nessie is permanently
+disabled by standing founder directive (CTO ruling R-1). Two fail-open paths were closed:
+
+1. The tool ran unconditionally. It now returns `nessieDisabledResult()` before any network call.
+2. On **any** non-2xx from the worker it degraded to `nessieTextFallback` — a lexical scan of
+   `public_records` — and answered `{total, results}`. So even once the worker started refusing, the
+   MCP tool would have reported a disabled capability as a completed search. `nessieWorkerQuery` now
+   inspects a 503 for `code: 'nessie_disabled'` / `enabled: false` and returns a ToolResult (not
+   `null`), which stops the caller's fallback dead. **Any other non-2xx still returns `null` and still
+   falls back** — a transient worker fault is not a disabled capability, and the labelled lexical path
+   is the honest answer there. Do not collapse those two cases.
+
+The disabled result carries `isError: true`, `enabled: false`, `code: 'nessie_disabled'`, and **none**
+of `total`/`results`/`answer`/`confidence`/`citations`. The absence is the contract: an agent reading
+only `total` would otherwise conclude "0 results".
+
+**`search_credentials` (BUG-026).** The description used to LEAD with "Uses semantic (vector)
+similarity matching". In practice the vector path needs a configured worker AND an open
+`ENABLE_SEMANTIC_SEARCH` gate; with the gate closed the worker answers 503 and every call is served
+lexically. Reproduced on the rig: the non-word fragment `aten` matched
+`Patent_Application_AI_Method.pdf` while an English paraphrase of the same document returned nothing.
+The description now leads with the served behaviour and marks the semantic path conditional.
+**No behaviour changed — this was a false description, not a broken search.** `search_mode` labelling
+is unchanged and still correct.
+
+Tests pin the literals `search_mode` / `lexical_substring` / `semantic_vector` in the description
+(`mcp-tools.test.ts` (h)) — keep all three in any future rewrite. The server card
+(`public/.well-known/mcp/server-card.json`) carries a copy of this description and has **no**
+automated text-parity check with `TOOL_DEFINITIONS`; `tests/infra/mcp-manifest-parity.test.ts` checks
+names/schemas only. Update both by hand, together.
 
 ## Open work
 - SCRUM-1793 (PR #741 NEW) — `validate_api_key` RPC migration committed to repo; already applied to prod + staging via Supabase MCP.
 - HakiChain sandbox key (`api_key_id=c75d84b9-…`) has wildcard CIDR allowlist entry written 2026-05-08.
 - BUG-026 residue: `oracle_batch_verify` and `list_agents` descriptions here disagree with `server-card.json` by one word each (`an envelope` vs `a response envelope`; `caller organization` vs `caller's organization`). Baselined, unowned, needs a T2 PR.
+- No CI check enforces text parity across the five published MCP claim surfaces (`mcp-tools.ts`,
+  `server-card.json`, `public/AGENTS.md`, `public/llms*.txt`, `docs/api/mcp-tools.md`). They can drift
+  freely today; a parity script is the durable fix for the BUG-026 class.
