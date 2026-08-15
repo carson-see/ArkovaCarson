@@ -11,6 +11,7 @@ import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import type { Event, ErrorEvent, Breadcrumb } from '@sentry/node';
 import { getBuildSha } from './buildInfo.js';
+import { PROD_SERVICE_NAME } from './environmentNamespace.js';
 import { scrubString, scrubUrl } from './pii-scrub.js';
 
 // ---------------------------------------------------------------------------
@@ -261,8 +262,16 @@ export interface SentryRuntimeConfig {
 // service earns 'production'; every other Cloud Run service is tagged with
 // its own service name (per-rig attribution, filterable as non-prod).
 
-/** The one Cloud Run service whose events may be tagged 'production'. */
-export const PROD_SERVICE_NAME = 'arkova-worker';
+/**
+ * The one Cloud Run service whose events may be tagged 'production'.
+ *
+ * BUG-018: defined in `utils/environmentNamespace.ts` and re-exported here, so
+ * the Sentry environment tag and the Upstash rate-limit namespace can never
+ * disagree about which service is production. The derivation lives in that
+ * module (no `@sentry/node` import) because the rate-limiter hot path must not
+ * pull in the Sentry SDK.
+ */
+export { PROD_SERVICE_NAME };
 
 export interface SentryEnvironmentInputs {
   /** Explicit SENTRY_ENVIRONMENT override (wins when non-blank). */

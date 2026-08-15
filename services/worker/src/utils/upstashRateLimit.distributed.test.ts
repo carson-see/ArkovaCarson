@@ -42,6 +42,7 @@ import {
   stopRateLimitCleanup,
   type IRateLimitStore,
 } from './rateLimit.js';
+import { resolveEnvironmentNamespace } from './environmentNamespace.js';
 import { logger } from './logger.js';
 
 const BASE_URL = 'https://fake-redis.upstash.io';
@@ -164,8 +165,16 @@ class FakeUpstash {
   };
 }
 
-/** Counter key the adapter is expected to use for a given limiter key. */
-const counterKey = (key: string) => `arkova:rl:${key}`;
+/**
+ * Counter key the adapter is expected to use for a given limiter key.
+ *
+ * BUG-018 added the `<env>` segment (`arkova:rl:<env>:<key>`). It is derived
+ * here rather than hardcoded so this helper cannot drift from the store, and
+ * so the sharing assertions below keep testing SHARING rather than accidentally
+ * testing the namespace: every store built in this file resolves the same
+ * environment, so they must all land on this one key.
+ */
+const counterKey = (key: string) => `arkova:rl:${resolveEnvironmentNamespace()}:${key}`;
 
 let redis: FakeUpstash;
 
