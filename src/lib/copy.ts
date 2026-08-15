@@ -3807,6 +3807,42 @@ export const FINGERPRINT_SOURCE_TRIAD = {
   },
 } as const satisfies Record<FingerprintSource, { measured: string; asserted: string; notAsserted: string }>;
 
+// =============================================================================
+// CONNECTOR-SOURCED FINGERPRINT (BUG-2026-08-13-010, §1.5 / §1.6A)
+// =============================================================================
+// A connector-sourced anchor's fingerprint commits the exact file bytes Arkova
+// retrieved from the connected source at the moment of retrieval. Source
+// services may regenerate the file on every download (proven against a live
+// source during the 2026-08 soak: four retrievals of the same unchanged
+// document produced four different fingerprints), so a fresh download is NOT
+// expected to reproduce the fingerprint. Two claims failure modes, both
+// avoided on purpose (§1.5 / R-7):
+//   - never read as "this record is weaker" — the exact retrieved file IS
+//     permanently secured;
+//   - never name a vendor — the marker that keys this copy is recorded
+//     classification, not independently provable vendor provenance.
+// Distinct from FINGERPRINT_SOURCE above (what was fingerprinted) — this axis
+// is whether the source system can be expected to reproduce those bytes.
+
+export const CONNECTOR_FINGERPRINT_LABELS = {
+  /** Shown in the re-verify section of a connector-sourced record's detail view. */
+  REVERIFY_NOTE:
+    'This record was secured from a connected source. Its fingerprint matches the exact file as retrieved at securing time. Downloading the document from the source again may produce a file with a different fingerprint, because some services regenerate the file on every download — verify against the originally retrieved copy.',
+  /** Appended to the re-verify mismatch alert for connector-sourced records. */
+  REVERIFY_MISMATCH_HINT:
+    'This document came from a connected source. Some services regenerate the file on every download, so a freshly downloaded copy can carry a different fingerprint even when nothing changed. A mismatch here is not, on its own, evidence the document was altered. To match this record, use the exact file as originally retrieved.',
+} as const;
+
+/** Measured / asserted / NOT-asserted triad per §1.5 for connector-sourced records. */
+export const CONNECTOR_FINGERPRINT_TRIAD = {
+  measured:
+    'The fingerprint of the document bytes retrieved from the connected source at the time this record was secured.',
+  asserted:
+    'That this exact retrieved file existed, unmodified, at the time it was secured.',
+  notAsserted:
+    'That downloading the document from the source again will produce the same fingerprint. Some services regenerate the file on each download, so a new copy may not match even when its content is unchanged.',
+} as const;
+
 /** Row-import (CSV bulk upload) issuer-attestation acknowledgement step. */
 export const RECORD_ATTESTATION_LABELS = {
   SECTION_TITLE: 'Issuer Attestation Required',

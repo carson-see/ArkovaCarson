@@ -29,7 +29,13 @@ const CACHE_TTL_SECONDS = 300; // 5 minutes
 // A hit is served verbatim without re-running buildVerificationResult — bump
 // again on any response-shape change so post-deploy cache hits don't serve
 // stale thin responses. Old keys age out naturally via TTL.
-const KEY_PREFIX = 'verify:v5:';
+//
+// Bumped v5 → v6 for BUG-2026-08-13-010: connector-sourced records now carry
+// the fingerprint_rederivability class + §1.5 note. Without the bump, a
+// connector anchor cached before the deploy keeps serving a response with NO
+// re-derivability statement for the whole TTL — the exact honesty gap this
+// change closes.
+const KEY_PREFIX = 'verify:v6:';
 
 /** Module-level config cache — avoids process.env reads on every request */
 let _redisConfig: { url: string; token: string } | null | undefined;
