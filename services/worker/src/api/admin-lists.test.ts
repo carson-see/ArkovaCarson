@@ -260,4 +260,73 @@ describe('Admin Lists API', () => {
       expect(ADMIN_PAGE_SIZE).toBe(25);
     });
   });
+
+  /**
+   * BUG-009: the unfiltered record count comes from the `anchor_status_counts`
+   * cache row, whose `total` can be `-1` — the sentinel for "no trustworthy
+   * count", not a number of rows. It must never be rendered as one.
+   */
+  describe('handleAdminRecords total (BUG-009 sentinel)', () => {
+    /**
+     * `handleAdminRecords` awaits the anchors query and the cache read in
+     * parallel, so both `db.from()` calls need distinct thenable chains.
+     */
+    function mockRecordsDb(rows: Array<Record<string, unknown>>, cacheValue: unknown) {
+      const anchors: Record<string, unknown> = {};
+      for (const m of ['select', 'is', 'order', 'range', 'eq', 'or', 'in'] as const) {
+        anchors[m] = vi.fn(() => anchors);
+      }
+      anchors.then = (resolve: (v: unknown) => unknown) =>
+        Promise.resolve({ data: rows, error: null }).then(resolve);
+
+      const cache: Record<string, unknown> = {};
+      cache.select = vi.fn(() => cache);
+      cache.eq = vi.fn(() => cache);
+      cache.single = vi.fn().mockResolvedValue({ data: { cache_value: cacheValue }, error: null });
+
+      mockDbFrom.mockImplementation((table: string) =>
+        table === 'pipeline_dashboard_cache' ? cache : anchors,
+      );
+    }
+
+    beforeEach(() => {
+      mockIsPlatformAdmin.mockResolvedValue(true);
+    });
+
+    it('uses the cached total when it is a real count', async () => {
+      mockRecordsDb([], { total: 3_490_000, SECURED: 3_400_000 });
+      const res = mockRes();
+      await handleAdminRecords('admin-1', mockReq(), res);
+      expect((res.body as { total: number }).total).toBe(3_490_000);
+    });
+
+    it('does NOT render the -1 sentinel as a count', async () => {
+      mockRecordsDb([], { total: -1, SECURED: -1, total_source: 'unavailable' });
+      const res = mockRes();
+      await handleAdminRecords('admin-1', mockReq(), res);
+      const total = (res.body as { total: number }).total;
+      expect(total).toBeGreaterThanOrEqual(0);
+      expect(total).not.toBe(-1);
+    });
+
+    it('falls back to the page heuristic when the total is unavailable', async () => {
+      // Full page returned ⇒ "there is at least one more page", which is the
+      // same claim the filtered branch makes. No total is asserted.
+      const rows = Array.from({ length: ADMIN_PAGE_SIZE }, (_, i) => ({ id: `a${i}`, user_id: null }));
+      mockRecordsDb(rows, { total: -1 });
+      const res = mockRes();
+      await handleAdminRecords('admin-1', mockReq(), res);
+      expect((res.body as { total: number }).total).toBe(ADMIN_PAGE_SIZE + 1);
+    });
+
+    it('treats a missing or non-numeric total as unavailable, not zero', async () => {
+      for (const cacheValue of [{}, { total: null }, { total: 'many' }]) {
+        mockRecordsDb([{ id: 'a1', user_id: null }], cacheValue);
+        const res = mockRes();
+        await handleAdminRecords('admin-1', mockReq(), res);
+        // One row on page 1 ⇒ last page ⇒ heuristic total of 1, not a claimed 0.
+        expect((res.body as { total: number }).total).toBe(1);
+      }
+    });
+  });
 });

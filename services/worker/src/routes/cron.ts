@@ -1395,17 +1395,26 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
     }
     const { categorizeExpiringDocuments, groupByOrg } = await import('../compliance/expiry-checker.js');
 
-    // Query anchors with expiry dates within 90 days
+    // BUG-002: this query used to select `not_after` and `document_title`.
+    // Neither column exists on `public.anchors` — not in the rig, not in prod —
+    // so PostgREST answered `42703 column anchors.document_title does not exist`
+    // and this route returned 500 on every single run since SCRUM-600 shipped.
+    // The real schema carries `expires_at` and `label`, and `public_id` is the
+    // only identifier allowed to leave the worker (CLAUDE.md §6).
+    //
+    // `deleted_at IS NULL` is new and deliberate: a soft-deleted document is not
+    // something to warn an issuer about renewing.
     const cutoff = new Date(Date.now() + 90 * 86_400_000).toISOString();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dbAny = db as any;
-    const { data: expiring, error } = await dbAny
+    const { data: expiring, error } = await db
       .from('anchors')
-      .select('id, org_id, credential_type, document_title, not_after')
+      .select('public_id, org_id, credential_type, label, expires_at')
       .eq('status', 'SECURED')
-      .not('not_after', 'is', null)
-      .gt('not_after', new Date().toISOString())
-      .lte('not_after', cutoff);
+      .is('deleted_at', null)
+      .not('public_id', 'is', null)
+      .not('org_id', 'is', null)
+      .not('expires_at', 'is', null)
+      .gt('expires_at', new Date().toISOString())
+      .lte('expires_at', cutoff);
 
     if (error) {
       logger.error({ error }, 'Failed to query expiring credentials');
@@ -1413,20 +1422,28 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
       return;
     }
 
-    const anchors = (expiring ?? []).map((a: Record<string, unknown>) => ({
-      id: a.id as string,
-      org_id: a.org_id as string,
-      credential_type: (a.credential_type as string) ?? 'OTHER',
-      title: (a.title as string) ?? null,
-      expiry_date: a.not_after as string,
-    }));
+    // `public_id` / `org_id` are nullable in the schema even though both are
+    // filtered above — narrow them here rather than assert, so a row that slips
+    // through is dropped instead of dispatching a webhook keyed on `null`.
+    const anchors = (expiring ?? []).flatMap((a) =>
+      a.public_id && a.org_id && a.expires_at
+        ? [{
+            public_id: a.public_id,
+            org_id: a.org_id,
+            credential_type: a.credential_type ?? null,
+            label: a.label ?? null,
+            expiry_date: a.expires_at,
+          }]
+        : [],
+    );
 
     const categories = categorizeExpiringDocuments(anchors);
     const urgentAnchors = categories.get('7_day') ?? [];
     const orgGroups = groupByOrg(urgentAnchors);
 
-    let emailsSent = 0;
+    let orgsNotified = 0;
     let webhooksSent = 0;
+    let webhooksFailed = 0;
 
     const { dispatchWebhookEvent } = await import('../webhooks/delivery.js');
     const now = Date.now();
@@ -1436,16 +1453,21 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
         const results = await Promise.allSettled(
           orgAnchors.map(anchor => {
             const daysRemaining = Math.ceil((new Date(anchor.expiry_date).getTime() - now) / 86_400_000);
-            const eventId = `expiry-${anchor.id}-${Date.now()}`;
+            const eventId = `expiry-${anchor.public_id}-${Date.now()}`;
+            // Payload shape is locked by ComplianceDocumentExpiringPayloadSchema
+            // (strict). The pre-BUG-002 version shipped `anchor_id` — the
+            // internal UUID — and got away with it only because the event type
+            // was unregistered and therefore unvalidated.
             return dispatchWebhookEvent(
               orgId,
               'compliance.document_expiring',
               eventId,
               {
-                anchor_id: anchor.id,
+                public_id: anchor.public_id,
                 credential_type: anchor.credential_type,
-                title: anchor.title,
-                expiry_date: anchor.expiry_date,
+                label: anchor.label,
+                status: 'SECURED',
+                expires_at: anchor.expiry_date,
                 days_remaining: daysRemaining,
                 warning_level: '7_day',
               },
@@ -1453,7 +1475,12 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
           })
         );
         webhooksSent += results.filter(r => r.status === 'fulfilled').length;
-        emailsSent++;
+        const failed = results.filter(r => r.status === 'rejected');
+        webhooksFailed += failed.length;
+        for (const f of failed) {
+          logger.warn({ error: f.reason, orgId }, 'Expiry alert webhook dispatch failed');
+        }
+        orgsNotified++;
       } catch (err) {
         logger.warn({ error: err, orgId }, 'Failed to send expiry alert');
       }
@@ -1466,7 +1493,10 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
       '90_day': (categories.get('90_day') ?? []).length,
     };
 
-    res.json({ processed: anchors.length, categories: totalExpiring, emailsSent, webhooksSent });
+    // `emailsSent` used to be reported here. It counted orgs and no email was
+    // ever sent — a fabricated metric (CLAUDE.md §1.13 R-7). Renamed to what it
+    // actually measures; email delivery is not implemented on this path.
+    res.json({ processed: anchors.length, categories: totalExpiring, orgsNotified, webhooksSent, webhooksFailed });
   } catch (error) {
     logger.error({ error }, 'Credential expiry check failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -2432,12 +2462,20 @@ async function runSmokeTestSuite(): Promise<SmokeCheckResult[]> {
     if (error) {
       results.push({ name: 'anchor-count', status: 'fail', durationMs: Date.now() - anchorStart, error: error.message });
     } else {
+      // BUG-009: `total` is `-1` when the count could not be established (no
+      // usable pg_class statistics and the exact fallback did not finish). That
+      // is "unknown", not "zero" — both fail the check, but only one of them
+      // means the database is empty, and an operator paged at 3am needs to be
+      // told which. Anything negative or non-finite reads as unavailable.
       const total = Number(data?.total ?? 0);
+      const measured = Number.isFinite(total) && total >= 0;
       results.push({
         name: 'anchor-count',
-        status: total > 0 ? 'pass' : 'fail',
+        status: measured && total > 0 ? 'pass' : 'fail',
         durationMs: Date.now() - anchorStart,
-        detail: `${total} total anchors`,
+        detail: measured
+          ? `${total} total anchors`
+          : 'anchor count unavailable (sentinel) — dashboard cache has no trustworthy total',
       });
     }
   } catch (err) {

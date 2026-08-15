@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { scanFiles, HOT_TABLES } from './check-hot-table-ddl-lock-timeout';
+import { scanFiles, HOT_TABLES, RUNTIME_DDL_TABLES } from './check-hot-table-ddl-lock-timeout';
 
 function file(name: string, body: string) {
   return { name, body };
@@ -29,6 +29,29 @@ function violations(files: ReturnType<typeof file>[]) {
 describe('HOT_TABLES', () => {
   it('covers the three tables named in the P0 postmortem', () => {
     expect([...HOT_TABLES].sort()).toEqual(['anchors', 'organizations', 'profiles']);
+  });
+});
+
+describe('RUNTIME_DDL_TABLES', () => {
+  it('is HOT_TABLES plus audit_events', () => {
+    // BUG-019: `cleanup_expired_data()` DROPs and re-CREATEs a trigger on
+    // `audit_events` on every retention run. `audit_events` is deliberately NOT
+    // in HOT_TABLES — three already-merged migrations (0295 / 0309 / 0404) do
+    // one-shot top-level DDL on it under operator supervision, and widening the
+    // top-level set would only add baseline entries, which the baseline file
+    // forbids ("Do NOT add entries to shrink a red build"). DDL executed at
+    // RUNTIME from a function body is the different, worse case: it fires on a
+    // cron clock, unsupervised, against a table every write path appends to.
+    expect([...RUNTIME_DDL_TABLES].sort()).toEqual([
+      'anchors',
+      'audit_events',
+      'organizations',
+      'profiles',
+    ]);
+  });
+
+  it('is a strict superset of HOT_TABLES', () => {
+    for (const t of HOT_TABLES) expect(RUNTIME_DDL_TABLES).toContain(t);
   });
 });
 
@@ -193,5 +216,191 @@ describe('check-hot-table-ddl-lock-timeout scanFiles', () => {
       file('supabase/migrations/0407_x.sql', '-- header\n\nALTER TABLE anchors ADD COLUMN a text;\n'),
     ]);
     expect(v.line).toBe(3);
+  });
+});
+
+/**
+ * BUG-019 (2026-08 soak): the linter above reads a migration as a flat sequence
+ * of statements, so a `SET LOCAL lock_timeout` anywhere earlier in the FILE
+ * counted as a guard for everything after it. That is correct for statements
+ * the migration itself runs, and wrong for a `CREATE FUNCTION` body: the body
+ * is stored, not executed, at apply time. It executes later, in a cron's
+ * session, where the migration's `SET LOCAL` is long gone — so a file-level
+ * guard in front of a `CREATE FUNCTION` is a guard over the CREATE, never over
+ * the DDL the function will run months later.
+ *
+ * `cleanup_expired_data()` is exactly that shape: SECURITY DEFINER, invoked by
+ * `POST /cron/cleanup-retention`, doing DROP TRIGGER -> DELETE -> CREATE TRIGGER
+ * on `audit_events` with no bounded timeout anywhere. It is the 2026-08-11 P0
+ * mechanism (CLAUDE.md §1.2) hidden one level down from where the linter looked.
+ *
+ * A `DO $$ ... $$` block is deliberately NOT treated as deferred: it runs during
+ * the migration, in the migration's own transaction, so a file-level `SET LOCAL`
+ * genuinely does cover it.
+ */
+describe('deferred function bodies (BUG-019)', () => {
+  const fnWith = (body: string, setClause = '') =>
+    `CREATE OR REPLACE FUNCTION public.f() RETURNS void\n` +
+    `    LANGUAGE plpgsql SECURITY DEFINER\n` +
+    `    SET search_path TO 'public'\n` +
+    (setClause ? `    ${setClause}\n` : '') +
+    `    AS $$\nBEGIN\n${body}\nEND;\n$$;\n`;
+
+  it('flags in-function DDL on a hot table with no timeout anywhere', () => {
+    expect(
+      violations([
+        file('supabase/migrations/0500_x.sql', fnWith('  ALTER TABLE anchors ADD COLUMN a text;')),
+      ]),
+    ).toEqual(['supabase/migrations/0500_x.sql:anchors:ALTER TABLE']);
+  });
+
+  it('flags in-function DDL even when the FILE sets a lock_timeout first', () => {
+    // The regression this whole suite exists for: the pre-BUG-019 linter passed
+    // this file. The SET LOCAL applies to the CREATE FUNCTION statement, not to
+    // the body, which runs in an entirely different session.
+    const v = scanFiles([
+      file('supabase/migrations/0500_x.sql', GUARD + fnWith('  ALTER TABLE anchors ADD COLUMN a text;')),
+    ]);
+    expect(v.map((x) => `${x.table}:${x.kind}:${x.context}`)).toEqual([
+      'anchors:ALTER TABLE:function-body',
+    ]);
+  });
+
+  it('accepts in-function DDL guarded by SET LOCAL inside the same body', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0500_x.sql',
+          fnWith("  SET LOCAL lock_timeout = '5s';\n  ALTER TABLE anchors ADD COLUMN a text;"),
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('accepts in-function DDL guarded by the function-level SET clause', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0500_x.sql',
+          fnWith('  ALTER TABLE anchors ADD COLUMN a text;', "SET lock_timeout TO '5s'"),
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('rejects a function-level SET clause of zero — still wait-forever', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0500_x.sql',
+          fnWith('  ALTER TABLE anchors ADD COLUMN a text;', "SET lock_timeout TO '0'"),
+        ),
+      ]),
+    ).toEqual(['supabase/migrations/0500_x.sql:anchors:ALTER TABLE']);
+  });
+
+  it('does not let an in-body guard leak forward to a LATER top-level statement', () => {
+    // The body never executes at apply time, so nothing it sets can protect the
+    // migration's own next statement.
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0500_x.sql',
+          fnWith("  SET LOCAL lock_timeout = '5s';\n  PERFORM 1;") +
+            'ALTER TABLE anchors ADD COLUMN a text;\n',
+        ),
+      ]),
+    ).toEqual(['supabase/migrations/0500_x.sql:anchors:ALTER TABLE']);
+  });
+
+  it('flags in-function DDL on audit_events (the exact BUG-019 statement pair)', () => {
+    const v = scanFiles([
+      file(
+        'supabase/migrations/0500_x.sql',
+        fnWith(
+          '  DROP TRIGGER IF EXISTS reject_audit_delete ON audit_events;\n' +
+            "  DELETE FROM audit_events WHERE created_at < now() - INTERVAL '2 years';\n" +
+            '  CREATE TRIGGER reject_audit_delete BEFORE DELETE ON audit_events\n' +
+            '    FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();',
+        ),
+      ),
+    ]);
+    expect(v.map((x) => `${x.table}:${x.kind}`)).toEqual([
+      'audit_events:DROP TRIGGER',
+      'audit_events:CREATE TRIGGER',
+    ]);
+  });
+
+  it('accepts that same pair once a bounded SET LOCAL precedes it in the body', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0500_x.sql',
+          fnWith(
+            "  SET LOCAL lock_timeout = '5s';\n" +
+              '  DROP TRIGGER IF EXISTS reject_audit_delete ON audit_events;\n' +
+              '  CREATE TRIGGER reject_audit_delete BEFORE DELETE ON audit_events\n' +
+              '    FOR EACH ROW EXECUTE FUNCTION reject_audit_modification();',
+          ),
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('does NOT widen the top-level rule to audit_events', () => {
+    // 0295 / 0309 / 0404 shapes stay green: one-shot, operator-supervised DDL.
+    expect(
+      violations([
+        file('supabase/migrations/0500_x.sql', 'ALTER TABLE public.audit_events DROP CONSTRAINT c;\n'),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('treats a DO block as immediate, so a file-level guard covers it', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0500_x.sql',
+          GUARD + 'DO $$\nBEGIN\n  ALTER TABLE anchors ADD COLUMN a text;\nEND;\n$$;\n',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('still flags an unguarded DO block', () => {
+    const v = scanFiles([
+      file(
+        'supabase/migrations/0500_x.sql',
+        'DO $$\nBEGIN\n  ALTER TABLE anchors ADD COLUMN a text;\nEND;\n$$;\n',
+      ),
+    ]);
+    expect(v.map((x) => `${x.table}:${x.context}`)).toEqual(['anchors:top-level']);
+  });
+
+  it('handles a tagged dollar quote ($fn$) and nested $$ inside it', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0500_x.sql',
+          'CREATE FUNCTION public.f() RETURNS void LANGUAGE plpgsql AS $fn$\n' +
+            "BEGIN\n  EXECUTE 'SELECT 1';\n  ALTER TABLE profiles ADD COLUMN a text;\nEND;\n$fn$;\n",
+        ),
+      ]),
+    ).toEqual(['supabase/migrations/0500_x.sql:profiles:ALTER TABLE']);
+  });
+
+  it('scopes the guard to one body — a guard in function A does not cover function B', () => {
+    const a = `CREATE FUNCTION public.a() RETURNS void LANGUAGE plpgsql AS $$\nBEGIN\n  SET LOCAL lock_timeout = '5s';\n  ALTER TABLE anchors ADD COLUMN a text;\nEND;\n$$;\n`;
+    const b = `CREATE FUNCTION public.b() RETURNS void LANGUAGE plpgsql AS $$\nBEGIN\n  ALTER TABLE profiles ADD COLUMN b text;\nEND;\n$$;\n`;
+    expect(violations([file('supabase/migrations/0500_x.sql', a + b)])).toEqual([
+      'supabase/migrations/0500_x.sql:profiles:ALTER TABLE',
+    ]);
+  });
+
+  it('labels top-level violations with context "top-level"', () => {
+    const [v] = scanFiles([
+      file('supabase/migrations/0500_x.sql', 'ALTER TABLE anchors ADD COLUMN a text;\n'),
+    ]);
+    expect(v.context).toBe('top-level');
   });
 });

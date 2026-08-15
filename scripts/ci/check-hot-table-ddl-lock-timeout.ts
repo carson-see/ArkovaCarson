@@ -30,6 +30,32 @@
  * `RESET lock_timeout` / `SET lock_timeout = 0`. `0` is Postgres' "wait
  * forever" — it is the bug, not the fix, so it is rejected explicitly.
  *
+ * ## Deferred bodies: the BUG-019 gap (2026-08 soak)
+ *
+ * A migration is not a flat list of statements. A `CREATE FUNCTION` body is
+ * *stored* at apply time and *executed* later, from some other session — a cron
+ * hit, an RPC call. So a `SET LOCAL lock_timeout` earlier in the FILE guards the
+ * `CREATE FUNCTION` statement and nothing the function will ever do. Until this
+ * was fixed the linter counted it anyway, which is how
+ * `cleanup_expired_data()` — SECURITY DEFINER, `POST /cron/cleanup-retention`,
+ * `DROP TRIGGER` -> `DELETE` -> `CREATE TRIGGER` on `audit_events` with no
+ * bounded timeout anywhere — sat in the tree with a green lint. Same mechanism
+ * as the P0, one level down from where the linter was looking.
+ *
+ * So statements are now classified:
+ *
+ *   - **top-level** (including `DO $$ ... $$`, which runs during the migration,
+ *     in the migration's own transaction): a file-level guard genuinely covers
+ *     it. Checked against `HOT_TABLES`, unchanged.
+ *   - **function-body** (inside a `CREATE [OR REPLACE] FUNCTION|PROCEDURE`
+ *     body): the guard must be *inside that same body*, or on the routine's own
+ *     `SET lock_timeout TO '<non-zero>'` clause. Checked against the wider
+ *     `RUNTIME_DDL_TABLES`.
+ *
+ * Guards do not cross the boundary in either direction: an in-body `SET LOCAL`
+ * cannot protect a later top-level statement (the body never ran), and a
+ * file-level `SET LOCAL` cannot protect a body (the file is long gone).
+ *
  * ## What this linter cannot cover
  *
  * Ad-hoc DDL typed straight into the Supabase MCP / SQL editor never passes
@@ -68,10 +94,26 @@ const BASELINE_PATH = join(REPO, 'scripts', 'ci', 'snapshots', 'hot-table-ddl-lo
 export const HOT_TABLES = ['organizations', 'anchors', 'profiles'] as const;
 const HOT = new Set<string>(HOT_TABLES);
 
+/**
+ * Tables checked for DDL that a stored routine will run at RUNTIME.
+ *
+ * `audit_events` is here but deliberately NOT in `HOT_TABLES`. Three merged
+ * migrations (0295 / 0309 / 0404) do one-shot top-level DDL on it, applied once
+ * under operator supervision; widening the top-level set would buy nothing but
+ * three new baseline entries, which the baseline file explicitly forbids. DDL
+ * that a cron re-runs forever against a table every write path appends to is a
+ * different risk, and the one BUG-019 is about.
+ */
+export const RUNTIME_DDL_TABLES = [...HOT_TABLES, 'audit_events'] as const;
+const RUNTIME_DDL = new Set<string>(RUNTIME_DDL_TABLES);
+
 export interface MigrationFile {
   name: string;
   body: string;
 }
+
+/** Where the statement executes — decides both the guard rule and the table set. */
+export type DdlContext = 'top-level' | 'function-body';
 
 export interface Violation {
   file: string;
@@ -79,6 +121,7 @@ export interface Violation {
   kind: string;
   line: number;
   statement: string;
+  context: DdlContext;
 }
 
 // Postgres identifiers are bare (`anchors`) or double-quoted (`"anchors"`).
@@ -194,13 +237,82 @@ function guardEvents(sql: string): GuardEvent[] {
   return events.sort((a, b) => a.index - b.index);
 }
 
-function guardedAt(events: GuardEvent[], index: number): boolean {
-  let active = false;
+function guardedAt(events: GuardEvent[], index: number, initiallyActive = false): boolean {
+  let active = initiallyActive;
   for (const e of events) {
     if (e.index >= index) break;
     active = e.active;
   }
   return active;
+}
+
+/** A dollar-quoted block: `$$ ... $$` or `$tag$ ... $tag$`. */
+interface DollarSpan {
+  /** Index of the first character of the statement the block belongs to. */
+  statementStart: number;
+  /** Index of the first character INSIDE the block. */
+  bodyStart: number;
+  /** Index of the first character of the closing delimiter. */
+  bodyEnd: number;
+  /** Index just past the closing delimiter. */
+  closeEnd: number;
+  /**
+   * True for `CREATE [OR REPLACE] FUNCTION|PROCEDURE ... AS $$...$$` — stored
+   * now, executed later. False for `DO $$...$$` (runs during the migration) and
+   * for dollar-quoted string literals in e.g. `COMMENT ON ... IS $$...$$`.
+   */
+  deferred: boolean;
+  /** The routine's own `SET lock_timeout` clause, if it carries a bounded one. */
+  headerGuard: boolean;
+}
+
+const DOLLAR_DELIM_RE = /\$([A-Za-z_][A-Za-z0-9_]*)?\$/g;
+const CREATE_ROUTINE_RE = /\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b/i;
+const ROUTINE_SET_LOCK_TIMEOUT_RE = /\bSET\s+lock_timeout\s*(?:=|\bTO\b)\s*('[^']*'|[^\s;]+)/i;
+
+/**
+ * Locate every dollar-quoted block, in source order, without recursing into one
+ * that is already open — the scan jumps past a block's closing delimiter, so a
+ * `$$` sitting inside a `$fn$ ... $fn$` body is never mistaken for a delimiter.
+ */
+export function dollarSpans(sql: string): DollarSpan[] {
+  const spans: DollarSpan[] = [];
+  let cursor = 0;
+  DOLLAR_DELIM_RE.lastIndex = 0;
+  for (let m = DOLLAR_DELIM_RE.exec(sql); m !== null; m = DOLLAR_DELIM_RE.exec(sql)) {
+    const delim = m[0];
+    const openStart = m.index;
+    const bodyStart = openStart + delim.length;
+    const closeIdx = sql.indexOf(delim, bodyStart);
+    // Unterminated block: everything after it is one opaque region. Bail rather
+    // than guess — a truncated file should not silently disable the check.
+    if (closeIdx === -1) break;
+
+    // The statement this block belongs to starts after the previous `;` that is
+    // outside any block. `cursor` already sits past the previous block, so a
+    // semicolon inside an earlier function body can never be picked up here.
+    const preceding = sql.slice(cursor, openStart);
+    const statementStart = cursor + preceding.lastIndexOf(';') + 1;
+    const head = sql.slice(statementStart, openStart);
+    const routineSet = ROUTINE_SET_LOCK_TIMEOUT_RE.exec(head);
+
+    spans.push({
+      statementStart,
+      bodyStart,
+      bodyEnd: closeIdx,
+      closeEnd: closeIdx + delim.length,
+      deferred: CREATE_ROUTINE_RE.test(head),
+      headerGuard: routineSet !== null && isBoundedTimeout(routineSet[1]),
+    });
+
+    cursor = closeIdx + delim.length;
+    DOLLAR_DELIM_RE.lastIndex = cursor;
+  }
+  return spans;
+}
+
+function deferredSpanAt(spans: DollarSpan[], index: number): DollarSpan | undefined {
+  return spans.find((s) => s.deferred && index >= s.bodyStart && index < s.bodyEnd);
 }
 
 /**
@@ -238,20 +350,44 @@ export function scanFiles(files: MigrationFile[]): Violation[] {
   const violations: Violation[] = [];
   for (const f of files) {
     const sql = stripComments(f.body);
-    const events = guardEvents(sql);
+    const spans = dollarSpans(sql);
+    const allEvents = guardEvents(sql);
+
+    // A deferred routine's whole `CREATE FUNCTION ... AS $$ ... $$` statement is
+    // invisible to the migration's own timeline: neither its `SET` clause nor
+    // anything in its body executes at apply time. Drop those events from the
+    // top-level stream so they cannot fake a guard for a later statement.
+    const topLevelEvents = allEvents.filter(
+      (e) => !spans.some((s) => s.deferred && e.index >= s.statementStart && e.index < s.closeEnd),
+    );
+
     const found: Violation[] = [];
     for (const [kind, pattern] of STATEMENT_PATTERNS) {
       const re = new RegExp(pattern.source, pattern.flags);
       for (let m = re.exec(sql); m !== null; m = re.exec(sql)) {
         const table = unquote(m[1]);
-        if (!HOT.has(table)) continue;
-        if (guardedAt(events, m.index)) continue;
+        const span = deferredSpanAt(spans, m.index);
+
+        if (span) {
+          if (!RUNTIME_DDL.has(table)) continue;
+          // Only guards set inside this body count, seeded by the routine's own
+          // `SET lock_timeout` clause when it carries a bounded value.
+          const bodyEvents = allEvents.filter(
+            (e) => e.index >= span.bodyStart && e.index < span.bodyEnd,
+          );
+          if (guardedAt(bodyEvents, m.index, span.headerGuard)) continue;
+        } else {
+          if (!HOT.has(table)) continue;
+          if (guardedAt(topLevelEvents, m.index)) continue;
+        }
+
         found.push({
           file: f.name,
           table,
           kind,
           line: sql.slice(0, m.index).split('\n').length,
           statement: m[0].replace(/\s+/g, ' ').trim().slice(0, 120),
+          context: span ? 'function-body' : 'top-level',
         });
       }
     }
@@ -295,18 +431,24 @@ function main(): void {
     return;
   }
 
-  console.error('\nBarrier-forming DDL on a hot table with no bounded lock_timeout:\n');
+  console.error('\nBarrier-forming DDL with no bounded lock_timeout:\n');
   for (const v of live) {
-    console.error(`  ${v.file}:${v.line}  ${v.kind} on public.${v.table}`);
+    console.error(`  ${v.file}:${v.line}  ${v.kind} on public.${v.table}  [${v.context}]`);
     console.error(`      ${v.statement}`);
   }
   console.error(
-    '\nFix: add a bounded timeout before the statement, inside the migration transaction:\n' +
+    '\nFix (top-level): add a bounded timeout before the statement, inside the migration\n' +
+      'transaction:\n' +
       "\n    SET LOCAL lock_timeout = '5s';\n" +
+      '\nFix (function-body): the guard must be INSIDE the routine — a file-level SET does not\n' +
+      'survive to the cron session that calls it. Either add the SET LOCAL as the first\n' +
+      'statement of the body, or put it on the routine itself:\n' +
+      "\n    CREATE OR REPLACE FUNCTION ... SET lock_timeout TO '5s' AS $$ ... $$;\n" +
       '\nWhy: Postgres lock queues are FIFO. An unbounded DDL request that blocks on a long\n' +
       'reader becomes a barrier in front of EVERY later lock request, including PostgREST\n' +
       'schema-cache introspection — which is how the 2026-08-11 P0 took /api/v1/verify down\n' +
-      'for 11m39s. With a bounded timeout the ALTER fails fast and nothing queues behind it.\n' +
+      'for 11m39s. With a bounded timeout the statement fails fast and nothing queues behind\n' +
+      'it. A stored routine re-runs that risk on every cron tick, unsupervised.\n' +
       `\nDeliberate exception? Label the PR "${OVERRIDE_LABEL}".\n`,
   );
   process.exit(1);

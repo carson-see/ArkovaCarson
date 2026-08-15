@@ -564,6 +564,9 @@ describe('WebhookSettings', () => {
         'credential.issued',
         'credential.verified',
         'credential.status_changed',
+        // BUG-002: registered in the worker allowlist so the expiry-alert cron's
+        // dispatch can actually reach a subscriber.
+        'compliance.document_expiring',
       ];
       const actualIds = AVAILABLE_EVENTS.map((e) => e.id);
       expect(actualIds).toEqual(EXPECTED_EVENT_IDS);
