@@ -182,13 +182,25 @@ export function parseSecurityDefinerFunctions(file: string, rawSql: string): Sec
   return out;
 }
 
-/** True when a REVOKE/GRANT statement names this specific function. */
+/**
+ * True when a REVOKE/GRANT statement names this specific function.
+ *
+ * The name must be followed by its argument list. A bare substring test is not
+ * enough: `public.get_anchor_status_counts` is a prefix of
+ * `public.get_anchor_status_counts_fast`, so 0378's revoke of the `_fast`
+ * variant was silently credited to the un-suffixed function — declaring an
+ * anon-callable SECURITY DEFINER function closed when nothing had revoked it.
+ * Verified against live prod: `get_anchor_status_counts` is anon-executable
+ * there, while `get_anchor_status_counts_fast` is not.
+ *
+ * Both identifiers may be double-quoted (the squashed baseline emits
+ * `"public"."fn"("arg" type)`), and the schema qualifier is optional.
+ */
 function statementTargets(text: string, schema: string, name: string): boolean {
   if (!/\bON FUNCTION\b/i.test(text)) return false;
-  return (
-    text.includes(`${schema}.${name}`) ||
-    new RegExp(`\\b${escapeRegExp(name)} ?\\(`, 'i').test(text)
-  );
+  const s = escapeRegExp(schema);
+  const n = escapeRegExp(name);
+  return new RegExp(`(?:"?${s}"? ?\\. ?)?"?${n}"? ?\\(`, 'i').test(text);
 }
 
 /**
@@ -244,6 +256,87 @@ export interface Violation extends SecdefFunction {
   reason: string;
 }
 
+/**
+ * The squashed baseline. It is the ONE file that structurally cannot carry its
+ * own revoke: it is a generated `supabase db dump` of prod, it is applied
+ * exactly once as the first statement batch of any replay, and it is never
+ * re-run afterwards. See `hasReplayPathRevoke`.
+ */
+export const SQUASHED_BASELINE = '00000000000000_baseline_at_main_HEAD.sql';
+
+/**
+ * True when a fresh, ordered replay of `files` ENDS with this function closed
+ * to `anon` and `authenticated` — even though the closing REVOKE lives in a
+ * later file than the definition.
+ *
+ * WHY THIS EXISTS, AND WHY IT IS NARROW
+ *   The same-file requirement in `hasExplicitRevoke` is correct and stays. Its
+ *   rationale is that `CREATE OR REPLACE` re-triggers ALTER DEFAULT PRIVILEGES,
+ *   so a revoke in some later migration is undone the next time the defining
+ *   migration runs. That rationale holds for every NUMBERED migration.
+ *
+ *   It cannot hold for the squashed baseline, which is a generated dump that
+ *   runs first and exactly once. Requiring the baseline to revoke inline would
+ *   mean hand-editing a regenerated dump on every squash — which is precisely
+ *   how FD-17 was produced: the real revokes were left behind in
+ *   `docs/migrations-archive/`, off the replay path, and every environment
+ *   built from the repo since the squash shipped 20 SECURITY DEFINER functions
+ *   anon-callable that prod correctly revokes.
+ *
+ *   So for baseline-defined functions ONLY, a compliant revoke in a later
+ *   numbered migration genuinely closes the hole, and this function credits it.
+ *   Terminal state is what matters: the revoke must come in a file that sorts
+ *   AFTER the last file to (re)define the function, and no later file may grant
+ *   EXECUTE back. A numbered migration that re-defines a baseline function is
+ *   still flagged under its OWN key by the same-file rule — correctly, because
+ *   the next re-definition would reopen what the later revoke closed.
+ *
+ * KNOWN LIMITATION — name granularity, not signature granularity.
+ *   Keys are `<file>::<schema>.<name>`, so overloads collapse into one entry
+ *   and a revoke on ANY overload credits the name. 0367 is the live example: it
+ *   revokes the 4-arg `supersede_anchor` / `resolve_anchor_queue_by_public_id`
+ *   while deliberately leaving the 3-arg `auth.uid()`-guarded overloads granted,
+ *   and prod agrees (3-arg anon-executable, 4-arg not). That is intended there,
+ *   but it means this rule cannot catch a case where one overload is revoked and
+ *   a genuinely unsafe sibling is not. Signature-level enforcement needs a live
+ *   ACL sweep against a rebuilt environment, not static SQL parsing.
+ */
+export function hasReplayPathRevoke(files: FileSql[], schema: string, name: string): boolean {
+  const qualified = `${schema}.${name}`;
+
+  let lastDefineIdx = -1;
+  let lastRevokeIdx = -1;
+  let lastRegrantIdx = -1;
+
+  for (let i = 0; i < files.length; i++) {
+    const sql = prepare(files[i].sql);
+
+    for (const m of sql.matchAll(CREATE_FN)) {
+      const target = m[1].toLowerCase();
+      if (target === qualified || target === name) lastDefineIdx = i;
+    }
+
+    for (const stmt of sql.matchAll(/\bREVOKE\b[^;]*;/gi)) {
+      const text = stmt[0];
+      if (!statementTargets(text, schema, name)) continue;
+      if (!/\banon\b/i.test(text) || !/\bauthenticated\b/i.test(text)) continue;
+      lastRevokeIdx = i;
+    }
+
+    for (const stmt of sql.matchAll(/\bGRANT\b[^;]*;/gi)) {
+      const text = stmt[0];
+      if (!statementTargets(text, schema, name)) continue;
+      if (/\banon\b/i.test(text) || /\bauthenticated\b/i.test(text)) lastRegrantIdx = i;
+    }
+  }
+
+  // The revoke must be the last word: after the final definition, and not
+  // undone by a re-grant in the same file or any later one.
+  if (lastRevokeIdx < 0) return false;
+  if (lastRevokeIdx < lastDefineIdx) return false;
+  return lastRegrantIdx < lastRevokeIdx;
+}
+
 export function findViolations(
   files: FileSql[],
   opts: { deliberatelyPublic?: Set<string> } = {},
@@ -255,6 +348,10 @@ export function findViolations(
     for (const fn of parseSecurityDefinerFunctions(file, sql)) {
       if (allowed.has(`${fn.schema}.${fn.name}`)) continue;
       if (hasExplicitRevoke(sql, fn.schema, fn.name)) continue;
+      // Baseline-only carve-out: a generated dump cannot revoke inline, so a
+      // compliant revoke in a later migration counts. Numbered migrations get
+      // no such credit — their revoke must sit next to their definition.
+      if (file === SQUASHED_BASELINE && hasReplayPathRevoke(files, fn.schema, fn.name)) continue;
       out.push({
         ...fn,
         reason:

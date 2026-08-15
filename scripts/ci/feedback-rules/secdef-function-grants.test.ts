@@ -16,9 +16,11 @@ import { describe, it, expect } from 'vitest';
 import {
   parseSecurityDefinerFunctions,
   hasExplicitRevoke,
+  hasReplayPathRevoke,
   findViolations,
   loadBaseline,
   realMigrations,
+  SQUASHED_BASELINE,
   DELIBERATELY_PUBLIC,
 } from './secdef-function-grants.js';
 
@@ -216,6 +218,107 @@ describe('findViolations', () => {
       deliberatelyPublic: new Set(['public.get_public_anchor']),
     });
     expect(v).toEqual([]);
+  });
+});
+
+/**
+ * FD-17 / BUG-2026-08-12-005. The squashed baseline is a generated `db dump`:
+ * it emits only `REVOKE ... FROM PUBLIC`, cannot carry inline anon revokes
+ * without hand-editing every regeneration, and runs exactly once at the head of
+ * a replay. The real revokes were left in `docs/migrations-archive/`, off the
+ * replay path, so every environment built from the repo shipped SECURITY
+ * DEFINER functions anon-callable that prod correctly revokes.
+ */
+describe('replay-path revoke (baseline-only carve-out)', () => {
+  const baselineFile = { file: SQUASHED_BASELINE, sql: SECDEF + REVOKE_PUBLIC_ONLY };
+
+  it('credits a later migration that revokes a baseline-defined function', () => {
+    const files = [baselineFile, { file: '0414_fix.sql', sql: REVOKE_NAMED }];
+    expect(hasReplayPathRevoke(files, 'public', 'widget_count')).toBe(true);
+    expect(findViolations(files).map((v) => v.key)).toEqual([]);
+  });
+
+  it('does NOT credit a revoke that a later file re-defines away', () => {
+    const files = [
+      baselineFile,
+      { file: '0414_fix.sql', sql: REVOKE_NAMED },
+      { file: '0415_redefine.sql', sql: SECDEF },
+    ];
+    expect(hasReplayPathRevoke(files, 'public', 'widget_count')).toBe(false);
+    expect(findViolations(files).map((v) => v.key)).toContain(
+      `${SQUASHED_BASELINE}::public.widget_count`,
+    );
+  });
+
+  it('does NOT credit a revoke undone by a later re-GRANT to anon', () => {
+    const files = [
+      baselineFile,
+      { file: '0414_fix.sql', sql: REVOKE_NAMED },
+      {
+        file: '0415_regrant.sql',
+        sql: 'GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO anon;',
+      },
+    ];
+    expect(hasReplayPathRevoke(files, 'public', 'widget_count')).toBe(false);
+  });
+
+  it('does NOT credit a PUBLIC-only revoke in the later file', () => {
+    const files = [baselineFile, { file: '0414_weak.sql', sql: REVOKE_PUBLIC_ONLY }];
+    expect(hasReplayPathRevoke(files, 'public', 'widget_count')).toBe(false);
+  });
+
+  it('gives a NUMBERED migration no cross-file credit — same-file still required', () => {
+    // The carve-out exists only because a generated dump cannot revoke inline.
+    // A hand-written migration gets no such licence: CREATE OR REPLACE re-runs
+    // ALTER DEFAULT PRIVILEGES, so its revoke must sit next to its definition.
+    const files = [
+      { file: '0413_defines.sql', sql: SECDEF + REVOKE_PUBLIC_ONLY },
+      { file: '0414_fix.sql', sql: REVOKE_NAMED },
+    ];
+    expect(findViolations(files).map((v) => v.key)).toEqual([
+      '0413_defines.sql::public.widget_count',
+    ]);
+  });
+});
+
+/**
+ * `statementTargets` matched by substring, which was wrong in both directions.
+ * Both bugs surfaced by running the cross-file pass over the real repo and
+ * cross-checking every result against live prod ACLs.
+ */
+describe('statementTargets identifier matching', () => {
+  const SECDEF_SHORT = `
+CREATE OR REPLACE FUNCTION public.widget_count()
+RETURNS bigint LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+AS $$ SELECT 1; $$;
+`;
+
+  it('a revoke on a LONGER same-prefix function does not credit the shorter one', () => {
+    // The real case: 0378 revokes get_anchor_status_counts_fast(); prod shows
+    // get_anchor_status_counts() is still anon-executable. Crediting the prefix
+    // would declare an open SECURITY DEFINER function closed.
+    const sql = `${SECDEF_SHORT}
+REVOKE ALL ON FUNCTION public.widget_count_fast() FROM PUBLIC, anon, authenticated;`;
+    expect(hasExplicitRevoke(sql, 'public', 'widget_count')).toBe(false);
+  });
+
+  it('still credits the exact function when a prefix sibling is also revoked', () => {
+    const sql = `${SECDEF_SHORT}
+REVOKE ALL ON FUNCTION public.widget_count_fast() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.widget_count() FROM PUBLIC, anon, authenticated;`;
+    expect(hasExplicitRevoke(sql, 'public', 'widget_count')).toBe(true);
+  });
+
+  it('credits the fully-quoted dump form the baseline and 0367 emit', () => {
+    // `"public"."fn"("arg" "type")` matched neither old branch, so genuinely
+    // compliant migrations were flagged and pinned in the burn-down list.
+    const sql = `
+CREATE OR REPLACE FUNCTION "public"."widget_count"("p_hours" integer)
+RETURNS bigint LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+AS $$ SELECT 1; $$;
+REVOKE ALL ON FUNCTION "public"."widget_count"("p_hours" integer) FROM PUBLIC, "anon", "authenticated";
+GRANT EXECUTE ON FUNCTION "public"."widget_count"("p_hours" integer) TO "service_role";`;
+    expect(hasExplicitRevoke(sql, 'public', 'widget_count')).toBe(true);
   });
 });
 
