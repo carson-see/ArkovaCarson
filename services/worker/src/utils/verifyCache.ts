@@ -9,6 +9,7 @@
  */
 
 import { logger } from './logger.js';
+import { resolveEnvironmentNamespace } from './environmentNamespace.js';
 
 const CACHE_TTL_SECONDS = 300; // 5 minutes
 // Bumped v1 → v2 when API-RICH-01 landed 8 additive response fields (2026-04-16).
@@ -30,6 +31,38 @@ const CACHE_TTL_SECONDS = 300; // 5 minutes
 // again on any response-shape change so post-deploy cache hits don't serve
 // stale thin responses. Old keys age out naturally via TTL.
 const KEY_PREFIX = 'verify:v5:';
+
+/**
+ * BUG-018 / D-8 (follow-up to #2231) — every key carries an environment
+ * segment: `verify:v5:<env>:<publicId>`.
+ *
+ * Production, shared staging and the connector side-rig are all bound to ONE
+ * Upstash database through the same un-suffixed UPSTASH_REDIS_REST_URL/_TOKEN
+ * secrets, and a publicId is by construction the SAME string wherever it is
+ * queried — so before this segment existed a verification computed against the
+ * STAGING database was served verbatim to a PRODUCTION caller of the public
+ * verify API for the full TTL, and vice versa. That is a correctness and
+ * tenant-integrity defect on a public surface, not a budget one: a cache hit
+ * short-circuits `buildVerificationResult` entirely (api/v1/verify.ts), so the
+ * response asserts something the production database never said (§1.5).
+ *
+ * It also cut the other way: `invalidateVerificationCache` fired by a rig's
+ * revocation job evicted PRODUCTION's entry for that publicId.
+ *
+ * The namespace comes from `resolveEnvironmentNamespace()`, derived from the
+ * SERVICE identity and never from anything instance-local — every instance of
+ * one service must land on one key or the shared cache stops being shared,
+ * which is PERF-12's entire purpose.
+ *
+ * The version segment stays ahead of the namespace so a `v5` → `v6` bump still
+ * rotates every environment at once, exactly as it did before.
+ */
+let _namespace: string | undefined;
+
+function namespacedKey(publicId: string): string {
+  _namespace ??= resolveEnvironmentNamespace();
+  return `${KEY_PREFIX}${_namespace}:${publicId}`;
+}
 
 /** Module-level config cache — avoids process.env reads on every request */
 let _redisConfig: { url: string; token: string } | null | undefined;
@@ -90,7 +123,7 @@ async function redisDel(key: string): Promise<void> {
  * Returns null on cache miss or Redis unavailable.
  */
 export async function getCachedVerification<T>(publicId: string): Promise<T | null> {
-  const raw = await redisGet(`${KEY_PREFIX}${publicId}`);
+  const raw = await redisGet(namespacedKey(publicId));
   if (!raw) return null;
 
   try {
@@ -104,7 +137,7 @@ export async function getCachedVerification<T>(publicId: string): Promise<T | nu
  * Cache a verification result for a publicId.
  */
 export async function setCachedVerification<T>(publicId: string, result: T, ttl = CACHE_TTL_SECONDS): Promise<void> {
-  await redisSet(`${KEY_PREFIX}${publicId}`, JSON.stringify(result), ttl);
+  await redisSet(namespacedKey(publicId), JSON.stringify(result), ttl);
 }
 
 /**
@@ -112,5 +145,5 @@ export async function setCachedVerification<T>(publicId: string, result: T, ttl 
  * Call this when anchor status changes (e.g., SECURED, REVOKED).
  */
 export async function invalidateVerificationCache(publicId: string): Promise<void> {
-  await redisDel(`${KEY_PREFIX}${publicId}`);
+  await redisDel(namespacedKey(publicId));
 }
