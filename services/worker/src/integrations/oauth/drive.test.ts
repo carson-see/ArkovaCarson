@@ -50,10 +50,38 @@ describe('buildAuthorizationUrl', () => {
     expect(url).toContain('scope=');
     expect(url).toContain('prompt=consent');
     expect(new URL(url).searchParams.get('scope')).toBe(DRIVE_DEFAULT_SCOPES.join(' '));
+    // Scope-minimality ratchet (FULLSOAK 2026-08, shared-resource register #9):
+    // this is the COMPLETE allowlist. drive.file + drive.activity.readonly for
+    // the connector itself; userinfo.email because the callback's
+    // fetchGoogleIdentity (oauth2/v3/userinfo) needs it for the stable
+    // account_id (`sub`) — without it userinfo 401s and account_id degrades to
+    // a constant, breaking the org_integrations upsert key. Any addition here
+    // widens what a leaked refresh token can reach — treat as a security review.
     expect(DRIVE_DEFAULT_SCOPES).toEqual([
       'https://www.googleapis.com/auth/drive.file',
       'https://www.googleapis.com/auth/drive.activity.readonly',
+      'https://www.googleapis.com/auth/userinfo.email',
     ]);
+  });
+
+  it('never sends include_granted_scopes — a Drive connect must not inherit scopes previously granted to the OAuth client', () => {
+    // FULLSOAK 2026-08 finding: with `include_granted_scopes=true` on the
+    // shared OAuth client, one Drive connect minted a grant carrying 33 scopes
+    // (full drive, gmail.modify, calendar, contacts, classroom.*, chat.*) —
+    // every scope that client was ever granted by the Google account. The
+    // parameter must be ABSENT (Google defaults it to false), so a compromised
+    // refresh token is scoped to the minimal Drive set and nothing else.
+    const url = buildAuthorizationUrl({
+      redirectUri: 'https://arkova.ai/cb',
+      state: 'nonce-xyz',
+      env: {
+        GOOGLE_OAUTH_CLIENT_ID: 'client-id',
+        GOOGLE_OAUTH_CLIENT_SECRET: 'secret',
+      },
+    });
+    const params = new URL(url).searchParams;
+    expect(params.has('include_granted_scopes')).toBe(false);
+    expect(params.get('include_granted_scopes')).not.toBe('true');
   });
 });
 
