@@ -8,6 +8,7 @@ Infrastructure integration tests. Verify operational scripts, edge workers, and 
 - **`crawler.test.ts`** — tests for web crawler/indexing behavior.
 - **`cross-tenant-assertions.test.ts`** — DEG-4 (SOAK-PREMORTEM-SOC2-2026-08-11 §4): pins the hardened blocked/positive-access semantics of `e2e/helpers/cross-tenant-assertions.ts`. A /login redirect must evaluate NOT-blocked (the old spec's hollow-pass), record content rendering is a leak not a block, and precondition failures carry the distinct `precondition: <label> session not authenticated` message. This is the local RED proof that an expired accessor session makes `e2e/cross-tenant.spec.ts` fail.
 - **`dlp-verification.test.ts`** — tests for DLP (Data Loss Prevention) policy enforcement.
+- **`signout-scope-guard.test.ts`** — unit tests for `e2e/helpers/signout-scope-guard.ts` plus a ratchet scan of every `e2e/**/*.ts` file: bare `auth.signOut()` (supabase-js default `scope: 'global'`) revokes a shared seed user's storageState session and cascades /login bounces through every later spec in a single-invocation run (2026-08-15 side-rig cascade, introduced by PR #2213's cross-tenant `afterAll`). E2e code must pass an explicit scope.
 - **`llms-txt.test.ts`** — tests for `llms.txt` AI crawler discovery file.
 - **`mcp-server.test.ts`** — tests for the MCP server edge deployment.
 - **`r2-report.test.ts`** — tests for Cloudflare R2 report storage.
