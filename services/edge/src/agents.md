@@ -38,6 +38,19 @@ the edge into `text_fallback`, invalidating MCP context/citation soak evidence.
 - `args_hash` is deliberately still a bare `sha256` — args are attacker-chosen high-entropy JSON, not a bounded enumerable space. If a tool ever hashes a low-cardinality argument on its own, that one needs the keyed helper too.
 - Tests: `src/tests/edge/mcp-security.test.ts` pins keyed-vs-bare and the null-on-missing-pepper path.
 
+## The edge suite is CI-gated (2026-08-15) — it was not, for ~10 weeks
+
+`services/edge/vitest.config.ts` has existed since Story D PR-1 (2026-06-05), but **nothing in CI ever invoked it** until 2026-08-15. The only edge step was `tsc -p services/edge/tsconfig.json --noEmit` in the `typecheck-lint` job — a typecheck, not a test run. The root suite could not pick these up either: root `vitest.config.ts` globs `tests/**`, `src/**`, `scripts/**` relative to the **repo root**, so `services/edge/src/*.test.ts` matched no pattern in any runner.
+
+Net effect: `src/mcp-tools.test.ts` (36 assertions over the MCP tool surface, incl. the BUG-2 `shapeAnchorRow` regressions) **gated nothing** and could have sat red indefinitely without failing a PR. It was found while fixing BUG-2026-08-13-016 (PR #2232), whose P0 tests were parked in the ROOT suite (`src/tests/edge/`, `tests/infra/`) purely to be sure CI would run them.
+
+**Now:** the `Tests` job runs `Install edge dependencies` (`npm ci --ignore-scripts` in `services/edge`) then `Run edge worker tests` (`npm test`), both wired into that job's `Aggregate test suite results` gate. Baseline when wired: **36/36 green** — the gate was not merged red.
+
+- Run it locally exactly as CI does: `cd services/edge && npm ci --ignore-scripts && npm test`.
+- `services/edge` has its **own** `package-lock.json` and is **not** part of the root npm workspace — deps must be installed separately or the suite cannot run at all.
+- It lives in the `Tests` job on purpose. `Tests` is an enumerated `check-success` merge condition in `.mergify.yml` (5 occurrences) and a required status check; a NEW top-level job would gate nothing until branch protection and `.mergify.yml` were updated too — i.e. it would recreate this exact bug.
+- **Adding a test under `services/edge/`? It runs here, not in the root suite.** Modules using ambient CF globals (`Ai` in `mcp-tools.ts:1049`, `KVNamespace`, …) can only be tested here, since the root tsconfig deliberately omits `@cloudflare/workers-types` from global `types`. See `src/tests/edge/agents.md` for the split.
+
 ## KV namespaces
 - `MCP_RATE_LIMIT_KV` (`a8a7843630e84c5aa22cf20ea8a8c5e8`)
 - `MCP_ORIGIN_ALLOWLIST_KV` (`5ace0a24154a4731b263285890ae3a10`)
