@@ -9,14 +9,29 @@
 import { z } from 'zod';
 import { db, isTransientConnectionError } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { dbUuid, parseDbRows } from '../utils/db-row-validation.js';
 import { processBatchAnchors, type BatchAnchorResult } from './batch-anchor.js';
 import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 
 const CLAIM_LIMIT_DEFAULT = 25;
 
+/**
+ * BUG-2026-08-12-003 / FD-15.
+ *
+ * `org_id` is a Postgres `uuid` column handed back by `claim_due_org_queue_runs`,
+ * so it is shape-checked, not RFC-checked — see `utils/db-row-validation.ts`.
+ * Zod 4.4.3's strict `.uuid()` rejected the seeded fixture orgs
+ * (`aaaaaaaa-0000-0000-0000-000000000001`: zero version/variant nibbles) that
+ * Postgres had accepted, which is how this scheduler returned INTERNAL on every
+ * run for a whole soak. PR #2215 fixed the seed side; this is the validator side.
+ *
+ * `last_run_at` is `.catch(null)` on purpose: the scheduler never reads it (only
+ * `org_id` is consumed below), so a malformed value in a field nobody uses must
+ * not cost that organization its run.
+ */
 const ClaimedOrgSchema = z.object({
-  org_id: z.string().uuid(),
-  last_run_at: z.string().nullable().optional(),
+  org_id: dbUuid('org_id'),
+  last_run_at: z.string().nullable().optional().catch(null),
 });
 
 type QueueRunTrigger = 'manual' | 'scheduled';
@@ -33,6 +48,15 @@ export interface OrgQueueSchedulerResult {
   skipped: number;
   failed: number;
   processed: number;
+  /**
+   * FD-15: claimed rows dropped because they failed row validation. These orgs
+   * did NOT get a run and their claim could not be released (an unparseable
+   * `org_id` is not a key we can write back with), so they stay locked until
+   * `claim_due_org_queue_runs`'s own 15-minute lock timeout reclaims them.
+   * Surfaced here — rather than swallowed — because quarantining is a degraded
+   * mode that must be alertable.
+   */
+  quarantined: number;
 }
 
 interface SchedulerDb {
@@ -225,7 +249,7 @@ async function releaseOrgQueueClaim(
 async function claimDueOrganizations(
   deps: ReturnType<typeof getDeps>,
   limit: number,
-): Promise<Array<{ org_id: string; last_run_at: string | null }>> {
+): Promise<{ rows: Array<{ org_id: string; last_run_at: string | null }>; quarantined: number }> {
   const now = deps.now();
   const params = {
     p_now: now.toISOString(),
@@ -258,14 +282,24 @@ async function claimDueOrganizations(
     throw new Error(`claim_due_org_queue_runs failed: ${(error as { message?: string }).message ?? 'unknown error'}`);
   }
 
-  const parsed = z.array(ClaimedOrgSchema).safeParse(data ?? []);
-  if (!parsed.success) {
-    throw new Error(`claim_due_org_queue_runs returned invalid rows: ${parsed.error.message}`);
-  }
-  return parsed.data.map((row) => ({
-    org_id: row.org_id,
-    last_run_at: row.last_run_at ?? null,
-  }));
+  // BUG-2026-08-12-003 / FD-15: per-row, NOT `z.array(...).safeParse`. The
+  // wholesale parse threw on the first bad row, so one malformed value denied
+  // service to every other org in the claim batch — the entire scheduler pass
+  // returned INTERNAL. A bad row is now quarantined and logged loudly; the rest
+  // of the batch still runs. A non-array payload still throws: that is a broken
+  // query contract, not one poison row, and there is nothing to salvage.
+  const { rows, quarantined } = parseDbRows(ClaimedOrgSchema, data ?? [], {
+    source: 'claim_due_org_queue_runs',
+    logger: deps.logger,
+  });
+
+  return {
+    rows: rows.map((row) => ({
+      org_id: row.org_id,
+      last_run_at: row.last_run_at ?? null,
+    })),
+    quarantined,
+  };
 }
 
 export async function runOrgQueueScheduler(
@@ -279,6 +313,7 @@ export async function runOrgQueueScheduler(
     skipped: 0,
     failed: 0,
     processed: 0,
+    quarantined: 0,
   };
 
   if (deps.env.ENABLE_ORG_QUEUE_SCHEDULER === 'false') {
@@ -287,9 +322,13 @@ export async function runOrgQueueScheduler(
   }
 
   const limit = Math.max(1, Math.min(opts.limit ?? CLAIM_LIMIT_DEFAULT, 100));
-  const claimed = await claimDueOrganizations(deps, limit);
+  const { rows: claimed, quarantined } = await claimDueOrganizations(deps, limit);
   result.claimed = claimed.length;
-  if (claimed.length === 0) return result;
+  result.quarantined = quarantined;
+  if (claimed.length === 0) {
+    if (quarantined > 0) deps.logger.info(result, 'Org queue scheduler pass complete');
+    return result;
+  }
 
   for (const row of claimed) {
     const startedAt = deps.now();

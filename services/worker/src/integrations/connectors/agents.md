@@ -121,3 +121,23 @@ ERROR on this tree + the `docusign-*` job files) enforces this at build time.
 So (2) can never run until (1) has happened. The callback used to type its local `subscription` as `{ resourceId; expiration }`, silently discarding the `startPageToken` the client already returned — which made the entire Drive changes pipeline unreachable by construction: a freshly connected org skipped forever, with no error anywhere. **Never drop `startPageToken` from that call site.**
 
 The write is deliberately **conditional** (`...(subscription ? { last_page_token } : {})`), not `?? null`. This is an upsert: unconditionally writing null on a *failed re-watch* would wipe a working org's cursor, and nothing else can re-seed it, so every change from then on would be skipped silently. Omitting the column preserves the existing cursor. Both behaviours are pinned by tests in `drive-oauth.test.ts`.
+
+## 2026-08-15 — FD-15: `(org_id, integration_id)` are shape-checked, not RFC-checked
+
+`drive-changes-runner.ts`'s three adapter-boundary schemas, `drive-artifact-producer.ts`'s job
+payload, and `docusign.ts`'s envelope-completed payload all validate `org_id` / `integration_id` /
+`rule_event_id`. Every one of those values is read out of `org_integrations` (or returned by the
+`enqueue_rule_event` RPC) before it reaches these schemas — none is Drive- or DocuSign-supplied.
+
+Zod 4.x's `z.string().uuid()` is strict RFC 9562 and rejects UUIDs that Postgres `uuid` happily
+stores, so validating our own stored ids more harshly than the column storing them can only
+false-reject. These now use `dbUuid()` from `../../utils/db-row-validation.ts`. See
+BUG-2026-08-12-003 / FD-15.
+
+Two boundaries in this folder deliberately did NOT move:
+
+- **`schemas.ts` `MicrosoftGraphChange.tenantId` stays strict** — it is parsed straight off the
+  Microsoft Graph webhook notification body (`api/v1/webhooks/microsoft-graph.ts`). That is external
+  input; strict validation is correct there.
+- **Drive-supplied ids were never UUID-validated and still are not.** File / revision / parent ids
+  are `z.string().min(1)` because Drive ids are not UUIDs — unchanged by this work.

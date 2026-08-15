@@ -34,6 +34,7 @@
  * real network, KMS, or DB.
  */
 import { z } from 'zod';
+import { dbUuid } from '../../utils/db-row-validation.js';
 
 import { GOOGLE_DRIVE_VENDOR } from '../../constants/connectors.js';
 
@@ -57,8 +58,8 @@ export const DRIVE_FILE_CHANGED_JOB_TYPE = 'google_drive.file_changed' as const;
  * key = org_id / source / external_ref / COALESCE(external_revision,'')).
  */
 export const DriveFileChangedJobPayload = z.object({
-  org_id: z.string().uuid(),
-  integration_id: z.string().uuid(),
+  org_id: dbUuid('org_id'),
+  integration_id: dbUuid('integration_id'),
   file_id: z.string().min(1),
   // Drive headRevisionId at detection. Optional: some change entries (e.g. a
   // shortcut) have no head revision — the artifact then dedupes on file_id alone.

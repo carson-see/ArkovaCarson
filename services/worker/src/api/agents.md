@@ -294,3 +294,28 @@ thing that was true at the time.
 Rule for this folder: **any `create*` factory that builds a mempool.space URL must be handed
 `config.bitcoinNetwork` explicitly.** The two defects here — the wallet leg's balance bug and the
 fee leg's rate bug — were both "call site omitted the network, factory defaulted to something".
+
+## 2026-08-15 — FD-15: UUID strictness is a function of PROVENANCE, not of field name
+
+BUG-2026-08-12-003 relaxed UUID validation on values read back out of Postgres, because strict
+RFC-9562 `.uuid()` rejects UUIDs a `uuid` column legitimately holds. **Almost every `.uuid()` in
+this folder was audited and deliberately left strict**: they validate `req.body`, `req.query`,
+`req.params`, webhook bodies and OAuth callbacks, where the strictness IS the security boundary.
+`utils/external-uuid-strictness.ratchet.test.ts` pins per-file strict-`.uuid()` counts and forbids
+these modules from importing the permissive helper, so the relaxation cannot creep across the
+boundary later.
+
+Two things in this folder are worth not re-litigating:
+
+- **`partner-provisioning.ts` is mixed, and only the actor's `orgId` was relaxed.** That one is a
+  server-derived principal (authoritative org-membership lookup) and the schema is documented as a
+  shape backstop, not the trust boundary. `sponsorOrgId` (caller-supplied request payload) and
+  `partnerOrgId` stay strict — the module has no HTTP routes yet, and nothing structurally stops a
+  future route from passing a client-supplied `partnerOrgId`, so it keeps the stricter check.
+- **Its UUID regex is inlined, not imported, on purpose.** `partner-provisioning.guard.test.ts`
+  pins this module as a pure state machine with an exact import allowlist and an explicit ban on
+  referencing the service_role database utilities; the shared helper lives beside them. A local
+  literal keeps the module pure and matches what `audit-event.ts`, `admin-org-members.ts`,
+  `invitations.ts` and `billing/entitlements.ts` already do. Note the guard scans the whole file as
+  text — **a comment mentioning the banned path fails it too**, which is easy to trip when
+  documenting exactly this decision.

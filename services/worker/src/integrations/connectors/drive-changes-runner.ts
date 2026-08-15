@@ -29,6 +29,7 @@
  * stub Drive HTTP, KMS, and the DB without touching production.
  */
 import { z } from 'zod';
+import { dbUuid } from '../../utils/db-row-validation.js';
 import {
   refreshAccessToken,
   type DriveClientDeps,
@@ -60,32 +61,40 @@ import {
 // edge is the last line where a malformed value can be caught before it hits
 // Postgres / the enqueue_rule_event RPC. Schemas mirror DriveProcessorDb
 // types in drive-changes-processor.ts — kept loose on file/revision/parent
-// ids (Drive file ids are not UUIDs) and tight on (org_id, integration_id)
-// which are always Postgres UUIDs.
+// ids (Drive file ids are not UUIDs) and UUID-shaped on (org_id,
+// integration_id) which are always Postgres UUIDs.
+//
+// BUG-2026-08-12-003 / FD-15: those two are read out of `org_integrations`
+// before they get here, so they are checked with `dbUuid` (shape-only) rather
+// than Zod's strict RFC-9562 `.uuid()`. Postgres `uuid` is looser than RFC
+// 9562, so the strict check could reject an id the database legitimately
+// holds — validating our own stored data more harshly than the column that
+// stores it can only cause false rejection. Drive-supplied values on this
+// edge are unaffected; they were never UUID-validated.
 const RevisionLedgerRowSchema = z.object({
-  integration_id: z.string().uuid(),
-  org_id: z.string().uuid(),
+  integration_id: dbUuid('integration_id'),
+  org_id: dbUuid('org_id'),
   file_id: z.string().min(1),
   revision_id: z.string().min(1),
   parent_ids: z.array(z.string().min(1)),
   modified_time: z.string().nullable(),
   actor_email: z.string().nullable(),
   outcome: z.enum(['queued', 'parent_mismatch', 'unrelated_change']),
-  rule_event_id: z.string().uuid().nullable(),
+  rule_event_id: dbUuid('rule_event_id').nullable(),
 });
 
 const AdvancePageTokenArgsSchema = z.object({
-  integration_id: z.string().uuid(),
+  integration_id: dbUuid('integration_id'),
   new_page_token: z.string().min(1),
 });
 
 const EnqueueRuleEventPayloadSchema = z.object({
-  org_id: z.string().uuid(),
+  org_id: dbUuid('org_id'),
   file_id: z.string().min(1),
   parent_ids: z.array(z.string().min(1)),
   actor_email: z.string().nullable(),
   revision_id: z.string().min(1),
-  integration_id: z.string().uuid(),
+  integration_id: dbUuid('integration_id'),
   filename: z.string().nullable(),
   // SCRUM-1837 (GH #1837): optional so a caller that predates folder_path
   // resolution (e.g. an existing test double) still validates — `.optional()`

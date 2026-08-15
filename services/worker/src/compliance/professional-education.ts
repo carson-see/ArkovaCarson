@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { dbUuid } from '../utils/db-row-validation.js';
 import type { IAIProvider } from '../ai/types.js';
 import { buildCleExtractionPrompt } from '../ai/prompts/cle-extraction-prompt.js';
 import { buildCpeExtractionPrompt } from '../ai/prompts/cpe-extraction-prompt.js';
@@ -97,7 +98,7 @@ export const ProfessionalEducationKindSchema = z.enum(['CPE', 'CLE']);
 export type ProfessionalEducationKind = z.infer<typeof ProfessionalEducationKindSchema>;
 
 export const ProfessionalEducationExtractionJobPayloadSchema = z.object({
-  anchorId: z.string().uuid(),
+  anchorId: dbUuid('anchorId'),
   educationKind: ProfessionalEducationKindSchema,
   evidence: z.record(z.string(), z.unknown()).optional(),
 }).strict();
