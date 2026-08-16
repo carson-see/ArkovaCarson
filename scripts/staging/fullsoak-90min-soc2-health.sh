@@ -169,6 +169,23 @@ fi
 if [ "$GCLOUD_OK" = 1 ]; then
   VM_STATUS="$(gcloud compute instances describe "$BTC_VM" --zone="$BTC_VM_ZONE" --project="$GCP_PROJECT" --format="value(status)" 2>/dev/null)"
   [ "$VM_STATUS" = "RUNNING" ] && check "Chain-dep bitcoind VM" PASS "RUNNING" || check "Chain-dep bitcoind VM" FAIL "status='$VM_STATUS' — BL-2's GetBlock-hybrid provider needs this live all week"
+
+  # A18 (added Day 4, 2026-08-16) — TREASURY VISIBILITY.
+  # FD-CHAIN-1: the worker claimed "Treasury has no UTXOs — ... until funded"
+  # while the treasury held 742,637 sat, because GetBlockHybridProvider
+  # .listUnspent guards on `length >= 0` and so returns [] instead of falling
+  # back. The VM being RUNNING says nothing about whether the worker can SEE
+  # the treasury through it. Assert on the worker's own claim.
+  UTXO_BLIND="$(gcloud logging read "resource.type=\"cloud_run_revision\"
+   AND resource.labels.service_name=\"$RIG_SERVICE\"
+   AND (jsonPayload.msg:\"Treasury has no UTXOs\" OR jsonPayload.msg:\"Treasury empty\")
+   AND timestamp>=\"$(python3 -c 'import datetime;print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=95)).strftime("%Y-%m-%dT%H:%M:%SZ"))')\"" \
+   --project="$GCP_PROJECT" --limit=1 --format="value(timestamp)" 2>/dev/null | head -1)"
+  if [ -z "$UTXO_BLIND" ]; then
+    check "Chain-dep treasury visible to worker" PASS "no 'no UTXOs' claim in last 95m"
+  else
+    check "Chain-dep treasury visible to worker" FAIL "worker reported treasury empty at $UTXO_BLIND — VERIFY THE BALANCE INDEPENDENTLY before funding anything (FD-CHAIN-1: this claim was false once already)"
+  fi
 else
   check "Chain-dep bitcoind VM" WARN "gcloud not available"
 fi
@@ -181,7 +198,32 @@ if [ -n "$SB_URL_VAL" ] && [ -n "$SB_KEY_VAL" ]; then
   ( umask 077; { printf 'header = "apikey: %s"\n' "$SB_KEY_VAL"; printf 'header = "Authorization: Bearer %s"\n' "$SB_KEY_VAL"; } > "$CURLRC" )
   SECURED_NOW="$(curl -sS -m 15 -K "$CURLRC" "$SB_URL_VAL/rest/v1/anchors?select=id&status=eq.SECURED&limit=1" -H "Prefer: count=exact" -o /dev/null -D - 2>/dev/null | grep -i '^content-range' | sed -E 's#.*/##' | tr -d '\r')"
   MOCK_COUNT="$(curl -sS -m 15 -K "$CURLRC" "$SB_URL_VAL/rest/v1/anchors?select=id&chain_block_height=gt.400000&limit=1" -H "Prefer: count=exact" -o /dev/null -D - 2>/dev/null | grep -i '^content-range' | sed -E 's#.*/##' | tr -d '\r')"
+  # A17 (added Day 4, 2026-08-16) — DRAIN LIVENESS.
+  # Added because this script reported 13/13 PASS straight through a TOTAL
+  # anchoring outage (FD-CHAIN-1): batch-anchors returned HTTP 200 while
+  # skipping every batch, so nothing here noticed. Worker liveness is not
+  # anchoring liveness. `batch-anchors` runs */30, so a PENDING anchor older
+  # than 75 min means the drain is stalled, not merely between cycles.
+  OLDEST_PENDING="$(curl -sS -m 15 -K "$CURLRC" "$SB_URL_VAL/rest/v1/anchors?select=created_at&status=eq.PENDING&order=created_at.asc&limit=1" 2>/dev/null | python3 -c "
+import json,sys,datetime
+try:
+  d=json.load(sys.stdin)
+  if not d: print(-1)
+  else:
+    t=datetime.datetime.fromisoformat(d[0]['created_at'].replace('Z','+00:00'))
+    print(int((datetime.datetime.now(datetime.timezone.utc)-t).total_seconds()//60))
+except Exception: print(-2)" 2>/dev/null)"
   rm -f "$CURLRC"
+
+  if [ "${OLDEST_PENDING:--2}" = "-1" ]; then
+    check "A1.2 anchor drain liveness" PASS "no PENDING anchors"
+  elif [ "${OLDEST_PENDING:--2}" -ge 0 ] 2>/dev/null && [ "$OLDEST_PENDING" -le 75 ]; then
+    check "A1.2 anchor drain liveness" PASS "oldest PENDING ${OLDEST_PENDING}m (<=75m)"
+  elif [ "${OLDEST_PENDING:--2}" -gt 75 ] 2>/dev/null; then
+    check "A1.2 anchor drain liveness" FAIL "oldest PENDING ${OLDEST_PENDING}m > 75m — drain STALLED; a skipped batch is not a successful batch (see FD-CHAIN-1)"
+  else
+    check "A1.2 anchor drain liveness" WARN "could not read PENDING age"
+  fi
 
   [ "${MOCK_COUNT:-0}" = "0" ] && check "Evidence mock-height detector" PASS "0 anchors above height 400000" || check "Evidence mock-height detector" FAIL "$MOCK_COUNT anchors with chain_block_height>400000 — MockChainClient contamination"
 
