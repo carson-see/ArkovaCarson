@@ -52,7 +52,7 @@ TMPD="$(mktemp -d "${TMPDIR:-/tmp}/fullsoak-prod.XXXXXX")" || exit 2
 trap 'rm -rf "$TMPD"' EXIT INT TERM; chmod 700 "$TMPD"
 
 RUN_DATE="$(date -u +%F)"; RUN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; RUN_STAMP="$(date -u +%H%M%SZ)"
-OUT_DIR="$REPO_ROOT/$EVID_ROOT_REL/$RUN_DATE"; mkdir -p "$OUT_DIR" || exit 2
+OUT_DIR="${EVID_ROOT_ABS:-$REPO_ROOT/$EVID_ROOT_REL}/$RUN_DATE"; mkdir -p "$OUT_DIR" || exit 2
 OUT_MD="$OUT_DIR/prod-mainnet-evidence.md"
 OUT_RUN_MD="$OUT_DIR/prod-mainnet-evidence-$RUN_STAMP.md"
 OUT_JSON="$OUT_DIR/prod-mainnet-evidence-$RUN_STAMP.json"
