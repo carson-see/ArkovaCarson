@@ -78,6 +78,46 @@ Consequences, in order of severity:
    asserted:* I have not traced downstream consumers of this table, so this is a risk to
    check, not a confirmed billing defect.
 
+## Prod blast radius — latent, and it activates at launch
+
+Queried prod (`vzwyaatejekddvltxyye`) directly:
+
+| Prod fact | Value |
+|---|---|
+| `org_daily_usage` rows, **all kinds, all time** | **1** (org `9af95daf`, 2026-07-29, `anchors_created`, count 13) |
+| `anchors` created in the last 24h | **5,020** |
+
+So the per-org quota path is **essentially never exercised in prod**: prod's anchor volume
+arrives through the internal public-records cron, not the API-key-gated public endpoint that
+`perOrgRateLimit` guards. One row in the table's entire history.
+
+That means both defects are **latent in prod today and near-zero impact right now** — and
+both activate the moment real API customers create anchors, which is exactly the launch path
+(SDK / MCP / partner API traffic). The first customer to hit their daily cap gets a 429 whose
+headers claim 987 requests of headroom, and a counter that permanently locks them out for the
+rest of the day if their client retries.
+
+It also means the quota system has had **essentially no production exercise at all**. Its
+first real use will be by a paying customer.
+
+## The pattern worth naming
+
+This is the **third** sighting of FD-RL-2, and the first two were written off:
+
+| When | Where | Recorded as |
+|---|---|---|
+| 2026-07-29 | `HANDOFF.md` F-7 — `current=102205` vs 32 real anchors | "likely a stale/uncapped usage counter, not diagnosed further" |
+| 2026-07-29 | `SOAK-FINDINGS-2026-08.md` — `current=104,668` | "a legitimate quota gate, **not a bug**" |
+| 2026-08-16 | here — `current=3,132` vs 98 real anchors | root-caused: increments on denial |
+
+The second sighting concluded it was not a bug and worked around it by bumping the fixture
+orgs to `ENTERPRISE` (1,000,000/day), which raised the ceiling so far that the runaway counter
+stopped being visible. **The workaround hid the defect for eighteen days.** A counter reading
+102,205 against 32 real rows was never a stale counter; it was this bug, in the open, twice.
+
+The lesson is the cheap one: an unexplained number that contradicts an authoritative count is
+a finding, not noise, and raising a limit until the symptom disappears is not a diagnosis.
+
 **Fix:** increment the usage counter only when the underlying operation succeeds, or split
 "requests" from "created" into distinct kinds. A regression test should assert that N denied
 requests leave the counter unchanged.
