@@ -64,6 +64,14 @@ window exercised Trigger A or Trigger B would be false. To evidence them the rig
 backlog of 3,000+ (B, with a 3h age) and 10,000 (A) — which is a deliberate volume
 injection, not something continuous low-rate traffic will ever produce.
 
+**CORRECTION (same day, after attempting it):** the rate was never the binding constraint.
+The per-org **daily quota** caps a FREE-tier org at **100 anchors/day**
+(`perOrgRateLimit.ts`, `TIER_QUOTAS.FREE.anchors_created`), and both rig orgs are FREE.
+An attempt to inject 3,100 anchors returned **3,030 x HTTP 429 `ORG_QUOTA_EXCEEDED`**.
+So 3,000 pending is ~15 org-days away and Trigger B is unreachable inside this window
+without moving an org to `PAID`. See `FD-RL-quota-headers-and-counter.md`, which also
+records two real defects found by that attempt.
+
 **Measured:** Trigger D (daily 03:00 flush), proven Day 0 (PENDING 2→0 in ~1.4s) and
 repeatable nightly.
 **NOT asserted:** Trigger A, Trigger B, or Trigger C fee-deferral behavior under a real
