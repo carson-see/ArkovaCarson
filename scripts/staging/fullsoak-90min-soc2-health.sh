@@ -198,12 +198,23 @@ if [ -n "$SB_URL_VAL" ] && [ -n "$SB_KEY_VAL" ]; then
   ( umask 077; { printf 'header = "apikey: %s"\n' "$SB_KEY_VAL"; printf 'header = "Authorization: Bearer %s"\n' "$SB_KEY_VAL"; } > "$CURLRC" )
   SECURED_NOW="$(curl -sS -m 15 -K "$CURLRC" "$SB_URL_VAL/rest/v1/anchors?select=id&status=eq.SECURED&limit=1" -H "Prefer: count=exact" -o /dev/null -D - 2>/dev/null | grep -i '^content-range' | sed -E 's#.*/##' | tr -d '\r')"
   MOCK_COUNT="$(curl -sS -m 15 -K "$CURLRC" "$SB_URL_VAL/rest/v1/anchors?select=id&chain_block_height=gt.400000&limit=1" -H "Prefer: count=exact" -o /dev/null -D - 2>/dev/null | grep -i '^content-range' | sed -E 's#.*/##' | tr -d '\r')"
-  # A17 (added Day 4, 2026-08-16) — DRAIN LIVENESS.
+  # A17 (added Day 4, 2026-08-16; THRESHOLD CORRECTED same day) — DRAIN LIVENESS.
   # Added because this script reported 13/13 PASS straight through a TOTAL
   # anchoring outage (FD-CHAIN-1): batch-anchors returned HTTP 200 while
   # skipping every batch, so nothing here noticed. Worker liveness is not
-  # anchoring liveness. `batch-anchors` runs */30, so a PENDING anchor older
-  # than 75 min means the drain is stalled, not merely between cycles.
+  # anchoring liveness.
+  #
+  # CORRECTION: the first version failed any PENDING older than 75 min, on the
+  # assumption that the */30 cron drains every cycle. It does not, and that
+  # assertion would have raised a false FAIL every single day. Batching is
+  # TRIGGER-based (batch-anchor.ts):
+  #   Trigger A — pendingCount >= BATCH_SIZE (10,000)         → fire
+  #   Trigger B — pendingCount >= 3,000 AND oldest age >= 3h  → fire
+  #   Trigger D — daily 03:00 forced flush                    → fire whatever is queued
+  # A micro-queue is DESIGNED to sit until the 03:00 flush; firing a TX for a
+  # handful of leaves burns a UTXO for nothing (the pre-2026-04-28 behavior
+  # that PR #627 removed). So the real failure signal is a MISSED DAILY FLUSH,
+  # not an anchor waiting a few hours. 26h allows one full daily cycle plus margin.
   OLDEST_PENDING="$(curl -sS -m 15 -K "$CURLRC" "$SB_URL_VAL/rest/v1/anchors?select=created_at&status=eq.PENDING&order=created_at.asc&limit=1" 2>/dev/null | python3 -c "
 import json,sys,datetime
 try:
@@ -216,13 +227,13 @@ except Exception: print(-2)" 2>/dev/null)"
   rm -f "$CURLRC"
 
   if [ "${OLDEST_PENDING:--2}" = "-1" ]; then
-    check "A1.2 anchor drain liveness" PASS "no PENDING anchors"
-  elif [ "${OLDEST_PENDING:--2}" -ge 0 ] 2>/dev/null && [ "$OLDEST_PENDING" -le 75 ]; then
-    check "A1.2 anchor drain liveness" PASS "oldest PENDING ${OLDEST_PENDING}m (<=75m)"
-  elif [ "${OLDEST_PENDING:--2}" -gt 75 ] 2>/dev/null; then
-    check "A1.2 anchor drain liveness" FAIL "oldest PENDING ${OLDEST_PENDING}m > 75m — drain STALLED; a skipped batch is not a successful batch (see FD-CHAIN-1)"
+    check "A1.2 anchor drain liveness (daily flush)" PASS "no PENDING anchors"
+  elif [ "${OLDEST_PENDING:--2}" -ge 0 ] 2>/dev/null && [ "$OLDEST_PENDING" -le 1560 ]; then
+    check "A1.2 anchor drain liveness (daily flush)" PASS "oldest PENDING ${OLDEST_PENDING}m (<=26h; micro-queues drain at the 03:00 flush by design)"
+  elif [ "${OLDEST_PENDING:--2}" -gt 1560 ] 2>/dev/null; then
+    check "A1.2 anchor drain liveness (daily flush)" FAIL "oldest PENDING ${OLDEST_PENDING}m > 26h — a DAILY FLUSH WAS MISSED (Trigger D), not merely a deferred micro-batch"
   else
-    check "A1.2 anchor drain liveness" WARN "could not read PENDING age"
+    check "A1.2 anchor drain liveness (daily flush)" WARN "could not read PENDING age"
   fi
 
   [ "${MOCK_COUNT:-0}" = "0" ] && check "Evidence mock-height detector" PASS "0 anchors above height 400000" || check "Evidence mock-height detector" FAIL "$MOCK_COUNT anchors with chain_block_height>400000 — MockChainClient contamination"
