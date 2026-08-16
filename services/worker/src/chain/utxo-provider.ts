@@ -836,11 +836,26 @@ export class GetBlockHybridProvider implements UtxoProvider {
     this.mempool = new MempoolUtxoProvider({ baseUrl: config.mempoolBaseUrl ?? MEMPOOL_URLS.mainnet });
   }
 
-  /** Try RPC node for UTXO listing first, fall back to mempool.space */
+  /**
+   * Try RPC node for UTXO listing first, fall back to mempool.space.
+   *
+   * FD-CHAIN-1: the length guard is `> 0`, NOT `>= 0`. `listunspent` is a
+   * Bitcoin Core **wallet** RPC — it returns only UTXOs belonging to a wallet
+   * the node has loaded. A WIF-derived treasury address that is not in the
+   * node's wallet therefore produces a SUCCESSFUL call returning `[]`, with no
+   * exception to catch. `>= 0` is true for every array, so that empty success
+   * was returned verbatim and the fallback below was unreachable — the
+   * provider reported an empty treasury that held 742,637 sat, and anchoring
+   * halted silently for hours behind HTTP 200s (fullsoak-2026-08 Day 4).
+   *
+   * An empty result is not an answer, it is the absence of one: fall through
+   * to the address-indexed source, which can see UTXOs the node's wallet does
+   * not track. See docs/staging/fullsoak-2026-08/FD-CHAIN-1-listunspent-silent-empty.md
+   */
   async listUnspent(address: string): Promise<Utxo[]> {
     try {
       const rpcUtxos = (await rpcCall(this.rpcUrl, 'listunspent', [1, 9999999, [address]], this.rpcAuth)) as Array<{ txid: string; vout: number; amount: number }>;
-      if (rpcUtxos && rpcUtxos.length >= 0) {
+      if (rpcUtxos && rpcUtxos.length > 0) {
         return rpcUtxos.map((u) => ({
           txid: u.txid,
           vout: u.vout,

@@ -1,10 +1,67 @@
 # agents.md — services/worker/src/chain/
 
-_Last updated: 2026-08-11_
+_Last updated: 2026-08-16_
 
 ## What This Folder Contains
 
 Bitcoin chain client implementation for anchoring document fingerprints on-chain via OP_RETURN transactions.
+
+## 2026-08-16 FD-CHAIN-1 — an EMPTY RPC result is not an answer (`>= 0` → `> 0`)
+
+`GetBlockHybridProvider.listUnspent` guarded its RPC result with
+`rpcUtxos.length >= 0`, which is true for **every** array. `listunspent` is a Bitcoin Core
+**wallet** RPC: it returns only UTXOs of a wallet the node has loaded, so a WIF-derived
+treasury address absent from that wallet produces a **successful** call returning `[]`. No
+throw ⇒ the `catch` never ran ⇒ the mempool.space fallback on the last line was
+**unreachable**, and `[]` was returned as though it were the truth about the treasury.
+
+Found on the fullsoak-2026-08 rig (Day 4): anchoring was **completely halted** for hours
+while the treasury held **742,637 sat**, and every signal stayed green — `POST
+/jobs/batch-anchors` 200, Cloud Scheduler success, SOC2 health check 13/13. The same worker
+logged `Treasury cache refreshed balance: 742637` seconds after logging `Treasury has no
+UTXOs`. Full writeup:
+`docs/staging/fullsoak-2026-08/FD-CHAIN-1-listunspent-silent-empty.md`.
+
+**Why every existing test missed it.** The fallback was designed for the *opposite* failure
+— GetBlock's shared endpoint rejecting the wallet RPC (SCRUM-1262 / R1-8, and the HTTP 405
+shape pinned by BUG-2026-08-01-F10). Every fallback test in `utxo-provider.test.ts` drives
+the path through an **exception**. "RPC returns 200 with an empty array" was not in the
+design's vocabulary, so no test expressed it. A fallback that only fires on a throw is not a
+fallback from *no data*; it is a fallback from *a broken transport*.
+
+**Prod was safe only by accident, and the accident is scheduled to end.** Prod's GetBlock
+RPC errors on `listunspent` every cycle (100% fallback rate, F-10), so the exception path
+fires and prod gets real UTXOs. The defect is fully latent there — and activates the moment
+prod moves to a self-hosted node, which is the stated sovereignty goal and precisely the
+architecture the rig ran.
+
+Rules this leaves behind:
+
+- **Never treat an empty provider result as an authoritative answer** in a multi-source
+  provider. Distinguish "the source said none" from "the source said nothing useful" —
+  fall through to the next source and let the last one own the empty verdict.
+- **A length check on a result you intend to guard is `> 0`.** `>= 0` and `!= null` are
+  guards that cannot fail; if a condition cannot be false, it is documentation, not a check.
+- **Test the success-shaped failure, not just the throw.** Any provider with a fallback needs
+  a case where the primary *succeeds uselessly*. The `FD-CHAIN-1` describe block in
+  `utxo-provider.test.ts` pins that, plus the inverse (a non-empty RPC result must NOT reach
+  the fallback) so the fix cannot decay into "always use mempool.space".
+
+Companion, same finding: `signet.ts::hasFunds()` observed "the provider returned no rows"
+and reported "the treasury is unfunded" (`'Treasury has no UTXOs — batch processing will be
+skipped until funded'`). That is a stronger claim than the observation supports and it sent
+a live diagnosis at the wallet instead of the provider. The message now states what is
+measured (Constitution §1.5) and logs `provider` so the answering source is named. Pinned by
+the `BitcoinChainClient.hasFunds` block in `signet.test.ts`. **Not fixed here:** the
+`jobs/batch-anchor.ts` companion log (`'Treasury empty — skipping batch anchor processing
+until funded'`) makes the same unsupported claim one layer up — different folder, separate
+change.
+
+**Still open (NOT closed by this fix):** FD-CHAIN-2 — the fallback-rate alert described in
+the `listUnspent` catch comment ("alert if it stays at 100%") is absent or unwired; prod
+sits at 100% fallback right now and nothing fires. Also unclosed: `batch-anchors` returns a
+bare 200 when it skips the whole batch, and the health check passed 13/13 through a total
+anchoring outage, so it is not measuring anchoring.
 
 ## 2026-08-11 SCRUM-3128 — `estimateFee()` is lossy; gates must use `estimateFeeDetailed()`
 
