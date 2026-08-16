@@ -113,10 +113,45 @@ Two detection gaps to close, independent of the code fix:
   the current message asserts the former while observing the latter, which is what sent the
   diagnosis toward the wallet instead of the provider.
 
-## Rig remediation (does not fix the bug)
+## Second contributing factor — FD-CHAIN-3, node descriptor drift
 
-Anchoring on the rig is unblocked at the **node** layer so the remaining window exercises
-the pipeline. That is a workaround, not a fix: the `>= 0` defect is untouched by it and
-the code fix ships separately as a draft PR. The frozen worker revision
-`arkova-worker-fullsoak-2026-08-staging-00013-mrw`, its digest, env, git_sha and uptime
-are not modified.
+The node's `arkova-watch-only` wallet was watching **a different address than the worker
+signs with**:
+
+| | Address |
+|---|---|
+| Node watch-only descriptor | `addr(tb1qxca7ke7hgguarqxkwwydrfenn8ymnspxq765eq)` |
+| Worker treasury (from `BITCOIN_TREASURY_WIF`) | `tb1qrjarsqj0ewqh3u9fdcu7yfyl0sx78k4savtmv7` |
+
+`getaddressinfo` on the real treasury returned `ismine=false, iswatchonly=false`. So even a
+correctly-written provider would have gotten `[]` from this node. **Two independent faults
+lined up**: the node could not see the treasury, and the provider could not fall back when
+the node saw nothing. Either one alone would have been survivable.
+
+This also means the rig's "self-hosted node" configuration was never actually able to serve
+UTXO listing for the treasury in use — worth checking before any prod sovereignty migration,
+because it is precisely the migration that activates the P0 above.
+
+## Rig remediation (does NOT fix the bug)
+
+Applied 2026-08-16 at the **node** layer so the remaining window exercises the pipeline:
+
+```
+importdescriptors [{"desc":"addr(tb1qrjarsqj0ewqh3u9fdcu7yfyl0sx78k4savtmv7)#7sdcexm7",
+                    "timestamp":0,"active":false,"internal":false,"label":"fullsoak-treasury"}]
+→ success: true
+```
+
+Verified after import: `ismine=true`; `listunspent` returns the real UTXO —
+`910e557c…:1`, `0.00742637 BTC`, 592 confirmations — matching mempool.space exactly.
+
+This is a **workaround, not a fix**. It repairs FD-CHAIN-3 (the drift) and thereby routes
+around FD-CHAIN-1, which is untouched; the `>= 0` guard still cannot fall back and the code
+fix ships separately as a draft PR. The frozen worker revision
+`arkova-worker-fullsoak-2026-08-staging-00013-mrw`, its digest, env, git_sha and uptime are
+not modified — this changed a soak *dependency*, not the software under test.
+
+**Evidence-integrity note:** anchor throughput for this window is therefore split. Days 0–3
+were idle by construction; Day 4 up to 2026-08-16T15:00Z produced anchors that could not
+drain because of this defect. Continuous drain evidence begins only after the import above.
+Any report must not describe the window as carrying uninterrupted anchoring.
