@@ -44,8 +44,12 @@ EXPECTED_DIGEST="${EXPECTED_DIGEST:-sha256:8ace89d483484c40ea2022f7f21361effbfd6
 EXPECTED_GIT_SHA="${EXPECTED_GIT_SHA:-f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-EVID_ROOT="${EVID_ROOT:-$REPO_ROOT/docs/staging/evidence/fullsoak-2026-08}"
-STATE_FILE="${STATE_FILE:-$EVID_ROOT/day0-snapshots/90min-health-last-state.txt}"
+# EVID_ROOT_ABS is accepted as an alias so every soak instrument takes the same
+# override. It used to be ignored HERE only, which silently sent manual runs to
+# the repo default while launchd wrote the home path — two diverging state files,
+# and the manual one was a stale orphan for 33h. See the staleness guard below.
+EVID_ROOT="${EVID_ROOT:-${EVID_ROOT_ABS:-$REPO_ROOT/docs/staging/evidence/fullsoak-2026-08}}"
+STATE_FILE="${STATE_FILE:-$EVID_ROOT/90min-health-last-state.txt}"
 
 now_epoch() { python3 -c 'import time; print(int(time.time()))'; }
 iso_to_epoch() { python3 -c "import datetime,sys; print(int(datetime.datetime.strptime(sys.argv[1],'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc).timestamp()))" "$1"; }
@@ -68,21 +72,52 @@ OUT="$OUT_DIR/90min-health-$UTC_NOW.md"
 # itself is written exactly once, at the very end of the script, from
 # whatever this cycle actually observed (falling back to the prior value
 # for any reading this cycle failed to obtain) — see the final write block.
-PRIOR_UPTIME="<none>"; PRIOR_SECURED="<none>"
+PRIOR_UPTIME="<none>"; PRIOR_SECURED="<none>"; PRIOR_AGE_MIN=""
 if [ -f "$STATE_FILE" ]; then
   PRIOR_UPTIME="$(grep -m1 '^last_uptime=' "$STATE_FILE" 2>/dev/null | cut -d= -f2)"
   PRIOR_SECURED="$(grep -m1 '^last_secured=' "$STATE_FILE" 2>/dev/null | cut -d= -f2)"
+  PRIOR_STAMP="$(grep -m1 '^last_check_utc=' "$STATE_FILE" 2>/dev/null | cut -d= -f2)"
   [ -n "$PRIOR_UPTIME" ] || PRIOR_UPTIME="<none>"
   [ -n "$PRIOR_SECURED" ] || PRIOR_SECURED="<none>"
+  # Staleness guard. A monotonic comparison against an OLD anchor is not an
+  # assertion — it passes for the wrong reason. This actually happened: manual
+  # runs read an orphaned state file frozen at last_uptime=125147 for 33h and
+  # reported PASS every cycle purely because uptime kept exceeding it. The
+  # cadence is 90 min, so anything older than 3h means the previous write did
+  # not land and both monotonic checks below are meaningless.
+  if [ -n "${PRIOR_STAMP:-}" ]; then
+    PRIOR_AGE_MIN="$(python3 -c "
+import datetime,sys
+try:
+  t=datetime.datetime.strptime(sys.argv[1],'%Y-%m-%dT%H%M%SZ').replace(tzinfo=datetime.timezone.utc)
+  print(int((datetime.datetime.now(datetime.timezone.utc)-t).total_seconds()//60))
+except Exception: print(-1)" "$PRIOR_STAMP" 2>/dev/null)"
+  fi
 fi
 
 PASS=0; FAIL=0; WARN=0
 declare -a ROWS=()
+
+check_state_freshness() {
+  if [ "$PRIOR_UPTIME" = "<none>" ]; then
+    check "CC7.2 monotonic-state freshness" WARN "no prior state (first run, or STATE_FILE just reset) — monotonic checks are informational this cycle"
+  elif [ -z "${PRIOR_AGE_MIN:-}" ] || [ "${PRIOR_AGE_MIN:--1}" -lt 0 ] 2>/dev/null; then
+    check "CC7.2 monotonic-state freshness" FAIL "state file carries no parsable last_check_utc — the monotonic assertions below cannot be trusted; STATE_FILE=$STATE_FILE"
+  elif [ "$PRIOR_AGE_MIN" -gt 180 ] 2>/dev/null; then
+    check "CC7.2 monotonic-state freshness" FAIL "prior state is ${PRIOR_AGE_MIN}m old (>3h) — the previous write did not land, so uptime/SECURED monotonic below PASS for the wrong reason; STATE_FILE=$STATE_FILE"
+  else
+    check "CC7.2 monotonic-state freshness" PASS "prior state ${PRIOR_AGE_MIN}m old"
+  fi
+}
 check() { # check <name> <status PASS|FAIL|WARN> <detail>
   local name="$1" status="$2" detail="$3"
   case "$status" in PASS) PASS=$((PASS+1));; FAIL) FAIL=$((FAIL+1));; WARN) WARN=$((WARN+1));; esac
   ROWS+=("| $name | $status | $detail |")
 }
+
+# Must run AFTER check() exists — an earlier version called this one line too
+# early, so it silently no-op'd and the guard never appeared in the report.
+check_state_freshness
 
 command -v gcloud >/dev/null 2>&1 && GCLOUD_OK=1 || GCLOUD_OK=0
 command -v gh >/dev/null 2>&1 && GH_OK=1 || GH_OK=0
