@@ -8,6 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 SearchType = Literal["all", "org", "record", "fingerprint", "document"]
 SearchResultType = Literal["org", "record", "fingerprint", "document"]
 
+# Discriminator emitted by every v2 anchor-detail route. `mapAnchorDetail()` in
+# services/worker/src/api/v2/resourceDetails.ts takes it as an argument and is
+# called with exactly these three values — one per route.
+ResourceDetailType = Literal["record", "fingerprint", "document"]
+
 # Mirrors the worker's CREDENTIAL_TYPES enum in
 # services/worker/src/api/v1/anchor-bulk.ts. Keep in sync; the server is
 # authoritative and rejects unknown values.
@@ -28,6 +33,23 @@ class ArkovaModel(BaseModel):
 
 
 class ProblemDetail(ArkovaModel):
+    """RFC 7807 problem document — emitted by the **v2 API only**.
+
+    `client._problem()` builds one only for an `application/problem+json`
+    response, which is the v2 error surface. The v1 endpoints this SDK also
+    calls (`/api/v1/anchor`, `/api/v1/anchor/bulk`, `/api/v1/verify/...`) emit
+    plain JSON in one of three shapes instead — `{error}`,
+    `{error, message, details}`, or `{error: {code, message}}` — so
+    `ArkovaError.problem` is `None` for every v1 failure. Read
+    `ArkovaError.code` / `.status_code` rather than `.problem` if the call
+    might hit a v1 route.
+
+    Those plain shapes are handled by `client._plain_error_body()`. Note the
+    nested `{error: {code, message}}` form yields `ArkovaError.code = None`
+    (the `error` value is a dict, not a string) and a status-derived message;
+    it raises correctly but carries no machine-readable code.
+    """
+
     type: str
     title: str
     status: int
@@ -36,6 +58,20 @@ class ProblemDetail(ArkovaModel):
 
 
 class SearchResult(ArkovaModel):
+    """One row of a v2 search response.
+
+    ``score`` carries NO relevance signal. All four mappers in
+    ``services/worker/src/api/v2/search.ts`` (org / record / fingerprint /
+    document) build ``score: 1.0`` as a literal; the file contains no ranking
+    function of any kind. Every result therefore ties, and sorting or
+    thresholding on ``score`` is meaningless — result order comes from the
+    query's own ``.order()`` clause, not from this field.
+
+    It is kept because the v2 response shape is frozen (CLAUDE.md §1.8):
+    removing a published field would be the breaking change, and the SDK
+    cannot invent a relevance number the API does not compute.
+    """
+
     type: SearchResultType
     public_id: str
     score: float
@@ -285,6 +321,18 @@ class OrgList(ArkovaModel):
 # id/org_id/user_id/record_id columns.
 
 class OrganizationDetail(ArkovaModel):
+    """Response of ``GET /api/v2/organizations/{public_id}``.
+
+    The handler in ``resourceDetails.ts`` does not spread the row — it names
+    six keys explicitly in its ``res.json({...})``, and those six are exactly
+    the fields below.
+
+    Removed in 2.3.0: ``industry_tag``, ``org_type``, ``location`` and
+    ``logo_url``. None of the four are selected from the ``organizations``
+    row, let alone emitted, so no code path could ever have set them; they
+    read ``None`` on every response since the model was written.
+    """
+
     # The v2 /api/v2/organizations/{public_id} response is intentionally
     # public-safe: no internal `id` UUID. We do NOT inherit from Org here
     # because `Org.id` is required, which would fail Pydantic validation
@@ -295,20 +343,29 @@ class OrganizationDetail(ArkovaModel):
     website_url: str | None = None
     verification_status: str | None = None
     description: str | None = None
-    industry_tag: str | None = None
-    org_type: str | None = None
-    location: str | None = None
-    logo_url: str | None = None
 
 
 class RecordDetail(ArkovaModel):
+    """Response of ``GET /api/v2/records/{public_id}``.
+
+    All three anchor-detail routes share one mapper (``mapAnchorDetail``), so
+    this model, `FingerprintDetail` and `DocumentDetail` share one field set
+    and differ only in the `type` discriminator each route emits.
+
+    Removed in 2.3.0: ``issuer_name``. ``mapAnchorDetail`` has no such key —
+    the issuer reaches clients through ``metadata["issuer"]`` instead
+    (``issuer`` is one of the ten keys ``safeMetadata()`` allow-lists).
+    """
+
+    # Always emitted; identifies which of the three routes answered. Declared
+    # as the full union on the base and narrowed per-subclass below.
+    type: ResourceDetailType
     public_id: str | None = None
     verified: bool
     status: str
     fingerprint: str | None = None
     title: str | None = None
     description: str | None = None
-    issuer_name: str | None = None
     credential_type: str | None = None
     sub_type: str | None = None
     issued_date: str | None = None
@@ -316,30 +373,54 @@ class RecordDetail(ArkovaModel):
     anchor_timestamp: str | None = None
     network_receipt_id: str | None = None
     record_uri: str | None = None
+    # `safeMetadata()` filters the row's metadata to a ten-key allow-list and
+    # returns `undefined` when nothing survives, which drops the key from the
+    # JSON entirely — so absent means empty, never null.
+    metadata: dict[str, Any] | None = None
 
 
 class FingerprintDetail(RecordDetail):
+    # Narrowed from the base union: this route always emits "fingerprint".
+    # Same override pattern (and same reason for the ignore) as `fingerprint`.
+    type: Literal["fingerprint"]  # type: ignore[assignment]
     fingerprint: str  # type: ignore[assignment]
 
 
 class DocumentDetail(RecordDetail):
-    pass
+    type: Literal["document"]  # type: ignore[assignment]
 
 
 # ── Write path (anchor / anchor_bulk) ────────────────────────────────────
 # HAKI-REQ-02 (SCRUM-1171): POST /api/v1/anchor and /api/v1/anchor/bulk.
 # Response shape is distinct from the read-only `Anchor` model above (no
-# `verified` / `record_uri` — those only exist once the anchor is looked up).
+# `verified` — that only exists once the anchor is looked up).
 
 
 class AnchorReceipt(ArkovaModel):
-    """Response of ``POST /api/v1/anchor``."""
+    """Response of ``POST /api/v1/anchor``.
+
+    Five keys, all unconditional: the endpoint's two emit sites — the
+    idempotent duplicate hit (200) and the fresh insert (201) — build the same
+    object literal, and `interface AnchorReceipt` in ``anchor-submit.ts``
+    declares every member non-optional.
+
+    Removed in 2.3.0: ``chain_tx_id``. The endpoint has never emitted it, and
+    structurally cannot: the receipt is issued at creation with
+    ``status='PENDING'``, before any batch drain has anchored the fingerprint,
+    so there is no transaction id in existence yet. Read it from
+    ``verify()``'s ``network_receipt_id`` once the anchor settles.
+    """
 
     public_id: str
     fingerprint: str
+    # Plain `str`, not `Literal["PENDING"]`: the endpoint only sends PENDING
+    # today, but pinning an API snapshot as a hard constraint is the defect
+    # BUG-2026-08-12-007 records. A new status must surface, not raise.
     status: str
     created_at: str
-    chain_tx_id: str | None = None
+    # The caller's link to the verification page. Always emitted — both sites
+    # build it via `buildVerifyUrl()`, which returns a string unconditionally.
+    record_uri: str
 
 
 @dataclass
@@ -371,8 +452,25 @@ class BulkAnchorDuplicate(ArkovaModel):
 
 
 class BulkAnchorRowError(ArkovaModel):
+    """One per-row failure from ``POST /api/v1/anchor/bulk``.
+
+    ``code`` is one of exactly two values today — ``insert_failed`` (the row's
+    database insert failed; a ``23505`` unique violation is reported as a
+    conflict message) and ``unexpected_error`` (the insert threw). Those are
+    documented here rather than enforced as a ``Literal`` for the same reason
+    ``AnchorReceipt.status`` is a plain ``str``.
+
+    Row-level *schema* problems never appear in this array: a malformed row
+    fails Zod validation for the whole request, which returns 400 with a
+    ``details[]`` list — a different shape on a different response, surfaced
+    as ``ArkovaError(code="invalid_request")``.
+
+    Removed in 2.3.0: ``field``. The worker's ``RowError`` interface declares
+    ``field?: string``, but neither ``errors.push()`` site assigns it, so it
+    never reaches the wire.
+    """
+
     row: int
-    field: str | None = None
     code: str
     message: str
 

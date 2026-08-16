@@ -47,6 +47,7 @@ with Arkova(api_key="ak_live_...") as arkova:
     # Raw content — fingerprinted in-process before anything is sent.
     receipt = arkova.anchor("document content goes here")
     print(receipt.public_id, receipt.status)  # "PENDING" -> "SUBMITTED" -> "SECURED"
+    print(receipt.record_uri)  # public verification page for this anchor
 
     # Or: you already have the fingerprint.
     receipt = arkova.anchor(fingerprint="a" * 64)
