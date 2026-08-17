@@ -56,6 +56,42 @@ batching property stated as a design goal — Bitcoin cost tracks **broadcast co
 document count** — and it is now measured rather than asserted, at two points three orders
 of magnitude apart in per-document cost.
 
+## Correction — how Trigger B was established, and a real observability gap
+
+**Trigger B fires SILENTLY. There is no log line for it.** In `batch-anchor.ts` the
+trigger block logs three cases and not the fourth:
+
+| Case | Log |
+|---|---|
+| `opts.force` | info — `Forced org batch flush` / `Forced batch flush (daily 3am EST sweep)` |
+| Trigger A | info — `Batch size trigger fired` |
+| Trigger B **fails** | debug — `Batch trigger not met — deferring`, then returns |
+| Trigger B **passes** | **nothing** — falls straight through to the claim |
+
+So the 14:00:02Z run is attributed to Trigger B by **elimination against the code**, not by
+a log line: there was no force log, no Trigger-A log, `claimed=3832` is below the 10,000
+Trigger-A threshold, and the run did not return empty — which is reachable only if
+`triggerB_shouldFireOnAge` returned true. The conclusion holds, but it is inference, and it
+should be read as such.
+
+**This is worth fixing.** The one trigger whose firing conditions are hardest to reason
+about (a conjunction of count AND age) is also the only one that leaves no trace. An
+operator cannot answer "why did this batch fire?" from logs alone. Trigger B should emit an
+info log symmetric with A and D.
+
+## Correction — the 14:19Z batch was NOT Trigger A
+
+A second batch claimed **6,706** anchors at 14:19:17Z. That was **not** Trigger A. The
+preceding line reads `Forced org batch flush  pendingCountSentinel=3000
+oldestAgeMs=1151342` — the per-org queue scheduler's `opts.force` path, which bypasses both
+the size and age thresholds. Trigger A has **still not fired**.
+
+This surfaces the real obstacle to reaching it: the per-org forced flush runs on its own
+cadence, independent of the `*/30` `batch-anchors` job (whose last Cloud Scheduler attempt
+was 14:00:14Z), and drains the pending pool before it can accumulate to 10,000. Reaching
+`pendingCount >= BATCH_SIZE` therefore requires injecting faster than the org-queue flush
+drains — a throughput race, not a quota problem.
+
 ## Scope of the claim
 
 **Measured:** Trigger B fires when `pendingCount >= 3,000` and oldest age `>= 3h`; it claims
