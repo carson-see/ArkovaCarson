@@ -90,6 +90,7 @@
 
 import { logger } from '../utils/logger.js';
 import { capturePipelineThroughputAlert } from '../utils/sentry.js';
+import { ANCHOR_INSERT_QUARANTINE_FILTER_COLUMN } from './public-record-quarantine.js';
 
 /**
  * Default lookback window for condition A. Must stay ≥ 24h: small org queues
@@ -325,6 +326,15 @@ async function fetchUnlinkedBoundaryCreatedAt(
     .from('public_records')
     .select('created_at')
     .is('anchor_id', null)
+    // Quarantined rows (metadata.anchor_insert_quarantined_at — see
+    // jobs/public-record-quarantine.ts) keep anchor_id NULL by design: the
+    // anchoring job deliberately skips them. Without this exclusion the
+    // oldest-unlinked probe ages a quarantined row forever and condition B
+    // becomes a permanent fatal-alert stream — the same alert storm
+    // (SCRUM-3156) the 2026-08-17 poison record caused. Still an Index Scan
+    // on idx_public_records_unanchored; the jsonb check is a filter on the
+    // (few) quarantined rows encountered in created_at order.
+    .is(ANCHOR_INSERT_QUARANTINE_FILTER_COLUMN, null)
     .order('created_at', { ascending: direction === 'oldest' })
     .limit(1);
 

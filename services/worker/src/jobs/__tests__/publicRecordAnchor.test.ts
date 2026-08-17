@@ -448,6 +448,40 @@ describe('publicRecordAnchor', () => {
     expect(sql).toContain('a.chain_tx_id = p_tx_id');
     expect(sql).toContain('UPDATE public_records pr');
   });
+
+  it('excludes quarantined records from every unanchored fetch (2026-08-17 poison record)', async () => {
+    // A row whose anchor insert poisoned the pipeline gets a
+    // metadata.anchor_insert_quarantined_at marker; the created_at-ascending
+    // fetch must skip it or it re-poisons the head of the queue every run.
+    const records = [{
+      id: 'record-0',
+      content_hash: 'ab'.repeat(32),
+      metadata: {},
+      source: 'edgar',
+      source_id: 'CIK-0',
+      source_url: 'https://sec.gov/filing/0',
+      record_type: '10-K',
+      title: 'Test Filing 0',
+    }];
+    mockRpc
+      .mockResolvedValueOnce({ data: true }) // get_flag
+      .mockResolvedValueOnce({ data: records.map((r, i) => ({ id: `anchor-uuid-${i}`, fingerprint: r.content_hash })) })
+      .mockResolvedValueOnce({ data: { records_updated: 1, anchors_updated: 1 } });
+    const { client: mockSupa } = makeMock(records);
+    mockSubmitFingerprint.mockResolvedValue({
+      receiptId: 'tx_mock_q',
+      blockHeight: 0,
+      blockTimestamp: new Date().toISOString(),
+      confirmations: 0,
+    });
+
+    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
+    await processPublicRecordAnchoring(mockSupa);
+
+    // Both fetch paths (priority sources + non-priority) go through the shared
+    // select chain — the quarantine filter must be on it.
+    expect(mockSelectChain.chain.is).toHaveBeenCalledWith('metadata->anchor_insert_quarantined_at', null);
+  });
 });
 
 /**

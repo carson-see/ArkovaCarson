@@ -2,6 +2,42 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-17 — poison-record fixes: surrogate-safe truncation + insert-failure quarantine (`publicRecordAnchor.ts`, new `public-record-quarantine.ts`)
+
+Two durable fixes demanded by the 2026-08-17 prod repair
+(`docs/staging/fullsoak-2026-08/prod-repair-poison-record-2026-08-17.md`): a `public_records` row
+whose abstract carried 86 astral-plane characters had its surrogate pair split by
+`publicRecordDescription`'s `.slice(0, 500)` at exactly unit 500 → lone high surrogate in
+`description` → PostgREST `PGRST102 "Empty or invalid json"` on the anchor insert → the
+`created_at`-ascending fetch re-selected the same oldest row at the head of the queue every 10
+minutes for 16 days, feeding the SCRUM-3156 fatal-alert storm.
+
+- **Truncation.** Both truncation sites (`publicRecordDescription` 500, `buildAnchorFilename` title
+  180) now go through `utils/utf16-truncate.ts` `truncateUtf16Safe` — see that folder's `agents.md`
+  for the mechanism (drop the split surrogate, `toWellFormed()` guard). `publicRecordDescription` is
+  now exported for direct unit testing.
+- **Quarantine (defense-in-depth — the truncation fix removes the KNOWN poison class).**
+  `insertAnchorSerialFallback` (now exported) returns `{ created, failures }`; a non-23505 per-row
+  failure is joined back to its record via `(source, source_id)` (`pipelineSourceKey`) and counted
+  durably in `public_records.metadata` by `quarantineFailedSerialInserts`
+  (`public-record-quarantine.ts`). At `ANCHOR_INSERT_QUARANTINE_THRESHOLD` (3, spanning runs — an
+  in-memory skip dies with the process) the row gets `metadata.anchor_insert_quarantined_at` and is
+  excluded from BOTH unanchored fetch paths via
+  `.is('metadata->anchor_insert_quarantined_at', null)`. Only the Postgres error CODE is persisted
+  in metadata, never `error.message` (PostgREST messages can echo the payload; metadata feeds
+  public projections). Un-quarantine = remove the key. No schema change by design; a dedicated
+  column + partial index is the flagged follow-up.
+- **`pipelineThroughputMonitor.ts` MUST stay in sync:** its oldest-unlinked probe carries the same
+  quarantine exclusion. A quarantined row keeps `anchor_id IS NULL` forever, so without the filter
+  condition B ages it into a permanent fatal-alert stream — the exact storm this work exists to end.
+  If you add another `anchor_id IS NULL` consumer, pair it with
+  `ANCHOR_INSERT_QUARANTINE_FILTER_COLUMN` or justify why quarantined rows belong in it.
+
+Tests: `__tests__/publicRecordAnchor-poison-record.test.ts` (exact poison shape: 2,000 UTF-16
+units / 1,914 codepoints / 86 astral, pair split at unit 500), `public-record-quarantine.test.ts`,
+`utils/utf16-truncate.test.ts`, plus fetch-filter assertions in `publicRecordAnchor.test.ts` and
+`pipelineThroughputMonitor.test.ts`. T3 (cron-on-anchors).
+
 ## 2026-08-11 SCRUM-3128 / BUG-2026-08-11 — the ECON-1 fee ceiling now fails CLOSED (`anchor.ts`)
 
 The ECON-1 ceiling in `processAnchor` had **two fail-opens stacked on one path**, and both resolved
