@@ -1,4 +1,11 @@
 BEGIN;
+-- Hot-table DDL guard (CLAUDE.md §1.2): both foreign keys below REFERENCE
+-- public.organizations, and adding an FK takes ShareRowExclusiveLock on the
+-- REFERENCED table. Unbounded, that lock request is the exact 2026-08-11 P0
+-- mechanism — a FIFO lock-queue barrier that parks ahead of PostgREST's
+-- schema-cache introspection. Bounded, it fails fast and the push retries
+-- when organizations is quiet.
+SET LOCAL lock_timeout = '5s';
 
 -- =============================================================================
 -- 0410 — public.partner_accounts: the partner-provisioning ledger (SCRUM-2990)
