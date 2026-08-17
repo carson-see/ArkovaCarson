@@ -1,5 +1,9 @@
 # agents.md — pages
-_Last updated: 2026-08-10_
+_Last updated: 2026-08-17_
+
+## 2026-08-17 — RecordDetailPage honest rename (founder-reported)
+
+`handleRenameFile` checked only `updateError`, but PostgREST returns HTTP 204 with `error: null` for an UPDATE whose RLS USING clause matches zero rows — so a non-owner rename fired `toast.success('Document renamed')` while the row was unchanged (silent false success), and an ORG_ADMIN renaming a teammate's record (blocked with 42501 by migration 0393's `restrict_org_admin_folder_update` trigger, which narrows the org-admin update policy to folder_id only) got a generic "Failed to rename document". Now: `.select('id')` + row-count check (mirrors `useFolders.assignRecord`), toast copy centralized in `RECORD_DETAIL_LABELS` (`TOAST_RENAMED` / `ERR_RENAME` / `ERR_RENAME_FORBIDDEN`, permission distinct from generic), `void refreshAnchor()` on success, and the page passes `canRename={user.id === anchor.user_id}` so `AssetDetailView` shows the rename pencil to the owner only (see `src/components/anchor/agents.md`). Deliberately NOT done: widening RLS so org admins can rename — that is a product decision not yet made; this PR only makes the existing permissions honest. Tests: `RecordDetailPage.honest-rename.test.tsx` (6 cases, TDD red-first — the red run reproduced the false success verbatim; renamed from `RecordDetailPage.test.tsx` during soak-prep rebase to avoid colliding with PR #2241's file of the same name — that PR lands first per the cluster's landing order).
 
 ## 2026-08-10 — `ActivateAccountPage.tsx` rebuilt; the recovery-phrase ruling
 
