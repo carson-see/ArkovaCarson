@@ -17,7 +17,8 @@ short-circuits, and the change is silently dropped. The provider under-reports s
 funds under sustained batching, exactly when it matters. Observed live 2026-08-17T03:10Z
 mid-flush: the worker logged `Treasury has no UTXOs` while the treasury held the
 just-broadcast batch's unconfirmed change
-(`docs/staging/fullsoak-2026-08/trigger-d-flush-2026-08-17.md`). The mempool leg
+(`docs/staging/fullsoak-2026-08/trigger-d-flush-2026-08-17.md`, currently on the
+`soak/day0-fullsoak-2026-08-docs` branch — **not** yet on `main`). The mempool leg
 deliberately includes unconfirmed UTXOs ("prevents the treasury from getting stuck waiting
 for confirmations between batches") — a fall-through design only reaches that property when
 the RPC leg is empty.

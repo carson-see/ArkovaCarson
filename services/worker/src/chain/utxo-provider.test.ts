@@ -564,7 +564,8 @@ describe('GetBlockHybridProvider listUnspent fallback observability', () => {
 // under-reporting spendable funds exactly under sustained batching (observed
 // live 2026-08-17T03:10Z mid-flush: "Treasury has no UTXOs" while the
 // treasury held the just-broadcast batch's unconfirmed change; see
-// docs/staging/fullsoak-2026-08/trigger-d-flush-2026-08-17.md). The mempool
+// docs/staging/fullsoak-2026-08/trigger-d-flush-2026-08-17.md, on the
+// soak/day0-fullsoak-2026-08-docs branch, NOT yet on main). The mempool
 // leg deliberately includes unconfirmed UTXOs ("prevents the treasury from
 // getting stuck waiting for confirmations between batches"). So the contract
 // is now a UNION: query BOTH legs, merge deduped by (txid, vout), prefer the

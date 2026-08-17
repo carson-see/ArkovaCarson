@@ -856,7 +856,8 @@ export class GetBlockHybridProvider implements UtxoProvider {
    * length 1, a fall-through design short-circuits, and the unconfirmed
    * change is silently dropped — under-reporting spendable funds precisely
    * under sustained batching (observed live 2026-08-17T03:10Z mid-flush,
-   * docs/staging/fullsoak-2026-08/trigger-d-flush-2026-08-17.md). The
+   * docs/staging/fullsoak-2026-08/trigger-d-flush-2026-08-17.md — on the
+   * `soak/day0-fullsoak-2026-08-docs` branch, NOT yet on `main`). The
    * mempool leg deliberately includes unconfirmed UTXOs ("prevents the
    * treasury from getting stuck waiting for confirmations between batches").
    *
