@@ -837,54 +837,129 @@ export class GetBlockHybridProvider implements UtxoProvider {
   }
 
   /**
-   * Try RPC node for UTXO listing first, fall back to mempool.space.
+   * UTXO listing is a UNION of two legs, deduped by (txid, vout) with the
+   * RPC leg's entry preferred on collision. Neither leg alone is
+   * authoritative:
    *
-   * FD-CHAIN-1: the length guard is `> 0`, NOT `>= 0`. `listunspent` is a
-   * Bitcoin Core **wallet** RPC — it returns only UTXOs belonging to a wallet
-   * the node has loaded. A WIF-derived treasury address that is not in the
-   * node's wallet therefore produces a SUCCESSFUL call returning `[]`, with no
-   * exception to catch. `>= 0` is true for every array, so that empty success
-   * was returned verbatim and the fallback below was unreachable — the
-   * provider reported an empty treasury that held 742,637 sat, and anchoring
-   * halted silently for hours behind HTTP 200s (fullsoak-2026-08 Day 4).
+   * FD-CHAIN-1 round 1 (the empty case): `listunspent` is a Bitcoin Core
+   * **wallet** RPC — it returns only UTXOs belonging to a wallet the node has
+   * loaded. A WIF-derived treasury address that is not in the node's wallet
+   * produces a SUCCESSFUL call returning `[]`, and the original `>= 0` guard
+   * (true for every array) returned that `[]` verbatim — the provider
+   * reported an empty treasury that held 742,637 sat, and anchoring halted
+   * silently for hours behind HTTP 200s (fullsoak-2026-08 Day 4).
    *
-   * An empty result is not an answer, it is the absence of one: fall through
-   * to the address-indexed source, which can see UTXOs the node's wallet does
-   * not track. See docs/staging/fullsoak-2026-08/FD-CHAIN-1-listunspent-silent-empty.md
+   * FD-CHAIN-1 round 2 (the PARTIAL case — why fall-through `> 0` was not
+   * enough): the RPC leg runs at minconf=1, so bitcoind EXCLUDES unconfirmed
+   * outputs. After a batch broadcasts, the treasury's normal shape is one
+   * confirmed UTXO + that batch's unconfirmed change: the RPC answers
+   * length 1, a fall-through design short-circuits, and the unconfirmed
+   * change is silently dropped — under-reporting spendable funds precisely
+   * under sustained batching (observed live 2026-08-17T03:10Z mid-flush,
+   * docs/staging/fullsoak-2026-08/trigger-d-flush-2026-08-17.md). The
+   * mempool leg deliberately includes unconfirmed UTXOs ("prevents the
+   * treasury from getting stuck waiting for confirmations between batches").
+   *
+   * Degradation contract (also defuses the PR #2216 body-read-timeout
+   * interaction — a timed-out mempool leg must not reintroduce the
+   * empty-treasury symptom through the fallback's own failure path):
+   *   - RPC leg fails → mempool-only, reported via the unchanged R0-8
+   *     emitRpcFallback event (SCRUM-1262 / SCRUM-1254 fallback-rate view).
+   *   - Mempool leg fails, RPC leg has UTXOs → RPC-only + structured warn.
+   *     NOT emitRpcFallback: that event's locked shape counts RPC→mempool
+   *     fallbacks, and folding mempool-leg failures into it would corrupt
+   *     the fallback-rate metric.
+   *   - Mempool leg fails, RPC leg succeeded EMPTY → throw. An empty
+   *     wallet-RPC success is the ABSENCE of an answer (round 1), so there
+   *     is no reliable answer left — "no source answered" must never be
+   *     promoted to "treasury empty".
+   *   - Both legs fail → throw the mempool leg's error, as before the union.
+   *
+   * The legs run CONCURRENTLY (independent I/O against different hosts); the
+   * union needs both answers regardless, so sequencing would only add the
+   * RPC leg's latency to every cycle.
+   * See docs/staging/fullsoak-2026-08/FD-CHAIN-1-listunspent-silent-empty.md
    */
   async listUnspent(address: string): Promise<Utxo[]> {
-    try {
-      const rpcUtxos = (await rpcCall(this.rpcUrl, 'listunspent', [1, 9999999, [address]], this.rpcAuth)) as Array<{ txid: string; vout: number; amount: number }>;
-      if (rpcUtxos && rpcUtxos.length > 0) {
-        return rpcUtxos.map((u) => ({
-          txid: u.txid,
-          vout: u.vout,
-          valueSats: Math.round(u.amount * 1e8),
-          rawTxHex: '',
-        }));
-      }
-    } catch (err) {
+    const [rpcLeg, mempoolLeg] = await Promise.allSettled([
+      this.listUnspentViaRpc(address),
+      this.mempool.listUnspent(address),
+    ]);
+
+    if (rpcLeg.status === 'rejected') {
       // SCRUM-1262 (R1-8): per the GetBlock RPC matrix, the shared endpoint
       // returns "Method not allowed" on listunspent (forensic 1/8). Falls
-      // back to public mempool.space — partial sovereignty leak. The
-      // counter below feeds the R0-8 / SCRUM-1254 db-health-monitor view
-      // so we can dashboard the fallback rate and alert if it stays at
-      // 100% (i.e. the RPC is functionally unused). Sentry breadcrumb +
-      // structured warn log (logger.warn is picked up by GCP Cloud Logging
-      // sink and the Arize tracing exporter when enabled).
-      // /simplify pass: pair extracted to emitRpcFallback() so future RPC
-      // fallback sites (getrawtransaction / getblockheader / fee estimation)
-      // emit the same locked shape.
+      // back to public mempool.space — partial sovereignty leak. This event
+      // feeds the R0-8 / SCRUM-1254 db-health-monitor view so we can
+      // dashboard the fallback rate and alert if it stays at 100% (i.e. the
+      // RPC is functionally unused). Sentry breadcrumb + structured warn log
+      // (logger.warn is picked up by GCP Cloud Logging sink and the Arize
+      // tracing exporter when enabled). /simplify pass: pair extracted to
+      // emitRpcFallback() so future RPC fallback sites emit the same locked
+      // shape.
       emitRpcFallback({
         provider: 'getblock',
         method: 'listunspent',
-        error: err,
+        error: rpcLeg.reason,
         fallbackTo: 'mempool.space',
         logger,
         origin: 'GetBlockHybridProvider.listUnspent',
       });
+      if (mempoolLeg.status === 'rejected') throw mempoolLeg.reason;
+      return mempoolLeg.value;
     }
-    return this.mempool.listUnspent(address);
+
+    if (mempoolLeg.status === 'rejected') {
+      if (rpcLeg.value.length === 0) {
+        // Round 1's lesson applies to the degraded path too: an empty
+        // wallet-RPC success is not an answer. With the address-indexed leg
+        // down there is no reliable answer — throw so the caller defers the
+        // cycle instead of reading "no source answered" as "unfunded".
+        throw mempoolLeg.reason;
+      }
+      logger.warn(
+        {
+          operation: 'GetBlockHybridProvider.listUnspent',
+          leg: 'mempool.space',
+          rpcUtxoCount: rpcLeg.value.length,
+          error: mempoolLeg.reason instanceof Error ? mempoolLeg.reason.message : String(mempoolLeg.reason),
+        },
+        'mempool.space UTXO leg failed — degrading to RPC-only listing for this cycle. Unconfirmed change (minconf=1 exclusion) may be under-reported until the leg recovers.',
+      );
+      return rpcLeg.value;
+    }
+
+    // Union, deduped by outpoint. RPC entries are appended first, so on a
+    // (txid, vout) collision the RPC leg's entry wins.
+    const seen = new Set<string>();
+    const union: Utxo[] = [];
+    for (const utxo of [...rpcLeg.value, ...mempoolLeg.value]) {
+      const outpoint = `${utxo.txid}:${utxo.vout}`;
+      if (!seen.has(outpoint)) {
+        seen.add(outpoint);
+        union.push(utxo);
+      }
+    }
+    return union;
+  }
+
+  /**
+   * The RPC leg of the union above: a single `listunspent` attempt against
+   * the dedicated node, mapped to the shared Utxo shape (valueSats computed
+   * from BTC `amount`; rawTxHex intentionally empty — P2WPKH signing uses
+   * witnessUtxo, matching the mempool leg's shape). Deliberately NOT wrapped
+   * in retryWithBackoff, preserving the pre-union single-attempt behavior:
+   * the mempool leg is this method's redundancy.
+   */
+  private async listUnspentViaRpc(address: string): Promise<Utxo[]> {
+    const rpcUtxos = (await rpcCall(this.rpcUrl, 'listunspent', [1, 9999999, [address]], this.rpcAuth)) as Array<{ txid: string; vout: number; amount: number }>;
+    if (!rpcUtxos || rpcUtxos.length === 0) return [];
+    return rpcUtxos.map((u) => ({
+      txid: u.txid,
+      vout: u.vout,
+      valueSats: Math.round(u.amount * 1e8),
+      rawTxHex: '',
+    }));
   }
 
   /** Broadcast through dedicated GetBlock RPC node */
