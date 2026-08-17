@@ -266,3 +266,44 @@ oracle call in this service and `jobs/treasury-cache.ts` owns it (every 10 min �
 - **`BTC_PRICE_MEMO_TTL_MS` (60 s) must stay well under the cron's 10-minute period**, or the memo
   becomes staler than the row it caches. Failures memoize too, and concurrent callers share one
   in-flight read — an outage must not turn every gated request into a DB round trip.
+
+## 2026-08-12 — F-1: `rateLimit.ts` + `upstashRateLimit.ts` share one counter now
+
+The v1 limiter enforced a **per-instance** bucket while its docstring promised a shared one. Prod
+runs `minScale=2, maxScale=10` with Upstash installed (`Upstash Redis rate limiting initialized`
+in the worker log), so every configured limit was effectively up to 10x its stated value, and a
+cold start reset the counter outright.
+
+- **`IRateLimitStore.get()/set()` CANNOT express a shared limit — this is structural, not a bug in
+  one adapter.** `get()` is synchronous, so a network-backed store has nothing to return but a
+  local cache; and `rateLimit()` mutated `entry.count++` in place, writing back only on the
+  create-new-entry branch. Redis received `{"count":0}` once per window and was never read again.
+  Any future store that implements only get/set is single-instance by construction.
+- **The shared path is the optional `increment(key, windowMs, now)`** — one atomic server-side
+  `INCR` returning the count *including* this request. A store that omits it keeps the original
+  synchronous path, so the bare `Map` default still works unchanged. Enforcement compares
+  `count > maxRequests` (post-increment) which is the same allowance as the sync path's
+  `count >= maxRequests` (pre-increment); don't "fix" one to match the other.
+- **Counter keys are namespaced `arkova:rl:`, deliberately separate from the raw keys used by
+  `set()`/`delete()`.** An `INCR` against a key holding the legacy JSON blob errors, and a
+  `delete()` fired by local-cache expiry must never be able to clear a live shared window early.
+- **`syncFromRedis()` was deleted, not wired up.** It warm-loaded the local cache at startup and
+  was never called outside its own test. Under server-side counting it would be actively wrong —
+  seeding a local mirror can only double-count or race the server TTL.
+- **The local `Map` is now the fail-open bucket and nothing else.** It is never populated by a
+  successful `increment()`. When Redis is unreachable the store counts locally, bounded and swept,
+  and logs a warning on every degraded request — the pre-fix behaviour, kept deliberately as the
+  degradation, never as the default.
+- **Cost of correctness: one Upstash round trip per request on the hot path** (`rateLimiters.api`
+  sits in front of nearly every route). `INCR`+`PTTL` are pipelined into a single HTTP call, and a
+  second call fires only on the first hit of a window to arm the TTL. A test pins the
+  one-round-trip steady state; if you add a command, expect it to fail.
+- **A `PTTL` of -1 re-arms the window.** That is both the first hit and the shape left behind by a
+  process that died between `INCR` and `PEXPIRE` — without the re-arm, such a key would block its
+  bucket with no expiry until someone noticed.
+- **The pre-existing `upstashRateLimit.test.ts` stayed green through the entire life of this
+  defect** because every assertion in it was one store round-tripping its own cache. The
+  cross-instance invariant lives in `upstashRateLimit.distributed.test.ts` — two store instances,
+  one fake Redis. Single-store tests cannot catch a sharing bug.
+- `api/v2/rateLimit.ts` already had the correct design (`UpstashV2RateLimitStore.increment`); this
+  brings v1 to parity. Prefer changing both together.
