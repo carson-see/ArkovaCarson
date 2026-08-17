@@ -72,7 +72,25 @@ So 3,000 pending is ~15 org-days away and Trigger B is unreachable inside this w
 without moving an org to `PAID`. See `FD-RL-quota-headers-and-counter.md`, which also
 records two real defects found by that attempt.
 
-**Measured:** Trigger D (daily 03:00 flush), proven Day 0 (PENDING 2→0 in ~1.4s) and
-repeatable nightly.
-**NOT asserted:** Trigger A, Trigger B, or Trigger C fee-deferral behavior under a real
-backlog — none are reachable at 36 anchors/day.
+## SUPERSEDED 2026-08-17 — A and B were both reached and both fired
+
+Everything above describes the state on Day 4 and is kept for provenance. It is no longer
+the coverage position. The binding constraint (the FREE-tier 100/day per-org cap) was
+removed by moving both rig orgs to `ENTERPRISE` at 13:47Z, volume was injected, and:
+
+| Trigger | Fired | Anchors | Block | txid |
+|---|---|---|---|---|
+| **A** size (`>= 10,000`) | 2026-08-17T14:40Z | **10,000** | 318117 | `c70d1662…` |
+| **B** age (`>= 3,000` AND `>= 3h`) | 2026-08-17T14:00Z | **3,832** | 318115 | `e688cf2e…` |
+| **D** daily flush | 2026-08-17T03:00Z | 104 | 318046 | `fba08120…` |
+
+Both verified on `mempool.space/signet` and `blockstream.info/signet`. Full evidence in
+`trigger-a-fired-2026-08-17.md` and `trigger-b-fired-2026-08-17.md`.
+
+**Measured:** Triggers A, B and D all fire and drive a batch end-to-end to SECURED with
+1:1 80-byte-header proof coverage.
+
+**NOT asserted:** **Trigger C** (fee-aware deferral) has still not fired — signet fee rates
+never approached `ABSOLUTE_FEE_CAP_SAT_PER_VB`, so the deferral path remains untested.
+Also NOT asserted: FREE-tier quota behaviour, which stopped being exercised the moment both
+orgs were moved to ENTERPRISE.
