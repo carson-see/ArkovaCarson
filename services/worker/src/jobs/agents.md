@@ -2,6 +2,59 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-17 — `pipelineThroughputMonitor.ts` condition B gets a count floor, and the cache stops lying
+
+**The storm.** Prod `public_records` held 3,538,743 rows: 3,538,742 linked, exactly **one** unlinked,
+~388h old. Condition B fired on the AGE of the oldest unlinked record with no magnitude qualifier at
+all, 388h maps to the `t168h` bucket, and `severityForSustainedBucket('t168h')` is `fatal` — so a
+monitor on a ~30-minute cadence emitted a FATAL Sentry event every half hour for ~16 days (~670
+events) over one row. A dead-man that pages fatal on a single orphan is not calibrated; it trains
+responders to ignore it, which is the same failure mode SCRUM-3050 fixed from the opposite direction.
+
+**Floor = 100 records, and the number is not arbitrary.** `unlinked_total` comes from
+`pipeline_dashboard_cache.pipeline_stats.pending_record_links`, which the deployed
+`refresh_cache_pipeline_stats()` computes as `round(pg_class.reltuples * pg_stats.null_frac)`.
+`null_frac` is an ANALYZE **sample** statistic (~30k rows at the default statistics target), so at
+3.5M rows the smallest non-zero value it can express is roughly 3.5M/30k ≈ 118. A floor below ~100
+would be comparing against a resolution the signal does not have. On the other side, the nightly
+flush moves ~10k anchors, so one missed linker cycle leaves two orders of magnitude more than the
+floor and the 2026-07 incident was 259,000 — the floor costs zero sensitivity for the incident class
+the monitor exists for. A floor at batch scale (10,000) would instead blind it to a small tenant
+whose entire daily volume is a few hundred records.
+
+**Graduated, not silenced.** Below the floor the decision is `should_fire: true, severity: 'warning',
+below_backlog_floor: true`, which routes to `logger.warn` with `pipelineStuckRecordSubFloor: true`
+and emits **no** Sentry event. The row is still stuck and still visible; it is just in the ops log
+rather than on a pager. `alertFired` now means "a Sentry alert was actually emitted", so the sub-floor
+result is honestly `healthy: false, alertFired: false`.
+
+**Three fail-loud properties deliberately preserved:**
+
+- `unlinked_total === null` (cache miss / `-1` timeout sentinel) does **not** take the sub-floor
+  branch. Resolving "unknown" to "small" is the same "no data therefore healthy" bug
+  `sustainedBucketFor` already refuses for an unbounded duration.
+- The floor gates **condition B only**. Condition A means nothing secured network-wide inside the
+  window while feeders demonstrably produced a record — an outage at any volume.
+- The floor is a lower bound on *escalation*, never on *detection*: the probes are unchanged.
+
+**The second defect: the cache disagreed with the live count, and the message printed both.** The
+alert read `oldest unlinked public record is 388h old ... (total unlinked backlog 0)`. The `0` is the
+sampled estimate above; the `388h` came from an exact `LIMIT 1` probe that was holding the very row
+the estimate says does not exist. `resolveUnlinkedBacklog()` now reconciles the two — the probe is an
+exact existence test, so when it returns a row the backlog is **at least 1** and the cached zero is
+reported as contradicted rather than asserted. `pending_record_links_approximate` (which the cache
+row already self-declares) is carried through and renders as a `~` marker, so an estimate is never
+printed as a measurement (§1.5). The DB-side estimator is **not** changed here: it is deliberately
+approximate to avoid the `count(*)` callsites R0-8/SCRUM-1254 banned, and making it exact would
+reintroduce the 60s PostgREST timeouts. The defect was consuming it as if it were exact.
+
+Route surface unchanged: `POST /cron/pipeline-throughput-monitor` still accepts only `window_hours`
+and `linker_stall_threshold_hours`. The floor is overridable in-process
+(`runPipelineThroughputMonitor(db, { linkerStallMinBacklog })`) but is not a query parameter — add
+one only if an incident actually needs it.
+
+Tests: `pipelineThroughputMonitor.backlogFloor.test.ts` (16 cases, red-first). T2 (worker behavior).
+
 ## 2026-08-11 SCRUM-3128 / BUG-2026-08-11 — the ECON-1 fee ceiling now fails CLOSED (`anchor.ts`)
 
 The ECON-1 ceiling in `processAnchor` had **two fail-opens stacked on one path**, and both resolved
