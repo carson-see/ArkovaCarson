@@ -605,7 +605,12 @@ const server = app.listen(config.port, async () => {
   const idempotencyRedisStore = createUpstashIdempotencyStore();
   if (idempotencyRedisStore) {
     setIdempotencyStore(idempotencyRedisStore);
-    logger.info('Upstash Redis idempotency store initialized');
+    // BUG-018 / D-8: log the derived namespace so the deployed keyspace is
+    // observable in Cloud Run logs without reading Redis.
+    logger.info(
+      { environmentNamespace: idempotencyRedisStore.environmentNamespace },
+      'Upstash Redis idempotency store initialized'
+    );
   } else if (!redisRateInit) {
     logger.info('Upstash Redis not configured — using in-memory stores (rate limit + idempotency)');
   }

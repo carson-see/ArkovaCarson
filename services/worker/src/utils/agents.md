@@ -365,3 +365,33 @@ to the shared Upstash database now starts with that answer.
   (`idem:<key>`). Those are worse than a rate-limit collision — a cached verification result
   computed against a staging database can be served to a production caller — but they change
   public-verify behaviour and need their own T2 change. Do not assume they were fixed here.
+  **Closed by the follow-up below (same branch stack) — that carve-out is no longer open.**
+
+## 2026-08-15 — BUG-018 / D-8 follow-up: the verify cache carries the same namespace
+
+Closes the carve-out the section above left open. `verifyCache.ts` keys are now
+`verify:v5:<env>:<publicId>`; `middleware/upstashIdempotency.ts` is covered in that folder's
+`agents.md`.
+
+- **This one is a correctness defect, not a budget defect.** A `publicId` is by construction the
+  SAME string in every environment — that is what a public identifier IS — so the old
+  `verify:v5:<publicId>` key collided across environments **by default**, not under contention.
+  `GET /api/v1/verify/:publicId` serves a cache hit **verbatim** and never re-runs
+  `buildVerificationResult`, so a result computed against a staging database was served to a
+  production caller for the full 300s TTL. Staging rows are fixtures; production rows are the
+  evidence product. §1.5 — the API must state what it actually measured.
+- **It cut both ways.** `invalidateVerificationCache` is called by `jobs/revocation.ts` and
+  `jobs/check-confirmations.ts`. Fired on a rig, it evicted **production's** cache entry for that
+  publicId. Cheap in isolation, but it means rig traffic could keep production permanently cold on
+  a hot anchor.
+- **The version segment stays AHEAD of the namespace** (`verify:v5:<env>:` and not
+  `verify:<env>:v5:`) so a `v5` → `v6` bump still rotates every environment at once, exactly as the
+  bump log above it describes. Keep that ordering when you bump.
+- **The namespace is memoised at module scope**, next to `_redisConfig` and for the same reason —
+  the public verify path is the hot path and must not re-run the sanitiser per request. That is why
+  `verifyCache.namespace.test.ts` models each environment as a fresh module instance
+  (`vi.resetModules()` + re-`import`) rather than a mutated env var: it makes the same-service test
+  genuinely two independent instances instead of one module asked twice.
+- **Both halves are asserted in one file, deliberately.** Different environments must NOT read each
+  other's cache, AND two instances of one service MUST share one — a namespace that also broke
+  sharing would be a PERF-12 regression dressed as a fix, and every cache-hit test would still pass.
