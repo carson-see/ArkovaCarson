@@ -15,3 +15,13 @@ Cross-cutting integration and chaos engineering test suites. These test the work
 
 - All external services (Supabase, Stripe, Bitcoin, mempool) must be mocked.
 - Chaos tests validate graceful degradation — the worker must never crash on transient failures.
+
+## 2026-08-17 — `utf16-poison.ts` shared test helper (surrogate-split truncation class)
+
+`poisonAt(cap)` builds a string whose `.slice(0, cap)` ends exactly on a split surrogate pair
+(parity: prefix `(cap-1) % 2` single units, then astral pairs — self-checks or throws);
+`isWellFormedUtf16(s)` / `illFormedStringPaths(payload)` assert nothing ill-formed reaches a
+PostgREST body. Used by the poison suites in `utils/jobQueue.test.ts`,
+`tests/webhook-delivery-roundtrip.test.ts`, `api/v1/{webhooks-test-ping,webhooks-self-service,
+compliance-audit,credentials-ctdl-registry-anchor,nessie-query}.test.ts`, and
+`lib/credential-source-import.test.ts`. Not a `.test.ts` itself — vitest include globs skip it.
