@@ -53,6 +53,7 @@ The root `typecheck-lint` job also runs `npm run lint:batch-drain-evidence`. Kee
 - Temporary PR #841 remediation exemptions are only for the renumbered 0314/0315 schema work after production already claimed 0313 for anchors index consolidation; remove them after operator-applied prod reconciliation.
 - Secrets: `arkova1/supabase_access` in GCP Secret Manager for migration drift, `arkova1/sonar_cloud_token` for the SonarCloud config guard (exported as `SONARCLOUD_TOKEN`), `SUPABASE_PROJECT_REF`, `SENTRY_DSN_OPS` (revision-drift Sentry alerts).
 - Revision-drift Sentry tags must match `infra/sentry/alert-rules.json`: `source=revision-drift`, `story`, `deployed_sha`, and `head_sha`.
+- Revision-drift's event payload must also carry `environment: "production"`. It POSTs a hand-built Sentry envelope rather than going through `Sentry.init`, so it inherits no environment — and every rule in `alert-rules.json` is now scoped to `environment: production` (2026-08-17). Drop the field and the SCRUM-1247 alert silently stops matching. Pinned by `scripts/ci/check-sentry-alert-environment-scope.test.ts`; rationale in `infra/sentry/agents.md`.
 - Deploy gate ≡ CI lint job: deploy-worker.yml + ci.yml `Lint worker` step BOTH invoke `npm run lint` from `services/worker/`. Drift between them is enforced by `scripts/ci/check-deploy-lint-parity.ts`. Override label: `ci-config-change`.
 
 ## CONDITIONAL-GO sub-decision B (TWO-SURFACE) — PR-time worker + verifier compile gates (NON-REQUIRED)
