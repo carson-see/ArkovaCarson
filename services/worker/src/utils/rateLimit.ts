@@ -67,6 +67,29 @@ export interface IRateLimitStore {
 
 const RATE_LIMIT_MAX_SIZE = 50_000; // cap to prevent unbounded growth (reduced from 500K — 50K covers ~800 unique IPs * ~60 paths)
 
+/**
+ * Per-request record of which limiter INSTANCES have already counted this
+ * request. Lives on the request object, so it dies with the request.
+ *
+ * 2026-08-12 — the same limiter instance can legitimately be mounted more than
+ * once (`apiIpShadowGuard` is mounted at `index.ts:418` under `/api` and again
+ * unprefixed at `index.ts:446`, because `didWebRouter` serves paths outside
+ * `/api` and must carry the same skip predicate). Express runs every mount a
+ * request matches, so a request that falls through the first mount without
+ * being answered reached the second one and got counted TWICE — making the
+ * documented 60 req/min per IP actually 30. Deleting a mount was not an option;
+ * counting once per instance is.
+ *
+ * Keyed by instance, NOT globally: index.ts deliberately shares one per-IP
+ * bucket across DIFFERENT limiters (the F5 fix keys purely on scope +
+ * keyGenerator), and each of those must still get its own count.
+ */
+const COUNTED_LIMITERS = Symbol('arkova.rateLimit.countedLimiters');
+
+interface RequestWithCountedLimiters extends Request {
+  [COUNTED_LIMITERS]?: Set<symbol>;
+}
+
 // In-memory store — works for single-instance deployments
 let rateLimitStore: IRateLimitStore = new Map<string, RateLimitEntry>();
 
@@ -222,11 +245,38 @@ export function rateLimit(options: RateLimitOptions) {
     next();
   };
 
+  /**
+   * Identity of THIS limiter, so a second mount of the same instance can be
+   * recognised. A fresh symbol per `rateLimit()` call — two limiters built from
+   * identical options are still two limiters.
+   *
+   * RC merge note (#2223 + #2224): the `countedBy` stamp below is checked and
+   * set BEFORE the store dispatch, so a second mount is passed through without
+   * charging on BOTH the synchronous path and the distributed `enforceShared`
+   * path — single-count semantics hold regardless of which store is installed.
+   */
+  const limiterId = Symbol('rateLimiterInstance');
+
   return (req: Request, res: Response, next: NextFunction): void => {
     if (skip?.(req)) {
       next();
       return;
     }
+
+    // Already counted by this same limiter earlier in the chain (a second
+    // mount). The request was admitted and its X-RateLimit-* headers are
+    // already set, so pass it straight through rather than charging it twice.
+    const tagged = req as RequestWithCountedLimiters;
+    let countedBy = tagged[COUNTED_LIMITERS];
+    if (!countedBy) {
+      countedBy = new Set<symbol>();
+      tagged[COUNTED_LIMITERS] = countedBy;
+    }
+    if (countedBy.has(limiterId)) {
+      next();
+      return;
+    }
+    countedBy.add(limiterId);
 
     const key = scope ? `${scope}:${keyGenerator(req)}` : keyGenerator(req);
     const now = Date.now();

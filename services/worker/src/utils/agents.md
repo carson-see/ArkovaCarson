@@ -307,3 +307,30 @@ cold start reset the counter outright.
   one fake Redis. Single-store tests cannot catch a sharing bug.
 - `api/v2/rateLimit.ts` already had the correct design (`UpstashV2RateLimitStore.increment`); this
   brings v1 to parity. Prefer changing both together.
+## 2026-08-12 — one request counts ONCE per limiter instance
+
+`rateLimit()` stamps the request with the limiter's own `Symbol` (`COUNTED_LIMITERS`) and skips
+counting if that instance already counted it. This exists because a limiter instance can be mounted
+more than once on purpose.
+
+- **`apiIpShadowGuard` is mounted twice by design** — `index.ts:418` under `/api`, and `index.ts:446`
+  unprefixed because `didWebRouter` serves `/.well-known/did.json` and `/orgs/:id/did.json`, which
+  are outside `/api` and must carry the same skip predicate (F-2, PR #1768 / `6f844d484`). Deleting
+  either mount breaks a route family. Do not "simplify" it.
+- **The bug was path-dependent, which is why it hid.** Express runs every mount a request matches, so
+  the double count only landed on requests that *fell through* the `/api` mount unanswered. A
+  `/api/badge/:id` request is answered by `badgeRouter` and never reaches mount 446 — counted once,
+  looks fine. An anonymous `/api/v1/*` request is answered by neither, reaches 446, and was counted
+  twice. Documented 60/min per IP was really 30/min for exactly that traffic. Side-rig 2026-08-12
+  saw `x-ratelimit-remaining` walk 48 → 46 → 44.
+- **The stamp is per INSTANCE, never global.** `index.ts` deliberately shares one per-IP bucket
+  across *different* limiters (the F5 fix keys buckets purely on `scope` + `keyGenerator`, and none
+  of the preconfigured limiters set a `scope`), so `rateLimiters.api` and `apiIpShadowGuard` both
+  legitimately charge the same bucket. A global "already counted" flag would silently stop the
+  second limiter enforcing anything. A test pins this.
+- **It also fixes `rateLimiters.api`**, which is mounted on overlapping prefixes (e.g.
+  `/api/v1/org` at index.ts:470 and `/api/v1/org/sub-orgs` at :471) and double-counted on the same
+  fall-through mechanism.
+- **This LOOSENS enforcement** (30/min → the intended 60/min for fall-through anon traffic). It is a
+  change in enforcement numbers, not a cleanup — treat it as such when reviewing.
+- The stamp lives on the request object, so it cannot leak between requests; a test pins that too.
