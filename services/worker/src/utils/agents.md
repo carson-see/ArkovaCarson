@@ -334,3 +334,34 @@ more than once on purpose.
 - **This LOOSENS enforcement** (30/min → the intended 60/min for fall-through anon traffic). It is a
   change in enforcement numbers, not a cleanup — treat it as such when reviewing.
 - The stamp lives on the request object, so it cannot leak between requests; a test pins that too.
+
+## 2026-08-15 — BUG-018 / D-8: every rate-limit key carries an environment namespace
+
+`environmentNamespace.ts` is new. It answers "which deployment surface am I?" and every key written
+to the shared Upstash database now starts with that answer.
+
+- **Prod, shared staging and the connector side-rig are bound to ONE Upstash database** via the same
+  un-suffixed `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` secrets. The v1 counter key was
+  `arkova:rl:` + the limiter key, which for the per-IP guard is the **bare client IP** — so the key
+  was identical in every environment. Inert only while the limiter never read Redis; live the moment
+  F-1 landed. Key shapes now: counters `arkova:rl:<env>:<key>`, legacy blobs
+  `arkova:rl:blob:<env>:<key>` (those were written **raw**, i.e. a Redis key that was literally a
+  client IP), v2 `arkova:v2:ratelimit:<env>:<key>`.
+- **`NODE_ENV` is NOT the discriminator, and must never become one.** Rigs and shared staging run
+  `NODE_ENV=production`. `K_SERVICE` — the Cloud Run service name — is the honest signal; only
+  `arkova-worker` earns the `prod` namespace, and off Cloud Run a bare `NODE_ENV=production`
+  resolves to `local-production`. Same derivation and same reasoning as
+  `resolveSentryEnvironment` (MT-1 / SCRUM-2901); `PROD_SERVICE_NAME` is defined in
+  `environmentNamespace.ts` and re-exported by `sentry.ts` so the two cannot drift.
+- **Derive NOTHING instance-local in that module** — `K_REVISION`, hostname, pid, a random id. Any
+  of those silently un-shares every shared counter, i.e. re-opens F-1 while all its tests stay
+  green. `upstashRateLimit.namespace.test.ts` asserts both halves at once: different environments
+  must NOT share a bucket, and two instances of the SAME service MUST.
+- **`prod` and `blob` are reserved namespace tokens.** A service literally named `prod` would
+  otherwise share production's counters, and one named `blob` could forge a counter key that
+  collides with the `arkova:rl:blob:` keyspace. Both get a `-nonprod` suffix.
+- **Still un-namespaced on the same database, deliberately out of scope here:**
+  `utils/verifyCache.ts` (`verify:v5:<publicId>`) and `middleware/upstashIdempotency.ts`
+  (`idem:<key>`). Those are worse than a rate-limit collision — a cached verification result
+  computed against a staging database can be served to a production caller — but they change
+  public-verify behaviour and need their own T2 change. Do not assume they were fixed here.

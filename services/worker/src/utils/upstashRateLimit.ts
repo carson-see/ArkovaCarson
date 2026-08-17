@@ -25,6 +25,17 @@
  * degraded request. That is the pre-fix behaviour, deliberately, as the
  * fail-open path — a rate limiter must not become an availability risk.
  *
+ * BUG-018 / D-8 (FULLSOAK 2026-08 gap-closure, 2026-08-13) — every key is
+ * namespaced by environment: `arkova:rl:<env>:<limiter key>`. Production,
+ * shared staging and the connector side-rig are all bound to ONE Upstash
+ * database through the same un-suffixed UPSTASH_REDIS_REST_URL/_TOKEN secrets,
+ * and the limiter key for the per-IP guard is the bare client IP — so without
+ * the `<env>` segment a burst against staging spends production's budget for
+ * that IP the moment enforcement actually reads Redis (i.e. from F-1 onward).
+ * The namespace comes from `resolveEnvironmentNamespace()`, which is derived
+ * from the SERVICE identity and never from anything instance-local: every
+ * instance of one service must land on one key, or F-1 is undone.
+ *
  * Setup: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN
  * (UPSTASH_REDIS_URL / UPSTASH_REDIS_TOKEN also accepted).
  * If not set, the worker keeps the in-memory store (single-instance mode).
@@ -34,6 +45,7 @@
 
 import type { IRateLimitStore } from './rateLimit.js';
 import { setRateLimitStore } from './rateLimit.js';
+import { resolveEnvironmentNamespace } from './environmentNamespace.js';
 import { logger } from './logger.js';
 
 interface RateLimitEntry {
@@ -48,6 +60,14 @@ interface RateLimitEntry {
  * never be able to clear a live shared window early.
  */
 const COUNTER_PREFIX = 'arkova:rl:';
+
+/**
+ * Legacy blob keyspace (`set`/`get`/`delete`). Before BUG-018 these wrote the
+ * limiter key RAW — for the per-IP shadow guard that is a Redis key that is
+ * literally a client IP, global across every environment bound to the database.
+ * The side-rig capture read one back directly: `GET {upstash}/get/216.183.125.66`.
+ */
+const BLOB_PREFIX = `${COUNTER_PREFIX}blob:`;
 
 const REDIS_TIMEOUT_MS = 2_000;
 
@@ -75,6 +95,15 @@ export class UpstashRateLimitStore implements IRateLimitStore {
   private readonly fetchImpl: FetchLike;
 
   /**
+   * BUG-018 / D-8: the environment discriminator in every key this store
+   * writes. Derived once at construction from the deployment surface, so it is
+   * identical for every instance of one Cloud Run service (which is what keeps
+   * PR #2223's cross-instance sharing working) and different for every other
+   * service bound to the same Upstash database.
+   */
+  private readonly namespace: string;
+
+  /**
    * Fail-open bucket. Populated ONLY when Redis is unreachable — never from a
    * successful `increment()`, because a warm local mirror would double-count
    * against the shared counter and would let local expiry race the server TTL.
@@ -82,11 +111,27 @@ export class UpstashRateLimitStore implements IRateLimitStore {
   private readonly cache = new Map<string, RateLimitEntry>();
   private nextSweepAt = 0;
 
-  constructor(baseUrl: string, token: string, fetchImpl?: FetchLike) {
+  constructor(baseUrl: string, token: string, fetchImpl?: FetchLike, namespace?: string) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.token = token;
     // Bind lazily so tests can stub globalThis.fetch after construction.
     this.fetchImpl = fetchImpl ?? ((input, init) => fetch(input, init));
+    this.namespace = namespace ?? resolveEnvironmentNamespace();
+  }
+
+  /** The environment namespace this store writes under (diagnostics). */
+  get environmentNamespace(): string {
+    return this.namespace;
+  }
+
+  /** Shared-counter key: `arkova:rl:<env>:<limiter key>`. */
+  private counterKey(key: string): string {
+    return `${COUNTER_PREFIX}${this.namespace}:${key}`;
+  }
+
+  /** Legacy blob key: `arkova:rl:blob:<env>:<limiter key>`. */
+  private blobKey(key: string): string {
+    return `${BLOB_PREFIX}${this.namespace}:${key}`;
   }
 
   /**
@@ -97,7 +142,7 @@ export class UpstashRateLimitStore implements IRateLimitStore {
    * INCLUDING this request.
    */
   async increment(key: string, windowMs: number, now: number): Promise<RateLimitEntry> {
-    const redisKey = COUNTER_PREFIX + key;
+    const redisKey = this.counterKey(key);
 
     try {
       const [rawCount, rawTtl] = await this.pipeline([
@@ -136,7 +181,7 @@ export class UpstashRateLimitStore implements IRateLimitStore {
     if (entry && entry.count > 0) entry.count -= 1;
 
     try {
-      await this.command('decr', COUNTER_PREFIX + key);
+      await this.command('decr', this.counterKey(key));
     } catch (err) {
       logger.warn({ error: err, key }, 'Upstash rate limit DECR failed');
     }
@@ -255,7 +300,7 @@ export class UpstashRateLimitStore implements IRateLimitStore {
 
   private async redisSet(key: string, value: string, ttlSec: number): Promise<void> {
     try {
-      await this.command('set', key, value, 'ex', String(ttlSec));
+      await this.command('set', this.blobKey(key), value, 'ex', String(ttlSec));
     } catch (err) {
       logger.warn({ error: err, key }, 'Upstash rate limit SET failed — falling back to local cache');
     }
@@ -263,7 +308,7 @@ export class UpstashRateLimitStore implements IRateLimitStore {
 
   private async redisDel(key: string): Promise<void> {
     try {
-      await this.command('del', key);
+      await this.command('del', this.blobKey(key));
     } catch {
       // Best effort
     }
@@ -285,6 +330,9 @@ export function initUpstashRateLimiting(): boolean {
 
   const store = new UpstashRateLimitStore(url, token);
   setRateLimitStore(store);
-  logger.info('Upstash Redis rate limiting initialized (shared counters via INCR)');
+  logger.info(
+    { environmentNamespace: store.environmentNamespace },
+    'Upstash Redis rate limiting initialized (shared counters via INCR)'
+  );
   return true;
 }

@@ -14,6 +14,7 @@ v2 agent-tool API surface. Designed for AI agents + future MCP parity. Per-scope
 ## Conventions
 - `auth.ts` records key usage via `touchApiKeyLastUsed` (exported from `middleware/apiKeyAuth.ts`) — a single implementation shared with the v1 middleware. Do NOT inline `void db.from('api_keys').update(...)` here: supabase-js builders are lazy and a discarded builder never issues its request (see `middleware/agents.md`, 2026-08-01 silent-write note).
 - Every endpoint: `requireScopeV2('<scope>')` + `createV2ScopeRateLimit('<scope>')` middleware pair.
+- **BUG-018 (2026-08-15): `UpstashV2RateLimitStore` keys are `arkova:v2:ratelimit:<env>:<key>`.** The `<env>` segment comes from `utils/environmentNamespace.ts` (derived from `K_SERVICE`, never `NODE_ENV` — rigs run `NODE_ENV=production`). Prod, shared staging and the side-rig all bind the SAME Upstash database, and unlike the v1 limiter this store has always read and written Redis on the hot path, so before this change an API key's staging burst spent its production budget. Never derive the namespace from anything instance-local; every instance of one service must land on one bucket.
 - Zod schemas live in `mcpParity.ts` and are imported by both REST handlers and (eventually) MCP tool handlers — single source of truth.
 - Response sort: when emitting field-name lists in errors, use `localeCompare` (SonarCloud S2871 — fixed in PR #737).
 

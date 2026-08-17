@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../../utils/logger.js';
+import { resolveEnvironmentNamespace } from '../../utils/environmentNamespace.js';
 import { API_V2_SCOPES, type ApiV2Scope } from '../apiScopes.js';
 import { ProblemError } from './problem.js';
 
@@ -131,15 +132,37 @@ export class UpstashV2RateLimitStore implements V2RateLimitStore {
   private readonly fetchImpl: FetchLike;
   private readonly fallback = new MemoryV2RateLimitStore();
 
-  constructor(baseUrl: string, token: string, fetchImpl: FetchLike = fetch) {
+  /**
+   * BUG-018 / D-8: environment discriminator for every key this store writes.
+   * Prod, shared staging and the connector side-rig all bind the SAME Upstash
+   * database via the same un-suffixed secrets, and unlike the v1 limiter this
+   * store has always read and written Redis on the hot path — so without this
+   * segment an API key's staging traffic has been spending its production
+   * budget. Derived from the SERVICE identity, never from anything
+   * instance-local: every instance of one service must share one bucket.
+   */
+  private readonly namespace: string;
+
+  constructor(
+    baseUrl: string,
+    token: string,
+    fetchImpl: FetchLike = fetch,
+    namespace: string = resolveEnvironmentNamespace(),
+  ) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.token = token;
     this.fetchImpl = fetchImpl;
+    this.namespace = namespace;
+  }
+
+  /** The environment namespace this store writes under (diagnostics). */
+  get environmentNamespace(): string {
+    return this.namespace;
   }
 
   async increment(key: string, windowMs: number, now: () => number): Promise<RateLimitEntry> {
     try {
-      const redisKey = `arkova:v2:ratelimit:${key}`;
+      const redisKey = `arkova:v2:ratelimit:${this.namespace}:${key}`;
       const count = await this.command<number>('incr', redisKey);
 
       if (count === 1) {
