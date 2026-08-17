@@ -124,10 +124,25 @@ command -v gh >/dev/null 2>&1 && GH_OK=1 || GH_OK=0
 
 # ── CC6.1: change-management freeze gates ───────────────────────────────────
 if [ "$GH_OK" = 1 ]; then
+  # An EMPTY result means the value could not be READ, which is not the same as
+  # the value being WRONG. During the 2026-08-17 GitHub partial outage
+  # (api.github.com returning HTTP 503 on the Actions-variables endpoint) both
+  # reads came back empty and this block reported FAIL — indistinguishable, in
+  # the evidence pack, from an actual freeze breach. Capture stderr, and treat
+  # unreadable as WARN with the reason attached; reserve FAIL for a value that
+  # was read and is genuinely wrong.
+  DWP_ERR="$(gh variable get DEPLOY_WORKER_PAUSED --repo "${GH_REPO_SLUG:-carson-see/ArkovaCarson}" 2>&1 >/dev/null | head -1)"
   DWP="$(gh variable get DEPLOY_WORKER_PAUSED --repo "${GH_REPO_SLUG:-carson-see/ArkovaCarson}" 2>/dev/null | tr -d '\r\n')"
+  SGD_ERR="$(gh variable get SOAK_GATE_DISABLED --repo "${GH_REPO_SLUG:-carson-see/ArkovaCarson}" 2>&1 >/dev/null | head -1)"
   SGD="$(gh variable get SOAK_GATE_DISABLED --repo "${GH_REPO_SLUG:-carson-see/ArkovaCarson}" 2>/dev/null | tr -d '\r\n')"
-  [ "$DWP" = "true" ] && check "CC6.1 DEPLOY_WORKER_PAUSED" PASS "true" || check "CC6.1 DEPLOY_WORKER_PAUSED" FAIL "got '$DWP', expected true"
-  [ "$SGD" = "false" ] && check "CC6.1 SOAK_GATE_DISABLED" PASS "false" || check "CC6.1 SOAK_GATE_DISABLED" FAIL "got '$SGD', expected false"
+
+  if [ "$DWP" = "true" ]; then check "CC6.1 DEPLOY_WORKER_PAUSED" PASS "true"
+  elif [ -z "$DWP" ]; then check "CC6.1 DEPLOY_WORKER_PAUSED" WARN "UNREADABLE (not necessarily wrong) — ${DWP_ERR:-empty response}. Verify via git that main has not moved before drawing any freeze conclusion."
+  else check "CC6.1 DEPLOY_WORKER_PAUSED" FAIL "got '$DWP', expected true"; fi
+
+  if [ "$SGD" = "false" ]; then check "CC6.1 SOAK_GATE_DISABLED" PASS "false"
+  elif [ -z "$SGD" ]; then check "CC6.1 SOAK_GATE_DISABLED" WARN "UNREADABLE (not necessarily wrong) — ${SGD_ERR:-empty response}."
+  else check "CC6.1 SOAK_GATE_DISABLED" FAIL "got '$SGD', expected false"; fi
 else
   check "CC6.1 freeze gates" WARN "gh not available — could not read repo variables"
 fi
