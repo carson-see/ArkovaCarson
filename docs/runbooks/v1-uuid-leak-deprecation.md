@@ -14,10 +14,36 @@ Confirmed leak sites (snapshot 2026-04-27):
 | `services/worker/src/api/v1/anchor-lifecycle.ts` | already fixed (uses `actor_public_id`) | — | resolved |
 | `services/worker/src/api/v1/attestations.ts` | 228, 325-326 | `attestation_id`, evidence `id` | HIGH |
 | `services/worker/src/api/v1/webhooks.ts` | 183, 283, 506, 561 | endpoint `id`, delivery `endpoint_id` | HIGH |
-| `services/worker/src/api/v1/keys.ts` | 130, 143-146, 184, 258 | api_keys `id` | HIGH — **deliberately re-exposed 2026-08-12 (FD-P7)**: SCRUM-1271-D's strip made revocation/deletion unreachable (v1 PATCH/DELETE are addressed by `:keyId`, and `key_prefix` has no unique constraint), defeating the CC6.8 control. Consistent with Phase 3 below (v1 carries the UUID until v2 ships). `org_id`/`key_hash` remain stripped. |
+| `services/worker/src/api/v1/keys.ts` | 130, 143-146, 184, 258 | api_keys `id` | **NOT A LEAK — do not strip. See below.** |
 | `services/worker/src/api/v1/jobs.ts` | 67 | `job_id` (frozen — defer) | MEDIUM |
 
 The `scripts/ci/check-v1-uuid-leaks.ts` lint script flags these patterns at PR time (warn-only initially; will flip to fail once §1.8 cutover completes).
+
+### `keys.ts` — carve-out (FD-P7 / BUG-2026-08-12)
+
+**`api_keys.id` stays in the `/api/v1/keys` responses. Do not strip it again.**
+
+SCRUM-1271-D removed it here in April 2026. Because PATCH/DELETE address a key
+by `:keyId` (= `api_keys.id`), that removal left org admins able to *see* their
+keys and unable to *name* the one they wanted revoked — `ApiKeySettings.tsx`
+passes `apiKey.id`, which became `undefined` at runtime, so the Revoke button
+issued `PATCH /api/v1/keys/undefined` and 404'd. SOC 2 CC6.8 (key lifecycle) had
+no customer-operable path until FD-P7 restored the field. It reached production.
+
+Why this row was never really in scope:
+
+- §6 bans UUIDs on **public** surfaces. Every `/api/v1/keys` route sits behind a
+  Supabase JWT + an `ORG_ADMIN` check + an org-scoped query; the only `id` a
+  caller sees belongs to a key their own org owns.
+- `org_id` and `key_hash` — the actual tenant identifier and the actual secret —
+  are still stripped, and `keys-sanitizer.test.ts` pins that.
+- Phase 3 below already specifies that v1 carries **both** `id` and `public_id`
+  through the deprecation window. Stripping the identifier before shipping its
+  replacement inverted the order and broke the feature.
+
+**Precondition for ever removing it:** `api_keys.public_id` exists and is
+backfilled (Phase 2), the routes resolve `:keyId` against it, and the frontend
+has migrated. Until all three hold, removing `id` breaks revocation again.
 
 ## Cutover phases
 

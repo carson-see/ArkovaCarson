@@ -83,4 +83,9 @@ describe('keys.ts public shape (SCRUM-1271-D + FD-P7)', () => {
     expect(JSON.stringify(out)).not.toContain('org-uuid-internal');
     expect(JSON.stringify(out)).not.toContain('TEST_HASH_NOT_REAL_REDACTED');
   });
+
+  it('returns an empty object for a null/undefined row', () => {
+    expect(publicKeyShape(null)).toEqual({});
+    expect(publicKeyShape(undefined)).toEqual({});
+  });
 });

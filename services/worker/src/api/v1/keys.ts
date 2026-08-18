@@ -44,6 +44,14 @@ export function toPublicKey<T extends Record<string, unknown>>(row: T | null | u
   return sanitized;
 }
 
+/**
+ * Columns safe to return to an org admin (everything but org_id + key_hash).
+ * One constant, used by every route — the FD-P7 regression started as three
+ * hand-maintained copies of this list drifting apart.
+ */
+const KEY_RESPONSE_COLUMNS =
+  'id, key_prefix, name, scopes, rate_limit_tier, is_active, created_at, expires_at, last_used_at, revoked_at, revocation_reason';
+
 /** Zod schema for key creation */
 const ApiKeyScopeSchema = z.enum(API_KEY_SCOPES);
 
@@ -156,7 +164,7 @@ router.post('/', async (req, res) => {
         access_purpose: access_purpose ?? null,
         ferpa_verified: !!ferpa_exception_category,
       })
-      .select('id, key_prefix, name, scopes, rate_limit_tier, is_active, created_at, expires_at, last_used_at, revoked_at, revocation_reason')
+      .select(KEY_RESPONSE_COLUMNS)
       .single();
 
     if (error || !inserted) {
@@ -210,7 +218,7 @@ router.get('/', async (req, res) => {
     }
 
     const { data: keys, error } = await db.from('api_keys')
-      .select('id, key_prefix, name, scopes, rate_limit_tier, is_active, created_at, expires_at, last_used_at, revoked_at, revocation_reason')
+      .select(KEY_RESPONSE_COLUMNS)
       .eq('org_id', profile.org_id)
       .order('created_at', { ascending: false });
 
@@ -283,9 +291,26 @@ router.patch('/:keyId', async (req, res) => {
       updateData.is_active = false;
       // CC6.8: a revoke stamps the designation, not just the boolean — the
       // first revocation wins so a repeat PATCH cannot rewrite the record.
+      // The stamp is its own UPDATE guarded by `revoked_at IS NULL`: the
+      // ownership probe above is read-then-write, so two concurrent first
+      // revokes could both observe NULL and both stamp, the later write
+      // silently shifting the timestamp and replacing the reason. With the
+      // guard the database arbitrates — the losing stamp matches zero rows
+      // and the persisted record survives.
       if (!existing.revoked_at) {
-        updateData.revoked_at = new Date().toISOString();
-        updateData.revocation_reason = parsed.data.revocation_reason ?? null;
+        const { error: stampError } = await db.from('api_keys')
+          .update({
+            revoked_at: new Date().toISOString(),
+            revocation_reason: parsed.data.revocation_reason ?? null,
+          })
+          .eq('id', keyId)
+          .eq('org_id', profile.org_id)
+          .is('revoked_at', null);
+
+        if (stampError) {
+          res.status(500).json({ error: 'Failed to update API key' });
+          return;
+        }
       }
     } else if (parsed.data.is_active === true) {
       // Revocation is one-way: validate_api_key (migration 0382) never
@@ -293,7 +318,12 @@ router.patch('/:keyId', async (req, res) => {
       // would create a row that claims active while every auth path refuses
       // it. Issue a new key instead.
       if (existing.revoked_at) {
-        res.status(409).json({ error: 'Revoked API keys cannot be reactivated. Create a new key instead.' });
+        res.status(409).json({
+          // Machine-readable code, matching apiKeyAuth's error style
+          // (`api_key_revoked` / `api_key_expired`).
+          error: 'api_key_already_revoked',
+          message: 'This API key was revoked and cannot be reactivated. Create a new key instead.',
+        });
         return;
       }
       updateData.is_active = true;
@@ -303,7 +333,7 @@ router.patch('/:keyId', async (req, res) => {
       .update(updateData)
       .eq('id', keyId)
       .eq('org_id', profile.org_id)
-      .select('id, key_prefix, name, scopes, rate_limit_tier, is_active, created_at, expires_at, last_used_at, revoked_at, revocation_reason')
+      .select(KEY_RESPONSE_COLUMNS)
       .single();
 
     if (error || !updated) {
@@ -311,14 +341,22 @@ router.patch('/:keyId', async (req, res) => {
       return;
     }
 
-    // Log revocation to audit_events
+    // Log revocation to audit_events. The payload carries the PERSISTED
+    // designation — `updated` is the post-update row — so a repeat revoke
+    // logs the original revoked_at/revocation_reason rather than whatever
+    // the repeat request supplied. An audit row must never contradict the
+    // table it describes.
     if (parsed.data.is_active === false) {
       logAuditEvent(
         userId,
         'api_key.revoked',
         'api_key',
         keyId,
-        JSON.stringify({ key_prefix: updated.key_prefix, revocation_reason: parsed.data.revocation_reason ?? null }),
+        JSON.stringify({
+          key_prefix: updated.key_prefix,
+          revoked_at: updated.revoked_at ?? null,
+          revocation_reason: updated.revocation_reason ?? null,
+        }),
         profile.org_id,
       );
     }

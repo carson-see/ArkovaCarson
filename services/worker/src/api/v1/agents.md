@@ -22,6 +22,18 @@ a revoked key is refused 409 — migration 0382's `validate_api_key` never authe
 lifecycle (create → list → revoke → refused 401 → delete) is pinned by `keys-revocation.test.ts`
 against the real router + real `apiKeyAuth` middleware.
 
+Review hardening (same PR, ported from the parallel #2218 fix plus its review): the revocation
+stamp is issued as its own UPDATE guarded by `revoked_at IS NULL`, so two concurrent first revokes
+cannot both stamp — the database arbitrates and the losing write no-ops (pinned by a deterministic
+microtask-lockstep race test). The reactivation refusal now returns a machine-readable 409 body
+(`error: 'api_key_already_revoked'`, matching `apiKeyAuth`'s `api_key_revoked`/`api_key_expired`
+style). The `api_key.revoked` audit payload carries the PERSISTED `revoked_at`/`revocation_reason`
+from the post-update row — a repeat revoke can no longer log a reason the table never stored. The
+three copies of the response select-list collapsed into one `KEY_RESPONSE_COLUMNS` constant (the
+drift-by-duplication pattern that produced FD-P7 in the first place).
+
+## 2026-08-11 — `POST /cle/submit` created anchors attributed to no organisation
+
 Same defect family as the `registry-anchor` entry below ("creating an anchor row is not the same
 as giving the user a record"), one axis over: this route wrote `anchors.user_id` and **omitted
 `org_id` entirely**. The worker is service_role and bypasses RLS, so the insert always succeeded —

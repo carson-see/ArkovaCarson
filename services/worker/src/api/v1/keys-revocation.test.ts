@@ -36,7 +36,7 @@ const h = vi.hoisted(() => {
   /**
    * Minimal stateful supabase-js query-builder fake. Supports the exact
    * chains keys.ts and apiKeyAuth.ts use: select/insert/update/delete +
-   * eq/order/single, lazy-thenable like the real builder.
+   * eq/is/order/single, lazy-thenable like the real builder.
    */
   function makeBuilder(table: string) {
     let op: 'select' | 'insert' | 'update' | 'delete' = 'select';
@@ -90,6 +90,10 @@ const h = vi.hoisted(() => {
       update: (p: Row) => { op = 'update'; payload = p; return b; },
       delete: () => { op = 'delete'; return b; },
       eq: (c: string, v: unknown) => { filters.push([c, v]); return b; },
+      // Strict-equality match is exactly PostgREST's `is` for the one use
+      // keys.ts has (`.is('revoked_at', null)` — the D1 first-stamp-wins
+      // guard): rows whose column is literally null.
+      is: (c: string, v: unknown) => { filters.push([c, v]); return b; },
       order: () => b,
       single: () => { wantSingle = true; return b; },
       then: (onOk: (r: unknown) => unknown, onErr?: (e: unknown) => unknown) =>
@@ -230,6 +234,41 @@ describe('FD-P7 — create -> list -> revoke -> refused -> delete (CC6.8)', () =
       .expect(200);
     expect(h.state.api_keys[0].revoked_at).toBe(firstStamp);
     expect(h.state.api_keys[0].revocation_reason).toBe('first');
+
+    // D2 (audit honesty): the repeat revoke's audit event must carry the
+    // PERSISTED designation — 'first' and the original stamp — never the
+    // unpersisted reason the repeat request supplied. An audit row that
+    // contradicts the table is worse than no audit row.
+    const revokeEvents = vi
+      .mocked(recordAuditEvent)
+      .mock.calls.filter(([e]) => e.event_type === 'api_key.revoked');
+    expect(revokeEvents).toHaveLength(2);
+    const repeatDetails = JSON.parse(String(revokeEvents[1][0].details));
+    expect(repeatDetails.revocation_reason).toBe('first');
+    expect(repeatDetails.revoked_at).toBe(firstStamp);
+    expect(String(revokeEvents[1][0].details)).not.toContain('second');
+  });
+
+  it('a name-only PATCH never stamps revoked_at', async () => {
+    const app = makeApp();
+    const created = await request(app)
+      .post('/api/v1/keys')
+      .send({ name: 'rename-me', scopes: ['verify'] })
+      .expect(201);
+
+    const renamed = await request(app)
+      .patch(`/api/v1/keys/${created.body.id}`)
+      .send({ name: 'renamed' })
+      .expect(200);
+
+    expect(renamed.body.name).toBe('renamed');
+    expect(h.state.api_keys[0].name).toBe('renamed');
+    expect(h.state.api_keys[0].is_active).toBe(true);
+    expect(h.state.api_keys[0].revoked_at).toBeNull();
+    expect(h.state.api_keys[0].revocation_reason).toBeNull();
+    expect(recordAuditEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'api_key.revoked' }),
+    );
   });
 
   it('refuses to reactivate a revoked key (409) — revocation is one-way', async () => {
@@ -251,7 +290,110 @@ describe('FD-P7 — create -> list -> revoke -> refused -> delete (CC6.8)', () =
       .patch(`/api/v1/keys/${created.body.id}`)
       .send({ is_active: true });
     expect(res.status).toBe(409);
+    // Machine-readable code (matches apiKeyAuth's api_key_revoked /
+    // api_key_expired style) so clients can branch without parsing prose.
+    expect(res.body.error).toBe('api_key_already_revoked');
+    expect(res.body.message).toContain('Create a new key instead');
     expect(h.state.api_keys[0].is_active).toBe(false);
+  });
+
+  it('audits api_key.revoked with the target id and the persisted designation', async () => {
+    const app = makeApp();
+    const created = await request(app)
+      .post('/api/v1/keys')
+      .send({ name: 'audit-me', scopes: ['verify'] })
+      .expect(201);
+
+    await request(app)
+      .patch(`/api/v1/keys/${created.body.id}`)
+      .send({ is_active: false, revocation_reason: 'rotating' })
+      .expect(200);
+
+    // Reason persisted on the row itself, not merely echoed in the response.
+    expect(h.state.api_keys[0].revocation_reason).toBe('rotating');
+
+    const calls = vi
+      .mocked(recordAuditEvent)
+      .mock.calls.filter(([e]) => e.event_type === 'api_key.revoked');
+    expect(calls).toHaveLength(1);
+    const event = calls[0][0];
+    expect(event.target_type).toBe('api_key');
+    expect(event.target_id).toBe(created.body.id);
+    const details = JSON.parse(String(event.details));
+    expect(details.key_prefix).toBe(h.state.api_keys[0].key_prefix);
+    expect(details.revocation_reason).toBe('rotating');
+    expect(details.revoked_at).toBe(h.state.api_keys[0].revoked_at);
+  });
+});
+
+describe('FD-P7 — concurrent first revokes (D1: the stamp is DB-arbitrated)', () => {
+  function patchHandler() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const layer = (keysRouter as any).stack.find(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (l: any) => l.route?.path === '/:keyId' && l.route?.methods?.patch,
+    );
+    return layer.route.stack[0].handle;
+  }
+
+  it('two concurrent first revokes cannot both stamp — the guard no-ops the loser', async () => {
+    const app = makeApp();
+    const created = await request(app)
+      .post('/api/v1/keys')
+      .send({ name: 'race-key', scopes: ['verify'] })
+      .expect(201);
+
+    const mkReq = (reason: string) =>
+      ({
+        authUserId: ADMIN_USER,
+        hmacSecret: TEST_HMAC_SECRET,
+        body: { is_active: false, revocation_reason: reason },
+        params: { keyId: created.body.id },
+      }) as unknown as import('express').Request;
+    const mkRes = () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const r: any = { statusCode: 200 };
+      r.status = (c: number) => { r.statusCode = c; return r; };
+      r.json = (b: unknown) => { r.body = b; return r; };
+      r.end = () => r;
+      return r as import('express').Response & { statusCode: number; body: Record<string, unknown> };
+    };
+
+    // Drive the REAL handler twice without awaiting in between. Both
+    // invocations run the identical code path, so they advance in microtask
+    // lockstep over the async fake: BOTH ownership probes observe
+    // `revoked_at IS NULL` before EITHER stamping UPDATE executes — the exact
+    // D1 read-then-write race. Only the `.is('revoked_at', null)` guard on
+    // the stamping UPDATE stands between the later write and a silently
+    // rewritten timestamp/reason.
+    const resA = mkRes();
+    const resB = mkRes();
+    await Promise.all([
+      patchHandler()(mkReq('winner'), resA, () => {}),
+      patchHandler()(mkReq('loser'), resB, () => {}),
+    ]);
+
+    expect(resA.statusCode).toBe(200);
+    expect(resB.statusCode).toBe(200);
+    const row = h.state.api_keys[0];
+    expect(row.is_active).toBe(false);
+    expect(row.revoked_at).toBeTruthy();
+    // The first stamp to reach the table wins (the first-launched handler,
+    // under lockstep). Without the guard the LATER write rewrites the record
+    // and this reads 'loser'.
+    expect(row.revocation_reason).toBe('winner');
+
+    // Both audit events describe the PERSISTED record — neither logs the
+    // unpersisted 'loser' reason (D2).
+    const details = vi
+      .mocked(recordAuditEvent)
+      .mock.calls.filter(([e]) => e.event_type === 'api_key.revoked')
+      .map(([e]) => JSON.parse(String(e.details)));
+    expect(details).toHaveLength(2);
+    for (const d of details) {
+      expect(d.revocation_reason).toBe('winner');
+      expect(d.revoked_at).toBe(row.revoked_at);
+    }
   });
 });
 
