@@ -60,6 +60,22 @@ Renaming the variable is a follow-up; pointing it at a channel that exists matte
 
 **Verification standard for anything added here.** Creating an alert policy is not evidence it works — that is the same mistake in a new costume. Cloud Monitoring exposes no public incidents API, so the way to prove delivery is the Pub/Sub channel above: trigger the condition (write a matching log line via `logging.googleapis.com/v2/entries:write`, or stand up a negative-control clone of the policy), then pull `alert-delivery-proof-sub` and read the incident payload. If a policy cannot be shown to have opened an incident and dispatched, it does not count.
 
+## 2026-08-18 — `platform-health-digest` NOT_SCHEDULED entry (`feat/platform-admin-daily-health-digest`, draft, T2)
+
+New route `POST /jobs/platform-health-digest` (`services/worker/src/routes/cron.ts`, backed by
+`services/worker/src/jobs/platform-health-digest-cron.ts`) added to `cloud-scheduler.sh`'s
+`NOT_SCHEDULED` array — the coverage-contract test (`cloud-scheduler.test.ts`, "every POST cron route
+appears in JOBS or NOT_SCHEDULED") would otherwise fail the moment the route landed. The reason
+recorded is genuinely a freeze-window fact, not a permanent state: `ENABLE_PLATFORM_HEALTH_DIGEST`
+defaults **true**, but binding the Cloud Scheduler job itself needs `gcloud auth login` project-admin
+credentials against `arkova1` — an operator step this session cannot perform (no rig/prod contact per
+the current freeze). **Follow-up for whoever binds it:** move this route from `NOT_SCHEDULED` to
+`JOBS` with schedule `0 13 * * *` (matches `queue-digest`'s cadence) once the job is actually created
+in prod — do not just delete the `NOT_SCHEDULED` line, since removing it without adding the `JOBS`
+entry would fail the same coverage test the other way (declared nowhere is exactly the state that
+lets a route silently have no trigger — see this file's SCRUM-3050 section above for the class of bug
+that pattern produces).
+
 ## Conventions
 
 - Requires `gcloud auth login` with project-admin role on `arkova1`.
