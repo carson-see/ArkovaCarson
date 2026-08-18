@@ -43,7 +43,7 @@ The server starts and warns to stderr (does not exit) if `ARKOVA_API_KEY` is uns
 
 | Tool | Description |
 |------|-------------|
-| `arkova_verify_credential` | Verify a credential's authenticity and Bitcoin anchor status by public ID or fingerprint |
+| `arkova_verify_credential` | Verify a credential's authenticity and network anchor status by public ID or fingerprint |
 | `arkova_credential_status` | Get anchor status and proof details for a credential |
 | `arkova_search_credentials` | Search verified credentials by name, institution, credential type, or other metadata |
 | `arkova_create_attestation` | Create a third-party attestation (requires org admin privileges) |
@@ -51,8 +51,10 @@ The server starts and warns to stderr (does not exit) if `ARKOVA_API_KEY` is uns
 | `arkova_verify_signature` | Verify an AdES electronic signature (Phase III) |
 | `nessie_compliance_score` | Get an organization's compliance score for a jurisdiction/industry pair |
 | `nessie_gap_analysis` | Identify missing required/recommended compliance documents |
-| `nessie_ask` | Ask Nessie a compliance question, answered with citations to anchored source documents |
+| `nessie_ask` | Ask Nessie a compliance question, answered with citations to anchored source documents. **Not yet enabled in production** — calls currently return a 503 until this feature launches. |
 | `nessie_cross_reference` | Cross-reference multiple anchored documents for inconsistencies |
+
+`nessie_compliance_score`, `nessie_gap_analysis`, and `nessie_cross_reference` are deterministic, rule-based compliance calculators (no dependency on the still-unlaunched Nessie search feature) and work today with a valid API key. Only `nessie_ask` depends on that feature.
 
 ## Usage with Claude Desktop
 

@@ -486,6 +486,32 @@ describe('verify', () => {
     expect(result.complianceControls).toBeNull();
     expect(result.complianceControlsNote).toBeNull();
   });
+
+  // Doc-accuracy regression: confirmed live against production
+  // (2026-08-18, npm-publish clean-room verification) that
+  // GET /api/v1/verify/{publicId} for an unknown ID returns
+  // 404 { verified: false, error: "Record not found" } — a legacy
+  // human-readable string, not the `not_found` slug the README's error
+  // code table documents for other v1 endpoints. jsonOrThrow carries
+  // `error` through verbatim as `code`, so pin that exact contract here:
+  // a documentation claim of `code: 'not_found'` for this call would have
+  // been silently wrong for every caller who branches on it.
+  it('throws ArkovaError with the server\'s literal error string as `code` on 404 (not a normalized slug)', async () => {
+    const client = new Arkova();
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: async () => ({ verified: false, error: 'Record not found' }),
+      headers: { get: () => null },
+    });
+
+    await expect(client.verify('ARK-DOES-NOT-EXIST')).rejects.toMatchObject({
+      statusCode: 404,
+      code: 'Record not found',
+      message: 'Record not found',
+    });
+  });
 });
 
 describe('query', () => {

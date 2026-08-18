@@ -20,6 +20,8 @@
  * Story: PH2-AGENT-06 (SCRUM-403); npm publication prep (2026-08-18).
  */
 
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -69,10 +71,42 @@ async function main(): Promise<void> {
   await server.connect(transport);
 }
 
-// Only run the live stdio server when this file is the process entry point
-// (i.e. actually invoked as the `bin`). Importing it — as the test suite
-// does, to reach `createServer()` — must not also start reading stdin.
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * True only when this file is the actual process entry point (i.e. invoked
+ * as the `bin`), false when merely imported (e.g. by the test suite, which
+ * imports this module to reach `createServer()` and must not also start
+ * reading stdin as a side effect).
+ *
+ * BUG (found in npm-publish clean-room verification, fixed same change):
+ * a plain `import.meta.url === \`file://${process.argv[1]}\`` string
+ * compare looks correct under `node dist/cli.js`, but npm's `bin` field is
+ * ALWAYS installed as a symlink — `node_modules/.bin/arkova-mcp-server ->
+ * ../arkova-mcp-server/dist/cli.js` locally, the same pattern for a global
+ * install, and the same pattern `npx` builds in its temp cache. Node's ESM
+ * loader resolves `import.meta.url` through that symlink to the real file,
+ * while `process.argv[1]` stays exactly as invoked (the symlink path), so
+ * the two never matched for any real install — `main()` silently never ran.
+ * The compiled bin executed, printed nothing, and exited 0 with the tool
+ * server never started, for every real invocation path (`npx -y
+ * arkova-mcp-server`, a global install, and the Claude Desktop config this
+ * README documents) — confirmed by running the packed tarball through an
+ * actual `npm install`-created `.bin` symlink, not just `node dist/cli.js`
+ * directly. `realpathSync` on both sides resolves symlinks before
+ * comparing, so direct and symlinked invocation both match while a test
+ * runner's own entry file still doesn't.
+ */
+function isRunAsScript(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    const thisFile = realpathSync(fileURLToPath(import.meta.url));
+    const invokedFile = realpathSync(process.argv[1]);
+    return thisFile === invokedFile;
+  } catch {
+    return false;
+  }
+}
+
+if (isRunAsScript()) {
   main().catch((err) => {
     process.stderr.write(
       `arkova-mcp-server: fatal error: ${err instanceof Error ? err.message : String(err)}\n`,

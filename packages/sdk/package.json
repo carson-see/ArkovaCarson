@@ -23,8 +23,14 @@
     "typecheck": "tsc --noEmit",
     "prepack": "npm run build"
   },
-  "keywords": ["arkova", "verification", "anchor", "bitcoin", "x402"],
+  "keywords": ["arkova", "verification", "anchor", "credentials", "x402"],
+  "author": "Arkova <engineering@arkova.ai>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/carson-see/ArkovaCarson",
+    "directory": "packages/sdk"
+  },
   "engines": {
     "node": ">=18"
   },
