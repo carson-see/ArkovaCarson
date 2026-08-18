@@ -1,5 +1,9 @@
 # agents.md — pages
-_Last updated: 2026-08-10_
+_Last updated: 2026-08-18_
+
+## 2026-08-18 — `OrgProfilePage.tsx` — Pending Invitations visibility on the People tab
+
+Wired `useOrgInvitations` (`src/hooks/agents.md`) + `PendingInvitationsList` (`src/components/organization/agents.md`) into the People tab, admin-only, below `MembersTable`. `handleInvite` and the new `handleResendInvitation` both call the existing `useInviteMember().inviteMember()` — resend is a fresh `invite_member` RPC + `/api/send-invitation-email` call (new row, new token, new 7-day clock), not a re-send of the old token, then `refreshInvitations()` invalidates the query. No new worker route, no migration. Context: founder-reported "I still cannot invite members" investigation found the accept-path backend correct (see the components/organization note); this closes the actual demonstrated gap — the admin had no way to see whether an invite was pending, expired, or ever sent.
 
 ## 2026-08-10 — `ActivateAccountPage.tsx` rebuilt; the recovery-phrase ruling
 
