@@ -437,6 +437,19 @@ coverage" for why (the 2026 silent-skip bug where a single early failure skipped
 suite with no signal). Baseline at wiring time: **36/36 green**, verified locally on `main` before
 the gate was added — a gate must not be merged red.
 
+## Queue-digest flag activation (2026-08-18, `feat/queue-digest-default-on`, draft)
+
+Same class of defect as the Drive connector activation above: `ENABLE_QUEUE_DIGEST` was absent from
+this file's `--set-env-vars` entirely (and from `docs/reference/ENV.md`), so the fully-built QUEUE-07
+daily digest job (`services/worker/src/jobs/queue-digest-cron.ts`) ran on `config.ts`'s
+`boolFlag(false)` code default in prod and `POST /cron/queue-digest` was a standing no-op — found via
+a read-only capability audit, not a code review. `ENABLE_QUEUE_DIGEST=true` added to the canary
+deploy step's `--set-env-vars` string (single append, no new step/job — this is a plain env-var
+addition, not a gating change). Per-org enrollment was separately flipped to DEFAULT-ON in the same
+PR (worker-only change, no workflow impact) — see the dated entry in
+`services/worker/src/jobs/agents.md`. Still requires a Cloud Scheduler job → `POST
+/cron/queue-digest` to actually fire daily; this workflow only gates the code path.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails

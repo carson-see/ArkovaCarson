@@ -25,7 +25,8 @@ const {
   readOrgMetrics,
   runDailyQueueDigest,
   isDigestRuleDueToday,
-  listDigestOptedInOrgIds,
+  listQueueDigestPreferences,
+  isOrgEnrolledInQueueDigest,
 } = await import('./queue-digest-cron.js');
 
 // ── A tiny query-builder mock that records the filters applied and returns a
@@ -118,25 +119,66 @@ describe('isDigestRuleDueToday (F4 — per-rule cadence)', () => {
   });
 });
 
-describe('listDigestOptedInOrgIds — cadence filtering (F4)', () => {
-  it('enumerates only orgs whose rule cadence is due today', async () => {
-    const wed = new Date('2026-07-01T13:00:00Z'); // Wednesday
+describe('listQueueDigestPreferences — DEFAULT-ON opt-out store', () => {
+  it('reads every QUEUE_DIGEST rule row (both enabled and disabled) keyed by org', async () => {
     const rows = [
-      { org_id: 'daily-org', trigger_config: { cron: '0 13 * * *' } },
-      { org_id: 'monday-org', trigger_config: { cron: '0 13 * * 1' } }, // not due Wed
-      { org_id: 'nocron-org', trigger_config: {} },
+      { org_id: 'opted-out-org', enabled: false, trigger_config: {} },
+      { org_id: 'custom-cadence-org', enabled: true, trigger_config: { cron: '0 13 * * 1' } },
     ];
     const database = { from: vi.fn(() => makeQuery({ data: rows })) };
-    const ids = await listDigestOptedInOrgIds(database as never, wed);
-    expect(ids.has('daily-org')).toBe(true);
-    expect(ids.has('nocron-org')).toBe(true);
-    expect(ids.has('monday-org')).toBe(false);
+    const prefs = await listQueueDigestPreferences(database as never);
+    expect(prefs).not.toBeNull();
+    expect(prefs?.get('opted-out-org')).toMatchObject({ enabled: false });
+    expect(prefs?.get('custom-cadence-org')).toMatchObject({ enabled: true });
+    // No preference query filters on `enabled` server-side — an opt-out row
+    // (enabled=false) must still come back so it can be honored, unlike the
+    // old opt-in world where only enabled=true rows mattered.
+    const calls = (
+      database.from.mock.results[0]?.value as unknown as {
+        _calls: Array<[string, unknown, unknown]>;
+      }
+    )._calls;
+    expect(calls.find(([m, col]) => m === 'eq' && col === 'enabled')).toBeUndefined();
   });
 
-  it('read error → empty set (fail closed)', async () => {
+  it('read error → null (fail CLOSED — unreadable preference store, not "empty")', async () => {
     const database = { from: vi.fn(() => makeQuery({ data: null, error: { message: 'boom' } })) };
-    const ids = await listDigestOptedInOrgIds(database as never, new Date());
-    expect(ids.size).toBe(0);
+    const prefs = await listQueueDigestPreferences(database as never);
+    expect(prefs).toBeNull();
+  });
+
+  it('a genuinely empty result set (no rows, no error) is a real empty map, not a failure', async () => {
+    const database = { from: vi.fn(() => makeQuery({ data: [] })) };
+    const prefs = await listQueueDigestPreferences(database as never);
+    expect(prefs).not.toBeNull();
+    expect(prefs?.size).toBe(0);
+  });
+});
+
+describe('isOrgEnrolledInQueueDigest — DEFAULT-ON enrollment (CTO decision)', () => {
+  const wed = new Date('2026-07-01T13:00:00Z'); // Wednesday
+
+  it('an org with NO preference row is enrolled by default (absence = enrolled)', () => {
+    const prefs = new Map();
+    expect(isOrgEnrolledInQueueDigest(prefs, 'no-row-org', wed)).toBe(true);
+  });
+
+  it('an org with an explicit enabled=false row is OPTED OUT', () => {
+    const prefs = new Map([['opted-out-org', { enabled: false, triggerConfig: {} }]]);
+    expect(isOrgEnrolledInQueueDigest(prefs, 'opted-out-org', wed)).toBe(false);
+  });
+
+  it('an org with an explicit enabled=true row stays enrolled and honors its cadence (F4 backward compat)', () => {
+    const prefs = new Map([
+      ['monday-org', { enabled: true, triggerConfig: { cron: '0 13 * * 1' } }], // due Monday only
+    ]);
+    expect(isOrgEnrolledInQueueDigest(prefs, 'monday-org', wed)).toBe(false); // wed, not due
+    const mon = new Date('2026-07-06T13:00:00Z');
+    expect(isOrgEnrolledInQueueDigest(prefs, 'monday-org', mon)).toBe(true);
+  });
+
+  it('prefs=null (preference read failed) → every org fails CLOSED (not enrolled)', () => {
+    expect(isOrgEnrolledInQueueDigest(null, 'any-org', wed)).toBe(false);
   });
 });
 
@@ -381,14 +423,15 @@ describe('runDailyQueueDigest — cron loop', () => {
     }
   });
 
-  it('sends one scoped digest per admin and aggregates the result', async () => {
+  it('sends one scoped digest per admin and aggregates the result (DEFAULT-ON: no preference row needed)', async () => {
     // Route per-table so the loop reads admins, scope, names, metrics, store.
     const database = {
       from: vi.fn((table: string) => {
         switch (table) {
           case 'organization_rules':
-            // org-acme has an ENABLED QUEUE_DIGEST opt-in rule.
-            return makeQuery({ data: [{ org_id: 'org-acme' }] });
+            // org-acme has NO QUEUE_DIGEST preference row at all — under the
+            // default-on flip this org is still enrolled (absence = enrolled).
+            return makeQuery({ data: [] });
           case 'profiles':
             return makeQuery({ data: [{ email: 'admin@acme.example', org_id: 'org-acme' }] });
           case 'organizations':
@@ -429,10 +472,10 @@ describe('runDailyQueueDigest — cron loop', () => {
     );
   });
 
-  // Build a per-table routed db where the QUEUE_DIGEST opt-in rule set is
+  // Build a per-table routed db where the QUEUE_DIGEST preference rows are
   // configurable. The queue (anchors) is always non-empty so the ONLY thing
-  // deciding whether mail is sent is the per-org opt-in gate.
-  function makeRoutedDb(optInOrgIds: string[]) {
+  // deciding whether mail is sent is the enrollment gate (default-on / opt-out).
+  function makeRoutedDb(preferenceRows: Array<{ org_id: string; enabled: boolean }>) {
     const anchorsFrom = vi.fn(() =>
       makeQuery({ data: [{ created_at: '2026-06-29T07:00:00Z' }] }),
     );
@@ -442,7 +485,7 @@ describe('runDailyQueueDigest — cron loop', () => {
     const from = vi.fn((table: string) => {
       switch (table) {
         case 'organization_rules':
-          return makeQuery({ data: optInOrgIds.map((id) => ({ org_id: id })) });
+          return makeQuery({ data: preferenceRows });
         case 'profiles':
           return profilesFrom();
         case 'organizations':
@@ -460,8 +503,8 @@ describe('runDailyQueueDigest — cron loop', () => {
     return { from, anchorsFrom, profilesFrom };
   }
 
-  it('emails an admin whose org HAS an enabled QUEUE_DIGEST opt-in rule', async () => {
-    const db = makeRoutedDb(['org-acme']);
+  it('DEFAULT-ON: emails an admin whose org has NO QUEUE_DIGEST preference row at all', async () => {
+    const db = makeRoutedDb([]);
     const send = vi.fn(async () => ({ success: true, messageId: 'm1' }));
     const result = await runDailyQueueDigest({
       database: { from: db.from } as never,
@@ -473,9 +516,9 @@ describe('runDailyQueueDigest — cron loop', () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it('does NOT enumerate or email an org without an enabled QUEUE_DIGEST rule, even with a non-empty queue', async () => {
-    // org-acme has a non-empty queue but NO opt-in rule (a DIFFERENT org opted in).
-    const db = makeRoutedDb(['org-other']);
+  it('OPT-OUT HONORED: does NOT email an org with an explicit enabled=false QUEUE_DIGEST rule, even with a non-empty queue', async () => {
+    // org-acme has a non-empty queue but explicitly opted out (enabled=false).
+    const db = makeRoutedDb([{ org_id: 'org-acme', enabled: false }]);
     const send = vi.fn(async () => ({ success: true, messageId: 'm1' }));
     const result = await runDailyQueueDigest({
       database: { from: db.from } as never,
@@ -484,14 +527,26 @@ describe('runDailyQueueDigest — cron loop', () => {
     });
     expect(result.admins).toBe(0);
     expect(send).not.toHaveBeenCalled();
-    // Never built metrics for the non-opted-in org.
+    // Never built metrics for the opted-out org.
     expect(db.anchorsFrom).not.toHaveBeenCalled();
   });
 
-  it('does NOT email when the org-rules read fails (fails closed → no opted-in orgs)', async () => {
+  it('legacy explicit opt-in (enabled=true) still enrolls the org and honors its custom cadence', async () => {
+    const db = makeRoutedDb([{ org_id: 'org-acme', enabled: true }]);
+    const send = vi.fn(async () => ({ success: true, messageId: 'm1' }));
+    const result = await runDailyQueueDigest({
+      database: { from: db.from } as never,
+      send: send as never,
+      now: new Date('2026-06-29T08:00:00Z'),
+    });
+    expect(result.admins).toBe(1);
+    expect(result.sent).toBe(1);
+  });
+
+  it('does NOT email when the preferences read fails (fails closed → nobody enrolled)', async () => {
     const from = vi.fn((table: string) => {
       if (table === 'organization_rules') {
-        return makeQuery({ data: null, error: { msg: 'rules read boom' } });
+        return makeQuery({ data: null, error: { msg: 'prefs read boom' } });
       }
       if (table === 'profiles') {
         return makeQuery({ data: [{ email: 'admin@acme.example', org_id: 'org-acme' }] });
@@ -505,6 +560,42 @@ describe('runDailyQueueDigest — cron loop', () => {
       now: new Date('2026-06-29T08:00:00Z'),
     });
     expect(result.admins).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('EMPTY-QUEUE SKIPPED: a default-enrolled org with an all-zero queue is counted but not emailed (no noise)', async () => {
+    // No preference row (default-enrolled), but the org's queue is completely
+    // quiet: zero open anchors, zero connector issues. Default-on enrollment
+    // must never turn into inbox noise for an org with nothing to review.
+    const database = {
+      from: vi.fn((table: string) => {
+        switch (table) {
+          case 'organization_rules':
+            return makeQuery({ data: [] }); // no preference row → enrolled
+          case 'profiles':
+            return makeQuery({ data: [{ email: 'admin@quiet.example', org_id: 'org-quiet' }] });
+          case 'organizations':
+            return makeQuery({ data: [{ id: 'org-quiet', display_name: 'Quiet Org' }] });
+          case 'anchors':
+            return makeQuery({ data: [] }); // zero open review items
+          case 'connector_alert_state':
+            return makeQuery({ data: [] }); // zero connector issues
+          case 'audit_events':
+            return { ...makeQuery({ data: [] }), insert: vi.fn(async () => ({ error: null })) };
+          default:
+            return makeQuery({ data: [] });
+        }
+      }),
+    };
+    const send = vi.fn(async () => ({ success: true }));
+    const result = await runDailyQueueDigest({
+      database: database as never,
+      send: send as never,
+      now: new Date('2026-06-29T08:00:00Z'),
+    });
+    expect(result.admins).toBe(1); // enrolled...
+    expect(result.skippedEmpty).toBe(1); // ...but skipped for having nothing to report
+    expect(result.sent).toBe(0);
     expect(send).not.toHaveBeenCalled();
   });
 });

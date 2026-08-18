@@ -326,6 +326,28 @@ ENABLE_RULES_ENGINE=true
 # When false, the /jobs/queue-reminders cron no-ops.
 ENABLE_QUEUE_REMINDERS=true
 
+# QUEUE-07 (SCRUM-2353) — daily org-admin review-queue digest email.
+# Read by config.ts as config.enableQueueDigest (boolFlag(false) code
+# default). Gates POST /cron/queue-digest (services/worker/src/jobs/
+# queue-digest-cron.ts): when false/unset, runDailyQueueDigest no-ops before
+# enumerating admins or sending mail. Was previously ABSENT from this file and
+# from deploy-worker.yml's --set-env-vars, so prod ran on the false default
+# even though the job was fully built (0 emails ever sent). Now set true in
+# deploy-worker.yml.
+#
+# Enrollment is DEFAULT-ON, not opt-in: every org with an ORG_ADMIN is
+# enrolled unless it holds an explicit opt-out — an `organization_rules` row
+# with trigger_type='QUEUE_DIGEST' and enabled=false (the existing Rule
+# Builder toggle, reused as the opt-out store; absence of a row = enrolled).
+# An enrolled org whose review queue is entirely empty is still skipped
+# (no mail) so default-on does not become inbox noise. See
+# listQueueDigestPreferences / isOrgEnrolledInQueueDigest in
+# queue-digest-cron.ts.
+#
+# Still requires a Cloud Scheduler job → POST /cron/queue-digest (CRON_SECRET
+# auth) to actually fire daily — this flag only gates the code path.
+ENABLE_QUEUE_DIGEST=true
+
 # ARK-103 — treasury low-balance alerting (SCRUM-1013)
 # When false, the /jobs/treasury-alert-check cron no-ops (no Slack/email fired).
 ENABLE_TREASURY_ALERTS=true
