@@ -67,3 +67,23 @@ Compliance monitoring and audit UI: score cards, audit gap analysis, jurisdictio
   a parenthetical "(SCCs)" tag the same way the removed Kenya string did —
   worth the same scrutiny. Flagged in the PR body for counsel; do not silently
   fix on a future touch without counsel sign-off, same as Kenya.
+- 2026-08-18 (second commit, same branch — Tranche 0, counsel-ordered):
+  `rights` and `breachTimeline` finish the job the entry above started. Both
+  are now optional on `JurisdictionNotice` (`rights?: readonly string[]`,
+  `breachTimeline?: string`), matching `transferBasis?` /
+  `informationOfficer?`. Two new conditional blocks in the render —
+  `{notice.breachTimeline && (...)}` and
+  `{notice.rights && notice.rights.length > 0 && (...)}` — mean a jurisdiction
+  that omits either field simply doesn't render that grid cell or the "Your
+  Rights" badge row, instead of throwing on `.map` over `undefined`. The
+  Kenya entry in `JURISDICTION_NOTICES` now sets none of `transferBasis`,
+  `rights`, or `breachTimeline` — title, regulator, description (rewritten to
+  the counsel-pending placeholder), and Information Officer are all it
+  renders. Every other jurisdiction still populates both fields as before, so
+  this is additive-safe: `notice.rights.length > 0` degrades gracefully for
+  any future jurisdiction that also needs to omit rights.
+  `JurisdictionPrivacyNotices.test.tsx` pins: the placeholder text is
+  present, `Sections 25-38` / `25-38` / `72 hours` / the specific rights
+  badge strings are absent from the Kenya-filtered render, and every other
+  jurisdiction (Nigeria, South Africa, Thailand, etc.) is unaffected — same
+  test file, unfiltered render.

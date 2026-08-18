@@ -17,8 +17,12 @@ interface JurisdictionNotice {
   description: string;
   regulator: string;
   regulatorUrl: string;
-  /** `readonly` because the rights arrays are `as const` values from copy.ts. */
-  rights: readonly string[];
+  /**
+   * `readonly` because the rights arrays are `as const` values from copy.ts.
+   * Optional as of 2026-08-18 (Tranche 0, counsel-ordered) — see the Kenya
+   * comment below for why.
+   */
+  rights?: readonly string[];
   /**
    * Optional (hotfix/kenya-transfer-basis-removal, 2026-08-18): Kenya's prior
    * value asserted SCCs — a EU GDPR mechanism — as its Kenya DPA 2019 §48
@@ -28,7 +32,14 @@ interface JurisdictionNotice {
    * conditional on this being set, matching `informationOfficer`.
    */
   transferBasis?: string;
-  breachTimeline: string;
+  /**
+   * Optional as of 2026-08-18 (Tranche 0, counsel-ordered): Kenya's prior
+   * value, "72 hours (controller to ODPC)", was never reviewed by counsel.
+   * Removed alongside `rights` — see the Kenya entry below. The row is
+   * conditional on this being set, matching `transferBasis` /
+   * `informationOfficer`.
+   */
+  breachTimeline?: string;
   informationOfficer?: string;
 }
 
@@ -53,19 +64,23 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     transferBasis: PRIVACY_NOTICE_LABELS.HIPAA_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.HIPAA_BREACH_TIMELINE,
   },
-  // Counsel-ordered removal 2026-08-18 (hotfix/kenya-transfer-basis-removal):
-  // no `transferBasis` field. The prior value falsely named EU GDPR Standard
-  // Contractual Clauses as the basis under Kenya DPA 2019 §48 — SCCs are not
-  // a Kenya DPA mechanism. Removed, not reworded; replacement wording awaits
-  // counsel. See the KENYA_BREACH_TIMELINE comment in copy.ts.
+  // Counsel-ordered removal 2026-08-18 (Tranche 0, hotfix/kenya-transfer-
+  // basis-removal): no `transferBasis`, `rights`, or `breachTimeline` field.
+  // The prior `transferBasis` falsely named EU GDPR Standard Contractual
+  // Clauses as the basis under Kenya DPA 2019 §48 — SCCs are not a Kenya DPA
+  // mechanism (removed in the first commit on this branch). The prior
+  // `rights`/`breachTimeline` cited Sections 25-38 and a "72 hours" ODPC
+  // timeline that were likewise never reviewed by counsel. All three are
+  // removed, not reworded — see the KENYA_DESCRIPTION comment in copy.ts for
+  // counsel's exact instruction. Title, regulator, and Information Officer
+  // are unaffected; KENYA_DESCRIPTION carries the counsel-pending placeholder
+  // that replaces what the removed rows used to show.
   {
     id: 'kenya',
     title: PRIVACY_NOTICE_LABELS.KENYA_TITLE,
     description: PRIVACY_NOTICE_LABELS.KENYA_DESCRIPTION,
     regulator: PRIVACY_NOTICE_LABELS.KENYA_REGULATOR,
     regulatorUrl: 'https://odpc.go.ke',
-    rights: PRIVACY_NOTICE_LABELS.KENYA_RIGHTS,
-    breachTimeline: PRIVACY_NOTICE_LABELS.KENYA_BREACH_TIMELINE,
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
   {
@@ -228,12 +243,14 @@ export function JurisdictionPrivacyNotices({ jurisdictions }: JurisdictionPrivac
                   </a>
                 </div>
 
-                <div>
-                  <p className="font-medium text-xs uppercase tracking-wide text-muted-foreground mb-1">
-                    {PRIVACY_NOTICE_LABELS.BREACH_TIMELINE_LABEL}
-                  </p>
-                  <p>{notice.breachTimeline}</p>
-                </div>
+                {notice.breachTimeline && (
+                  <div>
+                    <p className="font-medium text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                      {PRIVACY_NOTICE_LABELS.BREACH_TIMELINE_LABEL}
+                    </p>
+                    <p>{notice.breachTimeline}</p>
+                  </div>
+                )}
 
                 {notice.transferBasis && (
                   <div>
@@ -244,18 +261,20 @@ export function JurisdictionPrivacyNotices({ jurisdictions }: JurisdictionPrivac
                   </div>
                 )}
 
-                <div>
-                  <p className="font-medium text-xs uppercase tracking-wide text-muted-foreground mb-1">
-                    {PRIVACY_NOTICE_LABELS.RIGHTS_LABEL}
-                  </p>
-                  <div className="flex flex-wrap gap-1">
-                    {notice.rights.map((right) => (
-                      <Badge key={right} variant="secondary" className="text-xs">
-                        {right}
-                      </Badge>
-                    ))}
+                {notice.rights && notice.rights.length > 0 && (
+                  <div>
+                    <p className="font-medium text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                      {PRIVACY_NOTICE_LABELS.RIGHTS_LABEL}
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {notice.rights.map((right) => (
+                        <Badge key={right} variant="secondary" className="text-xs">
+                          {right}
+                        </Badge>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {notice.informationOfficer && (
                   <div>
