@@ -128,6 +128,88 @@ describe('runDbHealthMonitor (R0-8)', () => {
   });
 });
 
+// Prod anomaly triage (2026-08-18), verdict 2 — ARKOVA-WORKER-2A.
+//
+// The ratio check had no absolute floor, unlike its VACUUM_DEAD_TUPLE_THRESHOLD
+// sibling (see `alerts on autovacuum > 24h with > 100k dead tuples` above). On
+// a low-row-count table this makes the ratio pure threshold noise, not a bloat
+// signal: prod's `job_queue` sits around n_live_tup=24 (queue rows churn to
+// completed/dead and get vacuumed away), so a handful of rows moving between
+// states swings the ratio by tens of percentage points — three live snapshots
+// taken minutes apart read 0.83, 1.46, and 2.46 off the SAME table while
+// autovacuum was healthy the entire time (499 runs, last one minutes-fresh,
+// n_dead_tup=20 sitting well under the table's own
+// `50 + 0.2*n_live_tup ≈ 55` autovacuum trigger point). Same defect class as
+// `DEFAULT_LINKER_STALL_MIN_BACKLOG` in `pipelineThroughputMonitor.ts`: a
+// signal with no floor pages on a magnitude it was never meant to resolve.
+describe('dead-tuple ratio absolute floor (prod anomaly triage 2026-08-18)', () => {
+  it('the exact prod shape (24 live / 20 dead, ratio 0.83) does NOT alert', async () => {
+    mockRpcs({
+      deadTuples: [
+        { schemaname: 'public', relname: 'job_queue', n_live_tup: 24, n_dead_tup: 20, last_autovacuum: new Date().toISOString() },
+      ],
+    });
+    mockSmokeChain([]);
+    const result = await runDbHealthMonitor();
+    expect(result.alerts.some((a) => a.includes('Dead-tuple ratio on job_queue'))).toBe(false);
+    expect(sentryCapture).not.toHaveBeenCalled();
+  });
+
+  it('the ratio stays sub-floor across the SAME volatility the incident observed (0.83 / 1.46 / 2.46)', async () => {
+    // n_dead_tup fixed at 20 (below the floor); only n_live_tup swings, which
+    // is exactly what moved the ratio between snapshots taken minutes apart
+    // in the triage. None of these should ever alert — the floor makes the
+    // check indifferent to live-tup churn on a table this small.
+    for (const n_live_tup of [24, 14, 8]) {
+      mockRpcs({
+        deadTuples: [
+          { schemaname: 'public', relname: 'job_queue', n_live_tup, n_dead_tup: 20, last_autovacuum: new Date().toISOString() },
+        ],
+      });
+      mockSmokeChain([]);
+      const result = await runDbHealthMonitor();
+      expect(result.alerts.some((a) => a.includes('Dead-tuple ratio on job_queue'))).toBe(false);
+    }
+    expect(sentryCapture).not.toHaveBeenCalled();
+  });
+
+  it('a genuine bloat ratio at real scale (10k live / 50k dead) still fires', async () => {
+    // Same shape as the incident that motivated DEAD_RATIO_THRESHOLD in the
+    // first place — the floor must not blind the check to real bloat.
+    mockRpcs({
+      deadTuples: [
+        { schemaname: 'public', relname: 'anchors', n_live_tup: 10_000, n_dead_tup: 50_000, last_autovacuum: new Date().toISOString() },
+      ],
+    });
+    mockSmokeChain([]);
+    const result = await runDbHealthMonitor();
+    expect(result.alerts.some((a) => a.includes('Dead-tuple ratio on anchors'))).toBe(true);
+    expect(sentryCapture).toHaveBeenCalled();
+  });
+
+  it('the floor is inclusive at its boundary: at 500 dead tuples alerts, at 499 does not', async () => {
+    mockRpcs({
+      deadTuples: [
+        { schemaname: 'public', relname: 'job_queue', n_live_tup: 500, n_dead_tup: 500, last_autovacuum: new Date().toISOString() },
+      ],
+    });
+    mockSmokeChain([]);
+    const atFloor = await runDbHealthMonitor();
+    expect(atFloor.alerts.some((a) => a.includes('Dead-tuple ratio on job_queue'))).toBe(true);
+
+    vi.clearAllMocks();
+    sentryCapture.mockReset();
+    mockRpcs({
+      deadTuples: [
+        { schemaname: 'public', relname: 'job_queue', n_live_tup: 500, n_dead_tup: 499, last_autovacuum: new Date().toISOString() },
+      ],
+    });
+    mockSmokeChain([]);
+    const belowFloor = await runDbHealthMonitor();
+    expect(belowFloor.alerts.some((a) => a.includes('Dead-tuple ratio on job_queue'))).toBe(false);
+  });
+});
+
 describe('classifyAlert (SCRUM-1308)', () => {
   // The Sentry rules in infra/sentry/alert-rules.json filter on `alert_type`.
   // Drift between the alert text emitted by computeAlerts() and these

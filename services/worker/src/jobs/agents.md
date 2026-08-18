@@ -2,6 +2,35 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-18 — `db-health-monitor.ts` dead-tuple RATIO check gets the same absolute floor its autovacuum-age sibling already had
+
+**The alert.** Prod's `job_queue` (`n_live_tup=24, n_dead_tup=20`) actively fired ARKOVA-WORKER-2A. The
+ratio check (`n_dead_tup/n_live_tup > 0.5`, `computeAlerts()`) had **no absolute-count floor** — unlike
+`VACUUM_DEAD_TUPLE_THRESHOLD = 100_000`, which gates the autovacuum-age alert a few lines below it in
+the same function. `job_queue` sits in `HOT_TABLES` alongside `anchors`/`public_records`/`audit_events`
+(multi-million-row tables where the ratio is a real bloat signal), but at `job_queue`'s live scale —
+rows churn to `completed`/`dead` and get vacuumed away — a handful of rows moving between states swings
+the ratio by tens of percentage points: three snapshots taken minutes apart read **0.83, 1.46, and
+2.46** off the same table, while autovacuum ran demonstrably healthy the entire time (499 runs, last
+one minutes-fresh, `n_dead_tup=20` well under the table's own `50 + 0.2*n_live_tup ≈ 55` trigger point).
+Same defect class as yesterday's `DEFAULT_LINKER_STALL_MIN_BACKLOG` fix immediately below: an unfloored
+signal escalating on a magnitude it cannot resolve.
+
+**Fix.** `DEAD_RATIO_MIN_DEAD_TUPLES = 500` gates the ratio branch: `t.deadTuples >=
+DEAD_RATIO_MIN_DEAD_TUPLES && t.ratio > DEAD_RATIO_THRESHOLD`. 500 comfortably clears job_queue's
+live-scale churn while a genuinely bloated hot table (anchors/public_records/audit_events at their
+normal multi-million-row scale) crosses it on the very first missed vacuum cycle — no sensitivity lost
+for the incident class this check exists to catch. The floor gates escalation only: a sub-floor table
+still appears in the green-path `deadTuples` snapshot and the `db-health-monitor green` log line, it
+just doesn't page on noise the ratio can't distinguish from bloat.
+
+Tests: `db-health-monitor.test.ts`, new `describe('dead-tuple ratio absolute floor …')` block (4 cases,
+red-first) — the exact prod shape (24 live/20 dead) does not alert; the SAME 20-dead-tuple count stays
+sub-floor across the incident's observed live-tup volatility (ratios 0.83/1.46/2.46); a genuine
+10k-live/50k-dead bloat shape still fires; the floor is inclusive at its boundary (500 fires, 499
+doesn't). 75/75 across the five monitor test files (71 baseline + 4 net new, 0 regressions); tsc
+set-diff vs the pre-fix baseline is zero; eslint clean.
+
 ## 2026-08-17 — `pipelineThroughputMonitor.ts` condition B gets a count floor, and the cache stops lying
 
 **The storm.** Prod `public_records` held 3,538,743 rows: 3,538,742 linked, exactly **one** unlinked,
