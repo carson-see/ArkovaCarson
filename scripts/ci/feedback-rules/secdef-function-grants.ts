@@ -73,6 +73,28 @@ export const DELIBERATELY_PUBLIC = new Set([
   'public.get_public_records_page',
 ]);
 
+/**
+ * SECURITY DEFINER functions whose AUTHENTICATED grant is deliberate — prod
+ * grants EXECUTE to `authenticated` on purpose (verified 2026-08-18 via
+ * `has_function_privilege('authenticated', oid, 'EXECUTE')` against
+ * vzwyaatejekddvltxyye) because live browser code calls them as the signed-in
+ * user. For these, the rule requires the ANON axis closed but must not require
+ * revoking `authenticated`: doing so would reverse a decision prod already
+ * made and break the caller — the FD-17 divergence class, pointed the other
+ * way. Adding to this set is a security decision: it needs a live-prod ACL
+ * check AND a named browser caller, and the function must do its own
+ * caller-identity scoping.
+ */
+export const DELIBERATELY_AUTHENTICATED = new Set([
+  // src/hooks/useEntitlements.ts — usage widget calls this as the signed-in
+  // user; the hook falls back to 0 on error, so revoking fails SILENTLY.
+  // 0392 added the NULL-identity self-only guard that makes the grant safe.
+  'public.get_user_monthly_anchor_count',
+  // src/pages/PipelineAdminPage.tsx — client-RPC fallback when the worker
+  // route fails. Archive 0173 exists to fix these grants and KEPT authenticated.
+  'public.get_pipeline_stats',
+]);
+
 export interface SecdefFunction {
   file: string;
   schema: string;
@@ -219,8 +241,17 @@ function statementTargets(text: string, schema: string, name: string): boolean {
  *
  * Checks 2 and 3 are why every scan runs over the same `prepare()` output:
  * ordering is only meaningful in a shared index space.
+ *
+ * `authExempt` is the DELIBERATELY_AUTHENTICATED carve-out: when true, only
+ * the anon axis is required — the revoke must strip `anon` by name (with or
+ * without `authenticated`), and only a later grant to `anon` re-opens.
  */
-export function hasExplicitRevoke(rawSql: string, schema: string, name: string): boolean {
+export function hasExplicitRevoke(
+  rawSql: string,
+  schema: string,
+  name: string,
+  authExempt = false,
+): boolean {
   const sql = prepare(rawSql);
   const qualified = `${schema}.${name}`;
 
@@ -235,7 +266,8 @@ export function hasExplicitRevoke(rawSql: string, schema: string, name: string):
   for (const stmt of sql.matchAll(/\bREVOKE\b[^;]*;/gi)) {
     const text = stmt[0];
     if (!statementTargets(text, schema, name)) continue;
-    if (!/\banon\b/i.test(text) || !/\bauthenticated\b/i.test(text)) continue;
+    if (!/\banon\b/i.test(text)) continue;
+    if (!authExempt && !/\bauthenticated\b/i.test(text)) continue;
     if (stmt.index < lastCreate) continue; // undone by the CREATE OR REPLACE below it
     revokeAt = stmt.index;
     break;
@@ -247,7 +279,8 @@ export function hasExplicitRevoke(rawSql: string, schema: string, name: string):
     const text = stmt[0];
     if (stmt.index < revokeAt) continue;
     if (!statementTargets(text, schema, name)) continue;
-    if (/\banon\b/i.test(text) || /\bauthenticated\b/i.test(text)) return false;
+    if (/\banon\b/i.test(text)) return false;
+    if (!authExempt && /\bauthenticated\b/i.test(text)) return false;
   }
   return true;
 }
@@ -311,27 +344,50 @@ function definesFunction(sql: string, schema: string, name: string): boolean {
   return false;
 }
 
-/** True when this prepared SQL revokes `schema.name` from BOTH roles by name. */
-function revokesBothRoles(sql: string, schema: string, name: string): boolean {
+/**
+ * True when this prepared SQL revokes `schema.name` from the REQUIRED roles by
+ * name: anon always; authenticated too unless `authExempt`.
+ */
+function revokesRequiredRoles(
+  sql: string,
+  schema: string,
+  name: string,
+  authExempt: boolean,
+): boolean {
   for (const stmt of sql.matchAll(/\bREVOKE\b[^;]*;/gi)) {
     const text = stmt[0];
     if (!statementTargets(text, schema, name)) continue;
-    if (/\banon\b/i.test(text) && /\bauthenticated\b/i.test(text)) return true;
+    if (!/\banon\b/i.test(text)) continue;
+    if (authExempt || /\bauthenticated\b/i.test(text)) return true;
   }
   return false;
 }
 
-/** True when this prepared SQL grants `schema.name` back to either role. */
-function grantsEitherRole(sql: string, schema: string, name: string): boolean {
+/**
+ * True when this prepared SQL grants `schema.name` back to a role the rule
+ * requires closed: anon always; authenticated too unless `authExempt`.
+ */
+function grantsBlockedRole(
+  sql: string,
+  schema: string,
+  name: string,
+  authExempt: boolean,
+): boolean {
   for (const stmt of sql.matchAll(/\bGRANT\b[^;]*;/gi)) {
     const text = stmt[0];
     if (!statementTargets(text, schema, name)) continue;
-    if (/\banon\b/i.test(text) || /\bauthenticated\b/i.test(text)) return true;
+    if (/\banon\b/i.test(text)) return true;
+    if (!authExempt && /\bauthenticated\b/i.test(text)) return true;
   }
   return false;
 }
 
-export function hasReplayPathRevoke(files: FileSql[], schema: string, name: string): boolean {
+export function hasReplayPathRevoke(
+  files: FileSql[],
+  schema: string,
+  name: string,
+  authExempt = false,
+): boolean {
   let lastDefineIdx = -1;
   let lastRevokeIdx = -1;
   let lastRegrantIdx = -1;
@@ -339,8 +395,8 @@ export function hasReplayPathRevoke(files: FileSql[], schema: string, name: stri
   for (let i = 0; i < files.length; i++) {
     const sql = prepare(files[i].sql);
     if (definesFunction(sql, schema, name)) lastDefineIdx = i;
-    if (revokesBothRoles(sql, schema, name)) lastRevokeIdx = i;
-    if (grantsEitherRole(sql, schema, name)) lastRegrantIdx = i;
+    if (revokesRequiredRoles(sql, schema, name, authExempt)) lastRevokeIdx = i;
+    if (grantsBlockedRole(sql, schema, name, authExempt)) lastRegrantIdx = i;
   }
 
   // The revoke must be the last word: at or after the final definition, and not
@@ -352,19 +408,23 @@ export function hasReplayPathRevoke(files: FileSql[], schema: string, name: stri
 
 export function findViolations(
   files: FileSql[],
-  opts: { deliberatelyPublic?: Set<string> } = {},
+  opts: { deliberatelyPublic?: Set<string>; deliberatelyAuthenticated?: Set<string> } = {},
 ): Violation[] {
   const allowed = opts.deliberatelyPublic ?? new Set<string>();
+  const authExemptSet = opts.deliberatelyAuthenticated ?? new Set<string>();
   const out: Violation[] = [];
 
   for (const { file, sql } of files) {
     for (const fn of parseSecurityDefinerFunctions(file, sql)) {
       if (allowed.has(`${fn.schema}.${fn.name}`)) continue;
-      if (hasExplicitRevoke(sql, fn.schema, fn.name)) continue;
+      // Authenticated-axis exemption only — the anon axis stays mandatory.
+      const authExempt = authExemptSet.has(`${fn.schema}.${fn.name}`);
+      if (hasExplicitRevoke(sql, fn.schema, fn.name, authExempt)) continue;
       // Baseline-only carve-out: a generated dump cannot revoke inline, so a
       // compliant revoke in a later migration counts. Numbered migrations get
       // no such credit — their revoke must sit next to their definition.
-      if (file === SQUASHED_BASELINE && hasReplayPathRevoke(files, fn.schema, fn.name)) continue;
+      if (file === SQUASHED_BASELINE && hasReplayPathRevoke(files, fn.schema, fn.name, authExempt))
+        continue;
       out.push({
         ...fn,
         reason:
@@ -401,7 +461,10 @@ export function run(): { ok: boolean; message: string } {
 
   const files = realMigrations();
   const baseline = loadBaseline();
-  const all = findViolations(files, { deliberatelyPublic: DELIBERATELY_PUBLIC });
+  const all = findViolations(files, {
+    deliberatelyPublic: DELIBERATELY_PUBLIC,
+    deliberatelyAuthenticated: DELIBERATELY_AUTHENTICATED,
+  });
   const fresh = all.filter((v) => !baseline.has(v.key));
 
   // The baseline may only SHRINK. An entry that no longer violates is a

@@ -22,6 +22,7 @@ import {
   realMigrations,
   SQUASHED_BASELINE,
   DELIBERATELY_PUBLIC,
+  DELIBERATELY_AUTHENTICATED,
 } from './secdef-function-grants.js';
 
 const SECDEF = `
@@ -323,6 +324,106 @@ GRANT EXECUTE ON FUNCTION "public"."widget_count"("p_hours" integer) TO "service
 });
 
 /**
+ * Two baseline-defined functions keep their AUTHENTICATED grant ON PURPOSE.
+ * Prod grants EXECUTE to `authenticated` on both (verified 2026-08-18 via
+ * `has_function_privilege('authenticated', oid, 'EXECUTE')` against
+ * vzwyaatejekddvltxyye — ACLs read `{postgres=X,authenticated=X,service_role=X}`)
+ * and live browser code calls them as the signed-in user:
+ *
+ *   - public.get_user_monthly_anchor_count — src/hooks/useEntitlements.ts
+ *     (usage widget; falls back to 0 on error, so a revoke fails SILENTLY)
+ *   - public.get_pipeline_stats — src/pages/PipelineAdminPage.tsx (client-RPC
+ *     fallback when the worker route fails)
+ *
+ * Requiring an authenticated revoke for these would REVERSE a decision prod
+ * already made — the same defect class (FD-17: rebuilt environment diverges
+ * from prod) this rule exists to close, pointed the other way. The exemption
+ * is the authenticated axis ONLY: the anon axis stays mandatory, and a
+ * function with no revoke at all still violates.
+ */
+describe('deliberately-authenticated carve-out (anon axis still mandatory)', () => {
+  const REVOKE_ANON_ONLY = `
+REVOKE ALL ON FUNCTION public.widget_count(integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO service_role;
+`;
+
+  it('pins the set to exactly the two prod-verified functions', () => {
+    // Growing this set is a security decision — a new entry means a SECURITY
+    // DEFINER function stays callable by every signed-in user. It must come
+    // with a live-prod ACL check and a named browser caller, like these did.
+    expect([...DELIBERATELY_AUTHENTICATED].sort()).toEqual([
+      'public.get_pipeline_stats',
+      'public.get_user_monthly_anchor_count',
+    ]);
+  });
+
+  it('same-file: an anon-only revoke satisfies an auth-exempt function', () => {
+    expect(hasExplicitRevoke(SECDEF + REVOKE_ANON_ONLY, 'public', 'widget_count', true)).toBe(true);
+  });
+
+  it('same-file: the identical SQL still FAILS a normal function', () => {
+    expect(hasExplicitRevoke(SECDEF + REVOKE_ANON_ONLY, 'public', 'widget_count')).toBe(false);
+  });
+
+  it('same-file: a later GRANT to authenticated does not reopen an auth-exempt function', () => {
+    const sql = `${SECDEF}${REVOKE_ANON_ONLY}
+GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO authenticated;`;
+    expect(hasExplicitRevoke(sql, 'public', 'widget_count', true)).toBe(true);
+  });
+
+  it('same-file: a later GRANT to anon DOES reopen an auth-exempt function', () => {
+    const sql = `${SECDEF}${REVOKE_ANON_ONLY}
+GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO anon;`;
+    expect(hasExplicitRevoke(sql, 'public', 'widget_count', true)).toBe(false);
+  });
+
+  it('replay-path: a 0414-style anon-only revoke + authenticated re-grant closes a baseline function', () => {
+    const files = [
+      { file: SQUASHED_BASELINE, sql: SECDEF + REVOKE_PUBLIC_ONLY },
+      { file: '0414_fix.sql', sql: REVOKE_ANON_ONLY },
+    ];
+    expect(hasReplayPathRevoke(files, 'public', 'widget_count', true)).toBe(true);
+    expect(
+      findViolations(files, { deliberatelyAuthenticated: new Set(['public.widget_count']) }),
+    ).toEqual([]);
+  });
+
+  it('replay-path: the same file does NOT close a normal function', () => {
+    const files = [
+      { file: SQUASHED_BASELINE, sql: SECDEF + REVOKE_PUBLIC_ONLY },
+      { file: '0414_fix.sql', sql: REVOKE_ANON_ONLY },
+    ];
+    expect(hasReplayPathRevoke(files, 'public', 'widget_count')).toBe(false);
+    expect(findViolations(files).map((v) => v.key)).toEqual([
+      `${SQUASHED_BASELINE}::public.widget_count`,
+    ]);
+  });
+
+  it('replay-path: a later GRANT to anon reopens even an auth-exempt function', () => {
+    const files = [
+      { file: SQUASHED_BASELINE, sql: SECDEF + REVOKE_PUBLIC_ONLY },
+      { file: '0414_fix.sql', sql: REVOKE_ANON_ONLY },
+      {
+        file: '0415_regrant.sql',
+        sql: 'GRANT EXECUTE ON FUNCTION public.widget_count(integer) TO anon;',
+      },
+    ];
+    expect(hasReplayPathRevoke(files, 'public', 'widget_count', true)).toBe(false);
+  });
+
+  it('the exemption never excuses a function from the sweep entirely', () => {
+    // Auth-exempt + no anon revoke anywhere = still a violation.
+    const files = [{ file: SQUASHED_BASELINE, sql: SECDEF + REVOKE_PUBLIC_ONLY }];
+    expect(
+      findViolations(files, {
+        deliberatelyAuthenticated: new Set(['public.widget_count']),
+      }).map((v) => v.key),
+    ).toEqual([`${SQUASHED_BASELINE}::public.widget_count`]);
+  });
+});
+
+/**
  * The ratchet itself. Historical violations are pinned in the baseline and are
  * a burn-down list; anything NEW fails here.
  */
@@ -340,6 +441,7 @@ describe('repo-wide ratchet', () => {
   it('no SECURITY DEFINER function is missing its anon/authenticated REVOKE outside the baseline', () => {
     const violations = findViolations(files, {
       deliberatelyPublic: DELIBERATELY_PUBLIC,
+      deliberatelyAuthenticated: DELIBERATELY_AUTHENTICATED,
     }).filter((v) => !baseline.has(v.key));
 
     expect(
@@ -360,7 +462,12 @@ describe('repo-wide ratchet', () => {
   it('every baseline entry still corresponds to a real violation (no baseline rot)', () => {
     // If someone fixes a baselined file, the entry must be removed so the
     // baseline shrinks monotonically and never re-authorises a regression.
-    const live = new Set(findViolations(files, { deliberatelyPublic: DELIBERATELY_PUBLIC }).map((v) => v.key));
+    const live = new Set(
+      findViolations(files, {
+        deliberatelyPublic: DELIBERATELY_PUBLIC,
+        deliberatelyAuthenticated: DELIBERATELY_AUTHENTICATED,
+      }).map((v) => v.key),
+    );
     const stale = [...baseline].filter((k) => !live.has(k));
     expect(stale, 'baseline entries that no longer violate — delete them').toEqual([]);
   });

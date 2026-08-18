@@ -1,7 +1,10 @@
 -- 0414_sec_replay_missing_anon_revokes.sql
--- FD-17 / BUG-2026-08-12-005 — replay the anon/authenticated EXECUTE revokes that
---   exist ONLY in docs/migrations-archive/ and therefore never reach a freshly
---   built environment. Restores rebuilt-environment parity with prod.
+-- FD-17 / BUG-2026-08-12-005 — replay the EXECUTE revokes that exist ONLY in
+--   docs/migrations-archive/ and therefore never reach a freshly built
+--   environment. Restores rebuilt-environment parity with prod: `anon` is
+--   revoked on all sixteen functions; `authenticated` is revoked on the
+--   FOURTEEN where prod also revokes it and KEPT on the two where prod
+--   deliberately grants it (see AUTHENTICATED AXIS below).
 --
 -- ROLLBACK:
 --   GRANT EXECUTE ON FUNCTION public.activate_user(text, text) TO anon, authenticated;
@@ -20,9 +23,13 @@
 --   GRANT EXECUTE ON FUNCTION public.set_webhook_delivery_log_public_id() TO anon, authenticated;
 --   GRANT EXECUTE ON FUNCTION public.set_webhook_endpoint_public_id() TO anon, authenticated;
 --   GRANT EXECUTE ON FUNCTION public.try_advisory_lock(bigint) TO anon, authenticated;
---   (Rollback restores the PRE-0414 rebuilt-environment state, which is the
---    INSECURE one. It exists to satisfy the rollback-rehearsal gate, not because
---    reverting is ever desirable: prod already has all sixteen revoked.)
+--   (Rollback restores the PRE-0414 rebuilt-environment state — anon AND
+--    authenticated granted on all sixteen via the baseline's ALTER DEFAULT
+--    PRIVILEGES — which is the INSECURE one. It exists to satisfy the
+--    rollback-rehearsal gate, not because reverting is ever desirable: prod
+--    already lacks the anon grant on all sixteen. For get_pipeline_stats and
+--    get_user_monthly_anchor_count the forward file itself grants
+--    authenticated, so the rollback's authenticated grant is a no-op there.)
 --
 -- =============================================================================
 -- WHY THIS MIGRATION EXISTS
@@ -51,14 +58,41 @@
 -- evidence against a WEAKER security posture than the prod it is standing in
 -- for. That is the reason this is a P1 and not housekeeping.
 --
--- PARITY TARGET, VERIFIED AGAINST LIVE PROD (vzwyaatejekddvltxyye, 2026-08-15)
+-- PARITY TARGET, VERIFIED AGAINST LIVE PROD (vzwyaatejekddvltxyye) ON BOTH AXES
 -- -----------------------------------------------------------------------------
--- All sixteen were confirmed `has_function_privilege('anon', oid, 'EXECUTE') =
--- false` in prod, and every signature below was taken from prod's own
--- `pg_get_function_identity_arguments` rather than from an archive file, so the
--- REVOKEs bind to functions that actually exist with these exact arities.
+-- Anon axis (2026-08-15 sweep): all sixteen confirmed
+-- `has_function_privilege('anon', oid, 'EXECUTE') = false` in prod, and every
+-- signature below was taken from prod's own `pg_get_function_identity_arguments`
+-- rather than from an archive file, so the statements bind to functions that
+-- actually exist with these exact arities.
+--
+-- AUTHENTICATED AXIS (2026-08-18 sweep — the first cut of this file skipped it
+-- and over-revoked): FOURTEEN of the sixteen are
+-- `has_function_privilege('authenticated', oid, 'EXECUTE') = false` in prod
+-- (ACL `{postgres=X,service_role=X}`). TWO are `true` — prod's ACL is
+-- `{postgres=X,authenticated=X,service_role=X}` — and each has a live browser
+-- caller that depends on the grant:
+--
+--   * public.get_user_monthly_anchor_count(uuid) — archive 0220 revoked
+--     public+anon and GRANTED authenticated (the usage widget is the intended
+--     caller). Live caller: src/hooks/useEntitlements.ts
+--     (`.rpc('get_user_monthly_anchor_count')` as the signed-in user). 0392
+--     added the NULL-identity self-only guard precisely so this grant is safe.
+--     Revoking authenticated would make the widget's monthly count silently
+--     degrade to 0 for every user (the hook falls back to 0 on error).
+--   * public.get_pipeline_stats() — archive 0106/0160/0173/0215/0242 all grant
+--     authenticated; 0173 exists specifically to fix these grants and STILL
+--     keeps authenticated. Live caller: src/pages/PipelineAdminPage.tsx
+--     (client-RPC fallback when the worker route fails).
+--
+-- For those two this file revokes PUBLIC+anon only and RE-ASSERTS the
+-- authenticated grant, so a rebuilt environment matches prod on both axes.
 -- Applying this migration makes a rebuilt environment MATCH prod. It is not a
--- new security decision; it is the replay of one already made.
+-- new security decision; it is the replay of decisions already made — including
+-- the decision to KEEP authenticated on those two. The CI ratchet
+-- (`scripts/ci/feedback-rules/secdef-function-grants.ts`) pins the same pair in
+-- `DELIBERATELY_AUTHENTICATED`, so the anon axis stays enforced for them
+-- without ratcheting in an authenticated revoke prod never made.
 --
 -- DELIBERATELY EXCLUDED — the `http*` family (archive 0112_security_view_invoker_ssrf).
 --   That archive file also revoked extensions.http / http_get / http_post /
@@ -89,12 +123,17 @@
 -- index changes. `database.types.ts` is unaffected (ACLs are not surfaced by
 -- `gen types`), so no type regeneration. No `NOTIFY pgrst, 'reload schema'` is
 -- needed — no function signature or column surface changes. Idempotent: REVOKE
--- of an absent privilege is a no-op, so re-running is safe.
+-- of an absent privilege and GRANT of a present one are no-ops, so re-running
+-- is safe. On PROD this entire file is a no-op by construction — every
+-- statement asserts the state prod is already in.
 --
--- CALLER SAFETY. Each function below is worker-only (service_role), trigger-
--- invoked, or admin-only; `service_role` is granted/retained explicitly for
--- every one. The corresponding archive migration already made and shipped this
--- exact call-site judgement, and prod has run without these grants ever since.
+-- CALLER SAFETY. Each of the FOURTEEN blanket-revoked functions is worker-only
+-- (service_role), trigger-invoked, or admin-only; `service_role` is
+-- granted/retained explicitly for every one. The corresponding archive
+-- migration already made and shipped this exact call-site judgement, and prod
+-- has run without these grants ever since. The TWO exceptions keep
+-- `authenticated` exactly as prod has it — their live browser callers are
+-- named above.
 -- =============================================================================
 
 -- --- Admin / identity mutators (archive 0160, 0061, 0170) --------------------
@@ -128,11 +167,22 @@ GRANT EXECUTE ON FUNCTION public.get_agents_for_user(uuid) TO service_role;
 REVOKE ALL ON FUNCTION public.get_anchor_lineage(text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_anchor_lineage(text) TO service_role;
 
-REVOKE ALL ON FUNCTION public.get_user_monthly_anchor_count(uuid) FROM PUBLIC, anon, authenticated;
+-- AUTHENTICATED KEPT — prod parity (2026-08-18 sweep: prod ACL is
+-- {postgres=X,authenticated=X,service_role=X}). Live browser caller:
+-- src/hooks/useEntitlements.ts (usage widget, signed-in user). Archive 0220
+-- granted authenticated on purpose; 0392's self-only guard is what makes the
+-- grant safe. Revoking it here would silently zero the widget for every user.
+REVOKE ALL ON FUNCTION public.get_user_monthly_anchor_count(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_user_monthly_anchor_count(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_user_monthly_anchor_count(uuid) TO service_role;
 
 -- --- Internal stats / cache refreshers (archive 0173, 0283) ------------------
-REVOKE ALL ON FUNCTION public.get_pipeline_stats() FROM PUBLIC, anon, authenticated;
+-- AUTHENTICATED KEPT — prod parity (2026-08-18 sweep: prod ACL is
+-- {postgres=X,authenticated=X,service_role=X}). Live browser caller:
+-- src/pages/PipelineAdminPage.tsx (client-RPC fallback). Archive 0173 exists
+-- specifically to fix this function's grants and still kept authenticated.
+REVOKE ALL ON FUNCTION public.get_pipeline_stats() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_pipeline_stats() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_pipeline_stats() TO service_role;
 
 REVOKE ALL ON FUNCTION public.refresh_pipeline_dashboard_cache() FROM PUBLIC, anon, authenticated;
