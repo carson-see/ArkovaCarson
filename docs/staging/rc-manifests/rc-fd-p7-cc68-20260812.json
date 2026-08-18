@@ -13,7 +13,7 @@
   "included_prs": [
     {
       "number": 2220,
-      "head_sha": "ffa0ea04138b3df23b987f2805021d6bbb3a3a9d",
+      "head_sha": "e7cf72c742277a8bac6f722aab647fa05e553cff",
       "base_sha": "49358d607b47217cfe81caf44d17b5e4a595cc88",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
