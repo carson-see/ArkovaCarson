@@ -11,16 +11,20 @@ monitor on a ~30-minute cadence emitted a FATAL Sentry event every half hour for
 events) over one row. A dead-man that pages fatal on a single orphan is not calibrated; it trains
 responders to ignore it, which is the same failure mode SCRUM-3050 fixed from the opposite direction.
 
-**Floor = 100 records, and the number is not arbitrary.** `unlinked_total` comes from
+**Floor = 500 records, and the number is not arbitrary.** `unlinked_total` comes from
 `pipeline_dashboard_cache.pipeline_stats.pending_record_links`, which the deployed
 `refresh_cache_pipeline_stats()` computes as `round(pg_class.reltuples * pg_stats.null_frac)`.
-`null_frac` is an ANALYZE **sample** statistic (~30k rows at the default statistics target), so at
-3.5M rows the smallest non-zero value it can express is roughly 3.5M/30k ≈ 118. A floor below ~100
-would be comparing against a resolution the signal does not have. On the other side, the nightly
-flush moves ~10k anchors, so one missed linker cycle leaves two orders of magnitude more than the
-floor and the 2026-07 incident was 259,000 — the floor costs zero sensitivity for the incident class
-the monitor exists for. A floor at batch scale (10,000) would instead blind it to a small tenant
-whose entire daily volume is a few hundred records.
+`null_frac` is an ANALYZE **sample** statistic (~30k rows at the default statistics target), which
+makes the estimate **quantized**, not merely noisy: at 3.5M rows the smallest non-zero value it can
+express is roughly 3.5M/30k ≈ 118 — ONE sampled stuck row estimates ~118, never anything in 1..117.
+The floor must therefore sit ABOVE that quantum: a floor below it (100 was the first value shipped)
+re-arms the fatal storm in every ANALYZE epoch whose sample happens to catch the stuck row (~1% of
+cycles per stuck row), and the quantum grows linearly with the table, so headroom matters — 500
+stays above one quantum until ~15M rows (~4x today). On the other side, the nightly flush moves
+~10k anchors, so one missed linker cycle leaves 20x the floor and the 2026-07 incident was
+259,000 — the floor costs zero sensitivity for the incident class the monitor exists for. A floor
+at batch scale (10,000) would instead blind it to a small tenant whose entire daily volume is a few
+hundred records.
 
 **Graduated, not silenced.** Below the floor the decision is `should_fire: true, severity: 'warning',
 below_backlog_floor: true`, which routes to `logger.warn` with `pipelineStuckRecordSubFloor: true`
@@ -53,7 +57,9 @@ and `linker_stall_threshold_hours`. The floor is overridable in-process
 (`runPipelineThroughputMonitor(db, { linkerStallMinBacklog })`) but is not a query parameter — add
 one only if an incident actually needs it.
 
-Tests: `pipelineThroughputMonitor.backlogFloor.test.ts` (16 cases, red-first). T2 (worker behavior).
+Tests: `pipelineThroughputMonitor.backlogFloor.test.ts` (18 cases, red-first — including the
+minimum-expressible-estimate regression: a sampled-stuck-row epoch reading ≈117 must stay sub-floor,
+and a 259k-class backlog must still page fatal). T2 (worker behavior).
 
 ## 2026-08-11 SCRUM-3128 / BUG-2026-08-11 — the ECON-1 fee ceiling now fails CLOSED (`anchor.ts`)
 

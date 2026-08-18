@@ -23,11 +23,17 @@
  * 0 — while the monitor's own LIMIT-1 live probe is holding the row that
  * proves otherwise.
  *
- * Two properties are pinned here:
+ * Three properties are pinned here:
  *   1. A trivially small backlog cannot escalate on age alone; a genuinely
  *      stalled one at the SAME age still must.
  *   2. The message may never assert a zero backlog while reporting a stuck
  *      record, and may never present the sampled estimate as a count.
+ *   3. The floor clears the estimator's MINIMUM EXPRESSIBLE non-zero value.
+ *      `null_frac` is quantized to multiples of 1/sample_size, so one sampled
+ *      stuck row estimates round(3.5M / 30k) ≈ 118 — never anything in
+ *      1..117. A floor below that quantum (the original 100) re-armed the
+ *      fatal storm in every ANALYZE epoch whose sample caught the stuck row
+ *      (~1% of cycles per stuck row).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -139,6 +145,25 @@ describe('condition B minimum-count floor', () => {
     expect(belowFloor.severity).toBe('warning');
   });
 
+  it('an ANALYZE epoch that samples the single stuck row (estimate ≈ 117) still does NOT page', () => {
+    // The estimator is QUANTIZED, not merely noisy: `null_frac` can only take
+    // multiples of 1/sample_size, so the smallest non-zero estimate it can emit
+    // at prod scale is round(3,538,743 / 30,000) ≈ 118 — ONE sampled stuck row
+    // produces ~117–118, never anything in 1..117. The original floor (100) sat
+    // BELOW that quantum: in the ~1% of ANALYZE cycles whose sample caught the
+    // stuck row, the cache read ≈117 ≥ 100 and the exact fatal-every-30-minutes
+    // storm this floor exists to kill re-armed for that ANALYZE epoch.
+    for (const minimumExpressibleEstimate of [117, 118]) {
+      const decision = decidePipelineThroughputAlert(
+        alertStormInput({ unlinked_total: minimumExpressibleEstimate }),
+      );
+
+      expect(decision.should_fire).toBe(true);
+      expect(decision.below_backlog_floor).toBe(true);
+      expect(decision.severity).toBe('warning');
+    }
+  });
+
   it('the floor is overridable per call without touching the default', () => {
     const decision = decidePipelineThroughputAlert(
       alertStormInput({ unlinked_total: 50, linker_stall_min_backlog: 10 }),
@@ -167,12 +192,25 @@ describe('condition B minimum-count floor', () => {
     expect(decision.reason).toMatch(/network-wide/i);
   });
 
-  it('the default floor clears the cache estimator noise while sitting far below one batch drain', () => {
-    // Lower bound: at prod scale `round(reltuples * null_frac)` cannot express
-    // a value below ~100, so a smaller floor would be unmeasurable.
-    // Upper bound: the nightly flush moves ~10k anchors, so a real linker stall
-    // crosses this floor on its first missed cycle — no lost sensitivity.
-    expect(DEFAULT_LINKER_STALL_MIN_BACKLOG).toBeGreaterThanOrEqual(100);
+  it("the default floor clears the estimator's minimum expressible estimate, with growth headroom, while sitting far below one batch drain", () => {
+    // Lower bound: the estimator's smallest NON-ZERO output is
+    // round(rows / sample_size) — one sampled stuck row, ≈118 at prod's ~3.5M
+    // rows with a ~30k ANALYZE sample. The floor must clear that quantum or a
+    // single stuck row re-arms the storm whenever ANALYZE samples it. The
+    // quantum grows linearly with the table, so the floor also needs headroom:
+    // at 500 it stays above one quantum until ~15M rows (~4x today).
+    // Upper bound: the nightly flush moves ~10k anchors and the motivating
+    // 2026-07 incident was 259k, so a real linker stall crosses this floor on
+    // its first missed cycle — no lost sensitivity.
+    const PROD_ROWS = 3_538_743;
+    const ANALYZE_SAMPLE_ROWS = 30_000;
+    const minimumExpressibleEstimate = Math.round(PROD_ROWS / ANALYZE_SAMPLE_ROWS); // ≈118
+
+    expect(DEFAULT_LINKER_STALL_MIN_BACKLOG).toBeGreaterThan(minimumExpressibleEstimate);
+    // Growth headroom: still above the quantum at 4x today's table size.
+    expect(DEFAULT_LINKER_STALL_MIN_BACKLOG).toBeGreaterThanOrEqual(
+      4 * minimumExpressibleEstimate,
+    );
     expect(DEFAULT_LINKER_STALL_MIN_BACKLOG).toBeLessThan(10_000);
   });
 });
@@ -329,6 +367,39 @@ describe('runPipelineThroughputMonitor — sub-floor routing', () => {
     // The finding is real, so the run is not "healthy" — it is just not a page.
     expect(result.healthy).toBe(false);
     expect(result.reason).not.toMatch(/unlinked backlog 0\b/);
+  });
+
+  it('the sampled-stuck-row ANALYZE epoch (cache estimate ≈117) emits NO Sentry alert either', async () => {
+    // End-to-end version of the quantization regression: same single stuck
+    // row, but this ANALYZE epoch happened to sample it, so the cache holds
+    // the estimator's minimum expressible value instead of 0. Must route to
+    // the warn log exactly like the estimate-0 epochs — the storm must not
+    // re-arm for ~1% of cycles.
+    const db = mockDb({
+      oldestUnlinked: hoursAgo(STUCK_AGE_HOURS),
+      newestUnlinked: hoursAgo(STUCK_AGE_HOURS),
+      lastSecured: hoursAgo(1),
+      pipelineStats: {
+        data: {
+          cache_value: {
+            pending_record_links: 117,
+            pending_record_links_approximate: true,
+          },
+        },
+        error: null,
+      },
+    });
+
+    const result = await runPipelineThroughputMonitor(db, { now: NOW });
+
+    expect(result.belowBacklogFloor).toBe(true);
+    expect(result.healthy).toBe(false);
+    expect(result.alertFired).toBe(false);
+    expect(mockCapture).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ belowBacklogFloor: true, unlinkedTotal: 117 }),
+      expect.stringMatching(/linker stall/i),
+    );
   });
 
   it('a genuine 259k stall at the same age still fires the Sentry alert at fatal', async () => {

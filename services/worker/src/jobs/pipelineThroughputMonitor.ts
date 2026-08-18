@@ -19,7 +19,7 @@
  *
  *   B — LINKER STALL: the OLDEST unlinked public record's age exceeds the
  *       stall threshold (default 48h) AND the backlog clears a minimum-count
- *       floor (default 100 — see DEFAULT_LINKER_STALL_MIN_BACKLOG). This is
+ *       floor (default 500 — see DEFAULT_LINKER_STALL_MIN_BACKLOG). This is
  *       the exact motivating incident shape: a 255k+ backlog sits unlinked for
  *       weeks while OTHER anchor paths keep securing — condition A alone would
  *       never fire because prod's secured count always advances
@@ -71,8 +71,10 @@
  *     `refresh_cache_pipeline_stats()` derives it from
  *     `round(pg_class.reltuples * pg_stats.null_frac)` and self-declares
  *     `pending_record_links_approximate: true`. `null_frac` is an ANALYZE
- *     sample statistic, so at prod's ~3.5M rows it cannot resolve a backlog
- *     below roughly 100 records and reports a genuine backlog of 1 as 0.
+ *     sample statistic quantized to multiples of 1/sample_size, so at prod's
+ *     ~3.5M rows its smallest non-zero estimate is ~118 records: a genuine
+ *     backlog of 1 reads as 0 in most ANALYZE epochs — and as ~118 in the
+ *     epochs whose sample happens to catch the row.
  *     `resolveUnlinkedBacklog` reconciles it against the LIMIT-1 probes (which
  *     are exact existence tests) so the alert can never again claim
  *     "backlog 0" while reporting a stuck record.
@@ -131,30 +133,37 @@ export const DEFAULT_LINKER_STALL_THRESHOLD_HOURS = 48;
  * nuisance with a per-row remedy; it is not the pipeline-integrity outage this
  * dead-man exists to catch.
  *
- * Why 100 specifically:
+ * Why 500 specifically:
  *
- *  - **Lower bound — the signal cannot resolve finer.** `unlinked_total` comes
- *    from `pipeline_dashboard_cache`, whose `refresh_cache_pipeline_stats()`
+ *  - **Lower bound — the floor must clear the estimator's SMALLEST EXPRESSIBLE
+ *    non-zero value, with headroom.** `unlinked_total` comes from
+ *    `pipeline_dashboard_cache`, whose `refresh_cache_pipeline_stats()`
  *    computes `round(pg_class.reltuples * pg_stats.null_frac)`. `null_frac` is
  *    an ANALYZE sample statistic (~30k rows at the default statistics target),
- *    so at prod's 3.5M rows the smallest non-zero value it can express is
- *    roughly 3.5M / 30k ≈ 118 records. A floor below ~100 would be comparing
- *    against noise the estimator cannot produce.
+ *    so it is QUANTIZED to multiples of 1/sample_size: at prod's ~3.5M rows,
+ *    ONE sampled stuck row estimates round(3.5M / 30k) ≈ 118 — the estimator
+ *    can emit 0 or ~118, never anything in between. The floor's first value
+ *    (100) sat BELOW that quantum, so in the ~1% of ANALYZE cycles whose
+ *    sample happened to catch the single stuck row, the cache read ≈118 ≥ 100
+ *    and the fatal storm re-armed for that ANALYZE epoch. The quantum also
+ *    grows linearly with the table (rows / sample), so the floor needs growth
+ *    headroom: 500 stays above one quantum until ~15M rows (~4x today's
+ *    table).
  *  - **Upper bound — a real stall crosses it immediately.** The nightly flush
- *    moves ~10,000 anchors per drain, so one missed linker cycle leaves two
- *    orders of magnitude more than this floor. The motivating 2026-07 incident
- *    was 259,000. The floor therefore costs no sensitivity for the incident
- *    class the monitor was built for.
+ *    moves ~10,000 anchors per drain, so one missed linker cycle leaves 20x
+ *    this floor. The motivating 2026-07 incident was 259,000 — 500x. The floor
+ *    therefore costs no sensitivity for the incident class the monitor was
+ *    built for.
  *  - **It stays honest for a small tenant.** A floor at batch scale (10,000)
  *    would blind the monitor to a pipeline whose entire daily volume is a few
- *    hundred records. 100 is the smallest defensible value that clears the
- *    estimator's own noise.
+ *    hundred records. 500 clears the estimator's quantum with headroom while
+ *    staying an order of magnitude under one drain.
  *
  * Below the floor the finding is NOT discarded — it degrades to a warn-level
  * structured log (see `runPipelineThroughputMonitor`). Sentry is the paging
  * channel; a sub-floor stuck row belongs in the ops log, not on a pager.
  */
-export const DEFAULT_LINKER_STALL_MIN_BACKLOG = 100;
+export const DEFAULT_LINKER_STALL_MIN_BACKLOG = 500;
 
 const MS_PER_HOUR = 60 * 60 * 1000;
 
