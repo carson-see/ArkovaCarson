@@ -72,13 +72,75 @@ describe('Sentry alert rules — production environment scope', () => {
 });
 
 describe('the environment tag can only be earned by the prod service', () => {
-  const sentrySource = fs.readFileSync(
-    path.join(repoRoot, 'services/worker/src/utils/sentry.ts'),
-    'utf8',
-  );
+  const sentryPath = path.join(repoRoot, 'services/worker/src/utils/sentry.ts');
+  const sentrySource = fs.readFileSync(sentryPath, 'utf8');
 
-  it('only K_SERVICE === arkova-worker resolves to "production"', () => {
-    expect(sentrySource).toContain("export const PROD_SERVICE_NAME = 'arkova-worker'");
+  /**
+   * Resolve the VALUE of PROD_SERVICE_NAME instead of pinning the exact
+   * declaration line.
+   *
+   * Why not `toContain("export const PROD_SERVICE_NAME = 'arkova-worker'")`:
+   * that pin is a cross-PR landmine. PR #2231 moves the constant to
+   * `utils/environmentNamespace.ts` and re-exports it from sentry.ts — same
+   * name, same value — so the literal pin is green on either branch alone
+   * and red the moment both merge (the 2026-08-11 each-green-alone-red-
+   * together deploy-blackout class; root vitest includes every test under
+   * scripts/, so this file runs in the main test job).
+   *
+   * Why not simply `import { PROD_SERVICE_NAME } from '…/utils/sentry.js'`:
+   * sentry.ts imports `@sentry/node` / `@sentry/profiling-node`, which are
+   * services/worker-only dependencies. This file runs in the ROOT vitest
+   * suite, and ci.yml runs that suite before (or without) the worker
+   * `npm ci`, so the import fails at resolution in CI (verified: vite
+   * import-analysis error with worker node_modules absent). Resolving the
+   * value from source — following a relative re-export when the literal is
+   * not in sentry.ts — asserts the same fact and survives both shapes.
+   */
+  function resolveProdServiceNameValue(): { value: string; definedIn: string } | undefined {
+    const literalRe = /export\s+const\s+PROD_SERVICE_NAME\s*=\s*['"]([^'"]+)['"]/;
+
+    const inSentry = literalRe.exec(sentrySource);
+    if (inSentry) return { value: inSentry[1], definedIn: 'sentry.ts' };
+
+    // Re-export shape: `import { PROD_SERVICE_NAME } from './x.js'` (with a
+    // later `export { PROD_SERVICE_NAME }`) or `export { … } from './x.js'`.
+    const viaModule =
+      /(?:import|export)\s*\{[^}]*\bPROD_SERVICE_NAME\b[^}]*\}\s*from\s*['"](\.[^'"]+)['"]/.exec(
+        sentrySource,
+      );
+    if (!viaModule) return undefined;
+
+    const targetPath = path.join(
+      path.dirname(sentryPath),
+      viaModule[1].replace(/\.js$/, '.ts'),
+    );
+    if (!fs.existsSync(targetPath)) return undefined;
+
+    const inTarget = literalRe.exec(fs.readFileSync(targetPath, 'utf8'));
+    if (!inTarget) return undefined;
+    return { value: inTarget[1], definedIn: path.basename(targetPath) };
+  }
+
+  it('PROD_SERVICE_NAME has the value "arkova-worker", wherever it is declared', () => {
+    const resolved = resolveProdServiceNameValue();
+    expect(
+      resolved,
+      'PROD_SERVICE_NAME declaration not found in sentry.ts or its re-export source — ' +
+        'the alert-rule environment scope depends on this value existing',
+    ).toBeDefined();
+    expect(resolved?.value).toBe('arkova-worker');
+  });
+
+  it('sentry.ts still exports PROD_SERVICE_NAME for its consumers', () => {
+    expect(
+      /export\s+(?:const\s+PROD_SERVICE_NAME\b|\{[^}]*\bPROD_SERVICE_NAME\b[^}]*\})/.test(
+        sentrySource,
+      ),
+      'PROD_SERVICE_NAME must remain exported from utils/sentry.ts',
+    ).toBe(true);
+  });
+
+  it('only K_SERVICE === PROD_SERVICE_NAME resolves to "production"', () => {
     expect(sentrySource).toContain(
       "return inputs.kService === PROD_SERVICE_NAME ? 'production' : inputs.kService",
     );
