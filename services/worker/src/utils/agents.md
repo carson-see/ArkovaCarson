@@ -403,3 +403,33 @@ Upstash store's internal fallback bucket) now sets best-effort `X-RateLimit-*` h
 `next()`. §1.10 says headers on every response; a header-less allow was the one gap. Values are
 best-effort by design: configured limit, one request charged against a fresh window — there is no
 shared state to read on this path. Pinned in `rateLimit.test.ts` ("distributed fail-open path").
+
+## 2026-08-18 — per-instance circuit breaker around the Upstash `increment()` hot path
+
+CTO decision, PR #2269 soak-plan gap: `increment()` is on the blocking hot path
+(`rateLimit()` -> `enforceShared()` awaits it before `next()`), and every attempt paid up to
+`REDIS_TIMEOUT_MS` (2s, `AbortSignal.timeout`) before its internal catch fell back to the local
+bucket — nothing ever stopped it from retrying Redis on every single call. A full Upstash outage
+therefore added ~2s to every rate-limited request, indefinitely. `UpstashCircuitBreaker` (private
+to `UpstashRateLimitStore`) fixes that: opens after 5 CONSECUTIVE failures, skips the Redis round
+trip entirely while open (straight to `fallbackIncrement`), half-opens after 30s to let exactly one
+probe through, closes on a successful probe, and a failed probe re-opens immediately — it does not
+re-accumulate 5 more failures first.
+
+- **LATENCY SHIELD, NOT A CORRECTNESS MECHANISM — say this every time.** Breaker state is a private
+  field on the store instance, so N Cloud Run instances trip and recover independently and never
+  coordinate. That is fine: the shared counter was already fail-open before this change
+  (`fallbackIncrement` keeps counting locally during an outage), so a broken or out-of-sync breaker
+  cannot turn the limiter into "unlimited" — it can only make one instance slower to give up on a
+  dead Redis than another. Do not reach for this as a building block for anything that needs
+  cross-instance agreement.
+- **Scoped to `increment()` only** — the blocking call every request pays for. `decrement()` (best
+  effort, fire-and-forget, result never awaited by the caller) and the legacy `set`/`delete` blob
+  write-throughs are unaffected; they were never the latency problem PR #2269's soak plan flagged.
+- **The self-heal PEXPIRE call is inside the same try block as the pipeline**, so a failure there
+  also counts toward the breaker — one code path, one failure signal, no separate accounting to
+  keep in sync.
+- Regression suite: `upstashRateLimit.circuitBreaker.test.ts` — trips at 5 consecutive failures
+  (and NOT at 4, boundary-pinned), returns a valid fail-open entry (so §1.10 headers keep working)
+  while open, and both half-open outcomes (probe succeeds -> closes; probe fails -> re-opens without
+  needing 5 more failures).

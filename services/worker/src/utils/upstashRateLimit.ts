@@ -83,6 +83,59 @@ interface PipelineReply {
 }
 
 /**
+ * Minimal per-instance circuit breaker guarding the `increment()` pipeline
+ * call — the blocking hot path (`rateLimit()` awaits it before `next()`).
+ * Without this, a full Upstash outage costs every rate-limited request the
+ * full `REDIS_TIMEOUT_MS` (2s) forever, because nothing ever stops the store
+ * from retrying Redis on every single call before falling back.
+ *
+ * LATENCY SHIELD, NOT A CORRECTNESS MECHANISM: state lives only in this
+ * process, so each Cloud Run instance trips and recovers independently and
+ * none of them coordinate. That is fine — the shared counter's fail-open
+ * bucket (`fallbackIncrement`) is what keeps enforcement bounded during an
+ * outage; this only decides how fast one instance stops paying to find out
+ * Redis is still down.
+ */
+class UpstashCircuitBreaker {
+  private static readonly FAILURE_THRESHOLD = 5;
+  private static readonly RECOVERY_MS = 30_000;
+
+  private state: 'closed' | 'open' | 'half-open' = 'closed';
+  private consecutiveFailures = 0;
+  private openedAt = 0;
+
+  /** Should this call attempt Redis, or skip straight to the fail-open bucket? */
+  shouldAttempt(now: number): boolean {
+    if (this.state === 'closed') return true;
+    if (this.state === 'half-open') return false; // a probe is already in flight
+
+    if (now - this.openedAt < UpstashCircuitBreaker.RECOVERY_MS) return false;
+    this.state = 'half-open'; // this call becomes the one probe
+    return true;
+  }
+
+  onSuccess(): void {
+    this.state = 'closed';
+    this.consecutiveFailures = 0;
+  }
+
+  onFailure(now: number): void {
+    if (this.state === 'half-open') {
+      // A failed probe re-opens outright — no need to re-accumulate failures.
+      this.state = 'open';
+      this.openedAt = now;
+      return;
+    }
+
+    this.consecutiveFailures += 1;
+    if (this.consecutiveFailures >= UpstashCircuitBreaker.FAILURE_THRESHOLD) {
+      this.state = 'open';
+      this.openedAt = now;
+    }
+  }
+}
+
+/**
  * Upstash Redis adapter using the REST API.
  *
  * The hot path is `increment()`. `get`/`set`/`delete`/`entries`/`size` exist to
@@ -110,6 +163,9 @@ export class UpstashRateLimitStore implements IRateLimitStore {
    */
   private readonly cache = new Map<string, RateLimitEntry>();
   private nextSweepAt = 0;
+
+  /** See `UpstashCircuitBreaker` — shields `increment()` from paying REDIS_TIMEOUT_MS on every call during an outage. */
+  private readonly breaker = new UpstashCircuitBreaker();
 
   constructor(baseUrl: string, token: string, fetchImpl?: FetchLike, namespace?: string) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -144,6 +200,12 @@ export class UpstashRateLimitStore implements IRateLimitStore {
   async increment(key: string, windowMs: number, now: number): Promise<RateLimitEntry> {
     const redisKey = this.counterKey(key);
 
+    if (!this.breaker.shouldAttempt(now)) {
+      // Breaker OPEN: skip the round trip entirely rather than pay up to
+      // REDIS_TIMEOUT_MS to rediscover Redis is still down.
+      return this.fallbackIncrement(key, windowMs, now);
+    }
+
     try {
       const [rawCount, rawTtl] = await this.pipeline([
         ['INCR', redisKey],
@@ -165,8 +227,10 @@ export class UpstashRateLimitStore implements IRateLimitStore {
         ttlMs = windowMs;
       }
 
+      this.breaker.onSuccess();
       return { count, resetAt: now + ttlMs };
     } catch (err) {
+      this.breaker.onFailure(now);
       logger.warn(
         { error: err, key },
         'Upstash rate limit unavailable — degrading to per-instance bucket (limits are NOT shared across instances while this persists)'
