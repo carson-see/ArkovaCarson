@@ -5,7 +5,7 @@
  * Constitution 1.6: Documents never leave the user's device — no document data in Sentry.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Full mock of @sentry/node — avoids loading the native CPU profiler
 // binary which fails on some architectures. The PII scrubber functions
@@ -27,7 +27,7 @@ vi.mock('@sentry/profiling-node', () => ({
   nodeProfilingIntegration: vi.fn(() => ({})),
 }));
 
-import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, resolveSentryEnvironment, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, captureSchedulerPauseAlert, SCHEDULER_PAUSE_FINGERPRINT, captureCreditRpcFailureAlert, Sentry } from './sentry.js';
+import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, resolveSentryEnvironment, emitRpcFallback, withCronMonitoring, shouldSendCronCheckIns, PROD_SERVICE_NAME, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, capturePipelineThroughputAlert, PIPELINE_THROUGHPUT_FINGERPRINT, captureSchedulerPauseAlert, SCHEDULER_PAUSE_FINGERPRINT, captureCreditRpcFailureAlert, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
   it('strips email addresses from exception messages', () => {
@@ -494,6 +494,16 @@ describe('emitRpcFallback (SCRUM-1262 R1-8 /simplify carry-over)', () => {
 describe('withCronMonitoring', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // These tests assert the check-in REPORTING behavior, which is now
+    // gated to the prod service (see the 'sentry-cron-checkins-prod-only'
+    // describe block below for the gate itself) — stub K_SERVICE to the
+    // real prod service name so check-ins fire as before.
+    vi.stubEnv('K_SERVICE', PROD_SERVICE_NAME);
+    vi.stubEnv('ENABLE_SENTRY_CRON_CHECKINS', undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('flushes Sentry after a successful check-in so Cloud Run does not drop the event', async () => {
@@ -519,6 +529,147 @@ describe('withCronMonitoring', () => {
       expect.objectContaining({ status: 'error' }),
     );
     expect(Sentry.flush).toHaveBeenCalledWith(2000);
+  });
+});
+
+// fix/sentry-cron-checkins-prod-only: CTO directive — every soak rig's cron
+// jobs were auto-creating a permanent Sentry monitor environment that starts
+// paging "missed check-in" the moment the rig is torn down (5 dead rig envs
+// x 4 cron monitors = 16 zombie env/monitor pairs, ~93k events as of
+// 2026-08). `shouldSendCronCheckIns` is the single choke point that decides
+// whether `withCronMonitoring` reports to Sentry at all; the wrapped job
+// itself is NEVER gated by it.
+describe('shouldSendCronCheckIns (fix/sentry-cron-checkins-prod-only)', () => {
+  it('pins the production service name the gate keys off', () => {
+    // Regression pin: if this constant ever drifts (e.g. a Cloud Run
+    // service rename), every prod cron check-in silently stops — and the
+    // gate is BY DESIGN fail-safe-loud (prod's own monitor then pages
+    // "missed check-in"), but this test catches the drift before deploy.
+    expect(PROD_SERVICE_NAME).toBe('arkova-worker');
+  });
+
+  it('fires for the real prod service', () => {
+    expect(shouldSendCronCheckIns({ kService: 'arkova-worker' })).toBe(true);
+  });
+
+  it('suppresses for a rig-style K_SERVICE', () => {
+    expect(
+      shouldSendCronCheckIns({ kService: 'arkova-worker-fullsoak-2026-08-staging' }),
+    ).toBe(false);
+    expect(shouldSendCronCheckIns({ kService: 'arkova-worker-staging' })).toBe(false);
+    expect(shouldSendCronCheckIns({ kService: 'arkova-worker-rig-b1' })).toBe(false);
+  });
+
+  it('fires under the escape hatch regardless of K_SERVICE', () => {
+    expect(
+      shouldSendCronCheckIns({
+        kService: 'arkova-worker-fullsoak-2026-08-staging',
+        enableCronCheckIns: 'true',
+      }),
+    ).toBe(true);
+  });
+
+  it('fires under the escape hatch even with no K_SERVICE at all', () => {
+    expect(shouldSendCronCheckIns({ enableCronCheckIns: 'true' })).toBe(true);
+  });
+
+  it('suppresses when K_SERVICE is missing (local dev)', () => {
+    expect(shouldSendCronCheckIns({})).toBe(false);
+    expect(shouldSendCronCheckIns({ kService: undefined })).toBe(false);
+  });
+
+  it('does not treat a non-"true" escape-hatch value as enabling', () => {
+    expect(
+      shouldSendCronCheckIns({ kService: undefined, enableCronCheckIns: '1' }),
+    ).toBe(false);
+    expect(
+      shouldSendCronCheckIns({ kService: undefined, enableCronCheckIns: 'TRUE' }),
+    ).toBe(false);
+    expect(
+      shouldSendCronCheckIns({ kService: undefined, enableCronCheckIns: 'yes' }),
+    ).toBe(false);
+  });
+
+  it('reads live process.env when called with no explicit inputs', () => {
+    vi.stubEnv('K_SERVICE', 'arkova-worker');
+    vi.stubEnv('ENABLE_SENTRY_CRON_CHECKINS', undefined);
+    expect(shouldSendCronCheckIns()).toBe(true);
+
+    vi.stubEnv('K_SERVICE', 'arkova-worker-rig-b1');
+    expect(shouldSendCronCheckIns()).toBe(false);
+
+    vi.unstubAllEnvs();
+  });
+});
+
+describe('withCronMonitoring — prod-only check-in gate (fix/sentry-cron-checkins-prod-only)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('reports check-ins AND runs the job on the real prod service', async () => {
+    vi.stubEnv('K_SERVICE', 'arkova-worker');
+    const fn = vi.fn().mockResolvedValue({ ok: true });
+    const wrapped = withCronMonitoring('test-job', '*/5 * * * *', fn);
+
+    const result = await wrapped();
+
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ ok: true });
+    expect(Sentry.captureCheckIn).toHaveBeenCalledTimes(2);
+    expect(Sentry.flush).toHaveBeenCalledWith(2000);
+  });
+
+  it('suppresses check-ins on a rig-style K_SERVICE but still runs the job', async () => {
+    vi.stubEnv('K_SERVICE', 'arkova-worker-fullsoak-2026-08-staging');
+    const fn = vi.fn().mockResolvedValue({ ok: true });
+    const wrapped = withCronMonitoring('test-job', '*/5 * * * *', fn);
+
+    const result = await wrapped();
+
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ ok: true });
+    expect(Sentry.captureCheckIn).not.toHaveBeenCalled();
+    expect(Sentry.flush).not.toHaveBeenCalled();
+  });
+
+  it('propagates a job error unchanged when check-ins are suppressed', async () => {
+    vi.stubEnv('K_SERVICE', 'arkova-worker-rig-b1');
+    const fn = vi.fn().mockRejectedValue(new Error('boom'));
+    const wrapped = withCronMonitoring('test-job', '*/5 * * * *', fn);
+
+    await expect(wrapped()).rejects.toThrow('boom');
+
+    expect(Sentry.captureCheckIn).not.toHaveBeenCalled();
+  });
+
+  it('reports check-ins under the escape hatch even off the prod service', async () => {
+    vi.stubEnv('K_SERVICE', 'arkova-worker-rig-b1');
+    vi.stubEnv('ENABLE_SENTRY_CRON_CHECKINS', 'true');
+    const fn = vi.fn().mockResolvedValue({ ok: true });
+    const wrapped = withCronMonitoring('test-job', '*/5 * * * *', fn);
+
+    await wrapped();
+
+    expect(Sentry.captureCheckIn).toHaveBeenCalledTimes(2);
+  });
+
+  it('suppresses check-ins with no K_SERVICE at all (local dev) but still runs the job', async () => {
+    vi.stubEnv('K_SERVICE', undefined);
+    vi.stubEnv('ENABLE_SENTRY_CRON_CHECKINS', undefined);
+    const fn = vi.fn().mockResolvedValue({ ok: true });
+    const wrapped = withCronMonitoring('test-job', '*/5 * * * *', fn);
+
+    const result = await wrapped();
+
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ ok: true });
+    expect(Sentry.captureCheckIn).not.toHaveBeenCalled();
   });
 });
 
