@@ -1,9 +1,9 @@
-# @carsonarkova/sdk
+# Arkova SDK
 
-> The official TypeScript / JavaScript SDK for the Arkova verification API.
+> The official TypeScript / JavaScript SDK for the Arkova verification API. Published to npm as `arkova`.
 > Anchor documents to a public network, call the API v2 agent tools, verify records, and manage webhooks — all without ever opening the Arkova web app.
 
-[![npm version](https://img.shields.io/npm/v/@carsonarkova/sdk.svg)](https://www.npmjs.com/package/@carsonarkova/sdk) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![npm version](https://img.shields.io/npm/v/arkova.svg)](https://www.npmjs.com/package/arkova) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
@@ -29,11 +29,11 @@
 ## Install
 
 ```bash
-npm install @carsonarkova/sdk
+npm install arkova
 # or
-pnpm add @carsonarkova/sdk
+pnpm add arkova
 # or
-yarn add @carsonarkova/sdk
+yarn add arkova
 ```
 
 **Requirements:** Node.js ≥18 (uses native `fetch` and `crypto.subtle`). Works in browsers, Cloudflare Workers, Deno, and Bun without polyfills.
@@ -45,7 +45,7 @@ yarn add @carsonarkova/sdk
 ## Quickstart
 
 ```typescript
-import { Arkova } from '@carsonarkova/sdk';
+import { Arkova } from 'arkova';
 
 const arkova = new Arkova({ apiKey: process.env.ARKOVA_API_KEY });
 
@@ -79,7 +79,7 @@ See [`examples/anchor-document.ts`](./examples/anchor-document.ts) for a complet
 ## Configuration
 
 ```typescript
-import { Arkova } from '@carsonarkova/sdk';
+import { Arkova } from 'arkova';
 
 const arkova = new Arkova({
   /** API key — get one from app.arkova.ai/settings/api-keys */
@@ -420,7 +420,7 @@ Every citation links back to a network-anchored source document, so you can veri
 All SDK methods that fail throw an `ArkovaError`:
 
 ```typescript
-import { Arkova, ArkovaError } from '@carsonarkova/sdk';
+import { Arkova, ArkovaError } from 'arkova';
 
 try {
   await arkova.webhooks.create({ url: 'http://insecure.example.com' });
@@ -494,7 +494,7 @@ import type {
   FingerprintVerification,
   AnchorDetails,
   OrganizationSummary,
-} from '@carsonarkova/sdk';
+} from 'arkova';
 ```
 
 ---
@@ -505,7 +505,7 @@ The SDK works directly in modern browsers via the standard `<script type="module
 
 ```html
 <script type="module">
-  import { Arkova } from 'https://esm.sh/@carsonarkova/sdk';
+  import { Arkova } from 'https://esm.sh/arkova';
   const arkova = new Arkova({ apiKey: 'ak_live_...' });
   const receipt = await arkova.anchor('hello from the browser');
   console.log(receipt.publicId);

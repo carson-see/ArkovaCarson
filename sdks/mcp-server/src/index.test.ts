@@ -19,7 +19,9 @@ describe('Tool Definitions', () => {
     // Exact-name ratchet: adding or removing a tool must update this list
     // deliberately. 6 arkova_ verification tools (PH2-AGENT-06 / SCRUM-403,
     // arkova_verify_signature added in Phase III) + 4 nessie_ compliance
-    // intelligence tools (NCE-19).
+    // intelligence tools (NCE-19). Was pinned at 6 (PH2-AGENT-06); NCE-19 added
+    // the 4 nessie_-prefixed tools without updating this assertion, so it
+    // silently regressed to failing on every run until #2244 fixed it on main.
     expect(TOOL_DEFINITIONS.map(t => t.name)).toEqual([
       'arkova_verify_credential',
       'arkova_credential_status',
@@ -49,6 +51,13 @@ describe('Tool Definitions', () => {
     for (const tool of TOOL_DEFINITIONS) {
       expect(tool.name).toMatch(/^(arkova|nessie)_/);
     }
+  });
+
+  it('should prefix exactly 6 tools arkova_ and 4 tools nessie_', () => {
+    const arkovaTools = TOOL_DEFINITIONS.filter((t) => t.name.startsWith('arkova_'));
+    const nessieTools = TOOL_DEFINITIONS.filter((t) => t.name.startsWith('nessie_'));
+    expect(arkovaTools).toHaveLength(6);
+    expect(nessieTools).toHaveLength(4);
   });
 
   it('should include arkova_verify_signature for Phase III', () => {

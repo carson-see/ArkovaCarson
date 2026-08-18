@@ -241,7 +241,7 @@ test.describe('API Keys & Verification Flow', () => {
         await tsTab.click();
         // Canonical SDK class is `Arkova` (packages/sdk); the stale
         // `ArkovaClient` duplicate was removed in PR #1506.
-        await expect(page.getByText("import { Arkova } from '@carsonarkova/sdk'")).toBeVisible();
+        await expect(page.getByText("import { Arkova } from 'arkova'")).toBeVisible();
       }
     });
 

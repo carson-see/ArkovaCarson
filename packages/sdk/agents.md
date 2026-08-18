@@ -1,6 +1,6 @@
 # packages/sdk/agents.md
 
-`@carsonarkova/sdk` — TypeScript SDK for the Arkova Verification API (PH1-SDK-01 + INT-01).
+`arkova` — TypeScript SDK for the Arkova Verification API (PH1-SDK-01 + INT-01).
 
 ## Structure
 - **`src/`** — client, types, barrel export.
@@ -10,17 +10,27 @@
 
 ## Conventions
 - Client-side fingerprinting via SHA-256 (documents never leave the user's device).
-- Published via `.github/workflows/publish-sdk.yml`.
+- Published via `.github/workflows/publish-sdk.yml`, or manually via `scripts/release/publish-npm.sh`.
 - Must stay in sync with `integrations/shared/src/fingerprint.ts` algorithm.
-- **npm scope is `carsonarkova`, not `arkova`** (founder ruling 2026-08-01): the org that was
-  actually created and that the Secret Manager `NPM` token is scoped to (`package:write` +
-  `org:write`) is `carsonarkova` (owner: crseeger), confirmed empty at the time of the rename.
-  The `arkova` scope returned 403 on every access/org check for that token — either never
-  created or owned by someone else; `carsonarkova` was ruled to be the intended org all along,
-  so the package name changed to match instead of chasing the `arkova` scope. Do not rename
-  back without a new explicit ruling. `packages/embed` (`@arkova/embed`) was NOT included in
-  this ruling and still targets the old scope — that's a known, currently-unresolved mismatch,
-  not an oversight (see `scripts/publish-packages.sh`).
+- **npm name is unscoped `arkova` (CTO ruling 2026-08-18), superseding the 2026-08-01
+  `@carsonarkova/sdk` scoped-package ruling below.** Parity with the PyPI package, which already
+  publishes unscoped as `arkova`. An unscoped name needs no npm org at all — first-publish
+  ownership is per-package, not per-org — so the `carsonarkova`-vs-`arkova` org-scope question
+  that blocked the 2026-08-01 attempt is moot for this package. Confirmed free via
+  `npm view arkova` (E404) on 2026-08-18. `@arkova/*` scoped aliases can follow later if the
+  founder creates the `arkova` org on npmjs.com, but nothing requires that today.
+  `publishConfig.provenance` was dropped from `package.json` in the same change: provenance
+  attestation needs CI/OIDC (`id-token: write`) and fails outright on a manual laptop publish,
+  which is the near-term path (`scripts/release/publish-npm.sh`, no npm auth on the agent
+  machine — operator finishes the publish themselves). `.github/workflows/publish-sdk.yml`
+  still requests `--provenance` explicitly on its `npm publish` invocation and has real OIDC via
+  `permissions: id-token: write`, so CI-path provenance is unaffected by this change — only the
+  publishConfig default was removed. Restore `publishConfig.provenance: true` once the CI
+  workflow is the proven, exercised publish path rather than the untested one.
+  **Historical record, not current guidance:** the 2026-08-01 `@carsonarkova/sdk` rename (PR
+  #1785) and its org-scope rationale are preserved in `HANDOFF.md` `## History` — read there for
+  what actually happened, not here. `packages/embed` (`@arkova/embed`) is unaffected by either
+  ruling and keeps its own scope question open (see `scripts/publish-packages.sh`).
 
 ## Methods added since PH1-SDK-01
 - `anchorBulk(inputs, options?)` (W3 / HAKI-REQ-02 wiring, 2026-07-28) — wires `POST /api/v1/anchor/bulk` (`services/worker/src/api/v1/anchor-bulk.ts`). Rows accept either a pre-computed `fingerprint` or raw `data` (fingerprinted client-side via the existing `fingerprint()` helper — never both, never neither). Caps at `BULK_ANCHOR_MAX_ROWS` (1000, mirrors the server's `.max(1000)`) and throws `ArkovaError({code:'batch_too_large'})` client-side rather than auto-chunking — chunking would split intra-batch duplicate detection and credit deduction across requests. `dryRun` / `duplicateStrategy` / `batchId` map to the server's `dry_run` / `duplicate_strategy` / `batch_id`. See `client.test.ts` `describe('anchorBulk', ...)` for the full contract (cap boundary, mixed input types, dry-run, per-row errors, 409 duplicate-fail, 402 insufficient-credits).

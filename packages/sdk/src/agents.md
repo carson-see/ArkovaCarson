@@ -1,6 +1,6 @@
 # packages/sdk/src/agents.md
 
-Source code for `@carsonarkova/sdk` (PH1-SDK-01 + INT-01).
+Source code for `arkova` (PH1-SDK-01 + INT-01).
 
 ## Files
 - **`client.ts`** — `Arkova` class: anchor, verify, batch verify, query (Nessie), webhook management, search, org/record/fingerprint detail. Works in Node.js and browser.

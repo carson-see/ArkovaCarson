@@ -269,6 +269,6 @@ MIT © Arkova
 
 ## See also
 
-- [@carsonarkova/sdk](../sdk) — TypeScript SDK for the Arkova verification API
+- [arkova](../sdk) — TypeScript SDK for the Arkova verification API
 - [docs/api/webhooks.md](../../docs/api/webhooks.md) — Webhook CRUD developer guide
 - [docs/api/README.md](../../docs/api/README.md) — Full API documentation index
