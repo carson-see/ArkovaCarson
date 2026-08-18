@@ -77,6 +77,23 @@ Net: 45 → 40 open (assuming confirms), with one new consolidated draft replaci
   (Redis is now on the blocking hot path, 2s timeout, no circuit breaker) — known accepted
   risk to revisit.
 
+## Fix commits landed (2026-08-18, all branches remain DRAFT)
+
+| PR | New head | Fix |
+|---|---|---|
+| #2216 | `a664ee847` | GetBlock token leak — origin-only labels at both bounded-read sites + leak regression (red-first); 677 tests green |
+| #2248 | `c993e81cd` | 0414 rewritten no-op-on-prod on both axes (per-function prod sweep); ratchet gains test-pinned 2-member authenticated exemption; body corrected |
+| #2254 | `e79737530` | Floor 100→500 with derived-quantum tests (est ≈118 stays warn; 259k still fatal) |
+| #2259 | `665e01e27` | Value-resolver test survives literal AND re-export shapes (proven against #2231's real files); order-independence restored |
+| #2252 | `4b5a10662` | `Python SDK Tests (packages/arkova-py)` wired into all 3 Mergify queue rules + contract test forbidding a job-level `if:` while gated |
+| #2233 | `61d736cd6` | Kill-switch fail-open REVERTED — file byte-identical to main; fail-closed pinned at request-body level; tier note corrected (T2 via worker path) |
+| #2220 | `e7cf72c74` | 6 #2218 items ported + both CI defects fixed (staging pins recomputed, append-only heading restored) + `.is('revoked_at', null)` race guard with negative-control test; 90/90 + 218/218 |
+| #2221 | `5ec400023` | Manifest `head_sha` rebound to `e7cf72c74` in the same motion; body prose corrected |
+| **#2269 (new)** | `2ad3048cf` | Consolidated rate-limit draft (supersedes #2223/#2224/#2231/#2238) + v2 TTL self-heal + fail-open §1.10 headers; 171/171 |
+
+C-cluster review evidence was captured at #2216 head `90ff77071`; the token-leak commit
+supersedes exact-head claims — future soak cites `a664ee847`.
+
 ## NOT asserted
 
 No PR here has been soaked; verdicts are from diff/merge-tree/local-test analysis. Tier
