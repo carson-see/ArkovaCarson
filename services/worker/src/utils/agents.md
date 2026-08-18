@@ -395,3 +395,11 @@ Closes the carve-out the section above left open. `verifyCache.ts` keys are now
 - **Both halves are asserted in one file, deliberately.** Different environments must NOT read each
   other's cache, AND two instances of one service MUST share one — a namespace that also broke
   sharing would be a PERF-12 regression dressed as a fix, and every cache-hit test would still pass.
+
+## 2026-08-18 — consolidated rate-limit cluster: fail-open path emits §1.10 headers
+
+`enforceShared`'s last-resort catch (store `increment` rejects — normally unreachable behind the
+Upstash store's internal fallback bucket) now sets best-effort `X-RateLimit-*` headers before
+`next()`. §1.10 says headers on every response; a header-less allow was the one gap. Values are
+best-effort by design: configured limit, one request charged against a fresh window — there is no
+shared state to read on this path. Pinned in `rateLimit.test.ts` ("distributed fail-open path").

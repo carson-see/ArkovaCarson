@@ -318,3 +318,82 @@ describe('BUG-018 — v2 rate-limit keyspace is namespaced per environment', () 
     }
   });
 });
+
+/**
+ * Permanent-lockout regression (rate-limit cluster review, MEDIUM finding).
+ *
+ * A process that dies between INCR and PEXPIRE leaves a TTL-less key. The
+ * pre-fix store armed PEXPIRE only on `count === 1`, so such a key was never
+ * healed: its count grew forever and, once past the limit, that bucket blocked
+ * its key permanently. The v1 store (utils/upstashRateLimit.ts) re-arms the
+ * TTL whenever PTTL reports no expiry; this suite pins the same self-heal
+ * behavior onto the v2 store.
+ */
+describe('UpstashV2RateLimitStore — crash-orphaned TTL-less keys self-heal', () => {
+  const BASE = 'https://fake.upstash.io';
+
+  /** Fake Upstash that actually models TTL state: PTTL is -1 until PEXPIRE. */
+  function statefulUpstash() {
+    const counters = new Map<string, number>();
+    const ttls = new Map<string, number>();
+    let pexpireCalls = 0;
+    const fetchImpl = async (input: string | URL): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const [command, key, arg] = url
+        .replace(`${BASE}/`, '')
+        .split('/')
+        .map(decodeURIComponent);
+
+      let result: number;
+      switch (command) {
+        case 'incr':
+          result = (counters.get(key) ?? 0) + 1;
+          counters.set(key, result);
+          break;
+        case 'pexpire':
+          pexpireCalls += 1;
+          ttls.set(key, Number(arg));
+          result = 1;
+          break;
+        case 'pttl':
+          result = ttls.get(key) ?? -1; // -1 = key exists, no expiry
+          break;
+        default:
+          throw new Error(`unsupported command ${command}`);
+      }
+      return new Response(JSON.stringify({ result }), { status: 200 });
+    };
+    return { counters, ttls, fetchImpl, getPexpireCalls: () => pexpireCalls };
+  }
+
+  it('re-arms the window TTL when INCR lands on a key with no expiry', async () => {
+    const { counters, ttls, fetchImpl } = statefulUpstash();
+    const store = new UpstashV2RateLimitStore(BASE, 'tok', fetchImpl, 'prod');
+    const key = 'apikey:orphaned';
+    const redisKey = `arkova:v2:ratelimit:prod:${key}`;
+
+    // The crash shape: already counted (so count !== 1 on the next INCR),
+    // but the PEXPIRE that should have armed the window never ran.
+    counters.set(redisKey, 5);
+
+    const entry = await store.increment(key, 60_000, () => 1_000_000);
+
+    expect(entry.count).toBe(6);
+    // The heal: the next increment must arm the TTL so the bucket expires
+    // like any live window instead of counting up forever.
+    expect(ttls.get(redisKey)).toBe(60_000);
+    expect(entry.resetAt).toBe(1_000_000 + 60_000);
+  });
+
+  it('arms the TTL exactly once on the first hit of a clean window', async () => {
+    const { fetchImpl, getPexpireCalls } = statefulUpstash();
+    const store = new UpstashV2RateLimitStore(BASE, 'tok', fetchImpl, 'prod');
+
+    await store.increment('apikey:clean', 60_000, () => Date.now());
+    expect(getPexpireCalls()).toBe(1);
+
+    // Steady state: armed window, no re-arm.
+    await store.increment('apikey:clean', 60_000, () => Date.now());
+    expect(getPexpireCalls()).toBe(1);
+  });
+});

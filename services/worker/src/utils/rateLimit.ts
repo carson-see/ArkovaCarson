@@ -214,6 +214,12 @@ export function rateLimit(options: RateLimitOptions) {
         { error: err, key },
         'Rate limit store threw — allowing request (fail-open)'
       );
+      // Constitution §1.10: X-RateLimit-* headers on every response — including
+      // this one. No shared state was readable, so emit best-effort values:
+      // the configured limit, this request charged against a fresh window.
+      res.setHeader('X-RateLimit-Limit', maxRequests.toString());
+      res.setHeader('X-RateLimit-Remaining', Math.max(0, maxRequests - 1).toString());
+      res.setHeader('X-RateLimit-Reset', Math.floor((now + windowMs) / 1000).toString());
       next();
       return;
     }

@@ -169,8 +169,18 @@ export class UpstashV2RateLimitStore implements V2RateLimitStore {
         await this.command<number>('pexpire', redisKey, String(windowMs));
       }
 
-      const ttlMs = await this.command<number>('pttl', redisKey);
-      const resetAt = now() + (ttlMs > 0 ? ttlMs : windowMs);
+      let ttlMs = await this.command<number>('pttl', redisKey);
+      if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+        // PTTL -1: the key exists with no expiry — the shape left behind when
+        // a process died between INCR and PEXPIRE. `count === 1` never fires
+        // again for such a key, so without re-arming here its count grows
+        // forever and, once past the limit, blocks that bucket permanently.
+        // Same self-heal idiom as the v1 store (utils/upstashRateLimit.ts).
+        await this.command<number>('pexpire', redisKey, String(windowMs));
+        ttlMs = windowMs;
+      }
+
+      const resetAt = now() + ttlMs;
       return { count, resetAt };
     } catch (err) {
       logger.warn({ error: err, key }, 'API v2 Upstash rate limit failed; using local fallback bucket');
