@@ -328,7 +328,7 @@ ENABLE_QUEUE_REMINDERS=true
 
 # QUEUE-07 (SCRUM-2353) — daily org-admin review-queue digest email.
 # Read by config.ts as config.enableQueueDigest (boolFlag(false) code
-# default). Gates POST /cron/queue-digest (services/worker/src/jobs/
+# default). Gates POST /jobs/queue-digest (services/worker/src/jobs/
 # queue-digest-cron.ts): when false/unset, runDailyQueueDigest no-ops before
 # enumerating admins or sending mail. Was previously ABSENT from this file and
 # from deploy-worker.yml's --set-env-vars, so prod ran on the false default
@@ -344,8 +344,9 @@ ENABLE_QUEUE_REMINDERS=true
 # listQueueDigestPreferences / isOrgEnrolledInQueueDigest in
 # queue-digest-cron.ts.
 #
-# Still requires a Cloud Scheduler job → POST /cron/queue-digest (CRON_SECRET
-# auth) to actually fire daily — this flag only gates the code path.
+# Still requires a Cloud Scheduler job → POST /jobs/queue-digest (CRON_SECRET
+# auth) to actually fire daily — this flag only gates the code path. See
+# scripts/gcp-setup/cloud-scheduler.sh's NOT_SCHEDULED entry for this route.
 ENABLE_QUEUE_DIGEST=true
 
 # ARK-103 — treasury low-balance alerting (SCRUM-1013)

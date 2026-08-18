@@ -437,7 +437,7 @@ jobs:
       #
       # QUEUE-07 activation (CTO decision): ENABLE_QUEUE_DIGEST was previously
       # absent here entirely, so `config.enableQueueDigest` fell back to its
-      # boolFlag(false) code default and POST /cron/queue-digest was a
+      # boolFlag(false) code default and POST /jobs/queue-digest was a
       # standing no-op regardless of Cloud Scheduler. Flipped true below.
       # `runDailyQueueDigest` (services/worker/src/jobs/queue-digest-cron.ts)
       # is now also DEFAULT-ON per-org (an org is enrolled unless it holds an
@@ -445,9 +445,11 @@ jobs:
       # review queue is entirely empty, so activating the flag does not by
       # itself guarantee mail volume — only orgs with something to report and
       # no opt-out receive anything. Requires a Cloud Scheduler job →
-      # POST /cron/queue-digest (CRON_SECRET auth, matching the other
+      # POST /jobs/queue-digest (CRON_SECRET auth, matching the other
       # registered cron routes) to actually fire daily; this workflow only
-      # gates the code path, it does not provision the Scheduler job.
+      # gates the code path, it does not provision the Scheduler job. See
+      # scripts/gcp-setup/cloud-scheduler.sh's NOT_SCHEDULED entry for this
+      # route — binding it is a separate, not-yet-performed operator step.
       - name: Deploy canary (no traffic)
         run: |
           gcloud run deploy ${{ env.SERVICE_NAME }} \
