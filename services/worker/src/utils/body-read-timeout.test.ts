@@ -37,6 +37,10 @@ describe('readJsonBounded', () => {
     expect(Date.now() - started).toBeLessThan(1_000);
   });
 
+  // Full-URL-in-message is the contract for PUBLIC URLs only (mempool.space /
+  // blockstream — the path IS the correlation value). Credential-bearing URLs
+  // must pass a sanitized label instead; the RPC path's origin-only labeling
+  // is pinned in chain/utxo-provider.test.ts (§1.4 S3.3-F1).
   it('names the url and deadline in the error, for log correlation', async () => {
     const response = { json: () => parked() };
     await expect(

@@ -291,3 +291,8 @@ the lease forever, disabling SUBMITTED→SECURED promotion for every tenant with
   plain `{ ok, json }` objects; requiring a real `Response` would force every one of them to change.
 - **Use it at EVERY `fetch(...)` → `.json()`/`.text()` against an external provider.** A bounded
   request with an unbounded body read is the hazard, not a slow provider.
+- **§1.4 caller contract: the `url` argument is embedded verbatim in `BodyReadTimeoutError.message`
+  and flows to logs and Sentry.** Pass the full URL only when it is public (mempool.space /
+  blockstream — the path is the correlation value). A credential-bearing URL — e.g. token-in-path
+  `https://go.getblock.io/<ACCESS_TOKEN>` — must be reduced to a sanitized label first; the RPC
+  path uses `sanitizeRpcUrlForError` (origin-only) in `chain/utxo-provider.ts` (S3.3-F1).

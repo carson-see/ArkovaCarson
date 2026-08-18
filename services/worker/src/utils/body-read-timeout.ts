@@ -28,6 +28,15 @@
  * cover can no longer pin a lease forever.
  */
 
+/**
+ * CALLER CONTRACT (§1.4): `url` is embedded verbatim in `.message`, which
+ * flows to retry warn logs, Sentry breadcrumbs, and propagated error text —
+ * so it must be safe to log. Public API URLs (mempool.space, blockstream)
+ * pass the full URL: the path is the correlation value. Credential-bearing
+ * URLs — e.g. a token-in-path RPC endpoint like
+ * `https://go.getblock.io/<ACCESS_TOKEN>` — must pass a sanitized label
+ * instead (see `sanitizeRpcUrlForError` in chain/utxo-provider.ts).
+ */
 export class BodyReadTimeoutError extends Error {
   constructor(
     readonly url: string,

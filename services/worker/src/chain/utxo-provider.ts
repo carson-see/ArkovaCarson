@@ -525,9 +525,31 @@ export interface RpcProviderConfig {
  * back to the bare (retryable-if-5xx) HttpError, so the fail-safe transient
  * classification is unchanged for genuinely broken responses.
  */
+/**
+ * §1.4 (S3.3-F1): the RPC endpoint may carry its credential in the URL PATH —
+ * prod `BITCOIN_RPC_URL` is `https://go.getblock.io/<ACCESS_TOKEN>` — so the
+ * raw URL must never reach an Error message. `BodyReadTimeoutError` embeds
+ * its `url` argument verbatim in `.message`, which then flows to
+ * `retryWithBackoff`'s warn log on every retry, `emitRpcFallback` Sentry
+ * breadcrumbs, and any propagated job error text; the pii-scrub
+ * `URL_TOKEN_REGEX` only matches `token=`-style QUERY params, so a path
+ * token passes it untouched. Origin-only keeps the correlation value (which
+ * endpoint, which deadline) and provably drops path, query, and userinfo —
+ * the pre-F-D0-5 `rpcCall` never put the URL in an error for exactly this
+ * reason. Public mempool/blockstream call sites keep their full URLs: those
+ * carry no credential, and there the path IS the correlation value.
+ */
+export function sanitizeRpcUrlForError(rpcUrl: string): string {
+  try {
+    return new URL(rpcUrl).origin;
+  } catch {
+    return 'bitcoin-rpc';
+  }
+}
+
 async function tryParseRpcErrorBody(
   response: { text?: () => Promise<string> },
-  rpcUrl: string,
+  rpcUrlLabel: string,
 ): Promise<{ message: string; code?: number } | null> {
   try {
     if (typeof response.text !== 'function') return null;
@@ -537,7 +559,7 @@ async function tryParseRpcErrorBody(
     // HttpError, which is exactly the right answer for an unreadable body.
     const bodyText = await readTextBounded(
       response as { text(): Promise<string> },
-      rpcUrl,
+      rpcUrlLabel,
       DEFAULT_BODY_READ_TIMEOUT_MS,
     );
     const parsed = JSON.parse(bodyText) as {
@@ -570,6 +592,10 @@ async function rpcCall(
 
   const response = await fetch(rpcUrl, { method: 'POST', headers, body, signal: createTimeoutSignal() });
 
+  // §1.4 (S3.3-F1): everything below that can mint an Error gets the
+  // origin-only label, never `rpcUrl` — see sanitizeRpcUrlForError.
+  const rpcUrlLabel = sanitizeRpcUrlForError(rpcUrl);
+
   if (!response.ok) {
     // #1408-Finding-1: Bitcoin-Core-faithful endpoints wrap JSON-RPC
     // application errors in HTTP 500. Parse the body FIRST — if it carries an
@@ -577,7 +603,7 @@ async function rpcCall(
     // failure and must reach the transient-vs-definitive classifier and
     // isDuplicateTxError. Only a body with no parseable envelope stays a bare
     // HttpError (retryable on 5xx — fail-safe unchanged).
-    const appError = await tryParseRpcErrorBody(response, rpcUrl);
+    const appError = await tryParseRpcErrorBody(response, rpcUrlLabel);
     if (appError) {
       throw new RpcApplicationError(
         `RPC ${method} error: ${appError.message} (code ${appError.code ?? 'unknown'}) [HTTP ${response.status}]`,
@@ -588,7 +614,7 @@ async function rpcCall(
     throw new HttpError(`RPC ${method} failed: HTTP ${response.status}`, response.status);
   }
 
-  const json = (await readJsonBounded(response, rpcUrl, DEFAULT_BODY_READ_TIMEOUT_MS)) as { result?: unknown; error?: { message: string; code: number } };
+  const json = (await readJsonBounded(response, rpcUrlLabel, DEFAULT_BODY_READ_TIMEOUT_MS)) as { result?: unknown; error?: { message: string; code: number } };
   if (json.error) {
     throw new RpcApplicationError(
       `RPC ${method} error: ${json.error.message} (code ${json.error.code})`,

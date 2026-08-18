@@ -253,3 +253,13 @@ fullsoak rig (see `jobs/agents.md` F-D0-5).
   should treat it as one rather than surfacing a hard failure.
 - `MempoolFeeEstimator` reports a stalled body as `reason: 'timeout'`, not `'network_error'` — the
   fallback-reason metric exists to surface provider stalls, so it must not hide one.
+- **§1.4 (S3.3-F1): `rpcCall` never hands the raw `rpcUrl` to the bounded readers.** Prod
+  `BITCOIN_RPC_URL` is `https://go.getblock.io/<ACCESS_TOKEN>` — the credential is in the URL PATH,
+  and `BodyReadTimeoutError` embeds its `url` argument in `.message`, which reaches
+  `retryWithBackoff` warn logs, `emitRpcFallback` Sentry breadcrumbs, and propagated job error
+  text (the pii-scrub `URL_TOKEN_REGEX` only matches `token=` query params, so a path token passes
+  it untouched). `sanitizeRpcUrlForError` (exported) reduces the URL to its origin — correlation
+  preserved, token provably dropped. Public mempool/blockstream call sites keep full URLs on
+  purpose: no credential there, and the path is the correlation value. Regression pinned in
+  `utxo-provider.test.ts` ("§1.4 S3.3-F1"): a stalled RPC body with a token-in-path URL must
+  produce token-free error text, warn logs, and fallback breadcrumbs.
