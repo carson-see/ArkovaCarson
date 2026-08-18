@@ -66,9 +66,11 @@
  * differently to the two, so this module reads `switchboard_flags` directly
  * (service-role client, RLS-exempt) and returns a three-state answer.
  *
- * Callers that only need a fail direction should keep using `get_flag` and pass
- * `p_default` explicitly — see `services/edge/src/mcp-kill-switch.ts`, whose
- * documented fail-open was unreachable until it started doing so.
+ * Callers that only need a fail direction should keep using `get_flag` — and
+ * per CTO ruling the Arkova posture is fail-CLOSED on an absent row: every gate
+ * (including `services/edge/src/mcp-kill-switch.ts`) keeps the `false` default,
+ * so a fresh, never-seeded switchboard leaves the surface dark until an
+ * operator seeds the flag row.
  */
 
 import type { Response } from 'express';
