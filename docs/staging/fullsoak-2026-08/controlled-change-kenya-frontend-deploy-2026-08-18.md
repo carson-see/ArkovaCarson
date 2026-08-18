@@ -42,3 +42,14 @@ narrative is the worse audit posture.
   binding agreement (SCCs)') — same defect shape, but `claims-register.csv` ties
   transfer-basis claims to regulator-facing filings, so those removals follow counsel's
   explicit ruling (precedent: PR #1458, counsel owns transfer-basis changes even as removals).
+
+## Deploy 2 — Tranche 0 completion (~14:5xZ, counsel-doc execution)
+
+Head `79abafbf1` (PR #2271), deployment `arkova-26-4hb7d6iq3`, aliased app.arkova.ai.
+Executed counsel's written Tranche-0 instruction (Sarah's doc, 18 Aug addendum item 1).
+Live-bundle verification (`copy-DEctzTrG.js`): Section 48 string 0 occurrences; Kenya
+counsel-pending placeholder present verbatim; Sections 25-38 rights list 0; 72-hour ODPC
+timeline 0; Section 3 approved wording present; "Your files never leave your browser" 0;
+server-card `serverInfo.vendor` = "Bloc Doc Inc.". Rig, prod worker, main all unchanged.
+Note: sentry-vite-plugin sourcemap upload failed non-fatally during build — this deploy's
+frontend events are unsymbolicated until the next deploy with a working token.
