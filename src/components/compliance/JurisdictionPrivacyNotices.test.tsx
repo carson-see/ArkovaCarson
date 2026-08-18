@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { JurisdictionPrivacyNotices } from './JurisdictionPrivacyNotices';
+import { PRIVACY_NOTICE_LABELS } from '@/lib/copy';
 
 describe('JurisdictionPrivacyNotices — REG-14', () => {
   it('renders all jurisdictions when no filter is provided', () => {
@@ -158,15 +159,43 @@ describe('JurisdictionPrivacyNotices — REG-14', () => {
     expect(allText).toContain('file a complaint');
   });
 
-  it('shows cross-border transfer basis for all jurisdictions', () => {
+  it('shows cross-border transfer basis for jurisdictions that have one', () => {
     render(<JurisdictionPrivacyNotices />);
 
     const allText = document.body.textContent ?? '';
     // SA
     expect(allText).toContain('Section 72 binding agreement');
-    // Nigeria
+    // Nigeria — flagged separately (hotfix/kenya-transfer-basis-removal PR
+    // description) as the same SCC/Kenya-DPA-style conflation, unresolved
+    // pending counsel; not touched in this fix, Kenya only.
     expect(allText).toContain('Standard Contractual Clauses');
-    // Kenya
-    expect(allText).toContain('Section 48');
+  });
+
+  /**
+   * Counsel-ordered removal, 2026-08-18 (hotfix/kenya-transfer-basis-removal).
+   * The live bundle asserted "Standard Contractual Clauses (Section 48)" as
+   * Kenya's cross-border transfer basis. SCCs are an EU GDPR mechanism; Kenya
+   * DPA 2019 §48 is Kenya's own transfer regime and does not name SCCs — the
+   * claim was wrong, not just imprecise. Counsel said removed, not reworded,
+   * so this pins removal: no transfer-basis row renders for Kenya, and the
+   * rest of the Kenya notice (title, regulator, rights, breach timeline,
+   * Information Officer) is unaffected.
+   */
+  it('omits the cross-border transfer basis row for Kenya (counsel-ordered removal)', () => {
+    render(<JurisdictionPrivacyNotices jurisdictions={['kenya']} />);
+
+    const allText = document.body.textContent ?? '';
+    expect(allText).not.toContain('Section 48');
+    expect(allText).not.toContain('Standard Contractual Clauses');
+    expect(allText).not.toContain(PRIVACY_NOTICE_LABELS.TRANSFER_BASIS_LABEL);
+
+    // Rest of the Kenya notice still renders.
+    expect(allText).toContain('Kenya Data Protection Act 2019');
+    expect(allText).toContain('Office of the Data Protection Commissioner');
+    expect(allText).toContain('72 hours');
+    expect(allText).toContain('Rectification');
+
+    const officerLink = document.querySelector('a[href="mailto:privacy@arkova.ai"]');
+    expect(officerLink).not.toBeNull();
   });
 });

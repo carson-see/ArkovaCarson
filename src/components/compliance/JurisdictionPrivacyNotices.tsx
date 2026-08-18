@@ -19,7 +19,15 @@ interface JurisdictionNotice {
   regulatorUrl: string;
   /** `readonly` because the rights arrays are `as const` values from copy.ts. */
   rights: readonly string[];
-  transferBasis: string;
+  /**
+   * Optional (hotfix/kenya-transfer-basis-removal, 2026-08-18): Kenya's prior
+   * value asserted SCCs — a EU GDPR mechanism — as its Kenya DPA 2019 §48
+   * transfer basis, which is not correct. Counsel ordered the claim removed,
+   * not reworded, and has not supplied a replacement yet, so this jurisdiction
+   * omits the field rather than render a placeholder. The row below is
+   * conditional on this being set, matching `informationOfficer`.
+   */
+  transferBasis?: string;
   breachTimeline: string;
   informationOfficer?: string;
 }
@@ -45,6 +53,11 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     transferBasis: PRIVACY_NOTICE_LABELS.HIPAA_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.HIPAA_BREACH_TIMELINE,
   },
+  // Counsel-ordered removal 2026-08-18 (hotfix/kenya-transfer-basis-removal):
+  // no `transferBasis` field. The prior value falsely named EU GDPR Standard
+  // Contractual Clauses as the basis under Kenya DPA 2019 §48 — SCCs are not
+  // a Kenya DPA mechanism. Removed, not reworded; replacement wording awaits
+  // counsel. See the KENYA_BREACH_TIMELINE comment in copy.ts.
   {
     id: 'kenya',
     title: PRIVACY_NOTICE_LABELS.KENYA_TITLE,
@@ -52,7 +65,6 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     regulator: PRIVACY_NOTICE_LABELS.KENYA_REGULATOR,
     regulatorUrl: 'https://odpc.go.ke',
     rights: PRIVACY_NOTICE_LABELS.KENYA_RIGHTS,
-    transferBasis: PRIVACY_NOTICE_LABELS.KENYA_TRANSFER_BASIS,
     breachTimeline: PRIVACY_NOTICE_LABELS.KENYA_BREACH_TIMELINE,
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
@@ -223,12 +235,14 @@ export function JurisdictionPrivacyNotices({ jurisdictions }: JurisdictionPrivac
                   <p>{notice.breachTimeline}</p>
                 </div>
 
-                <div>
-                  <p className="font-medium text-xs uppercase tracking-wide text-muted-foreground mb-1">
-                    {PRIVACY_NOTICE_LABELS.TRANSFER_BASIS_LABEL}
-                  </p>
-                  <p>{notice.transferBasis}</p>
-                </div>
+                {notice.transferBasis && (
+                  <div>
+                    <p className="font-medium text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                      {PRIVACY_NOTICE_LABELS.TRANSFER_BASIS_LABEL}
+                    </p>
+                    <p>{notice.transferBasis}</p>
+                  </div>
+                )}
 
                 <div>
                   <p className="font-medium text-xs uppercase tracking-wide text-muted-foreground mb-1">

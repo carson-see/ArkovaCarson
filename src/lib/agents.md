@@ -1,6 +1,10 @@
 # agents.md — lib
 
-_Last updated: 2026-08-10_
+_Last updated: 2026-08-18_
+
+## 2026-08-18 — `KENYA_TRANSFER_BASIS` removed (counsel-ordered, `hotfix/kenya-transfer-basis-removal`)
+
+Counsel (Sarah) ordered removal, not rewording, of the live-served claim `KENYA_TRANSFER_BASIS: 'Standard Contractual Clauses (Section 48)'` — SCCs are an EU GDPR transfer mechanism, and Kenya DPA 2019 §48 is Kenya's own transfer-adequacy provision that does not name SCCs. Second correction of this general shape in two days, after the DPF/SCRUM-2283 fix (2026-08-10 entry in this file's sibling, `src/components/compliance/agents.md`). The key is now a comment-only removal (not a reworded placeholder value — final wording is counsel's call per §1.5 / §1.13 R-7); `KENYA_BREACH_TIMELINE` and the rest of the Kenya block are untouched. Consumer-side fix (making `transferBasis` optional on `JurisdictionNotice` + conditional row render) is in `src/components/compliance/JurisdictionPrivacyNotices.tsx` / that folder's `agents.md` — read there for the full writeup and the flagged-not-fixed Nigeria/South Africa candidates for the same pattern.
 
 ## 2026-08-10 — `ACTIVATE_ACCOUNT_LABELS` + `ActivateAccountSchema` (recipient activation launch blocker)
 

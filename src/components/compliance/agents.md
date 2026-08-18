@@ -40,3 +40,30 @@ Compliance monitoring and audit UI: score cards, audit gap analysis, jurisdictio
   test-enforced from two sides: `src/pages/PrivacyPage.copy-centralization.test.tsx`
   fails on any inline literal in a copy field of this table AND on any rendered
   /privacy prose that copy.ts does not own.
+- 2026-08-18 (counsel-ordered removal, `hotfix/kenya-transfer-basis-removal`):
+  the live bundle served `KENYA_TRANSFER_BASIS: 'Standard Contractual Clauses
+  (Section 48)'` on the public /privacy page. Wrong on its face — SCCs are an
+  EU GDPR transfer mechanism; Kenya DPA 2019 §48 is Kenya's own transfer-
+  adequacy provision and does not name SCCs. Counsel (Sarah) ordered it
+  removed, not reworded — the second correction of this general shape in two
+  days, after the DPF/SCRUM-2283 fix above. `transferBasis` on
+  `JurisdictionNotice` is now optional (`?: string`, matching the existing
+  `informationOfficer?` pattern) and the Kenya entry in `JURISDICTION_NOTICES`
+  no longer sets it; the "Cross-Border Transfer Basis" grid cell is now
+  conditional (`{notice.transferBasis && (...)}`) so Kenya's card simply omits
+  that row — every other jurisdiction is unaffected, verified by
+  `JurisdictionPrivacyNotices.test.tsx`'s
+  `omits the cross-border transfer basis row for Kenya` case (also pins that
+  the rest of the Kenya notice — title, regulator, rights, breach timeline,
+  Information Officer mailto — still renders). Replacement wording awaits
+  counsel; do not invent one (§1.5 / §1.13 R-7).
+  **Same-pattern audit, NOT fixed here (Kenya only, per hotfix scope):**
+  `NIGERIA_TRANSFER_BASIS: 'Standard Contractual Clauses'` names the same EU
+  mechanism with zero jurisdictional qualifier (unlike e.g. Brazil's `'ANPD
+  Standard Contractual Clauses (mandatory template)'` or Thailand's `'SCCs
+  aligned with ASEAN MCCs or GDPR SCCs referencing Thai PDPA'`, both of which
+  attribute the SCC framework to a specific regime). `SOUTH_AFRICA_TRANSFER_BASIS:
+  'Section 72 binding agreement (SCCs)'` pairs a domestic section number with
+  a parenthetical "(SCCs)" tag the same way the removed Kenya string did —
+  worth the same scrutiny. Flagged in the PR body for counsel; do not silently
+  fix on a future touch without counsel sign-off, same as Kenya.

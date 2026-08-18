@@ -3563,7 +3563,14 @@ export const PRIVACY_NOTICE_LABELS = {
   KENYA_DESCRIPTION: 'Applies to data subjects in Kenya. Your personal data is processed lawfully under Sections 25-38. You have rights of access, correction, and erasure. Contact the ODPC for complaints.',
   KENYA_REGULATOR: 'Office of the Data Protection Commissioner (ODPC)',
   KENYA_RIGHTS: ['Access', 'Rectification', 'Erasure', 'Data portability', 'Object to processing'],
-  KENYA_TRANSFER_BASIS: 'Standard Contractual Clauses (Section 48)',
+  // KENYA_TRANSFER_BASIS removed 2026-08-18 (counsel-ordered, hotfix/kenya-
+  // transfer-basis-removal): the prior value, "Standard Contractual Clauses
+  // (Section 48)", conflated two unrelated regimes — SCCs are an EU GDPR
+  // transfer mechanism; Kenya DPA 2019 §48 is Kenya's own transfer-adequacy
+  // provision and does not name SCCs. This is a removal, not a reword — final
+  // replacement wording is counsel's call (§1.5 / §1.13 R-7: state only what
+  // we hold). JurisdictionPrivacyNotices.tsx omits the transfer-basis row
+  // for Kenya entirely rather than render a placeholder.
   KENYA_BREACH_TIMELINE: '72 hours (controller to ODPC)',
 
   AUSTRALIA_TITLE: 'Australian Privacy Act 1988',
