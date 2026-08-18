@@ -14,14 +14,17 @@
 
 ## Now
 
-**State as of 2026-08-12T16:00Z, verified live.** (`### Soaks` and `### PR board` refreshed 2026-08-12
-at the soak clock start; the prod worker/anchor sub-block was refreshed earlier the same day; the
+**State as of 2026-08-12T16:00Z, verified live.** (`### Soaks` and `### PR board` refreshed again
+2026-08-18 — Day 6 of the soak window; see the dated sub-blocks below for exact timestamps and
+linked verification artifacts. The prod worker/anchor sub-block was refreshed 2026-08-12; the
 remainder of this block still carries its 2026-08-03T02:49Z reading unless a sub-block says
 otherwise.) This block is the only current-state claim in this
 file; everything under `## History` is the dated record and is not re-asserted here. Canonical soak
 findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md); the
 2026-08 full-functionality soak has its own canonical register — `FD-1`…`FD-16` in
 [docs/staging/fullsoak-2026-08/manifest-DAY-0.md](docs/staging/fullsoak-2026-08/manifest-DAY-0.md) §11.
+`FD-CHAIN-1` (SCRUM-3151, throughput-ceiling re-characterization, 2026-08-17) is tracked in
+[docs/staging/fullsoak-2026-08/FD-CHAIN-1-throughput-ceiling-2026-08-17.md](docs/staging/fullsoak-2026-08/FD-CHAIN-1-throughput-ceiling-2026-08-17.md).
 
 > ⚠️ **A 7-day SOC 2 Type 2 soak is RUNNING (clock started 2026-08-12T15:51:30Z, closes
 > 2026-08-19T15:51:30Z). Read `### Soaks` before touching anything.** Do not deploy, redeploy, or
@@ -106,6 +109,30 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 **FROZEN for the soak window (2026-08-12T15:51:30Z → 2026-08-19T15:51:30Z).** `DEPLOY_WORKER_PAUSED=true`,
 so worker deploys do not run and `deferred_consolidated_soak` is gated — merging worker code now would put
 main ahead of a build that cannot deploy, and touching the rig to soak anything would end the window.
+
+#### Refreshed 2026-08-18 — Day 6 review campaign
+
+Seven parallel review agents swept all 39 non-dependabot open PRs (dependabot pairs handled
+separately). Full verdicts, defects, and landing-order constraints:
+[pr-campaign-45-open-2026-08-18.md](docs/staging/fullsoak-2026-08/pr-campaign-45-open-2026-08-18.md).
+
+- **43 open PRs** (37 draft / 6 non-draft), verified live via `gh pr list --json number,isDraft
+  --limit 100` at write time 2026-08-18 — supersedes the "~73 merged / 2 open (#1864, #1813)"
+  2026-08-03 snapshot further below, which is kept for its own reasoning, not as a current count.
+- **5 PRs closed as superseded, 2026-08-18T13:45Z** (verified via `gh pr view --json state`, all
+  `state: CLOSED`): #2218 (→ #2220), #2223 / #2224 / #2231 / #2238 (→ consolidated #2269).
+- **3 new draft PRs opened 2026-08-18:** #2269 (`rc/rate-limit-cluster-2026-08`, **T2** —
+  consolidates the closed rate-limiter stack: cross-instance state F-1, once-per-request counting
+  F-2, env-namespaced keyspaces, v2 TTL self-heal, §1.10 fail-open headers; 171/171 tests green),
+  #2270 (`fix/sentry-cron-checkins-prod-only`, **T1**), #2271
+  (`hotfix/kenya-transfer-basis-removal`, **T1**, counsel-ordered compliance fix).
+- **6 defects found by review, fixed on draft branches (all still unsoaked):** GetBlock RPC-error
+  token leak §1.4 (#2216, head `a664ee847`), migration `0414` over-revoking `authenticated` on two
+  live UI paths (#2248, head `c993e81cd`), monitor floor below estimator resolution (#2254, head
+  `e79737530`), sentinel/value-resolver test collision (#2259, head `665e01e27`), missing Mergify
+  job wiring for `python-sdk-tests` (#2252, head `4b5a10662`), v2 rate-limit store permanent lockout
+  (folded into #2269). Full head-SHA table in the campaign doc.
+- Everything above is still **DRAFT and unsoaked** — the freeze holds; none of this is Ready-queued.
 
 - **Held until Day 7, deliberately, both in DRAFT:**
   [#2211](https://github.com/carson-see/ArkovaCarson/pull/2211) (ORG_ADMIN-gate the self-serve verification
@@ -264,6 +291,50 @@ build the same day). Every claim below is traceable to
 - **FD-2 — `check-credential-expiry` 500s on every run**: it selects `anchors.not_after` and
   `anchors.document_title`, neither of which exists. Prod-exposed whenever `ENABLE_EXPIRY_ALERTS` is on.
 
+**Day 5–6 update (2026-08-17/18) — all three reachable batch triggers have now fired.** Both rig
+orgs were bumped `FREE` → `ENTERPRISE` at 13:47Z on 2026-08-17 (a deliberate rig data change, not a
+schema/env change) to remove the FREE-tier 100/day per-org cap that made Trigger B's
+`pendingCount >= 3,000` arithmetically unreachable — see
+[batch-trigger-coverage.md](docs/staging/fullsoak-2026-08/batch-trigger-coverage.md). All three
+reachable triggers are now proven; Trigger C remains out of scope for this window:
+
+| Trigger | Fired | Anchors | Block | txid | Evidence |
+|---|---|---|---|---|---|
+| **D** — daily forced flush | 2026-08-17T03:00Z | 104 | 318046 | `fba08120d3fe8be73bd…` | [trigger-d-flush-2026-08-17.md](docs/staging/fullsoak-2026-08/trigger-d-flush-2026-08-17.md) |
+| **B** — age (first time ever observed) | 2026-08-17T14:00:02Z | 3,832 | 318115 | `e688cf2eb36d2794efe…` | [trigger-b-fired-2026-08-17.md](docs/staging/fullsoak-2026-08/trigger-b-fired-2026-08-17.md) |
+| **A** — size, full `BATCH_SIZE` | 2026-08-17T14:40:01Z | 10,000 | 318117 | `c70d1662bffb1720f5b…` | [trigger-a-fired-2026-08-17.md](docs/staging/fullsoak-2026-08/trigger-a-fired-2026-08-17.md) — closes **F-8**'s open question about `batch_insert_anchors` at 10k scale |
+| **C** — fee-aware deferral | **NOT exercised** | — | — | — | signet fee rates never approached `ABSOLUTE_FEE_CAP_SAT_PER_VB` |
+
+Each txid independently confirmed on both `mempool.space/signet` and `blockstream.info/signet`,
+agreeing with the rig DB's `chain_block_height`; all three broadcasts carry **100% proof coverage**
+(1:1 `anchor_proofs` rows, 80-byte `block_header` on every sampled row). As of the
+2026-08-18T12:33:40Z 90-minute health check, **SECURED count is 25,845 and monotonic**
+(`25845 -> 25845` across the check interval) —
+[90min-health-2026-08-18T123340Z.md](docs/staging/evidence/fullsoak-2026-08/2026-08-18/90min-health-2026-08-18T123340Z.md).
+
+**FD-CHAIN-1 (SCRUM-3151) re-characterized 2026-08-17 — not just a silent-halt bug, a hard
+throughput ceiling of one batch per confirmed block.** `listUnspent`'s RPC call uses `minconf=1`,
+which excludes the treasury's own unconfirmed change output from the very batch it just broadcast;
+the `rpcUtxos.length >= 0` guard is true for an empty array, so the mempool.space fallback — built
+specifically to prevent this coupling — is never reached; `hasFunds()` reports empty on a provably
+funded treasury and the batch is skipped. Observed live blocking the soak's own Trigger A evidence
+(10,570 PENDING, treasury funded, batch skipped) and recurring during the Trigger D flush (self-
+cleared once the change output confirmed). Fix is PR #2250 (`rework/fd-chain-1-union`, head
+`3d8851463`, **draft, unsoaked**) — unions the RPC and mempool legs deduped by `(txid, vout)`. Full
+mechanism: [FD-CHAIN-1-throughput-ceiling-2026-08-17.md](docs/staging/fullsoak-2026-08/FD-CHAIN-1-throughput-ceiling-2026-08-17.md).
+
+**Sentry zombie cron-monitor noise CLOSED 2026-08-18 (ops hygiene, not a soak finding).** All 12
+zombie alert issues (5 dead `K_SERVICE` environments, none in Cloud Run any more) set to
+ignored-forever via Sentry MCP `update_issue`; the two repair-related storms (ARKOVA-WORKER-2M
+batch-insert fallback, -2W linker-stall fatal) resolved after 18+ silent hours, root-caused to the
+poison-record repair plus draft PRs #2266/#2267/#2254. 16 monitor-environment deletions remain as
+UI-only quota hygiene (no monitor-write credential exists anywhere in infra) — not blocking
+anything. Detail: [sentry-zombie-monitor-runbook.md](docs/staging/fullsoak-2026-08/sentry-zombie-monitor-runbook.md).
+
+**Clock status, reconfirmed 2026-08-18:** still RUNNING, Day-7 close **2026-08-19T15:51:30Z**.
+`DEPLOY_WORKER_PAUSED=true` and `SOAK_GATE_DISABLED=false` reconfirmed live via `gh variable get`
+2026-08-18 — unchanged from the 2026-08-12 values recorded above.
+
 - **`arkova-worker-staging` is DEAD, not idle.** Last image `pr-1459-f053a99a` from **2026-07-09** — a
   month stale, and `/health` returns nothing. Do not cite it as a soak target or as evidence of
   anything until it is rebuilt.
@@ -331,7 +402,7 @@ build the same day). Every claim below is traceable to
 `gcloud` on the dev Mac needs `CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14`; the
 bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
 
-_Last refreshed: 2026-08-12 by CTO session — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-08-18 by Claude (CTO session) — claims verified against gcloud/MCP/CI output._
 
 ---
 
