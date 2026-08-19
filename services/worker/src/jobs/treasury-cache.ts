@@ -20,6 +20,18 @@ import {
   resolveMempoolApiBase,
 } from '../utils/mempool-url.js';
 import { normalizeBtcPrice } from '../utils/btc-price.js';
+import { readJsonBounded } from '../utils/body-read-timeout.js';
+
+/**
+ * F-D0-5 (fullsoak 2026-08-12): body-read deadlines for the three direct
+ * fetches below. Each `AbortSignal.timeout(...)` bounds only its REQUEST; the
+ * chained `.json()` had no deadline, so a provider stalling after headers
+ * would park a `Promise.allSettled` leg forever — and `allSettled` waits for
+ * every leg, so ONE stalled read hangs the whole refresh. Matched to each
+ * call's own request budget.
+ */
+const BALANCE_BODY_READ_TIMEOUT_MS = 15_000;
+const QUOTE_BODY_READ_TIMEOUT_MS = 10_000;
 
 export interface TreasuryCacheData {
   balance_confirmed_sats: number;
@@ -151,17 +163,29 @@ export async function refreshTreasuryCache(): Promise<TreasuryCacheData> {
     // 1. Balance from mempool.space
     address
       ? fetch(`${apiBase}/address/${address}`, { signal: AbortSignal.timeout(15_000) })
-          .then(res => res.ok ? res.json() as Promise<{
+          .then(res => res.ok ? readJsonBounded(
+            res,
+            `${apiBase}/address/${address}`,
+            BALANCE_BODY_READ_TIMEOUT_MS,
+          ) as Promise<{
             chain_stats: { funded_txo_sum: number; spent_txo_sum: number };
             mempool_stats: { funded_txo_sum: number; spent_txo_sum: number };
           }> : null)
       : Promise.resolve(null),
     // 2. BTC price — global quote, pinned base (see priceApiUrl)
     fetch(`${priceApiUrl()}/v1/prices`, { signal: AbortSignal.timeout(10_000) })
-      .then(res => res.ok ? res.json() as Promise<{ USD: number }> : null),
+      .then(res => res.ok ? readJsonBounded(
+        res,
+        `${priceApiUrl()}/v1/prices`,
+        QUOTE_BODY_READ_TIMEOUT_MS,
+      ) as Promise<{ USD: number }> : null),
     // 3. Fee rates
     fetch(`${apiBase}/v1/fees/recommended`, { signal: AbortSignal.timeout(10_000) })
-      .then(res => res.ok ? res.json() as Promise<{
+      .then(res => res.ok ? readJsonBounded(
+        res,
+        `${apiBase}/v1/fees/recommended`,
+        QUOTE_BODY_READ_TIMEOUT_MS,
+      ) as Promise<{
         fastestFee: number; halfHourFee: number; hourFee: number;
         economyFee: number; minimumFee: number;
       }> : null),

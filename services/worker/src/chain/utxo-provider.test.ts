@@ -16,8 +16,10 @@ import {
   RpcUtxoProvider, MempoolUtxoProvider, GetBlockHybridProvider, createUtxoProvider,
   HttpError, RpcApplicationError, retryWithBackoff, isRetryableError, isDuplicateTxError,
   BroadcastRejectedError, isBroadcastRejectedError, isBroadcastRejectText,
+  sanitizeRpcUrlForError,
 } from './utxo-provider.js';
 import { logger } from '../utils/logger.js';
+import { BodyReadTimeoutError } from '../utils/body-read-timeout.js';
 
 function rpcOk(result: unknown) {
   return { ok: true, json: () => Promise.resolve({ result, error: null }) };
@@ -311,6 +313,11 @@ describe('isRetryableError', () => {
     expect(isRetryableError(new TypeError('x.map is not a function'))).toBe(false);
   });
   it('retries AbortError', () => { expect(isRetryableError(new DOMException('aborted', 'AbortError'))).toBe(true); });
+  it('retries a parked-body-read timeout (F-D0-5 sweep)', () => {
+    // A provider that sends headers and then stalls the body is transient by
+    // definition — the bounded read turns the park into a retryable failure.
+    expect(isRetryableError(new BodyReadTimeoutError('https://mempool.space/api/tx/x', 10_000))).toBe(true);
+  });
   it('retries ECONNREFUSED', () => { expect(isRetryableError(new Error('connect ECONNREFUSED'))).toBe(true); });
   it('retries ECONNRESET', () => { expect(isRetryableError(new Error('read ECONNRESET'))).toBe(true); });
   it('retries ETIMEDOUT', () => { expect(isRetryableError(new Error('connect ETIMEDOUT'))).toBe(true); });
@@ -1154,5 +1161,115 @@ describe('S3-P0 #1417 MempoolUtxoProvider.broadcastTx error typing', () => {
     const provider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/signet/api' });
     mockFetch.mockResolvedValue({ ok: false, status: 400, text: () => Promise.resolve('txn-already-in-mempool') });
     expect(await provider.broadcastTx('deadbeef')).toEqual({ txid: '' });
+  });
+});
+
+// ─── §1.4 S3.3-F1: credential-bearing RPC URL must never reach error text ───
+// Prod `BITCOIN_RPC_URL` is `https://go.getblock.io/<ACCESS_TOKEN>` — the
+// credential lives in the URL PATH. `BodyReadTimeoutError` embeds its `url`
+// argument verbatim in `.message`, and that message flows to
+// `retryWithBackoff`'s `logger.warn` on every retry, `emitRpcFallback`
+// Sentry breadcrumbs, and any propagated job error text. The pii-scrub
+// `URL_TOKEN_REGEX` only matches `token=`-style QUERY params, so a path
+// token passes it untouched. `rpcCall` must therefore hand the bounded body
+// readers a sanitized origin-only label, never the raw URL — restoring the
+// pre-F-D0-5 invariant that no RPC error message carries the URL. (Public
+// mempool/blockstream call sites keep their full URLs: no credential there,
+// and the path IS the correlation value.)
+
+describe('sanitizeRpcUrlForError', () => {
+  it('reduces a token-in-path URL to its origin', () => {
+    expect(sanitizeRpcUrlForError('https://go.getblock.io/fake-token')).toBe('https://go.getblock.io');
+  });
+  it('drops userinfo, path, and query — origin carries none of them', () => {
+    expect(sanitizeRpcUrlForError('https://user:pass@node.example:8332/wallet/w1?apikey=zzz'))
+      .toBe('https://node.example:8332');
+  });
+  it('keeps a bare local RPC origin intact, port included', () => {
+    expect(sanitizeRpcUrlForError('http://localhost:38332')).toBe('http://localhost:38332');
+  });
+  it('falls back to a static label when the value is not a parsable URL', () => {
+    expect(sanitizeRpcUrlForError('not a url')).toBe('bitcoin-rpc');
+  });
+});
+
+describe('§1.4 S3.3-F1: rpcCall body-timeout errors are token-free', () => {
+  const FAKE_TOKEN = 'fake-secret-access-token-0123';
+  const TOKEN_URL = `https://go.getblock.io/${FAKE_TOKEN}`;
+  const localFetch = vi.fn();
+
+  beforeEach(() => {
+    global.fetch = localFetch as unknown as typeof fetch;
+    localFetch.mockReset();
+    vi.mocked(logger.warn).mockClear();
+    mockEmitRpcFallback.mockClear();
+  });
+
+  it('a stalled RPC body rejects with an origin-only label — token absent from message, url field, and every retry warn log', async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = new GetBlockHybridProvider({ rpcUrl: TOKEN_URL });
+      // Headers arrive, body parks forever — the exact F-D0-5 failure mode.
+      localFetch.mockResolvedValue({ ok: true, json: () => new Promise(() => {}) });
+      const outcome = provider.getBlockchainInfo().then(
+        () => {
+          throw new Error('expected a BodyReadTimeoutError rejection');
+        },
+        (error: unknown) => error as BodyReadTimeoutError,
+      );
+      // 4 attempts x 30s body deadline + capped jittered backoff.
+      await vi.advanceTimersByTimeAsync(600_000);
+      const error = await outcome;
+      expect(error).toBeInstanceOf(BodyReadTimeoutError);
+      // Correlation preserved: endpoint origin + deadline are still named…
+      expect(error.message).toContain('https://go.getblock.io');
+      expect(error.message).toContain('30000ms');
+      // …but the token never appears — not in the message, not in the
+      // structured `url` field either (Sentry serializes own enumerable
+      // properties of captured errors).
+      expect(error.message).not.toContain(FAKE_TOKEN);
+      expect(error.url).not.toContain(FAKE_TOKEN);
+      // And the highest-volume leak channel: the retry warn logged on every
+      // attempt embeds `error.message` — each call must be token-free.
+      const warnCalls = vi.mocked(logger.warn).mock.calls;
+      expect(warnCalls.length).toBeGreaterThan(0);
+      for (const call of warnCalls) {
+        expect(JSON.stringify(call)).not.toContain(FAKE_TOKEN);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emitRpcFallback after a stalled RPC body carries a token-free error (Sentry breadcrumb channel)', async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = new GetBlockHybridProvider({
+        rpcUrl: TOKEN_URL,
+        mempoolBaseUrl: 'https://mempool.space/api',
+      });
+      const txid = 'a'.repeat(64);
+      localFetch.mockImplementation((url: unknown) => {
+        if (url === TOKEN_URL) {
+          // RPC leg: headers arrive, body parks — times out per attempt.
+          return Promise.resolve({ ok: true, json: () => new Promise(() => {}) });
+        }
+        // mempool.space fallback leg answers immediately.
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ txid, status: { confirmed: false }, vout: [] }),
+        });
+      });
+      const outcome = provider.getRawTransaction(txid);
+      await vi.advanceTimersByTimeAsync(600_000);
+      const tx = await outcome;
+      expect(tx.txid).toBe(txid);
+      expect(mockEmitRpcFallback).toHaveBeenCalledTimes(1);
+      const fallbackArg = mockEmitRpcFallback.mock.calls[0][0] as { error: unknown };
+      expect(fallbackArg.error).toBeInstanceOf(BodyReadTimeoutError);
+      expect((fallbackArg.error as Error).message).not.toContain(FAKE_TOKEN);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
