@@ -15,8 +15,23 @@ beforeEach(() => {
 });
 
 describe('Tool Definitions', () => {
-  it('should define 6 tools', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(6);
+  it('should define exactly the 10 registered tools', () => {
+    // Exact-name ratchet: adding or removing a tool must update this list
+    // deliberately. 6 arkova_ verification tools (PH2-AGENT-06 / SCRUM-403,
+    // arkova_verify_signature added in Phase III) + 4 nessie_ compliance
+    // intelligence tools (NCE-19).
+    expect(TOOL_DEFINITIONS.map(t => t.name)).toEqual([
+      'arkova_verify_credential',
+      'arkova_credential_status',
+      'arkova_search_credentials',
+      'arkova_create_attestation',
+      'arkova_batch_verify',
+      'nessie_compliance_score',
+      'nessie_gap_analysis',
+      'nessie_ask',
+      'nessie_cross_reference',
+      'arkova_verify_signature',
+    ]);
   });
 
   it('should have valid input schemas', () => {
@@ -28,9 +43,11 @@ describe('Tool Definitions', () => {
     }
   });
 
-  it('should use arkova_ prefix on all tool names (DX-04)', () => {
+  it('should use an arkova_ or nessie_ namespace prefix on all tool names (DX-04)', () => {
+    // DX-04 namespace consistency: arkova_ for verification tools,
+    // nessie_ for the NCE-19 compliance intelligence tools.
     for (const tool of TOOL_DEFINITIONS) {
-      expect(tool.name).toMatch(/^arkova_/);
+      expect(tool.name).toMatch(/^(arkova|nessie)_/);
     }
   });
 
@@ -103,6 +120,60 @@ describe('handleToolCall', () => {
     const result = await handleToolCall('arkova_batch_verify', { public_ids: 'not-json' });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Invalid JSON');
+  });
+
+  it('should handle nessie_compliance_score', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ score: 87, grade: 'B', missing: [] }),
+    });
+
+    const result = await handleToolCall('nessie_compliance_score', { jurisdiction: 'US-CA', industry: 'accounting' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('87');
+  });
+
+  it('should handle nessie_gap_analysis', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ gaps: [{ document: 'W-9', priority: 'required' }] }),
+    });
+
+    const result = await handleToolCall('nessie_gap_analysis', { jurisdiction: 'US-NY', industry: 'legal' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('W-9');
+  });
+
+  it('should handle nessie_ask', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ answer: 'Analysis complete', citations: [] }),
+    });
+
+    const result = await handleToolCall('nessie_ask', { query: 'What licenses do I need?', task: 'compliance_qa' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('Analysis complete');
+  });
+
+  it('should handle nessie_cross_reference', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ inconsistencies: [], compared: 2 }),
+    });
+
+    const result = await handleToolCall('nessie_cross_reference', { anchor_ids: '["a1","a2"]' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('compared');
+  });
+
+  it('should reject nessie_cross_reference with fewer than 2 anchor IDs', async () => {
+    const result = await handleToolCall('nessie_cross_reference', { anchor_ids: '["only-one"]' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Minimum 2');
   });
 
   it('should return error for unknown tool', async () => {
