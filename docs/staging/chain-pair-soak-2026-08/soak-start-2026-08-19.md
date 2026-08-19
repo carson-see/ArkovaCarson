@@ -463,3 +463,21 @@ _Doc written 2026-08-19 during soak standup. Union head, image digests, and
 revision/timestamp fields above are live-verified (gcloud/MCP/log query
 output), not asserted from PR claims — see the "Verification" and "Preflight"
 sections for the exact commands/queries behind each number._
+
+## PM-C observation 1 (2026-08-19T20:5xZ): cron-miss spike root-caused to stale revisions, not the union
+
+Service-wide `[NODE-CRON] missed execution` warnings spiked to ~624-674/hour after standup
+(prior revision baseline: 4/hour). Diagnosis (read-only): SIX co-resident warm revisions
+from the standup's iterative deploys (00017-00021 + 00022-suy), each independently running
+in-process node-cron — the union revision alone accounted for 72/hour, explained by the
+DELIBERATE minScale 1→2 (cross-instance rate-limit evidence) times three jobs sharing one
+'*/2 * * * *' schedule. No busy loop exists in the union diff (dual-leg listUnspent,
+run-lease deadline, and circuit breaker all inspected and cleared). Functional impact:
+batch-anchor (30-min) and revocation (5-min) crons showed ZERO gaps; exactly one 2-min
+confirmation-check tick (20:32Z) was skipped and the next tick recovered.
+
+Resolution: the five stale revisions were deleted and their tags removed at ~20:55Z
+(operator hygiene, not code). The soak revision 00022-suy was untouched — uptime monotonic
+across the surgery (14,296s after), traffic 100%, health green at union head. Clock stands.
+Residual finding for FD-CRON-1: same-schedule job clustering ('*/2' x3) plus multi-instance
+minScale multiplies collision odds — input to the Cloud Scheduler migration design.
