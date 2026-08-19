@@ -1,5 +1,9 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-08-17 — Orphaned Export Lint now gates the Mergify queue
+
+`check-success = Orphaned Export Lint` was added to all three `.mergify.yml` queue rules' `merge_conditions` (s33-wave2-corpus, urgent, default). The `orphaned-export-lint` job (CTO ruling R14, fail-closed by design — `continue-on-error: false`) had run on every PR since 2026-07-28 but was never in `merge_conditions`, so it reported without blocking — the exact "new top-level job would not be in branch protection or those merge conditions, so it could go red while Mergify merged anyway" class this file already documents. Config-only; the lint script itself is untouched. This is DISTINCT from the CONDITIONAL-GO sub-decision B jobs (`Worker Build (deploy-parity)` / `Verifier Build`), which remain deliberately NON-REQUIRED pending Carson's required-flip — that ruling covers those two jobs only. Branch protection's required-check set is still a separate Carson/admin surface; only the in-repo Mergify layer changed. Contract test: `scripts/ci/mergify-orphaned-export-gate.test.ts`.
+
 ## Files
 
 All 16 workflows, with their real triggers. **Not everything here is PR-driven** —

@@ -1,6 +1,10 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-01 (agents.md remediation: changelog split out)._
+_Last updated: 2026-08-17 (mergify-orphaned-export-gate contract test)._
+
+## 2026-08-17 — `mergify-orphaned-export-gate.test.ts` (new)
+
+Contract test pinning `check-success = Orphaned Export Lint` into EVERY `.mergify.yml` queue rule's `merge_conditions`, plus the exact `name: Orphaned Export Lint` job name in `ci.yml` so the pair cannot silently drift. Exists because the `orphaned-export-lint` job (CTO ruling R14, fail-closed `continue-on-error: false`) ran on every PR since 2026-07-28 but was never listed in `merge_conditions` — a CI job absent from that list reports without blocking (the "NEW job not in .mergify.yml gates NOTHING" class). Raw-content style follows `s33-wave2-workflow-contract.test.ts`. NOTE: branch protection's required-check set is a separate, Carson/admin-only surface — this test pins only the in-repo Mergify layer.
 
 CI gate scripts. Each one fails the build with a structured exit code + an
 actionable message when a guardrail trips. Run via
