@@ -35,3 +35,19 @@ hours would trade a real finding for a cosmetic number. Durable fix direction: m
 schedule-critical crons (daily flush, batch evaluation) from in-process node-cron to Cloud
 Scheduler HTTP triggers — the pattern already exists in the codebase (cloud-scheduler
 coverage contract; the digest jobs use it). Jira + bug-tracker rows to follow at close-out.
+
+## Addendum (14:59Z): backlog drained organically; A18 blip = documented FD-CHAIN-1 recurrence
+
+Between 13:52Z and 14:59Z a non-Trigger-D batch path drained the accumulated micro-queue:
+SECURED 25,860 → 25,896 (+36). The 14:40:01Z health run then recorded the known FD-CHAIN-1
+signature — "worker reported treasury empty" — because the fresh batch's change output was
+the treasury's only UTXO and `listUnspent(minconf=1)` hides unconfirmed change (recurrence
+of the documented one-block stall; recorded per standing rule, not re-diagnosed; fix is
+draft PR #2250). By 15:00:00Z "Treasury pre-flight check passed" — visibility self-healed
+on the next block, exactly the characterized behavior.
+
+Consequences: (1) the planned post-window manual drain is unnecessary — the queue cleared
+organically inside the window; (2) the Trigger D amendment stands unchanged (3 of 4 nights
+— the 03:00Z flush itself did not run; a different batch leg recovered the backlog ~11.5h
+later); (3) the 14:40Z A18 FAIL row in the health archive is expected evidence of the known
+defect, not a new incident.
