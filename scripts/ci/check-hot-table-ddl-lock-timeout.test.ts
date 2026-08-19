@@ -126,6 +126,7 @@ describe('check-hot-table-ddl-lock-timeout scanFiles', () => {
     ['TRUNCATE', 'TRUNCATE TABLE public.anchors;'],
     ['DROP TABLE', 'DROP TABLE IF EXISTS public.anchors;'],
     ['GRANT/REVOKE', 'REVOKE ALL ON TABLE public.anchors FROM anon;'],
+    ['REFERENCES', 'CREATE TABLE cold_t (a uuid REFERENCES public.anchors(id));'],
   ])('flags unguarded %s on a hot table', (kind, sql) => {
     expect(violations([file('supabase/migrations/0407_x.sql', `${sql}\n`)])).toEqual([
       `supabase/migrations/0407_x.sql:anchors:${kind}`,
@@ -193,5 +194,127 @@ describe('check-hot-table-ddl-lock-timeout scanFiles', () => {
       file('supabase/migrations/0407_x.sql', '-- header\n\nALTER TABLE anchors ADD COLUMN a text;\n'),
     ]);
     expect(v.line).toBe(3);
+  });
+});
+
+describe('REFERENCES — FK to a hot table (the 0410 / PR #2219 shape)', () => {
+  // Adding a FOREIGN KEY takes ShareRowExclusiveLock on the REFERENCED table.
+  // A brand-new cold table whose columns REFERENCE public.organizations
+  // therefore queues on the hot table's FIFO lock queue exactly like an
+  // ALTER TABLE on the hot table itself — the same 2026-08-11 P0 lock class —
+  // but none of the statement patterns above look at the referenced side.
+  // That is how migration 0410 (two FKs to organizations, zero lock_timeout)
+  // passed this gate green on PR #2219.
+  it('flags an unguarded CREATE TABLE column FK that REFERENCES a hot table', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0410_x.sql',
+          'CREATE TABLE IF NOT EXISTS public.partner_accounts (\n' +
+            '  id uuid PRIMARY KEY,\n' +
+            '  sponsor_org_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE RESTRICT\n' +
+            ');\n',
+        ),
+      ]),
+    ).toEqual(['supabase/migrations/0410_x.sql:organizations:REFERENCES']);
+  });
+
+  it('accepts the same FK when a bounded lock_timeout precedes it', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0410_x.sql',
+          GUARD +
+            'CREATE TABLE IF NOT EXISTS public.partner_accounts (\n' +
+            '  id uuid PRIMARY KEY,\n' +
+            '  sponsor_org_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE RESTRICT\n' +
+            ');\n',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('reports BOTH unguarded FKs when a table references a hot table twice (exact 0410 shape)', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0410_x.sql',
+          'CREATE TABLE public.partner_accounts (\n' +
+            '  sponsor_org_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE RESTRICT,\n' +
+            '  partner_org_id uuid REFERENCES public.organizations(id) ON DELETE RESTRICT\n' +
+            ');\n',
+        ),
+      ]),
+    ).toEqual([
+      'supabase/migrations/0410_x.sql:organizations:REFERENCES',
+      'supabase/migrations/0410_x.sql:organizations:REFERENCES',
+    ]);
+  });
+
+  it('flags ALTER TABLE on a COLD table adding an FK that references a hot table', () => {
+    // The ALTER TABLE pattern only sees the altered (cold) table; the
+    // referenced hot table is what takes the ShareRowExclusiveLock.
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0410_x.sql',
+          'ALTER TABLE public.cold_ledger ADD CONSTRAINT cold_org_fkey\n' +
+            '  FOREIGN KEY (org_id) REFERENCES organizations (id);\n',
+        ),
+      ]),
+    ).toEqual(['supabase/migrations/0410_x.sql:organizations:REFERENCES']);
+  });
+
+  it('resolves quoted-identifier and schema-qualified forms', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0410_x.sql',
+          'CREATE TABLE t (a uuid REFERENCES "public"."organizations" ("id"));\n',
+        ),
+      ]),
+    ).toEqual(['supabase/migrations/0410_x.sql:organizations:REFERENCES']);
+  });
+
+  it('flags a bare REFERENCES with no column list (implicit PK form)', () => {
+    expect(
+      violations([
+        file('supabase/migrations/0410_x.sql', 'CREATE TABLE t (a uuid REFERENCES profiles);\n'),
+      ]),
+    ).toEqual(['supabase/migrations/0410_x.sql:profiles:REFERENCES']);
+  });
+
+  it('does not flag an FK to a non-hot table', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0410_x.sql',
+          'CREATE TABLE t (a uuid REFERENCES public.job_queue(id));\n',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('does not flag a commented-out FK (ROLLBACK headers quote DDL verbatim)', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0410_x.sql',
+          '-- ROLLBACK: recreate with sponsor_org_id uuid REFERENCES public.organizations(id)\n' +
+            '/* partner_org_id uuid REFERENCES public.organizations(id) */\n',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('still requires the guard to PRECEDE the FK', () => {
+    expect(
+      violations([
+        file(
+          'supabase/migrations/0410_x.sql',
+          'CREATE TABLE t (a uuid REFERENCES public.organizations(id));\n' + GUARD,
+        ),
+      ]),
+    ).toEqual(['supabase/migrations/0410_x.sql:organizations:REFERENCES']);
   });
 });
