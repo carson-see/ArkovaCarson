@@ -60,6 +60,11 @@ queue_rules:
       - check-success = AI Eval Regression Gate
       - check-success = SonarCloud Code Analysis
       - check-success = E2E Tests
+      # Orphaned-export lint (CTO ruling R14): fail-closed for NEW orphaned
+      # hook/component exports. The ci.yml job predates this line but gated
+      # nothing until listed here — a check absent from merge_conditions can
+      # be red while Mergify merges anyway.
+      - check-success = Orphaned Export Lint
       - check-success = Staging Soak Evidence Gate
       - check-success = S3.3 Wave 2 Exact-Head Acceptance
     merge_method: merge
@@ -86,6 +91,8 @@ queue_rules:
       - check-success = AI Eval Regression Gate
       - check-success = SonarCloud Code Analysis
       - check-success = E2E Tests
+      # Orphaned-export lint (CTO ruling R14) — see the default queue's note.
+      - check-success = Orphaned Export Lint
       # Risk-tiered staging evidence gate (CLAUDE.md §1.11)
       - check-success = Staging Soak Evidence Gate
     merge_method: merge
@@ -123,6 +130,13 @@ queue_rules:
       - check-success = AI Eval Regression Gate
       - check-success = SonarCloud Code Analysis
       - check-success = E2E Tests
+      # Orphaned-export lint (CTO ruling R14, SCRUM-3032/3033/3034):
+      # fail-closed for NEW orphaned hook/component exports (the #1657
+      # useFolders class). The ci.yml `orphaned-export-lint` job has run on
+      # every PR since 2026-07-28 but was never listed here, so it reported
+      # without blocking — a CI job absent from merge_conditions gates
+      # nothing. Config-only change; the lint itself is untouched.
+      - check-success = Orphaned Export Lint
       - check-success = Staging Soak Evidence Gate
     merge_method: merge
     # Aug-10 release push: expand the default batch to 10 PRs so the CI-green
