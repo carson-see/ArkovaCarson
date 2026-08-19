@@ -338,6 +338,28 @@ anything. Detail: [sentry-zombie-monitor-runbook.md](docs/staging/fullsoak-2026-
 - **`arkova-worker-staging` is DEAD, not idle.** Last image `pr-1459-f053a99a` from **2026-07-09** — a
   month stale, and `/health` returns nothing. Do not cite it as a soak target or as evidence of
   anything until it is rebuilt.
+  - **Sharper 2026-08-19 finding (PR #2269 rate-limit T2 soak standup attempt): it is worse than a
+    stale image — the backing Supabase project itself is gone.** `ujtlwnoqfhtitcmsnrpq` (the
+    standing `arkova-staging` project per CLAUDE.md §1.11 / `docs/reference/STAGING_RIG.md`) is
+    absent from Supabase MCP `list_projects` for the only org this account belongs to (only
+    `ehqqearcitrgloibtjqx`/connector-sidecar, `vzwyaatejekddvltxyye`/prod,
+    `gnkuaywlpmsaezwvlvhk`/fullsoak remain); `get_project('ujtlwnoqfhtitcmsnrpq')` returns a
+    permission error consistent with non-existence (we're the org owner and can describe the other
+    three fine); `ujtlwnoqfhtitcmsnrpq.supabase.co` is DNS `NXDOMAIN` (control: `supabase.co` and
+    unrelated hosts resolved fine); and the live main-URL `/health` (hit directly with a gcloud
+    identity token, not a stale cache) now returns HTTP 503
+    `{"status":"degraded",...,"checks":{"database":"error","anchoring":"ok","kms":"ok"}}` on a
+    fresh 44s-uptime cold start. `scripts/ci/staging-honesty-preflight.ts` against that ref fails
+    at the network layer (`TypeError: fetch failed`), not with a clean/dirty classification. **A
+    redeploy will not fix this — there is no database to redeploy against.** This blocks every
+    shared-staging T1/T2/T3 soak project-wide until an operator rebuilds the project or the
+    shared-rig model is formally retired; full evidence trail:
+    [`docs/staging/ratelimit-soak-2026-08/soak-standup-attempt-2026-08-19.md`](docs/staging/ratelimit-soak-2026-08/soak-standup-attempt-2026-08-19.md)
+    and its [`diagnostic-2026-08-19.json`](docs/staging/ratelimit-soak-2026-08/diagnostic-2026-08-19.json).
+    No new Supabase project was provisioned this session (cost gate, needs explicit approval); PR
+    #2269 was left in draft with no soak started. Fullsoak rig (`arkova-worker-fullsoak-2026-08-staging`,
+    project `gnkuaywlpmsaezwvlvhk`) is a confirmed-separate Cloud Run service and was not touched by
+    this investigation.
 
 - ~~**No soak is running.** Founder ruling holds: no interim soaks for the open PR queue through the
   pen-test window; green-CI PRs merge and deploy now. Both rigs and loadgens remain up for the

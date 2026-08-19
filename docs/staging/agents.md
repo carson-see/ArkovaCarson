@@ -17,6 +17,7 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 - **`staging-only-rpcs.sql`** — staging-specific RPCs (not applied to prod).
 - **`staging_lease.sql`** — lease table DDL for the staging environment.
 - **`evidence/`** — subdirectory of soak evidence screenshots and logs.
+- **`ratelimit-soak-2026-08/`** — PR #2269 (rate-limit cluster, T2) soak attempt. `soak-standup-attempt-2026-08-19.md` + `diagnostic-2026-08-19.json` record a **stopped-before-deploy** attempt on 2026-08-19: the standing shared staging rig's Supabase project (`ujtlwnoqfhtitcmsnrpq`, CLAUDE.md 1.11 / `STAGING_RIG.md`) is absent from `list_projects`, DNS-NXDOMAIN, and the live `arkova-worker-staging` `/health` reports `checks.database: "error"`. **This blocks every shared-staging soak project-wide, not just this PR** — no soak was started, nothing was deployed, nothing was provisioned. Needs an operator decision (rebuild the rig vs. formally retire the shared-rig model) before any further T1/T2/T3 soak can use `ujtlwnoqfhtitcmsnrpq`.
 
 ## Conventions
 
