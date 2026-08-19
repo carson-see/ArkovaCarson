@@ -165,3 +165,36 @@ operator-set `MEMPOOL_API_URL` may embed a credential. A test greps the logged o
 `/api/v1/anchor`, and that route mounts `anchorAnonAllow` / `requireScope('anchor:write')` — not
 this gate. The defect was latent, and it arms itself the moment an anchor route is added to the
 gate. Fixed ahead of that, not after.
+
+## 2026-08-15 — BUG-018 / D-8 follow-up: the idempotency keyspace carries an environment namespace
+
+`upstashIdempotency.ts` keys are now `idem:<env>:<caller key>`, from
+`resolveEnvironmentNamespace()` in `../utils/environmentNamespace.ts` (introduced by #2231, which
+namespaced the three rate-limit keyspaces and deliberately left this one out).
+
+**Why this is the worst of the three collisions.** Prod, shared staging and the connector side-rig
+all bind ONE Upstash database through the same un-suffixed `UPSTASH_REDIS_REST_URL` /
+`UPSTASH_REDIS_REST_TOKEN` secrets. A rate-limit collision spends the wrong budget. An idempotency
+collision **cancels real work**: this store exists to SUPPRESS a duplicate write, so an
+`Idempotency-Key` first seen on a rig returned the rig's cached response to a production caller for
+the whole 2h TTL and the production write never happened — with a 2xx and a response body handed
+back, so nothing surfaced as an error anywhere. The routes carrying idempotency keys are the
+anchor-creating ones.
+
+**Rule: the env segment must PRECEDE the caller's bytes.** The `Idempotency-Key` header is fully
+caller-controlled. `idem:<env>:<key>` means a staging caller crafting `prod:<key>` lands on
+`idem:<staging>:prod:<key>` and cannot reach production's segment. Reversing the order
+(`idem:<key>:<env>`) or interpolating the caller's value anywhere before `<env>` re-opens that as a
+forgery path. There is a test for it.
+
+**Rule: never derive this namespace from anything instance-local** — `K_REVISION`, hostname, pid, a
+random id. Deduping ACROSS instances of one service is the entire reason IDEM-3 replaced the
+in-memory `Map`; an instance-local namespace re-opens that bug while looking like a fix and while
+every single-store test stays green. `upstashIdempotency.namespace.test.ts` asserts both halves at
+once: different environments must NOT see each other's entries, and two instances of the SAME
+service MUST.
+
+**The factory is the only construction path `index.ts` uses.** `createUpstashIdempotencyStore()` is
+covered by its own test — a namespace wired into the constructor alone would ship inert. `index.ts`
+logs the derived namespace at startup so the deployed keyspace is readable from Cloud Run logs
+without querying Redis.

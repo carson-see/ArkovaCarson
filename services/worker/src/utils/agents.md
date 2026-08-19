@@ -296,3 +296,169 @@ the lease forever, disabling SUBMITTED→SECURED promotion for every tenant with
   blockstream — the path is the correlation value). A credential-bearing URL — e.g. token-in-path
   `https://go.getblock.io/<ACCESS_TOKEN>` — must be reduced to a sanitized label first; the RPC
   path uses `sanitizeRpcUrlForError` (origin-only) in `chain/utxo-provider.ts` (S3.3-F1).
+## 2026-08-12 — F-1: `rateLimit.ts` + `upstashRateLimit.ts` share one counter now
+
+The v1 limiter enforced a **per-instance** bucket while its docstring promised a shared one. Prod
+runs `minScale=2, maxScale=10` with Upstash installed (`Upstash Redis rate limiting initialized`
+in the worker log), so every configured limit was effectively up to 10x its stated value, and a
+cold start reset the counter outright.
+
+- **`IRateLimitStore.get()/set()` CANNOT express a shared limit — this is structural, not a bug in
+  one adapter.** `get()` is synchronous, so a network-backed store has nothing to return but a
+  local cache; and `rateLimit()` mutated `entry.count++` in place, writing back only on the
+  create-new-entry branch. Redis received `{"count":0}` once per window and was never read again.
+  Any future store that implements only get/set is single-instance by construction.
+- **The shared path is the optional `increment(key, windowMs, now)`** — one atomic server-side
+  `INCR` returning the count *including* this request. A store that omits it keeps the original
+  synchronous path, so the bare `Map` default still works unchanged. Enforcement compares
+  `count > maxRequests` (post-increment) which is the same allowance as the sync path's
+  `count >= maxRequests` (pre-increment); don't "fix" one to match the other.
+- **Counter keys are namespaced `arkova:rl:`, deliberately separate from the raw keys used by
+  `set()`/`delete()`.** An `INCR` against a key holding the legacy JSON blob errors, and a
+  `delete()` fired by local-cache expiry must never be able to clear a live shared window early.
+- **`syncFromRedis()` was deleted, not wired up.** It warm-loaded the local cache at startup and
+  was never called outside its own test. Under server-side counting it would be actively wrong —
+  seeding a local mirror can only double-count or race the server TTL.
+- **The local `Map` is now the fail-open bucket and nothing else.** It is never populated by a
+  successful `increment()`. When Redis is unreachable the store counts locally, bounded and swept,
+  and logs a warning on every degraded request — the pre-fix behaviour, kept deliberately as the
+  degradation, never as the default.
+- **Cost of correctness: one Upstash round trip per request on the hot path** (`rateLimiters.api`
+  sits in front of nearly every route). `INCR`+`PTTL` are pipelined into a single HTTP call, and a
+  second call fires only on the first hit of a window to arm the TTL. A test pins the
+  one-round-trip steady state; if you add a command, expect it to fail.
+- **A `PTTL` of -1 re-arms the window.** That is both the first hit and the shape left behind by a
+  process that died between `INCR` and `PEXPIRE` — without the re-arm, such a key would block its
+  bucket with no expiry until someone noticed.
+- **The pre-existing `upstashRateLimit.test.ts` stayed green through the entire life of this
+  defect** because every assertion in it was one store round-tripping its own cache. The
+  cross-instance invariant lives in `upstashRateLimit.distributed.test.ts` — two store instances,
+  one fake Redis. Single-store tests cannot catch a sharing bug.
+- `api/v2/rateLimit.ts` already had the correct design (`UpstashV2RateLimitStore.increment`); this
+  brings v1 to parity. Prefer changing both together.
+## 2026-08-12 — one request counts ONCE per limiter instance
+
+`rateLimit()` stamps the request with the limiter's own `Symbol` (`COUNTED_LIMITERS`) and skips
+counting if that instance already counted it. This exists because a limiter instance can be mounted
+more than once on purpose.
+
+- **`apiIpShadowGuard` is mounted twice by design** — `index.ts:418` under `/api`, and `index.ts:446`
+  unprefixed because `didWebRouter` serves `/.well-known/did.json` and `/orgs/:id/did.json`, which
+  are outside `/api` and must carry the same skip predicate (F-2, PR #1768 / `6f844d484`). Deleting
+  either mount breaks a route family. Do not "simplify" it.
+- **The bug was path-dependent, which is why it hid.** Express runs every mount a request matches, so
+  the double count only landed on requests that *fell through* the `/api` mount unanswered. A
+  `/api/badge/:id` request is answered by `badgeRouter` and never reaches mount 446 — counted once,
+  looks fine. An anonymous `/api/v1/*` request is answered by neither, reaches 446, and was counted
+  twice. Documented 60/min per IP was really 30/min for exactly that traffic. Side-rig 2026-08-12
+  saw `x-ratelimit-remaining` walk 48 → 46 → 44.
+- **The stamp is per INSTANCE, never global.** `index.ts` deliberately shares one per-IP bucket
+  across *different* limiters (the F5 fix keys buckets purely on `scope` + `keyGenerator`, and none
+  of the preconfigured limiters set a `scope`), so `rateLimiters.api` and `apiIpShadowGuard` both
+  legitimately charge the same bucket. A global "already counted" flag would silently stop the
+  second limiter enforcing anything. A test pins this.
+- **It also fixes `rateLimiters.api`**, which is mounted on overlapping prefixes (e.g.
+  `/api/v1/org` at index.ts:470 and `/api/v1/org/sub-orgs` at :471) and double-counted on the same
+  fall-through mechanism.
+- **This LOOSENS enforcement** (30/min → the intended 60/min for fall-through anon traffic). It is a
+  change in enforcement numbers, not a cleanup — treat it as such when reviewing.
+- The stamp lives on the request object, so it cannot leak between requests; a test pins that too.
+
+## 2026-08-15 — BUG-018 / D-8: every rate-limit key carries an environment namespace
+
+`environmentNamespace.ts` is new. It answers "which deployment surface am I?" and every key written
+to the shared Upstash database now starts with that answer.
+
+- **Prod, shared staging and the connector side-rig are bound to ONE Upstash database** via the same
+  un-suffixed `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` secrets. The v1 counter key was
+  `arkova:rl:` + the limiter key, which for the per-IP guard is the **bare client IP** — so the key
+  was identical in every environment. Inert only while the limiter never read Redis; live the moment
+  F-1 landed. Key shapes now: counters `arkova:rl:<env>:<key>`, legacy blobs
+  `arkova:rl:blob:<env>:<key>` (those were written **raw**, i.e. a Redis key that was literally a
+  client IP), v2 `arkova:v2:ratelimit:<env>:<key>`.
+- **`NODE_ENV` is NOT the discriminator, and must never become one.** Rigs and shared staging run
+  `NODE_ENV=production`. `K_SERVICE` — the Cloud Run service name — is the honest signal; only
+  `arkova-worker` earns the `prod` namespace, and off Cloud Run a bare `NODE_ENV=production`
+  resolves to `local-production`. Same derivation and same reasoning as
+  `resolveSentryEnvironment` (MT-1 / SCRUM-2901); `PROD_SERVICE_NAME` is defined in
+  `environmentNamespace.ts` and re-exported by `sentry.ts` so the two cannot drift.
+- **Derive NOTHING instance-local in that module** — `K_REVISION`, hostname, pid, a random id. Any
+  of those silently un-shares every shared counter, i.e. re-opens F-1 while all its tests stay
+  green. `upstashRateLimit.namespace.test.ts` asserts both halves at once: different environments
+  must NOT share a bucket, and two instances of the SAME service MUST.
+- **`prod` and `blob` are reserved namespace tokens.** A service literally named `prod` would
+  otherwise share production's counters, and one named `blob` could forge a counter key that
+  collides with the `arkova:rl:blob:` keyspace. Both get a `-nonprod` suffix.
+- **Still un-namespaced on the same database, deliberately out of scope here:**
+  `utils/verifyCache.ts` (`verify:v5:<publicId>`) and `middleware/upstashIdempotency.ts`
+  (`idem:<key>`). Those are worse than a rate-limit collision — a cached verification result
+  computed against a staging database can be served to a production caller — but they change
+  public-verify behaviour and need their own T2 change. Do not assume they were fixed here.
+  **Closed by the follow-up below (same branch stack) — that carve-out is no longer open.**
+
+## 2026-08-15 — BUG-018 / D-8 follow-up: the verify cache carries the same namespace
+
+Closes the carve-out the section above left open. `verifyCache.ts` keys are now
+`verify:v5:<env>:<publicId>`; `middleware/upstashIdempotency.ts` is covered in that folder's
+`agents.md`.
+
+- **This one is a correctness defect, not a budget defect.** A `publicId` is by construction the
+  SAME string in every environment — that is what a public identifier IS — so the old
+  `verify:v5:<publicId>` key collided across environments **by default**, not under contention.
+  `GET /api/v1/verify/:publicId` serves a cache hit **verbatim** and never re-runs
+  `buildVerificationResult`, so a result computed against a staging database was served to a
+  production caller for the full 300s TTL. Staging rows are fixtures; production rows are the
+  evidence product. §1.5 — the API must state what it actually measured.
+- **It cut both ways.** `invalidateVerificationCache` is called by `jobs/revocation.ts` and
+  `jobs/check-confirmations.ts`. Fired on a rig, it evicted **production's** cache entry for that
+  publicId. Cheap in isolation, but it means rig traffic could keep production permanently cold on
+  a hot anchor.
+- **The version segment stays AHEAD of the namespace** (`verify:v5:<env>:` and not
+  `verify:<env>:v5:`) so a `v5` → `v6` bump still rotates every environment at once, exactly as the
+  bump log above it describes. Keep that ordering when you bump.
+- **The namespace is memoised at module scope**, next to `_redisConfig` and for the same reason —
+  the public verify path is the hot path and must not re-run the sanitiser per request. That is why
+  `verifyCache.namespace.test.ts` models each environment as a fresh module instance
+  (`vi.resetModules()` + re-`import`) rather than a mutated env var: it makes the same-service test
+  genuinely two independent instances instead of one module asked twice.
+- **Both halves are asserted in one file, deliberately.** Different environments must NOT read each
+  other's cache, AND two instances of one service MUST share one — a namespace that also broke
+  sharing would be a PERF-12 regression dressed as a fix, and every cache-hit test would still pass.
+
+## 2026-08-18 — consolidated rate-limit cluster: fail-open path emits §1.10 headers
+
+`enforceShared`'s last-resort catch (store `increment` rejects — normally unreachable behind the
+Upstash store's internal fallback bucket) now sets best-effort `X-RateLimit-*` headers before
+`next()`. §1.10 says headers on every response; a header-less allow was the one gap. Values are
+best-effort by design: configured limit, one request charged against a fresh window — there is no
+shared state to read on this path. Pinned in `rateLimit.test.ts` ("distributed fail-open path").
+
+## 2026-08-18 — per-instance circuit breaker around the Upstash `increment()` hot path
+
+CTO decision, PR #2269 soak-plan gap: `increment()` is on the blocking hot path
+(`rateLimit()` -> `enforceShared()` awaits it before `next()`), and every attempt paid up to
+`REDIS_TIMEOUT_MS` (2s, `AbortSignal.timeout`) before its internal catch fell back to the local
+bucket — nothing ever stopped it from retrying Redis on every single call. A full Upstash outage
+therefore added ~2s to every rate-limited request, indefinitely. `UpstashCircuitBreaker` (private
+to `UpstashRateLimitStore`) fixes that: opens after 5 CONSECUTIVE failures, skips the Redis round
+trip entirely while open (straight to `fallbackIncrement`), half-opens after 30s to let exactly one
+probe through, closes on a successful probe, and a failed probe re-opens immediately — it does not
+re-accumulate 5 more failures first.
+
+- **LATENCY SHIELD, NOT A CORRECTNESS MECHANISM — say this every time.** Breaker state is a private
+  field on the store instance, so N Cloud Run instances trip and recover independently and never
+  coordinate. That is fine: the shared counter was already fail-open before this change
+  (`fallbackIncrement` keeps counting locally during an outage), so a broken or out-of-sync breaker
+  cannot turn the limiter into "unlimited" — it can only make one instance slower to give up on a
+  dead Redis than another. Do not reach for this as a building block for anything that needs
+  cross-instance agreement.
+- **Scoped to `increment()` only** — the blocking call every request pays for. `decrement()` (best
+  effort, fire-and-forget, result never awaited by the caller) and the legacy `set`/`delete` blob
+  write-throughs are unaffected; they were never the latency problem PR #2269's soak plan flagged.
+- **The self-heal PEXPIRE call is inside the same try block as the pipeline**, so a failure there
+  also counts toward the breaker — one code path, one failure signal, no separate accounting to
+  keep in sync.
+- Regression suite: `upstashRateLimit.circuitBreaker.test.ts` — trips at 5 consecutive failures
+  (and NOT at 4, boundary-pinned), returns a valid fail-open entry (so §1.10 headers keep working)
+  while open, and both half-open outcomes (probe succeeds -> closes; probe fails -> re-opens without
+  needing 5 more failures).
