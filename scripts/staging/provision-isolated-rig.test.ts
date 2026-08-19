@@ -63,20 +63,29 @@ const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
 const TEAM1_ADMISSION_PROVENANCE_RULE =
   '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.';
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  '055d0a435b2287521214790fe49f70e6a8af9ed35d83d6b783ff670245c781aa';
+  'fb57a37d56cc1350e82ab5a659f0fa112216738d5cbf8cb0fc02fb806ba5cd25';
 
-// Apply-mode cases launch many short-lived git/gcloud/npx shell stubs. They
-// finish in ~1s focused but can exceed Vitest's 5s default when the full
-// 25-file staging suite runs concurrently on a loaded developer host.
-vi.setConfig({ testTimeout: 20_000 });
-
-// A wedged synchronous child must fail before Vitest's 20s budget so the test
-// runner can report the actual subprocess timeout instead of hanging until the
-// enclosing test is killed. Keep the default generous enough for the existing
-// loaded-host/contention cases; the regression below injects a much smaller
-// deadline without weakening those cases.
-const PROVISION_CHILD_TIMEOUT_MS = 15_000;
+// A wedged synchronous child must be killed with a diagnosable ETIMEDOUT
+// instead of hanging the suite — but this deadline is a HANG detector, not a
+// bound on a healthy run, so it must be unreachable by CPU contention alone.
+// Apply-mode cases fork dozens of short-lived git/gcloud/npx stubs (~1-2s
+// focused); 2026-08-17 the full root suite running concurrently with
+// typecheck + lint:copy pushed those children past the previous 15s deadline,
+// SIGKILLing them mid-run (rc=124, admission/preflight artifacts never
+// written) and failing 18 tests that were green in isolation. 120s is ~60x
+// the focused runtime — far beyond any plausible scheduler-induced slowdown,
+// while still bounding a genuinely wedged child.
+const PROVISION_CHILD_TIMEOUT_MS = 120_000;
 const CHILD_TIMEOUT_EXIT_CODE = 124;
+
+// Vitest's per-test budget must outlive the slowest legitimate test, which
+// runs up to three sequential child invocations (the all-profiles dry-run
+// loop), each individually bounded by PROVISION_CHILD_TIMEOUT_MS. The child
+// deadline fires first in every hang scenario, so the ETIMEDOUT diagnostic —
+// not a bare Vitest timeout — is what a wedge reports. Individual tests must
+// NOT declare smaller per-test timeouts: they silently override this config
+// and reinstate the load flake.
+vi.setConfig({ testTimeout: 3 * PROVISION_CHILD_TIMEOUT_MS + 30_000 });
 
 describe('scripts/staging/agents.md — exact cross-lane semantic union', () => {
   it('retains the complete 13-section body shared by both current lane heads', () => {
@@ -747,7 +756,12 @@ exit 64
 }
 
 afterAll(() => {
-  for (const dir of stubDirs) rmSync(dir, { recursive: true, force: true });
+  // After an ETIMEDOUT SIGKILL of the bash child, orphaned stub grandchildren
+  // can survive briefly and touch files in their stub dir; retry so cleanup
+  // cannot throw on that race.
+  for (const dir of stubDirs) {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
 });
 
 describe('provision-isolated-rig.sh — bounded synchronous child execution', () => {
@@ -783,7 +797,15 @@ describe('provision-isolated-rig.sh — bounded synchronous child execution', ()
       expect(result.timedOut, helperName).toBe(true);
       expect(result.errorCode, helperName).toBe('ETIMEDOUT');
       expect(result.out, helperName).toContain(`ETIMEDOUT after ${timeoutMs}ms`);
-      expect(elapsedMs, `${helperName} exceeded the bounded hang-test wall time`).toBeLessThan(2_000);
+      // The "ETIMEDOUT after 150ms" assertion above already proves the
+      // INJECTED deadline governed the kill. This wall-clock bound is only an
+      // anti-hang tripwire (the helper must not fall back to the 120s
+      // default), so it stays far above scheduler noise on a loaded host —
+      // the previous 2s bound was itself load-flaky.
+      expect(
+        elapsedMs,
+        `${helperName} exceeded the bounded hang-test wall time`,
+      ).toBeLessThan(30_000);
     }
   });
 });
@@ -1507,7 +1529,7 @@ describe('provision-isolated-rig.sh — apply failure containment after Schedule
     expectEveryDeclaredSchedulerJobContainedAfter(result, updateIndexes[1]);
     expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
     expect(result.out).not.toContain('ADMISSION_JSON=');
-  }, 20_000);
+  });
 
   it('re-pauses every declared job and preserves the original rc after a partial resume', () => {
     const result = applyRunStubbed('partial-resume-failure', 'chain', {
@@ -1530,7 +1552,7 @@ describe('provision-isolated-rig.sh — apply failure containment after Schedule
       .map((entry, index) => (entry.startsWith('gcloud scheduler jobs resume ') ? index : -1))
       .filter((index) => index >= 0);
     expectEveryDeclaredSchedulerJobContainedAfter(result, resumeIndexes[1]);
-  }, 20_000);
+  });
 
   it('re-pauses every job when a later post-resume ENABLED verification fails', () => {
     const result = applyRunStubbed('enabled-verify-failure', 'chain', {
@@ -1546,7 +1568,7 @@ describe('provision-isolated-rig.sh — apply failure containment after Schedule
     expectEveryDeclaredSchedulerJobContainedAfter(result, resumeIndexes[1] + 1);
     expect(Object.values(result.schedulerStates).every((state) => state === 'PAUSED')).toBe(true);
     expect(result.out).not.toContain('ADMISSION_JSON=');
-  }, 20_000);
+  });
 
   it('re-pauses every job when final admission artifact persistence cannot start', () => {
     const result = applyRunStubbed('blocked-admission-path', 'chain', {
@@ -1566,7 +1588,7 @@ describe('provision-isolated-rig.sh — apply failure containment after Schedule
       .map((entry, index) => (entry.startsWith('gcloud scheduler jobs resume ') ? index : -1))
       .filter((index) => index >= 0);
     expectEveryDeclaredSchedulerJobContainedAfter(result, Math.max(...resumeIndexes) + 1);
-  }, 20_000);
+  });
 
   it('withdraws the artifact and re-pauses every job when final state persistence fails afterward', () => {
     const result = applyRunStubbed('final-state-failure', 'chain', {
@@ -1586,7 +1608,7 @@ describe('provision-isolated-rig.sh — apply failure containment after Schedule
       .map((entry, index) => (entry.startsWith('gcloud scheduler jobs resume ') ? index : -1))
       .filter((index) => index >= 0);
     expectEveryDeclaredSchedulerJobContainedAfter(result, Math.max(...resumeIndexes) + 1);
-  }, 20_000);
+  });
 });
 
 describe('provision-isolated-rig.sh — truthful observed provenance and config', () => {
@@ -1661,7 +1683,7 @@ describe('provision-isolated-rig.sh — truthful observed provenance and config'
     const line = result.out.split('\n').find((entry) => entry.startsWith('ADMISSION_JSON='));
     const admission = JSON.parse(line!.slice('ADMISSION_JSON='.length));
     expect(admission.supabase_project_ref).toBe('abcdefghijklmnopqrst');
-  }, 15_000);
+  });
 
   it('survives a secret payload larger than the pipe buffer (gcloud stub must drain --data-file=- stdin)', () => {
     // Deterministic reproduction of the CI flake (PR #1683 run 30166796132):
@@ -1686,7 +1708,7 @@ describe('provision-isolated-rig.sh — truthful observed provenance and config'
       ),
     ).toBe(true);
     expect(result.out).toContain('ADMISSION_JSON=');
-  }, 15_000);
+  });
 
   it('rejects a malformed created project ref before any downstream mutation', () => {
     const result = applyRunStubbed('bad-created-project-ref', 'mock', {
@@ -1743,7 +1765,6 @@ describe('provision-isolated-rig.sh — strict clean_mirror evidence schema', ()
       expect(result.out).not.toContain('secret-sentinel-must-not-leak');
       expect(result.out).not.toContain('ADMISSION_JSON=');
     },
-    15_000,
   );
 
   it.each([
@@ -1777,7 +1798,6 @@ describe('provision-isolated-rig.sh — strict clean_mirror evidence schema', ()
       expect(result.out).toMatch(/preflight|schema|checks/i);
       expect(result.out).not.toContain('ADMISSION_JSON=');
     },
-    15_000,
   );
 
   it('persists only allowlisted evidence and binds the captured project/timestamp', () => {
