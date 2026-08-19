@@ -36,3 +36,13 @@ Seven days of monitored availability and change control; ~3 days of full-through
 durability (days 0–3 pre-load are documented as such); staging-rig observation with prod
 monitoring alongside — an input artifact to SOC 2 Type 2 (SCRUM-1043), not the audit
 itself. Every deviation in the window is named, root-caused, and carries its remediation.
+
+## Post-close production catch-up (2026-08-19T19:2xZ)
+
+Wave 0 (7 T0/T1 PRs) merged via Mergify after the close; `DEPLOY_WORKER_PAUSED` was set
+false for one controlled catch-up deploy (workflow run 32290974654) and re-set true
+immediately after verification, keeping the deferred-consolidated-soak merge path open for
+the chain/rate-limit trio riding the 48h rig soak. Verification: prod `/health` reports
+`git_sha b6cfad73c...` (main tip), status healthy, all checks ok; revision
+`arkova-worker-01313-ram` at 100% traffic. Prod is fully current with main for the first
+time since 2026-08-08.
