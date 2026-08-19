@@ -14,7 +14,9 @@
 
 ## Now
 
-**State as of 2026-08-12T16:00Z, verified live.** (`### Soaks` and `### PR board` refreshed again
+**State as of 2026-08-12T16:00Z, verified live.** (`### Soaks` refreshed again 2026-08-19 — the
+7-day window closed on schedule and a new chain-pair + rate-limit T3 soak started the same day; see
+the top of `### Soaks` below. `### Soaks` and `### PR board` were also refreshed
 2026-08-18 — Day 6 of the soak window; see the dated sub-blocks below for exact timestamps and
 linked verification artifacts. The prod worker/anchor sub-block was refreshed 2026-08-12; the
 remainder of this block still carries its 2026-08-03T02:49Z reading unless a sub-block says
@@ -216,8 +218,42 @@ separately). Full verdicts, defects, and landing-order constraints:
 
 ### Soaks
 
-**RUNNING — 7-day SOC 2 Type 2 full-functionality soak. Clock start `2026-08-12T15:51:30Z`,
-Day-7 close `2026-08-19T15:51:30Z`.** This supersedes the `pr-2195` / `00011-bif` entry that
+**RUNNING — chain-pair + rate-limit T3 soak, started 2026-08-19T16:51:23Z, closes
+~2026-08-21T16:51:23Z.** This supersedes the 7-day SOC2 entry directly below, which **CLOSED ON
+SCHEDULE at 2026-08-19T15:51:30Z**
+([window-close-2026-08-19.md](docs/staging/fullsoak-2026-08/window-close-2026-08-19.md),
+[FINAL-REPORT-2026-08-19.md](docs/staging/fullsoak-2026-08/FINAL-REPORT-2026-08-19.md)) — the rig
+was then explicitly founder-approved for reuse ("get the new soaks going") and immediately restood
+up for this new soak; it was never idle between windows.
+
+- **What's soaking:** PR #2216 + PR #2250 (the chain pair — T3) merged as their union on
+  `rc/chain-pair-soak-2026-08` (head `daf3d6056788762ba56da5c328154e50fce03b59`), with PR #2269
+  (rate-limit cluster, T2) folded in mid-standup after its originally-slated shared staging project
+  (`ujtlwnoqfhtitcmsnrpq`) was found to no longer exist (see the `docs/staging/agents.md` pointer to
+  `ratelimit-soak-2026-08/` immediately below in this file's history). Full standup evidence, exact
+  revision/digest/preflight/PM-A-B-C plan:
+  [docs/staging/chain-pair-soak-2026-08/soak-start-2026-08-19.md](docs/staging/chain-pair-soak-2026-08/soak-start-2026-08-19.md).
+  RC manifest skeleton (soak fields pending until 48h):
+  [docs/staging/rc-manifests/rc-chain-pair-20260819.json](docs/staging/rc-manifests/rc-chain-pair-20260819.json).
+- **Rig:** same Cloud Run service, `arkova-worker-fullsoak-2026-08-staging`, now on revision
+  **`arkova-worker-fullsoak-2026-08-staging-00022-suy`** (tag `cp0819rc`), `min-instances=2` (raised
+  from 1 to make cross-instance rate-limit sharing observable), image digest
+  `sha256:d7a956079729b080a2e654f8014c9fbd270dbfc4392b1000e1a4e0630157ea45`. `/health` verified live:
+  `git_sha daf3d6056788762ba56da5c328154e50fce03b59`, `database/anchoring/kms: ok`, `network: signet`.
+  Treasury visible (736,985 sats), bitcoind VM `arkova-s33-rig-b1-bitcoin-core-signet` RUNNING.
+- **Preflight against `gnkuaywlpmsaezwvlvhk`: `environment_type=fixture_seeded`**, NOT
+  `clean_mirror` — zero artifact rows, the one failing check (`submitted_anchors`) traces to the
+  prior window's queue draining organically before close, not contamination. Full §1.11A reasoning
+  in the soak-start doc linked above.
+- **NEVER-DISTURB, this new window:** no deploy/redeploy/env/secret/scheduler change to
+  `arkova-worker-fullsoak-2026-08-staging` until 2026-08-21T16:51:23Z — same rule, new clock. Do not
+  read the "NEVER-DISTURB" bullets under the closed 7-day entry below as still governing revision
+  `-00013-mrw`; that revision no longer serves.
+
+---
+
+**CLOSED 2026-08-19T15:51:30Z — 7-day SOC 2 Type 2 full-functionality soak. Clock start `2026-08-12T15:51:30Z`.**
+This supersedes the `pr-2195` / `00011-bif` entry that
 previously occupied this block (that revision no longer serves; the rig moved to the full-functionality
 build the same day). Every claim below is traceable to
 [docs/staging/fullsoak-2026-08/manifest-DAY-0.md](docs/staging/fullsoak-2026-08/manifest-DAY-0.md).
@@ -424,7 +460,12 @@ anything. Detail: [sentry-zombie-monitor-runbook.md](docs/staging/fullsoak-2026-
 `gcloud` on the dev Mac needs `CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14`; the
 bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
 
-_Last refreshed: 2026-08-18 by Claude (CTO session) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-08-19 by Claude Opus 5 (chain-pair soak standup) — `### Soaks` block updated;
+7-day-window-close and new-soak claims verified live against gcloud (`run revisions describe`,
+`run services describe`, `compute instances describe`, `logging read`), Supabase MCP
+(`execute_sql`, `staging-honesty-preflight.ts` output), and a direct `/health` + `/jobs/refresh-treasury-cache`
+probe on revision `arkova-worker-fullsoak-2026-08-staging-00022-suy` — not asserted from prior-session
+prose. Rest of `## Now` unchanged from the 2026-08-18 refresh._
 
 ---
 
