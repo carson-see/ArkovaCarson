@@ -313,3 +313,20 @@ oracle call in this service and `jobs/treasury-cache.ts` owns it (every 10 min �
 - **`BTC_PRICE_MEMO_TTL_MS` (60 s) must stay well under the cron's 10-minute period**, or the memo
   becomes staler than the row it caches. Failures memoize too, and concurrent callers share one
   in-flight read — an outage must not turn every gated request into a DB round trip.
+
+## 2026-08-17 — surrogate-safe truncation sweep (follow-up to `utf16-truncate.ts`)
+
+> Placed at EOF deliberately: PR #2266 introduces `utf16-truncate.ts` and inserts its section near
+> the top of this file; this sweep lands as a sibling PR carrying byte-identical copies of that
+> util + its test (add/add-identical merges cleanly in either order), so this note must not overlap
+> that hunk.
+
+`sanitizeLastError` now bounds via `truncateUtf16Safe(text, 1000)` instead of a bare `.slice` —
+`job_queue.last_error` is failure bookkeeping, and a poisoned error message used to make `failJob`'s
+own PostgREST body invalid JSON (PGRST102): the job's failure handling itself failed. The same sweep
+migrated `webhooks/delivery.ts` (`response_body` ×3 + `error_message` — endpoint-controlled bytes),
+`credentials-ctdl-registry-anchor.ts` (filename/label/description), `compliance-audit.ts`
+(`error_message`), `credential-source-import.ts` (`cleanText` + filename), the two test-ping
+`response_body` echoes, and `nessie-query.ts` citation excerpts. CI ratchet:
+`scripts/ci/feedback-rules/surrogate-safe-truncate.ts` (baseline burn-down in
+`surrogate-truncate-baseline.json`; merge-time gate is its colocated `.test.ts` in `Tests`).

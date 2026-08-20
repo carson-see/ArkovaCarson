@@ -24,6 +24,7 @@ import request from 'supertest';
 import { buildCredentialsCtdlRegistryAnchorRouter } from './credentials-ctdl-registry-anchor.js';
 import { buildSelfImportRecipientHash } from '../../lib/credential-source-import.js';
 import type { SafeFetchDeps, SafeFetchResponse } from '../../lib/safe-fetch.js';
+import { poisonAt, illFormedStringPaths } from '../../tests/utf16-poison.js';
 
 const {
   mockFrom,
@@ -291,6 +292,46 @@ describe('POST /credentials/ctdl/registry-anchor — happy path', () => {
       .join('\n');
     expect(allLogArgs).not.toContain('Certified Production Technician');
     expect(allLogArgs).not.toContain('ceterms:');
+  });
+});
+
+// ─── Surrogate-safe truncation (2026-08-17 poison-record class) ─────────────
+//
+// `insertRegistryAnchor` bounds filename (255), label (500) and description
+// (500) before the PostgREST `anchors` insert. The CE Registry controls the
+// record name; a name whose cap boundary splits a surrogate pair leaves a lone
+// high surrogate in the payload, and PostgREST rejects the WHOLE insert body
+// as invalid JSON (PGRST102) — the exact mechanism that poisoned the
+// public-record anchoring queue for 16 days.
+describe('POST /credentials/ctdl/registry-anchor — surrogate-safe truncation', () => {
+  function fixtureWithName(name: string): string {
+    const parsed = JSON.parse(NONCREDIT_RAW) as { '@graph': Array<Record<string, unknown>> };
+    (parsed['@graph'][0]['ceterms:name'] as Record<string, string>)['en-US'] = name;
+    return JSON.stringify(parsed);
+  }
+
+  async function anchorInsertPayloadFor(name: string): Promise<Record<string, unknown>> {
+    const { deps } = depsReturning(stubResponse({ body: fixtureWithName(name) }));
+    const app = buildApp({ deps });
+    const res = await request(app).post('/').send({ ctid: PROGRAM_CTID });
+    expect(res.status).toBe(201);
+    expect(mockAnchorInsert).toHaveBeenCalledTimes(1);
+    return mockAnchorInsert.mock.calls[0][0] as Record<string, unknown>;
+  }
+
+  it('label and description stay well-formed when the record name splits at the 500-unit cap', async () => {
+    const payload = await anchorInsertPayloadFor(poisonAt(500));
+
+    expect((payload.label as string).length).toBeLessThanOrEqual(500);
+    expect((payload.description as string).length).toBeLessThanOrEqual(500);
+    expect(illFormedStringPaths(payload)).toEqual([]);
+  });
+
+  it('filename stays well-formed when the record name splits at the 255-unit cap', async () => {
+    const payload = await anchorInsertPayloadFor(poisonAt(255));
+
+    expect((payload.filename as string).length).toBeLessThanOrEqual(255);
+    expect(illFormedStringPaths(payload)).toEqual([]);
   });
 });
 

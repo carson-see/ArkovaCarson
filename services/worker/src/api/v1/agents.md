@@ -838,3 +838,15 @@ The 2026-06-24 entry above states, of the batch-extraction refund path: *"A lost
 - The drain (re-apply the refund, retry with backoff, Sentry on the final attempt) is documented in `services/worker/src/jobs/agents.md`; its trigger is `POST /jobs/ai-credit-reconcile` + a Cloud Scheduler binding.
 - **Nothing about the request path changed** — the per-row debit/refund accounting, the fingerprint cache, the latency budget, and the frozen response shape are all untouched. This entry fixes the claim, not the route.
 - `scripts/ci/check-job-queue-parity.ts` now fails CI on any `submitJob` type with no consumer, so this specific false-surfacing shape cannot ship again.
+
+## 2026-08-17 — surrogate-safe truncation sweep (poison-record class)
+
+Migrated to `utils/utf16-truncate.ts` `truncateUtf16Safe` (bare `.slice(0, N)` on text that reaches
+a PostgREST body can split a surrogate pair → lone high surrogate → whole request body rejected as
+invalid JSON, PGRST102): `credentials-ctdl-registry-anchor.ts` (anchors insert
+filename/label/description — CE Registry controls the record name), `compliance-audit.ts`
+(FAILED-audit `error_message`), `webhooks.ts` + `webhooks-self-service.ts` test-ping
+`response_body` echoes (response-surface hardening: grep confirms `response_body` is NOT persisted
+on these two paths — the persisted delivery-log sites are in `webhooks/delivery.ts`, migrated in the
+same sweep), and `nessie-query.ts` `buildCitationExcerpt` (exported for tests). CI ratchet:
+`scripts/ci/feedback-rules/surrogate-safe-truncate.ts`.

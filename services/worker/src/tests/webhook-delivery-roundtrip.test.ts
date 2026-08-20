@@ -24,6 +24,7 @@ const {
   endpointsContains,
   deliveryLogSelectSingle,
   deliveryLogInsertSingle,
+  deliveryLogUpdate,
 } = vi.hoisted(() => {
   const mockLogger = {
     info: vi.fn(),
@@ -79,6 +80,7 @@ const {
     endpointsContains,
     deliveryLogSelectSingle,
     deliveryLogInsertSingle,
+    deliveryLogUpdate,
   };
 });
 
@@ -112,6 +114,7 @@ import {
   resetCircuitBreakers,
   __resetWebhookFlagCacheForTest,
 } from '../webhooks/delivery.js';
+import { poisonAt, illFormedStringPaths } from './utf16-poison.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -462,5 +465,50 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
 
       expect(isCircuitOpen(TEST_ENDPOINT_ID)).toBe(true);
     });
+  });
+});
+
+// ─── Surrogate-safe `response_body` truncation (2026-08-17 poison-record class) ─
+//
+// `webhook_delivery_logs.response_body` is bounded to 1000 UTF-16 units before
+// the PostgREST `.update()`. The receiving endpoint controls that body — a
+// response whose unit-1000 boundary splits a surrogate pair would leave a lone
+// high surrogate, making the delivery-log update itself PGRST102: the delivery
+// pipeline's own status bookkeeping fails on attacker-controlled bytes.
+describe('response_body surrogate-safe truncation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', mockFetch);
+    resetCircuitBreakers();
+    __resetWebhookFlagCacheForTest();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('persists a well-formed response_body on 2xx when the endpoint returns poison at the cap', async () => {
+    setupStandardMocks([makeEndpoint()]);
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: async () => poisonAt(1000) });
+
+    await dispatchWebhookEvent(TEST_ORG_ID, 'anchor.secured', 'evt_poison_ok', MINIMAL_SECURED_PAYLOAD);
+
+    expect(deliveryLogUpdate).toHaveBeenCalled();
+    const patch = (deliveryLogUpdate.mock.calls.at(-1) as unknown[])[0] as Record<string, unknown>;
+    expect(patch.status).toBe('success');
+    expect((patch.response_body as string).length).toBeLessThanOrEqual(1000);
+    expect(illFormedStringPaths(patch)).toEqual([]);
+  });
+
+  it('persists a well-formed response_body on HTTP failure when the endpoint returns poison at the cap', async () => {
+    setupStandardMocks([makeEndpoint()]);
+    mockFetch.mockResolvedValue({ ok: false, status: 500, text: async () => poisonAt(1000) });
+
+    await dispatchWebhookEvent(TEST_ORG_ID, 'anchor.secured', 'evt_poison_5xx', MINIMAL_SECURED_PAYLOAD);
+
+    expect(deliveryLogUpdate).toHaveBeenCalled();
+    const patch = (deliveryLogUpdate.mock.calls.at(-1) as unknown[])[0] as Record<string, unknown>;
+    expect(illFormedStringPaths(patch)).toEqual([]);
   });
 });

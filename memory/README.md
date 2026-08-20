@@ -42,6 +42,7 @@ hook's own deny message.
 | `feedback_no_aws.md` | CI lint (`no-aws.ts`) | ✅ live (R0-7) |
 | `feedback_pr_target_repo.md` | CI lint (`pr-target-repo.ts`) | ✅ live (R0-7) |
 | `feedback_no_worktree_isolation.md` | CI lint (`no-worktree-isolation.ts`) | ✅ live (R0-7) |
+| `feedback_surrogate_safe_truncation.md` | CI lint (`surrogate-safe-truncate.ts`) — ratchet vs `surrogate-truncate-baseline.json`; merge-time gate is its colocated `.test.ts` in `Tests` | ✅ live (R0-7) |
 | `feedback_local_matches_prod.md` | CI lint (`feedback_local_matches_prod.ts`) — snapshot diff vs `scripts/ci/snapshots/prod-tables.json`; fails closed. Live-MCP comparison still deferred. | ✅ live (SCRUM-1306 / R0-7-FU1) |
 | `feedback_dont_recommend_do.md` | CI lint **advisory** (`feedback_dont_recommend_do.ts`) — always exits 0, never blocks | ✅ live (SCRUM-1306) |
 | `feedback_jira_user_story_format.md` | Atlassian Automation (SCRUM project rules; see CLAUDE.md §5.1). CI file `feedback_jira_user_story_format.ts` is a no-op stub. | ✅ live (SCRUM-1306) |
@@ -71,3 +72,4 @@ override label. `feedback_dont_recommend_do` needs none — it cannot fail.
 If you find yourself reaching for an override more than once, file a Jira
 sub-story to update the policy and remove the override path.
 - `worktree-branch-exception` -> overrides feedback_no_worktree_isolation (branch-name lint; added 2026-08-01 for #1737)
+- `surrogate-slice-reviewed` -> overrides `feedback_surrogate_safe_truncation` (surrogate-safe truncation ratchet; added 2026-08-17)

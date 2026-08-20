@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "Burn-down list for surrogate-safe-truncate.ts (2026-08-17 poison-record class).",
+    "May only SHRINK: a stale entry (one that no longer violates) fails the rule.",
+    "Migrate a site to truncateUtf16Safe, then DELETE its key here.",
+    "",
+    "Per-entry triage (2026-08-17, at rule introduction):",
+    "- anchor-bulk / cle-verify: fingerprint hex slices — ASCII, cannot split a pair. Safe forever; kept here rather than a code allow-list so the census stays in one file.",
+    "- demo-event-injector / proof-packet: JSON.stringify of small fixed objects, far under the 10000 cap — slice is a no-op today. If the object grows, migrate.",
+    "- ruleEventBackpressure: JSON.stringify(details).slice(0, 10000) into audit details — poisonable if details carry astral text near the cap; ALSO truncates JSON syntax. Follow-up burn-down.",
+    "- webhooks/{adobe-sign,checkr,docusign} webhook_dlq.reason: failure bookkeeping bounded from provider-influenced text — same class as job_queue.last_error. Follow-up burn-down.",
+    "- bq-export-watermark last_run_error / workspace-subscription-renewal last_renewal_error: error-message bookkeeping. Follow-up burn-down.",
+    "- openalexFetcher abstract slice(0, 2000): external scholarly text into public_records metadata — the ORIGINAL incident's feeder shape. Follow-up burn-down (jobs/ fetchers were out of this PR's scope; publicRecordAnchor.ts itself is owned by PR #2266)."
+  ],
+  "grandfathered": [
+    "services/worker/src/api/demo-event-injector.ts::details: JSON.stringify({ trigger_type: args.triggerType, source: 'demo_injector' }).slice(0, 10000),#1",
+    "services/worker/src/api/proof-packet.ts::details: JSON.stringify({ exported_at: new Date().toISOString() }).slice(0, 10000),#1",
+    "services/worker/src/api/v1/anchor-bulk.ts::filename: row.filename ?? `bulk-${row.fingerprint.slice(0, 12)}`,#1",
+    "services/worker/src/api/v1/cle-verify.ts::filename: `CLE_${safeFilenameSegment(data.jurisdiction)}_${data.completion_date}_${fingerprint.slice(0, 12)}.json`,#1",
+    "services/worker/src/api/v1/webhooks/adobe-sign.ts::reason: args.reason.slice(0, 500),#1",
+    "services/worker/src/api/v1/webhooks/checkr.ts::reason: args.reason.slice(0, 500),#1",
+    "services/worker/src/api/v1/webhooks/docusign.ts::reason: args.reason.slice(0, 500),#1",
+    "services/worker/src/jobs/bq-export-watermark.ts::last_run_error: errorMessage.slice(0, 4096),#1",
+    "services/worker/src/jobs/openalexFetcher.ts::abstract: abstract?.slice(0, 2000) ?? null,#1",
+    "services/worker/src/jobs/workspace-subscription-renewal.ts::last_renewal_error: message.slice(0, 1000),#1",
+    "services/worker/src/middleware/ruleEventBackpressure.ts::}).slice(0, 10000),#1"
+  ]
+}
