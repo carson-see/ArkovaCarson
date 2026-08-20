@@ -81,9 +81,26 @@ economics (one on-chain write amortised across the whole batch) rather than per-
 broadcast. Wall clock from trigger fire to fully-broadcast batch: **22:00:27Z → 22:03:23Z,
 under 3 minutes.**
 
-**NOT asserted:** on-chain confirmation. At capture the anchors were `BROADCASTING` with
-the tx id assigned but not yet confirmed into a block, so none had transitioned to
-`SECURED`. Confirmation follows block inclusion and is a separate observation.
+## Confirmation — all 3,116 SECURED at 22:08:38Z
+
+The batch confirmed into a block and every anchor transitioned to `SECURED`:
+
+| status | anchors | distinct txs | at |
+|---|---|---|---|
+| SECURED | **3,116** | **1** | 2026-08-20T22:08:38.671Z |
+
+**End-to-end wall clock: 22:00:27Z (scheduler fires) → 22:08:38Z (all SECURED) — 8 min 11 s
+for 3,116 anchors in one transaction.** No anchor was lost, none stalled in
+`BROADCASTING`, and none required manual intervention.
+
+Full evidenced chain for this T3 window:
+
+```
+PENDING 3,116  →  Trigger B fires 22:00:43Z (exactly 3,000 first pass)
+               →  BROADCASTING     22:00:24–22:00:52Z (27 s)
+               →  1 tx f9ddf989…   22:03:23Z
+               →  SECURED 3,116    22:08:38Z
+```
 
 **NOT asserted:** Trigger A. `BATCH_SIZE` = 10,000 was never approached and remains
 un-evidenced for this window.
