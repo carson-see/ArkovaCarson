@@ -7,11 +7,15 @@
   "approval_status": "approved",
   "approval_actor": "Carson",
   "approval_time": "2026-08-20T00:00:00Z",
-  "approval_note": "Founder approved all five asks in docs/staging/migration-t3-wave-premortem-2026-08-19.md §5 (\"go\", 2026-08-20): landing order (§1), merge-path option (a) prod-apply-before-merge (§3), the 48h T3 soak (§2), exclusive rig use for the window (PM-4), and the staging-rig-rebuild doc-only PR landing independently. This manifest centralizes REAL soak evidence per option (a) — soak_mode is deliberately NOT set to deferred_consolidated_soak; see §3's own reasoning in the premortem for why that mode would not have changed the migration-apply sequencing anyway.",
+  "approval_note": "Founder approved all five asks in docs/staging/migration-t3-wave-premortem-2026-08-19.md \u00a75 (\"go\", 2026-08-20): landing order (\u00a71), merge-path option (a) prod-apply-before-merge (\u00a73), the 48h T3 soak (\u00a72), exclusive rig use for the window (PM-4), and the staging-rig-rebuild doc-only PR landing independently. This manifest centralizes REAL soak evidence per option (a) \u2014 soak_mode is deliberately NOT set to deferred_consolidated_soak; see \u00a73's own reasoning in the premortem for why that mode would not have changed the migration-apply sequencing anyway.",
   "train_launch_sha": "3baf16015ed61b4063daa6e53bead2399657ecd6",
   "target_main_sha": "b6cfad73c73fbaf45bea08e3b155d61501a49daa",
-  "allowed_base_shas": ["b6cfad73c73fbaf45bea08e3b155d61501a49daa"],
-  "covered_main_shas": ["b6cfad73c73fbaf45bea08e3b155d61501a49daa"],
+  "allowed_base_shas": [
+    "b6cfad73c73fbaf45bea08e3b155d61501a49daa"
+  ],
+  "covered_main_shas": [
+    "b6cfad73c73fbaf45bea08e3b155d61501a49daa"
+  ],
   "included_prs": [
     {
       "number": 2219,
@@ -20,8 +24,10 @@
       "risk_tier": "T3",
       "owner": "carson-see",
       "ci_summary": "CI green on head SHA at premortem write time (gh pr checks, 2026-08-19); merged cleanly into rc/migration-t3-wave-2026-08 with no conflicts.",
-      "rollback_note": "0410 rollback rehearsed live 2026-08-20: apply→confirm→DROP TABLE (destructive — rehearsed before any CAS data existed, count(*)=0 verified first)→confirm absence→re-apply→confirm identical state (RLS+FORCE both true, 4 indexes, 1 policy).",
-      "migration_files": ["supabase/migrations/0410_partner_accounts.sql"]
+      "rollback_note": "0410 rollback rehearsed live 2026-08-20: apply\u2192confirm\u2192DROP TABLE (destructive \u2014 rehearsed before any CAS data existed, count(*)=0 verified first)\u2192confirm absence\u2192re-apply\u2192confirm identical state (RLS+FORCE both true, 4 indexes, 1 policy).",
+      "migration_files": [
+        "supabase/migrations/0410_partner_accounts.sql"
+      ]
     },
     {
       "number": 2235,
@@ -29,8 +35,8 @@
       "base_sha": "b6cfad73c73fbaf45bea08e3b155d61501a49daa",
       "risk_tier": "T3",
       "owner": "carson-see",
-      "ci_summary": "CI green on head SHA at premortem write time (gh pr checks, 2026-08-19); merge into rc/migration-t3-wave-2026-08 required resolving one conflict in scripts/ci/check-hot-table-ddl-lock-timeout.test.ts (union of both PRs' new describe blocks — see soak-start-2026-08-20.md §Merge log). agents.md files auto-merged cleanly per PM-5.",
-      "rollback_note": "0411/0412/0413 each rollback-rehearsed live 2026-08-20: 0411 restores the unbounded-lock baseline body (confirmed via pg_get_functiondef); 0412 restores the 0335 body (total_source key absence confirmed); 0413 DROP VIEW (to_regclass NULL, confirmed calibration-refit route would 500 again). All three re-applied and re-confirmed. REAL FINDING during BUG-019 forced-timeout testing: under real lock contention on this rig's role config (authenticator/service_role ambient statement_timeout=8s), the retention cron 500s at ~8.2s (SQLSTATE 57014 statement_timeout) instead of the intended 200-with-skip-flag at ~5s — the function's own EXCEPTION WHEN lock_not_available handler never fires because the wrong exception class is raised. No data-integrity regression (audit trigger survives, full-transaction rollback), but the intended graceful-degradation behavior does not hold. See soak-start-2026-08-20.md for full writeup. NOT fixed in this session — flagged for Carson/RTE follow-up before this PR is readied.",
+      "ci_summary": "CI green on head SHA at premortem write time (gh pr checks, 2026-08-19); merge into rc/migration-t3-wave-2026-08 required resolving one conflict in scripts/ci/check-hot-table-ddl-lock-timeout.test.ts (union of both PRs' new describe blocks \u2014 see soak-start-2026-08-20.md \u00a7Merge log). agents.md files auto-merged cleanly per PM-5.",
+      "rollback_note": "0411/0412/0413 each rollback-rehearsed live 2026-08-20: 0411 restores the unbounded-lock baseline body (confirmed via pg_get_functiondef); 0412 restores the 0335 body (total_source key absence confirmed); 0413 DROP VIEW (to_regclass NULL, confirmed calibration-refit route would 500 again). All three re-applied and re-confirmed. REAL FINDING during BUG-019 forced-timeout testing: under real lock contention on this rig's role config (authenticator/service_role ambient statement_timeout=8s), the retention cron 500s at ~8.2s (SQLSTATE 57014 statement_timeout) instead of the intended 200-with-skip-flag at ~5s \u2014 the function's own EXCEPTION WHEN lock_not_available handler never fires because the wrong exception class is raised. No data-integrity regression (audit trigger survives, full-transaction rollback), but the intended graceful-degradation behavior does not hold. See soak-start-2026-08-20.md for full writeup. NOT fixed in this session \u2014 flagged for Carson/RTE follow-up before this PR is readied.",
       "migration_files": [
         "supabase/migrations/0411_bug019_cleanup_expired_data_lock_timeout.sql",
         "supabase/migrations/0412_bug009_anchor_status_counts_stale_estimate_sentinel.sql",
@@ -39,13 +45,17 @@
     },
     {
       "number": 2248,
-      "head_sha": "c993e81cd241cafd13328108b9fa45bf6e314e11",
+      "head_sha": "1888515e0666c26e49f0ac7e207660fa53a77512",
       "base_sha": "b6cfad73c73fbaf45bea08e3b155d61501a49daa",
       "risk_tier": "T3",
       "owner": "carson-see",
-      "ci_summary": "CI green on head SHA at premortem write time (gh pr checks, 2026-08-19); merged cleanly into rc/migration-t3-wave-2026-08 with no conflicts. NOTE: this PR's branch also carries an unrelated stale commit (726d34461, 2026-08-15) that rewrites CLAUDE.md/docs/reference/STAGING_RIG.md with a false claim that the shared staging rig is gone — verified NOT an ancestor of origin/main (never landed), superseded by the 2026-08-19 rig rebuild. Flagged for the PR owner to drop before merge; not fixed by this wave (out of scope — not this wave's branch to edit).",
-      "rollback_note": "0414 rollback rehearsed LAST (per §2, minimizing exposure window since the rolled-back state is a live security regression): rolled back → confirmed the anon-executable regression is REAL and reproducible (has_function_privilege('anon','cleanup_expired_data()','EXECUTE') flipped true) → immediately re-applied → full 16-function sweep re-confirmed all closed within the same operation, seconds of exposure.",
-      "migration_files": ["supabase/migrations/0414_sec_replay_missing_anon_revokes.sql"]
+      "ci_summary": "CI green on head SHA at premortem write time (gh pr checks, 2026-08-19); merged cleanly into rc/migration-t3-wave-2026-08 with no conflicts. NOTE: this PR's branch also carries an unrelated stale commit (726d34461, 2026-08-15) that rewrites CLAUDE.md/docs/reference/STAGING_RIG.md with a false claim that the shared staging rig is gone \u2014 verified NOT an ancestor of origin/main (never landed), superseded by the 2026-08-19 rig rebuild. Flagged for the PR owner to drop before merge; not fixed by this wave (out of scope \u2014 not this wave's branch to edit).",
+      "rollback_note": "0414 rollback rehearsed LAST (per \u00a72, minimizing exposure window since the rolled-back state is a live security regression): rolled back \u2192 confirmed the anon-executable regression is REAL and reproducible (has_function_privilege('anon','cleanup_expired_data()','EXECUTE') flipped true) \u2192 immediately re-applied \u2192 full 16-function sweep re-confirmed all closed within the same operation, seconds of exposure.",
+      "migration_files": [
+        "supabase/migrations/0414_sec_replay_missing_anon_revokes.sql"
+      ],
+      "head_sha_soaked": "c993e81cd241cafd13328108b9fa45bf6e314e11",
+      "head_change_note": "Head advanced c993e81cd -> 1888515e0 AFTER the soak clock started. The delta is DOCUMENTATION ONLY (CLAUDE.md + docs/reference/STAGING_RIG.md): it retracts a now-false claim that the standing staging rig was gone, which became false when the rig was rebuilt 2026-08-19/20. Migration 0414 is byte-identical across the change (sha256 e6f853028241... verified before and after), and no worker/runtime/tested code differs. Per CLAUDE.md 1.11A, exact-head invalidation applies to runtime, migration, or tested-code commits; a doc-only commit is none of these, so the soak evidence carries forward under this explicit residual-risk note rather than requiring a re-soak. The soaked artifact remains the union branch rc/migration-t3-wave-2026-08 @ 3baf16015, built from head_sha_soaked."
     }
   ],
   "excluded_prs": [],
@@ -59,7 +69,7 @@
     "image_digest": "sha256:b64f08428f8b67d4ecc6c41e34d87c67c40c585ea499e2bc301e9e1d7514808f",
     "supabase_project_ref": "fizyjojbebyalirtjjht",
     "deploy_log_id": "local-buildx-linux-amd64-2026-08-20T14:00Z",
-    "preflight_result": "environment_type=fixture_seeded (post-migration re-run; ledger-hygiene checks all pass — divergence is the expected repo-ahead-of-rig signal from applying this wave's own migrations, not contamination; see soak-start-2026-08-20.md §Preflight for the full explanation, including why this is honestly NOT clean_mirror)"
+    "preflight_result": "environment_type=fixture_seeded (post-migration re-run; ledger-hygiene checks all pass \u2014 divergence is the expected repo-ahead-of-rig signal from applying this wave's own migrations, not contamination; see soak-start-2026-08-20.md \u00a7Preflight for the full explanation, including why this is honestly NOT clean_mirror)"
   },
   "soak": {
     "start": "2026-08-20T14:00:22Z",
@@ -81,9 +91,9 @@
       "0413_bug011_calibration_features_view.sql",
       "0414_sec_replay_missing_anon_revokes.sql"
     ],
-    "order_note": "Strictly serial numeric order, apply-then-merge-then-next when this wave eventually lands — never batched. 0414 has a real load-bearing dependency on 0411 (CREATE OR REPLACE re-triggers ALTER DEFAULT PRIVILEGES on cleanup_expired_data, re-opening the anon grant 0414 closes, if 0414 ran first). Confirmed live via the PM-1 standalone check after 0414 applied.",
-    "rollback_proof": "DONE for all 5/5 — apply→confirm→rollback→confirm→re-apply→confirm rehearsed live against rig fizyjojbebyalirtjjht 2026-08-20, in the §2-mandated order (0410 first — destructive if CAS data exists; 0414 last — rolled-back state is a live security hole, minimized exposure window). Full detail in docs/staging/migration-t3-soak-2026-08/soak-start-2026-08-20.md.",
-    "reapply_proof": "DONE for the same 5 — see rollback_proof. Ledger reconciled to the numeric prefix after every apply/re-apply per CLAUDE.md §0 rule 10; rehearsal-only timestamp ledger rows deleted after each cycle so the final ledger carries exactly one row per real migration file.",
+    "order_note": "Strictly serial numeric order, apply-then-merge-then-next when this wave eventually lands \u2014 never batched. 0414 has a real load-bearing dependency on 0411 (CREATE OR REPLACE re-triggers ALTER DEFAULT PRIVILEGES on cleanup_expired_data, re-opening the anon grant 0414 closes, if 0414 ran first). Confirmed live via the PM-1 standalone check after 0414 applied.",
+    "rollback_proof": "DONE for all 5/5 \u2014 apply\u2192confirm\u2192rollback\u2192confirm\u2192re-apply\u2192confirm rehearsed live against rig fizyjojbebyalirtjjht 2026-08-20, in the \u00a72-mandated order (0410 first \u2014 destructive if CAS data exists; 0414 last \u2014 rolled-back state is a live security hole, minimized exposure window). Full detail in docs/staging/migration-t3-soak-2026-08/soak-start-2026-08-20.md.",
+    "reapply_proof": "DONE for the same 5 \u2014 see rollback_proof. Ledger reconciled to the numeric prefix after every apply/re-apply per CLAUDE.md \u00a70 rule 10; rehearsal-only timestamp ledger rows deleted after each cycle so the final ledger carries exactly one row per real migration file.",
     "stop_conditions": [
       "worker uptime < 48h at merge time (soak not matured)",
       "any /api/health regression during the soak window",
@@ -104,9 +114,9 @@
     "timestamp": ""
   },
   "exceptions": [
-    "Full CAS lifecycle + sponsor-org 403 + self-provision-block for #2219's router not exercised via real HTTP this session — blocked by arkova-worker-staging's --no-allow-unauthenticated Cloud Run IAM layer sharing the Authorization header with the app's own requireAuthMw user-JWT check. DB-level RLS/grant/uniqueness checks ARE done and pass. Manual follow-up documented in soak-start-2026-08-20.md.",
-    "BUG-019 (0411) forced-timeout graceful-degradation does not hold under this rig's role-level statement_timeout config — real, reproduced finding, not yet fixed. See soak-start-2026-08-20.md and included_prs[1].rollback_note.",
-    "Sustained-load backdrop launched for 90 minutes at wave-start (~7.5-7.9k req/hour, within the 5k-10k mandate) but does not on its own cover the full 48h — needs periodic re-launch through the window; exact command in soak-start-2026-08-20.md.",
-    "Second BUG-009 ANALYZE cycle, Monday-3am calibration-refit scheduled firing (does not fall inside this specific 48h window), calibration_features RLS-invoker as a real non-service_role session, full credential-expiry webhook-payload validation, and 0414 idempotency re-run diff are all window tasks not yet run — see soak-start-2026-08-20.md §What ran vs manual follow-up."
+    "Full CAS lifecycle + sponsor-org 403 + self-provision-block for #2219's router not exercised via real HTTP this session \u2014 blocked by arkova-worker-staging's --no-allow-unauthenticated Cloud Run IAM layer sharing the Authorization header with the app's own requireAuthMw user-JWT check. DB-level RLS/grant/uniqueness checks ARE done and pass. Manual follow-up documented in soak-start-2026-08-20.md.",
+    "BUG-019 (0411) forced-timeout graceful-degradation does not hold under this rig's role-level statement_timeout config \u2014 real, reproduced finding, not yet fixed. See soak-start-2026-08-20.md and included_prs[1].rollback_note.",
+    "Sustained-load backdrop launched for 90 minutes at wave-start (~7.5-7.9k req/hour, within the 5k-10k mandate) but does not on its own cover the full 48h \u2014 needs periodic re-launch through the window; exact command in soak-start-2026-08-20.md.",
+    "Second BUG-009 ANALYZE cycle, Monday-3am calibration-refit scheduled firing (does not fall inside this specific 48h window), calibration_features RLS-invoker as a real non-service_role session, full credential-expiry webhook-payload validation, and 0414 idempotency re-run diff are all window tasks not yet run \u2014 see soak-start-2026-08-20.md \u00a7What ran vs manual follow-up."
   ]
 }
