@@ -60,6 +60,18 @@ Renaming the variable is a follow-up; pointing it at a channel that exists matte
 
 **Verification standard for anything added here.** Creating an alert policy is not evidence it works — that is the same mistake in a new costume. Cloud Monitoring exposes no public incidents API, so the way to prove delivery is the Pub/Sub channel above: trigger the condition (write a matching log line via `logging.googleapis.com/v2/entries:write`, or stand up a negative-control clone of the policy), then pull `alert-delivery-proof-sub` and read the incident payload. If a policy cannot be shown to have opened an incident and dispatched, it does not count.
 
+## 2026-08-18 — `queue-digest` NOT_SCHEDULED reason updated for the default-on flip (`feat/queue-digest-default-on`, draft, T2)
+
+`ENABLE_QUEUE_DIGEST` is flipping true (deploy-worker.yml) and per-org enrollment is flipping from
+opt-in to default-on/opt-out in the same PR (see `services/worker/src/jobs/agents.md`). The
+`/jobs/queue-digest` `NOT_SCHEDULED` entry's OLD reason text ("ENABLE_QUEUE_DIGEST off; user-facing
+digest emails are a product call") would have gone stale the moment that PR merged — the flag is no
+longer off, and delivery is now default-on rather than a per-org opt-in decision. Updated to record
+the real current reason (flag/enrollment change just shipped; the Scheduler binding itself is a
+separate, not-yet-performed manual step) and the schedule to bind it at once someone runs this script:
+`0 13 * * *`, matching `platform-health-digest`'s cadence right below it in `NOT_SCHEDULED`. Same
+follow-up instruction as that entry: move from `NOT_SCHEDULED` to `JOBS`, don't just delete the line.
+
 ## Conventions
 
 - Requires `gcloud auth login` with project-admin role on `arkova1`.

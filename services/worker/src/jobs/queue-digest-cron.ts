@@ -12,6 +12,17 @@
  *     suppression record. This keeps the change off the migration surface
  *     (T2, not a schema change) and off proof/chain/merkle runtime.
  *
+ * Enrollment (CTO decision, post-2026-08 flip): DEFAULT-ON. Every org with an
+ * ORG_ADMIN is enrolled unless it holds an explicit opt-out — an
+ * `organization_rules` row with `trigger_type='QUEUE_DIGEST'` and
+ * `enabled=false`, created via the existing Rule Builder toggle. Absence of a
+ * row = enrolled. See `listQueueDigestPreferences` / `isOrgEnrolledInQueueDigest`.
+ * This table used to be an opt-IN store (only an enabled row counted); it is
+ * now reused as the opt-OUT store instead — same table, flipped polarity.
+ * An enrolled org whose queue is entirely empty still gets skipped downstream
+ * (`SKIPPED_EMPTY` in `deliverDigestToAdmin`) so default-on never becomes
+ * inbox noise for a quiet org.
+ *
  * §1.6: the metrics readers select COUNTS ONLY — never a document column,
  * filename, fingerprint, or body. `assertNoRawContent` in the engine is the
  * runtime backstop. §1.4: service-role db only; no secrets logged.
@@ -278,19 +289,6 @@ export async function listOrgAdmins(database: DigestDb): Promise<AdminRecipient[
 }
 
 /**
- * Per-org QUEUE_DIGEST opt-in: the set of org ids that have an ENABLED
- * `organization_rules` row with `trigger_type = 'QUEUE_DIGEST'`. This is the
- * SAME contract the existing scheduler uses (see `queue-reminders.ts`'s
- * `.from('organization_rules').eq('enabled', true).in('trigger_type', [...,
- * 'QUEUE_DIGEST'])`) — an enabled QUEUE_DIGEST rule IS the org's opt-in record
- * (documented in `queue-digest.ts`). The global ENABLE_QUEUE_DIGEST flag only
- * gates whether the JOB runs; this gates WHICH orgs may be emailed, so an org
- * that never opted in is never enumerated, never metered, never mailed.
- *
- * Fails CLOSED: on a read error or non-array result, returns an empty set so we
- * never email orgs we could not confirm opted in.
- */
-/**
  * F4 (per-rule cadence): the daily digest cron runs once a day, but a
  * QUEUE_DIGEST rule may carry a `trigger_config.cron` (+ optional `timezone`)
  * expressing a coarser cadence (weekly, monthly, weekdays-only). The digest is
@@ -358,36 +356,93 @@ export function isDigestRuleDueToday(
   );
 }
 
-export async function listDigestOptedInOrgIds(
+/** One org's QUEUE_DIGEST Rule Builder preference row. */
+export interface QueueDigestPreference {
+  enabled: boolean;
+  triggerConfig: unknown;
+}
+
+/**
+ * DEFAULT-ON enrollment (CTO decision, post-2026-08 flip of QUEUE-07): reads
+ * every `organization_rules` row with `trigger_type = 'QUEUE_DIGEST'`,
+ * regardless of `enabled`, keyed by org id. The digest used to be opt-in (only
+ * an ENABLED row counted); it is now default-on for every org with an
+ * ORG_ADMIN, and this table is reused as the OPT-OUT store instead: an org
+ * with NO row is enrolled, and a row with `enabled = false` is that org's
+ * explicit opt-out via the existing Rule Builder UI. A row with
+ * `enabled = true` is the pre-flip legacy opt-in shape — still honored, and
+ * its `trigger_config.cron` still overrides the digest's cadence (F4), for
+ * backward compatibility with any org that already built a custom schedule.
+ *
+ * Deliberately does NOT filter on `enabled` server-side (unlike the old
+ * opt-in query) — a disabled row must come back too, since disabled is
+ * exactly what signals an opt-out here.
+ *
+ * Fails CLOSED on a read error: returns `null` (not an empty Map) so the
+ * caller can tell "confirmed nobody has a preference row" (real empty Map —
+ * every org enrolled) apart from "we could not read the opt-out store" (null
+ * — treat every org as NOT enrolled this pass, see `isOrgEnrolledInQueueDigest`).
+ * The digest is default-on, so an unreadable opt-out store must never risk
+ * overriding an org's real opt-out by defaulting everyone to enrolled.
+ */
+export async function listQueueDigestPreferences(
   database: DigestDb,
-  now: Date = new Date(),
-): Promise<Set<string>> {
-  // Intentional cross-org discovery: this is the daily-digest opt-in scan over
-  // ALL orgs' QUEUE_DIGEST rules, run on the service-role client. There is no
-  // single caller org to filter to — and the result is used only to RESTRICT
-  // (fail-closed) which orgs may be emailed, never to widen access. Same
-  // exemption the sibling cron jobs use (queue-reminders.ts:155,
+): Promise<Map<string, QueueDigestPreference> | null> {
+  // Intentional cross-org discovery: this is the daily-digest preference scan
+  // over ALL orgs' QUEUE_DIGEST rules, run on the service-role client. There
+  // is no single caller org to filter to — and the result is used only to
+  // RESTRICT (fail-closed) which orgs may be emailed, never to widen access.
+  // Same exemption the sibling cron jobs use (queue-reminders.ts:155,
   // rule-action-dispatcher.ts:126) — only the missing-org-filter half applies
   // here since this query uses the typed `DigestDb`, not a `db as any` cast.
   // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data, error } = await database
     .from('organization_rules')
-    .select('org_id, trigger_config')
-    .eq('enabled', true)
+    .select('org_id, enabled, trigger_config')
     .eq('trigger_type', 'QUEUE_DIGEST')
     .limit(10000);
   if (error || !Array.isArray(data)) {
-    logger.warn({ error }, 'digest: failed to list QUEUE_DIGEST opt-in orgs — treating as none opted in');
-    return new Set<string>();
+    logger.warn(
+      { error },
+      'digest: failed to read QUEUE_DIGEST preferences — fail-closed: nobody enrolled this pass',
+    );
+    return null;
   }
-  const ids = new Set<string>();
-  for (const row of data as Array<{ org_id: string | null; trigger_config: unknown }>) {
-    // F4: only enumerate an org whose QUEUE_DIGEST rule cadence is due today
-    // (per-rule cron/timezone; daily by default). A weekly/custom rule that is
-    // not due today is skipped instead of emailed every day.
-    if (row.org_id && isDigestRuleDueToday(row.trigger_config, now)) ids.add(row.org_id);
+  const prefs = new Map<string, QueueDigestPreference>();
+  for (const row of data as Array<{
+    org_id: string | null;
+    enabled: boolean | null;
+    trigger_config: unknown;
+  }>) {
+    if (!row.org_id) continue;
+    prefs.set(row.org_id, {
+      enabled: row.enabled !== false,
+      triggerConfig: row.trigger_config,
+    });
   }
-  return ids;
+  return prefs;
+}
+
+/**
+ * Whether an org is enrolled in today's digest pass. DEFAULT-ON: enrolled
+ * unless it holds an explicit `enabled = false` QUEUE_DIGEST preference row
+ * (opt-out), and — when enrolled — due today per that row's cadence (F4). An
+ * enrolled org with no row at all is daily by default.
+ *
+ * `prefs === null` means the preference read itself failed; every org is
+ * treated as NOT enrolled that pass regardless of any per-org state, so a
+ * transient read failure can never accidentally re-enroll an org that opted
+ * out.
+ */
+export function isOrgEnrolledInQueueDigest(
+  prefs: Map<string, QueueDigestPreference> | null,
+  orgId: string,
+  now: Date,
+): boolean {
+  if (prefs === null) return false;
+  const pref = prefs.get(orgId);
+  if (pref && pref.enabled === false) return false; // explicit opt-out
+  return isDigestRuleDueToday(pref?.triggerConfig, now);
 }
 
 /**
@@ -529,13 +584,17 @@ export async function runDailyQueueDigest(
 
   const store = createAuditBackedStore(database);
 
-  // Per-org opt-in gate: only orgs with an ENABLED `organization_rules`
-  // QUEUE_DIGEST rule may be emailed. An admin in a non-opted-in org is never
-  // enumerated, never has metrics built, and never receives mail — even when
-  // its queue is non-empty and the global flag is on.
-  const optedInOrgIds = await listDigestOptedInOrgIds(database, now);
+  // DEFAULT-ON enrollment gate: every org is enrolled unless it holds an
+  // explicit opt-out (organization_rules row, trigger_type='QUEUE_DIGEST',
+  // enabled=false). An org that opted out is never enumerated, never has
+  // metrics built, and never receives mail — even when its queue is
+  // non-empty and the global flag is on. A quiet (all-zero) enrolled org
+  // still gets counted here but is skipped downstream by
+  // `deliverDigestToAdmin` (SKIPPED_EMPTY) — enrollment and "has anything to
+  // report" are separate gates.
+  const preferences = await listQueueDigestPreferences(database);
   const allAdmins = await listOrgAdmins(database);
-  const admins = allAdmins.filter((a) => optedInOrgIds.has(a.adminOrgId));
+  const admins = allAdmins.filter((a) => isOrgEnrolledInQueueDigest(preferences, a.adminOrgId, now));
   result.admins = admins.length;
 
   // Per-org-name memo so a multi-admin org reads its name once.
