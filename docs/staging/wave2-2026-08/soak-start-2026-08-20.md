@@ -251,22 +251,42 @@ STAGING_CRON_SECRET=<cron-secret> \
   npm run staging:load -- --mode mixed --duration 90 --evidence-out docs/staging/wave2-2026-08/load-harness-1.json
 ```
 
-Launched `2026-08-20T15:55:04.488Z`. At the time this document was written
-(~19 min in): **total ≈3,053 requests, sustained rate ≈2.7 req/s ≈ 9,700
-req/hour** — inside the mandated 5k–10k req/hour band. `cron` mode ran 100%
-clean (`20/20` `200`s). `events`/`reads`/`webhook` returned mostly
+Launched `2026-08-20T15:55:04.488Z`.
+
+**Final outcome, corrected from the original write-up above (matching the
+migration-T3 precedent's own honest-disclosure pattern for the identical
+failure mode):** the process was killed when the launching agent session
+ended, at **`t+3541s` (≈59 minutes elapsed, not the full 90-minute duration
+requested) — 9,474 total requests** logged in that window, sustained rate
+holding steady at **~2.7 req/s (≈9,700 req/hour)** the entire time, inside
+the mandated 5k–10k req/hour band throughout. It did not crash and was not
+superseded — it was terminated by the session boundary, exactly the risk
+flagged before launch. `cron` mode ran **100% clean the entire run — `60/60`
+`200`s**, zero failures. `events`/`reads`/`webhook` returned mostly
 `401`/`429`/`503` because `STAGING_API_KEY` was not set for this launch — the
 harness's own header documents this as valid soak data (it still exercises
-the middleware/rate-limiter/logging chain under load).
+the middleware/rate-limiter/logging chain under load). No `--evidence-out`
+JSON was written (the harness only writes it on a clean exit at the
+requested duration, not on external kill), so
+`docs/staging/wave2-2026-08/load-harness-1.json` does **not** exist — the
+per-mode counts above are transcribed from the harness's own stdout log, not
+from that file.
 
-**Honest disclosure, matching the migration-T3 precedent's own caveat:** a
-background shell process launched from an interactive agent session cannot
-outlive that session with certainty. The 90-minute run may or may not
-complete the full duration depending on when this session ends — **relaunch
-periodically for the remainder of the 12h window** using the exact command
-above (bump `--evidence-out` to `load-harness-N.json` per relaunch) to keep
-volume/concurrency present for the full window, per §1.12's evidence
-standard.
+**This ~59-minute run does not cover the full 12h window on its own** — no
+single CLI session can guarantee a continuously-running background process
+for 12 hours, and this run's own early termination is direct proof of that
+limit, not just a theoretical caveat. **Manual follow-up, stated plainly:**
+re-launch the same command periodically (e.g. via a persistent terminal, a
+Cloud Scheduler job hitting the tag URL, or a supervised long-running
+process) to keep the volume/concurrency backdrop present for the remaining
+~11 hours of the window, per §1.12's evidence standard. Exact command:
+
+```
+STAGING_API_BASE="https://train-w2---arkova-worker-wave2-2026-08-staging-kvojbeutfa-uc.a.run.app" \
+STAGING_CRON_SECRET=<cron-secret> \
+  npm run staging:load -- --mode mixed --duration <minutes> \
+  --evidence-out docs/staging/wave2-2026-08/load-harness-<n>.json
+```
 
 ## §2 driver plan — per-member results
 
