@@ -758,8 +758,9 @@ export function partitionAgainstAllowlist(
 /**
  * @param rawCopyContinuation PR #1433 follow-up: true when {@link scanFileContent}
  *   determined this line is RAW COPY continued from a previous line — the
- *   middle of a wrapped `<p>…</p>` JSX paragraph, or (§1.3 worker-email parity)
- *   the middle of a wrapped paragraph inside an email template literal. Such a
+ *   middle of a wrapped `<p>…</p>` JSX paragraph, or the middle of a wrapped
+ *   paragraph inside a multi-line template literal (worker email HTML, the
+ *   src/lib/copy.ts disclaimer, an embed-widget string). Such a
  *   line often has neither a quote char nor a same-line `<`/`>` pair, so the
  *   quote/JSX short-circuit below would skip it — the blind spot that let the
  *   literal "Bitcoin blockchain" ship to prod in src/components/verification.
@@ -1136,15 +1137,22 @@ function updateJsxTextState(line: string, state: JsxTextState): void {
 }
 
 // =============================================================================
-// §1.3 worker-email parity — cross-line TEMPLATE-LITERAL text tracking.
+// Cross-line TEMPLATE-LITERAL text tracking — the non-JSX half of PR #1433.
 //
-// Worker email bodies are HTML inside a multi-line template literal, so they
-// have the SAME blind spot the JSX tracker above closes for .tsx: a wrapped
-// paragraph's middle line
+// Copy inside a multi-line template literal has the SAME blind spot the JSX
+// tracker above closes for .tsx: a wrapped paragraph's middle line
 //     `      secured to the Bitcoin blockchain and can be verified at any time.`
 // carries no quote char and no same-line `<`/`>` pair, so findTermViolations
-// short-circuited and the term shipped. The JSX machine cannot help — it only
-// runs on .tsx, and worker email modules are .ts.
+// short-circuits on `!hasString && !hasJsxText` and the term ships. The JSX
+// machine cannot help — it only runs on .tsx.
+//
+// Worker email bodies were the first instance (HTML inside a template
+// literal). The frontend `.ts` roots INCLUDE_ROOTS already admits have it too,
+// and the motivating case is `src/lib/copy.ts` itself: DISCLAIMER_LABELS.body
+// is the platform legal disclaimer — the most compliance-sensitive string we
+// ship — and every line after the first was unscanned. So the gate was green
+// over the one paragraph §1.3 most exists to police, in the very file its
+// failure message points offenders at.
 //
 // Deliberately minimal: one boolean (are we inside an unterminated backtick
 // string?), no JSX/tag parsing. Only lines that are FULLY inside a template
@@ -1153,10 +1161,30 @@ function updateJsxTextState(line: string, state: JsxTextState): void {
 // between tags, with the URL/quoted-value suppressions intact).
 // =============================================================================
 
-/** True for files whose template literals are email copy (worker, non-JSX). */
+/**
+ * True for every scanned file that is NOT .tsx — the exact complement of
+ * `trackJsx`, so each file gets exactly ONE cross-line raw-copy tracker.
+ *
+ * Scope is the whole non-.tsx in-scope set rather than a second root list:
+ * INCLUDE_ROOTS (+ the worker copy roots and detected composers) is already
+ * the curated "this is user-visible copy" admission decision, and a parallel
+ * list would be free to drift from it — the exact failure collectCandidateFiles
+ * exists to prevent. A content detector is the wrong tool here too: the worker
+ * needs `isEmailCopyComposer` because services/worker/src is overwhelmingly
+ * internal code, which §1.3 explicitly permits to use technical names; the
+ * frontend roots are the opposite, and such a detector would have excluded the
+ * copy.ts disclaimer that motivated this.
+ *
+ * The false-positive vectors this guards against are excluded structurally,
+ * not by luck: block-comment lines `continue` in scanFileContent BEFORE the
+ * tracker advances (so JSDoc's stray backticks can never open a literal),
+ * single-line literals open no continuation, and any line carrying `<` keeps
+ * the normal per-line path (SVG/HTML builders like src/lib/badgeSvg.ts).
+ * Measured over the in-scope frontend: 7 force-scanned lines total, 6 of them
+ * the copy.ts disclaimer and 1 a `${…}` interpolation.
+ */
 function tracksTemplateText(filePath: string): boolean {
-  const rel = toRelativePosix(filePath);
-  return !rel.endsWith('.tsx') && rel.startsWith(WORKER_SRC_ROOT);
+  return !filePath.endsWith('.tsx');
 }
 
 /**
@@ -1183,12 +1211,12 @@ function updateTemplateTextState(line: string, state: { inTemplate: boolean }): 
 
 /**
  * Scan one file's CONTENT line-by-line, carrying block-comment state (as
- * before) plus the cross-line JSX-text state machine and — for worker email
- * modules — the template-literal text tracker. A line is force-scanned as raw
- * copy when we are inside JSX element text (or inside an email template
- * literal), no tag or `{…}` expression is spanning lines, and the line itself
- * has no angle bracket (lines WITH tags are handled by the normal per-line
- * rules). Exported for unit tests; checkFile() delegates here.
+ * before) plus ONE cross-line raw-copy tracker per file: the JSX-text state
+ * machine for `.tsx`, the template-literal text tracker for everything else.
+ * A line is force-scanned as raw copy when we are inside JSX element text (or
+ * inside a template literal), no tag or `{…}` expression is spanning lines,
+ * and the line itself has no angle bracket (lines WITH tags are handled by the
+ * normal per-line rules). Exported for unit tests; checkFile() delegates here.
  */
 export function scanFileContent(content: string, filePath: string): Violation[] {
   const violations: Violation[] = [];
@@ -1248,8 +1276,8 @@ export function scanFileContent(content: string, filePath: string): Violation[] 
       !jsx.inTemplate &&
       !line.includes('<');
 
-    // Same rule for an email template literal: fully INSIDE it (state was open
-    // at line start and the line neither closes nor reopens one) and no tag.
+    // Same rule for a template literal: fully INSIDE it (state was open at
+    // line start and the line neither closes nor reopens one) and no tag.
     const isTemplateTextContinuation =
       trackTemplateText && template.inTemplate && !line.includes('`') && !line.includes('<');
 
