@@ -234,7 +234,7 @@ export function run(): { ok: boolean; message: string } {
   // regression on that exact key. Enforced here AND in the vitest file so a
   // direct run cannot false-all-clear on a rotted baseline.
   const live = new Set(all.map((v) => v.key));
-  const stale = [...baseline].filter((k) => !live.has(k)).sort();
+  const stale = [...baseline].filter((k) => !live.has(k)).sort((a, b) => a.localeCompare(b));
 
   if (fresh.length === 0 && stale.length === 0) {
     return {
