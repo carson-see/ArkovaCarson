@@ -249,6 +249,19 @@ dedicated standalone service like this one. Wrote
 `GET /.well-known/arkova-keys.json` (~12/min), plus both digest cron jobs
 fired every 5 minutes. First chunk: 2026-08-20T16:46Z → 2026-08-20T17:31Z
 (2700s), evidence at `docs/staging/wave3-2026-08/soak-load-chunk1-20260820.json`.
+**Result: 1523 requests, 0 failures, 9 cron cycles (each firing both
+`/jobs/queue-digest` and `/jobs/platform-health-digest`) — zero 5xx over the
+full 45-minute chunk.** Cross-checked independently via `gcloud logging read`
+against the live service for the same window. Note on the evidence file
+itself: the load loop's own JSON write failed mid-run (`No such file or
+directory`) because this session switched git branches while the script was
+still running in the background, which removed the untracked
+`docs/staging/wave3-2026-08/` directory out from under it (it only existed as
+tracked content on `soak/day0-fullsoak-2026-08-docs` at that moment, not on
+`rc/wave3-2026-08`). The numbers above are the script's own surviving stderr
+summary line, reconstructed into the JSON file after the fact — not
+re-derived or estimated. Full explanation in the evidence file's own
+`note_evidence_reconstruction` field.
 
 ## Per-member evidence
 
