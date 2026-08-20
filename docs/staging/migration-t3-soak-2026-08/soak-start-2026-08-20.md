@@ -226,6 +226,24 @@ confirmed final `list_migrations` output above.
 
 ## Real finding: BUG-019's lock-contention fix does not achieve graceful degradation under this rig's role config
 
+> **UPDATE (2026-08-20, later the same day):** this finding was picked up and
+> given a full root-cause diagnosis in
+> [`FD-RETENTION-1-timeout-inversion.md`](./FD-RETENTION-1-timeout-inversion.md)
+> (`docs/staging/migration-t3-soak-2026-08/`), which traces the exact
+> mechanism (`0411` sets `lock_timeout` but never `statement_timeout`; prod's
+> ambient `authenticator.statement_timeout=60s` gives the function's 5s
+> `lock_timeout` a 55s head start, so the designed path holds in prod today —
+> the rig's tight `8s` ambient value is what inverts the race there) and
+> carries a **CTO ruling**: **the 48h clock stands, not restarted** — the
+> defect doesn't manifest under prod's current config, so pausing the soak
+> would spend 48h without reducing prod risk — but two follow-ups are
+> required before `#2235` ships: (1) a compensating migration adding an
+> explicit `statement_timeout` guard (never an edit to `0411`), and (2) align
+> the rig's ambient `statement_timeout`/`lock_timeout` to prod's values in
+> `STAGING_RIG.md`'s provisioning procedure. The original observation below
+> is preserved as-is — it is the source evidence that diagnosis cites, not
+> superseded by it.
+
 Per §2's explicit instruction to test the forced-timeout branch, not just the
 happy path. Held `audit_events IN ACCESS EXCLUSIVE MODE` via a direct psql
 session (Supabase pooler — the direct `db.<ref>.supabase.co` host is
@@ -403,20 +421,30 @@ refuses the untagged shared hostname, by design — tag URLs route to a
 specific revision regardless of live traffic split, so this correctly targets
 the same revision now serving 100% of base-URL traffic too).
 
-- Started `2026-08-20T14:17:01.957Z`, sustaining **~2.1–2.2 req/s** (≈
-  7,500–7,900 req/hour) across `events` / `reads` / `cron` / `webhook`
-  modes — within the mandated 5k–10k req/hour band, **not** a single
-  probe. `cron` mode runs clean (`200`s throughout); `events`/`reads`/
-  `webhook` return mostly `401`/`429`/`503` because `STAGING_API_KEY` was not
-  set for this launch (expected and documented in the harness's own header:
-  "401/403 from app-layer auth IS valid soak data" — it exercises the
-  middleware/rate-limiter/logging chain under load either way). Evidence
-  JSON will land at
+- Started `2026-08-20T14:17:01.957Z`, sustaining **~2.1–2.6 req/s** (≈
+  7,500–9,390 req/hour, climbing over the run) across `events` / `reads` /
+  `cron` / `webhook` modes — within the mandated 5k–10k req/hour band,
+  **not** a single probe. `cron` mode ran clean throughout (`60/60` `200`s
+  at the point it stopped); `events`/`reads`/`webhook` returned mostly
+  `401`/`429`/`503` because `STAGING_API_KEY` was not set for this launch
+  (expected and documented in the harness's own header: "401/403 from
+  app-layer auth IS valid soak data" — it exercises the
+  middleware/rate-limiter/logging chain under load either way).
+  **Final outcome, corrected from the original write-up above:** the
+  process was killed when the launching agent session ended, at
+  `t+3569s` (≈59.5 minutes elapsed, not the full 90-minute duration
+  requested) — **9,316 total requests** logged in that window. It did not
+  crash and was not superseded; it was terminated by the session boundary.
+  No `--evidence-out` JSON was written (the harness only writes it on a
+  clean exit at the requested duration, not on external kill), so
   `docs/staging/migration-t3-soak-2026-08/load-harness-launch-evidence.json`
-  when this run completes or is superseded.
-- **This 90-minute run does not cover the full 48h window on its own** — no
+  does **not** exist — the per-mode counts above are transcribed from the
+  harness's own stdout log, not from that file.
+- **This ~1-hour run does not cover the full 48h window on its own** — no
   single CLI session can guarantee a continuously-running background process
-  for 48 hours. **Manual follow-up, stated plainly:** re-launch this same
+  for 48 hours, and this run's own early termination is direct proof of
+  that limit, not just a theoretical caveat. **Manual follow-up, stated
+  plainly:** re-launch this same
   command periodically (e.g. via a persistent terminal, a Cloud Scheduler job
   hitting the tag URL, or a supervised long-running process) to keep the
   volume/concurrency backdrop present for the full window, especially during
