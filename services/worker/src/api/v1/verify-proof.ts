@@ -20,6 +20,11 @@ import {
   proofAvailabilityFields,
   type ProofAvailability,
 } from '../../constants/proofAvailability.js';
+import {
+  connectorFingerprintRederivabilityFields,
+  resolveConnectorFetchSource,
+  type FingerprintRederivability,
+} from '../../constants/connectorFingerprint.js';
 import { fromByteaHex } from '../../utils/anchorProofs.js';
 import { createSignedBundle, staticEd25519Signer, type SignerFn } from '../../proof/signed-bundle.js';
 import { buildBoundProofPayload } from '../../proof/did-binding.js';
@@ -199,6 +204,21 @@ export interface MerkleProofResponse {
    * `null` when the two-layer proof is incomplete (Constitution §1.8 / §1.5).
    */
   proof_bundle: ProofBundle | null;
+  /**
+   * BUG-2026-08-13-010 (§1.5 / §1.6A): present only for connector-sourced
+   * records — the fingerprint commits the exact bytes fetched from the
+   * connected source at fetch time; re-fetching is NOT expected to reproduce
+   * it. Response-level on purpose: NEVER inside `proof_bundle` (that object is
+   * the signed / independently-verifiable artifact and its shape must not
+   * grow a prose field). Omitted, never null, when not measured. Additive —
+   * Constitution §1.8.
+   */
+  fingerprint_rederivability?: FingerprintRederivability;
+  /**
+   * The §1.5 measured / asserted / NOT-asserted statement for
+   * `fingerprint_rederivability`. Present exactly when it is.
+   */
+  fingerprint_rederivability_note?: string;
 }
 
 /**
@@ -587,6 +607,13 @@ export function buildProofResponse(
     verified: inclusion.valid,
     // PROOF-05 (SCRUM-2338): additive, nullable self-contained bundle.
     proof_bundle: buildProofBundle(anchor, proofSource, leafCount),
+    // BUG-2026-08-13-010 (§1.5/§1.6A): connector-sourced fingerprints attest
+    // fetch-time bytes, not source re-derivability. Response-level only —
+    // never inside the (signable) proof_bundle. Spread emits the indivisible
+    // pair for a measured connector marker and NOTHING otherwise.
+    ...(resolveConnectorFetchSource(anchor.metadata)
+      ? connectorFingerprintRederivabilityFields()
+      : {}),
   };
 }
 

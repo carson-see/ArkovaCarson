@@ -266,3 +266,7 @@ oracle call in this service and `jobs/treasury-cache.ts` owns it (every 10 min �
 - **`BTC_PRICE_MEMO_TTL_MS` (60 s) must stay well under the cron's 10-minute period**, or the memo
   becomes staler than the row it caches. Failures memoize too, and concurrent callers share one
   in-flight read — an outage must not turn every gated request into a DB round trip.
+
+## 2026-08-15 BUG-2026-08-13-010 — `verifyCache.ts` KEY_PREFIX v5 → v6
+
+Response-shape change per the bump rule in the file header: connector-sourced records now carry the `fingerprint_rederivability` class + §1.5 note (see `constants/connectorFingerprint.ts`). Without the bump, a connector anchor cached pre-deploy serves a response with NO re-derivability statement for the whole TTL — the exact honesty gap the change closes.

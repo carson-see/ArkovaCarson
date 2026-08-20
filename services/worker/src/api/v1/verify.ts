@@ -23,6 +23,12 @@ import {
   proofAvailabilityFields,
   type ProofAvailability,
 } from '../../constants/proofAvailability.js';
+import {
+  connectorFingerprintRederivabilityFields,
+  isConnectorFetchSource,
+  resolveConnectorFetchSource,
+  type FingerprintRederivability,
+} from '../../constants/connectorFingerprint.js';
 import { hasServableProofBranch } from '../../utils/proofBranch.js';
 import { getCachedVerification, setCachedVerification } from '../../utils/verifyCache.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
@@ -221,6 +227,23 @@ export interface VerificationResult {
    * `proof_availability` is, so a class never travels without its meaning.
    */
   proof_availability_note?: string;
+  /**
+   * BUG-2026-08-13-010 (§1.5 / §1.6A): how this record's fingerprint relates
+   * to its source. `fetch_time_snapshot` = the fingerprint commits the exact
+   * bytes Arkova retrieved from a connected third-party source at fetch time;
+   * re-fetching the source document is NOT expected to reproduce it (source
+   * systems may regenerate the file per request — proven against DocuSign
+   * during the 2026-08 soak). Emitted only for connector-sourced records
+   * (§1.6A); OMITTED otherwise — absence means "no re-derivability statement",
+   * never "re-derivable". Additive nullable — Constitution 1.8.
+   */
+  fingerprint_rederivability?: FingerprintRederivability;
+  /**
+   * The measured / asserted / NOT-asserted statement for
+   * `fingerprint_rederivability` (Constitution 1.5). Present exactly when it
+   * is, so the class never travels without its meaning.
+   */
+  fingerprint_rederivability_note?: string;
   error?: string;
 }
 
@@ -340,6 +363,17 @@ export interface AnchorByPublicId {
    * anchor.
    */
   has_stored_proof_branch?: boolean | null;
+  /**
+   * BUG-2026-08-13-010: the server-written `metadata->>'connector_source'`
+   * marker, resolved through `resolveConnectorFetchSource` (closed set, never
+   * free text). TRI-STATE like `has_stored_proof_branch`:
+   *   a marker  — connector-sourced → emit the re-derivability pair
+   *   `null`    — measured, not connector-sourced (or unrecognised marker)
+   *   absent    — NOT MEASURED (paths that never load metadata) → stay silent
+   * Both `null` and absent omit the fields; the distinction is documentary —
+   * either way no §1.5 statement is emitted without a measured marker.
+   */
+  connector_source?: string | null;
 }
 
 /**
@@ -526,6 +560,20 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     Object.assign(result, proofAvailabilityFields(anchor.has_stored_proof_branch));
   }
 
+  // BUG-2026-08-13-010 (§1.5 / §1.6A): a connector-sourced fingerprint commits
+  // the exact bytes fetched at that moment — re-fetching the source document is
+  // NOT expected to reproduce it (source systems may re-render per request).
+  // Emitted as an indivisible class+note pair, keyed on the closed-set marker
+  // resolved in mapAnchorRow; anchors without a measured marker (client
+  // uploads, CSV row-mode, batch/oracle paths that never load metadata) OMIT
+  // both fields — silence is not a claim (§1.5). Additive — Constitution 1.8.
+  // Re-validated at emission (not just in mapAnchorRow): AnchorByPublicId has
+  // other constructors (test lookups, oracle), and an unvalidated string must
+  // never key a public §1.5 statement.
+  if (isConnectorFetchSource(anchor.connector_source)) {
+    Object.assign(result, connectorFingerprintRederivabilityFields());
+  }
+
   return result;
 }
 
@@ -555,6 +603,10 @@ export const EMPTY_API_RICH_FIELDS = {
   confidence_scores: null,
   sub_type: null,
   fingerprint_source: null,
+  // BUG-2026-08-13-010: `null` = NOT MEASURED (these paths never load
+  // metadata) → the fingerprint_rederivability pair is OMITTED, mirroring
+  // has_stored_proof_branch — silence rather than a claim nobody measured.
+  connector_source: null,
 } as const;
 
 /** Fire-and-forget audit log for verification queries */
@@ -768,6 +820,8 @@ export function mapAnchorRow(row: AnchorSelectRow): AnchorByPublicId {
     sub_type: row.sub_type ?? null,
     fingerprint_source: row.fingerprint_source ?? null,
     has_stored_proof_branch: resolveHasStoredProofBranch(row),
+    // BUG-2026-08-13-010: closed-set marker only — free text never routes here.
+    connector_source: resolveConnectorFetchSource(row.metadata),
   };
 }
 
