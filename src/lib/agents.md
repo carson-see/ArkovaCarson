@@ -18,6 +18,9 @@ _Last updated: 2026-08-17_
 ## 2026-08-17 — RECORD_DETAIL_LABELS rename toasts
 
 `copy.ts` `RECORD_DETAIL_LABELS` gains `TOAST_RENAMED` / `ERR_RENAME` / `ERR_RENAME_FORBIDDEN` for RecordDetailPage's rename flow (previously inline literals in the page). Permission copy is deliberately distinct from the generic failure so an RLS-denied rename (zero-row UPDATE or 42501 from 0393's folder-only org-admin trigger) tells the user why. §1.3 clean — no banned terms.
+## 2026-08-18 — `PENDING_INVITATIONS_LABELS` + `queryKeys.orgInvitations`
+
+`copy.ts` gains `PENDING_INVITATIONS_LABELS` for the new `PendingInvitationsList` component (`src/components/organization/agents.md`) — status badges (Pending/Expired/Revoked) and the Resend action, org-admin-only visibility into invitations that have not resulted in a member yet. `queryClient.ts` gains `queryKeys.orgInvitations(orgId)`, same shape as `queryKeys.orgMembers`.
 
 ## 2026-08-10 — `ACTIVATE_ACCOUNT_LABELS` + `ActivateAccountSchema` (recipient activation launch blocker)
 
