@@ -10,6 +10,7 @@ Cloudflare Worker (`arkova-edge`) — Zero-Trust edge layer for x402 facilitator
 - `mcp-anomaly-detection.ts` — heuristics for unusual MCP tool-call patterns.
 - `mcp-tools.ts`, `mcp-tool-schemas.ts` — tool catalog and schemas.
 - `mcp-audit-log.ts` — fire-and-forget audit log writer via `ctx.waitUntil(...)`. Caller IPs are **keyed** HMAC-SHA256 (`MCP_IP_HASH_PEPPER`), not bare sha256 — see below.
+- **`audit-event-category.ts`** — canonical `audit_events.event_category` values. The edge is a standalone tsconfig, so it CANNOT import `services/worker/src/types/audit-event-category.ts`; this is the edge's own copy, pinned to the DB CHECK by a test (see below).
 - `mcp-kill-switch.ts` — checks switchboard flag `ENABLE_MCP_SERVER`.
 
 ## Nessie worker proxy timeout (2026-06-07)
@@ -50,6 +51,22 @@ Net effect: `src/mcp-tools.test.ts` (36 assertions over the MCP tool surface, in
 - `services/edge` has its **own** `package-lock.json` and is **not** part of the root npm workspace — deps must be installed separately or the suite cannot run at all.
 - It lives in the `Tests` job on purpose. `Tests` is an enumerated `check-success` merge condition in `.mergify.yml` (5 occurrences) and a required status check; a NEW top-level job would gate nothing until branch protection and `.mergify.yml` were updated too — i.e. it would recreate this exact bug.
 - **Adding a test under `services/edge/`? It runs here, not in the root suite.** Modules using ambient CF globals (`Ai` in `mcp-tools.ts:1049`, `KVNamespace`, …) can only be tested here, since the root tsconfig deliberately omits `@cloudflare/workers-types` from global `types`. See `src/tests/edge/agents.md` for the split.
+
+## The MCP audit log never wrote a row (BUG-2026-08-13-016, P0)
+
+From 2026-05-26 to 2026-08-15 `mcp-audit-log.ts` sent `event_category: 'security'` — lowercase — against a CHECK constraint that accepts uppercase only. Every insert returned HTTP 400. Prod holds 409,885 audit rows and **zero** `MCP_TOOL_CALL`: a SOC 2 audit-trail control that never operated once.
+
+Three rules came out of it. Do not relax any of them:
+
+- **Never write a bare string to `event_category` here.** Use the `AuditEventCategory` type from `audit-event-category.ts` so a wrong-case literal is a compile error. The worker gets this for free via `database-overrides.ts`; the edge had no equivalent, which is why the edge is where it broke.
+- **The category list is pinned to the migration, not to a promise.** `src/tests/edge/mcp-audit-log.test.ts` parses the highest-numbered migration defining `audit_events_event_category_valid` (currently `0309`) and fails if the edge constant drifts. Change the constraint → that test tells you to change this file.
+- **A failed audit write must stay loud and classified.** `reportAuditWriteFailure()` emits a structured `MCP_AUDIT_WRITE_FAILED` record splitting `permanent` (4xx — a code defect that will never self-heal) from `credential` and `transient`, and increments a counter readable via `getAuditWriteFailureCount()`. The old code did `console.error` with unclassified prose, so a permanent contract break was indistinguishable from a blip. `AUDIT_WRITE_FAILED` is an alerting token — do not reword it.
+
+**It does not fail the request, deliberately.** `fireAndForgetAudit` runs from `withTelemetry` after the tool result exists and is handed to `ctx.waitUntil()`, so the write completes after the response has left; there is no request left to fail. Making it blocking would add a Supabase round-trip to every tool call and turn an audit-store outage into a full MCP outage. Detection was the missing control, not refusal.
+
+**Only the SQLSTATE may be logged from an error body.** PostgREST returns `details: "Failing row contains (...)"`, i.e. the audit row including `actor_id`. `postgrestErrorCode()` whitelists `/^[0-9A-Z]{1,10}$/` so nothing else can escape into Logpush.
+
+**Historical note (superseded 2026-08-15):** at the time this fix was written, `services/edge/**/*.test.ts` was NOT run by CI, so this PR's own P0 tests were deliberately parked in the root suite (`src/tests/edge/` or `tests/infra/`) to be sure CI would run them. **That gap is now closed** — see "The edge suite is CI-gated (2026-08-15)" above; do not treat this paragraph as current guidance for where a new edge test belongs.
 
 ## KV namespaces
 - `MCP_RATE_LIMIT_KV` (`a8a7843630e84c5aa22cf20ea8a8c5e8`)
