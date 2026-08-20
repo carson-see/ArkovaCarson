@@ -102,6 +102,58 @@ const INCLUDE_ROOTS = [
   'packages/embed/src/',
 ];
 
+// §1.3 worker-email parity: outbound EMAIL is user-visible copy generated in
+// `services/worker/`, which INCLUDE_ROOTS never reached — `lint:copy` stayed
+// green while customer subjects/bodies went unscanned, even though both email
+// agents.md files already carried the rule with nothing enforcing it.
+//
+// Scope is deliberately NOT all of services/worker/src: §1.3 bans these terms
+// in USER-VISIBLE strings and explicitly allows internal code to use technical
+// names, so scanning the worker wholesale would bury the gate in false
+// positives (`.select('tx_hash')`, `crypto.randomBytes`, 'broadcast' log
+// lines). Two admission paths instead:
+//
+//   ROOTS      — modules whose ENTIRE contents are email copy by construction
+//                (template builders + the shared branded layout helpers).
+//   COMPOSERS  — files elsewhere under services/worker/src that the CONTENT
+//                detector proves build email copy (a `subject`/`html` literal
+//                or a wrapTemplate() call, in a module wired to the email
+//                infrastructure). Content-derived on purpose: a hand-maintained
+//                path census rots the moment the next digest job lands, which
+//                is exactly how `jobs/queue-digest.ts` came to be unscanned.
+const WORKER_COPY_ROOTS = [
+  'services/worker/src/email/',
+  'services/worker/src/emails/',
+];
+
+/** Walk root for COMPOSER detection (a superset of WORKER_COPY_ROOTS). */
+const WORKER_SRC_ROOT = 'services/worker/src/';
+
+// Wired to the email infrastructure: imports the sender / shared template
+// helpers, or calls sendEmail(). Necessary but NOT sufficient — a pure sender
+// (`sendEmail({ to, subject, html })` where both came from a builder) composes
+// no copy of its own and stays out of scope; its copy is scanned once, at the
+// builder in email/templates.ts.
+const EMAIL_INFRA_RE =
+  /from\s+['"][^'"]*(?:email\/sender|email\/index|emails\/_template)(?:\.js)?['"]|\bsendEmail\s*\(/;
+
+// Composes copy: a `subject` assigned a STRING/TEMPLATE literal, an `html`
+// template literal, or a wrapTemplate() call. `subject: string;` (a type
+// member) and `subject,` (shorthand pass-through) deliberately do not match.
+const EMAIL_COPY_LITERAL_RE =
+  /\bwrapTemplate\s*\(|\bsubject\s*[:=]\s*[`'"]|\bhtml\s*[:=]\s*`/;
+
+/**
+ * True when `content` both reaches the email infrastructure AND builds email
+ * copy of its own — i.e. the file is an email-copy COMPOSER whose strings ship
+ * to a recipient's inbox. Conservative by construction: a comment that merely
+ * mentions `wrapTemplate` only ever widens the scan (more copy checked), never
+ * narrows it. Exported for unit tests.
+ */
+export function isEmailCopyComposer(content: string): boolean {
+  return EMAIL_INFRA_RE.test(content) && EMAIL_COPY_LITERAL_RE.test(content);
+}
+
 // Files/patterns to exclude
 const EXCLUDE_PATTERNS = [
   '**/*.test.ts',
@@ -164,25 +216,47 @@ function getAllFiles(dir: string, files: string[] = []): string[] {
   return files;
 }
 
+/** Repo-relative POSIX form of `filePath` (absolute paths are made relative). */
+function toRelativePosix(filePath: string, root: string = process.cwd()): string {
+  return (path.isAbsolute(filePath) ? path.relative(root, filePath) : filePath)
+    .split(path.sep)
+    .join('/');
+}
+
 /**
  * True when `filePath` is in scope for the copy-term scan. Exported for unit
  * tests. Accepts absolute or repo-relative paths and normalises to POSIX
  * separators so the prefix/glob checks behave identically on Windows.
+ *
+ * `content` is OPTIONAL and only ever WIDENS scope: a file under
+ * services/worker/src that is not in a worker copy root is admitted when — and
+ * only when — its content proves it composes email copy
+ * ({@link isEmailCopyComposer}). Without content the answer for such a path is
+ * `false`, so every caller that wants worker-email coverage must read the file
+ * (see collectCandidateFiles) rather than guessing from the path.
  */
-export function shouldCheck(filePath: string): boolean {
-  const relativePath = (
-    path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath
-  ).split(path.sep).join('/');
+function isExcluded(relativePath: string): boolean {
+  return EXCLUDE_PATTERNS.some((pattern) => globToRegex(pattern).test(relativePath));
+}
 
-  // Check exclusions first (copy.ts vocabulary file, tests, ui primitives,
-  // treasury admin, node_modules/dist).
-  for (const pattern of EXCLUDE_PATTERNS) {
-    if (globToRegex(pattern).test(relativePath)) {
-      return false;
-    }
+export function shouldCheck(filePath: string, content?: string): boolean {
+  const relativePath = toRelativePosix(filePath);
+
+  // Check exclusions first (tests, ui primitives, treasury admin,
+  // node_modules/dist).
+  if (isExcluded(relativePath)) return false;
+
+  if (INCLUDE_ROOTS.some((root) => relativePath.startsWith(root))) return true;
+  if (WORKER_COPY_ROOTS.some((root) => relativePath.startsWith(root))) return true;
+
+  // Worker email-copy composers outside those roots (jobs/*-digest.ts …).
+  // Everything else under services/worker/src is internal code, which §1.3
+  // explicitly permits to use technical names.
+  if (relativePath.startsWith(WORKER_SRC_ROOT) && content !== undefined) {
+    return isEmailCopyComposer(content);
   }
 
-  return INCLUDE_ROOTS.some((root) => relativePath.startsWith(root));
+  return false;
 }
 
 // Pre-compile once. Building a new RegExp per line × 13 terms × 224 files was
@@ -231,15 +305,32 @@ export function shouldSkipLine(line: string, trimmed: string): boolean {
 }
 
 /**
+ * Neutralise the one CSS declaration that collides with a banned term.
+ *
+ * §1.3 worker-email parity: HTML email bodies carry INLINE CSS
+ * (`style="display: block; padding: 12px;"` on a button) because email clients
+ * strip stylesheets — and `display: block` is the only banned term that is a
+ * legitimate CSS value. The frontend never hit this: `className` values are
+ * stripped wholesale and `style={{ display: 'block' }}` is a bare in-code value
+ * string. Only the `display:`/`block` PAIR is blanked — never the whole
+ * attribute — so visible copy sitting beside the style attribute is still
+ * scanned (`style="display: block">Open your Bitcoin wallet</a>` still flags).
+ */
+function stripCssPresentation(line: string): string {
+  return line.replaceAll(/\bdisplay\s*:\s*block\b/gi, 'display:_');
+}
+
+/**
  * Sanitises a JSX/TS line so the term scan only sees user-visible copy.
  * Strips className/class attribute values (Tailwind utilities like
- * "inline-block" are noise) and JSX comments (so engineering notes can mention
- * banned terms without tripping the lint).
+ * "inline-block" are noise), inline `display: block` CSS, and JSX comments (so
+ * engineering notes can mention banned terms without tripping the lint).
  *
  * Exported for unit tests.
  */
 export function stripClassNameAttributes(line: string): string {
-  let out = line.replaceAll(/className\s*=\s*"[^"]*"/g, 'className=""');
+  let out = stripCssPresentation(line);
+  out = out.replaceAll(/className\s*=\s*"[^"]*"/g, 'className=""');
   out = out.replaceAll(/className\s*=\s*'[^']*'/g, "className=''");
   // Brace-walk so `className={\`text-${x} block\`}` and
   // `className={cn('a', isOpen && 'b')}` strip cleanly — a naive `.*?` would
@@ -665,22 +756,24 @@ export function partitionAgainstAllowlist(
 }
 
 /**
- * @param jsxTextContinuation PR #1433 follow-up: true when {@link scanFileContent}
- *   determined this line is RAW JSX ELEMENT TEXT continued from a previous line
- *   (e.g. the middle of a wrapped `<p>…</p>` paragraph). Such a line often has
- *   neither a quote char nor a same-line `<`/`>` pair, so the quote/JSX
- *   short-circuit below would skip it — the blind spot that let the literal
- *   "Bitcoin blockchain" ship to prod in src/components/verification. In this
- *   mode the line is user-visible copy BY CONSTRUCTION: balanced `{…}` JSX
- *   expressions are blanked out (they are code, scanned via their own lines'
- *   normal path) and every remaining forbidden-term match flags with no
- *   isCodeIdentifier suppression (there are no code positions in raw text).
+ * @param rawCopyContinuation PR #1433 follow-up: true when {@link scanFileContent}
+ *   determined this line is RAW COPY continued from a previous line — the
+ *   middle of a wrapped `<p>…</p>` JSX paragraph, or (§1.3 worker-email parity)
+ *   the middle of a wrapped paragraph inside an email template literal. Such a
+ *   line often has neither a quote char nor a same-line `<`/`>` pair, so the
+ *   quote/JSX short-circuit below would skip it — the blind spot that let the
+ *   literal "Bitcoin blockchain" ship to prod in src/components/verification.
+ *   In this mode the line is user-visible copy BY CONSTRUCTION: balanced `{…}`
+ *   expressions are blanked out (they are code — including a template's
+ *   `${…}` interpolations — and are scanned via their own lines' normal path)
+ *   and every remaining forbidden-term match flags with no isCodeIdentifier
+ *   suppression (there are no code positions in raw text).
  */
 export function findTermViolations(
   line: string,
   lineNum: number,
   filePath: string,
-  jsxTextContinuation = false,
+  rawCopyContinuation = false,
 ): Violation[] {
   const results: Violation[] = [];
   const cleaned = stripClassNameAttributes(line);
@@ -703,7 +796,7 @@ export function findTermViolations(
   // to .tsx inside findRawEnumRenders.
   results.push(...findRawEnumRenders(cleaned, lineNum, filePath));
 
-  if (jsxTextContinuation) {
+  if (rawCopyContinuation) {
     const textOnly = blankJsxExpressions(cleaned);
     for (const regex of FORBIDDEN_REGEXES) {
       regex.lastIndex = 0;
@@ -1042,13 +1135,60 @@ function updateJsxTextState(line: string, state: JsxTextState): void {
   }
 }
 
+// =============================================================================
+// §1.3 worker-email parity — cross-line TEMPLATE-LITERAL text tracking.
+//
+// Worker email bodies are HTML inside a multi-line template literal, so they
+// have the SAME blind spot the JSX tracker above closes for .tsx: a wrapped
+// paragraph's middle line
+//     `      secured to the Bitcoin blockchain and can be verified at any time.`
+// carries no quote char and no same-line `<`/`>` pair, so findTermViolations
+// short-circuited and the term shipped. The JSX machine cannot help — it only
+// runs on .tsx, and worker email modules are .ts.
+//
+// Deliberately minimal: one boolean (are we inside an unterminated backtick
+// string?), no JSX/tag parsing. Only lines that are FULLY inside a template
+// literal — no backtick of their own, no `<` — are force-scanned as raw copy;
+// markup lines keep the normal per-line rules (which already flag visible text
+// between tags, with the URL/quoted-value suppressions intact).
+// =============================================================================
+
+/** True for files whose template literals are email copy (worker, non-JSX). */
+function tracksTemplateText(filePath: string): boolean {
+  const rel = toRelativePosix(filePath);
+  return !rel.endsWith('.tsx') && rel.startsWith(WORKER_SRC_ROOT);
+}
+
+/**
+ * Advance the minimal template-literal tracker over one line. Skips quoted
+ * strings (a backtick inside `'…'` opens nothing) and line comments, and
+ * honours backslash escapes.
+ */
+function updateTemplateTextState(line: string, state: { inTemplate: boolean }): void {
+  let i = 0;
+  while (i < line.length) {
+    const ch = line[i];
+    if (state.inTemplate) {
+      if (ch === '\\') { i += 2; continue; }
+      if (ch === '`') state.inTemplate = false;
+      i++;
+      continue;
+    }
+    if (ch === '/' && line[i + 1] === '/') return; // line comment — rest is not code
+    if (ch === '"' || ch === "'") { i = skipQuoted(line, i); continue; }
+    if (ch === '`') { state.inTemplate = true; i++; continue; }
+    i++;
+  }
+}
+
 /**
  * Scan one file's CONTENT line-by-line, carrying block-comment state (as
- * before) plus the cross-line JSX-text state machine. A line is force-scanned
- * as raw copy (jsxTextContinuation) when we are inside JSX element text, no
- * tag or `{…}` expression is spanning lines, and the line itself has no angle
- * bracket (lines WITH tags are handled by the normal per-line rules).
- * Exported for unit tests; checkFile() delegates here.
+ * before) plus the cross-line JSX-text state machine and — for worker email
+ * modules — the template-literal text tracker. A line is force-scanned as raw
+ * copy when we are inside JSX element text (or inside an email template
+ * literal), no tag or `{…}` expression is spanning lines, and the line itself
+ * has no angle bracket (lines WITH tags are handled by the normal per-line
+ * rules). Exported for unit tests; checkFile() delegates here.
  */
 export function scanFileContent(content: string, filePath: string): Violation[] {
   const violations: Violation[] = [];
@@ -1058,6 +1198,8 @@ export function scanFileContent(content: string, filePath: string): Violation[] 
   // misread generics/comparisons (`if (a <b)`) with no possible payoff.
   const trackJsx = filePath.endsWith('.tsx');
   const jsx = newJsxTextState();
+  const trackTemplateText = tracksTemplateText(filePath);
+  const template = { inTemplate: false };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -1087,9 +1229,11 @@ export function scanFileContent(content: string, filePath: string): Violation[] 
           ...findTermViolations(line, i + 1, filePath).filter((v) => isNonSuppressibleTerm(v.term)),
         );
       }
-      // Skipped for normal SCANNING only — the line still advances the JSX state
-      // machine (e.g. a copy line exempted via `cryptographic` is still text).
+      // Skipped for normal SCANNING only — the line still advances the JSX and
+      // template state machines (e.g. a copy line exempted via `cryptographic`
+      // is still element text; a skipped line can still open a template).
       if (trackJsx) updateJsxTextState(line, jsx);
+      if (trackTemplateText) updateTemplateTextState(line, template);
       continue;
     }
 
@@ -1104,8 +1248,21 @@ export function scanFileContent(content: string, filePath: string): Violation[] 
       !jsx.inTemplate &&
       !line.includes('<');
 
-    violations.push(...findTermViolations(line, i + 1, filePath, isJsxTextContinuation));
+    // Same rule for an email template literal: fully INSIDE it (state was open
+    // at line start and the line neither closes nor reopens one) and no tag.
+    const isTemplateTextContinuation =
+      trackTemplateText && template.inTemplate && !line.includes('`') && !line.includes('<');
+
+    violations.push(
+      ...findTermViolations(
+        line,
+        i + 1,
+        filePath,
+        isJsxTextContinuation || isTemplateTextContinuation,
+      ),
+    );
     if (trackJsx) updateJsxTextState(line, jsx);
+    if (trackTemplateText) updateTemplateTextState(line, template);
   }
 
   return violations;
@@ -1116,22 +1273,44 @@ export function checkFile(filePath: string): Violation[] {
 }
 
 /**
- * Walk every INCLUDE_ROOT and return the de-duplicated set of in-scope files.
+ * Walk every in-scope root and return the de-duplicated set of files to scan.
  * SCRUM-2149(a): `packages/embed/src` lives OUTSIDE `src/`, so a single
  * `getAllFiles('src')` walk (the pre-2149 behaviour) could never reach the
  * public widget. We derive the walk roots from INCLUDE_ROOTS so coverage and
  * the `shouldCheck()` predicate can never silently drift apart.
+ *
+ * §1.3 worker-email parity adds `services/worker/src`: files under the two
+ * worker copy roots are admitted by path, and every other worker file is read
+ * once and admitted only if {@link isEmailCopyComposer} says it builds email
+ * copy. Exported (with an injectable `root`) so tests can prove the walker
+ * REACHES a file — admitting a path the walk never visits is the exact shape
+ * of the SCRUM-2149(a) bug.
  */
-function collectCandidateFiles(): string[] {
+export function collectCandidateFiles(root: string = process.cwd()): string[] {
   const seen = new Set<string>();
-  // Distinct top-level dirs to walk (`src` once, `packages/embed/src` once).
-  const walkDirs = new Set(
-    INCLUDE_ROOTS.map((root) => root.split('/')[0]).map((top) => path.join(process.cwd(), top)),
-  );
+  // Distinct top-level dirs to walk (`src` once, `packages/embed/src` once)
+  // plus the worker source root, walked directly rather than via its `services`
+  // top-level so composer detection never reads a sibling service's tree.
+  const walkDirs = new Set([
+    ...INCLUDE_ROOTS.map((r) => path.join(root, r.split('/')[0])),
+    path.join(root, WORKER_SRC_ROOT),
+  ]);
   const out: string[] = [];
   for (const dir of walkDirs) {
     for (const f of getAllFiles(dir)) {
-      if (!seen.has(f) && shouldCheck(f)) {
+      if (seen.has(f)) continue;
+      const rel = toRelativePosix(f, root);
+      // Path-only admission first — it is the cheap answer and covers every
+      // frontend root plus the two worker email roots.
+      if (shouldCheck(rel)) {
+        seen.add(f);
+        out.push(f);
+        continue;
+      }
+      // Content admission is reserved for worker files that survived the
+      // exclusion patterns: read once, ask the composer detector.
+      if (!rel.startsWith(WORKER_SRC_ROOT) || isExcluded(rel)) continue;
+      if (shouldCheck(rel, fs.readFileSync(f, 'utf-8'))) {
         seen.add(f);
         out.push(f);
       }
@@ -1146,7 +1325,9 @@ function main(): void {
   const filesToCheck = collectCandidateFiles();
 
   if (filesToCheck.length === 0) {
-    console.log('No UI files to check (src/components, src/pages, src/lib, src/hooks, packages/embed/src).');
+    console.log(
+      'No UI files to check (src/components, src/pages, src/lib, src/hooks, packages/embed/src, worker email copy).',
+    );
     console.log('This is expected if no UI components exist yet.\n');
     process.exit(0);
   }
@@ -1224,6 +1405,7 @@ function main(): void {
   console.log('  - block, transaction → use "record" / "Network Receipt"');
   console.log('  - crypto, bitcoin, blockchain, testnet, mainnet, utxo, broadcast → remove or rephrase');
   console.log('  - raw enum render ({x.status} / {x.credential_type} …) → route through a display mapper in src/lib/copy.ts');
+  console.log('  - worker EMAIL copy (services/worker/src/email*, detected digest builders) is in scope too');
   console.log('  - public launch blocker copy → remove placeholder/legal-review disclaimers from public UI');
   console.log('');
   console.log('See src/lib/copy.ts for approved terminology.');
