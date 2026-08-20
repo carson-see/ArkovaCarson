@@ -109,3 +109,33 @@ I did not apply this anywhere and did not touch `0411`, `rc/migration-t3-wave-20
 ## Recommendation
 
 **Do not restart the 48h clock.** The observed failure is real and reproducible, but it is a rig-provisioning-config artifact given production's actual current ambient timeouts, not a defect that manifests in prod today. It does not touch the migration's core safety property (bounded lock wait, no barrier re-formation), and no data-integrity or security regression exists in either environment. Recommend: (1) flag the fix above to Carson/CTO for a follow-up compensating migration before or shortly after `#2235` lands — it is cheap, mechanically consistent with `0411`'s own existing pattern, and removes a real (if currently dormant) reliance on ambient config outside this function's control; (2) separately flag that `arkova-staging-2026-08`'s `authenticator`/`authenticated` ambient timeouts should be widened to mirror prod (`60s`/`30s` and `30s`) so this class of rig-vs-prod divergence doesn't reproduce for the next soak on this rig.
+
+## CTO ruling (2026-08-20)
+
+**Clock stands — the 48h migration-T3 soak continues on union `3baf16015`.** The defect does
+not manifest in production's configuration (prod `authenticator`: `statement_timeout=60s`
+vs the function's 5s `lock_timeout`; the lock timeout wins by 55s), so restarting the clock
+would spend 48 hours buying no reduction in production risk.
+
+**But "does not manifest today" is not "safe", and two follow-ups are required:**
+
+1. **Ship the `statement_timeout` guard as a compensating migration** (never an edit to
+   `0411`). Today prod is saved only by an ambient 60s that nothing in the migration
+   depends on or asserts. Anyone hardening prod's `statement_timeout` — an ordinary and
+   desirable change — silently arms this defect, and the failure mode is the ENTIRE nightly
+   retention pass aborting (all four deletes, not just the audit purge), unmonitored: this
+   route has no `withCronMonitoring`/Sentry wrapper, so Cloud Scheduler retries twice and
+   then goes quiet until the next day. A latent failure that pages nobody is worse than a
+   loud one.
+
+2. **Align the rig's ambient timeouts to prod.** The rig being STRICTER than prod is what
+   surfaced this finding, which is a point in the rig's favour — but it also means the rig
+   is not faithfully representative for any timeout-sensitive behaviour, in either
+   direction. For the remainder of this soak, treat timeout-class failures as
+   possibly-rig-artifacts and check the ambient values before diagnosing. Fixing the rig's
+   provisioning to mirror prod's `statement_timeout`/`lock_timeout` belongs in
+   STAGING_RIG.md's provisioning procedure so every future rig inherits it.
+
+**Not asserted:** that prod's nightly retention pass has ever actually run under real lock
+contention. It has not been observed doing so; the claim here is only that prod's timeout
+ordering makes the graceful path the one that fires.
