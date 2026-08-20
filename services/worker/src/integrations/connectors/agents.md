@@ -133,3 +133,32 @@ ERROR on this tree + the `docusign-*` job files) enforces this at build time.
 So (2) can never run until (1) has happened. The callback used to type its local `subscription` as `{ resourceId; expiration }`, silently discarding the `startPageToken` the client already returned — which made the entire Drive changes pipeline unreachable by construction: a freshly connected org skipped forever, with no error anywhere. **Never drop `startPageToken` from that call site.**
 
 The write is deliberately **conditional** (`...(subscription ? { last_page_token } : {})`), not `?? null`. This is an upsert: unconditionally writing null on a *failed re-watch* would wipe a working org's cursor, and nothing else can re-seed it, so every change from then on would be skipped silently. Omitting the column preserves the existing cursor. Both behaviours are pinned by tests in `drive-oauth.test.ts`.
+
+## 2026-08-15 FD-D1 — `drive-connect-eligibility.ts` no longer admits individual scope
+
+**There is exactly one allowed shape now: `{ allowed: true, scope: 'org', orgId }`.** The
+`{ scope: 'individual' }` variant is **deleted from the union**, not merely made unreachable — so
+re-admitting individual scope without also building the personal-connect storage path is a type
+error, not a silent regression. That is the whole point of removing it from the type rather than
+adding an early return.
+
+Why: the gate admitted a paid, identity-verified solo user, and `drive-oauth.ts`'s callback then
+refused that exact case because `org_integrations.org_id` is NOT NULL. The user granted Google
+access to their entire Drive and silently got nothing. The consent was real; the capability was not.
+CTO ruling FD-D1 (2026-08-12): drop the scope, do not build personal-connect storage.
+
+The personal path still runs the org lookup, and that is deliberate — **which** denial the caller
+gets is the deliverable:
+
+- `org_scope_required` (FD-D3) — caller HAS an org, omitted `org_id`. Actionable: retry naming it.
+- `individual_scope_unsupported` (FD-D1) — caller has NO org. They have no `org_id` to resend, so
+  handing them the first message sends them hunting for something that does not exist.
+
+`needs_paid_plan` and `individual_not_verified` are **gone**. Both were upsells for something
+unbuildable. `getProfileEntitlement` is no longer called (a test asserts it is not — a
+`needs_paid_plan` denial here would have been a false promise that paying unlocks the path), though
+it stays on `DriveEligibilityDb` for the org-scoped consumers.
+
+The module remains **logger-free on purpose** (see the FD-D3 note in `drive-oauth.ts`): importing the
+logger pulls in `config.ts`, whose Zod boot validation would force a full env fixture into every
+consumer's unit test. Denials are logged by the route via `logConnectDenial`, on both legs.

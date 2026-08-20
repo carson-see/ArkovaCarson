@@ -55,6 +55,17 @@ result = client.verify("abc123-def456")
 print(result.status)  # "ACTIVE"`,
 };
 
+/**
+ * Public priced offer list. Every row here is a COMMERCIAL REPRESENTATION, not
+ * marketing copy — a price attached to an endpoint says "pay this and it runs".
+ *
+ * R-1 (CTO ruling 2026-08-12, final, no review date): `/nessie/query` at $0.010
+ * "AI assistant query" was REMOVED. Nessie is permanently disabled by standing
+ * founder directive, and it is now hard-gated to fail closed
+ * (services/worker/src/middleware/nessieCapabilityGate.ts). Pricing a
+ * permanently-disabled capability is a false offer; do not re-add the row
+ * unless the directive itself changes.
+ */
 const PRICING_TABLE = [
   { endpoint: '/verify/:publicId', method: 'GET', price: '$0.002', desc: 'Verify record' },
   { endpoint: '/verify/batch', method: 'POST', price: '$0.002/item', desc: 'Batch verification' },
@@ -63,7 +74,6 @@ const PRICING_TABLE = [
   { endpoint: '/regulatory/lookup', method: 'GET', price: '$0.002', desc: 'Regulatory lookup' },
   { endpoint: '/cle/*', method: 'GET/POST', price: '$0.005', desc: 'CLE verification' },
   { endpoint: '/ai/search', method: 'POST', price: '$0.010', desc: 'AI semantic search' },
-  { endpoint: '/nessie/query', method: 'GET', price: '$0.010', desc: 'AI assistant query' },
 ];
 
 const CTA_BUTTON_CLASS = "bg-[#00d4ff] text-[#003642] text-xs uppercase tracking-widest px-6 py-2.5 rounded-full font-bold shadow-[0_0_15px_rgba(0,212,255,0.3)] hover:shadow-[0_0_25px_rgba(0,212,255,0.5)] transition-all";

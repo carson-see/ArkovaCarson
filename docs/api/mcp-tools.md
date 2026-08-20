@@ -49,8 +49,8 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 7 | **`get_fingerprint`** | **Public-safe latest-anchor lookup by SHA-256 fingerprint** | **SCRUM-1132 / SCRUM-1584** |
 | 8 | **`get_document`** | **Public-safe document detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
 | 9 | `verify_credential` | Verify a single credential by public ID | P8-S19 |
-| 10 | `search_credentials` | Semantic search across credentials | P8-S19 |
-| 11 | `nessie_query` | RAG query over verified public records | PH1-SDK-03 |
+| 10 | `search_credentials` | Keyword (lexical substring) search across credentials | P8-S19 |
+| 11 | `nessie_query` | **DISABLED** — returns `nessie_disabled`, never results | PH1-SDK-03 |
 | 12 | `verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
 | 13 | **`verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
 | 14 | `oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
@@ -149,20 +149,37 @@ Verify the authenticity and current status of a single credential by its public 
 
 ## 2. `search_credentials`
 
-Semantic search across all anchored credentials. Returns ranked results with verification status and relevance scores.
+Keyword search across anchored credentials.
+
+**The served behaviour is lexical** (BUG-026): a case-insensitive substring
+match on credential title/description, with no relevance score and no
+understanding of meaning. A query matches only text that literally appears in
+the record — so an English paraphrase of a document will find nothing, while a
+non-word fragment of a longer word (`aten` → `Patent_Application_AI_Method.pdf`)
+will match.
+
+Semantic (vector) similarity is served **only when** the deployment has semantic
+search enabled and reachable. It is not guaranteed, and callers must not assume
+it: with the gate closed the worker answers `503 Semantic search is not
+currently enabled` and the tool degrades to the lexical path.
+
+Every result carries `search_mode` — `lexical_substring` or `semantic_vector`.
+**Read it before presenting results as semantically ranked.** Only the
+`semantic_vector` path carries a `similarity` score.
 
 ### Input
 
 | Field | Type | Required | Description |
 |---|---|:---:|---|
-| `query` | string | ✅ | Natural language query |
+| `query` | string | ✅ | Keyword query. Literal substring; keep it short |
 | `max_results` | number | ❌ | Default 10, max 50 |
 
 ### Output (success)
 
 ```json
 {
-  "query": "University of Michigan computer science",
+  "query": "University of Michigan",
+  "search_mode": "lexical_substring",
   "total": 3,
   "results": [
     {
@@ -180,9 +197,25 @@ Semantic search across all anchored credentials. Returns ranked results with ver
 
 ---
 
-## 3. `nessie_query`
+## 3. `nessie_query` — **DISABLED**
 
-Query Arkova's verified intelligence engine — semantic search over 1.4M+ anchored public records (SEC filings, patents, regulatory documents). Two modes:
+> **Status: disabled and not served.** CTO ruling R-1 (2026-08-12). Nessie is
+> permanently disabled by standing founder directive.
+>
+> The endpoint (`GET /api/v1/nessie/query`) and this MCP tool both fail
+> **closed**: they answer `503` with
+> `{"error":"capability_disabled","code":"nessie_disabled","enabled":false, …}`.
+> That response is **not** an empty result — no query is executed. Do not read
+> an absent answer from this tool as "no matching documents exist".
+>
+> Previously the endpoint was mounted with no capability check and returned
+> `200 {"results":[],"count":0}` (and, in `context` mode, a fluent
+> `{"answer":"No relevant verified documents were found…","confidence":0}`), so
+> "disabled" and "found nothing" were indistinguishable. That is the defect
+> BUG-008/BUG-027 records.
+
+The two modes below are documented for reference only; neither is currently
+reachable.
 
 - `retrieval` (default): raw ranked documents with anchor proofs
 - `context`: Gemini-synthesized answer with citations linking back to anchored documents

@@ -34,7 +34,6 @@
 - 16 credential templates for standardized issuance
 - Webhook notifications for real-time event delivery
 - Downloadable JSON proof packages
-- Semantic search across 22,000+ public records (EDGAR, Federal Register, DAPIP, OpenAlex)
 - MCP server for AI agent access at edge.arkova.ai
 
 ## API Reference
@@ -76,7 +75,8 @@ GET https://app.arkova.ai/api/v1/verify/search?q=<query>&max_results=<n>
 X-API-Key: <your-key>
 ```
 
-Semantic search across verified credentials using natural language.
+Credential search. Semantic (vector) matching is served only when semantic
+search is enabled on the deployment; the endpoint returns 503 otherwise.
 
 ### Authentication
 
@@ -101,7 +101,7 @@ Rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-R
 ### Tools
 
 - `verify_credential` — Verify a credential by public ID. Input: `{ "public_id": "string" }`
-- `search_credentials` — Search credentials by natural language query. Input: `{ "query": "string", "max_results": number }`
+- `search_credentials` — Keyword search over credentials. Lexical substring match on title/description, not meaning-based; paraphrases will not match. Every result carries a `search_mode` field — read it before presenting results as ranked. Input: `{ "query": "string", "max_results": number }`
 - `verify_fingerprint` — Check if a SHA-256 fingerprint matches an anchored record. Input: `{ "fingerprint": "string" }`
 
 ## Use Cases

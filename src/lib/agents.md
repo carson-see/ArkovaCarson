@@ -203,3 +203,13 @@ keep naming NO transfer mechanism (SCRUM-2283, §1.13 R-7).
 Coverage is enforced, not asserted: `src/pages/PrivacyPage.copy-centralization.test.tsx`
 fails if /privacy renders prose `copy.ts` does not own, or if a jurisdiction
 copy field regresses to an inline literal.
+
+- 2026-08-15 FD-D1 / FD-D3 (claims-integrity): `CONNECTIONS_LABELS` Drive denial copy now mirrors the
+  post-ruling `DriveConnectDenyReason` set exactly. **Added** `DRIVE_ORG_SCOPE_REQUIRED` (caller has an
+  org but omitted `org_id` — actionable retry) and `DRIVE_INDIVIDUAL_SCOPE_UNSUPPORTED` (caller has no
+  org; personal Google Drive is not supported). **Removed** `DRIVE_NEEDS_PAID_PLAN` and
+  `DRIVE_INDIVIDUAL_NOT_VERIFIED`: the worker can no longer emit those codes, and both offered a paid
+  upgrade / identity check for a personal-Drive connection that `org_integrations.org_id` (NOT NULL)
+  made impossible to persist. Keeping copy for an unreachable state is exactly the claims drift the
+  ruling targets — when a `code` dies, its string dies with it. Consumed by
+  `DriveConnectorCard.tsx`'s `DRIVE_DENIAL_COPY` map; §1.3-clean (`lint:copy` green).

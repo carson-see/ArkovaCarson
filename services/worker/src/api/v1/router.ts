@@ -48,6 +48,7 @@ import { logger } from '../../utils/logger.js';
 import { rateLimit } from '../../utils/rateLimit.js';
 import { x402PaymentGate } from '../../middleware/x402PaymentGate.js';
 import { x402PayerRateLimit } from '../../middleware/x402PayerRateLimit.js';
+import { nessieCapabilityGate } from '../../middleware/nessieCapabilityGate.js';
 import { idempotencyMiddleware } from '../../middleware/idempotency.js';
 import { nessieQueryRouter } from './nessie-query.js';
 import { regulatoryAlertsRouter } from './regulatory-alerts.js';
@@ -539,7 +540,21 @@ router.use('/cle', x402PaymentGate('/api/v1/cle'), cleVerifyRouter);
 // Keep this before the broad AdES compliance mounts below. Those routers are
 // mounted at `/` because their internals expose signature paths, and their JWT
 // guards would otherwise shadow this API-key/x402 endpoint.
-router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), x402PayerRateLimit, aiRateLimiter, nessieQueryRouter);
+//
+// BUG-008/027 (CTO ruling R-1 STRENGTHENED): `nessieCapabilityGate()` runs
+// FIRST — before the payment gate. Nessie is permanently disabled by standing
+// founder directive; until this gate existed the route was mounted with no flag
+// check at all and answered 200 `{"results":[],"count":0}`, which reads as "ran,
+// found nothing". Gating ahead of `x402PaymentGate` also means a disabled
+// capability never takes a caller's money on the way to saying it is disabled.
+router.use(
+  '/nessie/query',
+  nessieCapabilityGate(),
+  x402PaymentGate('/api/v1/nessie/query'),
+  x402PayerRateLimit,
+  aiRateLimiter,
+  nessieQueryRouter,
+);
 
 // ─── AdES Signatures — Phase III (PH3-ESIG-01) ───
 // Feature-gated + JWT auth required (except the public verify-signature check)

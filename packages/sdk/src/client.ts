@@ -580,6 +580,12 @@ export class Arkova {
 
   /**
    * Query Nessie — semantic search over verified public records.
+   *
+   * DISABLED (CTO ruling R-1, 2026-08-12). Nessie is permanently disabled by
+   * standing founder directive and the endpoint fails closed with
+   * `503 {"code":"nessie_disabled","enabled":false}`, so this throws an
+   * `ArkovaError` on every call. That throw does NOT mean "no matching
+   * records" — no search is executed.
    */
   async query(q: string, options?: { limit?: number }): Promise<NessieQueryResult> {
     const params = new URLSearchParams({ q, mode: 'retrieval' });
@@ -624,6 +630,9 @@ export class Arkova {
 
   /**
    * Query Nessie in verified context mode — synthesized answer with citations.
+   *
+   * DISABLED (CTO ruling R-1, 2026-08-12) — see `query()`. Throws on every
+   * call; a throw is not an empty answer.
    */
   async ask(q: string, options?: { limit?: number }): Promise<NessieContextResult> {
     const params = new URLSearchParams({ q, mode: 'context' });

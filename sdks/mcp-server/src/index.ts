@@ -177,7 +177,13 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'nessie_ask',
-    description: 'Ask Nessie a compliance question. Returns an analysis with citations to anchored source documents. Supports compliance_qa, risk_analysis, and recommendation task types.',
+    // BUG-008/027 (CTO ruling R-1 STRENGTHENED, 2026-08-12): Nessie is
+    // permanently disabled by standing founder directive. This tool used to
+    // return the worker's 200-shaped
+    // `{"answer":"No relevant verified documents were found…","confidence":0}`
+    // verbatim — a fluent sentence an agent reads as "searched, found nothing".
+    // The description now says what the caller will actually get.
+    description: 'DISABLED. Arkova\'s Nessie compliance intelligence engine is not currently served: this tool returns an explicit `nessie_disabled` error rather than an analysis. A response from it never means "no matching documents were found".',
     inputSchema: {
       type: 'object',
       properties: {
@@ -364,6 +370,17 @@ async function handleNessieGapAnalysis(jurisdiction: string, industry: string): 
   return textResult(JSON.stringify(data, null, 2));
 }
 
+/**
+ * BUG-008/027 — a disabled capability must not read as an empty answer.
+ *
+ * The worker's capability gate answers 503 with
+ * `{error:'capability_disabled', code:'nessie_disabled', enabled:false, …}`.
+ * Surfacing that as a bare "returned 503" would leave an agent guessing at an
+ * outage; surfacing the old context-mode body ("No relevant verified documents
+ * were found…", `confidence: 0`) was worse still — a fluent sentence that reads
+ * as a successful, empty search. The disabled reason is passed through intact,
+ * flagged as an error, and explicitly separated from "found nothing".
+ */
 async function handleNessieAsk(query: string, task?: string): Promise<McpToolResult> {
   const params = new URLSearchParams({
     q: query,
@@ -372,7 +389,23 @@ async function handleNessieAsk(query: string, task?: string): Promise<McpToolRes
     limit: '10',
   });
   const res = await arkovaFetch(`/api/v1/nessie/query?${params}`);
-  if (!res.ok) return errorResult(`Nessie query API returned ${res.status}`);
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null) as
+      | { code?: string; enabled?: boolean; message?: string }
+      | null;
+
+    if (res.status === 503 && (body?.code === 'nessie_disabled' || body?.enabled === false)) {
+      return errorResult(
+        'Nessie is disabled and was not queried. This is NOT an empty result — no search ran, ' +
+        'so it does not mean "no matching documents exist". ' +
+        `Server detail: ${body?.message ?? 'capability_disabled'}`,
+      );
+    }
+
+    return errorResult(`Nessie query API returned ${res.status}`);
+  }
+
   const data = await res.json();
   return textResult(JSON.stringify(data, null, 2));
 }

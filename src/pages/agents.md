@@ -373,3 +373,22 @@ Reproduce this class locally by settling the mocked query one macrotask later
 load — the variable is event-loop ordering, not CPU. Under that injection the
 pre-fix suite failed 2/7 with the verbatim CI error; CPU contention alone
 (24 busy cores, 8 concurrent vitest processes) never reproduced it.
+
+## 2026-08-15 R-1 — `DevelopersPage.tsx` `PRICING_TABLE` is a commercial representation
+
+Every row is a priced offer: a price next to an endpoint says "pay this and it runs". The
+`/nessie/query` row (`$0.010`, "AI assistant query") was **removed** — Nessie is permanently disabled
+by standing founder directive and is now hard-gated to fail closed
+(`services/worker/src/middleware/nessieCapabilityGate.ts`). CTO ruling R-1, final, no review date.
+
+`DevelopersPage.claims.test.ts` is the ratchet. It reads the **source** rather than rendering the
+page, deliberately: a row that never renders (behind a flag, in a collapsed section) is still a
+published price the moment someone shows it. Deleting the row once was not the fix — nothing stopped
+it being re-added, and a human census does not scale.
+
+**`/ai/search` stays.** R-2 is a HEDGE, not a retraction: its price holds unless the Day-7 probes fail
+to demonstrate semantic retrieval, at which point it auto-converts to RETRACT. The ratchet pins its
+presence so this change cannot be misread as having quietly resolved R-2. Do not remove it here.
+`scripts/ci/config-drift/flag-inventory.json` also still carries the two `ENABLE_SEMANTIC_SEARCH`
+`claimedBy` entries pointing at this file (lines 65 and 240); `flagInventory.test.ts` asserts that
+finding still fires, so deleting them turns that test red.
