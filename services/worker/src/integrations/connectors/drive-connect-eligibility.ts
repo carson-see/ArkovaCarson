@@ -58,6 +58,14 @@ export interface DriveEligibilityDb {
 
 export type DriveConnectDenyReason =
   | 'not_admin'
+  /**
+   * The caller belongs to an org but invoked the PERSONAL path (no `org_id`).
+   * Distinct from `not_admin` on purpose: this is a wrong-scope call by a user
+   * who may well be an org OWNER, not an authorization failure. Collapsing the
+   * two — as this module did until FD-D3 — makes an org owner read as "not
+   * admin", which is both wrong and undiagnosable from the response.
+   */
+  | 'org_scope_required'
   | 'org_unverified'
   | 'org_suspended'
   | 'needs_paid_plan'
@@ -84,6 +92,11 @@ export async function resolveDriveConnectEligibility(args: {
 }): Promise<DriveConnectEligibility> {
   const { userId, orgId, db } = args;
 
+  // NOTE: this module stays logger-free ON PURPOSE — importing the logger pulls
+  // in `config.ts`, whose Zod boot validation would make every consumer's unit
+  // test require a full env fixture. Denials are logged by the OAuth route
+  // (`logConnectDenial` in api/v1/integrations/drive-oauth.ts), which owns both
+  // the start and callback legs and already has the logger + request context.
   if (orgId) {
     return resolveOrgPath(userId, orgId, db);
   }
@@ -127,8 +140,13 @@ async function resolveIndividualPath(
   if (orgResult.error) return { allowed: false, reason: 'lookup_failed' };
   if (orgResult.value) {
     // Caller actually belongs to an org but called the personal path without an
-    // org id — deny; they must use the org connect path (needs admin).
-    return { allowed: false, reason: 'not_admin' };
+    // org id — deny; they must retry the ORG connect path, supplying `org_id`.
+    //
+    // FD-D3: this used to return `not_admin`, which is what an org OWNER saw
+    // when the client omitted `org_id`. The caller's admin status was never
+    // even checked here, so reporting "not admin" was not merely confusing, it
+    // was unfounded. `org_scope_required` says the actionable thing instead.
+    return { allowed: false, reason: 'org_scope_required' };
   }
 
   const { row, error } = await db.getProfileEntitlement(userId);
