@@ -62,8 +62,28 @@ batch path drains 3,116 anchors in 27s under the rig's own cron with no manual i
 injected anchor belongs to a **single org** (`orgs = 1`), so no cross-org batching
 behaviour was exercised. That remains outstanding for this soak.
 
-**NOT asserted:** broadcast confirmation. At capture time all 3,116 were `BROADCASTING`
-with `chain_tx_id` still null — the broadcast leg was in flight and is recorded separately.
+## Broadcast leg (completed 22:03:22.9Z)
+
+The batch broadcast into a **single Bitcoin transaction**:
+
+```
+f9ddf989003f820d7bb624634e353ddc7bec0595258cc123840234a67def3d00
+```
+
+| Time (UTC) | anchors with `chain_tx_id` | distinct txs |
+|---|---|---|
+| 22:02:42 | 1,200 | 1 |
+| 22:02:49 | 1,800 | 1 |
+| 22:03:22 | **3,116** | **1** |
+
+All 3,116 anchors resolved to that one transaction — consistent with the batching
+economics (one on-chain write amortised across the whole batch) rather than per-anchor
+broadcast. Wall clock from trigger fire to fully-broadcast batch: **22:00:27Z → 22:03:23Z,
+under 3 minutes.**
+
+**NOT asserted:** on-chain confirmation. At capture the anchors were `BROADCASTING` with
+the tx id assigned but not yet confirmed into a block, so none had transitioned to
+`SECURED`. Confirmation follows block inclusion and is a separate observation.
 
 **NOT asserted:** Trigger A. `BATCH_SIZE` = 10,000 was never approached and remains
 un-evidenced for this window.
