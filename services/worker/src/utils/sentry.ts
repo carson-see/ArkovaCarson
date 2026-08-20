@@ -45,6 +45,8 @@ const SENSITIVE_EXTRA_KEYS = [
   'api_key',
 ];
 
+const SENSITIVE_EXTRA_KEY_SET = new Set(SENSITIVE_EXTRA_KEYS);
+
 // ---------------------------------------------------------------------------
 // SCRUM-2492 (§1.6A): type-based binary scrub
 // ---------------------------------------------------------------------------
@@ -104,6 +106,88 @@ export function scrubBinaryValues<T>(value: T, depth = 0): T {
     }
   }
   return value;
+}
+
+// ---------------------------------------------------------------------------
+// Recursive `event.extra` scrubbing (§1.1 hardening)
+// ---------------------------------------------------------------------------
+//
+// The previous `event.extra` pass replaced EXACT top-level keys from
+// SENSITIVE_EXTRA_KEYS with [FILTERED] and did nothing else. Two holes:
+//
+//   1. Any other top-level key's string value was emitted verbatim — no
+//      `scrubString`, unlike the message / transaction / tags / request.url
+//      paths, which have always been scrubbed.
+//   2. Nested extras were never key-filtered at all: `{ ctx: { email: … } }`
+//      passed through, because `'email' in event.extra` is false.
+//
+// `captureCreditRpcFailureAlert` spreads caller-supplied `...args.extra`
+// straight into that bag, so any call site handing it a nested object was a
+// live route for an email / document fingerprint / API key into Sentry, which
+// §1.1 forbids outright.
+//
+// The walk below applies BOTH the key filter and `scrubString` at every level.
+// It runs AFTER `scrubBinaryValues`, so the SCRUM-2492 type-based binary drop
+// still happens first and the tokens it leaves behind are inert here.
+
+/** Replaces a subtree the walk could not certify (past MAX_SCRUB_DEPTH). */
+export const REDACTED_DEPTH_TOKEN = '[FILTERED_DEPTH]';
+
+/**
+ * GCP service-account principals survive the walk.
+ *
+ * SCRUM-2900's scheduler-pause dead-man exists to answer "which principal
+ * paused this job", and its production caller passes a service-account
+ * identity (`ops-sa@…iam.gserviceaccount.com`). That is operational
+ * attribution, not a user email, so §1.1 does not reach it and scrubbing it
+ * would delete the alert's entire diagnostic payload.
+ *
+ * The pattern is ANCHORED end to end on purpose: a value must be *exactly* a
+ * service-account principal to be exempt. A human email — including one merely
+ * concatenated next to a principal — matches nothing here and is scrubbed like
+ * any other string. There is no person-shaped exemption from §1.1.
+ */
+const SERVICE_ACCOUNT_PRINCIPAL_REGEX =
+  /^[a-z0-9][a-z0-9-]*@[a-z0-9][a-z0-9-]*\.iam\.gserviceaccount\.com$/i;
+
+function scrubExtraString(value: string): string {
+  if (SERVICE_ACCOUNT_PRINCIPAL_REGEX.test(value)) return value;
+  return scrubString(value);
+}
+
+/**
+ * Recursively scrub an `event.extra` value: sensitive KEYS become [FILTERED]
+ * at any depth, and every surviving string runs through the PII regexes.
+ * Mutates containers in place (Sentry expects the same object back) and also
+ * returns the value.
+ *
+ * Depth handling is deliberately fail-CLOSED. Past MAX_SCRUB_DEPTH the walk
+ * drops the remaining subtree instead of returning it verbatim: "we could not
+ * check this" must never render as "this is fine" (same reasoning as
+ * `orgFieldPolicy`'s truncated-payload rejection). That also terminates on a
+ * cyclic extra.
+ */
+export function scrubExtraValue(value: unknown, depth = 0): unknown {
+  // Strings are cheap and safe to scrub at any depth, so they are handled
+  // before the depth guard — a deep string is redacted, not dropped.
+  if (typeof value === 'string') return scrubExtraString(value);
+  if (value === null || typeof value !== 'object') return value;
+  if (depth >= MAX_SCRUB_DEPTH) return REDACTED_DEPTH_TOKEN;
+
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      value[i] = scrubExtraValue(value[i], depth + 1);
+    }
+    return value;
+  }
+
+  const obj = value as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    obj[key] = SENSITIVE_EXTRA_KEY_SET.has(key)
+      ? '[FILTERED]'
+      : scrubExtraValue(obj[key], depth + 1);
+  }
+  return obj;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,13 +263,10 @@ export function scrubPiiFromEvent(event: Event | null): Event | null {
     delete event.user.ip_address;
   }
 
-  // Scrub extra context
+  // Scrub extra context — recursively, key filter AND string scrub at every
+  // level. See scrubExtraValue: top-level-exact-key-only was the §1.1 hole.
   if (event.extra) {
-    for (const key of SENSITIVE_EXTRA_KEYS) {
-      if (key in event.extra) {
-        (event.extra as Record<string, unknown>)[key] = '[FILTERED]';
-      }
-    }
+    event.extra = scrubExtraValue(event.extra) as Record<string, unknown>;
   }
 
   // PII-09: Scrub event tags
