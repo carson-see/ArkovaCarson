@@ -39,7 +39,7 @@ The rich v1 verification response includes shipped API-RICH-02 fields `descripti
 | Anchoring | `POST /anchor` | API key | [OpenAPI](./openapi.yaml) |
 | Webhooks | `POST/GET/PATCH/DELETE /webhooks`, `POST /webhooks/test`, `GET /webhooks/deliveries` | API key | [Webhooks guide](./webhooks.md) |
 | API key management | `POST/GET/PATCH/DELETE /keys` | Supabase JWT | [OpenAPI](./openapi.yaml) |
-| Nessie RAG | `POST /nessie/query` | API key + x402 | [OpenAPI](./openapi.yaml) |
+| Nessie RAG — **DISABLED** (R-1) | `POST /nessie/query` | n/a — returns 503 `nessie_disabled` | [OpenAPI](./openapi.yaml) |
 | CLE compliance | `GET /cle/verify`, `GET /cle/credits`, `POST /cle/submit` | API key + x402 gate at `/api/v1/cle` | [OpenAPI](./openapi.yaml) |
 | Attestations | `POST/GET/PATCH /attestations` | Supabase JWT | [OpenAPI](./openapi.yaml) |
 

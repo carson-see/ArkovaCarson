@@ -14,14 +14,13 @@ vi.mock('../../../config.js', () => ({
   },
 }));
 
-vi.mock('../../../utils/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
+// Hoisted so tests can assert on it — FD-D3 made "every denial is logged" part
+// of the contract, and FD-D1 adds a denial reason that must appear there too.
+const { mockLogger } = vi.hoisted(() => ({
+  mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
+
+vi.mock('../../../utils/logger.js', () => ({ logger: mockLogger }));
 
 vi.mock('../../../utils/db.js', () => ({
   db: {},
@@ -649,7 +648,17 @@ describe('Drive OAuth router', () => {
       expect(res.body.code).toBe('org_unverified');
     });
 
-    it('individual path: allows a PAID + identity-verified individual with no org_id', async () => {
+    /**
+     * FD-D1 (CTO ruling 2026-08-12). This used to return 200 and an
+     * `accounts.google.com` authorization URL. The user then granted Google
+     * access to their whole Drive, and the callback bounced them with
+     * `personal_connect_unavailable`, because `org_integrations.org_id` is NOT
+     * NULL. A paying customer paid a real privacy cost for a capability that
+     * did not exist.
+     *
+     * Now: denied at START, so no consent screen is ever shown.
+     */
+    it('individual path: DENIES a paid + identity-verified solo user BEFORE any Google consent', async () => {
       // No org supplied → resolver reports the caller has no org.
       mockOrgId.mockResolvedValue({ value: null, error: false });
       const db = makeRouteDb({
@@ -662,13 +671,16 @@ describe('Drive OAuth router', () => {
         .set('host', 'worker.test')
         .send({}); // no org_id → personal-Drive path
 
-      expect(res.status).toBe(200);
-      expect(res.body.authorizationUrl).toContain('accounts.google.com');
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('individual_scope_unsupported');
+      // The whole point: no authorization URL is minted, so the user is never
+      // walked into a Google consent that cannot be honoured.
+      expect(res.body.authorizationUrl).toBeUndefined();
       // Personal path must NOT consult the admin resolver.
       expect(mockAdmin).not.toHaveBeenCalled();
     });
 
-    it('individual path: DENIES a FREE / unverified individual (no paid plan)', async () => {
+    it('individual path: gives a FREE solo user the SAME reason — paying does not unlock it', async () => {
       mockOrgId.mockResolvedValue({ value: null, error: false });
       const db = makeRouteDb({
         profile: { subscription_tier: 'free', identity_verified_at: '2026-01-01T00:00:00Z' },
@@ -681,7 +693,27 @@ describe('Drive OAuth router', () => {
         .send({});
 
       expect(res.status).toBe(403);
-      expect(res.body.code).toBe('needs_paid_plan');
+      // NOT `needs_paid_plan` — that was an upsell for something unbuildable.
+      expect(res.body.code).toBe('individual_scope_unsupported');
+    });
+
+    it('individual path: logs the denial with the reason, so the user-facing "why" has a server-side twin', async () => {
+      mockOrgId.mockResolvedValue({ value: null, error: false });
+      const app = createApp(makeRouteDb({ profile: { subscription_tier: 'professional' } }));
+
+      await request(app)
+        .post('/api/v1/integrations/google_drive/oauth/start')
+        .set('host', 'worker.test')
+        .send({});
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          leg: 'start',
+          reason: 'individual_scope_unsupported',
+          requestedScope: 'individual',
+        }),
+        expect.stringContaining('DENIED'),
+      );
     });
 
     it('callback re-check: a stale-but-valid state token cannot bypass an entitlement that lapsed after start', async () => {

@@ -34,7 +34,7 @@ Every path in `services/worker/` that can return HTTP 429, with what it limits, 
 | Emitter | Evidence | Status |
 |---|---|---|
 | `perOrgRateLimit.ts` / `requireOrgQuota()` | Mounted after trusted identity on schema-valid `POST /api/v1/anchor`, `/anchor/submit`, `/anchor/bulk`, persisted-rule `POST /api/rules`, and connector registration `POST /api/v1/webhooks` | **LIVE, but outside the five-bucket A/B headline soak.** Daily anchor cardinality uses the atomic usage RPC; rule and connector creation use authoritative current row counts. Canonical headers are `X-Org-Quota-{Anchors,Rule-Drafts,Rules,Connectors}-*`; the Anchors-Created and Connector-Webhooks aliases remain for one compatibility cycle. The providerless rule-draft module remains unmounted, so `rule_drafts` is explicitly not claimed as enforced. Report `mounted_excluded (write-surfaces-outside-headline-soak)`, never a sixth bucket. |
-| x402 verified-payer limiter | `x402PaymentGate` derives an opaque HMAC key from the verified USDC Transfer sender; `/nessie/query` order is payment gate → payer limiter → AI limiter → handler | **LIVE only on paid Nessie.** API-key and disabled-payment paths carry explicit bypass context; missing verified identity fails closed. The bounded process-local store never receives raw wallet addresses. Report `mounted_excluded (nessie-only-outside-headline-soak)`, never a sixth bucket. |
+| x402 verified-payer limiter | `x402PaymentGate` derives an opaque HMAC key from the verified USDC Transfer sender; `/nessie/query` order is **capability gate → payment gate → payer limiter → AI limiter → handler** (BUG-008/027: `nessieCapabilityGate()` leads, so a disabled capability is never billed on the way to refusing) | **Unreachable in practice.** Nessie is permanently disabled (CTO ruling R-1) and the capability gate short-circuits with 503 `nessie_disabled` before the payment gate runs, so the payer limiter takes no traffic. Wiring retained and pinned. API-key and disabled-payment paths carry explicit bypass context; missing verified identity fails closed. The bounded process-local store never receives raw wallet addresses. Report `mounted_excluded (nessie-only-outside-headline-soak)`, never a sixth bucket. |
 
 ### 1d. Upstream model 429s (received, preserved, and safely classified)
 
@@ -123,7 +123,7 @@ Machine-readable; parsed by `scripts/ci/check-429-limiter-map.test.ts`. Each row
 | 10 | services/worker/src/api/v1/router.ts | 263 | const aiRateLimiter = rateLimit({ |
 | 11 | services/worker/src/api/v1/router.ts | 266 | keyGenerator: (req) => `ai:${req.authUserId ?? req.ip ?? 'unknown'}`, |
 | 12 | services/worker/src/api/v1/router.ts | 371 | router.use('/webhooks', batchRateLimiter, webhooksRouter); |
-| 13 | services/worker/src/api/v1/router.ts | 488 | router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), x402PayerRateLimit, aiRateLimiter, nessieQueryRouter); |
+| 13 | services/worker/src/api/v1/router.ts | 552 | nessieCapabilityGate(), |
 | 14 | services/worker/src/middleware/usageTracking.ts | 18 | const FREE_TIER_MONTHLY_QUOTA = 10_000; |
 | 15 | services/worker/src/middleware/usageTracking.ts | 171 | res.status(429).json({ |
 | 16 | services/worker/src/api/rules-crud.ts | 394 | res.status(429).json({ |

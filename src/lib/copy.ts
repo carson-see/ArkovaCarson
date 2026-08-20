@@ -1745,8 +1745,13 @@ export const CONNECTIONS_LABELS = {
   DRIVE_NOT_ADMIN: 'Only an organization administrator can connect Google Drive for your organization.',
   DRIVE_ORG_NOT_VERIFIED: 'Your organization must be verified before connecting Google Drive. Verified organizations can connect a document source. Contact support to start verification.',
   DRIVE_ORG_SUSPENDED: 'Your organization is currently suspended. Google Drive cannot be connected until the suspension is resolved.',
-  DRIVE_NEEDS_PAID_PLAN: 'Connecting Google Drive requires a paid plan. Upgrade your plan, or ask an organization administrator to connect it for your organization.',
-  DRIVE_INDIVIDUAL_NOT_VERIFIED: 'You must complete identity verification before connecting Google Drive to your personal account.',
+  // FD-D3: the caller HAS an organization but asked to connect without naming
+  // it. Actionable — retry from the organization's settings.
+  DRIVE_ORG_SCOPE_REQUIRED: 'Google Drive connects to an organization. Open your organization’s settings and connect from there.',
+  // FD-D1: the caller has no organization at all. Says plainly that this is not
+  // something they can unlock — the previous copy offered a paid upgrade and an
+  // identity check for a personal-Drive connection that could never be saved.
+  DRIVE_INDIVIDUAL_SCOPE_UNSUPPORTED: 'Google Drive can only be connected by an administrator of a verified organization. Personal Google Drive accounts are not supported, so there is nothing to upgrade or verify here.',
   DRIVE_GATE_CHECKING: 'Checking your authorization to connect Google Drive…',
   DRIVE_GATE_UNAVAILABLE: 'We could not verify your authorization right now. Please retry in a few seconds; if the issue persists, contact support.',
 } as const;

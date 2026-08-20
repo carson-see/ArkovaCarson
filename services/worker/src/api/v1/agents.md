@@ -878,3 +878,29 @@ Soak-proven: re-fetching the same unchanged DocuSign envelope yields a DIFFERENT
 - `AnchorByPublicId.connector_source` is tri-state like `has_stored_proof_branch`: marker = emit, `null` = measured-not-connector, absent = not measured (batch/oracle via `EMPTY_API_RICH_FIELDS` stay silent).
 - `verifyCache.ts` KEY_PREFIX bumped v5 → v6 (response-shape change; a pre-deploy cached connector record would otherwise serve no statement for the whole TTL).
 - Tests: `verify-connector-fingerprint.test.ts` (marker closed-set, pair inseparability, no-vendor-echo, bundle-untouched).
+## 2026-08-15 BUG-008/027 — `/nessie/query` is capability-gated and fails CLOSED
+
+The mount is now `nessieCapabilityGate()` → `x402PaymentGate` → `x402PayerRateLimit` → `aiRateLimiter`
+→ `nessieQueryRouter`. **Order is the contract, and three separate tests pin it** (`quota-wiring.test.ts`,
+`scripts/ci/check-429-limiter-map.test.ts`, `middleware/__tests__/x402LaunchScope.test.ts`) — the gate
+leads so a permanently-disabled capability never bills a caller on the way to refusing.
+
+`nessie-query.ts` repeats the check as its first statement, ahead of the `ENABLE_PUBLIC_RECORD_EMBEDDINGS`
+read. Those are **different flags**: the switchboard one governs the embedding index and is legitimately
+on, which is why it never stopped a disabled Nessie from answering `200 {"results":[],"count":0}`.
+Rationale, the env-vs-switchboard choice, and the no-success-shape-key rule live in
+`middleware/agents.md`.
+
+## 2026-08-15 FD-D1 — Drive connect no longer admits individual scope
+
+`integrations/drive-oauth.ts`: `DENY_HTTP` drops `needs_paid_plan` / `individual_not_verified` and adds
+`individual_scope_unsupported` (403). The old pair promised that upgrading a plan or completing
+identity verification would unlock a personal-Drive connection; it never could, because
+`org_integrations.org_id` is NOT NULL — so the gate admitted the caller at `oauth/start`, the user
+granted Google access to their whole Drive, and the callback bounced them with
+`personal_connect_unavailable`. The denial now happens **at start, before any consent screen**.
+
+The `!payload.orgId` branch in the callback is retained as a NOT-NULL insert guard and logs at
+`error` level — it is unreachable through the gate, so reaching it means the gate regressed. It is the
+last line of defence, not the policy: the policy has to run before Google consent is requested, which
+that check could never do from where it sits.

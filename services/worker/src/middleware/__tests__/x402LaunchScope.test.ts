@@ -30,7 +30,12 @@ describe('x402 launch-scope contract', () => {
   });
 
   it('mounts Nessie query before root-mounted AdES compliance routers', () => {
-    const nessieRoute = "router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query')";
+    // BUG-008/027: the mount is now multi-line and led by
+    // `nessieCapabilityGate()`, which sits AHEAD of the payment gate so a
+    // permanently-disabled capability is never billed on the way to refusing.
+    // The ordering claim under test here is still "Nessie mount precedes the
+    // root-mounted AdES routers", so anchor on the mount's first line.
+    const nessieRoute = "router.use(\n  '/nessie/query',\n  nessieCapabilityGate(),";
     const signatureComplianceRoot = "router.use('/', adesSignatureGate(), requireComplianceAuth, signatureComplianceRouter)";
     const keyInventoryRoot = "router.use('/', adesSignatureGate(), requireComplianceAuth, complianceAiRateLimiter, keyInventoryRouter)";
 

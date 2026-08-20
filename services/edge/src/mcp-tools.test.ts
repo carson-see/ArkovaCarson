@@ -32,6 +32,11 @@ const CONFIG: SupabaseConfig = {
   supabaseUrl: 'https://test.supabase.co',
   supabaseKey: 'test-key',
   userId: 'test-user-id',
+  // BUG-008/027: `nessieEnabled` is fail-closed (absent === disabled). The
+  // pre-existing suites below exercise the ENABLED behaviour, so the shared
+  // fixture turns it on explicitly; the disabled contract has its own describe
+  // block, which omits/clears it.
+  nessieEnabled: true,
 };
 
 const mockFetch = vi.fn();
@@ -899,5 +904,159 @@ describe('handleSearchCredentials — semantic path + search_mode labelling', ()
     expect(def!.description).toContain('search_mode');
     expect(def!.description).toContain('lexical_substring');
     expect(def!.description).toContain('semantic_vector');
+  });
+});
+
+// ─── BUG-008 / BUG-027: nessie_query must fail CLOSED ────────────────────────
+
+/**
+ * CTO ruling R-1 STRENGTHENED
+ * (`docs/staging/fullsoak-2026-08/cto-claims-rulings-2026-08-12.md`).
+ *
+ * Nessie is permanently disabled by standing founder directive. The worker
+ * endpoint answered HTTP 200 with a success shape — and this edge tool made it
+ * worse: on ANY non-2xx from the worker it degraded to `nessieTextFallback`, a
+ * lexical scan of public_records, and returned `{total, results}`. So even once
+ * the worker started refusing, the MCP tool would have answered as though a
+ * disabled capability had run. Fail-open, twice over.
+ *
+ * Contract pinned here: a disabled Nessie produces a result an agent can
+ * recognise as disabled — `isError`, `enabled:false`, a stable code — carrying
+ * NONE of the keys that mean "it ran" (`total`/`results`/`answer`/`confidence`/
+ * `citations`), and it does NOT fall back to text search.
+ */
+describe('handleNessieQuery — capability disabled (BUG-008/027)', () => {
+  const DISABLED_CONFIG: SupabaseConfig = {
+    supabaseUrl: 'https://test.supabase.co',
+    supabaseKey: 'test-key',
+    userId: 'test-user-id',
+    // nessieEnabled deliberately ABSENT — absence must mean disabled.
+  };
+
+  const SUCCESS_SHAPE_KEYS = ['total', 'results', 'answer', 'confidence', 'citations'];
+
+  it('treats an ABSENT flag as disabled (fail closed, not fail open)', async () => {
+    const result = await handleNessieQuery({ query: 'anything' }, DISABLED_CONFIG);
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toMatchObject({ code: 'nessie_disabled', enabled: false });
+  });
+
+  it('does NOT hit the network at all when disabled', async () => {
+    await handleNessieQuery({ query: 'anything' }, DISABLED_CONFIG);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('does NOT degrade to the lexical text fallback (the fail-open path)', async () => {
+    const result = await handleNessieQuery({ query: 'Apple SEC filing' }, DISABLED_CONFIG);
+
+    const parsed = JSON.parse(result.content[0].text);
+    for (const key of SUCCESS_SHAPE_KEYS) {
+      expect(parsed).not.toHaveProperty(key);
+    }
+  });
+
+  it('stays disabled even when a worker + caller key ARE configured', async () => {
+    const result = await handleNessieQuery(
+      { query: 'Tesla filings' },
+      {
+        ...DISABLED_CONFIG,
+        workerBaseUrl: 'https://worker.test.internal',
+        callerApiKey: 'ak_live_x',
+      },
+    );
+
+    expect(result.isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('PROPAGATES the worker disabled envelope instead of falling back to text search', async () => {
+    // Edge flag on, worker flag off — the worker is the authority, and its
+    // "disabled" must survive the hop rather than become a lexical answer.
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        error: 'capability_disabled',
+        code: 'nessie_disabled',
+        capability: 'nessie',
+        enabled: false,
+        message: 'disabled',
+      }),
+    });
+
+    const result = await handleNessieQuery(
+      { query: 'Tesla filings' },
+      {
+        ...CONFIG,
+        workerBaseUrl: 'https://worker.test.internal',
+        callerApiKey: 'ak_live_caller_secret_key',
+      },
+    );
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toMatchObject({ code: 'nessie_disabled', enabled: false });
+    for (const key of SUCCESS_SHAPE_KEYS) {
+      expect(parsed).not.toHaveProperty(key);
+    }
+    // Exactly one call — the worker probe. No Supabase text-fallback query.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('still falls back to text search on an ORDINARY worker failure (500) — that is not "disabled"', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ error: 'boom' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => [] });
+
+    const result = await handleNessieQuery(
+      { query: 'Apple SEC filing' },
+      {
+        ...CONFIG,
+        workerBaseUrl: 'https://worker.test.internal',
+        callerApiKey: 'ak_live_caller_secret_key',
+      },
+    );
+
+    // Degraded but honest: a transient worker fault is not a disabled
+    // capability, so the labelled lexical fallback is still the right answer.
+    expect(result.isError).toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ─── BUG-026: search_credentials must describe what it actually does ─────────
+
+/**
+ * Reproduced on the rig: the non-word fragment `aten` matched
+ * `Patent_Application_AI_Method.pdf` (a substring hit), an English paraphrase
+ * of the same document returned 0, and the worker's semantic endpoint answered
+ * 503 `Semantic search is not currently enabled`. Meanwhile the published
+ * description LED with "Uses semantic (vector) similarity matching".
+ *
+ * The fix is descriptive, not behavioural — no semantic search is implemented
+ * here. What is pinned: the description states the served behaviour first, and
+ * does not assert semantic matching as the unconditional default.
+ */
+describe('search_credentials tool description — honest by default (BUG-026)', () => {
+  const def = () => TOOL_DEFINITIONS.find((t) => t.name === 'search_credentials')!;
+
+  it('names lexical substring matching as what the tool does', () => {
+    expect(def().description.toLowerCase()).toContain('substring');
+  });
+
+  it('does not assert unconditional semantic/vector matching', () => {
+    const description = def().description;
+    // The old lead sentence, and its server-card twin. Any phrasing that says
+    // the tool "uses" semantic matching, full stop, is the BUG-026 claim.
+    expect(description).not.toMatch(/uses semantic \(vector\) similarity matching/i);
+    expect(description).not.toMatch(/uses semantic similarity matching/i);
+  });
+
+  it('describes the semantic path as conditional, not as the default', () => {
+    // The vector path needs a configured worker AND an open
+    // ENABLE_SEMANTIC_SEARCH gate — neither of which the caller controls.
+    expect(def().description).toMatch(/\b(only when|when the|if the)\b/i);
   });
 });

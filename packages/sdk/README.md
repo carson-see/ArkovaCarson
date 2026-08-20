@@ -381,11 +381,18 @@ For a complete reference (with Express, Flask, and Go examples), see [docs/api/w
 
 ---
 
-## Nessie semantic search
+## Nessie semantic search — **DISABLED**
 
-> **Not yet enabled in production.** `arkova.query()` and `arkova.ask()` both call `GET /api/v1/nessie/query`, which is gated behind a feature flag that is currently off — calls will reject with an `ArkovaError` (`statusCode: 503`, message `"Nessie query endpoint is not enabled"`) until this feature launches. The rest of this SDK (anchoring, verification, webhooks) is unaffected. This section documents the intended shape for when it does.
+> **Not currently served.** CTO ruling R-1 (2026-08-12): Nessie is permanently
+> disabled by standing founder directive, and `/api/v1/nessie/query` now fails
+> closed with `503 {"code":"nessie_disabled","enabled":false, …}`. `arkova.query()`
+> and `arkova.ask()` therefore throw an `ArkovaError` on every call.
+>
+> A failure from these methods is **not** "no matching records" — no search runs.
+> The methods and types below are documented so existing integrations can
+> recognise and handle the disabled response.
 
-Arkova maintains an embedding corpus of verified public records (SEC filings, court documents, regulatory data). Nessie lets you search and ask questions over them — every result is provably anchored.
+Arkova maintains an embedding corpus of verified public records (SEC filings, court documents, regulatory data). When Nessie was served, these methods searched and asked questions over them, with every result anchored.
 
 ### `arkova.query(q, options?)` — retrieval mode
 

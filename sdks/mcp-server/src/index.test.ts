@@ -303,3 +303,70 @@ describe('handleToolCall', () => {
     expect(result.content[0].text).toContain('500');
   });
 });
+
+/**
+ * BUG-008/027 — CTO ruling R-1 STRENGTHENED.
+ *
+ * `nessie_ask` calls the worker in `mode=context`. Before the worker was gated,
+ * that returned HTTP 200 and
+ * `{"answer":"No relevant verified documents were found…","confidence":0}` —
+ * which this tool passed through verbatim. An agent reads that as a completed
+ * search over an empty corpus, not as "the feature is off".
+ */
+describe('nessie_ask — disabled must not read as an empty answer', () => {
+  const disabledBody = {
+    error: 'capability_disabled',
+    code: 'nessie_disabled',
+    capability: 'nessie',
+    enabled: false,
+    message: 'The Nessie intelligence query capability is disabled and is not being served.',
+  };
+
+  it('flags the disabled capability as an error, not a result', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: () => Promise.resolve(disabledBody),
+    });
+
+    const result = await handleToolCall('nessie_ask', { query: 'any compliance question' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('disabled');
+  });
+
+  it('says explicitly that this is NOT an empty result', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: () => Promise.resolve(disabledBody),
+    });
+
+    const result = await handleToolCall('nessie_ask', { query: 'q' });
+
+    expect(result.content[0].text).toContain('NOT an empty result');
+    // The fluent no-documents sentence must never appear on the disabled path.
+    expect(result.content[0].text).not.toContain('No relevant verified documents were found');
+    expect(result.content[0].text).not.toContain('"confidence": 0');
+  });
+
+  it('still reports an ordinary upstream failure distinctly from "disabled"', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: 'boom' }),
+    });
+
+    const result = await handleToolCall('nessie_ask', { query: 'q' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('500');
+    expect(result.content[0].text).not.toContain('disabled');
+  });
+
+  it('advertises the disabled state in the published tool description', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'nessie_ask');
+    expect(tool).toBeDefined();
+    expect(tool!.description).toContain('DISABLED');
+  });
+});

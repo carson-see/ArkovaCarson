@@ -173,3 +173,33 @@ operator-set `MEMPOOL_API_URL` may embed a credential. A test greps the logged o
 `/api/v1/anchor`, and that route mounts `anchorAnonAllow` / `requireScope('anchor:write')` — not
 this gate. The defect was latent, and it arms itself the moment an anchor route is added to the
 gate. Fixed ahead of that, not after.
+
+## 2026-08-15 BUG-008/027 — `nessieCapabilityGate.ts`: a disabled capability must not answer 200
+
+Nessie is permanently disabled by standing founder directive, yet `/api/v1/nessie/query` was mounted
+**unconditionally** and returned **HTTP 200** with a success shape — `{"results":[],"count":0}`, and in
+context mode a fluent `{"answer":"No relevant verified documents were found…","confidence":0}`. A
+caller could not tell "off" from "found nothing". CTO ruling R-1 STRENGTHENED, 2026-08-12.
+
+Three properties this gate holds, none of them incidental:
+
+- **The flag is ENV, not `switchboard_flags`.** `ENABLE_NESSIE_QUERY` defaults false in `config.ts`.
+  A capability disabled by founder directive must not be re-enablable by a DB write; turning it on
+  requires a deploy, which is reviewable. Do not "improve" this by moving it to the switchboard.
+- **The route's pre-existing `ENABLE_PUBLIC_RECORD_EMBEDDINGS` check is NOT this gate.** That flag
+  governs the public-record embedding index, is legitimately ON, and passing it is exactly how a
+  permanently-disabled capability came to answer 200. Two flags, two questions.
+- **The disabled body carries NO success-shape key** — no `results`, `count`, `answer`, `confidence`,
+  or `citations`, plus an explicit `enabled: false` and `code: 'nessie_disabled'`. The absence is half
+  the contract and is pinned by test; an agent that only reads `total` would otherwise still conclude
+  "0 results". `nessieDisabledBody()` returns a fresh object per call so no caller can mutate the
+  shared envelope into a success shape.
+
+Mounted **ahead of `x402PaymentGate`** in `api/v1/router.ts` (order pinned by
+`api/v1/quota-wiring.test.ts`, `scripts/ci/check-429-limiter-map.test.ts`, and
+`middleware/__tests__/x402LaunchScope.test.ts`): a disabled capability must not take a caller's money
+on the way to telling them it is disabled. The check is repeated inside `api/v1/nessie-query.ts` so
+the router cannot be mounted dark by a later refactor.
+
+503, not 404 (the `partnerProvisioningGate` shape): `/nessie/query` is a **published** surface — it
+was listed and priced on `/developers` — so callers who already integrated get told, not hidden from.

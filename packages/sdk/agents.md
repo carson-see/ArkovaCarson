@@ -37,3 +37,13 @@
 - **`LICENSE`** (2026-07-28, engineering-counsel review): MIT text copied verbatim from `packages/verifier-cli/LICENSE`. Listed in `package.json` `files` so it actually ships in the published tarball — `"license": "MIT"` alone doesn't discharge the obligation. See `scripts/security/package-license-files.test.ts`.
 - **`package.json` `repository`/`author`** (2026-08-18, npm-publish clean-room verification): were missing entirely — added, matching the sibling `sdks/mcp-server/package.json` pattern (`repository.directory: "packages/sdk"`). `keywords` also had `"bitcoin"` (§1.3-banned, indexed on npmjs.com) — replaced with `"credentials"`. Guarded going forward by `src/package-metadata.test.ts`.
 - **README/type-doc terminology + accuracy pass** (2026-08-18, npm-publish clean-room verification, same change as the `sdks/mcp-server` P0 fix): fixed "Bitcoin anchor status"-style prose (→ "network"), x402 "wallet" references (→ "signer" — this SDK's x402 config takes a real third-party on-chain signer, a different concept from the §1.3 "Wallet → Fee Account" UI-copy mapping, which is about *Arkova's own* product surface), and added two accuracy disclosures the README previously lacked: (1) the "Nessie semantic search" section (`query()`/`ask()`) now states up front that `GET /api/v1/nessie/query` is gated off in production today (`ENABLE_PUBLIC_RECORD_EMBEDDINGS` switchboard flag, confirmed off) and returns 503 until launch; (2) the x402 section now states payments currently settle on Base Sepolia (confirmed via `services/worker/src/config.ts`'s `x402Network` default `eip155:84532` and `deploy-worker.yml`'s prod env-var, which sets the same value), not Base's production network. See `src/terminology.test.ts` for the standing guard.
+
+## Disabled surfaces
+- 2026-08-15, CTO ruling R-1: `arkova.query()` and `arkova.ask()` hit `/api/v1/nessie/query`, which now
+  fails closed with `503 {"code":"nessie_disabled","enabled":false}` — so both **throw `ArkovaError` on
+  every call**. Nessie is permanently disabled by standing founder directive. The README section and
+  both JSDoc blocks say so; a throw from these methods is NOT "no matching records", because no search
+  runs. Behaviour is unchanged (the client already threw on non-2xx) — what changed is that the docs no
+  longer advertise a capability we do not serve. Do not remove the methods or types: existing installs
+  need to recognise and handle the disabled response. **Republishing to npm is founder-reserved** — this
+  edit updates the in-repo docs only.

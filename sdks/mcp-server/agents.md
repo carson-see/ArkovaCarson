@@ -19,3 +19,20 @@ Nessie is off in production by standing founder directive (2026-08-01). The prio
 - `nessie_ask` → `GET /api/v1/nessie/query` is the one tool that actually depends on the disabled feature — gated by the `ENABLE_PUBLIC_RECORD_EMBEDDINGS` switchboard flag (`services/worker/src/api/v1/nessie-query.ts`), which is off, so it returns a clean `503 { error: 'Nessie query endpoint is not enabled' }` (not a crash, not a hang).
 
 **Resolution: document, don't hide.** Hiding all 4 tools would have removed 3 genuinely working ones on a false premise. Instead: `nessie_ask`'s tool description now discloses the current 503 in the wire-level `tools/list` response (not just the README), and `handleNessieAsk` in `index.ts` now surfaces the server's actual error message instead of a bare `Nessie query API returned 503`, so a caller can tell "not launched yet" apart from "outage" or "bad input." The README's Tools table carries the same disclosure plus a note that the other 3 don't depend on this flag. See `arkova`'s (the SDK's) parallel fix in `packages/sdk/README.md`'s "Nessie semantic search" section — `arkova.query()`/`arkova.ask()` hit the same `/api/v1/nessie/query` endpoint.
+## 2026-08-15 BUG-008/027 — `nessie_ask` must not pass a disabled capability through as an answer
+
+`nessie_ask` calls the worker in `mode=context`. Before the worker was gated, that returned HTTP 200
+with `{"answer":"No relevant verified documents were found…","confidence":0}` and this handler passed
+it through **verbatim** — a fluent sentence an agent reads as a completed search over an empty corpus,
+not as "the feature is off". CTO ruling R-1 STRENGTHENED (2026-08-12).
+
+`handleNessieAsk` now inspects a 503 for `code: 'nessie_disabled'` / `enabled: false` and returns an
+error that says, in words, that this is **NOT** an empty result and no search ran. An ordinary
+upstream failure still reports as `returned <status>` — keep the two distinguishable. The tool
+description leads with `DISABLED`.
+
+**This package's suite has 2 PRE-EXISTING failures on `main`**, unrelated to the above: `should define
+6 tools` (there are 10) and `should use arkova_ prefix on all tool names` (the `nessie_*` tools do
+not). They are not covered by root CI — the root `vitest.config.ts` `include` is `tests/**`, `src/**`,
+`scripts/**`, so nothing under `sdks/` runs there. Run `npx vitest run` in this directory. Do not
+"fix" the count assertion by trimming tools; the stale number is the bug.
