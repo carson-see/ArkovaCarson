@@ -168,6 +168,10 @@ is pinned by a test, because the fall-through is the only reason it holds.
 any org that has no policy row. For a configured org, requests that previously succeeded now 400 —
 which is the point of the control and is what that org contracted for. New error codes on an existing
 status class are additive; this needs no `v2` prefix.
+## 2026-08-12 — self-serve verification routes are ORG_ADMIN-gated
+
+`orgVerification.ts`'s three writers (`verify-ein`, `verify-domain`, `confirm-domain`) now require ORG_ADMIN via `requireAdminCaller` → `_org-auth.ts` (`getCallerOrgIdResult` + `isCallerOrgAdminResult`; org resolved from the caller's own `profiles` row, never client input; operational lookup failures are 500, never a masked 403). Rationale mirrors `org-kyb.ts`: writing a legal identifier and driving the VERIFIED grant is an org-level action. `GET /verification-status` stays member-level; `dev-verify` stays isDev-gated. `ein_tax_id` gained a 32-char upper bound (`MAX_EIN_LENGTH`) — format stays loose for international tax IDs (no `^\d{9}$`; that US-only shape belongs to the Middesk submission in `org-kyb.ts`). **No frontend change was needed**: the `OrgVerification` card renders inside OrgProfilePage's `{isAdmin && (` settings block (lines 614–903), and every caller who can see the card (org_members owner/admin, platform admin) passes the backend gate, so no reachable UI path 403s. Prod risk ~zero at gating time: no org had ever called these routes in prod (2026-08-11 census below).
+
 ## 2026-08-11 — two-grade org verification (CTO decision; sibling of AUDIT-0424-10 / PR #2134)
 
 `organizations.verification_status = 'VERIFIED'` has two **sanctioned** grant paths, by decision (not drift):
@@ -188,7 +192,7 @@ status class are additive; this needs no `v2` prefix.
 
 **Open follow-ups (separate PRs):**
 
-* ORG_ADMIN-gate `verify-ein`/`verify-domain`/`confirm-domain` (today any org **member** can write legal identifiers; `org-kyb.ts` requires ORG_ADMIN for the analogous action).
+* ORG_ADMIN-gate `verify-ein`/`verify-domain`/`confirm-domain` (today any org **member** can write legal identifiers; `org-kyb.ts` requires ORG_ADMIN for the analogous action). — **Done 2026-08-12** (see the 2026-08-12 entry above), including the EIN length cap; EIN **normalization** remains open under the bullet below.
 * Provider-status stickiness: `verify-ein` must not clobber a provider-granted status (any member POSTing it flips `VERIFIED → PENDING` with **no self-serve recovery** once the domain is verified — confirm-domain 400s "already verified"), and `confirm-domain` must not promote out of a provider-terminal status.
 * Domain-first dead-end: `confirm-domain` is the **only** promoter and checks `ein_tax_id` at confirm time — an API caller who confirms the domain before submitting an EIN is stuck `PENDING` with no self-serve path forward (the UI happens to order EIN first, so this is browser-latent, API-live).
 * EIN normalization, not just a length cap: the duplicate check is exact-string `eq()`, so `12-3456789` vs `123456789` evades the 409. Format stays loose for international tax IDs, but note `org-kyb.ts` pins `^\d{9}$` (US-only) — international self-serve orgs cannot upgrade to the provider grade as-is.
