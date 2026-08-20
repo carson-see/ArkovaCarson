@@ -552,6 +552,19 @@ const ConfigSchema = z.object({
    * Optional — unset means dry-run-only (safe default).
    */
   supplementaryAnchorConfirm: z.string().optional(),
+
+  // USPTO bulk-patent fetcher (BUG-023 / SCRUM public-record ingestion)
+  /**
+   * USPTO_BULK_TSV_URL — bulk patent TSV/ZIP source for `jobs/usptoFetcher.ts`.
+   * Deliberately NO default: the previous hardcoded PatentsView S3 bucket had
+   * its access revoked (HTTP 403 AccessDenied, confirmed 2026-08-15) and the
+   * USPTO Open Data Portal replacement requires a credential Arkova does not
+   * hold. Unset means the job refuses to run and returns
+   * `status: 'source_unavailable'` rather than defaulting to the dead bucket.
+   * Supplying a value is an explicit operator act — see the DECLARED-UNTESTED
+   * banner at the top of usptoFetcher.ts before setting this.
+   */
+  usptoBulkTsvUrl: z.string().url().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -968,6 +981,7 @@ function loadConfig(): Config {
     proofClassifierConfirm: process.env.PROOF_CLASSIFIER_CONFIRM || undefined,
     proofMaterializerConfirm: process.env.PROOF_MATERIALIZER_CONFIRM || undefined,
     supplementaryAnchorConfirm: process.env.SUPPLEMENTARY_ANCHOR_CONFIRM || undefined,
+    usptoBulkTsvUrl: process.env.USPTO_BULK_TSV_URL || undefined,
   });
 
   if (!result.success) {

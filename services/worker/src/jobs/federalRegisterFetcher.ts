@@ -56,14 +56,33 @@ function delay(ms: number): Promise<void> {
  * Fetch Federal Register documents and insert into public_records.
  * Resumable: picks up from the most recent publication date in the database.
  */
-export async function fetchFederalRegisterDocuments(supabase: SupabaseClient): Promise<void> {
+/**
+ * BUG-020: this job used to return `void`. It tracked `totalInserted`
+ * internally, logged it, and threw it away — and its route answered a fixed
+ * `{"status":"complete"}` at HTTP 200 no matter what happened, including a
+ * `break` out of the page loop on a transport failure. It was the most opaque
+ * member of the ingestion family: not even a counter escaped. It now returns
+ * the same shape the rest of the family does so the response contract in
+ * `routes/ingestionResponse.ts` can classify it.
+ */
+export interface FederalRegisterFetchResult {
+  status: string;
+  inserted: number;
+  skipped: number;
+  errors: number;
+  pagesProcessed: number;
+}
+
+export async function fetchFederalRegisterDocuments(
+  supabase: SupabaseClient,
+): Promise<FederalRegisterFetchResult> {
   // Check switchboard flag
   const { data: enabled } = await supabase.rpc('get_flag', {
     p_flag_key: 'ENABLE_PUBLIC_RECORDS_INGESTION',
   });
   if (!enabled) {
     logger.info('ENABLE_PUBLIC_RECORDS_INGESTION is disabled — skipping Federal Register fetch');
-    return;
+    return { status: 'disabled', inserted: 0, skipped: 0, errors: 0, pagesProcessed: 0 };
   }
 
   // Determine resume point
@@ -85,6 +104,9 @@ export async function fetchFederalRegisterDocuments(supabase: SupabaseClient): P
   let page = 1;
   let hasMore = true;
   let totalInserted = 0;
+  let totalSkipped = 0;
+  let totalErrors = 0;
+  let pagesProcessed = 0;
 
   while (hasMore) {
     const params = new URLSearchParams();
@@ -108,13 +130,16 @@ export async function fetchFederalRegisterDocuments(supabase: SupabaseClient): P
       });
     } catch (err) {
       logger.error({ error: err, page }, 'Federal Register API request failed');
+      totalErrors++;
       break;
     }
 
     if (!response.ok) {
       logger.error({ status: response.status, page }, 'Federal Register API returned error');
+      totalErrors++;
       break;
     }
+    pagesProcessed++;
 
     const result = (await response.json()) as FRResponse;
     const docs = result.results ?? [];
@@ -135,6 +160,7 @@ export async function fetchFederalRegisterDocuments(supabase: SupabaseClient): P
         .limit(1);
 
       if (existing && existing.length > 0) {
+        totalSkipped++;
         continue;
       }
 
@@ -167,6 +193,7 @@ export async function fetchFederalRegisterDocuments(supabase: SupabaseClient): P
 
       if (insertError) {
         logger.error({ docNumber: doc.document_number, error: insertError }, 'Failed to insert Federal Register record');
+        totalErrors++;
       } else {
         totalInserted++;
       }
@@ -183,5 +210,16 @@ export async function fetchFederalRegisterDocuments(supabase: SupabaseClient): P
     await delay(FR_RATE_LIMIT_MS);
   }
 
-  logger.info({ pagesProcessed: page, totalInserted }, 'Federal Register fetch complete');
+  logger.info(
+    { pagesProcessed, totalInserted, totalSkipped, totalErrors },
+    'Federal Register fetch complete',
+  );
+
+  return {
+    status: 'complete',
+    inserted: totalInserted,
+    skipped: totalSkipped,
+    errors: totalErrors,
+    pagesProcessed,
+  };
 }

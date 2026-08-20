@@ -89,6 +89,46 @@ one only if an incident actually needs it.
 Tests: `pipelineThroughputMonitor.backlogFloor.test.ts` (18 cases, red-first — including the
 minimum-expressible-estimate regression: a sampled-stuck-row epoch reading ≈117 must stay sub-floor,
 and a 259k-class backlog must still page fatal). T2 (worker behavior).
+## 2026-08-15 — the `*Fetcher.ts` family cannot report failure as success any more (BUG-020/022/023)
+
+The 2026-08 connector side-rig force-ran 42 previously-untested ingestion routes
+(`docs/staging/fullsoak-2026-08/side-rig-cron-coverage.md`). 30 of them looked healthy to any
+HTTP-status monitor while ingesting nothing, because each fetcher catches its own transport failure,
+increments an internal counter, and **resolves** — so the route's catch block (throw-only) never ran.
+
+Three rules now bind every fetcher in this directory:
+
+1. **A fetcher that gives up before reaching upstream must say so in `status`.** Use one of
+   `INGESTION_FAILURE_STATUSES` from `utils/pipeline.ts` (`download_failed`, `source_unavailable`,
+   `unconfigured_source`, `fetch_failed`, `failed`, `error`). `routes/ingestionResponse.ts` treats those
+   as a failed run even when `errors` is 0 — which is exactly how `/fetch-uspto` shipped a hard 403 as
+   `{"status":"download_failed","errors":0}`. A missing API key is `unconfigured_source`, not a
+   `logger.warn` and a zeroed return.
+2. **Every failure path increments `errors`.** `usptoFetcher.ts`'s three `download_failed` returns used
+   to carry `errors: 0`.
+3. **Return a tally, not `void`.** `federalRegisterFetcher.ts` was the worst case: it tracked
+   `totalInserted` internally, logged it, threw it away, and its route answered a hardcoded
+   `{status:'complete'}` at 200 no matter what — including after a `break` out of the page loop on a
+   transport failure. It now returns `{status, inserted, skipped, errors, pagesProcessed}` and counts
+   its skip/error paths.
+
+**`openStatesFetcher.ts` (BUG-022).** `include` is an ENUM query param — one value per occurrence.
+`include=abstracts,sponsorships` is rejected **422** ("value is not a valid enumeration member;
+permitted: 'sponsorships', 'abstracts', …"), `&include=abstracts&include=sponsorships` returns 200; both
+directions verified against the live v3 API with a valid key. This broke `/fetch-state-bills` and
+`/fetch-all-state-bills` 100% of the time while both returned HTTP 200. `federalRegisterFetcher.ts`
+already used the correct repeated-param shape for `fields[]` — copy that, not the comma join.
+`fetchMultipleStateBills` also folds a failed sub-result's `status` into `totalErrors`, or a fan-out
+where every state failed still aggregates to `totalErrors: 0`.
+
+**`usptoFetcher.ts` (BUG-023) — DECLARED-UNTESTED.** The hardcoded PatentsView S3 URL returns 403
+AccessDenied, confirmed from a **non-cloud residential IP** (not blocked Cloud Run egress). PatentsView
+migrated to the USPTO Open Data Portal on 2026-03-20; `api.uspto.gov` answers 401 without an ODP API
+key, and since 2026-06-18 a key needs a USPTO.gov account with MFA. Arkova holds none, so **no default
+URL is carried in code** — the source comes from `USPTO_BULK_TSV_URL` / the `sourceUrl` option, and the
+job refuses to run (`source_unavailable`, `errors: 1`, no request made) when it is unset. A test asserts
+the dead bucket cannot reappear as a default outside a comment. Do not ship a speculative ODP code path
+that nobody can exercise; that is the failure mode this whole cluster is made of.
 
 ## 2026-08-11 SCRUM-3128 / BUG-2026-08-11 — the ECON-1 fee ceiling now fails CLOSED (`anchor.ts`)
 

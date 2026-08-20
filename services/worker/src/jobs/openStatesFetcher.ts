@@ -16,6 +16,7 @@
 
 import { createHash } from 'node:crypto';
 import { logger } from '../utils/logger.js';
+import { isIngestionFailureStatus } from '../utils/pipeline.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /** Open States REST API base */
@@ -32,6 +33,12 @@ const MAX_PAGES_PER_STATE = 300;
 
 /** Max records per batch insert */
 const BULK_INSERT_BATCH = 500;
+
+/**
+ * Related collections to prefetch inline. Each must be sent as its OWN
+ * `include` query param — see the BUG-022 note at the request builder.
+ */
+const OS_INCLUDES = ['abstracts', 'sponsorships'] as const;
 
 interface OSBill {
   id: string;
@@ -90,6 +97,7 @@ export async function fetchStateBills(
     updatedSince?: string;
   } = {},
 ): Promise<{
+  status?: string;
   inserted: number;
   skipped: number;
   errors: number;
@@ -101,20 +109,23 @@ export async function fetchStateBills(
   });
   if (!enabled) {
     logger.info('ENABLE_PUBLIC_RECORDS_INGESTION is disabled — skipping Open States');
-    return { inserted: 0, skipped: 0, errors: 0, pagesProcessed: 0 };
+    return { status: 'disabled', inserted: 0, skipped: 0, errors: 0, pagesProcessed: 0 };
   }
 
+  // BUG-020: a missing credential is a MISCONFIGURATION, not a quiet no-op.
+  // `unconfigured_source` is a failure literal in routes/ingestionResponse.ts,
+  // so this now surfaces as a non-2xx instead of an all-zeros HTTP 200.
   const apiKey = process.env.OPENSTATES_API_KEY;
   if (!apiKey) {
-    logger.warn('OPENSTATES_API_KEY not set — skipping Open States fetch');
-    return { inserted: 0, skipped: 0, errors: 0, pagesProcessed: 0 };
+    logger.error('OPENSTATES_API_KEY not set — Open States fetch cannot run');
+    return { status: 'unconfigured_source', inserted: 0, skipped: 0, errors: 0, pagesProcessed: 0 };
   }
 
   const stateCode = (options.stateCode ?? 'CA').toUpperCase();
   const stateConfig = STATE_JURISDICTIONS[stateCode];
   if (!stateConfig) {
     logger.error({ stateCode }, 'Unknown state code for Open States');
-    return { inserted: 0, skipped: 0, errors: 0, pagesProcessed: 0 };
+    return { status: 'failed', inserted: 0, skipped: 0, errors: 0, pagesProcessed: 0 };
   }
 
   const maxPages = options.maxPages ?? MAX_PAGES_PER_STATE;
@@ -145,8 +156,16 @@ export async function fetchStateBills(
       sort: 'updated_desc',
       per_page: String(PER_PAGE),
       page: String(page),
-      include: 'abstracts,sponsorships',
     });
+    // BUG-022: `include` is an ENUM param, one value per occurrence. A single
+    // comma-joined value (`include=abstracts,sponsorships`) is rejected 422 —
+    // "value is not a valid enumeration member; permitted: 'sponsorships',
+    // 'abstracts', …" — which broke this fetcher 100% of the time while the
+    // route still returned HTTP 200. Repeated params return 200; both
+    // directions verified against the live v3 API with a valid key. Same
+    // repeated-param shape `federalRegisterFetcher.ts` already uses for
+    // `fields[]`.
+    for (const include of OS_INCLUDES) params.append('include', include);
     if (options.session) params.set('session', options.session);
     if (options.updatedSince) params.set('updated_since', options.updatedSince);
 
@@ -291,12 +310,12 @@ export async function fetchMultipleStateBills(
   totalInserted: number;
   totalSkipped: number;
   totalErrors: number;
-  stateResults: Array<{ state: string; inserted: number; skipped: number; errors: number }>;
+  stateResults: Array<{ state: string; status?: string; inserted: number; skipped: number; errors: number }>;
 }> {
   let totalInserted = 0;
   let totalSkipped = 0;
   let totalErrors = 0;
-  const stateResults: Array<{ state: string; inserted: number; skipped: number; errors: number }> = [];
+  const stateResults: Array<{ state: string; status?: string; inserted: number; skipped: number; errors: number }> = [];
 
   for (const stateCode of stateCodes) {
     const result = await fetchStateBills(supabase, {
@@ -305,8 +324,18 @@ export async function fetchMultipleStateBills(
     });
     totalInserted += result.inserted;
     totalSkipped += result.skipped;
-    totalErrors += result.errors;
-    stateResults.push({ state: stateCode, inserted: result.inserted, skipped: result.skipped, errors: result.errors });
+    // BUG-020: a per-state result that failed BEFORE it could increment its own
+    // error counter (missing credential, unknown state) must still show up in
+    // the aggregate — otherwise the fan-out route reports totalErrors: 0 while
+    // every state failed, which is the exact masking this fix exists to remove.
+    totalErrors += result.errors + (isIngestionFailureStatus(result.status) ? 1 : 0);
+    stateResults.push({
+      state: stateCode,
+      status: result.status,
+      inserted: result.inserted,
+      skipped: result.skipped,
+      errors: result.errors,
+    });
   }
 
   return { totalInserted, totalSkipped, totalErrors, stateResults };
