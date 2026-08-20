@@ -481,3 +481,34 @@ Resolution: the five stale revisions were deleted and their tags removed at ~20:
 across the surgery (14,296s after), traffic 100%, health green at union head. Clock stands.
 Residual finding for FD-CRON-1: same-schedule job clustering ('*/2' x3) plus multi-instance
 minScale multiplies collision odds — input to the Cloud Scheduler migration design.
+
+## HONESTY DISCLOSURE — anchor throughput began at hour ~25 of 48, not hour 0
+
+**Recorded 2026-08-20T18:05Z. Read this before citing any chain-lifecycle evidence from
+this window.**
+
+The soak clock started 2026-08-19T16:51:23Z. A check at 2026-08-20T17:40Z found that the rig
+had received **zero anchor traffic for the first ~25 hours**: the newest SECURED anchor
+(2026-08-19T14:37:12Z) predated the soak's own start, PENDING was empty, and the `*/30`
+batch-anchor cron had been firing into an empty queue the entire time, logging only
+"Individual pending-anchor processing is disabled; batch-anchor owns ordinary PENDING
+anchors."
+
+For a soak whose stated purpose is FD-CHAIN-1 (unconfirmed-change treasury visibility) and
+the batch triggers, that means the first 25 hours evidenced **availability only** — the
+chain path itself was never exercised. This is the same failure mode the 7-day fullsoak
+window hit on its Days 0-3, and it recurred here because the durable anchor-traffic agent
+from that window was unloaded at its close and nothing replaced it.
+
+**Corrected at 2026-08-20T18:01Z**: a clock-aware anchor-traffic driver was added to the
+`ai.arkova.soak.wave-load` LaunchAgent (session-independent, 4 anchors per 30-minute cycle).
+First run returned rc=0 and **8 PENDING anchors were confirmed in the rig database at
+18:02:38Z**, so batch evaluation now has real work.
+
+**What may therefore be claimed from this soak:** ~25h of continuous single-revision
+availability with zero 5xx and zero container terminations, plus chain-lifecycle throughput
+from 2026-08-20T18:01Z to close (2026-08-21T16:51:23Z) — roughly 23 hours.
+
+**What may NOT be claimed:** 48 hours of chain-lifecycle or batch-trigger evidence. Any
+trigger firing, treasury-visibility observation, or FD-CHAIN-1 exercise is valid ONLY from
+18:01Z onward. Evidence written before that timestamp describes an idle chain path.
