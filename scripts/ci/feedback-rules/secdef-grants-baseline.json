@@ -16,10 +16,10 @@
     "prod ACL with has_function_privilege(anon, fn, EXECUTE) and either adding the REVOKE",
     "or moving the function to DELIBERATELY_PUBLIC in the rule with a reason."
   ],
-  "_generated": "2026-08-15",
+  "_generated": "2026-08-20",
   "_counts": {
-    "total": 114,
-    "in_squashed_baseline": 64,
+    "total": 113,
+    "in_squashed_baseline": 63,
     "in_numbered_migrations": 50
   },
   "grandfathered": [
@@ -70,7 +70,6 @@
     "00000000000000_baseline_at_main_HEAD.sql::public.prevent_metadata_edit_after_secured",
     "00000000000000_baseline_at_main_HEAD.sql::public.protect_anchor_status_transition",
     "00000000000000_baseline_at_main_HEAD.sql::public.protect_platform_admin_flag",
-    "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_anchor_status_counts",
     "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_anchor_type_counts",
     "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_by_source",
     "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_pipeline_stats",
