@@ -6,6 +6,12 @@ Developer SDK packages for integrating with the Arkova Verification API. Each su
 - **`langchain/`** — LangChain Python-style tool wrappers (verify, oracle, search). Peer dep: `@langchain/core`.
 - **`langchain-ts/`** — LangChain TypeScript tool wrappers (verify, anchor status, search, attest, batch, signature).
 - **`mcp-server/`** — Model Context Protocol server exposing 10 tools (6 `arkova_` verification + 4 `nessie_` compliance intelligence, NCE-19) for Claude/OpenAI/Cursor.
+- **`mcp-server/`** — Model Context Protocol server exposing 10 tools (6 `arkova_`-prefixed +
+  4 `nessie_`-prefixed compliance-intelligence tools, NCE-19) for Claude/OpenAI/Cursor. Published
+  to npm as unscoped `arkova-mcp-server`, `bin` entry runs the stdio server via `npx`. This is
+  the **local/stdio** MCP server — the **hosted** MCP endpoint is `edge.arkova.ai`
+  (`services/edge/`), a completely separate implementation with its own tool set; do not confuse
+  the two or assume a fix to one reaches the other.
 
 ## Files
 - **`vitest.config.ts`** — shared Vitest config for all SDK packages. This is the CI entry point: the root `Tests` job in `.github/workflows/ci.yml` runs `node_modules/.bin/vitest run --root sdks` (step id `sdk-tests`), which discovers every `**/*.test.ts` under `sdks/`. Before 2026-08-15 nothing ran these suites in CI (BUG-2026-08-15-035) — keep new SDK tests as `*.test.ts` under a package `src/` so this config picks them up. Vitest resolves from the root node_modules; the SDK packages carry no devDependencies of their own.
@@ -17,9 +23,12 @@ Developer SDK packages for integrating with the Arkova Verification API. Each su
 
 ## Where is the TypeScript SDK?
 
-**`packages/sdk/`** — that is the one true `@carsonarkova/sdk` (class `Arkova`),
+**`packages/sdk/`** — that is the one true `arkova` package (class `Arkova`),
 wired into `.github/workflows/publish-sdk.yml` and
-`scripts/publish-packages.sh`. A stale duplicate previously lived here at
-`sdks/typescript/` (class `ArkovaClient`) claiming the same npm name and
+`scripts/publish-packages.sh` / `scripts/release/publish-npm.sh`. A stale duplicate previously
+lived here at `sdks/typescript/` (class `ArkovaClient`) claiming the same npm name and
 version with an incompatible API; it was removed 2026-07-12. Do not
 recreate TypeScript client code under `sdks/` — extend `packages/sdk/`.
+Published npm name history: `@arkova/sdk` -> `@carsonarkova/sdk` (2026-08-01, org-scope
+ruling, see `HANDOFF.md` `## History`) -> unscoped `arkova` (2026-08-18, CTO ruling, PyPI
+parity — see `packages/sdk/agents.md`).

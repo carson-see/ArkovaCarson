@@ -19,7 +19,9 @@ describe('Tool Definitions', () => {
     // Exact-name ratchet: adding or removing a tool must update this list
     // deliberately. 6 arkova_ verification tools (PH2-AGENT-06 / SCRUM-403,
     // arkova_verify_signature added in Phase III) + 4 nessie_ compliance
-    // intelligence tools (NCE-19).
+    // intelligence tools (NCE-19). Was pinned at 6 (PH2-AGENT-06); NCE-19 added
+    // the 4 nessie_-prefixed tools without updating this assertion, so it
+    // silently regressed to failing on every run until #2244 fixed it on main.
     expect(TOOL_DEFINITIONS.map(t => t.name)).toEqual([
       'arkova_verify_credential',
       'arkova_credential_status',
@@ -51,10 +53,36 @@ describe('Tool Definitions', () => {
     }
   });
 
+  it('should prefix exactly 6 tools arkova_ and 4 tools nessie_', () => {
+    const arkovaTools = TOOL_DEFINITIONS.filter((t) => t.name.startsWith('arkova_'));
+    const nessieTools = TOOL_DEFINITIONS.filter((t) => t.name.startsWith('nessie_'));
+    expect(arkovaTools).toHaveLength(6);
+    expect(nessieTools).toHaveLength(4);
+  });
+
   it('should include arkova_verify_signature for Phase III', () => {
     const sigTool = TOOL_DEFINITIONS.find(t => t.name === 'arkova_verify_signature');
     expect(sigTool).toBeDefined();
     expect(sigTool?.inputSchema.required).toContain('signature_id');
+  });
+
+  // CLAUDE.md §1.3 bans crypto/blockchain terminology in user-visible strings
+  // (Wallet, Gas, Hash, Block, Transaction, Crypto, Blockchain, Bitcoin,
+  // Testnet, Mainnet, UTXO, Broadcast). Tool name/description text is sent
+  // verbatim to every connected MCP client (tools/list) — it is user-visible
+  // the same way UI copy is. Found live in this file during npm-publish
+  // clean-room verification (2026-08-18): two descriptions said "Bitcoin
+  // anchor status" / "Bitcoin anchor information" — fixed to "network" to
+  // match the SDK README's existing house style.
+  it('should not use §1.3-banned terminology in any tool name or description', () => {
+    const banned = /\b(wallet|gas|hash|block|transaction|crypto|blockchain|bitcoin|testnet|mainnet|utxo|broadcast)\b/i;
+    for (const tool of TOOL_DEFINITIONS) {
+      expect(tool.name, `tool name "${tool.name}"`).not.toMatch(banned);
+      expect(tool.description, `${tool.name} description: "${tool.description}"`).not.toMatch(banned);
+      for (const [propName, prop] of Object.entries(tool.inputSchema.properties)) {
+        expect(prop.description, `${tool.name}.${propName} description: "${prop.description}"`).not.toMatch(banned);
+      }
+    }
   });
 });
 
@@ -190,5 +218,88 @@ describe('handleToolCall', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Connection refused');
+  });
+
+  // NCE-19 added 4 nessie_-prefixed tools with zero test coverage (found
+  // during npm-publish clean-room verification, 2026-08-18). Basic smoke
+  // coverage for the three that don't depend on the disabled Nessie
+  // embeddings flag (score/gap/cross-reference are deterministic
+  // rule-based compliance calculators server-side — see
+  // services/worker/src/compliance/score-calculator.ts, no AI/embedding
+  // call in that path).
+  it('should handle nessie_compliance_score', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ score: 82, grade: 'B' }),
+    });
+
+    const result = await handleToolCall('nessie_compliance_score', { jurisdiction: 'US-CA', industry: 'legal' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('82');
+  });
+
+  it('should handle nessie_gap_analysis', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ gaps: [] }),
+    });
+
+    const result = await handleToolCall('nessie_gap_analysis', { jurisdiction: 'US-CA', industry: 'legal' });
+
+    expect(result.isError).toBeFalsy();
+  });
+
+  it('should reject nessie_cross_reference with fewer than 2 anchor IDs', async () => {
+    const result = await handleToolCall('nessie_cross_reference', { anchor_ids: '["only-one"]' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Minimum 2 anchor IDs');
+  });
+
+  it('should handle nessie_ask success path', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ answer: 'Revenue was $394B.', citations: [] }),
+    });
+
+    const result = await handleToolCall('nessie_ask', { query: 'What was Apple revenue?' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('394B');
+  });
+
+  // Regression test for a real, verified-in-prod condition: Nessie is
+  // OFF in production (founder directive) — GET /api/v1/nessie/query
+  // gates on the ENABLE_PUBLIC_RECORD_EMBEDDINGS switchboard flag
+  // (services/worker/src/api/v1/nessie-query.ts) and, when disabled,
+  // returns 503 { error: 'Nessie query endpoint is not enabled' }. Before
+  // this fix, handleNessieAsk discarded that body and returned the generic
+  // "Nessie query API returned 503" — leaving the caller with no idea *why*
+  // (feature gate vs. outage vs. bad input). Surface the server's message.
+  it('should surface the server error message when nessie_ask is disabled (503)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: () => Promise.resolve({ error: 'Nessie query endpoint is not enabled' }),
+    });
+
+    const result = await handleToolCall('nessie_ask', { query: 'What was Apple revenue?' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Nessie query endpoint is not enabled');
+  });
+
+  it('should fall back to a generic message when nessie_ask errors without a JSON body', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.reject(new Error('not json')),
+    });
+
+    const result = await handleToolCall('nessie_ask', { query: 'x' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('500');
   });
 });

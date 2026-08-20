@@ -45,7 +45,7 @@ compares it against the packet's claimed `block_timestamp` to flag a forged
 timestamp (§1.5 — measured vs asserted).
 
 ## Conventions
-- Mirrors `@carsonarkova/sdk` toolchain: own `tsconfig.json` + `vitest.config.ts`,
+- Mirrors `arkova` toolchain: own `tsconfig.json` + `vitest.config.ts`,
   `tsup` build, NO eslint (root eslint ignores `packages/`). Gates: `tsc
   --noEmit` + `vitest run`.
 - Zero runtime dependencies (only `node:crypto`). Keep it that way — the whole

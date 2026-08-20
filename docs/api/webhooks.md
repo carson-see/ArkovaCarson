@@ -536,10 +536,10 @@ All errors follow the same envelope:
 
 ## Quickstart Examples
 
-### TypeScript SDK (`@carsonarkova/sdk`)
+### TypeScript SDK (`arkova`)
 
 ```typescript
-import { Arkova } from '@carsonarkova/sdk';
+import { Arkova } from 'arkova';
 
 const arkova = new Arkova({ apiKey: process.env.ARKOVA_API_KEY });
 

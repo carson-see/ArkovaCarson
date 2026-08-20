@@ -1,9 +1,9 @@
-# @carsonarkova/sdk
+# Arkova SDK
 
-> The official TypeScript / JavaScript SDK for the Arkova verification API.
+> The official TypeScript / JavaScript SDK for the Arkova verification API. Published to npm as `arkova`.
 > Anchor documents to a public network, call the API v2 agent tools, verify records, and manage webhooks — all without ever opening the Arkova web app.
 
-[![npm version](https://img.shields.io/npm/v/@carsonarkova/sdk.svg)](https://www.npmjs.com/package/@carsonarkova/sdk) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![npm version](https://img.shields.io/npm/v/arkova.svg)](https://www.npmjs.com/package/arkova) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
@@ -29,11 +29,11 @@
 ## Install
 
 ```bash
-npm install @carsonarkova/sdk
+npm install arkova
 # or
-pnpm add @carsonarkova/sdk
+pnpm add arkova
 # or
-yarn add @carsonarkova/sdk
+yarn add arkova
 ```
 
 **Requirements:** Node.js ≥18 (uses native `fetch` and `crypto.subtle`). Works in browsers, Cloudflare Workers, Deno, and Bun without polyfills.
@@ -45,7 +45,7 @@ yarn add @carsonarkova/sdk
 ## Quickstart
 
 ```typescript
-import { Arkova } from '@carsonarkova/sdk';
+import { Arkova } from 'arkova';
 
 const arkova = new Arkova({ apiKey: process.env.ARKOVA_API_KEY });
 
@@ -79,7 +79,7 @@ See [`examples/anchor-document.ts`](./examples/anchor-document.ts) for a complet
 ## Configuration
 
 ```typescript
-import { Arkova } from '@carsonarkova/sdk';
+import { Arkova } from 'arkova';
 
 const arkova = new Arkova({
   /** API key — get one from app.arkova.ai/settings/api-keys */
@@ -95,7 +95,7 @@ const arkova = new Arkova({
   x402: {
     payerAddress: '0xae12...',
     signPayment: async (amount, payTo) => {
-      // your wallet signing logic
+      // your on-chain signer's payment-signing logic
       return signedPaymentToken;
     },
   },
@@ -224,7 +224,7 @@ The result shape:
 
 Verification results also expose rich nullable metadata when the API returns it, including `complianceControls`, `chainConfirmations`, `parentPublicId`, `versionNumber`, `revocationTxId`, `revocationBlockHeight`, `fileMime`, and `fileSize`.
 
-When called with `(data, receipt)` and the SHA-256 hash of `data` doesn't match `receipt.fingerprint`, the SDK returns `{ verified: false, status: 'UNKNOWN', ... }` **without making a network call**. This is the offline tamper detection path.
+When called with `(data, receipt)` and the SHA-256 fingerprint of `data` doesn't match `receipt.fingerprint`, the SDK returns `{ verified: false, status: 'UNKNOWN', ... }` **without making a network call**. This is the offline tamper detection path.
 
 ---
 
@@ -383,7 +383,9 @@ For a complete reference (with Express, Flask, and Go examples), see [docs/api/w
 
 ## Nessie semantic search
 
-Arkova maintains an embedding corpus of 1.4M+ verified public records (SEC filings, court documents, regulatory data). Nessie lets you search and ask questions over them — every result is provably anchored.
+> **Not yet enabled in production.** `arkova.query()` and `arkova.ask()` both call `GET /api/v1/nessie/query`, which is gated behind a feature flag that is currently off — calls will reject with an `ArkovaError` (`statusCode: 503`, message `"Nessie query endpoint is not enabled"`) until this feature launches. The rest of this SDK (anchoring, verification, webhooks) is unaffected. This section documents the intended shape for when it does.
+
+Arkova maintains an embedding corpus of verified public records (SEC filings, court documents, regulatory data). Nessie lets you search and ask questions over them — every result is provably anchored.
 
 ### `arkova.query(q, options?)` — retrieval mode
 
@@ -420,7 +422,7 @@ Every citation links back to a network-anchored source document, so you can veri
 All SDK methods that fail throw an `ArkovaError`:
 
 ```typescript
-import { Arkova, ArkovaError } from '@carsonarkova/sdk';
+import { Arkova, ArkovaError } from 'arkova';
 
 try {
   await arkova.webhooks.create({ url: 'http://insecure.example.com' });
@@ -442,9 +444,11 @@ try {
 | `verification_failed` | 400 | Webhook verification ping (`verify: true`) failed |
 | `batch_too_large` | 400 | More than 20 IDs passed to `verifyBatch` |
 | `authentication_required` | 401 | Missing or invalid API key |
-| `not_found` | 404 | Resource doesn't exist or belongs to another org |
+| `not_found` | 404 | Resource doesn't exist or belongs to another org (webhook, job, and most v1 endpoints) |
 | `rate_limit_exceeded` | 429 | Exceeded the rate limit for this endpoint group |
 | `internal_error` | 500 | Server-side failure — retry with exponential backoff |
+
+> **`code` is the server's raw `error` field, not a fully normalized enum.** Most v1 endpoints send a machine-readable slug (`not_found`, `invalid_url`, ...) and the table above reflects those. One confirmed exception: `arkova.verify(publicId)` against an unknown ID gets HTTP `404` with `error: "Record not found"` (human-readable prose, not `not_found`) — so `err.code` for that specific call is the literal string `"Record not found"`, not `"not_found"`. Branch on `err.statusCode` when you need reliable programmatic dispatch; treat `err.code` as a human-readable hint unless you've confirmed the exact endpoint normalizes it.
 
 ---
 
@@ -452,14 +456,16 @@ try {
 
 Arkova supports the [x402 protocol](https://x402.org) for machine-to-machine billing. x402 is enforced for paid API v1 launch scopes such as `/api/v1/verify`, `/api/v1/verify/entity`, `/api/v1/compliance/check`, `/api/v1/regulatory/lookup`, `/api/v1/cle`, and `/api/v1/nessie/query`. API v2 agent/read surfaces use scoped API keys, not x402.
 
+> **Network:** x402 payments currently settle on **Base Sepolia** (Arkova's present configuration for this feature), not Base's production network — USDC exchanged today is test-environment USDC, not funds with real value. A valid `apiKey` always bypasses the x402 flow entirely, so most integrations never need this section.
+
 ```typescript
 const arkova = new Arkova({
   x402: {
     facilitatorUrl: 'https://x402.arkova.ai',
     payerAddress: '0xae12...',
     signPayment: async (amount, payTo) => {
-      // Sign the payment using your wallet (Base USDC)
-      return await myWallet.signX402(amount, payTo);
+      // Sign the payment using your on-chain signer (Base Sepolia USDC)
+      return await mySigner.signX402(amount, payTo);
     },
   },
 });
@@ -494,7 +500,7 @@ import type {
   FingerprintVerification,
   AnchorDetails,
   OrganizationSummary,
-} from '@carsonarkova/sdk';
+} from 'arkova';
 ```
 
 ---
@@ -505,7 +511,7 @@ The SDK works directly in modern browsers via the standard `<script type="module
 
 ```html
 <script type="module">
-  import { Arkova } from 'https://esm.sh/@carsonarkova/sdk';
+  import { Arkova } from 'https://esm.sh/arkova';
   const arkova = new Arkova({ apiKey: 'ak_live_...' });
   const receipt = await arkova.anchor('hello from the browser');
   console.log(receipt.publicId);
@@ -527,7 +533,7 @@ Override with `baseUrl` config option for staging or local development.
 
 | Method | Description |
 |---|---|
-| `arkova.fingerprint(data)` | Compute SHA-256 hash client-side |
+| `arkova.fingerprint(data)` | Compute SHA-256 fingerprint client-side |
 | `arkova.anchor(data)` | Anchor a document fingerprint |
 | `arkova.anchorBulk(inputs, options?)` | Anchor up to 1000 documents in one call |
 | `arkova.verify(publicId)` | Verify by public ID |

@@ -57,7 +57,7 @@ async function arkovaFetch(path: string, options: RequestInit = {}): Promise<Res
 export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
     name: 'arkova_verify_credential',
-    description: 'Verify a credential\'s authenticity and Bitcoin anchor status on Arkova. Returns verification result including issuer, credential type, and anchor proof.',
+    description: 'Verify a credential\'s authenticity and network anchor status on Arkova. Returns verification result including issuer, credential type, and anchor proof.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -71,7 +71,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'arkova_credential_status',
-    description: 'Get the current status and proof details of a credential, including Bitcoin anchor information and timestamp.',
+    description: 'Get the current status and proof details of a credential, including network anchor information and timestamp.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -177,7 +177,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'nessie_ask',
-    description: 'Ask Nessie a compliance question. Returns an analysis with citations to anchored source documents. Supports compliance_qa, risk_analysis, and recommendation task types.',
+    description: 'Ask Nessie a compliance question, answered with citations to anchored source documents. Supports compliance_qa, risk_analysis, and recommendation task types. NOTE: this endpoint is not yet enabled in production — calls currently return an error (503, "Nessie query endpoint is not enabled") until the feature launches.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -372,7 +372,15 @@ async function handleNessieAsk(query: string, task?: string): Promise<McpToolRes
     limit: '10',
   });
   const res = await arkovaFetch(`/api/v1/nessie/query?${params}`);
-  if (!res.ok) return errorResult(`Nessie query API returned ${res.status}`);
+  if (!res.ok) {
+    // Surface the server's own message when present (e.g. the feature-gate
+    // 503 { error: 'Nessie query endpoint is not enabled' } this endpoint
+    // returns while Nessie is off) rather than a bare status code — the
+    // caller needs to tell "not enabled yet" apart from "bad input" or
+    // "outage" to react correctly.
+    const err = await res.json().catch(() => ({}));
+    return errorResult((err as { error?: string }).error || `Nessie query API returned ${res.status}`);
+  }
   const data = await res.json();
   return textResult(JSON.stringify(data, null, 2));
 }
