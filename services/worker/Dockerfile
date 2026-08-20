@@ -3,7 +3,10 @@
 # SEC-014: Run as non-root user
 
 # Stage 1: Build (includes native build tools)
-FROM node:20-alpine AS builder
+# SCRUM-3166 / GH #2188: Node 22 floor — undici 8.x requires Node >=22.19.0
+# and @google-cloud/kms 6.0 requires Node >=22. Bumped from node:20-alpine
+# (Node 20 EOL 2026-04) in both stages together, per the plan in #2188.
+FROM node:22-alpine AS builder
 RUN apk add --no-cache python3 make g++
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
@@ -13,10 +16,10 @@ COPY src/ ./src/
 RUN npm run build
 
 # Stage 2: Production (minimal image, non-root)
-FROM node:20-alpine
+FROM node:22-alpine
 # SEC: refresh OS packages so the shipped image picks up Alpine security
 # patches (openssl/libssl3/libcrypto3, etc.) not yet baked into the upstream
-# node:20-alpine tag. The container-image CVE gate in deploy-worker.yml
+# node:22-alpine tag. The container-image CVE gate in deploy-worker.yml
 # (Trivy, vuln-type=os, HIGH/CRITICAL fixable) fails the deploy if a fixable
 # base-image CVE would otherwise ship to Cloud Run.
 RUN apk upgrade --no-cache && apk add --no-cache python3 make g++
