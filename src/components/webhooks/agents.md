@@ -24,3 +24,20 @@ Webhook configuration UI for ORG_ADMIN users: endpoint CRUD, event catalog, sign
 ## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
 
 WebhookSettings event display names: "Record Verified/Record Status Changed (coming soon)"; "Credential Issued" kept — it names the restricted-issuance event (SCRUM-1672). Event keys `credential.*` unchanged (API contract). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
+
+## 2026-08-15 — `compliance.document_expiring` added (BUG-002)
+
+Added to `AVAILABLE_EVENTS`, `CATALOG_DATA` (`live: true` — the emit point is
+real: `POST /cron/check-credential-expiry`, behind `ENABLE_EXPIRY_ALERTS`), and
+`WEBHOOK_EVENT_DESCRIPTIONS` in `src/lib/copy.ts`. The pinned drift-guard list in
+`WebhookSettings.test.tsx` was extended in the same commit — that list is the
+only thing tying this workspace to the worker's `VALID_WEBHOOK_EVENTS`, since the
+UI cannot direct-import the worker constant.
+
+The event was already being dispatched by the worker; it just was not registrable,
+so no endpoint could subscribe. Worker-side detail (including why registering it
+is what stops an internal UUID reaching the wire) is in
+`services/worker/src/webhooks/agents.md`.
+
+Pre-existing drift left alone: `anchor.superseded` is in the worker's
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` but not in `AVAILABLE_EVENTS`.

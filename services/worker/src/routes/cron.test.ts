@@ -80,8 +80,20 @@ vi.mock('../jobs/revocation.js', () => ({
 }));
 
 const mockProcessWebhookRetries = vi.fn().mockResolvedValue(2);
+// BUG-002: /check-credential-expiry dynamically imports dispatchWebhookEvent
+// from this module. Without it on the mock the route throws on first dispatch.
+const mockDispatchWebhookEvent = vi.fn().mockResolvedValue(undefined);
 vi.mock('../webhooks/delivery.js', () => ({
   processWebhookRetries: (...args: unknown[]) => mockProcessWebhookRetries(...args),
+  dispatchWebhookEvent: (...args: unknown[]) => mockDispatchWebhookEvent(...args),
+}));
+
+// `flagRegistry` is reached from exactly one cron route
+// (/check-credential-expiry, gated on ENABLE_EXPIRY_ALERTS), so a module-level
+// mock here cannot perturb any other route's behaviour.
+const mockGetFlag = vi.fn().mockReturnValue(true);
+vi.mock('../middleware/flagRegistry.js', () => ({
+  flagRegistry: { getFlag: (...args: unknown[]) => mockGetFlag(...args) },
 }));
 
 const mockProcessMonthlyCredits = vi.fn().mockResolvedValue(10);
@@ -2253,6 +2265,163 @@ describe('cron routes', () => {
       (callRpc as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('fail'));
       const app = createApp();
       const res = await request(app).post('/cron/cleanup-retention');
+      expect(res.status).toBe(500);
+    });
+  });
+
+  /**
+   * BUG-002 (P1, 2026-08 soak). This route returned 500 on every run since
+   * SCRUM-600: it selected `anchors.not_after` and `anchors.document_title`,
+   * and neither column has ever existed — in the rig or in prod. The rig log
+   * read `42703 column anchors.document_title does not exist`. The schema's
+   * expiry column is `expires_at`; there is no title column, the human label
+   * is `label`.
+   *
+   * The compounding defect: `compliance.document_expiring` was not a
+   * registrable event type, so the dispatch could never reach a subscriber AND
+   * skipped payload validation entirely — the payload carried `anchor_id`, the
+   * internal UUID (CLAUDE.md §6). Both are fixed; the schema side is locked in
+   * webhooks/payload-schemas.test.ts.
+   */
+  describe('POST /check-credential-expiry (BUG-002)', () => {
+    /**
+     * Records the PostgREST filter chain so the test can assert on the columns
+     * actually requested, which is the whole bug — a `.select()` naming a
+     * column that does not exist is invisible until PostgREST answers 42703.
+     */
+    function mockAnchorsQuery(rows: Array<Record<string, unknown>>, error: { message: string } | null = null) {
+      const calls: Array<[string, ...unknown[]]> = [];
+      const chain: Record<string, unknown> = {};
+      for (const method of ['select', 'eq', 'is', 'not', 'gt', 'lte'] as const) {
+        chain[method] = vi.fn((...args: unknown[]) => {
+          calls.push([method, ...args]);
+          return chain;
+        });
+      }
+      // The chain is awaited directly (no terminal .limit()), so it must be a
+      // thenable resolving to the PostgREST envelope.
+      chain.then = (resolve: (v: unknown) => unknown) => Promise.resolve({ data: rows, error }).then(resolve);
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue(chain);
+      return calls;
+    }
+
+    const expiringRow = (overrides: Record<string, unknown> = {}) => ({
+      public_id: 'ARK-SEC-VMQ3R8',
+      org_id: 'org-1',
+      credential_type: 'LICENSE',
+      label: 'CPA License',
+      expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      mockGetFlag.mockReturnValue(true);
+      mockDispatchWebhookEvent.mockResolvedValue(undefined);
+    });
+
+    it('selects only columns that exist on anchors', async () => {
+      const calls = mockAnchorsQuery([]);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.status).toBe(200);
+      const select = calls.find(([m]) => m === 'select')?.[1] as string;
+      expect(select).toBe('public_id, org_id, credential_type, label, expires_at');
+      // The two columns that produced 42703 must not reappear anywhere.
+      expect(JSON.stringify(calls)).not.toContain('not_after');
+      expect(JSON.stringify(calls)).not.toContain('document_title');
+    });
+
+    it('filters on expires_at, SECURED status, and excludes soft-deleted rows', async () => {
+      const calls = mockAnchorsQuery([]);
+      await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(calls).toContainEqual(['eq', 'status', 'SECURED']);
+      expect(calls).toContainEqual(['is', 'deleted_at', null]);
+      expect(calls).toContainEqual(['not', 'expires_at', 'is', null]);
+      expect(calls.some(([m, col]) => m === 'gt' && col === 'expires_at')).toBe(true);
+      expect(calls.some(([m, col]) => m === 'lte' && col === 'expires_at')).toBe(true);
+    });
+
+    it('dispatches a payload with public_id and no internal UUID', async () => {
+      mockAnchorsQuery([expiringRow()]);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.status).toBe(200);
+      expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(1);
+      const [orgId, eventType, , payload] = mockDispatchWebhookEvent.mock.calls[0] as [
+        string, string, string, Record<string, unknown>,
+      ];
+      expect(orgId).toBe('org-1');
+      expect(eventType).toBe('compliance.document_expiring');
+      expect(payload.public_id).toBe('ARK-SEC-VMQ3R8');
+      expect(payload.status).toBe('SECURED');
+      expect(payload.warning_level).toBe('7_day');
+      expect(payload.days_remaining).toBeGreaterThan(0);
+      expect(payload).not.toHaveProperty('anchor_id');
+      expect(payload).not.toHaveProperty('expiry_date');
+      expect(payload).not.toHaveProperty('title');
+    });
+
+    it('reports orgsNotified rather than a fabricated emailsSent count', async () => {
+      // The old response claimed `emailsSent` while sending no email
+      // (CLAUDE.md §1.13 R-7 — never claim external action we do not take).
+      mockAnchorsQuery([expiringRow()]);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.body).not.toHaveProperty('emailsSent');
+      expect(res.body).toMatchObject({ processed: 1, orgsNotified: 1, webhooksSent: 1, webhooksFailed: 0 });
+    });
+
+    it('counts a rejected dispatch as failed, not sent, and still returns 200', async () => {
+      mockAnchorsQuery([expiringRow()]);
+      mockDispatchWebhookEvent.mockRejectedValueOnce(new Error('payload failed validation'));
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ webhooksSent: 0, webhooksFailed: 1 });
+    });
+
+    it('drops a row with a null public_id instead of dispatching on null', async () => {
+      mockAnchorsQuery([expiringRow({ public_id: null })]);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.body.processed).toBe(0);
+      expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
+    });
+
+    it('passes a null credential_type through rather than inventing OTHER', async () => {
+      mockAnchorsQuery([expiringRow({ credential_type: null })]);
+      await request(createApp()).post('/cron/check-credential-expiry');
+
+      const payload = mockDispatchWebhookEvent.mock.calls[0][3] as Record<string, unknown>;
+      expect(payload.credential_type).toBeNull();
+    });
+
+    it('only alerts on the 7-day window but reports every bucket', async () => {
+      mockAnchorsQuery([
+        expiringRow({ public_id: 'ARK-7', expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString() }),
+        expiringRow({ public_id: 'ARK-30', expires_at: new Date(Date.now() + 20 * 86_400_000).toISOString() }),
+        expiringRow({ public_id: 'ARK-90', expires_at: new Date(Date.now() + 80 * 86_400_000).toISOString() }),
+      ]);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.body.processed).toBe(3);
+      expect(res.body.categories).toMatchObject({ '7_day': 1, '30_day': 1, '90_day': 1 });
+      expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips cleanly when ENABLE_EXPIRY_ALERTS is off', async () => {
+      mockGetFlag.mockReturnValue(false);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ skipped: true });
+      expect(db.from).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 when the query itself errors', async () => {
+      mockAnchorsQuery([], { message: 'boom' });
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
       expect(res.status).toBe(500);
     });
   });

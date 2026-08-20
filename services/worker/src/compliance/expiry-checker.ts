@@ -7,11 +7,23 @@
  * Jira: SCRUM-600
  */
 
+/**
+ * One document approaching expiry.
+ *
+ * BUG-002: the fields here are the ones that actually exist on `public.anchors`.
+ * The caller previously selected `not_after` and `document_title` — neither
+ * column has ever existed, in the rig or in prod, so `/jobs/check-credential-expiry`
+ * returned 500 on every run (`42703 column anchors.document_title does not exist`).
+ * The schema's expiry column is `expires_at` and its human label is `label`.
+ *
+ * `public_id` — not the internal `anchors.id` UUID — because this identifier
+ * rides an outbound webhook payload (CLAUDE.md §6).
+ */
 export interface ExpiryAnchor {
-  id: string;
+  public_id: string;
   org_id: string;
-  credential_type: string;
-  title: string | null;
+  credential_type: string | null;
+  label: string | null;
   expiry_date: string;
 }
 

@@ -248,6 +248,51 @@ export const CredentialStatusChangedPayloadSchema = z
   });
 
 /**
+ * BUG-002: `compliance.document_expiring` is the ADVANCE warning — a SECURED
+ * document is inside its 7-day expiry window and has not expired yet. It is
+ * distinct from `anchor.expired`, which fires after the fact, once the
+ * anchorExpirySweep cron has already transitioned the anchor to EXPIRED. A
+ * subscriber acting on `anchor.expired` is by definition too late to renew.
+ *
+ * It is emitted by `POST /cron/check-credential-expiry` (NCE-09 / SCRUM-600),
+ * gated on the `ENABLE_EXPIRY_ALERTS` flag. That emit point has existed since
+ * SCRUM-600 but the event type was never added here — and because
+ * `VALID_WEBHOOK_EVENTS` is derived from THIS map, no endpoint could ever
+ * subscribe to it, so every dispatch matched zero endpoints and was silently a
+ * no-op. Worse, an unregistered type takes the `bypassed` branch of
+ * `validateWebhookPayload`, so the payload was never checked: the emit site was
+ * shipping `anchor_id` (the internal UUID, CLAUDE.md §6) into a `data` block one
+ * subscription away from being deliverable. Registering it here is what closes
+ * that, not just what turns the feature on — `.strict()` now rejects
+ * `anchor_id` before anything is signed.
+ *
+ * `status` is `SECURED` and only `SECURED`: an EXPIRED or REVOKED document is
+ * not "expiring". `days_remaining` is positive for the same reason.
+ * Chain fields are deliberately absent — this event is about a calendar date,
+ * not an on-chain transition, and the anchor's receipt is already carried by
+ * `anchor.secured`.
+ */
+export const ComplianceDocumentExpiringPayloadSchema = z
+  .object({
+    public_id: z.string().min(1).max(64),
+    org_public_id: z.string().min(1).max(64).nullable().optional(),
+    // Nullable rather than defaulted: `anchors.credential_type` is nullable, and
+    // inventing an 'OTHER' for a null would assert a classification we do not
+    // have (CLAUDE.md §1.5 — state what is measured).
+    credential_type: z.string().min(1).max(64).nullable().optional(),
+    status: z.literal('SECURED'),
+    expires_at: isoTimestamp,
+    days_remaining: z.number().int().positive(),
+    warning_level: z.enum(['7_day', '30_day', '60_day', '90_day']),
+    // The issuer's own display label for the document, so the alert names
+    // something a human recognises. Free text, same footing as
+    // `anchor.revoked`'s `revocation_reason`; `.strict()` keeps UUIDs and
+    // fingerprints out regardless.
+    label: z.string().max(200).nullable().optional(),
+  })
+  .strict();
+
+/**
  * Map event_type → matching schema. Used by `dispatchWebhookEvent` to validate
  * outbound payloads against the canonical contract before signing.
  */
@@ -261,6 +306,7 @@ export const PAYLOAD_SCHEMAS_BY_EVENT_TYPE = {
   'credential.issued': CredentialIssuedPayloadSchema,
   'credential.verified': CredentialVerifiedPayloadSchema,
   'credential.status_changed': CredentialStatusChangedPayloadSchema,
+  'compliance.document_expiring': ComplianceDocumentExpiringPayloadSchema,
 } as const;
 
 export type WebhookEventType = keyof typeof PAYLOAD_SCHEMAS_BY_EVENT_TYPE;
@@ -273,6 +319,7 @@ export type AnchorBatchSecuredPayload = z.infer<typeof AnchorBatchSecuredPayload
 export type CredentialIssuedPayload = z.infer<typeof CredentialIssuedPayloadSchema>;
 export type CredentialVerifiedPayload = z.infer<typeof CredentialVerifiedPayloadSchema>;
 export type CredentialStatusChangedPayload = z.infer<typeof CredentialStatusChangedPayloadSchema>;
+export type ComplianceDocumentExpiringPayload = z.infer<typeof ComplianceDocumentExpiringPayloadSchema>;
 
 export class WebhookPayloadValidationError extends Error {
   constructor(

@@ -95,3 +95,20 @@ persistence.
   Australia, EU/UK, Canada, Singapore, Japan, India, South Africa, Nigeria.
 - Migration `0217_nca03_compliance_audits.sql` (NCA-03): `compliance_audits`
   table storing full audit history.
+
+## 2026-08-15 — `ExpiryAnchor` fields now match the real schema (BUG-002)
+
+`ExpiryAnchor` declared `id` and `title`. The only caller
+(`POST /cron/check-credential-expiry`) selected `anchors.not_after` and
+`anchors.document_title` to fill them — **neither column has ever existed**, in
+the rig or in prod, so the route 500'd on every run with
+`42703 column anchors.document_title does not exist`. The schema's expiry column
+is `expires_at` and its human label is `label`; there is no title column.
+
+The interface now reads `public_id` / `label`, and `credential_type` is
+`string | null` because the column is nullable. `public_id` rather than
+`anchors.id` because this identifier rides an outbound webhook payload
+(CLAUDE.md §6) — the pre-fix emit site was shipping the internal UUID.
+
+`categorizeExpiringDocuments` / `groupByOrg` are pure and unchanged; only the
+field names moved.
