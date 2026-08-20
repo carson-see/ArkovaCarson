@@ -80,7 +80,7 @@ INSERT INTO auth.users (
   email_change_token_current, reauthentication_token, phone_change, phone_change_token
 ) VALUES (
   '00000000-0000-0000-0000-000000000000',
-  '5eed0000-0000-0000-0000-0000000000a1',
+  '5eed0000-0000-4000-8000-0000000000a1',
   'authenticated', 'authenticated',
   'seed-fixture-user@seed-fixture.invalid',
   extensions.crypt(gen_random_uuid()::text, extensions.gen_salt('bf')),
@@ -102,16 +102,16 @@ INSERT INTO auth.identities (
   last_sign_in_at, created_at, updated_at
 )
 SELECT
-  '5eed0000-0000-0000-0000-0000000000d1',
-  '5eed0000-0000-0000-0000-0000000000a1',
-  '{"sub": "5eed0000-0000-0000-0000-0000000000a1", "email": "seed-fixture-user@seed-fixture.invalid"}'::jsonb,
+  '5eed0000-0000-4000-8000-0000000000d1',
+  '5eed0000-0000-4000-8000-0000000000a1',
+  '{"sub": "5eed0000-0000-4000-8000-0000000000a1", "email": "seed-fixture-user@seed-fixture.invalid"}'::jsonb,
   'email',
-  '5eed0000-0000-0000-0000-0000000000a1',
+  '5eed0000-0000-4000-8000-0000000000a1',
   NOW(), NOW(), NOW()
 WHERE NOT EXISTS (
   SELECT 1 FROM auth.identities
   WHERE provider = 'email'
-    AND provider_id = '5eed0000-0000-0000-0000-0000000000a1'
+    AND provider_id = '5eed0000-0000-4000-8000-0000000000a1'
 )
 ON CONFLICT (id) DO NOTHING;
 
@@ -124,7 +124,7 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO public.organizations (
   id, legal_name, display_name, domain, verification_status
 ) VALUES (
-  '5eed0000-0000-0000-0000-0000000000b1',
+  '5eed0000-0000-4000-8000-0000000000b1',
   'Seed Fixture Org LLC',
   'Seed Fixture Org',
   'seed-fixture.invalid',
@@ -140,11 +140,11 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO public.profiles (
   id, email, full_name, role, org_id, is_public_profile, is_platform_admin
 ) VALUES (
-  '5eed0000-0000-0000-0000-0000000000a1',
+  '5eed0000-0000-4000-8000-0000000000a1',
   'seed-fixture-user@seed-fixture.invalid',
   'Seed Fixture User',
   'ORG_ADMIN',
-  '5eed0000-0000-0000-0000-0000000000b1',
+  '5eed0000-0000-4000-8000-0000000000b1',
   false,
   false
 )
@@ -166,9 +166,9 @@ INSERT INTO public.anchors (
   id, user_id, org_id, filename, fingerprint, status,
   file_size, file_mime, description, metadata, legal_hold, created_at
 ) VALUES (
-  '5eed0000-0000-0000-0000-0000000000c1',
-  '5eed0000-0000-0000-0000-0000000000a1',
-  '5eed0000-0000-0000-0000-0000000000b1',
+  '5eed0000-0000-4000-8000-0000000000c1',
+  '5eed0000-0000-4000-8000-0000000000a1',
+  '5eed0000-0000-4000-8000-0000000000b1',
   'seed-fixture-baseline-anchor.pdf',
   'face1234face1234face1234face1234face1234face1234face1234face1234',
   'SUBMITTED',
