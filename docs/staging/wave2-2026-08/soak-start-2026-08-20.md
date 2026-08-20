@@ -546,3 +546,79 @@ MCP (`list_migrations`/`execute_sql`) output, `gcloud run`/`gcloud builds`
 describe/list output, live `curl` probes with real IAM + Supabase session
 tokens, and this session's own `git`/`npm`/`vitest`/`tsx` output — not
 asserted from either the wave plan or any prior doc._
+
+---
+
+## Amendment 2026-08-20T17:24Z — authenticated load added mid-soak
+
+Founder standard for this wave is "SAME standards as the 7 day soak," whose
+own traffic agent submitted real anchors via the API. Up to this point the
+wave2 load-harness cycles (the ~59-minute manual run above, plus every
+`ai.arkova.soak.wave-load` LaunchAgent auto-relaunch since clock start) ran
+with **no `STAGING_API_KEY`** — `events`/`reads` traffic was unauthenticated,
+proving only the middleware/rate-limiter chain, not authenticated application
+behavior. **That earlier traffic is not retroactively upgraded by this
+amendment** — it stands as anon/rate-limit coverage only, exactly as
+originally logged.
+
+**Blocking discovery, fixed first:** before minting a key, `POST
+/api/v1/keys` returned `503 {"error":"service_unavailable","message":
+"Verification API is not currently enabled"}`. This fresh rig had **zero**
+`switchboard_flags` rows for `ENABLE_VERIFICATION_API`, and
+`featureGate.ts`'s `get_flag()` read fails **closed** on a missing row — so
+`/api/v1/*` was dark for every caller, not just unauthenticated ones. Fixed
+at **2026-08-20T17:20:38Z** via one `INSERT ... ON CONFLICT DO UPDATE` on
+`public.switchboard_flags` (`tkciooifwxwnkoizgalp`, DB only — no Cloud Run
+redeploy, no revision/traffic change). This also means any `reads`-mode `503`
+in the harness's own stdout log from before this timestamp was the flag gate,
+not (only) missing auth.
+
+**Route used to mint the key: the real creation endpoint**, `POST
+/api/v1/keys`, not a direct DB insert. Authenticated with a genuine Supabase
+session JWT for the org already seeded for this rig
+(`seed-fixture-user@seed-fixture.invalid`, `profiles.role='ORG_ADMIN'`, org
+`5eed0000-0000-0000-0000-0000000000b1` — the same fixture the ORG_ADMIN-gate
+driver used, not a new fixture) via the documented
+`/auth/v1/admin/generate_link` → `/auth/v1/verify` recipe, submitted through
+`gcloud run services proxy` (the same IAM/app-JWT header-collision workaround
+this doc's ORG_ADMIN section already used) so the app-level `Authorization`
+header carried the Supabase JWT while the proxy supplied its own IAM
+credential to the Cloud Run ingress.
+
+**Key created 2026-08-20T17:22:00Z:** `key_prefix=ak_live_9504`,
+`name=wave2-soak-load-2026-08-20`, `rate_limit_tier=free`,
+`scopes=[verify, anchor:write, anchor:read, read:search, usage:read,
+verify:batch]`. Raw key written **only** to `~/.arkova-soak/wave2-api-key`
+(mode `0600`) — never logged, never committed, never printed in any session
+output.
+
+**Verified working, live, against the tag URL** (IAM identity token +
+`X-API-Key`, not the proxy): `GET /api/v1/usage` → **200**, headers
+`X-RateLimit-Limit: 1000`, `X-RateLimit-Remaining: 999`,
+`X-RateLimit-Reset: 1787246606`, body correctly attributing 1 request to
+`key_prefix=ak_live_9504` — real usage-tracking/DB behavior, not just a
+middleware pass-through. Control request (same route, IAM token only, no
+`X-API-Key`) came back `429` from the anonymous rate-limit bucket (concurrent
+soak traffic), confirming the keyed request is on its own, separate,
+essentially-fresh 1000/min bucket rather than merely dodging a shared limit.
+
+**Wired into `relaunch-wave-load.sh`** (the `ai.arkova.soak.wave-load`
+LaunchAgent, `StartInterval=1800`): `run_one` now takes an optional API-key
+file path; for the wave2 invocation only it reads
+`~/.arkova-soak/wave2-api-key` at run time and exports it as
+`STAGING_API_KEY` for that cycle's `npm run staging:load` subprocess — never
+inlined into the script. Wave3 is untouched (different rig, different driver
+path, no key needed there). Health gate, clock gate, and the
+`docs/staging/${NAME}-2026-08/load-harness-auto-*.json` evidence path are
+unchanged.
+
+**Named limits, not overclaimed:** in `--mode mixed`, `STAGING_API_KEY` only
+changes `reads` mode's headers (per `load-harness.ts`'s own `runReadsMode`).
+`events` mode (`POST /api/rules/demo-event`) is JWT-gated per the harness's
+own comment ("admin-gated (requires user JWT)") and will keep 401ing
+regardless of `STAGING_API_KEY` — an API key is the wrong credential type for
+that route, not a missing one. `webhooks` mode authenticates via
+per-connector HMAC signature, not an API key, so it is likewise unaffected by
+this change. The concrete before/after is: `reads` mode flips from
+anonymous/rate-limited to fully authenticated, scoped, usage-tracked
+requests against a rig that was previously dark end-to-end for `/api/v1/*`.
