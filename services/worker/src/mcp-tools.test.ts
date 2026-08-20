@@ -601,6 +601,15 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
     expect(result.content[0].text).toContain('SHA-256');
   });
 
+  // BUG-028 (PR #2232): public_records has no public_id column, so the old
+  // `record?.public_id` expression was always undefined and JSON.stringify
+  // dropped the key outright — the response never actually carried an
+  // identifier despite the tool description's old claim. The fix returns
+  // `public_id: null` explicitly (a decidable answer, not a missing field)
+  // plus a `verify_with` pointer at the content_hash, which is the handle
+  // `verify_document` actually accepts. These assertions were stale against
+  // that contract change; updated to match services/edge/src/mcp-tools.ts's
+  // current `anchorSubmittedResult`.
   it('submits anchor request successfully', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -615,7 +624,8 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.status).toBe('submitted');
     expect(parsed.content_hash).toBe(validHash);
-    expect(parsed.public_id).toBe('ARK-2026-999');
+    expect(parsed.public_id).toBeNull();
+    expect(parsed.verify_with).toEqual({ tool: 'verify_document', content_hash: validHash });
     expect(parsed).not.toHaveProperty('record_id');
   });
 
@@ -637,9 +647,10 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
 
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.status).toBe('already_submitted');
-    expect(parsed.public_id).toBe('ARK-2026-999');
+    expect(parsed.public_id).toBeNull();
     expect(parsed).not.toHaveProperty('record_id');
     expect(JSON.stringify(parsed)).not.toContain('internal-rec-1');
+    expect(JSON.stringify(parsed)).not.toContain('ARK-2026-999');
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch.mock.calls[0][0]).toContain('/rest/v1/public_records');
   });
