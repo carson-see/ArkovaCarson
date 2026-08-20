@@ -1,157 +1,144 @@
 # Staging Rig — Operations Reference
 
-> **Authoritative reference** for Arkova staging rigs. CLAUDE.md §1.11 points here. Read this before touching `scripts/staging/*` or running a soak.
+> **Authoritative reference** for the `arkova-staging` rig. CLAUDE.md §1.11 points here. Every session should read this before touching `scripts/staging/*` or running a soak.
 
-## The model: isolated per-soak rigs, provisioned on demand
+## Live state (as of 2026-05-04 evening)
 
-**There is no standing shared staging rig.** Every soak provisions its own standalone Supabase project plus its own `arkova-worker-<name>-staging` Cloud Run service, runs, produces evidence, and is torn down.
-
-This is a correction of record, not a change of policy. The former standing rig — `arkova-staging`, project ref `ujtlwnoqfhtitcmsnrpq` — **was deleted**. Earlier revisions of this document described it as operational and told you to run `npx supabase db push --linked` against it. Those instructions targeted nothing. If you are reading a runbook, PR body, skill, or agents.md that still names `ujtlwnoqfhtitcmsnrpq` as a live target, that text is stale.
-
-### Verified reality (2026-08-15)
-
-Supabase projects in org `byhkazrpmivhcsuqjtva` (`list_projects`) — **three**, and only three:
-
-| Project ref | Name | Role |
-|---|---|---|
-| `vzwyaatejekddvltxyye` | carson-see's Project | **PRODUCTION** — never a soak target |
-| `gnkuaywlpmsaezwvlvhk` | `arkova-fullsoak-2026-08` | **FROZEN 7-day soak rig** — do not disturb |
-| `ehqqearcitrgloibtjqx` | `arkova-connector-sidecar-2026-08` | connector side-rig |
-
-`ujtlwnoqfhtitcmsnrpq` is **absent**: `curl https://ujtlwnoqfhtitcmsnrpq.supabase.co/rest/v1/` exits 6 (could not resolve host).
-
-Cloud Run services matching `*staging*` in `us-central1`:
-
-| Service | State |
+### Supabase project
+| Field | Value |
 |---|---|
-| `arkova-worker-fullsoak-2026-08-staging` | frozen soak worker |
-| `arkova-worker-connector-sidecar-2026-08-staging` | side-rig worker |
-| `arkova-worker-staging` | **ZOMBIE** — revision `arkova-worker-staging-00294-tev`, `Ready=True`, but its `SUPABASE_URL` secret points at the deleted `ujtlwnoqfhtitcmsnrpq`. It boots against a database that is gone. Do not target it; do not read its health as staging health. |
+| Project ref | `ujtlwnoqfhtitcmsnrpq` |
+| Name | `arkova-staging` |
+| Organization | `byhkazrpmivhcsuqjtva` (carson-see's Org) |
+| Region | `us-east-2` (matches prod for soak fidelity) |
+| URL | https://ujtlwnoqfhtitcmsnrpq.supabase.co |
+| DB host | `db.ujtlwnoqfhtitcmsnrpq.supabase.co` |
+| Postgres version | 17.6.1.113 |
+| Cost | $10/month (Supabase Pro project; pause-when-idle if soaked rarely) |
+| Schema state | 270 ledger rows, 101 public tables, 97 RLS-enabled, 279 functions, anchors 37 cols (replayed 2026-05-04) |
 
-## Provisioning a rig
+### Cloud Run worker
+| Field | Value |
+|---|---|
+| Service name | `arkova-worker-staging` |
+| Region | `us-central1` |
+| Service URL | https://arkova-worker-staging-kvojbeutfa-uc.a.run.app |
+| Project-suffix URL | https://arkova-worker-staging-270018525501.us-central1.run.app |
+| Initial revision | `arkova-worker-staging-00002-xzq` (2026-05-04 — first revision after `NODE_ENV=production` fix) |
+| Image | reuses prod's pinned image `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:30e56792d1b1cdb8b2d658782d1e7d88994eaaa5` |
+| Service account | `270018525501-compute@developer.gserviceaccount.com` (default compute SA, same as prod) |
+| Auth | `--no-allow-unauthenticated` (IAM-protected; principals need `roles/run.invoker`) |
+| Scaling | `--min-instances=0 --max-instances=2` (cost-controlled; cold start acceptable for soak) |
+| Resources | `--memory=1Gi --cpu=1 --timeout=300` |
 
-`scripts/staging/provision-isolated-rig.sh` is the one command. It creates the project, replays the schema, deploys a wired worker on the prod-pinned image, seeds the baseline fixture, and requires `clean_mirror` from the preflight before it returns.
+### Staging-specific env-var deltas vs prod
 
-```bash
-# Dry-run (the DEFAULT — mutates nothing, prints every command it would run)
-./scripts/staging/provision-isolated-rig.sh --name my-soak
+The staging worker reuses the prod Docker image but overrides env-vars + secrets:
 
-# Live
-CONFIRM_PROVISION=my-soak \
-  ./scripts/staging/provision-isolated-rig.sh --name my-soak --apply
-```
-
-Safety model (CLAUDE.md §1.11A):
-
-* `--dry-run` is the default. A real run needs **both** `--apply` and `CONFIRM_PROVISION=<name>` matching `--name` exactly.
-* Non-mock profiles (`chain`, `gemini`) additionally require `CONFIRM_REAL_CONFIG=<profile>` — a rig with real Bitcoin exposure or real model spend is never provisioned by a bare `CONFIRM_PROVISION`.
-* The prod ref and the dead shared-staging ref are **hard-denied** constants in the script; it exits 1 rather than touch them.
-
-Profiles: `mock` (default, safe — `USE_MOCKS=true`, anchoring off), `chain` (real GetBlock + WIF signer), `gemini` (real tuned model, chain still mocked). Non-mock profiles also create Cloud Scheduler jobs POSTing to `/jobs/*`, because **node-cron does not fire on a throttled (min-instances=0) Cloud Run service** — without Scheduler the "behavioral" cron paths never run and the soak degenerates to health-only.
-
-Every profile wires the boot-critical Stripe / API-key-HMAC / cron / `FRONTEND_URL` secrets, because `config.ts`'s production Zod `superRefine` crash-loops a worker missing them — and a rig that never boots is a no-op soak, not a passing one.
+| Var | Prod | Staging | Why |
+|---|---|---|---|
+| `SUPABASE_URL` | `supabase-url` secret | `supabase-url-staging` secret | points at staging project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | `supabase-service-role-key` secret | `supabase-service-role-key-staging` secret | staging project's own key |
+| `SUPABASE_JWT_SECRET` | `supabase-jwt-secret` secret | (same as prod — Supabase Mgmt API doesn't expose the staging JWT secret) | acceptable; JWT-protected client paths aren't load-tested by the soak harness |
+| `NODE_ENV` | `production` | `production` (Zod rejects `staging`) | staging codepath = prod codepath, just different DB |
+| `USE_MOCKS` | `false` | **`true`** | chain client returns fake tx ids — zero real Bitcoin exposure from staging |
+| `ENABLE_PROD_NETWORK_ANCHORING` | `true` | **`false`** | belt-and-suspenders against the chain client |
+| `ENABLE_AI_FRAUD` | `true` | `false` | no need to burn Gemini budget on staging |
+| `ENABLE_AI_REPORTS` | `true` | `false` | same |
+| `BATCH_ANCHOR_MAX_SIZE` | `10000` | `10000` via `STAGING_BATCH_ANCHOR_MAX_SIZE` in `scripts/staging/deploy.sh` | keep Trigger A/B soak semantics production-like; do not preserve stale low staging overrides |
+| `CORS_ALLOWED_ORIGINS` | full prod list | `https://app.arkova.ai` only | staging worker isn't called from any other origin during soak |
+| `CRON_OIDC_AUDIENCE` | prod URL | (not set; staging cron triggered manually during soak) | |
 
 ## Why a standalone project (not a Supabase preview branch)
 
-Two failure modes killed the preview-branch approach and still apply:
+Two failure modes killed the preview-branch approach on 2026-05-04:
 
-1. **Lettered-suffix migration builder bug.** The preview-branch builder regex is `^(\d{14}|\d{1,4})_` and silently skips files like `0055b_seed_alignment_idempotent.sql`. The next migration then runs without its prerequisites and the branch hits `MIGRATIONS_FAILED`.
-2. **Cost clock on idle preview branches.** ~$0.01344/hr per branch and they do not pause when idle.
+1. **Lettered-suffix migration builder bug.** Supabase preview-branch builder regex is `^(\d{14}|\d{1,4})_` and silently skips `0055b_seed_alignment_idempotent.sql`. Migration 0056 then runs without its prerequisites and the branch hits `MIGRATIONS_FAILED` with `column a.issued_at does not exist`. Both prior orphan branches (`08b02c0f`, `5b225c3f`) died this way and were deleted.
+2. **Cost clock on idle preview branches.** $0.01344/hr per branch — $9.66/mo each — and they don't pause when idle the way a standalone project does.
 
-A standalone project applies migrations via the Supabase **CLI** parser, which recognises lettered suffixes natively.
+A standalone Supabase project applies migrations via `npx supabase db push --linked`, which uses the Supabase CLI parser (not the preview-branch builder) and recognizes lettered suffixes natively. So 0055b applies cleanly, no fix-forward gymnastics required.
 
-## Schema replay — the corrected bootstrap
+## Authorization model
 
-> **This section was wrong until 2026-08-15 and actively broke fresh rigs** (BUG-2026-08-12-013, findings F-3 / F-4 in `docs/staging/fullsoak-2026-08/connector-sidecar-evidence.md`). The two failures below are the ones to know about.
+* The project itself: created via Supabase MCP `create_project` after `get_cost` + `confirm_cost`. Carson authorized the $10/mo on 2026-05-04.
+* CLI access: use Supabase MCP or an approved non-interactive token path. Do not make merge readiness depend on an operator's local interactive Supabase login.
+* Service role + anon keys: pull via Supabase MCP `get_publishable_keys`. Never check service role key into the repo.
+* Cloud Run worker: use the WIF-backed `Deploy to Staging` workflow. Local `gcloud auth login` is not an acceptable dependency for merge readiness.
 
-### Do NOT pre-create extensions (F-3)
+## How to populate / re-populate the schema
 
-Earlier revisions instructed a bootstrap of `CREATE EXTENSION ... pg_trgm WITH SCHEMA extensions` before `db push`. **This breaks the push.**
-
-The squashed baseline `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql` declares its own extension layout, and pins `pg_trgm` to **`public`**, not `extensions`:
-
-```sql
---   extensions schema  → pgcrypto, uuid-ossp, http, moddatetime, pg_stat_statements
---   public schema      → pg_trgm, vector, hypopg, index_advisor, pg_repack
-CREATE EXTENSION IF NOT EXISTS pg_trgm;          -- lands in public
-```
-
-and then builds indexes against `public.gin_trgm_ops`:
-
-```sql
-CREATE INDEX "idx_anchors_description_trgm" ON "public"."anchors" USING "gin" ("description" "public"."gin_trgm_ops");
-```
-
-Pre-creating `pg_trgm` in `extensions` makes the baseline's own `CREATE EXTENSION IF NOT EXISTS` a silent no-op, so the operator class never exists in `public` and the push dies at statement ~1047 with `operator class "public.gin_trgm_ops" does not exist`.
-
-**Correct procedure: create no extensions by hand.** The baseline installs all of them, in the right schemas, matching prod. If you inherited a rig already in the broken state, the repair is `ALTER EXTENSION pg_trgm SET SCHEMA public;`.
-
-The old enum pre-adds (`anchor_status` `SUBMITTED`/`EXPIRED`) and the "move 11 prefix-colliding migration files aside" dance are **also stale** — those migrations are inside the squashed baseline now. Do not perform them.
-
-### Migration 0381 cannot be applied by `db push` (F-4)
-
-`0381_docusign_envelope_metadata_lookup_indexes.sql` fails under `supabase db push` with:
-
-```
-CREATE INDEX CONCURRENTLY cannot be executed within a pipeline (SQLSTATE 25001)
-```
-
-**Root cause — it is the statement count, not `BEGIN`/`COMMIT`.** The CLI's Postgres driver sends a multi-statement migration file as a single extended-protocol **pipeline**, and Postgres treats a pipeline as an implicit transaction block. `CREATE INDEX CONCURRENTLY` is rejected inside one. A file containing exactly **one** statement is sent on its own, outside any pipeline, and applies fine. The evidence is in the repo:
-
-| File | Executable `CREATE INDEX CONCURRENTLY` statements | `db push` |
-|---|---|---|
-| `0366_scrum2940_anchors_folder_id_index.sql` | 1 | applies |
-| `0389_anchors_ce_registry_ctid_partial_index.sql` | 1 | applies |
-| `0381_docusign_envelope_metadata_lookup_indexes.sql` | **3** | **fails, SQLSTATE 25001** |
-
-0381's own header asserts the opposite rule — that "a bare file with only CONCURRENTLY statements and no explicit transaction applies OUTSIDE a transaction." That is true for one statement and false for three. The header is wrong; this table is right. **0381 is already applied in prod (numeric ledger head `0409`), so it must not be edited or renumbered** — per CLAUDE.md §1.2, an applied migration is never modified.
-
-**The convention going forward: one `CREATE INDEX CONCURRENTLY` per migration file.** If you need three indexes, write three files.
-
-**Rig workaround** — after `db push` fails on 0381, apply its three statements individually, then record the ledger row:
-
-```bash
-# Each statement standalone, outside any transaction.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_metadata_source_envelope_id
-  ON public.anchors ((metadata ->> 'source_envelope_id'))
-  WHERE (metadata ->> 'source_envelope_id') IS NOT NULL;
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_metadata_envelope_id
-  ON public.anchors ((metadata ->> 'envelope_id'))
-  WHERE (metadata ->> 'envelope_id') IS NOT NULL;
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_metadata_external_ref
-  ON public.anchors ((metadata ->> 'external_ref'))
-  WHERE (metadata ->> 'external_ref') IS NOT NULL;
-
--- Verify all three built (CONCURRENTLY can leave an INVALID index):
-SELECT indexrelid::regclass, indisvalid FROM pg_index WHERE indexrelid IN (
-  'public.idx_anchors_metadata_source_envelope_id'::regclass,
-  'public.idx_anchors_metadata_envelope_id'::regclass,
-  'public.idx_anchors_metadata_external_ref'::regclass);   -- expect t, t, t
-ANALYZE public.anchors;
-```
-
-Then insert the `0381` ledger row so the rig's numeric head stays contiguous and the drift gate does not see a hole. This is a **rig** ledger write on a rig you own, not a shared-staging or prod ledger repair — §1.11A's prohibition is about making dirty evidence look clean, not about standing up your own rig.
-
-### The replay itself
+The initial schema replay was done 2026-05-04 (evening). State as of that
+session: 270 ledger rows, 101 public tables, 97 RLS-enabled, 279 functions.
+For a clean rebuild from scratch, use this same procedure:
 
 ```bash
 export SUPABASE_ACCESS_TOKEN="$(gcloud secrets versions access latest --secret=supabase_access --project=arkova1)"
-supabase link --project-ref <YOUR-RIG-REF>     # never a prod or shared ref
-supabase db push --linked                       # creates every extension itself
-# ... 0381 fails here; apply its three statements per the block above, then re-run.
-```
+supabase link --project-ref ujtlwnoqfhtitcmsnrpq
+# Bootstrap: ensure required extensions are present in `extensions` schema
+# and the database default search_path includes them. Without this, 0013
+# fails with "function uuid_generate_v4() does not exist".
+psql_cmd="CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA extensions; CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions; CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA extensions; ALTER DATABASE postgres SET search_path TO public, extensions;"
+# Apply via Supabase MCP execute_sql (or the management API) before db push.
 
-`provision-isolated-rig.sh` performs the link + push as its Step 2.
+# Pre-add the SUBMITTED + EXPIRED enum values; otherwise migration 0068
+# trips Postgres's "unsafe use of new enum value in same transaction" guard.
+ALTER TYPE anchor_status ADD VALUE IF NOT EXISTS 'SUBMITTED';
+ALTER TYPE anchor_status ADD VALUE IF NOT EXISTS 'EXPIRED';
+
+# Move the 11 prefix-colliding migration files out of supabase/migrations/
+# temporarily — db push parses leading numeric digits as `version` (PK in
+# supabase_migrations.schema_migrations) and bails with UNIQUE violation
+# when two files share the same prefix. The colliding pairs to set aside:
+#   0174_public_verification_revoked
+#   0175_fix_pipeline_stats_timeout
+#   0176_fix_anchors_rls_timeout
+#   0180_fix_public_issuer_perf
+#   0236_cleanup_anchor_backlog
+#   0258_ark112_queue_public_id
+#   0262_verify_anchors_rls_enabled
+#   0265_refresh_cache_pipeline_stats_fast
+#   0273_db_health_rpcs
+#   0274_restore_anchor_protections_and_get_flag
+#   0278_revoke_anon_authenticated_matviews
+# Same set listed in .github/workflows/migration-drift.yml exempt_regex
+# (with a few additions for older known collisions like 0033/0078/0162).
+
+mv supabase/migrations/{0174_public_verification_revoked,0175_fix_pipeline_stats_timeout,0176_fix_anchors_rls_timeout,0180_fix_public_issuer_perf,0236_cleanup_anchor_backlog,0258_ark112_queue_public_id,0262_verify_anchors_rls_enabled,0265_refresh_cache_pipeline_stats_fast,0273_db_health_rpcs,0274_restore_anchor_protections_and_get_flag,0278_revoke_anon_authenticated_matviews}.sql /tmp/colliding_migrations/
+
+supabase db push --linked  # applies the rest
+
+# Now apply the 11 set-aside files directly via the Supabase Management API
+# `/database/query` endpoint (the SQL itself is idempotent — CREATE OR REPLACE,
+# CREATE INDEX IF NOT EXISTS — so re-applying on a populated schema is safe).
+for f in /tmp/colliding_migrations/*.sql; do
+  jq -Rs --arg n "$(basename "$f" .sql)" '{name: $n, query: .}' < "$f" | \
+    curl -s -X POST "https://api.supabase.com/v1/projects/ujtlwnoqfhtitcmsnrpq/database/query" \
+      -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+      -H "Content-Type: application/json" -d @-
+done
+
+# Move them back so the worktree matches main.
+mv /tmp/colliding_migrations/*.sql supabase/migrations/
+```
 
 ## Baseline data fixture (required for `clean_mirror`)
 
-Schema replay alone is **not enough** to pass `scripts/ci/staging-honesty-preflight.ts`. A freshly provisioned rig has an empty `anchors` table, and the preflight's **Check 5 (`submitted_anchors`)** requires `>= 1` anchor with `status='SUBMITTED'`. With zero, the rig is classified `environment_type=fixture_seeded` and the Staging Soak Evidence Gate rejects its soak as **HOLLOW** — worker healthy, exercising nothing.
+Schema replay alone is **not enough** to pass `staging-honesty-preflight.ts`.
+Isolated rigs are provisioned with no data seed, so their `anchors` table is
+empty — and the preflight's **Check 5 (`submitted_anchors`)** requires `>= 1`
+anchor with `status='SUBMITTED'`. With zero SUBMITTED anchors a rig is
+classified `environment_type=fixture_seeded` and the Staging Soak Evidence Gate
+rejects its soak as **HOLLOW** (worker healthy but exercises nothing).
+
+After schema replay, seed the minimal valid fixture chain:
 
 ```bash
+# Project must already be linked (the schema-replay step above does this).
 supabase db query --linked --file scripts/staging/seed-baseline-fixture.sql
 ```
 
-The FK/NOT-NULL/CHECK chain it satisfies:
+What the seed inserts (the FK/NOT-NULL/CHECK chain, verified against
+`00000000000000_baseline_at_main_HEAD.sql`):
 
 ```
 auth.users(id)            <- profiles.id FKs here (ON DELETE CASCADE)
@@ -163,77 +150,146 @@ auth.users(id)            <- profiles.id FKs here (ON DELETE CASCADE)
 
 Key properties:
 
-* **Data-only (§1.11A).** Writes NOTHING to `supabase_migrations.schema_migrations`; runs no `migration repair`.
-* **Idempotent.** Every insert is `ON CONFLICT (id) DO NOTHING` on stable `seed-fixture` UUIDs.
-* **Clearly synthetic.** `seed-fixture-user@seed-fixture.invalid`, `Seed Fixture Org`, UUIDs in the `5eed0000-…` range. The org name is deliberately NOT `stg`/`staging_seed_`/`test_org_`-prefixed, so the preflight's `org_topology` check counts it as an org-scoped fixture (PASS) rather than a bare seed org.
-* **Status trigger.** `protect_anchor_status_transition()` rejects a non-PENDING anchor INSERT unless `get_caller_role()='service_role'`. A raw postgres connection has no JWT, so the seed sets a **transaction-local** service_role claim via `set_config('request.jwt.claims', …, true)`.
-* **Use the CLI direct-DB path**, not the Management API `/database/query` endpoint — a Cloudflare integrity rule (HTTP 403, `error code: 1010`) blocks that endpoint for automated clients.
+* **Data-only (§1.11A).** Writes NOTHING to `supabase_migrations.schema_migrations`;
+  runs no `migration repair`. The preflight sees a clean ledger plus the new
+  anchor — nothing else flagged by the seed.
+* **Idempotent.** Every insert is `ON CONFLICT (id) DO NOTHING` on stable
+  `seed-fixture` UUIDs, so re-provisioning (or a re-run) is safe.
+* **Clearly synthetic.** `seed-fixture-user@seed-fixture.invalid`,
+  `Seed Fixture Org`, fixture UUIDs in the `5eed0000-…` range — obviously a
+  baseline fixture, never real data. The org name is intentionally NOT
+  `stg`/`staging_seed_`/`test_org_`-prefixed so the preflight's `org_topology`
+  check counts it as an org-scoped fixture (PASS), not a bare seed org.
+* **Status trigger.** `protect_anchor_status_transition()` rejects a non-PENDING
+  anchor INSERT unless `get_caller_role()='service_role'`. A raw `psql`/postgres
+  connection has no JWT, so the seed sets a **transaction-local** service_role
+  JWT claim (`set_config('request.jwt.claims', …, true)`) to take the fast-path.
+* **Use the CLI direct-DB path**, not the Management API read-write `/database/query`
+  endpoint — a Cloudflare integrity rule (HTTP 403, `error code: 1010`) blocks
+  that endpoint for automated clients. `supabase db query --linked` reaches the
+  DB directly and works.
 
-`provision-isolated-rig.sh` runs this automatically as Step 4.
+`scripts/staging/provision-isolated-rig.sh` runs this automatically as Step 4/5
+(between the worker deploy and the `clean_mirror` preflight). The ad-hoc
+`soak-rig.sh` one-shot recipe runs it after the worker deploy too.
 
-> **Known preflight bug (unrelated to the fixture):** the `duplicate_names` check false-positives on `validate_api_key_rpc_hardening`, because the repo legitimately ships both `0302_` and `0303_validate_api_key_rpc_hardening.sql`. A faithful rig replays both, so the bare-`name` dedup flags it. It needs its own fix to dedup by `version` (the `NNNN` prefix) rather than `name`.
+> **Known gap (separate from this fixture):** the preflight's `duplicate_names`
+> check currently false-positives on `validate_api_key_rpc_hardening` because the
+> repo legitimately ships `0302_` and `0303_validate_api_key_rpc_hardening.sql`
+> (distinct, prod-applied migrations sharing a descriptive name). A faithful rig
+> replays both, so the bare-`name` dedup flags it. This is a preflight bug, not
+> rig contamination, and it is **not** fixed by the baseline fixture — it needs
+> its own change to dedup by `version` (the `NNNN` prefix) rather than `name`.
 
-## Running a soak on your rig
+## Soak workflow caveat for the prefix-collision files
 
-1. **Provision** (above). Capture the rig's project ref, Cloud Run service name, worker revision, and image digest — the evidence block needs all of them.
-2. **Preflight** — `scripts/ci/staging-honesty-preflight.ts` against your rig's ref. Require `clean_mirror`. Capture the output.
-3. **Load harness** against your rig's worker URL:
+When a soak session needs to apply a NEW migration (e.g. PR #695's
+`0291_msgraph_nonce_payload_hash_and_compound_rpc.sql` or PR #697's
+`0290_suborg_suspension_audit_and_service_role_fix.sql`), it MUST use
+Supabase MCP `apply_migration` against `project_id=ujtlwnoqfhtitcmsnrpq`,
+NOT `supabase db push --linked`. Reason: `db push` re-parses
+`supabase/migrations/` and trips on the 11 prefix-collision pairs
+described above (the second of each pair has no ledger row matching its
+4-digit version — it was applied via the Management API in the initial
+setup, ledger entry exists with the file's name but a non-canonical
+version). `apply_migration` via MCP is collision-tolerant — it inserts
+with a fresh timestamp version regardless of the file's leading digits.
+
+This is the same pattern prod uses: `migration-drift.yml` `exempt_regex`
+allows the same set of files to coexist with non-canonical ledger entries.
+
+## How to run a T2 soak (CLAUDE.md §1.12)
+
+**Updated 2026-05-09 — SCRUM-1803; hardened 2026-05-14 — SCRUM-1821.** Multiple PRs can soak in parallel; each PR gets its own tag-routed Cloud Run revision URL via `scripts/staging/deploy.sh`. The lease is now per-PR (PRIMARY KEY on `pr_number`); deploys are gated by lease presence, image existence, recent-revision collision detection, structured force reasons, and an extra promote token for main-URL traffic shifts. SCRUM-1821 also adds the dry-run/apply script for rotating staging deploy privileges from the default compute SA to a deploy-only SA.
+
+1. **Acquire your lease** — multiple PRs may hold leases simultaneously, but only one per PR:
 
    ```bash
-   STAGING_API_BASE="https://<your-rig-worker-url>" \
-     STAGING_CRON_SECRET="$(gcloud secrets versions access latest --secret=cron-secret --project=arkova1)" \
-     npx tsx scripts/staging/load-harness.ts --mode mixed --duration 720 \
-       --evidence-out docs/staging/soak-<name>.json
+   export STAGING_SUPABASE_URL="https://ujtlwnoqfhtitcmsnrpq.supabase.co"
+   export STAGING_SUPABASE_SERVICE_ROLE_KEY="$(gcloud secrets versions access latest --secret=supabase-service-role-key-staging --project=arkova1)"
+   ./scripts/staging/claim.sh acquire <pr-number> "<short reason>"
    ```
 
-   **Note on `STAGING_CRON_SECRET`:** staging workers bind `CRON_SECRET` to the secret named **`cron-secret`** (the same one prod uses; *not* `cron-secret-staging`). Sourcing from `cron-secret-staging` returns 401 on every `cron`-mode request and silently degrades soak coverage.
+   `claim.sh` prints any other PRs currently soaking — that's expected; the tag URL pattern keeps them isolated. `./scripts/staging/claim.sh status` also lists each PR's tag URL plus the latest `staging_deploy_log` row id.
 
-4. **Rollback rehearsal** — for any new migration, apply its `-- ROLLBACK:` block, confirm `/health` stays green, then re-apply.
-5. **Capture evidence** — fill the PR's `## Staging Soak Evidence` block per the `soak-evidence` skill: tier, exact PR head SHA, rig project ref, Cloud Run service/URL, worker revision, image digest, soak start/end, preflight result, E2E result, rollback rehearsal.
-6. **Tear down** — `scripts/staging/teardown-isolated-rig.sh`.
+2. **Build your image** — `gcloud builds submit --tag us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:scrum-N-<sha>` from `services/worker/`.
 
-### `claim.sh` / `deploy.sh` — lease + tag-routing
+3. **Deploy via the lease-enforced wrapper** — refuses to deploy without a lease (override only with a structured Jira reason such as `--force "SCRUM-1821: recover contaminated soak"`):
 
-These predate the isolated-rig model. They were built for many PRs sharing **one** service via Cloud Run tag URLs, and **their defaults still point at the dead shared rig** (`deploy.sh` defaults `SERVICE=arkova-worker-staging`; `claim.sh` defaults its tag host to `arkova-worker-staging-270018525501.us-central1.run.app`). With one service per rig the lease is largely redundant, but both are overridable and still usable:
+   ```bash
+   ./scripts/staging/deploy.sh --pr <N> --image <image-ref>
+   # prints:
+   #   STAGING_API_BASE=https://pr-<N>---arkova-worker-staging-270018525501.us-central1.run.app
+   #   STAGING_DEPLOY_LOG_ID=<row id for the PR evidence block>
+   ```
 
-```bash
-export STAGING_CLOUD_RUN_SERVICE=arkova-worker-<name>-staging
-export STAGING_CLOUD_RUN_HOST=<your-rig-worker-host>
-export STAGING_SUPABASE_URL=https://<your-rig-ref>.supabase.co
-```
+   The wrapper checks that the image exists in Artifact Registry and refuses to proceed if another PR-labeled revision landed in the last 5 minutes. The `--no-traffic` flag is implicit; the main URL is undisturbed unless you pass `--promote` plus `STAGING_PROMOTE_TOKEN` from Secret Manager. Each deploy writes a row to `staging_deploy_log` (append-only, audit-grade).
 
-Set those before invoking either script, or you will act on the zombie.
+4. **Seed** — `npx tsx scripts/staging/seed.ts` against the staging Supabase project. Synthetic data only, namespaced by `org_prefix LIKE 'STG%'`.
 
-Why tag-routing existed at all: pre-SCRUM-1803 the rig was single-tenant and the lease was advisory, so `gcloud run services update` with no tag rewrote main-URL traffic for everybody. PR #742↔#743 collided on 2026-05-08; #742↔#755 contaminated a 4h SOC 2 T2 soak ~12 min in on 2026-05-09 — both despite a held lease, because nothing checked it before deploy. Per-rig isolation removes the shared surface those collisions needed.
+5. **Run the load harness against your tag URL**:
+
+   ```bash
+   STAGING_API_BASE="https://pr-<N>---arkova-worker-staging-270018525501.us-central1.run.app" \
+     STAGING_CRON_SECRET="$(gcloud secrets versions access latest --secret=cron-secret --project=arkova1)" \
+     npx tsx scripts/staging/load-harness.ts --mode mixed --duration 720 \
+       --evidence-out docs/staging/soak-pr-<N>.json
+   ```
+
+   Other PRs' soaks hit their own tag URLs; your traffic is isolated to your revision.
+   The load harness refuses missing `STAGING_API_BASE`, shared/main staging
+   URLs, and untagged Cloud Run hosts so T2/T3 soaks cannot accidentally target
+   the mutable shared service.
+
+   Use `npm run staging:soak-lanes` for a read-only snapshot of active lanes,
+   latest local evidence summaries, missing final JSON, idle
+   T3/migration/soak-pending candidates, and blocked candidates carrying
+   labels such as `do-not-merge`.
+
+   **Note on `STAGING_CRON_SECRET` (SCRUM-1808):** the staging worker binds its
+   `CRON_SECRET` env var to the gcloud secret named **`cron-secret`** (the same
+   secret prod uses; not `cron-secret-staging`). Set the harness env var from
+   that source — sourcing from `cron-secret-staging` will return 401 on every
+   `cron` mode request and silently degrade soak coverage. The harness's
+   `agents.md` already documents this; surfaced here so the soak-workflow flow
+   is self-contained.
+
+6. **Rollback rehearsal** — for any new migration in the PR, apply its `-- ROLLBACK:` block and confirm `/health` on your tag URL stays green, then re-apply.
+
+7. **Capture evidence** — fill PR body's `## Staging Soak Evidence` block: Tier, Staging branch (project ref), Worker revision, Soak start/end, E2E result, Migration applied, Rollback rehearsed. Reference the `staging_deploy_log` rows for your PR via `select * from staging_deploy_log where pr_number = <N>`.
+
+8. **Release the lease** — `./scripts/staging/claim.sh release <pr-number>`.
+
+9. **Mark PR ready** — `gh pr ready <N>` (only after the evidence block is complete).
+
+### Why tag-routed instead of "one soak at a time"
+
+Pre-SCRUM-1803, the rig was single-tenant and the lease was advisory. `gcloud run services update` with no tag rewrites the main URL traffic for everybody. PR #742↔#743 collided on 2026-05-08; PR #742↔#755 contaminated a 4h SOC 2 T2 soak ~12 min in on 2026-05-09. Both happened despite a held lease, because nothing checked it before deploy.
+
+The tag URL pattern is Cloud Run's native isolation: `--tag pr-N --no-traffic` creates a revision reachable only at `https://pr-N---<service>-...run.app` while leaving the main URL untouched. Multiple PRs can hold revisions; load-harness traffic on each tag URL routes to that revision only. The lease scopes which PR is the legitimate author of deploys to a given tag; `deploy.sh` enforces it.
+
+### Force-deploy bypass
+
+`deploy.sh --force "<Jira>: <reason>"` skips the lease check but writes `forced=true` and the reason to `staging_deploy_log`. Use ONLY for genuine emergencies (recovering a contaminated soak from a different session, urgent prod hotfix needing same-session staging). Audit log is queryable by anyone reviewing soak evidence.
+
+### Orphan tag cleanup
+
+Run `./scripts/staging/cleanup-orphan-tags.sh` to inspect old tag URLs. The janitor is dry-run by default, reads current `pr-*` Cloud Run traffic tags, checks PR state through `gh api`, and removes tags only for closed or merged PRs older than 7 days when passed `--apply`. This is designed to be wired to Cloud Scheduler or an equivalent authenticated maintenance job.
 
 ### Deploy-only IAM rotation
 
-`./scripts/staging/rotate-deploy-iam.sh` — dry-run by default, prints the exact `gcloud` commands. Live mutation requires `--apply --confirm SCRUM-1821`; rollback uses `--rollback --apply --confirm SCRUM-1821`. It creates/uses `arkova-staging-deployer@arkova1.iam.gserviceaccount.com`, grants `roles/artifactregistry.reader` on `arkova-worker-images`, grants a conditioned `roles/run.developer`, grants `roles/iam.serviceAccountUser` on the runtime SA, and removes `roles/run.developer` from the default compute SA.
+SCRUM-1821 item 8 is handled by `./scripts/staging/rotate-deploy-iam.sh`. The script is dry-run by default and prints the exact `gcloud` commands. Live IAM mutation requires `--apply --confirm SCRUM-1821`; rollback uses `--rollback --apply --confirm SCRUM-1821`.
 
-## Cost discipline and orphaned resources
+The forward path creates/uses `arkova-staging-deployer@arkova1.iam.gserviceaccount.com`, grants `roles/artifactregistry.reader` on the `arkova-worker-images` repository so the deploy wrapper can preflight image existence, grants a conditioned `roles/run.developer` binding limited to `projects/arkova1/locations/us-central1/services/arkova-worker-staging`, grants `roles/iam.serviceAccountUser` on the runtime service account, and removes `roles/run.developer` from `270018525501-compute@developer.gserviceaccount.com`.
 
-Isolated rigs are Supabase Pro projects (~$10/month each) and they do not clean themselves up. **Tear down every rig when its soak closes.** Per CLAUDE.md §7, sweep the rig inventory at release close / end of sprint — and note that a paid project **cannot** be paused via MCP `pause_project` (that needs a free-tier downgrade first), so the options are delete, or flag it for Carson to pause from the dashboard.
+## Cost discipline
 
-### Orphaned Secret Manager pointers (founder action)
+* The project is $10/month. If no soak has run for >7 days, pause it via the Supabase dashboard. Resume costs nothing per the Supabase Pro pricing model.
+* Do NOT spin up additional preview branches on top of `ujtlwnoqfhtitcmsnrpq`. Use the project itself; sequence soaks via `claim.sh`.
 
-Deleting a Supabase project does **not** delete its Secret Manager entries. As of 2026-08-15, **84 of the 86** `supabase-url-*` secrets in `arkova1` resolve to project refs that no longer exist — including `supabase-url-staging` → `ujtlwnoqfhtitcmsnrpq`. Only `supabase-url-fullsoak-2026-08-staging` and `supabase-url-connector-sidecar-2026-08-staging` point at live projects.
+## Future sessions: read this BEFORE picking up rig work
 
-Secret deletion is a **founder action** — this document does not authorize an agent to perform it. The current orphan set is enumerated in the PR that landed this correction; regenerate it with:
-
-```bash
-gcloud secrets list --format="value(name)" --filter="name~supabase-url-" \
-  | xargs -I{} sh -c 'echo "{}|$(gcloud secrets versions access latest --secret={} 2>/dev/null)"'
-# then diff the refs against Supabase `list_projects`
-```
-
-Each orphaned rig typically owns a family sharing one `<name>` suffix: `supabase-url-<name>`, `supabase-service-role-key-<name>`, and sometimes `supabase-anon-key-<name>`, `supabase-jwt-secret-<name>`, `supabase-db-password-<name>`, `ip-hash-pepper-<name>`, `health-detail-token-<name>`. Delete the family, not just the URL.
-
-## Before you pick up rig work
-
-If you are about to:
-
-* **`create_branch` against the prod project ref** → STOP. Rigs are standalone projects, never preview branches off prod.
-* **Hardcode `vzwyaatejekddvltxyye` (prod) in `scripts/staging/*`** → STOP.
-* **Target `ujtlwnoqfhtitcmsnrpq` or `arkova-worker-staging`** → STOP. The first does not exist; the second is a zombie.
-* **Touch `gnkuaywlpmsaezwvlvhk` or `arkova-worker-fullsoak-2026-08-staging`** → STOP. That is the frozen 7-day soak. Check HANDOFF.md `## Now` → `### Soaks` before assuming any rig is idle.
-* **Pre-create extensions before `db push`** → STOP. The baseline does it correctly; pre-creating `pg_trgm` in `extensions` is exactly what breaks the push.
+If you find yourself about to:
+* `Supabase MCP create_branch` against prod project_ref → STOP. The standing rig is a standalone project, not a preview branch.
+* Hardcode `vzwyaatejekddvltxyye` (prod) anywhere in `scripts/staging/*` → STOP. Staging is `ujtlwnoqfhtitcmsnrpq`.
+* Apply a migration via Supabase MCP `apply_migration` to staging → only do this for files in `migration-drift.yml` `exempt_regex` (those that haven't yet been promoted to prod). All other migrations apply via `db push --linked`.
