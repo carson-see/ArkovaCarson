@@ -100,6 +100,13 @@ export const QUEUE_INTERNALS_ALLOWLIST: readonly string[] = [
   // Resumable proof-job checkpoints. Read back by their owning job's scope
   // key, never drained as work.
   'services/worker/src/jobs/proofJobCheckpoint.ts',
+  // Platform-health-digest cron wiring (feat/platform-admin-daily-health-digest).
+  // readJobQueueMetrics() does a single read-only `.select('created_at').eq
+  // ('status','pending')` for a depth/oldest-age monitoring metric — it never
+  // enqueues, claims, or completes a row, and never calls submitJob/claimJob/
+  // processNextJob. Not queued work and not a lease/checkpoint either; listed
+  // here because rule 4 allow-lists by module path, not by read-vs-write.
+  'services/worker/src/jobs/platform-health-digest-cron.ts',
 ];
 
 const PRODUCER_FNS = new Set(['submitJob']);

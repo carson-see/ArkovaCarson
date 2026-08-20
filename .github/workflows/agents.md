@@ -453,6 +453,16 @@ PR (worker-only change, no workflow impact) — see the dated entry in
 cited "ENABLE_QUEUE_DIGEST off" as the reason, which is no longer true once this merges) — binding the
 actual Cloud Scheduler job is still a separate, not-yet-performed operator step (needs project-admin
 `gcloud` credentials this freeze-window session does not have).
+## Platform-health-digest flag activation (2026-08-18, `feat/platform-admin-daily-health-digest`, draft)
+
+`ENABLE_PLATFORM_HEALTH_DIGEST=true` appended to the canary deploy step's `--set-env-vars` string —
+plain env-var addition, no new step/job. Unlike most job-activation entries in this file, this flag
+was never dark: the route (`POST /jobs/platform-health-digest`) and the flag are BOTH new in this same
+PR (a real capability gap identified by a read-only audit, not a previously-shipped-but-inert switch).
+Default true both here and in `config.ts`'s code default — see the dated entry in
+`services/worker/src/agents.md`. Still requires a manual Cloud Scheduler binding this workflow does
+not perform (see `scripts/gcp-setup/agents.md`'s dated entry and `cloud-scheduler.sh`'s
+`NOT_SCHEDULED` reason for this route).
 
 ## Related
 

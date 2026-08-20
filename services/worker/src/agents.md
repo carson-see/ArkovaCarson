@@ -11,6 +11,13 @@ default `false`. No config.ts schema change here, only the comment updated to re
 `deploy-worker.yml` now sets it explicitly (see that folder's `agents.md`) and that per-org enrollment
 in `jobs/queue-digest-cron.ts` is DEFAULT-ON as of this PR, not opt-in. See
 `jobs/agents.md`'s dated entry for the full mechanism.
+## 2026-08-18 — `config.ts` gains `enablePlatformHealthDigest` (`feat/platform-admin-daily-health-digest`, draft, T2)
+
+New `boolFlag(true)` (`ENABLE_PLATFORM_HEALTH_DIGEST`) gates `jobs/platform-health-digest-cron.ts`'s
+daily platform-admin summary digest — see `jobs/agents.md`'s dated entry for the full mechanism.
+Default **true** at both the code level and in `deploy-worker.yml` (unlike most new job flags in this
+file, which ship default-false) because this is a routine internal ops-visibility email with no
+customer-facing blast radius, not a new production capability that needs a deliberate opt-in rollout.
 
 ## 2026-08-11 BUG-2026-08-11 — `index.ts` fee-estimator singleton was network-blind
 
