@@ -2,6 +2,94 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-18 — `db-health-monitor.ts` dead-tuple RATIO check gets the same absolute floor its autovacuum-age sibling already had
+
+**The alert.** Prod's `job_queue` (`n_live_tup=24, n_dead_tup=20`) actively fired ARKOVA-WORKER-2A. The
+ratio check (`n_dead_tup/n_live_tup > 0.5`, `computeAlerts()`) had **no absolute-count floor** — unlike
+`VACUUM_DEAD_TUPLE_THRESHOLD = 100_000`, which gates the autovacuum-age alert a few lines below it in
+the same function. `job_queue` sits in `HOT_TABLES` alongside `anchors`/`public_records`/`audit_events`
+(multi-million-row tables where the ratio is a real bloat signal), but at `job_queue`'s live scale —
+rows churn to `completed`/`dead` and get vacuumed away — a handful of rows moving between states swings
+the ratio by tens of percentage points: three snapshots taken minutes apart read **0.83, 1.46, and
+2.46** off the same table, while autovacuum ran demonstrably healthy the entire time (499 runs, last
+one minutes-fresh, `n_dead_tup=20` well under the table's own `50 + 0.2*n_live_tup ≈ 55` trigger point).
+Same defect class as yesterday's `DEFAULT_LINKER_STALL_MIN_BACKLOG` fix immediately below: an unfloored
+signal escalating on a magnitude it cannot resolve.
+
+**Fix.** `DEAD_RATIO_MIN_DEAD_TUPLES = 500` gates the ratio branch: `t.deadTuples >=
+DEAD_RATIO_MIN_DEAD_TUPLES && t.ratio > DEAD_RATIO_THRESHOLD`. 500 comfortably clears job_queue's
+live-scale churn while a genuinely bloated hot table (anchors/public_records/audit_events at their
+normal multi-million-row scale) crosses it on the very first missed vacuum cycle — no sensitivity lost
+for the incident class this check exists to catch. The floor gates escalation only: a sub-floor table
+still appears in the green-path `deadTuples` snapshot and the `db-health-monitor green` log line, it
+just doesn't page on noise the ratio can't distinguish from bloat.
+
+Tests: `db-health-monitor.test.ts`, new `describe('dead-tuple ratio absolute floor …')` block (4 cases,
+red-first) — the exact prod shape (24 live/20 dead) does not alert; the SAME 20-dead-tuple count stays
+sub-floor across the incident's observed live-tup volatility (ratios 0.83/1.46/2.46); a genuine
+10k-live/50k-dead bloat shape still fires; the floor is inclusive at its boundary (500 fires, 499
+doesn't). 75/75 across the five monitor test files (71 baseline + 4 net new, 0 regressions); tsc
+set-diff vs the pre-fix baseline is zero; eslint clean.
+
+## 2026-08-17 — `pipelineThroughputMonitor.ts` condition B gets a count floor, and the cache stops lying
+
+**The storm.** Prod `public_records` held 3,538,743 rows: 3,538,742 linked, exactly **one** unlinked,
+~388h old. Condition B fired on the AGE of the oldest unlinked record with no magnitude qualifier at
+all, 388h maps to the `t168h` bucket, and `severityForSustainedBucket('t168h')` is `fatal` — so a
+monitor on a ~30-minute cadence emitted a FATAL Sentry event every half hour for ~16 days (~670
+events) over one row. A dead-man that pages fatal on a single orphan is not calibrated; it trains
+responders to ignore it, which is the same failure mode SCRUM-3050 fixed from the opposite direction.
+
+**Floor = 500 records, and the number is not arbitrary.** `unlinked_total` comes from
+`pipeline_dashboard_cache.pipeline_stats.pending_record_links`, which the deployed
+`refresh_cache_pipeline_stats()` computes as `round(pg_class.reltuples * pg_stats.null_frac)`.
+`null_frac` is an ANALYZE **sample** statistic (~30k rows at the default statistics target), which
+makes the estimate **quantized**, not merely noisy: at 3.5M rows the smallest non-zero value it can
+express is roughly 3.5M/30k ≈ 118 — ONE sampled stuck row estimates ~118, never anything in 1..117.
+The floor must therefore sit ABOVE that quantum: a floor below it (100 was the first value shipped)
+re-arms the fatal storm in every ANALYZE epoch whose sample happens to catch the stuck row (~1% of
+cycles per stuck row), and the quantum grows linearly with the table, so headroom matters — 500
+stays above one quantum until ~15M rows (~4x today). On the other side, the nightly flush moves
+~10k anchors, so one missed linker cycle leaves 20x the floor and the 2026-07 incident was
+259,000 — the floor costs zero sensitivity for the incident class the monitor exists for. A floor
+at batch scale (10,000) would instead blind it to a small tenant whose entire daily volume is a few
+hundred records.
+
+**Graduated, not silenced.** Below the floor the decision is `should_fire: true, severity: 'warning',
+below_backlog_floor: true`, which routes to `logger.warn` with `pipelineStuckRecordSubFloor: true`
+and emits **no** Sentry event. The row is still stuck and still visible; it is just in the ops log
+rather than on a pager. `alertFired` now means "a Sentry alert was actually emitted", so the sub-floor
+result is honestly `healthy: false, alertFired: false`.
+
+**Three fail-loud properties deliberately preserved:**
+
+- `unlinked_total === null` (cache miss / `-1` timeout sentinel) does **not** take the sub-floor
+  branch. Resolving "unknown" to "small" is the same "no data therefore healthy" bug
+  `sustainedBucketFor` already refuses for an unbounded duration.
+- The floor gates **condition B only**. Condition A means nothing secured network-wide inside the
+  window while feeders demonstrably produced a record — an outage at any volume.
+- The floor is a lower bound on *escalation*, never on *detection*: the probes are unchanged.
+
+**The second defect: the cache disagreed with the live count, and the message printed both.** The
+alert read `oldest unlinked public record is 388h old ... (total unlinked backlog 0)`. The `0` is the
+sampled estimate above; the `388h` came from an exact `LIMIT 1` probe that was holding the very row
+the estimate says does not exist. `resolveUnlinkedBacklog()` now reconciles the two — the probe is an
+exact existence test, so when it returns a row the backlog is **at least 1** and the cached zero is
+reported as contradicted rather than asserted. `pending_record_links_approximate` (which the cache
+row already self-declares) is carried through and renders as a `~` marker, so an estimate is never
+printed as a measurement (§1.5). The DB-side estimator is **not** changed here: it is deliberately
+approximate to avoid the `count(*)` callsites R0-8/SCRUM-1254 banned, and making it exact would
+reintroduce the 60s PostgREST timeouts. The defect was consuming it as if it were exact.
+
+Route surface unchanged: `POST /cron/pipeline-throughput-monitor` still accepts only `window_hours`
+and `linker_stall_threshold_hours`. The floor is overridable in-process
+(`runPipelineThroughputMonitor(db, { linkerStallMinBacklog })`) but is not a query parameter — add
+one only if an incident actually needs it.
+
+Tests: `pipelineThroughputMonitor.backlogFloor.test.ts` (18 cases, red-first — including the
+minimum-expressible-estimate regression: a sampled-stuck-row epoch reading ≈117 must stay sub-floor,
+and a 259k-class backlog must still page fatal). T2 (worker behavior).
+
 ## 2026-08-11 SCRUM-3128 / BUG-2026-08-11 — the ECON-1 fee ceiling now fails CLOSED (`anchor.ts`)
 
 The ECON-1 ceiling in `processAnchor` had **two fail-opens stacked on one path**, and both resolved
