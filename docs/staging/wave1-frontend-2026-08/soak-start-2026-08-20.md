@@ -270,3 +270,44 @@ _Deployed by the Claude Code Wave-1 standup session, 2026-08-20. Verified agains
 (Vercel `inspect`/MCP `get_deployment`) output and live browser evidence, not self-report._
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+---
+
+## T1 CLOCK MATURED — 2026-08-20T17:29:30Z
+
+**The 2h T1 minimum is satisfied. This is recorded from the monitor's own log, not asserted
+from elapsed wall-clock.**
+
+| Field | Value |
+|---|---|
+| Clock start | 2026-08-20T15:29:30Z (Vercel preview deployment creation) |
+| Clock end | 2026-08-20T17:29:30Z |
+| Elapsed | 2h 00m, T1 minimum met |
+| Independent monitor | background task `bf3xg179y`, log `scratchpad/wave1-soak-health.log` |
+| Checks recorded | **7**, first 2026-08-20T15:56:59Z, last 2026-08-20T17:30:21Z (past maturity) |
+| Deployment status across all 7 | `● Ready` on every check — zero degraded or failed readings |
+| Preview | `dpl_CsBpSPHYjWDAxGcgg71BDhScfUQx` — still serving at maturity |
+
+The final check at 17:30:21Z falls after the maturity deadline, so the window is covered at
+both ends rather than inferred from a start time plus arithmetic.
+
+## Member status at maturity
+
+All six carry T1 evidence: #2241 `b7fb4a07a`, #2255 `9db556728`, #2256 `1fe71d179`,
+#2275 `b0e39cbaa`, #2215 `ac7526374`, #2259 `ef0a7b104`.
+
+**They remain DRAFT and are NOT queued.** Evidence-complete is not the same as approved to
+land; readying these is Carson's call, not this session's.
+
+## What this evidence does and does not cover
+
+**Covers:** 2h of continuous availability of the union build on a real deployment, plus the
+per-member behavioural drivers recorded earlier in this document (real record render, a
+rename persisted across a hard reload, tab navigation, invite list + resend, seed fixtures,
+and #2259 confirmed declaration-only).
+
+**Does NOT cover, and is not claimed:** #2241's sub-frame render race (below the resolution
+of external browser automation — covered by its own in-process test), #2255's RLS-denied
+path (single-member demo org — covered by its TDD suite), and `tests/rls/**` (needs live DB
+credentials not wired to this harness). #2259 has no live surface by design: nothing syncs
+`alert-rules.json` to Sentry, so its alert rules are NOT asserted to be live there.
