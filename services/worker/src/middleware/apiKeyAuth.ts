@@ -184,7 +184,7 @@ export function apiKeyAuth(hmacSecret: string, options: { required?: boolean } =
     try {
       // eslint-disable-next-line arkova/missing-org-filter -- auth: org unknown until key resolved
       const { data: apiKey, error } = await db.from('api_keys')
-        .select('id, org_id, created_by, scopes, rate_limit_tier, key_prefix, is_active, expires_at')
+        .select('id, org_id, created_by, scopes, rate_limit_tier, key_prefix, is_active, expires_at, revoked_at')
         .eq('key_hash', keyHash)
         .single();
 
@@ -197,7 +197,9 @@ export function apiKeyAuth(hmacSecret: string, options: { required?: boolean } =
         return;
       }
 
-      if (!apiKey.is_active) {
+      // `revoked_at` mirrors validate_api_key's 0382 predicate: a key stamped
+      // as revoked never authenticates, even if is_active was left true.
+      if (!apiKey.is_active || apiKey.revoked_at) {
         res.status(401).json({
           error: 'api_key_revoked',
           message: 'This API key has been revoked.',

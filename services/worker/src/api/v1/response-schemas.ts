@@ -27,12 +27,16 @@ const Timestamp = z.string().datetime({ offset: true });
 
 // ─── /api/v1/keys — list / detail / create response shape ────────────────
 //
-// SCRUM-1271-D — `key_prefix` is the public identifier; `id` (UUID) and
-// `key_hash` (HMAC) are stripped from the body. The DELETE / PATCH path
-// param still takes `:keyId` because v1 routes are frozen — full rename
-// → key_prefix-only happens in /api/v2/keys (SCRUM-1441).
+// SCRUM-1271-D stripped `id` intending /api/v2/keys (SCRUM-1441) to take
+// over addressing by key_prefix; v2 never shipped, and the frozen v1
+// PATCH/DELETE routes take `:keyId` — so no client could revoke or delete
+// a key (fullsoak 2026-08 finding FD-P7, a CC6.8 control failure). `id` is
+// therefore part of the v1 shape again, matching the runbook's Phase 3
+// posture (v1 carries the UUID until the v2 cutover completes). `key_hash`
+// (HMAC) and `org_id` remain stripped — those are the secrets.
 export const KeyResponseShape = z
   .object({
+    id: z.string().uuid(),
     key_prefix: z.string().regex(/^arkv_[a-z]+_[a-z0-9]+$/i, 'expected arkv_<env>_<random>'),
     name: z.string().max(200),
     scopes: z.array(z.string()).min(1),
@@ -41,6 +45,9 @@ export const KeyResponseShape = z
     created_at: Timestamp,
     expires_at: Timestamp.nullable(),
     last_used_at: Timestamp.nullable().optional(),
+    // CC6.8 revocation designation — stamped by PATCH is_active:false.
+    revoked_at: Timestamp.nullable().optional(),
+    revocation_reason: z.string().max(500).nullable().optional(),
     // Present only on POST (create) — the raw key, shown ONCE.
     key: z.string().optional(),
     warning: z.string().optional(),

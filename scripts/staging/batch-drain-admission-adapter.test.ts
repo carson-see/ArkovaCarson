@@ -572,7 +572,7 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
     const provenanceOccurrences = occurrenceCount(batchDrain, TEAM1_ADMISSION_PROVENANCE_RULE);
     const f61BatchDrain = batchDrain.replace(TEAM1_ADMISSION_PROVENANCE_RULE, '');
 
-    expect(sha256(prefix)).toBe('d42a72a31c77bd13b0a89cada92c39a44d1adbc26a273bc0c7cf4cf2ad9f4fc3');
+    expect(sha256(prefix)).toBe('595626f919e4ef7d4bd2fde33f4cd8217f10e4ee0688d7960aac67829dde9ee3');
     expect(sha256(f61BatchDrain)).toBe('4128e8e460051d5d4a8677296d841d491ded72ba6e8e3c5652d17eefa04b7d49');
     expect(provenanceOccurrences).toBe(1);
     expect(batchDrain).toContain('S3.3 R3 acceptance extensions are split deliberately');

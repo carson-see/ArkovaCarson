@@ -2,6 +2,14 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-08-12 — `apiKeyAuth` refuses `revoked_at`-stamped keys (FD-P7 companion)
+
+The middleware now selects `revoked_at` and returns 401 `api_key_revoked` when it is non-null even
+if `is_active` is still true — mirroring migration 0382's `revoked_at IS NULL` predicate in
+`validate_api_key` so the worker and edge paths agree. Rationale in 0382's header: a write path that
+stamps `revoked_at` without flipping `is_active` must not leave a revoked key live. The PATCH
+`/api/v1/keys/:keyId` revoke path stamps both together, but defense-in-depth means not relying on it.
+
 ## 2026-08-01 SILENT-WRITE CLASS — `void <supabase builder>` never executes (PR #1808)
 
 **Do not reintroduce:** supabase-js query builders are **lazy PromiseLikes**. `PostgrestBuilder.then()` is where the HTTP request is issued — nothing happens until something calls `then` (via `await`, `.then(...)`, or `Promise.all`). So
