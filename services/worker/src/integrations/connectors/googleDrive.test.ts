@@ -115,7 +115,7 @@ function makeDriveFetch(calls: Array<{ url: string; init?: RequestInit }>): type
 }
 
 describe('Google Drive connector OAuth', () => {
-  it('uses only drive.file + drive.activity.readonly scopes in the consent URL', () => {
+  it('uses only the minimal Drive scope set in the consent URL and never inherits previously granted scopes', () => {
     const url = buildGoogleDriveAuthorizationUrl({
       redirectUri: 'https://arkova.ai/api/v1/integrations/google-drive/callback',
       state: 'state-1',
@@ -124,12 +124,21 @@ describe('Google Drive connector OAuth', () => {
         GOOGLE_OAUTH_CLIENT_SECRET: 'client-secret',
       },
     });
-    expect(new URL(url).searchParams.get('scope')).toBe(
+    const params = new URL(url).searchParams;
+    // Minimal set (FULLSOAK 2026-08, shared-resource register #9): the two
+    // Drive scopes the connector uses plus userinfo.email for the callback's
+    // account-identity lookup. Nothing else.
+    expect(params.get('scope')).toBe(
       [
         'https://www.googleapis.com/auth/drive.file',
         'https://www.googleapis.com/auth/drive.activity.readonly',
+        'https://www.googleapis.com/auth/userinfo.email',
       ].join(' '),
     );
+    // The 33-scope grant observed during the soak came from
+    // include_granted_scopes=true pulling in every scope ever granted to the
+    // shared OAuth client. The parameter must not be sent at all.
+    expect(params.has('include_granted_scopes')).toBe(false);
   });
 
   it('stores OAuth tokens only in the token secret store, not connection metadata', async () => {

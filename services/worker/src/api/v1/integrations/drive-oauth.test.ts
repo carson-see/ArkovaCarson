@@ -281,6 +281,19 @@ describe('Drive OAuth router', () => {
     expect(url.searchParams.get('client_id')).toBe('google-client');
     expect(url.searchParams.get('redirect_uri')).toBe('http://worker.test/api/v1/integrations/google_drive/oauth/callback');
     expect(url.searchParams.get('state')).toBeTruthy();
+    // End-to-end scope minimality (FULLSOAK 2026-08, shared-resource register
+    // #9): the URL the route actually hands the browser requests exactly the
+    // minimal scope set and does NOT carry include_granted_scopes — the flag
+    // that made one Drive connect inherit a 33-scope grant (gmail.modify,
+    // calendar, …) previously granted to the shared OAuth client.
+    expect(url.searchParams.get('scope')).toBe(
+      [
+        'https://www.googleapis.com/auth/drive.file',
+        'https://www.googleapis.com/auth/drive.activity.readonly',
+        'https://www.googleapis.com/auth/userinfo.email',
+      ].join(' '),
+    );
+    expect(url.searchParams.has('include_granted_scopes')).toBe(false);
   });
 
   it('rejects OAuth start when the caller is not an org admin', async () => {
