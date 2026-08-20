@@ -1,5 +1,15 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-08-20 — every redirect-following `curl` now carries a `--proto '=https'` floor (S6506)
+
+SonarCloud `githubactions:S6506` had an open finding on `revision-drift.yml`'s `/health` probe (`curl -fsSL`, open since 2026-04-25). `-L` follows a `Location` header with no protocol floor, so an `http://` redirect is followed silently — reproduced locally: the old command followed a 302 to `http://evil.example/health` and only died on DNS. For a drift probe that is worse than a crash, because a `git_sha` read off the redirect target reports **"in sync"** and silences the alarm.
+
+Two compliant shapes, both now in use:
+- `revision-drift.yml` — **`-L` dropped.** The URL is a first-party Cloud Run literal that answers 200 directly (verified 2026-08-20), and a health probe has no business following a redirect at all. `--proto '=https'` still pins the request itself, so editing the URL to `http://` fails closed. Because `-f` only fails on >= 400, an unexpected 3xx now returns its body at exit 0 — the step therefore fails loudly on unparseable JSON instead of letting an empty `live_sha` reach the compare step, where it was mislabelled `stale` drift and paged on a false cause.
+- `gitleaks.yml` — **`-L` kept, floor added.** GitHub release assets genuinely redirect to `objects.githubusercontent.com`. Same edit also lands the SHA256 pin this file has required since SCRUM-1248; it was the one external download without one.
+
+`--proto` is a hard ceiling that covers redirects too (`Protocol "http" disabled (in redirect)`, verified against curl 8.7.1), so `--proto-redir` is optional belt-and-braces, not a substitute — `ci.yml` carries both, `deploy-worker.yml` carries `--proto` alone, and both are compliant. Ratchet: `scripts/ci/check-workflow-curl-redirect-protocol.test.ts` scans every workflow (joining shell line-continuations first) and fails on any redirect-following `curl` without the floor. It found `gitleaks.yml`, which the original report missed.
+
 ## 2026-08-17 — Orphaned Export Lint now gates the Mergify queue
 
 `check-success = Orphaned Export Lint` was added to all three `.mergify.yml` queue rules' `merge_conditions` (s33-wave2-corpus, urgent, default). The `orphaned-export-lint` job (CTO ruling R14, fail-closed by design — `continue-on-error: false`) had run on every PR since 2026-07-28 but was never in `merge_conditions`, so it reported without blocking — the exact "new top-level job would not be in branch protection or those merge conditions, so it could go red while Mergify merged anyway" class this file already documents. Config-only; the lint script itself is untouched. This is DISTINCT from the CONDITIONAL-GO sub-decision B jobs (`Worker Build (deploy-parity)` / `Verifier Build`), which remain deliberately NON-REQUIRED pending Carson's required-flip — that ruling covers those two jobs only. Branch protection's required-check set is still a separate Carson/admin surface; only the in-repo Mergify layer changed. Contract test: `scripts/ci/mergify-orphaned-export-gate.test.ts`.
