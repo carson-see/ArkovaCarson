@@ -169,3 +169,50 @@ Containment performs a complete pause pass before a separate complete verificati
 - Team 1 review hardening keeps every chronology field on one canonical UTC/RFC3339 parser, confines live raw capture paths to direct regular JSON files under `/var/lib/arkova/s33-evidence/captures` with no-follow opens, bounds the fixed crash controller, rejects flag-shaped controller identities, and re-keys all R3 scenario ranks so suffixed scenarios cannot share rank-one org IDs. The focused evidence lint is a native `typecheck-lint` CI step; update its explicit file list whenever this surface grows.
 - `batch-drain-admission-adapter.ts` is the only Team1 bridge from Team2 isolated-rig admission v2 into a run declaration. It accepts primitive raw JSON only, rejects lexical duplicate keys, validates Team2's exact strict v2 admission shape, and binds RIG-B1/project/region/lease/clean-mirror/head/base/deployed-image/Supabase/soak/service/revision identity. RIG-B1 admission additionally requires Team2's complete six-job Scheduler set as exact service-derived name/path pairs, the exact creation-guard/PAUSED-through-clean-mirror/resumed lifecycle, and the complete live-chain critical config (`USE_MOCKS=false`, anchoring on, signet, GetBlock, GCP KMS, chain-inapplicable Gemini fields empty, response schema `<unset>`). Missing, extra, duplicated, arbitrary, or name/path-swapped jobs fail closed. The separate ceremony input may supply only declaration id, timestamps, recoveries, and windows. The adapter returns a deeply frozen opaque provenance handle; clones, getters, proxies, extra fields, identity overrides, contradictory aliases, and manual declaration objects fail closed. Signing and the production Ed25519 trust root remain separate and null/fail-closed.
 - Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.
+
+## Wave 3 T2 union soak (2026-08-20)
+
+Stand-up for `rc/wave3-2026-08` (9-member union: #2272, #2276, #2232, #2246,
+#2220, #2252, #2274, #2230, #2236) on a **brand-new dedicated rig** — Supabase
+`jiotjhqmedkajdsojsbn` + Cloud Run `arkova-worker-wave3-2026-08-staging`, both
+new resources, not tag-routed on the shared `arkova-worker-staging` service.
+Full record: `docs/staging/wave3-2026-08/soak-start-2026-08-20.md`.
+
+- `wave3-soak-fixtures.sql` — additive to `seed-baseline-fixture.sql`. Seeds
+  two orgs with a real `PENDING_RESOLUTION` queue item (one default-enrolled,
+  one with an explicit `organization_rules` `QUEUE_DIGEST` opt-out row), a
+  `profiles.is_platform_admin=true` fixture, an `ORG_MEMBER` fixture (no
+  `org_members` admin row, for the Drive `not_admin` deny case), and one
+  SECURED connector-sourced (`metadata.connector_source='docusign'`) anchor.
+  Same idempotent/`5eed…`-namespaced pattern as the baseline fixture, one
+  namespace up (`5eed0003-…`).
+- `wave3-load-loop.sh` — sustained mixed-traffic driver for this rig.
+  `scripts/staging/load-harness.ts` refuses this rig's URL BY DESIGN: its
+  `STAGING_API_BASE` validator (`load-harness-env.ts`) only accepts
+  tag-routed URLs on the shared `arkova-worker-staging` service (a guard
+  against contaminating that shared rig), which does not describe a
+  dedicated standalone service. This script is the substitute — mixed
+  `/health` + `/api/v1/verify/*` + `/.well-known/arkova-keys.json` probes
+  plus both digest cron routes fired every 5 minutes, env-driven
+  (`WAVE3_BASE_URL`, `WAVE3_IDTOKEN_FILE`, `WAVE3_CRON_SECRET_FILE`,
+  `WAVE3_DURATION_SEC`, `WAVE3_EVIDENCE_OUT`), refreshes its own identity
+  token every 40 minutes for multi-hour runs.
+- `wave3-mcp-audit-probe.ts` — imports the real, shipped `logMcpToolCall`
+  from `services/edge/src/mcp-audit-log.ts` directly (no reimplementation)
+  and invokes it against a real rig, for exercising #2232's audit-log P0 fix
+  without needing the Cloudflare `edge.arkova.ai` Worker deployed (it is
+  Carson's shared, standing infra, out of scope for a per-wave rig).
+- `wave3-drive-eligibility-probe.ts` — imports the real, shipped
+  `resolveDriveConnectEligibility` directly and runs it against real seeded
+  rig data. Exists because the actual HTTP route
+  (`POST /api/v1/integrations/google_drive/oauth/start`) needs a Supabase
+  user JWT in `Authorization`, which collides with Cloud Run's own IAM
+  identity-token check on that same header on any `--no-allow-unauthenticated`
+  rig — see `docs/reference/STAGING_RIG.md`'s existing note that
+  "JWT-protected client paths aren't load-tested by the soak harness" for the
+  identical reason on the shared staging rig. The same collision blocks
+  `#2220`'s `POST`/`PATCH`/`DELETE /api/v1/keys*` management endpoints; that
+  soak instead proved the revoke/reject mechanism via `X-API-Key`-authenticated
+  HTTP calls (a header the collision does not touch), not a direct-invocation
+  script — no dedicated script needed since the real endpoint (`/api/v1/verify/*`)
+  already existed.
