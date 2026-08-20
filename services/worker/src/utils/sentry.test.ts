@@ -641,19 +641,42 @@ describe('captureSchedulerPauseAlert (SCRUM-2900)', () => {
     expect(SCHEDULER_PAUSE_FINGERPRINT).toEqual(['scheduler-pause-deadman']);
   });
 
-  it('the beforeSend scrubber leaves an actor_principal in extra intact (operational identity survives; message emails do not)', () => {
+  it('the beforeSend scrubber leaves a SERVICE-ACCOUNT actor_principal in extra intact (operational identity survives; message emails do not)', () => {
+    // NARROWED (§1.1 hardening): this case previously asserted that ANY
+    // actor_principal survived, and demonstrated it with a human email. It
+    // survived only because `event.extra` was never walked at all — the same
+    // hole that let a nested email/fingerprint/API key reach Sentry. Nested
+    // extras are now scrubbed, and the surviving exemption is anchored to the
+    // GCP service-account shape, which is what the production caller actually
+    // passes (see the capture assertion above). Operational attribution is
+    // preserved; a user email is not, because §1.1 has no exemption for one.
     const event = {
       message: 'Scheduler pause dead-man: 1 unexpected pause (batch-anchors)',
       extra: {
         findings: [
-          { job_id: 'batch-anchors', actor_principal: 'carson@arkova.ai' },
+          { job_id: 'batch-anchors', actor_principal: 'ops-sa@arkova1.iam.gserviceaccount.com' },
         ],
       },
     };
     const scrubbed = scrubPiiFromEvent(event);
     const findings = scrubbed?.extra?.findings as Array<Record<string, unknown>>;
-    expect(findings[0].actor_principal).toBe('carson@arkova.ai');
+    expect(findings[0].actor_principal).toBe('ops-sa@arkova1.iam.gserviceaccount.com');
     expect(scrubbed?.message).not.toContain('[EMAIL]');
+  });
+
+  it('a HUMAN actor_principal in extra IS scrubbed — §1.1 forbids user emails in Sentry', () => {
+    const event = {
+      message: 'Scheduler pause dead-man: 1 unexpected pause (batch-anchors)',
+      extra: {
+        findings: [{ job_id: 'batch-anchors', actor_principal: 'carson@arkova.ai' }],
+      },
+    };
+    const scrubbed = scrubPiiFromEvent(event);
+    const findings = scrubbed?.extra?.findings as Array<Record<string, unknown>>;
+    expect(findings[0].actor_principal).toBe('[EMAIL]');
+    // The rest of the finding is untouched — attribution degrades, it does not
+    // disappear; the Cloud Scheduler audit log still has the identity.
+    expect(findings[0].job_id).toBe('batch-anchors');
   });
 });
 
