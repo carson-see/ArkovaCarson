@@ -198,13 +198,18 @@ surfaced four things the section above does not cover:
    `arkova-worker-staging` service's existing secret bindings did **not**
    carry — a redeploy from a pre-2026-08-11 service config crash-loops on
    boot with `Error: Invalid worker configuration` / `Production requires
-   IP_HASH_PEPPER`. Fix: `gcloud run services update arkova-worker-staging
+   IP_HASH_PEPPER`. This is a secret-binding repair, not a deploy — deploys still
+   go through `scripts/staging/deploy.sh` (SCRUM-1821); the binding must be
+   fixed first or every deploy through the wrapper crash-loops on boot.
+   <!-- staging-gcloud-ok: one-time secret-binding repair on a dead rig; not a deploy path -->
+   Fix: `gcloud run services update arkova-worker-staging
    --region=us-central1 --project=arkova1
    --update-secrets=IP_HASH_PEPPER=ip-hash-pepper:latest`. Re-check
    `services/worker/src/config.ts`'s `superRefine` block for other
    production-only requirements added since the service was last redeployed
    before assuming the env/secret list above (§ "Staging-specific env-var
    deltas vs prod") is still complete.
+<!-- staging-gcloud-ok: documents a gcloud output trap; warning text, not a deploy instruction -->
 7. **`gcloud run services update --image=...` prints a revision name in its
    summary line that is not reliably the revision it just created**, when the
    service's traffic is pinned to an explicit revision name rather than the
@@ -216,6 +221,7 @@ surfaced four things the section above does not cover:
    --region=us-central1 --project=arkova1 --sort-by="~metadata.creationTimestamp" --limit=3`
    and its actual traffic share with `gcloud run services describe ...
    --format=json` (`status.traffic`), then move traffic explicitly with
+   <!-- staging-gcloud-ok: verification remediation for the trap above; deploys still use deploy.sh -->
    `gcloud run services update-traffic ... --to-revisions=<real-new-revision>=100`.
    `--to-latest` is not equivalent when traffic is pinned this way.
 
@@ -362,6 +368,7 @@ allows the same set of files to coexist with non-canonical ledger entries.
 
 ### Why tag-routed instead of "one soak at a time"
 
+<!-- staging-gcloud-ok: historical incident transcript explaining why the wrapper exists -->
 Pre-SCRUM-1803, the rig was single-tenant and the lease was advisory. `gcloud run services update` with no tag rewrites the main URL traffic for everybody. PR #742↔#743 collided on 2026-05-08; PR #742↔#755 contaminated a 4h SOC 2 T2 soak ~12 min in on 2026-05-09. Both happened despite a held lease, because nothing checked it before deploy.
 
 The tag URL pattern is Cloud Run's native isolation: `--tag pr-N --no-traffic` creates a revision reachable only at `https://pr-N---<service>-...run.app` while leaving the main URL untouched. Multiple PRs can hold revisions; load-harness traffic on each tag URL routes to that revision only. The lease scopes which PR is the legitimate author of deploys to a given tag; `deploy.sh` enforces it.
