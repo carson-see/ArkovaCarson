@@ -26,9 +26,17 @@ close-out executed 15:52–15:5xZ on 2026-08-19.**
 - Manual drain SKIPPED — unnecessary, queue cleared organically in-window.
 - **Prod FD-CRON-1 relevance CONFIRMED: 30+ `[NODE-CRON] missed execution` warnings on the
   prod worker in the trailing 7 days** — the contention class exists in production's
-  in-process cron scheduler, which owns the nightly billing drain. Migration of
-  schedule-critical crons to Cloud Scheduler HTTP triggers is now a priority post-freeze
-  item (pattern already in-repo via the digest jobs).
+  in-process cron scheduler. Migration of schedule-critical crons to Cloud Scheduler HTTP
+  triggers is a priority follow-up (pattern already in-repo via the digest jobs).
+
+  **CORRECTION 2026-08-20:** an earlier draft of this line asserted that the in-process
+  scheduler "owns the nightly billing drain" in production. That is wrong and is retracted.
+  Verified via `gcloud scheduler jobs list`: prod's daily 03:00Z flush is genuinely
+  Cloud-Scheduler-driven, i.e. already on the more resilient path. The in-process contention
+  affects prod's OTHER scheduled jobs, and end-to-end prod flush reliability remains
+  explicitly NOT asserted (never directly observed firing end to end). The migration
+  recommendation stands for the jobs still on in-process cron; the billing-drain framing does
+  not.
 
 ## What this window is and is not
 
