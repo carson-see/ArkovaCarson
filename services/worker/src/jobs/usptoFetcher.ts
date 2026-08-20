@@ -48,14 +48,18 @@ import { Readable } from 'node:stream';
 import { createInterface } from 'node:readline';
 import unzipper from 'unzipper';
 import { logger } from '../utils/logger.js';
+import { config } from '../config.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * Bulk patent TSV/ZIP source. There is deliberately NO default — see the
  * DECLARED-UNTESTED banner above. Supplying a URL is an explicit operator act.
+ * Read via the typed `config` export (config.ts `usptoBulkTsvUrl`, SCRUM-1258)
+ * rather than `process.env` directly, so a Cloud Run typo fails validation at
+ * startup instead of silently disabling this fetcher.
  */
 function resolveSourceUrl(override?: string): string | undefined {
-  const url = override ?? process.env.USPTO_BULK_TSV_URL;
+  const url = override ?? config.usptoBulkTsvUrl;
   return url && url.trim().length > 0 ? url.trim() : undefined;
 }
 
