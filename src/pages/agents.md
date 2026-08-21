@@ -4,6 +4,25 @@ _Last updated: 2026-08-18_
 ## 2026-08-18 — `OrgProfilePage.tsx` — Pending Invitations visibility on the People tab
 
 Wired `useOrgInvitations` (`src/hooks/agents.md`) + `PendingInvitationsList` (`src/components/organization/agents.md`) into the People tab, admin-only, below `MembersTable`. `handleInvite` and the new `handleResendInvitation` both call the existing `useInviteMember().inviteMember()` — resend is a fresh `invite_member` RPC + `/api/send-invitation-email` call (new row, new token, new 7-day clock), not a re-send of the old token, then `refreshInvitations()` invalidates the query. No new worker route, no migration. Context: founder-reported "I still cannot invite members" investigation found the accept-path backend correct (see the components/organization note); this closes the actual demonstrated gap — the admin had no way to see whether an invite was pending, expired, or ever sent.
+## 2026-08-18 — `PrivacyPage.tsx` Section 3 rewritten (counsel-ordered, Tranche 0)
+
+`PRIVACY_S3_BODY` ("Your files never leave your browser") was accurate for
+browser uploads but false for connector-fetched documents (DocuSign / Google
+Drive), which are fingerprinted server-side under the §1.6A carve-out, not in
+the browser. Counsel's exact approved replacement — sent to Solomon Karanja
+Meru, MNA Legal — is now in `copy.ts` (see that folder's `agents.md` for the
+full addendum quote and Google Doc reference). No JSX change was needed;
+`PrivacyPage.tsx` already renders `PRIVACY_S3_BODY` as a single `<p>`, so the
+fix is entirely in the copy value.
+
+New file `PrivacyPage.test.tsx` pins the wording verbatim (word-for-word
+`.toBe()`, not a substring match) — the sibling
+`PrivacyPage.copy-centralization.test.tsx` explicitly disclaims pinning
+wording (that's this file's job now, plus legal counsel's), it only checks
+every rendered string traces back to `copy.ts`. Both suites pass together:
+the centralization test's residue check is agnostic to what the copy value
+*says*, only that `PrivacyPage.tsx` doesn't say anything `copy.ts` doesn't
+also say.
 
 ## 2026-08-10 — `ActivateAccountPage.tsx` rebuilt; the recovery-phrase ruling
 
