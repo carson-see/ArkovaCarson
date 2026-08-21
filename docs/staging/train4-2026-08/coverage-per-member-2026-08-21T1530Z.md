@@ -16,7 +16,7 @@ member** — never as a blanket claim over the window. This is that per-member a
 
 | Member | Surface | Anonymous reachability | Authenticated behaviour | Verdict |
 |---|---|---|---|---|
-| **#2220** FD-P7 key revoke/delete | `/api/v1/keys` | `401` on list/PATCH/DELETE | **CREATE 201 -> revoke 200 -> DELETE 204**, full lifecycle | **COVERED** |
+| **#2220** FD-P7 key revoke/delete | `/api/v1/keys` | `401` on list/PATCH/DELETE | **CREATE 201 -> active key authenticates -> revoke 200 -> revoked key REFUSED 401 `api_key_revoked` -> DELETE 204** | **COVERED (full FD-P7 loop)** |
 | **#2211** ORG_ADMIN verification gate | `/api/v1/org/*` | corrected — see FD-PROBE-1 | `verification-status` **200**; `verify-ein` over-length **400** (gate admitted admin) | **COVERED (positive case only)** |
 | **#2230** Drive connect deny-reason | `/api/v1/integrations/google_drive/oauth/start` | `401` | **403 `org_scope_required`** — the exact deny-reason distinction | **COVERED** |
 | **#2236** Nessie fail-closed | `/api/v1/nessie/query` | **`503`** fail-closed, sustained all window | not applicable — must never serve | **COVERED** |
@@ -51,10 +51,20 @@ prove a non-admin org member is rejected with `403`: the rig has exactly one see
 user, `seed-fixture-user@seed-fixture.invalid`, and that user is `ORG_ADMIN`. Proving the
 denial half needs a second, non-admin fixture user.
 
-**#2220 — the revoked-key rejection path was NOT re-exercised.**
-The lifecycle (create -> revoke -> delete) is proven. What is not proven in this window is
-that a *revoked key is subsequently refused* on a request — that is the FD-P7 behaviour the
-earlier wave3 key was minted for, and its key is already revoked.
+**#2220 — the revoked-key rejection path IS now exercised (gap closed 2026-08-21T15:49Z).**
+The full FD-P7 loop was driven end to end against the soaking revision with a freshly
+minted key:
+
+| Step | Request | Result |
+|---|---|---|
+| A | `GET /api/v1/verify/STG-ANC-DEADBEEF` with the **active** key | `404` — the key **authenticated**; 404 is "anchor not found", not an auth rejection |
+| B | `PATCH /api/v1/keys/{id}` `{is_active:false, revocation_reason:...}` | `200`, `revoked_at` and reason persisted |
+| C | same verify request with the **revoked** key | **`401 {"error":"api_key_revoked","message":"This API key has been revoked."}`** |
+| D | `DELETE /api/v1/keys/{id}` | `204` |
+
+Step A is what makes step C meaningful: without it, a `401` could mean the key never worked.
+The raw key existed only in a shell variable for the duration of the probe and was never
+written to disk, logged, or echoed (§1.4); the key was deleted at the end.
 
 ## How the authenticated probes were obtained
 
