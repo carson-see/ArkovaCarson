@@ -21,7 +21,7 @@
   "included_prs": [
     {
       "number": 2272,
-      "head_sha": "08014061b40fd142e21dfbc0f602746dde482741",
+      "head_sha": "7e59e4b8e88175a05d2d235e65980ecf04610c4c",
       "base_sha": "b6cfad73c73fbaf45bea08e3b155d61501a49daa",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
@@ -31,7 +31,9 @@
       "allowed_base_shas": [
         "b6cfad73c73fbaf45bea08e3b155d61501a49daa",
         "c0d963490892cedce354620c810a214140ae82ab"
-      ]
+      ],
+      "soaked_head_sha": "08014061b40fd142e21dfbc0f602746dde482741",
+      "head_restack_note": "Restacked onto main so the RC manifest exists in this PR's checked-out tree (the gate loads the manifest from the PR head, not the merge preview). The restack is a MERGE of origin/main with NO content change to this PR's contribution: the changed-file set is identical before and after, and the patch for services/worker/src/jobs/queue-digest-cron.ts is byte-identical (md5 610639d1c12511116398653368b35e4e both sides). soaked_head_sha records the head the wave3 soak actually ran; head_sha is the restacked head the gate binds against. The soaked CODE is unchanged."
     },
     {
       "number": 2276,
@@ -63,7 +65,7 @@
     "start": "2026-08-20T21:50:00Z",
     "end": "2026-08-21T09:50:00Z",
     "duration_hours": 12.0,
-    "result": "pass — revision 00004-cjk unchanged for the whole window, traffic 100%, only that revision served requests (1,200-request sample), zero container terminations, zero 5xx, health 3/3 at close",
+    "result": "pass \u2014 revision 00004-cjk unchanged for the whole window, traffic 100%, only that revision served requests (1,200-request sample), zero container terminations, zero 5xx, health 3/3 at close",
     "harness_version": "scripts/staging/wave3-load-loop.sh (dedicated wave3 driver; 18 cycles, 14,368 successful requests, 0 failures, 86 cron fires; 6.98h loaded of the 12.00h window = 58.1%)",
     "evidence_links": [
       "docs/staging/wave3-2026-08/maturity-2026-08-21T0950Z.md",
