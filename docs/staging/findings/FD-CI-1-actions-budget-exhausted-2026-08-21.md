@@ -2,7 +2,7 @@
 
 **Found:** 2026-08-21T15:37Z, while re-running checks on #2228 after a dependabot rebase.
 **Severity:** blocks the entire merge pipeline. **Founder-reserved** — only Carson can raise the spending limit.
-**Status when written:** OPEN.
+**Status when written:** OPEN. **RESOLVED 2026-08-21T15:51Z** — Carson raised the limit; a re-run of #2228's CI went 13 success / 7 in-progress instead of all-refused, confirming jobs start again. Kept as a record: the diagnostic (read the check-run annotation) is the reusable part.
 
 ## What is happening
 
