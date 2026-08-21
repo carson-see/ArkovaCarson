@@ -4,7 +4,7 @@
 **Supabase project:** `jiotjhqmedkajdsojsbn` (`arkova-wave3-2026-08`, isolated)
 **Union head:** `0333464d7b22e140c07b049718b1214ea98633e1`
 **Clock (FD-CLOCK-1):** revision `creationTimestamp` = 2026-08-21T13:57:35.121840Z -> closes 2026-08-22T01:57:35Z (T2, 12 h)
-**Captured:** 2026-08-21T15:30Z. Window is **open**; this is the running record, not the close-out.
+**Captured:** 2026-08-21T15:30Z, extended 15:49Z (#2220) and 15:44Z (#2211). Window is **open**; this is the running record, not the close-out.
 
 ## Why this document exists
 
@@ -17,7 +17,7 @@ member** — never as a blanket claim over the window. This is that per-member a
 | Member | Surface | Anonymous reachability | Authenticated behaviour | Verdict |
 |---|---|---|---|---|
 | **#2220** FD-P7 key revoke/delete | `/api/v1/keys` | `401` on list/PATCH/DELETE | **CREATE 201 -> active key authenticates -> revoke 200 -> revoked key REFUSED 401 `api_key_revoked` -> DELETE 204** | **COVERED (full FD-P7 loop)** |
-| **#2211** ORG_ADMIN verification gate | `/api/v1/org/*` | corrected — see FD-PROBE-1 | `verification-status` **200**; `verify-ein` over-length **400** (gate admitted admin) | **COVERED (positive case only)** |
+| **#2211** ORG_ADMIN verification gate | `/api/v1/org/*` | corrected — see FD-PROBE-1 | admin: `verification-status` 200, `verify-ein` **400** (admitted); member: **403** on all 3 writers, 200 on status | **COVERED (both directions + control)** |
 | **#2230** Drive connect deny-reason | `/api/v1/integrations/google_drive/oauth/start` | `401` | **403 `org_scope_required`** — the exact deny-reason distinction | **COVERED** |
 | **#2236** Nessie fail-closed | `/api/v1/nessie/query` | **`503`** fail-closed, sustained all window | not applicable — must never serve | **COVERED** |
 | **#2232** proof-keys + MCP audit log | `/.well-known/arkova-keys.json` | **`200`** sustained | n/a (public) | **PARTIAL — see below** |
@@ -44,12 +44,23 @@ these conditions as HTTP **200**). **502 and 207 were NOT exercised** and would 
 seeding the flag plus at least one configured source. A `200` on these routes is now the
 regression signal, and the probe treats it as a deviation.
 
-**#2211 — the negative case was NOT exercised.**
-`verify-ein` returning `400` on an over-length value proves the ORG_ADMIN gate **admitted**
-an admin caller and that #2211's new 32-char `MAX_EIN_LENGTH` bound is live. It does **not**
-prove a non-admin org member is rejected with `403`: the rig has exactly one seeded fixture
-user, `seed-fixture-user@seed-fixture.invalid`, and that user is `ORG_ADMIN`. Proving the
-denial half needs a second, non-admin fixture user.
+**#2211 — the negative case IS now exercised (gap closed 2026-08-21T15:44Z).**
+The rig already carries a second fixture, `member-fixture@seed-fixture.invalid`
+(`ORG_MEMBER`, `org_id 5eed0000-...-b1` — the **same org** as the admin fixture), so no
+seeding was needed. Driving both identities against the same routes proves the gate in both
+directions, and the control row proves it is selective rather than blanket-denying:
+
+| Caller | Route | Result |
+|---|---|---|
+| ORG_ADMIN | `POST /org/verify-ein` (33-char EIN) | `400` "Valid EIN/Tax ID is required (5–32 characters)" — **admitted**, then validation; also confirms #2211's new `MAX_EIN_LENGTH` bound is live |
+| ORG_MEMBER | `POST /org/verify-ein` | **`403` "Organization admin access required"** |
+| ORG_MEMBER | `POST /org/verify-domain` | **`403`** |
+| ORG_MEMBER | `POST /org/confirm-domain` | **`403`** |
+| ORG_MEMBER | `GET /org/verification-status` | **`200`** — member-level route correctly still open |
+
+The last row is the one that makes the other three meaningful: the member is not being
+rejected wholesale, only on the three ORG_ADMIN-gated writers, which is exactly the
+contract #2211 implements.
 
 **#2220 — the revoked-key rejection path IS now exercised (gap closed 2026-08-21T15:49Z).**
 The full FD-P7 loop was driven end to end against the soaking revision with a freshly
