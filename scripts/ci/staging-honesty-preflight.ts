@@ -634,6 +634,57 @@ export function checkOrgTopologyUnavailable(reason: string): CheckResult {
 // Report builder
 // ---------------------------------------------------------------------------
 
+/**
+ * Check 6 (`prod_divergence`) as a standalone verdict.
+ *
+ * Split out of buildReport so the report builder stays readable: the
+ * baseline-squash-aware path and the legacy strict path are two different
+ * judgements that happen to share a check name.
+ */
+function buildProdDivergenceCheck(
+  migrationRows: MigrationRow[],
+  prodVersions: string[],
+  repoVersions: ReadonlySet<string> | undefined,
+  divergence: { missingFromStaging: string[]; extraVsProd: string[] },
+): CheckResult {
+  if (!repoVersions) {
+    const prodDiverged =
+      divergence.missingFromStaging.length > 0 || divergence.extraVsProd.length > 0;
+    return {
+      name: 'prod_divergence',
+      passed: !prodDiverged,
+      details: prodDiverged
+        ? `Missing from staging: [${divergence.missingFromStaging.join(', ')}]; Extra vs prod: [${divergence.extraVsProd.join(', ')}]`
+        : 'Staging versions match prod ledger.',
+    };
+  }
+
+  const verdict = analyzeProdDivergence(migrationRows, prodVersions, repoVersions);
+  if (verdict.passed) {
+    const subsumed =
+      verdict.baselinePresent && verdict.prodMissing.length > 0
+        ? ` ${verdict.prodMissing.length} pre-baseline/version-shape prod row(s) subsumed by the canonical baseline (informational).`
+        : '';
+    return {
+      name: 'prod_divergence',
+      passed: true,
+      details: `Rig ledger reconciles with repo migration files + canonical baseline.${subsumed}`,
+    };
+  }
+
+  const detailParts: string[] = [];
+  if (verdict.unexplainedExtras.length > 0) {
+    detailParts.push(`Unexplained extras (not in repo or prod): [${verdict.unexplainedExtras.join(', ')}]`);
+  }
+  if (verdict.missingRepoMigrations.length > 0) {
+    detailParts.push(`Repo migrations missing from rig: [${verdict.missingRepoMigrations.join(', ')}]`);
+  }
+  if (!verdict.baselinePresent && verdict.prodMissing.length > 0) {
+    detailParts.push(`Prod versions missing from rig (no baseline to subsume them): [${verdict.prodMissing.join(', ')}]`);
+  }
+  return { name: 'prod_divergence', passed: false, details: detailParts.join('; ') };
+}
+
 export function buildReport(opts: {
   projectRef: string;
   migrationRows: MigrationRow[];
@@ -725,42 +776,9 @@ export function buildReport(opts: {
   // claims. Without repoVersions, the legacy strict rule applies (any
   // divergence fails) — this preserves shared-staging behavior.
   const divergence = computeProdDivergence(migrationRows, prodVersions);
-  if (repoVersions) {
-    const verdict = analyzeProdDivergence(migrationRows, prodVersions, repoVersions);
-    const detailParts: string[] = [];
-    if (verdict.unexplainedExtras.length > 0) {
-      detailParts.push(`Unexplained extras (not in repo or prod): [${verdict.unexplainedExtras.join(', ')}]`);
-    }
-    if (verdict.missingRepoMigrations.length > 0) {
-      detailParts.push(`Repo migrations missing from rig: [${verdict.missingRepoMigrations.join(', ')}]`);
-    }
-    if (!verdict.baselinePresent && verdict.prodMissing.length > 0) {
-      detailParts.push(`Prod versions missing from rig (no baseline to subsume them): [${verdict.prodMissing.join(', ')}]`);
-    }
-    let passDetail: string;
-    if (verdict.passed) {
-      const subsumed = verdict.baselinePresent && verdict.prodMissing.length > 0
-        ? ` ${verdict.prodMissing.length} pre-baseline/version-shape prod row(s) subsumed by the canonical baseline (informational).`
-        : '';
-      passDetail = `Rig ledger reconciles with repo migration files + canonical baseline.${subsumed}`;
-    } else {
-      passDetail = detailParts.join('; ');
-    }
-    checks.push({
-      name: 'prod_divergence',
-      passed: verdict.passed,
-      details: passDetail,
-    });
-  } else {
-    const prodDiverged = divergence.missingFromStaging.length > 0 || divergence.extraVsProd.length > 0;
-    checks.push({
-      name: 'prod_divergence',
-      passed: !prodDiverged,
-      details: prodDiverged
-        ? `Missing from staging: [${divergence.missingFromStaging.join(', ')}]; Extra vs prod: [${divergence.extraVsProd.join(', ')}]`
-        : 'Staging versions match prod ledger.',
-    });
-  }
+  checks.push(
+    buildProdDivergenceCheck(migrationRows, prodVersions, repoVersions, divergence),
+  );
 
   // Check 7: Org topology (single-tenant prod vs multi-org staging seeds).
   // An unreadable projection is a FAILED check, never an omitted one.
@@ -981,6 +999,66 @@ function loadRepoMigrationVersions(): ReadonlySet<string> | undefined {
   }
 }
 
+/**
+ * The narrow slice of a Supabase client queryOrgTopology needs. Structural, so
+ * the helper does not have to name supabase-js's generic client type — which
+ * varies with the schema type parameters and does not unify across call sites.
+ */
+interface OrgProjectionReader {
+  from(table: string): {
+    select(columns: string): PromiseLike<{
+      data: unknown;
+      error: { message: string } | null;
+    }>;
+  };
+}
+
+/**
+ * Check 7's data, or the reason it could not be read.
+ *
+ * FD-PREFLIGHT-1: this used to select a column `organizations.name` that does
+ * not exist. PostgREST answered 42703, the caller's `if (!error && data)` guard
+ * fell through with no else, and the check silently disappeared from the report
+ * — for every rig, indefinitely. Every branch here now yields either data or a
+ * reason, and the caller turns a reason into a FAILED check.
+ */
+async function queryOrgTopology(
+  publicClient: OrgProjectionReader,
+): Promise<{ orgTopology?: OrgTopologyData; orgTopologyError?: string }> {
+  try {
+    const { data, error } = await publicClient
+      .from('organizations')
+      .select(ORG_NAME_COLUMNS.join(','));
+    if (error) return { orgTopologyError: error.message };
+    if (!data) return { orgTopologyError: 'organizations projection returned no rows payload.' };
+    const rows = data as unknown as OrgNameRow[];
+    return { orgTopology: { totalOrgs: rows.length, seedOrgs: rows.filter(isOrgRowSeeded).length } };
+  } catch (err) {
+    return { orgTopologyError: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Check 8 fallback: read pg_cron jobs from the environment under test when no
+ * prod ref + Management API token were supplied. Returns undefined when the
+ * `cron` schema is not exposed via PostgREST, which is the common case and is
+ * why Check 8 stays optional (unlike Check 7 — see queryOrgTopology).
+ */
+async function queryCronFactsFromEnvironment(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+): Promise<ProdFactsData | undefined> {
+  try {
+    const cronClient = createClient(supabaseUrl, serviceRoleKey, { db: { schema: 'cron' } });
+    const { data, error } = await cronClient.from('job').select('jobname');
+    if (error || !data) return undefined;
+    const cronJobNames = data.map((j: { jobname: string }) => j.jobname);
+    return { cronJobNames, functionExists: cronJobNames.length > 0 };
+  } catch {
+    return undefined;
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
@@ -1039,28 +1117,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Query org topology (Check 7). Every failure path records a reason so the
-  // check is reported as FAILED instead of vanishing from the report —
-  // FD-PREFLIGHT-1, where a select of the non-existent `organizations.name`
-  // meant this check never ran on any rig and its absence looked clean.
-  let orgTopology: OrgTopologyData | undefined;
-  let orgTopologyError: string | undefined;
-  try {
-    const { data: orgData, error: orgError } = await publicClient
-      .from('organizations')
-      .select(ORG_NAME_COLUMNS.join(','));
-    if (orgError) {
-      orgTopologyError = orgError.message;
-    } else if (!orgData) {
-      orgTopologyError = 'organizations projection returned no rows payload.';
-    } else {
-      const rows = orgData as unknown as OrgNameRow[];
-      const seedOrgs = rows.filter(isOrgRowSeeded).length;
-      orgTopology = { totalOrgs: rows.length, seedOrgs };
-    }
-  } catch (err) {
-    orgTopologyError = err instanceof Error ? err.message : String(err);
-  }
+  // Check 7. Every failure path records a reason, so the check is reported as
+  // FAILED instead of vanishing from the report — FD-PREFLIGHT-1.
+  const { orgTopology, orgTopologyError } = await queryOrgTopology(publicClient);
 
   let prodVersions = args.prodVersions;
   if (managementApiToken && prodProjectRef) {
@@ -1083,19 +1142,7 @@ async function main(): Promise<void> {
     }
   }
   if (!prodFacts && !(managementApiToken && prodProjectRef)) {
-    try {
-      const cronClient = createClient(supabaseUrl, serviceRoleKey, { db: { schema: 'cron' } });
-      const { data: cronData, error: cronError } = await cronClient
-        .from('job')
-        .select('jobname');
-      if (!cronError && cronData) {
-        const cronJobNames = cronData.map((j: { jobname: string }) => j.jobname);
-        const functionExists = cronJobNames.length > 0;
-        prodFacts = { cronJobNames, functionExists };
-      }
-    } catch {
-      // Prod facts check skipped — cron schema may not be exposed via PostgREST.
-    }
+    prodFacts = await queryCronFactsFromEnvironment(supabaseUrl, serviceRoleKey);
   }
 
   const repoVersions = loadRepoMigrationVersions();
