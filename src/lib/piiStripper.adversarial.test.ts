@@ -407,6 +407,15 @@ describe('piiStripper adversarial tests (CISO THREAT-5)', () => {
       expect(result.piiFound).not.toContain('address');
     });
 
+    it('does not let a national ID value run past the end of its own line', () => {
+      // The value class used to use `\s`, which includes `\n`: a 10-char ID ran
+      // greedily onto the next line and swallowed that line's label, destroying
+      // the credential title the extractor reads. A national ID never spans lines.
+      const result = stripPII('national_id: AB.123/456\ncourse_name: Advanced Cardiac Life Support');
+      expect(result.strippedText).not.toContain('AB.123/456');
+      expect(result.strippedText).toContain('course_name: Advanced Cardiac Life Support');
+    });
+
     it('holds across a multi-line CSV-style row (bulk-upload shape)', () => {
       // Mirrors the "<column>: <value>" per line text the bulk-upload wizard
       // builds before POSTing to /api/v1/ai/extract-batch.
