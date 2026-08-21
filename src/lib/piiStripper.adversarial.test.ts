@@ -344,4 +344,98 @@ describe('piiStripper adversarial tests (CISO THREAT-5)', () => {
       expect(result.strippedText).not.toContain("O'Malley");
     });
   });
+
+  // ─── Keyword-label separator evasion ────────────────────────────────
+  // The keyword rules used to join their tokens with `\s+`. That made the
+  // separator itself an evasion channel: `Student ID: 88213` redacted while
+  // `student_id: 88213` — the shape every CSV header actually uses — did not.
+  // Widening the separator is only half the job: the widened matcher must not
+  // start swallowing ordinary words that merely *contain* a keyword ("taxidermy"
+  // contains "tax id"). Both directions are pinned here.
+  describe('keyword-label separator evasion', () => {
+    it('redacts a student ID label across every separator form', () => {
+      for (const label of ['Student ID', 'student_id', 'student-id', 'studentid', 'STUDENT_ID']) {
+        const result = stripPII(`${label}: 88213`);
+        expect(result.strippedText, label).not.toContain('88213');
+        expect(result.piiFound, label).toContain('studentId');
+      }
+    });
+
+    it('tolerates repeated and mixed separators', () => {
+      for (const label of ['Student  ID', 'student__id', 'student-_id', 'Student _ ID']) {
+        const result = stripPII(`${label}: 88213`);
+        expect(result.strippedText, label).not.toContain('88213');
+      }
+    });
+
+    it('redacts an ID label that is the suffix of a longer snake_case header', () => {
+      const result = stripPII('intl_student_id: 88213');
+      expect(result.strippedText).not.toContain('88213');
+      expect(result.piiFound).toContain('studentId');
+    });
+
+    it('does not treat "student identification" prose as a student ID label', () => {
+      const text = 'The student identification policy was revised in 2024';
+      const result = stripPII(text);
+      expect(result.strippedText).toBe(text);
+      expect(result.redactionCount).toBe(0);
+    });
+
+    it('does not treat "student_notes" as a "student no." label', () => {
+      const text = 'student_notes: excellent laboratory progress';
+      const result = stripPII(text);
+      expect(result.strippedText).toBe(text);
+    });
+
+    it('does not treat "Taxidermy" as a tax ID label', () => {
+      const text = 'Taxidermy License issued 2024 by the state board';
+      const result = stripPII(text);
+      expect(result.strippedText).toBe(text);
+      expect(result.piiFound).not.toContain('nationalId');
+    });
+
+    it('does not treat "valid_number" as an ID number label', () => {
+      const text = 'valid_number: 12345';
+      const result = stripPII(text);
+      expect(result.strippedText).toBe(text);
+    });
+
+    it('does not treat "Zipper" as a ZIP label', () => {
+      const text = 'Zipper pouches included in the graduation kit';
+      const result = stripPII(text);
+      expect(result.strippedText).toBe(text);
+      expect(result.piiFound).not.toContain('address');
+    });
+
+    it('holds across a multi-line CSV-style row (bulk-upload shape)', () => {
+      // Mirrors the "<column>: <value>" per line text the bulk-upload wizard
+      // builds before POSTing to /api/v1/ai/extract-batch.
+      const rowText = [
+        'student_id: 88213',
+        'employee-id: E44718',
+        'memberid: M90210',
+        'date_of_birth: 03/14/1997',
+        'national_id: AB.123/456',
+        'course_name: Advanced Cardiac Life Support',
+        'credit_hours: 3',
+        'score: 88',
+        'year: 2024',
+      ].join('\n');
+
+      const result = stripPII(rowText);
+
+      for (const leaked of ['88213', 'E44718', 'M90210', '03/14/1997', 'AB.123/456']) {
+        expect(result.strippedText, leaked).not.toContain(leaked);
+      }
+      expect(result.piiFound).toContain('studentId');
+      expect(result.piiFound).toContain('dob');
+      expect(result.piiFound).toContain('nationalId');
+
+      // Precision: the non-identifier columns the extractor reads are intact.
+      expect(result.strippedText).toContain('course_name: Advanced Cardiac Life Support');
+      expect(result.strippedText).toContain('credit_hours: 3');
+      expect(result.strippedText).toContain('score: 88');
+      expect(result.strippedText).toContain('year: 2024');
+    });
+  });
 });
