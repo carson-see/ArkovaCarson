@@ -1,5 +1,9 @@
 # agents.md — hooks
-_Last updated: 2026-08-10_
+_Last updated: 2026-08-18_
+
+## 2026-08-18 — `useOrgInvitations.ts` (invite-accept investigation, admin visibility)
+
+New hook: reads an org's non-accepted invitations (`invitations` table, RLS-scoped by the pre-existing "Org admins can view invitations" policy — no migration) for `PendingInvitationsList` (`src/components/organization/agents.md`). Never selects `invitations.token` (pinned by a dedicated test — the single-use accept credential must never reach the browser, §1.4). Recomputes `pending` → `expired` client-side from `expires_at` exactly like the worker's `GET /api/invitations/:token` preview (`services/worker/src/api/invitations.ts`'s `isExpired()`) — the `status` column is never flipped to `'expired'` at rest, confirmed live against prod (3 real invitations still read `status='pending'` days past their `expires_at`). Built while investigating the founder's "I still cannot invite members" report: the accept-path backend was found correct end to end (new router-level integration test, `services/worker/src/routes/anchor-invitation-accept.test.ts`); the real, demonstrated gap was that the inviting admin had zero visibility into invitation status. See `src/components/organization/agents.md` for the full investigation note.
 
 ## 2026-08-10 — `useActivateAccount.ts` (recipient activation launch blocker)
 

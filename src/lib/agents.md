@@ -1,5 +1,10 @@
 # agents.md — lib
 
+_Last updated: 2026-08-18_
+
+## 2026-08-18 — `PENDING_INVITATIONS_LABELS` + `queryKeys.orgInvitations`
+
+`copy.ts` gains `PENDING_INVITATIONS_LABELS` for the new `PendingInvitationsList` component (`src/components/organization/agents.md`) — status badges (Pending/Expired/Revoked) and the Resend action, org-admin-only visibility into invitations that have not resulted in a member yet. `queryClient.ts` gains `queryKeys.orgInvitations(orgId)`, same shape as `queryKeys.orgMembers`.
 _Last updated: 2026-08-21_
 
 ## Keyword redaction is separator-insensitive (PR #2312)
