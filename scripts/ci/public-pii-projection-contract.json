@@ -366,6 +366,7 @@
     "ce_envelope_sha256", "cle_metadata", "course_title", "cpe_metadata",
     "created_at", "credential_id_hash", "credential_title", "credential_type",
     "credit_hours", "delivery_format", "delivery_method", "description",
+    "directory_info_suppressed",
     "ethics_hours", "evidence_package_hash", "evidence_schema_version",
     "expires_at", "expiry_date", "extraction_confidence",
     "extraction_manifest_hash", "extraction_method", "fetched_at",
@@ -401,7 +402,8 @@
 
   "structural_keys": [
     "anchor_timestamp", "bitcoin_block", "cle_metadata", "cpe_metadata",
-    "created_at", "credential_type", "expires_at", "expiry_date", "file_size",
+    "created_at", "credential_type", "directory_info_suppressed", "expires_at",
+    "expiry_date", "file_size",
     "fingerprint", "fingerprint_source", "issued_at", "issued_date",
     "issuer_public_id", "merkle_proof_hash", "metadata", "network_receipt_id",
     "public_id", "record_uri", "revoked_at", "secured_at", "status",
@@ -423,6 +425,139 @@
     "that 0385 itself introduced, and to every source expression a future",
     "migration might invent. Recognising danger fails open; recognising safety",
     "fails closed."
+  ],
+
+  "directory_opt_out_predicate": "is_directory_info_suppressed",
+  "directory_opt_out_owner_migration": "supabase/migrations/0415_ferpa_directory_info_opt_out_public_projections.sql",
+  "directory_opt_out_fails_closed_on_absent_type": true,
+  "$directory_opt_out_note": [
+    "FD-FERPA-1. `anchors.directory_info_opt_out` shipped in archive migration",
+    "0197 with a column comment naming the FERPA Section 99.37 obligation, and",
+    "NO public projection function read it for over a year. Three production",
+    "records carry the flag; all three are SECURED, which is exactly the state",
+    "these projections serve.",
+    "",
+    "THE FAIL-CLOSED RULE IS THE WHOLE FIX. Measured on prod 2026-08-21, all",
+    "three opted-out records have `credential_type IS NULL`. A predicate written",
+    "as `type IN (education types)` evaluates FALSE for every one of them, so a",
+    "'fix' shaped that way would have gone green and changed nothing in",
+    "production. An absent type cannot be shown to be outside FERPA's reach, so",
+    "it suppresses — the same inversion 0390 applied to the academic free-text",
+    "gate.",
+    "",
+    "The predicate deliberately covers `ferpa_education_types` (which includes",
+    "CLE) and NOT `academic_record_credential_types`. Three sets, three jobs:",
+    "academic = free-text suppression, FERPA = the 99.37 opt-out and the 99.33",
+    "re-disclosure notice, and this one reuses the FERPA set rather than adding",
+    "a fourth."
+  ],
+
+  "directory_opt_out_suppressed_fields": [
+    "issuer_public_id", "issued_date", "expiry_date", "issued_at", "expires_at",
+    "cpe_metadata", "cle_metadata", "revocation_reason",
+    "metadata.title", "metadata.credential_title", "metadata.description",
+    "metadata.category", "metadata.issuer"
+  ],
+  "directory_opt_out_controlled_fields": ["filename", "issuer_name"],
+  "directory_opt_out_omitted_fields": ["recipient_identifier"],
+  "$suppressed_vs_controlled_directory": [
+    "SUPPRESSED -> NULL. Keys inside the metadata sub-object are dropped by",
+    "jsonb_strip_nulls; top-level ones are already nullable on this projection",
+    "and already null on most records, so NULL is in-shape rather than a schema",
+    "change (CLAUDE.md 1.8).",
+    "",
+    "CONTROLLED -> a fixed label, never NULL. `filename` is the record's public",
+    "display title and its schema.org `name`; `issuer_name` is rendered as the",
+    "issuing institution. Both are strings consumers assume are present, so they",
+    "degrade to values this function already emits ('Secured Document',",
+    "'Unknown Issuer') which assert nothing. Same rule 0385 applies to filename.",
+    "",
+    "OMITTED -> the key is absent. Only recipient_identifier, which is appended",
+    "after the projection so omission is expressible there. It matches the REST",
+    "path (`not.toHaveProperty('recipient_identifier')`) and leaves a suppressed",
+    "record indistinguishable from one that simply has no recipient."
+  ],
+
+  "directory_opt_out_residual_published_fields": ["credential_type"],
+  "$directory_opt_out_residual_note": [
+    "STATED, NOT HIDDEN (CLAUDE.md 1.5 / 1.13 R-7). The 0197 column comment",
+    "names 'degree type' as directory information, and 34 CFR 99.3 agrees",
+    "('degrees, honors and awards received'). It is published anyway, on BOTH",
+    "anonymous surfaces, because verify.test.ts pins the REST path emitting it",
+    "on a suppressed record and one row answering two ways across two public",
+    "projections is the asymmetry FD-FERPA-1 exists to remove.",
+    "",
+    "No live exposure today: all three opted-out records have a NULL type, which",
+    "projects as the 'OTHER' fallback. This is a decision on the record awaiting",
+    "a counsel/CTO call, not an oversight. Changing it means changing the SQL",
+    "projection AND verify.ts AND that test in ONE PR."
+  ],
+
+  "directory_opt_out_verification_fields": [
+    "verified", "status", "public_id", "fingerprint", "fingerprint_source",
+    "record_uri", "anchor_timestamp", "bitcoin_block", "network_receipt_id",
+    "merkle_proof_hash", "created_at", "secured_at", "revoked_at",
+    "superseded_at"
+  ],
+  "$directory_opt_out_verification_note": [
+    "The half that must NOT change. Suppression drops directory FIELDS; the",
+    "record still verifies. None of these keys may be gated on the opt-out, and",
+    "the predicate may not appear in the row filter: answering",
+    "{\"error\":\"Record not found\"} for an opted-out anchor would tell an",
+    "anonymous verifier that a genuinely anchored document does not exist —",
+    "protecting nobody and breaking the one answer the learner is relying on the",
+    "record to give."
+  ],
+
+  "directory_level_columns": [
+    "credential_type", "issued_at", "expires_at", "filename", "cpe_metadata",
+    "cle_metadata", "'issuer'", "'recipient'", "display_name"
+  ],
+  "directory_opt_out_classifications": {
+    "get_public_anchor": {
+      "disposition": "consults_flag",
+      "reason": "The primary anon-callable verification projection. Calls private.is_directory_info_suppressed via the hoisted g.suppress_directory (migration 0415)."
+    },
+    "search_public_credentials": {
+      "disposition": "consults_flag",
+      "reason": "Anon-executable public search. Excludes opted-out records from MATCHING, not just from the projected title — a non-empty result set is itself the disclosure (0387's hit-count-oracle rule, extended by 0415)."
+    },
+    "bulk_create_anchors": {
+      "disposition": "identity_guarded",
+      "reason": "A WRITER, not a projection. Reads credential_type/filename from its own jsonb argument and returns per-row create/skip counts, never an existing record's directory fields. Guarded by a profiles lookup on auth.uid() that RAISEs 'Profile not found' before any work. Its anon EXECUTE grant is its own (separate) hygiene question, tracked outside FD-FERPA-1."
+    },
+    "resolve_anchor_queue": {
+      "disposition": "identity_guarded",
+      "reason": "An admin RPC that resolves a duplicate-anchor queue entry and returns a uuid. Guarded by a profiles lookup on auth.uid() plus an explicit ORG_ADMIN role RAISE before it touches anchors. Returns no projection of directory fields."
+    },
+    "refresh_cache_anchor_type_counts": {
+      "disposition": "returns_no_projection",
+      "reason": "An aggregate cache refresher: counts anchors by credential_type into a stats cache and returns void. Emits no per-record value, and prod ACL confirms anon=false, authenticated=false (checked 2026-08-21)."
+    }
+  },
+  "$directory_opt_out_classifications_note": [
+    "THE RATCHET. Derived from the migrations by",
+    "src/tests/ferpa-directory-info-opt-out.contract.test.ts — every public.*",
+    "function whose newest definition reads `anchors` and touches one of",
+    "directory_level_columns, minus any a migration explicitly REVOKEs from",
+    "anon — and compared for SET EQUALITY against this map.",
+    "",
+    "The revoke subtraction is the only AUTOMATIC exemption, because it is the",
+    "only machine-checkable one: `REVOKE ... FROM ... anon` is a fact in a file.",
+    "'It has its own auth.uid() guard' and 'it delegates' are JUDGEMENTS, and",
+    "judgements live here where a human wrote them down and the suite holds each",
+    "one to its own claim.",
+    "",
+    "get_public_anchor_by_fingerprint is deliberately ABSENT: it projects no",
+    "anchor column of its own, it resolves a public_id and returns",
+    "get_public_anchor's body verbatim. The delegation is asserted behaviourally",
+    "in tests/rls/ferpa-directory-info-opt-out.test.ts, which compares the two",
+    "bodies with toEqual rather than trusting the comment.",
+    "",
+    "A new anon-reachable projection over these columns fails this test and has",
+    "to be classified. That is the difference between a one-time patch and a",
+    "class fix: the 0197 column was read by nothing for over a year because",
+    "nothing ever asked the question."
   ],
 
   "max_public_url_chars": 2048,

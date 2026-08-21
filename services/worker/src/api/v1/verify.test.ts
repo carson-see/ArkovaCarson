@@ -383,6 +383,63 @@ describe('buildVerificationResult', () => {
 
       expect(result.directory_info_suppressed).toBe(true);
     });
+
+    // FD-FERPA-1 (2026-08-21). The five cases above all pass a PRESENT
+    // credential type, and the block they cover was written as
+    // `anchor.credential_type && FERPA_EDUCATION_TYPES.includes(...)` — falsy
+    // for a null type. Measured on prod vzwyaatejekddvltxyye: all three anchors
+    // carrying directory_info_opt_out have `credential_type IS NULL`, so this
+    // suite was green while the surface it covers suppressed nothing for 100%
+    // of the records the control exists to protect. An absent type cannot be
+    // shown to be outside FERPA's reach, so it FAILS CLOSED (migration 0390's
+    // inversion, applied to the opt-out).
+    it('suppresses when the credential type is ABSENT — fails closed', () => {
+      const anchor = createAnchor({
+        credential_type: null,
+        directory_info_opt_out: true,
+        org_name: 'University of Michigan',
+        recipient_hash: 'sha256:student@edu',
+        issued_at: '2026-01-15T00:00:00Z',
+        expires_at: '2030-01-15T00:00:00Z',
+      });
+      const result = buildVerificationResult(anchor);
+
+      expect(result).not.toHaveProperty('issuer_name');
+      expect(result).not.toHaveProperty('recipient_identifier');
+      expect(result).not.toHaveProperty('issued_date');
+      expect(result).not.toHaveProperty('expiry_date');
+      expect(result.directory_info_suppressed).toBe(true);
+      // The positive control that matters most: it still VERIFIES.
+      expect(result.verified).toBe(true);
+      expect(result.network_receipt_id).toBeTruthy();
+    });
+
+    it('suppresses for a whitespace-only credential type', () => {
+      const result = buildVerificationResult(
+        createAnchor({
+          credential_type: '   ',
+          directory_info_opt_out: true,
+          org_name: 'University of Michigan',
+        }),
+      );
+      expect(result).not.toHaveProperty('issuer_name');
+      expect(result.directory_info_suppressed).toBe(true);
+    });
+
+    it('does not suppress an ABSENT type when the opt-out is OFF', () => {
+      // The fail-closed rule must not become "suppress everything untyped".
+      // The opt-out is opt-in; default-publish is the standing behaviour for
+      // the ~59 untyped anchors in production.
+      const result = buildVerificationResult(
+        createAnchor({
+          credential_type: null,
+          directory_info_opt_out: false,
+          org_name: 'University of Michigan',
+        }),
+      );
+      expect(result.issuer_name).toBe('University of Michigan');
+      expect(result).not.toHaveProperty('directory_info_suppressed');
+    });
   });
 
   describe('API-RICH-01 — additive rich fields (SCRUM-772 / 2026-04-16)', () => {
