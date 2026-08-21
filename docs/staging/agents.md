@@ -18,7 +18,7 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 - **`staging_lease.sql`** — lease table DDL for the staging environment.
 - **`evidence/`** — subdirectory of soak evidence screenshots and logs.
 - **`trainN-2026-08/`, `pr<NNNN>-*-2026-08/`** — per-window soak stand-up records: frozen head(s), rig, revision, image digest, clock start/close, the verbatim `staging-honesty-preflight.ts` JSON for THAT window and THAT project ref, and an honest per-member coverage table naming what is NOT covered. A preflight result is never reused across windows or projects; each block names its ref and run time.
-- **`rig-reservations.json`** — the active-reservation ledger (one rig = one concurrent soak). Add an `active` row in the same session that stands the rig up; flip to `released` at teardown. Validate with `npx tsx scripts/staging/check-rig-reservations.ts docs/staging/rig-reservations.json`.
+- **`rig-reservations.json`** — the active-reservation ledger (one rig = one concurrent soak). Add an `active` row in the same session that stands the rig up; flip to `released` at teardown. Validate with `npx tsx scripts/staging/check-rig-reservations.ts docs/staging/rig-reservations.json` — and **run `scripts/staging/check-rig-reservations.test.ts` too**, not just the CLI: the unit suite reads this committed file and asserts every `active` row names a full 40-char `pr_head_sha`, a `rig.tag_url`, and a coherent `soak.start`/`soak.end` window (CLAUDE.md §1.11A isolated-evidence identity), which the CLI validator does not check.
 
 ## Conventions
 
