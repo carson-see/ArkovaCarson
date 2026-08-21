@@ -1,6 +1,26 @@
 # agents.md — lib
 
-_Last updated: 2026-08-18_
+_Last updated: 2026-08-21_
+
+## Keyword redaction is separator-insensitive (PR #2312)
+
+`piiStripper.ts` used to join every multi-word keyword with `\s+`. That made the **separator itself** an evasion channel: `Student ID: 88213` redacted, `student_id: 88213` did not. CSV headers are overwhelmingly snake_case, so the CSV bulk-upload path shipped those values to `/api/v1/ai/extract-batch` in the clear. A student or employee ID identifies an education record under FERPA, so §1.6 requires every separator form stripped.
+
+All four keyword rules carried the assumption — `STUDENT_ID_KEYWORD` (`student id`, `id number`, `student no.`), `DOB_KEYWORD_PATTERN` (`date of birth`, `birth date`), `ADDRESS_KEYWORD` (`postal code`), `NATIONAL_ID_KEYWORD` (`national id`, `tax id`, `ni number`, `passport no/number`, `pan no/number/card`, `sin no/number`). Tokens now join with `[\s_-]*`, so space / underscore / hyphen / nothing all match. `employee id` and `member id` were added — they were absent from the list in **every** form, not just snake_case.
+
+**If you add a keyword, use the `tok()` + `keywordPattern()` helpers, not a raw literal.** Widening the separator alone over-redacts: with a zero-width separator a keyword matches the *prefix* of an ordinary word and the value pattern then eats the rest of the line — `taxidermy` → `tax id`, `studentidentifier` → `student id`, `zipper` → `zip`. `keywordPattern()` supplies the two bounds that stop it:
+
+- `KEYWORD_START` = `(?:^|[^A-Za-z0-9])` — **consuming**, not a lookbehind, because Safari <16.4 has no lookbehind. Lossless: every caller already captures the keyword as `prefix` and re-emits it verbatim. Using a character class rather than `\b` is what lets `intl_student_id` match while `valid_number` does not.
+- `KEYWORD_END` = `(?![A-Za-z])` — digits may still follow, so unseparated forms like `ZIP90210` keep matching.
+
+Net precision **improved**: `Zipper pouches` and `addressing` used to be redacted and no longer are.
+
+**This module is SHARED.** It is reached from the document path (`stripPIIEnhanced` in `aiExtraction.ts`, which has no keyword rules of its own) as well as the CSV path, so any keyword change must be judged on precision as much as recall. Both directions are pinned: `piiStripper.test.ts` has a `precision: non-identifier columns are NOT redacted` block, and `piiStripper.adversarial.test.ts` has `keyword-label separator evasion` covering the near-miss words above.
+
+Two things found while doing this, recorded so nobody re-derives them:
+
+- **Value patterns must not cross a line break.** `NATIONAL_ID`'s value class used `\s`, which includes `\n`, so a 10-char ID ran greedily onto the next line and swallowed that line's label — in the `"<column>: <value>"` per-line text the CSV upload builds, `national_id: AB.123/456` ate the `course_name` header and destroyed the credential title the extractor reads. Now bounded to space and tab. Pre-existing (reproducible at HEAD through the spaced `National ID:` form), strictly narrowing. `ADDRESS_KEYWORD`'s value is *deliberately* multi-line (CRIT-4, up to 3 lines) and was left alone — which does mean an `address:` column in a CSV row still consumes the two columns after it.
+- **`EMAIL_PATTERN` is quadratic and was NOT fixed here.** `[a-zA-Z0-9._%+-]+@…` backtracks one character at a time from every start position when the input has no `@`: measured 64,004 ms on a 100k-char input, versus 0 ms for SSN and phone and 0–1 ms for all four keyword rules on the same input. `stripPII` runs in the browser on raw OCR text, so a large scanned document freezes the tab. Out of scope for this PR; tracked separately.
 
 ## 2026-08-18 — Kenya card neutralized (Tranche 0) + Section 3 corrected (counsel-ordered, `hotfix/kenya-transfer-basis-removal`)
 
