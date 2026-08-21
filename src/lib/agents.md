@@ -1,6 +1,18 @@
 # agents.md — lib
 
-_Last updated: 2026-08-10_
+_Last updated: 2026-08-18_
+
+## 2026-08-18 — Kenya card neutralized (Tranche 0) + Section 3 corrected (counsel-ordered, `hotfix/kenya-transfer-basis-removal`)
+
+Second commit on this branch, executing item 1 of the Sarah/Carson privacy-policy addendum (Google Doc `1LVNus_xgbWu79DZGUDwh0MUJ8OQn6ISaJSPMQwxSDl8`, "Tranche 0"), quoted verbatim: *"Neutralise the Kenya card: remove the Standard Contractual Clauses under Section 48 transfer basis, the rights list citing Sections 25 to 38, and the 72-hour controller notification timeline. Replace with the counsel-pending placeholder pattern already used for the EU to US basis. Subtraction only. Do not substitute an alternative safeguard."*
+
+- `KENYA_RIGHTS` and `KENYA_BREACH_TIMELINE` are deleted (not reworded — same treatment as `KENYA_TRANSFER_BASIS` in the prior commit below). `KENYA_DESCRIPTION` is rewritten to carry the same "under review by legal counsel and will be published here once confirmed" placeholder sentence that `DPF_DESCRIPTION` already uses for the EU→US card (SCRUM-2283 / §1.13 R-7) — this is the "mirror the EU-US pattern" instruction, applied literally: same substring, same construction.
+- `PRIVACY_S3_BODY` replaced. The prior "Your files never leave your browser" claim was false on the connector path (DocuSign / Google Drive documents are fingerprinted server-side under the §1.6A carve-out, not in the browser). New wording is counsel's exact approved text, sent to Solomon Karanja Meru (MNA Legal) — reproduced verbatim per the addendum, not paraphrased.
+- Consumer-side changes (`rights`/`breachTimeline` now optional on `JurisdictionNotice`, conditional row render, Kenya entry drops both fields) are in `src/components/compliance/JurisdictionPrivacyNotices.tsx` / that folder's `agents.md`.
+
+## 2026-08-18 — `KENYA_TRANSFER_BASIS` removed (counsel-ordered, `hotfix/kenya-transfer-basis-removal`)
+
+Counsel (Sarah) ordered removal, not rewording, of the live-served claim `KENYA_TRANSFER_BASIS: 'Standard Contractual Clauses (Section 48)'` — SCCs are an EU GDPR transfer mechanism, and Kenya DPA 2019 §48 is Kenya's own transfer-adequacy provision that does not name SCCs. Second correction of this general shape in two days, after the DPF/SCRUM-2283 fix (2026-08-10 entry in this file's sibling, `src/components/compliance/agents.md`). The key is now a comment-only removal (not a reworded placeholder value — final wording is counsel's call per §1.5 / §1.13 R-7); `KENYA_BREACH_TIMELINE` and the rest of the Kenya block are untouched. Consumer-side fix (making `transferBasis` optional on `JurisdictionNotice` + conditional row render) is in `src/components/compliance/JurisdictionPrivacyNotices.tsx` / that folder's `agents.md` — read there for the full writeup and the flagged-not-fixed Nigeria/South Africa candidates for the same pattern.
 
 ## 2026-08-10 — `ACTIVATE_ACCOUNT_LABELS` + `ActivateAccountSchema` (recipient activation launch blocker)
 
