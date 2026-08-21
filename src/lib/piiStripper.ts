@@ -40,17 +40,95 @@ const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 // Intl: +CC followed by 7-12 digits (covers UK +44, FR +33, DE +49, JP +81, etc.)
 const PHONE_PATTERN = /(?:\+1\d{10}|\(\d{3}\)\s?\d{3}[-.]?\d{4}|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b|\+(?:4[0-9]|3[0-9]|2[0-9]|5[0-9]|6[0-9]|7[0-9]|8[0-9]|9[0-9])\d{7,11})/g;
 
+/**
+ * Word separator inside a context keyword.
+ *
+ * These keywords used to join their words with `\s+`, which is right for OCR prose
+ * but wrong for the CSV bulk-upload path: `csvRowText.ts` serialises each row as
+ * `"<column>: <value>"` lines straight from the CSV headers, and real-world CSV
+ * headers are overwhelmingly snake_case. The result was that `Student ID: 88213`
+ * redacted while `student_id: 88213` shipped the raw identifier to
+ * `/api/v1/ai/extract-batch` — a §1.6 breach on the highest-volume path in the app.
+ *
+ * `-` is last inside the class so it is a literal, not a range.
+ */
+const SEP = '[\\s_-]+';
+
+/** Separator for keywords whose trailing word is itself optional (`zip` / `zip_code`). */
+const SEP_OPT = '[\\s_-]*';
+
+/** Padding and optional `:` between the end of a keyword and its value. */
+const KEYWORD_TAIL = '\\s*:?\\s*';
+
 // DOB: MM/DD/YYYY or MM-DD-YYYY after DOB-like keywords, or YYYY-MM-DD after DOB keywords
-const DOB_KEYWORD_PATTERN = /(?:dob|date\s+of\s+birth|born|birthday|birth\s+date)\s*:?\s*/gi;
+const DOB_KEYWORD_PATTERN = new RegExp(
+  `(?:dob|date${SEP}of${SEP}birth|born|birthday|birth${SEP}date)${KEYWORD_TAIL}`,
+  'gi',
+);
 const DATE_MMDDYYYY = /\d{2}[/-]\d{2}[/-]\d{4}/;
 const DATE_YYYYMMDD = /\d{4}-\d{2}-\d{2}/;
 
-// Student ID: after "Student ID", "ID Number", "Student No." keywords
-const STUDENT_ID_KEYWORD = /(?:student\s+id|id\s+number|student\s+no\.?)\s*:?\s*/gi;
-const ID_VALUE = /[A-Za-z0-9]{5,12}/;
+/**
+ * Roles that denote a human being, for identifier keywords.
+ *
+ * Deliberately an allowlist of PERSON roles, mirroring `PERSON_ROLE_TOKENS` in
+ * `csvRowText.ts`. A person's identifier is PII; `course_id`, `credential_id`,
+ * `issuer_id` and `batch_id` name a thing and must survive, because the extractor
+ * is called to read exactly that metadata.
+ *
+ * This — an in-cell, keyword-anchored redaction — is the right mechanism for these
+ * columns, NOT the CSV name-column classifier. A value handed to `stripPII` as a
+ * recipient name is removed from the WHOLE row text, so classifying `employee_id`
+ * as a name column would scrub that identifier out of every other line it appears
+ * in. That is the over-redaction bug PR #2302 fixed; do not re-introduce it.
+ */
+const PERSON_ID_ROLE =
+  'student|employee|member|learner|participant|attendee|candidate|recipient|holder';
 
-// PII-07: Postal/ZIP codes (context-aware — only after address keywords)
-const ADDRESS_KEYWORD = /(?:address|street|postal\s+code|zip\s*(?:code)?|postcode)\s*:?\s*/gi;
+/**
+ * Person identifiers: `Student ID`, `student_id`, `employee-id`, `ID Number`,
+ * `Student No.`, `member_number`, ... The leading lookbehind keeps the role token
+ * on a segment boundary so `remember_id` cannot match via `member_id`.
+ * `number` precedes `no\.?` so the longer alternative wins without backtracking.
+ */
+const STUDENT_ID_KEYWORD = new RegExp(
+  `(?<![A-Za-z0-9])(?:(?:${PERSON_ID_ROLE})s?${SEP}(?:id|number|no\\.?)|id${SEP}number)${KEYWORD_TAIL}`,
+  'gi',
+);
+
+/**
+ * An identifier value. Starts and ends alphanumeric with internal separators
+ * allowed, so real IDs like `EMP-000418` and `2026/AB/0417` are caught whole rather
+ * than missed for containing a `-`. It matches neither whitespace nor a newline, so
+ * it cannot run past the end of its own CSV cell.
+ *
+ * Known residual: the 5-character floor is inherited, so a 4-digit `student_id`
+ * still passes through. Widening it further trades against redacting ordinary
+ * short tokens; see `agents.md`.
+ */
+const ID_VALUE = /[A-Za-z0-9][A-Za-z0-9._/-]{3,22}[A-Za-z0-9]/;
+
+/**
+ * PII-07: Postal/ZIP codes and street addresses (context-aware).
+ *
+ * The optional leading qualifier keeps common CSV headers intact in the output —
+ * without it `street_address:` matched only its `street` half and the value regex
+ * swallowed `_address: `, emitting a mangled `street[ADDRESS_REDACTED]`.
+ * `zip` alone requires a non-alphanumeric next character so `zipper` is not an
+ * address keyword.
+ */
+const ADDRESS_KEYWORD = new RegExp(
+  `(?:(?:home|mailing|postal|street|business|work|permanent|current|residential)${SEP})?` +
+    `(?:address|street|postal${SEP}code|zip${SEP_OPT}code|zip(?![A-Za-z0-9])|postcode)` +
+    KEYWORD_TAIL,
+  'gi',
+);
+
+/**
+ * A line that opens a new `<label>: <value>` field. Used as a stop condition so a
+ * multi-line address capture cannot swallow the following CSV columns.
+ */
+const FIELD_LABEL_LINE = '[ \\t]*[A-Za-z][A-Za-z0-9 _-]{0,40}:';
 
 // PII-06: EU-format DOB (DD/MM/YYYY, DD.MM.YYYY) after DOB keywords
 const DATE_DDMMYYYY = /\d{2}[/.-]\d{2}[/.-]\d{4}/;
@@ -58,7 +136,12 @@ const DATE_DDMMYYYY = /\d{2}[/.-]\d{2}[/.-]\d{4}/;
 // PII-07: National ID patterns (after relevant keywords)
 // CRIT-4: Expanded keyword list + broader value pattern to catch Aadhaar, passports with slashes/dots
 // Note: SSN is handled separately by SSN_PATTERN — do NOT add it here to avoid double-matching
-const NATIONAL_ID_KEYWORD = /(?:national\s+id|tax\s+id|steuer[-\s]?id|ni\s+number|nino|passport\s+(?:no\.?|number)|aadhaar|aadhar|pan\s+(?:no\.?|number|card)|cedula|dni|sin\s+(?:no\.?|number))\s*:?\s*/gi;
+const NATIONAL_ID_KEYWORD = new RegExp(
+  `(?:national${SEP}id|tax${SEP}id|steuer${SEP_OPT}id|ni${SEP}number|nino|` +
+    `passport${SEP}(?:number|no\\.?)|aadhaar|aadhar|pan${SEP}(?:number|no\\.?|card)|` +
+    `cedula|dni|sin${SEP}(?:number|no\\.?))${KEYWORD_TAIL}`,
+  'gi',
+);
 
 /**
  * Strip PII from raw text. Returns the stripped text and a report of what was found.
@@ -201,9 +284,16 @@ function stripAddressValues(
   //   Address: 123 Main St
   //   Apt 4B
   //   New York, NY 10001
+  //
+  // A continuation line stops at anything that opens a new `<label>: <value>` field.
+  // Without that guard the CSV bulk-upload path — one column per line — lost the two
+  // columns after any address column outright: `postal_code: SW1A 1AA\nissue_date:
+  // 2026-03-14` collapsed to `postal_code: [ADDRESS_REDACTED]` and the issue date
+  // never reached the extractor. Genuine continuations (`Apt 4B`,
+  // `New York, NY 10001`) carry no such label and are still captured.
   result = result.replace(
     new RegExp(
-      `(${ADDRESS_KEYWORD.source})([^\\n]{5,80}(?:\\n[^\\n]{3,80}){0,2})`,
+      `(${ADDRESS_KEYWORD.source})([^\\n]{5,80}(?:\\n(?!${FIELD_LABEL_LINE})[^\\n]{3,80}){0,2})`,
       'gi',
     ),
     (_match, prefix: string) => {
@@ -230,8 +320,15 @@ function stripNationalIds(
 
   // CRIT-4: Broader value pattern — handles dots, slashes, and longer IDs (e.g. Aadhaar: 12 digits)
   // Negative lookahead prevents matching redaction tokens like [SSN_REDACTED]
+  //
+  // Horizontal whitespace only. `\s` includes `\n`, so on the CSV bulk-upload path —
+  // where each column is its own `"<column>: <value>"` line — a 30-character greedy
+  // match ran off the end of its cell and ate the NEXT column's header, turning
+  // `national_id: AB123456\nissue_date: 2026-03-14` into
+  // `national_id: [NATIONAL_ID_REDACTED]: 2026-03-14`. Spaces still match, so the UK
+  // NINO form `QQ 12 34 56 C` is still caught whole.
   result = result.replace(
-    new RegExp(`(${NATIONAL_ID_KEYWORD.source})(?!\\[)([A-Za-z0-9\\s_./-]{4,30})`, 'gi'),
+    new RegExp(`(${NATIONAL_ID_KEYWORD.source})(?!\\[)([A-Za-z0-9 \\t_./-]{4,30})`, 'gi'),
     (_match, prefix: string) => {
       count++;
       piiFoundSet.add('nationalId');
