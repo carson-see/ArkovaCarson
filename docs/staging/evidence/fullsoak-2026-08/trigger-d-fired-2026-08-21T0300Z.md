@@ -66,11 +66,26 @@ age precondition met. That is the forced-flush behaviour Trigger D exists to pro
 **Measured:** the daily forced flush fires on schedule, bypasses both threshold triggers,
 and drains a sub-threshold queue that the regular run had just declined to touch.
 
-**NOT asserted — confirmation.** At 03:05:45Z all 2,614 were still `SUBMITTED` with the
-transaction id assigned; none had reached `SECURED`. The confirmation cron
-(`check-confirmations`) runs `*/30`, so the transition was expected around 03:30Z and is
-**not** captured in this document. Trigger A's and Trigger B's cohorts both reached SECURED
-(01:40:14Z and 22:08:38Z respectively); this one is recorded only as far as broadcast.
+**Confirmation — CONFIRMED at 03:13:33.317Z.** All **2,614** anchors carrying tx
+`011a88f2…` reached `SECURED`, in a single transaction:
+
+| status | anchors | distinct txs | confirmed at |
+|---|---|---|---|
+| SECURED | **2,614** | **1** | 2026-08-21T03:13:33.317Z |
+
+End-to-end **03:00:28Z (forced flush) → 03:13:33Z (all SECURED) — 13 min 5 s**. No anchor
+was lost and none stalled in `SUBMITTED`.
+
+(An earlier revision of this document recorded the cohort only as far as broadcast, since
+at 03:05:45Z they were still `SUBMITTED`. This section supersedes that.)
+
+All three exercised triggers now have a complete PENDING → SECURED chain:
+
+| Trigger | Fired | Anchors | Tx | All SECURED |
+|---|---|---|---|---|
+| B | 2026-08-20T22:00:43Z | 3,116 | `f9ddf989…` | 22:08:38Z (8 min 11 s) |
+| A | 2026-08-21T01:30:00Z | 10,000 | `8962f944…` | 01:40:14Z (9 min 46 s) |
+| D | 2026-08-21T03:00:28Z | 2,614 | `011a88f2…` | 03:13:33Z (13 min 5 s) |
 
 **NOT asserted:** cross-org behaviour (`orgs = 1`).
 
