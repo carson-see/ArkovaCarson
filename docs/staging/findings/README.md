@@ -15,6 +15,8 @@ soak measuring nothing is indistinguishable from a healthy soak.
 | [FD-TRIGGER-1](FD-TRIGGER-1-ambient-load-cannot-reach-triggers-a-b.md) | Ambient anchor traffic (~36/day) can **never** reach Trigger A (10,000) or B (3,000+3h), both required T3 evidence. Use `scripts/staging/fullsoak-trigger-b-volume.sh`. |
 | [FD-CLOCK-1](FD-CLOCK-1-instance-uptime-is-the-wrong-soak-clock.md) | The clock is the serving **revision's** `creationTimestamp` plus integrity conditions — **not** instance uptime. Cloud Run recycles instances. |
 | [FD-RC-1](FD-RC-1-manifests-cannot-be-retrofitted.md) | An RC manifest asserting soak coverage **cannot be retrofitted**. It is a train-launch artifact: manifest first, restack once, freeze, then soak. |
+| [FD-LOAD-1](FD-LOAD-1-mixed-mode-exceeds-anonymous-rate-limit.md) | `--mode mixed` offers **160 req/min** into the **100 req/min** anonymous limiter, so events/webhook/reads report `ok=0` every cycle. The soak measures its own rate limiter. |
+| [FD-PROBE-1](FD-PROBE-1-anonymous-401-cannot-prove-a-route-exists.md) | An anonymous `401` under a prefix-gated router is returned **unconditionally** — it cannot tell "mounted and gated" from "route does not exist". One probe was green all window against a `404`. |
 
 ## Product / correctness
 
@@ -22,6 +24,7 @@ soak measuring nothing is indistinguishable from a healthy soak.
 |---|---|
 | [FD-GATE-1](FD-GATE-1-api-v1-killswitch-gap-2026-08-20.md) | Three `/api/v1` route trees mount **before** the catch-all with no `verificationApiGate()`, so §1.9's kill switch does not cover them. |
 | [FD-FERPA-1](FD-FERPA-1-directory-opt-out-not-honored-2026-08-20.md) | `anchors.directory_info_opt_out` is read by **no** public projection; opted-out records are still publicly served. |
+| [FD-SDK-1](FD-SDK-1-sdk-prs-cannot-reach-the-unsoakable-path.md) | SDK/package PRs are hard-**T2** but one `.github/workflows/` or `scripts/` file in the diff disqualifies them from the unsoakable-evidence path, demanding worker evidence that cannot truthfully exist. |
 
 ## Traps that are now enforced in code, not prose
 
