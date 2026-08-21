@@ -25,6 +25,7 @@ soak measuring nothing is indistinguishable from a healthy soak.
 | [FD-GATE-1](FD-GATE-1-api-v1-killswitch-gap-2026-08-20.md) | Three `/api/v1` route trees mount **before** the catch-all with no `verificationApiGate()`, so §1.9's kill switch does not cover them. |
 | [FD-FERPA-1](FD-FERPA-1-directory-opt-out-not-honored-2026-08-20.md) | `anchors.directory_info_opt_out` is read by **no** public projection; opted-out records are still publicly served. |
 | [FD-SDK-1](FD-SDK-1-sdk-prs-cannot-reach-the-unsoakable-path.md) | SDK/package PRs are hard-**T2** but one `.github/workflows/` or `scripts/` file in the diff disqualifies them from the unsoakable-evidence path, demanding worker evidence that cannot truthfully exist. |
+| [FD-REORG-1](FD-REORG-1-detectreorgs-inprocess-cron-times-out.md) | `detectReorgs`' **in-process** cron times out ~3×/hour (151× in 48 h). The Cloud Scheduler path returned 288/288 × 200, so reorg detection was never actually down — but two paths share a name and only one is broken. |
 | [FD-PROD-1](FD-PROD-1-0386-merged-but-unapplied-fingerprint-oracle-open.md) | **OPEN.** Migration 0386 is merged but **never applied to prod** — the fingerprint existence oracle it closed is still open live. Found by md5-comparing function bodies against prod, not by assuming repo head. |
 | [FD-CI-1](FD-CI-1-actions-budget-exhausted-2026-08-21.md) | **RESOLVED 2026-08-21T15:51Z.** The Actions budget ran out 2026-08-21 ~15:32Z. Every job repo-wide is refused in 2–4 s, so no PR can go green and Mergify cannot merge. Soaks are unaffected. |
 
