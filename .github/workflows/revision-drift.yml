@@ -47,9 +47,17 @@ jobs:
       - name: Fetch /health from prod worker
         id: live
         run: |
-          # Retry 3x to ride out a single-instance Cloud Run cold-start
+          # SonarCloud githubactions:S6506 — the old `-fsSL` followed redirects
+          # with no protocol floor, so an http:// Location would have been
+          # followed silently. Dropped `-L` rather than constraining it:
+          # WORKER_HEALTH_URL is a first-party Cloud Run literal that answers
+          # 200 directly (verified 2026-08-20), and a probe that follows a
+          # redirect would read `git_sha` off whatever host it landed on — a
+          # false "in sync" is worse than a hard failure. `--proto '=https'`
+          # keeps the request pinned to TLS if that URL is ever edited.
+          # Retry 3x to ride out a single-instance Cloud Run cold-start.
           for i in 1 2 3; do
-            if RAW=$(curl -fsSL --max-time 15 "${WORKER_HEALTH_URL}"); then
+            if RAW=$(curl --proto '=https' -fsS --max-time 15 "${WORKER_HEALTH_URL}"); then
               break
             fi
             echo "Attempt $i failed, retrying in 5s..." >&2
@@ -59,7 +67,14 @@ jobs:
             echo "::error::Failed to fetch ${WORKER_HEALTH_URL} after 3 attempts"
             exit 1
           fi
-          LIVE_SHA=$(echo "${RAW}" | jq -r '.git_sha // "unknown"')
+          # Without -L a 3xx returns its body at exit 0 (`-f` only fails on
+          # >= 400), so an unexpected redirect surfaces here as unparseable
+          # JSON. Fail loudly: an empty live_sha reaching the compare step
+          # would be mislabelled `stale` drift and page on a false cause.
+          if ! LIVE_SHA=$(printf '%s' "${RAW}" | jq -r '.git_sha // "unknown"'); then
+            echo "::error::${WORKER_HEALTH_URL} did not return JSON — redirect or error page? First 200 bytes: $(printf '%s' "${RAW}" | head -c 200)"
+            exit 1
+          fi
           echo "live_sha=${LIVE_SHA}" >> "$GITHUB_OUTPUT"
           echo "Live /health.git_sha: ${LIVE_SHA}"
 

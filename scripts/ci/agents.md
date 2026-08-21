@@ -1,6 +1,10 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-17 (mergify-orphaned-export-gate contract test)._
+_Last updated: 2026-08-20 (workflow curl redirect-protocol ratchet)._
+
+## 2026-08-20 — `check-workflow-curl-redirect-protocol.test.ts` (new)
+
+Repo-wide ratchet for SonarCloud `githubactions:S6506`: no `curl` in `.github/workflows/` may follow redirects (`-L`, a short cluster containing `L`, or `--location`) without a `--proto '=https'` floor. Shell line-continuations are joined first, so a `curl` split across YAML lines is judged as the single command it is. Written red-first against the two live sites — `revision-drift.yml:52` (the reported finding) and `gitleaks.yml:37` (which the report missed, and which is exactly why this is a detector and not a one-line fix). Both regexes carry their own positive/negative assertions so a detector that silently matches nothing cannot pass forever; the negative cases pin that `--proto-redir` is not mistaken for a short-flag cluster and that a permissive `--proto 'https'` is not mistaken for a floor. Runs in the gated root `test` job via the `scripts/**/*.test.ts` include — deliberately not a new CI job, which would gate nothing until it was added to `.mergify.yml`.
 
 ## 2026-08-17 — `mergify-orphaned-export-gate.test.ts` (new)
 
