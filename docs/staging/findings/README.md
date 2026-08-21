@@ -36,10 +36,20 @@ skipped and a check does not:
 - **Evidence must be non-empty** — `scripts/staging/soak-liveness-check.sh` asserts an
   evidence file exists, is fresh, reports `ok > 0`, and the serving revision still matches
   the pinned clock. A soak producing nothing now fails loudly instead of looking green.
-- **`ENABLE_VERIFICATION_API` is seeded at provisioning** —
-  `scripts/staging/seed-baseline-fixture.sql`. Without the row `get_flag` fails closed and
-  every `/api/v1` request 503s in under 10 ms *before reaching application code*, while the
-  rig looks healthy. This cost wave2 its entire 12 h window.
+- **`ENABLE_VERIFICATION_API` seeding is NOT enforced — this entry was false.**
+  ~~Seeded at provisioning by `scripts/staging/seed-baseline-fixture.sql`.~~ **Corrected
+  2026-08-21:** that file exists (9,180 bytes) and contains **zero** occurrences of
+  `ENABLE_VERIFICATION_API` and **zero** of `switchboard_flags`; the string appears nowhere
+  under `scripts/staging/` at all. Verified by grep, not by reading this list. Without the
+  row, `get_flag` fails closed and every `/api/v1` request returns a sub-10 ms 503 *before
+  reaching application code*, while the rig reports healthy — the failure that cost wave2 its
+  entire 12 h window and that is, right now, why the migration-T3 soak's read traffic returns
+  503 instead of anything useful.
+  **Until a seeding step actually ships, this is a manual per-rig check:** confirm the row
+  exists on the rig's own `switchboard_flags` before trusting any `/api/v1` evidence from it.
+  This entry is deliberately left in the "enforced" section, struck through, rather than
+  quietly deleted — a list of guarantees that silently loses one is worse than a list that
+  shows where it was wrong.
 - **401/403 count as failure** in `wave3-load-loop.sh`. The classifier previously counted
   any 2xx–4xx as `ok`, so a run where **every request was rejected** reported
   `ok=61 fail=0`.
