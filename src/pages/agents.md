@@ -1,4 +1,9 @@
 # agents.md — pages
+_Last updated: 2026-08-17_
+
+## 2026-08-17 — DocumentsPage: "My Records" tab is a link-out, not a duplicate list
+
+Founder-reported: `/documents` rendered a "My Records" TAB (its own folder-less copy of the records list) while the real records+folders surface (SCRUM-2940) is `ROUTES.RECORDS` (`MyRecordsPage`) — users landing on `/documents` concluded folders didn't exist. Chosen resolution: **link/redirect through**, not tab removal — the trigger stays visible (with its record-count badge) so the entry point survives, but clicking it navigates to `ROUTES.RECORDS`, and legacy `?tab=records` deep links redirect there with remaining query params preserved (`MyRecordsPage` consumes the same `?action=upload&credential_type&jurisdiction` contract, so those deep links keep working). The tab's `RecordsList` sub-component was a strict functional subset of MyRecordsPage (same list/search/status-filter/revoke; zero folder affordances; its "Download Proof" menu item was an inert no-op with no onClick) and is deleted along with the revoke plumbing only it used. Records still appear in the "All" tab. Tests: `DocumentsPage.test.tsx` (new, 5 cases, TDD red-first).
 _Last updated: 2026-08-18_
 
 ## 2026-08-18 — `OrgProfilePage.tsx` — Pending Invitations visibility on the People tab
