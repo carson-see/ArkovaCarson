@@ -215,3 +215,39 @@ keep naming NO transfer mechanism (SCRUM-2283, §1.13 R-7).
 Coverage is enforced, not asserted: `src/pages/PrivacyPage.copy-centralization.test.tsx`
 fails if /privacy renders prose `copy.ts` does not own, or if a jurisdiction
 copy field regresses to an inline literal.
+
+## 2026-08-21 — `csvRowText.ts` column-role classification (PR #2302)
+
+`buildStrippedRowText` is the ONLY exported way to build the text the CSV
+bulk-upload path POSTs to `/api/v1/ai/extract-batch`. Keep it that way: the choke
+point is what makes §1.6 enforceable for the CSV path.
+
+Its `isPersonNameColumn` classifier is load-bearing in **both** directions, because
+a column classified as a person name has its *value* handed to `stripPII` as a
+literal, and `stripPII` removes that literal from the **whole row text**, not just
+that cell:
+
+- too narrow -> a real name leaves the browser (§1.6 breach)
+- too broad  -> `course_name: Advanced Cardiac Life Support` scrubs the credential
+  title out of every line it appears in, and the extractor receives a row stripped
+  of the metadata it was called to read
+
+Bare token matching fails the second half for the COMMON case: `course_name`,
+`credential_name`, `certificate_name`, `issuer_name`, `organization_name`,
+`employee_id` and `participant_count` all contain a person-role token while naming
+a thing or an identifier. Classification is therefore token match MINUS
+(non-person qualifier immediately before the token) MINUS (identifier/scalar
+suffix `_id|_count|_number|_code|_type|_date|_url`).
+
+Ties break toward redaction: an unrecognised qualifier (`nominee_name`) or a person
+token outside the qualified pair (`student_course_name`) still redacts. If you add
+a token, add it to `PERSON_ROLE_TOKENS`; if you add a qualifier, add it to
+`NON_PERSON_QUALIFIERS` — and add both a true-positive and a false-positive case to
+`csvRowText.test.ts`, which pins 16 person headers and 18 non-person headers.
+
+**Known residual:** the `_id` exclusion means `student_id` / `employee_id` /
+`member_id` VALUES now reach the extraction endpoint. `stripPII`'s context-aware
+student-ID stripper does not cover them: `STUDENT_ID_KEYWORD` joins its words with
+`\s+`, so `Student ID: 88213` redacts but the snake_case CSV header form
+`student_id: 88213` does not. That gap is in `piiStripper.ts`, predates this PR,
+and is not fixed here.
