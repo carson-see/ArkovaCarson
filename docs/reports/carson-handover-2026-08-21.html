@@ -1,0 +1,101 @@
+<h1>Arkova — Founder Handover, 2026-08-19 → 2026-08-21</h1>
+<p><em>Everything from this session that needs your decision, your hands, or your awareness. Times are UTC.</em></p>
+
+<h2>1. Things only you can do</h2>
+
+<h3>1.1 Grant Full Disk Access to the soak LaunchAgent (System Settings)</h3>
+<p>The <code>ai.arkova.soak.wave-load</code> LaunchAgent can <strong>write</strong> and <strong>stat</strong> files on <code>/Volumes/Extreme</code> but <strong>cannot read or copy</strong> them. Consequence: the automated soak-evidence gate cannot verify two of the three load legs, so those get verified by hand every cycle. This needs your password, so I will not attempt it.</p>
+<p><strong>Fix:</strong> System Settings → Privacy &amp; Security → Full Disk Access → add the agent's interpreter (<code>/bin/bash</code>) or the agent itself.</p>
+
+<h3>1.2 Ready the PRs you want merged</h3>
+<p>Under the tiered-merge rule a <strong>green non-draft PR is itself the merge authorization</strong>, so marking ready is yours, not mine. Currently green and waiting:</p>
+<ul>
+<li><strong>#2302</strong> — fixes a <strong>live §1.6 PII breach</strong> (see 2.1). Gate SUCCESS. CTO/RM approval already recorded in the body.</li>
+<li><strong>#2275</strong> — org-invite accept path.</li>
+<li><strong>#2228</strong> — <code>@hono/node-server</code> bump.</li>
+<li><strong>#2306</strong> — seeds <code>ENABLE_VERIFICATION_API</code> at rig provisioning (draft). Prevents a whole class of worthless soak evidence.</li>
+</ul>
+
+<h3>1.3 Decide when the deploy freeze lifts permanently</h3>
+<p><code>DEPLOY_WORKER_PAUSED</code> is <strong>still <code>true</code></strong>. I shipped the backlog via a one-shot <code>workflow_dispatch</code> override and deliberately left the variable set so future merges do <em>not</em> auto-deploy while the migration soak runs (closes 2026-08-22T14:00Z). After that it is your call whether to set it <code>false</code>.</p>
+<p><strong>Trap worth knowing:</strong> with the pause on, <code>deploy-worker</code> still runs pre-deploy checks and reports <strong>success</strong> while shipping nothing. A green deploy run does not mean anything reached prod.</p>
+
+<h3>1.4 Founder-reserved items still outstanding</h3>
+<ul>
+<li><strong>Stripe <code>price_id</code></strong> — checkout is dead in prod without it.</li>
+<li><strong>16 Sentry monitor-environment deletions</strong> (UI only).</li>
+<li><strong>DMARC</strong> — still <code>p=none</code>, wants bumping.</li>
+<li><strong>Delete idle rig</strong> <code>arkova-connector-sidecar-2026-08</code> (<code>ehqqearcitrgloibtjqx</code>) — idle since Aug 15, has <code>allUsers</code> invoker.</li>
+<li><strong><code>chaindump-mcp</code></strong> — recognize or delete.</li>
+<li><strong>npm / PyPI accounts</strong> — founder-reserved.</li>
+</ul>
+
+<h2>2. Live issues you should be aware of</h2>
+
+<h3>2.1 §1.6 PII breach in CSV bulk upload — fix written, NOT merged</h3>
+<p>The CSV upload path had <strong>no PII stripping at all</strong>. It serialised every column verbatim and POSTed it to the AI extraction endpoint — raw SSNs, emails, phone numbers, dates of birth — for every CSV under the 50-row cap. Verified: no reference to <code>stripPII</code> anywhere in the CSV path. The strippers exist but are only reached from the <em>document</em> path.</p>
+<p>Fixed in <strong>#2302</strong> (15 tests, plus a load proof showing zero leaks across 10,000 rows at 79,535 rows/sec). <strong>Still unmerged.</strong></p>
+
+<h3>2.2 FD-FERPA-1 — live production privacy issue, UNFIXED</h3>
+<p><code>anchors.directory_info_opt_out</code> is honored by <strong>none</strong> of the public projections. <strong>Three production records have opted out and are still publicly served.</strong> FERPA §99.37 directory-information issue. No fix written yet. Worth a counsel conversation about disclosure.</p>
+
+<h3>2.3 FD-GATE-1 — the §1.9 kill switch does not cover what the docs claim</h3>
+<p>Three <code>/api/v1</code> route trees (<code>/api/v1/org</code>, <code>/api/v1/org/sub-orgs</code>, <code>/api/v1/org-kyb</code>) mount <strong>before</strong> the catch-all with no <code>verificationApiGate()</code>. CLAUDE.md §1.9 says the flag controls <code>/api/v1/*</code> — it does not. Needs a design call: gate the three routes, or correct §1.9.</p>
+
+<h3>2.4 Why bulk uploads fail and extraction is slow — root causes proven in prod</h3>
+<ul>
+<li><strong>The big one:</strong> <code>anchors.fingerprint</code> is <code>character(64)</code>, but <code>bulk_create_anchors</code> declares its comparand <code>text</code>. Postgres therefore casts the <em>indexed column</em> and no index is usable. <code>EXPLAIN</code> on prod: <strong>cost 1,783,431 (seq scan) versus 2.78 (index scan) — 649,000×, per row</strong> — one probe per row, inside a per-user advisory lock. It is <strong>O(N²) during backfill</strong>, which is exactly your million-document case. Same bug class as SCRUM-3031, fixed in <code>batch_insert_anchors</code> by migration 0370 and <strong>never fixed here</strong>. The fix is a type declaration.</li>
+<li><strong>AI extraction:</strong> the client sends <em>all</em> rows to an endpoint capped at 50, so every CSV over 50 rows fails deterministically. A client/server contract mismatch, not a model problem.</li>
+<li><strong>Body cap:</strong> <code>express.json()</code> has no limit, so body-parser's 100 kb default applies against a documented 1000-row API cap — 413 at roughly 400–850 rows.</li>
+<li><strong>Confidence gate:</strong> live at 0.4 (<code>ANCHOR_CONFIDENCE_THRESHOLD</code> unset in prod). Sub-threshold anchors revert to PENDING. Prod currently has 0 PENDING, so it is a hazard rather than an outage. Removing it is your call — note <code>confidence</code> is <code>required</code> in the published OpenAPI, so dropping the field breaks partner clients with generated code.</li>
+</ul>
+<p>Full detail: <code>docs/design/bulk-upload-verified-root-causes-2026-08-20.md</code>.</p>
+
+<h3>2.5 Corrections to figures you may be carrying</h3>
+<ul>
+<li>Live anchor count is <strong>3,553,498 SECURED</strong>, not 2.97M.</li>
+<li>The Gemini "model 404" concern is <strong>refuted for prod</strong> — <code>GEMINI_MODEL=gemini-2.5-flash</code> is live. It applies to rigs only.</li>
+</ul>
+
+<h2>3. Current state as of 2026-08-21 14:52Z</h2>
+<table border="1" cellpadding="6" cellspacing="0">
+<tr><th>Thing</th><th>State</th></tr>
+<tr><td>Prod worker</td><td><strong>Current.</strong> <code>git_sha c632256e3</code>, revision <code>arkova-worker-01316-zit</code>, database/anchoring/kms ok. The 44-hour lag is closed.</td></tr>
+<tr><td>chain-pair soak (T3)</td><td>Closes 16:51Z. All trigger evidence banked: A, B, D plus per-org isolation.</td></tr>
+<tr><td>TRAIN-4 soak (T2)</td><td>Closes 2026-08-22T01:57Z. Six previously-unexercised PRs.</td></tr>
+<tr><td>migration soak (T3)</td><td>Closes 2026-08-22T14:00Z. Validating unmerged migrations 0410–0414.</td></tr>
+<tr><td>Open PRs</td><td>41 (38 draft). Most genuinely need soak time, not paperwork.</td></tr>
+</table>
+
+<h3>3.1 What the soaks actually proved</h3>
+<p>chain-pair produced complete Trigger A / B / D evidence, each with a full PENDING → SECURED chain. Trigger A claimed exactly 10,000 anchors into one transaction, SECURED in under 10 minutes. Per-org isolation was demonstrated live: one org's 120 anchors drained while another org's 4 stayed untouched, and credits were charged exactly +120 / +0.</p>
+<p><strong>Trigger C (fee ceiling) is not exercisable on demand and was not simulated.</strong> It remains un-evidenced, deliberately.</p>
+
+<h2>4. The uncomfortable finding</h2>
+<p>You said <em>"all this should've been caught in the soak, that's why we did it."</em> You were right, and the reason is worth keeping.</p>
+<p><strong>Soak health was judged by "did the clock run and is <code>/health</code> green", never by "did the soak exercise anything."</strong> Under those criteria a soak measuring nothing looks identical to a healthy one. Four separate instances in one window:</p>
+<ul>
+<li>wave3's driver sent an <strong>empty bearer token for 5 hours 10 minutes</strong> — every request failed, dashboard green.</li>
+<li>TRAIN-4's driver returned <strong>401 on every path including <code>/health</code></strong> while reporting <code>ok=61, fail=0</code>, because the classifier counted any 2xx–4xx as success.</li>
+<li>Ambient anchor traffic (~36/day) can <strong>never</strong> reach the Trigger A/B thresholds that T3 requires — a soak could run for weeks and evidence neither.</li>
+<li>The load agent <strong>silently died for 26 minutes</strong> and nothing noticed.</li>
+</ul>
+<p>Separately: <strong>wave2's entire 12-hour window was worthless for its API members</strong> because one row was missing from that rig's <code>switchboard_flags</code>, so <code>/api/v1</code> fail-closed at sub-10 ms 503s while everything looked healthy.</p>
+
+<h3>4.1 What is now enforced in code, not in a checklist</h3>
+<ul>
+<li><strong>Liveness gate</strong> (merged, #2299) — asserts evidence exists, is fresh, and reports <code>ok &gt; 0</code>. It has already caught a real load outage.</li>
+<li><strong><code>ENABLE_VERIFICATION_API</code> seeded at provisioning</strong> (#2306) — the wave2 failure cannot recur.</li>
+<li><strong>401/403 count as failure</strong> in the load driver.</li>
+<li><strong>Per-member probes with declared expectations</strong>, written into the evidence file — coverage is auditable from the artifact rather than asserted in prose.</li>
+</ul>
+<p>Findings index: <code>docs/staging/findings/README.md</code>. It also lists the traps not yet automated: Cloud Run tag naming, <code>BUILD_SHA</code> preservation on deploy, launchd's exit-based scheduling, and stale-branch tier computation.</p>
+
+<h2>5. Honest gaps</h2>
+<ul>
+<li><strong>wave2's #2211 and #2233 are NOT soak-covered</strong> — <code>/api/v1</code> was dark for their entire window.</li>
+<li><strong>wave3 soaked 9 members and probed 2.</strong> #2220/#2230/#2232/#2236 were never touched; #2247/#2252/#2274 are offline package surfaces no rig can exercise.</li>
+<li><strong>TRAIN-4's authenticated paths are unprobed</strong> — the rig's only API key is scope <code>verify</code> and already revoked, and raw keys are never persisted. #2233 has no probe at all yet.</li>
+<li><strong>RC manifests cannot be retrofitted</strong> onto already-soaked PRs (structural live-lock, FD-RC-1). #2272 and #2276 are stuck behind it.</li>
+<li>The <strong>GCP IAM downloadable-keys P0</strong> from earlier work is still open: the <code>arkova-cli</code> key holds <code>secretmanager.admin</code> and can therefore read <code>BITCOIN_TREASURY_WIF</code>.</li>
+</ul>
