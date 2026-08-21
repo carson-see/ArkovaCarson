@@ -81,6 +81,18 @@ export interface OrgTopologyData {
   seedOrgs: number;
 }
 
+/**
+ * One row of the org-name projection used by Check 7.
+ *
+ * FD-PREFLIGHT-1: this used to be `{ name: string }`. `public.organizations`
+ * has no `name` column — it has `legal_name` and `display_name` — so the
+ * PostgREST select failed 42703 on every rig and Check 7 never ran.
+ */
+export interface OrgNameRow {
+  legal_name: string | null;
+  display_name: string | null;
+}
+
 export interface ProdFactsData {
   cronJobNames: string[];
   functionExists: boolean;
@@ -134,6 +146,16 @@ const TIMESTAMP_VERSION_RE = /^\d{14,}$/;
 
 /** Prefixes in org names that indicate staging seed data (case-insensitive). */
 const SEED_ORG_PREFIXES = ['stg', 'staging_seed_', 'test_org_'];
+
+/**
+ * The columns on `public.organizations` that can carry a staging seed marker.
+ *
+ * FD-PREFLIGHT-1: there is no `organizations.name`. Selecting it made Check 7
+ * (`org_topology`) throw 42703 on every rig, and the caller-side guard turned
+ * that into a silent skip. Keep this list in sync with the table; the unit
+ * suite ratchets on both the list and the call site that uses it.
+ */
+export const ORG_NAME_COLUMNS = ['legal_name', 'display_name'] as const;
 
 const MANAGEMENT_API_BASE_URL = 'https://api.supabase.com/v1';
 const MANAGEMENT_API_TIMEOUT_MS = 30_000;
@@ -576,6 +598,38 @@ export function isOrgSeedName(name: string): boolean {
   return SEED_ORG_PREFIXES.some((p) => lower.startsWith(p));
 }
 
+/**
+ * True when EITHER org-name column carries a staging seed prefix.
+ *
+ * Both columns are considered because a rig can be seeded with a real-looking
+ * `legal_name` and a `stg`-prefixed `display_name`, or the reverse.
+ */
+export function isOrgRowSeeded(row: OrgNameRow): boolean {
+  return ORG_NAME_COLUMNS.some((column) => {
+    const value = row[column];
+    return typeof value === 'string' && isOrgSeedName(value);
+  });
+}
+
+/**
+ * Check 7 could not be evaluated — report it as a FAILURE.
+ *
+ * FD-PREFLIGHT-1. A preflight whose whole job is to refuse to vouch for a rig
+ * must never treat "I could not look" as "I looked and it was fine". If the
+ * organizations projection cannot be read, the environment is not certified
+ * clean; it is uncertified, and that is a failing outcome.
+ */
+export function checkOrgTopologyUnavailable(reason: string): CheckResult {
+  return {
+    name: 'org_topology',
+    passed: false,
+    details:
+      `org_topology could not be evaluated: ${reason}. ` +
+      'A check that cannot run is a FAILED check, not a skipped one — ' +
+      'this environment is uncertified for merge-grade soak evidence.',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Report builder
 // ---------------------------------------------------------------------------
@@ -593,6 +647,12 @@ export function buildReport(opts: {
    */
   repoVersions?: ReadonlySet<string>;
   orgTopology?: OrgTopologyData;
+  /**
+   * Why the org-topology projection could not be read. When set (and
+   * `orgTopology` is not), Check 7 is emitted as a FAILURE rather than
+   * omitted — see checkOrgTopologyUnavailable / FD-PREFLIGHT-1.
+   */
+  orgTopologyError?: string;
   prodFacts?: ProdFactsData;
 }): PreflightReport {
   const { projectRef, migrationRows, submittedAnchorCount, prodVersions, repoVersions } = opts;
@@ -702,9 +762,12 @@ export function buildReport(opts: {
     });
   }
 
-  // Check 7: Org topology (single-tenant prod vs multi-org staging seeds)
+  // Check 7: Org topology (single-tenant prod vs multi-org staging seeds).
+  // An unreadable projection is a FAILED check, never an omitted one.
   if (opts.orgTopology) {
     checks.push(checkOrgTopology(opts.orgTopology));
+  } else if (opts.orgTopologyError) {
+    checks.push(checkOrgTopologyUnavailable(opts.orgTopologyError));
   }
 
   // Check 8: Prod facts (pg_cron, function existence, scheduling)
@@ -976,18 +1039,27 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Query org topology (best-effort — organizations table is in public schema).
+  // Query org topology (Check 7). Every failure path records a reason so the
+  // check is reported as FAILED instead of vanishing from the report —
+  // FD-PREFLIGHT-1, where a select of the non-existent `organizations.name`
+  // meant this check never ran on any rig and its absence looked clean.
   let orgTopology: OrgTopologyData | undefined;
+  let orgTopologyError: string | undefined;
   try {
     const { data: orgData, error: orgError } = await publicClient
       .from('organizations')
-      .select('name');
-    if (!orgError && orgData) {
-      const seedOrgs = orgData.filter((o: { name: string }) => isOrgSeedName(o.name)).length;
-      orgTopology = { totalOrgs: orgData.length, seedOrgs };
+      .select(ORG_NAME_COLUMNS.join(','));
+    if (orgError) {
+      orgTopologyError = orgError.message;
+    } else if (!orgData) {
+      orgTopologyError = 'organizations projection returned no rows payload.';
+    } else {
+      const rows = orgData as unknown as OrgNameRow[];
+      const seedOrgs = rows.filter(isOrgRowSeeded).length;
+      orgTopology = { totalOrgs: rows.length, seedOrgs };
     }
-  } catch {
-    // Org topology check skipped — table may not exist in this environment.
+  } catch (err) {
+    orgTopologyError = err instanceof Error ? err.message : String(err);
   }
 
   let prodVersions = args.prodVersions;
@@ -1035,6 +1107,7 @@ async function main(): Promise<void> {
     prodVersions,
     repoVersions,
     orgTopology,
+    orgTopologyError,
     prodFacts,
   });
 
