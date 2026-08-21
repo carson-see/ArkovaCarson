@@ -60,6 +60,11 @@ reclaimer is named by the row it reclaimed.
 
 ## The wrong attribution this replaces
 
+(Also recorded independently as [`FD-TRAIN6-1`](FD-TRAIN6-1-soak-driver-invalidates-its-own-preflight.md)
+/ SCRUM-3189, filed by a parallel session on the same symptom. That finding's general rule is
+sound; its causal attribution is the one corrected here, and a banner at the top of that file
+points back to this one.)
+
 TRAIN-6's stand-up doc concluded the reclaimer was the soak's own load driver — specifically
 its `2249-anchor-expiry-sweep` probe — and therefore that "this window can never reach a
 passing preflight while its driver runs."

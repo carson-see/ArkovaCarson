@@ -1,3 +1,30 @@
+> ## ⚠️ CORRECTED 2026-08-21T20:40Z — the mechanism named below is wrong
+>
+> This finding blames TRAIN-6's own `2249-anchor-expiry-sweep` probe for reverting the fixture
+> anchor `SUBMITTED → PENDING`. **It did not, and could not.** `jobs/anchorExpirySweep.ts` selects
+> only `status = 'SECURED'` (`.eq('status','SECURED')`, `expires_at < now`, `deleted_at IS NULL`)
+> and moves those to `EXPIRED`. It has no code path that reads or writes a `SUBMITTED` row.
+>
+> The reclaimer was `public.recover_stuck_broadcasts()` (migration `0379`), run by the in-process
+> `recover-stuck-broadcasts` cron (`routes/scheduled.ts`, `*/2 * * * *`) against
+> `status IN ('BROADCASTING','SUBMITTED') AND updated_at < now() - 5 min AND chain_tx_id IS NULL`.
+> The row stamps its own provenance: `metadata._recovery_reason = 'stuck_submitted_null_txid'`,
+> `_recovered_from_status = 'SUBMITTED'`.
+>
+> **This matters because it changes the fix.** Retargeting or removing the driver probe — step 4
+> of the Resolution below — would have changed nothing: no load-driver change can stop an
+> in-process DB cron. The fixture itself had to change (`chain_tx_id` NOT NULL). It is also not
+> TRAIN-6-specific: **every** rig seeded with `scripts/staging/seed-baseline-fixture.sql` has it.
+>
+> Full mechanism, proof, and the durable-fixture recipe:
+> [`FD-SEED-1`](FD-SEED-1-baseline-fixture-self-reverts-in-7-minutes.md).
+>
+> **The general rule this finding states is still correct and still worth keeping** — "check
+> whether the driver's own actions can violate the preconditions its window is judged against."
+> The rule survives; only the worked example's causal attribution was wrong. Widen it slightly:
+> ask the same question of every scheduled job in the *deployed image*, not only of the probes
+> in your driver. Everything below is retained unedited.
+
 # FD-TRAIN6-1 — a soak driver can invalidate its own preflight condition
 
 **Found:** 2026-08-21, running the real preflight against TRAIN-6.
