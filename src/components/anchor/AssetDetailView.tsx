@@ -114,6 +114,17 @@ interface AssetDetailViewProps {
   /** Called after a successful revoke so the parent can refresh the anchor. */
   onRevoked?: () => void;
   /**
+   * Rename honesty gate (founder-reported, 2026-08-17): only the record OWNER
+   * can rename — RLS `anchors_update_own` requires user_id = auth.uid(), and
+   * migration 0393's trigger `restrict_org_admin_folder_update` narrows the
+   * org-admin update policy to folder_id only. The parent computes ownership
+   * (anchor.user_id === auth uid) and passes it here, mirroring how
+   * `canRevoke` is parent-computed. Defaults false (fail-closed): without it
+   * a non-owner's pencil click yields either a raw 42501 error toast or a
+   * silent zero-row false success.
+   */
+  canRename?: boolean;
+  /**
    * CPE-R1 (SCRUM-1847) — whether the viewer holds the
    * `credential_source_import` entitlement. The parent resolves it read-only
    * via `useHasCredentialImportEntitlement` (page-level concern, mirrors how
@@ -362,7 +373,7 @@ function AnchorRecordGrid({ anchor, status, formatDate }: Readonly<AnchorRecordG
   );
 }
 
-export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile, canRevoke = false, onRevoked, hasImportEntitlement = false }: Readonly<AssetDetailViewProps>) {
+export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile, canRename = false, canRevoke = false, onRevoked, hasImportEntitlement = false }: Readonly<AssetDetailViewProps>) {
   const [copied, setCopied] = useState(false);
   const [verificationState, setVerificationState] = useState<VerificationState>('idle');
   const [showVerifyDropzone, setShowVerifyDropzone] = useState(false);
@@ -586,7 +597,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               ) : (
                 <div className="flex items-center gap-2">
                   <p className="text-lg font-medium truncate">{anchor.filename}</p>
-                  {onRenameFile && (
+                  {onRenameFile && canRename && (
                     <button
                       type="button"
                       className="text-muted-foreground hover:text-foreground transition-colors shrink-0"

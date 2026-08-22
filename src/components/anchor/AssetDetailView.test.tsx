@@ -281,6 +281,37 @@ describe('AssetDetailView', () => {
     expect(queryByText('Record Created')).toBeInTheDocument();
   });
 
+  // Founder-reported rename honesty fix: the pencil is owner-only. RLS
+  // (anchors_update_own = user_id match; migration 0393's trigger
+  // restrict_org_admin_folder_update narrows org-admin updates to folder_id)
+  // means a non-owner rename can never succeed — showing the pencil to a
+  // non-owner yields either a raw 42501 error toast or a silent zero-row
+  // false success. The parent computes ownership and passes canRename,
+  // mirroring the canRevoke pattern; it fails closed when omitted.
+  it('shows the rename pencil when the viewer can rename (owner)', () => {
+    const { getByLabelText } = render(
+      <AssetDetailView anchor={mockAnchor} onRenameFile={vi.fn()} canRename />
+    );
+
+    expect(getByLabelText('Edit document name')).toBeInTheDocument();
+  });
+
+  it('hides the rename pencil when canRename is false (non-owner)', () => {
+    const { queryByLabelText } = render(
+      <AssetDetailView anchor={mockAnchor} onRenameFile={vi.fn()} canRename={false} />
+    );
+
+    expect(queryByLabelText('Edit document name')).not.toBeInTheDocument();
+  });
+
+  it('hides the rename pencil when canRename is omitted (fail-closed default)', () => {
+    const { queryByLabelText } = render(
+      <AssetDetailView anchor={mockAnchor} onRenameFile={vi.fn()} />
+    );
+
+    expect(queryByLabelText('Edit document name')).not.toBeInTheDocument();
+  });
+
   // BUG-2026-07-17-010 (SCRUM-2910, P0): historical fraud_* metadata keys must
   // never render on the OWNER document detail view.
   it('never renders fraud_* metadata keys on the owner detail view (BUG-2026-07-17-010)', () => {
