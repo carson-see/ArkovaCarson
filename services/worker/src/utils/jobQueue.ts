@@ -14,6 +14,7 @@
 
 import { db } from './db.js';
 import { logger } from './logger.js';
+import { truncateUtf16Safe } from './utf16-truncate.js';
 import {
   REDACTED_BYTES_TOKEN,
   SERIALIZED_BUFFER_RE,
@@ -90,7 +91,9 @@ export function sanitizeLastError(raw: unknown): string {
     return REDACTED_LAST_ERROR_TOKEN;
   }
 
-  return text.length > LAST_ERROR_MAX_LENGTH ? text.slice(0, LAST_ERROR_MAX_LENGTH) : text;
+  // Surrogate-safe: a bare .slice here could cut inside a surrogate pair and
+  // make the failJob PostgREST body itself invalid JSON (PGRST102).
+  return truncateUtf16Safe(text, LAST_ERROR_MAX_LENGTH);
 }
 
 export type JobHandler<T = unknown> = (job: Job<T>) => Promise<void>;

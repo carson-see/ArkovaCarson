@@ -7,6 +7,7 @@
 import crypto from 'node:crypto';
 import type { Json } from '../types/database.types.js';
 import { db } from '../utils/db.js';
+import { truncateUtf16Safe } from '../utils/utf16-truncate.js';
 import { logger } from '../utils/logger.js';
 import { Sentry } from '../utils/sentry.js';
 import { validateWebhookPayload } from './payload-schemas.js';
@@ -592,7 +593,7 @@ async function deliverToEndpoint(
         .update({
           status: 'success',
           response_status: response.status,
-          response_body: responseBody.slice(0, 1000),
+          response_body: truncateUtf16Safe(responseBody, 1000),
           delivered_at: new Date().toISOString(),
         })
         .eq('id', logEntry.id);
@@ -613,7 +614,7 @@ async function deliverToEndpoint(
         .update({
           status: shouldRetry ? 'retrying' : 'failed',
           response_status: response.status,
-          response_body: responseBody.slice(0, 1000),
+          response_body: truncateUtf16Safe(responseBody, 1000),
           error_message: `HTTP ${response.status}`,
           next_retry_at: shouldRetry
             ? new Date(Date.now() + getRetryDelay(attempt)).toISOString()
@@ -1097,7 +1098,7 @@ export async function replayDelivery(
       .update({
         status: isSuccess ? 'success' : 'failed',
         response_status: response.status,
-        response_body: responseBody.slice(0, 1000),
+        response_body: truncateUtf16Safe(responseBody, 1000),
         delivered_at: isSuccess ? new Date().toISOString() : null,
         error_message: isSuccess ? null : `HTTP ${response.status}`,
       })
@@ -1108,7 +1109,7 @@ export async function replayDelivery(
     const msg = err instanceof Error ? err.message : 'unknown';
     await dbAny
       .from('webhook_delivery_logs')
-      .update({ status: 'failed', error_message: msg.slice(0, 500) })
+      .update({ status: 'failed', error_message: truncateUtf16Safe(msg, 500) })
       .eq('id', newLog.id);
     return { ok: false, error: 'delivery_failed', new_delivery_id: newLog.id };
   }

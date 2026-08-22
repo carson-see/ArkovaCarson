@@ -25,6 +25,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
 import { getCallerOrgId } from '../../compliance/auth-helpers.js';
 import { chunkForInFilter } from '../../utils/postgrest-filter.js';
 import {
@@ -186,7 +187,7 @@ router.post('/', async (req: Request, res: Response) => {
         completed_at: completedAt.toISOString(),
         duration_ms: durationMs,
         error_code: 'AUDIT_COMPUTE_ERROR',
-        error_message: (err as Error).message?.slice(0, 500) ?? 'unknown',
+        error_message: truncateUtf16Safe((err as Error).message ?? 'unknown', 500),
         jurisdiction_filter: jurisdictionFilter ?? null,
       })
       .then(() => null, () => null);
