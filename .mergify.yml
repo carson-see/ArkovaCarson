@@ -65,6 +65,8 @@ queue_rules:
       # nothing until listed here — a check absent from merge_conditions can
       # be red while Mergify merges anyway.
       - check-success = Orphaned Export Lint
+      # Python SDK suite (BUG-2026-08-12-007) — see the default queue's note.
+      - check-success = Python SDK Tests (packages/arkova-py)
       - check-success = Staging Soak Evidence Gate
       - check-success = S3.3 Wave 2 Exact-Head Acceptance
     merge_method: merge
@@ -93,6 +95,8 @@ queue_rules:
       - check-success = E2E Tests
       # Orphaned-export lint (CTO ruling R14) — see the default queue's note.
       - check-success = Orphaned Export Lint
+      # Python SDK suite (BUG-2026-08-12-007) — see the default queue's note.
+      - check-success = Python SDK Tests (packages/arkova-py)
       # Risk-tiered staging evidence gate (CLAUDE.md §1.11)
       - check-success = Staging Soak Evidence Gate
     merge_method: merge
@@ -137,6 +141,14 @@ queue_rules:
       # without blocking — a CI job absent from merge_conditions gates
       # nothing. Config-only change; the lint itself is untouched.
       - check-success = Orphaned Export Lint
+      # Python SDK suite (BUG-2026-08-12-007): the ci.yml `python-sdk-tests`
+      # job (pytest + ruff for packages/arkova-py, added by this same PR) runs
+      # UNCONDITIONALLY on every PR — no job-level `if:` and no path filter —
+      # so requiring it here cannot deadlock a non-SDK PR on a never-reported
+      # check. Without this line the job reports but gates nothing: a CI job
+      # absent from merge_conditions can be red while Mergify merges anyway,
+      # which is the exact after-the-release blindness the job exists to close.
+      - check-success = Python SDK Tests (packages/arkova-py)
       - check-success = Staging Soak Evidence Gate
     merge_method: merge
     # Aug-10 release push: expand the default batch to 10 PRs so the CI-green
