@@ -1,0 +1,6 @@
+READ-SCRIPT:
+head: /Volumes/Extreme/Arkova/_legacy/home-Arkova-2026-05-15/arkova-mvpcopy-main/scripts/staging/fullsoak-90min-soc2-health.sh: Operation not permitted
+LIST-DIR:
+ls: /Volumes/Extreme/Arkova/_legacy/home-Arkova-2026-05-15/arkova-mvpcopy-main/scripts/staging/: Operation not permitted
+GCLOUD:
+WARNING:  Python 3.9.x is no longer officially supported by the Google Cloud CLI

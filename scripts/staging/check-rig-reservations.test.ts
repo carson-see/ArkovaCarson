@@ -201,16 +201,50 @@ describe('formatReport', () => {
   });
 });
 
+function readCommittedLedger(): Ledger {
+  const path = resolve(__dirname, '../../docs/staging/rig-reservations.json');
+  return JSON.parse(readFileSync(path, 'utf8')) as Ledger;
+}
+
 describe('main (CLI) + committed scaffold', () => {
   it('returns exit code 2 when the ledger file cannot be read', () => {
     expect(main(['/nonexistent/rig-reservations.json'])).toBe(2);
   });
 
-  it('the committed docs/staging/rig-reservations.json scaffold is valid (example-only → passes)', () => {
-    const path = resolve(__dirname, '../../docs/staging/rig-reservations.json');
-    const ledger: Ledger = JSON.parse(readFileSync(path, 'utf8'));
+  // This used to also assert `report.activeCount === 0`. That pin was written
+  // when the file held nothing but the scaffold example, and it made the
+  // ledger's own documented workflow impossible: its `_comment` says to add a
+  // real `status: "active"` row in the SAME session that stands the rig up, and
+  // doing so turned this test red. A ledger that cannot record a reservation is
+  // not a reservation ledger. The invariant worth pinning is that the committed
+  // file VALIDATES — no double-booking, no malformed active rows — not that it
+  // is permanently empty.
+  it('the committed docs/staging/rig-reservations.json ledger validates', () => {
+    const ledger = readCommittedLedger();
     const report = validateLedger(ledger);
-    expect(report.ok).toBe(true);
-    expect(report.activeCount).toBe(0);
+    expect(report.ok, JSON.stringify(report.findings, null, 2)).toBe(true);
+  });
+
+  // Replaces the coverage the activeCount pin was standing in for. An active
+  // row is a claim that a rig is occupied right now, and CLAUDE.md §1.11A
+  // requires isolated-soak evidence to name its identity. validateLedger only
+  // enforces reservation_id / rail / rig.cloud_run_service / rig.supabase_ref,
+  // so the head SHA and the soak window — the two fields that make a
+  // reservation auditable rather than decorative — are pinned here.
+  it('every ACTIVE reservation names its head SHA and its soak window', () => {
+    const ledger = readCommittedLedger();
+    const active = (ledger.reservations ?? []).filter((r) => r?.status === 'active');
+    for (const r of active) {
+      const id = r.reservation_id ?? '<no reservation_id>';
+      expect(r.rig?.tag_url, `${id}: rig.tag_url`).toMatch(/^https:\/\//);
+      expect(r.pr_head_sha, `${id}: pr_head_sha must be a full 40-char SHA`)
+        .toMatch(/^[0-9a-f]{40}$/);
+      expect(r.soak?.start, `${id}: soak.start`).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(r.soak?.end, `${id}: soak.end`).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(
+        new Date(String(r.soak?.end)).getTime(),
+        `${id}: soak window must end after it starts`,
+      ).toBeGreaterThan(new Date(String(r.soak?.start)).getTime());
+    }
   });
 });

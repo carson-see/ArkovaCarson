@@ -146,6 +146,27 @@ If the PR touches *any* worker/migration/served-contract file, this variant does
 
 ---
 
+## When the preflight was dirty, late, or never ran — `### Residual-risk note`
+
+Both preflight fields have exactly one escape hatch, and it is the same one. Say what actually happened and attach the note; do **not** paste another window's timestamp to make the block parse — that is the stale-evidence reuse CLAUDE.md §1.11A forbids.
+
+- `Preflight result:` — anything other than `environment_type=clean_mirror`.
+- `Preflight timestamp:` — either a reading **after** `Soak start:` (it does not describe the state the soak ran against), or no reading at all. For "no reading at all", write the literal `NOT RUN`. Also accepted: `NONE`, `N/A`, `NO PREFLIGHT`, `NOT APPLICABLE`, each optionally followed by ` — <reason>`. Any other free text is still a hard parse error, and leaving the field out entirely still fails the required-field check.
+
+The note must carry all five sub-fields, and `Approved by:` must name a real person — blank, `pending`, `TBD`, or `N/A` is a self-waiver and fails. The note is scoped to the preflight fields only: it does not waive the soak-duration floor, head/base SHA identity, evidence scope, or the deploy-artifact value checks.
+
+```markdown
+### Residual-risk note (preflight timestamp not a pre-clock reading)
+
+- Contamination type: unknown — no preflight was captured for this window
+- Affected rows: unknown; shared staging ledger was not sampled at clock start
+- Impact on this PR: <why the un-sampled state cannot change this PR's result>
+- Reason not cleaned: <why re-running the preflight now would not describe the soaked state>
+- Approved by: <real name> (YYYY-MM-DD)
+```
+
+---
+
 ## Release-candidate manifest coverage — batched T2/T3 evidence
 
 Use this variant only when the release owner has approved a release candidate and the long soak evidence is captured in a local, machine-readable manifest. This keeps the same `Staging Soak Evidence Gate` required check name while moving long soak evidence from many mutable PR bodies into one audited RC artifact.
