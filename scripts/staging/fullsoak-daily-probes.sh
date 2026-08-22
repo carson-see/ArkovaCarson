@@ -145,7 +145,7 @@ chmod 700 "$TMPD"
 RUN_DATE="$(date -u +%F)"
 RUN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 RUN_STAMP="$(date -u +%H%M%SZ)"
-OUT_DIR="$REPO_ROOT/$EVID_ROOT_REL/$RUN_DATE"
+OUT_DIR="${EVID_ROOT_ABS:-$REPO_ROOT/$EVID_ROOT_REL}/$RUN_DATE"
 mkdir -p "$OUT_DIR" || exit 2
 # Fresh file per run (§5.0 rule 1) — never reuse a path across iterations.
 OUT_TXT="$OUT_DIR/probes-$RUN_STAMP.txt"

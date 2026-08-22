@@ -1,0 +1,414 @@
+{
+  "probe": "SCRUM-3139 \u2014 Upstash rate limiter shares no state across Cloud Run instances",
+  "target": {
+    "service": "arkova-worker-connector-sidecar-2026-08-staging",
+    "revision": "arkova-worker-connector-sidecar-2026-08-staging-00008-jnj",
+    "region": "us-central1",
+    "min_instances": 2,
+    "max_instances": 2,
+    "path": "/.well-known/did.json",
+    "documented_limit_per_min_per_ip": 60,
+    "limiter": "apiIpShadowGuard (services/worker/src/index.ts:413), bucket key = req.ip"
+  },
+  "egress_ip_bucket_key": "216.183.125.66",
+  "window": {
+    "started": "2026-08-13T15:59:21.929Z",
+    "ended": "2026-08-13T15:59:23.248Z"
+  },
+  "requested": 200,
+  "concurrency": 25,
+  "accepted": 114,
+  "refused_429": 86,
+  "distinct_x_ratelimit_reset_values": [
+    "1786636805",
+    "1786636819"
+  ],
+  "duplicate_x_ratelimit_remaining_values": [
+    {
+      "remaining": 56,
+      "seen_times": 2
+    },
+    {
+      "remaining": 55,
+      "seen_times": 2
+    },
+    {
+      "remaining": 54,
+      "seen_times": 2
+    },
+    {
+      "remaining": 53,
+      "seen_times": 2
+    },
+    {
+      "remaining": 52,
+      "seen_times": 2
+    },
+    {
+      "remaining": 51,
+      "seen_times": 2
+    },
+    {
+      "remaining": 50,
+      "seen_times": 2
+    },
+    {
+      "remaining": 49,
+      "seen_times": 2
+    },
+    {
+      "remaining": 48,
+      "seen_times": 2
+    },
+    {
+      "remaining": 47,
+      "seen_times": 2
+    },
+    {
+      "remaining": 46,
+      "seen_times": 2
+    },
+    {
+      "remaining": 45,
+      "seen_times": 2
+    },
+    {
+      "remaining": 44,
+      "seen_times": 2
+    },
+    {
+      "remaining": 43,
+      "seen_times": 2
+    },
+    {
+      "remaining": 42,
+      "seen_times": 2
+    },
+    {
+      "remaining": 41,
+      "seen_times": 2
+    },
+    {
+      "remaining": 40,
+      "seen_times": 2
+    },
+    {
+      "remaining": 39,
+      "seen_times": 2
+    },
+    {
+      "remaining": 38,
+      "seen_times": 2
+    },
+    {
+      "remaining": 37,
+      "seen_times": 2
+    },
+    {
+      "remaining": 36,
+      "seen_times": 2
+    },
+    {
+      "remaining": 35,
+      "seen_times": 2
+    },
+    {
+      "remaining": 34,
+      "seen_times": 2
+    },
+    {
+      "remaining": 33,
+      "seen_times": 2
+    },
+    {
+      "remaining": 32,
+      "seen_times": 2
+    },
+    {
+      "remaining": 31,
+      "seen_times": 2
+    },
+    {
+      "remaining": 30,
+      "seen_times": 2
+    },
+    {
+      "remaining": 29,
+      "seen_times": 2
+    },
+    {
+      "remaining": 28,
+      "seen_times": 2
+    },
+    {
+      "remaining": 27,
+      "seen_times": 2
+    },
+    {
+      "remaining": 26,
+      "seen_times": 2
+    },
+    {
+      "remaining": 25,
+      "seen_times": 2
+    },
+    {
+      "remaining": 24,
+      "seen_times": 2
+    },
+    {
+      "remaining": 23,
+      "seen_times": 2
+    },
+    {
+      "remaining": 22,
+      "seen_times": 2
+    },
+    {
+      "remaining": 21,
+      "seen_times": 2
+    },
+    {
+      "remaining": 20,
+      "seen_times": 2
+    },
+    {
+      "remaining": 19,
+      "seen_times": 2
+    },
+    {
+      "remaining": 18,
+      "seen_times": 2
+    },
+    {
+      "remaining": 17,
+      "seen_times": 2
+    },
+    {
+      "remaining": 16,
+      "seen_times": 2
+    },
+    {
+      "remaining": 15,
+      "seen_times": 2
+    },
+    {
+      "remaining": 14,
+      "seen_times": 2
+    },
+    {
+      "remaining": 13,
+      "seen_times": 2
+    },
+    {
+      "remaining": 12,
+      "seen_times": 2
+    },
+    {
+      "remaining": 11,
+      "seen_times": 2
+    },
+    {
+      "remaining": 10,
+      "seen_times": 2
+    },
+    {
+      "remaining": 9,
+      "seen_times": 2
+    },
+    {
+      "remaining": 8,
+      "seen_times": 2
+    },
+    {
+      "remaining": 7,
+      "seen_times": 2
+    },
+    {
+      "remaining": 6,
+      "seen_times": 2
+    },
+    {
+      "remaining": 5,
+      "seen_times": 2
+    },
+    {
+      "remaining": 4,
+      "seen_times": 2
+    },
+    {
+      "remaining": 3,
+      "seen_times": 2
+    },
+    {
+      "remaining": 2,
+      "seen_times": 2
+    },
+    {
+      "remaining": 1,
+      "seen_times": 2
+    },
+    {
+      "remaining": 0,
+      "seen_times": 2
+    }
+  ],
+  "duplicate_remaining_extra_total": 57,
+  "cloud_logging_correlation": {
+    "filter": "resource.labels.service_name=\"arkova-worker-connector-sidecar-2026-08-staging\" AND jsonPayload.msg=\"Rate limit exceeded\"",
+    "entries": 86,
+    "distinct_bucket_keys_logged": [
+      "216.183.125.66"
+    ],
+    "per_instance_429_warnings": {
+      "001548f729c5f4e23bf276c048acec08\u2026": 49,
+      "001548f72961871a3a9f679d946ac6b3\u2026": 37
+    },
+    "sample_payload": {
+      "key": "216.183.125.66",
+      "count": 60,
+      "maxRequests": 60,
+      "msg": "Rate limit exceeded"
+    }
+  },
+  "redis_state": {
+    "before_25_counted_requests": "{\"count\":0,\"resetAt\":1786636898380}",
+    "after_25_counted_requests": "{\"count\":0,\"resetAt\":1786636898380}",
+    "ttl_seconds_at_read": 26,
+    "note": "increment is never written back; get() never reads Redis; syncFromRedis() is never called"
+  },
+  "ab_two_process_harness_against_real_upstash": {
+    "main_HEAD": {
+      "requested": 200,
+      "accepted": 120,
+      "refused_429": 80,
+      "per_instance": {
+        "A": 60,
+        "B": 60
+      },
+      "duplicate_remaining_pairs": 60,
+      "verdict": "2x the documented limit \u2014 per-instance buckets"
+    },
+    "pr2223_45d51ff2": {
+      "requested": 200,
+      "accepted": 60,
+      "refused_429": 140,
+      "per_instance": {
+        "A": 30,
+        "B": 30
+      },
+      "duplicate_remaining_pairs": 0,
+      "verdict": "one shared bucket \u2014 limit enforced once"
+    }
+  },
+  "raw_first_12_responses": [
+    {
+      "seq": 0,
+      "t": 1786636761929,
+      "status": 200,
+      "limit": "60",
+      "remaining": "48",
+      "reset": "1786636805",
+      "retryAfter": null
+    },
+    {
+      "seq": 1,
+      "t": 1786636761976,
+      "status": 200,
+      "limit": "60",
+      "remaining": "56",
+      "reset": "1786636805",
+      "retryAfter": null
+    },
+    {
+      "seq": 2,
+      "t": 1786636761976,
+      "status": 200,
+      "limit": "60",
+      "remaining": "44",
+      "reset": "1786636819",
+      "retryAfter": null
+    },
+    {
+      "seq": 3,
+      "t": 1786636761977,
+      "status": 200,
+      "limit": "60",
+      "remaining": "50",
+      "reset": "1786636819",
+      "retryAfter": null
+    },
+    {
+      "seq": 4,
+      "t": 1786636761977,
+      "status": 200,
+      "limit": "60",
+      "remaining": "45",
+      "reset": "1786636819",
+      "retryAfter": null
+    },
+    {
+      "seq": 5,
+      "t": 1786636761977,
+      "status": 200,
+      "limit": "60",
+      "remaining": "46",
+      "reset": "1786636805",
+      "retryAfter": null
+    },
+    {
+      "seq": 6,
+      "t": 1786636761978,
+      "status": 200,
+      "limit": "60",
+      "remaining": "52",
+      "reset": "1786636805",
+      "retryAfter": null
+    },
+    {
+      "seq": 7,
+      "t": 1786636761978,
+      "status": 200,
+      "limit": "60",
+      "remaining": "45",
+      "reset": "1786636805",
+      "retryAfter": null
+    },
+    {
+      "seq": 8,
+      "t": 1786636761979,
+      "status": 200,
+      "limit": "60",
+      "remaining": "51",
+      "reset": "1786636819",
+      "retryAfter": null
+    },
+    {
+      "seq": 9,
+      "t": 1786636761979,
+      "status": 200,
+      "limit": "60",
+      "remaining": "54",
+      "reset": "1786636819",
+      "retryAfter": null
+    },
+    {
+      "seq": 10,
+      "t": 1786636761980,
+      "status": 200,
+      "limit": "60",
+      "remaining": "54",
+      "reset": "1786636805",
+      "retryAfter": null
+    },
+    {
+      "seq": 11,
+      "t": 1786636761980,
+      "status": 200,
+      "limit": "60",
+      "remaining": "52",
+      "reset": "1786636819",
+      "retryAfter": null
+    }
+  ]
+}

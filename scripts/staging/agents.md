@@ -169,3 +169,121 @@ Containment performs a complete pause pass before a separate complete verificati
 - Team 1 review hardening keeps every chronology field on one canonical UTC/RFC3339 parser, confines live raw capture paths to direct regular JSON files under `/var/lib/arkova/s33-evidence/captures` with no-follow opens, bounds the fixed crash controller, rejects flag-shaped controller identities, and re-keys all R3 scenario ranks so suffixed scenarios cannot share rank-one org IDs. The focused evidence lint is a native `typecheck-lint` CI step; update its explicit file list whenever this surface grows.
 - `batch-drain-admission-adapter.ts` is the only Team1 bridge from Team2 isolated-rig admission v2 into a run declaration. It accepts primitive raw JSON only, rejects lexical duplicate keys, validates Team2's exact strict v2 admission shape, and binds RIG-B1/project/region/lease/clean-mirror/head/base/deployed-image/Supabase/soak/service/revision identity. RIG-B1 admission additionally requires Team2's complete six-job Scheduler set as exact service-derived name/path pairs, the exact creation-guard/PAUSED-through-clean-mirror/resumed lifecycle, and the complete live-chain critical config (`USE_MOCKS=false`, anchoring on, signet, GetBlock, GCP KMS, chain-inapplicable Gemini fields empty, response schema `<unset>`). Missing, extra, duplicated, arbitrary, or name/path-swapped jobs fail closed. The separate ceremony input may supply only declaration id, timestamps, recoveries, and windows. The adapter returns a deeply frozen opaque provenance handle; clones, getters, proxies, extra fields, identity overrides, contradictory aliases, and manual declaration objects fail closed. Signing and the production Ed25519 trust root remain separate and null/fail-closed.
 - Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.
+
+## `fullsoak-daily-check.sh` — daily rig/prod parity for the 2026-08 7-day soak (2026-08-12)
+
+`scripts/staging/fullsoak-daily-check.sh` is the instrument for **BL-1 criterion 4** and rollback trigger **R13** in
+`docs/staging/SOAK-PREMORTEM-SOC2-2026-08-11.md`: re-verify rig↔prod parity **every soak day** and log divergence on
+the day it occurs, rather than discovering a Day-1 build swap at Day 7. It is **strictly read-only** against Cloud Run,
+Supabase, Cloud Scheduler, Cloud Monitoring, Secret Manager and GitHub, and it **does not schedule itself** — wiring the
+cron/launchd entry is a deliberate act by the session that owns the soak clock.
+
+- **Deps:** `gcloud`, `gh`, `curl`, `python3`. No repo/node dependency; bash 3.2 compatible. Needs
+  `export CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14` on this workstation.
+- **Modes:** `--day0` freezes the baselines under `docs/staging/evidence/fullsoak-2026-08/day0-snapshots/` and refuses
+  to overwrite an existing set without `--force` (re-capturing invalidates every comparison already made against it).
+  `--day0 --archive-as <label>` moves the outgoing set to `day0-snapshots/superseded-by-<label>/day0/` instead of
+  destroying it, then writes `REGENERATION-DIFF.md` comparing every surface old-vs-new — so "the redeploy only changed
+  the env" is **verified, not assumed**. Used on 2026-08-12 for the `00012-f45` → `00013-mrw` freeze-break deploy
+  (same image digest; `BITCOIN_UTXO_PROVIDER` `mempool`→`getblock` plus the `fullsoak-btc-rpc` VPC connector;
+  scheduler census, both flag hashes and the monitoring census all byte-identical).
+  Default mode runs the daily check and writes `docs/staging/evidence/fullsoak-2026-08/<UTC-date>/daily-check.md` plus
+  its raw artifacts; a same-date re-run preserves the prior report as `daily-check.prev-<HHMMSSZ>.md`.
+- **Verdict:** last line is exactly `DAILY_PARITY: PASS` or `DAILY_PARITY: FAIL — <ids>`; exit 0 / 1 (2 = harness error).
+- **Assertions:** A1–A3 git_sha (rig, prod, equality); A4/A4b/A4c rig `latestReadyRevision` + traffic routes 100% to
+  LATEST + the revision actually serving equals latest; A5/A6/A6b image digest on the rig revision, on the prod
+  **tag→digest resolution** (a matching tag string is not evidence), and on the prod serving revision; A7 rig
+  `/health.uptime` monotonic; A8/A9 `DEPLOY_WORKER_PAUSED` / `SOAK_GATE_DISABLED`; A10 rig env dump; A11
+  `switchboard_flags` hash; A12 Cloud Scheduler census; A13/A14 the 3 SOAK alert policies + 4 SOAK uptime checks;
+  A15 ledger-head parity; A16/A16a–d gated detailed health; A17/A17b bitcoin RPC node liveness; A18/A19 `/health.status`.
+- **Result states:** `PASS`, `FAIL` (verdict-breaking), `SKIP` (could not run), `WARN` (ran, no verdict reachable,
+  deliberately non-fatal). The verdict line counts only FAIL.
+- **A4 is not a pinned-name match.** The rig serves 100% from LATEST, so A4 asserts `latestReadyRevisionName`, A4b
+  asserts `latestRevision:true @ 100`, and A4c asserts the serving revision equals latest. A name-only check would
+  stay green while a newer revision quietly became latest.
+- **A16 — gated detailed health (`/health?detailed=true`, `X-Health-Token` from Secret Manager
+  `health-detail-token-fullsoak-2026-08-staging`).** An unauthorized request **degrades to the compact body at HTTP
+  200** (SCRUM-2653), so A16 proves the detailed shape was served (`checks.anchoring` is an object, not a status
+  string) **before** A16a–d assert on it — otherwise every field reads null and a naive check goes green on nothing.
+  A16a `drainStalled == false`; A16b `lastSecuredAt` non-null; A16c `lastSecuredAt` advancing; A16d `feeRateSatVb`
+  non-null. The gated `connection` block (Supabase project ref/URL) is **dropped before anything is written** —
+  writing it to evidence would recreate the disclosure SCRUM-2653 closed.
+- **A16c compares only against a record from a strictly earlier UTC date.** Comparing against a same-day Day-0 seed
+  captured minutes earlier would FAIL every seeding run; that run reports SKIP instead.
+- **A17 — bitcoin RPC node** (`arkova-s33-rig-b1-bitcoin-core-signet`, `us-central1-a`). On the critical path since
+  the rig moved to `BITCOIN_UTXO_PROVIDER=getblock` over the `fullsoak-btc-rpc` VPC connector. A17 asserts VM
+  `status == RUNNING` (hard). A17b compares `bitcoin-cli -signet getblockcount` (via IAP SSH →
+  `docker exec arkova-rig-b1-bitcoin-core`; bitcoind runs in a container, there is no `bitcoin-cli` on the host PATH)
+  against `mempool.space/signet` tip within 2 blocks — **non-fatal WARN**. The probe is skipped entirely unless an SSH
+  key already exists at `~/.ssh/google_compute_engine`: `gcloud compute ssh` would otherwise publish a new key to
+  project metadata, which is a **write**, and this checker is read-only.
+- **`EXPECT_SOAK_GATE_DISABLED` is a config-block expectation, not a hardcoded `false`.** The period requires `false`,
+  but the flip is the last action before the clock (premortem §6.3 step 7). Pre-flip runs set `true` so a Day-0 run is
+  not a guaranteed red herring that trains the operator to ignore a FAIL. **Flip the committed default to `false` in
+  the same action that runs `gh variable set SOAK_GATE_DISABLED --body false`.**
+- **A7 samples `/health` 5× and takes the MAX.** Cloud Run routes `/health` to any live instance, so a single low
+  reading is a scale-out, not a restart; a regression of the maximum is a genuine restart of the oldest instance (R2).
+- **A11 hashes only `flag_key|enabled`.** A row touched without a behaviour change moves the full-row hash and is
+  reported, never failed.
+- **Secret hygiene:** the Supabase service key reaches curl through a mode-0600 `--config` file, never argv. Rig env
+  vars are dumped as names + non-secret values; secret-backed vars render as `-> SECRET_REF: <name>` only. No artifact
+  contains a secret value.
+- **A15 (ledger-head parity) is wired and passing.** `supabase_migrations.schema_migrations` is not reachable over
+  PostgREST (`PGRST106` — only `public` / `graphql_public` are exposed) and Secret Manager holds no DB password for
+  `gnkuaywlpmsaezwvlvhk` or `vzwyaatejekddvltxyye`, so the check goes through the Supabase Management API
+  (`POST /v1/projects/<ref>/database/query`). The PAT resolves from `SUPABASE_ACCESS_TOKEN` if set, else from Secret
+  Manager secret `arkova1/supabase_access` (`SUPABASE_ACCESS_TOKEN_SECRET`); only the secret *name* reaches argv, the
+  value goes to curl via a mode-0600 `--config` file. If no PAT resolves the assertion reports **SKIP**, never PASS.
+  An errored or non-numeric response **fails** rather than satisfying the equality — two `<error>` values are equal to
+  each other, and that must not read as parity. First verified run: rig `0409` == prod `0409`.
+
+## `fullsoak-daily-probes.sh` — daily BEHAVIOURAL probes for the 2026-08 7-day soak (2026-08-12)
+
+Complement to `fullsoak-daily-check.sh`, not a replacement. **Run both, every soak day.**
+
+- **Why it exists.** `fullsoak-daily-check.sh` is a parity/integrity checker (`A1`–`A19`): frozen SHA, image digest,
+  env hash, flag hash, scheduler census, ledger head, `/health`. It proves the rig has not *drifted*. It contains
+  **zero product-behaviour assertions**. Every runbook §4 row promising "daily" for a *feature* — cross-tenant
+  isolation, the anon-RPC deny sweep, revoked-key refusal, webhook HMAC rejection — had no instrument behind it.
+  This script is that instrument.
+- **Probes.** `P1` login (both orgs mint real JWTs) · `P2` cross-tenant, 4 planes · `P3` invitations · `P4` folders +
+  anchor filing · `P5` DPA org field policies (0405 write-lock) · `P6` QR verification target · `P7` API-key scope +
+  revocation · `P8` anon-RPC deny sweep · `P9` inbound webhook HMAC rejection · `P10` dashboards, data-level.
+  `--list` prints the inventory; `--read-only` drops `P3/P4/P7` (the only mutating groups); `--only P8` runs one.
+- **Constitutional limits.** Traffic only — every mutation goes through a real product flow authenticated by a
+  Supabase user JWT or an Arkova API key; **no service-role write anywhere in the file**. Reads may use the
+  Management API (a SELECT is not a write) for row-delta verification and the `pg_proc` grant census. It never writes
+  `anchors` / `anchor_proofs`, never changes env/flags/secrets/scheduler/revisions, and cannot restart the worker —
+  so it cannot void the soak clock.
+- **`P2` proves positive access before every denial.** An isolation assertion whose counterparty never authenticated
+  is void (runbook §6c — the vendor's exact failure). `P2a` fails the whole group if Org B cannot read its own rows.
+- **`P8` is side-effect-free by construction.** Zero-argument and known-mutating functions listed in `$NEVER_INVOKE`
+  are **census-only, never invoked**. Argument-taking functions are called with a *type-invalid* argument so the cast
+  fails before the function body runs: `permission denied` = denied, `invalid input syntax` = grant live and
+  reachable, and any 2xx is an immediate FAIL. The census leg is the only leg that may speak about **prod**, which is
+  change-frozen and must not be probed with traffic.
+- **Baselines pinned in the config block** (2026-08-12): rig anon-executable functions **282**, prod **262**, and the
+  **20** functions anon-executable on the rig but revoked in prod. Growth in any of the three is a FAIL. That 20-set
+  is a rebuild-provenance finding: the squashed baseline emits only `REVOKE … FROM PUBLIC`, while the explicit
+  `REVOKE … FROM anon, authenticated` statements live in `docs/migrations-archive/` and are never replayed, so any
+  environment rebuilt from `supabase/migrations/` comes up with `admin_set_platform_admin` anon-callable. Prod is
+  clean; a rig sweep therefore **cannot** certify prod's deny posture.
+- **A 429 is never a pass.** The rig runs the in-memory limiter and will 429 a probe run under ordinary load. `P10`
+  retries with backoff and then records **SKIP with the 429 named** — a rate-limited request is evidence about the
+  limiter, not about the payload and not about authorization.
+- **`P7` currently FAILs on a real prod-exposed defect (FD-P7).** `toPublicKey()` (`api/v1/keys.ts:36`) strips `id`
+  from the create response *and* every list row, while revoke/delete are addressed by `:keyId` — so API-key
+  revocation is unreachable from any client, and the CC6.8 "a revoked key is refused" control cannot be exercised.
+  The probe records it mechanically instead of skipping past it. Consequence: `P7` cannot delete its own key, so it
+  leaves one behind per run and self-caps at `PROBE_KEY_CAP` (default 8).
+- **Evidence.** Fresh file per run (never reuse a path — `curl` does not truncate on failure), transport status
+  recorded separately from the body, timestamped at capture, written append-only to
+  `docs/staging/evidence/fullsoak-2026-08/<UTC-date>/probes-<HHMMSSZ>.{txt,json}` plus the `P8` set-diff artifacts.
+- **Three probe defects were found by running it, not by reading it,** and the fixes are the useful part:
+  `invite_member`'s role argument is `ORG_MEMBER` (not `MEMBER`); `folders_insert_own` requires
+  `created_by = auth.uid()`, so the probe must send the JWT's own `sub` rather than a hardcoded seed uuid; and the
+  Drive rejection path keys off a **known** channel with a wrong token — a made-up channel id acks 200 and proves
+  nothing. A fourth apparent failure was correct product behaviour: `get_public_anchor` answers an unknown id with
+  HTTP 200 `{"error":"Record not found"}`, so the assertion tests the payload, not the status.
+- First full run 2026-08-12T16:26:33Z against rev `00013-mrw`: **35 PASS · 2 FAIL (both FD-P7) · 2 SKIP**.
+  Coverage narrative and the founder-lever list: `docs/staging/fullsoak-2026-08/founder-coverage-checklist.md`.
