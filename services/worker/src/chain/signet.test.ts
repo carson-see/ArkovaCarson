@@ -556,6 +556,73 @@ describe('BitcoinChainClient.healthCheck', () => {
   });
 });
 
+// ─── BitcoinChainClient.hasFunds ─────────────────────────────────────────
+
+// FD-CHAIN-1 companion (fullsoak-2026-08, Day 4). `hasFunds()` observes ONE
+// thing — that the UTXO provider returned no rows — and used to report a
+// DIFFERENT, stronger thing: that the treasury is unfunded ("Treasury has no
+// UTXOs — batch processing will be skipped until funded"). During the Day 4
+// outage that claim was false: the address held 742,637 sat and the same
+// worker logged `Treasury cache refreshed balance: 742637` seconds later. The
+// message sent the diagnosis at the wallet instead of the provider.
+//
+// Constitution §1.5 — state what is measured, not what is inferred. These
+// tests pin the honest framing and the provider attribution, not exact prose.
+describe('BitcoinChainClient.hasFunds', () => {
+  it('returns true and logs the total when the provider returns UTXOs', async () => {
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: DUMMY_TXID, vout: 0, valueSats: 742637, rawTxHex: DUMMY_RAW_TX_HEX },
+      ]),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    expect(await client.hasFunds()).toBe(true);
+  });
+
+  it('returns false on an empty result WITHOUT asserting the treasury is unfunded', async () => {
+    const { logger } = await import('../utils/logger.js');
+    vi.mocked(logger.warn).mockClear();
+
+    const provider = createMockProvider({
+      name: 'GetBlock Hybrid (RPC broadcast + Mempool UTXO)',
+      listUnspent: vi.fn().mockResolvedValue([]),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    // Behaviour is unchanged — an empty result still skips the batch.
+    expect(await client.hasFunds()).toBe(false);
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    // pino's `warn` is overloaded, so the recorded call tuple needs the
+    // double cast to be read as the (context, message) form this call uses.
+    const [context, message] = vi.mocked(logger.warn).mock.calls[0] as unknown as [Record<string, unknown>, string];
+
+    // The operator must be able to see WHICH source answered — that is the
+    // difference between "go fund the wallet" and "go look at the provider".
+    expect(context).toMatchObject({
+      provider: 'GetBlock Hybrid (RPC broadcast + Mempool UTXO)',
+    });
+    expect(context.address).toBeTruthy();
+
+    // The old message asserted an unfunded treasury as fact. It must not.
+    expect(message).not.toMatch(/treasury has no utxos/i);
+    expect(message).not.toMatch(/until funded/i);
+    // ...and must name the alternative the old message hid: the source, not
+    // the wallet, may be the thing that came back empty.
+    expect(message).toMatch(/no utxo source returned/i);
+  });
+
+  it('returns false and logs an error when the provider throws', async () => {
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockRejectedValue(new Error('Connection refused')),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    expect(await client.hasFunds()).toBe(false);
+  });
+});
+
 // ─── BitcoinChainClient.submitFingerprint ────────────────────────────────
 
 describe('BitcoinChainClient.submitFingerprint', () => {
