@@ -227,3 +227,105 @@ describe('RecordDetailPage — canRename ownership gate', () => {
     expect(capturedProps.current?.canRename).toBe(false);
   });
 });
+
+/**
+ * Load / concurrency evidence for the rename honesty gate.
+ *
+ * The tests above pin each outcome at n=1. The defect class here is a FALSE
+ * SUCCESS — a denied write that reports success — and a single leak under
+ * repetition or interleaving is exactly as damaging as a systematic one, while
+ * being far easier to miss. These assert exact toast COUNTS across volume and
+ * across concurrent in-flight renames, so one stray success fails the suite.
+ *
+ * Frontend-only change: there is no worker rig that could exercise this, so
+ * this is the load evidence the gate's frontend-T2 path asks for.
+ */
+describe('RecordDetailPage — rename honesty under volume and concurrency', () => {
+  const VOLUME = 500;
+  const CONCURRENT = 50;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedProps.current = null;
+    mockUpdateResponse.current = { data: null, error: null };
+    mockAnchorReturn(baseAnchor);
+    mockFrom.mockImplementation(() => ({ update: mockUpdate }));
+    mockUpdate.mockImplementation(() => ({ eq: mockEq }));
+    mockEq.mockImplementation(() => {
+      const legacy = { data: null, error: mockUpdateResponse.current.error };
+      return {
+        select: vi.fn(() => Promise.resolve(mockUpdateResponse.current)),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        then: (res: any, rej: any) => Promise.resolve(legacy).then(res, rej),
+      };
+    });
+  });
+
+  it(`fires ZERO success toasts across ${VOLUME} consecutive zero-row denials`, async () => {
+    await renderPage();
+    mockUpdateResponse.current = { data: [], error: null };
+
+    for (let i = 0; i < VOLUME; i += 1) {
+      await invokeRename(`denied-${i}.pdf`);
+    }
+
+    expect(toast.success).toHaveBeenCalledTimes(0);
+    expect(toast.error).toHaveBeenCalledTimes(VOLUME);
+    expect(refreshAnchor).not.toHaveBeenCalled();
+  });
+
+  it('keeps success and denial counts exact across a mixed high-volume sequence', async () => {
+    await renderPage();
+
+    let allowed = 0;
+    let denied = 0;
+    for (let i = 0; i < VOLUME; i += 1) {
+      // Deterministic 1-in-3 allow, so the counts are exact rather than
+      // approximate — an off-by-one leak still fails.
+      const allow = i % 3 === 0;
+      mockUpdateResponse.current = allow
+        ? { data: [{ id: 'anchor-1' }], error: null }
+        : { data: [], error: null };
+      await invokeRename(`mixed-${i}.pdf`);
+      if (allow) allowed += 1; else denied += 1;
+    }
+
+    expect(allowed + denied).toBe(VOLUME);
+    expect(toast.success).toHaveBeenCalledTimes(allowed);
+    expect(toast.error).toHaveBeenCalledTimes(denied);
+    // Refresh happens on (and only on) a confirmed row.
+    expect(refreshAnchor).toHaveBeenCalledTimes(allowed);
+  });
+
+  it(`fires ZERO success toasts with ${CONCURRENT} denied renames in flight at once`, async () => {
+    await renderPage();
+    mockUpdateResponse.current = { data: [], error: null };
+
+    // Rapid pencil re-submits / double-clicks: all in flight simultaneously.
+    await Promise.all(
+      Array.from({ length: CONCURRENT }, (_, i) => invokeRename(`race-${i}.pdf`)),
+    );
+
+    expect(toast.success).toHaveBeenCalledTimes(0);
+    expect(toast.error).toHaveBeenCalledTimes(CONCURRENT);
+    expect(toast.error).toHaveBeenLastCalledWith(
+      RECORD_DETAIL_LABELS.ERR_RENAME_FORBIDDEN,
+    );
+  });
+
+  it('never reports success for a 42501 burst (0393 org-admin trigger path)', async () => {
+    await renderPage();
+    mockUpdateResponse.current = { data: null, error: { code: '42501', message: 'permission denied' } };
+
+    await Promise.all(
+      Array.from({ length: CONCURRENT }, (_, i) => invokeRename(`burst-${i}.pdf`)),
+    );
+
+    expect(toast.success).toHaveBeenCalledTimes(0);
+    expect(toast.error).toHaveBeenCalledTimes(CONCURRENT);
+    const calls = (toast.error as ReturnType<typeof vi.fn>).mock.calls;
+    expect(
+      calls.every(([msg]) => msg === RECORD_DETAIL_LABELS.ERR_RENAME_FORBIDDEN),
+    ).toBe(true);
+  });
+});
