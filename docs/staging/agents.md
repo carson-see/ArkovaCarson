@@ -17,12 +17,37 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 - **`staging-only-rpcs.sql`** — staging-specific RPCs (not applied to prod).
 - **`staging_lease.sql`** — lease table DDL for the staging environment.
 - **`evidence/`** — subdirectory of soak evidence screenshots and logs.
+- **`trainN-2026-08/`, `pr<NNNN>-*-2026-08/`** — per-window soak stand-up records: frozen head(s), rig, revision, image digest, clock start/close, the verbatim `staging-honesty-preflight.ts` JSON for THAT window and THAT project ref, and an honest per-member coverage table naming what is NOT covered. A preflight result is never reused across windows or projects; each block names its ref and run time.
+- **`rig-reservations.json`** — the active-reservation ledger (one rig = one concurrent soak). Add an `active` row in the same session that stands the rig up; flip to `released` at teardown. Validate with `npx tsx scripts/staging/check-rig-reservations.ts docs/staging/rig-reservations.json` — and **run `scripts/staging/check-rig-reservations.test.ts` too**, not just the CLI: the unit suite reads this committed file and asserts every `active` row names a full 40-char `pr_head_sha`, a `rig.tag_url`, and a coherent `soak.start`/`soak.end` window (CLAUDE.md §1.11A isolated-evidence identity), which the CLI validator does not check.
 
 ## Conventions
 
 - T0 docs/tests/CI/tooling-only PRs need CI only; T1/T2/T3 prod-bound PRs must include a `## Staging Soak Evidence` block with the exact fields in `PR_TEMPLATE.md`.
 - Soak JSON files are append-only evidence; do not modify after creation.
 - These are engineering artifacts, not documentation (Confluence is the doc source of truth).
+
+## 2026-08-22 — FD-SEED-1 FIXED in `seed-baseline-fixture.sql` (PR #2322)
+
+- The 2026-08-21 entry below stands as the record of what was true that day. This one
+  supersedes its **action item**: the seed file is fixed, so the manual "re-check after 10
+  minutes" advice now applies only to rigs provisioned **before** this PR and not yet
+  re-seeded.
+- `scripts/staging/seed-baseline-fixture.sql` now writes the fixture anchor with a synthetic
+  64-hex `chain_tx_id` (two `md5()` halves — deterministic, so re-runs stay idempotent)
+  alongside the `legal_hold = true` it already had. That is what puts the row outside
+  `recover_stuck_broadcasts()` (migration `0379`), which deliberately ignores `legal_hold`.
+- **Re-running the seed repairs an older rig.** Its `ON CONFLICT (id) DO UPDATE` backfills a
+  NULL `chain_tx_id` and reinstates a fixture `0379` already reclaimed to PENDING — but only
+  when the row holds no txid of its own, so a row carrying a real txid keeps its own status.
+  No teardown, no re-provision.
+- **The seed asserts its own post-conditions** in a closing `DO $$ … $$` block: fixture
+  present, SUBMITTED, `chain_tx_id` NOT NULL, on legal hold, and `ENABLE_VERIFICATION_API`
+  enabled. `provision-isolated-rig.sh` runs it through `run_cmd` under `set -euo pipefail`,
+  so a `RAISE` aborts provisioning before the clean_mirror preflight can certify a rig whose
+  fixture is already doomed. No shell-side change was needed.
+- Verified by execution against a throwaway Postgres carrying a verbatim copy of `0379`'s
+  predicate: backdated 60 minutes and ticked three times, the reclaimer took 0 rows; reverted
+  to the pre-fix shape it took the row on the first tick.
 
 ## 2026-08-21 — TRAIN-6 window RESTARTED; first window is VOID
 

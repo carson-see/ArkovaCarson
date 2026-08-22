@@ -1,4 +1,9 @@
 # agents.md — hooks
+_Last updated: 2026-08-15_
+
+## 2026-08-15 — `useAnchor.ts` settled-state semantics (BUG-2026-08-13-017)
+
+`useAnchor`'s `!user || !id` reset branch used to `setLoading(false)` while auth was still resolving, committing one frame of `(loading=false, anchor=null, error=null)` between auth settling and the fetch effect re-running. RecordDetailPage renders exactly that tuple as "Record Not Found" — a live-measured ~25ms flash for records the user OWNS, and the state that let `e2e/cross-tenant.spec.ts`'s `evaluateRecordBlocked()` be satisfied by a loading state (hollow-pass class PR #2213 closed). The reset branch now does `setLoading(authLoading)`: a null `user` is terminal only once auth has settled. Invariant, pinned by `useAnchor.test.ts` (frame-recording test) and `RecordDetailPage.test.tsx` (MutationObserver over DOM commits): consumers must never observe settled-empty unless auth resolved + query completed + confirmed absent/denied. If you write a new manual-loading hook that both depends on `useAuth` and feeds a terminal not-found UI, apply the same rule — the React-Query hooks (`useAnchors`, `useProfile`, …) don't need it because v5's optimistic render result reports `isLoading=true` on the very render `enabled` flips true.
 _Last updated: 2026-08-18_
 
 ## 2026-08-18 — `useOrgInvitations.ts` (invite-accept investigation, admin visibility)
