@@ -1,6 +1,22 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-20 (workflow curl redirect-protocol ratchet)._
+_Last updated: 2026-08-22 (preflight-timestamp residual-risk symmetry)._
+
+## 2026-08-22 — preflight-timestamp residual-risk symmetry (PR #2329)
+
+`check-staging-evidence.ts`: `preflightTimestampErrors()` now shares the escape hatch `preflightResultErrors()` always had, via the new `preflightExceptionErrors()` helper. Both call `hasResidualRiskException()`, so both demand the same five sub-fields and the same real-approver guard.
+
+**Why it was a defect and not a nicety.** `Preflight result:` could say "dirty" behind a note. `Preflight timestamp:` could say nothing at all — and it is a REQUIRED field at T2/T3, so omitting it tripped `missingFields()` instead. That made "we ran a bad preflight" expressible and "we ran none" inexpressible, which rewards running a worthless preflight over running none and pressures an author toward pasting some OTHER window's timestamp to make the block parse. That is the stale-evidence reuse CLAUDE.md §1.11A forbids, and it nearly happened on the chain-pair window (a `clean_mirror` reading 8 days stale, belonging to rig provisioning rather than the soak). 19 PRs across three closed windows were blocked by authors who correctly refused to fabricate a value.
+
+**The predicate.** `classifyPreflightTimestamp()` returns exactly one of `ok` / `not-run` / `late` / `unparseable`. `not-run` and `late` are accepted ONLY behind a valid approved note; `unparseable` is still a hard error; `ok` is unchanged.
+
+Three properties to preserve if you touch this:
+
+- **The sentinel set is CLOSED and matched by exact membership** (`PREFLIGHT_NOT_RUN_SENTINELS`, a literal `Set`): `NOT RUN` / `NOT-RUN` / `NOTRUN`, `NO PREFLIGHT` / `NO-PREFLIGHT` / `NOPREFLIGHT`, `NONE`, `N/A` / `NA` / `N.A` / `N.A.`, `NOT APPLICABLE` / `NOT-APPLICABLE` / `NOTAPPLICABLE`. An optional trailing reason is cut at the first `PREFLIGHT_REASON_SEPARATOR_RE` hit, in which a plain hyphen must be preceded by whitespace so `NOT-RUN` is not read as `NOT` plus a reason. **Two SonarCloud findings shaped this and both were fixed by extraction, not suppression** — keep it that way: one big alternation regex tripped `typescript:S5843` (complexity 26 > 20), and the obvious replacement `(?:\s+[-—–:]|[—–:])\s*\S[\s\S]*$` tripped `typescript:S8786` because an unanchored `\s+` is retried from every position (quadratic on a long whitespace run). The surviving form is a Set plus two fixed-length, quantifier-free separator alternatives. Prose that merely *talks about* not running a preflight (`none of the preflight checks were captured`) is NOT a member and still hard-fails. Do not relax this to a substring or keyword match — free text through this field is how the gate stops being a gate. Eight near-miss tests pin it, and forcing the membership test to `true` reds 24 tests.
+- **Sentinels are matched BEFORE `Date.parse`.** Reversing that order would let any sentinel V8 happens to parse be silently accepted as a real reading.
+- **An absent label is still owned by `missingFields()`.** `preflightTimestampErrors()` returns `[]` for a null value on purpose — it is not waiving anything, the required-field check already rejected the body. The note buys the ability to say `NOT RUN` out loud, not the ability to stay silent.
+
+**The note is not a blanket bypass.** It is scoped to the preflight fields only: soak duration, head/base SHA identity, evidence scope, and the deploy-artifact value checks all run independently, pinned by two explicit "does not waive" tests. And `preflightExceptionNotes()` makes every acceptance announce itself — without it a `clean_mirror`-but-late reading would pass silently, since `preflightIsClean` is true in that case and the pre-existing result-note branch never fires.
 
 ## 2026-08-20 — `check-workflow-curl-redirect-protocol.test.ts` (new)
 
@@ -218,6 +234,13 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - **Verified against the real regression, not just fixtures.** Run against the pre-fix `ci.yml` and `staging-evidence.yml` from `HEAD` it reports all 17 step-level gaps plus the job-level one; against the fixed files, zero.
 - Runs in the existing `Tests` job via the `scripts/**/*.test.ts` vitest glob — no new CI job, so nothing needed adding to `.mergify.yml`'s required-check set.
 - **Naming debt flagged, not silently changed:** `Dependency Scanning` is a poor name for a ~25-step policy-lint job in which a failure almost never concerns dependencies. Renaming it means updating all three `.mergify.yml` queue rules and the branch-protection contexts in lockstep, and a mismatch there silently un-gates the queue. Left alone deliberately.
+
+## `check-staging-evidence.ts` — `.gitleaksignore` joins its sibling in `STAGING_TOOLING_ALLOW` (2026-08-22)
+
+- **The gap.** `STAGING_TOOLING_ALLOW` carried `/^\.gitleaks\.toml$/` under the comment "Secret-scanner policy is CI-only; it never ships to application runtime" — but not `.gitleaksignore`. The two files are one policy split across two formats: the `.toml` holds rules and allowlists, the ignore file holds per-finding `commit:path:rule:line` fingerprint waivers. Both are read only by the `scan` job in `.github/workflows/gitleaks.yml`; neither is imported, bundled, or deployed.
+- **What it cost.** A one-line fingerprint waiver classified `T1 — default frontend / additive change` and demanded a 2 h staging soak of a file production never reads. There is nothing for a soak to exercise, so the evidence such a PR produces is worker-health noise that does not cover the change — the shape CLAUDE.md §1.12 already calls out as inadmissible.
+- **Direction of the change, stated plainly.** This LOWERS a tier, against the gate's usual fail-closed-to-the-highest-tier posture. It is admissible for the same reason every other entry in that list is: the file has no prod runtime surface, so a higher tier buys no assurance. The entry is exact-anchored (`^…$`) — `services/worker/.gitleaksignore`, `.gitleaksignore.ts`, and `src/lib/gitleaksignore` are all still rejected, with a test for each.
+- **Tests.** `check-staging-evidence.test.ts` gains `passes for the secret-scanner policy pair` (asserts `isStagingToolingOnly` on both halves AND `requiredTierFor(['.gitleaksignore'])` → T0, so the classifier is pinned end-to-end, not just the predicate) and `rejects gitleaks-config lookalike filenames`. Verified red-before-green: against the pre-fix classifier the pair test fails on `.gitleaksignore`.
 
 ---
 
