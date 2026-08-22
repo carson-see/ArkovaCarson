@@ -1,6 +1,11 @@
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { SEED_USERS, WS_CLIENT_OPTIONS } from '../fixtures/supabase';
+import {
+  resolveE2EFrontendOrigin,
+  resolveE2ESupabaseUrl,
+  supabaseAuthStorageKey,
+} from './supabase-storage-key';
 import { uniqueTestId } from './unique';
 
 export interface TestProfileOptions {
@@ -57,8 +62,15 @@ export async function createProfileSession(
     throw new Error(`Failed to prepare profile session: ${profileError.message}`);
   }
 
+  // BUG-030 / E-2: both the Supabase URL and the localStorage key below are
+  // derived, not hardcoded. `supabaseAuthStorageKey` reproduces supabase-js's
+  // own default — `sb-<first host label>-auth-token` — which for the local
+  // project is exactly the `sb-127-auth-token` this used to inline, and for a
+  // hosted project is `sb-<project-ref>-auth-token`. See
+  // `helpers/supabase-storage-key.ts`.
+  const supabaseUrl = resolveE2ESupabaseUrl();
   const userClient = createClient(
-    process.env.E2E_SUPABASE_URL || 'http://127.0.0.1:54321',
+    supabaseUrl,
     process.env.VITE_SUPABASE_ANON_KEY || '',
     WS_CLIENT_OPTIONS,
   );
@@ -76,9 +88,12 @@ export async function createProfileSession(
     storageState: {
       cookies: [],
       origins: [{
-        origin: 'http://localhost:5173',
+        // Playwright matches storageState origins by ORIGIN, so this has to be
+        // the origin the browser actually visits — the dev server locally,
+        // E2E_BASE_URL on a rig.
+        origin: resolveE2EFrontendOrigin(),
         localStorage: [{
-          name: 'sb-127-auth-token',
+          name: supabaseAuthStorageKey(supabaseUrl),
           value: JSON.stringify(sessionData.session),
         }],
       }],

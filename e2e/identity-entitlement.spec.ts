@@ -13,7 +13,14 @@
  * via the service client (bypasses RLS, test-data only).
  *
  * Requires the worker running on E2E_WORKER_URL (default localhost:3001) and a
- * local Supabase. Cleans up all rows it creates.
+ * Supabase project (local, or a rig via E2E_SUPABASE_URL).
+ *
+ * NON-DESTRUCTIVE (BUG-030 / E-3): this suite mutates rows the SEED owns — the
+ * seed individual's single `subscriptions` row and their `identity_verified`
+ * entitlements. It snapshots both before the first delete and restores them
+ * verbatim in `afterAll`, so it is safe to run repeatedly against a persistent
+ * rig. It does not merely "clean up rows it creates"; deleting a seeded row and
+ * walking away is the defect this replaced.
  *
  * Live-worker-only, like `api-verify-flow.spec.ts`: every assertion drives the
  * real worker over HTTP and a real Supabase session, so the whole suite is a
@@ -28,6 +35,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
 import { WS_CLIENT_OPTIONS } from './fixtures/supabase';
+import { captureRows, supabaseRowStore, type RowSnapshot } from './helpers/row-snapshot';
 
 const WORKER_URL = process.env.E2E_WORKER_URL || 'http://localhost:3001';
 const SUPABASE_URL = process.env.E2E_SUPABASE_URL || 'http://127.0.0.1:54321';
@@ -72,6 +80,20 @@ test.describe('Verified-Identity Entitlement Gate (PAY-01)', () => {
   let accessToken: string | null = null;
   let planId: string | null = null;
 
+  // BUG-030 / E-3: this suite DESTROYS seeded rows — the seed provisions a
+  // `subscriptions` row for the seed individual, and `beforeEach` deletes it.
+  // Under CI that is invisible because CI runs against a freshly `db reset`
+  // database. On a persistent rig (a daily runner is exactly what this suite is
+  // being made portable for) the first run destroys the seed permanently, and
+  // every later run — plus every other spec that assumes a seeded subscription —
+  // silently tests a database the seed no longer describes.
+  //
+  // Both tables are snapshotted BEFORE the first delete and restored verbatim
+  // in afterAll. A failed snapshot throws in beforeAll, before anything is
+  // deleted: never destroy what was not captured.
+  let subscriptionSnapshot: RowSnapshot<Record<string, unknown>> | null = null;
+  let entitlementSnapshot: RowSnapshot<Record<string, unknown>> | null = null;
+
   test.beforeAll(async () => {
     // Mint a real worker token for the seed individual. Pass WS_CLIENT_OPTIONS
     // (the `ws` realtime transport) like getServiceClient()/profile-session.ts —
@@ -93,6 +115,21 @@ test.describe('Verified-Identity Entitlement Gate (PAY-01)', () => {
     // subscriptions.plan_id is NOT NULL — use any existing plan.
     const { data: plan } = await service.from('plans').select('id').limit(1).maybeSingle();
     planId = plan?.id ?? 'free';
+
+    // Snapshot BEFORE the first beforeEach delete. `captureRows` throws if the
+    // read fails, so a suite that cannot guarantee a restore never gets as far
+    // as its first destructive statement.
+    subscriptionSnapshot = await captureRows(
+      supabaseRowStore<Record<string, unknown>>(service, 'subscriptions', { user_id: USER.id }),
+      `subscriptions(user_id=${USER.id})`,
+    );
+    entitlementSnapshot = await captureRows(
+      supabaseRowStore<Record<string, unknown>>(service, 'entitlements', {
+        user_id: USER.id,
+        entitlement_type: VERIFIED_IDENTITY_ENTITLEMENT,
+      }),
+      `entitlements(user_id=${USER.id}, type=${VERIFIED_IDENTITY_ENTITLEMENT})`,
+    );
   });
 
   test.beforeEach(async () => {
@@ -103,9 +140,13 @@ test.describe('Verified-Identity Entitlement Gate (PAY-01)', () => {
   });
 
   test.afterAll(async () => {
-    await service.from('entitlements').delete()
-      .eq('user_id', USER.id).eq('entitlement_type', VERIFIED_IDENTITY_ENTITLEMENT);
-    await service.from('subscriptions').delete().eq('user_id', USER.id);
+    // Put the seed back exactly as found — original rows, original primary
+    // keys. Restore clears this suite's rows first, so it is safe against
+    // `subscriptions`' UNIQUE(user_id) and idempotent if the hook re-runs.
+    // If nothing was seeded, restore leaves nothing: "no subscription" is a
+    // legitimate seed state and the fail-closed test depends on it.
+    await subscriptionSnapshot?.restore();
+    await entitlementSnapshot?.restore();
   });
 
   async function getEntitlement(request: import('@playwright/test').APIRequestContext) {

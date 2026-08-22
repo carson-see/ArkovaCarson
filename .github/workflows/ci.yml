@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@6f3c981e7b77f235fd2702dd74af25fc4b72bf11 # v3.96.0
+        uses: trufflesecurity/trufflehog@bcfcf73aaf4759d4dadc2783177c245a02792318 # v3.97.0
         with:
           extra_args: --only-verified
 
@@ -64,7 +64,28 @@ jobs:
       # ciContext.fetchLiveLabels() reads labels from the API so a label-gated
       # override still works on a plain re-run, where the frozen pull_request
       # payload would not carry it (PR #1336). Degrades to env-only without this.
+      #
+      # This permission is HALF the requirement — see the job-level GH_TOKEN below.
       pull-requests: read
+    env:
+      # `pull-requests: read` scopes the token; it does not SUPPLY one. `gh`
+      # authenticates only from GH_TOKEN / GITHUB_TOKEN — actions/checkout
+      # persists credentials into git config, which `gh` never reads. Without
+      # this, ciContext.fetchLiveLabels() throws, is swallowed to `[]`, and
+      # resolvePrLabels() silently degrades to the FROZEN pull_request payload:
+      # every override label in this job then only works if it was already on
+      # the PR when the webhook fired, so the documented "apply the label, then
+      # re-run the failed job" remediation is inert (confirmed on PR #2322,
+      # 2026-08-22 — `agents-md-deletion-approved` applied, `gh run rerun
+      # --failed`, same failure).
+      #
+      # Job-level ON PURPOSE: ~11 steps here are label-gated
+      # (agents-md-deletion-approved / dep-range-intentional /
+      # csp-runtime-deps-intentional / …) and the next one added must inherit
+      # this rather than have to remember it. `scripts/ci/
+      # check-pr-labels-token-parity.test.ts` fails if a job seeds PR_LABELS
+      # without a token.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -359,6 +380,14 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    env:
+      # Same pairing as dependency-scan above: `pull-requests: read` scopes the
+      # token but does not supply one, and `gh` reads only GH_TOKEN /
+      # GITHUB_TOKEN. Without this, every label-gated override in this job
+      # (feedback rules, coverage-drop-allowed, count-exact-allowed,
+      # handoff-narrative-only, confluence-drift-skip, …) silently falls back to
+      # the frozen pull_request payload and cannot be applied on a re-run.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -821,6 +850,20 @@ jobs:
         id: root-coverage
         run: npm run test:coverage
 
+      # SDK suites (sdks/mcp-server, sdks/langchain-ts) were a CI blind spot
+      # (BUG-2026-08-15-035): the root vitest include only covers tests/**,
+      # src/** and scripts/**, so a failing sdks/ test never gated a merge.
+      # `--root sdks` picks up the shared sdks/vitest.config.ts, whose
+      # include (**/*.test.ts) discovers every current and future SDK
+      # package's tests. Needs only the root npm install (vitest resolves
+      # from the root node_modules) — no per-package npm ci. Invoked
+      # directly (not via a package.json script) so this fix stays within
+      # the tier detector's T0 CI-tooling surface.
+      - name: Run SDK tests (sdks/)
+        id: sdk-tests
+        if: always()
+        run: node_modules/.bin/vitest run --root sdks
+
       - name: Run RLS tests
         # SCRUM-1301: 8 assertion failures resolved — migration 0265 restores
         # get_flag + chain/legal_hold protections; test assertions updated for
@@ -861,7 +904,7 @@ jobs:
       - name: Cache zk circuit artifacts
         id: cache-zk-artifacts
         if: always() && steps.worker-deps.outcome == 'success'
-        uses: actions/cache@v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: services/worker/circuits/artifacts
           key: zk-artifacts-${{ runner.os }}-circom2.1.9-${{ hashFiles('services/worker/circuits/extraction-proof.circom', 'services/worker/circuits/build.sh', 'services/worker/package-lock.json') }}
@@ -961,6 +1004,7 @@ jobs:
           declare -A results=(
             [db-reset]="${{ steps.db-reset.outcome }}"
             [root-coverage]="${{ steps.root-coverage.outcome }}"
+            [sdk-tests]="${{ steps.sdk-tests.outcome }}"
             [rls-tests]="${{ steps.rls-tests.outcome }}"
             [worker-deps]="${{ steps.worker-deps.outcome }}"
             [cache-zk-artifacts]="${{ steps.cache-zk-artifacts.outcome }}"
@@ -973,7 +1017,7 @@ jobs:
           )
           failed=0
           echo "== Test suite step outcomes =="
-          for name in db-reset root-coverage rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage edge-deps edge-tests; do
+          for name in db-reset root-coverage sdk-tests rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage edge-deps edge-tests; do
             outcome="${results[$name]}"
             echo "  ${name}: ${outcome}"
             if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
@@ -1190,7 +1234,7 @@ jobs:
 
       - name: Set up Java (for TLC model checker)
         if: steps.tla-changed.outputs.changed == 'true'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: '17'
