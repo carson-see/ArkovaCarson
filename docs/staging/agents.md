@@ -24,6 +24,26 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 - Soak JSON files are append-only evidence; do not modify after creation.
 - These are engineering artifacts, not documentation (Confluence is the doc source of truth).
 
+## 2026-08-21 — TRAIN-6 window RESTARTED; first window is VOID
+
+- **`train6-2026-08/soak-start-2026-08-21T1854Z.md` is SUPERSEDED and must not be cited.**
+  Its preflight returned `fixture_seeded` / exit 1 on the one check that matters for an
+  anchor-lifecycle PR. The live window is
+  `train6-2026-08/soak-start-2026-08-21T2038Z.md` — revision `00006-gik`, clock
+  2026-08-21T20:33:58Z → 2026-08-23T20:33:58Z, preflight `clean_mirror` / exit 0.
+- **`findings/FD-SEED-1-baseline-fixture-self-reverts-in-7-minutes.md`** — OPEN, systemic.
+  `scripts/staging/seed-baseline-fixture.sql` seeds its SUBMITTED anchor with `chain_tx_id`
+  NULL, which is exactly what `recover_stuck_broadcasts()` (migration `0379`) reclaims to
+  PENDING every 2 minutes. **Every** rig seeded with that file fails preflight Check 5
+  roughly 7 minutes after provisioning, so a provisioning-time preflight pass expires before
+  most soaks even start. Until the seed file is fixed (`.sql`, needs a PR), re-check
+  `count(*) where status='SUBMITTED'` on any rig **after** its first 10 minutes, not only at
+  provisioning.
+- A durable SUBMITTED fixture needs **both** `chain_tx_id` NOT NULL (excludes
+  `recover_stuck_broadcasts`, which deliberately ignores `legal_hold`) **and**
+  `legal_hold = true` (excludes `autoConfirmMockAnchors` / `monitorStuckTransactions` /
+  `rebroadcastDroppedTransactions`). Either one alone is insufficient.
+
 ## 2026-07-28 — Two 72h signet soaks RUNNING (SCRUM-2980)
 
 - **`SOAK-FINDINGS-2026-08.md`** — canonical findings log for the `launch-72h-2026-08` + `legacy-soak-2026-08` soak pair. Severity-ordered (F-1 through F-5, all open except the disclosed F-4 exception); full security detail lives in the Confluence bug tracker, not here.
