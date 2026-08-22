@@ -221,6 +221,13 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - Runs in the existing `Tests` job via the `scripts/**/*.test.ts` vitest glob — no new CI job, so nothing needed adding to `.mergify.yml`'s required-check set.
 - **Naming debt flagged, not silently changed:** `Dependency Scanning` is a poor name for a ~25-step policy-lint job in which a failure almost never concerns dependencies. Renaming it means updating all three `.mergify.yml` queue rules and the branch-protection contexts in lockstep, and a mismatch there silently un-gates the queue. Left alone deliberately.
 
+## `check-staging-evidence.ts` — `.gitleaksignore` joins its sibling in `STAGING_TOOLING_ALLOW` (2026-08-22)
+
+- **The gap.** `STAGING_TOOLING_ALLOW` carried `/^\.gitleaks\.toml$/` under the comment "Secret-scanner policy is CI-only; it never ships to application runtime" — but not `.gitleaksignore`. The two files are one policy split across two formats: the `.toml` holds rules and allowlists, the ignore file holds per-finding `commit:path:rule:line` fingerprint waivers. Both are read only by the `scan` job in `.github/workflows/gitleaks.yml`; neither is imported, bundled, or deployed.
+- **What it cost.** A one-line fingerprint waiver classified `T1 — default frontend / additive change` and demanded a 2 h staging soak of a file production never reads. There is nothing for a soak to exercise, so the evidence such a PR produces is worker-health noise that does not cover the change — the shape CLAUDE.md §1.12 already calls out as inadmissible.
+- **Direction of the change, stated plainly.** This LOWERS a tier, against the gate's usual fail-closed-to-the-highest-tier posture. It is admissible for the same reason every other entry in that list is: the file has no prod runtime surface, so a higher tier buys no assurance. The entry is exact-anchored (`^…$`) — `services/worker/.gitleaksignore`, `.gitleaksignore.ts`, and `src/lib/gitleaksignore` are all still rejected, with a test for each.
+- **Tests.** `check-staging-evidence.test.ts` gains `passes for the secret-scanner policy pair` (asserts `isStagingToolingOnly` on both halves AND `requiredTierFor(['.gitleaksignore'])` → T0, so the classifier is pinned end-to-end, not just the predicate) and `rejects gitleaks-config lookalike filenames`. Verified red-before-green: against the pre-fix classifier the pair test fails on `.gitleaksignore`.
+
 ---
 
 Historical change log: [./agents-changelog.md](./agents-changelog.md)
