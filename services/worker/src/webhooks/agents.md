@@ -52,3 +52,18 @@ System description for this module is documented in Confluence under SCRUM-1735.
 ## SSRF guard extract (SCRUM-2483)
 
 - The private-IP classifier (`isPrivateIp`, `PRIVATE_IP_PATTERNS`, `BLOCKED_HOSTNAMES`) + DNS-resolution helper were lifted **byte-identically** from `delivery.ts` into `../lib/ssrf-guard.ts` so this webhook guard and the new `safeFetch` egress primitive share ONE source of truth. `delivery.ts` re-exports them, so `isPrivateUrl`/`isPrivateUrlResolved` and every importer (`api/v1/webhooks.ts`, `credential-sources.ts`) are unchanged — no behaviour delta on the webhook delivery path. Edit the blocklist in `ssrf-guard.ts`, not here.
+
+## 2026-08-15 — `compliance.document_expiring` registered (BUG-002)
+
+`POST /cron/check-credential-expiry` has dispatched `compliance.document_expiring` since SCRUM-600, but the type was never in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`. Two consequences, and the second is the security one:
+
+1. `VALID_WEBHOOK_EVENTS` is **derived** from that map, so the CRUD allowlist rejected the type and **no endpoint could ever subscribe** — every dispatch matched zero endpoints and was silently a no-op.
+2. An unregistered type takes the `bypassed: true` branch of `validateWebhookPayload` — no schema, no check. The emit site was shipping `anchor_id` (the internal UUID, CLAUDE.md §6) plus a `title` key that was always `undefined`. It was one subscription away from being deliverable.
+
+Registering it is what makes (2) impossible, not just what turns the feature on: `ComplianceDocumentExpiringPayloadSchema` is `.strict()`, so `anchor_id` now fails validation before anything is signed.
+
+- **Distinct from `anchor.expired` on purpose.** This is the ADVANCE warning — `status` is `SECURED` and only `SECURED`, `days_remaining` is a positive int. `anchor.expired` fires after the fact, once `anchorExpirySweep` has already transitioned the record to `EXPIRED`; a subscriber acting on it is by definition too late to renew.
+- No chain fields. This event is about a calendar date, not an on-chain transition; the receipt already rides `anchor.secured`.
+- `credential_type` is nullable rather than defaulted. `anchors.credential_type` is nullable and the pre-fix emit site substituted `'OTHER'`, asserting a classification nobody measured (§1.5).
+- Catalog entry is `live: true` — the emit point is real, behind `ENABLE_EXPIRY_ALERTS`. Registration points kept in lockstep (all test-guarded): `WebhookSettings.tsx` `AVAILABLE_EVENTS`, its pinned drift-guard list, `WebhookEventCatalog.tsx` `CATALOG_DATA`, `src/lib/copy.ts` `WEBHOOK_EVENT_DESCRIPTIONS`, `packages/sdk/src/types.ts`, `integrations/zapier/src/constants.ts`, `docs/api/webhooks.md`.
+- **Known pre-existing drift, NOT introduced here:** `anchor.superseded` is in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` but absent from `AVAILABLE_EVENTS` and the pinned list. Left alone rather than folded into this fix.

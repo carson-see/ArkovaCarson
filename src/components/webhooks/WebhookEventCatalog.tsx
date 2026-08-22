@@ -72,6 +72,13 @@ const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
     live: false,
     fields: ['public_id', 'previous_status', 'new_status', 'changed_at', 'reason?', 'credential_type', 'recipient_public_id?', 'org_public_id?'],
   },
+  // BUG-002: `live: true` is asserted because the emit point is real —
+  // POST /cron/check-credential-expiry, behind the ENABLE_EXPIRY_ALERTS flag.
+  // Field list mirrors ComplianceDocumentExpiringPayloadSchema (strict).
+  'compliance.document_expiring': {
+    live: true,
+    fields: ['public_id', 'status', 'expires_at', 'days_remaining', 'warning_level', 'credential_type?', 'label?', 'org_public_id?'],
+  },
 };
 
 /**

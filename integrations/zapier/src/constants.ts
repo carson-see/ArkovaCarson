@@ -22,6 +22,9 @@ export const VALID_EVENTS = [
   'credential.issued',
   'credential.verified',
   'credential.status_changed',
+  // BUG-002: advance 7-day expiry warning. Emitted by the
+  // check-credential-expiry cron behind the ENABLE_EXPIRY_ALERTS flag.
+  'compliance.document_expiring',
 ] as const;
 
 /** Max batch verify size (sync) */
