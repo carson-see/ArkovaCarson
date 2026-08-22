@@ -63,7 +63,7 @@ const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
 const TEAM1_ADMISSION_PROVENANCE_RULE =
   '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.';
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  'fb57a37d56cc1350e82ab5a659f0fa112216738d5cbf8cb0fc02fb806ba5cd25';
+  '85acf3b81805b9faea6bf6c0b37ff35f62bcf948bfbf675e212e05ea7c64f8ea';
 
 // A wedged synchronous child must be killed with a diagnosable ETIMEDOUT
 // instead of hanging the suite — but this deadline is a HANG detector, not a

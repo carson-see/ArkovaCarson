@@ -91,6 +91,7 @@ The root `typecheck-lint` job also runs `npm run lint:batch-drain-evidence`. Kee
 - Temporary PR #841 remediation exemptions are only for the renumbered 0314/0315 schema work after production already claimed 0313 for anchors index consolidation; remove them after operator-applied prod reconciliation.
 - Secrets: `arkova1/supabase_access` in GCP Secret Manager for migration drift, `arkova1/sonar_cloud_token` for the SonarCloud config guard (exported as `SONARCLOUD_TOKEN`), `SUPABASE_PROJECT_REF`, `SENTRY_DSN_OPS` (revision-drift Sentry alerts).
 - Revision-drift Sentry tags must match `infra/sentry/alert-rules.json`: `source=revision-drift`, `story`, `deployed_sha`, and `head_sha`.
+- Revision-drift's event payload must also carry `environment: "production"`. It POSTs a hand-built Sentry envelope rather than going through `Sentry.init`, so it inherits no environment — and every rule in `alert-rules.json` is now scoped to `environment: production` (2026-08-17). Drop the field and the SCRUM-1247 alert silently stops matching. Pinned by `scripts/ci/check-sentry-alert-environment-scope.test.ts`; rationale in `infra/sentry/agents.md`.
 - Deploy gate ≡ CI lint job: deploy-worker.yml + ci.yml `Lint worker` step BOTH invoke `npm run lint` from `services/worker/`. Drift between them is enforced by `scripts/ci/check-deploy-lint-parity.ts`. Override label: `ci-config-change`.
 
 ## CONDITIONAL-GO sub-decision B (TWO-SURFACE) — PR-time worker + verifier compile gates (NON-REQUIRED)
@@ -491,6 +492,27 @@ PR (worker-only change, no workflow impact) — see the dated entry in
 cited "ENABLE_QUEUE_DIGEST off" as the reason, which is no longer true once this merges) — binding the
 actual Cloud Scheduler job is still a separate, not-yet-performed operator step (needs project-admin
 `gcloud` credentials this freeze-window session does not have).
+
+## Label-gated overrides need a token, not just `pull-requests: read` (2026-08-22)
+
+Any job that seeds `PR_LABELS` must ALSO carry `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` in its
+**job-level** `env:`. The two are not interchangeable: `permissions: { pull-requests: read }` scopes
+a token, it does not supply one, and `gh` authenticates from `GH_TOKEN`/`GITHUB_TOKEN` only —
+`actions/checkout` persists credentials into git config, which `gh` never reads.
+
+Without the token, `ciContext.fetchLiveLabels()` throws, the error is swallowed to `[]`, and
+`resolvePrLabels()` falls back to the FROZEN `pull_request` payload. Because `pull_request` does not
+fire on `labeled`, that makes the standard remediation — apply the override label, re-run the failed
+job — structurally inert: the label counts only if it was already on the PR when the webhook fired.
+Confirmed on PR #2322 (2026-08-22): `agents-md-deletion-approved` applied, `gh run rerun --failed`,
+identical failure, with nothing in the log to explain it.
+
+Fixed on `dependency-scan` + `policy-lints` (ci.yml) and `staging-evidence` (staging-evidence.yml).
+Job-level rather than per-step on purpose — `dependency-scan` alone has 11 label-gated steps, and the
+next one added must inherit the token instead of having to remember it.
+`scripts/ci/check-pr-labels-token-parity.test.ts` fails the build if a job seeds `PR_LABELS` without
+one, and `fetchLiveLabels()` now emits a non-fatal `::warning` when the live fetch fails (silent for
+a genuine non-PR context, so push builds do not cry wolf).
 
 ## Related
 

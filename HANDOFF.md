@@ -149,6 +149,39 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 
 ### Soaks
 
+- **TRAIN-6 CLOCK RESTARTED 2026-08-21T20:33:58Z — the 18:54:36Z window is VOID.** PR #2249 (T3,
+  anchor lifecycle) on `arkova-worker-wave2-2026-08-staging`.
+  Stand-up: `docs/staging/train6-2026-08/soak-start-2026-08-21T2038Z.md`. The earlier
+  `soak-start-2026-08-21T1854Z.md` carries a supersession header and **must not be cited**.
+  - **Service / tag:** `arkova-worker-wave2-2026-08-staging`, tag `train-6`, 100% traffic on
+    `arkova-worker-wave2-2026-08-staging-00006-gik` (`gcloud run services describe`, this session).
+  - **Revision created:** 2026-08-21T20:33:58.053472Z — the soak clock per FD-CLOCK-1. Window
+    closes **2026-08-23T20:33:58Z**.
+  - **Head / BUILD_SHA:** `f0e4cfe2e375b838a6f164f7c15e23d6b981c34b`; image
+    `sha256:76f1d043280c24ea593932ebe4e32158afbe56a647c4be709ca93f121d8508b4`.
+  - **Supabase:** `tkciooifwxwnkoizgalp` (isolated). Preflight `environment_type=clean_mirror`,
+    exit 0, six checks (`staging-honesty-preflight.ts` run from the PR-head checkout at
+    2026-08-21T20:36:36Z; a second run at 20:26:30Z agreed).
+  - **Why the first window was voided:** its preflight failed `submitted_anchors`, and the seed
+    fixture could not stay SUBMITTED. Root cause is **not** the sweep probe — it is
+    `recover_stuck_broadcasts()` (migration `0379`) reclaiming `chain_tx_id IS NULL` rows every
+    2 minutes. See `docs/staging/findings/FD-SEED-1-baseline-fixture-self-reverts-in-7-minutes.md`.
+    **This affects every rig seeded with `scripts/staging/seed-baseline-fixture.sql`** and the
+    seed file is not yet fixed.
+  - **DO NOT** redeploy, retag, reseed, or repoint this service or that Supabase project before
+    2026-08-23T20:33:58Z.
+
+- **Other soaks in flight at 2026-08-21T20:37Z** — serving revision + `creationTimestamp` read
+  directly from `gcloud run services describe` / `revisions describe` in this session; each one's
+  own stand-up doc remains the authority on its scope and evidence. Do not disturb any of them.
+
+  | Soak | Service | Serving revision | Clock start | Closes |
+  |---|---|---|---|---|
+  | TRAIN-4 | `arkova-worker-wave3-2026-08-staging` | `00005-rib` | 2026-08-21T13:57:35Z | 2026-08-22T01:57:35Z |
+  | TRAIN-5 | `arkova-worker-fullsoak-2026-08-staging` | `00024-kaj` | 2026-08-21T18:39:17Z | 2026-08-22T06:39:17Z |
+  | migration-T3 | `arkova-worker-staging` | `00300-few` | 2026-08-20T14:00:22Z | 2026-08-22T14:00:22Z |
+  | PR #2314 FERPA | `arkova-worker-ferpa2314-staging` | `00001-cit` | 2026-08-21T19:24:30Z | 2026-08-23T19:24:30Z |
+
 - **SOAK RUNNING as of 2026-08-20T14:00:22Z — migration-T3 wave (0410-0414), on `arkova-worker-staging`.**
   Founder-approved 2026-08-19 premortem (`docs/staging/migration-t3-wave-premortem-2026-08-19.md`).
   Full stand-up record: `docs/staging/migration-t3-soak-2026-08/soak-start-2026-08-20.md`.
@@ -1234,4 +1267,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-20 by Claude Opus 5 (migration-t3 soak stand-up session) — claims verified against `list_projects`/`list_migrations` (MCP), `gcloud run services describe`/`revisions list`, and live `/api/health` calls at soak stand-up and again ~80 minutes into the soak, not asserted from prior-session prose or from CLAUDE.md's current §1.11 text._
+_Last refreshed: 2026-08-21 by Claude Opus 5 (TRAIN-6 clock-restart session) — claims verified against gcloud/MCP/CI output: `gcloud run services describe` + `gcloud run revisions describe` for every revision and creationTimestamp named above, `gcloud logging read` for the probe timings, the Supabase Management API query endpoint for every row count, and `staging-honesty-preflight.ts` run to completion from the PR-head checkout. Nothing here is asserted from prior-session prose._
