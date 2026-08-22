@@ -431,21 +431,40 @@ describe('repo-wide ratchet', () => {
   const files = realMigrations();
   const baseline = loadBaseline();
 
+  /**
+   * Scan ONCE, here, not inside each `it`.
+   *
+   * `findViolations` re-parses every migration in the repo (~415 files, ~5 s).
+   * Running it per-test meant three full scans, each racing vitest's 5 000 ms
+   * per-test budget. On 2026-08-22 the surviving assertion passed at 4 886 ms —
+   * 97.7 % of budget — and the two others timed out at 5 221 ms and 5 308 ms on
+   * a PR whose only relevant change was adding one migration. That is a
+   * ratchet that fails on repo SIZE rather than on a real violation, and it was
+   * one migration away from doing the same to `main`.
+   *
+   * Work in the describe body is not governed by `testTimeout`, so hoisting
+   * both removes the cliff and drops three scans to two. No assertion is
+   * weakened: the same inputs are compared, just computed once.
+   */
+  const violations = findViolations(files, {
+    deliberatelyPublic: DELIBERATELY_PUBLIC,
+    deliberatelyAuthenticated: DELIBERATELY_AUTHENTICATED,
+  });
+  /** The 0406 check deliberately passes NO exemptions — a distinct computation. */
+  const violationsNoExemptions = findViolations(files);
+  const secDefFunctions = files.flatMap((f) => parseSecurityDefinerFunctions(f.file, f.sql));
+
   it('the sweep is non-vacuous — it still sees the SECURITY DEFINER surface', () => {
     // A parser that silently stops matching would make this suite pass while
     // checking nothing. Pin a floor well below the true count.
-    const all = files.flatMap((f) => parseSecurityDefinerFunctions(f.file, f.sql));
-    expect(all.length).toBeGreaterThan(40);
+    expect(secDefFunctions.length).toBeGreaterThan(40);
   });
 
   it('no SECURITY DEFINER function is missing its anon/authenticated REVOKE outside the baseline', () => {
-    const violations = findViolations(files, {
-      deliberatelyPublic: DELIBERATELY_PUBLIC,
-      deliberatelyAuthenticated: DELIBERATELY_AUTHENTICATED,
-    }).filter((v) => !baseline.has(v.key));
+    const newViolations = violations.filter((v) => !baseline.has(v.key));
 
     expect(
-      violations.map((v) => v.key),
+      newViolations.map((v) => v.key),
       'New SECURITY DEFINER function(s) without an explicit ' +
         '`REVOKE ALL ON FUNCTION <fn> FROM PUBLIC, anon, authenticated;` in the same ' +
         'migration. REVOKE ... FROM PUBLIC alone does NOT remove the direct grants ' +
@@ -456,18 +475,13 @@ describe('repo-wide ratchet', () => {
   it('0406 is compliant and is NOT grandfathered', () => {
     const key = '0406_proof_coverage_window_and_reconstruction_classes.sql::public.proof_coverage_window';
     expect(baseline.has(key)).toBe(false);
-    expect(findViolations(files).map((v) => v.key)).not.toContain(key);
+    expect(violationsNoExemptions.map((v) => v.key)).not.toContain(key);
   });
 
   it('every baseline entry still corresponds to a real violation (no baseline rot)', () => {
     // If someone fixes a baselined file, the entry must be removed so the
     // baseline shrinks monotonically and never re-authorises a regression.
-    const live = new Set(
-      findViolations(files, {
-        deliberatelyPublic: DELIBERATELY_PUBLIC,
-        deliberatelyAuthenticated: DELIBERATELY_AUTHENTICATED,
-      }).map((v) => v.key),
-    );
+    const live = new Set(violations.map((v) => v.key));
     const stale = [...baseline].filter((k) => !live.has(k));
     expect(stale, 'baseline entries that no longer violate — delete them').toEqual([]);
   });
