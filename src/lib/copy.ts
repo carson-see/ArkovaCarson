@@ -2808,6 +2808,13 @@ export const FINGERPRINT_TOOLTIP = {
 export const RECORD_DETAIL_LABELS = {
   FINGERPRINT_COPY_ARIA: 'Copy document fingerprint',
   FINGERPRINT_COPIED_ARIA: 'Document fingerprint copied',
+  // Rename toasts (founder-reported honesty fix, 2026-08-17): previously
+  // inline literals in RecordDetailPage; a zero-row RLS-denied UPDATE fired
+  // the success toast while the row was unchanged. Permission copy is
+  // distinct from the generic failure so a denied rename says why.
+  TOAST_RENAMED: 'Document renamed',
+  ERR_RENAME: 'Could not rename the document. Please try again.',
+  ERR_RENAME_FORBIDDEN: 'You don’t have permission to rename this record.',
 } as const;
 
 export const ONBOARDING_VALUE_PROP_LABELS = {
