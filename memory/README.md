@@ -55,6 +55,7 @@ hook's own deny message.
 | `feedback_vertex_endpoint_hygiene.md` | Documentation only (CLAUDE.md §0 rule 7 + §7 end-of-sprint infra sweep) | 📖 docs only |
 | `feedback_worker_hands_off.md` | Documentation only (agent-author detection unreliable) | 📖 docs only |
 | `feedback_nvi_lawyer_scope.md` | Documentation only (Jira scoping decision, 2026-04-27) | 📖 docs only |
+| `feedback_verify_cloud_project_before_auth.md` | Documentation only (no reliable detector for a wrong project ID) | 📖 docs only |
 
 ## Override pattern
 
