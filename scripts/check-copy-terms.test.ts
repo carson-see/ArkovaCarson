@@ -22,8 +22,10 @@ import {
   type BaselineEntry,
   type Violation,
   checkFile,
+  collectCandidateFiles,
   findRawEnumRenders,
   findTermViolations,
+  isEmailCopyComposer,
   isNonSuppressibleTerm,
   loadAllowlist,
   loadBaseline,
@@ -1361,5 +1363,204 @@ describe('upstream suppression cannot hide a secret / launch-blocker leak', () =
     } finally {
       fs.unlinkSync(tmp);
     }
+  });
+});
+
+// =============================================================================
+// §1.3 worker-email parity — outbound EMAIL copy is generated in
+// `services/worker/`, which INCLUDE_ROOTS never reached: `npm run lint:copy`
+// stayed green while customer-facing subjects and bodies (email templates, the
+// queue digest, the platform-health digest) went entirely unscanned. Customer
+// email is exactly the surface §1.3 exists to protect, and both
+// `services/worker/src/email/agents.md` and `.../emails/agents.md` already
+// carried the rule ("No blockchain terminology in user-facing email copy")
+// with NOTHING enforcing it.
+//
+// Scope is deliberately NOT all of services/worker/src (internal code may use
+// technical names, §1.3): the dedicated email roots plus files the CONTENT
+// detector proves compose email copy. A hand-maintained path census would rot
+// the moment the next digest job lands.
+// =============================================================================
+
+const REPO_ROOT = path.resolve(HERE, '..');
+const QUEUE_DIGEST = 'services/worker/src/jobs/queue-digest.ts';
+
+function repoRel(abs: string): string {
+  return path.relative(REPO_ROOT, abs).split(path.sep).join('/');
+}
+
+function freshTerms(content: string, file: string): string[] {
+  // Mirrors main(): scan → pardon sanctioned → grandfather debt → what's left fails CI.
+  const { remaining } = partitionAgainstAllowlist(scanFileContent(content, file), loadAllowlist());
+  const { fresh } = partitionAgainstBaseline(remaining, loadBaseline());
+  return fresh.map((v) => v.term.toLowerCase());
+}
+
+describe('worker email copy — the gate actually VISITS the email surfaces', () => {
+  it('walks the dedicated email roots and the detected digest composers', () => {
+    const files = collectCandidateFiles(REPO_ROOT).map(repoRel);
+    expect(files).toContain('services/worker/src/email/templates.ts');
+    expect(files).toContain('services/worker/src/emails/grace-warning.ts');
+    expect(files).toContain('services/worker/src/emails/parent-delinquent-split.ts');
+    // The blind spot that motivated this change: a digest that BUILDS email
+    // copy from `jobs/`, outside any email directory.
+    expect(files).toContain(QUEUE_DIGEST);
+    // A user-facing compliance email, also composed from `jobs/`.
+    expect(files).toContain('services/worker/src/jobs/regulatory-change-cron.ts');
+  });
+
+  it('scans the internal-ops alerts too — no ops-exemption list is pre-dug', () => {
+    // Both pass clean today, so excluding them would be a hole with no
+    // demonstrated need. If an ops-only alert ever genuinely needs technical
+    // vocabulary, that PR adds an EXCLUDE_PATTERNS entry with a recipient-based
+    // rationale (the src/components/admin/treasury/** precedent) — and this
+    // assertion is where that decision becomes visible in review.
+    const files = collectCandidateFiles(REPO_ROOT).map(repoRel);
+    expect(files).toContain('services/worker/src/jobs/pipeline-health.ts');
+    expect(files).toContain('services/worker/src/jobs/treasury-alert-dispatcher.ts');
+  });
+
+  it('does NOT drag in worker code that merely sends, or is unrelated to, email', () => {
+    const files = collectCandidateFiles(REPO_ROOT).map(repoRel);
+    // Internal code is explicitly allowed to use technical names (§1.3).
+    expect(files).not.toContain('services/worker/src/index.ts');
+    expect(files).not.toContain('services/worker/src/chain/bitcoinClient.ts');
+    // Senders whose subject/html come from a builder in email/templates.ts:
+    // the copy is scanned once, at the builder, not at every call site.
+    expect(files).not.toContain('services/worker/src/api/invitations.ts');
+    expect(files).not.toContain('services/worker/src/routes/anchor.ts');
+    expect(files).not.toContain('services/worker/src/api/v1/orgVerification.ts');
+    // `subject:` here is connector EVENT metadata, not an email subject.
+    expect(files).not.toContain('services/worker/src/api/demo-event-injector.ts');
+    // Tests are excluded everywhere.
+    expect(files).not.toContain('services/worker/src/jobs/queue-digest.test.ts');
+  });
+
+  it('the real worker email surfaces are CLEAN today (the gate ships green)', () => {
+    const workerFiles = collectCandidateFiles(REPO_ROOT)
+      .map(repoRel)
+      .filter((f) => f.startsWith('services/worker/'));
+    expect(workerFiles.length).toBeGreaterThan(0);
+    for (const f of workerFiles) {
+      const content = fs.readFileSync(path.join(REPO_ROOT, f), 'utf-8');
+      expect({ file: f, fresh: freshTerms(content, f) }).toEqual({ file: f, fresh: [] });
+    }
+  });
+});
+
+describe('worker email copy — banned terms in an email are caught', () => {
+  const digestSource = (): string => fs.readFileSync(path.join(REPO_ROOT, QUEUE_DIGEST), 'utf-8');
+
+  it('flags a banned term in a digest email SUBJECT', () => {
+    const src = digestSource().replace('Your daily review summary', 'Your daily blockchain summary');
+    expect(shouldCheck(QUEUE_DIGEST, src)).toBe(true);
+    expect(freshTerms(src, QUEUE_DIGEST)).toContain('blockchain');
+  });
+
+  it('flags a banned term in a digest email BODY (HTML paragraph)', () => {
+    const src = digestSource().replace(
+      '<p>Here is what is waiting in your review queue as of ${measured}.</p>',
+      '<p>Here is what is waiting in your Bitcoin wallet as of ${measured}.</p>',
+    );
+    const terms = freshTerms(src, QUEUE_DIGEST);
+    expect(terms).toContain('bitcoin');
+    expect(terms).toContain('wallet');
+  });
+
+  it('flags a banned term in WRAPPED PROSE inside an email template literal', () => {
+    // The worker analogue of the multi-line JSX blind spot (PR #1433): the
+    // enclosing `<p>` and `</p>` are on OTHER lines, so the middle line has no
+    // quote and no angle bracket and the per-line scanner used to skip it.
+    const src = digestSource().replace(
+      'This summary shows counts only. Open the review queue to act on individual items.',
+      [
+        '',
+        '      Every item in this summary was secured to the Bitcoin blockchain and',
+        '      can be verified at any time.',
+        '    ',
+      ].join('\n'),
+    );
+    // The banned terms now sit on a line with no quote, no backtick and no
+    // angle bracket — invisible to the per-line scanner without the tracker.
+    expect(src).toMatch(/^\s+Every item in this summary was secured to the Bitcoin blockchain and$/m);
+    const terms = freshTerms(src, QUEUE_DIGEST);
+    expect(terms).toContain('bitcoin');
+    expect(terms).toContain('blockchain');
+  });
+
+  it('flags a banned term in a plain-string email line (text-first digests)', () => {
+    const line = `  return 'BATCH FLUSH: broadcast to the Bitcoin network';`;
+    const terms = findTermViolations(line, 12, QUEUE_DIGEST).map((v) => v.term.toLowerCase());
+    expect(terms).toContain('broadcast');
+    expect(terms).toContain('bitcoin');
+  });
+});
+
+describe('isEmailCopyComposer — content detector (no hand-maintained path census)', () => {
+  it('detects a NEW digest job that composes subject + body, wherever it lives', () => {
+    const newDigest = [
+      `import { esc, wrapTemplate } from '../emails/_template.js';`,
+      `export function build() {`,
+      `  const subject = \`Your weekly summary\`;`,
+      `  const html = wrapTemplate(\`<p>Hello</p>\`);`,
+      `  return { subject, html };`,
+      `}`,
+    ].join('\n');
+    expect(isEmailCopyComposer(newDigest)).toBe(true);
+    expect(shouldCheck('services/worker/src/jobs/weekly-digest.ts', newDigest)).toBe(true);
+  });
+
+  it('the real queue digest is a detected composer', () => {
+    expect(isEmailCopyComposer(fs.readFileSync(path.join(REPO_ROOT, QUEUE_DIGEST), 'utf-8'))).toBe(
+      true,
+    );
+  });
+
+  it('email/templates.ts is in scope by ROOT, not by detection (it composes but never sends)', () => {
+    const templates = 'services/worker/src/email/templates.ts';
+    expect(isEmailCopyComposer(fs.readFileSync(path.join(REPO_ROOT, templates), 'utf-8'))).toBe(
+      false,
+    );
+    expect(shouldCheck(templates)).toBe(true);
+  });
+
+  it('a pure SENDER (subject comes from a builder) is NOT a composer', () => {
+    const sender = [
+      `import { sendEmail } from '../email/sender.js';`,
+      `const { subject, html } = buildInvitationEmail({ orgName });`,
+      `await sendEmail({ to, subject, html, emailType: 'invitation' });`,
+    ].join('\n');
+    expect(isEmailCopyComposer(sender)).toBe(false);
+  });
+
+  it('a non-email module with a `subject` field is NOT a composer', () => {
+    const connectorEvent = [
+      `export const DEMO = {`,
+      `  EMAIL_INTAKE: { subject: 'Demo: Signed contract for review' },`,
+      `};`,
+    ].join('\n');
+    expect(isEmailCopyComposer(connectorEvent)).toBe(false);
+    expect(shouldCheck('services/worker/src/api/demo-event-injector.ts', connectorEvent)).toBe(false);
+  });
+
+  it('worker internal code is out of scope even when content is available', () => {
+    const internal = `const txid = await broadcastTransaction(hash); // mainnet utxo`;
+    expect(shouldCheck('services/worker/src/chain/broadcast.ts', internal)).toBe(false);
+  });
+});
+
+describe('inline CSS is presentation, not copy', () => {
+  it('does not flag `display: block` in an inline style attribute', () => {
+    const line = `      <a href="\${url}" style="display: block; padding: 12px;">Open your account</a>`;
+    expect(findTermViolations(line, 1, 'services/worker/src/email/templates.ts')).toEqual([]);
+  });
+
+  it('still flags visible copy sitting next to that style attribute', () => {
+    const line = `      <a href="\${url}" style="display: block;">Open your Bitcoin wallet</a>`;
+    const terms = findTermViolations(line, 1, 'services/worker/src/email/templates.ts').map((v) =>
+      v.term.toLowerCase(),
+    );
+    expect(terms).toContain('bitcoin');
+    expect(terms).toContain('wallet');
   });
 });

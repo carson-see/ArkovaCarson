@@ -1,0 +1,11 @@
+{
+  "captured_at": "2026-08-12T15:18:00Z",
+  "vm_name": "arkova-s33-rig-b1-bitcoin-core-signet",
+  "vm_zone": "us-central1-a",
+  "vm_status": "RUNNING",
+  "container": "arkova-rig-b1-bitcoin-core",
+  "node_block_height": "317386",
+  "mempool_signet_tip": "317386",
+  "tolerance_blocks": 2,
+  "probe_note": "IAP SSH -> docker exec arkova-rig-b1-bitcoin-core bitcoin-cli -signet getblockcount"
+}

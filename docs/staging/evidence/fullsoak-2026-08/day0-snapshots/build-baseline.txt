@@ -1,0 +1,18 @@
+# Day-0 build baseline — fullsoak-2026-08 (captured 2026-08-12T15:18:00Z)
+rig_git_sha=f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58
+prod_git_sha=f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58
+rig_revision=arkova-worker-fullsoak-2026-08-staging-00013-mrw
+rig_latest_ready_revision=arkova-worker-fullsoak-2026-08-staging-00013-mrw
+rig_traffic_mode=LATEST@100
+prod_revision=arkova-worker-01310-god
+rig_image_digest=sha256:8ace89d483484c40ea2022f7f21361effbfd6e0ab4d61ac4707f54e2ed1c1e18
+prod_revision_image_digest=sha256:8ace89d483484c40ea2022f7f21361effbfd6e0ab4d61ac4707f54e2ed1c1e18
+prod_tag_resolved_digest=sha256:8ace89d483484c40ea2022f7f21361effbfd6e0ab4d61ac4707f54e2ed1c1e18
+rig_network=signet
+deploy_worker_paused=true
+soak_gate_disabled=true
+ledger_head_rig=0409
+ledger_head_prod=0409
+rpc_vm_status=RUNNING
+rpc_node_block_height=317386
+mempool_signet_tip=317386

@@ -1,0 +1,7 @@
+ALERT_POLICY|PAGE — SOAK rig /health not healthy (body assertion)|enabled=True
+ALERT_POLICY|PAGE — SOAK rig 5xx burst|enabled=True
+ALERT_POLICY|PAGE — SOAK rig restart/revision change (boot line)|enabled=True
+UPTIME_CHECK|SOAK — app.arkova.ai frontend|enabled=True|period=60s
+UPTIME_CHECK|SOAK — edge.arkova.ai /health|enabled=True|period=60s
+UPTIME_CHECK|SOAK — fullsoak rig /health (body: status healthy)|enabled=True|period=60s
+UPTIME_CHECK|SOAK — search.arkova.ai frontend|enabled=True|period=60s

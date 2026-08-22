@@ -1,0 +1,131 @@
+fullsoak-daily-probes — behavioural probe run
+run_ts           : 2026-08-16T13:33:47Z
+mode             : full
+rig service      : https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app
+rig supabase ref : gnkuaywlpmsaezwvlvhk
+prod supabase ref: vzwyaatejekddvltxyye
+host             : Arkovas-Mac-mini.local
+git HEAD         : <none>
+mgmt SQL (reads) : available
+----------------------------------------------------------------------
+PASS  P1a  Org A (sarah@arkova.ai) mints a real Supabase JWT
+         expected: http 200 + JWT
+         observed: http 200 + JWT
+PASS  P1b  Org B (demo-admin@arkova.local) mints a real Supabase JWT
+         expected: http 200 + JWT
+         observed: http 200 + JWT
+PASS  P1c  Wrong password is refused
+         expected: 400/401/403
+         observed: http 400
+PASS  P2a  PRECONDITION: Org B session is live (reads its OWN anchors)
+         expected: >=1 row
+         observed: 5 rows
+PASS  P2b  Org B JWT cannot read Org A anchors (RLS filters to empty)
+         expected: 0 rows
+         observed: http 200, 0 rows
+PASS  P2c  Org B JWT cannot enumerate Org A folders
+         expected: 0 rows
+         observed: 0 rows
+PASS  P2d  Org B JWT cannot enumerate Org A API keys
+         expected: 0 rows or 401/403/404
+         observed: http 200, 0 rows
+PASS  P3a  invite_member as ORG_ADMIN writes an invitations row
+         expected: http 200 AND row delta +1
+         observed: http 200, count 2 -> 3
+PASS  P3b  invite_member refuses to mint an ORG_ADMIN (SEC-RECON-8)
+         expected: non-2xx
+         observed: http 403
+PASS  P3c  Org B admin cannot invite into Org A
+         expected: non-2xx
+         observed: http 403
+PASS  P3d  GET /api/invitations/:token previews the invite
+         expected: 200 + org name in body
+         observed: http 200, org=Arkova
+PASS  P4a  ORG_ADMIN JWT creates a folder
+         expected: 201 + id
+         observed: http 201, id=840da98c…
+PASS  P4b  Folder rename returns the updated row (not a silent 0-row PATCH)
+         expected: >=1 row
+         observed: 1 rows
+PASS  P4c  Anchor filed into folder (row-count proven, not status-only)
+         expected: >=1 row returned
+         observed: 1 rows
+PASS  P4d  Org B JWT cannot re-file an Org A anchor
+         expected: 0 rows
+         observed: 0 rows
+PASS  P4e  Folder delete releases filed anchors (ON DELETE SET NULL)
+         expected: 0 anchors left pointing at it
+         observed: http 200, 0
+PASS  P5a  anon cannot read organization_field_policies
+         expected: 401/403 or 0 rows
+         observed: http 401, rows=-1
+PASS  P5b  ORG_ADMIN cannot INSERT its own field policy (cannot self-disarm)
+         expected: non-2xx
+         observed: http 403
+PASS  P5c  ORG_ADMIN cannot UPDATE a field policy row
+         expected: 0 rows affected
+         observed: http 403, 0 rows
+SKIP  P5d  Field-policy enforcement armed? (row count, dated)
+         expected: 0 = inert; enforcement path NOT exercised
+         observed: 0 policy rows
+PASS  P6a  QR scan path resolves as anon (get_public_anchor -> record)
+         expected: 200 + public_id=ARK-2026-9476A947
+         observed: http 200, public_id=ARK-2026-9476A947
+PASS  P6b  Unknown QR target yields a distinct not-found payload, never a record and never a 5xx
+         expected: 404, or 200 with error payload and NO public_id
+         observed: http 200, error=Record not found, public_id=<none>
+PASS  P7a  Probe API key minted through the real POST /api/v1/keys flow
+         expected: 200/201 + raw key returned once
+         observed: http 201, prefix=ak_live_c6e0
+FAIL  P7f  GET /api/v1/keys exposes an addressable key id (revoke/delete precondition)
+         expected: id present on list rows
+         observed: no — no id on any row; UI revoke/delete are keyed by an id the API never returns (keys.ts toPublicKey strips it)
+PASS  P7b  Live key with 'verify' scope is accepted
+         expected: http 200
+         observed: http 200
+PASS  P7c  Scope enforced: verify-only key refused on /api/v1/anchor
+         expected: 401/403
+         observed: http 403
+FAIL  P7d  REVOKED key is refused (CC6.8 daily assertion)
+         expected: 401/403 after revoke through the product surface
+         observed: UNREACHABLE — no key id is exposed by create or list, so PATCH/DELETE /api/v1/keys/:keyId cannot be addressed by any client. Probe key ak_live_c6e0 left active.
+PASS  P8a  Rig anon-executable function count has not grown
+         expected: <= 282
+         observed: 282
+PASS  P8b  PROD anon-executable function count has not grown (change freeze)
+         expected: <= 262
+         observed: 262
+PASS  P8c  Rig-only anon grants (prod-revoked) have not grown
+         expected: <= 20
+         observed: 20: admin_change_user_role admin_set_platform_admin admin_set_user_org anonymize_user_data can_export_user_data cleanup_expired_data get_agents_for_user get_anchor_lineage get_pipeline_stats get_user_mont
+PASS  P8d  No function is anon-executable in PROD but not on the rig
+         expected: 0
+         observed: 0
+PASS  P8e  Live anon invocation sweep (type-invalid args; body never runs)
+         expected: every call classified; 0 executed-to-success
+         observed: swept=26 denied=4 grant-reachable=22 executed=0
+PASS  P9a  Forged DocuSign signature rejected AND writes nothing
+         expected: 401/400/403 AND nonce delta 0
+         observed: http 401, nonces 1 -> 1
+PASS  P9b  Forged Drive channel token rejected on a KNOWN channel
+         expected: 400/401/403
+         observed: http 401
+SKIP  P10a Platform overview dashboard returns a populated payload
+         expected: 200 + non-empty payload
+         observed: http 429 after 3 retries — rate-limited, payload NOT asserted
+PASS  P10b Pipeline admin dashboard returns a populated payload
+         expected: 200 + non-empty payload
+         observed: http 200, keys=['anchorLinkedRecords', 'anchoredRecords', 'broadcastingRecords', 'bySource', 'cacheUpdatedAt']
+PASS  P10c Treasury dashboard returns a populated payload
+         expected: 200 + non-empty payload
+         observed: http 200, keys=['fees', 'network', 'recentAnchors', 'wallet']
+PASS  P10d Ops SLO dashboard returns a populated payload
+         expected: 200 + non-empty payload
+         observed: http 200, keys=['anchorSecuredRate', 'apiErrors', 'checkedAt', 'connectorQueue', 'creditConservation']
+PASS  P10e Unauthenticated caller cannot read admin dashboards
+         expected: 401/403
+         observed: http 401
+----------------------------------------------------------------------
+PASS=35 FAIL=2 SKIP=2
+DAILY_PROBES: FAIL
+artifact: /Users/carson/arkova-soak-evidence/2026-08-16/probes-133347Z.txt
