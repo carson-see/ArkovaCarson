@@ -84,3 +84,18 @@ way and was anon-callable in prod until revoked on 2026-08-11.
 - **Keep the positive case in the same suite.** If `service_role` also lost
   EXECUTE the function is merely broken, and "anon cannot call it" would pass
   for the wrong reason.
+
+## Fixture ownership — every suite owns its org (FD-FERPA-1)
+
+An RLS suite must create its own organization, user and profile in `beforeAll` and
+delete them in `afterAll`. **Do not reuse another file's `ORG_ID`.**
+
+`ferpa-directory-info-opt-out.test.ts` originally pinned the same
+`f19e2400-…c001` as `fingerprint-lookup-secured-only.test.ts` and only *read* a
+profile for it. That sibling creates the org in `beforeAll` and **deletes it** in
+`afterAll`, so the FERPA suite threw `could not resolve a seed profile` whenever it
+ran outside the sibling's window — and no seed defines that org, on any branch.
+Worse, had it run inside that window, the sibling's
+`anchors.delete().eq('org_id', ORG_ID)` could remove the FERPA fixtures mid-run,
+making leak assertions pass **vacuously**. Shared ids couple suites through the
+database; unique ids per suite do not.

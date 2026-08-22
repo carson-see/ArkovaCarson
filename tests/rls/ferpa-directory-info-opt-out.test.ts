@@ -32,13 +32,25 @@
  * Prerequisites: local Supabase running + seeded, migrated to at least 0415
  * (see tests/rls/agents.md).
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServiceClient, createAnonClient } from '../../src/tests/rls/helpers';
 
 const RUN_STARTED = Date.now();
 const RUN_ID = RUN_STARTED.toString(36);
 const RUN_HEX = RUN_STARTED.toString(16).padStart(12, '0').slice(-12);
-const ORG_ID = 'f19e2400-0000-4000-8000-00000000c001';
+/**
+ * This suite's OWN org. It must NOT be shared with another RLS file.
+ * `fingerprint-lookup-secured-only.test.ts` pins `…c001` and its `afterAll`
+ * runs `organizations.delete().eq('id', ORG_ID)` plus `anchors.delete()
+ * .eq('org_id', ORG_ID)`. Sharing that id made this suite depend on another
+ * file's fixture lifetime: it failed outright when it ran before that setup or
+ * after that teardown, and when it ran in between, the sibling's teardown could
+ * delete THIS suite's seeded anchors mid-run — which makes every leak assertion
+ * pass vacuously, the exact failure mode the seedAnchor docstring warns about.
+ * `…c002` is RFC 9562 compliant (version nibble 4, variant nibble 8) per the
+ * DEG-5 ratchet in `tests/infra/seed-fixture-uuids.test.ts`.
+ */
+const ORG_ID = 'f19e2400-0000-4000-8000-00000000c002';
 
 /**
  * The directory-level values seeded into every fixture. Each is a distinctive
@@ -67,17 +79,51 @@ describe('FD-FERPA-1 — directory_info_opt_out suppresses directory information
   const anon = createAnonClient();
   let userId: string;
 
+  /**
+   * Owns its fixture end to end. The previous version only READ a profile for a
+   * shared org and threw `could not resolve a seed profile` when it found none —
+   * which is what CI hit, because no seed defines this org: it is created by a
+   * sibling suite that also deletes it again.
+   */
   beforeAll(async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (service as any)
-      .from('profiles')
-      .select('id')
-      .eq('org_id', ORG_ID)
-      .limit(1)
-      .single();
-    if (error) throw new Error(`could not resolve a seed profile for ${ORG_ID}: ${error.message}`);
-    userId = data.id as string;
-  });
+    const svc = service as any;
+    const orgName = `FERPA Directory Opt-Out Org ${RUN_ID}`;
+    const { error: orgErr } = await svc
+      .from('organizations')
+      .upsert({ id: ORG_ID, legal_name: orgName, display_name: orgName }, { onConflict: 'id' });
+    if (orgErr) throw new Error(`org upsert failed: ${orgErr.message}`);
+
+    const email = `ferpa-directory-${RUN_ID}@rls.arkova.local`;
+    const { data: created, error: createErr } = await svc.auth.admin.createUser({
+      email,
+      password: process.env.RLS_TEST_PASSWORD as string,
+      email_confirm: true,
+    });
+    if (createErr) throw new Error(`createUser failed: ${createErr.message}`);
+    userId = created.user.id as string;
+
+    const { error: profErr } = await svc.from('profiles').upsert(
+      {
+        id: userId,
+        email,
+        full_name: 'FERPA Directory Opt-Out Seed',
+        role: 'ORG_ADMIN',
+        org_id: ORG_ID,
+        is_public_profile: false,
+      },
+      { onConflict: 'id' },
+    );
+    if (profErr) throw new Error(`profile upsert failed: ${profErr.message}`);
+  }, 60_000);
+
+  afterAll(async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const svc = service as any;
+    await svc.from('anchors').delete().eq('org_id', ORG_ID);
+    if (userId) await svc.auth.admin.deleteUser(userId);
+    await svc.from('organizations').delete().eq('id', ORG_ID);
+  }, 60_000);
 
   /**
    * Seeds a SECURED anchor carrying every directory-level field the projection
