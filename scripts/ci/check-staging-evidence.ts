@@ -1869,39 +1869,182 @@ export function hasUnsoakableSurfaceNote(body: string): { valid: boolean; missin
   );
 }
 
-function preflightResultErrors(body: string): string[] {
-  const preflightResult = extractEvidenceFieldValue(body, 'Preflight result:');
-  if (preflightResult === null || hasCleanMirrorPreflight(preflightResult)) return [];
-
+/**
+ * The one escape hatch shared by every preflight field: the situation is
+ * expressible, but ONLY behind a `### Residual-risk note` whose required
+ * sub-fields are all present and whose `Approved by:` names a real approver.
+ * `validateResidualRiskNote` enforces the approver guard, so a blank /
+ * `pending` / `TBD` / `N/A` approver is still a self-waiver and still fails.
+ *
+ * Scoped deliberately to the preflight fields. It is NOT a blanket bypass: the
+ * soak-duration floor, head/base SHA identity, evidence scope, and the
+ * deploy-artifact value checks all run independently of it.
+ */
+function preflightExceptionErrors(
+  body: string,
+  situation: string,
+  fallbackMessage: string,
+): string[] {
   const riskException = hasResidualRiskException(body);
   if (riskException.valid) return [];
   if (riskException.missing.length > 0) {
     return [
-      `Preflight is not clean_mirror but the residual-risk note is missing required sub-fields: `
+      `${situation} but the residual-risk note is missing required sub-fields: `
       + riskException.missing.map((f) => `\`${f}\``).join(', ')
       + `. Add a \`### Residual-risk note\` section with all required fields.`,
     ];
   }
 
-  return ['Preflight result must capture `environment_type=clean_mirror`; dirty or diagnostic preflight output is not merge-grade evidence. Alternatively, add a `### Residual-risk note` section documenting the exception (see CLAUDE.md §1.11A).'];
+  return [fallbackMessage];
 }
 
-function preflightTimestampErrors(body: string): string[] {
-  const preflightTimestampValue = extractEvidenceFieldValue(body, 'Preflight timestamp:');
-  if (preflightTimestampValue === null) return [];
+function preflightResultErrors(body: string): string[] {
+  const preflightResult = extractEvidenceFieldValue(body, 'Preflight result:');
+  if (preflightResult === null || hasCleanMirrorPreflight(preflightResult)) return [];
 
-  const preflightMs = parseEvidenceTimestamp(preflightTimestampValue);
-  if (preflightMs === null) {
-    return [`Preflight timestamp could not parse as a timestamp: \`${preflightTimestampValue}\`.`];
-  }
+  return preflightExceptionErrors(
+    body,
+    'Preflight is not clean_mirror',
+    'Preflight result must capture `environment_type=clean_mirror`; dirty or diagnostic preflight output is not merge-grade evidence. Alternatively, add a `### Residual-risk note` section documenting the exception (see CLAUDE.md §1.11A).',
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Preflight-timestamp symmetry.
+//
+// `Preflight result:` has always had the residual-risk escape hatch above, so
+// "a DIRTY preflight ran at T" was expressible. `Preflight timestamp:` had
+// none, and it is a REQUIRED field at T2/T3 — so "no preflight ran at all" and
+// "a clean preflight ran after the clock started" were both inexpressible.
+// That is backwards: it rewarded running a worthless preflight over running
+// none, and pressured an author toward pasting some OTHER window's timestamp,
+// which is precisely the stale-evidence reuse CLAUDE.md §1.11A forbids
+// ("Evidence may not be copied across heads, services, or projects").
+//
+// The fix makes the timestamp rule symmetric with the result rule and NO
+// LOOSER: both non-clean states are sayable, both require the same approved
+// note, and any value that is neither a parseable timestamp nor one of the
+// sentinels below is still a hard error — free text does not get through.
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * The closed set of `Preflight timestamp:` values that explicitly declare no
+ * preflight reading exists for this window. A literal set rather than one big
+ * alternation regex: the membership test is exact, and the set is readable as
+ * the policy it is. Deliberately small — a value that merely *talks about* not
+ * running a preflight is not a member and stays a hard error.
+ */
+const PREFLIGHT_NOT_RUN_SENTINELS = new Set([
+  'not run', 'not-run', 'notrun',
+  'no preflight', 'no-preflight', 'nopreflight',
+  'none',
+  'n/a', 'na', 'n.a', 'n.a.',
+  'not applicable', 'not-applicable', 'notapplicable',
+]);
+
+/**
+ * Start of an optional trailing reason: `NOT RUN — rig provisioned 8 days
+ * before the clock`, `N/A: no pre-clock sample`. A colon or em/en dash
+ * separates on its own; a plain hyphen must be preceded by whitespace so
+ * `NOT-RUN` is not mistaken for `NOT` plus a reason.
+ *
+ * Both alternatives are fixed-length and quantifier-free, so matching is a
+ * single linear scan (SonarCloud `typescript:S8786` — an earlier
+ * `(?:\s+[-—–:]|[—–:])\s*\S[\s\S]*$` form was quadratic on a long run of
+ * whitespace because the unanchored `\s+` was retried from every position).
+ */
+const PREFLIGHT_REASON_SEPARATOR_RE = /[—–:]|\s-/;
+
+function isPreflightNotRunSentinel(value: string): boolean {
+  const trimmed = value.trim();
+  const separator = PREFLIGHT_REASON_SEPARATOR_RE.exec(trimmed);
+  const head = separator === null ? trimmed : trimmed.slice(0, separator.index);
+  return PREFLIGHT_NOT_RUN_SENTINELS.has(head.trim().toLowerCase());
+}
+
+type PreflightTimestampStatus = 'ok' | 'not-run' | 'late' | 'unparseable';
+
+/**
+ * Classify the `Preflight timestamp:` value. Sentinels are matched BEFORE
+ * `Date.parse` so a sentinel can never be silently accepted as a real reading.
+ */
+function classifyPreflightTimestamp(body: string, value: string): PreflightTimestampStatus {
+  if (isPreflightNotRunSentinel(value)) return 'not-run';
+
+  const preflightMs = parseEvidenceTimestamp(value);
+  if (preflightMs === null) return 'unparseable';
 
   const soakStartValue = extractEvidenceFieldValue(body, 'Soak start:');
   const soakStartMs = soakStartValue === null ? null : parseEvidenceTimestamp(soakStartValue);
-  if (soakStartMs !== null && preflightMs > soakStartMs) {
-    return ['Preflight timestamp must be at or before Soak start.'];
+  return soakStartMs !== null && preflightMs > soakStartMs ? 'late' : 'ok';
+}
+
+/** `null` when the label is absent — `missingFields()` owns that at T2/T3. */
+function preflightTimestampStatus(body: string): PreflightTimestampStatus | null {
+  const value = extractEvidenceFieldValue(body, 'Preflight timestamp:');
+  return value === null ? null : classifyPreflightTimestamp(body, value);
+}
+
+const PREFLIGHT_TIMESTAMP_UNPARSEABLE_HINT =
+  'Give the UTC reading taken at or before Soak start, or — if no preflight was run for this '
+  + 'window — the literal `NOT RUN` (also accepted: `NONE`, `N/A`, `NO PREFLIGHT`, `NOT APPLICABLE`, '
+  + 'each optionally followed by ` — <reason>`) together with an approved `### Residual-risk note`. '
+  + "Do not paste another window's timestamp (CLAUDE.md §1.11A).";
+
+function preflightTimestampErrors(body: string): string[] {
+  const value = extractEvidenceFieldValue(body, 'Preflight timestamp:');
+  // Label absent. Not waived here: at T2/T3 — the only tiers this runs for —
+  // `missingFields()` already rejects the body for the missing required field.
+  if (value === null) return [];
+
+  switch (classifyPreflightTimestamp(body, value)) {
+    case 'ok':
+      return [];
+    case 'not-run':
+      return preflightExceptionErrors(
+        body,
+        `Preflight timestamp declares no preflight was run (\`${value.trim()}\`)`,
+        'Preflight timestamp declares no preflight was run; a soak with no pre-clock preflight is not merge-grade evidence on its own. Add a `### Residual-risk note` section documenting the exception (see CLAUDE.md §1.11A).',
+      );
+    case 'late':
+      return preflightExceptionErrors(
+        body,
+        `Preflight timestamp \`${value.trim()}\` is after Soak start`,
+        'Preflight timestamp must be at or before Soak start; a preflight captured after the clock started does not describe the state the soak ran against. Add a `### Residual-risk note` section documenting the exception (see CLAUDE.md §1.11A).',
+      );
+    default:
+      return [
+        `Preflight timestamp could not parse as a timestamp: \`${value}\`. `
+        + PREFLIGHT_TIMESTAMP_UNPARSEABLE_HINT,
+      ];
+  }
+}
+
+/**
+ * Every accepted preflight exception announces itself. Without this a
+ * `clean_mirror`-but-late reading (or a `NOT RUN` sentinel) would be accepted
+ * SILENTLY — exactly the unannounced acceptance this gate exists to prevent.
+ * Callers must only invoke this once the body has produced zero errors, which
+ * already implies the residual-risk note validated.
+ */
+function preflightExceptionNotes(body: string): string[] {
+  const notes: string[] = [];
+
+  const preflightVal = extractEvidenceFieldValue(body, 'Preflight result:');
+  const preflightIsClean = preflightVal !== null && hasCleanMirrorPreflight(preflightVal);
+  if (!preflightIsClean && hasResidualRiskException(body).valid) {
+    notes.push('Preflight is not clean_mirror; residual-risk exception accepted.');
   }
 
-  return [];
+  const tsStatus = preflightTimestampStatus(body);
+  if (tsStatus === 'not-run') {
+    notes.push('Preflight timestamp declares no preflight was run; residual-risk exception accepted.');
+  }
+  if (tsStatus === 'late') {
+    notes.push('Preflight timestamp is after Soak start; residual-risk exception accepted.');
+  }
+
+  return notes;
 }
 
 const FUTURE_TIMESTAMP_FIELDS = [
@@ -2608,11 +2751,8 @@ function standardEvidenceErrors(
     ...futureTimestampErrors(body),
   );
 
-  const preflightVal = extractEvidenceFieldValue(body, 'Preflight result:');
-  const preflightIsClean = preflightVal !== null && hasCleanMirrorPreflight(preflightVal);
-  if (errors.length === 0 && !preflightIsClean && hasResidualRiskException(body).valid) {
-    notes.push('Preflight is not clean_mirror; residual-risk exception accepted.');
-  }
+  // Only reachable with zero errors, which already implies the note validated.
+  if (errors.length === 0) notes.push(...preflightExceptionNotes(body));
 
   return { errors, notes };
 }
