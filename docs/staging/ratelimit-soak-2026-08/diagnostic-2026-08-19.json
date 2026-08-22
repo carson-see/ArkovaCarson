@@ -1,0 +1,83 @@
+{
+  "purpose": "Diagnostic capture explaining why the PR #2269 T2 rate-limit soak was NOT stood up on 2026-08-19.",
+  "pr": 2269,
+  "pr_head_sha": "fadc04c927ee4c41966d87bf86c969931b02c97e",
+  "pr_base_sha": "92ed61cb689b46c13ebadbdad6e96ddfde3f481f",
+  "checked_at_utc": "2026-08-19T16:21:13Z",
+  "conclusion": "shared_staging_structurally_unusable",
+  "target_project_ref": "ujtlwnoqfhtitcmsnrpq",
+  "evidence": [
+    {
+      "check": "supabase_mcp_list_projects",
+      "method": "Supabase MCP list_projects (org byhkazrpmivhcsuqjtva)",
+      "result": {
+        "projects": [
+          {"ref": "ehqqearcitrgloibtjqx", "name": "arkova-connector-sidecar-2026-08", "status": "ACTIVE_HEALTHY", "created_at": "2026-08-12T16:48:26.000495Z"},
+          {"ref": "vzwyaatejekddvltxyye", "name": "carson-see's Project", "status": "ACTIVE_HEALTHY", "created_at": "2026-03-01T16:41:28.116317Z", "note": "PROD"},
+          {"ref": "gnkuaywlpmsaezwvlvhk", "name": "arkova-fullsoak-2026-08", "status": "ACTIVE_HEALTHY", "created_at": "2026-08-10T13:31:00.631771Z", "note": "FULLSOAK rig, do not touch"}
+        ]
+      },
+      "finding": "ujtlwnoqfhtitcmsnrpq (the CLAUDE.md 1.11 / STAGING_RIG.md standing 'arkova-staging' project) is ABSENT from the live project list for the only Supabase organization this account belongs to."
+    },
+    {
+      "check": "supabase_mcp_get_project",
+      "method": "Supabase MCP get_project(id='ujtlwnoqfhtitcmsnrpq')",
+      "result": {"error": {"name": "McpError", "message": "MCP error -32600: You do not have permission to perform this action"}},
+      "finding": "Permission-denied on a project ref inside our own (and only) org is consistent with the project no longer existing, not with a scoping restriction -- we are the org owner and successfully enumerate/describe the other 3 projects in the same org."
+    },
+    {
+      "check": "dns_resolution",
+      "method": "dig +short ujtlwnoqfhtitcmsnrpq.supabase.co",
+      "result": "NXDOMAIN (host not found: 3(NXDOMAIN))",
+      "control": "dig +short supabase.co resolved fine (76.76.21.21); other external hosts (google.com, api.github.com) resolved and returned HTTP 200.",
+      "finding": "Not a general network/DNS sandbox problem -- this specific project subdomain does not exist in DNS."
+    },
+    {
+      "check": "staging_honesty_preflight",
+      "method": "npx tsx scripts/ci/staging-honesty-preflight.ts --project-ref ujtlwnoqfhtitcmsnrpq --format json (service role key pulled live from gcloud secret supabase-service-role-key-staging)",
+      "stderr": "::error::Failed to query schema_migrations: TypeError: fetch failed",
+      "exit_code": 1,
+      "finding": "The CLAUDE.md 1.11A-mandated preflight cannot even reach the database layer -- this is a network/DNS failure ahead of any clean_mirror/soak_artifact/fixture_seeded classification. Not a 'dirty rig', an unreachable one."
+    },
+    {
+      "check": "live_worker_health",
+      "method": "GET https://arkova-worker-staging-270018525501.us-central1.run.app/health with a gcloud identity token (Cloud Run service is IAM-protected, --no-allow-unauthenticated)",
+      "http_status": 503,
+      "body": {"status": "degraded", "version": "0.1.0", "git_sha": "0cbdd9a6da61b54ad4886cb3f8afeef87d846ab9", "uptime": 44, "network": "mainnet", "checks": {"database": "error", "anchoring": "ok", "kms": "ok"}},
+      "finding": "The shared arkova-worker-staging Cloud Run service (main URL, not a PR tag route) is itself live proof of the outage: it cold-started for this request (uptime 44s) and immediately reported checks.database = 'error'. This is a systemic condition affecting the whole shared rig, not something specific to this preflight run or this PR."
+    },
+    {
+      "check": "cloud_run_service_secret_bindings",
+      "method": "gcloud run services describe arkova-worker-staging --region=us-central1 --project=arkova1",
+      "finding": "Contrary to the anticipated 'drifted onto a dead rig's secrets' trap, the service's env secretKeyRefs correctly point at the *-staging-suffixed secrets (supabase-url-staging, supabase-service-role-key-staging) -- i.e. no naming/binding drift. The secrets themselves resolve to values for project ref ujtlwnoqfhtitcmsnrpq, which is the project that no longer exists. Different failure mode than the known trap: the binding is correct, the target it points at is gone.",
+      "latest_revision_observed": "arkova-worker-staging-00294-tev (tag pr-1459)",
+      "min_instances_annotation": "autoscaling.knative.dev/minScale=1",
+      "max_instances_annotation": "autoscaling.knative.dev/maxScale=2",
+      "mempool_api_url_set": false
+    },
+    {
+      "check": "cloud_run_services_list",
+      "method": "gcloud run services list --project=arkova1 --region=us-central1",
+      "result": ["arkova-worker", "arkova-worker-connector-sidecar-2026-08-staging", "arkova-worker-fullsoak-2026-08-staging", "arkova-worker-staging", "chaindump-mcp"],
+      "finding": "arkova-worker-fullsoak-2026-08-staging is confirmed to be a SEPARATE Cloud Run service from arkova-worker-staging -- deploying to arkova-worker-staging (had it been usable) would not have touched the fullsoak rig. No writes were made to the fullsoak service or its backing project (gnkuaywlpmsaezwvlvhk) during this investigation."
+    }
+  ],
+  "actions_taken": [
+    "Read CLAUDE.md, docs/reference/STAGING_RIG.md",
+    "Ran scripts/agent/ack-claude-bootstrap.sh (acknowledged)",
+    "Confirmed PR #2269 head/base SHA and CI status via gh pr view",
+    "Ran scripts/ci/staging-honesty-preflight.ts against ujtlwnoqfhtitcmsnrpq (failed at network layer)",
+    "Queried Supabase MCP list_projects / get_project / list_organizations",
+    "Inspected arkova-worker-staging Cloud Run service spec and live /health",
+    "Confirmed arkova-worker-fullsoak-2026-08-staging is a distinct, untouched service"
+  ],
+  "actions_deliberately_NOT_taken": [
+    "Did not provision a new Supabase project (requires explicit Carson/operator approval per CLAUDE.md 7 cost policy and the task's own instruction)",
+    "Did not deploy any image to arkova-worker-staging or any other Cloud Run service",
+    "Did not touch arkova-worker-fullsoak-2026-08-staging, its Supabase project (gnkuaywlpmsaezwvlvhk), or prod (vzwyaatejekddvltxyye)",
+    "Did not start a soak clock",
+    "Did not mark PR #2269 ready",
+    "Did not attempt to repair/recreate/rename the ujtlwnoqfhtitcmsnrpq project or its Secret Manager entries"
+  ],
+  "recommendation": "This blocks EVERY staging soak project-wide, not just PR #2269 -- CLAUDE.md 1.11's standing rig is gone. Needs an operator decision: (a) recreate 'arkova-staging' per docs/reference/STAGING_RIG.md's from-scratch replay procedure and repoint arkova-worker-staging's *-staging secrets at the new ref, or (b) confirm the deletion was an intentional (undocumented) cost action and formally retire the shared-rig model in favor of per-soak isolated rigs, updating CLAUDE.md 1.11 / STAGING_RIG.md either way. No HANDOFF.md or memory/ record explains when or why ujtlwnoqfhtitcmsnrpq disappeared."
+}

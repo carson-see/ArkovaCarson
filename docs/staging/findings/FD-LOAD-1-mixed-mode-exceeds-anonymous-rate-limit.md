@@ -59,6 +59,76 @@ a total rather than per-mode error rates.
 - Guard: extend the liveness check from "aggregate `ok > 0`" to "**no mode** has
   `errorRate == 1`". A mode that never once succeeded is a dead probe, not load.
 
+## Measured result of the fix — a partial win, stated as such
+
+The migration-T3 leg was switched from `--mode mixed` to `--mode reads` + `--mode cron`
+at 15:34Z. First post-fix cycle (`20260821T153410Z`) versus the last mixed cycle:
+
+| | before (mixed) | after (reads + cron) |
+|---|---|---|
+| total requests | 4,011 | 1,272 |
+| 429s | **3,437** | **622** |
+| successful requests | 25 (cron only) | 25 (cron only) |
+| reads `byStatus` | `401:17 429:973 503:257` | `401:43 429:622 503:582` |
+
+**What improved:** self-inflicted 429s fell 82 %, and the dominant response is now `503`
+— a real answer from application code rather than the limiter swallowing the request.
+
+**What did NOT improve, and why:** `reads` is still `ok=0`. That is *not* the driver's
+fault and no rate change fixes it — this rig's Supabase project has no
+`ENABLE_VERIFICATION_API` row in `switchboard_flags`, so `get_flag` fails closed and every
+`/api/v1` request returns a sub-10 ms `503` before reaching application logic. The wave3
+maturity record documents the same condition on this rig. `/api/admin/pipeline-stats`
+answers `401` (its auth gate, working correctly).
+
+622 residual 429s at an offered 50/min against a documented 100/min/IP bucket also says the
+effective budget is lower than the headline number for these paths — worth a follow-up, but
+it is no longer the dominant failure mode.
+
+**Consequence for the migration-T3 window, stated plainly:** its HTTP evidence covers the
+middleware, auth and rate-limit path plus cron — it does **not** cover `/api/v1` behaviour,
+because that surface is dark on this rig. Migrations 0410–0414 are DB-level changes
+(`partner_accounts`, a cleanup `lock_timeout`, a stale-estimate sentinel, a calibration view,
+anon revokes), and the right acceptance instrument for them is targeted SQL against the rig
+database, not anonymous HTTP load. This window should not be cited as exercising them.
+
+## Correction — the real anonymous ceiling is **60/min**, not 100
+
+CLAUDE.md §1.10 states "Anonymous: 100 req/min/IP", and `anonRateLimiter`
+(`services/worker/src/api/v1/router.ts:195`) is indeed `windowMs: 60_000, maxRequests: 100`.
+**But it is not the first limiter an anonymous request meets.**
+
+`services/worker/src/index.ts:413` mounts `apiIpShadowGuard` on the whole `/api` prefix:
+
+```ts
+const apiIpShadowGuard = rateLimit({
+  windowMs: 60000,
+  maxRequests: 60,
+  skip: (req) => req.originalUrl.startsWith('/api/v1/') && hasApiKeyCredential(req),
+});
+app.use('/api', apiIpShadowGuard, badgeRouter);
+```
+
+The `skip` exempts only `/api/v1/*` requests **carrying an API key**. An anonymous request is
+not skipped, so it is capped at **60/min** before `anonRateLimiter` is ever consulted. The
+code's own comment says as much: *"still capped here at 60/min per IP."*
+
+**Consequences:**
+- `--mode mixed`'s 160/min is **2.7×** the real ceiling, not 1.6×. The finding above understated it.
+- Any driver sized to §1.10's 100/min — the documented number — will still 429. A soak driver
+  written from the constitution alone is guaranteed to trip the limiter. A run at 36/min drew ten
+  429s on a fresh rig, which is consistent with a 60/min bucket shared with other probe traffic.
+- Everything **outside** `/api/v1` (badge, checkout, verify-anchor, treasury, admin) is capped at
+  60/min for every caller including API-key holders, because the skip is `/api/v1`-scoped.
+
+**§1.10 is inaccurate as written** and should say that anonymous callers are governed by the
+60/min `/api` guard, with the 100/min `/api/v1` anon limiter sitting behind it. Filed as a
+separate CLAUDE.md rule change (rule changes go through PR review per §0 rule 8, even though
+CLAUDE.md is a `.md` file).
+
+**Practical guidance for anyone writing a soak driver: budget under 60/min of anonymous traffic
+per egress IP, not 100** — and remember every concurrent driver on the same machine shares that IP.
+
 ## The rule this is a case of
 
 A soak covers only what the driver **successfully** probes. `ok=0` with a four-figure 429

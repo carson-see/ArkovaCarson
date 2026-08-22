@@ -22,6 +22,7 @@ import { AssetDetailView } from '@/components/anchor';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ROUTES } from '@/lib/routes';
+import { RECORD_DETAIL_LABELS } from '@/lib/copy';
 import { sourceProofInput } from '@/lib/sourceProofInput';
 
 export function RecordDetailPage() {
@@ -115,15 +116,34 @@ export function RecordDetailPage() {
 
   const handleRenameFile = async (newName: string) => {
     if (!anchor) return;
-    const { error: updateError } = await supabase
+    // `.select('id')` + row-count check (mirrors useFolders.assignRecord):
+    // PostgREST returns HTTP 204 with `error: null` for an UPDATE whose RLS
+    // USING clause matches zero rows, so checking `error` alone let a
+    // non-owner rename fire the success toast while the row was unchanged.
+    // RLS reality: `anchors_update_own` requires user_id = auth.uid(), and
+    // migration 0393's trigger `restrict_org_admin_folder_update` narrows the
+    // org-admin update policy to folder_id only — that path raises 42501.
+    const { data, error: updateError } = await supabase
       .from('anchors')
       .update({ filename: newName })
-      .eq('id', anchor.id);
+      .eq('id', anchor.id)
+      .select('id');
     if (updateError) {
-      toast.error('Failed to rename document');
+      toast.error(
+        updateError.code === '42501'
+          ? RECORD_DETAIL_LABELS.ERR_RENAME_FORBIDDEN
+          : RECORD_DETAIL_LABELS.ERR_RENAME,
+      );
       throw updateError;
     }
-    toast.success('Document renamed');
+    if (!data || data.length === 0) {
+      toast.error(RECORD_DETAIL_LABELS.ERR_RENAME_FORBIDDEN);
+      throw new Error(RECORD_DETAIL_LABELS.ERR_RENAME_FORBIDDEN);
+    }
+    toast.success(RECORD_DETAIL_LABELS.TOAST_RENAMED);
+    // Realtime usually catches the UPDATE, but refresh explicitly so the
+    // certificate header reflects the confirmed new name immediately.
+    void refreshAnchor();
   };
 
   if (anchorLoading) {
@@ -177,6 +197,7 @@ export function RecordDetailPage() {
     >
       <AssetDetailView
         canRevoke={profile?.role === 'ORG_ADMIN' && anchor.org_id === profile?.org_id}
+        canRename={!!user && user.id === anchor.user_id}
         onRevoked={() => { void refreshAnchor(); }}
         hasImportEntitlement={hasImportEntitlement}
         anchor={{

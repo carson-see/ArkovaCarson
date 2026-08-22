@@ -68,6 +68,20 @@ jobs:
       # (fetchLiveLabels), so a label added after this frozen payload was
       # captured is still honored on a bare rerun.
       PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+      # That live union only actually happens with a token in the env: `gh`
+      # authenticates from GH_TOKEN / GITHUB_TOKEN and nothing else (the
+      # `pull-requests: read` permission above scopes a token, it does not
+      # supply one). The "Resolve live PR state" step below sets GH_TOKEN for
+      # itself, but a STEP-scoped value does not reach the tsx check step — so
+      # before this line the fetch threw on every run and was swallowed to `[]`.
+      # PR_NUMBER is set right here, so fetchLiveLabels() always had a PR
+      # context and always attempted (and failed) the call.
+      #
+      # check-staging-evidence.ts reads no label today, but it imports
+      # ciContext, whose module-level `resolvePrLabels()` performs the fetch
+      # regardless — so this both removes a guaranteed-failing subprocess and
+      # makes the job correct in advance of the first label gate added here.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       # Mergify merge queue creates speculative draft PRs (branch mergify/merge-queue/*)
       # whose body doesn't carry the original PR's staging evidence section.

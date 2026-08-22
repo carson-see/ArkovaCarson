@@ -5,7 +5,12 @@
  * tabbed view. Auto-classifies items by type so users don't have to
  * pick a category.
  *
- * Tabs: All / My Records / Issued to Me / Attestations
+ * Tabs: All / Issued to Me / Attestations. "My Records" is a LINK-OUT to
+ * ROUTES.RECORDS (MyRecordsPage) — the one records surface, with folders
+ * (SCRUM-2940). This page previously rendered its own folder-less copy of
+ * the records list under a real tab, so users landing on /documents
+ * concluded folders didn't exist (founder-reported). Legacy `?tab=records`
+ * deep links redirect to ROUTES.RECORDS with remaining params preserved.
  *
  * @see Session 10 — Sprint A usability overhaul
  */
@@ -13,12 +18,11 @@
 import { useState, useCallback, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { FileText, CheckCircle, Clock, Plus, Search, Filter, XCircle, AlertTriangle, MoreHorizontal, Eye, Download, Loader2, GraduationCap, Award, Building2, ExternalLink, Inbox } from 'lucide-react';
+import { FileText, CheckCircle, Clock, Plus, Search, Filter, XCircle, AlertTriangle, Loader2, Award, Building2, ExternalLink, Inbox } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
 import { useMyCredentials, type ReceivedCredential } from '@/hooks/useMyCredentials';
-import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
 import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/layout';
 import { SecureDocumentDialog } from '@/components/anchor';
@@ -27,7 +31,6 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -37,17 +40,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { ROUTES, recordDetailPath, verifyPath } from '@/lib/routes';
 import { CREDENTIAL_TYPE_LABELS, DOCUMENTS_PAGE_LABELS } from '@/lib/copy';
-import { formatDate, formatFileSize } from '@/lib/formatters';
-import type { Record as AnchorRecord } from '@/components/records';
+import { formatDate } from '@/lib/formatters';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -108,9 +103,8 @@ export function DocumentsPage() {
   const { profile, loading: profileLoading } = useProfile();
 
   // Data hooks
-  const { records, loading: recordsLoading, refreshAnchors } = useAnchors();
+  const { records, loading: recordsLoading } = useAnchors();
   const { credentials, loading: credentialsLoading } = useMyCredentials();
-  const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
 
   // Attestations (inline fetch like AttestationsPage)
   const [attestations, setAttestations] = useState<Attestation[]>([]);
@@ -123,11 +117,26 @@ export function DocumentsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
 
+  // One records surface (founder-reported): '?tab=records' predates the full
+  // records+folders surface at ROUTES.RECORDS (SCRUM-2940). Redirect legacy
+  // deep links there, carrying every remaining param — MyRecordsPage consumes
+  // the same `?action=upload&credential_type=...&jurisdiction=...` contract.
+  const legacyRecordsTab = searchParams.get('tab') === 'records';
+  useEffect(() => {
+    if (!legacyRecordsTab) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('tab');
+    const qs = next.toString();
+    navigate(qs ? `${ROUTES.RECORDS}?${qs}` : ROUTES.RECORDS, { replace: true });
+  }, [legacyRecordsTab, searchParams, navigate]);
+
   // NCA-FU2 (SCRUM-906): Auto-open dialog when linked from compliance scorecard
   const actionParam = searchParams.get('action');
   const initialCredentialType = searchParams.get('credential_type') ?? undefined;
   useEffect(() => {
-    if (actionParam === 'upload') {
+    // legacyRecordsTab: don't consume the params here — the redirect above
+    // hands them to MyRecordsPage, which owns the same auto-open contract.
+    if (actionParam === 'upload' && !legacyRecordsTab) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- URL-param driven one-time dialog open
       setSecureDialogOpen(true);
       setSearchParams((prev) => {
@@ -138,15 +147,22 @@ export function DocumentsPage() {
         return next;
       }, { replace: true });
     }
-  }, [actionParam, setSearchParams]);
+  }, [actionParam, legacyRecordsTab, setSearchParams]);
 
-  // Tab from URL search params
+  // Tab from URL search params. 'records' is deliberately NOT a rendered tab
+  // any more — while its redirect (above) is in flight, fall back to 'all'.
   const tabParam = searchParams.get('tab');
-  const activeTab: DocumentTab = (['all', 'records', 'credentials', 'attestations'] as const).includes(tabParam as DocumentTab)
-    ? (tabParam as DocumentTab)
+  const activeTab: Exclude<DocumentTab, 'records'> = (['all', 'credentials', 'attestations'] as const).includes(tabParam as Exclude<DocumentTab, 'records'>)
+    ? (tabParam as Exclude<DocumentTab, 'records'>)
     : 'all';
 
   const setActiveTab = (tab: DocumentTab) => {
+    if (tab === 'records') {
+      // Link-out, not a tab switch: the one records surface lives at
+      // ROUTES.RECORDS (folders, move-to-folder, revoke — SCRUM-2940).
+      navigate(ROUTES.RECORDS);
+      return;
+    }
     setSearchParams(tab === 'all' ? {} : { tab }, { replace: true });
     setStatusFilter('ALL');
     setSearchQuery('');
@@ -195,13 +211,6 @@ export function DocumentsPage() {
 
   // Realtime subscription in useAnchors handles INSERT — no manual refresh needed
   const handleSecureSuccess = useCallback(() => {}, []);
-
-  const handleRevokeRecord = useCallback(async (record: AnchorRecord) => {
-    const success = await revokeAnchor(record.id);
-    if (success) {
-      await refreshAnchors();
-    }
-  }, [revokeAnchor, refreshAnchors]);
 
   // Unified items for "All" tab
   const unifiedItems: UnifiedDocumentItem[] = [
@@ -278,16 +287,6 @@ export function DocumentsPage() {
         </Button>
       </div>
 
-      {/* Revoke error */}
-      {revokeError && (
-        <Alert variant="destructive" className="mb-4">
-          <AlertDescription className="flex items-center justify-between">
-            <span>{revokeError}</span>
-            <Button variant="ghost" size="sm" onClick={clearRevokeError}>Dismiss</Button>
-          </AlertDescription>
-        </Alert>
-      )}
-
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as DocumentTab)} className="mb-4">
         <TabsList>
@@ -353,14 +352,6 @@ export function DocumentsPage() {
               items={unifiedItems.filter(i => filterBySearch(i) && filterByStatus(i.status))}
               allEmpty={unifiedItems.length === 0 && !searchQuery.trim() && statusFilter === 'ALL'}
               onSecure={() => setSecureDialogOpen(true)}
-            />
-          ) : activeTab === 'records' ? (
-            <RecordsList
-              records={records.filter(r => filterBySearch(r) && filterByStatus(r.status))}
-              allEmpty={records.length === 0 && !searchQuery.trim() && statusFilter === 'ALL'}
-              navigate={navigate}
-              onSecure={() => setSecureDialogOpen(true)}
-              onRevoke={handleRevokeRecord}
             />
           ) : activeTab === 'credentials' ? (
             <CredentialsList
@@ -500,108 +491,6 @@ function AllDocumentsList({
           </div>
         </div>
       ))}
-    </div>
-  );
-}
-
-// "My Records" tab — same as the old MyRecordsPage list
-function RecordsList({
-  records,
-  allEmpty,
-  navigate,
-  onSecure,
-  onRevoke,
-}: {
-  records: AnchorRecord[];
-  allEmpty: boolean;
-  navigate: ReturnType<typeof useNavigate>;
-  onSecure: () => void;
-  onRevoke: (r: AnchorRecord) => void;
-}) {
-  if (records.length === 0) {
-    return (
-      <EmptyState
-        title={allEmpty ? 'No records yet' : DOCUMENTS_PAGE_LABELS.NO_MATCHING}
-        description={allEmpty ? 'Secure your first document to create a permanent, tamper-proof record.' : DOCUMENTS_PAGE_LABELS.NO_MATCHING_DESC}
-        action={allEmpty ? (
-          <Button onClick={onSecure}>
-            <Plus className="mr-2 h-4 w-4" />
-            Secure Document
-          </Button>
-        ) : undefined}
-      />
-    );
-  }
-
-  return (
-    <div className="divide-y">
-      {records.map((record) => (
-          <div
-            key={record.id}
-            role="button"
-            tabIndex={0}
-            className="flex items-center gap-4 py-4 px-2 hover:bg-[#00d4ff]/[0.02] transition-colors cursor-pointer"
-            onClick={() => navigate(recordDetailPath(record.id))}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(recordDetailPath(record.id)); } }}
-          >
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
-              <FileText className="h-5 w-5 text-muted-foreground" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <p className="text-sm font-medium truncate">{record.filename}</p>
-                <StatusBadge status={record.status} />
-              </div>
-              <div className="flex items-center gap-2">
-                <p className="text-xs text-muted-foreground font-mono truncate">
-                  {record.fingerprint.slice(0, 16)}...{record.fingerprint.slice(-8)}
-                </p>
-                {record.credentialType && (
-                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                    <GraduationCap className="h-3 w-3" />
-                    {CREDENTIAL_TYPE_LABELS[record.credentialType as keyof typeof CREDENTIAL_TYPE_LABELS] ?? record.credentialType}
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="text-right hidden sm:block shrink-0">
-              <p className="text-sm text-muted-foreground">{formatDate(record.createdAt)}</p>
-              <p className="text-xs text-muted-foreground">{formatFileSize(record.fileSize)}</p>
-            </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <MoreHorizontal className="h-4 w-4" />
-                  <span className="sr-only">Actions</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => navigate(recordDetailPath(record.id))}>
-                  <Eye className="mr-2 h-4 w-4" />
-                  View Record
-                </DropdownMenuItem>
-                {record.status === 'SECURED' && (
-                  <DropdownMenuItem>
-                    <Download className="mr-2 h-4 w-4" />
-                    Download Proof
-                  </DropdownMenuItem>
-                )}
-                {record.status !== 'REVOKED' && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={(e) => { e.stopPropagation(); onRevoke(record); }}
-                      className="text-destructive focus:text-destructive"
-                    >
-                      <XCircle className="mr-2 h-4 w-4" />
-                      Revoke Record
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        ))}
     </div>
   );
 }
