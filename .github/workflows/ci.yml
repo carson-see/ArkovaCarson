@@ -1571,6 +1571,54 @@ jobs:
           uploadArtifacts: true
           temporaryPublicStorage: true
 
+  # Python SDK suite — pytest + ruff for packages/arkova-py on every PR.
+  #
+  # BUG-2026-08-12-007: this package's tests ran NOWHERE on a pull request. The
+  # only pytest/ruff invocation lived in publish-python-sdk.yml, which fires on
+  # an `arkova-py-v*` tag push — i.e. AFTER the release decision, never before
+  # it. Consequences, both real:
+  #   1. The published 2.2.0 wheel typed `compliance_controls` as a dict while
+  #      the API emitted a list. No gate ever compared the two, and `verify()`
+  #      was broken for every record carrying controls.
+  #   2. The source fix (a1592b975, 2026-08-01) then sat unreleased for two
+  #      weeks with nothing on any PR executing the tests that would have shown
+  #      source and published artifact disagreeing.
+  #
+  # Deliberately its OWN job rather than a step inside `Tests`: that job is a
+  # Node + Supabase harness and this needs setup-python and nothing else. The
+  # sibling sdks/ JavaScript suites ride the `Tests` job through vitest, which is
+  # the right home for those and the wrong one for this.
+  #
+  # python-version and both commands MIRROR publish-python-sdk.yml on purpose —
+  # same parity argument as the deploy-gate/CI-lint rule (CLAUDE.md §0.9). If the
+  # publish gate would reject it, a PR should reject it first.
+  python-sdk-tests:
+    name: Python SDK Tests (packages/arkova-py)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/arkova-py
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install Python SDK with dev extras
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Run Python SDK tests
+        run: pytest
+
+      # ruff is pinned to an EXACT version in pyproject.toml — see the comment on
+      # the pin there. This is the same command the publish gate runs.
+      - name: Lint Python SDK (publish-gate parity)
+        run: ruff check src tests
+
   # Lockfile integrity check (CISO Action-9) — prevent supply-chain attacks via tampered lockfiles
   lockfile-integrity:
     name: Lockfile Integrity

@@ -9,6 +9,11 @@ Repo-wide ratchet for SonarCloud `githubactions:S6506`: no `curl` in `.github/wo
 ## 2026-08-17 — `mergify-orphaned-export-gate.test.ts` (new)
 
 Contract test pinning `check-success = Orphaned Export Lint` into EVERY `.mergify.yml` queue rule's `merge_conditions`, plus the exact `name: Orphaned Export Lint` job name in `ci.yml` so the pair cannot silently drift. Exists because the `orphaned-export-lint` job (CTO ruling R14, fail-closed `continue-on-error: false`) ran on every PR since 2026-07-28 but was never listed in `merge_conditions` — a CI job absent from that list reports without blocking (the "NEW job not in .mergify.yml gates NOTHING" class). Raw-content style follows `s33-wave2-workflow-contract.test.ts`. NOTE: branch protection's required-check set is a separate, Carson/admin-only surface — this test pins only the in-repo Mergify layer.
+_Last updated: 2026-08-18 (mergify-python-sdk-gate contract test)._
+
+## 2026-08-18 — `mergify-python-sdk-gate.test.ts` (new)
+
+Contract test pinning `check-success = Python SDK Tests (packages/arkova-py)` into EVERY `.mergify.yml` queue rule's `merge_conditions`, plus the exact `name: Python SDK Tests (packages/arkova-py)` job name in `ci.yml` so the pair cannot silently drift. Exists because the `python-sdk-tests` job (BUG-2026-08-12-007) was added to ci.yml without being listed in `merge_conditions` — a CI job absent from that list reports without blocking (the "NEW job not in .mergify.yml gates NOTHING" class), which would have reproduced the original never-gated-on-a-PR blindness one layer up. Also pins that the job stays free of a job-level `if:`: an unreported check never satisfies `check-success`, so a path-filtered gated job would deadlock every non-SDK PR in the queue (path conditioning here is step-level `if:` inside always-reporting jobs, e.g. ai-eval-gate). Raw-content style follows `s33-wave2-workflow-contract.test.ts`; queue-gate shape follows `mergify-orphaned-export-gate.test.ts` (PR #2257). NOTE: branch protection's required-check set is a separate, Carson/admin-only surface — this test pins only the in-repo Mergify layer.
 
 CI gate scripts. Each one fails the build with a structured exit code + an
 actionable message when a guardrail trips. Run via
