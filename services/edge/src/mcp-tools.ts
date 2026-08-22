@@ -303,10 +303,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: 'anchor_document',
+    // BUG-028: this used to end "Returns an anchor receipt with a public
+    // identifier for later verification." No public identifier is returned,
+    // and none exists at submission time — a public_id is minted when the
+    // batch pipeline anchors the record. The fingerprint is the handle, and
+    // it is what verify_document accepts. Describe the contract that holds.
     description:
       'Submit a document fingerprint for anchoring to the public ledger. ' +
       'The document itself is never sent — only its SHA-256 fingerprint. ' +
-      'Returns an anchor receipt with a public identifier for later verification.',
+      'Anchoring is asynchronous (batched), so this returns a submission receipt, ' +
+      'NOT a completed anchor: public_id is null and no network receipt exists yet. ' +
+      'Follow up with verify_document using the SAME content_hash — it reports ' +
+      'status UNKNOWN until anchoring completes, then returns the public_id and proof.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1329,12 +1337,54 @@ async function nessieTextFallback(
  *
  * Submits the fingerprint to public_records for batch anchoring.
  */
-function anchorSubmittedResult(record: Record<string, unknown> | undefined, contentHash: string): ToolResult {
+/**
+ * BUG-028 — the submission receipt must name a handle that actually resolves.
+ *
+ * The old shape read `public_id: record?.public_id`. `public_records` has no
+ * `public_id` column (see the CREATE TABLE in the baseline migration: id,
+ * source, source_id, source_url, record_type, title, content_hash, anchor_id,
+ * metadata, timestamps, training_exported), so that expression was always
+ * `undefined` and `JSON.stringify` dropped the key outright — the tool
+ * description promised "a public identifier for later verification" and the
+ * response carried no identifier at all.
+ *
+ * A public_id cannot be returned here, and not merely because of a missing
+ * column: public_ids live on `anchors`, and an MCP submission only becomes an
+ * anchor when the batch pipeline links the `public_records` row (that is what
+ * `anchor_id` is for). At submission time no anchor exists, so there is no
+ * public_id in existence to return. Manufacturing one, or echoing the internal
+ * `public_records.id` UUID, would both be worse: the first is a fabricated
+ * identifier, the second leaks an internal row id (CLAUDE.md §6).
+ *
+ * The handle that IS durable and IS accepted by the documented follow-up is the
+ * fingerprint: `verify_document` takes `content_hash`, never a public_id. So
+ * the receipt states the fingerprint as the handle, states `public_id: null`
+ * explicitly rather than omitting the key (an agent gets a decidable answer
+ * instead of a missing field), and says plainly that verification resolves only
+ * once anchoring completes — measured vs asserted vs NOT asserted, per §1.5.
+ */
+function anchorSubmittedResult(
+  _record: Record<string, unknown> | undefined,
+  contentHash: string,
+  status: 'submitted' | 'already_submitted' = 'submitted',
+): ToolResult {
   return textResult({
-    status: 'submitted',
-    public_id: record?.public_id,
+    status,
+    // No anchor exists yet, so no public_id exists yet. Explicit null, not a
+    // dropped key: the absence is a fact about the lifecycle, not an omission.
+    public_id: null,
     content_hash: contentHash,
-    message: 'Document fingerprint submitted for batch anchoring. Check status with verify_document.',
+    // The handle the documented follow-up actually accepts.
+    verify_with: { tool: 'verify_document', content_hash: contentHash },
+    message: status === 'already_submitted'
+      ? 'Document was already submitted within the last 5 minutes; returning the existing '
+        + 'submission. Call verify_document with this content_hash. It reports '
+        + 'verified:false / status:UNKNOWN until batch anchoring completes and the '
+        + 'record is secured; a public_id is assigned at that point, not now.'
+      : 'Document fingerprint submitted for batch anchoring. Call verify_document with '
+        + 'this content_hash to check status. It reports verified:false / status:UNKNOWN '
+        + 'until batch anchoring completes and the record is secured; a public_id is '
+        + 'assigned at that point, not now.',
   });
 }
 
@@ -1352,12 +1402,9 @@ async function findRecentAnchorSubmission(
   const existing = await lookupResp.json() as Array<Record<string, unknown>>;
   if (!Array.isArray(existing) || existing.length === 0) return null;
 
-  return textResult({
-    status: 'already_submitted',
-    public_id: existing[0].public_id,
-    content_hash: contentHash,
-    message: 'Document was already submitted within the last 5 minutes. Returning existing record.',
-  });
+  // BUG-028: same receipt shape as a fresh submission — this path had the
+  // identical always-undefined `public_id` read.
+  return anchorSubmittedResult(existing[0], contentHash, 'already_submitted');
 }
 
 async function submitAnchorViaRpc(

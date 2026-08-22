@@ -42,6 +42,14 @@ writeup of this session's three fixes (SCRUM-3021 check-confirmations tip-height
 SCRUM-3017 SUBMITTED watchdog, SCRUM-3016 MEMPOOL_API_URL `/api` contract). No new env var is
 *required* — the default (unset `STUCK_SUBMITTED_ALERT_HOURS`/`MEMPOOL_API_URL`) path is unchanged.
 
+## 2026-08-15 BUG-024 — `/.well-known/arkova-keys.json` was never mounted
+
+`api/proof-keys.ts` was written, unit-tested, `COPY`d into the Docker image, and named by every signed proof bundle's `signing_key_id` — but `index.ts` never imported or mounted `proofKeysRouter`, so the route 404'd on every worker host from the day it shipped. Its sibling `didWebRouter` WAS mounted, so `/.well-known/did.json` returned 200 and the gap read as a routing/CDN problem rather than a missing line. External verifiers could not resolve the public key a bundle names.
+
+- `api/proof-keys.test.ts` could not catch it: that test builds its own Express app and mounts the router itself, so it proved the router works while saying nothing about whether the real app serves it. **A router test is not a mount test.** The composed-app assertion lives in `src/index.test.ts`.
+- The mount rides didWebRouter's existing `app.use(apiIpShadowGuard, didWebRouter, proofKeysRouter)` chain **on purpose**. A second `app.use(apiIpShadowGuard, ...)` would run the shared 60/min limiter twice per request against one bucket, halving the anonymous cap to 30/min — see the F-2 note below for what that class of re-shadowing already cost once.
+- Generally: when adding a public `/.well-known/*` route here, add a `src/index.test.ts` supertest that asserts `status !== 404` through the real `app`.
+
 ## 2026-07-28 SOAK FINDING F-2 — per-IP limiter shadows per-API-key limiter (HIGH, open)
 
 `index.ts:377` mounts a 60 req/min **per-source-IP** limiter on a broad `/api` prefix, ahead of the real 1,000/min-per-API-key limiter. All `/api/v1/*` traffic is capped at 60/min regardless of key tier — contradicts §1.10. This is why the 72h signet soak load plateaued at ~2.6 RPS against a 28 RPS target (a product defect, not rig capacity). Would throttle every paying customer at launch. Canonical writeup: `docs/staging/SOAK-FINDINGS-2026-08.md`. Anyone touching rate limiting in `index.ts` or `middleware/` must know this before adding/reordering limiter mounts.

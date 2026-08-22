@@ -21,8 +21,19 @@ Root vitest globs only `tests/**`, `src/**`, `scripts/**` **from the repo root**
 ## Key Files
 - `mcp-jwt-verify.test.ts` — tests `verifySupabaseJwt` local JWT verification (SCRUM-926 / MCP-SEC-07): forged signatures, expired tokens, wrong aud/iss, missing claims
 - `mcp-security.test.ts` — tests HMAC validation, rate-limiting, and security helpers for the edge MCP proxy (SCRUM-923/919/924/920)
+- `mcp-audit-log.test.ts` — BUG-2026-08-13-016 (P0). Pins the `event_category` casing contract against the DB CHECK, and the classified fail-loud path
+
+## Why these live here and not in `services/edge/`
+The edge worker *does* have a vitest config now (`services/edge/vitest.config.ts`), but **CI never runs it** — `.github/workflows/ci.yml` only typechecks `services/edge/tsconfig.json`. A test placed under `services/edge/src/` therefore gates nothing. Anything that must block a merge belongs in this folder (or `tests/infra/`), which the root suite picks up.
+
+## The lesson from BUG-2026-08-13-016
+`mcp-security.test.ts` asserted `event_category === 'security'` and passed for 2.5 months while the production audit control had never written a row — because its fetch mock returned 201 unconditionally, so the database CHECK constraint was never in the loop. A green test pinned the P0 in place.
+
+- DO: put the real constraint in the loop. `mcp-audit-log.test.ts` derives the allowed set *from the migration file* and its Supabase stub rejects with the actual SQLSTATE (`23514`) — so "the real DB would reject this row" is what fails.
+- DON'T: assert a payload field against a constant you typed by hand from a migration. That is a copy, and copies drift silently.
 
 ## Do / Don't Rules
 - DO: Declare CF Worker types (`KVNamespace`, `R2Bucket`, etc.) locally in the test file — importing `@cloudflare/workers-types` globally breaks frontend type resolution
 - DON'T: Import these tests from the edge worker build — they live here for the CF-type reason above, which is a real constraint (the edge worker DOES have its own vitest config; see the correction at the top)
 - DON'T: assume a new edge test belongs here. If it exercises a module that needs the ambient CF globals (`Ai`, `KVNamespace`, …) — e.g. `services/edge/src/mcp-tools.ts`, which annotates `_ai?: Ai` — it belongs in the edge suite, because the root tsconfig deliberately omits `@cloudflare/workers-types` from global `types`. Only put it here when the code under test is small enough to cover with LOCAL ambient declarations
+- DO: probe `globalThis.crypto?.subtle?.importKey` (not `.digest`) before polyfilling with `node:crypto` webcrypto — jsdom ships a partial `subtle` that HAS `digest` but NOT `importKey`, so a `digest` probe silently leaves the HMAC path broken

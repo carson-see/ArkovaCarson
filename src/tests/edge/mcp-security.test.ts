@@ -287,7 +287,12 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     expect(url).toBe('https://stub.supabase.co/rest/v1/audit_events');
     const body = JSON.parse(init.body as string);
     expect(body.event_type).toBe('MCP_TOOL_CALL');
-    expect(body.event_category).toBe('security');
+    // BUG-2026-08-13-016: this line read `.toBe('security')` and so pinned
+    // the P0 in place — the fetch mock returns 201 unconditionally, so the
+    // CHECK constraint was never in the loop and a green test coexisted with
+    // an audit control that had never written a row. The constraint-enforcing
+    // coverage lives in mcp-audit-log.test.ts.
+    expect(body.event_category).toBe('SECURITY');
     expect(body.actor_id).toBe('u-1');
     expect(body.target_type).toBe('mcp_tool');
     expect(body.target_id).toBe('verify_credential');
