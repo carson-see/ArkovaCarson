@@ -14,13 +14,25 @@
     "",
     "Grandfathered != safe. These are UNREVIEWED. Burning one down means checking the live",
     "prod ACL with has_function_privilege(anon, fn, EXECUTE) and either adding the REVOKE",
-    "or moving the function to DELIBERATELY_PUBLIC in the rule with a reason."
+    "or moving the function to DELIBERATELY_PUBLIC in the rule with a reason.",
+    "",
+    "BURNED DOWN VIA REPLAY PARITY (0418). Four entries left this list without their",
+    "defining file changing: the four refresh_cache_* dashboard refreshers. Their last",
+    "definition is the squashed baseline or the merged 0335, neither of which may be",
+    "edited, so the closing REVOKE is a later compensating migration",
+    "(0418_sec_replay_dashboard_cache_refresher_revokes.sql). They are pinned in",
+    "REPLAY_PARITY_REVOKES in the rule, which checks the TERMINAL state of an ordered",
+    "replay - so deleting 0418 turns them straight back into fresh violations. Their",
+    "0335 keys stay grandfathered on purpose: the next re-definition of those",
+    "functions would re-run ALTER DEFAULT PRIVILEGES and reopen what 0418 closed, so",
+    "whoever writes it still owes an inline revoke."
   ],
-  "_generated": "2026-08-11",
+  "_generated": "2026-08-22",
   "_counts": {
-    "total": 188,
-    "in_squashed_baseline": 136,
-    "in_numbered_migrations": 52
+    "total": 184,
+    "in_squashed_baseline": 132,
+    "in_numbered_migrations": 52,
+    "burned_down_by_replay_parity": 4
   },
   "grandfathered": [
     "00000000000000_baseline_at_main_HEAD.sql::public.activate_user",
@@ -126,10 +138,6 @@
     "00000000000000_baseline_at_main_HEAD.sql::public.recover_stuck_broadcasts",
     "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_anchor_status_counts",
     "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_anchor_tx_stats",
-    "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_anchor_type_counts",
-    "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_by_source",
-    "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_pipeline_stats",
-    "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_record_types",
     "00000000000000_baseline_at_main_HEAD.sql::public.refresh_pipeline_dashboard_cache",
     "00000000000000_baseline_at_main_HEAD.sql::public.refresh_stats_cache",
     "00000000000000_baseline_at_main_HEAD.sql::public.refresh_stats_materialized_views",
