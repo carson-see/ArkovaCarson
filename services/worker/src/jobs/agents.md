@@ -834,7 +834,7 @@ depends on supabase-js `.eq()` path-string tolerance and warrants its own verifi
 - **`docusign-queue-reconciliation.ts` + `docusign-queue-reconciliation-deps.ts` (DS-05 / SCRUM-2365)** — pure `reconcileDocusignQueueDrift()` + prod deps factory. Reconciles the **queue** (distinct from SCRUM-2042's webhook-delivery reconciliation): detects completed DocuSign envelopes MISSING from `connector_artifact` (24h lookback), writes bounded `integration_events` (`event_type='queue_drift_detected'`, ids only) + a Sentry drift alert per gap, and idempotently re-materializes each missing envelope by re-submitting the audited `docusign.envelope_completed` producer job (0343 dedupe ⇒ safe re-drive). §1.6A: the reconciliation NEVER touches bytes — materialization is delegated to the single producer byte path. Member drift routes to the personal queue via `scope`/`owner_user_id`. Per-org isolation: one integration's failure never starves the rest. Cron route `/docusign-queue-reconciliation` (Scheduler daily `0 7 * * *`). Gated OFF by `ENABLE_DOCUSIGN_QUEUE_RECONCILIATION` (default off); re-materialization also depends on `ENABLE_CONNECTOR_ARTIFACT_ENQUEUE`. Runbook: `docs/runbooks/integrations/docusign-queue-reconciliation.md`. (Restored 2026-07-28, lost by the union-merge-driver incident.)
 - SCRUM-2904 — `docusign-anchor-reconciliation.ts` reconciles the TWO DocuSign anchor mechanisms so one envelope → one anchor. (A) DECLARED-HASH rules path (`rule-action-dispatcher.ts` AUTO_ANCHOR/FAST_TRACK_ANCHOR — anchor from an ASSERTED payload hash) vs (B) SERVER-FETCHED connector path (`docusign-envelope-completed.ts` → `connector-artifact-drain.ts` — anchor from the §1.6A MEASURED-bytes fingerprint). **Precedence:** the server-fetched connector path is AUTHORITATIVE. `connectorPathIsAuthoritative()` returns true only when the source has a server-fetch path AND **both** `enableConnectorArtifactEnqueue` **and** `enableConnectorArtifactDrain` are on (never defer into a path that can't complete — that would strand the envelope). When authoritative, the declared-hash path DEFERS (new outcome `deferred_to_connector` / routed_to `connector_pipeline`; no anchor, no credit). Belt-and-suspenders `findExistingEnvelopeAnchor()` (envelope-level guard, matches metadata `source_envelope_id`/`envelope_id`/`external_ref`) is wired into AUTO_ANCHOR + the connector drain's `defaultMaterializeAnchor` to catch the flag-flip-mid-flight race the `(user_id,fingerprint)` index misses (different asserted-vs-measured hashes). §1.6A preserved: reconciliation reads flags + coarse ids only, never bytes. (Restored 2026-07-28, lost by the union-merge-driver incident.)
 - **`credit-conservation-reconciler.ts` (S1-9 / SCRUM-2349 / PM-25)** — money-conservation reconciler daily-sweep CALLER. The reconciler LOGIC is the prod SQL function `org_credit_ledger_divergence(p_org_id uuid DEFAULT NULL)` (added by mig 0341, corrected by mig 0347; service_role EXECUTE, STABLE SECURITY DEFINER), which checks `balance == purchased + monthly_allocation + net(org_credit_allocations) + SUM(org_credit_deductions.amount)` per org. `decideCreditConservationAlert(rows)` is a pure decision fn; `runCreditConservationReconciler(db)` is the cron glue. **Read-only** → idempotent/safe to re-run, and NOT in `ANCHOR_TABLE_IN_PROCESS_JOBS` (a paused anchor pipeline must NOT silence credit-ledger integrity checks). **PII (§1.4):** logs + Sentry carry `org_id` + a COARSE divergence BUCKET only (`bucketDivergence()`) — never raw balance/granted/ledger_sum/expected/divergence. Cron route `/jobs/reconcile-credit-conservation`; in-process backup in `scheduled.ts` (daily `0 9 * * *`). (Restored 2026-07-28, lost by the union-merge-driver incident.)
-- **`queue-digest.ts` / `queue-digest-cron.ts` (QUEUE-07 / SCRUM-2353)** — daily review-queue digest email to org admins. `queue-digest.ts` is the **pure engine**: `buildDigestPayload()` (counts-only HTML: open / aged / failed-connector + action links; returns null for a quiet queue) and `deliverDigestToAdmin()` (suppression → idempotency → retry orchestration over an injected `DigestStore`). **§1.6 hard guard:** `assertNoRawContent()` runs on every scope/payload and throws on any forbidden document key (content/filename/fingerprint/sha256/ocr/…) **or any Buffer/typed-array value by type** — the digest carries COUNTS + action links only, never document bytes/PII (recipient email is the only PII). `queue-digest-cron.ts` is the **production wiring**: `runDailyQueueDigest()` resolves org admins, scopes each admin to their org + owned sub-orgs, reads counts-only metrics, and backs preferences/suppression/delivery-log/retry on `audit_events` — no new migration. Suppression **fails CLOSED** on a read error. Idempotent per (admin, org, UTC date). Gated by `ENABLE_QUEUE_DIGEST`. Prod trigger: `POST /jobs/queue-digest`. T2. (Restored 2026-07-28, lost by the union-merge-driver incident.)
+- **`queue-digest.ts` / `queue-digest-cron.ts` (QUEUE-07 / SCRUM-2353)** — daily review-queue digest email to org admins. `queue-digest.ts` is the **pure engine**: `buildDigestPayload()` (counts-only HTML: open / aged / failed-connector + action links; returns null for a quiet queue) and `deliverDigestToAdmin()` (suppression → idempotency → retry orchestration over an injected `DigestStore`). **§1.6 hard guard:** `assertNoRawContent()` runs on every scope/payload and throws on any forbidden document key (content/filename/fingerprint/sha256/ocr/…) **or any Buffer/typed-array value by type** — the digest carries COUNTS + action links only, never document bytes/PII (recipient email is the only PII). `queue-digest-cron.ts` is the **production wiring**: `runDailyQueueDigest()` resolves org admins, scopes each admin to their org + owned sub-orgs, reads counts-only metrics, and backs preferences/suppression/delivery-log/retry on `audit_events` — no new migration. Suppression **fails CLOSED** on a read error. Idempotent per (admin, org, UTC date). Gated by `ENABLE_QUEUE_DIGEST`. Prod trigger: `POST /jobs/queue-digest`. T2. (Restored 2026-07-28, lost by the union-merge-driver incident.) **Enrollment flipped DEFAULT-ON 2026-08-18 (`feat/queue-digest-default-on`, draft — see the dated entry at the end of this file) — do not read this bullet's "digest email to org admins" as still opt-in.**
 - `attestationAnchor.ts` — `processAttestationAnchoring()` Merkle-batches PENDING attestation fingerprints to Bitcoin via OP_RETURN. Gated by `ENABLE_ATTESTATION_ANCHORING` flag. Dispatches `attestation.active` webhooks and audit events.
 - `docusign-notarization-completed.ts` (SCRUM-1872) — `processDocusignNotarizationCompletedJob()` handles queued `docusign.notarization_completed` jobs. Looks up `legally_binding_attestations` by `docusign_envelope_id`, validates org match (cross-tenant guard) and status (`pending_notarization`), updates row to `notarized` with notary metadata, writes NOTARIZATION_COMPLETED audit event. `runDocusignNotarizationCompletedJobs()` is the queue runner. Handler throws on processor failure so `processNextJob` correctly marks the job as failed (not completed).
 - **`anchorExpirySweep.ts` (SCRUM-1736)** — daily 03:00 UTC sweep that flips `anchors.status` from SECURED to EXPIRED past `expires_at` and dispatches `anchor.expired` outbound webhook. Compare-and-set on UPDATE guards against concurrent revocation. Sentinel `anchor.expired_dispatch_failed` audit row written if dispatch throws so manual recovery is possible (per CodeRabbit PR #734 review). Adapter validates every write via Zod (`AnchorIdSchema`, `AuditEventRowSchema`).
@@ -1092,6 +1092,48 @@ What changed is who else depends on it: `middleware/x402PaymentGate.ts` now pric
 off the `btc_price_usd` this job writes. **This cron is on a money path.** If it stops running, the
 quote goes stale, the reader rejects it past 6 h, and anchor pricing silently loses its entire fee
 component. It was previously only feeding display and alerting.
+
+## 2026-08-18 — QUEUE-07 default-on flip (`feat/queue-digest-default-on`, draft, T2)
+
+CTO decision, per the read-only email/auth/admin capability audit that found the digest fully built
+and completely dark: `ENABLE_QUEUE_DIGEST` was absent from `.github/workflows/deploy-worker.yml`'s
+env block AND from `docs/reference/ENV.md` (undocumented lever), and delivery was **opt-in** via an
+`organization_rules` row that **zero orgs ever created** (prod `QUEUE_DIGEST`-enabled rule count = 0,
+`QUEUE_DIGEST_SENT` audit rows = 0, ever). Two independent gates both closed by construction — the
+flag would not have mattered even if it had been set.
+
+Two changes, both in `queue-digest-cron.ts`:
+
+1. **`ENABLE_QUEUE_DIGEST=true` added to `deploy-worker.yml`'s `--set-env-vars` and documented in
+   `docs/reference/ENV.md`.** The code-level `config.enableQueueDigest` default stays
+   `boolFlag(false)` — prod is now explicitly on, everything else (local/test/preview) stays dark by
+   default unless it also sets the var.
+2. **Enrollment flipped from opt-in to DEFAULT-ON, opt-out.** `listDigestOptedInOrgIds` (queried
+   `.eq('enabled', true)`, so a disabled/absent row both meant "not enrolled") is replaced by
+   `listQueueDigestPreferences` (drops the `enabled` filter — a disabled row must come back, because
+   disabled is now the SIGNAL) + `isOrgEnrolledInQueueDigest`. Same table
+   (`organization_rules`/`trigger_type='QUEUE_DIGEST'`), same Rule Builder UI, opposite polarity:
+   - No row at all → enrolled (the new default; was previously "not enrolled").
+   - `enabled=false` → explicit opt-out (was previously just "still not enrolled"; now it is THE
+     opt-out mechanism).
+   - `enabled=true` → still enrolled, and its `trigger_config.cron`/`timezone` still overrides cadence
+     (F4 unchanged) — this is the pre-flip shape, kept working for backward compatibility even though
+     no prod org currently has one.
+   - Preference-read failure → `listQueueDigestPreferences` returns `null` (not an empty Map) so
+     `isOrgEnrolledInQueueDigest` can fail CLOSED (nobody enrolled that pass) without confusing "read
+     failed" with "confirmed nobody has a preference row" (a real empty Map, which is the everyday
+     case today and correctly means "everyone enrolled").
+   - The existing empty-queue skip (`buildDigestPayload` → `SKIPPED_EMPTY` in `deliverDigestToAdmin`)
+     is untouched and does the "no noise" work: an org counted in `result.admins` can still land in
+     `result.skippedEmpty` with zero mail sent.
+
+**Known gap, deliberately not closed in this change (worker-only PR):** `src/lib/ruleTemplates.ts`'s
+`bgc-daily-digest` template still reads as an opt-IN affordance ("Queue every background check for
+daily review") and — per its own file header, "rules always ship disabled per SEC-02" — creates its
+`QUEUE_DIGEST` rule with `enabled=false` by default. Under the new polarity, an admin who adds this
+template and does nothing else has **silently opted their org out** of a digest they were never told
+existed, rather than opted in to one they wanted. Functionally harmless today (opt-out is a valid
+outcome), but the copy no longer matches the mechanism. Frontend follow-up, not filed against this PR.
 
 ## 2026-08-12 — F-D0-5: the run lease could not bound a HUNG run (`run-lease.ts`, `check-confirmations.ts`)
 

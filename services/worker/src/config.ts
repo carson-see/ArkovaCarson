@@ -133,10 +133,14 @@ const ConfigSchema = z.object({
   enableConfirmationProofBackfill: boolFlag(false),
   /**
    * QUEUE-07 (SCRUM-2353) — gate the daily queue-review digest email job.
-   * Default false: this is a new production email-sending job and must be
-   * explicitly opted in per-environment. When unset OR false,
-   * `runDailyQueueDigest` no-ops (never enumerates admins, never sends mail).
-   * Flip to true only after the soak + a deliberate prod rollout.
+   * Code default false: an environment that never sets this var stays dark
+   * (local/test/preview). Prod's deploy-worker.yml explicitly sets this true
+   * (CTO decision, post-2026-08 default-on flip) — the code default itself
+   * stays false as the safe fallback for any surface the deploy workflow
+   * does not cover. When unset OR false, `runDailyQueueDigest` no-ops (never
+   * enumerates admins, never sends mail). Per-org enrollment is DEFAULT-ON
+   * once this flag is true: an org is enrolled unless it holds an explicit
+   * `organization_rules` opt-out row (see queue-digest-cron.ts).
    */
   enableQueueDigest: boolFlag(false),
   /**

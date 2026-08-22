@@ -3,6 +3,15 @@ _Last updated: 2026-08-03 (merge: PR #1944 Drive review rounds 2-3 create-then-s
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
+## 2026-08-18 — QUEUE-07 `ENABLE_QUEUE_DIGEST` activation note (`feat/queue-digest-default-on`, draft, T2)
+
+`config.ts`'s `enableQueueDigest` (boolFlag, existing since QUEUE-07/SCRUM-2353) was never actually
+true anywhere — `.github/workflows/deploy-worker.yml` never set the env var, so prod ran on the code
+default `false`. No config.ts schema change here, only the comment updated to record that
+`deploy-worker.yml` now sets it explicitly (see that folder's `agents.md`) and that per-org enrollment
+in `jobs/queue-digest-cron.ts` is DEFAULT-ON as of this PR, not opt-in. See
+`jobs/agents.md`'s dated entry for the full mechanism.
+
 ## 2026-08-11 BUG-2026-08-11 — `index.ts` fee-estimator singleton was network-blind
 
 The module-level `feeEstimatorInstance` (the `/health` fee estimator, created once at boot to avoid
