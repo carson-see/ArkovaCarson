@@ -1,6 +1,22 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-20 (workflow curl redirect-protocol ratchet)._
+_Last updated: 2026-08-22 (preflight-timestamp residual-risk symmetry)._
+
+## 2026-08-22 — preflight-timestamp residual-risk symmetry (PR #2329)
+
+`check-staging-evidence.ts`: `preflightTimestampErrors()` now shares the escape hatch `preflightResultErrors()` always had, via the new `preflightExceptionErrors()` helper. Both call `hasResidualRiskException()`, so both demand the same five sub-fields and the same real-approver guard.
+
+**Why it was a defect and not a nicety.** `Preflight result:` could say "dirty" behind a note. `Preflight timestamp:` could say nothing at all — and it is a REQUIRED field at T2/T3, so omitting it tripped `missingFields()` instead. That made "we ran a bad preflight" expressible and "we ran none" inexpressible, which rewards running a worthless preflight over running none and pressures an author toward pasting some OTHER window's timestamp to make the block parse. That is the stale-evidence reuse CLAUDE.md §1.11A forbids, and it nearly happened on the chain-pair window (a `clean_mirror` reading 8 days stale, belonging to rig provisioning rather than the soak). 19 PRs across three closed windows were blocked by authors who correctly refused to fabricate a value.
+
+**The predicate.** `classifyPreflightTimestamp()` returns exactly one of `ok` / `not-run` / `late` / `unparseable`. `not-run` and `late` are accepted ONLY behind a valid approved note; `unparseable` is still a hard error; `ok` is unchanged.
+
+Three properties to preserve if you touch this:
+
+- **The sentinel set is CLOSED and matched by exact membership** (`PREFLIGHT_NOT_RUN_SENTINELS`, a literal `Set`): `NOT RUN` / `NOT-RUN` / `NOTRUN`, `NO PREFLIGHT` / `NO-PREFLIGHT` / `NOPREFLIGHT`, `NONE`, `N/A` / `NA` / `N.A` / `N.A.`, `NOT APPLICABLE` / `NOT-APPLICABLE` / `NOTAPPLICABLE`. An optional trailing reason is cut at the first `PREFLIGHT_REASON_SEPARATOR_RE` hit, in which a plain hyphen must be preceded by whitespace so `NOT-RUN` is not read as `NOT` plus a reason. **Two SonarCloud findings shaped this and both were fixed by extraction, not suppression** — keep it that way: one big alternation regex tripped `typescript:S5843` (complexity 26 > 20), and the obvious replacement `(?:\s+[-—–:]|[—–:])\s*\S[\s\S]*$` tripped `typescript:S8786` because an unanchored `\s+` is retried from every position (quadratic on a long whitespace run). The surviving form is a Set plus two fixed-length, quantifier-free separator alternatives. Prose that merely *talks about* not running a preflight (`none of the preflight checks were captured`) is NOT a member and still hard-fails. Do not relax this to a substring or keyword match — free text through this field is how the gate stops being a gate. Eight near-miss tests pin it, and forcing the membership test to `true` reds 24 tests.
+- **Sentinels are matched BEFORE `Date.parse`.** Reversing that order would let any sentinel V8 happens to parse be silently accepted as a real reading.
+- **An absent label is still owned by `missingFields()`.** `preflightTimestampErrors()` returns `[]` for a null value on purpose — it is not waiving anything, the required-field check already rejected the body. The note buys the ability to say `NOT RUN` out loud, not the ability to stay silent.
+
+**The note is not a blanket bypass.** It is scoped to the preflight fields only: soak duration, head/base SHA identity, evidence scope, and the deploy-artifact value checks all run independently, pinned by two explicit "does not waive" tests. And `preflightExceptionNotes()` makes every acceptance announce itself — without it a `clean_mirror`-but-late reading would pass silently, since `preflightIsClean` is true in that case and the pre-existing result-note branch never fires.
 
 ## 2026-08-20 — `check-workflow-curl-redirect-protocol.test.ts` (new)
 

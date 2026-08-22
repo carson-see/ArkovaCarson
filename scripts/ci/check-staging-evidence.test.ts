@@ -3201,6 +3201,201 @@ describe('check-staging-evidence', () => {
     });
   });
 
+  // ── Preflight-timestamp symmetry ──
+  // `Preflight result:` always had an escape hatch: a non-clean_mirror reading
+  // is expressible behind an approved `### Residual-risk note`. `Preflight
+  // timestamp:` had none — so "a dirty preflight ran" was sayable while "no
+  // preflight ran" and "a clean preflight ran late" were not, and the field is
+  // REQUIRED at T2/T3. That asymmetry rewarded running a worthless preflight
+  // over running none, and pressured authors toward pasting some other
+  // window's timestamp — the exact stale-evidence reuse CLAUDE.md §1.11A
+  // forbids. These pin the symmetric rule: expressible, but only behind the
+  // same approved note, and no looser.
+  describe('preflight-timestamp residual-risk symmetry', () => {
+    const headSha = '1234567890abcdef1234567890abcdef12345678';
+    const baseSha = 'abcdef1234567890abcdef1234567890abcdef12';
+
+    const REAL_APPROVER_NOTE = `
+### Residual-risk note (preflight timestamp not a pre-clock reading)
+- Contamination type: unknown — no preflight was captured for this window
+- Affected rows: unknown; shared staging ledger not sampled at clock start
+- Impact on this PR: worker-only change, no migration or schema surface
+- Reason not cleaned: soak window already closed; re-running the preflight now would not describe the soaked state
+- Approved by: Carson (2026-08-21)
+`;
+
+    const PLACEHOLDER_APPROVER_NOTE = `
+### Residual-risk note (preflight timestamp not a pre-clock reading)
+- Contamination type: unknown — no preflight was captured for this window
+- Affected rows: unknown; shared staging ledger not sampled at clock start
+- Impact on this PR: worker-only change, no migration or schema surface
+- Reason not cleaned: soak window already closed
+- Approved by: TBD
+`;
+
+    /** A merge-grade T2 body with a caller-chosen `Preflight timestamp:` line. */
+    function t2Body(opts: { preflightTimestampLine?: string; note?: string } = {}): string {
+      const tsLine = opts.preflightTimestampLine === undefined
+        ? '- Preflight timestamp: 2026-08-21 13:55 UTC'
+        : opts.preflightTimestampLine;
+      return `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00190-diz
+- PR head SHA: ${headSha}
+- Changed behavior: DocuSign envelope fetch retries once on a 429 before failing the job
+- Targeted evidence: staging replay of POST /api/v1/docusign/envelopes hit 429 then succeeded on retry
+- Load/concurrency evidence: tests/load fixture exercised the changed behavior under high-concurrency users
+- Base SHA: ${baseSha}
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+${tsLine}${tsLine === '' ? '' : '\n'}- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-08-21 14:00 UTC
+- Soak end: 2026-08-22 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: yes — redeployed the prior revision and back
+- Staging deploy log id: 142
+${opts.note ?? ''}`;
+    }
+
+    function run(body: string) {
+      return check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha,
+        baseSha,
+      });
+    }
+
+    it('still passes the clean case: preflight timestamp at or before soak start', () => {
+      const r = run(t2Body());
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+    });
+
+    it('fails when the Preflight timestamp label is absent and there is no note', () => {
+      const r = run(t2Body({ preflightTimestampLine: '' }));
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/missing required fields.*Preflight timestamp:/is);
+    });
+
+    it('fails a NOT RUN sentinel with no residual-risk note', () => {
+      const r = run(t2Body({ preflightTimestampLine: '- Preflight timestamp: NOT RUN' }));
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/no preflight was run/i);
+      expect(r.errors.join(' ')).toMatch(/Residual-risk note/i);
+    });
+
+    it('fails a NOT RUN sentinel whose note names a placeholder approver', () => {
+      const r = run(t2Body({
+        preflightTimestampLine: '- Preflight timestamp: NOT RUN',
+        note: PLACEHOLDER_APPROVER_NOTE,
+      }));
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Approved by/i);
+    });
+
+    it('passes a NOT RUN sentinel behind a note naming a real approver', () => {
+      const r = run(t2Body({
+        preflightTimestampLine: '- Preflight timestamp: NOT RUN',
+        note: REAL_APPROVER_NOTE,
+      }));
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/preflight timestamp/i);
+    });
+
+    it.each([
+      '- Preflight timestamp: NOT RUN — rig was provisioned 8 days before this window',
+      '- Preflight timestamp: not run',
+      '- Preflight timestamp: NONE',
+      '- Preflight timestamp: N/A',
+      '- Preflight timestamp: not applicable - shared rig, no pre-clock sample',
+      '- Preflight timestamp: no preflight',
+      // The reason splitter must not mistake the hyphen INSIDE `NOT-RUN` for a
+      // reason separator, and a colon separates without a leading space.
+      '- Preflight timestamp: NOT-RUN',
+      '- Preflight timestamp: NOT RUN: window closed before the preflight was wired',
+      '- Preflight timestamp: N/A — 2026-08-13 reading belongs to rig provisioning, not this soak',
+    ])('accepts sentinel %s behind an approved note', (preflightTimestampLine) => {
+      const r = run(t2Body({ preflightTimestampLine, note: REAL_APPROVER_NOTE }));
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+    });
+
+    it('fails a timestamp later than Soak start with no residual-risk note', () => {
+      const r = run(t2Body({ preflightTimestampLine: '- Preflight timestamp: 2026-08-21 14:24 UTC' }));
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/at or before Soak start/i);
+    });
+
+    it('passes a timestamp later than Soak start behind a note naming a real approver', () => {
+      const r = run(t2Body({
+        preflightTimestampLine: '- Preflight timestamp: 2026-08-21 14:24 UTC',
+        note: REAL_APPROVER_NOTE,
+      }));
+      expect(r.errors).toEqual([]);
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/preflight timestamp/i);
+    });
+
+    it('fails a late timestamp whose note names a placeholder approver', () => {
+      const r = run(t2Body({
+        preflightTimestampLine: '- Preflight timestamp: 2026-08-21 14:24 UTC',
+        note: PLACEHOLDER_APPROVER_NOTE,
+      }));
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Approved by/i);
+    });
+
+    it.each([
+      '- Preflight timestamp: whenever',
+      '- Preflight timestamp: ran it at some point before the clock',
+      '- Preflight timestamp: YYYY-MM-DD HH:MM UTC',
+      '- Preflight timestamp: clean',
+      '- Preflight timestamp: see the soak doc',
+      '- Preflight timestamp:',
+      // Near-misses that pin the anchoring: a value that merely TALKS ABOUT
+      // not running a preflight is prose, not a sentinel. A reason must be
+      // separated by a dash or colon so the sentinel set stays closed.
+      '- Preflight timestamp: none of the preflight checks were captured',
+      '- Preflight timestamp: not run because the rig was freshly provisioned',
+    ])('rejects unrecognised free text %s even behind an approved note', (preflightTimestampLine) => {
+      const r = run(t2Body({ preflightTimestampLine, note: REAL_APPROVER_NOTE }));
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/could not parse/i);
+    });
+
+    it('does not let the note waive anything beyond the preflight fields', () => {
+      // Same approved note, but the soak clock is 2h on a 12h T2 floor. The
+      // note must not become a blanket bypass.
+      const shortSoak = t2Body({
+        preflightTimestampLine: '- Preflight timestamp: NOT RUN',
+        note: REAL_APPROVER_NOTE,
+      }).replace('- Soak end: 2026-08-22 02:00 UTC', '- Soak end: 2026-08-21 16:00 UTC');
+      const r = run(shortSoak);
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/below the 12h minimum/i);
+    });
+
+    it('does not let the note waive a stale PR head SHA', () => {
+      const r = check({
+        body: t2Body({
+          preflightTimestampLine: '- Preflight timestamp: NOT RUN',
+          note: REAL_APPROVER_NOTE,
+        }),
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha: 'feedfacefeedfacefeedfacefeedfacefeedface',
+        baseSha,
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/PR head/i);
+    });
+  });
+
   // Gap 1: at T2/T3 the deploy-evidence fields (Worker revision, Cloud Run
   // service/tag URL, Image digest, Staging deploy log id, …) were never
   // value-checked — only their labels were required. A PR could go green with
