@@ -71,6 +71,17 @@ const KEYWORD_END = '(?![A-Za-z])';
 /** Joins keyword tokens separator-insensitively: `tok('student','id')` → `student[\s_-]*id`. */
 const tok = (...tokens: string[]): string => tokens.join(KEYWORD_SEP);
 
+/**
+ * Separator for keyword pairs whose SPACED form is also an ordinary prose bigram.
+ * `post code` is the only one so far: "please post code to the repo" must not be
+ * read as an address label, while the `post_code` / `post-code` / `postcode` CSV
+ * header forms must. `_`, `-` or nothing — a space is not a separator here.
+ */
+const KEYWORD_SEP_TIGHT = '[_-]?';
+
+/** Joins keyword tokens without accepting a space: `tokTight('post','code')` → `post[_-]?code`. */
+const tokTight = (...tokens: string[]): string => tokens.join(KEYWORD_SEP_TIGHT);
+
 /** Builds a bounded, separator-insensitive keyword prefix pattern (keyword + optional `:`). */
 function keywordPattern(alternatives: string[]): RegExp {
   return new RegExp(
@@ -115,14 +126,37 @@ const STUDENT_ID_KEYWORD = keywordPattern([
 ]);
 const ID_VALUE = /[A-Za-z0-9]{5,12}/;
 
+/**
+ * Qualifiers that precede `address` / `street` in real CSV headers.
+ *
+ * The separated forms (`home_address`, `home address`) already matched, because
+ * `_` and a space are keyword boundaries and the bare `address` alternative picks
+ * up from there. The camelCase and unseparated forms did not: the character before
+ * `Address` in `homeAddress` is a letter, `KEYWORD_START` fails, and the whole
+ * value shipped to the extractor in the clear.
+ */
+const ADDRESS_QUALIFIER =
+  'home|mailing|postal|street|business|work|permanent|current|residential';
+
 // PII-07: Postal/ZIP codes (context-aware — only after address keywords)
 const ADDRESS_KEYWORD = keywordPattern([
+  // Qualified forms come FIRST. Alternation is ordered, so with `street` ahead of
+  // it, `street_address:` matched only its `street` half and the value pattern ate
+  // the rest of the label — emitting `street[ADDRESS_REDACTED]` and destroying a
+  // column name the extractor is called to read.
+  tok(`(?:${ADDRESS_QUALIFIER})`, '(?:address|street)'),
   'address',
   'street',
   tok('postal', 'code'),
   tok('zip', '(?:code)?'),
-  'postcode',
+  tokTight('post', 'code'),
 ]);
+
+/**
+ * A line that opens a new `<label>: <value>` field — the stop condition for the
+ * multi-line address capture in `stripAddressValues`.
+ */
+const FIELD_LABEL_LINE = '[ \\t]*[A-Za-z][A-Za-z0-9 _-]{0,40}:';
 
 // PII-06: EU-format DOB (DD/MM/YYYY, DD.MM.YYYY) after DOB keywords
 const DATE_DDMMYYYY = /\d{2}[/.-]\d{2}[/.-]\d{4}/;
@@ -287,9 +321,17 @@ function stripAddressValues(
   //   Address: 123 Main St
   //   Apt 4B
   //   New York, NY 10001
+  //
+  // A continuation line stops at anything that opens a new `<label>: <value>` field.
+  // Without that guard the CSV bulk-upload path — one column per line — lost up to
+  // two columns after every address column: `postal_code: SW1A 1AA` +
+  // `issue_date: 2026-03-14` collapsed to `postal_code: [ADDRESS_REDACTED]` and the
+  // issue date never reached the extractor. Same line-crossing class the national-ID
+  // rule already fixed. Genuine continuations (`Apt 4B`, `New York, NY 10001`) carry
+  // no label and are still captured.
   result = result.replace(
     new RegExp(
-      `(${ADDRESS_KEYWORD.source})([^\\n]{5,80}(?:\\n[^\\n]{3,80}){0,2})`,
+      `(${ADDRESS_KEYWORD.source})([^\\n]{5,80}(?:\\n(?!${FIELD_LABEL_LINE})[^\\n]{3,80}){0,2})`,
       'gi',
     ),
     (_match, prefix: string) => {

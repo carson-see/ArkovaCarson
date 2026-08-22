@@ -24,8 +24,48 @@ Net precision **improved**: `Zipper pouches` and `addressing` used to be redacte
 
 Two things found while doing this, recorded so nobody re-derives them:
 
-- **Value patterns must not cross a line break.** `NATIONAL_ID`'s value class used `\s`, which includes `\n`, so a 10-char ID ran greedily onto the next line and swallowed that line's label — in the `"<column>: <value>"` per-line text the CSV upload builds, `national_id: AB.123/456` ate the `course_name` header and destroyed the credential title the extractor reads. Now bounded to space and tab. Pre-existing (reproducible at HEAD through the spaced `National ID:` form), strictly narrowing. `ADDRESS_KEYWORD`'s value is *deliberately* multi-line (CRIT-4, up to 3 lines) and was left alone — which does mean an `address:` column in a CSV row still consumes the two columns after it.
+- **Value patterns must not cross a line break.** `NATIONAL_ID`'s value class used `\s`, which includes `\n`, so a 10-char ID ran greedily onto the next line and swallowed that line's label — in the `"<column>: <value>"` per-line text the CSV upload builds, `national_id: AB.123/456` ate the `course_name` header and destroyed the credential title the extractor reads. Now bounded to space and tab. Pre-existing (reproducible at HEAD through the spaced `National ID:` form), strictly narrowing. `ADDRESS_KEYWORD`'s value is *deliberately* multi-line (CRIT-4, up to 3 lines) and was left alone — which does mean an `address:` column in a CSV row still consumes the two columns after it. **Closed by PR #2313 — see the next section; do not cite this sentence as current behaviour.**
 - **`EMAIL_PATTERN` is quadratic and was NOT fixed here.** `[a-zA-Z0-9._%+-]+@…` backtracks one character at a time from every start position when the input has no `@`: measured 64,004 ms on a 100k-char input, versus 0 ms for SSN and phone and 0–1 ms for all four keyword rules on the same input. `stripPII` runs in the browser on raw OCR text, so a large scanned document freezes the tab. Out of scope for this PR; tracked separately.
+
+_Last updated: 2026-08-22_
+
+## Address coverage the separator fix did not reach (PR #2313)
+
+PR #2312 (above) made every keyword separator-insensitive, which is why `postal_code`,
+`postcode`, `zip_code` and `ZIP90210` all redact on `main`. Three address-specific holes
+survived it. All three only show up on the CSV bulk-upload path, where `csvRowText.ts`
+serialises each row as one `"<column>: <value>"` line per column — the shape `ADDRESS_KEYWORD`
+was never written for.
+
+- **Qualified labels in camelCase / unseparated form leaked.** `home_address` and
+  `home address` already matched, because `_` and a space are `KEYWORD_START` boundaries and
+  the bare `address` alternative picks up from there. `homeAddress` did not: the character
+  before `Address` is a letter, the boundary fails, and the value shipped in the clear.
+  `ADDRESS_QUALIFIER` (`home|mailing|postal|street|business|work|permanent|current|residential`)
+  now composes with `address` / `street` as a **first** alternative. Order is load-bearing:
+  alternation is ordered, and with bare `street` ahead of it, `street_address:` matched only its
+  `street` half and the value pattern ate `_address: `, emitting `street[ADDRESS_REDACTED]` —
+  redacted, but with the column name destroyed.
+- **`post_code` / `post-code` leaked.** `postcode` was a raw literal, so the separator fix never
+  reached it. It is now `tokTight('post', 'code')`. **`tokTight()` is a new, deliberately
+  narrower sibling of `tok()`** — `[_-]?`, no space — because `post code` spaced is an ordinary
+  prose bigram and this module is SHARED with the OCR document path: `tok()` here would redact
+  the rest of the line in "please post code to the repo". Use `tok()` by default; reach for
+  `tokTight()` only when the spaced form is real English. Both directions are pinned.
+- **The multi-line address capture swallowed the following columns.** CRIT-4 lets an address
+  value run up to 3 lines, which is right for OCR (`Apt 4B`, `New York, NY 10001`) and wrong
+  per-column: `postal_code: SW1A 1AA` + `issue_date: 2026-03-14` collapsed to
+  `postal_code: [ADDRESS_REDACTED]` and the issue date never reached the extractor. A
+  continuation line now stops at `FIELD_LABEL_LINE` (`[ \t]*[A-Za-z][A-Za-z0-9 _-]{0,40}:`).
+  Genuine continuations carry no `<label>:` opener and are still captured — the unlabelled
+  three-line OCR address is pinned in the same block. This is the same line-crossing class
+  #2312 fixed for `NATIONAL_ID`, applied to the address rule.
+
+Scope note for anyone reading the PR: #2313 was branched before #2312 existed and originally
+carried its own parallel copy of the separator machinery (`SEP` / `SEP_OPT` / `KEYWORD_TAIL`,
+plus a lookbehind that Safari <16.4 does not support). That was dropped wholesale in the
+`origin/main` merge in favour of `main`'s `tok()` / `keywordPattern()`; what remains is only
+the address delta above.
 
 ## 2026-08-18 — Kenya card neutralized (Tranche 0) + Section 3 corrected (counsel-ordered, `hotfix/kenya-transfer-basis-removal`)
 

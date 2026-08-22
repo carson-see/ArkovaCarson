@@ -452,6 +452,122 @@ describe('piiStripper', () => {
     });
   });
 
+  // ─── Address coverage the separator fix did not reach (PR #2313) ────
+  //
+  // #2312 made every keyword separator-insensitive, which covers `postal_code`
+  // and `postcode`. Three address-specific holes survived it, all of them on the
+  // CSV bulk-upload path where each column is its own `"<column>: <value>"` line.
+  describe('address labels carrying a qualifier', () => {
+    // `home_address` already matched, because `_` is a keyword boundary and the
+    // bare `address` alternative picks up from there. The camelCase and
+    // unseparated forms did NOT: the character before `Address` is a letter, so
+    // the boundary fails and the whole value shipped in the clear.
+    const qualified = [
+      ['homeAddress', '123 Main Street'],
+      ['mailingAddress', '1 Rue de Rivoli'],
+      ['postalAddress', '10 Downing Street'],
+      ['streetAddress', '742 Evergreen Terrace'],
+      ['businessAddress', '30 St Mary Axe'],
+      ['workAddress', '55 Water Street'],
+      ['permanentAddress', '221B Baker Street'],
+      ['currentAddress', '4 Privet Drive'],
+      ['residentialAddress', '12 Grimmauld Place'],
+      ['homeaddress', '9 Bond Street'],
+    ] as const;
+
+    it.each(qualified)('redacts %s and keeps the label intact', (label, value) => {
+      const result = stripPII(`${label}: ${value}`);
+      expect(result.strippedText).toBe(`${label}: [ADDRESS_REDACTED]`);
+      expect(result.strippedText).not.toContain(value);
+      expect(result.piiFound).toContain('address');
+    });
+
+    it('redacts a qualified street label', () => {
+      const result = stripPII('businessStreet: 12 Long Acre');
+      expect(result.strippedText).toBe('businessStreet: [ADDRESS_REDACTED]');
+      expect(result.piiFound).toContain('address');
+    });
+
+    // Regression on the OTHER failure mode: `street_address` DID redact, but it
+    // matched only its `street` half, so the value pattern swallowed the rest of
+    // the label and emitted `street[ADDRESS_REDACTED]`. The column name is
+    // metadata the extractor reads — destroying it is a bug in its own right.
+    it('keeps the whole street_address label instead of eating half of it', () => {
+      const result = stripPII('street_address: 123 Main St');
+      expect(result.strippedText).toBe('street_address: [ADDRESS_REDACTED]');
+    });
+
+    it('keeps the whole "street address" label', () => {
+      const result = stripPII('street address: 123 Main St');
+      expect(result.strippedText).toBe('street address: [ADDRESS_REDACTED]');
+    });
+  });
+
+  describe('post_code / post-code separator forms', () => {
+    it.each(['postcode', 'post_code', 'post-code'])('redacts %s', (label) => {
+      const result = stripPII(`${label}: SW1A 1AA`);
+      expect(result.strippedText).toBe(`${label}: [ADDRESS_REDACTED]`);
+      expect(result.piiFound).toContain('address');
+    });
+
+    // Precision boundary: this module is SHARED with the OCR document path, and
+    // "post code" is an ordinary prose bigram. Only the `_` / `-` / unseparated
+    // header forms are address keywords — a plain space is not.
+    it('leaves the prose bigram "post code" alone', () => {
+      const text = 'Please post code to the repository before the review';
+      expect(stripPII(text).strippedText).toBe(text);
+    });
+
+    it('leaves "postcodes" alone', () => {
+      const text = 'postcodes are validated on submission';
+      expect(stripPII(text).strippedText).toBe(text);
+    });
+
+    it('leaves "compost code" alone', () => {
+      const text = 'compost code: nothing personal here';
+      expect(stripPII(text).strippedText).toBe(text);
+    });
+  });
+
+  // The multi-line address capture predates the CSV path. On a per-line
+  // "<column>: <value>" row it read the NEXT columns as continuation lines and
+  // collapsed up to two of them into the redaction token, so the extractor never
+  // saw them. Same line-crossing class #2312 fixed for NATIONAL_ID, address rule.
+  describe('multi-line address capture stops at the next column', () => {
+    it('does not swallow the column after postal_code', () => {
+      const result = stripPII('postal_code: SW1A 1AA\nissue_date: 2026-03-14');
+      expect(result.strippedText).toBe('postal_code: [ADDRESS_REDACTED]\nissue_date: 2026-03-14');
+    });
+
+    it('does not swallow the two columns after an address column', () => {
+      const result = stripPII(
+        'address: 123 Main St\nissue_date: 2026-03-14\ncourse_name: Advanced Cardiac Life Support',
+      );
+      expect(result.strippedText).toBe(
+        'address: [ADDRESS_REDACTED]\nissue_date: 2026-03-14\ncourse_name: Advanced Cardiac Life Support',
+      );
+    });
+
+    it('does not swallow the column after zip_code', () => {
+      const result = stripPII('zip_code: 90210\nissue_date: 2026-03-14');
+      expect(result.strippedText).toBe('zip_code: [ADDRESS_REDACTED]\nissue_date: 2026-03-14');
+    });
+
+    it('stops at a labelled column that follows a genuine continuation line', () => {
+      const result = stripPII('address: 123 Main St\nSuite 400\ncourse_name: ACLS');
+      expect(result.strippedText).toBe('address: [ADDRESS_REDACTED]\ncourse_name: ACLS');
+      expect(result.strippedText).not.toContain('Suite 400');
+    });
+
+    // The guard must not cost the OCR case it was written for: real address
+    // continuations carry no `<label>:` opener and are still captured.
+    it('still captures an unlabelled multi-line postal address', () => {
+      const result = stripPII('Address: 123 Main St\nApt 4B\nNew York, NY 10001');
+      expect(result.strippedText).toBe('Address: [ADDRESS_REDACTED]');
+      expect(result.piiFound).toContain('address');
+    });
+  });
+
   describe('CRIT-4: expanded national ID patterns', () => {
     it('strips Aadhaar numbers (12 digits with spaces)', () => {
       const result = stripPII('Aadhaar: 1234 5678 9012');
