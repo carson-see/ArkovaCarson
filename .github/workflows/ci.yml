@@ -64,7 +64,28 @@ jobs:
       # ciContext.fetchLiveLabels() reads labels from the API so a label-gated
       # override still works on a plain re-run, where the frozen pull_request
       # payload would not carry it (PR #1336). Degrades to env-only without this.
+      #
+      # This permission is HALF the requirement — see the job-level GH_TOKEN below.
       pull-requests: read
+    env:
+      # `pull-requests: read` scopes the token; it does not SUPPLY one. `gh`
+      # authenticates only from GH_TOKEN / GITHUB_TOKEN — actions/checkout
+      # persists credentials into git config, which `gh` never reads. Without
+      # this, ciContext.fetchLiveLabels() throws, is swallowed to `[]`, and
+      # resolvePrLabels() silently degrades to the FROZEN pull_request payload:
+      # every override label in this job then only works if it was already on
+      # the PR when the webhook fired, so the documented "apply the label, then
+      # re-run the failed job" remediation is inert (confirmed on PR #2322,
+      # 2026-08-22 — `agents-md-deletion-approved` applied, `gh run rerun
+      # --failed`, same failure).
+      #
+      # Job-level ON PURPOSE: ~11 steps here are label-gated
+      # (agents-md-deletion-approved / dep-range-intentional /
+      # csp-runtime-deps-intentional / …) and the next one added must inherit
+      # this rather than have to remember it. `scripts/ci/
+      # check-pr-labels-token-parity.test.ts` fails if a job seeds PR_LABELS
+      # without a token.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -359,6 +380,14 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    env:
+      # Same pairing as dependency-scan above: `pull-requests: read` scopes the
+      # token but does not supply one, and `gh` reads only GH_TOKEN /
+      # GITHUB_TOKEN. Without this, every label-gated override in this job
+      # (feedback rules, coverage-drop-allowed, count-exact-allowed,
+      # handoff-narrative-only, confluence-drift-skip, …) silently falls back to
+      # the frozen pull_request payload and cannot be applied on a re-run.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
