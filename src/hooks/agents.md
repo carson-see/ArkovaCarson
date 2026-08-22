@@ -1,4 +1,13 @@
 # agents.md — hooks
+_Last updated: 2026-08-12_
+
+## 2026-08-12 — `useApiKeys.ts`: revoke/delete actually reachable now (FD-P7)
+
+`revokeKey(keyId)` / `deleteKey(keyId)` were dead paths: the worker stripped `id` from every key
+response, so `ApiKeyMasked.id` was a type the server never satisfied and the PATCH/DELETE calls
+addressed `/api/v1/keys/undefined`. The worker now returns `id` (plus nullable `revoked_at` /
+`revocation_reason`, added to `ApiKeyMasked` as optional — a pre-fix worker omits them). No hook
+logic changed; do not "fix" the id-based addressing to key_prefix — the prefix is not unique.
 _Last updated: 2026-08-15_
 
 ## 2026-08-15 — `useAnchor.ts` settled-state semantics (BUG-2026-08-13-017)

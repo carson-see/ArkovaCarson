@@ -21,6 +21,7 @@ import {
 describe('SCRUM-1442 — v1 response schemas', () => {
   it('KeyResponseShape rejects unknown fields (catches future leak regressions)', () => {
     const result = KeyResponseShape.safeParse({
+      id: '4dfc0d78-3f19-4a5e-9d0a-2f6b7c8d9e0f',
       key_prefix: 'arkv_live_abc',
       name: 'Test',
       scopes: ['verify'],
@@ -28,14 +29,15 @@ describe('SCRUM-1442 — v1 response schemas', () => {
       is_active: true,
       created_at: '2026-04-27T00:00:00Z',
       expires_at: null,
-      // Future regression: someone adds the internal id field back.
-      id: 'should-not-pass',
+      // Regression canary: a secret-bearing field must never pass.
+      key_hash: 'should-not-pass',
     });
     expect(result.success).toBe(false);
   });
 
-  it('KeyResponseShape accepts the public-safe shape', () => {
+  it('KeyResponseShape accepts the public-safe shape (id addressable per FD-P7)', () => {
     const result = KeyResponseShape.safeParse({
+      id: '4dfc0d78-3f19-4a5e-9d0a-2f6b7c8d9e0f',
       key_prefix: 'arkv_live_abc',
       name: 'Test',
       scopes: ['verify'],
@@ -43,6 +45,8 @@ describe('SCRUM-1442 — v1 response schemas', () => {
       is_active: true,
       created_at: '2026-04-27T00:00:00Z',
       expires_at: null,
+      revoked_at: null,
+      revocation_reason: null,
     });
     expect(result.success).toBe(true);
   });

@@ -2,6 +2,36 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-12 — FD-P7: key revocation/deletion were unreachable from every client (CC6.8)
+
+`toPublicKey` (keys.ts) stripped `id` from create AND list responses (SCRUM-1271-D) while the frozen
+v1 revoke/delete routes are addressed by `:keyId` — so no client could ever revoke or delete a key,
+defeating the CC6.8 control asserted to the SOC 2 auditor. Found live on the 2026-08 fullsoak rig.
+
+**Decision: `id` is back in key responses** (create/list/PATCH), matching the uuid-leak runbook's
+Phase 3 posture (v1 carries the UUID until v2 ships). By-prefix addressing was rejected because
+`key_prefix` has NO unique constraint (only a length ≥ 8 CHECK and 4 visible hex chars of entropy) —
+an ambiguous prefix would make the same control unreachable again, data-dependently. `org_id` and
+`key_hash` remain stripped; `BANNED_RESPONSE_KEYS` never banned `id`.
+
+Also fixed in the same change: PATCH `is_active:false` now stamps `revoked_at = now()` and an
+optional `revocation_reason` (first revocation wins; repeat revokes cannot rewrite the record), so a
+CC6.8 designation export no longer reads `revoked = false` after a product-path revoke. Reactivating
+a revoked key is refused 409 — migration 0382's `validate_api_key` never authenticates a key with
+`revoked_at` set, so `is_active:true` would create a row that lies about being live. The full
+lifecycle (create → list → revoke → refused 401 → delete) is pinned by `keys-revocation.test.ts`
+against the real router + real `apiKeyAuth` middleware.
+
+Review hardening (same PR, ported from the parallel #2218 fix plus its review): the revocation
+stamp is issued as its own UPDATE guarded by `revoked_at IS NULL`, so two concurrent first revokes
+cannot both stamp — the database arbitrates and the losing write no-ops (pinned by a deterministic
+microtask-lockstep race test). The reactivation refusal now returns a machine-readable 409 body
+(`error: 'api_key_already_revoked'`, matching `apiKeyAuth`'s `api_key_revoked`/`api_key_expired`
+style). The `api_key.revoked` audit payload carries the PERSISTED `revoked_at`/`revocation_reason`
+from the post-update row — a repeat revoke can no longer log a reason the table never stored. The
+three copies of the response select-list collapsed into one `KEY_RESPONSE_COLUMNS` constant (the
+drift-by-duplication pattern that produced FD-P7 in the first place).
+
 ## 2026-08-11 — `POST /cle/submit` created anchors attributed to no organisation
 
 Same defect family as the `registry-anchor` entry below ("creating an anchor row is not the same
