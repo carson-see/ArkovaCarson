@@ -5,6 +5,11 @@ _Last updated: 2026-08-15 (BUG-2026-08-13-010 connector fetch-time fingerprint c
 ## 2026-08-15 BUG-2026-08-13-010 — connector-sourced re-verify caveat (§1.5/§1.6A)
 
 `AssetDetailView.tsx`: when `isConnectorSourcedAnchorMetadata(anchor.metadata)` (closed `connector_source` marker set, `src/lib/connectorFingerprint.ts`), the Re-verify card shows `CONNECTOR_FINGERPRINT_LABELS.REVERIFY_NOTE` (testid `connector-fingerprint-reverify-note`) and the mismatch alert appends `REVERIFY_MISMATCH_HINT` (testid `connector-fingerprint-mismatch-hint`). Rationale: connector fingerprints commit the exact bytes AS FETCHED at securing time; source systems may regenerate the file per download (soak-proven against DocuSign), so a fresh download legitimately mismatches — the caveat prevents the mismatch alert from reading as tampering on its own, while client-uploaded anchors must NEVER show it (their retained file always reproduces the fingerprint). Tests: `AssetDetailView.connectorFingerprint.test.tsx` (mocks `FileUpload` to drive the mismatch state deterministically).
+_Last updated: 2026-08-17 (AssetDetailView canRename owner-only pencil)_
+
+## 2026-08-17 — AssetDetailView `canRename` (owner-only rename pencil)
+
+New parent-computed `canRename?: boolean` prop (default false, fail-closed), mirroring `canRevoke`: the rename pencil renders only when `onRenameFile && canRename`. RLS (`anchors_update_own` requires user_id = auth.uid(); migration 0393's trigger narrows org-admin updates to folder_id only) means a non-owner rename can never succeed, so showing the pencil to non-owners produced either a raw 42501 error toast or a silent zero-row false success — the founder-reported rename bug (full writeup in `src/pages/agents.md`). Do not widen this to org admins without the explicit RLS/product decision.
 
 ## Lane 4 bug blitz (2026-08) — HakiChain 22-format accept/dispatch matrix
 

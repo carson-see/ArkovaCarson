@@ -10,7 +10,7 @@
 | — HEIC/TIFF extraction | Unsupported (soft-fail) | asserted | Anchors, but not OCR-read. Do **not** claim. |
 | — Audio/video extraction | **No path** | not_asserted | **Never claim audio/video *content* extraction.** Audio anchors; content is not read. |
 | **AI template reconstruction** | Degraded (SCRUM-2999) | asserted | Do not claim current richness parity with early-2026 records until the model-SKU fix lands. |
-| **CTDL import/parse** | Built (Draft PR #1603) | measured | "CTDL JSON-LD import implemented and unit-tested." Not yet merged/prod. |
+| **CTDL import/parse** | Built, merged and deployed (PR #1603, merged 2026-07-23) | measured | "CTDL JSON-LD import implemented, unit-tested, and live in production." Verified deployed 2026-08-12. |
 | **CE registry consume (read)** | Endpoint reachable | measured | Sandbox GET-by-CTID works; no real envelope consumed yet (needs Jeff's sandbox resource). |
 | **"Natively CTDL-compliant"** | Not verified | **not_asserted** | **Do not assert** — SCRUM-2998 owns this validation. |
 | **Fraud detection (UI)** | Removed | measured | Not a user-facing capability; do not reference. |

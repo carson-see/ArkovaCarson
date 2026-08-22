@@ -535,8 +535,10 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
       '## Isolated-rig admission v2 hardening (Lane 2 S3.3 readiness, 2026-07-13)',
       '## Admission rollback and identity pins (Team 2 review remediation, 2026-07-13)',
       '## Real batch-drain behavioral harness (#1417, 2026-07-07, Lane-1 chain)',
+      '## `fullsoak-daily-check.sh` — daily rig/prod parity for the 2026-08 7-day soak (2026-08-12)',
+      '## `fullsoak-daily-probes.sh` — daily BEHAVIOURAL probes for the 2026-08 7-day soak (2026-08-12)',
     ]);
-    expect(new Set(headings).size).toBe(13);
+    expect(new Set(headings).size).toBe(15);
   });
 
   it('preserves each authoritative Team2 section body exactly once', () => {
@@ -573,7 +575,7 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
     const f61BatchDrain = batchDrain.replace(TEAM1_ADMISSION_PROVENANCE_RULE, '');
 
     expect(sha256(prefix)).toBe('25276dbedb6e5f5679e5a8418c62808c8b8825128fb4dd298a2c4c8500b83c22');
-    expect(sha256(f61BatchDrain)).toBe('4128e8e460051d5d4a8677296d841d491ded72ba6e8e3c5652d17eefa04b7d49');
+    expect(sha256(f61BatchDrain)).toBe('d50f4fb1878cf76d5eae3e34853d7c106e6317cef45e19072eefe21b0959a80d');
     expect(provenanceOccurrences).toBe(1);
     expect(batchDrain).toContain('S3.3 R3 acceptance extensions are split deliberately');
     expect(batchDrain).toContain('Team 1 review hardening keeps every chronology field');
