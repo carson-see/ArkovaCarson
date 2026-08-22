@@ -13,7 +13,11 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
-import { FERPA_EDUCATION_TYPES, FERPA_REDISCLOSURE_NOTICE } from '../../constants/ferpa.js';
+import {
+  FERPA_EDUCATION_TYPES,
+  FERPA_REDISCLOSURE_NOTICE,
+  suppressesDirectoryInfo,
+} from '../../constants/ferpa.js';
 import {
   COMPLIANCE_CONTROLS_NOTE,
   controlsApplyForStatus,
@@ -366,10 +370,19 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   };
 
   // REG-02: When directory_info_opt_out is true for education types,
-  // suppress directory-level fields (name, degree type, dates) per FERPA Section 99.37
-  const isEducationType = anchor.credential_type &&
-    (FERPA_EDUCATION_TYPES as readonly string[]).includes(anchor.credential_type);
-  const suppressDirectory = anchor.directory_info_opt_out && isEducationType;
+  // suppress directory-level fields (name, degree type, dates) per FERPA Section 99.37.
+  //
+  // FD-FERPA-1: this was `anchor.credential_type && FERPA_EDUCATION_TYPES
+  // .includes(...)`, which is FALSY for a null type — and every anchor in
+  // production that carries the opt-out has a null type, so this block
+  // suppressed nothing for 100% of the records it exists to protect. The rule
+  // now lives in one named, fail-closed predicate shared with the SQL
+  // projection (migration 0415), so the two anonymous surfaces cannot answer
+  // differently for the same row.
+  const suppressDirectory = suppressesDirectoryInfo(
+    anchor.directory_info_opt_out,
+    anchor.credential_type,
+  );
 
   // Structural layer: an ACADEMIC RECORD (a record about an identified learner)
   // emits no issuer- or extraction-authored free text. Unconditional — see the

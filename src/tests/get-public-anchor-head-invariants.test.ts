@@ -77,9 +77,32 @@ function headDefinition(): { file: string; prefix: number; sql: string } {
   return candidates[candidates.length - 1];
 }
 
+/**
+ * The head migration's `get_public_anchor` DEFINITION, not the whole file.
+ *
+ * These are invariants of the FUNCTION. Scanning the whole file was equivalent
+ * while every migration that redefined `get_public_anchor` contained nothing
+ * else, and stopped being equivalent with 0415, which redefines
+ * `search_public_credentials` in the same transaction — and that function has
+ * projected `'org_id', a.org_id` since 0325, so the "never projects internal
+ * identifiers" assertion started failing on a function it does not govern.
+ *
+ * Narrowing rather than special-casing: a whole-file scan reports the union of
+ * every function in the file, which means it can fail on a body it says nothing
+ * about AND pass a real clobber that a sibling function happens to compensate
+ * for. The slice runs to the first `$$;` after the CREATE, which is this
+ * function's own terminator.
+ */
+function headFunctionBody(sql: string): string {
+  const start = sql.indexOf(REDEFINES);
+  if (start === -1) throw new Error('head definition lost its CREATE statement');
+  const end = sql.indexOf('$$;', start);
+  return end === -1 ? sql.slice(start) : sql.slice(start, end + 3);
+}
+
 describe('get_public_anchor head-state invariants (CREATE OR REPLACE clobber guard)', () => {
   const head = headDefinition();
-  const sql = executableSql(head.sql);
+  const sql = headFunctionBody(executableSql(head.sql));
   // Everything between the allow-list open and its closing `))` — the base
   // `metadata` sub-object only, not the whole function.
   const metaBlock = sql.slice(
