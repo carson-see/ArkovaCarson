@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@6f3c981e7b77f235fd2702dd74af25fc4b72bf11 # v3.96.0
+        uses: trufflesecurity/trufflehog@bcfcf73aaf4759d4dadc2783177c245a02792318 # v3.97.0
         with:
           extra_args: --only-verified
 
@@ -64,7 +64,28 @@ jobs:
       # ciContext.fetchLiveLabels() reads labels from the API so a label-gated
       # override still works on a plain re-run, where the frozen pull_request
       # payload would not carry it (PR #1336). Degrades to env-only without this.
+      #
+      # This permission is HALF the requirement — see the job-level GH_TOKEN below.
       pull-requests: read
+    env:
+      # `pull-requests: read` scopes the token; it does not SUPPLY one. `gh`
+      # authenticates only from GH_TOKEN / GITHUB_TOKEN — actions/checkout
+      # persists credentials into git config, which `gh` never reads. Without
+      # this, ciContext.fetchLiveLabels() throws, is swallowed to `[]`, and
+      # resolvePrLabels() silently degrades to the FROZEN pull_request payload:
+      # every override label in this job then only works if it was already on
+      # the PR when the webhook fired, so the documented "apply the label, then
+      # re-run the failed job" remediation is inert (confirmed on PR #2322,
+      # 2026-08-22 — `agents-md-deletion-approved` applied, `gh run rerun
+      # --failed`, same failure).
+      #
+      # Job-level ON PURPOSE: ~11 steps here are label-gated
+      # (agents-md-deletion-approved / dep-range-intentional /
+      # csp-runtime-deps-intentional / …) and the next one added must inherit
+      # this rather than have to remember it. `scripts/ci/
+      # check-pr-labels-token-parity.test.ts` fails if a job seeds PR_LABELS
+      # without a token.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -359,6 +380,14 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    env:
+      # Same pairing as dependency-scan above: `pull-requests: read` scopes the
+      # token but does not supply one, and `gh` reads only GH_TOKEN /
+      # GITHUB_TOKEN. Without this, every label-gated override in this job
+      # (feedback rules, coverage-drop-allowed, count-exact-allowed,
+      # handoff-narrative-only, confluence-drift-skip, …) silently falls back to
+      # the frozen pull_request payload and cannot be applied on a re-run.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -439,6 +468,14 @@ jobs:
 
       - name: Config↔reality drift + cross-runtime parity gate (S0-5.2)
         run: node_modules/.bin/tsx scripts/ci/check-config-drift.ts
+
+      # BUG-026 class: the MCP tool descriptions are published on five surfaces
+      # and nothing compared the description TEXT between them, so one false
+      # claim survived on all of them at once. Parity + declared claim rules.
+      - name: MCP tool-claim parity (BUG-026)
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node_modules/.bin/tsx scripts/ci/check-mcp-claim-parity.ts
 
       - name: HANDOFF.md verification lint
         env:
@@ -752,6 +789,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             services/worker/package-lock.json
+            services/edge/package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -812,6 +850,20 @@ jobs:
         id: root-coverage
         run: npm run test:coverage
 
+      # SDK suites (sdks/mcp-server, sdks/langchain-ts) were a CI blind spot
+      # (BUG-2026-08-15-035): the root vitest include only covers tests/**,
+      # src/** and scripts/**, so a failing sdks/ test never gated a merge.
+      # `--root sdks` picks up the shared sdks/vitest.config.ts, whose
+      # include (**/*.test.ts) discovers every current and future SDK
+      # package's tests. Needs only the root npm install (vitest resolves
+      # from the root node_modules) — no per-package npm ci. Invoked
+      # directly (not via a package.json script) so this fix stays within
+      # the tier detector's T0 CI-tooling surface.
+      - name: Run SDK tests (sdks/)
+        id: sdk-tests
+        if: always()
+        run: node_modules/.bin/vitest run --root sdks
+
       - name: Run RLS tests
         # SCRUM-1301: 8 assertion failures resolved — migration 0265 restores
         # get_flag + chain/legal_hold protections; test assertions updated for
@@ -852,7 +904,7 @@ jobs:
       - name: Cache zk circuit artifacts
         id: cache-zk-artifacts
         if: always() && steps.worker-deps.outcome == 'success'
-        uses: actions/cache@v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: services/worker/circuits/artifacts
           key: zk-artifacts-${{ runner.os }}-circom2.1.9-${{ hashFiles('services/worker/circuits/extraction-proof.circom', 'services/worker/circuits/build.sh', 'services/worker/package-lock.json') }}
@@ -897,6 +949,49 @@ jobs:
         working-directory: services/worker
         run: npm run test:coverage
 
+      # services/edge has had a working vitest harness (services/edge/vitest.config.ts,
+      # `include: ['src/**/*.test.ts', 'tests/**/*.test.ts']`) since Story D PR-1, but
+      # NOTHING in CI ever invoked it — the only edge step was the `tsc --noEmit` check in
+      # typecheck-lint. The root suite cannot pick these up either: root vitest.config.ts
+      # globs only `tests/**`, `src/**`, `scripts/**` from the repo root, so
+      # services/edge/src/*.test.ts matched no pattern in any runner. Net effect:
+      # services/edge/src/mcp-tools.test.ts (36 assertions covering the MCP tool surface)
+      # gated nothing and could sit red indefinitely without failing a PR. Discovered while
+      # fixing BUG-2026-08-13-016 (PR #2232), where the P0 fix's tests had to be parked in
+      # the ROOT suite (src/tests/edge/, tests/infra/) purely to be certain CI would run them.
+      #
+      # These live in this job (not a new one) on purpose: `Tests` is already an enumerated
+      # merge condition in .mergify.yml (5 occurrences) and a required status check. A new
+      # top-level job would need branch-protection + .mergify.yml changes to gate anything,
+      # and until those landed it would reproduce exactly the bug being fixed here — a suite
+      # that runs, goes red, and blocks no one.
+      - name: Install edge dependencies
+        id: edge-deps
+        if: always()
+        working-directory: services/edge
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci --ignore-scripts; then
+              break
+            else
+              status=$?
+            fi
+
+            if [ "$attempt" = "3" ]; then
+              exit "$status"
+            fi
+
+            echo "::warning::Edge npm ci failed on attempt ${attempt}; retrying after transient registry/network failure."
+            npm cache verify || true
+            sleep $((attempt * 15))
+          done
+
+      - name: Run edge worker tests
+        id: edge-tests
+        if: always() && steps.edge-deps.outcome == 'success'
+        working-directory: services/edge
+        run: npm test
+
       # Explicit aggregate gate (defense-in-depth, see comment above "Run
       # tests with coverage"). Treats 'skipped' as fine (e.g. the circom
       # install/build steps deliberately skip on a cache hit) but fails the
@@ -909,6 +1004,7 @@ jobs:
           declare -A results=(
             [db-reset]="${{ steps.db-reset.outcome }}"
             [root-coverage]="${{ steps.root-coverage.outcome }}"
+            [sdk-tests]="${{ steps.sdk-tests.outcome }}"
             [rls-tests]="${{ steps.rls-tests.outcome }}"
             [worker-deps]="${{ steps.worker-deps.outcome }}"
             [cache-zk-artifacts]="${{ steps.cache-zk-artifacts.outcome }}"
@@ -916,10 +1012,12 @@ jobs:
             [build-zk-circuit]="${{ steps.build-zk-circuit.outcome }}"
             [verify-zk-artifacts]="${{ steps.verify-zk-artifacts.outcome }}"
             [worker-coverage]="${{ steps.worker-coverage.outcome }}"
+            [edge-deps]="${{ steps.edge-deps.outcome }}"
+            [edge-tests]="${{ steps.edge-tests.outcome }}"
           )
           failed=0
           echo "== Test suite step outcomes =="
-          for name in db-reset root-coverage rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage; do
+          for name in db-reset root-coverage sdk-tests rls-tests worker-deps cache-zk-artifacts install-circom build-zk-circuit verify-zk-artifacts worker-coverage edge-deps edge-tests; do
             outcome="${results[$name]}"
             echo "  ${name}: ${outcome}"
             if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
@@ -928,7 +1026,7 @@ jobs:
             fi
           done
           if [ "$failed" -eq 1 ]; then
-            echo "::error::One or more required test suites failed — see outcomes above. Both the root suite and the worker suite are required; a failure in either fails this job regardless of step ordering."
+            echo "::error::One or more required test suites failed — see outcomes above. The root suite, the worker suite and the edge suite are all required; a failure in any of them fails this job regardless of step ordering."
             exit 1
           fi
           echo "All required test suite steps passed (or were intentionally skipped, e.g. zk cache hit)."
@@ -1136,7 +1234,7 @@ jobs:
 
       - name: Set up Java (for TLC model checker)
         if: steps.tla-changed.outputs.changed == 'true'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: '17'

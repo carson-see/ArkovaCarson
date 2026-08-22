@@ -2255,6 +2255,16 @@ const STAGING_TOOLING_ALLOW = [
   // was the missing half, which under-classified PR #1775 to T1.
   /^scripts\/ci\/feedback-rules\//,
   /^scripts\/ci\/check-feedback-rules(\.test)?\.ts$/,
+  // BUG-026: MCP tool-claim parity gate + its ratchet. Runs only in the
+  // ci.yml "policy-lints" job; it READS services/edge/src/mcp-tools.ts
+  // (a static import of TOOL_DEFINITIONS, so a rename fails typecheck) but
+  // nothing in src/ or services/*/src/ imports IT — no prod runtime to soak.
+  // Same class as the check-* gates above. NOTE the corollary this encodes:
+  // a T0 PR can add the gate but can NEVER correct a published surface
+  // (public/** is T1, services/edge/src/** and docs/api/** are T2) — which is
+  // why the gate ships with a baseline instead of a clean sheet.
+  /^scripts\/ci\/check-mcp-claim-parity(\.test)?\.ts$/,
+  /^scripts\/ci\/mcp-claim-parity-baseline\.json$/,
   // SCRUM-2977: anti-hollow-soak pre-clock guard set. A pure guard module + CLI
   // + tests, wired into ci.yml as a REPORT-ONLY / non-gating job. Runs only in
   // CI (and locally over a soak-preflight JSON); never ships to prod runtime →

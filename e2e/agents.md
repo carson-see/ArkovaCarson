@@ -89,6 +89,20 @@ Playwright E2E test specs and shared fixtures for the Arkova application.
   turned previously-CSP-blocked enrichment legs into live calls and broke
   `treasury-errors.spec.ts` on every PR run until the legs were explicitly
   stubbed to fail fast.
+- **Never call bare `auth.signOut()` in a spec — supabase-js defaults it to
+  `scope: 'global'`, which revokes EVERY session for that seed user,** including
+  the `.auth/*.json` storageState session `auth.setup.ts` minted and every later
+  spec in a single-invocation run reuses. 2026-08-15, fullsoak side-rig:
+  `cross-tenant.spec.ts`'s PostgREST-leg `afterAll` (added by #2213) global-signed-out
+  demo-admin; every subsequent `orgAdminPage` spec (csv-upload, dashboard,
+  error-states, integrations-docusign*, member-invite, org-admin…) bounced to
+  /login while the storageState JWT was still 55 min from expiry — GoTrue
+  answered 403 `session_not_found` for it. Two things masked it: CI's local
+  GoTrue does not bounce the app on a revoked session, and per-spec
+  invocations re-mint sessions every spec. Pass an explicit scope
+  (`{ scope: 'local' }`, the same convention as `src/hooks/useAuth.ts`);
+  `tests/infra/signout-scope-guard.test.ts` now ratchets this over every
+  `e2e/**/*.ts` file.
 
 ## File Inventory
 
