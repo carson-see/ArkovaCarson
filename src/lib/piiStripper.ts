@@ -47,7 +47,7 @@ export interface StrippingReport {
 // <16.4 does not support it). Matching stays linear in input length.
 
 /** Separator between keyword tokens: space(s), underscore, hyphen, or nothing. */
-const KEYWORD_SEP = '[\\s_-]*';
+const KEYWORD_SEP = String.raw`[\s_-]*`;
 
 /**
  * Left boundary. CONSUMING rather than a lookbehind, which Safari <16.4 lacks.
@@ -85,7 +85,7 @@ const tokTight = (...tokens: string[]): string => tokens.join(KEYWORD_SEP_TIGHT)
 /** Builds a bounded, separator-insensitive keyword prefix pattern (keyword + optional `:`). */
 function keywordPattern(alternatives: string[]): RegExp {
   return new RegExp(
-    `${KEYWORD_START}(?:${alternatives.join('|')})${KEYWORD_END}\\s*:?\\s*`,
+    String.raw`${KEYWORD_START}(?:${alternatives.join('|')})${KEYWORD_END}\s*:?\s*`,
     'gi',
   );
 }
@@ -122,7 +122,7 @@ const STUDENT_ID_KEYWORD = keywordPattern([
   tok('employee', 'id'),
   tok('member', 'id'),
   tok('id', 'number'),
-  `${tok('student', 'no')}\\.?`,
+  String.raw`${tok('student', 'no')}\.?`,
 ]);
 const ID_VALUE = /[A-Za-z0-9]{5,12}/;
 
@@ -170,13 +170,13 @@ const NATIONAL_ID_KEYWORD = keywordPattern([
   tok('steuer', 'id'),
   tok('ni', 'number'),
   'nino',
-  tok('passport', '(?:no\\.?|number)'),
+  tok('passport', String.raw`(?:no\.?|number)`),
   'aadhaar',
   'aadhar',
-  tok('pan', '(?:no\\.?|number|card)'),
+  tok('pan', String.raw`(?:no\.?|number|card)`),
   'cedula',
   'dni',
-  tok('sin', '(?:no\\.?|number)'),
+  tok('sin', String.raw`(?:no\.?|number)`),
 ]);
 
 /**
@@ -367,7 +367,7 @@ function stripNationalIds(
   // title the extractor reads. A national ID never spans lines, so this is
   // strictly narrowing: no real ID stops matching.
   result = result.replace(
-    new RegExp(`(${NATIONAL_ID_KEYWORD.source})(?!\\[)([A-Za-z0-9 \\t_./-]{4,30})`, 'gi'),
+    new RegExp(String.raw`(${NATIONAL_ID_KEYWORD.source})(?!\[)([A-Za-z0-9 \t_./-]{4,30})`, 'gi'),
     (_match, prefix: string) => {
       count++;
       piiFoundSet.add('nationalId');

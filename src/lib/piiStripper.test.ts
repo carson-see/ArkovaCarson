@@ -115,50 +115,28 @@ describe('piiStripper', () => {
   // or employee ID identifies an education/employment record (FERPA), so §1.6
   // requires it stripped in every separator form, not just the spaced one.
   describe('student ID labels are separator-insensitive', () => {
-    it('strips snake_case student_id (the CSV header form)', () => {
-      const result = stripPII('student_id: 88213');
-      expect(result.strippedText).toBe('student_id: [STUDENT_ID_REDACTED]');
+    // Every separator form of every person-role ID label, in the CSV
+    // `<column>: <value>` shape. The spaced forms are the no-regression cases;
+    // the rest are what used to flow through unredacted. Parameterised so a
+    // failure names the exact label rather than stopping at the first one.
+    it.each([
+      ['student_id', '88213'],
+      ['student-id', '88213'],
+      ['studentid', '88213'],
+      ['Student ID', '88213'],
+      ['id_number', 'A12345678'],
+      ['employee_id', '88213'],
+      ['employee-id', '88213'],
+      ['employeeid', '88213'],
+      ['Employee ID', '88213'],
+      ['member_id', '88213'],
+      ['member-id', '88213'],
+      ['memberid', '88213'],
+      ['Member ID', '88213'],
+    ])('redacts the value under %s', (label, value) => {
+      const result = stripPII(`${label}: ${value}`);
+      expect(result.strippedText).toBe(`${label}: [STUDENT_ID_REDACTED]`);
       expect(result.piiFound).toContain('studentId');
-    });
-
-    it('strips kebab-case student-id', () => {
-      const result = stripPII('student-id: 88213');
-      expect(result.strippedText).toBe('student-id: [STUDENT_ID_REDACTED]');
-      expect(result.piiFound).toContain('studentId');
-    });
-
-    it('strips separator-less studentid', () => {
-      const result = stripPII('studentid: 88213');
-      expect(result.strippedText).toBe('studentid: [STUDENT_ID_REDACTED]');
-      expect(result.piiFound).toContain('studentId');
-    });
-
-    it('still strips the spaced "Student ID:" form (no regression)', () => {
-      const result = stripPII('Student ID: 88213');
-      expect(result.strippedText).toBe('Student ID: [STUDENT_ID_REDACTED]');
-      expect(result.piiFound).toContain('studentId');
-    });
-
-    it('strips snake_case id_number', () => {
-      const result = stripPII('id_number: A12345678');
-      expect(result.strippedText).toBe('id_number: [STUDENT_ID_REDACTED]');
-      expect(result.piiFound).toContain('studentId');
-    });
-
-    it('strips employee_id in every separator form', () => {
-      for (const label of ['employee_id', 'employee-id', 'employeeid', 'Employee ID']) {
-        const result = stripPII(`${label}: 88213`);
-        expect(result.strippedText).toBe(`${label}: [STUDENT_ID_REDACTED]`);
-        expect(result.piiFound).toContain('studentId');
-      }
-    });
-
-    it('strips member_id in every separator form', () => {
-      for (const label of ['member_id', 'member-id', 'memberid', 'Member ID']) {
-        const result = stripPII(`${label}: 88213`);
-        expect(result.strippedText).toBe(`${label}: [STUDENT_ID_REDACTED]`);
-        expect(result.piiFound).toContain('studentId');
-      }
     });
   });
 
@@ -189,22 +167,15 @@ describe('piiStripper', () => {
       expect(result.piiFound).toContain('nationalId');
     });
 
-    it('strips snake_case tax_id', () => {
-      const result = stripPII('tax_id: 12-3456789');
+    // `steuer_id` is the underscore form of Steuer-ID.
+    it.each([
+      ['tax_id', '12-3456789'],
+      ['passport_number', 'X1234567'],
+      ['steuer_id', '12345678901'],
+    ])('strips snake_case %s', (label, value) => {
+      const result = stripPII(`${label}: ${value}`);
       expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
-      expect(result.strippedText).not.toContain('12-3456789');
-    });
-
-    it('strips snake_case passport_number', () => {
-      const result = stripPII('passport_number: X1234567');
-      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
-      expect(result.strippedText).not.toContain('X1234567');
-    });
-
-    it('strips snake_case steuer_id (underscore form of Steuer-ID)', () => {
-      const result = stripPII('steuer_id: 12345678901');
-      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
-      expect(result.strippedText).not.toContain('12345678901');
+      expect(result.strippedText).not.toContain(value);
     });
   });
 
