@@ -1,0 +1,8 @@
+{
+  "startedAt": "2026-08-20T21:50:19Z",
+  "endedAt": "2026-08-20T21:51:34Z",
+  "durationSec": 75,
+  "apiBase": "https://arkova-worker-wave3-2026-08-staging-kvojbeutfa-uc.a.run.app",
+  "requests": { "ok": 41, "fail": 0, "status_200": 41, "status_other_2xx_4xx": 0 },
+  "cronFires": 1
+}
