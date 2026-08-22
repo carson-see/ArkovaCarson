@@ -1616,6 +1616,14 @@ jobs:
 
       # ruff is pinned to an EXACT version in pyproject.toml — see the comment on
       # the pin there. This is the same command the publish gate runs.
+      #
+      # NOTE on the pip bootstrap above: this job pins `pip==26.2.1` while
+      # publish-python-sdk.yml still bootstraps an unpinned pip. That is a
+      # deliberate asymmetry, not drift — pinning the publish file's line would
+      # re-classify it as NEW code and hand SonarCloud a fresh S8544 on a line
+      # that has been there untouched for months, without changing what it
+      # installs. The parity that matters and is test-enforced is the
+      # python-version plus the pytest/ruff commands, not the bootstrap.
       - name: Lint Python SDK (publish-gate parity)
         run: ruff check src tests
 
