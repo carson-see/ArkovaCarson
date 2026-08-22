@@ -756,6 +756,50 @@ export function partitionAgainstAllowlist(
 }
 
 /**
+ * Collect one {@link Violation} per match of every regex in `regexes` against
+ * `haystack`. Extracted so the three scan passes in {@link findTermViolations}
+ * (launch-blocker terms, raw-copy terms, code-aware terms) share one loop
+ * instead of three copies of the same regex/exec/push nest.
+ *
+ * `context` is supplied by the caller rather than derived from `haystack`: a
+ * pass may scan a transformed variant of the line (raw-copy mode blanks `{…}`
+ * expressions) while still reporting the original cleaned line as the snippet.
+ * `isSuppressed` — when supplied — drops a match the pass considers a code
+ * position rather than copy.
+ */
+function collectTermMatches(
+  regexes: RegExp[],
+  haystack: string,
+  lineNum: number,
+  filePath: string,
+  context: string,
+  isSuppressed?: (haystack: string, match: RegExpExecArray) => boolean,
+): Violation[] {
+  const found: Violation[] = [];
+  for (const regex of regexes) {
+    regex.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(haystack)) !== null) {
+      if (isSuppressed?.(haystack, match)) continue;
+      found.push({ file: filePath, line: lineNum, term: match[0], context });
+    }
+  }
+  return found;
+}
+
+/**
+ * True when a forbidden-term match sits in a code position that is never copy
+ * ({@link isCodeIdentifier}) AND the term is one the structural filter is
+ * ALLOWED to silence. A secret / launch-blocker leak is never suppressed —
+ * see the non-suppressible guard in {@link isNonSuppressibleTerm}.
+ */
+function isSuppressedCodePosition(haystack: string, match: RegExpExecArray): boolean {
+  return (
+    isCodeIdentifier(haystack, match.index, match[0].length) && !isNonSuppressibleTerm(match[0])
+  );
+}
+
+/**
  * @param rawCopyContinuation PR #1433 follow-up: true when {@link scanFileContent}
  *   determined this line is RAW COPY continued from a previous line — the
  *   middle of a wrapped `<p>…</p>` JSX paragraph, or (§1.3 worker-email parity)
@@ -775,21 +819,12 @@ export function findTermViolations(
   filePath: string,
   rawCopyContinuation = false,
 ): Violation[] {
-  const results: Violation[] = [];
   const cleaned = stripClassNameAttributes(line);
+  // Reported snippet. Always derived from the CLEANED line, never from the
+  // haystack a pass scans — raw-copy mode scans a brace-blanked variant.
+  const context = cleaned.trim().substring(0, 80);
 
-  for (const regex of LAUNCH_BLOCKER_REGEXES) {
-    regex.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(cleaned)) !== null) {
-      results.push({
-        file: filePath,
-        line: lineNum,
-        term: match[0],
-        context: cleaned.trim().substring(0, 80),
-      });
-    }
-  }
+  const results = collectTermMatches(LAUNCH_BLOCKER_REGEXES, cleaned, lineNum, filePath, context);
 
   // SCRUM-2149(c): raw DB-enum render heuristic (JSX-child {X.status}). Runs on
   // the cleaned line (so className braces are already neutralised) and is gated
@@ -798,18 +833,7 @@ export function findTermViolations(
 
   if (rawCopyContinuation) {
     const textOnly = blankJsxExpressions(cleaned);
-    for (const regex of FORBIDDEN_REGEXES) {
-      regex.lastIndex = 0;
-      let match: RegExpExecArray | null;
-      while ((match = regex.exec(textOnly)) !== null) {
-        results.push({
-          file: filePath,
-          line: lineNum,
-          term: match[0],
-          context: cleaned.trim().substring(0, 80),
-        });
-      }
-    }
+    results.push(...collectTermMatches(FORBIDDEN_REGEXES, textOnly, lineNum, filePath, context));
     return results;
   }
 
@@ -819,24 +843,16 @@ export function findTermViolations(
   const hasJsxText = cleaned.includes('>') && cleaned.includes('<');
   if (!hasString && !hasJsxText) return results;
 
-  for (const regex of FORBIDDEN_REGEXES) {
-    regex.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(cleaned)) !== null) {
-      if (
-        isCodeIdentifier(cleaned, match.index, match[0].length) &&
-        !isNonSuppressibleTerm(match[0])
-      ) {
-        continue;
-      }
-      results.push({
-        file: filePath,
-        line: lineNum,
-        term: match[0],
-        context: cleaned.trim().substring(0, 80),
-      });
-    }
-  }
+  results.push(
+    ...collectTermMatches(
+      FORBIDDEN_REGEXES,
+      cleaned,
+      lineNum,
+      filePath,
+      context,
+      isSuppressedCodePosition,
+    ),
+  );
   return results;
 }
 
@@ -1159,26 +1175,130 @@ function tracksTemplateText(filePath: string): boolean {
   return !rel.endsWith('.tsx') && rel.startsWith(WORKER_SRC_ROOT);
 }
 
+/** Template-literal tracker state: are we inside an unterminated backtick? */
+type TemplateTextState = { inTemplate: boolean };
+
+/**
+ * Advance one character while INSIDE a template literal, and return the next
+ * index. A backslash escapes the following character (so `` \` `` does not
+ * close the literal); an unescaped backtick closes it.
+ */
+function stepInsideTemplate(line: string, i: number, state: TemplateTextState): number {
+  const ch = line[i];
+  if (ch === '\\') return i + 2;
+  if (ch === '`') state.inTemplate = false;
+  return i + 1;
+}
+
+/**
+ * Advance one character while OUTSIDE a template literal, and return the next
+ * index. A quoted string is skipped wholesale (a backtick inside `'…'` opens
+ * nothing); a `//` comment ends the line (returns `line.length`); a backtick
+ * opens a template literal.
+ */
+function stepOutsideTemplate(line: string, i: number, state: TemplateTextState): number {
+  const ch = line[i];
+  if (ch === '/' && line[i + 1] === '/') return line.length; // line comment — not code
+  if (ch === '"' || ch === "'") return skipQuoted(line, i);
+  if (ch === '`') state.inTemplate = true;
+  return i + 1;
+}
+
 /**
  * Advance the minimal template-literal tracker over one line. Skips quoted
  * strings (a backtick inside `'…'` opens nothing) and line comments, and
- * honours backslash escapes.
+ * honours backslash escapes. The per-character work lives in the two
+ * {@link stepInsideTemplate} / {@link stepOutsideTemplate} halves so neither
+ * branch has to be read through the other.
  */
-function updateTemplateTextState(line: string, state: { inTemplate: boolean }): void {
+function updateTemplateTextState(line: string, state: TemplateTextState): void {
   let i = 0;
   while (i < line.length) {
-    const ch = line[i];
-    if (state.inTemplate) {
-      if (ch === '\\') { i += 2; continue; }
-      if (ch === '`') state.inTemplate = false;
-      i++;
-      continue;
-    }
-    if (ch === '/' && line[i + 1] === '/') return; // line comment — rest is not code
-    if (ch === '"' || ch === "'") { i = skipQuoted(line, i); continue; }
-    if (ch === '`') { state.inTemplate = true; i++; continue; }
-    i++;
+    i = state.inTemplate
+      ? stepInsideTemplate(line, i, state)
+      : stepOutsideTemplate(line, i, state);
   }
+}
+
+/** Per-file cursor for the two cross-line trackers scanFileContent carries. */
+interface FileScanState {
+  /** JSX tag/text tracking is .tsx-only (see scanFileContent). */
+  trackJsx: boolean;
+  jsx: JsxTextState;
+  /** Email template-literal tracking is worker-non-.tsx-only. */
+  trackTemplateText: boolean;
+  template: TemplateTextState;
+}
+
+/**
+ * Classify one line against the running block-comment state and return both
+ * whether the line is skipped and the state to carry forward. Opening and
+ * continuing a block comment collapse to the same answer: the line is skipped,
+ * and the comment stays open unless the line closes it.
+ */
+function stepBlockComment(
+  trimmed: string,
+  inBlockComment: boolean,
+): { skip: boolean; inBlockComment: boolean } {
+  if (!inBlockComment && !trimmed.startsWith('/*')) return { skip: false, inBlockComment: false };
+  return { skip: true, inBlockComment: !trimmed.includes('*/') };
+}
+
+/**
+ * Violations still reported on a line that {@link shouldSkipLine} suppressed.
+ *
+ * A line-skip suppresses vocab false-positives (`crypto.subtle`→"crypto", the
+ * DOM `block:` param, URL `token` key). On a real CODE line it must NEVER hide
+ * a secret / launch-blocker leak in a same-line shipped string (e.g.
+ * `toast('service_role failed'); el.scrollIntoView()`), so those are still
+ * scanned for the non-suppressible terms. Comments and imports are exempt —
+ * they are not shipped copy and legitimately mention infra terms.
+ */
+function scanSkippedLine(
+  line: string,
+  trimmed: string,
+  lineNum: number,
+  filePath: string,
+): Violation[] {
+  const isCommentOrImport =
+    trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('import ');
+  if (isCommentOrImport) return [];
+  return findTermViolations(line, lineNum, filePath).filter((v) => isNonSuppressibleTerm(v.term));
+}
+
+/** Advance whichever cross-line trackers this file uses over one line. */
+function advanceScanState(line: string, scan: FileScanState): void {
+  if (scan.trackJsx) updateJsxTextState(line, scan.jsx);
+  if (scan.trackTemplateText) updateTemplateTextState(line, scan.template);
+}
+
+/**
+ * True when the line must be force-scanned as RAW COPY continued from an
+ * earlier line. Two sources, one rule:
+ *
+ *  - JSX element text is the current context (no tag or `{…}` expression is
+ *    spanning lines), or
+ *  - an email template literal is open and the line neither closes nor
+ *    reopens one.
+ *
+ * Either way the line must carry no tag start (`<`) — a bare `>` is fine, it
+ * is prose ("> 6 confirmations"); lines WITH tags go through the normal
+ * per-line rules.
+ */
+function isRawCopyContinuation(line: string, scan: FileScanState): boolean {
+  if (line.includes('<')) return false;
+
+  const inJsxText =
+    scan.trackJsx &&
+    scan.jsx.stack[scan.jsx.stack.length - 1]?.kind === 'text' &&
+    scan.jsx.pendingTag === null &&
+    !scan.jsx.inBlockComment &&
+    !scan.jsx.inTemplate;
+
+  const inEmailTemplate =
+    scan.trackTemplateText && scan.template.inTemplate && !line.includes('`');
+
+  return inJsxText || inEmailTemplate;
 }
 
 /**
@@ -1193,76 +1313,37 @@ function updateTemplateTextState(line: string, state: { inTemplate: boolean }): 
 export function scanFileContent(content: string, filePath: string): Violation[] {
   const violations: Violation[] = [];
   const lines = content.split('\n');
+  const scan: FileScanState = {
+    // JSX can only appear in .tsx — running the tag tracker on plain .ts would
+    // misread generics/comparisons (`if (a <b)`) with no possible payoff.
+    trackJsx: filePath.endsWith('.tsx'),
+    jsx: newJsxTextState(),
+    trackTemplateText: tracksTemplateText(filePath),
+    template: { inTemplate: false },
+  };
   let inBlockComment = false;
-  // JSX can only appear in .tsx — running the tag tracker on plain .ts would
-  // misread generics/comparisons (`if (a <b)`) with no possible payoff.
-  const trackJsx = filePath.endsWith('.tsx');
-  const jsx = newJsxTextState();
-  const trackTemplateText = tracksTemplateText(filePath);
-  const template = { inTemplate: false };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
 
-    if (inBlockComment) {
-      if (trimmed.includes('*/')) inBlockComment = false;
-      continue;
-    }
-
-    if (trimmed.startsWith('/*')) {
-      if (!trimmed.includes('*/')) inBlockComment = true;
-      continue;
-    }
+    const comment = stepBlockComment(trimmed, inBlockComment);
+    inBlockComment = comment.inBlockComment;
+    if (comment.skip) continue;
 
     if (shouldSkipLine(line, trimmed)) {
-      // A line-skip suppresses vocab false-positives (`crypto.subtle`→"crypto",
-      // the DOM `block:` param, URL `token` key). On a real CODE line it must
-      // NEVER hide a secret / launch-blocker leak in a same-line shipped string
-      // (e.g. `toast('service_role failed'); el.scrollIntoView()`), so we still
-      // scan those for the non-suppressible terms. Comments and imports are
-      // exempt — they are not shipped copy and legitimately mention infra terms.
-      const isCommentOrImport =
-        trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('import ');
-      if (!isCommentOrImport) {
-        violations.push(
-          ...findTermViolations(line, i + 1, filePath).filter((v) => isNonSuppressibleTerm(v.term)),
-        );
-      }
+      violations.push(...scanSkippedLine(line, trimmed, i + 1, filePath));
       // Skipped for normal SCANNING only — the line still advances the JSX and
       // template state machines (e.g. a copy line exempted via `cryptographic`
       // is still element text; a skipped line can still open a template).
-      if (trackJsx) updateJsxTextState(line, jsx);
-      if (trackTemplateText) updateTemplateTextState(line, template);
+      advanceScanState(line, scan);
       continue;
     }
 
-    // Force-scan as raw copy when element text is the current context and the
-    // line has no tag start (`<`). A bare `>` is fine — it is prose ("> 6
-    // confirmations"); lines WITH tags go through the normal per-line rules.
-    const isJsxTextContinuation =
-      trackJsx &&
-      jsx.stack[jsx.stack.length - 1]?.kind === 'text' &&
-      jsx.pendingTag === null &&
-      !jsx.inBlockComment &&
-      !jsx.inTemplate &&
-      !line.includes('<');
-
-    // Same rule for an email template literal: fully INSIDE it (state was open
-    // at line start and the line neither closes nor reopens one) and no tag.
-    const isTemplateTextContinuation =
-      trackTemplateText && template.inTemplate && !line.includes('`') && !line.includes('<');
-
     violations.push(
-      ...findTermViolations(
-        line,
-        i + 1,
-        filePath,
-        isJsxTextContinuation || isTemplateTextContinuation,
-      ),
+      ...findTermViolations(line, i + 1, filePath, isRawCopyContinuation(line, scan)),
     );
-    if (trackJsx) updateJsxTextState(line, jsx);
-    if (trackTemplateText) updateTemplateTextState(line, template);
+    advanceScanState(line, scan);
   }
 
   return violations;
