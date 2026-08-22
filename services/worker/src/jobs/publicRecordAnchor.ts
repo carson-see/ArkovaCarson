@@ -37,6 +37,13 @@ import {
 } from '../utils/postgrest-filter.js';
 import type { ChainReceipt } from '../chain/types.js';
 import { captureCreditRpcFailureAlert } from '../utils/sentry.js';
+import { truncateUtf16Safe } from '../utils/utf16-truncate.js';
+import {
+  ANCHOR_INSERT_QUARANTINE_FILTER_COLUMN,
+  pipelineSourceKey,
+  quarantineFailedSerialInserts,
+  type SerialInsertFailure,
+} from './public-record-quarantine.js';
 
 /** Max records per batch — one Bitcoin TX can commit up to 10k pipeline anchors. */
 export const PUBLIC_RECORD_BATCH_SIZE = resolveAnchorBatchSize(config.batchAnchorMaxSize);
@@ -157,9 +164,11 @@ export function buildAnchorFilename(record: {
 }): string {
   const prefix = SOURCE_PREFIX[record.source] ?? record.source.toUpperCase();
 
-  // Use title if available, otherwise source_id
+  // Use title if available, otherwise source_id. Surrogate-safe truncation —
+  // a bare .slice() can split a surrogate pair and emit a lone surrogate,
+  // which PostgREST rejects as invalid JSON (2026-08-17 poison record).
   const name = record.title
-    ? record.title.slice(0, 180)
+    ? truncateUtf16Safe(record.title, 180)
     : `${record.record_type}-${record.source_id}`;
 
   return `[${prefix}] ${name}`;
@@ -513,6 +522,9 @@ async function fetchRecordsForSource(
       .from('public_records')
       .select(PUBLIC_RECORD_SELECT)
       .is('anchor_id', null)
+      // Quarantined rows (repeated anchor-insert failures) must not re-enter
+      // the created_at-ascending queue head — 2026-08-17 poison record.
+      .is(ANCHOR_INSERT_QUARANTINE_FILTER_COLUMN, null)
       .eq('source', source)
       .order('created_at', { ascending: true })
       .range(offset, offset + chunkSize - 1);
@@ -539,6 +551,9 @@ async function fetchNonPriorityRecords(
       .from('public_records')
       .select(PUBLIC_RECORD_SELECT)
       .is('anchor_id', null)
+      // Same quarantine exclusion as fetchRecordsForSource — both fetch paths
+      // must agree or a quarantined row re-poisons the queue via this one.
+      .is(ANCHOR_INSERT_QUARANTINE_FILTER_COLUMN, null)
       .not('source', 'in', `(${PRIORITY_SOURCES.join(',')})`)
       .order('created_at', { ascending: true })
       .range(offset, offset + chunkSize - 1);
@@ -572,13 +587,20 @@ async function fetchUnanchoredPublicRecords(client: SupabaseClient): Promise<Pip
   return records;
 }
 
-function publicRecordDescription(record: PipelinePublicRecord): string | null {
+/**
+ * Exported for direct unit testing (mirrors buildAnchorFilename).
+ *
+ * MUST truncate surrogate-safely: the 2026-08-17 poison record was an
+ * abstract of 2,000 UTF-16 units whose `.slice(0, 500)` split a surrogate
+ * pair at unit 500 — the lone high surrogate made the anchor insert's JSON
+ * body invalid (PGRST102) on every run for 16 days.
+ */
+export function publicRecordDescription(record: PipelinePublicRecord): string | null {
   const meta = record.metadata ?? {};
-  return (
-    (typeof meta.abstract === 'string' ? meta.abstract : null)
+  const raw = (typeof meta.abstract === 'string' ? meta.abstract : null)
     ?? (typeof meta.description === 'string' ? meta.description : null)
-    ?? (typeof meta.summary === 'string' ? meta.summary : null)
-  )?.slice(0, 500) ?? null;
+    ?? (typeof meta.summary === 'string' ? meta.summary : null);
+  return raw !== null ? truncateUtf16Safe(raw, 500) : null;
 }
 
 function buildPipelineAnchorInsert(record: PipelinePublicRecord, owner: PipelineOwner): PipelineAnchorInsert {
@@ -620,12 +642,25 @@ async function findExistingAnchor(
   return (existing as { id: string; fingerprint: string } | null) ?? null;
 }
 
-async function insertAnchorSerialFallback(
+/**
+ * Per-row insert fallback for a failed `batch_insert_anchors` chunk.
+ *
+ * A non-23505 failure is REPORTED, not just logged: before the 2026-08-17
+ * poison-record incident this loop `continue`d past the failing row, the
+ * `created_at`-ascending fetch re-selected it at the head of the queue ten
+ * minutes later, and the identical insert failed identically for 16 days.
+ * The returned `failures` feed `quarantineFailedSerialInserts`, which counts
+ * them durably in the record's metadata and side-lines the row at the
+ * threshold. Exported for direct unit testing (mirrors buildAnchorFilename /
+ * mapCredentialType).
+ */
+export async function insertAnchorSerialFallback(
   client: SupabaseClient,
   chunk: PipelineAnchorInsert[],
   ownerId: string,
-): Promise<Array<{ id: string; fingerprint: string }>> {
+): Promise<{ created: Array<{ id: string; fingerprint: string }>; failures: SerialInsertFailure[] }> {
   const created: Array<{ id: string; fingerprint: string }> = [];
+  const failures: SerialInsertFailure[] = [];
   for (const anchor of chunk) {
     const { data: inserted, error: insertError } = await client
       .from('anchors')
@@ -640,11 +675,16 @@ async function insertAnchorSerialFallback(
     }
     if (insertError) {
       logger.error({ error: insertError, fingerprint: anchor.fingerprint }, 'Failed to create anchor');
+      failures.push({
+        fingerprint: anchor.fingerprint,
+        sourceKey: pipelineSourceKey(anchor.metadata.pipeline_source, anchor.metadata.source_id),
+        pgCode: (insertError as { code?: string | null })?.code ?? null,
+      });
       continue;
     }
     if (inserted) created.push(inserted as { id: string; fingerprint: string });
   }
-  return created;
+  return { created, failures };
 }
 
 // SCRUM-3031: hard client-side ceiling on the batch_insert_anchors RPC call.
@@ -754,6 +794,7 @@ async function insertAnchorChunk(
   chunk: PipelineAnchorInsert[],
   chunkStart: number,
   ownerId: string,
+  onSerialInsertFailures?: (failures: SerialInsertFailure[]) => Promise<void>,
 ): Promise<Array<{ id: string; fingerprint: string }>> {
   const { data: result, error: rpcError } = await callBatchInsertAnchorsOnce(client, chunk, chunkStart);
 
@@ -771,7 +812,11 @@ async function insertAnchorChunk(
       orgId: ownerId,
       extra: { chunkIndex: chunkStart, chunkSize: chunk.length },
     });
-    return insertAnchorSerialFallback(client, chunk, ownerId);
+    const { created, failures } = await insertAnchorSerialFallback(client, chunk, ownerId);
+    if (failures.length > 0 && onSerialInsertFailures) {
+      await onSerialInsertFailures(failures);
+    }
+    return created;
   }
 
   const anchors = (result ?? []) as Array<{ id: string; fingerprint: string }>;
@@ -783,11 +828,12 @@ async function createPublicRecordAnchors(
   client: SupabaseClient,
   anchorInserts: PipelineAnchorInsert[],
   ownerId: string,
+  onSerialInsertFailures?: (failures: SerialInsertFailure[]) => Promise<void>,
 ): Promise<Array<{ id: string; fingerprint: string }>> {
   const createdAnchors: Array<{ id: string; fingerprint: string }> = [];
   for (let i = 0; i < anchorInserts.length; i += ANCHOR_INSERT_CHUNK) {
     const chunk = anchorInserts.slice(i, i + ANCHOR_INSERT_CHUNK);
-    createdAnchors.push(...await insertAnchorChunk(client, chunk, i, ownerId));
+    createdAnchors.push(...await insertAnchorChunk(client, chunk, i, ownerId, onSerialInsertFailures));
   }
   return createdAnchors;
 }
@@ -864,9 +910,17 @@ async function processPublicRecordAnchoringInner(
   const heapBefore = process.memoryUsage().heapUsed;
   logger.info({ recordCount: records.length, batchSize: PUBLIC_RECORD_BATCH_SIZE }, 'Creating individual anchors for public records');
 
-  // Step 1: Create individual anchor records for each public record
+  // Step 1: Create individual anchor records for each public record.
+  // Serial-fallback failures are joined back to their records via
+  // (source, source_id) — the identity the insert already carries — and
+  // counted durably toward quarantine (2026-08-17 poison record).
+  const recordsBySourceKey = new Map(
+    records.map((record) => [pipelineSourceKey(record.source, record.source_id), record]),
+  );
   const anchorInserts = records.map((record) => buildPipelineAnchorInsert(record, owner));
-  const createdAnchors = await createPublicRecordAnchors(client, anchorInserts, owner.ownerId);
+  const createdAnchors = await createPublicRecordAnchors(client, anchorInserts, owner.ownerId, async (failures) => {
+    await quarantineFailedSerialInserts(client, failures, recordsBySourceKey);
+  });
 
   logger.info({ created: createdAnchors.length, total: records.length }, 'Anchor records created (batch RPC)');
 

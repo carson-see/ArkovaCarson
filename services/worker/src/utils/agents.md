@@ -2,6 +2,28 @@
 
 Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
+## 2026-08-17 — new `utf16-truncate.ts`: surrogate-safe truncation (poison-record incident)
+
+`truncateUtf16Safe(input, maxUnits)` replaces bare `.slice(0, N)` wherever a truncated string is
+persisted or JSON-serialized. `.slice` cuts at UTF-16 code-unit boundaries; a cut inside a surrogate
+pair leaves a lone high surrogate, which cannot encode as UTF-8 and makes the enclosing PostgREST
+request body invalid JSON (`PGRST102`). One such string in `anchors.description` — an OpenAlex
+abstract with astral-plane math symbols, split exactly at unit 500 — poisoned the head of the
+public-record anchoring queue for 16 days
+(`docs/staging/fullsoak-2026-08/prod-repair-poison-record-2026-08-17.md`).
+
+Mechanism: slice → drop a trailing lone high surrogate (the whole fix for well-formed input, and it
+avoids `toWellFormed()`'s visible U+FFFD in user-facing strings) → feature-detected
+`String.prototype.toWellFormed()` (ES2024, Node ≥ 20 — our engines floor is 20.14) as a final
+invariant guard for already-malformed input. The feature-detect also keeps `"lib": ["ES2022"]`
+tsconfig untouched.
+
+Known remaining `.slice(0, N)`-before-persist sites NOT migrated in that PR (each needs its own
+look at whether the destination is a JSON write path): `jobQueue.ts` `sanitizeLastError` (1000),
+`api/v1/credentials-ctdl-registry-anchor.ts` (500 ×2), `api/v1/webhooks*.ts` `response_body` (500),
+`api/v1/nessie-query.ts` (500 ×2), `lib/credential-source-import.ts` (180). A lint rule banning
+truncate-then-persist via bare slice would beat this census — see the PR body follow-ups.
+
 ## 2026-08-10 — new `orgFieldPolicy.ts`: org-scoped request-field rejection (DPA Schedule 1 / clause 4.6)
 
 The first per-org *request shape* control in the worker. `switchboard_flags` is global (no `org_id`)
