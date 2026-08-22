@@ -161,6 +161,7 @@ jobs:
               level: "error",
               logger: "ci.revision-drift",
               platform: "other",
+              environment: "production",
               fingerprint: ["revision-drift", $kind],
               message: { formatted: $msg },
               tags: { story: "SCRUM-1247", deployed_sha: $live, head_sha: $head, drift_age_seconds: $age, drift_kind: $kind, source: "revision-drift" },

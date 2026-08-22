@@ -79,8 +79,11 @@ describe('seed-baseline-fixture.sql — §1.11A data-only + idempotent', () => {
 
   it('uses clearly-synthetic fixture identifiers', () => {
     expect(sql).toMatch(/seed-fixture/i);
-    // Fixture UUIDs live in the obviously-synthetic 5eed0000- range.
-    expect(sql).toMatch(/5eed0000-0000-0000-0000-/i);
+    // Fixture UUIDs live in the obviously-synthetic 5eed0000- range, and carry
+    // RFC 9562 version/variant nibbles (`4`/`8`) so strict `z.string().uuid()`
+    // worker validators accept them — see tests/infra/seed-fixture-uuids.test.ts
+    // and docs/staging/fullsoak-2026-08/deg5-org-queue-triage.md (DEG-5).
+    expect(sql).toMatch(/5eed0000-0000-4000-8000-/i);
   });
 
   it('does not use a seed-prefixed org name (keeps org_topology PASS)', () => {
