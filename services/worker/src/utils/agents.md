@@ -266,3 +266,33 @@ oracle call in this service and `jobs/treasury-cache.ts` owns it (every 10 min �
 - **`BTC_PRICE_MEMO_TTL_MS` (60 s) must stay well under the cron's 10-minute period**, or the memo
   becomes staler than the row it caches. Failures memoize too, and concurrent callers share one
   in-flight read — an outage must not turn every gated request into a DB round trip.
+
+## 2026-08-15 — new `db-row-validation.ts`: DB-sourced UUIDs + per-row batch parsing (BUG-2026-08-12-003 / FD-15)
+
+Two helpers, one bug.
+
+- **`dbUuid()` is shape-only, and that is the point.** Zod 4.x's `z.string().uuid()` is a strict
+  RFC-9562 check: it rejects any UUID whose version nibble is not 1–8 or whose variant nibble is not
+  8/9/a/b. Postgres `uuid` is *looser* — it accepts and stores any 128-bit value. Re-validating a
+  value the database already typed as `uuid` with a STRICTER rule than the column enforces cannot
+  add safety; it can only false-reject data we ourselves stored. The seeded fixture orgs
+  (`aaaaaaaa-0000-0000-0000-000000000001`) are exactly that case. Format-only was already the house
+  convention — `billing/entitlements.ts`, `api/audit-event.ts`, `api/admin-org-members.ts` and
+  `api/invitations.ts` each carried their own copy of the literal; this gives it one home.
+- **Do NOT use `dbUuid` on external input.** Request bodies, query strings, URL params, webhook
+  payloads and OAuth callbacks keep strict `.uuid()` — there the strictness IS the security
+  boundary, because nothing upstream has guaranteed the shape.
+  `external-uuid-strictness.ratchet.test.ts` pins both directions and fails if either drifts: an
+  external-input module may not import this helper, and a relaxed DB-sourced site may not go back
+  to strict.
+- **`parseDbRows` exists because `z.array(Schema).safeParse(rows)` is all-or-nothing.** One
+  malformed row failed the whole array, so a single bad value denied service to every other row in
+  the batch — that is how `org-queue-scheduler` returned INTERNAL on every run for an entire soak.
+  Per-row now: bad rows are quarantined and logged at `error`, good rows proceed. A **non-array**
+  payload still throws: that is a broken query contract, not one poison row, and silently returning
+  zero rows would hide it.
+- **Callers must surface the quarantine count, not swallow it.** Quarantining is a degraded mode; if
+  nothing reports it, a slow-growing data problem looks like a quiet system.
+- **The quarantine log carries issue paths + messages only, never the row value** (§1.4 / §1.6A). DB
+  rows routinely carry user-scoped data; Zod's messages describe the expectation, not the input, so
+  they are safe to pass through.

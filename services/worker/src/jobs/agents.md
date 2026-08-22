@@ -1092,3 +1092,30 @@ What changed is who else depends on it: `middleware/x402PaymentGate.ts` now pric
 off the `btc_price_usd` this job writes. **This cron is on a money path.** If it stops running, the
 quote goes stale, the reader rejects it past 6 h, and anchor pricing silently loses its entire fee
 component. It was previously only feeding display and alerting.
+
+## 2026-08-15 — FD-15: one malformed claim row no longer denies service to a whole scheduler pass
+
+`org-queue-scheduler.ts` parsed the `claim_due_org_queue_runs` result with
+`z.array(ClaimedOrgSchema).safeParse(...)` and threw on failure. Through the 2026-08 soak every pass
+returned INTERNAL: the seeded fixture orgs' UUIDs have zero version/variant nibbles, which Postgres
+stores happily and Zod 4.4.3's strict `.uuid()` rejects. PR #2215 fixed the seed side. This is the
+validator side — and the **blast radius was the real defect**: one bad row denied service to every
+other due org in the batch.
+
+- `claimDueOrganizations` now returns `{ rows, quarantined }` and parses per-row via `parseDbRows`
+  (`../utils/db-row-validation.ts`). `OrgQueueSchedulerResult.quarantined` is the alertable signal —
+  it is deliberately part of the result rather than a silent log line.
+- **A quarantined row's claim cannot be released.** `claim_due_org_queue_runs` has already set
+  `locked_at`, and an unparseable `org_id` is not a key we can write back with, so that org stays
+  locked until the RPC's own 15-minute lock timeout reclaims it. Self-healing, but not instant —
+  worth knowing before reading a `quarantined > 0` pass as harmless.
+- **A non-array RPC payload still throws.** That is a broken query contract, not one poison row.
+- `last_run_at` is `.catch(null)`: the scheduler never reads it, so a malformed value in a field
+  nobody consumes must not cost an organization its run.
+- The same reasoning moved the DB-sourced id schemas in `anchorExpirySweep.ts`,
+  `rule-action-dispatcher.ts`, `ai-credit-reconcile.ts`, `connector-artifact-drain.ts` and
+  `docusign-notarization-completed.ts` to `dbUuid()`. **Caveat worth keeping:** those read
+  `job_queue.payload`, which is `jsonb` — Postgres gives no format guarantee there. The guarantee is
+  that our own worker wrote a value it had read out of a `uuid` column, which is weaker than a
+  `uuid`-typed projection but still strong enough that strict RFC re-validation can only
+  false-reject.

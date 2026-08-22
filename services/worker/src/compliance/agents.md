@@ -95,3 +95,14 @@ persistence.
   Australia, EU/UK, Canada, Singapore, Japan, India, South Africa, Nigeria.
 - Migration `0217_nca03_compliance_audits.sql` (NCA-03): `compliance_audits`
   table storing full audit history.
+
+## 2026-08-15 — FD-15: `professional-education.ts` `anchorId` is DB-sourced, so shape-only
+
+`ProfessionalEducationExtractionJobPayloadSchema.anchorId` is built from `anchor.id` — a row read
+out of `anchors` — by `buildProfessionalEducationJobPayload`, and re-parsed by
+`jobs/professional-education-extraction.ts` off `job.payload`. It never carries client input.
+
+Strict `z.string().uuid()` (Zod 4.x, RFC 9562) rejects UUIDs that Postgres `uuid` legitimately
+stores — the zero version/variant nibbles of our seeded fixtures are the live example — so
+validating our own stored id more harshly than the column that stores it could only false-reject.
+Now uses `dbUuid()` from `../utils/db-row-validation.ts`. See BUG-2026-08-12-003 / FD-15.
