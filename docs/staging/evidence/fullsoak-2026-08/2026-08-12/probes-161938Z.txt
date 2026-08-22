@@ -1,0 +1,20 @@
+fullsoak-daily-probes — behavioural probe run
+run_ts           : 2026-08-12T16:19:38Z
+mode             : full (only P6)
+rig service      : https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app
+rig supabase ref : gnkuaywlpmsaezwvlvhk
+prod supabase ref: vzwyaatejekddvltxyye
+host             : Arkovas-Mac-mini.local
+git HEAD         : 550320dc8f7a48852177336c80999374b7e758b2
+mgmt SQL (reads) : available
+----------------------------------------------------------------------
+PASS  P6a  QR scan path resolves as anon (get_public_anchor -> record)
+         expected: 200 + public_id=ARK-2026-9476A947
+         observed: http 200, public_id=ARK-2026-9476A947
+PASS  P6b  Unknown QR target yields a distinct not-found payload, never a record and never a 5xx
+         expected: 404, or 200 with error payload and NO public_id
+         observed: http 200, error=Record not found, public_id=<none>
+----------------------------------------------------------------------
+PASS=2 FAIL=0 SKIP=0
+DAILY_PROBES: PASS
+artifact: /Volumes/Extreme/Arkova/_legacy/home-Arkova-2026-05-15/arkova-mvpcopy-main/docs/staging/evidence/fullsoak-2026-08/2026-08-12/probes-161938Z.txt
