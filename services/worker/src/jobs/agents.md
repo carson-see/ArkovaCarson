@@ -1093,3 +1093,45 @@ What changed is who else depends on it: `middleware/x402PaymentGate.ts` now pric
 off the `btc_price_usd` this job writes. **This cron is on a money path.** If it stops running, the
 quote goes stale, the reader rejects it past 6 h, and anchor pricing silently loses its entire fee
 component. It was previously only feeding display and alerting.
+
+## 2026-08-12 — F-D0-5: the run lease could not bound a HUNG run (`run-lease.ts`, `check-confirmations.ts`)
+
+Found on the fullsoak rig running prod's image digest (revision `…-00012-f45`), evidence in
+the Day-0 BL-2 secured-E2E write-up §2.6a/§4 (under `docs/staging/fullsoak-2026-08/`; authored
+by the soak close-out session, not on `main` when this landed). A `check-confirmations`
+run started at 14:16:00Z logged "Checking SUBMITTED anchors grouped by tx_id" and never logged
+"Confirmation check complete". SUBMITTED→SECURED promotion was disabled for **every tenant** for
+35+ minutes, with **zero warn/error logs**, and 31 forced POSTs all answered
+`{"checked":0,"confirmed":0}` — the same body a healthy idle run returns.
+
+**The TTL bounds a DEAD holder; it cannot bound a hung-but-ALIVE one.** All three mechanisms
+pointed the same way: the heartbeat renews on schedule for as long as the event loop turns (its
+`setInterval` fired at 14:27:50 / 14:39:30 / 14:51:10, exactly ttl/3 apart — which also rules out
+timer starvation); `releaseRunLease` lives only in `withRunLease`'s `finally`, which a parked body
+never reaches; and the per-process `inFlight` Set is consulted BEFORE the store, so the holding
+instance self-blocked too. With `minScale=2, maxScale=10` in prod, one hung instance blocks the job
+globally — the lease row is shared.
+
+Three changes, each with tests that fail without it:
+
+1. **`maxRunMs` on every `RunLeaseSpec`** — `withRunLease` races `body()` against it. On expiry the
+   heartbeat stops, the lease is released, `inFlight` is cleared, and the caller gets a
+   `RunLeaseBodyTimeoutError`. It **abandons**, it does not kill (nothing cancels a promise in JS);
+   the abandoned promise is observed so a late rejection cannot crash the worker. Floor is the TTL,
+   asserted for every spec in `RUN_LEASE_SPECS`. `check-confirmations` gets the tightest bound
+   (45 min) for the same reason it has the shortest TTL; `batch-anchor` the longest (110 min),
+   because cutting off a run that is mid-signing is the dangerous direction.
+2. **Bounded body reads** (`utils/body-read-timeout.ts`) — `AbortSignal.timeout` bounds the
+   REQUEST; `await response.json()` is a separate await with no deadline, and a provider that sends
+   headers then stalls parks it forever. That is the suspected proximate cause here
+   (`fetchTxStatus`, `check-confirmations.ts:~925` inside `Promise.allSettled`). Wired through
+   `check-confirmations.ts`, `chain/utxo-provider.ts`, `chain/fee-estimator.ts` and
+   `treasury-cache.ts`; `BodyReadTimeoutError` classifies as retryable in `isRetryableError`.
+3. **A lease-blocked run says so.** `checkSubmittedConfirmations` returns
+   `skipped: 'run-lease-held'` (F-D0-2), and `withRunLease` escalates a skip streak to **warn**
+   once it has outlived a full TTL — one skip is healthy overlap, a streak past the TTL means the
+   holder is renewing without finishing.
+
+**Do not "fix" a future hang by shortening the TTL.** A TTL below the cadence lets the next tick
+steal the lease from a run that is still working — the SCRUM-3031 overlap this module exists to
+prevent. `maxRunMs` is the knob for a hung run; `ttlMs` is the knob for a dead one.
