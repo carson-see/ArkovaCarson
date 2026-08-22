@@ -25,6 +25,7 @@ rev `00006-gik` tag `train-6`, closes 2026-08-23T20:33:58Z) were not touched.
   `arkova-worker-staging-00300-few` at 100% + tag `train-migration-t3` — nothing else
   referenced. The two warm revisions are no longer referenced, so their instances spin down and
   the cross-database cron writes stop.
+  <!-- staging-gcloud-ok: historical operator transcript — this is the documented REVERSAL command for the tag cleanup above, not a deploy path; restoring a tag goes through the operator, and scripts/staging/deploy.sh does not manage bare tag restoration. -->
 - **Reversal:** `gcloud run services update-traffic arkova-worker-staging
   --update-tags <tag>=<revision> --project=arkova1 --region=us-central1` restores any tag
   (revisions still exist; only tags were removed).
