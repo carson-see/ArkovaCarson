@@ -214,11 +214,20 @@ export function stripPII(text: string, options: StrippingOptions = {}): Strippin
   }
 
   // 3. Strip emails
-  const emailMatches = result.match(EMAIL_PATTERN);
-  if (emailMatches) {
-    result = result.replace(EMAIL_PATTERN, '[EMAIL_REDACTED]');
-    redactionCount += emailMatches.length;
-    piiFoundSet.add('email');
+  // Fast path: EMAIL_PATTERN cannot match without a literal '@', but its
+  // unanchored local-part quantifier backtracks quadratically across any long
+  // contiguous run of local-part characters when no '@' exists (measured 64s
+  // on a 100k-char OCR text — src/lib/agents.md, 2026-08-22). stripPII runs
+  // in the browser on raw OCR output, so skip the regex entirely on the
+  // overwhelmingly common '@'-less document. Zero semantic change: the
+  // indexOf check and the pattern agree exactly on when a match is possible.
+  if (result.includes('@')) {
+    const emailMatches = result.match(EMAIL_PATTERN);
+    if (emailMatches) {
+      result = result.replace(EMAIL_PATTERN, '[EMAIL_REDACTED]');
+      redactionCount += emailMatches.length;
+      piiFoundSet.add('email');
+    }
   }
 
   // 4. Strip phones

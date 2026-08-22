@@ -447,4 +447,34 @@ describe('piiStripper adversarial tests (CISO THREAT-5)', () => {
       expect(result.strippedText).toContain('year: 2024');
     });
   });
+
+  // ─── Performance ratchet (quadratic EMAIL_PATTERN, src/lib/agents.md 2026-08-22) ───
+  describe('email pattern performance', () => {
+    it('handles a large @-less OCR text in linear time (quadratic scan froze the tab)', () => {
+      // One CONTIGUOUS ~100k-char run of local-part-valid characters with no
+      // '@' anywhere (dots and dashes are local-part chars, so a dotted OCR
+      // token stream forms a single run): EMAIL_PATTERN's unanchored
+      // local-part quantifier re-scans the remainder of the run from every
+      // start position on such input — quadratic (measured 64s at this size
+      // in the browser profile, ~5s under vitest/node on this machine; see
+      // src/lib/agents.md 2026-08-22). With the no-'@' fast path the whole
+      // stripPII call completes in single-digit milliseconds, so the 2s bound
+      // sits ~1000x above the fixed runtime and beneath every observed broken
+      // one — it cannot flake in either direction on a loaded CI runner.
+      const input = 'certificate.of.completion.credential-record.'.repeat(2273);
+      const started = performance.now();
+      const result = stripPII(input);
+      const elapsed = performance.now() - started;
+      expect(elapsed).toBeLessThan(2000);
+      expect(result.piiFound).not.toContain('email');
+    });
+
+    it('still redacts emails identically when an @ is present', () => {
+      const result = stripPII('contact carson@arkova.io or admissions@school.edu today');
+      expect(result.strippedText).not.toContain('carson@arkova.io');
+      expect(result.strippedText).not.toContain('admissions@school.edu');
+      expect(result.strippedText.match(/\[EMAIL_REDACTED\]/g)).toHaveLength(2);
+      expect(result.piiFound).toContain('email');
+    });
+  });
 });
