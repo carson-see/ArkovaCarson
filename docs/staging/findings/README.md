@@ -32,6 +32,7 @@ soak measuring nothing is indistinguishable from a healthy soak.
 | [FD-REORG-1](FD-REORG-1-detectreorgs-inprocess-cron-times-out.md) | `detectReorgs`' **in-process** cron times out ~3×/hour (151× in 48 h). The Cloud Scheduler path returned 288/288 × 200, so reorg detection was never actually down — but two paths share a name and only one is broken. |
 | [FD-PROD-1](FD-PROD-1-0386-merged-but-unapplied-fingerprint-oracle-open.md) | **OPEN.** Migration 0386 is merged but **never applied to prod** — the fingerprint existence oracle it closed is still open live. Found by md5-comparing function bodies against prod, not by assuming repo head. |
 | [FD-CI-1](FD-CI-1-actions-budget-exhausted-2026-08-21.md) | **RESOLVED 2026-08-21T15:51Z.** The Actions budget ran out 2026-08-21 ~15:32Z. Every job repo-wide is refused in 2–4 s, so no PR can go green and Mergify cannot merge. Soaks are unaffected. |
+| [FD-CL-1](FD-CL-1-courtlistener-429-backoff-has-no-budget.md) | **OPEN.** `/jobs/fetch-courtlistener` has **no cumulative budget and no consecutive-429 cap**, so a sustained upstream 429 loops to `maxPages` (2000 x 30s) and Cloud Run kills it at the 3600s ceiling. **57% of runs for 8 days**, ~19 instance-days burned. |
 
 ## Traps that are now enforced in code, not prose
 
