@@ -67,13 +67,15 @@ export const FORBIDDEN_TERMS = [
   // inside identifiers where adjacent chars include `_`, e.g. the env-var name
   // SUPABASE_SERVICE_ROLE_KEY leaking into an error string. \w includes `_`
   // which used to defeat the boundary and miss the most common leak vector.
-  String.raw`(?<![A-Za-z0-9])service_role(?![A-Za-z0-9])`,
-  String.raw`(?<![A-Za-z0-9])service role(?![A-Za-z0-9])`,
+  // (Plain quotes, not String.raw: these three patterns carry no backslash,
+  // so String.raw would be pure noise — SonarCloud S7780.)
+  '(?<![A-Za-z0-9])service_role(?![A-Za-z0-9])',
+  '(?<![A-Za-z0-9])service role(?![A-Za-z0-9])',
   // CIBA-HARDEN-05: PostgRESTError is the common TitleCase variant — match it
   // too. Keep only the left ASCII-alnum boundary (no right boundary) so
   // CamelCase continuations like "PostgRESTError" hit while genuine words
   // (there's nothing English starting with "postgrest") don't false-positive.
-  String.raw`(?<![A-Za-z0-9])postgrest`,
+  '(?<![A-Za-z0-9])postgrest',
 
   // SCRUM-1092 / SCRUM-1672: the generic document action is "Secure Document".
   // "Issue Credential" is allowed only in src/lib/copy.ts for the restricted
@@ -603,7 +605,7 @@ function normaliseTerm(term: string): string {
   return term.trim().toLowerCase();
 }
 
-const MATCH_KEY_SEP = '\\0';
+const MATCH_KEY_SEP = String.raw`\0`;
 
 // Match key = normalised file + line + normalised term. SCRUM-2149 fix2:
 // `term` is part of the key (NUL-separated at runtime so it can never collide with the
@@ -880,6 +882,9 @@ export function findTermViolations(
 /** One frame of nesting: JSX element text, or a `{…}` expression opened from it. */
 type JsxFrame = { kind: 'text' } | { kind: 'expr'; depth: number };
 
+/** The `{…}` half of {@link JsxFrame} — the only frame that carries depth. */
+type JsxExprFrame = Extract<JsxFrame, { kind: 'expr' }>;
+
 interface JsxTextState {
   /**
    * Context stack. Empty = plain code. `text` on top = inside JSX element
@@ -905,6 +910,22 @@ function newJsxTextState(): JsxTextState {
 }
 
 /**
+ * Index just past the `}` that balances the `{` at `start`, or the line length
+ * when it never closes — an unclosed `{` runs to EOL, because the rest of the
+ * line is the head of a multi-line expression, not copy.
+ */
+function balancedBraceEnd(chars: string[], start: number): number {
+  let depth = 1;
+  let j = start + 1;
+  while (j < chars.length && depth > 0) {
+    if (chars[j] === '{') depth++;
+    else if (chars[j] === '}') depth--;
+    j++;
+  }
+  return depth === 0 ? j : chars.length;
+}
+
+/**
  * Blank balanced `{…}` JSX expressions on a raw-text continuation line (they
  * are code — their values are scanned by the normal per-line rules when they
  * span lines, and are never element text). An UNCLOSED `{` blanks to EOL: the
@@ -912,18 +933,15 @@ function newJsxTextState(): JsxTextState {
  */
 function blankJsxExpressions(line: string): string {
   const out = line.split('');
-  for (let i = 0; i < out.length; i++) {
-    if (out[i] !== '{') continue;
-    let depth = 1;
-    let j = i + 1;
-    while (j < out.length && depth > 0) {
-      if (out[j] === '{') depth++;
-      else if (out[j] === '}') depth--;
-      j++;
+  let i = 0;
+  while (i < out.length) {
+    if (out[i] !== '{') {
+      i++;
+      continue;
     }
-    const end = depth === 0 ? j : out.length;
+    const end = balancedBraceEnd(out, i);
     for (let k = i; k < end; k++) out[k] = ' ';
-    i = end - 1;
+    i = end;
   }
   return out.join('');
 }
@@ -939,6 +957,19 @@ function skipQuoted(line: string, i: number): number {
     else j++;
   }
   return line.length;
+}
+
+/**
+ * Index of the backtick that closes a template literal opened at or before
+ * `i`, or a value >= `line.length` when it does not close on this line. A
+ * backslash escapes the next character, so an escaped backtick does not close
+ * the literal. Shared by the tag-attribute walker and the code-context walker
+ * so the two can never disagree about where a template ends.
+ */
+function skipToTemplateEnd(line: string, i: number): number {
+  let j = i;
+  while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
+  return j;
 }
 
 /** True when a `/` at `i` starts a REGEX literal rather than division: the
@@ -976,6 +1007,104 @@ const TAG_SPANS_LINES = -2;
 // matching just these two closes the generic-arrow hole (review finding 2).
 const GENERIC_PARAM_RE = /^[A-Za-z_$][\w$]*(?:\s+extends\b|\s*,)/;
 
+/** Attribute-scanning cursor for a tag, carried across lines while it is open. */
+type TagWalk = { braceDepth: number; inTemplate: boolean };
+
+/** {@link walkTagBody} reached end-of-line without the tag's `>`. */
+const TAG_UNTERMINATED = -1;
+
+/**
+ * Advance past ONE tag-body character that is not the tag's terminating `>`: a
+ * quoted attribute value is skipped wholesale, a backtick opens an attribute
+ * template literal, and braces track attribute-expression depth.
+ */
+function stepTagBodyChar(line: string, j: number, walk: TagWalk): number {
+  const c = line[j];
+  if (c === '"' || c === "'") return skipQuoted(line, j);
+  if (c === '`') {
+    walk.inTemplate = true;
+    return j + 1;
+  }
+  if (c === '{') {
+    walk.braceDepth++;
+    return j + 1;
+  }
+  if (c === '}') {
+    walk.braceDepth = Math.max(0, walk.braceDepth - 1);
+    return j + 1;
+  }
+  return j + 1;
+}
+
+/**
+ * Close an attribute template literal that is already open. Returns the index
+ * just past its backtick, or TAG_UNTERMINATED when the template runs past the
+ * end of this line — the tag then stays open (the ApiSandbox className shape).
+ */
+function closeTagTemplate(line: string, j: number, walk: TagWalk): number {
+  const end = skipToTemplateEnd(line, j);
+  if (end >= line.length) return TAG_UNTERMINATED;
+  walk.inTemplate = false;
+  return end + 1;
+}
+
+/**
+ * Walk tag-attribute characters from `j` to the tag's `>` at `{}`-depth 0,
+ * honouring quoted attribute values, attribute-expression braces, and template
+ * literals — a multi-line `` className={`… ${ `` template is opaque until its
+ * closing backtick (adversarial review round 2, ApiSandbox className shape).
+ * Returns the `>` index, or -1 when the tag continues on the next line (walk
+ * state updated for the caller to persist in pendingTag).
+ */
+function walkTagBody(line: string, j: number, walk: TagWalk): number {
+  let k = j;
+  while (k < line.length) {
+    if (walk.inTemplate) {
+      k = closeTagTemplate(line, k, walk);
+      if (k === TAG_UNTERMINATED) return TAG_UNTERMINATED;
+      continue;
+    }
+    if (line[k] === '>' && walk.braceDepth === 0) return k;
+    k = stepTagBodyChar(line, k, walk);
+  }
+  return TAG_UNTERMINATED;
+}
+
+/**
+ * Which stack transition a completed tag performs. A named kind rather than
+ * two boolean flags (SonarCloud S2301): the call site states which shape it
+ * just parsed, and a further shape would extend the union instead of adding
+ * another flag whose meaning is invisible at the call site.
+ */
+type TagEnd = 'close' | 'open' | 'self-close';
+
+/** Apply the stack transition for a completed tag. */
+function applyTagEnd(state: JsxTextState, end: TagEnd): void {
+  if (end === 'close') {
+    // `</p>` / `</>` closes the innermost text frame (back to parent context).
+    if (state.stack[state.stack.length - 1]?.kind === 'text') state.stack.pop();
+  } else if (end === 'open') {
+    state.stack.push({ kind: 'text' });
+  }
+  // 'self-close' (`<br />`) neither opens nor closes a frame.
+}
+
+/**
+ * True when a `<` that is neither `</` nor `<>` does NOT open a JSX tag: a
+ * non-letter follows it, or — in CODE context only — it is a comparison or a
+ * generic argument list (`Array<string>`, `x<y`) or one of the two TSX
+ * generic-arrow spellings. Inside element text (`prose`) an abutting previous
+ * character is ordinary copy (`text</b>`), never a disambiguator: the
+ * prev-char guard is a CODE-context tool only (review finding 1).
+ */
+function isNonTagAngle(line: string, i: number, next: string, prose: boolean): boolean {
+  if (!/[A-Za-z]/.test(next)) return true;
+  if (prose) return false;
+  const prev = i > 0 ? line[i - 1] : '';
+  if (/[\w$)\]]/.test(prev)) return true; // Array<string>, x<y
+  return GENERIC_PARAM_RE.test(line.slice(i + 1)); // <T extends …> / <T,>
+}
+
 /**
  * Try to consume a JSX tag starting at the `<` at index `i`. Returns the index
  * to continue from, TAG_NOT_A_TAG when this `<` is not a tag (comparison,
@@ -989,77 +1118,150 @@ function tryConsumeTag(line: string, i: number, state: JsxTextState, prose: bool
   const closing = next === '/';
   const fragmentOpen = next === '>';
 
-  if (!closing && !fragmentOpen) {
-    if (!/[A-Za-z]/.test(next)) return TAG_NOT_A_TAG;
-    if (!prose) {
-      const prev = i > 0 ? line[i - 1] : '';
-      if (/[\w$)\]]/.test(prev)) return TAG_NOT_A_TAG; // Array<string>, x<y
-      if (GENERIC_PARAM_RE.test(line.slice(i + 1))) return TAG_NOT_A_TAG; // <T extends …> / <T,>
-    }
-  }
+  if (!closing && !fragmentOpen && isNonTagAngle(line, i, next, prose)) return TAG_NOT_A_TAG;
 
   if (fragmentOpen) {
     state.stack.push({ kind: 'text' });
     return i + 2;
   }
 
-  const walk = { braceDepth: 0, inTemplate: false };
+  const walk: TagWalk = { braceDepth: 0, inTemplate: false };
   const gt = walkTagBody(line, i + (closing ? 2 : 1), walk);
-  if (gt === -1) {
+  if (gt === TAG_UNTERMINATED) {
     state.pendingTag = { closing, braceDepth: walk.braceDepth, inTemplate: walk.inTemplate };
     return TAG_SPANS_LINES;
   }
-  applyTagEnd(state, closing, line[gt - 1] === '/');
+  if (closing) applyTagEnd(state, 'close');
+  else applyTagEnd(state, line[gt - 1] === '/' ? 'self-close' : 'open');
   return gt + 1;
 }
 
-/**
- * Walk tag-attribute characters from `j` to the tag's `>` at `{}`-depth 0,
- * honouring quoted attribute values, attribute-expression braces, and template
- * literals — a multi-line `` className={`… ${ `` template is opaque until its
- * closing backtick (adversarial review round 2, ApiSandbox className shape).
- * Returns the `>` index, or -1 when the tag continues on the next line (walk
- * state updated for the caller to persist in pendingTag).
- */
-function walkTagBody(line: string, j: number, walk: { braceDepth: number; inTemplate: boolean }): number {
-  while (j < line.length) {
-    if (walk.inTemplate) {
-      while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
-      if (j >= line.length) return -1;
-      walk.inTemplate = false;
-      j++;
-      continue;
-    }
-    const c = line[j];
-    if (c === '"' || c === "'") { j = skipQuoted(line, j); continue; }
-    if (c === '`') { walk.inTemplate = true; j++; continue; }
-    if (c === '{') { walk.braceDepth++; j++; continue; }
-    if (c === '}') { walk.braceDepth = Math.max(0, walk.braceDepth - 1); j++; continue; }
-    if (c === '>' && walk.braceDepth === 0) return j;
-    j++;
-  }
-  return -1;
-}
-
-/** Apply the stack transition for a completed tag. */
-function applyTagEnd(state: JsxTextState, closing: boolean, selfClosing: boolean): void {
-  if (closing) {
-    // `</p>` / `</>` closes the innermost text frame (back to parent context).
-    if (state.stack[state.stack.length - 1]?.kind === 'text') state.stack.pop();
-  } else if (!selfClosing) {
-    state.stack.push({ kind: 'text' });
-  }
-}
 
 /** Resume a tag that spans lines; returns index past its `>` or -1 (still open). */
 function resumePendingTag(line: string, state: JsxTextState): number {
   const pending = state.pendingTag;
   if (pending === null) return 0;
   const gt = walkTagBody(line, 0, pending);
-  if (gt === -1) return -1;
-  applyTagEnd(state, pending.closing, gt > 0 && line[gt - 1] === '/');
+  if (gt === TAG_UNTERMINATED) return TAG_UNTERMINATED;
+  if (pending.closing) applyTagEnd(state, 'close');
+  else applyTagEnd(state, gt > 0 && line[gt - 1] === '/' ? 'self-close' : 'open');
   state.pendingTag = null;
   return gt + 1;
+}
+
+/** A step consumed the rest of the line; the caller stops walking it. */
+const LINE_CONSUMED = -1;
+
+/**
+ * Consume the tail of a construct opened on an EARLIER line — a block comment
+ * or a code-context template literal — and return the index to resume parsing
+ * from, or LINE_CONSUMED when that construct swallows this whole line.
+ */
+function resumeOpenConstruct(line: string, state: JsxTextState): number {
+  if (state.inBlockComment) {
+    const e = line.indexOf('*/');
+    if (e === -1) return LINE_CONSUMED;
+    state.inBlockComment = false;
+    return e + 2;
+  }
+  if (state.inTemplate) {
+    const end = skipToTemplateEnd(line, 0);
+    if (end >= line.length) return LINE_CONSUMED;
+    state.inTemplate = false;
+    return end + 1;
+  }
+  return 0;
+}
+
+/**
+ * Advance one character of JSX element TEXT. Only `{` (opens an expression
+ * frame) and `<` (a tag) are structural — apostrophes, quotes, slashes and a
+ * bare `>` are prose, so copy can never corrupt state (review finding 3).
+ */
+function stepTextContext(line: string, i: number, state: JsxTextState): number {
+  const ch = line[i];
+  if (ch === '{') {
+    state.stack.push({ kind: 'expr', depth: 1 });
+    return i + 1;
+  }
+  if (ch !== '<') return i + 1; // prose — quotes, slashes, `>` etc. are just copy
+  const r = tryConsumeTag(line, i, state, true);
+  if (r === TAG_SPANS_LINES) return LINE_CONSUMED;
+  return r === TAG_NOT_A_TAG ? i + 1 : r;
+}
+
+/**
+ * Handle a `/` in CODE context: a line comment ends the line, a block comment
+ * is skipped (and may stay open past it), a regex literal is skipped wholesale
+ * (review finding 4), and anything else is division.
+ */
+function stepCodeSlash(line: string, i: number, state: JsxTextState): number {
+  if (line[i + 1] === '/') return LINE_CONSUMED; // line comment
+  if (line[i + 1] === '*') {
+    const e = line.indexOf('*/', i + 2);
+    if (e === -1) {
+      state.inBlockComment = true;
+      return LINE_CONSUMED;
+    }
+    return e + 2;
+  }
+  if (startsRegexLiteral(line, i)) {
+    const e = skipRegexLiteral(line, i);
+    if (e !== -1) return e;
+  }
+  return i + 1; // unterminated on this line → it was division
+}
+
+/**
+ * Handle expression braces and tag starts in CODE/EXPR context; every other
+ * character advances by one. `{`/`}` count only inside an EXPR frame — at the
+ * bottom of the stack (plain code) they are ordinary block braces.
+ */
+function stepCodeBrace(
+  line: string,
+  i: number,
+  state: JsxTextState,
+  top: JsxExprFrame | undefined,
+): number {
+  const ch = line[i];
+  if (top !== undefined && ch === '{') {
+    top.depth++;
+    return i + 1;
+  }
+  if (top !== undefined && ch === '}') {
+    top.depth--;
+    if (top.depth === 0) state.stack.pop();
+    return i + 1;
+  }
+  if (ch !== '<') return i + 1;
+  const r = tryConsumeTag(line, i, state, false);
+  if (r === TAG_SPANS_LINES) return LINE_CONSUMED;
+  return r === TAG_NOT_A_TAG ? i + 1 : r;
+}
+
+/**
+ * Advance one character of CODE (empty stack) or of a `{…}` EXPR frame:
+ * strings, template literals, comments and regex literals are all skipped as
+ * code, then {@link stepCodeBrace} handles expression depth and tag starts.
+ */
+function stepCodeContext(
+  line: string,
+  i: number,
+  state: JsxTextState,
+  top: JsxExprFrame | undefined,
+): number {
+  const ch = line[i];
+  if (ch === '"' || ch === "'") return skipQuoted(line, i);
+  if (ch === '`') {
+    const end = skipToTemplateEnd(line, i + 1);
+    if (end >= line.length) {
+      state.inTemplate = true;
+      return LINE_CONSUMED;
+    }
+    return end + 1;
+  }
+  if (ch === '/') return stepCodeSlash(line, i, state);
+  return stepCodeBrace(line, i, state, top);
 }
 
 /**
@@ -1074,81 +1276,22 @@ function resumePendingTag(line: string, state: JsxTextState): number {
  * guard. All tag ends honour `{}` depth and quoted attribute values.
  */
 function updateJsxTextState(line: string, state: JsxTextState): void {
-  let i = 0;
-
-  if (state.inBlockComment) {
-    const e = line.indexOf('*/');
-    if (e === -1) return;
-    state.inBlockComment = false;
-    i = e + 2;
-  } else if (state.inTemplate) {
-    let j = 0;
-    while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
-    if (j >= line.length) return;
-    state.inTemplate = false;
-    i = j + 1;
-  }
+  let i = resumeOpenConstruct(line, state);
+  if (i === LINE_CONSUMED) return;
 
   if (state.pendingTag !== null) {
     const r = resumePendingTag(line.slice(i), state);
-    if (r === -1) return;
+    if (r === TAG_UNTERMINATED) return;
     i += r;
   }
 
   while (i < line.length) {
     const top = state.stack[state.stack.length - 1];
-    const ch = line[i];
-
-    if (top?.kind === 'text') {
-      if (ch === '{') {
-        state.stack.push({ kind: 'expr', depth: 1 });
-        i++;
-      } else if (ch === '<') {
-        const r = tryConsumeTag(line, i, state, true);
-        if (r === TAG_SPANS_LINES) return;
-        i = r === TAG_NOT_A_TAG ? i + 1 : r;
-      } else {
-        i++; // prose — quotes, slashes, `>` etc. are just copy
-      }
-      continue;
-    }
-
-    // CODE (empty stack) or EXPR frame.
-    if (ch === '"' || ch === "'") { i = skipQuoted(line, i); continue; }
-    if (ch === '`') {
-      let j = i + 1;
-      while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
-      if (j >= line.length) { state.inTemplate = true; return; }
-      i = j + 1;
-      continue;
-    }
-    if (ch === '/' && line[i + 1] === '/') return; // line comment
-    if (ch === '/' && line[i + 1] === '*') {
-      const e = line.indexOf('*/', i + 2);
-      if (e === -1) { state.inBlockComment = true; return; }
-      i = e + 2;
-      continue;
-    }
-    if (ch === '/' && startsRegexLiteral(line, i)) {
-      const e = skipRegexLiteral(line, i);
-      if (e !== -1) { i = e; continue; }
-      i++; // unterminated on this line → it was division
-      continue;
-    }
-    if (top !== undefined && ch === '{') { top.depth++; i++; continue; }
-    if (top !== undefined && ch === '}') {
-      top.depth--;
-      if (top.depth === 0) state.stack.pop();
-      i++;
-      continue;
-    }
-    if (ch === '<') {
-      const r = tryConsumeTag(line, i, state, false);
-      if (r === TAG_SPANS_LINES) return;
-      i = r === TAG_NOT_A_TAG ? i + 1 : r;
-      continue;
-    }
-    i++;
+    i =
+      top?.kind === 'text'
+        ? stepTextContext(line, i, state)
+        : stepCodeContext(line, i, state, top);
+    if (i === LINE_CONSUMED) return;
   }
 }
 
