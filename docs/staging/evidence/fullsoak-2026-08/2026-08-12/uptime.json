@@ -1,0 +1,9 @@
+{
+  "recorded_at": "2026-08-12T15:19:01Z",
+  "rig_service": "arkova-worker-fullsoak-2026-08-staging",
+  "rig_revision": "arkova-worker-fullsoak-2026-08-staging-00013-mrw",
+  "rig_uptime_seconds": 562,
+  "samples": 5,
+  "previous_uptime_seconds": "501",
+  "previous_source": "docs/staging/evidence/fullsoak-2026-08/day0-snapshots/uptime-baseline.json"
+}

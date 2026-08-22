@@ -1,0 +1,39 @@
+{
+  "_redacted": [
+    "connection (Supabase project ref/URL \u2014 deliberately not written to evidence)"
+  ],
+  "anchoring": {
+    "drainReason": "backlog_aged",
+    "drainStalled": true,
+    "feeRateSatVb": 4,
+    "lastBatchAt": null,
+    "lastSecuredAt": "2026-08-17T02:37:11.715704+00:00",
+    "pendingCount": 15,
+    "status": "warning"
+  },
+  "authorized": true,
+  "detail_field": null,
+  "git_sha": "f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58",
+  "info": {
+    "ai": {
+      "configured": true
+    },
+    "prodAnchoring": {
+      "enabled": true
+    },
+    "sentry": {
+      "configured": false,
+      "message": "SENTRY_DSN not configured"
+    },
+    "stripe": {
+      "configured": true
+    }
+  },
+  "kms": {
+    "provider": "wif",
+    "status": "ok"
+  },
+  "network": "signet",
+  "status": "healthy",
+  "uptime": 51024
+}

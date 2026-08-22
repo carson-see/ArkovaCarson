@@ -1,0 +1,10 @@
+{
+  "run_ts": "2026-08-12T16:22:20Z",
+  "mode": "full",
+  "rig_service": "https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app",
+  "rig_supabase_ref": "gnkuaywlpmsaezwvlvhk",
+  "git_head": "550320dc8f7a48852177336c80999374b7e758b2",
+  "pass": 2, "fail": 1, "skip": 1,
+  "verdict": "FAIL",
+  "probes": [{"id": "P3a", "desc": "invite_member as ORG_ADMIN writes an invitations row", "expected": "http 200 AND row delta +1", "observed": "http 400, count 0 -> 0", "result": "FAIL"},{"id": "P3b", "desc": "invite_member refuses to mint an ORG_ADMIN (SEC-RECON-8)", "expected": "non-2xx", "observed": "http 403", "result": "PASS"},{"id": "P3c", "desc": "Org B admin cannot invite into Org A", "expected": "non-2xx", "observed": "http 400", "result": "PASS"},{"id": "P3d", "desc": "GET /api/invitations/:token previews the invite", "expected": "200 + org name", "observed": "no token row to preview", "result": "SKIP"}]
+}

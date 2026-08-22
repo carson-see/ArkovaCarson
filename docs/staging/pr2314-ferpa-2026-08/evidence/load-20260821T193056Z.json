@@ -1,0 +1,12 @@
+{
+  "pr": 2314,
+  "rig": "arkova-worker-ferpa2314-staging",
+  "tag": "pr-2314",
+  "supabase_ref": "wjuelohtpklodpjklvqy",
+  "head_sha": "93747a6aa451991476ab0b00d58c3fb0754f2e2d",
+  "window_seconds": 110,
+  "finished_at": "2026-08-21T19:30:56Z",
+  "requests": { "ok": 62, "fail": 10, "status_200": 58, "status_404": 4, "status_other": 10 },
+  "memberProbes": "2314-optout-nulltype=200 2314-optout-cpe-boundary=200 2314-absent=404 2314-proof-declared404=404 2314-provenance-suppressed=200 2314-anon-fingerprint=200 2314-anon-search-matchset=200 health=200 2314-suppressed-still-verifies=200 2314-control-unaffected=200 ",
+  "deviations": "2314-control-unaffected=429(want 200) 2314-optout-nulltype=429(want 200) 2314-optout-cpe-boundary=429(want 200) 2314-absent=429(want 404) 2314-proof-declared404=429(want 404) 2314-provenance-suppressed=429(want 200) 2314-suppressed-still-verifies=429(want 200) 2314-control-unaffected=429(want 200) 2314-suppressed-still-verifies=429(want 200) 2314-control-unaffected=429(want 200) "
+}

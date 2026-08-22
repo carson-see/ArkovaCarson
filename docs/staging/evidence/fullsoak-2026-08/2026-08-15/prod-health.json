@@ -1,0 +1,1 @@
+{"status":"healthy","version":"0.1.0","git_sha":"f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58","uptime":123418,"network":"mainnet","checks":{"database":"ok","anchoring":"ok","kms":"ok"}}

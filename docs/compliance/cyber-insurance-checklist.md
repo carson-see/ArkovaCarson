@@ -91,7 +91,7 @@ Procure cyber liability insurance with $2-5M aggregate coverage. This is a procu
 | Completed carrier application | TODO | Carrier portal |
 | Annual revenue / ARR | TODO | Finance records |
 | Number of employees | TODO | HR records |
-| Number of records stored | Available | 1.41M+ public records, 1.41M+ SECURED anchors |
+| Number of records stored | Available | 3,485,148 anchors, 3,485,077 SECURED (verified 2026-08-12) |
 | Types of data processed | Available | `data-classification.md` |
 | Industry / SIC code | Available | SaaS / Credential Verification |
 | Geographic scope of operations | Available | US primary, international (Kenya, Australia, South Africa, Nigeria, EU) |

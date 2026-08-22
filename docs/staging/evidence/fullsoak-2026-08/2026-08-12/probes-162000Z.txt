@@ -1,0 +1,29 @@
+fullsoak-daily-probes — behavioural probe run
+run_ts           : 2026-08-12T16:20:00Z
+mode             : full (only P10)
+rig service      : https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app
+rig supabase ref : gnkuaywlpmsaezwvlvhk
+prod supabase ref: vzwyaatejekddvltxyye
+host             : Arkovas-Mac-mini.local
+git HEAD         : 550320dc8f7a48852177336c80999374b7e758b2
+mgmt SQL (reads) : available
+----------------------------------------------------------------------
+PASS  P10a Platform overview dashboard returns a populated payload
+         expected: 200 + non-empty payload
+         observed: http 200, keys=['anchors', 'organizations', 'subscriptions', 'users']
+PASS  P10b Pipeline admin dashboard returns a populated payload
+         expected: 200 + non-empty payload
+         observed: http 200, keys=['anchorLinkedRecords', 'anchoredRecords', 'broadcastingRecords', 'bySource', 'cacheUpdatedAt']
+PASS  P10c Treasury dashboard returns a populated payload
+         expected: 200 + non-empty payload
+         observed: http 200, keys=['fees', 'network', 'recentAnchors', 'wallet']
+SKIP  P10d Ops SLO dashboard returns a populated payload
+         expected: 200 + non-empty payload
+         observed: http 429 after 3 retries — rate-limited, payload NOT asserted
+PASS  P10e Unauthenticated caller cannot read admin dashboards
+         expected: 401/403
+         observed: http 401
+----------------------------------------------------------------------
+PASS=4 FAIL=0 SKIP=1
+DAILY_PROBES: PASS
+artifact: /Volumes/Extreme/Arkova/_legacy/home-Arkova-2026-05-15/arkova-mvpcopy-main/docs/staging/evidence/fullsoak-2026-08/2026-08-12/probes-162000Z.txt
