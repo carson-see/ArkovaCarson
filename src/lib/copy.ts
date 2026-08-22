@@ -1601,6 +1601,23 @@ export const ORG_PAGE_LABELS = {
 } as const;
 
 // =============================================================================
+// PENDING INVITATIONS (org page — visibility for invites that have not
+// resulted in a member yet)
+// =============================================================================
+
+export const PENDING_INVITATIONS_LABELS = {
+  SECTION_TITLE: 'Pending Invitations',
+  STATUS_PENDING: 'Pending',
+  STATUS_EXPIRED: 'Expired',
+  STATUS_REVOKED: 'Revoked',
+  SENT_ON: 'Sent',
+  RESEND: 'Resend',
+  RESENDING: 'Resending…',
+  RESEND_SUCCESS: 'Invitation resent.',
+  RESEND_FAILED: 'Could not resend this invitation. Please try again.',
+} as const;
+
+// =============================================================================
 // MEMBER DETAIL PAGE
 // =============================================================================
 
