@@ -17,3 +17,17 @@
 # pattern matches, but the value is a database row id (not a secret)
 # and the raw key was never stored in plaintext (CLAUDE.md §1.4).
 a13572d8a18bf9c3075578bdc5e6bf3cd19ee292:HANDOFF.md:generic-api-key:214
+# PR #2269 (rc/rate-limit-cluster-2026-08): `generic-api-key` fires on the
+# `IDEM_KEY` constant in a unit test — a hand-written placeholder UUID whose
+# digits walk the hex alphabet in order, used as the idempotency key the test
+# writes into a mocked Upstash/Redis store (`idem:<namespace>:<key>`). Only its
+# 3.95 entropy trips the rule; it is not a credential, and no real Upstash
+# token appears in the file (its token constant is the literal string
+# fake-token). The value is deliberately NOT quoted here: reproducing it
+# re-plants the same entropy string in this file and trips the scanner at a
+# fresh fingerprint, which is what reddened PR #2332 on its first push. No
+# `.gitleaks.toml` regex allowlist entry either — a UUID-shaped pattern would
+# blanket-exempt every UUID in every test, which is the blanket test-file
+# exclusion SEC-015 deliberately removed. Keep scoped to the exact
+# commit/path/rule/line fingerprint.
+65b60f7a6fddbc6bdd2666a3d3b46639e6a03511:services/worker/src/middleware/upstashIdempotency.namespace.test.ts:generic-api-key:43
