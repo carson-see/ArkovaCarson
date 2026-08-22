@@ -110,7 +110,14 @@ describe('FD-FERPA-1 — directory_info_opt_out suppresses directory information
         full_name: 'FERPA Directory Opt-Out Seed',
         role: 'ORG_ADMIN',
         org_id: ORG_ID,
-        is_public_profile: false,
+        // MUST be true. `search_public_credentials` only considers rows whose
+        // owner profile satisfies `role = 'ORG_ADMIN' AND is_public_profile =
+        // true AND org_id IS NOT NULL`. With `false` (copied from the
+        // fingerprint-oracle sibling, which never exercises public search) this
+        // suite's records are unsearchable, so every "opted-out record returns
+        // []" assertion passes VACUOUSLY. The non-vacuity control below is what
+        // catches that, and it caught exactly this.
+        is_public_profile: true,
       },
       { onConflict: 'id' },
     );
