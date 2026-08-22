@@ -60,23 +60,59 @@ A real concern: if `main` changed the chain hot path, a soak taken against the *
 longer represent what will run after merge. That is legitimate for a PR **whose own behaviour
 interacts with that path**. The defect is that the check never asks whether it does.
 
-## Suggested fix (not yet written)
+## Suggested fix — and a correction to my first version of it
 
-Scope the invalidation to the **intersection** of the base drift with the PR's own changed
-surface, rather than to the drift alone:
+**My first draft of this finding said "compute it three-dot, not two-dot." That is wrong as
+written, and `ciContext.ts` already says why.** The two-dot form is a deliberate, documented
+choice (`scripts/ci/lib/ciContext.ts`, `changedFiles()`):
 
-1. Compute the PR's own changed paths (three-dot / merge-base diff, not two-dot — which also
-   fixes FD-GATE-2).
+> Two-dot (`base..HEAD`) = the changeset of THIS PR vs the current base tip, NOT three-dot
+> (`base...HEAD`, which re-surfaces everything reachable since the merge-base). On a rebased
+> lane branch the three-dot form attributes a now-merged base commit's edits to the PR;
+> two-dot does not.
+
+That scenario is real. So **both forms are wrong, in opposite situations**, and neither is the
+fix:
+
+| branch state | `base..HEAD` (two-dot) | `base...HEAD` (three-dot) |
+|---|---|---|
+| **behind** a base that has moved on | main's commits appear as **reversions** → FD-GATE-2 / FD-GATE-3 | correct |
+| **rebased** onto newer main, `base` stale | correct | main's commits are in the branch's ancestry → **attributed to the PR** |
+
+The common factor is not the dot count. It is that **`BASE_REF_SHA` is a frozen ref** —
+GitHub pins `pull_request.base.sha` at the base tip as of the PR's last push — and *any* diff
+against a stale fixed point misattributes somebody's commits.
+
+**The fix is to stop diffing against a frozen sha at all** and use the live merge base:
+
+```
+git merge-base origin/main HEAD     # → M
+git diff --name-only M..HEAD        # equivalently: origin/main...HEAD
+```
+
+`M` is recomputed against the *current* `origin/main` on every run, so it is correct in both
+rows above: it is by construction the point where this branch diverged from the `main` that
+exists now. This is also exactly the file list GitHub shows under "Files changed."
+
+Then, for the soak-surface rule specifically:
+
+1. Compute the PR's own changed paths as above.
 2. Invalidate soak evidence only when a drifted T3 path is one the PR **also** touches, or is a
-   declared dependency of a path it touches.
+   declared dependency of one — the **intersection**, not the drift alone.
 3. Where a genuine cross-cutting risk exists (e.g. `main` changed the anchor lifecycle under an
-   anchoring PR), demand a **named residual-risk note** rather than a full re-soak, since a
+   anchoring PR), demand a **named residual-risk note** rather than a full re-soak, because a
    re-soak provably cannot converge at current merge velocity.
 
-Until then the only escape the message itself offers is *"release-owner re-scope/retest"*, which
-under CLAUDE.md §1.12 is an explicitly Carson-approved residual-risk exception. **That approval
-is deliberately not assumed here** — this finding documents the mechanism so the decision can be
-made with the facts, not so it can be routed around.
+Note that step 1 needs care in a shallow CI checkout: `merge-base` requires enough history for
+both tips, so the fetch depth must cover the divergence. `getBaseRef({ required: true })`
+already fails closed on an unresolvable base, and any replacement must keep that property —
+a diff that silently returns `[]` makes every path-gated check PASS, which is the wrong
+direction for a gate and was already fixed once here.
+
+Until then the only escape the message itself offers is *"release-owner re-scope/retest"*,
+which under CLAUDE.md §1.12 is an explicitly Carson-approved residual-risk exception. **That
+approval is deliberately not assumed here** — this finding documents the mechanism so the
+decision can be made with the facts, not so it can be routed around.
 
 ## Currently blocked by this
 
