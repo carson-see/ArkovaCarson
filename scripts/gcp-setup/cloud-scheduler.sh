@@ -275,6 +275,7 @@ NOT_SCHEDULED=(
   # activation runbook; binding now would only drain queues that cannot fill.
   "/jobs/professional-education-extraction|ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY unset in prod; producer and consumer both no-op (PR #841); bind when the flag flips"
   "/jobs/queue-digest|ENABLE_QUEUE_DIGEST off; user-facing digest emails are a product call (QUEUE-07)"
+  "/jobs/platform-health-digest|new route (feat/platform-admin-daily-health-digest, draft T2); ENABLE_PLATFORM_HEALTH_DIGEST defaults true but the Cloud Scheduler binding itself is a manual gcloud step this freeze-window session cannot perform (no rig/prod contact) — bind on merge/rollout"
   "/jobs/check-credential-expiry|switchboard ENABLE_EXPIRY_ALERTS=false since 2026-04-18 (NCE-09); user-facing alerts are a product call"
   "/jobs/docusign-queue-reconciliation|ENABLE_DOCUSIGN_QUEUE_RECONCILIATION off (DS-05); bind when the flag flips"
   # Product-gated notifications — enabling is a product decision, not ops.

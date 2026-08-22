@@ -330,6 +330,31 @@ ENABLE_QUEUE_REMINDERS=true
 # When false, the /jobs/treasury-alert-check cron no-ops (no Slack/email fired).
 ENABLE_TREASURY_ALERTS=true
 
+# Platform-admin daily health digest (services/worker/src/jobs/
+# platform-health-digest-cron.ts). Gates POST /jobs/platform-health-digest: a
+# routine daily summary email — anchors by status + 24h delta, job_queue
+# depth/oldest, last night's batch flush result, connector health rollup,
+# quota anomalies — sent to every `profiles.is_platform_admin = true`
+# recipient (never a hardcoded address). Distinct from and additive to the
+# existing hardcoded-recipient stuck-anchor ALERT in pipeline-health.ts,
+# which is unchanged and stays a separate, threshold-triggered signal.
+#
+# Default true (code level AND deploy-worker.yml) — an internal
+# ops-visibility email, not a customer-facing surface. Read by config.ts as
+# config.enablePlatformHealthDigest. When false, runPlatformHealthDigest
+# no-ops before listing admins or touching the DB otherwise.
+#
+# A metric this job could not cheaply/safely measure (e.g. a full-table
+# COUNT(*) it deliberately avoids) renders as "not measured" rather than a
+# false zero. A Sentry-reported error count was scoped in the original ask
+# but is DELIBERATELY OMITTED — no existing table stores it, and this job
+# does not add a live Sentry API dependency.
+#
+# Still requires a Cloud Scheduler job → POST /jobs/platform-health-digest
+# (CRON_SECRET auth) to actually fire daily — this flag only gates the code
+# path. See scripts/gcp-setup/cloud-scheduler.sh's NOT_SCHEDULED entry.
+ENABLE_PLATFORM_HEALTH_DIGEST=true
+
 # ARK-103 — treasury alert dispatch targets
 # If either is missing the dispatcher logs a warning and skips that channel —
 # partial-configuration is allowed.

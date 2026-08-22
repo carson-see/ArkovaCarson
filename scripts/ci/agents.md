@@ -30,6 +30,23 @@ CI gate scripts. Each one fails the build with a structured exit code + an
 actionable message when a guardrail trips. Run via
 `npx tsx scripts/ci/<name>.ts` from a CI workflow.
 
+## 2026-08-18 — `platform-health-digest-cron.ts` registered against two guards (`feat/platform-admin-daily-health-digest`, draft, T2)
+
+New job hit two independent CI gates on first push, both fixed in the same PR rather than worked around:
+
+- **`config-drift/flag-inventory.json`** gained an `ENABLE_PLATFORM_HEALTH_DIGEST` entry
+  (`soak: must-be-on`, `customerReachable: false` — recipients are `profiles.is_platform_admin`,
+  internal staff only). Without it, `check-config-drift.ts`'s flag-inventory reconciliation hard-fails
+  with `unregistered-flag` the moment `deploy-worker.yml` sets an `ENABLE_*` var the manifest has never
+  seen — see this file's 2026-08-11 entry above for why that reconciliation exists.
+- **`check-job-queue-parity.ts`'s `QUEUE_INTERNALS_ALLOWLIST`** gained
+  `services/worker/src/jobs/platform-health-digest-cron.ts`. `readJobQueueMetrics()` does one read-only
+  `.select('created_at').eq('status','pending')` against `job_queue` for a depth/oldest-age monitoring
+  metric — never `submitJob`/`claimJob`/`processNextJob`, never an insert. The guard flags ANY direct
+  `.from('job_queue')` outside the allow-list regardless of read vs. write (see the "`QUEUE_INTERNALS_ALLOWLIST` is by PATH, not by type name" bullet below), so a read-only monitoring query trips it exactly
+  like a raw enqueue would. Verified locally after the fix: `check-job-queue-parity.ts` exits 0 and its
+  13-test suite stays green.
+
 ## 2026-08-10 — `check-anchor-field-policy-coverage.ts` (new, wired into ci.yml)
 
 Requires every request handler under `services/worker/src/api/` that inserts into `anchors` to call
