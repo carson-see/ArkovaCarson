@@ -1,14 +1,17 @@
 {
   "name": "arkova-mcp-server",
   "version": "2.2.0",
-  "description": "MCP server tools for Arkova credential verification — works with Claude, OpenAI, Cursor",
+  "description": "MCP server tools for Arkova credential verification \u2014 works with Claude, OpenAI, Cursor",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "arkova-mcp-server": "dist/cli.js"
   },
-  "files": ["dist", "LICENSE"],
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -18,7 +21,14 @@
     "typecheck": "tsc --noEmit",
     "prepack": "npm run build"
   },
-  "keywords": ["arkova", "mcp", "model-context-protocol", "verification", "credentials", "ai-agent"],
+  "keywords": [
+    "arkova",
+    "mcp",
+    "model-context-protocol",
+    "verification",
+    "credentials",
+    "ai-agent"
+  ],
   "author": "Arkova <engineering@arkova.ai>",
   "license": "MIT",
   "repository": {
@@ -33,6 +43,7 @@
     "@modelcontextprotocol/sdk": "1.30.0"
   },
   "devDependencies": {
+    "@types/node": "26.2.0",
     "typescript": "5.9.3",
     "vitest": "4.1.6"
   }
