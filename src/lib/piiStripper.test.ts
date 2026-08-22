@@ -512,19 +512,13 @@ describe('piiStripper', () => {
 
     // Precision boundary: this module is SHARED with the OCR document path, and
     // "post code" is an ordinary prose bigram. Only the `_` / `-` / unseparated
-    // header forms are address keywords — a plain space is not.
-    it('leaves the prose bigram "post code" alone', () => {
-      const text = 'Please post code to the repository before the review';
-      expect(stripPII(text).strippedText).toBe(text);
-    });
-
-    it('leaves "postcodes" alone', () => {
-      const text = 'postcodes are validated on submission';
-      expect(stripPII(text).strippedText).toBe(text);
-    });
-
-    it('leaves "compost code" alone', () => {
-      const text = 'compost code: nothing personal here';
+    // header forms are address keywords — a plain space is not, and neither is a
+    // longer word that merely contains the keyword.
+    it.each([
+      'Please post code to the repository before the review',
+      'postcodes are validated on submission',
+      'compost code: nothing personal here',
+    ])('leaves %j untouched', (text) => {
       expect(stripPII(text).strippedText).toBe(text);
     });
   });

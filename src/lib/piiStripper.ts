@@ -156,7 +156,7 @@ const ADDRESS_KEYWORD = keywordPattern([
  * A line that opens a new `<label>: <value>` field — the stop condition for the
  * multi-line address capture in `stripAddressValues`.
  */
-const FIELD_LABEL_LINE = '[ \\t]*[A-Za-z][A-Za-z0-9 _-]{0,40}:';
+const FIELD_LABEL_LINE = String.raw`[ \t]*[A-Za-z][A-Za-z0-9 _-]{0,40}:`;
 
 // PII-06: EU-format DOB (DD/MM/YYYY, DD.MM.YYYY) after DOB keywords
 const DATE_DDMMYYYY = /\d{2}[/.-]\d{2}[/.-]\d{4}/;
@@ -331,7 +331,7 @@ function stripAddressValues(
   // no label and are still captured.
   result = result.replace(
     new RegExp(
-      `(${ADDRESS_KEYWORD.source})([^\\n]{5,80}(?:\\n(?!${FIELD_LABEL_LINE})[^\\n]{3,80}){0,2})`,
+      String.raw`(${ADDRESS_KEYWORD.source})([^\n]{5,80}(?:\n(?!${FIELD_LABEL_LINE})[^\n]{3,80}){0,2})`,
       'gi',
     ),
     (_match, prefix: string) => {
