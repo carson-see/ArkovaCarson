@@ -168,3 +168,43 @@ Containment performs a complete pause pass before a separate complete verificati
 - Team 1 review hardening keeps every chronology field on one canonical UTC/RFC3339 parser, confines live raw capture paths to direct regular JSON files under `/var/lib/arkova/s33-evidence/captures` with no-follow opens, bounds the fixed crash controller, rejects flag-shaped controller identities, and re-keys all R3 scenario ranks so suffixed scenarios cannot share rank-one org IDs. The focused evidence lint is a native `typecheck-lint` CI step; update its explicit file list whenever this surface grows.
 - `batch-drain-admission-adapter.ts` is the only Team1 bridge from Team2 isolated-rig admission v2 into a run declaration. It accepts primitive raw JSON only, rejects lexical duplicate keys, validates Team2's exact strict v2 admission shape, and binds RIG-B1/project/region/lease/clean-mirror/head/base/deployed-image/Supabase/soak/service/revision identity. RIG-B1 admission additionally requires Team2's complete six-job Scheduler set as exact service-derived name/path pairs, the exact creation-guard/PAUSED-through-clean-mirror/resumed lifecycle, and the complete live-chain critical config (`USE_MOCKS=false`, anchoring on, signet, GetBlock, GCP KMS, chain-inapplicable Gemini fields empty, response schema `<unset>`). Missing, extra, duplicated, arbitrary, or name/path-swapped jobs fail closed. The separate ceremony input may supply only declaration id, timestamps, recoveries, and windows. The adapter returns a deeply frozen opaque provenance handle; clones, getters, proxies, extra fields, identity overrides, contradictory aliases, and manual declaration objects fail closed. Signing and the production Ed25519 trust root remain separate and null/fail-closed.
 - Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.
+
+## Orphan tag cleanup covers EVERY tag, not just `pr-<N>` (BUG-2026-08-22-001, 2026-08-22)
+
+A Cloud Run traffic **tag** keeps its revision REFERENCED by the service, and a
+referenced revision whose own template carries `autoscaling.knative.dev/minScale >= 1`
+keeps a warm instance — which goes on running the in-process `node-cron` schedule
+in `services/worker/src/routes/scheduled.ts` against whatever `SUPABASE_URL`
+resolves to *now*, not what it resolved to when that revision was deployed.
+
+Measured on `arkova-worker-staging`, 2026-08-22. Of 250 revisions, 47 are tagged
+and 16 carry `minScale = 1`. The intersection is exactly 9 — the serving revision
+plus 8 retired ones — and exactly those 9 emit logs. The other 7 `minScale = 1`
+revisions are untagged and silent; the other 38 tagged revisions have no
+`minScale` and are silent. The rule is therefore:
+
+> a revision stays warm **iff** `minScale >= 1` **AND** it is referenced in the
+> service's traffic block.
+
+Consequences that were live for weeks: instances started before the
+2026-08-19T19:53Z rotation of `supabase-url-staging` still held the DELETED
+project URL and logged `getaddrinfo ENOTFOUND` on every cron tick; instances
+started after it resolved `latest` to the LIVE rig and **wrote to it** — at
+2026-08-22T02:00Z four revisions each ran the GDPR retention cron against
+`fizyjojbebyalirtjjht` within ten seconds. CLAUDE.md §1.11A's "exclusive use of
+clean shared staging" cannot hold on a service in that state.
+
+`cleanup-orphan-tags.sh` is the control, and it under-covered: its selector was
+`^pr-[0-9]+$`, so the four `train-c-*` tags were invisible to it — including two
+of the eight warm revisions (`train-c-ce`, `train-c-1154-cfaee18e`). It now
+selects **every** tag. `pr-<N>` tags still age out on their PR's close date;
+every other tag ages out on its revision's `creationTimestamp`, because there is
+no PR to consult. A revision serving traffic is never untagged at any age, so an
+in-flight soak's tag URL is safe.
+
+**It has never been scheduled.** `gcloud scheduler jobs list --project=arkova1`
+carries no tag-cleanup job, which is why 46 orphan tags accumulated over 84 days.
+Untagging is also the CHEAP fix: it does not create a new revision, so it can be
+run against a service whose soak has closed without disturbing the revision that
+soak was measured on. Deleting the revisions is a separate, irreversible step
+that buys no further operational benefit once the tag is gone.
