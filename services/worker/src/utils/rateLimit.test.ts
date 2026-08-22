@@ -19,7 +19,7 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-import { rateLimit, rateLimiters, cleanupExpiredEntries } from './rateLimit.js';
+import { rateLimit, rateLimiters, cleanupExpiredEntries, setRateLimitStore } from './rateLimit.js';
 
 let testCounter = 0;
 
@@ -471,6 +471,48 @@ describe('rateLimit', () => {
       const { req, res, next } = createMockReqResWithKey(ip, path);
       rateLimiters.quotaCheck(req, res, next);
       expect(res.status).toHaveBeenCalledWith(429);
+    });
+  });
+
+  /**
+   * Rate-limit cluster review, LOW finding: Constitution §1.10 requires
+   * X-RateLimit-* headers on every response. The distributed path's last-resort
+   * fail-open (store.increment rejects — normally unreachable behind the
+   * Upstash store's internal fallback) allowed the request but emitted no
+   * headers at all. It must emit best-effort values instead.
+   */
+  describe('distributed fail-open path (§1.10 headers on every response)', () => {
+    it('emits best-effort X-RateLimit-* headers when the store increment rejects', async () => {
+      const throwingStore: import('./rateLimit.js').IRateLimitStore = {
+        get: () => undefined,
+        set: () => undefined,
+        delete: () => undefined,
+        entries: () => new Map<string, never>().entries(),
+        size: 0,
+        increment: () => Promise.reject(new Error('store exploded')),
+      };
+      setRateLimitStore(throwingStore);
+      try {
+        const limiter = rateLimit({ windowMs: 60000, maxRequests: 7 });
+        const { req, res, next } = createMockReqRes();
+
+        limiter(req, res, next);
+        await vi.waitFor(() => expect(next).toHaveBeenCalledTimes(1));
+
+        // Fail OPEN — the request goes through...
+        expect(res.status).not.toHaveBeenCalled();
+        // ...but never header-less.
+        expect(res.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', '7');
+        expect(res.setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', '6');
+        const resetCall = (res.setHeader as ReturnType<typeof vi.fn>).mock.calls.find(
+          ([name]) => name === 'X-RateLimit-Reset'
+        );
+        expect(resetCall).toBeDefined();
+        expect(Number(resetCall?.[1])).toBeGreaterThan(Math.floor(Date.now() / 1000) - 1);
+      } finally {
+        // Restore the default in-memory store for the rest of the suite.
+        setRateLimitStore(new Map());
+      }
     });
   });
 });

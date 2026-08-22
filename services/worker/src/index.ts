@@ -443,6 +443,17 @@ app.get('/.well-known/openapi.json', (_req, res) => {
 // anchor-creates still returned 429 after that fix deployed. It must carry
 // the same skip predicate, or it silently re-shadows apiV1Router's
 // 1,000/min-per-key limiter (Constitution §1.10).
+//
+// 2026-08-12 — this is the SECOND mount of the same `apiIpShadowGuard`
+// instance (the first is at the `/api` mount above). That is intentional and
+// both are needed: did:web paths live outside `/api`, and this mount must
+// carry the same skip predicate. But Express runs every mount a request
+// matches, so an anonymous `/api/v1/*` request — which falls through the
+// `/api` mount unanswered — used to be counted by this guard TWICE, making
+// the documented 60/min per IP actually 30/min. `rateLimit()` now counts a
+// request at most once per limiter INSTANCE (see `utils/rateLimit.ts`,
+// COUNTED_LIMITERS), which is what makes mounting one limiter twice safe.
+// Do not "simplify" this by deleting a mount; see rateLimitDoubleMount.test.ts.
 app.use(apiIpShadowGuard, didWebRouter);
 
 // 2026-04-26 — bug-bounty F4. Spec was already publicly inlined in
@@ -594,7 +605,12 @@ const server = app.listen(config.port, async () => {
   const idempotencyRedisStore = createUpstashIdempotencyStore();
   if (idempotencyRedisStore) {
     setIdempotencyStore(idempotencyRedisStore);
-    logger.info('Upstash Redis idempotency store initialized');
+    // BUG-018 / D-8: log the derived namespace so the deployed keyspace is
+    // observable in Cloud Run logs without reading Redis.
+    logger.info(
+      { environmentNamespace: idempotencyRedisStore.environmentNamespace },
+      'Upstash Redis idempotency store initialized'
+    );
   } else if (!redisRateInit) {
     logger.info('Upstash Redis not configured — using in-memory stores (rate limit + idempotency)');
   }

@@ -215,6 +215,60 @@ separately). Full verdicts, defects, and landing-order constraints:
   **Flagged, not fixed:** `chain/fee-estimator.ts` has the same mainnet-only default, so a
   non-mainnet deployment reports mainnet fee rates — that fix is T3 (`chain/`) and is tracked
   separately rather than folded in.
+- **New PR opened 2026-08-12** (`services/worker/src/utils/rateLimit.ts`,
+  `utils/upstashRateLimit.ts`): the v1 Upstash rate-limit store never shared state. `get()`
+  returned its local `Map` and never read Redis; `rateLimit()` called `store.set()` only on the
+  create-new-entry branch, so the later `entry.count++` mutated in place with no write-back and
+  Redis received `{"count":0}` once per window; `syncFromRedis()` was never called outside its own
+  test. Net: every Cloud Run instance enforced a private bucket behind a docstring promising a
+  shared one. **Verified live, not inferred from code** — prod `arkova-worker` mounts
+  `UPSTASH_REDIS_REST_URL`/`_TOKEN` as secrets (`gcloud run services describe`), logs
+  `Upstash Redis rate limiting initialized` (`gcloud logging read`, 5 hits within 7d, latest
+  2026-08-12T13:20:18Z), and runs `minScale=2, maxScale=10`, so configured limits were effectively
+  up to 10x their stated value and cold starts reset counters. Fixed by adding an optional atomic
+  `increment()` to `IRateLimitStore` (single pipelined `INCR`+`PTTL`, `PEXPIRE` only to arm a new
+  window), which is the design `api/v2/rateLimit.ts` already shipped — v1 is now at parity. Redis
+  loss degrades to a bounded per-instance bucket that logs on every degraded request, rather than
+  being the silent default. TDD: 17 new cross-instance tests written first, **14 confirmed red**
+  against the old implementation (incl. `expected 429, got 200` for a request served by a second
+  instance); 54/54 green after. Worker typecheck + `npm run lint` clean. T2 by path rule
+  (`services/worker/src/utils/`); opened in DRAFT, **not** queued toward Ready — the full-soak rig
+  is occupied by `pr-2195` and frozen, so no soak was run; see the PR's evidence block for the
+  per-field NOT RUN disclosure and the `SOAK_GATE_DISABLED` state checked at open time.
+  **Two corrections to the incoming report, both load-bearing:** (1) `rateLimiters.auth` (5/min,
+  the "most severe, brute-force" item) is **not mounted on any route** — it is referenced only by
+  tests and comments, so it protects nothing today at any multiplier; the real exposure is
+  `rateLimiters.api`/`apiIpShadowGuard` (60/min) and `checkout`/`quotaCheck` (10/min). (2) The
+  cited write-up `docs/staging/fullsoak-2026-08/connector-sidecar-evidence.md` **does not exist**
+  in this repo or anywhere in git history, and the `F-1` label collides with the existing, unrelated
+  F-1 (org-queue-scheduler 500s) in `docs/staging/SOAK-FINDINGS-2026-08.md` — the code defect was
+  re-derived and confirmed from source and live prod state independently of that document.
+  **Flagged, not fixed:** `apiIpShadowGuard` is mounted twice (`app.use('/api', …)` at index.ts:418
+  and unprefixed `app.use(…, didWebRouter)` at index.ts:446), so one `/api/*` request is counted
+  twice against the same key — which is exactly the `48 → 46 → 44` header stride in the report, and
+  means the documented 60/min per IP is really 30/min. Separate defect, separate risk profile, not
+  folded in.
+- **New PR opened 2026-08-12** (`services/worker/src/utils/rateLimit.ts`, comment-only in
+  `services/worker/src/index.ts`): `apiIpShadowGuard` is mounted twice — `index.ts:418` under `/api`
+  and `index.ts:446` unprefixed — and Express runs every mount a request matches, so one request was
+  counted twice by the same limiter instance. **The documented 60 req/min per IP (§1.10) was really
+  30/min.** Path-dependent, which is why it hid: `/api/badge/:id` is answered by `badgeRouter` and
+  never reaches mount 446 (counted once, looks correct), while anonymous `/api/v1/*` is answered by
+  neither and falls through to 446 (counted twice). Matches the side-rig's `x-ratelimit-remaining`
+  48 → 46 → 44 stride, which one correctly-mounted limiter cannot produce. **Neither mount could be
+  deleted** — the unprefixed one serves did:web paths outside `/api` and must carry the same skip
+  predicate (F-2, #1768). Fixed by stamping the request with the limiter's own `Symbol` and counting
+  at most once per limiter INSTANCE; deliberately per-instance, not global, because `index.ts` shares
+  one per-IP bucket across different limiters and each must still charge it. Also fixes
+  `rateLimiters.api`, which double-counted on overlapping prefixes (`/api/v1/org` at :470 vs
+  `/api/v1/org/sub-orgs` at :471). TDD: 7 tests written first, **4 confirmed red**
+  (`expected [8, 6, 4] to deeply equal [9, 8, 7]`); all adjacent rate-limit suites pass, worker
+  typecheck + `npm run lint` clean. **This LOOSENS enforcement** (30/min → the intended 60/min) — it
+  changes enforcement numbers, so it is not a cleanup. T2 by path rule; opened in DRAFT, **not**
+  queued toward Ready — the full-soak rig is occupied by `pr-2195` and frozen and
+  `arkova-worker-staging` is dead, so no soak was run; `SOAK_GATE_DISABLED` read `false` at open
+  time, so its Staging Soak Evidence Gate is expected to fail. Independent of, and additive to,
+  the F-1 store fix in #2223 — until both land, each `/api/*` request costs two Upstash round trips.
 
 ### Soaks
 
