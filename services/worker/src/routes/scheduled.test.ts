@@ -307,4 +307,67 @@ describe('setupScheduledJobs', () => {
 
     expect(skippedJobNames).toContain('drain-connector-artifacts');
   });
+  /**
+   * BUG-2026-08-22-001. `arkova-worker` runs `minScale = 2`, so this handler
+   * executes on two instances every night at 02:00 UTC. Migration 0417 makes
+   * the losing caller a no-op skip (`skipped_concurrent_run: true`) instead of
+   * a 40P01 deadlock. Logging that skip as "complete" is what let six nights
+   * of double-runs pass unnoticed, so the two outcomes must read differently.
+   */
+  describe('cleanup-expired-data: 0417 concurrent-skip reporting', () => {
+    async function runRetentionTask(rpcResult: unknown) {
+      const { callRpc } = await import('../utils/rpc.js');
+      (callRpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: rpcResult, error: null });
+
+      const { setupScheduledJobs } = await import('./scheduled.js');
+      setupScheduledJobs(true);
+
+      // The retention job is the only one registered on the daily 02:00 slot.
+      const call = mockCronSchedule.mock.calls.find((c) => c[0] === '0 2 * * *');
+      expect(call).toBeDefined();
+      await (call![1] as () => Promise<void>)();
+    }
+
+    it('logs a completed purge as complete', async () => {
+      await runRetentionTask({
+        success: true,
+        skipped_concurrent_run: false,
+        audit_events_deleted: 12,
+      });
+
+      const messages = mockLogger.info.mock.calls.map((c) => c[1] ?? c[0]);
+      expect(messages).toContain('Data retention cleanup complete');
+      expect(messages).not.toContain(
+        'Data retention cleanup skipped — another instance holds the singleton lock',
+      );
+    });
+
+    it('does NOT report a concurrent skip as a completed cleanup', async () => {
+      await runRetentionTask({
+        success: true,
+        skipped_concurrent_run: true,
+        audit_events_deleted: -1,
+      });
+
+      const messages = mockLogger.info.mock.calls.map((c) => c[1] ?? c[0]);
+      expect(messages).toContain(
+        'Data retention cleanup skipped — another instance holds the singleton lock',
+      );
+      expect(messages).not.toContain('Data retention cleanup complete');
+    });
+
+    it('does not treat a concurrent skip as an error', async () => {
+      await runRetentionTask({ success: true, skipped_concurrent_run: true });
+
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+
+    it('still reports complete for a pre-0417 result with no skip key', async () => {
+      // Backward compatibility: prod runs the old body until 0417 is applied.
+      await runRetentionTask({ success: true, audit_events_deleted: 3 });
+
+      const messages = mockLogger.info.mock.calls.map((c) => c[1] ?? c[0]);
+      expect(messages).toContain('Data retention cleanup complete');
+    });
+  });
 });
