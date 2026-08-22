@@ -25,6 +25,23 @@ Tests for the Arkova Python SDK.
   where httpx/pydantic are absent (stdlib-only, Python >= 3.9). Skips itself
   in installed-package runs where the repo fixture corpus is not present.
 
+- **`test_models_load.py`** — volume + concurrency evidence for the verification
+  model surface, and the merge-grade `Load/concurrency evidence:` this PR cites.
+  `test_client.py` pins each payload SHAPE at n=1; this pins the two properties
+  n=1 cannot show. A 10,000-payload sweep over the full observed shape space
+  (absent / null / one / three / fifty controls / unicode ids, x the
+  `fingerprint_source` + `proof_availability` open-enum values incl. deliberately
+  UNSEEN ones) parses with zero `ValidationError` above a 2,000/sec floor —
+  measured 168,445/sec, so the model is not a batch-verifier bottleneck. A
+  50-control record must not bleed its list into its neighbours (the classic
+  mutable-default defect, invisible at n=1), checked by distinct `id()`. And
+  20 threads x 500 payloads must each round-trip their own `public_id` with no
+  duplicate or torn read. Closing guard: a dict `compliance_controls` must STILL
+  raise, so the sweep cannot pass vacuously by the model having gone permissive.
+  Verified RED against the current `origin/main` model before it went green
+  (`AttributeError: 'VerificationResult' object has no attribute
+  'fingerprint_source'`). Offline: no network, no fixtures, no clock.
+
 ## Conventions
 - Uses `httpx` transport mocks; never calls real Arkova API. `test_proofs.py`
   touches NO network at all (canned Esplora responses only, §1.7).
