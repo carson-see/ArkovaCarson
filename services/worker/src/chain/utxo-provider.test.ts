@@ -457,6 +457,10 @@ describe('GetBlockHybridProvider listUnspent fallback observability', () => {
       mempoolBaseUrl: 'https://mempool.space/api',
     });
     mockFetch.mockResolvedValueOnce(rpcOk([{ txid: 'aa', vout: 0, amount: 0.001 }]));
+    // FD-CHAIN-1 round 2: listUnspent is a union — the mempool leg is
+    // queried even when the RPC succeeds. An empty mempool answer keeps this
+    // test about ONE thing: emitRpcFallback fires only on RPC-leg failure.
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) });
 
     const utxos = await provider.listUnspent('bc1qtest');
 
@@ -531,6 +535,269 @@ describe('GetBlockHybridProvider listUnspent fallback observability', () => {
         message: 'RPC listunspent failed: HTTP 405',
       }),
     }));
+  });
+});
+
+// FD-CHAIN-1 (fullsoak-2026-08, Day 4) — the guard `rpcUtxos.length >= 0` is
+// TRUE for every array, so a SUCCESSFUL RPC returning `[]` returned `[]` and
+// the mempool.space fallback was unreachable. Every prior test in this file
+// drives the fallback through an EXCEPTION, because the fallback was designed
+// for GetBlock's shared endpoint rejecting the wallet RPC (SCRUM-1262 / F-10).
+// A self-hosted bitcoind does the opposite: `listunspent` is a WALLET RPC, so
+// for a WIF-derived treasury address that is not in the node's wallet it
+// SUCCEEDS with `[]`. No throw ⇒ no fallback ⇒ the provider reports an empty
+// treasury that holds real money.
+//
+// On the fullsoak rig this halted ALL anchoring for hours while every signal
+// stayed green (batch-anchors 200, Cloud Scheduler success, SOC2 health check
+// 13/13) and the worker logged "Treasury has no UTXOs" against an address
+// holding 742,637 sat. Prod is latent-only TODAY because its GetBlock RPC
+// errors on `listunspent` every cycle (100% fallback rate) — the exception
+// path fires and masks the defect. It activates the moment prod moves to a
+// self-hosted node, which is the stated sovereignty goal.
+//
+// REVIEW ROUND 2 — the empty-case fix (`> 0`) was INCOMPLETE. The RPC leg
+// runs `listunspent` at minconf=1, so bitcoind EXCLUDES unconfirmed outputs.
+// After a batch broadcasts, the treasury's normal shape is one confirmed
+// UTXO + the unconfirmed change of that batch: the RPC answers length 1
+// (`> 0`), short-circuits, and the unconfirmed change is silently dropped —
+// under-reporting spendable funds exactly under sustained batching (observed
+// live 2026-08-17T03:10Z mid-flush: "Treasury has no UTXOs" while the
+// treasury held the just-broadcast batch's unconfirmed change; see
+// docs/staging/fullsoak-2026-08/trigger-d-flush-2026-08-17.md, on the
+// soak/day0-fullsoak-2026-08-docs branch, NOT yet on main). The mempool
+// leg deliberately includes unconfirmed UTXOs ("prevents the treasury from
+// getting stuck waiting for confirmations between batches"). So the contract
+// is now a UNION: query BOTH legs, merge deduped by (txid, vout), prefer the
+// RPC leg's entry on collision. One leg failing degrades to the other (a
+// mempool body-read timeout — PR #2216's territory — must NOT reintroduce
+// the empty-treasury symptom through a different door); both failing throws.
+//
+// Full writeup: docs/staging/fullsoak-2026-08/FD-CHAIN-1-listunspent-silent-empty.md
+describe('FD-CHAIN-1 GetBlockHybridProvider listUnspent — RPC ∪ mempool union (no leg alone is authoritative)', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockEmitRpcFallback.mockReset();
+    vi.mocked(logger.warn).mockReset();
+  });
+
+  // (a) THE PARTIAL-RESULT CASE. minconf=1 hides the unconfirmed change of
+  // the batch that just broadcast; only the mempool leg can see it. A
+  // non-empty RPC answer must NOT short-circuit the mempool leg.
+  it('unions a confirmed RPC UTXO with the unconfirmed change only the mempool leg can see (minconf=1 partial result)', async () => {
+    const provider = new GetBlockHybridProvider({
+      rpcUrl: 'http://10.0.0.5:38332',
+      mempoolBaseUrl: 'https://mempool.space/signet/api',
+    });
+
+    // bitcoind at minconf=1: sees ONLY the confirmed UTXO.
+    mockFetch.mockResolvedValueOnce(rpcOk([
+      { txid: 'confirmed01', vout: 1, amount: 0.00742637 },
+    ]));
+    // mempool.space: sees the same confirmed UTXO PLUS the unconfirmed
+    // change output of the batch that just broadcast.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([
+        { txid: 'confirmed01', vout: 1, status: { confirmed: true }, value: 742637 },
+        { txid: 'batchchange', vout: 1, status: { confirmed: false }, value: 512400 },
+      ]),
+    });
+
+    const utxos = await provider.listUnspent('tb1qrjarsqj0ewqh3u9fdcu7yfyl0sx78k4savtmv7');
+
+    // Union of 2 — the unconfirmed change is spendable and must be reported.
+    expect(utxos).toEqual([
+      { txid: 'confirmed01', vout: 1, valueSats: 742637, rawTxHex: '' },
+      { txid: 'batchchange', vout: 1, valueSats: 512400, rawTxHex: '' },
+    ]);
+    // BOTH legs were genuinely queried.
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    // The RPC leg succeeded — the R0-8 fallback event must not fire.
+    expect(mockEmitRpcFallback).not.toHaveBeenCalled();
+  });
+
+  // (e) Dedupe contract: key is (txid, vout); on collision the RPC leg's
+  // entry wins (it is the sovereign source and may carry rawTxHex in future
+  // shapes). Divergent values between the legs must resolve to the RPC's.
+  it('dedupes by txid:vout preferring the RPC entry on collision, appending mempool-only UTXOs after', async () => {
+    const provider = new GetBlockHybridProvider({
+      rpcUrl: 'http://10.0.0.5:38332',
+      mempoolBaseUrl: 'https://mempool.space/signet/api',
+    });
+
+    mockFetch.mockResolvedValueOnce(rpcOk([
+      { txid: 'aa', vout: 0, amount: 0.001 },
+      { txid: 'bb', vout: 2, amount: 0.0005 },
+    ]));
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([
+        // Same outpoint as the RPC's 'aa' but a divergent value — the RPC
+        // entry must win, not this one.
+        { txid: 'aa', vout: 0, status: { confirmed: true }, value: 99998 },
+        { txid: 'cc', vout: 0, status: { confirmed: false }, value: 300 },
+      ]),
+    });
+
+    const utxos = await provider.listUnspent('tb1qdedupe');
+
+    expect(utxos).toEqual([
+      { txid: 'aa', vout: 0, valueSats: 100000, rawTxHex: '' }, // RPC's value, not 99998
+      { txid: 'bb', vout: 2, valueSats: 50000, rawTxHex: '' },
+      { txid: 'cc', vout: 0, valueSats: 300, rawTxHex: '' },
+    ]);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  // (c) The #2216 interaction defusal: a mempool leg that times out or
+  // throws (e.g. a BodyReadTimeoutError once #2216 lands) degrades to the
+  // RPC leg's answer instead of failing the call — the FD-CHAIN-1 symptom
+  // must not come back through the fallback's own failure path.
+  it('degrades to the RPC result WITHOUT throwing when the mempool leg fails and the RPC leg has UTXOs', async () => {
+    const provider = new GetBlockHybridProvider({
+      rpcUrl: 'http://10.0.0.5:38332',
+      mempoolBaseUrl: 'https://mempool.space/signet/api',
+    });
+
+    mockFetch.mockResolvedValueOnce(rpcOk([
+      { txid: 'confirmed01', vout: 1, amount: 0.00742637 },
+    ]));
+    // Mempool leg fails (non-retryable 4xx keeps the test fast; the generic
+    // catch covers timeouts and #2216's typed body-read errors identically).
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    const utxos = await provider.listUnspent('tb1qdegrade');
+
+    expect(utxos).toEqual([
+      { txid: 'confirmed01', vout: 1, valueSats: 742637, rawTxHex: '' },
+    ]);
+    // The mempool leg WAS attempted — this is a degradation, not the old
+    // short-circuit.
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    // Degradation is observable as a structured warn, NOT as the R0-8
+    // emitRpcFallback event — that event's locked shape counts RPC→mempool
+    // fallbacks, and folding mempool-leg failures into it would corrupt the
+    // fallback-rate metric it feeds.
+    expect(mockEmitRpcFallback).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'GetBlockHybridProvider.listUnspent',
+        leg: 'mempool.space',
+      }),
+      expect.stringContaining('degrading to RPC-only'),
+    );
+  });
+
+  // An empty wallet-RPC success is the ABSENCE of an answer (the original
+  // FD-CHAIN-1 lesson), so with the mempool leg also failed there is no
+  // reliable answer left — the call must THROW, never promote "no source
+  // answered" into "treasury empty". Preserves the current head's behavior
+  // (empty RPC → mempool throw propagated).
+  it('throws when the RPC leg succeeds EMPTY and the mempool leg fails — no reliable answer is an error, not an empty treasury', async () => {
+    const provider = new GetBlockHybridProvider({
+      rpcUrl: 'http://10.0.0.5:38332',
+      mempoolBaseUrl: 'https://mempool.space/signet/api',
+    });
+
+    mockFetch.mockResolvedValueOnce(rpcOk([]));
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    await expect(provider.listUnspent('tb1qnoanswer')).rejects.toThrow('HTTP 404');
+    // The RPC leg did not fail — the R0-8 fallback event must not fire.
+    expect(mockEmitRpcFallback).not.toHaveBeenCalled();
+  });
+
+  // Both legs failing throws, exactly as before the union: the mempool leg's
+  // error propagates (same error shape callers already handle) and the RPC
+  // leg's failure is reported through the unchanged R0-8 fallback event.
+  it('throws (and emits the RPC-fallback event once) when BOTH legs fail', async () => {
+    const provider = new GetBlockHybridProvider({
+      rpcUrl: 'http://10.0.0.5:38332',
+      mempoolBaseUrl: 'https://mempool.space/signet/api',
+    });
+
+    // RPC leg: bare transport 405 (the real GetBlock shared-endpoint shape).
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 405, text: () => Promise.resolve('405 Method Not Allowed') });
+    // Mempool leg: non-retryable failure.
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    await expect(provider.listUnspent('tb1qbothdown')).rejects.toThrow('HTTP 404');
+    expect(mockEmitRpcFallback).toHaveBeenCalledTimes(1);
+    expect(mockEmitRpcFallback).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'getblock',
+      method: 'listunspent',
+      fallbackTo: 'mempool.space',
+      origin: 'GetBlockHybridProvider.listUnspent',
+    }));
+  });
+
+  it('falls back to mempool.space when the RPC SUCCEEDS with an empty array (no throw)', async () => {
+    const provider = new GetBlockHybridProvider({
+      rpcUrl: 'http://10.0.0.5:38332',
+      mempoolBaseUrl: 'https://mempool.space/signet/api',
+    });
+
+    // A self-hosted bitcoind answers the wallet RPC normally — HTTP 200,
+    // `{result: [], error: null}` — because the treasury address is not in
+    // its wallet. This is a SUCCESS, not an error: nothing is thrown.
+    mockFetch.mockResolvedValueOnce(rpcOk([]));
+    // mempool.space, an address-indexed source, sees the real UTXO.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([
+        { txid: '910e557c', vout: 1, status: { confirmed: true }, value: 742637 },
+      ]),
+    });
+
+    const utxos = await provider.listUnspent('tb1qrjarsqj0ewqh3u9fdcu7yfyl0sx78k4savtmv7');
+
+    // The treasury is NOT empty and the provider must not say that it is.
+    expect(utxos).toEqual([
+      { txid: '910e557c', vout: 1, valueSats: 742637, rawTxHex: '' },
+    ]);
+
+    // The RPC was genuinely tried first with the correct wallet-RPC shape...
+    const [rpcUrl, rpcInit] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(rpcUrl).toBe('http://10.0.0.5:38332');
+    expect(JSON.parse(rpcInit.body as string)).toMatchObject({
+      method: 'listunspent',
+      params: [1, 9999999, ['tb1qrjarsqj0ewqh3u9fdcu7yfyl0sx78k4savtmv7']],
+    });
+    // ...and the second call actually reached the mempool fallback.
+    expect(mockFetch.mock.calls[1]?.[0]).toBe(
+      'https://mempool.space/signet/api/address/tb1qrjarsqj0ewqh3u9fdcu7yfyl0sx78k4savtmv7/utxo',
+    );
+
+    // The RPC did not throw, so this is NOT the SCRUM-1262 error-fallback
+    // path: the locked `emitRpcFallback` shape carries a `reason` derived
+    // from an Error, and there is no error here. Empty-result fall-through
+    // observability is FD-CHAIN-2's concern, deliberately not folded into
+    // the error-shaped event (see PR body).
+    expect(mockEmitRpcFallback).not.toHaveBeenCalled();
+  });
+
+  // NOTE (round 2): the round-1 anti-decay test here pinned "a NON-empty RPC
+  // result must NOT reach the fallback" — exactly one outbound call. That
+  // pin was the partial-result bug wearing a test's clothes: it FORBADE the
+  // union. Deliberately replaced by case (a) above, which pins the opposite
+  // (both legs always queried). The decay this block now guards against is
+  // value corruption, via the dedupe-prefers-RPC pin.
+
+  // Both sources genuinely empty is a real, distinct state: the fallback
+  // fires, answers `[]`, and `[]` is the honest result. The fix must not
+  // turn "genuinely unfunded" into an error or a retry storm.
+  it('returns empty when the RPC succeeds empty AND the fallback is also empty', async () => {
+    const provider = new GetBlockHybridProvider({
+      rpcUrl: 'http://10.0.0.5:38332',
+      mempoolBaseUrl: 'https://mempool.space/signet/api',
+    });
+
+    mockFetch.mockResolvedValueOnce(rpcOk([]));
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) });
+
+    expect(await provider.listUnspent('tb1qempty')).toEqual([]);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });
 
