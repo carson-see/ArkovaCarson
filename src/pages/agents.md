@@ -1,5 +1,33 @@
 # agents.md — pages
-_Last updated: 2026-08-10_
+_Last updated: 2026-08-17_
+
+## 2026-08-17 — DocumentsPage: "My Records" tab is a link-out, not a duplicate list
+
+Founder-reported: `/documents` rendered a "My Records" TAB (its own folder-less copy of the records list) while the real records+folders surface (SCRUM-2940) is `ROUTES.RECORDS` (`MyRecordsPage`) — users landing on `/documents` concluded folders didn't exist. Chosen resolution: **link/redirect through**, not tab removal — the trigger stays visible (with its record-count badge) so the entry point survives, but clicking it navigates to `ROUTES.RECORDS`, and legacy `?tab=records` deep links redirect there with remaining query params preserved (`MyRecordsPage` consumes the same `?action=upload&credential_type&jurisdiction` contract, so those deep links keep working). The tab's `RecordsList` sub-component was a strict functional subset of MyRecordsPage (same list/search/status-filter/revoke; zero folder affordances; its "Download Proof" menu item was an inert no-op with no onClick) and is deleted along with the revoke plumbing only it used. Records still appear in the "All" tab. Tests: `DocumentsPage.test.tsx` (new, 5 cases, TDD red-first).
+_Last updated: 2026-08-18_
+
+## 2026-08-18 — `OrgProfilePage.tsx` — Pending Invitations visibility on the People tab
+
+Wired `useOrgInvitations` (`src/hooks/agents.md`) + `PendingInvitationsList` (`src/components/organization/agents.md`) into the People tab, admin-only, below `MembersTable`. `handleInvite` and the new `handleResendInvitation` both call the existing `useInviteMember().inviteMember()` — resend is a fresh `invite_member` RPC + `/api/send-invitation-email` call (new row, new token, new 7-day clock), not a re-send of the old token, then `refreshInvitations()` invalidates the query. No new worker route, no migration. Context: founder-reported "I still cannot invite members" investigation found the accept-path backend correct (see the components/organization note); this closes the actual demonstrated gap — the admin had no way to see whether an invite was pending, expired, or ever sent.
+## 2026-08-18 — `PrivacyPage.tsx` Section 3 rewritten (counsel-ordered, Tranche 0)
+
+`PRIVACY_S3_BODY` ("Your files never leave your browser") was accurate for
+browser uploads but false for connector-fetched documents (DocuSign / Google
+Drive), which are fingerprinted server-side under the §1.6A carve-out, not in
+the browser. Counsel's exact approved replacement — sent to Solomon Karanja
+Meru, MNA Legal — is now in `copy.ts` (see that folder's `agents.md` for the
+full addendum quote and Google Doc reference). No JSX change was needed;
+`PrivacyPage.tsx` already renders `PRIVACY_S3_BODY` as a single `<p>`, so the
+fix is entirely in the copy value.
+
+New file `PrivacyPage.test.tsx` pins the wording verbatim (word-for-word
+`.toBe()`, not a substring match) — the sibling
+`PrivacyPage.copy-centralization.test.tsx` explicitly disclaims pinning
+wording (that's this file's job now, plus legal counsel's), it only checks
+every rendered string traces back to `copy.ts`. Both suites pass together:
+the centralization test's residue check is agnostic to what the copy value
+*says*, only that `PrivacyPage.tsx` doesn't say anything `copy.ts` doesn't
+also say.
 
 ## 2026-08-10 — `ActivateAccountPage.tsx` rebuilt; the recovery-phrase ruling
 

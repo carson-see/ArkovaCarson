@@ -1,0 +1,78 @@
+{
+  "$comment": [
+    "Ratchet for scripts/ci/check-mcp-claim-parity.ts.",
+    "",
+    "proseCoverage: the tools each CURATED prose surface documents today. Shrink-only —",
+    "  a tool listed here that disappears from that surface fails the build. Growing a list",
+    "  is always allowed and needs no edit here (the gate only reads it as a floor).",
+    "  NOTE the finding this encodes: public/AGENTS.md and public/llms*.txt each document",
+    "  2 of the 16 registered tools — verify_credential and search_credentials. (A count of",
+    "  4 appears if you match bare `search` / `verify`, but those hits are the English words",
+    "  and the REST path `verify-anchor`, not the MCP tools; see mentionRegex.) That is the",
+    "  same under-advertisement shape as the 2-of-16 discovery-manifest bug that",
+    "  tests/infra/mcp-manifest-parity.test.ts was written for. Raising these is content work",
+    "  on a non-T0 surface, not a tooling change.",
+    "",
+    "knownViolations: violations live on main the day this gate landed. A NEW violation —",
+    "  including the same false claim appearing on one more surface — fails. Never baseline",
+    "  a claim introduced by your own PR."
+  ],
+  "proseCoverage": {
+    "public/AGENTS.md": ["verify_credential", "search_credentials"],
+    "public/llms.txt": ["verify_credential", "search_credentials"],
+    "public/llms-full.txt": ["verify_credential", "search_credentials"],
+    "docs/api/mcp-tools.md": [
+      "verify_credential", "search_credentials", "nessie_query", "anchor_document",
+      "verify_document", "verify_batch", "search", "verify", "list_orgs", "get_anchor",
+      "get_organization", "get_record", "get_fingerprint", "get_document",
+      "oracle_batch_verify", "list_agents"
+    ]
+  },
+  "knownViolations": [
+    {
+      "key": "card-description-parity::public/.well-known/mcp/server-card.json::search_credentials",
+      "owner": "PR #2236 (BUG-026) — held for the 2026-08 full-soak freeze",
+      "reason": "The manifest rewrote the mechanism sentence instead of appending to it: canonical says semantic matching qualified by search_mode/lexical_substring, the manifest says unqualified 'semantic similarity matching against the credential database'. #2236 replaces the manifest description to match the tool definition."
+    },
+    {
+      "key": "card-description-parity::public/.well-known/mcp/server-card.json::oracle_batch_verify",
+      "owner": "UNOWNED — needs a follow-up PR at the tier of whichever surface it corrects",
+      "reason": "Hand-copy drift inside the shared sentence: canonical 'where an envelope with query_id', manifest 'where a response envelope with query_id'. The manifest's appended guidance (item cap, HMAC signing) is legitimate; only the mid-sentence edit is drift. Correcting either side touches services/edge/src/ (T2) or public/ (T1), so a T0 tooling PR cannot clear it."
+    },
+    {
+      "key": "card-description-parity::public/.well-known/mcp/server-card.json::list_agents",
+      "owner": "UNOWNED — needs a follow-up PR at the tier of whichever surface it corrects",
+      "reason": "Hand-copy drift: canonical 'the authenticated caller organization', manifest 'the authenticated caller's organization'. The manifest's wording is the correct English; the fix belongs in services/edge/src/mcp-tools.ts (T2). Same tier constraint as oracle_batch_verify above."
+    },
+    {
+      "key": "retrieval-mechanism-claim::public/.well-known/mcp/server-card.json::search_credentials",
+      "owner": "PR #2236 (BUG-026)",
+      "reason": "BUG-026 residue: 'Uses semantic similarity matching against the credential database. Returns ranked results with verification status and relevance scores.' No search_mode / lexical disclosure."
+    },
+    {
+      "key": "retrieval-mechanism-claim::public/AGENTS.md::search_credentials",
+      "owner": "PR #2236 (BUG-026)",
+      "reason": "BUG-026 residue: the search_credentials section repeats the manifest's unqualified semantic claim."
+    },
+    {
+      "key": "retrieval-mechanism-claim::docs/api/mcp-tools.md::search_credentials",
+      "owner": "PR #2236 (BUG-026)",
+      "reason": "BUG-026 residue: tool-index row 10 reads 'Semantic search across credentials'."
+    },
+    {
+      "key": "disabled-capability-claim::services/edge/src/mcp-tools.ts::nessie_query",
+      "owner": "PR #2236 (R-1 / BUG-008 / BUG-027)",
+      "reason": "The canonical description says Nessie 'Searches anchored public records ... using semantic similarity' in the present tense. Nessie is off by standing founder directive and off in prod. #2236 makes the description lead with DISABLED."
+    },
+    {
+      "key": "disabled-capability-claim::public/.well-known/mcp/server-card.json::nessie_query",
+      "owner": "PR #2236 (R-1)",
+      "reason": "Same present-tense capability claim, hand-copied into the discovery manifest."
+    },
+    {
+      "key": "disabled-capability-claim::docs/api/mcp-tools.md::nessie_query",
+      "owner": "PR #2236 (R-1)",
+      "reason": "Same present-tense capability claim in the per-tool reference section and the tool-index row."
+    }
+  ]
+}

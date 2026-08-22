@@ -49,9 +49,9 @@ function makeQuery(result: { data: unknown; error: { message: string } | null })
   return { query, capture };
 }
 
-const ORG_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
-const ADMIN_ID = '44444444-0000-0000-0000-000000000001';
-const MEMBER_ID = '44444444-0000-0000-0000-000000000002';
+const ORG_ID = 'aaaaaaaa-0000-4000-8000-000000000001';
+const ADMIN_ID = '44444444-0000-4000-8000-000000000001';
+const MEMBER_ID = '44444444-0000-4000-8000-000000000002';
 
 // Status taxonomy fixtures (round-1 review finding 1): every anchor_status
 // enum value appears — SECURED; the four in-progress states (PENDING,

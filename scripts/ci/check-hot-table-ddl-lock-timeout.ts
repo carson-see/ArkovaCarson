@@ -232,6 +232,17 @@ const STATEMENT_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
   // FIFO queue. `ON FUNCTION ...` cannot false-positive here: the captured
   // identifier would be `FUNCTION`, which is not a hot table.
   ['GRANT/REVOKE', new RegExp(`\\b(?:GRANT|REVOKE)\\b[^;]{0,200}?\\bON\\s+(?:TABLE\\s+)?${QUALIFIED}\\b`, 'gi')],
+  // Adding a FOREIGN KEY takes ShareRowExclusiveLock on the REFERENCED table
+  // (Postgres installs the FK's internal validation triggers on both sides).
+  // So `CREATE TABLE cold_t (... REFERENCES organizations ...)` — or an
+  // `ALTER TABLE cold_t ADD CONSTRAINT ... REFERENCES organizations` — queues
+  // on the HOT table's FIFO lock queue exactly like DDL on the hot table
+  // itself, even though the statement's target relation is cold. Every other
+  // pattern in this table looks at the statement's target; this one looks at
+  // the referenced side. Gap found live: migration 0410 (PR #2219) carried TWO
+  // FKs to public.organizations with zero lock_timeout and passed this gate
+  // green.
+  ['REFERENCES', new RegExp(`\\bREFERENCES\\s+${QUALIFIED}`, 'gi')],
 ];
 
 export function scanFiles(files: MigrationFile[]): Violation[] {

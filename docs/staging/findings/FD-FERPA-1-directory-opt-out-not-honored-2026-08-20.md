@@ -1,5 +1,34 @@
 # FD-FERPA-1 — the FERPA directory-information opt-out is not honored by any public projection
 
+> **CORRECTED 2026-08-21 while building the fix (PR #2314). Two claims below are wrong, and
+> the corrections matter more than the original finding.**
+>
+> **1. The published fields are not the ones named below.** All three opted-out production
+> records have `credential_type IS NULL`. Confirmed by *calling* `get_public_anchor` on prod:
+> what actually publishes is `issuer_name`, `issuer_public_id`,
+> `cpe_metadata.field_of_study` (`Taxation` / `Auditing` / `Ethics` — "major field of study"
+> is verbatim 34 CFR §99.3 directory information) and `credit_hours`. The name/title fields
+> named below **are** already suppressed for these three rows — but only **by accident**:
+> migration 0390 made `is_academic_record_credential_type(NULL)` return true, so a NULL-typed
+> record falls into 0385's unrelated academic free-text branch. That accident protects
+> nothing for an opted-out record that actually *has* a credential type.
+>
+> **2. "The REST path does consult the flag" is wrong in effect.** It consults it and then
+> publishes anyway: `buildVerificationResult` computed
+> `anchor.credential_type && FERPA_EDUCATION_TYPES.includes(...)`, which is falsy when the
+> type is null. Six existing tests covered that block and **not one passed a null type**. So
+> both surfaces leaked, not just the RPC one. The REST twin is fixed in the same PR.
+>
+> **Why this matters beyond bookkeeping:** the obvious fix — writing the predicate as
+> `type IN (education types)` — would have gone green and changed **nothing in production for
+> any of the three records**, because their type is NULL. The shipped predicate therefore
+> **fails closed on an absent credential type**. A finding that misidentifies the leaking
+> field is how a fix gets written that passes its own tests and protects no one.
+>
+> **3. `get_public_anchor_by_fingerprint` needs no change** — it delegates its whole
+> projection to `get_public_anchor` (0386, "single source of redaction truth") and inherits
+> the fix. Redefining it would be pure clobber risk for zero gain.
+
 **Found 2026-08-20 during adversarial review of the provenance-chain spec. This is a LIVE
 regulatory compliance defect affecting real records in production, not a design concern.**
 

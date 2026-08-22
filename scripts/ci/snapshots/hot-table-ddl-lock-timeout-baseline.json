@@ -21,14 +21,28 @@
     "Postgres lock queues are FIFO it became a barrier in front of PostgREST's",
     "schema-cache introspection. /api/v1/verify served service_unavailable for",
     "11m39s. Baseline at creation: 151 violations across 16 files (117 of them in",
-    "the pg_dump-shaped baseline migration, which is not hand-written SQL)."
+    "the pg_dump-shaped baseline migration, which is not hand-written SQL).",
+    "",
+    "2026-08-17 REFERENCES extension: the gate now also detects a FOREIGN KEY",
+    "that REFERENCES a hot table — adding an FK takes ShareRowExclusiveLock on",
+    "the REFERENCED table, so a cold table's CREATE TABLE queues on the hot",
+    "table's FIFO lock queue exactly like DDL on the hot table itself (how 0410",
+    "on PR #2219 passed the gate green). Six already-merged, immutable migrations",
+    "carry that pre-existing class (0314, 0317, 0320, 0326, 0328, 0405) and are",
+    "grandfathered below — the one-line guard cannot be added to a merged",
+    "migration (supabase/migrations/agents.md hard rule)."
   ],
   "grandfathered": [
     "supabase/migrations/00000000000000_baseline_at_main_HEAD.sql",
     "supabase/migrations/0307_fix_anchors_rls_statement_timeout.sql",
     "supabase/migrations/0310_idx_anchors_secured_chain_ts.sql",
+    "supabase/migrations/0314_legally_binding_attestations.sql",
     "supabase/migrations/0315_professional_education_foundations.sql",
+    "supabase/migrations/0317_connector_alert_state.sql",
+    "supabase/migrations/0320_member_integrations.sql",
+    "supabase/migrations/0326_scrum1649_deduct_org_credit_idempotency.sql",
     "supabase/migrations/0327_scrum2225_free_tier_quota.sql",
+    "supabase/migrations/0328_org_integrations_suborg_inheritance.sql",
     "supabase/migrations/0333_scrum2193_validate_anchors_metadata_constraints.sql",
     "supabase/migrations/0336_scrum2252_revocation_metadata.sql",
     "supabase/migrations/0340_scrum2335_proof_completeness_columns_and_trigger.sql",
@@ -40,6 +54,7 @@
     "supabase/migrations/0384_scrum2481_anchor_evidence_claim_authority.sql",
     "supabase/migrations/0393_scrum2940_anchors_folder_update_org_admin.sql",
     "supabase/migrations/0394_sec_ce_provenance_key_authority.sql",
+    "supabase/migrations/0405_org_field_policies_dpa_clause_4_6.sql",
     "supabase/migrations/0407_widen_org_verification_status_for_kyb_rejection.sql"
   ]
 }

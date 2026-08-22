@@ -218,184 +218,119 @@ separately). Full verdicts, defects, and landing-order constraints:
 
 ### Soaks
 
-**RUNNING — chain-pair + rate-limit T3 soak, started 2026-08-19T16:51:23Z, closes
-~2026-08-21T16:51:23Z.** This supersedes the 7-day SOC2 entry directly below, which **CLOSED ON
-SCHEDULE at 2026-08-19T15:51:30Z**
-([window-close-2026-08-19.md](docs/staging/fullsoak-2026-08/window-close-2026-08-19.md),
-[FINAL-REPORT-2026-08-19.md](docs/staging/fullsoak-2026-08/FINAL-REPORT-2026-08-19.md)) — the rig
-was then explicitly founder-approved for reuse ("get the new soaks going") and immediately restood
-up for this new soak; it was never idle between windows.
+- **TRAIN-6 CLOCK RESTARTED 2026-08-21T20:33:58Z — the 18:54:36Z window is VOID.** PR #2249 (T3,
+  anchor lifecycle) on `arkova-worker-wave2-2026-08-staging`.
+  Stand-up: `docs/staging/train6-2026-08/soak-start-2026-08-21T2038Z.md`. The earlier
+  `soak-start-2026-08-21T1854Z.md` carries a supersession header and **must not be cited**.
+  - **Service / tag:** `arkova-worker-wave2-2026-08-staging`, tag `train-6`, 100% traffic on
+    `arkova-worker-wave2-2026-08-staging-00006-gik` (`gcloud run services describe`, this session).
+  - **Revision created:** 2026-08-21T20:33:58.053472Z — the soak clock per FD-CLOCK-1. Window
+    closes **2026-08-23T20:33:58Z**.
+  - **Head / BUILD_SHA:** `f0e4cfe2e375b838a6f164f7c15e23d6b981c34b`; image
+    `sha256:76f1d043280c24ea593932ebe4e32158afbe56a647c4be709ca93f121d8508b4`.
+  - **Supabase:** `tkciooifwxwnkoizgalp` (isolated). Preflight `environment_type=clean_mirror`,
+    exit 0, six checks (`staging-honesty-preflight.ts` run from the PR-head checkout at
+    2026-08-21T20:36:36Z; a second run at 20:26:30Z agreed).
+  - **Why the first window was voided:** its preflight failed `submitted_anchors`, and the seed
+    fixture could not stay SUBMITTED. Root cause is **not** the sweep probe — it is
+    `recover_stuck_broadcasts()` (migration `0379`) reclaiming `chain_tx_id IS NULL` rows every
+    2 minutes. See `docs/staging/findings/FD-SEED-1-baseline-fixture-self-reverts-in-7-minutes.md`.
+    **This affects every rig seeded with `scripts/staging/seed-baseline-fixture.sql`** and the
+    seed file is not yet fixed.
+  - **DO NOT** redeploy, retag, reseed, or repoint this service or that Supabase project before
+    2026-08-23T20:33:58Z.
 
-- **What's soaking:** PR #2216 + PR #2250 (the chain pair — T3) merged as their union on
-  `rc/chain-pair-soak-2026-08` (head `daf3d6056788762ba56da5c328154e50fce03b59`), with PR #2269
-  (rate-limit cluster, T2) folded in mid-standup after its originally-slated shared staging project
-  (`ujtlwnoqfhtitcmsnrpq`) was found to no longer exist (see the `docs/staging/agents.md` pointer to
-  `ratelimit-soak-2026-08/` immediately below in this file's history). Full standup evidence, exact
-  revision/digest/preflight/PM-A-B-C plan:
-  [docs/staging/chain-pair-soak-2026-08/soak-start-2026-08-19.md](docs/staging/chain-pair-soak-2026-08/soak-start-2026-08-19.md).
-  RC manifest skeleton (soak fields pending until 48h):
-  [docs/staging/rc-manifests/rc-chain-pair-20260819.json](docs/staging/rc-manifests/rc-chain-pair-20260819.json).
-- **Rig:** same Cloud Run service, `arkova-worker-fullsoak-2026-08-staging`, now on revision
-  **`arkova-worker-fullsoak-2026-08-staging-00022-suy`** (tag `cp0819rc`), `min-instances=2` (raised
-  from 1 to make cross-instance rate-limit sharing observable), image digest
-  `sha256:d7a956079729b080a2e654f8014c9fbd270dbfc4392b1000e1a4e0630157ea45`. `/health` verified live:
-  `git_sha daf3d6056788762ba56da5c328154e50fce03b59`, `database/anchoring/kms: ok`, `network: signet`.
-  Treasury visible (736,985 sats), bitcoind VM `arkova-s33-rig-b1-bitcoin-core-signet` RUNNING.
-- **Preflight against `gnkuaywlpmsaezwvlvhk`: `environment_type=fixture_seeded`**, NOT
-  `clean_mirror` — zero artifact rows, the one failing check (`submitted_anchors`) traces to the
-  prior window's queue draining organically before close, not contamination. Full §1.11A reasoning
-  in the soak-start doc linked above.
-- **NEVER-DISTURB, this new window:** no deploy/redeploy/env/secret/scheduler change to
-  `arkova-worker-fullsoak-2026-08-staging` until 2026-08-21T16:51:23Z — same rule, new clock. Do not
-  read the "NEVER-DISTURB" bullets under the closed 7-day entry below as still governing revision
-  `-00013-mrw`; that revision no longer serves.
+- **Other soaks in flight at 2026-08-21T20:37Z** — serving revision + `creationTimestamp` read
+  directly from `gcloud run services describe` / `revisions describe` in this session; each one's
+  own stand-up doc remains the authority on its scope and evidence. Do not disturb any of them.
 
----
+  | Soak | Service | Serving revision | Clock start | Closes |
+  |---|---|---|---|---|
+  | TRAIN-4 | `arkova-worker-wave3-2026-08-staging` | `00005-rib` | 2026-08-21T13:57:35Z | 2026-08-22T01:57:35Z |
+  | TRAIN-5 | `arkova-worker-fullsoak-2026-08-staging` | `00024-kaj` | 2026-08-21T18:39:17Z | 2026-08-22T06:39:17Z |
+  | migration-T3 | `arkova-worker-staging` | `00300-few` | 2026-08-20T14:00:22Z | 2026-08-22T14:00:22Z |
+  | PR #2314 FERPA | `arkova-worker-ferpa2314-staging` | `00001-cit` | 2026-08-21T19:24:30Z | 2026-08-23T19:24:30Z |
 
-**CLOSED 2026-08-19T15:51:30Z — 7-day SOC 2 Type 2 full-functionality soak. Clock start `2026-08-12T15:51:30Z`.**
-This supersedes the `pr-2195` / `00011-bif` entry that
-previously occupied this block (that revision no longer serves; the rig moved to the full-functionality
-build the same day). Every claim below is traceable to
-[docs/staging/fullsoak-2026-08/manifest-DAY-0.md](docs/staging/fullsoak-2026-08/manifest-DAY-0.md).
+- **SOAK RUNNING as of 2026-08-20T14:00:22Z — migration-T3 wave (0410-0414), on `arkova-worker-staging`.**
+  Founder-approved 2026-08-19 premortem (`docs/staging/migration-t3-wave-premortem-2026-08-19.md`).
+  Full stand-up record: `docs/staging/migration-t3-soak-2026-08/soak-start-2026-08-20.md`.
+  - **Service:** `arkova-worker-staging`, tag `train-migration-t3`, **100% traffic** (explicitly
+    re-pointed, verified via `gcloud run revisions list` — not just the deploy summary line).
+  - **Tag URL:** `https://train-migration-t3---arkova-worker-staging-kvojbeutfa-uc.a.run.app`
+  - **Revision:** `arkova-worker-staging-00300-few` (created 2026-08-20T14:00:22Z — soak clock)
+  - **Image digest:** `sha256:b64f08428f8b67d4ecc6c41e34d87c67c40c585ea499e2bc301e9e1d7514808f`
+  - **Union head SHA:** `3baf16015ed61b4063daa6e53bead2399657ecd6` (`rc/migration-t3-wave-2026-08` =
+    #2219 + #2235 + #2248, base `b6cfad73c73fbaf45bea08e3b155d61501a49daa`)
+  - **Supabase project:** `fizyjojbebyalirtjjht` (`arkova-staging-2026-08`, created 2026-08-19,
+    **ACTIVE_HEALTHY** — verified live via `list_projects` at 2026-08-20T15:20Z, i.e. AFTER the
+    entry below was written) — ledger head `0414` post-apply (0410-0414 applied + reconciled +
+    rollback-rehearsed this session).
+  - **Health at soak start:** `status: healthy`, database/anchoring/kms all `ok`, re-verified live
+    at 2026-08-20T15:20Z (`git_sha` still matches, uptime climbing, traffic still 100% on this
+    revision).
+  - **DO NOT** provision a fresh rig, rebuild, or repurpose `arkova-worker-staging` /
+    `fizyjojbebyalirtjjht` for the 48h window (expected end `2026-08-22T14:00:22Z`) — see the
+    correction immediately below this entry.
 
-- **Clock start = LATER of the two legs**, per premortem §6.3 / BL-4 — manifest §9.1:
-  - rig revision `Ready` = `2026-08-12T15:10:05.965578Z`
-  - `SOAK_GATE_DISABLED=false` echo = `2026-08-12T15:51:30Z` (variable `updatedAt` `15:51:29Z`)
-  - ⇒ **clock start `2026-08-12T15:51:30Z`**. The clock is **rig uptime**, not a probe loop.
-- **Rig:** Cloud Run `arkova-worker-fullsoak-2026-08-staging`, revision
-  **`arkova-worker-fullsoak-2026-08-staging-00013-mrw`**, 100% traffic, project `arkova1`/`us-central1`.
-- **Image digest `sha256:8ace89d483484c40ea2022f7f21361effbfd6e0ab4d61ac4707f54e2ed1c1e18` — byte-identical
-  to prod** `arkova-worker-01310-god`; `git_sha f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58` on both.
-  Manifest §2.
-- **Supabase:** isolated rig `gnkuaywlpmsaezwvlvhk` — ledger head `0409`, 111 rows, **exact parity with
-  prod** `vzwyaatejekddvltxyye`. `staging-honesty-preflight.ts` returned `environment_type=clean_mirror`
-  twice (13:36Z main session, 13:50:06.151Z independent re-run). Manifest §2.4, §7.
-- **Chain:** signet, `ENABLE_PROD_NETWORK_ANCHORING=true`, real broadcasts. `BITCOIN_UTXO_PROVIDER=getblock`
-  ⇒ **GetBlock Hybrid = prod's exact architecture** (RPC broadcast + RPC inclusion proofs, mempool.space for
-  UTXO listing and fees), dynamic fee estimation (`FORCE_DYNAMIC_FEE_ESTIMATION=true`). RPC node is our own
-  GCE VM `arkova-s33-rig-b1-bitcoin-core-signet` over VPC connector `fullsoak-btc-rpc`. Manifest §9.4.
-- **`MEMPOOL_API_URL` is UNSET** — deliberately. Setting it froze two prior soaks ~24 h each
-  (BUG-2026-07-26-003).
-- **Gate 0 result: BL-1…BL-7 ALL PASS.** BL-2 closed on this revision — **12/12 anchors SECURED, 12/12
-  proofs with `octet_length(block_header)=80`, 6 txids × 2 independent explorers, all agreeing**
-  ([day0-bl2-secured-e2e-evidence.md](docs/staging/fullsoak-2026-08/day0-bl2-secured-e2e-evidence.md) §4.10).
-  Behavioural probes: **15 PASS / 1 FAIL (a real defect, FD-2) / 4 PARTIAL / 5 NOT-RUN**, each with a written
-  rationale ([day0-behavioral-probes.md](docs/staging/fullsoak-2026-08/day0-behavioral-probes.md)).
-  Monitoring: 4 uptime checks + 3 SOAK alert policies, **all fire-tested and armed**, two with Pub/Sub
-  delivery proof (manifest §4).
+- **CORRECTION — `arkova-worker-staging` is NOT dead and is NOT a "zombie."** The entry that used to
+  sit here (now moved down, still struck nowhere so its own history is visible) described
+  `arkova-worker-staging` as dead as of 2026-07-09/2026-08-12. That was true **on those dates**. It
+  was rebuilt 2026-08-19 and now points at `fizyjojbebyalirtjjht` (a real, `ACTIVE_HEALTHY` Supabase
+  project) — verified directly via `list_projects`, `gcloud run services describe`, and a live
+  `/api/health` call, not inferred from any doc, at soak stand-up (2026-08-20) and re-verified
+  ~80 minutes into the soak. **A stale copy of the pre-rebuild "dead/zombie" claim has been
+  independently repeated in at least two other places and should be corrected there too, not just
+  here:** (1) an unlanded commit (`726d34461`, 2026-08-15) sitting in PR #2248's own branch
+  rewrites `docs/reference/STAGING_RIG.md` and `CLAUDE.md` with the same claim — confirmed via
+  `git merge-base --is-ancestor` to never have reached `main` as of this soak's stand-up; (2) as of
+  this HANDOFF edit, `CLAUDE.md` **on `main` itself** now carries very similar "no standing shared
+  rig / `arkova-worker-staging` is a zombie" language (§1.11) — checked live just now and it does
+  **not** match current reality for `arkova-worker-staging` specifically, which is healthy, serving
+  real traffic, and mid-soak. This HANDOFF entry is the docs-carve-out-eligible fix (describes
+  already-verified state, zero code changes); the `CLAUDE.md` copy needs a PR-reviewed correction
+  (CLAUDE.md rule/content changes are excluded from the direct-to-main carve-out per its own §0
+  rule 8) — flagging for Carson/whoever picks this up next, not fixing it here.
 
-**NEVER-DISTURB RULES — these hold for the whole window, no exceptions without the founder:**
+- **SOAK RUNNING as of 2026-08-12T01:15:13Z — the "no interim soaks" ruling below is REVERSED.**
+  Founder directive 2026-08-11 (verbatim intent): every piece of code should be soaking. The prior
+  ruling is kept struck-through underneath because it is what every session read for the last week,
+  and deleting it would make the reversal invisible.
+  - **Service:** `arkova-worker-fullsoak-2026-08-staging`, tag `pr-2195`
+  - **Tag URL:** `https://pr-2195---arkova-worker-fullsoak-2026-08-staging-kvojbeutfa-uc.a.run.app`
+  - **Revision:** `arkova-worker-fullsoak-2026-08-staging-00011-bif` (created 2026-08-12T01:15:13Z — this is the soak clock; clock = Cloud Run revision uptime, not a probe loop)
+  - **Image digest:** `sha256:f5acf9e1b22d0d58a3b09a39769c6484cd4fa293fb22dd7c7e98ebcb87ededa6`
+  - **Head SHA:** `f354975aea1f0a819c61902ecd25518bcb5eae16` (= `origin/main` at start)
+  - **Supabase project:** `gnkuaywlpmsaezwvlvhk` — ledger head `0409`, 111 rows, **matches prod exactly**;
+    the single non-numeric row is `00000000000000 / baseline_at_main_HEAD`, which prod also has. Clean mirror.
+  - **Network:** signet, `ENABLE_PROD_NETWORK_ANCHORING=true` (real chain, real broadcasts)
+  - **`MEMPOOL_API_URL` is UNSET** — deliberately. Setting it froze two prior soaks ~24h each (BUG-2026-07-26-003).
+  - **Health at start:** `status: healthy`, database/anchoring/kms all `ok`
+  - **Why this head:** the fee-estimator network fix (BUG-2026-08-11 / SCRUM-3128) shipped to prod with
+    **zero** soak. The rig was burning hours on `1d12f0d39`, which predates it — 0 occurrences of
+    `mempoolApiBaseForNetwork` versus 5 on the soaked head. Verified by content, not by SHA comparison.
 
-- **No deploy, no redeploy, no revision change** to `arkova-worker-fullsoak-2026-08-staging`. The clock is
-  revision uptime; a new revision ends the window and the seven days restart.
-- **No env var, secret, Cloud Scheduler, alert-policy, uptime-check or `switchboard_flags` change** on the rig.
-  The flag registry is a **boot-time snapshot with no TTL** — changing an env flag requires a deploy, which is
-  the same as ending the soak.
-- **Both GitHub variables must hold all week:** `DEPLOY_WORKER_PAUSED=true` (set 13:23:42Z) and
-  `SOAK_GATE_DISABLED=false` (set 15:51:29Z). `DEPLOY_WORKER_PAUSED` also gates
-  `deferred_consolidated_soak`, so it changes **merge semantics**, not just deploy timing.
-- **Three load-bearing resources that look disposable and are not:**
-  - Secret `treasury-wif-legacy-soak-2026-08-staging` — named for a deleted service, but it is the rig's live
-    signet treasury WIF. Deleting it in a hygiene sweep stops the worker and costs soak days.
-    (Runbook §2.1 carries the same warning.)
-  - GCE VM `arkova-s33-rig-b1-bitcoin-core-signet` (`us-central1-a`) — the Bitcoin Core node the rig's
-    inclusion proofs come from. It is on the critical path since the provider flip.
-  - VPC connector `fullsoak-btc-rpc` — the only path from the rig to that node.
-- **Do not run a second soak on this Supabase project.** A Cloud Run tag isolates the revision only, never the
-  database (CLAUDE.md §1.11A).
-
-**Daily ops:**
-
-- `scripts/staging/fullsoak-daily-check.sh` — 28 assertions (git_sha ×3, revision/traffic/serving ×3, digest
-  ×3, uptime monotonic, both GitHub variables, env dump, flag hash, scheduler census, alert policies, uptime
-  checks, ledger parity, gated detailed health ×5, RPC-node liveness ×2, `/health.status` ×2). Read-only.
-  Last line is exactly `DAILY_PARITY: PASS` or `DAILY_PARITY: FAIL — <ids>`.
-- Scheduled via crontab **09:07 local, daily**; a manual run is a plain invocation of the same script.
-  Evidence appends to `docs/staging/evidence/fullsoak-2026-08/<UTC-date>/`; Day-0 frozen baselines live in
-  `docs/staging/evidence/fullsoak-2026-08/day0-snapshots/` (the superseded `00012`-era set is preserved
-  under `day0-snapshots/superseded-by-00013/` with a `REGENERATION-DIFF.md`, not deleted).
-- **Expected and NOT a failure:** preflight Check 5 (`submitted_anchors > 0`) will start failing once anchors
-  confirm — that is DEG-6, it is the pipeline working, and the `clean_mirror` capture is taken **once** at
-  Day 0 and never re-greened. Never hand-insert a SUBMITTED row.
-
-**Two prod-exposed defects found during Gate 0** (same image digest as prod, so these are not rig artifacts):
-
-- **FD-4 — a hung `check-confirmations` run deadlocks SUBMITTED→SECURED promotion fleet-wide.** The lease
-  heartbeat renews forever so the TTL never fires, `inFlight` self-blocks the holding instance, every call
-  returns HTTP 200 `{"checked":0,"confirmed":0}`, and nothing alarms. Prod runs `minScale=2` and is exposed
-  identically. Founder-started remediation session `task_ce0c8fb8`.
-- **FD-2 — `check-credential-expiry` 500s on every run**: it selects `anchors.not_after` and
-  `anchors.document_title`, neither of which exists. Prod-exposed whenever `ENABLE_EXPIRY_ALERTS` is on.
-
-**Day 5–6 update (2026-08-17/18) — all three reachable batch triggers have now fired.** Both rig
-orgs were bumped `FREE` → `ENTERPRISE` at 13:47Z on 2026-08-17 (a deliberate rig data change, not a
-schema/env change) to remove the FREE-tier 100/day per-org cap that made Trigger B's
-`pendingCount >= 3,000` arithmetically unreachable — see
-[batch-trigger-coverage.md](docs/staging/fullsoak-2026-08/batch-trigger-coverage.md). All three
-reachable triggers are now proven; Trigger C remains out of scope for this window:
-
-| Trigger | Fired | Anchors | Block | txid | Evidence |
-|---|---|---|---|---|---|
-| **D** — daily forced flush | 2026-08-17T03:00Z | 104 | 318046 | `fba08120d3fe8be73bd…` | [trigger-d-flush-2026-08-17.md](docs/staging/fullsoak-2026-08/trigger-d-flush-2026-08-17.md) |
-| **B** — age (first time ever observed) | 2026-08-17T14:00:02Z | 3,832 | 318115 | `e688cf2eb36d2794efe…` | [trigger-b-fired-2026-08-17.md](docs/staging/fullsoak-2026-08/trigger-b-fired-2026-08-17.md) |
-| **A** — size, full `BATCH_SIZE` | 2026-08-17T14:40:01Z | 10,000 | 318117 | `c70d1662bffb1720f5b…` | [trigger-a-fired-2026-08-17.md](docs/staging/fullsoak-2026-08/trigger-a-fired-2026-08-17.md) — closes **F-8**'s open question about `batch_insert_anchors` at 10k scale |
-| **C** — fee-aware deferral | **NOT exercised** | — | — | — | signet fee rates never approached `ABSOLUTE_FEE_CAP_SAT_PER_VB` |
-
-Each txid independently confirmed on both `mempool.space/signet` and `blockstream.info/signet`,
-agreeing with the rig DB's `chain_block_height`; all three broadcasts carry **100% proof coverage**
-(1:1 `anchor_proofs` rows, 80-byte `block_header` on every sampled row). As of the
-2026-08-18T12:33:40Z 90-minute health check, **SECURED count is 25,845 and monotonic**
-(`25845 -> 25845` across the check interval) —
-[90min-health-2026-08-18T123340Z.md](docs/staging/evidence/fullsoak-2026-08/2026-08-18/90min-health-2026-08-18T123340Z.md).
-
-**FD-CHAIN-1 (SCRUM-3151) re-characterized 2026-08-17 — not just a silent-halt bug, a hard
-throughput ceiling of one batch per confirmed block.** `listUnspent`'s RPC call uses `minconf=1`,
-which excludes the treasury's own unconfirmed change output from the very batch it just broadcast;
-the `rpcUtxos.length >= 0` guard is true for an empty array, so the mempool.space fallback — built
-specifically to prevent this coupling — is never reached; `hasFunds()` reports empty on a provably
-funded treasury and the batch is skipped. Observed live blocking the soak's own Trigger A evidence
-(10,570 PENDING, treasury funded, batch skipped) and recurring during the Trigger D flush (self-
-cleared once the change output confirmed). Fix is PR #2250 (`rework/fd-chain-1-union`, head
-`3d8851463`, **draft, unsoaked**) — unions the RPC and mempool legs deduped by `(txid, vout)`. Full
-mechanism: [FD-CHAIN-1-throughput-ceiling-2026-08-17.md](docs/staging/fullsoak-2026-08/FD-CHAIN-1-throughput-ceiling-2026-08-17.md).
-
-**Sentry zombie cron-monitor noise CLOSED 2026-08-18 (ops hygiene, not a soak finding).** All 12
-zombie alert issues (5 dead `K_SERVICE` environments, none in Cloud Run any more) set to
-ignored-forever via Sentry MCP `update_issue`; the two repair-related storms (ARKOVA-WORKER-2M
-batch-insert fallback, -2W linker-stall fatal) resolved after 18+ silent hours, root-caused to the
-poison-record repair plus draft PRs #2266/#2267/#2254. 16 monitor-environment deletions remain as
-UI-only quota hygiene (no monitor-write credential exists anywhere in infra) — not blocking
-anything. Detail: [sentry-zombie-monitor-runbook.md](docs/staging/fullsoak-2026-08/sentry-zombie-monitor-runbook.md).
-
-**Clock status, reconfirmed 2026-08-18:** still RUNNING, Day-7 close **2026-08-19T15:51:30Z**.
-`DEPLOY_WORKER_PAUSED=true` and `SOAK_GATE_DISABLED=false` reconfirmed live via `gh variable get`
-2026-08-18 — unchanged from the 2026-08-12 values recorded above.
-
-- **`arkova-worker-staging` is DEAD, not idle.** Last image `pr-1459-f053a99a` from **2026-07-09** — a
+- ~~**`arkova-worker-staging` is DEAD, not idle.** Last image `pr-1459-f053a99a` from **2026-07-09** — a
   month stale, and `/health` returns nothing. Do not cite it as a soak target or as evidence of
-  anything until it is rebuilt.
-  - **Sharper 2026-08-19 finding (PR #2269 rate-limit T2 soak standup attempt): it is worse than a
-    stale image — the backing Supabase project itself is gone.** `ujtlwnoqfhtitcmsnrpq` (the
-    standing `arkova-staging` project per CLAUDE.md §1.11 / `docs/reference/STAGING_RIG.md`) is
-    absent from Supabase MCP `list_projects` for the only org this account belongs to (only
-    `ehqqearcitrgloibtjqx`/connector-sidecar, `vzwyaatejekddvltxyye`/prod,
-    `gnkuaywlpmsaezwvlvhk`/fullsoak remain); `get_project('ujtlwnoqfhtitcmsnrpq')` returns a
-    permission error consistent with non-existence (we're the org owner and can describe the other
-    three fine); `ujtlwnoqfhtitcmsnrpq.supabase.co` is DNS `NXDOMAIN` (control: `supabase.co` and
-    unrelated hosts resolved fine); and the live main-URL `/health` (hit directly with a gcloud
-    identity token, not a stale cache) now returns HTTP 503
-    `{"status":"degraded",...,"checks":{"database":"error","anchoring":"ok","kms":"ok"}}` on a
-    fresh 44s-uptime cold start. `scripts/ci/staging-honesty-preflight.ts` against that ref fails
-    at the network layer (`TypeError: fetch failed`), not with a clean/dirty classification. **A
-    redeploy will not fix this — there is no database to redeploy against.** This blocks every
-    shared-staging T1/T2/T3 soak project-wide until an operator rebuilds the project or the
-    shared-rig model is formally retired; full evidence trail:
-    [`docs/staging/ratelimit-soak-2026-08/soak-standup-attempt-2026-08-19.md`](docs/staging/ratelimit-soak-2026-08/soak-standup-attempt-2026-08-19.md)
-    and its [`diagnostic-2026-08-19.json`](docs/staging/ratelimit-soak-2026-08/diagnostic-2026-08-19.json).
-    No new Supabase project was provisioned this session (cost gate, needs explicit approval); PR
-    #2269 was left in draft with no soak started. Fullsoak rig (`arkova-worker-fullsoak-2026-08-staging`,
-    project `gnkuaywlpmsaezwvlvhk`) is a confirmed-separate Cloud Run service and was not touched by
-    this investigation.
+  anything until it is rebuilt.~~ **(superseded 2026-08-19 — rebuilt; see the correction entry at
+  the top of this section. `arkova-worker-staging` is not dead and is mid-soak as of 2026-08-20.)**
+
+- **Not yet soaking:** the two in-flight follow-up fixes (x402 hardcoded BTC price; ECON-1 fee ceiling
+  failing open on a mempool outage) are being developed in separate sessions. Under the new directive
+  they each need their own soak before merge — the tag-URL pattern above is the template, but note that
+  **a Cloud Run tag isolates the revision only, never the Supabase project**, so two PRs that touch
+  schema/queue/cron state cannot share this rig concurrently (CLAUDE.md §1.11A).
+  - **x402 BTC price → [#2208](https://github.com/carson-see/ArkovaCarson/pull/2208), open in DRAFT
+    awaiting its soak** (head `bb26e824fcc7bd05dc579313b2517dbd1a25b21e`, base `382cddd97`, T2).
+    Code + tests complete and green locally (typecheck, worker lint, `lint:copy`, 24 new tests); the
+    PR body carries a T2 evidence block with every soak field explicitly marked NOT RUN. Do not
+    promote it out of draft on a green gate alone — `SOAK_GATE_DISABLED` is still `true`, so its
+    Staging Soak Evidence Gate will go green without reading the body.
+    **Needs a rig:** the full-soak rig above is occupied by `pr-2195`, and `arkova-worker-staging` is
+    now rebuilt but **occupied by the migration-T3 soak above through ~2026-08-22T14:00Z** — this PR
+    needs either the full-soak rig once #2195 releases it, or a fresh isolated one, not
+    `arkova-worker-staging`. It touches **no** migration/RLS/schema/cron/queue state — worker code only (`middleware/`,
+    `utils/`, plus a pure function move in `jobs/treasury-cache.ts`) — so on §1.11A grounds it is a
+    candidate to share a clean rig rather than requiring its own Supabase project.
 
 - ~~**No soak is running.** Founder ruling holds: no interim soaks for the open PR queue through the
   pen-test window; green-CI PRs merge and deploy now. Both rigs and loadgens remain up for the
@@ -1408,4 +1343,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-12 by CTO session — claims verified against gcloud/MCP/CI output, not asserted from prior-session prose._
+_Last refreshed: 2026-08-21 by Claude Opus 5 (TRAIN-6 clock-restart session) — claims verified against gcloud/MCP/CI output: `gcloud run services describe` + `gcloud run revisions describe` for every revision and creationTimestamp named above, `gcloud logging read` for the probe timings, the Supabase Management API query endpoint for every row count, and `staging-honesty-preflight.ts` run to completion from the PR-head checkout. Nothing here is asserted from prior-session prose._
