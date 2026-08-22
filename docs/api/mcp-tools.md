@@ -182,7 +182,7 @@ Semantic search across all anchored credentials. Returns ranked results with ver
 
 ## 3. `nessie_query`
 
-Query Arkova's verified intelligence engine — semantic search over 3.48M+ anchored public records (SEC filings, patents, regulatory documents). Two modes:
+Query Arkova's verified intelligence engine — semantic search over 1.4M+ anchored public records (SEC filings, patents, regulatory documents). Two modes:
 
 - `retrieval` (default): raw ranked documents with anchor proofs
 - `context`: Gemini-synthesized answer with citations linking back to anchored documents
