@@ -2186,7 +2186,14 @@ interface StagingFilesOnlyResult {
  */
 const STAGING_TOOLING_ALLOW = [
   // Secret-scanner policy is CI-only; it never ships to application runtime.
+  // Both halves of the pair belong here: `.gitleaks.toml` holds the rules and
+  // allowlists, `.gitleaksignore` holds the per-finding fingerprint waivers.
+  // Each is read only by the `scan` job in .github/workflows/gitleaks.yml and
+  // is never imported, bundled, or deployed, so neither has a runtime surface
+  // a soak could exercise. Only the .toml was listed, so a one-line fingerprint
+  // waiver classified T1 and demanded a 2 h soak of a file prod never reads.
   /^\.gitleaks\.toml$/,
+  /^\.gitleaksignore$/,
   /^scripts\/staging\//,
   // CI-only local-Supabase bootstrap for the types/tests/e2e jobs (sourced by
   // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.
