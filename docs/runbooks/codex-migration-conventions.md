@@ -59,7 +59,7 @@ Never `--linked`. Never without a flag. The `--linked` default points at prod.
 
 Supabase's connection pooler enforces a hard statement timeout (~2 min) that `SET LOCAL` cannot override. Any `CREATE INDEX` on a table with more than ~100k rows WILL time out via `supabase db push`.
 
-For indexes on `anchors` (1.4M rows), `public_records`, `anchor_proofs`, or any other known-hot table:
+For indexes on `anchors` (3.48M+ rows and growing), `public_records`, `anchor_proofs`, or any other known-hot table:
 
 1. **Don't put the `CREATE INDEX` in the feature migration.** Keep it out of the file entirely.
 2. **Add it to `supabase/migrations/0255_deferred_slow_indexes.sql`** (or the successor numeric file — check the repo for the current deferred-indexes migration). Update the header comment with the SQL.

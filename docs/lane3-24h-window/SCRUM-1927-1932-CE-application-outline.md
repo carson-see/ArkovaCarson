@@ -11,7 +11,7 @@
 6. **References / partners** — Credential Engine contact Jeanne Kitchens (CTSO); Jeff Grann (sandbox). *[relationship framing only, no commitments]*
 
 ## SCRUM-1932 — CE Registry Publishing / CTDL Application (outline)
-1. **CTDL production readiness** — importer built (Draft PR #1603); serializer exists (`ctdl-serializer.ts`). Round-trip parse tested (26 cases).
+1. **CTDL production readiness** — importer built, merged and deployed (PR #1603, merged 2026-07-23); serializer exists (`ctdl-serializer.ts`). Round-trip parse tested (26 cases).
 2. **Sandbox validation status** — sandbox reachable; GET-by-CTID read confirmed; **real-envelope consume pending** a Jeff Grann published resource (SCRUM-2993 finding).
 3. **Data scope** — which fields Arkova publishes (ctid, name, ownedBy/issuer, dateEffective, expirationDate/status). Map to capability matrix.
 4. **Limitations disclosure** — English-only OCR (Mercy-letter disclosure); template reconstruction currently degraded (SCRUM-2999, being fixed).
@@ -21,7 +21,7 @@
 | Claim | Label | Wording to use | Wording to AVOID |
 |---|---|---|---|
 | Document anchoring | measured (PDF/DOCX/image); asserted (audio/video) | "Anchors files of any format with SHA-256 integrity + a network-observed timestamp." (no "Bitcoin"/"any size" — §1.3; very large media may hit a client hashing limit) | "Bitcoin timestamp", "any file, any size", or any wording implying the anchor proves content authenticity/legal validity |
-| CTDL import/parse | measured | "CTDL JSON-LD import implemented and unit-tested." | "in production" (Draft, unmerged) |
+| CTDL import/parse | measured | "CTDL JSON-LD import implemented, unit-tested, and in production." | — (the earlier "avoid: in production" caveat no longer applies; PR #1603 merged 2026-07-23 and is deployed) |
 | CE registry consume | measured | "Validated read access against the CE sandbox registry." | "fully integrated with CE registry" |
 | Natively CTDL-compliant | **not_asserted** | *(omit)* | "natively CTDL-compliant" (pending SCRUM-2998) |
 | Audio/image support | anchor: measured (PDF/DOCX/image) / asserted (audio); extraction: asserted (static code-path, no live OCR run) | "Anchors audio and image files; extracts content from PDF/DOCX/common images." | "understands/reads audio", "reads all image formats" |

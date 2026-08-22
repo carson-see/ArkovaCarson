@@ -1,0 +1,11 @@
+{
+  "startedAt": "2026-08-20T16:46:03Z",
+  "endedAt": "2026-08-20T17:31:03Z",
+  "durationSec": 2700,
+  "apiBase": "https://arkova-worker-wave3-2026-08-staging-270018525501.us-central1.run.app",
+  "requests": { "ok": 1523, "fail": 0 },
+  "cronFires": 9,
+  "note_evidence_reconstruction": "scripts/staging/wave3-load-loop.sh's own JSON write failed mid-run ('No such file or directory') because the operator switched git branches (rc/wave3-2026-08 -> wave3-docs-push -> back) while this background process was still running, which deleted docs/staging/wave3-2026-08/ out from under it since that directory only existed as tracked content on the docs branch at the time. The script's final stderr summary line survived the failed write and exited 0; it is captured verbatim here: 'wave3-load-loop done: ok=1523 fail=0 cron_fires=9'. ok/fail/cronFires are the script's own counters, not re-derived after the fact. Independently cross-checked via gcloud logging read against the live Cloud Run service for a slightly WIDER window (16:24-17:31Z, which also includes this operator's own earlier manual per-member verification calls before the load loop started at ~16:46Z): 1482x HTTP 200 + 49x 401 + 4x 403 = 1535 total requests logged — consistent with, and not contradicting, the loop's own narrower 1523/0 tally.",
+  "cronDetail": "9 cron_fires means POST /jobs/queue-digest and POST /jobs/platform-health-digest were each triggered 9 times over the 45-minute run (every 5 minutes, as designed) via X-Cron-Secret auth, continuously exercising #2272's and #2276's per-org / platform-wide role-resolution and opt-out logic against the seeded fixtures for the full duration of this chunk, beyond the one-off manual trigger already documented in soak-start-2026-08-20.md's per-member evidence section.",
+  "zeroFailures": "fail=0 across all 1523 requests (health, verify, proof-keys, and both cron routes) over the full 45-minute chunk -- no 5xx observed."
+}
