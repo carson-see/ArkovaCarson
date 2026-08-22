@@ -43,7 +43,7 @@ const SDK_EXAMPLES = {
   curl: `curl -X GET \\
   ${PUBLIC_API_URL}/api/v1/verify/abc123-def456 \\
   -H "Authorization: Bearer YOUR_API_KEY"`,
-  typescript: `import { Arkova } from '@carsonarkova/sdk';
+  typescript: `import { Arkova } from 'arkova';
 
 const client = new Arkova({ apiKey: 'YOUR_API_KEY' });
 const result = await client.verify('abc123-def456');

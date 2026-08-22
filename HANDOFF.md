@@ -146,6 +146,40 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
   **Flagged, not fixed:** `chain/fee-estimator.ts` has the same mainnet-only default, so a
   non-mainnet deployment reports mainnet fee rates — that fix is T3 (`chain/`) and is tracked
   separately rather than folded in.
+- **New PR opened 2026-08-18 (DRAFT), `feat/npm-publish-prep`: npm publication prep for
+  `packages/sdk` and `sdks/mcp-server`.** Founder-authorized; CTO naming ruling supersedes the
+  2026-08-01 `@carsonarkova/sdk` scoped-package attempt (PR #1785, never published — see
+  `## History` above) — parity with PyPI, where `pip install arkova` already works at 2.2.0.
+  Both new names confirmed free via `npm view` (E404) on 2026-08-18: unscoped **`arkova`**
+  (`packages/sdk`, was `@carsonarkova/sdk`) and unscoped **`arkova-mcp-server`**
+  (`sdks/mcp-server`, was `@arkova/mcp-server`). No npm org needed for either — unscoped
+  first-publish ownership is per-account, not per-org. Repo-wide sweep of both old names across
+  docs/examples/e2e/agents.md; `publishConfig.provenance` dropped from `packages/sdk/package.json`
+  (needs CI/OIDC, fails a manual publish — the CI workflow keeps it via an explicit
+  `--provenance` CLI flag, unaffected). **`sdks/mcp-server` previously had NO runnable server** —
+  only `TOOL_DEFINITIONS`/`handleToolCall`, no `@modelcontextprotocol/sdk` wiring, no
+  `dependencies` block at all despite `"test": "vitest run"` — so `npx arkova-mcp-server` would
+  have failed outright; added `src/cli.ts` (real stdio `Server`, shebang, `bin` entry) with
+  protocol-level tests via the SDK's `InMemoryTransport`+`Client` (5 new tests), plus `"type":
+  "module"` (required for the ESM build to actually load) and pinned `dependencies`/
+  `devDependencies` + a committed `package-lock.json` (previously absent). **Found while
+  fixing:** `sdks/mcp-server/src/index.test.ts` was silently red on `main` — pinned at 6 tools
+  while NCE-19 had added 4 `nessie_`-prefixed tools without updating the assertions or
+  `agents.md`; fixed to assert the real 10-tool shape. **Flagged, not fixed:** 4 of those 10
+  tools call Nessie-backed endpoints while Nessie is off in prod by standing founder directive
+  (2026-08-01) — pre-existing (NCE-19), out of scope for a packaging/naming change, noted in
+  `sdks/mcp-server/agents.md` for follow-up. New
+  `scripts/release/publish-npm.sh` (manual/laptop publish path: `npm whoami` gate, build+test+
+  pack+publish per package, idempotent skip-if-already-published, final `npm view` confirmation)
+  — written and dry-run verified (`--dry-run`, both packages: install/typecheck/test/build/pack
+  all green) but **`npm publish` was never invoked**, per explicit instruction, regardless of
+  this session's own `npm whoami` unexpectedly returning an authenticated identity (`crseeger`)
+  on a machine the task brief described as having no npm auth — flagged for the operator to
+  reconcile, not acted on. T2 by path rule (SDK path — `scripts/ci/check-staging-evidence.ts`'s
+  detector has no override label for SDK paths); an SDK-only PR deploys nothing to any running
+  service, so this needs a Carson §1.12 exception rather than a real soak. Opened as **DRAFT**,
+  no merge, no rig contact — full-soak rig (`arkova-worker-fullsoak-2026-08-staging`) was not
+  touched.
 
 ### Soaks
 

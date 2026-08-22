@@ -56,7 +56,7 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 14 | `oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
 | 15 | `list_agents` | List AI agents registered to the caller's organization | SCRUM-1107 |
 
-> **CLE compliance tool deferred:** `cle_verify` was scoped for INT-02 but pulled before merge — the underlying `rpc/cle_verify` does not exist in the schema. The HTTP route at `/api/v1/cle/verify` is live and usable via the REST API or `@carsonarkova/sdk`. Tracked as follow-up **INT-02b** (expose it through MCP by threading caller API keys through the edge handler context).
+> **CLE compliance tool deferred:** `cle_verify` was scoped for INT-02 but pulled before merge — the underlying `rpc/cle_verify` does not exist in the schema. The HTTP route at `/api/v1/cle/verify` is live and usable via the REST API or `arkova`. Tracked as follow-up **INT-02b** (expose it through MCP by threading caller API keys through the edge handler context).
 
 All tool responses follow the MCP convention:
 
@@ -427,7 +427,7 @@ curl -X POST https://edge.arkova.ai/mcp \
 
 ```
 
-> CLE compliance lookup is available via the REST API today (see [`/api/v1/cle/verify`](./openapi.yaml)) and the [`@carsonarkova/sdk`](../../packages/sdk/README.md). It will be exposed through MCP in a follow-up (INT-02b).
+> CLE compliance lookup is available via the REST API today (see [`/api/v1/cle/verify`](./openapi.yaml)) and the [`arkova`](../../packages/sdk/README.md). It will be exposed through MCP in a follow-up (INT-02b).
 
 ---
 
@@ -452,5 +452,5 @@ curl -X POST https://edge.arkova.ai/mcp \
 
 - [Webhooks developer guide](./webhooks.md)
 - [API docs index](./README.md)
-- [@carsonarkova/sdk](../../packages/sdk/README.md) — TypeScript SDK
+- [arkova](../../packages/sdk/README.md) — TypeScript SDK
 - [@arkova/embed](../../packages/embed/README.md) — Embeddable widget
