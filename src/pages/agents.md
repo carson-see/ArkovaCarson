@@ -1,4 +1,9 @@
 # agents.md — pages
+_Last updated: 2026-08-15_
+
+## 2026-08-15 — `RecordDetailPage.test.tsx` new (BUG-2026-08-13-017 not-found flash)
+
+New test file for `/records/:id`. The fix itself lives in `src/hooks/useAnchor.ts` (see `src/hooks/agents.md`): the page transiently painted "Record Not Found" while auth/data resolved, because the hook reported settled-empty before the fetch ran. The page's own render order (`if (anchorLoading)` before `if (error || !anchor)`) was already correct — it was fed a lying `loading`. Testing note: the flash frame is committed and then overwritten inside a single `act()` flush, so a post-await `queryByText` can never see it; the test therefore keeps the REAL `useAuth` + `useAnchor` wiring over a mocked supabase module and records every DOM commit with a `MutationObserver`, asserting the blocked heading (`Record Not Found`, pinned by `e2e/helpers/cross-tenant-assertions.ts` as SOC 2 isolation evidence) never enters the DOM for an owned record, plus a terminal-contract test that it STILL renders once the query settles absent (PGRST116). Sibling audit at fix time: `/vault` is a pure `Navigate` redirect; DocumentsPage/MyRecordsPage use React-Query hooks (optimistic result covers the enabled-flip frame); `PublicVerification` starts `loading=true` and settles only in `finally` — none share the defect.
 _Last updated: 2026-08-17_
 
 ## 2026-08-17 — DocumentsPage: "My Records" tab is a link-out, not a duplicate list

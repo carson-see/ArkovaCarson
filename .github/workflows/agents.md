@@ -476,6 +476,27 @@ coverage" for why (the 2026 silent-skip bug where a single early failure skipped
 suite with no signal). Baseline at wiring time: **36/36 green**, verified locally on `main` before
 the gate was added — a gate must not be merged red.
 
+## Label-gated overrides need a token, not just `pull-requests: read` (2026-08-22)
+
+Any job that seeds `PR_LABELS` must ALSO carry `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` in its
+**job-level** `env:`. The two are not interchangeable: `permissions: { pull-requests: read }` scopes
+a token, it does not supply one, and `gh` authenticates from `GH_TOKEN`/`GITHUB_TOKEN` only —
+`actions/checkout` persists credentials into git config, which `gh` never reads.
+
+Without the token, `ciContext.fetchLiveLabels()` throws, the error is swallowed to `[]`, and
+`resolvePrLabels()` falls back to the FROZEN `pull_request` payload. Because `pull_request` does not
+fire on `labeled`, that makes the standard remediation — apply the override label, re-run the failed
+job — structurally inert: the label counts only if it was already on the PR when the webhook fired.
+Confirmed on PR #2322 (2026-08-22): `agents-md-deletion-approved` applied, `gh run rerun --failed`,
+identical failure, with nothing in the log to explain it.
+
+Fixed on `dependency-scan` + `policy-lints` (ci.yml) and `staging-evidence` (staging-evidence.yml).
+Job-level rather than per-step on purpose — `dependency-scan` alone has 11 label-gated steps, and the
+next one added must inherit the token instead of having to remember it.
+`scripts/ci/check-pr-labels-token-parity.test.ts` fails the build if a job seeds `PR_LABELS` without
+one, and `fetchLiveLabels()` now emits a non-fatal `::warning` when the live fetch fails (silent for
+a genuine non-PR context, so push builds do not cry wolf).
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
