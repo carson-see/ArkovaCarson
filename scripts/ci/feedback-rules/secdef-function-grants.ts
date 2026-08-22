@@ -347,7 +347,7 @@ function statementTargetsExactly(text: string, schema: string, name: string): bo
   if (!/\bON FUNCTION\b/i.test(text)) return false;
   const s = escapeRegExp(schema);
   const n = escapeRegExp(name);
-  return new RegExp(`(?:"?${s}"? ?\\. ?)?"?${n}"? ?\\(`, 'i').test(text);
+  return new RegExp(String.raw`(?:"?${s}"? ?\. ?)?"?${n}"? ?\(`, 'i').test(text);
 }
 
 /**
@@ -518,7 +518,7 @@ export function run(): { ok: boolean; message: string } {
   // so that running this rule directly — the obvious way to check your work —
   // cannot report a false all-clear on a rotted baseline.
   const live = new Set(all.map((v) => v.key));
-  const stale = [...baseline].filter((k) => !live.has(k)).sort();
+  const stale = [...baseline].filter((k) => !live.has(k)).sort((a, b) => a.localeCompare(b));
 
   if (fresh.length === 0 && stale.length === 0 && missingReplay.length === 0) {
     return {
@@ -532,12 +532,13 @@ export function run(): { ok: boolean; message: string } {
   }
 
   if (missingReplay.length > 0) {
+    const lines = missingReplay.map((m) => `  - ${m.reason}`).join('\n');
     return {
       ok: false,
       message:
         `secdef_function_grants: ${missingReplay.length} pinned replay-parity REVOKE(s) ` +
         `missing from supabase/migrations/:\n` +
-        `${missingReplay.map((m) => `  - ${m.reason}`).join('\n')}\n\n` +
+        `${lines}\n\n` +
         `These functions are defined in a file that cannot be edited (the squashed\n` +
         `baseline, or an already-merged migration), so their revoke lives in a later\n` +
         `compensating migration. Restore it, or remove the entry from\n` +
