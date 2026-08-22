@@ -1,0 +1,10 @@
+{
+  "run_ts": "2026-08-12T16:19:38Z",
+  "mode": "full",
+  "rig_service": "https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app",
+  "rig_supabase_ref": "gnkuaywlpmsaezwvlvhk",
+  "git_head": "550320dc8f7a48852177336c80999374b7e758b2",
+  "pass": 2, "fail": 0, "skip": 0,
+  "verdict": "PASS",
+  "probes": [{"id": "P6a", "desc": "QR scan path resolves as anon (get_public_anchor -> record)", "expected": "200 + public_id=ARK-2026-9476A947", "observed": "http 200, public_id=ARK-2026-9476A947", "result": "PASS"},{"id": "P6b", "desc": "Unknown QR target yields a distinct not-found payload, never a record and never a 5xx", "expected": "404, or 200 with error payload and NO public_id", "observed": "http 200, error=Record not found, public_id=<none>", "result": "PASS"}]
+}

@@ -224,3 +224,13 @@ public/vendor/ort/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Cloudflare Worker local secrets (wrangler dev) — never commit
+.dev.vars
+.dev.vars.*
+
+# Playwright run output (see playwright-report/ above)
+test-results/
+
+# wrangler dev local state
+services/edge/.wrangler/

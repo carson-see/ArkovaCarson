@@ -1,0 +1,29 @@
+fullsoak-daily-probes — behavioural probe run
+run_ts           : 2026-08-12T16:22:10Z
+mode             : full (only P4)
+rig service      : https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app
+rig supabase ref : gnkuaywlpmsaezwvlvhk
+prod supabase ref: vzwyaatejekddvltxyye
+host             : Arkovas-Mac-mini.local
+git HEAD         : 550320dc8f7a48852177336c80999374b7e758b2
+mgmt SQL (reads) : available
+----------------------------------------------------------------------
+PASS  P4a  ORG_ADMIN JWT creates a folder
+         expected: 201 + id
+         observed: http 201, id=1142548d…
+PASS  P4b  Folder rename returns the updated row (not a silent 0-row PATCH)
+         expected: >=1 row
+         observed: 1 rows
+PASS  P4c  Anchor filed into folder (row-count proven, not status-only)
+         expected: >=1 row returned
+         observed: 1 rows
+PASS  P4d  Org B JWT cannot re-file an Org A anchor
+         expected: 0 rows
+         observed: 0 rows
+PASS  P4e  Folder delete releases filed anchors (ON DELETE SET NULL)
+         expected: 0 anchors left pointing at it
+         observed: http 200, 0
+----------------------------------------------------------------------
+PASS=5 FAIL=0 SKIP=0
+DAILY_PROBES: PASS
+artifact: /Volumes/Extreme/Arkova/_legacy/home-Arkova-2026-05-15/arkova-mvpcopy-main/docs/staging/evidence/fullsoak-2026-08/2026-08-12/probes-162210Z.txt

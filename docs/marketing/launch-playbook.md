@@ -51,11 +51,11 @@ After all four channels launch, SCRUM-477 can transition to Done.
 > Customers use Arkova for:
 >
 > - Employment and education verification where the employer cannot (legally) keep the original document on file.
-> - Background-check providers who want a single API for credential anchoring across 1.4M+ public records.
+> - Background-check providers who want a single API for credential anchoring across 3.48M+ public records.
 > - ATS integrations (webhook, SDK, MCP).
 > - International compliance operators subject to FERPA, HIPAA, FCRA, GDPR, Kenya DPA, APP, POPIA, PDPA, APPI, PIPEDA.
 >
-> 1.41M+ records are already secured on our production network. The client-side processing boundary is a foundational privacy guarantee, not a configuration flag.
+> 3.48M+ records (3,485,077 SECURED, verified 2026-08-12) are already secured on our production network. The client-side processing boundary is a foundational privacy guarantee, not a configuration flag.
 
 ---
 

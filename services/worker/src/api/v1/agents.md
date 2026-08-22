@@ -838,3 +838,13 @@ The 2026-06-24 entry above states, of the batch-extraction refund path: *"A lost
 - The drain (re-apply the refund, retry with backoff, Sentry on the final attempt) is documented in `services/worker/src/jobs/agents.md`; its trigger is `POST /jobs/ai-credit-reconcile` + a Cloud Scheduler binding.
 - **Nothing about the request path changed** — the per-row debit/refund accounting, the fingerprint cache, the latency budget, and the frozen response shape are all untouched. This entry fixes the claim, not the route.
 - `scripts/ci/check-job-queue-parity.ts` now fails CI on any `submitJob` type with no consumer, so this specific false-surfacing shape cannot ship again.
+
+## 2026-08-15 BUG-2026-08-13-010 — connector fingerprints are fetch-time snapshots (§1.5/§1.6A)
+
+Soak-proven: re-fetching the same unchanged DocuSign envelope yields a DIFFERENT SHA-256 per request (the source re-renders the file), so a connector-sourced anchor's fingerprint is NOT re-derivable from the source system — it attests the exact bytes fetched at that moment, which is what the anchor receipt commits. Nothing told a verifier this.
+
+- `verify.ts` + `verify-proof.ts` now emit an additive pair for connector-sourced records only: `fingerprint_rederivability: 'fetch_time_snapshot'` + `fingerprint_rederivability_note` (§1.8 additive; OMITTED — never null — without a measured marker). Keyed on `metadata->>'connector_source'` through the closed set in `constants/connectorFingerprint.ts`; free text never routes here and the fixed note never echoes a vendor.
+- On `/proof` the pair is RESPONSE-level only — never inside `proof_bundle`, whose shape is the signable/independently-verifiable artifact.
+- `AnchorByPublicId.connector_source` is tri-state like `has_stored_proof_branch`: marker = emit, `null` = measured-not-connector, absent = not measured (batch/oracle via `EMPTY_API_RICH_FIELDS` stay silent).
+- `verifyCache.ts` KEY_PREFIX bumped v5 → v6 (response-shape change; a pre-deploy cached connector record would otherwise serve no statement for the whole TTL).
+- Tests: `verify-connector-fingerprint.test.ts` (marker closed-set, pair inseparability, no-vendor-echo, bundle-untouched).
