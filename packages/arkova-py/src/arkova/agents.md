@@ -6,6 +6,37 @@ Python SDK for the Arkova Verification API v2. Sync + async clients using `httpx
 - **`__init__.py`** — package exports: `Arkova`, `AsyncArkova`, `ArkovaError`, `BULK_ANCHOR_MAX_ROWS`, all model classes, and the offline proof helpers (`verify_bundle`, `verify_merkle_inclusion`, `REASON_CODES`, `VerifyOutcome`).
 - **`client.py`** — `Arkova` (sync) and `AsyncArkova` (async) clients. Supports search, verify, anchor, anchor_bulk, org listing. Auto-retry on 429/5xx with exponential backoff.
 - **`models.py`** — Pydantic models: `Anchor`, `VerificationResult`, `FingerprintVerification`, `SearchResponse`, `ProblemDetail`, `AnchorReceipt`, `BulkAnchorInput` (plain dataclass, not pydantic — it's a request shape, not a parsed response), `BulkAnchorResponse`, etc.
+  - **Type these against the worker source, never against one observed payload.**
+    BUG-2026-08-12-007: `compliance_controls` was typed `dict` from a stale
+    snapshot while the API had only ever emitted a list, and `verify()` raised on
+    every record that carried controls. The authority for a response shape is
+    `services/worker/src/api/v1/verify.ts` (`buildVerificationResult`) plus the
+    OpenAPI block in `api/v1/docs.ts` — not a sample response.
+  - **Prefer `str` over `Literal` for server-controlled value sets** on parsed
+    responses. `fingerprint_source` and `proof_availability` are deliberately
+    plain `str | None`: a value we have not seen must not raise inside a
+    consumer's `verify()`. `Literal` is fine on REQUEST shapes
+    (`BulkAnchorCredentialType`) where the server rejects unknown values anyway.
+  - **`None` mostly means OMITTED, not null.** `buildVerificationResult` skips
+    null/empty values rather than serialising them, so most optional fields are
+    present-with-a-value or absent. Declaring `| None` covers absence.
+  - The non-crash drift that 2.2.1 deferred (different endpoints, outside the P1
+    blast radius) was CLEARED in **2.3.0**: `chain_tx_id`, `issuer_name`,
+    `industry_tag`, `org_type`, `location`, `logo_url` and `BulkAnchorRowError.
+    field` were removed (seven fields no emitter can populate), and
+    `AnchorReceipt.record_uri` plus `RecordDetail.type` / `.metadata` were added.
+    Do not re-add any of the seven from an OpenAPI block or a TS interface —
+    `interface RowError` declares `field?: string` that nothing assigns, and
+    that declaration is exactly how it got here. **The emitter is the
+    authority, not the type that describes it.**
+  - **Model↔emitter parity is now a test, not a convention.** `test_client.py`
+    holds a frozen key set per response model (`ANCHOR_RECEIPT_EMITTED_KEYS`,
+    `MAP_ANCHOR_DETAIL_EMITTED_KEYS`, `ORGANIZATION_DETAIL_EMITTED_KEYS`,
+    `BULK_ROW_ERROR_EMITTED_KEYS`), each transcribed from the worker source that
+    BUILDS the response. Change a route's emitted keys and the matching parity
+    test fails — update the set and the model together, in that PR. Do not
+    regenerate these from a captured payload: a sample proves what one record
+    contained on one day, which is how every field above got here.
 - **`errors.py`** — `ArkovaError` exception with `status_code`, `code` (machine-readable error code), `problem` (RFC 7807), and `retry_after`.
 - **`proofs.py`** — DEV-02 / S3-B standalone OFFLINE proof-bundle verifier:
   `verify_bundle(packet, node=None, signed_bundle=None, published_keys=None,
