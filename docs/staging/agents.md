@@ -31,13 +31,17 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
   anchor-lifecycle PR. The live window is
   `train6-2026-08/soak-start-2026-08-21T2038Z.md` — revision `00006-gik`, clock
   2026-08-21T20:33:58Z → 2026-08-23T20:33:58Z, preflight `clean_mirror` / exit 0.
-- **`findings/FD-SEED-1-baseline-fixture-self-reverts-in-7-minutes.md`** — OPEN, systemic.
-  `scripts/staging/seed-baseline-fixture.sql` seeds its SUBMITTED anchor with `chain_tx_id`
+- **`findings/FD-SEED-1-baseline-fixture-self-reverts-in-7-minutes.md`** — FIXED (PR #2322).
+  `scripts/staging/seed-baseline-fixture.sql` seeded its SUBMITTED anchor with `chain_tx_id`
   NULL, which is exactly what `recover_stuck_broadcasts()` (migration `0379`) reclaims to
-  PENDING every 2 minutes. **Every** rig seeded with that file fails preflight Check 5
-  roughly 7 minutes after provisioning, so a provisioning-time preflight pass expires before
-  most soaks even start. Until the seed file is fixed (`.sql`, needs a PR), re-check
-  `count(*) where status='SUBMITTED'` on any rig **after** its first 10 minutes, not only at
+  PENDING every 2 minutes. **Every** rig seeded with that file failed preflight Check 5
+  roughly 7 minutes after provisioning, so a provisioning-time preflight pass expired before
+  most soaks even started. The fixture now carries a synthetic 64-hex `chain_tx_id`, the seed
+  asserts its own durability in-transaction (so provisioning aborts rather than admitting a
+  doomed rig), and **re-running the seed repairs a rig provisioned before the fix** — it
+  backfills the txid and reinstates a fixture already reclaimed to PENDING. On any rig
+  seeded before that PR and not yet re-seeded, still re-check
+  `count(*) where status='SUBMITTED'` **after** its first 10 minutes, not only at
   provisioning.
 - A durable SUBMITTED fixture needs **both** `chain_tx_id` NOT NULL (excludes
   `recover_stuck_broadcasts`, which deliberately ignores `legal_hold`) **and**

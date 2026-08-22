@@ -17,7 +17,7 @@ soak measuring nothing is indistinguishable from a healthy soak.
 | [FD-RC-1](FD-RC-1-manifests-cannot-be-retrofitted.md) | An RC manifest asserting soak coverage **cannot be retrofitted**. It is a train-launch artifact: manifest first, restack once, freeze, then soak. |
 | [FD-LOAD-1](FD-LOAD-1-mixed-mode-exceeds-anonymous-rate-limit.md) | `--mode mixed` offers **160 req/min** into the anonymous limiter, so events/webhook/reads report `ok=0` every cycle. The soak measures its own rate limiter. **The real ceiling is 60/min, not §1.10's 100** — `apiIpShadowGuard` (`index.ts:413`) caps all of `/api` at 60 and skips only keyed `/api/v1`. Budget soak drivers under 60. |
 | [FD-PROBE-1](FD-PROBE-1-anonymous-401-cannot-prove-a-route-exists.md) | An anonymous `401` under a prefix-gated router is returned **unconditionally** — it cannot tell "mounted and gated" from "route does not exist". One probe was green all window against a `404`. |
-| [FD-SEED-1](FD-SEED-1-baseline-fixture-self-reverts-in-7-minutes.md) | **OPEN, systemic.** `seed-baseline-fixture.sql` writes its SUBMITTED anchor with `chain_tx_id` NULL — the exact row `recover_stuck_broadcasts()` (0379) reclaims to PENDING every 2 min. **Every** rig it seeds fails preflight Check 5 ~7 minutes after provisioning. |
+| [FD-SEED-1](FD-SEED-1-baseline-fixture-self-reverts-in-7-minutes.md) | **FIXED (PR #2322).** `seed-baseline-fixture.sql` wrote its SUBMITTED anchor with `chain_tx_id` NULL — the exact row `recover_stuck_broadcasts()` (0379) reclaims to PENDING every 2 min — so **every** rig it seeded failed preflight Check 5 ~7 minutes after provisioning. The fixture now carries a synthetic 64-hex txid, re-running the seed repairs an older rig, and the seed asserts its own durability in-transaction. |
 
 ## Product / correctness
 
@@ -50,6 +50,12 @@ skipped and a check does not:
   returned 503 on every read. Without the row, `get_flag` fails closed and every `/api/v1`
   request 503s in under 10 ms *before reaching application code*, while the rig reports healthy.
   The claim is now true; the history stays so the next false "enforced" entry is easier to spot.
+- **The baseline fixture must survive the rig's own crons (PR #2322)** — `scripts/staging/seed-baseline-fixture.sql`
+  ends in a `DO $$ … $$` post-condition block that fails the seed (and therefore provisioning,
+  under `set -euo pipefail`) unless the fixture anchor is SUBMITTED, holds a non-NULL
+  `chain_tx_id`, is on legal hold, and `ENABLE_VERIFICATION_API` is enabled. FD-SEED-1 was a
+  provisioning-time preflight pass that expired seven minutes later; the seed now proves the
+  structural predicate instead of leaving a point-in-time count to speak for it.
 - **401/403 count as failure** in `wave3-load-loop.sh`. The classifier previously counted
   any 2xx–4xx as `ok`, so a run where **every request was rejected** reported
   `ok=61 fail=0`.
