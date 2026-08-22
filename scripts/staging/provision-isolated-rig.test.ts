@@ -63,7 +63,7 @@ const stagingAgents = readFileSync(resolve(here, 'agents.md'), 'utf8');
 const TEAM1_ADMISSION_PROVENANCE_RULE =
   '- Team1 accepts Team2 admission v2 only for Supabase organization `byhkazrpmivhcsuqjtva`, with `source_head_image_ref` pinned to the exact full-SHA tag in `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker` and `source_head_image_digest` equal to both input and deployed image digests. The input and deployed image refs must also be digest pins in that exact approved repository. The committed RIG-B1 fixture mirrors that producer packet; missing, malformed, cross-project, cross-repository, stale-head, or digest-mismatched provenance fails closed.';
 const CANONICAL_CROSS_LANE_AGENTS_SHA256 =
-  'fb57a37d56cc1350e82ab5a659f0fa112216738d5cbf8cb0fc02fb806ba5cd25';
+  '83269353a0df0a7082f507eb029a6b5d0963262ca9e9d3ae9207fb8e89ee164d';
 
 // A wedged synchronous child must be killed with a diagnosable ETIMEDOUT
 // instead of hanging the suite — but this deadline is a HANG detector, not a
@@ -88,10 +88,10 @@ const CHILD_TIMEOUT_EXIT_CODE = 124;
 vi.setConfig({ testTimeout: 3 * PROVISION_CHILD_TIMEOUT_MS + 30_000 });
 
 describe('scripts/staging/agents.md — exact cross-lane semantic union', () => {
-  it('retains the complete 13-section body shared by both current lane heads', () => {
+  it('retains the complete 15-section body shared by both current lane heads', () => {
     const headings = stagingAgents.match(/^## .+$/gm) ?? [];
-    expect(headings).toHaveLength(13);
-    expect(new Set(headings).size).toBe(13);
+    expect(headings).toHaveLength(15);
+    expect(new Set(headings).size).toBe(15);
     expect(createHash('sha256').update(stagingAgents).digest('hex')).toBe(
       CANONICAL_CROSS_LANE_AGENTS_SHA256,
     );
