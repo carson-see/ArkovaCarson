@@ -40,6 +40,7 @@ hook's own deny message.
 | `feedback_migration_number_vs_reservations.md` | `.claude/hooks/check-constitution-on-edit.sh` — **BLOCK**; named in the deny message | ✅ live |
 | `feedback_no_credit_limits_beta.md` | CI lint (`no-credit-limits-beta.ts`) | ✅ live (R0-7) |
 | `feedback_no_aws.md` | CI lint (`no-aws.ts`) | ✅ live (R0-7) |
+| `feedback_bounded_body_reads.md` | CI lint (`bounded-body-reads.ts`) — raw `.json()`/`.text()` on a fetch response under `services/worker/src/**`, scoped to lines the PR **adds** (145 pre-existing sites; see the rule's header for why whole-file would be wrong here). Override `unbounded-body-read-reviewed`. The companion `maxRunMs >= ttlMs` half is test-enforced in `jobs/__tests__/run-lease.deadline.test.ts`. | ✅ live (R0-7 / F-D0-5) |
 | `feedback_pr_target_repo.md` | CI lint (`pr-target-repo.ts`) | ✅ live (R0-7) |
 | `feedback_no_worktree_isolation.md` | CI lint (`no-worktree-isolation.ts`) | ✅ live (R0-7) |
 | `feedback_local_matches_prod.md` | CI lint (`feedback_local_matches_prod.ts`) — snapshot diff vs `scripts/ci/snapshots/prod-tables.json`; fails closed. Live-MCP comparison still deferred. | ✅ live (SCRUM-1306 / R0-7-FU1) |
@@ -64,6 +65,7 @@ and documented in the rule script. Examples:
 - `local-matches-prod-skip` → overrides `feedback_local_matches_prod`
 - `confluence-drift-skip` → overrides the Confluence coverage drift guard
 - `handoff-narrative-only` → overrides R0-6 HANDOFF.md lint
+- `unbounded-body-read-reviewed` → overrides `feedback_bounded_body_reads`
 
 `feedback_pr_target_repo` and `feedback_no_worktree_isolation` have **no**
 override label. `feedback_dont_recommend_do` needs none — it cannot fail.
