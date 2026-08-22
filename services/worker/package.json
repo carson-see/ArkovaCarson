@@ -23,7 +23,7 @@
   "dependencies": {
     "@arizeai/openinference-semantic-conventions": "2.7.0",
     "@aws-sdk/client-kms": "3.1111.0",
-    "@google-cloud/kms": "5.7.0",
+    "@google-cloud/kms": "6.0.0",
     "@google/generative-ai": "0.24.1",
     "@grpc/grpc-js": "1.14.4",
     "@opentelemetry/api": "1.9.1",
