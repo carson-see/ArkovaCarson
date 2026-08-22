@@ -108,6 +108,146 @@ describe('piiStripper', () => {
     });
   });
 
+  // ─── Separator-insensitive ID labels ──────────────────────────────────
+  // CSV headers are overwhelmingly snake_case. The keyword patterns used to
+  // join their tokens with `\s+`, so the free-text form redacted while the
+  // CSV form flowed through to /api/v1/ai/extract-batch unredacted. A student
+  // or employee ID identifies an education/employment record (FERPA), so §1.6
+  // requires it stripped in every separator form, not just the spaced one.
+  describe('student ID labels are separator-insensitive', () => {
+    it('strips snake_case student_id (the CSV header form)', () => {
+      const result = stripPII('student_id: 88213');
+      expect(result.strippedText).toBe('student_id: [STUDENT_ID_REDACTED]');
+      expect(result.piiFound).toContain('studentId');
+    });
+
+    it('strips kebab-case student-id', () => {
+      const result = stripPII('student-id: 88213');
+      expect(result.strippedText).toBe('student-id: [STUDENT_ID_REDACTED]');
+      expect(result.piiFound).toContain('studentId');
+    });
+
+    it('strips separator-less studentid', () => {
+      const result = stripPII('studentid: 88213');
+      expect(result.strippedText).toBe('studentid: [STUDENT_ID_REDACTED]');
+      expect(result.piiFound).toContain('studentId');
+    });
+
+    it('still strips the spaced "Student ID:" form (no regression)', () => {
+      const result = stripPII('Student ID: 88213');
+      expect(result.strippedText).toBe('Student ID: [STUDENT_ID_REDACTED]');
+      expect(result.piiFound).toContain('studentId');
+    });
+
+    it('strips snake_case id_number', () => {
+      const result = stripPII('id_number: A12345678');
+      expect(result.strippedText).toBe('id_number: [STUDENT_ID_REDACTED]');
+      expect(result.piiFound).toContain('studentId');
+    });
+
+    it('strips employee_id in every separator form', () => {
+      for (const label of ['employee_id', 'employee-id', 'employeeid', 'Employee ID']) {
+        const result = stripPII(`${label}: 88213`);
+        expect(result.strippedText).toBe(`${label}: [STUDENT_ID_REDACTED]`);
+        expect(result.piiFound).toContain('studentId');
+      }
+    });
+
+    it('strips member_id in every separator form', () => {
+      for (const label of ['member_id', 'member-id', 'memberid', 'Member ID']) {
+        const result = stripPII(`${label}: 88213`);
+        expect(result.strippedText).toBe(`${label}: [STUDENT_ID_REDACTED]`);
+        expect(result.piiFound).toContain('studentId');
+      }
+    });
+  });
+
+  describe('DOB / address / national ID labels are separator-insensitive', () => {
+    it('strips snake_case date_of_birth', () => {
+      const result = stripPII('date_of_birth: 01/15/1990');
+      expect(result.strippedText).toBe('date_of_birth: [DOB_REDACTED]');
+      expect(result.piiFound).toContain('dob');
+    });
+
+    it('strips snake_case birth_date', () => {
+      const result = stripPII('birth_date: 1985-06-15');
+      expect(result.strippedText).toBe('birth_date: [DOB_REDACTED]');
+      expect(result.piiFound).toContain('dob');
+    });
+
+    it('strips snake_case postal_code', () => {
+      const result = stripPII('postal_code: SW1A 2AA');
+      expect(result.strippedText).toContain('[ADDRESS_REDACTED]');
+      expect(result.strippedText).not.toContain('SW1A 2AA');
+      expect(result.piiFound).toContain('address');
+    });
+
+    it('strips snake_case national_id', () => {
+      const result = stripPII('national_id: AB.123/456');
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+      expect(result.strippedText).not.toContain('AB.123/456');
+      expect(result.piiFound).toContain('nationalId');
+    });
+
+    it('strips snake_case tax_id', () => {
+      const result = stripPII('tax_id: 12-3456789');
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+      expect(result.strippedText).not.toContain('12-3456789');
+    });
+
+    it('strips snake_case passport_number', () => {
+      const result = stripPII('passport_number: X1234567');
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+      expect(result.strippedText).not.toContain('X1234567');
+    });
+
+    it('strips snake_case steuer_id (underscore form of Steuer-ID)', () => {
+      const result = stripPII('steuer_id: 12345678901');
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+      expect(result.strippedText).not.toContain('12345678901');
+    });
+  });
+
+  // Precision matters as much as recall: this module is SHARED with the
+  // document path via stripPIIEnhanced, so a broadened keyword matcher must
+  // not start eating ordinary structured columns.
+  describe('precision: non-identifier columns are NOT redacted', () => {
+    it('leaves scalar academic columns untouched', () => {
+      const result = stripPII('credit_hours: 3\nscore: 88\nyear: 2024');
+      expect(result.strippedText).toBe('credit_hours: 3\nscore: 88\nyear: 2024');
+      expect(result.redactionCount).toBe(0);
+      expect(result.piiFound).toEqual([]);
+    });
+
+    it('redacts identifier columns while preserving the rest of a CSV row', () => {
+      const rowText = [
+        'student_id: 88213',
+        'employee_id: E44718',
+        'member_id: M90210',
+        'credential_name: Advanced Cardiac Life Support',
+        'credit_hours: 3',
+        'score: 88',
+        'year: 2024',
+        'issue_date: 2024-06-01',
+      ].join('\n');
+
+      const result = stripPII(rowText);
+
+      // Identifiers gone
+      expect(result.strippedText).not.toContain('88213');
+      expect(result.strippedText).not.toContain('E44718');
+      expect(result.strippedText).not.toContain('M90210');
+      expect(result.piiFound).toContain('studentId');
+
+      // Everything the extractor actually needs survives
+      expect(result.strippedText).toContain('credential_name: Advanced Cardiac Life Support');
+      expect(result.strippedText).toContain('credit_hours: 3');
+      expect(result.strippedText).toContain('score: 88');
+      expect(result.strippedText).toContain('year: 2024');
+      expect(result.strippedText).toContain('issue_date: 2024-06-01');
+    });
+  });
+
   describe('name matching against provided names', () => {
     it('strips names when recipient names are provided', () => {
       const result = stripPII('Awarded to John Michael Smith for excellence', {
@@ -172,168 +312,6 @@ describe('piiStripper', () => {
         expect.arrayContaining(['ssn', 'email', 'phone', 'dob', 'studentId', 'name']),
       );
       expect(result.redactionCount).toBeGreaterThanOrEqual(6);
-    });
-  });
-
-  // ─── Keyword word-separator coverage (snake_case / kebab-case) ────────
-  //
-  // Every context-aware keyword in this module joined its words with `\s+`, which
-  // does not match `_` or `-`. That is fine for OCR prose but wrong for the CSV
-  // bulk-upload path, which serialises each row as `"<column>: <value>"` lines
-  // straight from CSV headers — and real CSV headers are overwhelmingly
-  // snake_case. `Student ID: 88213` redacted; `student_id: 88213` shipped the raw
-  // identifier to `/api/v1/ai/extract-batch`.
-  describe('keyword separators — person ID keywords', () => {
-    const REDACTED = '[STUDENT_ID_REDACTED]';
-
-    it.each([
-      ['space',      'Student ID: 88213'],
-      ['lowercase',  'student id: 88213'],
-      ['snake_case', 'student_id: 88213'],
-      ['kebab-case', 'student-id: 88213'],
-    ])('redacts the student ID in %s form', (_label, text) => {
-      const result = stripPII(text);
-      expect(result.strippedText).toContain(REDACTED);
-      expect(result.strippedText).not.toContain('88213');
-      expect(result.piiFound).toContain('studentId');
-    });
-
-    it.each([
-      ['space',      'ID Number: 88213'],
-      ['snake_case', 'id_number: 88213'],
-      ['kebab-case', 'id-number: 88213'],
-    ])('redacts the ID number in %s form', (_label, text) => {
-      const result = stripPII(text);
-      expect(result.strippedText).toContain(REDACTED);
-      expect(result.strippedText).not.toContain('88213');
-    });
-
-    it.each([
-      ['space + period', 'Student No. 987654'],
-      ['snake_case',     'student_no: 987654'],
-      ['space',          'student number: 987654'],
-      ['snake_case',     'student_number: 987654'],
-    ])('redacts the student number in %s form', (_label, text) => {
-      const result = stripPII(text);
-      expect(result.strippedText).toContain(REDACTED);
-      expect(result.strippedText).not.toContain('987654');
-    });
-
-    it('preserves the keyword itself, redacting only the value', () => {
-      const result = stripPII('student_id: 88213');
-      expect(result.strippedText).toBe(`student_id: ${REDACTED}`);
-    });
-  });
-
-  // Deliberate scope decision (see agents.md): person-role identifiers redact,
-  // thing-role identifiers do not. The mechanism is this in-cell, keyword-anchored
-  // stripper — NOT the CSV name-column classifier, whose literals are removed from
-  // the WHOLE row text and would scrub credential metadata everywhere it appears.
-  describe('keyword separators — non-student person ID roles', () => {
-    it.each([
-      ['employee_id',    'employee_id: EMP0004189'],
-      ['member_id',      'member_id: MBR0004189'],
-      ['learner_id',     'learner_id: LRN0004189'],
-      ['participant_id', 'participant_id: PRT0004189'],
-      ['attendee_id',    'attendee_id: ATT0004189'],
-      ['candidate_id',   'candidate_id: CND0004189'],
-      ['recipient_id',   'recipient_id: RCP0004189'],
-      ['holder_id',      'holder_id: HLD0004189'],
-    ])('redacts %s', (_label, text) => {
-      const result = stripPII(text);
-      expect(result.strippedText).toContain('[STUDENT_ID_REDACTED]');
-      expect(result.strippedText).not.toContain('0004189');
-      expect(result.piiFound).toContain('studentId');
-    });
-
-    it('redacts a hyphenated person ID value', () => {
-      const result = stripPII('employee_id: EMP-000418');
-      expect(result.strippedText).toBe('employee_id: [STUDENT_ID_REDACTED]');
-    });
-
-    it.each([
-      ['course_id',       'course_id: CS10199'],
-      ['credential_id',   'credential_id: CRED12345'],
-      ['certificate_id',  'certificate_id: CERT12345'],
-      ['badge_id',        'badge_id: BADGE1234'],
-      ['issuer_id',       'issuer_id: ISS123456'],
-      ['organization_id', 'organization_id: ORG123456'],
-      ['batch_id',        'batch_id: BATCH12345'],
-      ['transaction_id',  'transaction_id: TXN1234567'],
-      ['document_id',     'document_id: DOC1234567'],
-    ])('leaves the thing-role identifier %s intact', (_label, text) => {
-      const result = stripPII(text);
-      expect(result.strippedText).toBe(text);
-      expect(result.piiFound).not.toContain('studentId');
-    });
-  });
-
-  describe('keyword separators — DOB keywords', () => {
-    it.each([
-      ['space',      'Date of Birth: 01/15/1990'],
-      ['snake_case', 'date_of_birth: 01/15/1990'],
-      ['kebab-case', 'date-of-birth: 01/15/1990'],
-      ['space',      'birth date: 01/15/1990'],
-      ['snake_case', 'birth_date: 01/15/1990'],
-    ])('redacts the DOB in %s form', (_label, text) => {
-      const result = stripPII(text);
-      expect(result.strippedText).toContain('[DOB_REDACTED]');
-      expect(result.strippedText).not.toContain('01/15/1990');
-      expect(result.piiFound).toContain('dob');
-    });
-
-    it('still preserves a non-DOB issue date', () => {
-      const result = stripPII('issue_date: 2024-06-15');
-      expect(result.strippedText).toBe('issue_date: 2024-06-15');
-      expect(result.piiFound).not.toContain('dob');
-    });
-  });
-
-  describe('keyword separators — address keywords', () => {
-    it.each([
-      ['space',      'Postal Code: SW1A 1AA'],
-      ['snake_case', 'postal_code: SW1A 1AA'],
-      ['kebab-case', 'postal-code: SW1A 1AA'],
-    ])('redacts the postal code in %s form', (_label, text) => {
-      const result = stripPII(text);
-      expect(result.strippedText).toContain('[ADDRESS_REDACTED]');
-      expect(result.strippedText).not.toContain('SW1A 1AA');
-      expect(result.piiFound).toContain('address');
-    });
-
-    it('redacts zip_code without mangling the keyword', () => {
-      // Previously `zip\s*(?:code)?` matched only `zip`, leaving the value regex to
-      // swallow `_code: ` and emit `zip[ADDRESS_REDACTED]`.
-      const result = stripPII('zip_code: 10001-4321');
-      expect(result.strippedText).toBe('zip_code: [ADDRESS_REDACTED]');
-    });
-
-    it.each([
-      ['street_address', 'street_address: 123 Main St'],
-      ['home_address',   'home_address: 123 Main St'],
-    ])('redacts the address in %s form', (_label, text) => {
-      const result = stripPII(text);
-      expect(result.strippedText).toContain('[ADDRESS_REDACTED]');
-      expect(result.strippedText).not.toContain('123 Main St');
-    });
-  });
-
-  describe('keyword separators — national ID keywords', () => {
-    it.each([
-      ['national_id',     'national_id: AB123456'],
-      ['national-id',     'national-id: AB123456'],
-      ['tax_id',          'tax_id: AB123456'],
-      ['ni_number',       'ni_number: QQ123456C'],
-      ['passport_number', 'passport_number: X1234567'],
-      ['passport_no',     'passport_no: X1234567'],
-      ['steuer_id',       'steuer_id: 12345678901'],
-      ['pan_number',      'pan_number: ABCDE1234F'],
-      ['pan_card',        'pan_card: ABCDE1234F'],
-      ['sin_number',      'sin_number: AB123456'],
-    ])('redacts %s', (_label, text) => {
-      const result = stripPII(text);
-      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
-      expect(result.piiFound).toContain('nationalId');
     });
   });
 

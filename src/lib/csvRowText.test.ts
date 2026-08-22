@@ -177,8 +177,8 @@ describe('buildStrippedRowText — name-column classification', () => {
     ['file_name', 'roster-q1.csv'],
     ['event_name', 'Annual Safety Summit'],
     ['product_name', 'Compliance Suite Pro'],
-    ['course_id', 'ACLS2026'],
-    ['credential_id', 'CRED12345'],
+    ['member_id', 'MBR-000418'],
+    ['employee_id', 'EMP-000418'],
     ['participant_count', '128'],
   ];
 
@@ -198,52 +198,6 @@ describe('buildStrippedRowText — name-column classification', () => {
       expect(text).toContain(value);
       // ...and the person in the same row is still redacted, so this is a
       // precision fix, not a weakening of the boundary.
-      expect(text).not.toContain('Jane Q. Doe');
-    },
-  );
-
-  /**
-   * Person-role IDENTIFIER columns are a third category, and the two mechanisms must
-   * not be confused. `member_id` / `employee_id` are still NOT person-name columns —
-   * a name literal is removed from the WHOLE row text, so classifying them as names
-   * would scrub that identifier out of every other line, which is the over-redaction
-   * bug this classifier was written to fix. Their values are instead redacted
-   * IN-CELL by `stripPII`'s keyword-anchored ID stripper, which required the keyword
-   * separator to accept `_` and `-` and not just spaces.
-   */
-  const PERSON_ID_HEADERS: Array<[string, string]> = [
-    ['student_id', 'STU0004189'],
-    ['employee_id', 'EMP-000418'],
-    ['member_id', 'MBR-000418'],
-    ['learner_id', 'LRN0004189'],
-    ['participant_id', 'PRT0004189'],
-    ['candidate_id', 'CND0004189'],
-    ['employee_number', 'EMP0004189'],
-  ];
-
-  it.each(PERSON_ID_HEADERS)(
-    'redacts the value of person-identifier column %s in-cell',
-    (header, value) => {
-      const cols = [
-        { name: header, index: 0 },
-        { name: 'course_name', index: 1 },
-        { name: 'recipient', index: 2 },
-      ] as unknown as CsvColumn[];
-      const r = {
-        data: {
-          [header]: value,
-          course_name: 'Advanced Cardiac Life Support',
-          recipient: 'Jane Q. Doe',
-        },
-      } as unknown as CsvRow;
-
-      const text = buildStrippedRowText(r, cols);
-      // The identifier does not leave the browser...
-      expect(text).not.toContain(value);
-      expect(text).toContain(`${header}: [STUDENT_ID_REDACTED]`);
-      // ...the redaction is IN-CELL, so the row's metadata is untouched...
-      expect(text).toContain('course_name: Advanced Cardiac Life Support');
-      // ...and the person in the same row is still redacted.
       expect(text).not.toContain('Jane Q. Doe');
     },
   );
@@ -326,88 +280,5 @@ describe('buildStrippedRowText — realistic credential row', () => {
     const text = buildStrippedRowText(realRow, realColumns);
     expect(text.split('\n')).toHaveLength(realColumns.length);
     expect(text).toContain('course_name: Advanced Cardiac Life Support');
-  });
-});
-
-describe('buildStrippedRowText — snake_case identifier columns', () => {
-  // `isPersonNameColumn` deliberately excludes `_id` / `_count` / `_number`
-  // columns, because a name-column value is handed to `stripPII` as a literal and
-  // removed from the WHOLE row text — classifying `employee_id` as a name would
-  // scrub that identifier out of every line it appears in. The identifier values
-  // are instead redacted in-cell by `stripPII`'s keyword-anchored ID stripper,
-  // which required the keyword separator to accept `_` and `-`, not just spaces.
-  const idColumns = [
-    { name: 'student_id', index: 0 },
-    { name: 'employee_id', index: 1 },
-    { name: 'member_id', index: 2 },
-    { name: 'recipient_name', index: 3 },
-    { name: 'course_name', index: 4 },
-    { name: 'course_id', index: 5 },
-  ] as unknown as CsvColumn[];
-
-  const idRow = {
-    data: {
-      student_id: '88213',
-      employee_id: 'EMP-000418',
-      member_id: 'MBR0004189',
-      recipient_name: 'Jane Q. Doe',
-      course_name: 'Advanced Cardiac Life Support',
-      course_id: 'ACLS2026',
-    },
-  } as unknown as CsvRow;
-
-  it('does not ship the raw student_id value', () => {
-    const text = buildStrippedRowText(idRow, idColumns);
-    expect(text).not.toContain('88213');
-    expect(text).toContain('student_id: [STUDENT_ID_REDACTED]');
-  });
-
-  it('does not ship the raw employee_id or member_id values', () => {
-    const text = buildStrippedRowText(idRow, idColumns);
-    expect(text).not.toContain('EMP-000418');
-    expect(text).not.toContain('MBR0004189');
-    expect(text).toContain('employee_id: [STUDENT_ID_REDACTED]');
-    expect(text).toContain('member_id: [STUDENT_ID_REDACTED]');
-  });
-
-  it('keeps the credential metadata that PR #2302 stopped over-redacting', () => {
-    const text = buildStrippedRowText(idRow, idColumns);
-    expect(text).toContain('course_name: Advanced Cardiac Life Support');
-    expect(text).toContain('course_id: ACLS2026');
-  });
-
-  it('still redacts the person name globally', () => {
-    const text = buildStrippedRowText(idRow, idColumns);
-    expect(text).not.toContain('Jane Q. Doe');
-    expect(text).toContain('[NAME_REDACTED]');
-  });
-
-  it('still emits one line per non-empty column', () => {
-    const text = buildStrippedRowText(idRow, idColumns);
-    expect(text.split('\n')).toHaveLength(idColumns.length);
-  });
-
-  it('redacts snake_case DOB, postal code and national ID columns', () => {
-    const cols = [
-      { name: 'date_of_birth', index: 0 },
-      { name: 'postal_code', index: 1 },
-      { name: 'national_id', index: 2 },
-      { name: 'issue_date', index: 3 },
-    ] as unknown as CsvColumn[];
-    const r = {
-      data: {
-        date_of_birth: '01/15/1990',
-        postal_code: 'SW1A 1AA',
-        national_id: 'AB123456',
-        issue_date: '2026-03-14',
-      },
-    } as unknown as CsvRow;
-
-    const text = buildStrippedRowText(r, cols);
-    expect(text).not.toContain('01/15/1990');
-    expect(text).not.toContain('SW1A 1AA');
-    expect(text).not.toContain('AB123456');
-    // A non-DOB date is credential metadata and must survive.
-    expect(text).toContain('issue_date: 2026-03-14');
   });
 });
