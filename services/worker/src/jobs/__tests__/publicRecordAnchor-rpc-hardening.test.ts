@@ -80,7 +80,7 @@ function timeoutError(ms = BATCH_INSERT_RPC_TIMEOUT_MS): Error {
 
 const SAMPLE_CHUNK = [
   {
-    user_id: '44444444-0000-0000-0000-000000000001',
+    user_id: '44444444-0000-4000-8000-000000000001',
     org_id: null,
     fingerprint: 'a'.repeat(64),
     filename: 'doc.pdf',

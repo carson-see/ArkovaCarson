@@ -92,6 +92,43 @@ because that surface is dark on this rig. Migrations 0410–0414 are DB-level ch
 anon revokes), and the right acceptance instrument for them is targeted SQL against the rig
 database, not anonymous HTTP load. This window should not be cited as exercising them.
 
+## Correction — the real anonymous ceiling is **60/min**, not 100
+
+CLAUDE.md §1.10 states "Anonymous: 100 req/min/IP", and `anonRateLimiter`
+(`services/worker/src/api/v1/router.ts:195`) is indeed `windowMs: 60_000, maxRequests: 100`.
+**But it is not the first limiter an anonymous request meets.**
+
+`services/worker/src/index.ts:413` mounts `apiIpShadowGuard` on the whole `/api` prefix:
+
+```ts
+const apiIpShadowGuard = rateLimit({
+  windowMs: 60000,
+  maxRequests: 60,
+  skip: (req) => req.originalUrl.startsWith('/api/v1/') && hasApiKeyCredential(req),
+});
+app.use('/api', apiIpShadowGuard, badgeRouter);
+```
+
+The `skip` exempts only `/api/v1/*` requests **carrying an API key**. An anonymous request is
+not skipped, so it is capped at **60/min** before `anonRateLimiter` is ever consulted. The
+code's own comment says as much: *"still capped here at 60/min per IP."*
+
+**Consequences:**
+- `--mode mixed`'s 160/min is **2.7×** the real ceiling, not 1.6×. The finding above understated it.
+- Any driver sized to §1.10's 100/min — the documented number — will still 429. A soak driver
+  written from the constitution alone is guaranteed to trip the limiter. A run at 36/min drew ten
+  429s on a fresh rig, which is consistent with a 60/min bucket shared with other probe traffic.
+- Everything **outside** `/api/v1` (badge, checkout, verify-anchor, treasury, admin) is capped at
+  60/min for every caller including API-key holders, because the skip is `/api/v1`-scoped.
+
+**§1.10 is inaccurate as written** and should say that anonymous callers are governed by the
+60/min `/api` guard, with the 100/min `/api/v1` anon limiter sitting behind it. Filed as a
+separate CLAUDE.md rule change (rule changes go through PR review per §0 rule 8, even though
+CLAUDE.md is a `.md` file).
+
+**Practical guidance for anyone writing a soak driver: budget under 60/min of anonymous traffic
+per egress IP, not 100** — and remember every concurrent driver on the same machine shares that IP.
+
 ## The rule this is a case of
 
 A soak covers only what the driver **successfully** probes. `ok=0` with a four-figure 429

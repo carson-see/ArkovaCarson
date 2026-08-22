@@ -1,10 +1,11 @@
 {
     "$schema": "https://docs.sentry.io/api/alerts/issue-alert-rule/",
-    "comment": "Source of truth for the 10 Sentry alert rules in arkova-worker (SCRUM-1254 / R0-8 + SCRUM-1308 / R0-8-FU2 + SCRUM-1247 / R0-1). Sentry MCP cannot create issue alert rules; an admin opens https://arkova.sentry.io/alerts/rules/ and creates each rule below 1:1. Update this file alongside any UI change. SCRUM-1062 (BQ export pipeline) added 2 rules: consecutive-failure on incremental cron and any-failure on daily snapshot. SCRUM-1805 (PR #753) added 1 rule: any-failure on webhook delivery_log insert (first-occurrence page; steady state is zero events). SCRUM-3050 added 2 rules for the pipeline-throughput dead-man: a baseline route and a level>=fatal SUSTAINED escalation route. NOTE: the rule count in this comment has drifted before — count the `rules` array, do not trust a number in prose. NOTE 2: a rule in this file is a DECLARATION, not a working alarm. Nothing here is live until an admin creates it in the Sentry UI and a live delivery (a real Slack message) is captured.",
+    "comment": "Source of truth for the 10 Sentry alert rules in arkova-worker (SCRUM-1254 / R0-8 + SCRUM-1308 / R0-8-FU2 + SCRUM-1247 / R0-1). Sentry MCP cannot create issue alert rules; an admin opens https://arkova.sentry.io/alerts/rules/ and creates each rule below 1:1. Update this file alongside any UI change. SCRUM-1062 (BQ export pipeline) added 2 rules: consecutive-failure on incremental cron and any-failure on daily snapshot. SCRUM-1805 (PR #753) added 1 rule: any-failure on webhook delivery_log insert (first-occurrence page; steady state is zero events). SCRUM-3050 added 2 rules for the pipeline-throughput dead-man: a baseline route and a level>=fatal SUSTAINED escalation route. NOTE: the rule count in this comment has drifted before — count the `rules` array, do not trust a number in prose. NOTE 2: a rule in this file is a DECLARATION, not a working alarm. Nothing here is live until an admin creates it in the Sentry UI and a live delivery (a real Slack message) is captured. ENVIRONMENT SCOPE (2026-08-17): every rule now carries \"environment\": \"production\" — set it in the Environment dropdown at the top of the Sentry rule editor when creating or updating a rule. Previously no rule had one, which was harmless only because the soak rigs have no SENTRY_DSN; the moment a rig gets one (a Cloud Run env change, no code review) every unscoped rule would route rig events to #ops identically to prod. resolveSentryEnvironment (services/worker/src/utils/sentry.ts) already guarantees that only K_SERVICE=arkova-worker earns the 'production' tag — rigs run NODE_ENV=production and tag themselves with their own service name — so the scope is exact. The one emitter that does NOT go through Sentry.init is .github/workflows/revision-drift.yml, which POSTs a hand-built envelope; it now stamps environment itself or the SCRUM-1247 rule would stop matching. Parity is enforced by scripts/ci/check-sentry-alert-environment-scope.test.ts.",
     "project": "arkova-worker",
     "rules": [
         {
-            "name": "SCRUM-1254 \u2014 pg_cron job failures",
+            "name": "SCRUM-1254 — pg_cron job failures",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -38,7 +39,8 @@
             "frequency": 60
         },
         {
-            "name": "SCRUM-1254 \u2014 Dead-tuple ratio > threshold for > 1h",
+            "name": "SCRUM-1254 — Dead-tuple ratio > threshold for > 1h",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -72,8 +74,9 @@
             "frequency": 60
         },
         {
-            "name": "SCRUM-1254 \u2014 Autovacuum age > 24h with dead-tuple bloat",
+            "name": "SCRUM-1254 — Autovacuum age > 24h with dead-tuple bloat",
             "comment": "PR #690 Codex P1: separated from dead_tuple_ratio so a hot table emitting both signals in one 5-min pass cannot double-count toward the 12-events-per-hour ratio rule.",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -107,7 +110,8 @@
             "frequency": 60
         },
         {
-            "name": "SCRUM-1254 \u2014 Smoke test fail-streak",
+            "name": "SCRUM-1254 — Smoke test fail-streak",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -139,8 +143,9 @@
             "frequency": 5
         },
         {
-            "name": "SCRUM-1254 \u2014 Smoke test runtime > 60s (PostgREST timeout risk)",
-            "comment": "PR #690 CodeRabbit follow-up: db-health-monitor classifies the runtime alert as `smoke_runtime` but the prior ruleset had no matching Sentry rule. Pages immediately on first occurrence \u2014 the 60s cap is the PostgREST gateway timeout, so a slow run is the same severity as a hard fail.",
+            "name": "SCRUM-1254 — Smoke test runtime > 60s (PostgREST timeout risk)",
+            "comment": "PR #690 CodeRabbit follow-up: db-health-monitor classifies the runtime alert as `smoke_runtime` but the prior ruleset had no matching Sentry rule. Pages immediately on first occurrence — the 60s cap is the PostgREST gateway timeout, so a slow run is the same severity as a hard fail.",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -172,7 +177,9 @@
             "frequency": 5
         },
         {
-            "name": "SCRUM-1254 \u2014 count:'exact' baseline drift (weekly trend)",
+            "name": "SCRUM-1254 — count:'exact' baseline drift (weekly trend)",
+            "comment": "Block is enforced at PR time by check-count-exact-baseline.ts. This rule only surfaces the weekly trend metric for visibility.",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -200,11 +207,11 @@
                     "tags": "story"
                 }
             ],
-            "frequency": 1440,
-            "comment": "Block is enforced at PR time by check-count-exact-baseline.ts. This rule only surfaces the weekly trend metric for visibility."
+            "frequency": 1440
         },
         {
-            "name": "SCRUM-1247 \u2014 Cloud Run revision drift",
+            "name": "SCRUM-1247 — Cloud Run revision drift",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -235,7 +242,8 @@
             "frequency": 30
         },
         {
-            "name": "SCRUM-1062 \u2014 BQ export incremental consecutive failures",
+            "name": "SCRUM-1062 — BQ export incremental consecutive failures",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -269,7 +277,8 @@
             "frequency": 60
         },
         {
-            "name": "SCRUM-1062 \u2014 BQ export snapshot failure",
+            "name": "SCRUM-1062 — BQ export snapshot failure",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -303,8 +312,9 @@
             "frequency": 60
         },
         {
-            "name": "SCRUM-1805 \u2014 Webhook delivery_log insert failure",
-            "comment": "PR #753 dispatcher fix wrapped the delivery_log insert path with Sentry.captureException after the pre-existing PG 22P02 UUID-coercion bug ran undetected for the lifetime of PR #734. Any non-zero rate of `subsystem:webhooks AND stage:delivery_log_insert` indicates the dispatcher cannot persist a delivery row \u2014 customer events are being silently dropped at the storage layer (pre-fix this was a UUID type mismatch; post-fix it would be a DB outage, RLS regression, or schema drift). Threshold = 1 occurrence / 5 minutes; we want a page on first occurrence rather than a frequency-based pattern because the steady-state expectation is zero.",
+            "name": "SCRUM-1805 — Webhook delivery_log insert failure",
+            "comment": "PR #753 dispatcher fix wrapped the delivery_log insert path with Sentry.captureException after the pre-existing PG 22P02 UUID-coercion bug ran undetected for the lifetime of PR #734. Any non-zero rate of `subsystem:webhooks AND stage:delivery_log_insert` indicates the dispatcher cannot persist a delivery row — customer events are being silently dropped at the storage layer (pre-fix this was a UUID type mismatch; post-fix it would be a DB outage, RLS regression, or schema drift). Threshold = 1 occurrence / 5 minutes; we want a page on first occurrence rather than a frequency-based pattern because the steady-state expectation is zero.",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -340,6 +350,7 @@
         {
             "name": "SCRUM-2902 — Credential Engine API key expiry",
             "comment": "Fail-LOUD expiry alarm for the CE partnership API key / CTID publishing credential (R-1 FATAL launch dependency). services/worker/src/jobs/ce-key-expiry-alert.ts emits a Sentry event at T-30/T-14/T-7 and continuously after expiry, and fires EVERY daily run with expiry_window=SENTINEL when CE_API_KEY_EXPIRES_AT is unset/placeholder. This rule is what turns those events into a human page (Slack #ops) — event ≠ alert. FirstSeenEventCondition pages on each new day's issue (the message carries the changing day count) so the countdown is a daily reminder while in-window. Tag/channel parity enforced by scripts/ci/check-ce-key-expiry-alert-contract.test.ts. An admin must create this rule 1:1 at https://arkova.sentry.io/alerts/rules/ (Sentry MCP cannot create issue alert rules) AND a live delivery test (real Slack page) must be captured per the SCRUM-2902 runbook before this is considered wired.",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -372,6 +383,7 @@
         {
             "name": "SCRUM-3050 — Pipeline throughput dead-man",
             "comment": "The pipeline-throughput dead-man (services/worker/src/jobs/pipelineThroughputMonitor.ts) CORRECTLY detected the 70h anchoring outage and fired every ~30 min for 70+ hours with an accurate diagnosis — and no human ever saw it, because there was no alert rule routing its events anywhere. Two defects were fixed together: (1) the capture helper carried source/story in `extra` only, so no TaggedEventFilter could ever have matched it — it now emits real TAGS; (2) one stable fingerprint meant every re-fire folded into a single aged issue. This rule is the baseline route to a human for any firing of the monitor. Tag parity is enforced by scripts/ci/check-pipeline-throughput-alert-contract.test.ts. An admin must create this rule 1:1 at https://arkova.sentry.io/alerts/rules/ (Sentry MCP cannot create issue alert rules) AND capture a live Slack delivery before it counts as wired.",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -404,6 +416,7 @@
         {
             "name": "SCRUM-3050 — Pipeline throughput dead-man SUSTAINED (72h+)",
             "comment": "Escalation route. The monitor stamps a duration bucket (t24h/t48h/t72h/t168h) into its Sentry fingerprint, so crossing a boundary opens a genuinely NEW issue and re-triggers FirstSeenEventCondition instead of silently incrementing a stale one; past 72h the level escalates to fatal. This rule keys on level>=fatal (50) so a sustained outage pages on a separate, louder route than the routine error stream, with a 30-minute frequency rather than 60. This is the rule that would have re-paged during hours 24, 48 and 72 of the 2026-07-29 -> 2026-08-01 anchoring outage.",
+            "environment": "production",
             "actionMatch": "all",
             "filterMatch": "all",
             "conditions": [
@@ -437,7 +450,7 @@
     "dashboards": [
         {
             "name": "Arkova R0-8 Drift Telemetry",
-            "url_placeholder": "https://arkova.sentry.io/dashboard/<id>/ \u2014 populate after first deploy",
+            "url_placeholder": "https://arkova.sentry.io/dashboard/<id>/ — populate after first deploy",
             "widgets": [
                 {
                     "title": "Cloud Run live SHA vs HEAD of main",
