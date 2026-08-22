@@ -47,6 +47,7 @@ import type { IRateLimitStore } from './rateLimit.js';
 import { setRateLimitStore } from './rateLimit.js';
 import { resolveEnvironmentNamespace } from './environmentNamespace.js';
 import { logger } from './logger.js';
+import { readJsonBounded } from './body-read-timeout.js';
 
 interface RateLimitEntry {
   count: number;
@@ -333,7 +334,15 @@ export class UpstashRateLimitStore implements IRateLimitStore {
       throw new Error(`Upstash pipeline failed with HTTP ${res.status}`);
     }
 
-    const json = (await res.json()) as PipelineReply[];
+    // F-D0-5: bound the BODY read too — AbortSignal.timeout above only bounds
+    // the request. A stalled body on this hot path would park `increment()`
+    // forever without ever reaching the fail-open local bucket. The label is
+    // the static `/pipeline` URL: no key, so nothing caller-derived is logged.
+    const json = (await readJsonBounded(
+      res,
+      `${this.baseUrl}/pipeline`,
+      REDIS_TIMEOUT_MS,
+    )) as PipelineReply[];
     if (!Array.isArray(json) || json.length !== commands.length) {
       throw new Error('Upstash pipeline returned an unexpected payload shape');
     }
@@ -358,7 +367,14 @@ export class UpstashRateLimitStore implements IRateLimitStore {
       throw new Error(`Upstash ${command} failed with HTTP ${res.status}`);
     }
 
-    const json = (await res.json()) as { result: unknown };
+    // F-D0-5, as in pipeline(). The label deliberately omits `path`: it is
+    // `<command>/<key>` and an anonymous limiter key IS a caller IP, which
+    // BodyReadTimeoutError would embed verbatim in a logged message (§1.4).
+    const json = (await readJsonBounded(
+      res,
+      `${this.baseUrl}/${command}`,
+      REDIS_TIMEOUT_MS,
+    )) as { result: unknown };
     return json.result;
   }
 

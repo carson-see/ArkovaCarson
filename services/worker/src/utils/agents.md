@@ -463,3 +463,25 @@ the lease forever, disabling SUBMITTED→SECURED promotion for every tenant with
   blockstream — the path is the correlation value). A credential-bearing URL — e.g. token-in-path
   `https://go.getblock.io/<ACCESS_TOKEN>` — must be reduced to a sanitized label first; the RPC
   path uses `sanitizeRpcUrlForError` (origin-only) in `chain/utxo-provider.ts` (S3.3-F1).
+
+## 2026-08-22 — `upstashRateLimit.ts` transport reads are bounded (PR #2269, surfaced by merging `main`)
+
+Both Upstash transport methods now read their response body through
+`readJsonBounded(res, label, REDIS_TIMEOUT_MS)` instead of a bare `await res.json()`:
+`pipeline()` (the INCR + PTTL hot path) and `command()` (PEXPIRE self-heal, DECR, SET, DEL).
+
+Why it was found late rather than in review: `feedback_bounded_body_reads` (F-D0-5) landed on `main`
+*after* this branch was cut, so the detector and this code first met when `main` was merged in to
+clear a conflict. The rule was right — `increment()` is awaited on the blocking path of
+`rateLimit()`, and the circuit breaker only counts failures it is told about, so a body that stalls
+after headers would park every rate-limited request indefinitely and never reach the fail-open local
+bucket that exists for exactly this case. `AbortSignal.timeout()` does not help: it bounds the
+request, not the read.
+
+**The label argument is not cosmetic.** `BodyReadTimeoutError` embeds it verbatim in `.message`,
+which reaches warn logs and Sentry, and `command()`'s real request path is `/<command>/<key>` where
+an anonymous limiter key IS a caller IP. So the label is `${baseUrl}/${command}` — host and verb, no
+key (§1.4/§1.6). `pipeline()` can pass its real URL because `/pipeline` is static.
+
+Pinned by `upstashRateLimit.bodyRead.test.ts`, which fails by TIMING OUT rather than asserting if the
+bounding is removed — the failure mode under test is a hang, so the test has to be able to hang.
