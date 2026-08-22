@@ -80,7 +80,7 @@ INSERT INTO auth.users (
   email_change_token_current, reauthentication_token, phone_change, phone_change_token
 ) VALUES (
   '00000000-0000-0000-0000-000000000000',
-  '5eed0000-0000-0000-0000-0000000000a1',
+  '5eed0000-0000-4000-8000-0000000000a1',
   'authenticated', 'authenticated',
   'seed-fixture-user@seed-fixture.invalid',
   extensions.crypt(gen_random_uuid()::text, extensions.gen_salt('bf')),
@@ -102,16 +102,16 @@ INSERT INTO auth.identities (
   last_sign_in_at, created_at, updated_at
 )
 SELECT
-  '5eed0000-0000-0000-0000-0000000000d1',
-  '5eed0000-0000-0000-0000-0000000000a1',
-  '{"sub": "5eed0000-0000-0000-0000-0000000000a1", "email": "seed-fixture-user@seed-fixture.invalid"}'::jsonb,
+  '5eed0000-0000-4000-8000-0000000000d1',
+  '5eed0000-0000-4000-8000-0000000000a1',
+  '{"sub": "5eed0000-0000-4000-8000-0000000000a1", "email": "seed-fixture-user@seed-fixture.invalid"}'::jsonb,
   'email',
-  '5eed0000-0000-0000-0000-0000000000a1',
+  '5eed0000-0000-4000-8000-0000000000a1',
   NOW(), NOW(), NOW()
 WHERE NOT EXISTS (
   SELECT 1 FROM auth.identities
   WHERE provider = 'email'
-    AND provider_id = '5eed0000-0000-0000-0000-0000000000a1'
+    AND provider_id = '5eed0000-0000-4000-8000-0000000000a1'
 )
 ON CONFLICT (id) DO NOTHING;
 
@@ -124,7 +124,7 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO public.organizations (
   id, legal_name, display_name, domain, verification_status
 ) VALUES (
-  '5eed0000-0000-0000-0000-0000000000b1',
+  '5eed0000-0000-4000-8000-0000000000b1',
   'Seed Fixture Org LLC',
   'Seed Fixture Org',
   'seed-fixture.invalid',
@@ -140,11 +140,11 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO public.profiles (
   id, email, full_name, role, org_id, is_public_profile, is_platform_admin
 ) VALUES (
-  '5eed0000-0000-0000-0000-0000000000a1',
+  '5eed0000-0000-4000-8000-0000000000a1',
   'seed-fixture-user@seed-fixture.invalid',
   'Seed Fixture User',
   'ORG_ADMIN',
-  '5eed0000-0000-0000-0000-0000000000b1',
+  '5eed0000-0000-4000-8000-0000000000b1',
   false,
   false
 )
@@ -166,9 +166,9 @@ INSERT INTO public.anchors (
   id, user_id, org_id, filename, fingerprint, status,
   file_size, file_mime, description, metadata, legal_hold, created_at
 ) VALUES (
-  '5eed0000-0000-0000-0000-0000000000c1',
-  '5eed0000-0000-0000-0000-0000000000a1',
-  '5eed0000-0000-0000-0000-0000000000b1',
+  '5eed0000-0000-4000-8000-0000000000c1',
+  '5eed0000-0000-4000-8000-0000000000a1',
+  '5eed0000-0000-4000-8000-0000000000b1',
   'seed-fixture-baseline-anchor.pdf',
   'face1234face1234face1234face1234face1234face1234face1234face1234',
   'SUBMITTED',
@@ -181,6 +181,36 @@ INSERT INTO public.anchors (
 )
 ON CONFLICT (id) DO UPDATE
 SET legal_hold = true;
+
+
+-- ---------------------------------------------------------------------------
+-- Switchboard flags — WITHOUT THIS A FRESH RIG'S /api/v1 IS DARK.
+--
+-- `get_flag('ENABLE_VERIFICATION_API')` fails CLOSED on an empty
+-- switchboard_flags table, so every /api/v1/* request returns a sub-10ms 503
+-- BEFORE reaching application code. The worker still looks healthy: /health is
+-- 200, the clock runs, load "lands" — and every scrap of /api/v1 evidence the
+-- soak produces is worthless.
+--
+-- This is not hypothetical. The 2026-08-20 wave2 T2 rig lacked this row, so its
+-- entire 12h window produced fail-closed 503s on the read paths, and members
+-- #2211 (ORG_ADMIN verification gate) and #2233 (ingestion HTTP status) came out
+-- NOT soak-covered. The wave3 rig happened to have it, and its /api/v1 evidence
+-- is real. One row is the whole difference.
+--
+-- §1.11A DATA-ONLY and idempotent: switchboard_flags has UNIQUE (flag_key), and
+-- the upsert only forces `enabled` — it writes nothing to supabase_migrations
+-- and runs no migration repair, so re-provisioning stays safe.
+-- ---------------------------------------------------------------------------
+INSERT INTO public.switchboard_flags (flag_key, enabled, description)
+VALUES (
+  'ENABLE_VERIFICATION_API',
+  true,
+  'Seeded at rig provisioning. Absent => get_flag fails closed => /api/v1 dark => soak evidence for any /api/v1 surface is worthless. See docs/staging/wave2-2026-08/maturity-2026-08-21T0351Z.md.'
+)
+ON CONFLICT (flag_key) DO UPDATE
+SET enabled = true,
+    updated_at = NOW();
 
 COMMIT;
 

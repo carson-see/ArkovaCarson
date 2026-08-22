@@ -1,5 +1,43 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-08-20 — every third-party action is pinned to a commit SHA, ratcheted by a detector
+
+`actions/checkout@v4` in `gitleaks.yml` was the reported finding. A tag is a mutable pointer: whoever can move `v4` upstream changes what our runner executes, with `secrets` and `GITHUB_TOKEN` in scope — the `tj-actions/changed-files` shape, where one retagged action dumped runner memory into ~23,000 repositories' logs. In the workflow whose entire job is catching leaked secrets, that is the weakest link in the gate.
+
+The census behind the fix found **nine** mutable refs across four workflows, not one:
+
+| File | Was | Now |
+|---|---|---|
+| `gitleaks.yml` | `actions/checkout@v4` | `9c091bb…` `# v7.0.0` |
+| `gitleaks.yml` | `actions/upload-artifact@v4` | `043fb46d…` `# v7.0.1` |
+| `ci.yml` | `actions/cache@v6.1.0` | `55cc8345…` `# v6.1.0` |
+| `ci.yml` | `actions/setup-java@v5` | `b6effb05…` `# v5.7.0` |
+| `publish-sdk.yml` | `actions/checkout@v7` | `9c091bb…` `# v7.0.0` |
+| `publish-sdk.yml` | `actions/setup-node@v7.0.0` | `82076278…` `# v7.0.0` |
+| `publish-python-sdk.yml` | `actions/checkout@v7` | `9c091bb…` `# v7.0.0` |
+| `publish-python-sdk.yml` | `actions/setup-python@v6` | `ece7cb06…` `# v6.3.0` |
+| `publish-python-sdk.yml` | `pypa/gh-action-pypi-publish@release/v1` | `dc37677b…` `# v1.14.2` |
+
+The two publish workflows mattered most and were the two nobody had looked at: `publish-sdk.yml` runs with `NPM_TOKEN` in the environment and `publish-python-sdk.yml` holds `id-token: write` for PyPI trusted publishing, so a moved ref there mints releases under our name. `@release/v1` is worse than a version tag — it is a **branch**, so every upstream push moves it. A fully-qualified tag is no safer than a short one: `@v7.0.0` is still mutable, and `publish-sdk.yml` had exactly that shape.
+
+Versions bumped only where the repo already had a settled answer: `gitleaks.yml`'s `checkout`/`upload-artifact` moved v4 → the v7 SHAs the other ~21 call sites already use, so Dependabot maintains one line per action instead of a stale v4 line beside it. `fetch-depth: 0` behaves identically on v7 (already proven at four other call sites in `ci.yml`), and `upload-artifact` v5→v7 were Node-runtime bumps plus an additive `archive` input — `name`/`path`/`if-no-files-found` are unchanged. `actions/cache@v6.1.0` kept its version exactly and only gained the SHA. `setup-python` stayed on its current major (v6.3.0, not the available v7.0.0); a major bump there is a deliberate change, not pinning.
+
+**Also corrected: two version comments that lied.** `deploy-staging.yml` and `deploy-worker.yml` labelled `actions/setup-node@8207627…` as `# v4` while 29 other sites labelled that same SHA `# v7.0.0`. The SHA is v7.0.0. The pin was always correct; the comment told a reviewer the deploy path ran three majors behind what it actually ran.
+
+Ratchet: `scripts/ci/check-workflow-action-sha-pinning.test.ts` walks every YAML under `.github/` (so a composite action added later at `.github/actions/**` is covered the day it lands) and fails on any `uses:` that is not a 40-hex SHA carrying a `# vX.Y.Z` comment. Both halves are required — Dependabot reads that comment to know which version a SHA represents, and without it the pin cannot be upgraded by automation or read by a human. Repo-local `./` refs and digest-pinned `docker://` images are exempt. A second assertion catches what a per-line check cannot: the same SHA must carry the **same** version comment everywhere, which is what surfaced the `# v4` pair. Verified red-before-green — against the pre-fix tree the detector reports all 9 sites plus the comment disagreement.
+
+Offline limits, stated plainly: nothing local proves `# v7.0.0` names that SHA — only internal agreement is checkable. The SHAs here were resolved through the GitHub tags API and each confirmed to be a real upstream commit at pin time.
+
+## 2026-08-20 — every redirect-following `curl` now carries a `--proto '=https'` floor (S6506)
+
+SonarCloud `githubactions:S6506` had an open finding on `revision-drift.yml`'s `/health` probe (`curl -fsSL`, open since 2026-04-25). `-L` follows a `Location` header with no protocol floor, so an `http://` redirect is followed silently — reproduced locally: the old command followed a 302 to `http://evil.example/health` and only died on DNS. For a drift probe that is worse than a crash, because a `git_sha` read off the redirect target reports **"in sync"** and silences the alarm.
+
+Two compliant shapes, both now in use:
+- `revision-drift.yml` — **`-L` dropped.** The URL is a first-party Cloud Run literal that answers 200 directly (verified 2026-08-20), and a health probe has no business following a redirect at all. `--proto '=https'` still pins the request itself, so editing the URL to `http://` fails closed. Because `-f` only fails on >= 400, an unexpected 3xx now returns its body at exit 0 — the step therefore fails loudly on unparseable JSON instead of letting an empty `live_sha` reach the compare step, where it was mislabelled `stale` drift and paged on a false cause.
+- `gitleaks.yml` — **`-L` kept, floor added.** GitHub release assets genuinely redirect to `objects.githubusercontent.com`. Same edit also lands the SHA256 pin this file has required since SCRUM-1248; it was the one external download without one.
+
+`--proto` is a hard ceiling that covers redirects too (`Protocol "http" disabled (in redirect)`, verified against curl 8.7.1), so `--proto-redir` is optional belt-and-braces, not a substitute — `ci.yml` carries both, `deploy-worker.yml` carries `--proto` alone, and both are compliant. Ratchet: `scripts/ci/check-workflow-curl-redirect-protocol.test.ts` scans every workflow (joining shell line-continuations first) and fails on any redirect-following `curl` without the floor. It found `gitleaks.yml`, which the original report missed.
+
 ## 2026-08-17 — Orphaned Export Lint now gates the Mergify queue
 
 `check-success = Orphaned Export Lint` was added to all three `.mergify.yml` queue rules' `merge_conditions` (s33-wave2-corpus, urgent, default). The `orphaned-export-lint` job (CTO ruling R14, fail-closed by design — `continue-on-error: false`) had run on every PR since 2026-07-28 but was never in `merge_conditions`, so it reported without blocking — the exact "new top-level job would not be in branch protection or those merge conditions, so it could go red while Mergify merged anyway" class this file already documents. Config-only; the lint script itself is untouched. This is DISTINCT from the CONDITIONAL-GO sub-decision B jobs (`Worker Build (deploy-parity)` / `Verifier Build`), which remain deliberately NON-REQUIRED pending Carson's required-flip — that ruling covers those two jobs only. Branch protection's required-check set is still a separate Carson/admin surface; only the in-repo Mergify layer changed. Contract test: `scripts/ci/mergify-orphaned-export-gate.test.ts`.
@@ -53,6 +91,7 @@ The root `typecheck-lint` job also runs `npm run lint:batch-drain-evidence`. Kee
 - Temporary PR #841 remediation exemptions are only for the renumbered 0314/0315 schema work after production already claimed 0313 for anchors index consolidation; remove them after operator-applied prod reconciliation.
 - Secrets: `arkova1/supabase_access` in GCP Secret Manager for migration drift, `arkova1/sonar_cloud_token` for the SonarCloud config guard (exported as `SONARCLOUD_TOKEN`), `SUPABASE_PROJECT_REF`, `SENTRY_DSN_OPS` (revision-drift Sentry alerts).
 - Revision-drift Sentry tags must match `infra/sentry/alert-rules.json`: `source=revision-drift`, `story`, `deployed_sha`, and `head_sha`.
+- Revision-drift's event payload must also carry `environment: "production"`. It POSTs a hand-built Sentry envelope rather than going through `Sentry.init`, so it inherits no environment — and every rule in `alert-rules.json` is now scoped to `environment: production` (2026-08-17). Drop the field and the SCRUM-1247 alert silently stops matching. Pinned by `scripts/ci/check-sentry-alert-environment-scope.test.ts`; rationale in `infra/sentry/agents.md`.
 - Deploy gate ≡ CI lint job: deploy-worker.yml + ci.yml `Lint worker` step BOTH invoke `npm run lint` from `services/worker/`. Drift between them is enforced by `scripts/ci/check-deploy-lint-parity.ts`. Override label: `ci-config-change`.
 
 ## CONDITIONAL-GO sub-decision B (TWO-SURFACE) — PR-time worker + verifier compile gates (NON-REQUIRED)
