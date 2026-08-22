@@ -131,10 +131,19 @@ with Arkova(api_key="ak_live_...") as arkova:
     print(result.verified, result.description, result.confidence_scores)
 ```
 
+> **Upgrade from 2.2.0.** In 2.2.0 `verify()` raised
+> `ArkovaError: Arkova API returned an unexpected response shape` on any record
+> carrying compliance controls — `compliance_controls` was typed as a mapping,
+> but the API returns a list of control-ID strings. Fixed in 2.2.1; there is no
+> workaround on 2.2.0 short of bypassing the model layer.
+
 `verify()` returns the rich v1 verification shape, including API-RICH-01 fields
-such as `compliance_controls`, `chain_confirmations`, `parent_public_id`,
-`version_number`, `file_mime`, and `file_size`, plus API-RICH-02 fields
-`confidence_scores` and `sub_type` when the API response includes them.
+such as `compliance_controls` (a list of control-ID strings, accompanied by
+`compliance_controls_note` whenever present), `chain_confirmations`,
+`parent_public_id`, `version_number`, `file_mime`, and `file_size`, plus
+API-RICH-02 fields `confidence_scores` and `sub_type`, and
+`fingerprint_source` / `proof_availability` / `proof_availability_note`, when
+the API response includes them.
 The same optional rich fields are typed on v2 `verify_fingerprint()` and
 `get_anchor()` responses, so newer API payloads are not silently hidden by the
 SDK model layer.
