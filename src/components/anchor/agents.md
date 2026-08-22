@@ -1,5 +1,10 @@
 # agents.md — components/anchor
 
+_Last updated: 2026-08-15 (BUG-2026-08-13-010 connector fetch-time fingerprint caveat)_
+
+## 2026-08-15 BUG-2026-08-13-010 — connector-sourced re-verify caveat (§1.5/§1.6A)
+
+`AssetDetailView.tsx`: when `isConnectorSourcedAnchorMetadata(anchor.metadata)` (closed `connector_source` marker set, `src/lib/connectorFingerprint.ts`), the Re-verify card shows `CONNECTOR_FINGERPRINT_LABELS.REVERIFY_NOTE` (testid `connector-fingerprint-reverify-note`) and the mismatch alert appends `REVERIFY_MISMATCH_HINT` (testid `connector-fingerprint-mismatch-hint`). Rationale: connector fingerprints commit the exact bytes AS FETCHED at securing time; source systems may regenerate the file per download (soak-proven against DocuSign), so a fresh download legitimately mismatches — the caveat prevents the mismatch alert from reading as tampering on its own, while client-uploaded anchors must NEVER show it (their retained file always reproduces the fingerprint). Tests: `AssetDetailView.connectorFingerprint.test.tsx` (mocks `FileUpload` to drive the mismatch state deterministically).
 _Last updated: 2026-08-17 (AssetDetailView canRename owner-only pencil)_
 
 ## 2026-08-17 — AssetDetailView `canRename` (owner-only rename pencil)

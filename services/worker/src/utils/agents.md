@@ -284,6 +284,10 @@ migrated `webhooks/delivery.ts` (`response_body` ×3 + `error_message` — endpo
 `scripts/ci/feedback-rules/surrogate-safe-truncate.ts` (baseline burn-down in
 `surrogate-truncate-baseline.json`; merge-time gate is its colocated `.test.ts` in `Tests`).
 
+## 2026-08-15 BUG-2026-08-13-010 — `verifyCache.ts` KEY_PREFIX v5 → v6
+
+Response-shape change per the bump rule in the file header: connector-sourced records now carry the `fingerprint_rederivability` class + §1.5 note (see `constants/connectorFingerprint.ts`). Without the bump, a connector anchor cached pre-deploy serves a response with NO re-derivability statement for the whole TTL — the exact honesty gap the change closes.
+
 ## 2026-08-12 — F-D0-5 `body-read-timeout.ts`
 
 **`AbortSignal.timeout(...)` passed to `fetch()` does NOT bound `await response.json()`.** The
