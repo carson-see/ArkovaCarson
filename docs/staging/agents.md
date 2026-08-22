@@ -26,6 +26,29 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 - Soak JSON files are append-only evidence; do not modify after creation.
 - These are engineering artifacts, not documentation (Confluence is the doc source of truth).
 
+## 2026-08-22 — FD-SEED-1 FIXED in `seed-baseline-fixture.sql` (PR #2322)
+
+- The 2026-08-21 entry below stands as the record of what was true that day. This one
+  supersedes its **action item**: the seed file is fixed, so the manual "re-check after 10
+  minutes" advice now applies only to rigs provisioned **before** this PR and not yet
+  re-seeded.
+- `scripts/staging/seed-baseline-fixture.sql` now writes the fixture anchor with a synthetic
+  64-hex `chain_tx_id` (two `md5()` halves — deterministic, so re-runs stay idempotent)
+  alongside the `legal_hold = true` it already had. That is what puts the row outside
+  `recover_stuck_broadcasts()` (migration `0379`), which deliberately ignores `legal_hold`.
+- **Re-running the seed repairs an older rig.** Its `ON CONFLICT (id) DO UPDATE` backfills a
+  NULL `chain_tx_id` and reinstates a fixture `0379` already reclaimed to PENDING — but only
+  when the row holds no txid of its own, so a row carrying a real txid keeps its own status.
+  No teardown, no re-provision.
+- **The seed asserts its own post-conditions** in a closing `DO $$ … $$` block: fixture
+  present, SUBMITTED, `chain_tx_id` NOT NULL, on legal hold, and `ENABLE_VERIFICATION_API`
+  enabled. `provision-isolated-rig.sh` runs it through `run_cmd` under `set -euo pipefail`,
+  so a `RAISE` aborts provisioning before the clean_mirror preflight can certify a rig whose
+  fixture is already doomed. No shell-side change was needed.
+- Verified by execution against a throwaway Postgres carrying a verbatim copy of `0379`'s
+  predicate: backdated 60 minutes and ticked three times, the reclaimer took 0 rows; reverted
+  to the pre-fix shape it took the row on the first tick.
+
 ## 2026-08-21 — TRAIN-6 window RESTARTED; first window is VOID
 
 - **`train6-2026-08/soak-start-2026-08-21T1854Z.md` is SUPERSEDED and must not be cited.**

@@ -647,3 +647,27 @@ describe('computeBatchFeeCeiling (SCRUM-2592 batch fee-ceiling primitive)', () =
     ).toBe(120);
   });
 });
+
+describe('MempoolFeeEstimator parked body read (F-D0-5 sweep)', () => {
+  // Real timers on purpose: the bounded body read is a real setTimeout race,
+  // and a tiny timeoutMs buys the coverage in ~30ms of wall clock.
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('falls back with reason "timeout" when the response body parks after headers', async () => {
+    // F-D0-5 (fullsoak 2026-08-12): headers arrive, the body never does. The
+    // request-phase AbortController cannot help a runtime whose fetch double
+    // (or a stalled socket) leaves `.json()` parked — the estimator must
+    // still answer by its own deadline instead of suspending its caller.
+    mockFetch.mockResolvedValue({ ok: true, json: () => new Promise(() => {}) });
+    const estimator = new MempoolFeeEstimator({ timeoutMs: 30 });
+
+    const started = Date.now();
+    const result = await estimator.estimateFeeDetailed();
+
+    expect(result).toEqual({ rate: 5, source: 'fallback', reason: 'timeout' });
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+});

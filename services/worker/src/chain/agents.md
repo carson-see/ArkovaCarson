@@ -1,10 +1,111 @@
 # agents.md — services/worker/src/chain/
 
-_Last updated: 2026-08-11_
+_Last updated: 2026-08-17_
 
 ## What This Folder Contains
 
 Bitcoin chain client implementation for anchoring document fingerprints on-chain via OP_RETURN transactions.
+
+## 2026-08-17 FD-CHAIN-1 round 2 — `listUnspent` is a UNION; no single leg is authoritative
+
+Round 1 (below) fixed the EMPTY-result case by turning `>= 0` into `> 0` so an empty RPC
+success fell through to mempool.space. Review caught that fall-through fixes only the empty
+case, not the **PARTIAL** one: the RPC leg runs `listunspent` at **minconf=1**, so bitcoind
+excludes unconfirmed outputs. After a batch broadcasts, the treasury's normal shape is one
+confirmed UTXO + that batch's **unconfirmed change** — the RPC answers length 1 (`> 0`),
+short-circuits, and the change is silently dropped. The provider under-reports spendable
+funds under sustained batching, exactly when it matters. Observed live 2026-08-17T03:10Z
+mid-flush: the worker logged `Treasury has no UTXOs` while the treasury held the
+just-broadcast batch's unconfirmed change
+(`docs/staging/fullsoak-2026-08/trigger-d-flush-2026-08-17.md`, currently on the
+`soak/day0-fullsoak-2026-08-docs` branch — **not** yet on `main`). The mempool leg
+deliberately includes unconfirmed UTXOs ("prevents the treasury from getting stuck waiting
+for confirmations between batches") — a fall-through design only reaches that property when
+the RPC leg is empty.
+
+`GetBlockHybridProvider.listUnspent` is now a **union**: both legs are queried concurrently
+(`Promise.allSettled` — independent I/O, and the union needs both answers regardless, so
+sequencing would only add latency), merged deduped by `(txid, vout)`, **RPC entry preferred
+on collision** (sovereign source; may carry `rawTxHex` in future shapes). Degradation:
+
+| RPC leg | mempool leg | Result |
+|---|---|---|
+| ok (any) | ok (any) | union, deduped, RPC-preferred |
+| **fails** | ok | mempool-only + unchanged R0-8 `emitRpcFallback` (SCRUM-1262 / SCRUM-1254 fallback-rate view keeps its meaning) |
+| ok, non-empty | **fails** | RPC-only + structured `logger.warn` (`leg: 'mempool.space'`). **NOT `emitRpcFallback`** — its locked shape counts RPC→mempool fallbacks; folding mempool-leg failures in would corrupt the fallback-rate metric |
+| ok, **empty** | **fails** | **throw** the mempool error. Round 1's lesson: an empty wallet-RPC success is the ABSENCE of an answer — with the address-indexed leg down there is no reliable answer, and "no source answered" must never be promoted to "treasury empty" |
+| **fails** | **fails** | throw the mempool error (same shape as before the union) |
+
+The mempool-leg-fails row is also what defuses the interaction with PR #2216 (body-read
+timeouts in this same file): a `BodyReadTimeoutError` from the mempool leg arrives as an
+ordinary leg failure and degrades to RPC-only, instead of a pure-fallback design returning
+empty/throwing — which would have reintroduced the FD-CHAIN-1 symptom through a different
+door.
+
+Round 1's anti-decay test ("a non-empty RPC result must NOT reach the fallback", exactly one
+outbound call) was the partial-result bug **wearing a test's clothes** — it forbade the
+union. Deliberately replaced: the `FD-CHAIN-1` describe block now pins both-legs-always-
+queried, the minconf=1 partial case, dedupe-prefers-RPC (divergent values resolve to the
+RPC's), the degrade row, and both throw rows. Rule: **when a "guard" test pins a
+short-circuit, ask what the short-circuit is hiding.**
+
+## 2026-08-16 FD-CHAIN-1 — an EMPTY RPC result is not an answer (`>= 0` → `> 0`; superseded by the union above)
+
+`GetBlockHybridProvider.listUnspent` guarded its RPC result with
+`rpcUtxos.length >= 0`, which is true for **every** array. `listunspent` is a Bitcoin Core
+**wallet** RPC: it returns only UTXOs of a wallet the node has loaded, so a WIF-derived
+treasury address absent from that wallet produces a **successful** call returning `[]`. No
+throw ⇒ the `catch` never ran ⇒ the mempool.space fallback on the last line was
+**unreachable**, and `[]` was returned as though it were the truth about the treasury.
+
+Found on the fullsoak-2026-08 rig (Day 4): anchoring was **completely halted** for hours
+while the treasury held **742,637 sat**, and every signal stayed green — `POST
+/jobs/batch-anchors` 200, Cloud Scheduler success, SOC2 health check 13/13. The same worker
+logged `Treasury cache refreshed balance: 742637` seconds after logging `Treasury has no
+UTXOs`. Full writeup:
+`docs/staging/fullsoak-2026-08/FD-CHAIN-1-listunspent-silent-empty.md`.
+
+**Why every existing test missed it.** The fallback was designed for the *opposite* failure
+— GetBlock's shared endpoint rejecting the wallet RPC (SCRUM-1262 / R1-8, and the HTTP 405
+shape pinned by BUG-2026-08-01-F10). Every fallback test in `utxo-provider.test.ts` drives
+the path through an **exception**. "RPC returns 200 with an empty array" was not in the
+design's vocabulary, so no test expressed it. A fallback that only fires on a throw is not a
+fallback from *no data*; it is a fallback from *a broken transport*.
+
+**Prod was safe only by accident, and the accident is scheduled to end.** Prod's GetBlock
+RPC errors on `listunspent` every cycle (100% fallback rate, F-10), so the exception path
+fires and prod gets real UTXOs. The defect is fully latent there — and activates the moment
+prod moves to a self-hosted node, which is the stated sovereignty goal and precisely the
+architecture the rig ran.
+
+Rules this leaves behind:
+
+- **Never treat an empty provider result as an authoritative answer** in a multi-source
+  provider. Distinguish "the source said none" from "the source said nothing useful" —
+  fall through to the next source and let the last one own the empty verdict.
+- **A length check on a result you intend to guard is `> 0`.** `>= 0` and `!= null` are
+  guards that cannot fail; if a condition cannot be false, it is documentation, not a check.
+- **Test the success-shaped failure, not just the throw.** Any provider with a fallback needs
+  a case where the primary *succeeds uselessly*. The `FD-CHAIN-1` describe block in
+  `utxo-provider.test.ts` pins that. (Round 1 also pinned the inverse — "a non-empty RPC
+  result must NOT reach the fallback" — which round 2 above identified as the partial-result
+  bug itself and replaced with the union pins.)
+
+Companion, same finding: `signet.ts::hasFunds()` observed "the provider returned no rows"
+and reported "the treasury is unfunded" (`'Treasury has no UTXOs — batch processing will be
+skipped until funded'`). That is a stronger claim than the observation supports and it sent
+a live diagnosis at the wallet instead of the provider. The message now states what is
+measured (Constitution §1.5) and logs `provider` so the answering source is named. Pinned by
+the `BitcoinChainClient.hasFunds` block in `signet.test.ts`. **Not fixed here:** the
+`jobs/batch-anchor.ts` companion log (`'Treasury empty — skipping batch anchor processing
+until funded'`) makes the same unsupported claim one layer up — different folder, separate
+change.
+
+**Still open (NOT closed by this fix):** FD-CHAIN-2 — the fallback-rate alert described in
+the `listUnspent` RPC-leg-failure comment ("alert if it stays at 100%") is absent or unwired; prod
+sits at 100% fallback right now and nothing fires. Also unclosed: `batch-anchors` returns a
+bare 200 when it skips the whole batch, and the health check passed 13/13 through a total
+anchoring outage, so it is not measuring anchoring.
 
 ## 2026-08-11 SCRUM-3128 — `estimateFee()` is lossy; gates must use `estimateFeeDetailed()`
 
@@ -236,3 +337,30 @@ Only `listUnspent` has a mempool fallback on `GetBlockHybridProvider`; `broadcas
 - `../config.js` — environment config (WIF, KMS key, RPC URL, fee strategy, feature flags)
 - `../utils/logger.js` — structured logging (pino)
 - `../utils/db.js` — Supabase service_role client (for `SupabaseChainIndexLookup`)
+
+## 2026-08-12 — F-D0-5: bounded body reads (`utxo-provider.ts`, `fee-estimator.ts`)
+
+Every `fetch(...)` here now reads its body through `utils/body-read-timeout.ts`
+(`readJsonBounded` / `readTextBounded`), including the RPC error-envelope path in
+`tryParseRpcErrorBody` — a stalled body inside failure handling is the least observable place a
+hang can occur. `createTimeoutSignal()` bounds only the REQUEST; `await response.json()` had no
+deadline of its own, which is how one wedged provider socket parked a whole job on the 2026-08-12
+fullsoak rig (see `jobs/agents.md` F-D0-5).
+
+- **DO** route new external `fetch` calls in this folder through the bounded readers. A bounded
+  request with an unbounded body read is the hazard.
+- `BodyReadTimeoutError` is **retryable** in `isRetryableError` — a body that stalled after its
+  headers arrived is transient by the same argument as an `AbortError`, and `retryWithBackoff`
+  should treat it as one rather than surfacing a hard failure.
+- `MempoolFeeEstimator` reports a stalled body as `reason: 'timeout'`, not `'network_error'` — the
+  fallback-reason metric exists to surface provider stalls, so it must not hide one.
+- **§1.4 (S3.3-F1): `rpcCall` never hands the raw `rpcUrl` to the bounded readers.** Prod
+  `BITCOIN_RPC_URL` is `https://go.getblock.io/<ACCESS_TOKEN>` — the credential is in the URL PATH,
+  and `BodyReadTimeoutError` embeds its `url` argument in `.message`, which reaches
+  `retryWithBackoff` warn logs, `emitRpcFallback` Sentry breadcrumbs, and propagated job error
+  text (the pii-scrub `URL_TOKEN_REGEX` only matches `token=` query params, so a path token passes
+  it untouched). `sanitizeRpcUrlForError` (exported) reduces the URL to its origin — correlation
+  preserved, token provably dropped. Public mempool/blockstream call sites keep full URLs on
+  purpose: no credential there, and the path is the correlation value. Regression pinned in
+  `utxo-provider.test.ts` ("§1.4 S3.3-F1"): a stalled RPC body with a token-in-path URL must
+  produce token-free error text, warn logs, and fallback breadcrumbs.
