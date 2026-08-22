@@ -1,6 +1,10 @@
 # agents.md — components/anchor
 
-_Last updated: 2026-07-28 (R19 fingerprint_source, advances SCRUM-2481)_
+_Last updated: 2026-08-17 (AssetDetailView canRename owner-only pencil)_
+
+## 2026-08-17 — AssetDetailView `canRename` (owner-only rename pencil)
+
+New parent-computed `canRename?: boolean` prop (default false, fail-closed), mirroring `canRevoke`: the rename pencil renders only when `onRenameFile && canRename`. RLS (`anchors_update_own` requires user_id = auth.uid(); migration 0393's trigger narrows org-admin updates to folder_id only) means a non-owner rename can never succeed, so showing the pencil to non-owners produced either a raw 42501 error toast or a silent zero-row false success — the founder-reported rename bug (full writeup in `src/pages/agents.md`). Do not widen this to org admins without the explicit RLS/product decision.
 
 ## Lane 4 bug blitz (2026-08) — HakiChain 22-format accept/dispatch matrix
 

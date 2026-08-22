@@ -1,5 +1,10 @@
 # agents.md — lib
 
+_Last updated: 2026-08-17_
+
+## 2026-08-17 — RECORD_DETAIL_LABELS rename toasts
+
+`copy.ts` `RECORD_DETAIL_LABELS` gains `TOAST_RENAMED` / `ERR_RENAME` / `ERR_RENAME_FORBIDDEN` for RecordDetailPage's rename flow (previously inline literals in the page). Permission copy is deliberately distinct from the generic failure so an RLS-denied rename (zero-row UPDATE or 42501 from 0393's folder-only org-admin trigger) tells the user why. §1.3 clean — no banned terms.
 _Last updated: 2026-08-18_
 
 ## 2026-08-18 — `PENDING_INVITATIONS_LABELS` + `queryKeys.orgInvitations`
