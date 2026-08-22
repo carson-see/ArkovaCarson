@@ -1601,6 +1601,23 @@ export const ORG_PAGE_LABELS = {
 } as const;
 
 // =============================================================================
+// PENDING INVITATIONS (org page — visibility for invites that have not
+// resulted in a member yet)
+// =============================================================================
+
+export const PENDING_INVITATIONS_LABELS = {
+  SECTION_TITLE: 'Pending Invitations',
+  STATUS_PENDING: 'Pending',
+  STATUS_EXPIRED: 'Expired',
+  STATUS_REVOKED: 'Revoked',
+  SENT_ON: 'Sent',
+  RESEND: 'Resend',
+  RESENDING: 'Resending…',
+  RESEND_SUCCESS: 'Invitation resent.',
+  RESEND_FAILED: 'Could not resend this invitation. Please try again.',
+} as const;
+
+// =============================================================================
 // MEMBER DETAIL PAGE
 // =============================================================================
 
@@ -3055,8 +3072,16 @@ export const LEGAL_PAGE_LABELS = {
     'Your information is used to authenticate your account, manage your organization, process billing, and deliver the verification service. We do not sell or share your personal information with third parties for marketing purposes.',
 
   PRIVACY_S3_HEADING: '3. Document Privacy',
+  // Rewritten 2026-08-18 (counsel-ordered, Tranche 0 of the Sarah/Carson
+  // privacy-policy addendum, item 1 — "Fix Section 3. 'Your files never
+  // leave your browser' is not true on the connector path."). The prior
+  // wording was accurate for uploaded documents but false for
+  // connector-fetched ones (DocuSign / Google Drive): those are fetched and
+  // fingerprinted server-side under the narrow §1.6A carve-out, not in the
+  // browser. This is counsel's exact approved wording, sent to Solomon
+  // Karanja Meru (MNA Legal) — reproduce verbatim, do not paraphrase.
   PRIVACY_S3_BODY:
-    'Documents are processed entirely on your device. Only a cryptographic fingerprint (a one-way mathematical representation) is sent to our servers. It is mathematically impossible to reconstruct your document from its fingerprint. Your files never leave your browser.',
+    'Personal information is removed before any metadata is sent to our AI processor. For documents you upload directly, that removal happens in your browser, before anything is transmitted. Documents fetched from a source you connect, such as DocuSign or Google Drive, are not subject to AI metadata processing at all. They are fingerprinted in memory on our servers, the file is discarded immediately, and only the fingerprint and a fixed set of technical fields are retained. In neither case is raw document text or document bytes transmitted to the AI processor.',
 
   PRIVACY_S4_HEADING: '4. Data Security',
   PRIVACY_S4_BODY:
@@ -3560,11 +3585,37 @@ export const PRIVACY_NOTICE_LABELS = {
   HIPAA_BREACH_TIMELINE: '60 calendar days (BA to CE)',
 
   KENYA_TITLE: 'Kenya Data Protection Act 2019',
-  KENYA_DESCRIPTION: 'Applies to data subjects in Kenya. Your personal data is processed lawfully under Sections 25-38. You have rights of access, correction, and erasure. Contact the ODPC for complaints.',
+  // KENYA_DESCRIPTION rewritten, KENYA_RIGHTS and KENYA_BREACH_TIMELINE
+  // removed 2026-08-18 (counsel-ordered, Tranche 0 of the Sarah/Carson
+  // privacy-policy addendum, item 1 — quoted verbatim in the PR body):
+  // "Neutralise the Kenya card: remove the Standard Contractual Clauses
+  // under Section 48 transfer basis, the rights list citing Sections 25 to
+  // 38, and the 72-hour controller notification timeline. Replace with the
+  // counsel-pending placeholder pattern already used for the EU to US
+  // basis. Subtraction only. Do not substitute an alternative safeguard."
+  // The prior KENYA_DESCRIPTION cited Sections 25-38 as the basis for a
+  // specific rights list, and KENYA_BREACH_TIMELINE asserted "72 hours
+  // (controller to ODPC)" — neither was ever reviewed by counsel (Solomon
+  // Karanja Meru, MNA Legal): Sarah told him on 17 August this wording was
+  // left blank pending his recommendation, while the live bundle published
+  // it. KENYA_RIGHTS and KENYA_BREACH_TIMELINE are deleted, not reworded,
+  // and no alternative safeguard is substituted. KENYA_DESCRIPTION now
+  // carries the same "under review by legal counsel and will be published
+  // here once confirmed" placeholder pattern as DPF_DESCRIPTION below
+  // (SCRUM-2283 / §1.13 R-7). JurisdictionPrivacyNotices.tsx omits the
+  // Your Rights and Breach Notification Timeline rows for Kenya entirely,
+  // matching how it already omits the Cross-Border Transfer Basis row
+  // (removed in the prior commit on this branch).
+  KENYA_DESCRIPTION: 'Applies to data subjects in Kenya. Your specific rights and the applicable breach-notification timeline under the Kenya Data Protection Act 2019 are under review by legal counsel and will be published here once confirmed.',
   KENYA_REGULATOR: 'Office of the Data Protection Commissioner (ODPC)',
-  KENYA_RIGHTS: ['Access', 'Rectification', 'Erasure', 'Data portability', 'Object to processing'],
-  KENYA_TRANSFER_BASIS: 'Standard Contractual Clauses (Section 48)',
-  KENYA_BREACH_TIMELINE: '72 hours (controller to ODPC)',
+  // KENYA_TRANSFER_BASIS removed 2026-08-18 (counsel-ordered, hotfix/kenya-
+  // transfer-basis-removal): the prior value, "Standard Contractual Clauses
+  // (Section 48)", conflated two unrelated regimes — SCCs are an EU GDPR
+  // transfer mechanism; Kenya DPA 2019 §48 is Kenya's own transfer-adequacy
+  // provision and does not name SCCs. This is a removal, not a reword — final
+  // replacement wording is counsel's call (§1.5 / §1.13 R-7: state only what
+  // we hold). JurisdictionPrivacyNotices.tsx omits the transfer-basis row
+  // for Kenya entirely rather than render a placeholder.
 
   AUSTRALIA_TITLE: 'Australian Privacy Act 1988',
   AUSTRALIA_DESCRIPTION: 'Applies to data subjects in Australia. Your personal information is handled per the Australian Privacy Principles (APPs). You have rights of access and correction under APP 12-13.',

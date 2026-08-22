@@ -1,5 +1,14 @@
 # agents.md — hooks
-_Last updated: 2026-08-10_
+_Last updated: 2026-08-15_
+
+## 2026-08-15 — `useAnchor.ts` settled-state semantics (BUG-2026-08-13-017)
+
+`useAnchor`'s `!user || !id` reset branch used to `setLoading(false)` while auth was still resolving, committing one frame of `(loading=false, anchor=null, error=null)` between auth settling and the fetch effect re-running. RecordDetailPage renders exactly that tuple as "Record Not Found" — a live-measured ~25ms flash for records the user OWNS, and the state that let `e2e/cross-tenant.spec.ts`'s `evaluateRecordBlocked()` be satisfied by a loading state (hollow-pass class PR #2213 closed). The reset branch now does `setLoading(authLoading)`: a null `user` is terminal only once auth has settled. Invariant, pinned by `useAnchor.test.ts` (frame-recording test) and `RecordDetailPage.test.tsx` (MutationObserver over DOM commits): consumers must never observe settled-empty unless auth resolved + query completed + confirmed absent/denied. If you write a new manual-loading hook that both depends on `useAuth` and feeds a terminal not-found UI, apply the same rule — the React-Query hooks (`useAnchors`, `useProfile`, …) don't need it because v5's optimistic render result reports `isLoading=true` on the very render `enabled` flips true.
+_Last updated: 2026-08-18_
+
+## 2026-08-18 — `useOrgInvitations.ts` (invite-accept investigation, admin visibility)
+
+New hook: reads an org's non-accepted invitations (`invitations` table, RLS-scoped by the pre-existing "Org admins can view invitations" policy — no migration) for `PendingInvitationsList` (`src/components/organization/agents.md`). Never selects `invitations.token` (pinned by a dedicated test — the single-use accept credential must never reach the browser, §1.4). Recomputes `pending` → `expired` client-side from `expires_at` exactly like the worker's `GET /api/invitations/:token` preview (`services/worker/src/api/invitations.ts`'s `isExpired()`) — the `status` column is never flipped to `'expired'` at rest, confirmed live against prod (3 real invitations still read `status='pending'` days past their `expires_at`). Built while investigating the founder's "I still cannot invite members" report: the accept-path backend was found correct end to end (new router-level integration test, `services/worker/src/routes/anchor-invitation-accept.test.ts`); the real, demonstrated gap was that the inviting admin had zero visibility into invitation status. See `src/components/organization/agents.md` for the full investigation note.
 
 ## 2026-08-10 — `useActivateAccount.ts` (recipient activation launch blocker)
 

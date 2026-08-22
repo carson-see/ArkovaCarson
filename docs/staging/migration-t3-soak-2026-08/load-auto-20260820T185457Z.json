@@ -1,0 +1,60 @@
+{
+  "startedAt": "2026-08-20T18:55:03.025Z",
+  "endedAt": "2026-08-20T19:20:03.032Z",
+  "durationSec": 1500.007,
+  "apiBase": "https://train-migration-t3---arkova-worker-staging-kvojbeutfa-uc.a.run.app",
+  "mode": "mixed",
+  "concurrency": 10,
+  "totalRequests": 4011,
+  "byMode": {
+    "cron": {
+      "ok": 25,
+      "fail": 0,
+      "errorRate": 0,
+      "p50Ms": 649,
+      "p95Ms": 1085,
+      "p99Ms": 1087,
+      "byStatus": {
+        "200": 25
+      }
+    },
+    "reads": {
+      "ok": 0,
+      "fail": 1247,
+      "errorRate": 1,
+      "p50Ms": 189,
+      "p95Ms": 256,
+      "p99Ms": 505,
+      "byStatus": {
+        "401": 17,
+        "429": 974,
+        "503": 256
+      }
+    },
+    "events": {
+      "ok": 0,
+      "fail": 2489,
+      "errorRate": 1,
+      "p50Ms": 188,
+      "p95Ms": 255,
+      "p99Ms": 535,
+      "byStatus": {
+        "401": 75,
+        "429": 2414
+      }
+    },
+    "webhook": {
+      "ok": 0,
+      "fail": 250,
+      "errorRate": 1,
+      "p50Ms": 215,
+      "p95Ms": 613,
+      "p99Ms": 830,
+      "byStatus": {
+        "401": 50,
+        "429": 49,
+        "503": 151
+      }
+    }
+  }
+}

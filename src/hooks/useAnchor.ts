@@ -60,14 +60,22 @@ export function useAnchor(id: string | undefined): UseAnchorReturn {
     if (!user || !id) {
       async function reset() {
         setAnchor(null);
-        setLoading(false);
+        // BUG-2026-08-13-017: a null `user` is only a TERMINAL state once auth
+        // has settled. While the session is still resolving, keep reporting
+        // loading — flipping to (loading=false, anchor=null, error=null) here
+        // committed one "Record Not Found" frame on /records/:id between auth
+        // resolving and this effect re-running, which also let the e2e
+        // cross-tenant blocked assertion be satisfied by a loading state.
+        // Not-found may render only when the fetch has genuinely settled:
+        // auth resolved + query completed + confirmed absent/denied.
+        setLoading(authLoading);
       }
       void reset();
       return;
     }
     async function run() { await fetchAnchor(); }
     void run();
-  }, [user, id, fetchAnchor]);
+  }, [user, id, authLoading, fetchAnchor]);
 
   // Realtime subscription for anchor status changes (BETA-01)
   useEffect(() => {

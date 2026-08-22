@@ -5,6 +5,44 @@ _Last updated: 2026-08-15_
 ## 2026-08-15 BUG-2026-08-13-010 — `connectorFingerprint.ts` + `CONNECTOR_FINGERPRINT_LABELS`/`_TRIAD` in `copy.ts`
 
 Connector-sourced anchors (§1.6A: server-fetched from DocuSign/Drive) carry fingerprints of the bytes AS FETCHED at securing time; source systems may regenerate the file per download (soak-proven), so a fresh download is NOT expected to reproduce the fingerprint. `connectorFingerprint.ts` detects the server-written `metadata.connector_source` marker against a closed set (`docusign`/`google_drive`/`microsoft_365`/`connector`; EXCLUDES `manual_upload`/`batch_upload` — user-supplied bytes are reproducible) — a structural mirror of `services/worker/src/constants/connectorFingerprint.ts`, kept in sync manually per the `proofAvailability.ts` FE/worker convention. `copy.ts` owns the human-facing caveat strings (`CONNECTOR_FINGERPRINT_LABELS`) and the §1.5 measured/asserted/NOT-asserted triad (`CONNECTOR_FINGERPRINT_TRIAD`); both are vendor-neutral BY RULE — the marker is org-writable on legacy paths (`bulk_create_anchors` persists metadata verbatim), so naming a vendor would let spoofed metadata become a provenance claim (R-7). Consumer: `src/components/anchor/AssetDetailView.tsx` re-verify flow. The copy must never read as "this record is weaker" — the exact retrieved file IS permanently secured.
+_Last updated: 2026-08-18_
+
+## 2026-08-18 — `PENDING_INVITATIONS_LABELS` + `queryKeys.orgInvitations`
+
+`copy.ts` gains `PENDING_INVITATIONS_LABELS` for the new `PendingInvitationsList` component (`src/components/organization/agents.md`) — status badges (Pending/Expired/Revoked) and the Resend action, org-admin-only visibility into invitations that have not resulted in a member yet. `queryClient.ts` gains `queryKeys.orgInvitations(orgId)`, same shape as `queryKeys.orgMembers`.
+_Last updated: 2026-08-21_
+
+## Keyword redaction is separator-insensitive (PR #2312)
+
+`piiStripper.ts` used to join every multi-word keyword with `\s+`. That made the **separator itself** an evasion channel: `Student ID: 88213` redacted, `student_id: 88213` did not. CSV headers are overwhelmingly snake_case, so the CSV bulk-upload path shipped those values to `/api/v1/ai/extract-batch` in the clear. A student or employee ID identifies an education record under FERPA, so §1.6 requires every separator form stripped.
+
+All four keyword rules carried the assumption — `STUDENT_ID_KEYWORD` (`student id`, `id number`, `student no.`), `DOB_KEYWORD_PATTERN` (`date of birth`, `birth date`), `ADDRESS_KEYWORD` (`postal code`), `NATIONAL_ID_KEYWORD` (`national id`, `tax id`, `ni number`, `passport no/number`, `pan no/number/card`, `sin no/number`). Tokens now join with `[\s_-]*`, so space / underscore / hyphen / nothing all match. `employee id` and `member id` were added — they were absent from the list in **every** form, not just snake_case.
+
+**If you add a keyword, use the `tok()` + `keywordPattern()` helpers, not a raw literal.** Widening the separator alone over-redacts: with a zero-width separator a keyword matches the *prefix* of an ordinary word and the value pattern then eats the rest of the line — `taxidermy` → `tax id`, `studentidentifier` → `student id`, `zipper` → `zip`. `keywordPattern()` supplies the two bounds that stop it:
+
+- `KEYWORD_START` = `(?:^|[^A-Za-z0-9])` — **consuming**, not a lookbehind, because Safari <16.4 has no lookbehind. Lossless: every caller already captures the keyword as `prefix` and re-emits it verbatim. Using a character class rather than `\b` is what lets `intl_student_id` match while `valid_number` does not.
+- `KEYWORD_END` = `(?![A-Za-z])` — digits may still follow, so unseparated forms like `ZIP90210` keep matching.
+
+Net precision **improved**: `Zipper pouches` and `addressing` used to be redacted and no longer are.
+
+**This module is SHARED.** It is reached from the document path (`stripPIIEnhanced` in `aiExtraction.ts`, which has no keyword rules of its own) as well as the CSV path, so any keyword change must be judged on precision as much as recall. Both directions are pinned: `piiStripper.test.ts` has a `precision: non-identifier columns are NOT redacted` block, and `piiStripper.adversarial.test.ts` has `keyword-label separator evasion` covering the near-miss words above.
+
+Two things found while doing this, recorded so nobody re-derives them:
+
+- **Value patterns must not cross a line break.** `NATIONAL_ID`'s value class used `\s`, which includes `\n`, so a 10-char ID ran greedily onto the next line and swallowed that line's label — in the `"<column>: <value>"` per-line text the CSV upload builds, `national_id: AB.123/456` ate the `course_name` header and destroyed the credential title the extractor reads. Now bounded to space and tab. Pre-existing (reproducible at HEAD through the spaced `National ID:` form), strictly narrowing. `ADDRESS_KEYWORD`'s value is *deliberately* multi-line (CRIT-4, up to 3 lines) and was left alone — which does mean an `address:` column in a CSV row still consumes the two columns after it.
+- **`EMAIL_PATTERN` is quadratic and was NOT fixed here.** `[a-zA-Z0-9._%+-]+@…` backtracks one character at a time from every start position when the input has no `@`: measured 64,004 ms on a 100k-char input, versus 0 ms for SSN and phone and 0–1 ms for all four keyword rules on the same input. `stripPII` runs in the browser on raw OCR text, so a large scanned document freezes the tab. Out of scope for this PR; tracked separately.
+
+## 2026-08-18 — Kenya card neutralized (Tranche 0) + Section 3 corrected (counsel-ordered, `hotfix/kenya-transfer-basis-removal`)
+
+Second commit on this branch, executing item 1 of the Sarah/Carson privacy-policy addendum (Google Doc `1LVNus_xgbWu79DZGUDwh0MUJ8OQn6ISaJSPMQwxSDl8`, "Tranche 0"), quoted verbatim: *"Neutralise the Kenya card: remove the Standard Contractual Clauses under Section 48 transfer basis, the rights list citing Sections 25 to 38, and the 72-hour controller notification timeline. Replace with the counsel-pending placeholder pattern already used for the EU to US basis. Subtraction only. Do not substitute an alternative safeguard."*
+
+- `KENYA_RIGHTS` and `KENYA_BREACH_TIMELINE` are deleted (not reworded — same treatment as `KENYA_TRANSFER_BASIS` in the prior commit below). `KENYA_DESCRIPTION` is rewritten to carry the same "under review by legal counsel and will be published here once confirmed" placeholder sentence that `DPF_DESCRIPTION` already uses for the EU→US card (SCRUM-2283 / §1.13 R-7) — this is the "mirror the EU-US pattern" instruction, applied literally: same substring, same construction.
+- `PRIVACY_S3_BODY` replaced. The prior "Your files never leave your browser" claim was false on the connector path (DocuSign / Google Drive documents are fingerprinted server-side under the §1.6A carve-out, not in the browser). New wording is counsel's exact approved text, sent to Solomon Karanja Meru (MNA Legal) — reproduced verbatim per the addendum, not paraphrased.
+- Consumer-side changes (`rights`/`breachTimeline` now optional on `JurisdictionNotice`, conditional row render, Kenya entry drops both fields) are in `src/components/compliance/JurisdictionPrivacyNotices.tsx` / that folder's `agents.md`.
+
+## 2026-08-18 — `KENYA_TRANSFER_BASIS` removed (counsel-ordered, `hotfix/kenya-transfer-basis-removal`)
+
+Counsel (Sarah) ordered removal, not rewording, of the live-served claim `KENYA_TRANSFER_BASIS: 'Standard Contractual Clauses (Section 48)'` — SCCs are an EU GDPR transfer mechanism, and Kenya DPA 2019 §48 is Kenya's own transfer-adequacy provision that does not name SCCs. Second correction of this general shape in two days, after the DPF/SCRUM-2283 fix (2026-08-10 entry in this file's sibling, `src/components/compliance/agents.md`). The key is now a comment-only removal (not a reworded placeholder value — final wording is counsel's call per §1.5 / §1.13 R-7); `KENYA_BREACH_TIMELINE` and the rest of the Kenya block are untouched. Consumer-side fix (making `transferBasis` optional on `JurisdictionNotice` + conditional row render) is in `src/components/compliance/JurisdictionPrivacyNotices.tsx` / that folder's `agents.md` — read there for the full writeup and the flagged-not-fixed Nigeria/South Africa candidates for the same pattern.
 
 ## 2026-08-10 — `ACTIVATE_ACCOUNT_LABELS` + `ActivateAccountSchema` (recipient activation launch blocker)
 
@@ -207,3 +245,39 @@ keep naming NO transfer mechanism (SCRUM-2283, §1.13 R-7).
 Coverage is enforced, not asserted: `src/pages/PrivacyPage.copy-centralization.test.tsx`
 fails if /privacy renders prose `copy.ts` does not own, or if a jurisdiction
 copy field regresses to an inline literal.
+
+## 2026-08-21 — `csvRowText.ts` column-role classification (PR #2302)
+
+`buildStrippedRowText` is the ONLY exported way to build the text the CSV
+bulk-upload path POSTs to `/api/v1/ai/extract-batch`. Keep it that way: the choke
+point is what makes §1.6 enforceable for the CSV path.
+
+Its `isPersonNameColumn` classifier is load-bearing in **both** directions, because
+a column classified as a person name has its *value* handed to `stripPII` as a
+literal, and `stripPII` removes that literal from the **whole row text**, not just
+that cell:
+
+- too narrow -> a real name leaves the browser (§1.6 breach)
+- too broad  -> `course_name: Advanced Cardiac Life Support` scrubs the credential
+  title out of every line it appears in, and the extractor receives a row stripped
+  of the metadata it was called to read
+
+Bare token matching fails the second half for the COMMON case: `course_name`,
+`credential_name`, `certificate_name`, `issuer_name`, `organization_name`,
+`employee_id` and `participant_count` all contain a person-role token while naming
+a thing or an identifier. Classification is therefore token match MINUS
+(non-person qualifier immediately before the token) MINUS (identifier/scalar
+suffix `_id|_count|_number|_code|_type|_date|_url`).
+
+Ties break toward redaction: an unrecognised qualifier (`nominee_name`) or a person
+token outside the qualified pair (`student_course_name`) still redacts. If you add
+a token, add it to `PERSON_ROLE_TOKENS`; if you add a qualifier, add it to
+`NON_PERSON_QUALIFIERS` — and add both a true-positive and a false-positive case to
+`csvRowText.test.ts`, which pins 16 person headers and 18 non-person headers.
+
+**Known residual:** the `_id` exclusion means `student_id` / `employee_id` /
+`member_id` VALUES now reach the extraction endpoint. `stripPII`'s context-aware
+student-ID stripper does not cover them: `STUDENT_ID_KEYWORD` joins its words with
+`\s+`, so `Student ID: 88213` redacts but the snake_case CSV header form
+`student_id: 88213` does not. That gap is in `piiStripper.ts`, predates this PR,
+and is not fixed here.
