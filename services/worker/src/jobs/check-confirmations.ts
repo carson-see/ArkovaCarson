@@ -23,6 +23,7 @@ import { runWithConcurrency } from '../utils/concurrency.js';
 import { chunkForInFilter } from '../utils/postgrest-filter.js';
 import { captureConfirmationTipHeightUnavailable } from '../utils/sentry.js';
 import { resolveMempoolHostBase } from '../utils/mempool-url.js';
+import { readJsonBounded, readTextBounded } from '../utils/body-read-timeout.js';
 
 /** Maximum unique transactions to check per cron run (rate limit mempool.space) */
 const MAX_TX_CHECKS_PER_RUN = 100;
@@ -662,6 +663,21 @@ function getMempoolBaseUrl(): string {
 const MEMPOOL_MAX_RETRIES = 3;
 const MEMPOOL_INITIAL_BACKOFF_MS = 500;
 
+/** Request-phase deadline, enforced by `AbortSignal.timeout`. */
+const MEMPOOL_REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * F-D0-5 (fullsoak 2026-08-12): deadline on the BODY read, which the request
+ * signal above does NOT cover. A provider that sends headers and then stalls
+ * leaves `await response.json()` parked with no timer of its own — the
+ * suspected mechanism behind the 2026-08-12 hang that disabled
+ * SUBMITTED→SECURED promotion for 35+ minutes. Matched to the request
+ * deadline: a body that has not arrived in 10s is not a body worth waiting
+ * for, and the retry loop below treats the abandoned read as the transient
+ * failure it is.
+ */
+export const MEMPOOL_BODY_READ_TIMEOUT_MS = 10_000;
+
 /** Blockstream.info fallback base URLs */
 function getBlockstreamBaseUrl(): string {
   const networkPaths: Record<string, string> = {
@@ -681,11 +697,14 @@ async function fetchTxStatus(txid: string): Promise<MempoolTxResponse | null> {
   for (let attempt = 0; attempt <= MEMPOOL_MAX_RETRIES; attempt++) {
     try {
       const response = await fetch(url, {
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(MEMPOOL_REQUEST_TIMEOUT_MS),
       });
 
       if (response.ok) {
-        return (await response.json()) as MempoolTxResponse;
+        // F-D0-5: bounded body read. A parked `.json()` here is what hung the
+        // 2026-08-12 run — a `BodyReadTimeoutError` is caught by the `catch`
+        // below and retried like any other transient failure.
+        return (await readJsonBounded(response, url, MEMPOOL_BODY_READ_TIMEOUT_MS)) as MempoolTxResponse;
       }
 
       if (response.status === 404) {
@@ -722,11 +741,16 @@ async function fetchTxStatus(txid: string): Promise<MempoolTxResponse | null> {
     const fallbackUrl = `${getBlockstreamBaseUrl()}/api/tx/${txid}`;
     logger.info({ txid, fallbackUrl }, 'Falling back to blockstream.info');
     const response = await fetch(fallbackUrl, {
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(MEMPOOL_REQUEST_TIMEOUT_MS),
     });
 
     if (response.ok) {
-      return (await response.json()) as MempoolTxResponse;
+      // F-D0-5: the fallback provider can park a body just as the primary can.
+      return (await readJsonBounded(
+        response,
+        fallbackUrl,
+        MEMPOOL_BODY_READ_TIMEOUT_MS,
+      )) as MempoolTxResponse;
     }
   } catch (fallbackError) {
     logger.warn({ txid, error: fallbackError }, 'Blockstream.info fallback also failed');
@@ -775,11 +799,16 @@ async function fetchChainTipHeight(): Promise<number | null> {
   for (let attempt = 0; attempt <= MEMPOOL_MAX_RETRIES; attempt++) {
     try {
       const response = await fetch(url, {
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(MEMPOOL_REQUEST_TIMEOUT_MS),
       });
 
       if (response.ok) {
-        const height = parseTipHeight(await response.text());
+        // F-D0-5: bounded body read — see fetchTxStatus above. A parked read
+        // here is worse than a slow one: a null tip height defers promotion
+        // for the whole run (SCRUM-3021), and a parked read defers it forever.
+        const height = parseTipHeight(
+          await readTextBounded(response, url, MEMPOOL_BODY_READ_TIMEOUT_MS),
+        );
         if (height != null) return height;
         logger.warn({ url }, 'Mempool.space tip-height response was not a valid positive integer');
         break; // malformed body is not retryable — fall through to fallback
@@ -813,11 +842,13 @@ async function fetchChainTipHeight(): Promise<number | null> {
     const fallbackUrl = `${getBlockstreamBaseUrl()}/api/blocks/tip/height`;
     logger.info({ fallbackUrl }, 'Falling back to blockstream.info for tip height');
     const response = await fetch(fallbackUrl, {
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(MEMPOOL_REQUEST_TIMEOUT_MS),
     });
 
     if (response.ok) {
-      const height = parseTipHeight(await response.text());
+      const height = parseTipHeight(
+        await readTextBounded(response, fallbackUrl, MEMPOOL_BODY_READ_TIMEOUT_MS),
+      );
       if (height != null) return height;
     }
   } catch (fallbackError) {
@@ -835,7 +866,25 @@ async function fetchChainTipHeight(): Promise<number | null> {
  * only require one mempool API call per group. This dramatically improves
  * throughput: 50 tx checks can confirm 1000+ anchors per run.
  */
-export async function checkSubmittedConfirmations(): Promise<{ checked: number; confirmed: number }> {
+/**
+ * F-D0-2 (fullsoak 2026-08-12): `skipped` is what makes a blocked run
+ * DISTINGUISHABLE from an idle one.
+ *
+ * During the F-D0-5 incident, 31 forced `POST /jobs/check-confirmations` calls
+ * over 29 minutes every one returned `{"checked":0,"confirmed":0}` — the exact
+ * body a healthy run with nothing to do returns — while promotion was
+ * completely disabled behind a hung lease holder. The operator driving those
+ * calls had no way to tell the two apart from the response. Present and equal
+ * to `'run-lease-held'` means "another run holds the lease, this call did
+ * nothing"; absent means the run actually executed.
+ */
+export interface ConfirmationCheckResult {
+  checked: number;
+  confirmed: number;
+  skipped?: 'run-lease-held';
+}
+
+export async function checkSubmittedConfirmations(): Promise<ConfirmationCheckResult> {
   logger.info('Starting confirmation check for SUBMITTED anchors');
 
   // PR #753 audit fix A3 (preserved): serialize BOTH the mock-mode and
@@ -855,7 +904,11 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
     }
     return checkSubmittedConfirmationsUnlocked();
   });
-  return outcome.acquired ? outcome.result : { checked: 0, confirmed: 0 };
+  // F-D0-2: the skipped run reports WHY it did nothing — see
+  // ConfirmationCheckResult. `withRunLease` has already logged the skip (at
+  // warn once the streak outlives a TTL), so this only has to carry the
+  // signal out to the HTTP caller.
+  return outcome.acquired ? outcome.result : { checked: 0, confirmed: 0, skipped: 'run-lease-held' };
 }
 
 async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number; confirmed: number }> {
