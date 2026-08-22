@@ -1465,6 +1465,32 @@ describe('check-staging-evidence', () => {
       expect(isStagingToolingOnly(['sonar-project.properties.ts']).pass).toBe(false);
     });
 
+    // The secret-scanner policy is a PAIR: `.gitleaks.toml` holds the rules and
+    // allowlists, `.gitleaksignore` holds the per-finding fingerprint waivers.
+    // Both are read only by the `scan` job in .github/workflows/gitleaks.yml —
+    // never imported, bundled, or deployed — so neither has a runtime surface a
+    // soak could exercise. `.gitleaks.toml` was allowlisted; its sibling was
+    // overlooked, so a one-line fingerprint waiver classified T1 and demanded a
+    // 2 h soak of a file production never reads.
+    it('passes for the secret-scanner policy pair', () => {
+      expect(
+        isStagingToolingOnly([
+          '.gitleaks.toml',
+          '.gitleaksignore',
+        ]).pass,
+      ).toBe(true);
+      expect(requiredTierFor(['.gitleaksignore'])).toEqual({
+        tier: 'T0',
+        reason: 'docs/tests/CI/tooling-only',
+      });
+    });
+
+    it('rejects gitleaks-config lookalike filenames', () => {
+      expect(isStagingToolingOnly(['services/worker/.gitleaksignore']).pass).toBe(false);
+      expect(isStagingToolingOnly(['.gitleaksignore.ts']).pass).toBe(false);
+      expect(isStagingToolingOnly(['src/lib/gitleaksignore']).pass).toBe(false);
+    });
+
     // cf3917ad2 ("split changelog sediment out of four guide files") moved the
     // dated narrative out of agents.md into sibling agents-changelog.md files
     // but never extended the T0 carve-out to the new name, so every one of them
