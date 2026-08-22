@@ -19,6 +19,7 @@ import type { Request, Response } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getCallerOrgId } from './_org-auth.js';
+import { connectorFingerprintRederivabilityFields } from '../constants/connectorFingerprint.js';
 
 export const PROOF_PACKET_SCHEMA_VERSION = 1;
 const VERIFICATION_BASE_URL = process.env.PROOF_PACKET_VERIFY_BASE_URL ?? 'https://app.arkova.io/verify';
@@ -350,6 +351,15 @@ export async function handleProofPacketExport(
           bitcoin_tx_id: anchor.bitcoin_tx_id,
           block_height: anchor.block_height,
           verification_uri: verificationUri,
+          // BUG-2026-08-13-010 (§1.5/§1.6A): every packet anchor is
+          // connector-materialized BY CONSTRUCTION (resolved via
+          // metadata->>external_file_id), so the fingerprint attests the exact
+          // bytes fetched from the connector at fetch time — NOT that
+          // re-fetching the source document reproduces it (source systems may
+          // re-render per request). The auditor challenge this packet answers
+          // is exactly the flow where someone re-downloads from the source and
+          // compares — state the caveat where the fingerprint travels.
+          ...connectorFingerprintRederivabilityFields(),
         }
       : {
           public_id: null,

@@ -1,5 +1,10 @@
 # agents.md — lib
 
+_Last updated: 2026-08-15_
+
+## 2026-08-15 BUG-2026-08-13-010 — `connectorFingerprint.ts` + `CONNECTOR_FINGERPRINT_LABELS`/`_TRIAD` in `copy.ts`
+
+Connector-sourced anchors (§1.6A: server-fetched from DocuSign/Drive) carry fingerprints of the bytes AS FETCHED at securing time; source systems may regenerate the file per download (soak-proven), so a fresh download is NOT expected to reproduce the fingerprint. `connectorFingerprint.ts` detects the server-written `metadata.connector_source` marker against a closed set (`docusign`/`google_drive`/`microsoft_365`/`connector`; EXCLUDES `manual_upload`/`batch_upload` — user-supplied bytes are reproducible) — a structural mirror of `services/worker/src/constants/connectorFingerprint.ts`, kept in sync manually per the `proofAvailability.ts` FE/worker convention. `copy.ts` owns the human-facing caveat strings (`CONNECTOR_FINGERPRINT_LABELS`) and the §1.5 measured/asserted/NOT-asserted triad (`CONNECTOR_FINGERPRINT_TRIAD`); both are vendor-neutral BY RULE — the marker is org-writable on legacy paths (`bulk_create_anchors` persists metadata verbatim), so naming a vendor would let spoofed metadata become a provenance claim (R-7). Consumer: `src/components/anchor/AssetDetailView.tsx` re-verify flow. The copy must never read as "this record is weaker" — the exact retrieved file IS permanently secured.
 _Last updated: 2026-08-17_
 
 ## 2026-08-17 — RECORD_DETAIL_LABELS rename toasts
