@@ -1943,16 +1943,23 @@ const PREFLIGHT_NOT_RUN_SENTINELS = new Set([
 ]);
 
 /**
- * An optional trailing reason: `NOT RUN — rig provisioned 8 days before the
- * clock`, `N/A: no pre-clock sample`. A colon or em/en dash separates on its
- * own; a plain hyphen must be preceded by whitespace so `NOT-RUN` is not
- * mistaken for `NOT` plus a reason.
+ * Start of an optional trailing reason: `NOT RUN — rig provisioned 8 days
+ * before the clock`, `N/A: no pre-clock sample`. A colon or em/en dash
+ * separates on its own; a plain hyphen must be preceded by whitespace so
+ * `NOT-RUN` is not mistaken for `NOT` plus a reason.
+ *
+ * Both alternatives are fixed-length and quantifier-free, so matching is a
+ * single linear scan (SonarCloud `typescript:S8786` — an earlier
+ * `(?:\s+[-—–:]|[—–:])\s*\S[\s\S]*$` form was quadratic on a long run of
+ * whitespace because the unanchored `\s+` was retried from every position).
  */
-const PREFLIGHT_REASON_SUFFIX_RE = /(?:\s+[-—–:]|[—–:])\s*\S[\s\S]*$/;
+const PREFLIGHT_REASON_SEPARATOR_RE = /[—–:]|\s-/;
 
 function isPreflightNotRunSentinel(value: string): boolean {
-  const head = value.trim().replace(PREFLIGHT_REASON_SUFFIX_RE, '').trim().toLowerCase();
-  return PREFLIGHT_NOT_RUN_SENTINELS.has(head);
+  const trimmed = value.trim();
+  const separator = PREFLIGHT_REASON_SEPARATOR_RE.exec(trimmed);
+  const head = separator === null ? trimmed : trimmed.slice(0, separator.index);
+  return PREFLIGHT_NOT_RUN_SENTINELS.has(head.trim().toLowerCase());
 }
 
 type PreflightTimestampStatus = 'ok' | 'not-run' | 'late' | 'unparseable';
