@@ -1,0 +1,13 @@
+{
+  "captured_at": "2026-08-12T15:18:00Z",
+  "rig_revision": "arkova-worker-fullsoak-2026-08-staging-00013-mrw",
+  "authorized": "yes",
+  "lastSecuredAt": "2026-08-11T17:55:23.359924+00:00",
+  "lastBatchAt": "2026-08-12T14:34:55.116292+00:00",
+  "drainStalled": "False",
+  "drainReason": "ok",
+  "pendingCount": "0",
+  "feeRateSatVb": "4",
+  "anchoring_status": "ok",
+  "seed_note": "lastSecuredAt seeds the A16c advancement check. The first DAILY run on a LATER UTC date is the first one that can assert advancement; a same-date run reports SKIP rather than comparing against a value captured minutes earlier."
+}

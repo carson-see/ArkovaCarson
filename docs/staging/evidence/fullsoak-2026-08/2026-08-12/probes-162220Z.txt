@@ -1,0 +1,26 @@
+fullsoak-daily-probes — behavioural probe run
+run_ts           : 2026-08-12T16:22:20Z
+mode             : full (only P3)
+rig service      : https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app
+rig supabase ref : gnkuaywlpmsaezwvlvhk
+prod supabase ref: vzwyaatejekddvltxyye
+host             : Arkovas-Mac-mini.local
+git HEAD         : 550320dc8f7a48852177336c80999374b7e758b2
+mgmt SQL (reads) : available
+----------------------------------------------------------------------
+FAIL  P3a  invite_member as ORG_ADMIN writes an invitations row
+         expected: http 200 AND row delta +1
+         observed: http 400, count 0 -> 0
+PASS  P3b  invite_member refuses to mint an ORG_ADMIN (SEC-RECON-8)
+         expected: non-2xx
+         observed: http 403
+PASS  P3c  Org B admin cannot invite into Org A
+         expected: non-2xx
+         observed: http 400
+SKIP  P3d  GET /api/invitations/:token previews the invite
+         expected: 200 + org name
+         observed: no token row to preview
+----------------------------------------------------------------------
+PASS=2 FAIL=1 SKIP=1
+DAILY_PROBES: FAIL
+artifact: /Volumes/Extreme/Arkova/_legacy/home-Arkova-2026-05-15/arkova-mvpcopy-main/docs/staging/evidence/fullsoak-2026-08/2026-08-12/probes-162220Z.txt

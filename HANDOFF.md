@@ -14,15 +14,39 @@
 
 ## Now
 
-**State as of 2026-08-03T02:49Z, verified live.** This block is the only current-state claim in this
+**State as of 2026-08-12T16:00Z, verified live.** (`### Soaks` refreshed again 2026-08-19 — the
+7-day window closed on schedule and a new chain-pair + rate-limit T3 soak started the same day; see
+the top of `### Soaks` below. `### Soaks` and `### PR board` were also refreshed
+2026-08-18 — Day 6 of the soak window; see the dated sub-blocks below for exact timestamps and
+linked verification artifacts. The prod worker/anchor sub-block was refreshed 2026-08-12; the
+remainder of this block still carries its 2026-08-03T02:49Z reading unless a sub-block says
+otherwise.) This block is the only current-state claim in this
 file; everything under `## History` is the dated record and is not re-asserted here. Canonical soak
-findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md).
+findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md); the
+2026-08 full-functionality soak has its own canonical register — `FD-1`…`FD-16` in
+[docs/staging/fullsoak-2026-08/manifest-DAY-0.md](docs/staging/fullsoak-2026-08/manifest-DAY-0.md) §11.
+`FD-CHAIN-1` (SCRUM-3151, throughput-ceiling re-characterization, 2026-08-17) is tracked in
+[docs/staging/fullsoak-2026-08/FD-CHAIN-1-throughput-ceiling-2026-08-17.md](docs/staging/fullsoak-2026-08/FD-CHAIN-1-throughput-ceiling-2026-08-17.md).
+
+> ⚠️ **A 7-day SOC 2 Type 2 soak is RUNNING (clock started 2026-08-12T15:51:30Z, closes
+> 2026-08-19T15:51:30Z). Read `### Soaks` before touching anything.** Do not deploy, redeploy, or
+> change any env var, secret, scheduler job, flag or GitHub variable on the rig — the clock is rig
+> uptime, and a revision change ends the window.
 
 ### Prod
 
-- Worker `git_sha 1d12f0d39f650e634c1a381efe40c2fed5dde39a` (short `1d12f0d39`); deploy-worker run
+- Worker `git_sha f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58` (short `f5d1070fc`, merge of #2209),
+  revision `arkova-worker-01310-god`. **Verified live 2026-08-12 ~14:00Z** by direct `/health` read:
+  `{"status":"healthy","git_sha":"f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58","network":"mainnet",
+  "checks":{"database":"ok","anchoring":"ok","kms":"ok"}}`, cross-checked against
+  `gcloud run services describe arkova-worker --region=us-central1`. Prod anchor counts at the same
+  reading: **3,485,148 total / 3,485,077 SECURED**, newest `2026-08-12 13:40:12Z`.
+  _(2026-08-12 sub-block; supersedes the 2026-08-11 `1d12f0d39` claim, which is its ancestor —
+  `git merge-base --is-ancestor` confirms `f5d1070fc` is the newer head.)_
+- _(superseded, 2026-08-11)_ Worker `git_sha 1d12f0d39f650e634c1a381efe40c2fed5dde39a` (short
+  `1d12f0d39`); deploy-worker run
   31533160150 succeeded 2026-08-11 (canary→full), `/health` verified live: `status: healthy`,
-  `database/anchoring/kms: ok`, `network: mainnet`. _(2026-08-11 sub-block; supersedes the
+  `database/anchoring/kms: ok`, `network: mainnet`. _(2026-08-11 sub-block; superseded the
   2026-08-03 `18d33efcf` claim.)_ Two deploy runs earlier the same hour FAILED at Pre-deploy
   Quality Gates — a semantic merge collision (#2081's clause 4.6 guard vs the new
   `cle-submit-recipient-semantics.test.ts`, each green alone, red together) blacked out ALL prod
@@ -83,6 +107,51 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
   rationale (kept there deliberately as the audit trail, not duplicated here).
 
 ### PR board
+
+**FROZEN for the soak window (2026-08-12T15:51:30Z → 2026-08-19T15:51:30Z).** `DEPLOY_WORKER_PAUSED=true`,
+so worker deploys do not run and `deferred_consolidated_soak` is gated — merging worker code now would put
+main ahead of a build that cannot deploy, and touching the rig to soak anything would end the window.
+
+#### Refreshed 2026-08-18 — Day 6 review campaign
+
+Seven parallel review agents swept all 39 non-dependabot open PRs (dependabot pairs handled
+separately). Full verdicts, defects, and landing-order constraints:
+[pr-campaign-45-open-2026-08-18.md](docs/staging/fullsoak-2026-08/pr-campaign-45-open-2026-08-18.md).
+
+- **43 open PRs** (37 draft / 6 non-draft), verified live via `gh pr list --json number,isDraft
+  --limit 100` at write time 2026-08-18 — supersedes the "~73 merged / 2 open (#1864, #1813)"
+  2026-08-03 snapshot further below, which is kept for its own reasoning, not as a current count.
+- **5 PRs closed as superseded, 2026-08-18T13:45Z** (verified via `gh pr view --json state`, all
+  `state: CLOSED`): #2218 (→ #2220), #2223 / #2224 / #2231 / #2238 (→ consolidated #2269).
+- **3 new draft PRs opened 2026-08-18:** #2269 (`rc/rate-limit-cluster-2026-08`, **T2** —
+  consolidates the closed rate-limiter stack: cross-instance state F-1, once-per-request counting
+  F-2, env-namespaced keyspaces, v2 TTL self-heal, §1.10 fail-open headers; 171/171 tests green),
+  #2270 (`fix/sentry-cron-checkins-prod-only`, **T1**), #2271
+  (`hotfix/kenya-transfer-basis-removal`, **T1**, counsel-ordered compliance fix).
+- **6 defects found by review, fixed on draft branches (all still unsoaked):** GetBlock RPC-error
+  token leak §1.4 (#2216, head `a664ee847`), migration `0414` over-revoking `authenticated` on two
+  live UI paths (#2248, head `c993e81cd`), monitor floor below estimator resolution (#2254, head
+  `e79737530`), sentinel/value-resolver test collision (#2259, head `665e01e27`), missing Mergify
+  job wiring for `python-sdk-tests` (#2252, head `4b5a10662`), v2 rate-limit store permanent lockout
+  (folded into #2269). Full head-SHA table in the campaign doc.
+- Everything above is still **DRAFT and unsoaked** — the freeze holds; none of this is Ready-queued.
+
+- **Held until Day 7, deliberately, both in DRAFT:**
+  [#2211](https://github.com/carson-see/ArkovaCarson/pull/2211) (ORG_ADMIN-gate the self-serve verification
+  writers, **T2** — needs a rig it cannot have this week) and
+  [#2215](https://github.com/carson-see/ArkovaCarson/pull/2215) (RFC-9562-compliant seed fixture UUIDs,
+  **T1** — the seed-side half of FD-15; the worker-validator half, 57 strict `z.string().uuid()` call sites
+  on DB-sourced ids, is still open and unfiled as code).
+- **Landed pre-freeze**, inside the documented 13:08:54–13:23:42Z drain window opened for exactly this:
+  [#2208](https://github.com/carson-see/ArkovaCarson/pull/2208) (x402 BTC price oracle) and
+  [#2209](https://github.com/carson-see/ArkovaCarson/pull/2209) (ECON-1 fee ceiling fails closed) — the
+  latter is the `f5d1070fc` the soak and prod both run.
+- **Landed as T0 docs/test-only during Day 0:**
+  [#2210](https://github.com/carson-see/ArkovaCarson/pull/2210) (premortem + Day-0 artifacts),
+  [#2213](https://github.com/carson-see/ArkovaCarson/pull/2213) (cross-tenant E2E hardening).
+- **`SOAK_GATE_DISABLED` is now `false`.** A green Staging Soak Evidence Gate finally means the evidence
+  block was read — but that also means every prod-affecting PR opened from now on must carry a real one, and
+  T2/T3 PRs cannot get merge-grade evidence while the only clean rig is under a 7-day window.
 
 - **~73 PRs merged to main since 2026-08-02T12:00.** Two remain open: **#1864** and **#1813**, both
   **superseded, not defective** — #1864's outbound PII gate on `verify.ts` is already live on main via
@@ -265,7 +334,7 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 
 - ~~**No soak is running.** Founder ruling holds: no interim soaks for the open PR queue through the
   pen-test window; green-CI PRs merge and deploy now. Both rigs and loadgens remain up for the
-  post-pentest week-long consolidated soak.~~ **(superseded 2026-08-12)**
+  post-pentest week-long consolidated soak.~~ **(superseded 2026-08-12 — see the running soak above)**
 
 ### Jira / Confluence sync (2026-08-02/03, this session)
 
@@ -325,6 +394,13 @@ findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDI
 
 `gcloud` on the dev Mac needs `CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14`; the
 bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
+
+_Last refreshed: 2026-08-19 by Claude Opus 5 (chain-pair soak standup) — `### Soaks` block updated;
+7-day-window-close and new-soak claims verified live against gcloud (`run revisions describe`,
+`run services describe`, `compute instances describe`, `logging read`), Supabase MCP
+(`execute_sql`, `staging-honesty-preflight.ts` output), and a direct `/health` + `/jobs/refresh-treasury-cache`
+probe on revision `arkova-worker-fullsoak-2026-08-staging-00022-suy` — not asserted from prior-session
+prose. Rest of `## Now` unchanged from the 2026-08-18 refresh._
 
 ---
 
