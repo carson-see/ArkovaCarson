@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-08-20-WAVE2",
+  "created_at": "2026-08-20T16:17:00Z",
+  "created_by": "claude-agent-wave2-standup",
+  "release_owner": "Carson",
+  "approval_status": "pending",
+  "approval_actor": null,
+  "approval_time": null,
+  "approval_note": "Founder approved the WAVE PLAN and wave grouping 2026-08-20 (docs/staging/wave-plan-2026-08-20.md, Wave 2 section: '12h' worker T2 union A) with the explicit standard 'SAME standards (in regards to quality) as the 7 day soak — no hollow soaks.' This manifest centralizes the soak-in-progress evidence for that approved wave. approval_status stays 'pending' until Carson/RTE reviews the matured 12h soak and its per-PR driver results in docs/staging/wave2-2026-08/soak-start-2026-08-20.md and explicitly approves readiness — the wave-plan approval authorized STANDING UP this soak, not merge readiness.",
+  "train_launch_sha": "6ace61c37370028581bd82e935b6c0bec627bc44",
+  "target_main_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+  "allowed_base_shas": [
+    "6b4847c0b257cfb28085afdf6570971493bf4c85"
+  ],
+  "covered_main_shas": [
+    "6b4847c0b257cfb28085afdf6570971493bf4c85"
+  ],
+  "included_prs": [
+    {
+      "number": 2258,
+      "head_sha": "01e92774b6376718e31970fc5cbed35ec6e628fa",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "carson-see",
+      "ci_summary": "Head verified live via gh pr view at stand-up (matches task instruction exactly). Merged cleanly into rc/wave2-2026-08, zero conflicts.",
+      "rollback_note": "Code-only worker change (services/worker/src/utils/sentry.ts, sentry-extra-scrub.test.ts, sentry.test.ts, agents.md); no migration to reverse. Revert the PR and redeploy.",
+      "migration_files": []
+    },
+    {
+      "number": 2270,
+      "head_sha": "d1fc1a256709dfa6306dbf700a51984b808854a1",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T1",
+      "owner": "carson-see",
+      "ci_summary": "Head verified live via gh pr view at stand-up. Merged cleanly, auto-merged sentry.ts/sentry.test.ts/agents.md with #2258 (wave plan's own 'three-way sentry co-merge already verified clean' claim confirmed: PROD_SERVICE_NAME appears exactly once in the merged tree).",
+      "rollback_note": "Code-only worker change; no migration to reverse. Revert the PR and redeploy.",
+      "migration_files": []
+    },
+    {
+      "number": 2254,
+      "head_sha": "81d76ae8a908c4ea281deeca2ab4721fefb1f8bf",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "carson-see",
+      "ci_summary": "Head verified live via gh pr view at stand-up. Merged cleanly, zero conflicts.",
+      "rollback_note": "Code-only worker change (jobs/pipelineThroughputMonitor.ts, jobs/db-health-monitor.ts); no migration to reverse. Revert the PR and redeploy.",
+      "migration_files": []
+    },
+    {
+      "number": 2233,
+      "head_sha": "1d1ab20a4a0ee18603716c231da4c3aac0b7e76e",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "carson-see",
+      "ci_summary": "Head verified live via gh pr view at stand-up. Merged cleanly, auto-merged docs/reference/ENV.md, jobs/agents.md, utils/agents.md.",
+      "rollback_note": "Code-only worker change (routes/cron.ts, routes/ingestionResponse.ts, jobs/{openStatesFetcher,usptoFetcher,federalRegisterFetcher}.ts, config.ts); no migration to reverse. Revert the PR and redeploy.",
+      "migration_files": []
+    },
+    {
+      "number": 2267,
+      "head_sha": "43716e59cfc73174399d7ddc619b1f2ae188077a",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "carson-see",
+      "ci_summary": "Head verified live via gh pr view at stand-up. Merged cleanly, auto-merged utils/agents.md.",
+      "rollback_note": "Code-only worker change (new utils/utf16-truncate.ts + call-site updates across api/v1, webhooks, lib); no migration to reverse. Revert the PR and redeploy.",
+      "migration_files": []
+    },
+    {
+      "number": 2245,
+      "head_sha": "a6bd0763ddf9fa95c3ed317b7e233a26152bf5fe",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "carson-see",
+      "ci_summary": "Head verified live via gh pr view at stand-up. Merged cleanly, zero conflicts. Security fix (Drive OAuth scope minimization).",
+      "rollback_note": "Code-only worker change (integrations/oauth/drive.ts); no migration to reverse. Revert the PR and redeploy.",
+      "migration_files": []
+    },
+    {
+      "number": 2211,
+      "head_sha": "7143daebf55fe82e9676ce46fa894654e707ff5e",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "carson-see",
+      "ci_summary": "Head verified live via gh pr view at stand-up. Merged cleanly, auto-merged api/v1/agents.md (one in-place edit marking a prior 'Open follow-up' bullet Done — confirmed not a drop via scripts/ci/check-agents-md-append-only.ts).",
+      "rollback_note": "Code-only worker change (api/v1/orgVerification.ts); no migration to reverse. Revert the PR and redeploy.",
+      "migration_files": []
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade, brand-new dedicated rig (not the frozen fullsoak-2026-08 rig, not the shared arkova-staging migration-T3 rig, not the deleted ujtlwnoqfhtitcmsnrpq)",
+    "staging_api_base": "https://train-w2---arkova-worker-wave2-2026-08-staging-kvojbeutfa-uc.a.run.app",
+    "staging_url": "https://arkova-worker-wave2-2026-08-staging-270018525501.us-central1.run.app",
+    "cloud_run_service": "arkova-worker-wave2-2026-08-staging",
+    "revision": "arkova-worker-wave2-2026-08-staging-00001-qir",
+    "deploy_tag": "train-w2",
+    "image_digest": "sha256:38fbfb8b659340953ba2785d7d5d0d3b29c5ab0616d8640dc45113b2bdb08cac",
+    "deploy_build_log_id": "b5988a31-ad4c-4ed6-b4ce-adc37e66339f",
+    "supabase_project_ref": "tkciooifwxwnkoizgalp",
+    "preflight_result": "environment_type=clean_mirror (all 7 checks passed: staging_only_rows, duplicate_names, duplicate_versions, known_artifacts, submitted_anchors, prod_divergence, prod_facts)"
+  },
+  "soak": {
+    "start": "2026-08-20T15:51:57Z",
+    "end": "2026-08-21T03:51:57Z",
+    "duration_hours": 12,
+    "harness_version": "scripts/staging/load-harness.ts@6ace61c37 + services/worker/scripts/wave2-driver-{sentry-scrub,sentry-cron-checkins,monitor-floors,truncation-boundaries,drive-oauth-scopes}.ts@6ace61c37",
+    "result": "in_progress",
+    "evidence_links": [
+      "docs/staging/wave2-2026-08/soak-start-2026-08-20.md",
+      "docs/staging/wave2-2026-08/load-harness-1.json"
+    ],
+    "expires_at": "2026-08-23T03:51:57Z"
+  },
+  "migration_plan": {
+    "order": [],
+    "order_note": "No migration files in any of the 7 wave 2 members — all are worker-code-only changes (verified: git diff origin/main HEAD --name-only | grep supabase/migrations/ returns nothing).",
+    "rollback_proof": "N/A — no schema change in this wave.",
+    "reapply_proof": "N/A — no schema change in this wave.",
+    "stop_conditions": [
+      "worker uptime < 12h at merge time (soak not matured)",
+      "any /api/health regression during the soak window",
+      "staging-honesty-preflight.ts reports a new divergence on this project",
+      "an ingestion route driver reveals a real 207/503-flag-unreadable defect not yet exercised",
+      "sustained load falls outside the 5k-10k req/hour band for an extended stretch with no relaunch"
+    ]
+  },
+  "exceptions": []
+}

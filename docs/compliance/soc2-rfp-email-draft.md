@@ -47,7 +47,7 @@ We're selecting a firm for a SOC 2 Type II **readiness** assessment for Arkova (
 - ~15 FTE; bootstrapped.
 - Cloud footprint: Vercel (frontend), Google Cloud Run (worker), Supabase (database, with RLS and `FORCE ROW LEVEL SECURITY` on every table), Cloudflare Workers (edge), GCP KMS for key custody.
 - Client-side processing boundary: documents never leave the user's device. Fingerprints + PII-stripped metadata are anchored to Bitcoin mainnet. This materially reduces audit scope — we're flagging so you scope accurately.
-- 1.41M+ anchored records in production; SOC 2 evidence already assembled at the level expected by Drata / Vanta / Hyperproof.
+- 3.48M+ anchored records in production; SOC 2 evidence already assembled at the level expected by Drata / Vanta / Hyperproof.
 
 **Engagement we want:**
 
@@ -131,7 +131,7 @@ Requesting a proposal for a SOC 2 Type II **readiness** assessment for Arkova (a
 - ~15 FTE; bootstrapped.
 - Cloud footprint: Vercel, Cloud Run, Supabase with RLS, Cloudflare Workers, GCP KMS.
 - Client-side processing boundary reduces audit scope.
-- 1.41M+ anchored records in production.
+- 3.48M+ anchored records in production.
 
 **Engagement:**
 

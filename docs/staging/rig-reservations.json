@@ -1,7 +1,7 @@
 {
   "_comment": "SCRUM-2906 R1 — parallel-rig reservation ledger (SCAFFOLD). Machine-checkable source of truth for which isolated staging rig is reserved to which rail/soak, so parallel sessions never double-book a Cloud Run service or a Supabase project (the real isolation boundary per CLAUDE.md 1.11A). Validate with: npx tsx scripts/staging/check-rig-reservations.ts docs/staging/rig-reservations.json. Rows with status='example' are ignored by the double-booking check and exist only to document the shape. Add a real row (status='active') in the SAME PR/session that stands up the rig; flip it to 'released' at teardown. This file is NOT auto-applied and stands up nothing.",
   "version": 1,
-  "updated": "2026-07-21T00:00:00Z",
+  "updated": "2026-08-21T19:24:30Z",
   "reservations": [
     {
       "reservation_id": "resv-EXAMPLE-0001",
@@ -19,10 +19,37 @@
       "worker_revision": null,
       "image_digest": null,
       "deploy_log_id": null,
-      "soak": { "start": null, "end": null },
+      "soak": {
+        "start": null,
+        "end": null
+      },
       "preflight_result": null,
       "owner": "RTE",
       "notes": "Scaffold example. status='example' is skipped by the double-booking check. Copy this shape for a real reservation and set status='active'."
+    },
+    {
+      "reservation_id": "resv-PR2314-FERPA-0001",
+      "status": "active",
+      "rail": "ferpa-directory-opt-out",
+      "tier": "T3",
+      "rig": {
+        "cloud_run_service": "arkova-worker-ferpa2314-staging",
+        "supabase_ref": "wjuelohtpklodpjklvqy",
+        "region": "us-central1",
+        "tag_url": "https://pr-2314---arkova-worker-ferpa2314-staging-kvojbeutfa-uc.a.run.app"
+      },
+      "pr": 2314,
+      "pr_head_sha": "93747a6aa451991476ab0b00d58c3fb0754f2e2d",
+      "worker_revision": "arkova-worker-ferpa2314-staging-00001-cit",
+      "image_digest": "sha256:be79097dc3fcf9b755d45ad301cd55abb28f33a8726226386fdcb8986e5ef518",
+      "deploy_log_id": null,
+      "soak": {
+        "start": "2026-08-21T19:24:30Z",
+        "end": "2026-08-23T19:24:30Z"
+      },
+      "preflight_result": "clean_mirror",
+      "owner": "RTE",
+      "notes": "FD-FERPA-1 / PR #2314. Isolated rig provisioned 2026-08-21 (USD 10/mo Supabase project) because every other rig was mid-soak or pointed at a deleted database. 0415 applied byte-exact (file md5 192e5797b9fc052ae0e8dbbeb3d4bd9a; get_public_anchor prosrc md5 8019d49a18fd142517b9445c70c002e7), ledger head numeric 0415. Preflight clean_mirror at the PR head. Stand-up: docs/staging/pr2314-ferpa-2026-08/soak-start-2026-08-21T1924Z.md. TEAR DOWN at window close."
     }
   ]
 }
