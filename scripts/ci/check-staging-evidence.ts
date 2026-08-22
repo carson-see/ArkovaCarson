@@ -1929,16 +1929,30 @@ function preflightResultErrors(body: string): string[] {
 
 /**
  * The closed set of `Preflight timestamp:` values that explicitly declare no
- * preflight reading exists for this window, optionally followed by a reason
- * after a dash or colon (`NOT RUN — rig provisioned 8 days before the clock`).
- * Deliberately small and whole-value anchored: a value that merely *talks
- * about* not running a preflight is not a sentinel and stays a hard error.
+ * preflight reading exists for this window. A literal set rather than one big
+ * alternation regex: the membership test is exact, and the set is readable as
+ * the policy it is. Deliberately small — a value that merely *talks about* not
+ * running a preflight is not a member and stays a hard error.
  */
-const PREFLIGHT_NOT_RUN_SENTINEL_RE =
-  /^(?:not[\s-]?run|no[\s-]?preflight|none|n\/a|n\.a\.?|na|not[\s-]?applicable)(?:\s*[—–:-]\s*\S[\s\S]*)?$/i;
+const PREFLIGHT_NOT_RUN_SENTINELS = new Set([
+  'not run', 'not-run', 'notrun',
+  'no preflight', 'no-preflight', 'nopreflight',
+  'none',
+  'n/a', 'na', 'n.a', 'n.a.',
+  'not applicable', 'not-applicable', 'notapplicable',
+]);
+
+/**
+ * An optional trailing reason: `NOT RUN — rig provisioned 8 days before the
+ * clock`, `N/A: no pre-clock sample`. A colon or em/en dash separates on its
+ * own; a plain hyphen must be preceded by whitespace so `NOT-RUN` is not
+ * mistaken for `NOT` plus a reason.
+ */
+const PREFLIGHT_REASON_SUFFIX_RE = /(?:\s+[-—–:]|[—–:])\s*\S[\s\S]*$/;
 
 function isPreflightNotRunSentinel(value: string): boolean {
-  return PREFLIGHT_NOT_RUN_SENTINEL_RE.test(value.trim());
+  const head = value.trim().replace(PREFLIGHT_REASON_SUFFIX_RE, '').trim().toLowerCase();
+  return PREFLIGHT_NOT_RUN_SENTINELS.has(head);
 }
 
 type PreflightTimestampStatus = 'ok' | 'not-run' | 'late' | 'unparseable';

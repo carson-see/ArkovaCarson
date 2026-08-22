@@ -3289,6 +3289,11 @@ ${opts.note ?? ''}`;
       '- Preflight timestamp: N/A',
       '- Preflight timestamp: not applicable - shared rig, no pre-clock sample',
       '- Preflight timestamp: no preflight',
+      // The reason splitter must not mistake the hyphen INSIDE `NOT-RUN` for a
+      // reason separator, and a colon separates without a leading space.
+      '- Preflight timestamp: NOT-RUN',
+      '- Preflight timestamp: NOT RUN: window closed before the preflight was wired',
+      '- Preflight timestamp: N/A — 2026-08-13 reading belongs to rig provisioning, not this soak',
     ])('accepts sentinel %s behind an approved note', (preflightTimestampLine) => {
       const r = run(t2Body({ preflightTimestampLine, note: REAL_APPROVER_NOTE }));
       expect(r.errors).toEqual([]);
