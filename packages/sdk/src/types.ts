@@ -14,7 +14,10 @@ export type WebhookEventType =
   | 'anchor.batch_secured'
   | 'credential.issued'
   | 'credential.verified'
-  | 'credential.status_changed';
+  | 'credential.status_changed'
+  // Advance warning: a SECURED record is inside its 7-day expiry window and has
+  // NOT expired yet. Distinct from `anchor.expired`, which fires after the fact.
+  | 'compliance.document_expiring';
 
 /** Webhook endpoint metadata (INT-09) */
 export interface WebhookEndpoint {

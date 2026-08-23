@@ -662,6 +662,7 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'credential.issued': 'A credential was issued by a verified organization.',
   'credential.verified': 'A document record was confirmed as secured through a verification request.',
   'credential.status_changed': 'A document record moved to a different status.',
+  'compliance.document_expiring': 'A secured document record is within seven days of its expiration date.',
 };
 
 // =============================================================================
