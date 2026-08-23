@@ -23,7 +23,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { REPO, GIT_BIN, getBaseRef, prBody as PR_BODY, prCommitsMsgs as PR_COMMITS_MSGS, hasLabel, LABELS } from './lib/ciContext.js';
+import { REPO, GIT_BIN, getBaseRef, prBody as PR_BODY, prCommitsMsgs, hasLabel, LABELS } from './lib/ciContext.js';
 
 const HANDOFF_PATH = resolve(REPO, 'HANDOFF.md');
 
@@ -234,7 +234,7 @@ function extractAddedLines(diff: string): { line: number; text: string }[] {
 }
 
 function checkArtifactExists(pattern: ClaimPattern): boolean {
-  const haystack = `${PR_BODY}\n${PR_COMMITS_MSGS}`;
+  const haystack = `${PR_BODY}\n${prCommitsMsgs()}`;
   return pattern.artifactPatterns.some((re) => re.test(haystack));
 }
 
