@@ -527,6 +527,19 @@ next one added must inherit the token instead of having to remember it.
 one, and `fetchLiveLabels()` now emits a non-fatal `::warning` when the live fetch fails (silent for
 a genuine non-PR context, so push builds do not cry wolf).
 
+## `merge-authority.yml` runs the resolved local `tsx` binary (2026-08-23, GH #2396)
+
+`merge-authority.yml` was the last workflow still invoking `npx tsx`. SonarCloud attributes a
+pre-existing finding to any PR that *touches the file at all* (not just the offending line), so the
+`actions/checkout` 7.0.0 -> 7.0.1 bump surfaced `githubactions:S6505` (`npx` can install packages
+on-demand and run their lifecycle scripts) and `githubactions:S8543` (pin an exact version) at
+`merge-authority.yml:48` and dropped the PR's `new_security_rating` to C, failing the required
+`SonarCloud Code Analysis` check. The job already runs `npm ci --ignore-scripts` two steps earlier
+and `tsx` is a root devDependency pinned to an exact version, so `node_modules/.bin/tsx` is
+deterministic and clears both rules with no suppression. Same fix already applied in `ci.yml`,
+`staging-evidence.yml` and `migration-drift.yml` — this closes the last `npx tsx` call site in a
+workflow that runs on every PR.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails

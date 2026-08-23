@@ -132,9 +132,16 @@ function assertWorkflowContract(workflow: string): void {
   ).toContain(bodyDelimiterVarName);
 
   const livePrIndex = workflow.indexOf(livePrStep);
-  const checkoutIndex = workflow.indexOf(
-    "uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+  // Locate the checkout by its ACTION REFERENCE, never by a hardcoded action
+  // SHA: pinning the literal `actions/checkout@<sha>` here made this contract
+  // test break on every Dependabot pin bump (GH #2396, v7.0.0 -> v7.0.1, turned
+  // this lookup into -1 and failed the required `Tests` check on a PR that
+  // changed nothing about the contract being asserted). The assertion below
+  // still fails closed if the checkout step is removed outright.
+  const checkoutUses = /^(?: {6}- | {8})uses:\s*actions\/checkout@[^\s#]+/mu.exec(
+    workflow,
   );
+  const checkoutIndex = checkoutUses ? checkoutUses.index : -1;
   expect(
     livePrIndex,
     "the live_pr step must exist before the checkout step",
@@ -334,13 +341,19 @@ describe("staging-evidence workflow live-state contract (SCRUM-3026)", () => {
 
   it("rejects an anchored checkout reused through a step alias", () => {
     const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    // Read the real checkout line out of the workflow instead of hardcoding the
+    // pinned action SHA — see the comment in assertWorkflowContract (GH #2396).
     const checkoutLine =
-      "      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0";
+      /^ {6}- uses: actions\/checkout@.*$/mu.exec(workflow)?.[0] ?? "";
+    expect(
+      checkoutLine,
+      "staging-evidence must keep a root `- uses: actions/checkout@…` step for this mutation to be meaningful",
+    ).not.toBe("");
     const anchored = workflow.replace(
       checkoutLine,
       [
         "      - &staging_checkout",
-        "        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0",
+        checkoutLine.replace(/^ {6}- /u, "        "),
       ].join("\n"),
     );
     expect(anchored).not.toBe(workflow);
