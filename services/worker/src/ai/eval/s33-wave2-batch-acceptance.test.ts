@@ -248,7 +248,7 @@ function loadSnapshotFixture(): Readonly<{
     defaultRawDiff,
     cleanup: () => {
       gitRun(trustedMainRoot, ['worktree', 'remove', '--force', candidateRoot]);
-      rmSync(fixtureRoot, { recursive: true, force: true });
+      rmSync(fixtureRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     },
   };
 }

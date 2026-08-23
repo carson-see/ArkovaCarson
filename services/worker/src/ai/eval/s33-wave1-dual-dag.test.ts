@@ -87,7 +87,7 @@ const REVISION12_CHANGED_PATHS = [
 ];
 
 afterEach(() => {
-  while (roots.length > 0) rmSync(roots.pop()!, { force: true, recursive: true });
+  while (roots.length > 0) rmSync(roots.pop()!, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
 });
 
 function sha256(value: string | Uint8Array): string {
