@@ -8,6 +8,16 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// usptoFetcher.ts imports the typed `config` export (usptoBulkTsvUrl,
+// SCRUM-1258), and config.ts validates required env at import time — without
+// this mock the whole suite dies in loadConfig() before a single test runs.
+// Same pattern as every other jobs/ test; `usptoBulkTsvUrl` is deliberately
+// left undefined to match the production default (BUG-023: no bulk source),
+// and every download-path test passes `sourceUrl` explicitly.
+vi.mock('../config.js', () => ({
+  config: { logLevel: 'info', nodeEnv: 'test' },
+}));
+
 const { fetchUsptoPAtents, fetchWithConnectTimeout } = await import('./usptoFetcher.js');
 
 /**
