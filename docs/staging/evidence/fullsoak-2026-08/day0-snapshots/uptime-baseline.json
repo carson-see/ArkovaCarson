@@ -1,0 +1,9 @@
+{
+  "captured_at": "2026-08-12T15:18:00Z",
+  "rig_service": "arkova-worker-fullsoak-2026-08-staging",
+  "rig_revision": "arkova-worker-fullsoak-2026-08-staging-00013-mrw",
+  "rig_uptime_seconds": 501,
+  "samples": 5,
+  "sampling_note": "max uptime across 5 samples; Cloud Run may serve /health from any live instance, so max tracks the oldest instance rather than a scaled-out one",
+  "prod_uptime_seconds_informational": "7137"
+}

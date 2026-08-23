@@ -91,6 +91,24 @@ export interface RunLeaseSpec {
    * slower of the two is the only safe reading.
    */
   readonly slowestRecordedCadenceMs: number;
+  /**
+   * Hard deadline on the run BODY (F-D0-5, fullsoak 2026-08-12). The TTL
+   * bounds how long a DEAD holder blocks the job, but a hung-but-ALIVE run is
+   * outside its reach: the heartbeat below renews the lease on schedule for as
+   * long as the event loop turns, so a body parked on a single await — the
+   * observed incident was a provider response whose body never arrived — holds
+   * the lease forever, and `withRunLease`'s `finally` (the only release path)
+   * is never reached. `maxRunMs` is the bound the TTL cannot be: when it
+   * expires, the heartbeat stops, the lease is released, the in-process guard
+   * is freed, and the caller gets a typed error instead of silence.
+   *
+   * Floor: the TTL (a body bound below the TTL would add cutoff-risk without
+   * adding recovery — a crashed holder is already TTL-bounded). It must stay
+   * comfortably above the job's worst HEALTHY run, because the deadline
+   * abandons the body: the abandoned run keeps executing detached (nothing can
+   * kill a promise), it just no longer holds the lease.
+   */
+  readonly maxRunMs: number;
 }
 
 /**
@@ -108,6 +126,10 @@ export const PUBLIC_RECORD_ANCHOR_RUN_LEASE: RunLeaseSpec = {
   ttlMs: 45 * MINUTES,
   label: 'public-record anchoring',
   slowestRecordedCadenceMs: 30 * MINUTES,
+  // Healthy runs ~13 min; degraded runs are documented to outlive the TTL
+  // (see renewRunLease). 2× TTL leaves that headroom while still recovering
+  // from a hung run within one missed-and-a-half cadence window.
+  maxRunMs: 90 * MINUTES,
 };
 
 /**
@@ -135,6 +157,12 @@ export const BATCH_ANCHOR_RUN_LEASE: RunLeaseSpec = {
   ttlMs: 55 * MINUTES,
   label: 'batch anchoring',
   slowestRecordedCadenceMs: 30 * MINUTES,
+  // The signing job gets the LONGEST body deadline, mirroring its TTL
+  // asymmetry: cutting off a run that is mid-signing and releasing its lease
+  // is the dangerous direction (the txid journal — not the lease — is what
+  // makes even that safe against a double broadcast), while a hung run only
+  // defers PENDING work. 2× TTL.
+  maxRunMs: 110 * MINUTES,
 };
 
 /**
@@ -161,6 +189,14 @@ export const CHECK_CONFIRMATIONS_RUN_LEASE: RunLeaseSpec = {
   ttlMs: 35 * MINUTES,
   label: 'confirmation check',
   slowestRecordedCadenceMs: 30 * MINUTES,
+  // The TIGHTEST body deadline of the three, for the same reason it has the
+  // shortest TTL: a stuck run lags SECURED promotion for every customer —
+  // the F-D0-5 incident held it for 35+ minutes with no recovery path — while
+  // this job's chain reads are idempotent and its promotion goes through the
+  // drain RPC, so an abandoned body costs duplicated reads, not money. Worst
+  // healthy run is ~12 min (100 tx lookups + capped drain iterations), so
+  // 45 min still clears it with ~4× headroom.
+  maxRunMs: 45 * MINUTES,
 };
 
 /**
@@ -199,6 +235,9 @@ export const DRIVE_SUBSCRIPTION_RENEWAL_RUN_LEASE: RunLeaseSpec = {
   ttlMs: 50 * MINUTES,
   label: 'Drive subscription renewal',
   slowestRecordedCadenceMs: 60 * MINUTES,
+  // A renewal sweep completes in seconds to low minutes; one hour recovers a
+  // hung sweep within its own hourly cadence while clearing the TTL floor.
+  maxRunMs: 60 * MINUTES,
 };
 
 /**
@@ -517,6 +556,99 @@ export type RunLeaseOutcome<T> =
  */
 const inFlight = new Set<string>();
 
+/**
+ * Thrown when a run body exceeds its `maxRunMs` deadline (F-D0-5).
+ *
+ * A distinct type, not a bare Error, because the two questions a caller asks
+ * are different: "did my work fail?" versus "was my work cut off because it
+ * hung?". The second is an operational signal — it means a run parked long
+ * enough to have blocked its job on every instance — and callers that convert
+ * job failures into HTTP responses should be able to say so specifically.
+ */
+export class RunLeaseBodyTimeoutError extends Error {
+  constructor(
+    readonly lease: string,
+    readonly maxRunMs: number,
+  ) {
+    super(`Run for '${lease}' exceeded its ${maxRunMs}ms body deadline and was abandoned`);
+    this.name = 'RunLeaseBodyTimeoutError';
+  }
+}
+
+/**
+ * Consecutive lease-refused skips per lease id, with the time of the first
+ * skip in the current streak.
+ *
+ * F-D0-2/F-D0-5: ONE skip is unremarkable — it is what healthy overlap looks
+ * like, and this job logs it at info. A streak that outlives a full TTL is
+ * not: the TTL should have expired the holder by then, so continued refusal
+ * means an ACTIVE heartbeat is renewing a run that never ends. That is the
+ * incident's exact signature, and it is what earns a warn.
+ */
+const skipStreaks = new Map<string, { count: number; firstSkipAtMs: number }>();
+
+/** Test seam — module state must not leak between test files. */
+export function resetRunLeaseSkipTrackingForTests(): void {
+  skipStreaks.clear();
+}
+
+/**
+ * Why a run was skipped. Both count toward the SAME streak, and that is the
+ * point: during the F-D0-5 incident the instance holding the hung run answered
+ * every forced POST from the `in-process` branch, never the `lease-held` one.
+ * Tracking only the latter would leave the instance operators were actually
+ * probing as the one instance that never warns.
+ */
+type RunLeaseSkipReason = 'in-process' | 'lease-held';
+
+const SKIP_MESSAGES: Record<RunLeaseSkipReason, string> = {
+  'in-process': 'Run skipped — already in progress on this instance',
+  'lease-held': 'Run skipped — another instance holds the run lease',
+};
+
+/**
+ * Records a skipped run and warns when the streak has outlived a full TTL.
+ *
+ * One skip is unremarkable — it is what healthy overlap looks like. A streak
+ * spanning more than a full TTL is not: by then the TTL should have expired a
+ * dead holder, so continued refusal means an ACTIVE run is renewing without
+ * finishing. That is the incident's signature, and it is what earns a warn.
+ */
+function recordRunLeaseSkip(
+  spec: RunLeaseSpec,
+  reason: RunLeaseSkipReason,
+  holder?: string,
+): number {
+  const nowMs = Date.now();
+  const previous = skipStreaks.get(spec.leaseId);
+  const streak = previous
+    ? { count: previous.count + 1, firstSkipAtMs: previous.firstSkipAtMs }
+    : { count: 1, firstSkipAtMs: nowMs };
+  skipStreaks.set(spec.leaseId, streak);
+
+  const blockedForMs = nowMs - streak.firstSkipAtMs;
+  if (blockedForMs > spec.ttlMs) {
+    logger.warn(
+      {
+        holder,
+        lease: spec.label,
+        reason,
+        consecutiveSkips: streak.count,
+        blockedForMs,
+        ttlMs: spec.ttlMs,
+        maxRunMs: spec.maxRunMs,
+      },
+      'Run lease has been continuously unavailable for longer than a full TTL — the holder is renewing but not finishing; work for this job is not progressing',
+    );
+  } else {
+    logger.info(
+      { holder, lease: spec.label, reason, consecutiveSkips: streak.count },
+      SKIP_MESSAGES[reason],
+    );
+  }
+  return streak.count;
+}
+
 export interface WithRunLeaseOptions extends RunLeaseSpec {
   client: SupabaseClient;
 }
@@ -527,6 +659,14 @@ export interface WithRunLeaseOptions extends RunLeaseSpec {
  * The `{ acquired }` discriminant is deliberate: a skipped run is NOT the same
  * as an empty one, and each caller has to say what its own "did nothing" value
  * is rather than inheriting a silent default.
+ *
+ * F-D0-5: the body is raced against `spec.maxRunMs`. The lease alone cannot
+ * bound a hung-but-alive run — the heartbeat renews it for as long as the
+ * event loop turns — so the deadline is what makes the lease reclaimable at
+ * all in that state. On expiry this throws {@link RunLeaseBodyTimeoutError}
+ * after stopping the heartbeat, releasing the lease and freeing the
+ * in-process guard, so the very next tick (on this instance or any other) can
+ * proceed.
  */
 export async function withRunLease<T>(
   options: WithRunLeaseOptions,
@@ -535,7 +675,7 @@ export async function withRunLease<T>(
   const { client, ...spec } = options;
 
   if (inFlight.has(spec.leaseId)) {
-    logger.info({ lease: spec.label }, 'Run skipped — already in progress on this instance');
+    recordRunLeaseSkip(spec, 'in-process');
     return { acquired: false };
   }
   // Claimed SYNCHRONOUSLY, before the first await — exactly where the
@@ -551,14 +691,12 @@ export async function withRunLease<T>(
   try {
     claimed = await acquireRunLease(client, spec, holder);
     if (!claimed) {
-      logger.info(
-        { holder, lease: spec.label },
-        'Run skipped — another instance holds the run lease',
-      );
+      recordRunLeaseSkip(spec, 'lease-held', holder);
       return { acquired: false };
     }
+    skipStreaks.delete(spec.leaseId);
     heartbeat = startRunLeaseHeartbeat(client, spec, holder);
-    return { acquired: true, result: await body() };
+    return { acquired: true, result: await runBodyWithDeadline(spec, holder, body) };
   } finally {
     if (heartbeat) clearInterval(heartbeat);
     inFlight.delete(spec.leaseId);
@@ -566,6 +704,74 @@ export async function withRunLease<T>(
     // an UPDATE that can never match (we never wrote our holder), logging a
     // false "this run overran its TTL" against a lease we never held.
     if (claimed) await releaseRunLease(client, spec, holder);
+  }
+}
+
+/**
+ * Races the run body against its `maxRunMs` deadline.
+ *
+ * IT DOES NOT KILL THE BODY — nothing can cancel a promise in JS. It ABANDONS
+ * it: the parked run keeps whatever it is doing, detached, while this function
+ * unwinds so `withRunLease`'s `finally` can release the lease. That asymmetry
+ * is the whole point. The failure mode being fixed is not "a run does work
+ * twice", it is "a run that will never finish holds a global lease forever and
+ * disables the job for every tenant". A duplicate drain is idempotent; an
+ * indefinitely blocked promotion pipeline is not recoverable without a
+ * redeploy.
+ *
+ * The abandoned body is OBSERVED (`.then(…, …)`) so that a late rejection —
+ * the socket finally dying twenty minutes on — cannot surface as an unhandled
+ * rejection and crash the worker.
+ */
+async function runBodyWithDeadline<T>(
+  spec: RunLeaseSpec,
+  holder: string,
+  body: () => Promise<T>,
+): Promise<T> {
+  const running = body();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const startedAtMs = Date.now();
+
+  try {
+    return await Promise.race([
+      running,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          // Attach the late-settlement observers BEFORE rejecting, so there is
+          // no window in which the abandoned promise is unobserved.
+          running.then(
+            () => {
+              logger.warn(
+                { holder, lease: spec.label, maxRunMs: spec.maxRunMs },
+                'Abandoned run completed after its deadline — its result was discarded and its lease had already been released',
+              );
+            },
+            (error: unknown) => {
+              logger.warn(
+                { holder, lease: spec.label, maxRunMs: spec.maxRunMs, error },
+                'Abandoned run failed after its deadline — the lease had already been released',
+              );
+            },
+          );
+          logger.error(
+            {
+              holder,
+              lease: spec.label,
+              maxRunMs: spec.maxRunMs,
+              ttlMs: spec.ttlMs,
+              elapsedMs: Date.now() - startedAtMs,
+            },
+            'Run exceeded its body deadline and was abandoned — releasing the lease so the next tick can proceed. A run that hangs past this bound is renewing its lease without making progress; investigate the job for an unbounded await',
+          );
+          reject(new RunLeaseBodyTimeoutError(spec.label, spec.maxRunMs));
+        }, spec.maxRunMs);
+        // A pending deadline must never keep the worker process alive, exactly
+        // like the heartbeat it complements.
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

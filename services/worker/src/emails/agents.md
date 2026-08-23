@@ -15,3 +15,4 @@ Individual email template modules. Each file builds a specific transactional ema
 - New email templates should import `esc`, `SHARED_STYLES`, `wrapTemplate`, and `formatUtc` from `_template.ts`.
 - All sends go through `email/sender.ts` — never call Resend directly from template files.
 - No document content or PII beyond email address in email bodies.
+- No banned §1.3 terminology in subjects or bodies. **CI-enforced since 2026-08-20:** this directory is a `WORKER_COPY_ROOT` in `scripts/check-copy-terms.ts` (`npm run lint:copy`); a copy-composing module placed OUTSIDE it (e.g. a digest under `jobs/`) is picked up by the content detector `isEmailCopyComposer`, so there is no path list to remember. See `scripts/agents.md` → "Worker-email scope".

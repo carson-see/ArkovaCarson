@@ -23,6 +23,46 @@
 -- After this seed, the preflight sees a clean migration ledger PLUS the new
 -- SUBMITTED anchor — nothing else is flagged by this seed.
 --
+-- DURABILITY — THE FIXTURE MUST SURVIVE THE RIG'S OWN CRONS (FD-SEED-1)
+-- ---------------------------------------------------------------------------
+-- Seeding a SUBMITTED anchor is not enough; it has to still BE one when the
+-- soak is judged. Three in-process jobs mutate SUBMITTED rows on every rig, and
+-- the fixture must be outside all of them. Two independent exclusions are
+-- required and they are NOT interchangeable:
+--
+--   | Mutator                        | Cadence | Predicate            | Exclusion        |
+--   |--------------------------------|---------|----------------------|------------------|
+--   | recover_stuck_broadcasts() 0379| */2     | chain_tx_id IS NULL  | chain_tx_id NOT NULL |
+--   | autoConfirmMockAnchors()       | */2     | legal_hold = false   | legal_hold = true    |
+--   | monitorStuckTransactions()     | */10    | legal_hold = false   | legal_hold = true    |
+--   | rebroadcastDroppedTransactions | 0 */6   | legal_hold = false   | legal_hold = true    |
+--
+-- `legal_hold = true` ALONE is insufficient. `0379_f3_recover_submitted_null_txid.sql`
+-- deliberately does not check legal_hold (its header explains why: recovery-to-PENDING
+-- is not a delete/revoke/supersede), so a SUBMITTED row with a NULL `chain_tx_id`
+-- crosses the 5-minute staleness threshold and the next */2 tick of
+-- `recover-stuck-broadcasts` (services/worker/src/routes/scheduled.ts, in-process,
+-- ALL environments) resets it to PENDING. That is FD-SEED-1: every rig seeded by the
+-- pre-fix version of this file lost its fixture ~7 minutes after provisioning, its
+-- provisioning-time `clean_mirror` pass silently expired, and preflight Check 5 read
+-- zero from then on. It voided TRAIN-6's first 48 h window on 2026-08-21. See
+-- docs/staging/findings/FD-SEED-1-baseline-fixture-self-reverts-in-7-minutes.md.
+--
+-- So the anchor below carries a SYNTHETIC 64-hex `chain_tx_id` that exists on no
+-- chain (two md5() halves of a self-describing string — deterministic, so re-runs
+-- stay idempotent, and obviously not a real txid in source). This is safe in both
+-- rig modes: mock rigs never look it up, and on a real-mode rig
+-- `checkSubmittedConfirmations` fetches it, gets a 404, and returns without
+-- promoting to SECURED. It is also the more CORRECT shape —
+-- machines/bitcoinAnchor.machine.ts INV-1b (submittedRequiresChainTx) states a
+-- SUBMITTED anchor with a null txid is unreachable through every modeled write
+-- path, so the pre-fix seed was manufacturing a state the state machine says
+-- cannot exist and 0379 is the net that cleans it up.
+--
+-- The post-condition DO block at the end of this file ENFORCES all of that
+-- in-transaction, so a rig can never be admitted with a fixture that is already
+-- doomed. It proves the structural predicate rather than waiting out a cron tick.
+--
 -- CONSTRAINT CHAIN (verified against 00000000000000_baseline_at_main_HEAD.sql)
 -- ---------------------------------------------------------------------------
 --   auth.users(id)               <- root; profiles.id FKs here (ON DELETE CASCADE)
@@ -45,8 +85,15 @@
 -- ----------
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/staging/seed-baseline-fixture.sql
 -- or via the Supabase Management API read-write query endpoint as a service_role
--- caller. Provisioning wires this into scripts/staging/soak-rig.sh (and the
--- mirrored /tmp/soak-rig.sh recipe) after the schema replay + before deploy.
+-- caller. Provisioning wires this into scripts/staging/provision-isolated-rig.sh
+-- (Step 5/6) after the worker deploy and before the clean_mirror preflight. That
+-- script runs under `set -euo pipefail` via run_cmd, so the post-condition block
+-- below aborts provisioning rather than admitting a rig with a doomed fixture —
+-- no separate shell-side assertion is needed.
+--
+-- RE-RUNNING REPAIRS AN OLD RIG. The anchors ON CONFLICT clause backfills a NULL
+-- `chain_tx_id` and reinstates a fixture that 0379 already reclaimed to PENDING,
+-- so a rig seeded with the pre-fix file is fixed by running this file again.
 
 BEGIN;
 
@@ -158,12 +205,19 @@ ON CONFLICT (id) DO NOTHING;
 --      fingerprint character(64) NOT NULL, CHECK ~ '^[A-Fa-f0-9]{64}$'
 --      filename  NOT NULL, CHECK length 1..255, no control chars
 --      status    -> 'SUBMITTED' (allowed via service_role fast-path)
+--      chain_tx_id NOT NULL -> REQUIRED for durability, see the header. text
+--                  column, no format CHECK; the value is synthetic and unfindable
+--                  on-chain. Nothing in the repo treats it as a real receipt: the
+--                  row never reaches SECURED (legal_hold blocks the mock path,
+--                  a 404 blocks the real one), so no proof or receipt is derived
+--                  from it.
 --      file_size CHECK (NULL OR > 0)
 --    version_number defaults to 1 (satisfies anchors_lineage_root_is_v1 since
 --    parent_anchor_id is NULL).
 -- ---------------------------------------------------------------------------
 INSERT INTO public.anchors (
   id, user_id, org_id, filename, fingerprint, status,
+  chain_tx_id,
   file_size, file_mime, description, metadata, legal_hold, created_at
 ) VALUES (
   '5eed0000-0000-4000-8000-0000000000c1',
@@ -172,6 +226,11 @@ INSERT INTO public.anchors (
   'seed-fixture-baseline-anchor.pdf',
   'face1234face1234face1234face1234face1234face1234face1234face1234',
   'SUBMITTED',
+  -- FD-SEED-1: 64 hex chars from two md5() halves. Deterministic (idempotent
+  -- re-runs), self-describing in source, and vanishingly unlikely to name a real
+  -- transaction. NOT NULL is what puts this row outside recover_stuck_broadcasts().
+  md5('arkova-seed-fixture-baseline-anchor-txid-hi')
+    || md5('arkova-seed-fixture-baseline-anchor-txid-lo'),
   4096,
   'application/pdf',
   'Baseline soak-rig fixture anchor — synthetic; satisfies preflight Check 5 (submitted_anchors).',
@@ -179,8 +238,27 @@ INSERT INTO public.anchors (
   true,
   NOW()
 )
+-- Re-running this file REPAIRS a rig seeded with the pre-FD-SEED-1 version:
+--   * chain_tx_id  backfilled only when absent, so a row that somehow acquired a
+--                  real txid keeps it (COALESCE reads the pre-UPDATE row).
+--   * status       reinstated to SUBMITTED only when the row is PENDING *and*
+--                  carries no txid of its own — i.e. exactly the shape 0379
+--                  leaves behind. A row holding a real txid keeps its own status;
+--                  this clause never invents a submission that did not happen.
+--   * legal_hold   forced true, as before.
+-- All three are permitted because the transaction-local service_role claim set at
+-- the top takes protect_anchor_status_transition()'s fast-path; without it the
+-- trigger would reject both the status change and the chain-data write.
 ON CONFLICT (id) DO UPDATE
-SET legal_hold = true;
+SET legal_hold  = true,
+    chain_tx_id = COALESCE(anchors.chain_tx_id, EXCLUDED.chain_tx_id),
+    status      = CASE
+                    WHEN anchors.status = 'PENDING'
+                     AND COALESCE(anchors.chain_tx_id, EXCLUDED.chain_tx_id) = EXCLUDED.chain_tx_id
+                    THEN 'SUBMITTED'::public.anchor_status
+                    ELSE anchors.status
+                  END,
+    updated_at  = NOW();
 
 
 -- ---------------------------------------------------------------------------
@@ -212,9 +290,93 @@ ON CONFLICT (flag_key) DO UPDATE
 SET enabled = true,
     updated_at = NOW();
 
-COMMIT;
+-- ---------------------------------------------------------------------------
+-- POST-CONDITIONS — ENFORCED, NOT DOCUMENTED (FD-SEED-1).
+--
+-- The preflight reads Check 5 as a point-in-time count:
+--   select count(*) from anchors where status = 'SUBMITTED'   (head, count exact)
+-- which cannot distinguish "no fixture" from "fixture that evaporates in five
+-- minutes" — the pre-fix seed passed that check at provisioning and failed it
+-- seven minutes later. So this block proves the STRUCTURAL predicate instead,
+-- instantly and inside the seeding transaction: a row outside every mutator's
+-- WHERE clause cannot be taken, which is strictly stronger than observing that
+-- one cron tick happened not to take it.
+--
+-- Any RAISE here rolls the whole seed back and exits non-zero, which aborts
+-- provision-isolated-rig.sh under `set -euo pipefail` BEFORE the clean_mirror
+-- preflight can certify a rig whose fixture is already doomed.
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE
+  fixture_id CONSTANT uuid := '5eed0000-0000-4000-8000-0000000000c1';
+  fixture RECORD;
+  flag_enabled boolean;
+  reclaimable integer;
+BEGIN
+  SELECT a.status::text AS status, a.chain_tx_id, a.legal_hold, a.deleted_at
+    INTO fixture
+    FROM public.anchors a
+   WHERE a.id = fixture_id;
 
--- Post-conditions (informational; not executed as assertions here):
---   select count(*) from public.anchors where status = 'SUBMITTED';  -- >= 1
--- The preflight's exact query is:
---   select count(*) from anchors where status = 'SUBMITTED'  (head, count exact)
+  IF NOT FOUND THEN
+    RAISE EXCEPTION
+      'seed-baseline-fixture: anchor % is absent after seeding — preflight Check 5 (submitted_anchors) will read zero',
+      fixture_id;
+  END IF;
+
+  IF fixture.deleted_at IS NOT NULL OR fixture.status <> 'SUBMITTED' THEN
+    RAISE EXCEPTION
+      'seed-baseline-fixture: anchor % is status=% deleted_at=% — not a live SUBMITTED row, so preflight Check 5 will read zero',
+      fixture_id, fixture.status, fixture.deleted_at;
+  END IF;
+
+  -- The FD-SEED-1 condition itself. A NULL chain_tx_id here IS
+  -- recover_stuck_broadcasts()' reclaim predicate (0379); the row would revert to
+  -- PENDING within ~7 minutes and take the rig's clean_mirror standing with it.
+  IF fixture.chain_tx_id IS NULL THEN
+    RAISE EXCEPTION
+      'seed-baseline-fixture: anchor % has a NULL chain_tx_id — recover_stuck_broadcasts() (migration 0379) resets exactly this shape to PENDING on its next */2 tick (FD-SEED-1). legal_hold does NOT protect it; 0379 does not check legal_hold.',
+      fixture_id;
+  END IF;
+
+  -- The second, independent exclusion: without it a USE_MOCKS rig's
+  -- autoConfirmMockAnchors() promotes the fixture to SECURED instead.
+  IF fixture.legal_hold IS NOT TRUE THEN
+    RAISE EXCEPTION
+      'seed-baseline-fixture: anchor % is not on legal hold — autoConfirmMockAnchors() / monitorStuckTransactions() / rebroadcastDroppedTransactions() all select legal_hold = false and would consume it',
+      fixture_id;
+  END IF;
+
+  -- ENABLE_VERIFICATION_API: without an enabled row, get_flag fails closed and
+  -- every /api/v1 request 503s before reaching application code, so any /api/v1
+  -- evidence the soak produces is worthless while the rig still reports healthy.
+  SELECT f.enabled INTO flag_enabled
+    FROM public.switchboard_flags f
+   WHERE f.flag_key = 'ENABLE_VERIFICATION_API';
+  IF flag_enabled IS NOT TRUE THEN
+    RAISE EXCEPTION
+      'seed-baseline-fixture: ENABLE_VERIFICATION_API is % — /api/v1 would be dark on this rig and its evidence worthless',
+      COALESCE(flag_enabled::text, 'absent');
+  END IF;
+
+  -- Informational only: other rows on this rig may legitimately be mid-flight, so
+  -- this must not fail the seed. It is reported so an operator reading the
+  -- provisioning log knows whether the reclaimer has anything else to take.
+  SELECT count(*) INTO reclaimable
+    FROM public.anchors a
+   WHERE a.status IN ('BROADCASTING', 'SUBMITTED')
+     AND a.deleted_at IS NULL
+     AND a.chain_tx_id IS NULL;
+  IF reclaimable > 0 THEN
+    RAISE NOTICE
+      'seed-baseline-fixture: % other anchor(s) still match the 0379 reclaim predicate (the fixture is not among them)',
+      reclaimable;
+  END IF;
+
+  RAISE NOTICE
+    'seed-baseline-fixture: anchor % is SUBMITTED, chain_tx_id NOT NULL, legal_hold true — durable against every scheduled mutator',
+    fixture_id;
+END;
+$$;
+
+COMMIT;

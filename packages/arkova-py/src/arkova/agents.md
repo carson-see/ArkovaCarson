@@ -37,6 +37,15 @@ Python SDK for the Arkova Verification API v2. Sync + async clients using `httpx
     test fails — update the set and the model together, in that PR. Do not
     regenerate these from a captured payload: a sample proves what one record
     contained on one day, which is how every field above got here.
+  - Known non-crash drift, audited 2026-08-15 and deliberately NOT changed in
+    2.2.1 (different endpoints, outside the P1 blast radius — see the PR body for
+    BUG-2026-08-12-007): `AnchorReceipt` declares `chain_tx_id` (never emitted)
+    and omits `record_uri` (always emitted); `RecordDetail` omits `type` and
+    `metadata` and declares `issuer_name` (never emitted by `mapAnchorDetail`);
+    `OrganizationDetail` declares `industry_tag` / `org_type` / `location` /
+    `logo_url`, none of which the v2 org-detail route emits;
+    `BulkAnchorRowError.field` is never populated. All are `extra="allow"`-safe
+    (they parse; they just read `None` forever).
 - **`errors.py`** — `ArkovaError` exception with `status_code`, `code` (machine-readable error code), `problem` (RFC 7807), and `retry_after`.
 - **`proofs.py`** — DEV-02 / S3-B standalone OFFLINE proof-bundle verifier:
   `verify_bundle(packet, node=None, signed_bundle=None, published_keys=None,

@@ -42,6 +42,13 @@ vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../config.js', () => ({ config: mockConfig }));
 vi.mock('../utils/db.js', () => ({ db: { from: dbFrom, rpc: mockRpc } }));
 vi.mock('../utils/verifyCache.js', () => ({ invalidateVerificationCache: vi.fn() }));
+// `utils/sentry.js` initializes the real @sentry/node SDK at import time. This
+// suite never reaches the tip-height alert path, and loading the SDK to prove
+// a lease is held is both pointless and (on a workspace without the optional
+// native profiling dep installed) an import-time hard failure that hides every
+// assertion in this file behind an unrelated error. Mocked, as in
+// check-confirmations.test.ts.
+vi.mock('../utils/sentry.js', () => ({ captureConfirmationTipHeightUnavailable: vi.fn() }));
 vi.mock('../webhooks/delivery.js', () => ({ dispatchWebhookEvent: vi.fn() }));
 vi.mock('../email/index.js', () => ({ sendEmail: vi.fn(), buildAnchorSecuredEmail: vi.fn() }));
 vi.mock('../ai/embeddings.js', () => ({ generateAndStoreEmbedding: vi.fn() }));
@@ -52,7 +59,14 @@ vi.mock('../middleware/aiFeatureGate.js', () => ({
 
 import { checkSubmittedConfirmations } from './check-confirmations.js';
 
-const NOTHING_DONE = { checked: 0, confirmed: 0 };
+/**
+ * F-D0-2 (fullsoak 2026-08-12): a lease-blocked run must be DISTINGUISHABLE
+ * from an empty one. During the F-D0-5 incident, 31 forced POSTs over 29
+ * minutes all returned the identical `{"checked":0,"confirmed":0}` body while
+ * promotion was silently disabled — operators could not tell "nothing to do"
+ * from "blocked behind a hung holder". `skipped` carries that signal.
+ */
+const LEASE_BLOCKED = { checked: 0, confirmed: 0, skipped: 'run-lease-held' };
 
 function heldLease() {
   return createRunLeaseStore(CHECK_CONFIRMATIONS_RUN_LEASE, {
@@ -72,7 +86,7 @@ describe('confirmation check is guarded by the shared run lease', () => {
     const held = heldLease();
     leaseStores.current = held.from;
 
-    expect(await checkSubmittedConfirmations()).toEqual(NOTHING_DONE);
+    expect(await checkSubmittedConfirmations()).toEqual(LEASE_BLOCKED);
     expect(held.current()?.payload.holder).toBe('other-instance');
   });
 
@@ -87,7 +101,7 @@ describe('confirmation check is guarded by the shared run lease', () => {
     leaseStores.current = held.from;
     mockConfig.useMocks = true;
 
-    expect(await checkSubmittedConfirmations()).toEqual(NOTHING_DONE);
+    expect(await checkSubmittedConfirmations()).toEqual(LEASE_BLOCKED);
     // `autoConfirmMockAnchors` reads `anchors` first, and that read throws in
     // this suite — so reaching it at all would fail loudly rather than silently.
     expect(dbFrom).not.toHaveBeenCalledWith('anchors');
@@ -99,7 +113,7 @@ describe('confirmation check is guarded by the shared run lease', () => {
     mockConfig.useMocks = false;
     mockConfig.nodeEnv = 'production';
 
-    expect(await checkSubmittedConfirmations()).toEqual(NOTHING_DONE);
+    expect(await checkSubmittedConfirmations()).toEqual(LEASE_BLOCKED);
     expect(dbFrom).not.toHaveBeenCalledWith('anchors');
   });
 
@@ -119,7 +133,7 @@ describe('confirmation check is guarded by the shared run lease', () => {
       throw new Error('lease store unreachable');
     };
 
-    expect(await checkSubmittedConfirmations()).toEqual(NOTHING_DONE);
+    expect(await checkSubmittedConfirmations()).toEqual(LEASE_BLOCKED);
     expect(dbFrom).not.toHaveBeenCalledWith('anchors');
   });
 });

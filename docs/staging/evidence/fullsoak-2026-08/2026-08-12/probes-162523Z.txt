@@ -1,0 +1,29 @@
+fullsoak-daily-probes — behavioural probe run
+run_ts           : 2026-08-12T16:25:23Z
+mode             : full (only P7)
+rig service      : https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app
+rig supabase ref : gnkuaywlpmsaezwvlvhk
+prod supabase ref: vzwyaatejekddvltxyye
+host             : Arkovas-Mac-mini.local
+git HEAD         : 550320dc8f7a48852177336c80999374b7e758b2
+mgmt SQL (reads) : available
+----------------------------------------------------------------------
+PASS  P7a  Probe API key minted through the real POST /api/v1/keys flow
+         expected: 200/201 + raw key returned once
+         observed: http 201, prefix=ak_live_5f0a
+FAIL  P7f  GET /api/v1/keys exposes an addressable key id (revoke/delete precondition)
+         expected: id present on list rows
+         observed: no — no id on any row; UI revoke/delete are keyed by an id the API never returns (keys.ts toPublicKey strips it)
+PASS  P7b  Live key with 'verify' scope is accepted
+         expected: http 200
+         observed: http 200
+PASS  P7c  Scope enforced: verify-only key refused on /api/v1/anchor
+         expected: 401/403
+         observed: http 403
+FAIL  P7d  REVOKED key is refused (CC6.8 daily assertion)
+         expected: 401/403 after revoke through the product surface
+         observed: UNREACHABLE — no key id is exposed by create or list, so PATCH/DELETE /api/v1/keys/:keyId cannot be addressed by any client. Probe key ak_live_5f0a left active.
+----------------------------------------------------------------------
+PASS=3 FAIL=2 SKIP=0
+DAILY_PROBES: FAIL
+artifact: /Volumes/Extreme/Arkova/_legacy/home-Arkova-2026-05-15/arkova-mvpcopy-main/docs/staging/evidence/fullsoak-2026-08/2026-08-12/probes-162523Z.txt

@@ -237,6 +237,15 @@
       "soak": "must-be-on",
       "why": "Queue reminder/digest behaviour — a cron surface the soak should observe across daily cycles."
     },
+    "ENABLE_QUEUE_DIGEST": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableQueueDigest (default false)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "QUEUE-07 daily org-admin review-queue digest (feat/queue-digest-default-on, draft T2). Previously absent from deploy-worker.yml entirely, so it resolved false via the config.ts code default and POST /jobs/queue-digest was a standing no-op — found by a read-only capability audit, not by this gate. Now true. Per-org enrollment is separately DEFAULT-ON (opt-out via an organization_rules row), so a soak should observe this cron path actually enumerating admins and sending mail across daily cycles, not just staying dark."
+    },
     "ENABLE_TREASURY_ALERTS": {
       "sources": ["env"],
       "resolvers": ["config.ts enableTreasuryAlerts (default true)"],
@@ -245,6 +254,15 @@
       "customerReachable": false,
       "soak": "must-be-on",
       "why": "Treasury/spend alerting. OFF, a treasury drain during a 7-day soak would go unannounced."
+    },
+    "ENABLE_PLATFORM_HEALTH_DIGEST": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enablePlatformHealthDigest (default true)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": false,
+      "soak": "must-be-on",
+      "why": "New platform-admin daily health digest (feat/platform-admin-daily-health-digest, draft T2). Internal-staff-only recipient (profiles.is_platform_admin), not customer-reachable. A soak should observe this new cron path (anchors-by-status, job_queue depth, batch flush, connector rollup, quota anomalies) assembling and sending without error across daily cycles."
     },
     "ENABLE_GRC_INTEGRATIONS": {
       "sources": ["env"],
@@ -399,6 +417,19 @@
       "customerReachable": true,
       "soak": "must-be-off",
       "why": "Standing founder directive (2026-08-01): Nessie stays OFF. Never plan or run work that activates it."
+    },
+    "ENABLE_NESSIE_QUERY": {
+      "sources": ["env"],
+      "resolvers": [
+        "config.ts enableNessieQuery (default false)",
+        "services/worker/src/middleware/nessieCapabilityGate.ts (503 nessie_disabled)",
+        "services/edge/src/mcp-server.ts nessieEnabled (ENABLE_NESSIE_QUERY === 'true')"
+      ],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "must-be-off",
+      "why": "BUG-008/027, CTO ruling R-1 STRENGTHENED (2026-08-12). Capability gate for /api/v1/nessie/query and the MCP nessie_query tool. Deliberately ENV-backed, not a switchboard_flags row: a capability disabled by standing founder directive must not be re-enablable by a DB write. Before this flag the route was mounted unconditionally and answered 200 {\"results\":[],\"count\":0}, so a permanently-disabled capability was indistinguishable from an empty result. Must stay OFF."
     },
     "ENABLE_DEMO_INJECTOR": {
       "sources": ["env"],

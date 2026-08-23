@@ -41,6 +41,9 @@ Two compliant shapes, both now in use:
 ## 2026-08-17 — Orphaned Export Lint now gates the Mergify queue
 
 `check-success = Orphaned Export Lint` was added to all three `.mergify.yml` queue rules' `merge_conditions` (s33-wave2-corpus, urgent, default). The `orphaned-export-lint` job (CTO ruling R14, fail-closed by design — `continue-on-error: false`) had run on every PR since 2026-07-28 but was never in `merge_conditions`, so it reported without blocking — the exact "new top-level job would not be in branch protection or those merge conditions, so it could go red while Mergify merged anyway" class this file already documents. Config-only; the lint script itself is untouched. This is DISTINCT from the CONDITIONAL-GO sub-decision B jobs (`Worker Build (deploy-parity)` / `Verifier Build`), which remain deliberately NON-REQUIRED pending Carson's required-flip — that ruling covers those two jobs only. Branch protection's required-check set is still a separate Carson/admin surface; only the in-repo Mergify layer changed. Contract test: `scripts/ci/mergify-orphaned-export-gate.test.ts`.
+## 2026-08-18 — python-sdk-tests now gates the Mergify queue
+
+`check-success = Python SDK Tests (packages/arkova-py)` was added to all three `.mergify.yml` queue rules' `merge_conditions` (s33-wave2-corpus, urgent, default), in the same PR that introduces the `python-sdk-tests` ci.yml job (BUG-2026-08-12-007). A new top-level job is not in branch protection or those merge conditions, so it could go red while Mergify merged anyway — the exact class this file already documents; landing the job without this wiring would have kept the arkova-py suite advisory-only. The job is deliberately UNCONDITIONAL (no job-level `if:`, no path filter — it runs on every PR run of ci.yml), so requiring it cannot deadlock non-SDK PRs on a never-reported check; an unreported check never satisfies `check-success`. Branch protection's required-check set is still a separate Carson/admin surface; only the in-repo Mergify layer changed. Contract test: `scripts/ci/mergify-python-sdk-gate.test.ts`.
 
 ## Files
 
@@ -50,7 +53,7 @@ issue comment), so a change to one of those can take effect outside the PR cycle
 
 | File | Trigger | Purpose |
 |------|---------|---------|
-| `ci.yml` | `push` (main/staging/develop) + `pull_request` | The main gate. 23 jobs: secret-scan, dependency-scan (also hosts the agents.md append-only gate), sonatype-sca, policy-lints, orphaned-export-lint, tdd-enforcement, typecheck-lint, test, ai-eval-gate, tla-verify, migration-check, e2e, lighthouse, sbom-generation, worker-build-parity, verifier-build, evidence-identity-report, anti-hollow-soak-report. |
+| `ci.yml` | `push` (main/staging/develop) + `pull_request` | The main gate. 24 jobs: secret-scan, dependency-scan (also hosts the agents.md append-only gate), sonatype-sca, policy-lints, orphaned-export-lint, tdd-enforcement, typecheck-lint, test, python-sdk-tests (queue-gated via .mergify.yml — see the 2026-08-18 note), ai-eval-gate, tla-verify, migration-check, e2e, lighthouse, sbom-generation, worker-build-parity, verifier-build, evidence-identity-report, anti-hollow-soak-report. |
 | `staging-evidence.yml` | `pull_request` incl. **`edited`**/`labeled`/`unlabeled` | The `Staging Soak Evidence Gate` required check (CLAUDE.md §1.11/§1.12). `edited` matters: a body-only evidence update fires no `synchronize`. |
 | `migration-drift.yml` | `push` main + `pull_request` incl. **`edited`** | Read-only diff of local migrations vs the prod applied set. Prevents the scorecard-outage class of bug. Also runs the full-ledger numeric-integrity audit (SCRUM-2500). |
 | `merge-authority.yml` | `pull_request` (`opened`/`synchronize`/`reopened`/`ready_for_review`) | Single `compute` job — reuses `requiredTierFor` to emit the tier/merge-council marker. Fails closed. |
@@ -475,6 +478,54 @@ Follows the job's existing `if: always()` convention — see the long comment ab
 coverage" for why (the 2026 silent-skip bug where a single early failure skipped the whole worker
 suite with no signal). Baseline at wiring time: **36/36 green**, verified locally on `main` before
 the gate was added — a gate must not be merged red.
+
+## Platform-health-digest flag activation (2026-08-18, `feat/platform-admin-daily-health-digest`, draft)
+
+`ENABLE_PLATFORM_HEALTH_DIGEST=true` appended to the canary deploy step's `--set-env-vars` string —
+plain env-var addition, no new step/job. Unlike most job-activation entries in this file, this flag
+was never dark: the route (`POST /jobs/platform-health-digest`) and the flag are BOTH new in this same
+PR (a real capability gap identified by a read-only audit, not a previously-shipped-but-inert switch).
+Default true both here and in `config.ts`'s code default — see the dated entry in
+`services/worker/src/agents.md`. Still requires a manual Cloud Scheduler binding this workflow does
+not perform (see `scripts/gcp-setup/agents.md`'s dated entry and `cloud-scheduler.sh`'s
+`NOT_SCHEDULED` reason for this route).
+## Queue-digest flag activation (2026-08-18, `feat/queue-digest-default-on`, draft)
+
+Same class of defect as the Drive connector activation above: `ENABLE_QUEUE_DIGEST` was absent from
+this file's `--set-env-vars` entirely (and from `docs/reference/ENV.md`), so the fully-built QUEUE-07
+daily digest job (`services/worker/src/jobs/queue-digest-cron.ts`) ran on `config.ts`'s
+`boolFlag(false)` code default in prod and `POST /jobs/queue-digest` was a standing no-op — found via
+a read-only capability audit, not a code review. `ENABLE_QUEUE_DIGEST=true` added to the canary
+deploy step's `--set-env-vars` string (single append, no new step/job — this is a plain env-var
+addition, not a gating change). Per-org enrollment was separately flipped to DEFAULT-ON in the same
+PR (worker-only change, no workflow impact) — see the dated entry in
+`services/worker/src/jobs/agents.md`. Still requires a Cloud Scheduler job → `POST
+/jobs/queue-digest` to actually fire daily; this workflow only gates the code path. The
+`cloud-scheduler.sh` `NOT_SCHEDULED` reason for this route was updated in the same PR (the old text
+cited "ENABLE_QUEUE_DIGEST off" as the reason, which is no longer true once this merges) — binding the
+actual Cloud Scheduler job is still a separate, not-yet-performed operator step (needs project-admin
+`gcloud` credentials this freeze-window session does not have).
+
+## Label-gated overrides need a token, not just `pull-requests: read` (2026-08-22)
+
+Any job that seeds `PR_LABELS` must ALSO carry `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` in its
+**job-level** `env:`. The two are not interchangeable: `permissions: { pull-requests: read }` scopes
+a token, it does not supply one, and `gh` authenticates from `GH_TOKEN`/`GITHUB_TOKEN` only —
+`actions/checkout` persists credentials into git config, which `gh` never reads.
+
+Without the token, `ciContext.fetchLiveLabels()` throws, the error is swallowed to `[]`, and
+`resolvePrLabels()` falls back to the FROZEN `pull_request` payload. Because `pull_request` does not
+fire on `labeled`, that makes the standard remediation — apply the override label, re-run the failed
+job — structurally inert: the label counts only if it was already on the PR when the webhook fired.
+Confirmed on PR #2322 (2026-08-22): `agents-md-deletion-approved` applied, `gh run rerun --failed`,
+identical failure, with nothing in the log to explain it.
+
+Fixed on `dependency-scan` + `policy-lints` (ci.yml) and `staging-evidence` (staging-evidence.yml).
+Job-level rather than per-step on purpose — `dependency-scan` alone has 11 label-gated steps, and the
+next one added must inherit the token instead of having to remember it.
+`scripts/ci/check-pr-labels-token-parity.test.ts` fails the build if a job seeds `PR_LABELS` without
+one, and `fetchLiveLabels()` now emits a non-fatal `::warning` when the live fetch fails (silent for
+a genuine non-PR context, so push builds do not cry wolf).
 
 ## Related
 
