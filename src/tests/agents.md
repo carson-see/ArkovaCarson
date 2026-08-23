@@ -80,3 +80,34 @@ The two self-check cases ("guard self-check") exist because the parser is a
 regex over a source file: if the `ROUTES` literal is reformatted and the regex
 matches nothing, the real assertions would pass vacuously. They pin a floor on
 what the parser must find.
+
+## 2026-08-15 — data-integrity soak cluster content guards
+
+Three files, all reading migration SQL as text (the convention set by
+`scrum-2189-rpc-reads-cache.test.ts` / `scrum-2236-dashboard-cache-budgets.test.ts`):
+
+- `bug-019-cleanup-expired-data-lock-timeout.test.ts`
+- `bug-009-anchor-status-counts-stale-estimate.test.ts`
+- `bug-011-calibration-features-view.test.ts`
+
+Two conventions worth copying:
+
+**Pin the defect, not just the fix.** Each file asserts the *pre-fix* shape from
+the file that still contains it — `GREATEST(reltuples::bigint, 0)` in `0335`, the
+absent `security_invoker` in archived `0222`, the unguarded DROP/CREATE TRIGGER
+pair in the baseline. Merged migrations are immutable, so those assertions are
+stable, and they document what "fixed" means instead of asserting a string that
+could be satisfied by an unrelated edit.
+
+**Run the detector over the real defect.** `bug-019-*` imports `scanFiles` from
+`scripts/ci/check-hot-table-ddl-lock-timeout` and points it at the actual
+`cleanup_expired_data` body sliced out of the baseline migration — then asserts it
+is *still* flagged when a file-level `SET LOCAL lock_timeout` is prepended, which
+is the precise false negative that let BUG-019 sit in the tree with a green lint.
+A test that only pinned the migration text would have let the next author
+reintroduce the class in a different function with nothing to catch it
+(`memory/feedback_lint_rule_beats_human_census.md`).
+
+Comment lines are stripped before asserting on SQL (`code()` helper) — every
+`-- ROLLBACK:` header quotes the old body, so a naive substring match on the raw
+file finds the defect in its own rollback note.

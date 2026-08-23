@@ -1,5 +1,9 @@
 # FD-SEED-1 — the baseline soak fixture deletes itself within ~7 minutes on every rig that uses it
 
+> **FIXED in `scripts/staging/seed-baseline-fixture.sql` (PR #2322).** Rigs provisioned
+> before that PR are repaired by re-running the seed — see [Status](#status). The finding
+> below is preserved as written.
+
 **Found:** 2026-08-21, on the TRAIN-6 T3 window (`arkova-worker-wave2-2026-08-staging`, tag
 `train-6`, Supabase `tkciooifwxwnkoizgalp`). It voided that window's first 48 h clock.
 **Class:** evidence integrity — and it is **systemic, not rig-specific**. Every isolated soak
@@ -116,9 +120,33 @@ on both mock and real rigs.
 - **TRAIN-6:** fixed in-place for that rig by seeding a durable Set A (5 SUBMITTED anchors,
   `chain_tx_id` NOT NULL + `legal_hold = true`) before restarting the clock. Durability
   measured, not asserted — see `docs/staging/train6-2026-08/soak-start-2026-08-21T2038Z.md`.
-- **`scripts/staging/seed-baseline-fixture.sql`:** **NOT yet fixed.** It is a `.sql` file, so
-  the change needs a PR, not the docs carve-out. Until it lands, every newly provisioned rig
-  inherits this defect and its provisioning-time preflight pass expires after ~7 minutes.
+- **`scripts/staging/seed-baseline-fixture.sql`: FIXED (PR #2322).** The fixture anchor now
+  carries a synthetic 64-hex `chain_tx_id` — `md5('…-txid-hi') || md5('…-txid-lo')`,
+  deterministic so re-runs stay idempotent — alongside the `legal_hold = true` it already had.
+  Three things landed with it:
+  - **The repair path.** `ON CONFLICT (id) DO UPDATE` backfills a NULL `chain_tx_id` and
+    reinstates a fixture that `0379` already reclaimed to PENDING, so **re-running the seed
+    fixes a rig provisioned before this change** — no teardown needed. It reinstates the
+    status only when the row is PENDING *and* holds no txid of its own, so a row carrying a
+    real txid keeps its own status; the clause never invents a submission that did not happen.
+  - **An in-transaction post-condition block** (`DO $$ … $$` before `COMMIT`) that fails the
+    seed if the fixture is absent, not SUBMITTED, missing a `chain_tx_id`, off legal hold, or
+    if `ENABLE_VERIFICATION_API` is not enabled. `provision-isolated-rig.sh` runs the seed
+    through `run_cmd` under `set -euo pipefail`, so a `RAISE` there aborts provisioning
+    **before** the clean_mirror preflight can certify a rig whose fixture is already doomed.
+    This proves the structural predicate rather than waiting out a cron tick — a row outside
+    every mutator's WHERE clause *cannot* be taken, which is strictly stronger than observing
+    that one tick happened not to take it. No shell-side change was needed.
+  - **Structural tests** in `scripts/staging/seed-baseline-fixture.test.ts` pinning the txid,
+    both halves of the repair clause, and the presence of the post-condition block.
+
+  Verified by execution, not by reading the diff: the file was run against a throwaway
+  Postgres 17 carrying stub `auth`/`public` tables and a verbatim copy of `0379`'s
+  `recover_stuck_broadcasts()` predicate. Backdated 60 minutes and ticked three times, the
+  reclaimer took **0** rows and the fixture stayed SUBMITTED. Reverting that same row to the
+  pre-fix shape (`chain_tx_id` NULL) and ticking once reproduced the finding exactly —
+  1 reclaimed, `_recovery_reason = 'stuck_submitted_null_txid'`, Check 5 down to zero — and
+  re-running the fixed seed restored it to SUBMITTED and durable.
 - **Preflight:** `staging-honesty-preflight.ts` reports Check 5 as a point-in-time count. It
   cannot distinguish "no fixture" from "fixture that will evaporate in five minutes." The
   TRAIN-6 driver now re-measures the SUBMITTED count every member pass and records it in each

@@ -88,6 +88,11 @@ export const AVAILABLE_EVENTS = [
   { id: 'credential.issued', label: 'Credential Issued (coming soon)' },
   { id: 'credential.verified', label: 'Record Verified (coming soon)' },
   { id: 'credential.status_changed', label: 'Record Status Changed (coming soon)' },
+  // BUG-002: the emit point (POST /cron/check-credential-expiry, gated on
+  // ENABLE_EXPIRY_ALERTS) has existed since SCRUM-600, but the event type was
+  // never registered in the worker allowlist, so this option could not be
+  // offered and every dispatch matched zero endpoints.
+  { id: 'compliance.document_expiring', label: 'Document Expiring Soon' },
 ];
 
 export function WebhookSettings({

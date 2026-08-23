@@ -237,16 +237,31 @@ export async function handleAdminRecords(
 
     // Derive total from cache when no filter/search narrows results; otherwise use
     // page-size * current-page heuristic so the page shows a Next button.
+    //
+    // BUG-009: the cached `total` can be `-1` — the sentinel for "no trustworthy
+    // count" (refresh_cache_anchor_status_counts could neither trust the
+    // pg_class estimate nor finish an exact count). It is not a number of rows,
+    // so it must not be rendered as one. Fall back to the same page-size
+    // heuristic the filtered branch uses: it makes no claim about the total and
+    // still gets the Next button right.
+    const returned = records?.length ?? 0;
+    const pageHeuristic = returned < limit ? offset + returned : offset + limit + 1;
+
     let count: number;
     const isFiltered = !!(search || statusFilter || typeFilter);
     if (isFiltered) {
       // For filtered results, we don't know the exact count without a scan.
       // Estimate: if rows returned < limit, this is the last page; otherwise assume there's more.
-      const returned = records?.length ?? 0;
-      count = returned < limit ? offset + returned : offset + limit + 1;
+      count = pageHeuristic;
     } else {
       const cacheVal = (cachedCountResp?.data?.cache_value ?? {}) as Record<string, unknown>;
-      count = Number(cacheVal.total ?? 0);
+      const cachedTotal = cacheVal.total;
+      // `typeof === 'number'` deliberately, not `Number(...)`: `Number(null)` is
+      // 0, which would turn an absent/null total back into a claimed "zero
+      // records" — the same laundering BUG-009 is about, one layer up.
+      count = typeof cachedTotal === 'number' && Number.isFinite(cachedTotal) && cachedTotal >= 0
+        ? cachedTotal
+        : pageHeuristic;
     }
 
     // Enrich with user emails

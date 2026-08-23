@@ -667,6 +667,15 @@ function cloneFixture(): S33Wave3EvaluationInput {
   return structuredClone(makeFixture());
 }
 
+// Hoisted out of the per-test bodies: five tests asserted against the identical
+// happy-path report, recomputing a full evaluation each time and racing vitest's
+// 5000ms per-test budget (the stale-bindings test ran three evaluations and began
+// timing out at ~5096ms). Module scope is not governed by testTimeout, and every
+// consumer below only reads from the report, so one shared evaluation is
+// equivalent. The determinism test deliberately keeps its own two independent
+// evaluations.
+const BASELINE_REPORT = evaluateS33Wave3OfflineGates(makeFixture());
+
 function rebindInputPackets(input: S33Wave3EvaluationInput): void {
   input.inputPacketDigests = createS33Wave3InputPacketDigests({
     observations: input.observations,
@@ -759,7 +768,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
   });
 
   it('never turns a test-injected acceptance chain into a release GO', () => {
-    const report = evaluateS33Wave3OfflineGates(makeFixture());
+    const report = BASELINE_REPORT;
     expect(report.gates).toHaveLength(16);
     expect(report.bindings.acceptanceAuthority.verificationMode).toBe('test-injected');
     expect(report.bindings.acceptanceAuthority.releaseAuthority).toBe(false);
@@ -820,7 +829,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
   });
 
   it('reports per-domain confusion, abstention, calibration, and a deterministic coverage curve', () => {
-    const report = evaluateS33Wave3OfflineGates(makeFixture());
+    const report = BASELINE_REPORT;
 
     expect(report.diagnostics.confusionByDomain.legal.total).toBeGreaterThan(0);
     expect(report.diagnostics.top20ConfusedPairs).toContainEqual({
@@ -854,7 +863,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
   });
 
   it('freezes the exact founder 3x15 mapping and emits the deterministic three-way scorer contract', () => {
-    const report = evaluateS33Wave3OfflineGates(makeFixture());
+    const report = BASELINE_REPORT;
 
     expect(report.founderCoverage.mappingCount).toBe(45);
     expect(report.founderCoverage.frozenCredentialTypes).toEqual(S33_WAVE3_FROZEN_CREDENTIAL_TYPES);
@@ -903,7 +912,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
   });
 
   it('scores exact AU>=10 and KE>=10 manifests separately with small-n/no-marketing wording', () => {
-    const report = evaluateS33Wave3OfflineGates(makeFixture());
+    const report = BASELINE_REPORT;
 
     expect(report.jurisdictions.AU.sampleSize).toBe(11);
     expect(report.jurisdictions.KE.sampleSize).toBe(11);
@@ -1131,7 +1140,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
     stale.observations[0].arms.v71.description = 'metric-equivalent but distinct raw description';
     expect(() => evaluateS33Wave3OfflineGates(stale)).toThrow(/observationsCanonicalSha256 mismatch/u);
 
-    const originalReport = evaluateS33Wave3OfflineGates(makeFixture());
+    const originalReport = BASELINE_REPORT;
     const changed = cloneFixture();
     changed.observations[0].arms.v71.description = 'metric-equivalent but distinctly bound description';
     rebindInputPackets(changed);

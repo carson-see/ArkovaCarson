@@ -33,13 +33,13 @@ describe('check-dep-pinning (SCRUM-1005)', () => {
   });
 
   beforeEach(() => {
-    rmSync(tmp, { recursive: true, force: true });
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     mkdirSync(join(tmp, 'services', 'worker'), { recursive: true });
     mkdirSync(join(tmp, 'services', 'edge'), { recursive: true });
   });
 
   afterAll(() => {
-    rmSync(tmp, { recursive: true, force: true });
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   /** Write a fixture root package.json plus empty worker/edge stubs. */
@@ -235,7 +235,7 @@ describe('resolveRepoRoot security validation', () => {
   });
 
   afterAll(() => {
-    rmSync(validTmp, { recursive: true, force: true });
+    rmSync(validTmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     if (originalEnv === undefined) {
       delete process.env.DEP_PINNING_REPO_ROOT;
     } else {
@@ -283,7 +283,7 @@ describe('resolveRepoRoot security validation', () => {
       process.env.DEP_PINNING_REPO_ROOT = noPkg;
       expect(() => resolveRepoRoot()).toThrow(/no package\.json/);
     } finally {
-      rmSync(noPkg, { recursive: true, force: true });
+      rmSync(noPkg, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 

@@ -12,6 +12,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { BodyReadTimeoutError, readJsonBounded } from '../utils/body-read-timeout.js';
 import {
   mempoolApiBaseForNetwork,
   resolveMempoolApiBase,
@@ -225,7 +226,13 @@ export class MempoolFeeEstimator implements FeeEstimator {
         return this.fallback('http_error');
       }
 
-      const data = (await response.json()) as Record<string, number>;
+      // F-D0-5 (fullsoak 2026-08-12): the AbortController above bounds the
+      // REQUEST; `.json()` is a separate await with no deadline of its own, so
+      // a provider that sends headers and then stalls would park this
+      // estimator — and every fee gate awaiting it — indefinitely. Bounded on
+      // the same budget; a BodyReadTimeoutError lands in the catch below,
+      // which already answers with the static fallback.
+      const data = (await readJsonBounded(response, url, this.timeoutMs)) as Record<string, number>;
       const field = TARGET_FIELD_MAP[this.target];
       const rate = data[field];
 
@@ -240,7 +247,14 @@ export class MempoolFeeEstimator implements FeeEstimator {
       logger.debug({ target: this.target, rate }, 'Mempool fee estimate');
       return { rate, source: 'live' };
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
+      if (
+        (error instanceof DOMException && error.name === 'AbortError')
+        || error instanceof BodyReadTimeoutError
+      ) {
+        // F-D0-5: a stalled BODY is a timeout by any operator's reading, so it
+        // reports as one — folding it into 'network_error' would hide the
+        // provider-stall signal in the fallback-reason metric that exists to
+        // surface exactly this.
         logger.warn(
           { url, timeoutMs: this.timeoutMs },
           'Mempool fee API request timed out — using fallback',

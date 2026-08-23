@@ -17,8 +17,53 @@ Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test ba
 - HTTP-triggered jobs are protected by `X-Cron-Secret` per AUDIT-03 (handled in middleware before this router).
 - In-process schedules are conditional: `chainInitialized` guard for chain-touching jobs; `disableInProcessAnchorCron` guard for `anchors`-table jobs.
 
+## The ingestion response contract (`ingestionResponse.ts`) — read before touching a `/fetch-*` route
+
+`cron.ts`'s 41 public-record ingestion routes do **not** use the `try { res.json(result) } catch { 500 }`
+shape the rest of this router uses. They go through `runIngestionRoute()`. If you add a fetcher route,
+use it too — the plain shape is the bug.
+
+**Why (BUG-020).** The 2026-08 connector side-rig force-ran 42 previously-untested ingestion routes
+(`docs/staging/fullsoak-2026-08/side-rig-cron-coverage.md`) and found the whole family reports failure
+as HTTP 200: `/fetch-ipeds` `{"inserted":0,"errors":30}`, `/fetch-fcc` `errors:26`, `/fetch-sec-iapd`
+`errors:26`, and worst, `/fetch-uspto` returning a hard upstream 403 as
+`{"status":"download_failed","errors":0}`. Each fetcher catches its own transport failure internally and
+resolves, so the route's catch block — which only fires on a *throw* — never ran. A Cloud Scheduler job
+bound to any of them was green forever and no HTTP-status monitor could see it.
+
+| condition | HTTP | `ingestion_status` |
+|---|---|---|
+| flag row ABSENT | 503 (+ `Retry-After`) | `flag_not_configured` |
+| switchboard unreadable | 503 | `flag_unreadable` |
+| flag present and false | 200 | `disabled` |
+| nothing failed | 200 | *(body forwarded verbatim, no added keys)* |
+| some landed, some failed | 207 | `partial_failure` |
+| nothing landed, something failed | 502 | `total_failure` |
+
+502 rather than 500 because these fail on a third-party registry (403/404/422/429), not on us — still
+non-2xx, so Scheduler retries and alerts. 207 is still 2xx so a run that made real progress is not
+retry-stormed, but the code says it was not clean. `skipped` counts as progress (an already-ingested
+static statute set legitimately inserts 0). A clean run is byte-for-byte unchanged, so existing consumers
+of a healthy response are untouched.
+
+**The flag gate runs BEFORE the fetcher (BUG-021 / FD-S1).** On a fresh rig `switchboard_flags` held one
+unrelated row, `get_flag('ENABLE_PUBLIC_RECORDS_INGESTION')` returned its `p_default` (false), and every
+fetcher no-opped at `200 {"inserted":0,"skipped":0,"errors":0}` — identical to a healthy run with nothing
+new upstream. A blind exerciser scores 100% false coverage against that state. `runIngestionRoute` reads
+`switchboard_flags` **directly** (service-role, RLS-exempt) precisely because `get_flag` cannot tell
+"absent" from "explicitly off", and refuses to run at all when the row is missing.
+
+`/embed-public-records` passes its own `flagKey` (`ENABLE_PUBLIC_RECORD_EMBEDDINGS`). Fetchers that give
+up before reaching upstream (missing credential, dead endpoint) must return one of the
+`INGESTION_FAILURE_STATUSES` from `utils/pipeline.ts` so a zeroed error counter cannot mask them.
+
+Pinned by `routes/ingestionResponse.test.ts` (the contract) and the `ingestion response contract` block in
+`cron.test.ts` (the three named routes end to end, plus all four flag states). Note `cron.test.ts`'s `db`
+double now answers a `switchboard_flags` read — every other table still returns `undefined` as before.
+
 ## Recent changes
 
+- **2026-08-18 (`cron.ts`, `feat/platform-admin-daily-health-digest`, draft, T2) — new `POST /jobs/platform-health-digest` route.** Delegates to `runPlatformHealthDigest()` (`../jobs/platform-health-digest-cron.js`) — a daily summary email (anchors by status, job_queue depth, last night's batch flush, connector health rollup, quota anomalies) to every `profiles.is_platform_admin=true` recipient, sourced by DB flag, never hardcoded. Same shape as the `/queue-digest` route right above it: `withCronMonitoring`, same `'0 13 * * *'` schedule string (informational only — the actual Scheduler binding is a separate, not-yet-performed step, see `scripts/gcp-setup/agents.md`), JSON-result / 500-on-error. Gated by `ENABLE_PLATFORM_HEALTH_DIGEST` (default true — an internal ops digest, not a customer-facing send). Distinct from and additive to the existing hardcoded-recipient stuck-anchor ALERT in `../jobs/pipeline-health.ts`, which is unchanged.
 - **2026-08-18 (`anchor.ts`, test-only) — invite-accept investigation: no router bug found, new full-path integration test added.** Investigated the founder's "I still cannot invite members" report (prod: 5 invitations ever, 3 confirmed EMAIL_SENT, 0 accepted, 0 `MEMBER_JOINED` audit events). `POST /invitations/accept` had router-level coverage only for error-mapping (`anchor-invitation-email.test.ts`'s "requires a token" / "maps an InvitationError code") — the full new-account happy path was only ever exercised at the bare-function level (`api/invitations.test.ts`), never through the real Express handler an unauthenticated invitee's browser actually hits. Added `anchor-invitation-accept.test.ts`: drives the real `anchorRouter` handler through (1) the complete no-session new-account provisioning sequence (createUser → profile insert → org_members insert → invitations status flip → `MEMBER_JOINED` audit insert → verification email) and (2) the exact real-prod scenario — an invitation created 2026-08-03 with `expires_at` 2026-08-10, hit on 2026-08-18 — asserting 410 `expired` and that account creation is never attempted. Both pass against the CURRENT, unmodified code — the accept endpoint is correct. See `src/components/organization/agents.md` for what the investigation found instead (admin visibility gap, fixed there) and the residual deliverability risk (documented, not fixed — DNS/founder-owned).
 
 - **2026-08-10 (`anchor.ts`) — recipient activation launch blocker.** Added `GET /activation/:token` (public preview) and `POST /activation/complete` (unauthenticated by design — the caller cannot have a session yet, which is the point of activation), both delegating to `../api/activation.js`. `ActivationError.code` → HTTP status via the local `ACTIVATION_ERROR_STATUS` map (`expired`/`already_used` → 410 so the page can offer a re-send). Mounted here, not under `/api/v1`, for the same reason the invitation routes are: that surface is the frozen API-key-scoped public contract, this is a token-proves-identity internal flow. **Uses a `scope: 'activation'` limiter at 10/min** — unscoped buckets share one IP counter with `index.ts`'s `apiIpShadowGuard` (see the SCRUM-3012 note below for the full bug class); tighter than the invitation limiter because this endpoint consumes a single-use credential, but still loose enough for retries and a shared office NAT. Wiring is pinned by `anchor-activation.test.ts`, which uses the router-stack `getHandler` harness so the route PATHS are asserted (it throws if a path is not registered) and checks that neither the token nor the password can escape in a response body. Root cause + architecture rationale: `services/worker/src/api/agents.md`.
@@ -53,3 +98,12 @@ Operator-triggered supplementary proof anchoring (`jobs/supplementary-proof-anch
 3. the job re-checks a fee ceiling and a treasury reserve before every batch.
 
 Body params are all validated positive-int / string-array or dropped — an out-of-range `batchSize` falls back to the default rather than being clamped silently to something the operator did not ask for. Deliberately **not** registered in any Cloud Scheduler manifest.
+
+## 2026-08-15 — data-integrity soak cluster (BUG-002 / BUG-009 / BUG-011)
+
+- **`POST /check-credential-expiry` returned 500 on every run since SCRUM-600.** It selected `anchors.not_after` and `anchors.document_title`; **neither column has ever existed**, in the rig or in prod — rig log `42703 column anchors.document_title does not exist`. The schema carries `expires_at`, and there is no title column (the human label is `label`). It also read `a.title` from a row where it had selected `document_title`, so `title` was structurally always `undefined`. Now selects `public_id, org_id, credential_type, label, expires_at`, adds `.is('deleted_at', null)` (a soft-deleted document is not something to warn an issuer about renewing), and narrows nullable `public_id`/`org_id` with a `flatMap` rather than asserting — a row that slips the filter is dropped, never dispatched on `null`. Uses `public_id`, never `anchors.id` (§6).
+- The compounding half — `compliance.document_expiring` was not a registrable event type, so the dispatch reached nobody **and** bypassed payload validation — is fixed in `../webhooks/`; see that folder's `agents.md`.
+- **`emailsSent` is gone from the response.** It counted orgs and no email was ever sent (§1.13 R-7: never report an external action we do not take). Replaced by `orgsNotified` / `webhooksSent` / `webhooksFailed`, and rejected dispatches are now logged and counted instead of being invisible.
+- **`POST /smoke-test` anchor-count check now distinguishes "unknown" from "zero"** (BUG-009). `get_anchor_status_counts_fast().total` can be `-1`, the established sentinel for "no trustworthy count". Both still fail the check, but only one means the database is empty, and the detail string says which. The root cause is migration `0412`: an un-analysed `anchors` table published `{"total":0,"SECURED":0}` as measured, which this check read as "no anchors exist".
+- **`POST /calibration-refit` 500'd with `PGRST205`** because `public.calibration_features` does not exist — including in prod. Recreated by migration `0413`; no route change. The job itself was never broken.
+- Test note: `cron.test.ts` now mocks `../middleware/flagRegistry.js` and adds `dispatchWebhookEvent` to the `../webhooks/delivery.js` mock. `flagRegistry` is reached from exactly one cron route, so the module-level mock cannot perturb any other route.

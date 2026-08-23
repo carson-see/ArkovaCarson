@@ -2,6 +2,36 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-12 — FD-P7: key revocation/deletion were unreachable from every client (CC6.8)
+
+`toPublicKey` (keys.ts) stripped `id` from create AND list responses (SCRUM-1271-D) while the frozen
+v1 revoke/delete routes are addressed by `:keyId` — so no client could ever revoke or delete a key,
+defeating the CC6.8 control asserted to the SOC 2 auditor. Found live on the 2026-08 fullsoak rig.
+
+**Decision: `id` is back in key responses** (create/list/PATCH), matching the uuid-leak runbook's
+Phase 3 posture (v1 carries the UUID until v2 ships). By-prefix addressing was rejected because
+`key_prefix` has NO unique constraint (only a length ≥ 8 CHECK and 4 visible hex chars of entropy) —
+an ambiguous prefix would make the same control unreachable again, data-dependently. `org_id` and
+`key_hash` remain stripped; `BANNED_RESPONSE_KEYS` never banned `id`.
+
+Also fixed in the same change: PATCH `is_active:false` now stamps `revoked_at = now()` and an
+optional `revocation_reason` (first revocation wins; repeat revokes cannot rewrite the record), so a
+CC6.8 designation export no longer reads `revoked = false` after a product-path revoke. Reactivating
+a revoked key is refused 409 — migration 0382's `validate_api_key` never authenticates a key with
+`revoked_at` set, so `is_active:true` would create a row that lies about being live. The full
+lifecycle (create → list → revoke → refused 401 → delete) is pinned by `keys-revocation.test.ts`
+against the real router + real `apiKeyAuth` middleware.
+
+Review hardening (same PR, ported from the parallel #2218 fix plus its review): the revocation
+stamp is issued as its own UPDATE guarded by `revoked_at IS NULL`, so two concurrent first revokes
+cannot both stamp — the database arbitrates and the losing write no-ops (pinned by a deterministic
+microtask-lockstep race test). The reactivation refusal now returns a machine-readable 409 body
+(`error: 'api_key_already_revoked'`, matching `apiKeyAuth`'s `api_key_revoked`/`api_key_expired`
+style). The `api_key.revoked` audit payload carries the PERSISTED `revoked_at`/`revocation_reason`
+from the post-update row — a repeat revoke can no longer log a reason the table never stored. The
+three copies of the response select-list collapsed into one `KEY_RESPONSE_COLUMNS` constant (the
+drift-by-duplication pattern that produced FD-P7 in the first place).
+
 ## 2026-08-11 — `POST /cle/submit` created anchors attributed to no organisation
 
 Same defect family as the `registry-anchor` entry below ("creating an anchor row is not the same
@@ -168,6 +198,10 @@ is pinned by a test, because the fall-through is the only reason it holds.
 any org that has no policy row. For a configured org, requests that previously succeeded now 400 —
 which is the point of the control and is what that org contracted for. New error codes on an existing
 status class are additive; this needs no `v2` prefix.
+## 2026-08-12 — self-serve verification routes are ORG_ADMIN-gated
+
+`orgVerification.ts`'s three writers (`verify-ein`, `verify-domain`, `confirm-domain`) now require ORG_ADMIN via `requireAdminCaller` → `_org-auth.ts` (`getCallerOrgIdResult` + `isCallerOrgAdminResult`; org resolved from the caller's own `profiles` row, never client input; operational lookup failures are 500, never a masked 403). Rationale mirrors `org-kyb.ts`: writing a legal identifier and driving the VERIFIED grant is an org-level action. `GET /verification-status` stays member-level; `dev-verify` stays isDev-gated. `ein_tax_id` gained a 32-char upper bound (`MAX_EIN_LENGTH`) — format stays loose for international tax IDs (no `^\d{9}$`; that US-only shape belongs to the Middesk submission in `org-kyb.ts`). **No frontend change was needed**: the `OrgVerification` card renders inside OrgProfilePage's `{isAdmin && (` settings block (lines 614–903), and every caller who can see the card (org_members owner/admin, platform admin) passes the backend gate, so no reachable UI path 403s. Prod risk ~zero at gating time: no org had ever called these routes in prod (2026-08-11 census below).
+
 ## 2026-08-11 — two-grade org verification (CTO decision; sibling of AUDIT-0424-10 / PR #2134)
 
 `organizations.verification_status = 'VERIFIED'` has two **sanctioned** grant paths, by decision (not drift):
@@ -188,7 +222,7 @@ status class are additive; this needs no `v2` prefix.
 
 **Open follow-ups (separate PRs):**
 
-* ORG_ADMIN-gate `verify-ein`/`verify-domain`/`confirm-domain` (today any org **member** can write legal identifiers; `org-kyb.ts` requires ORG_ADMIN for the analogous action).
+* ORG_ADMIN-gate `verify-ein`/`verify-domain`/`confirm-domain` (today any org **member** can write legal identifiers; `org-kyb.ts` requires ORG_ADMIN for the analogous action). — **Done 2026-08-12** (see the 2026-08-12 entry above), including the EIN length cap; EIN **normalization** remains open under the bullet below.
 * Provider-status stickiness: `verify-ein` must not clobber a provider-granted status (any member POSTing it flips `VERIFIED → PENDING` with **no self-serve recovery** once the domain is verified — confirm-domain 400s "already verified"), and `confirm-domain` must not promote out of a provider-terminal status.
 * Domain-first dead-end: `confirm-domain` is the **only** promoter and checks `ein_tax_id` at confirm time — an API caller who confirms the domain before submitting an EIN is stuck `PENDING` with no self-serve path forward (the UI happens to order EIN first, so this is browser-latent, API-live).
 * EIN normalization, not just a length cap: the duplicate check is exact-string `eq()`, so `12-3456789` vs `123456789` evades the 409. Format stays loose for international tax IDs, but note `org-kyb.ts` pins `^\d{9}$` (US-only) — international self-serve orgs cannot upgrade to the provider grade as-is.
@@ -838,3 +872,51 @@ The 2026-06-24 entry above states, of the batch-extraction refund path: *"A lost
 - The drain (re-apply the refund, retry with backoff, Sentry on the final attempt) is documented in `services/worker/src/jobs/agents.md`; its trigger is `POST /jobs/ai-credit-reconcile` + a Cloud Scheduler binding.
 - **Nothing about the request path changed** — the per-row debit/refund accounting, the fingerprint cache, the latency budget, and the frozen response shape are all untouched. This entry fixes the claim, not the route.
 - `scripts/ci/check-job-queue-parity.ts` now fails CI on any `submitJob` type with no consumer, so this specific false-surfacing shape cannot ship again.
+
+## 2026-08-15 BUG-008/027 — `/nessie/query` is capability-gated and fails CLOSED
+
+The mount is now `nessieCapabilityGate()` → `x402PaymentGate` → `x402PayerRateLimit` → `aiRateLimiter`
+→ `nessieQueryRouter`. **Order is the contract, and three separate tests pin it** (`quota-wiring.test.ts`,
+`scripts/ci/check-429-limiter-map.test.ts`, `middleware/__tests__/x402LaunchScope.test.ts`) — the gate
+leads so a permanently-disabled capability never bills a caller on the way to refusing.
+
+`nessie-query.ts` repeats the check as its first statement, ahead of the `ENABLE_PUBLIC_RECORD_EMBEDDINGS`
+read. Those are **different flags**: the switchboard one governs the embedding index and is legitimately
+on, which is why it never stopped a disabled Nessie from answering `200 {"results":[],"count":0}`.
+Rationale, the env-vs-switchboard choice, and the no-success-shape-key rule live in
+`middleware/agents.md`.
+
+## 2026-08-15 FD-D1 — Drive connect no longer admits individual scope
+
+`integrations/drive-oauth.ts`: `DENY_HTTP` drops `needs_paid_plan` / `individual_not_verified` and adds
+`individual_scope_unsupported` (403). The old pair promised that upgrading a plan or completing
+identity verification would unlock a personal-Drive connection; it never could, because
+`org_integrations.org_id` is NOT NULL — so the gate admitted the caller at `oauth/start`, the user
+granted Google access to their whole Drive, and the callback bounced them with
+`personal_connect_unavailable`. The denial now happens **at start, before any consent screen**.
+
+The `!payload.orgId` branch in the callback is retained as a NOT-NULL insert guard and logs at
+`error` level — it is unreachable through the gate, so reaching it means the gate regressed. It is the
+last line of defence, not the policy: the policy has to run before Google consent is requested, which
+that check could never do from where it sits.
+## 2026-08-17 — surrogate-safe truncation sweep (poison-record class)
+
+Migrated to `utils/utf16-truncate.ts` `truncateUtf16Safe` (bare `.slice(0, N)` on text that reaches
+a PostgREST body can split a surrogate pair → lone high surrogate → whole request body rejected as
+invalid JSON, PGRST102): `credentials-ctdl-registry-anchor.ts` (anchors insert
+filename/label/description — CE Registry controls the record name), `compliance-audit.ts`
+(FAILED-audit `error_message`), `webhooks.ts` + `webhooks-self-service.ts` test-ping
+`response_body` echoes (response-surface hardening: grep confirms `response_body` is NOT persisted
+on these two paths — the persisted delivery-log sites are in `webhooks/delivery.ts`, migrated in the
+same sweep), and `nessie-query.ts` `buildCitationExcerpt` (exported for tests). CI ratchet:
+`scripts/ci/feedback-rules/surrogate-safe-truncate.ts`.
+
+## 2026-08-15 BUG-2026-08-13-010 — connector fingerprints are fetch-time snapshots (§1.5/§1.6A)
+
+Soak-proven: re-fetching the same unchanged DocuSign envelope yields a DIFFERENT SHA-256 per request (the source re-renders the file), so a connector-sourced anchor's fingerprint is NOT re-derivable from the source system — it attests the exact bytes fetched at that moment, which is what the anchor receipt commits. Nothing told a verifier this.
+
+- `verify.ts` + `verify-proof.ts` now emit an additive pair for connector-sourced records only: `fingerprint_rederivability: 'fetch_time_snapshot'` + `fingerprint_rederivability_note` (§1.8 additive; OMITTED — never null — without a measured marker). Keyed on `metadata->>'connector_source'` through the closed set in `constants/connectorFingerprint.ts`; free text never routes here and the fixed note never echoes a vendor.
+- On `/proof` the pair is RESPONSE-level only — never inside `proof_bundle`, whose shape is the signable/independently-verifiable artifact.
+- `AnchorByPublicId.connector_source` is tri-state like `has_stored_proof_branch`: marker = emit, `null` = measured-not-connector, absent = not measured (batch/oracle via `EMPTY_API_RICH_FIELDS` stay silent).
+- `verifyCache.ts` KEY_PREFIX bumped v5 → v6 (response-shape change; a pre-deploy cached connector record would otherwise serve no statement for the whole TTL).
+- Tests: `verify-connector-fingerprint.test.ts` (marker closed-set, pair inseparability, no-vendor-echo, bundle-untouched).

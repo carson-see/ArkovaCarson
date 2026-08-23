@@ -44,13 +44,41 @@ describe('WebhookEventCatalog', () => {
     expect(within(credRow).getByText(WEBHOOK_LABELS.CATALOG_DEFERRED_NOTE)).toBeInTheDocument();
   });
 
-  it('only credential.* events are deferred — all anchor events have live emit points', () => {
+  /**
+   * `live: true` may be asserted ONLY for an event the worker actually emits
+   * (§1.13 R-7 — never claim a capability we do not have; a subscriber must not
+   * be led to expect deliveries that will never come).
+   *
+   * This used to be spelled "anchor.* is live, everything else is deferred",
+   * which was true only while every live event happened to be an `anchor.*`
+   * one. BUG-002 registered `compliance.document_expiring`, whose emit point
+   * (`POST /cron/check-credential-expiry`, behind `ENABLE_EXPIRY_ALERTS`) is
+   * real, and the prefix proxy started contradicting the rule it stood for.
+   *
+   * The set is explicit now, so the ratchet still bites in the direction that
+   * matters: a newly added event is deferred unless someone deliberately lists
+   * it here, and listing it means claiming a verified emit point.
+   */
+  const LIVE_EVENT_IDS = new Set([
+    'anchor.submitted',
+    'anchor.secured',
+    'anchor.revoked',
+    'anchor.expired',
+    'anchor.batch_secured',
+    'compliance.document_expiring',
+  ]);
+
+  it('claims live only for events with a real emit point', () => {
     for (const entry of WEBHOOK_EVENT_CATALOG) {
-      if (entry.id.startsWith('anchor.')) {
-        expect(entry.live).toBe(true);
-      } else {
-        expect(entry.live).toBe(false);
-      }
+      expect(entry.live, entry.id).toBe(LIVE_EVENT_IDS.has(entry.id));
+    }
+  });
+
+  it('keeps every credential.* event deferred — no emit points yet (SCRUM-1743)', () => {
+    const credentialEntries = WEBHOOK_EVENT_CATALOG.filter((e) => e.id.startsWith('credential.'));
+    expect(credentialEntries.length).toBeGreaterThan(0);
+    for (const entry of credentialEntries) {
+      expect(entry.live, entry.id).toBe(false);
     }
   });
 

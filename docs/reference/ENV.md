@@ -202,7 +202,31 @@ EDGAR_USER_AGENT=                   # required by SEC for EDGAR API
 COURTLISTENER_API_TOKEN=
 OPENSTATES_API_KEY=
 SAM_GOV_API_KEY=
+USPTO_BULK_TSV_URL=                 # unset by default — see below
 ```
+
+**`USPTO_BULK_TSV_URL` (BUG-023).** `jobs/usptoFetcher.ts` used to hardcode
+`https://s3.amazonaws.com/data.patentsview.org/download/g_patent.tsv.zip`. That
+bucket now returns `AccessDenied` (HTTP 403) — confirmed from a **non-cloud**
+residential IP, so it is not blocked Cloud Run egress. PatentsView migrated to
+the USPTO Open Data Portal on 2026-03-20; the replacement (`api.uspto.gov`)
+answers **401 without an ODP API key**, and since 2026-06-18 obtaining one
+requires a USPTO.gov account with MFA. Arkova holds no such credential.
+
+So there is deliberately **no default**. With the variable unset `/fetch-uspto`
+makes no request and answers **502** `source_unavailable` instead of the old
+`200 {"status":"download_failed","errors":0}`. The route is marked
+DECLARED-UNTESTED in code. Setting this variable is how a future operator
+re-arms it once a reachable bulk source exists — the TSV column contract in the
+fetcher is unverified against any ODP product, so treat the first run as new
+work, not a resumption.
+
+**Missing credentials are now loud.** A fetcher that gives up before reaching
+upstream because its key is unset returns `status: 'unconfigured_source'`, which
+`routes/ingestionResponse.ts` classifies as a failure. `SAM_GOV_API_KEY` was
+rejected 401 and `COURTLISTENER_API_TOKEN` was over quota (429 — *worse than no
+token*, which returns 200) during the 2026-08 side-rig run; both now surface as
+non-2xx rather than as an all-zeros HTTP 200.
 
 ## Redis rate limiting (optional)
 ```bash
@@ -244,6 +268,22 @@ SENTRY_ENVIRONMENT=                  # MT-1 (SCRUM-2901): explicit override. Whe
 #  (no K_SERVICE) it falls back to NODE_ENV, and a bare NODE_ENV=production maps to 'local-production'
 #  (§1.5 honesty). Rationale: rigs run NODE_ENV=production, so NODE_ENV alone would flood prod
 #  alerting on every rig standup. Prod does NOT set this var — the K_SERVICE derivation is the mechanism.
+ENABLE_SENTRY_CRON_CHECKINS=         # fix/sentry-cron-checkins-prod-only (CTO directive, 2026-08):
+#  escape hatch, default unset/false. Sentry Crons check-in REPORTING (utils/sentry.ts
+#  withCronMonitoring / shouldSendCronCheckIns) is gated to the real prod service only —
+#  fires when K_SERVICE === 'arkova-worker' (PROD_SERVICE_NAME), suppressed for every other
+#  K_SERVICE (rigs, staging) and for local dev (no K_SERVICE at all). Reason: every soak rig's
+#  cron jobs (webhook-retries, check-confirmations, process-revocations, grace-expiry-sweep)
+#  were reporting check-ins tagged with the rig's own K_SERVICE, which auto-creates a Sentry
+#  monitor environment that pages "missed check-in" forever once the rig is torn down (5 dead
+#  rig envs x 4 cron monitors = 16 zombie env/monitor pairs, ~93k events as of 2026-08). Set
+#  ENABLE_SENTRY_CRON_CHECKINS=true (exact string 'true') on a rig only when cron observability
+#  via Sentry Crons is deliberately wanted for that rig — it overrides the K_SERVICE check.
+#  The gate ONLY suppresses the Sentry report; the cron job itself always runs regardless.
+#  Prod does NOT set this var — the K_SERVICE derivation is the mechanism, same as
+#  SENTRY_ENVIRONMENT above. Canonical Confluence topic-doc update (Doc Update Matrix has no
+#  exact row for "cron observability gating"; nearest is Switchboard/Feature flags) is a
+#  post-freeze gate item — see the PR body.
 ```
 
 ## AI
@@ -326,9 +366,57 @@ ENABLE_RULES_ENGINE=true
 # When false, the /jobs/queue-reminders cron no-ops.
 ENABLE_QUEUE_REMINDERS=true
 
+# QUEUE-07 (SCRUM-2353) — daily org-admin review-queue digest email.
+# Read by config.ts as config.enableQueueDigest (boolFlag(false) code
+# default). Gates POST /jobs/queue-digest (services/worker/src/jobs/
+# queue-digest-cron.ts): when false/unset, runDailyQueueDigest no-ops before
+# enumerating admins or sending mail. Was previously ABSENT from this file and
+# from deploy-worker.yml's --set-env-vars, so prod ran on the false default
+# even though the job was fully built (0 emails ever sent). Now set true in
+# deploy-worker.yml.
+#
+# Enrollment is DEFAULT-ON, not opt-in: every org with an ORG_ADMIN is
+# enrolled unless it holds an explicit opt-out — an `organization_rules` row
+# with trigger_type='QUEUE_DIGEST' and enabled=false (the existing Rule
+# Builder toggle, reused as the opt-out store; absence of a row = enrolled).
+# An enrolled org whose review queue is entirely empty is still skipped
+# (no mail) so default-on does not become inbox noise. See
+# listQueueDigestPreferences / isOrgEnrolledInQueueDigest in
+# queue-digest-cron.ts.
+#
+# Still requires a Cloud Scheduler job → POST /jobs/queue-digest (CRON_SECRET
+# auth) to actually fire daily — this flag only gates the code path. See
+# scripts/gcp-setup/cloud-scheduler.sh's NOT_SCHEDULED entry for this route.
+ENABLE_QUEUE_DIGEST=true
+
 # ARK-103 — treasury low-balance alerting (SCRUM-1013)
 # When false, the /jobs/treasury-alert-check cron no-ops (no Slack/email fired).
 ENABLE_TREASURY_ALERTS=true
+
+# Platform-admin daily health digest (services/worker/src/jobs/
+# platform-health-digest-cron.ts). Gates POST /jobs/platform-health-digest: a
+# routine daily summary email — anchors by status + 24h delta, job_queue
+# depth/oldest, last night's batch flush result, connector health rollup,
+# quota anomalies — sent to every `profiles.is_platform_admin = true`
+# recipient (never a hardcoded address). Distinct from and additive to the
+# existing hardcoded-recipient stuck-anchor ALERT in pipeline-health.ts,
+# which is unchanged and stays a separate, threshold-triggered signal.
+#
+# Default true (code level AND deploy-worker.yml) — an internal
+# ops-visibility email, not a customer-facing surface. Read by config.ts as
+# config.enablePlatformHealthDigest. When false, runPlatformHealthDigest
+# no-ops before listing admins or touching the DB otherwise.
+#
+# A metric this job could not cheaply/safely measure (e.g. a full-table
+# COUNT(*) it deliberately avoids) renders as "not measured" rather than a
+# false zero. A Sentry-reported error count was scoped in the original ask
+# but is DELIBERATELY OMITTED — no existing table stores it, and this job
+# does not add a live Sentry API dependency.
+#
+# Still requires a Cloud Scheduler job → POST /jobs/platform-health-digest
+# (CRON_SECRET auth) to actually fire daily — this flag only gates the code
+# path. See scripts/gcp-setup/cloud-scheduler.sh's NOT_SCHEDULED entry.
+ENABLE_PLATFORM_HEALTH_DIGEST=true
 
 # ARK-103 — treasury alert dispatch targets
 # If either is missing the dispatcher logs a warning and skips that channel —
@@ -545,6 +633,16 @@ GEMINI_LITE_MODEL=                  # GEM lite/cheaper model for low-latency cal
 GEMINI_VISION_MODEL=                # vision-capable Gemini model for image extraction
 ENABLE_MULTIMODAL_EMBEDDINGS=false  # multimodal (text+image) embedding gate
 ENABLE_NESSIE_RAG_RECOMMENDATIONS=false  # Nessie RAG recommendation experiment gate
+# BUG-008/027 (CTO ruling R-1, 2026-08-12). Capability gate for
+# GET /api/v1/nessie/query AND the edge MCP `nessie_query` tool. Nessie is
+# permanently disabled by standing founder directive — LEAVE THIS UNSET/false in
+# every environment. Deliberately env-backed, NOT a switchboard_flags row: a
+# capability disabled by founder directive must not be re-enablable by a DB
+# write. With it off, both surfaces fail CLOSED with 503 + code=nessie_disabled
+# and enabled=false, carrying no results/count/answer/confidence key, so a
+# disabled capability cannot be mistaken for an empty result. Set the SAME var on
+# the Cloudflare edge worker (services/edge) — it gates the MCP tool there.
+ENABLE_NESSIE_QUERY=false           # Nessie query capability gate — keep OFF (founder directive)
 ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY=false # PR #841 CPE/CLE runtime paths; keep false until prod schema + ledger reconciliation is complete
 ENABLE_DEMO_INJECTOR=false          # synthetic demo data injector for sales/QA
 EVAL_VERBOSE=false                  # extra logging in eval scripts (test-only)

@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 
 const mockFrom = vi.hoisted(() => vi.fn());
 const mockGetSession = vi.hoisted(() => vi.fn());
@@ -123,5 +123,67 @@ describe('useAnchor', () => {
     });
 
     expect(result.current.error).toBe('Something went wrong');
+  });
+
+  // BUG-2026-08-13-017: the reset branch used to set loading=false while auth
+  // was still resolving, exposing one committed frame of (loading=false,
+  // anchor=null, error=null) — the exact state RecordDetailPage renders as
+  // "Record Not Found". Record every render frame and prove that settled-empty
+  // state is never presented for a record that loads successfully.
+  it('never exposes a settled empty state before the fetch settles (BUG-2026-08-13-017)', async () => {
+    let resolveSession!: (value: unknown) => void;
+    mockGetSession.mockReturnValue(
+      new Promise((r) => {
+        resolveSession = r;
+      }),
+    );
+
+    const mockAnchor = { id: 'anchor-1', filename: 'owned.pdf', status: 'SECURED' };
+    let resolveFetch!: (value: unknown) => void;
+    mockFrom.mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          is: vi.fn().mockReturnValue({
+            single: vi.fn().mockReturnValue(
+              new Promise((r) => {
+                resolveFetch = r;
+              }),
+            ),
+          }),
+        }),
+      }),
+    });
+
+    const { useAnchor } = await import('./useAnchor');
+    const frames: { loading: boolean; anchor: unknown; error: string | null }[] = [];
+    const { result } = renderHook(() => {
+      const state = useAnchor('anchor-1');
+      frames.push({ loading: state.loading, anchor: state.anchor, error: state.error });
+      return state;
+    });
+
+    // Auth settles AFTER mount (the live page's 783ms moment); the anchor
+    // query is still in flight.
+    await act(async () => {
+      resolveSession({
+        data: { session: { user: { id: 'user-1', email: 'owner@test.dev' } } },
+        error: null,
+      });
+    });
+
+    // Query settles with the owned record.
+    await act(async () => {
+      resolveFetch({ data: mockAnchor, error: null });
+    });
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+    expect(result.current.anchor).toEqual(mockAnchor);
+
+    // THE assertion: no rendered frame ever claimed "settled and empty".
+    // (loading=false ∧ anchor=null ∧ error=null) is the not-found trigger —
+    // it must be unreachable for a record that ultimately loads.
+    const settledEmptyFrames = frames.filter((f) => !f.loading && f.anchor === null && f.error === null);
+    expect(settledEmptyFrames).toEqual([]);
   });
 });

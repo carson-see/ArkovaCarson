@@ -74,7 +74,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 describe('getDiff two-dot vs three-dot (rebased-lane false-positive)', () => {

@@ -4,7 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arkova"
-version = "2.2.0"
+# 2.3.0 — MINOR, not PATCH. The 2.2.1 corrective release fixed the one
+# crash-class drift; this one clears the rest of the same audit, and seven
+# declared fields that no endpoint emits are REMOVED. Nothing can lose data
+# (they read `None` on every response ever returned), but `.chain_tx_id` on a
+# receipt now raises AttributeError instead of answering `None`, and that is a
+# source-visible break. See CHANGELOG.md.
+version = "2.3.0"
 description = "Typed Python SDK for the Arkova Verification APIs"
 readme = "README.md"
 requires-python = ">=3.10"

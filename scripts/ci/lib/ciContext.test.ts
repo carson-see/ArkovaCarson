@@ -178,6 +178,120 @@ describe('resolvePrLabels', () => {
   });
 });
 
+/**
+ * The degradation used to be structurally invisible: the `gh` call was wrapped
+ * in a bare `catch { return [] }` with stderr routed to `ignore`, so a job whose
+ * env carries no GH_TOKEN/GITHUB_TOKEN fell back to the FROZEN pull_request
+ * payload with NOTHING in the log. Every label-gated override in that job was
+ * inert and the only symptom was "I applied the label, re-ran the job, and it
+ * still failed" (PR #2322, 2026-08-22).
+ *
+ * The fallback stays non-fatal — these tests pin that it is now also LOUD, and
+ * that the genuinely-empty case does NOT cry wolf.
+ */
+describe('fetchLiveLabels failure is annotated, not silent', () => {
+  const PR_ENV = { GITHUB_REF: 'refs/pull/2322/merge', GITHUB_REPOSITORY: 'carson/arkova' };
+
+  function failGh(message = 'gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.') {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'gh') throw Object.assign(new Error('Command failed'), { stderr: `${message}\n` });
+      return gitPassthrough(cmd, args);
+    });
+  }
+
+  it('emits a ::warning when the gh call fails inside a real PR context', async () => {
+    failGh();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    mod.resolvePrLabels({ ...PR_ENV, PR_LABELS: 'foo' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('::warning title=Live PR label fetch failed::');
+    expect(warn.mock.calls[0][0]).toContain('#2322');
+  });
+
+  it('still returns the env-only labels — the annotation must not turn this fatal', async () => {
+    failGh();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    expect(mod.resolvePrLabels({ ...PR_ENV, PR_LABELS: 'foo,bar' }).sort()).toEqual(['bar', 'foo']);
+  });
+
+  it('names the missing token as the cause when neither GH_TOKEN nor GITHUB_TOKEN is set', async () => {
+    failGh();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    mod.resolvePrLabels({ ...PR_ENV });
+    const msg = String(warn.mock.calls[0][0]);
+    expect(msg).toContain('neither GH_TOKEN nor GITHUB_TOKEN is set');
+    // The remediation must be actionable without reading this source file.
+    expect(msg).toContain('secrets.GITHUB_TOKEN');
+    // And it must surface gh's own reason, not just our narrative.
+    expect(msg).toContain('set the GH_TOKEN environment variable');
+  });
+
+  it('does NOT blame a missing token when one is present (real gh/API/timeout failure)', async () => {
+    failGh('gh: Not Found (HTTP 404)');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    mod.resolvePrLabels({ ...PR_ENV, GH_TOKEN: 'ghs_live' });
+    const msg = String(warn.mock.calls[0][0]);
+    expect(msg).toContain('a token IS present');
+    expect(msg).not.toContain('neither GH_TOKEN nor GITHUB_TOKEN is set');
+  });
+
+  it('stays SILENT with no PR context — a push build is legitimately empty, not broken', async () => {
+    failGh();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    expect(mod.resolvePrLabels({ GITHUB_REF: 'refs/heads/main', PR_LABELS: 'foo' })).toEqual(['foo']);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('stays silent when the gh call succeeds', async () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'gh') return 'agents-md-deletion-approved\n';
+      return gitPassthrough(cmd, args);
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    expect(mod.resolvePrLabels({ ...PR_ENV })).toEqual(['agents-md-deletion-approved']);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('warns once per process, not once per hasLabel() call', async () => {
+    // dependency-scan runs ~11 label-gated steps and hasLabel() re-resolves on
+    // every call — an un-deduped warning would bury the log.
+    failGh();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    process.env.GITHUB_REF = PR_ENV.GITHUB_REF;
+    process.env.GITHUB_REPOSITORY = PR_ENV.GITHUB_REPOSITORY;
+    mod.hasLabel('dep-range-intentional');
+    mod.hasLabel('csp-runtime-deps-intentional');
+    mod.resolvePrLabels({ ...PR_ENV });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds a pathological gh error body so it cannot flood the log', async () => {
+    failGh('x'.repeat(5_000));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    mod.resolvePrLabels({ ...PR_ENV });
+    expect(String(warn.mock.calls[0][0]).length).toBeLessThan(1_200);
+  });
+
+  it('pipes gh stderr so the reason is capturable (it used to be routed to `ignore`)', async () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'gh') return 'foo\n';
+      return gitPassthrough(cmd, args);
+    });
+    mod = await import('./ciContext.js');
+    mod.resolvePrLabels({ ...PR_ENV });
+    const ghCall = execFileSyncMock.mock.calls.find((c) => c[0] === 'gh');
+    expect((ghCall?.[2] as { stdio?: string[] })?.stdio).toEqual(['ignore', 'pipe', 'pipe']);
+  });
+});
+
 describe('getBaseRef — lazy, memoized, fail-closed (ci/ciContext-lazy-baseref)', () => {
   it('does NOT invoke git on a labels/body-only import (no eager base resolution)', async () => {
     // The whole point of the lazy split: importing ciContext to read labels /
@@ -269,22 +383,144 @@ describe('getBaseRef — lazy, memoized, fail-closed (ci/ciContext-lazy-baseref)
   });
 });
 
-describe('changedFiles — two-dot diff, fail-closed base (ci/ciContext-lazy-baseref)', () => {
-  it('diffs with TWO-dot (base..HEAD), NOT three-dot (base...HEAD)', async () => {
+describe('changedFiles — PR-own-changeset anchoring, fail-closed base (FD-GATE-2)', () => {
+  // FD-GATE-2: ci.yml and merge-authority.yml pass BASE_REF_SHA from the
+  // FROZEN `github.event.pull_request.base.sha`, while HEAD is the LIVE
+  // refs/pull/N/merge preview GitHub recomputes against current main. The old
+  // two-dot `base..HEAD` therefore charged every base commit landed since the
+  // PR's last push to the PR itself (162 "changed" files on a 6-file PR).
+  // changedFiles now anchors the diff so base movement is never attributed to
+  // the PR:
+  //   - HEAD is the merge preview (pull merge ref + 2-parent HEAD whose FIRST
+  //     parent descends from the env base) → diff HEAD^1..HEAD. HEAD^1 IS the
+  //     live base tip the preview was built on, so this is exactly the PR's
+  //     own changeset (conflict resolutions included).
+  //   - raw head (local run, raw-head fallback) → diff merge-base(base,
+  //     HEAD)..HEAD, i.e. three-dot semantics from the fork point.
+  //   - merge-base unresolvable → fall back to the env base (legacy anchor);
+  //     never degrade to [].
+  const MERGE_BASE_SHA = 'b'.repeat(40);
+  const HEAD_SHA = 'e'.repeat(40);
+  const P1 = 'c'.repeat(40);
+  const P2 = 'd'.repeat(40);
+
+  const findDiffCall = () =>
+    execFileSyncMock.mock.calls.find((c) => c[0] === 'git' && c[1][0] === 'diff');
+  const rangeArgOf = (call: unknown[] | undefined) =>
+    ((call?.[1] ?? []) as string[]).find((a) => a.includes('..'));
+
+  it('anchors the diff at merge-base(base, HEAD), not at the (possibly frozen) env base', async () => {
     execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
       if (cmd === 'git' && args[0] === 'rev-parse') return `${FORTY_HEX}\n`;
+      if (cmd === 'git' && args[0] === 'merge-base' && args[1] !== '--is-ancestor') {
+        return `${MERGE_BASE_SHA}\n`;
+      }
       if (cmd === 'git' && args[0] === 'diff') return 'a.ts\nb.ts\n';
       return '';
     });
     mod = await import('./ciContext.js');
     const files = mod.changedFiles();
     expect(files).toEqual(['a.ts', 'b.ts']);
-    const diffCall = execFileSyncMock.mock.calls.find((c) => c[0] === 'git' && c[1][0] === 'diff');
+    const diffCall = findDiffCall();
     expect(diffCall).toBeDefined();
-    const rangeArg = (diffCall![1] as string[]).find((a) => a.includes('HEAD') && a.includes(FORTY_HEX));
-    expect(rangeArg).toBe(`${FORTY_HEX}..HEAD`);
-    // Explicitly assert the three-dot form is NOT used.
-    expect(rangeArg).not.toContain('...');
+    // The diff starts at the merge-base — base commits landed after the fork
+    // point can never appear in the changeset.
+    expect(rangeArgOf(diffCall)).toBe(`${MERGE_BASE_SHA}..HEAD`);
+    // --diff-filter is preserved on the anchored diff.
+    expect(diffCall![1] as string[]).toContain('--diff-filter=AMR');
+  });
+
+  it('diffs from HEAD^1 when HEAD is the GitHub merge preview (refs/pull/N/merge)', async () => {
+    process.env.GITHUB_REF = 'refs/pull/2291/merge';
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args[0] === 'rev-parse') return `${FORTY_HEX}\n`;
+      if (cmd === 'git' && args[0] === 'rev-list') return `${HEAD_SHA} ${P1} ${P2}\n`;
+      // exit 0 → the env base IS an ancestor of HEAD^1 (i.e. HEAD^1 is the
+      // live base tip, at or after the frozen base) → HEAD is the preview.
+      if (cmd === 'git' && args[0] === 'merge-base' && args[1] === '--is-ancestor') return '';
+      if (cmd === 'git' && args[0] === 'diff') return 'own.ts\n';
+      return '';
+    });
+    mod = await import('./ciContext.js');
+    expect(mod.changedFiles()).toEqual(['own.ts']);
+    expect(rangeArgOf(findDiffCall())).toBe('HEAD^1..HEAD');
+    // The ancestry probe asked about the FIRST parent (the live base tip).
+    const ancestryCall = execFileSyncMock.mock.calls.find(
+      (c) => c[0] === 'git' && (c[1] as string[])[1] === '--is-ancestor',
+    );
+    expect(ancestryCall).toBeDefined();
+    expect(ancestryCall![1]).toEqual(['merge-base', '--is-ancestor', FORTY_HEX, P1]);
+  });
+
+  it('does NOT use HEAD^1 for a raw branch head whose tip merely merges another branch', async () => {
+    // staging-evidence.yml's raw-head fallback checks out the BRANCH head under
+    // the same refs/pull/N/merge GITHUB_REF. A branch tip that is itself a
+    // merge commit (main merged into the branch) has 2 parents, but its first
+    // parent is the PREVIOUS branch head — which the env base does not
+    // descend into. The ancestry probe fails → merge-base anchoring.
+    process.env.GITHUB_REF = 'refs/pull/2291/merge';
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args[0] === 'rev-parse') return `${FORTY_HEX}\n`;
+      if (cmd === 'git' && args[0] === 'rev-list') return `${HEAD_SHA} ${P1} ${P2}\n`;
+      if (cmd === 'git' && args[0] === 'merge-base' && args[1] === '--is-ancestor') {
+        throw Object.assign(new Error('not an ancestor'), { status: 1 });
+      }
+      if (cmd === 'git' && args[0] === 'merge-base') return `${MERGE_BASE_SHA}\n`;
+      if (cmd === 'git' && args[0] === 'diff') return 'x.ts\n';
+      return '';
+    });
+    mod = await import('./ciContext.js');
+    expect(mod.changedFiles()).toEqual(['x.ts']);
+    expect(rangeArgOf(findDiffCall())).toBe(`${MERGE_BASE_SHA}..HEAD`);
+  });
+
+  it('does NOT use HEAD^1 for a single-parent HEAD even on the pull merge ref', async () => {
+    process.env.GITHUB_REF = 'refs/pull/2291/merge';
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args[0] === 'rev-parse') return `${FORTY_HEX}\n`;
+      if (cmd === 'git' && args[0] === 'rev-list') return `${HEAD_SHA} ${P1}\n`;
+      if (cmd === 'git' && args[0] === 'merge-base' && args[1] !== '--is-ancestor') {
+        return `${MERGE_BASE_SHA}\n`;
+      }
+      if (cmd === 'git' && args[0] === 'diff') return 'y.ts\n';
+      return '';
+    });
+    mod = await import('./ciContext.js');
+    expect(mod.changedFiles()).toEqual(['y.ts']);
+    expect(rangeArgOf(findDiffCall())).toBe(`${MERGE_BASE_SHA}..HEAD`);
+  });
+
+  it('never consults HEAD parents outside a pull-request merge ref', async () => {
+    process.env.GITHUB_REF = 'refs/heads/main';
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args[0] === 'rev-parse') return `${FORTY_HEX}\n`;
+      if (cmd === 'git' && args[0] === 'merge-base' && args[1] !== '--is-ancestor') {
+        return `${MERGE_BASE_SHA}\n`;
+      }
+      if (cmd === 'git' && args[0] === 'diff') return 'z.ts\n';
+      return '';
+    });
+    mod = await import('./ciContext.js');
+    expect(mod.changedFiles()).toEqual(['z.ts']);
+    expect(rangeArgOf(findDiffCall())).toBe(`${MERGE_BASE_SHA}..HEAD`);
+    // On a push build HEAD may be a merge commit too — the preview path must be
+    // gated on the ref, so rev-list is never even invoked here.
+    const revListCalls = execFileSyncMock.mock.calls.filter(
+      (c) => c[0] === 'git' && (c[1] as string[])[0] === 'rev-list',
+    );
+    expect(revListCalls).toHaveLength(0);
+  });
+
+  it('falls back to the env base when merge-base cannot resolve (legacy anchor, never [])', async () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args[0] === 'rev-parse') return `${FORTY_HEX}\n`;
+      if (cmd === 'git' && args[0] === 'merge-base') throw new Error('fatal: no merge base');
+      if (cmd === 'git' && args[0] === 'diff') return 'a.ts\n';
+      return '';
+    });
+    mod = await import('./ciContext.js');
+    expect(mod.changedFiles()).toEqual(['a.ts']);
+    expect(rangeArgOf(findDiffCall())).toBe(`${FORTY_HEX}..HEAD`);
   });
 
   it('fails closed (exits) when the base is unresolvable instead of returning [] (no silent path-gate bypass)', async () => {
