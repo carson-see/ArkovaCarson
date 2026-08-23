@@ -20,6 +20,23 @@ Python SDK for the Arkova Verification API v2. Sync + async clients using `httpx
   - **`None` mostly means OMITTED, not null.** `buildVerificationResult` skips
     null/empty values rather than serialising them, so most optional fields are
     present-with-a-value or absent. Declaring `| None` covers absence.
+  - The non-crash drift that 2.2.1 deferred (different endpoints, outside the P1
+    blast radius) was CLEARED in **2.3.0**: `chain_tx_id`, `issuer_name`,
+    `industry_tag`, `org_type`, `location`, `logo_url` and `BulkAnchorRowError.
+    field` were removed (seven fields no emitter can populate), and
+    `AnchorReceipt.record_uri` plus `RecordDetail.type` / `.metadata` were added.
+    Do not re-add any of the seven from an OpenAPI block or a TS interface —
+    `interface RowError` declares `field?: string` that nothing assigns, and
+    that declaration is exactly how it got here. **The emitter is the
+    authority, not the type that describes it.**
+  - **Model↔emitter parity is now a test, not a convention.** `test_client.py`
+    holds a frozen key set per response model (`ANCHOR_RECEIPT_EMITTED_KEYS`,
+    `MAP_ANCHOR_DETAIL_EMITTED_KEYS`, `ORGANIZATION_DETAIL_EMITTED_KEYS`,
+    `BULK_ROW_ERROR_EMITTED_KEYS`), each transcribed from the worker source that
+    BUILDS the response. Change a route's emitted keys and the matching parity
+    test fails — update the set and the model together, in that PR. Do not
+    regenerate these from a captured payload: a sample proves what one record
+    contained on one day, which is how every field above got here.
   - Known non-crash drift, audited 2026-08-15 and deliberately NOT changed in
     2.2.1 (different endpoints, outside the P1 blast radius — see the PR body for
     BUG-2026-08-12-007): `AnchorReceipt` declares `chain_tx_id` (never emitted)

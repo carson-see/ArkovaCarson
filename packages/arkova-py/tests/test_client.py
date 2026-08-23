@@ -10,14 +10,23 @@ from pydantic import ValidationError
 from arkova import (
     BULK_ANCHOR_MAX_ROWS,
     Anchor,
+    AnchorReceipt,
     Arkova,
     ArkovaError,
     AsyncArkova,
     BulkAnchorInput,
+    BulkAnchorRowError,
     FingerprintVerification,
+    SearchResult,
     VerificationResult,
 )
-from arkova.models import RichVerificationFields
+from arkova.models import (
+    DocumentDetail,
+    FingerprintDetail,
+    OrganizationDetail,
+    RecordDetail,
+    RichVerificationFields,
+)
 
 
 def json_response(
@@ -593,6 +602,7 @@ def test_anchor_sends_precomputed_fingerprint_via_bearer_auth() -> None:
                 "fingerprint": "a" * 64,
                 "status": "PENDING",
                 "created_at": "2026-01-01T00:00:00Z",
+                "record_uri": "https://app.arkova.ai/verify/ARK-2026-001",
             },
             status_code=201,
         )
@@ -602,7 +612,7 @@ def test_anchor_sends_precomputed_fingerprint_via_bearer_auth() -> None:
 
     assert receipt.public_id == "ARK-2026-001"
     assert receipt.status == "PENDING"
-    assert receipt.chain_tx_id is None
+    assert receipt.record_uri == "https://app.arkova.ai/verify/ARK-2026-001"
     assert len(seen_requests) == 1
     req = seen_requests[0]
     assert req.method == "POST"
@@ -622,6 +632,7 @@ def test_anchor_fingerprints_data_client_side_raw_content_never_sent() -> None:
                 "fingerprint": "irrelevant",
                 "status": "PENDING",
                 "created_at": "2026-01-01T00:00:00Z",
+                "record_uri": "https://app.arkova.ai/verify/ARK-2026-002",
             },
             status_code=201,
         )
@@ -990,6 +1001,7 @@ def test_async_anchor_and_anchor_bulk_wire_to_correct_paths_with_bearer_auth() -
                     "fingerprint": "a" * 64,
                     "status": "PENDING",
                     "created_at": "2026-01-01T00:00:00Z",
+                    "record_uri": "https://app.arkova.ai/verify/ARK-2026-ASYNC",
                 },
                 status_code=201,
             )
@@ -1288,3 +1300,346 @@ def test_verify_types_the_proof_and_fingerprint_evidence_fields() -> None:
     assert result.fingerprint_source == "document_bytes"
     assert result.proof_availability == "root_only"
     assert result.proof_availability_note == ROOT_ONLY_NOTE
+
+
+# ── Model ↔ emitter parity (BUG-2026-08-12-007 follow-up) ────────────────
+#
+# Every key set below is transcribed from the worker code that BUILDS the
+# response, not from a captured sample payload. A sample only proves what one
+# record happened to contain on one day; the emitter proves what the endpoint
+# can ever emit. Sample-derived modelling is precisely what put `chain_tx_id`,
+# `issuer_name`, `industry_tag`, `org_type`, `location`, `logo_url` and
+# `field` into this SDK as fields that could only ever read `None`.
+#
+# These sets are a ratchet: if a route starts emitting a new key, the parity
+# test fails and the model gets updated in the same change — rather than the
+# key sitting in `model_extra` untyped and undiscoverable, which is how the
+# fields corrected in 2.2.1 stayed invisible for a full release.
+
+# services/worker/src/api/v1/anchor-submit.ts — `interface AnchorReceipt`.
+# BOTH emit sites (the idempotent duplicate hit at 200 and the fresh insert at
+# 201) build this same object literal with no conditional key.
+ANCHOR_RECEIPT_EMITTED_KEYS = frozenset(
+    {"public_id", "fingerprint", "status", "created_at", "record_uri"}
+)
+
+# services/worker/src/api/v2/resourceDetails.ts — `mapAnchorDetail()`. One
+# return literal, shared by /records/{id}, /fingerprints/{fp} and
+# /documents/{id}. `metadata` is the ONLY key that can be absent: `safeMetadata`
+# returns `undefined` when no SAFE_METADATA_KEYS survived filtering, and an
+# `undefined` value drops the key from the JSON entirely.
+MAP_ANCHOR_DETAIL_EMITTED_KEYS = frozenset(
+    {
+        "type",
+        "public_id",
+        "verified",
+        "status",
+        "title",
+        "description",
+        "credential_type",
+        "sub_type",
+        "fingerprint",
+        "issued_date",
+        "expiry_date",
+        "anchor_timestamp",
+        "network_receipt_id",
+        "record_uri",
+        "metadata",
+    }
+)
+
+# resourceDetails.ts — GET /api/v2/organizations/{public_id}. The handler does
+# not spread the row; it names six keys explicitly in its `res.json({...})`.
+ORGANIZATION_DETAIL_EMITTED_KEYS = frozenset(
+    {
+        "public_id",
+        "display_name",
+        "description",
+        "domain",
+        "website_url",
+        "verification_status",
+    }
+)
+
+# services/worker/src/api/v1/anchor-bulk.ts — the only two `errors.push()`
+# sites in the file. The worker's `RowError` interface declares `field?: string`
+# but nothing ever assigns it, so it never reaches the wire.
+BULK_ROW_ERROR_EMITTED_KEYS = frozenset({"row", "code", "message"})
+BULK_ROW_ERROR_EMITTED_CODES = ("insert_failed", "unexpected_error")
+
+
+def map_anchor_detail_payload(
+    detail_type: str,
+    *,
+    metadata: dict | None = None,
+) -> dict:
+    """Reproduce `mapAnchorDetail()` output for one anchor row.
+
+    `status` is `ACTIVE`, not `SECURED`: `normalizeAnchorStatus()` rewrites
+    `SECURED` on the way out, so `SECURED` never appears on this route.
+    """
+    payload: dict = {
+        "type": detail_type,
+        "public_id": "ARK-2026-C3A718D0",
+        "verified": True,
+        "status": "ACTIVE",
+        "title": "engagement-letter.pdf",
+        "description": "Signed engagement letter",
+        "credential_type": "LEGAL",
+        "sub_type": None,
+        "fingerprint": "a" * 64,
+        "issued_date": "2026-01-05T00:00:00Z",
+        "expiry_date": None,
+        "anchor_timestamp": "2026-01-06T12:00:00Z",
+        "network_receipt_id": "9f" * 32,
+        "record_uri": "https://app.arkova.ai/verify/ARK-2026-C3A718D0",
+    }
+    if metadata is not None:
+        payload["metadata"] = metadata
+    return payload
+
+
+def detail_client(payload: dict) -> Arkova:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(payload)
+
+    return Arkova(api_key="ak_test", transport=httpx.MockTransport(handler))
+
+
+def test_anchor_receipt_declares_exactly_what_the_endpoint_emits() -> None:
+    """`POST /api/v1/anchor` emits five keys; the model must declare those five.
+
+    `chain_tx_id` was never one of them. An anchor is `PENDING` at creation and
+    has no chain transaction yet by definition — the receipt is issued before
+    any batch drain runs, so there is no value the endpoint could put there.
+    """
+    assert set(AnchorReceipt.model_fields) == ANCHOR_RECEIPT_EMITTED_KEYS
+
+
+def test_anchor_receipt_exposes_the_record_uri_every_response_carries() -> None:
+    """`record_uri` is the caller's link to the verification page.
+
+    It was absent from the model, so it landed in `model_extra`: invisible to
+    type checkers and IDE completion, and absent from `model_dump()` round
+    trips through the declared schema. Callers had to rebuild the URL by hand.
+    """
+    payload = {
+        "public_id": "ARK-2026-C3A718D0",
+        "fingerprint": "a" * 64,
+        "status": "PENDING",
+        "created_at": "2026-01-06T12:00:00Z",
+        "record_uri": "https://app.arkova.ai/verify/ARK-2026-C3A718D0",
+    }
+
+    assert "record_uri" in AnchorReceipt.model_fields, "must be declared, not a pydantic extra"
+
+    receipt = AnchorReceipt.model_validate(payload)
+
+    assert receipt.record_uri == "https://app.arkova.ai/verify/ARK-2026-C3A718D0"
+    assert "record_uri" not in (receipt.model_extra or {})
+
+
+def test_anchor_receipt_status_is_not_narrowed_to_a_literal() -> None:
+    """`status` stays `str` even though the endpoint only ever sends `PENDING`.
+
+    Same reasoning as `fingerprint_source` / `proof_availability` in 2.2.1:
+    a `Literal["PENDING"]` would be an API snapshot promoted to a hard
+    constraint, and the day the endpoint gains a status it would raise inside
+    `anchor()` rather than surface the new value.
+    """
+    receipt = AnchorReceipt.model_validate(
+        {
+            "public_id": "ARK-2026-C3A718D0",
+            "fingerprint": "a" * 64,
+            "status": "SOME_FUTURE_STATUS",
+            "created_at": "2026-01-06T12:00:00Z",
+            "record_uri": "https://app.arkova.ai/verify/ARK-2026-C3A718D0",
+        }
+    )
+
+    assert receipt.status == "SOME_FUTURE_STATUS"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [RecordDetail, FingerprintDetail, DocumentDetail],
+)
+def test_detail_models_declare_exactly_what_map_anchor_detail_emits(model: type) -> None:
+    """All three v2 detail routes share one mapper, so they share one key set.
+
+    `issuer_name` is not in it. `mapAnchorDetail` has no such key — issuer
+    reaches the client through `metadata["issuer"]` instead (see below).
+    """
+    assert set(model.model_fields) == MAP_ANCHOR_DETAIL_EMITTED_KEYS
+
+
+@pytest.mark.parametrize(
+    ("detail_type", "getter"),
+    [
+        ("record", "get_record"),
+        ("fingerprint", "get_fingerprint"),
+        ("document", "get_document"),
+    ],
+)
+def test_detail_routes_surface_the_type_discriminator(detail_type: str, getter: str) -> None:
+    """`type` is emitted unconditionally and identifies which route answered.
+
+    It is the one field that distinguishes the three otherwise-identical
+    payloads, and it was not declared — so the discriminator was unusable
+    without reaching into `model_extra`.
+    """
+    payload = map_anchor_detail_payload(detail_type)
+    lookup = "a" * 64 if detail_type == "fingerprint" else "ARK-2026-C3A718D0"
+
+    with detail_client(payload) as client:
+        detail = getattr(client, getter)(lookup)
+
+    assert "type" in type(detail).model_fields, "must be declared, not a pydantic extra"
+    assert detail.type == detail_type
+    assert "type" not in (detail.model_extra or {})
+    assert detail.public_id == "ARK-2026-C3A718D0"
+    assert detail.record_uri == "https://app.arkova.ai/verify/ARK-2026-C3A718D0"
+
+
+def test_detail_metadata_is_declared_and_carries_the_issuer() -> None:
+    """`metadata` is the replacement path for the phantom `issuer_name`.
+
+    `safeMetadata()` allow-lists ten keys (SAFE_METADATA_KEYS), `issuer` among
+    them. So issuer data was reaching Python consumers all along — just not
+    where the model told them to look.
+    """
+    payload = map_anchor_detail_payload(
+        "record",
+        metadata={"issuer": "Example Legal Services LLP", "jurisdiction": "US-NY"},
+    )
+
+    with detail_client(payload) as client:
+        detail = client.get_record("ARK-2026-C3A718D0")
+
+    assert detail.metadata == {"issuer": "Example Legal Services LLP", "jurisdiction": "US-NY"}
+
+
+def test_detail_metadata_is_none_when_the_worker_omits_it() -> None:
+    """`safeMetadata()` returns `undefined` for an empty result, dropping the key.
+
+    So absent-means-empty, and the model must tolerate the key being missing
+    rather than requiring it.
+    """
+    payload = map_anchor_detail_payload("document")
+    assert "metadata" not in payload
+
+    with detail_client(payload) as client:
+        detail = client.get_document("ARK-2026-C3A718D0")
+
+    assert detail.metadata is None
+
+
+def test_organization_detail_declares_exactly_the_six_emitted_keys() -> None:
+    """The v2 org-detail handler names six keys explicitly.
+
+    `industry_tag`, `org_type`, `location` and `logo_url` are not among them
+    and are not selected from the `organizations` row either, so no code path
+    could ever have populated them.
+    """
+    assert set(OrganizationDetail.model_fields) == ORGANIZATION_DETAIL_EMITTED_KEYS
+
+
+def test_organization_detail_round_trips_the_route_payload() -> None:
+    payload = {
+        "public_id": "ORG-2026-4F2A",
+        "display_name": "Example Legal Services LLP",
+        "description": "Commercial litigation practice",
+        "domain": "example-legal.test",
+        "website_url": "https://example-legal.test",
+        "verification_status": "VERIFIED",
+    }
+
+    with detail_client(payload) as client:
+        org = client.get_organization("ORG-2026-4F2A")
+
+    assert org.display_name == "Example Legal Services LLP"
+    assert org.verification_status == "VERIFIED"
+    assert org.model_dump() == payload
+
+
+def test_bulk_row_error_declares_exactly_what_the_worker_pushes() -> None:
+    """`field` is declared on the worker's `RowError` interface but never set.
+
+    Both `errors.push()` sites pass `{row, code, message}`. Row-level schema
+    failures never reach this array at all — a bad row fails Zod validation for
+    the WHOLE request and returns a 400 with a `details[]` list instead, which
+    is a different shape on a different response.
+    """
+    assert set(BulkAnchorRowError.model_fields) == BULK_ROW_ERROR_EMITTED_KEYS
+
+
+@pytest.mark.parametrize("code", BULK_ROW_ERROR_EMITTED_CODES)
+def test_bulk_row_error_parses_both_emitted_codes(code: str) -> None:
+    error = BulkAnchorRowError.model_validate(
+        {"row": 3, "code": code, "message": "Failed to create anchor record."}
+    )
+
+    assert error.row == 3
+    assert error.code == code
+
+
+def test_bulk_row_error_code_is_not_narrowed_to_a_literal() -> None:
+    """Only two codes are emitted today, and `code` still stays `str`.
+
+    The two known values are documented on the model rather than enforced by
+    it, for the same reason `status` above is not a `Literal`.
+    """
+    error = BulkAnchorRowError.model_validate(
+        {"row": 1, "code": "some_future_code", "message": "..."}
+    )
+
+    assert error.code == "some_future_code"
+
+
+@pytest.mark.parametrize(
+    ("model", "removed"),
+    [
+        (AnchorReceipt, "chain_tx_id"),
+        (RecordDetail, "issuer_name"),
+        (FingerprintDetail, "issuer_name"),
+        (DocumentDetail, "issuer_name"),
+        (OrganizationDetail, "industry_tag"),
+        (OrganizationDetail, "org_type"),
+        (OrganizationDetail, "location"),
+        (OrganizationDetail, "logo_url"),
+        (BulkAnchorRowError, "field"),
+    ],
+)
+def test_phantom_fields_are_gone(model: type, removed: str) -> None:
+    """Explicit ratchet against re-adding a field no endpoint emits.
+
+    Each of these was declared, defaulted to `None`, and had no code path on
+    the worker that could ever set it. `extra="allow"` means removal costs
+    nothing if an endpoint later starts sending one: it would arrive as an
+    extra and still be readable, and the parity tests above would fail and
+    prompt a proper typed declaration.
+    """
+    assert removed not in model.model_fields
+
+
+def test_search_result_score_is_a_constant_not_a_relevance_signal() -> None:
+    """All four v2 search mappers hardcode `score: 1.0`.
+
+    org / record / fingerprint / document each build `score: 1.0` literally;
+    there is no ranking function anywhere in `services/worker/src/api/v2/
+    search.ts`. The field is part of the frozen v2 response shape (§1.8) so
+    the SDK keeps it, but sorting or thresholding on it is meaningless — every
+    result ties. Ordering comes from the query's own `.order()` clause.
+
+    Documented, deliberately not "fixed": the SDK cannot invent a relevance
+    signal the API does not compute, and dropping a frozen field would be the
+    breaking change.
+    """
+    results = [
+        SearchResult.model_validate(
+            {"type": result_type, "public_id": f"ARK-{result_type}", "score": 1.0, "snippet": ""}
+        )
+        for result_type in ("org", "record", "fingerprint", "document")
+    ]
+
+    assert {result.score for result in results} == {1.0}

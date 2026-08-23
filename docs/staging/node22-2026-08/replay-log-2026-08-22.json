@@ -1,0 +1,786 @@
+[
+ {
+  "file": "00000000000000_baseline_at_main_HEAD.sql",
+  "file_md5": "e3dc2e79ce3dae2dd7ccd8aa59efc042",
+  "payload_md5": "e3dc2e79ce3dae2dd7ccd8aa59efc042",
+  "stripped_concurrently": false,
+  "version": "00000000000000"
+ },
+ {
+  "file": "0290_suborg_suspension_audit_and_service_role_fix.sql",
+  "file_md5": "08d5b7e7954bf39799bbb79a1c1651a9",
+  "payload_md5": "08d5b7e7954bf39799bbb79a1c1651a9",
+  "stripped_concurrently": false,
+  "version": "0290"
+ },
+ {
+  "file": "0292_microsoft_graph_webhook_nonces.sql",
+  "file_md5": "87cc834fcc4d8588d59a464e35955f18",
+  "payload_md5": "87cc834fcc4d8588d59a464e35955f18",
+  "stripped_concurrently": false,
+  "version": "0292"
+ },
+ {
+  "file": "0293_msgraph_nonce_payload_hash_and_compound_rpc.sql",
+  "file_md5": "e447424677bfaf9c5ede57d8cb9b52d4",
+  "payload_md5": "e447424677bfaf9c5ede57d8cb9b52d4",
+  "stripped_concurrently": false,
+  "version": "0293"
+ },
+ {
+  "file": "0294_org_queue_scheduler.sql",
+  "file_md5": "a46b44143c9400b24c395297a2926eb9",
+  "payload_md5": "a46b44143c9400b24c395297a2926eb9",
+  "stripped_concurrently": false,
+  "version": "0294"
+ },
+ {
+  "file": "0295_pr700_rls_baseline_reconciliation.sql",
+  "file_md5": "20bf23aef9e1b1e1ea7ad65897814216",
+  "payload_md5": "20bf23aef9e1b1e1ea7ad65897814216",
+  "stripped_concurrently": false,
+  "version": "0295"
+ },
+ {
+  "file": "0296_refund_org_credit.sql",
+  "file_md5": "2e1f87b06dd0866f9d75b711655b1e0f",
+  "payload_md5": "2e1f87b06dd0866f9d75b711655b1e0f",
+  "stripped_concurrently": false,
+  "version": "0296"
+ },
+ {
+  "file": "0297_bq_export_watermarks.sql",
+  "file_md5": "51e38cb845696fe161839e2b5ef6b3e7",
+  "payload_md5": "51e38cb845696fe161839e2b5ef6b3e7",
+  "stripped_concurrently": false,
+  "version": "0297"
+ },
+ {
+  "file": "0299_validate_api_key_rpc.sql",
+  "file_md5": "e9f4152ed8005eb5a689559a663995e3",
+  "payload_md5": "e9f4152ed8005eb5a689559a663995e3",
+  "stripped_concurrently": false,
+  "version": "0299"
+ },
+ {
+  "file": "0300_test_credit_pool.sql",
+  "file_md5": "4f9152a971af48c4ea098bf48684ccdb",
+  "payload_md5": "4f9152a971af48c4ea098bf48684ccdb",
+  "stripped_concurrently": false,
+  "version": "0300"
+ },
+ {
+  "file": "0301_anchor_quota_nonneg_check.sql",
+  "file_md5": "34d925702c19ddf925cec34ec5b51de2",
+  "payload_md5": "34d925702c19ddf925cec34ec5b51de2",
+  "stripped_concurrently": false,
+  "version": "0301"
+ },
+ {
+  "file": "0302_validate_api_key_rpc_hardening.sql",
+  "file_md5": "c29d466441d5c1418d14c06b88c6666d",
+  "payload_md5": "c29d466441d5c1418d14c06b88c6666d",
+  "stripped_concurrently": false,
+  "version": "0302"
+ },
+ {
+  "file": "0303_validate_api_key_rpc_hardening.sql",
+  "file_md5": "03609e8824db5ab55cd5263e9a2dc3b4",
+  "payload_md5": "03609e8824db5ab55cd5263e9a2dc3b4",
+  "stripped_concurrently": false,
+  "version": "0303"
+ },
+ {
+  "file": "0304_drop_broken_search_public_credentials_overload.sql",
+  "file_md5": "16b00d8287cb232319e602113ad999a6",
+  "payload_md5": "16b00d8287cb232319e602113ad999a6",
+  "stripped_concurrently": false,
+  "version": "0304"
+ },
+ {
+  "file": "0305_pipeline_operational_status_filters.sql",
+  "file_md5": "344b1b0e4b22005647979c5ca86c6659",
+  "payload_md5": "344b1b0e4b22005647979c5ca86c6659",
+  "stripped_concurrently": false,
+  "version": "0305"
+ },
+ {
+  "file": "0306_docusign_org_integrations_base_uri.sql",
+  "file_md5": "da3a85cbc73e30d2d18ea786ca3d0161",
+  "payload_md5": "da3a85cbc73e30d2d18ea786ca3d0161",
+  "stripped_concurrently": false,
+  "version": "0306"
+ },
+ {
+  "file": "0307_fix_anchors_rls_statement_timeout.sql",
+  "file_md5": "089477c6d702769d5ef951f2640b3506",
+  "payload_md5": "089477c6d702769d5ef951f2640b3506",
+  "stripped_concurrently": false,
+  "version": "0307"
+ },
+ {
+  "file": "0308_seed_arkova_org_credits.sql",
+  "file_md5": "d0ad29daabe430ff24d23b16160874d7",
+  "payload_md5": "d0ad29daabe430ff24d23b16160874d7",
+  "stripped_concurrently": false,
+  "version": "0308"
+ },
+ {
+  "file": "0309_expand_audit_event_category_constraint.sql",
+  "file_md5": "f51635a6968d70ae5ee90529c1e40feb",
+  "payload_md5": "f51635a6968d70ae5ee90529c1e40feb",
+  "stripped_concurrently": false,
+  "version": "0309"
+ },
+ {
+  "file": "0310_idx_anchors_secured_chain_ts.sql",
+  "file_md5": "a5d813f3f229a26aa9a87f3a70c01122",
+  "payload_md5": "a5d813f3f229a26aa9a87f3a70c01122",
+  "stripped_concurrently": false,
+  "version": "0310"
+ },
+ {
+  "file": "0311_scrum1599_public_anchor_provenance.sql",
+  "file_md5": "2ccb01dd871a9c008792bdb922c0e6ea",
+  "payload_md5": "2ccb01dd871a9c008792bdb922c0e6ea",
+  "stripped_concurrently": false,
+  "version": "0311"
+ },
+ {
+  "file": "0312_org_integrations_token_secret_name.sql",
+  "file_md5": "5d0b1eef5c5938d49c3f445a2a802fa8",
+  "payload_md5": "5d0b1eef5c5938d49c3f445a2a802fa8",
+  "stripped_concurrently": false,
+  "version": "0312"
+ },
+ {
+  "file": "0313_anchors_index_consolidation.sql",
+  "file_md5": "fe843db83dc3634b3ab839396eb802ef",
+  "payload_md5": "fe843db83dc3634b3ab839396eb802ef",
+  "stripped_concurrently": false,
+  "version": "0313"
+ },
+ {
+  "file": "0314_legally_binding_attestations.sql",
+  "file_md5": "a1120a4b524e3dcfae43cdef4d767eef",
+  "payload_md5": "a1120a4b524e3dcfae43cdef4d767eef",
+  "stripped_concurrently": false,
+  "version": "0314"
+ },
+ {
+  "file": "0315_professional_education_foundations.sql",
+  "file_md5": "4ac7fd2edff079aab51243df8c6fce98",
+  "payload_md5": "4ac7fd2edff079aab51243df8c6fce98",
+  "stripped_concurrently": false,
+  "version": "0315"
+ },
+ {
+  "file": "0316_sweep_webhook_nonces_rpc.sql",
+  "file_md5": "a21562cff4b7adec69a7737e6673f0f8",
+  "payload_md5": "a21562cff4b7adec69a7737e6673f0f8",
+  "stripped_concurrently": false,
+  "version": "0316"
+ },
+ {
+  "file": "0317_connector_alert_state.sql",
+  "file_md5": "d8b4a69552edda55f348a8ad295df438",
+  "payload_md5": "d8b4a69552edda55f348a8ad295df438",
+  "stripped_concurrently": false,
+  "version": "0317"
+ },
+ {
+  "file": "0318_docusign_reconciliation_gaps.sql",
+  "file_md5": "061a6ab25b707b1d2d6dea37c33f2394",
+  "payload_md5": "061a6ab25b707b1d2d6dea37c33f2394",
+  "stripped_concurrently": false,
+  "version": "0318"
+ },
+ {
+  "file": "0319_org_integrations_hmac_keys.sql",
+  "file_md5": "29bfd35b38c6b839020588e2564d03d2",
+  "payload_md5": "29bfd35b38c6b839020588e2564d03d2",
+  "stripped_concurrently": false,
+  "version": "0319"
+ },
+ {
+  "file": "0320_member_integrations.sql",
+  "file_md5": "3fc5e3df53fa7401230f896226c19189",
+  "payload_md5": "3fc5e3df53fa7401230f896226c19189",
+  "stripped_concurrently": false,
+  "version": "0320"
+ },
+ {
+  "file": "0321_member_integrations_account_uniqueness.sql",
+  "file_md5": "5d55b6127627f556c579834219e6d9f0",
+  "payload_md5": "5d55b6127627f556c579834219e6d9f0",
+  "stripped_concurrently": false,
+  "version": "0321"
+ },
+ {
+  "file": "0322_bump_cloud_logging_retry_counts_rpc.sql",
+  "file_md5": "1616f3e4643e85def406b13ff1471735",
+  "payload_md5": "1616f3e4643e85def406b13ff1471735",
+  "stripped_concurrently": false,
+  "version": "0322"
+ },
+ {
+  "file": "0323_external_document_versions.sql",
+  "file_md5": "d8f35509cc20fd3d90ca18f4e6ea0cd6",
+  "payload_md5": "d8f35509cc20fd3d90ca18f4e6ea0cd6",
+  "stripped_concurrently": false,
+  "version": "0323"
+ },
+ {
+  "file": "0324_anchor_status_counts_read_cache.sql",
+  "file_md5": "666c7b3fdef19c4a5b0bd8031714c9aa",
+  "payload_md5": "666c7b3fdef19c4a5b0bd8031714c9aa",
+  "stripped_concurrently": false,
+  "version": "0324"
+ },
+ {
+  "file": "0325_public_search_min_length_and_timeouts.sql",
+  "file_md5": "e1bef2589205c15ec0e22acea724058c",
+  "payload_md5": "e1bef2589205c15ec0e22acea724058c",
+  "stripped_concurrently": false,
+  "version": "0325"
+ },
+ {
+  "file": "0326_scrum1649_deduct_org_credit_idempotency.sql",
+  "file_md5": "1854b2ad5329079975bf7e19ab393c1c",
+  "payload_md5": "1854b2ad5329079975bf7e19ab393c1c",
+  "stripped_concurrently": false,
+  "version": "0326"
+ },
+ {
+  "file": "0327_scrum2225_free_tier_quota.sql",
+  "file_md5": "1882e5112015fc1083d0022b6eb1be49",
+  "payload_md5": "1882e5112015fc1083d0022b6eb1be49",
+  "stripped_concurrently": false,
+  "version": "0327"
+ },
+ {
+  "file": "0328_org_integrations_suborg_inheritance.sql",
+  "file_md5": "7d4adb3441041fe96cdf6bc7bd854cdd",
+  "payload_md5": "7d4adb3441041fe96cdf6bc7bd854cdd",
+  "stripped_concurrently": false,
+  "version": "0328"
+ },
+ {
+  "file": "0329_member_integrations_credential_providers.sql",
+  "file_md5": "5372a9ea3ebc8eaf41012e8c2646a9c8",
+  "payload_md5": "5372a9ea3ebc8eaf41012e8c2646a9c8",
+  "stripped_concurrently": false,
+  "version": "0329"
+ },
+ {
+  "file": "0330_scrum2203_unembedded_records_query_perf.sql",
+  "file_md5": "83a3cee33876c50423e79f28a3dc35ee",
+  "payload_md5": "83a3cee33876c50423e79f28a3dc35ee",
+  "stripped_concurrently": false,
+  "version": "0330"
+ },
+ {
+  "file": "0331_scrum1847_1869_public_anchor_cpe_cle_metadata.sql",
+  "file_md5": "98bc4b7af91618a6b195b96c34d2d0b6",
+  "payload_md5": "98bc4b7af91618a6b195b96c34d2d0b6",
+  "stripped_concurrently": false,
+  "version": "0331"
+ },
+ {
+  "file": "0333_scrum2193_validate_anchors_metadata_constraints.sql",
+  "file_md5": "f09ee2403edc90c2d60bc95edf3192b8",
+  "payload_md5": "f09ee2403edc90c2d60bc95edf3192b8",
+  "stripped_concurrently": false,
+  "version": "0333"
+ },
+ {
+  "file": "0334_scrum2248_sanitize_metadata_strip_underscore.sql",
+  "file_md5": "d71b0f3be46825662ad4d4e0dcc36bc0",
+  "payload_md5": "d71b0f3be46825662ad4d4e0dcc36bc0",
+  "stripped_concurrently": false,
+  "version": "0334"
+ },
+ {
+  "file": "0335_scrum2236_dashboard_cache_budgets.sql",
+  "file_md5": "a85f6c796645a9b286f9a38aba2d2e8c",
+  "payload_md5": "a85f6c796645a9b286f9a38aba2d2e8c",
+  "stripped_concurrently": false,
+  "version": "0335"
+ },
+ {
+  "file": "0336_scrum2252_revocation_metadata.sql",
+  "file_md5": "c40acd8e25d29d98e1d7a2d742e0a8c0",
+  "payload_md5": "c40acd8e25d29d98e1d7a2d742e0a8c0",
+  "stripped_concurrently": false,
+  "version": "0336"
+ },
+ {
+  "file": "0337_scrum2250_webhook_event_sequence.sql",
+  "file_md5": "efd21466225334aefcbc27e1a503f633",
+  "payload_md5": "efd21466225334aefcbc27e1a503f633",
+  "stripped_concurrently": false,
+  "version": "0337"
+ },
+ {
+  "file": "0338_scrum2244_dlq_idempotency.sql",
+  "file_md5": "bda75000fcf7071009ad195a348ab205",
+  "payload_md5": "bda75000fcf7071009ad195a348ab205",
+  "stripped_concurrently": false,
+  "version": "0338"
+ },
+ {
+  "file": "0339_get_public_anchor_by_fingerprint.sql",
+  "file_md5": "c45a2ff35211862e1b6a0ec061c9221d",
+  "payload_md5": "c45a2ff35211862e1b6a0ec061c9221d",
+  "stripped_concurrently": false,
+  "version": "0339"
+ },
+ {
+  "file": "0340_scrum2335_proof_completeness_columns_and_trigger.sql",
+  "file_md5": "7c896fd27c1621561056541abdd9b2f7",
+  "payload_md5": "7c896fd27c1621561056541abdd9b2f7",
+  "stripped_concurrently": false,
+  "version": "0340"
+ },
+ {
+  "file": "0341_scrum2349_2350_credit_integrity_foundation.sql",
+  "file_md5": "861c323315249a3dc2c6900371bc516b",
+  "payload_md5": "861c323315249a3dc2c6900371bc516b",
+  "stripped_concurrently": false,
+  "version": "0341"
+ },
+ {
+  "file": "0342_cpe_cle_dashboard_partial_index.sql",
+  "file_md5": "82e212fdd4e1c86d7e04f57d8e7e4aa3",
+  "payload_md5": "82e212fdd4e1c86d7e04f57d8e7e4aa3",
+  "stripped_concurrently": false,
+  "version": "0342"
+ },
+ {
+  "file": "0343_scrum2348_connector_artifact_queue_schema.sql",
+  "file_md5": "04bf3afe96b3d20daaea1795f8b128f6",
+  "payload_md5": "04bf3afe96b3d20daaea1795f8b128f6",
+  "stripped_concurrently": false,
+  "version": "0343"
+ },
+ {
+  "file": "0345_fix_vacuum_anchors_cron.sql",
+  "file_md5": "85927aeb263ecbc20b124075d496b2ce",
+  "payload_md5": "85927aeb263ecbc20b124075d496b2ce",
+  "stripped_concurrently": false,
+  "version": "0345"
+ },
+ {
+  "file": "0346_fix_embed_unembedded_query_perf.sql",
+  "file_md5": "bfa460e5c7663a62605f4425d733eadb",
+  "payload_md5": "bfa460e5c7663a62605f4425d733eadb",
+  "stripped_concurrently": false,
+  "version": "0346"
+ },
+ {
+  "file": "0347_lane1_i4_chain_block_hash_reorg.sql",
+  "file_md5": "6483bd17094c4f0a4a9ff7060cf766bd",
+  "payload_md5": "6483bd17094c4f0a4a9ff7060cf766bd",
+  "stripped_concurrently": false,
+  "version": "0347"
+ },
+ {
+  "file": "0348_scrum2353_webhook_event_claims.sql",
+  "file_md5": "7cd4af12fa3112a727d274bc91a28690",
+  "payload_md5": "7cd4af12fa3112a727d274bc91a28690",
+  "stripped_concurrently": false,
+  "version": "0348"
+ },
+ {
+  "file": "0349_scrum2349_credit_conservation_invariant_fix.sql",
+  "file_md5": "8e8dedff785a3a1fa52d1abee387aa18",
+  "payload_md5": "8e8dedff785a3a1fa52d1abee387aa18",
+  "stripped_concurrently": false,
+  "version": "0349"
+ },
+ {
+  "file": "0350_list_drainable_connector_orgs.sql",
+  "file_md5": "4ddaa7c98c3d71e9f84b46f4af6ed73e",
+  "payload_md5": "4ddaa7c98c3d71e9f84b46f4af6ed73e",
+  "stripped_concurrently": false,
+  "version": "0350"
+ },
+ {
+  "file": "0351_drive_watch_state.sql",
+  "file_md5": "45aa17517c0788e33b0fada558364e4e",
+  "payload_md5": "45aa17517c0788e33b0fada558364e4e",
+  "stripped_concurrently": false,
+  "version": "0351"
+ },
+ {
+  "file": "0352_queue_digest_idempotency_unique.sql",
+  "file_md5": "dd465a25b6b44a02e4908fdc1f023324",
+  "payload_md5": "dd465a25b6b44a02e4908fdc1f023324",
+  "stripped_concurrently": false,
+  "version": "0352"
+ },
+ {
+  "file": "0353_reset_unclaimed_connector_broadcasts.sql",
+  "file_md5": "ea4f6b6676e0deb353ba343a0bf57fa3",
+  "payload_md5": "ea4f6b6676e0deb353ba343a0bf57fa3",
+  "stripped_concurrently": false,
+  "version": "0353"
+ },
+ {
+  "file": "0354_proof_completeness_class_and_guc_reader.sql",
+  "file_md5": "c71e3952457ab40f3c8e4ccc7906da66",
+  "payload_md5": "c71e3952457ab40f3c8e4ccc7906da66",
+  "stripped_concurrently": false,
+  "version": "0354"
+ },
+ {
+  "file": "0355_scrum2485_public_anchor_base_projection_allowlist.sql",
+  "file_md5": "c5b10e4633de915f1800bf7876d2400a",
+  "payload_md5": "c5b10e4633de915f1800bf7876d2400a",
+  "stripped_concurrently": false,
+  "version": "0355"
+ },
+ {
+  "file": "0356_scrum2484_public_anchor_recipient_hmac.sql",
+  "file_md5": "5893e19bc8a2a565bc67c8b076716659",
+  "payload_md5": "5893e19bc8a2a565bc67c8b076716659",
+  "stripped_concurrently": false,
+  "version": "0356"
+ },
+ {
+  "file": "0357_scrum2486_secured_chain_integrity_trigger.sql",
+  "file_md5": "b402d64aca00b9a904bdaff95feaeb62",
+  "payload_md5": "b402d64aca00b9a904bdaff95feaeb62",
+  "stripped_concurrently": false,
+  "version": "0357"
+ },
+ {
+  "file": "0358_scrum2692_anchor_txid_journal.sql",
+  "file_md5": "1ae0fac4535f73ffda163e521f88c12c",
+  "payload_md5": "1ae0fac4535f73ffda163e521f88c12c",
+  "stripped_concurrently": false,
+  "version": "0358"
+ },
+ {
+  "file": "0359_scrum2917_materialize_run_id.sql",
+  "file_md5": "7076348181b8a46b24bcecbe3192c9cb",
+  "payload_md5": "7076348181b8a46b24bcecbe3192c9cb",
+  "stripped_concurrently": false,
+  "version": "0359"
+ },
+ {
+  "file": "0360_scrum2917_secured_proof_predicate_hardening.sql",
+  "file_md5": "61c38a24e5d651127421a4a08c9c67ad",
+  "payload_md5": "61c38a24e5d651127421a4a08c9c67ad",
+  "stripped_concurrently": false,
+  "version": "0360"
+ },
+ {
+  "file": "0362_scrum2913_public_anchor_registry_url_allowlist.sql",
+  "file_md5": "4007ed3a4726140d27a233095ed8066c",
+  "payload_md5": "4007ed3a4726140d27a233095ed8066c",
+  "stripped_concurrently": false,
+  "version": "0362"
+ },
+ {
+  "file": "0363_g4_enable_org_credit_enforcement_flag.sql",
+  "file_md5": "e5b4ada4ad0c497ad7c0044ce6621dfa",
+  "payload_md5": "e5b4ada4ad0c497ad7c0044ce6621dfa",
+  "stripped_concurrently": false,
+  "version": "0363"
+ },
+ {
+  "file": "0364_scrum2905_security_advisor_revokes.sql",
+  "file_md5": "11fef30e8a185e26301a7df947164bf2",
+  "payload_md5": "11fef30e8a185e26301a7df947164bf2",
+  "stripped_concurrently": false,
+  "version": "0364"
+ },
+ {
+  "file": "0365_scrum2940_folders_table_and_anchor_link.sql",
+  "file_md5": "2d234dda1108f8279e112a43c350e2de",
+  "payload_md5": "2d234dda1108f8279e112a43c350e2de",
+  "stripped_concurrently": false,
+  "version": "0365"
+ },
+ {
+  "file": "0366_scrum2940_anchors_folder_id_index.sql",
+  "file_md5": "14d46ba6e66a5161d9dba0f34961da8e",
+  "payload_md5": "a0c5af2d6fd735d0bc20a9d638b4e931",
+  "stripped_concurrently": true,
+  "version": "0366"
+ },
+ {
+  "file": "0367_worker_rpc_caller_identity_supersede_queue_resolve.sql",
+  "file_md5": "01bfe16ecad1e516f986c93fa0e22def",
+  "payload_md5": "01bfe16ecad1e516f986c93fa0e22def",
+  "stripped_concurrently": false,
+  "version": "0367"
+ },
+ {
+  "file": "0368_scrum2971_billing_events_idempotency.sql",
+  "file_md5": "3551f4373b7af2fbe1ea7565dab76b96",
+  "payload_md5": "3551f4373b7af2fbe1ea7565dab76b96",
+  "stripped_concurrently": false,
+  "version": "0368"
+ },
+ {
+  "file": "0370_scrum3031_batch_insert_anchors_fix.sql",
+  "file_md5": "826a02de370eed26ab7ac60f8bd377d6",
+  "payload_md5": "826a02de370eed26ab7ac60f8bd377d6",
+  "stripped_concurrently": false,
+  "version": "0370"
+ },
+ {
+  "file": "0375_admin_org_credit_adjust.sql",
+  "file_md5": "dbefdb22e51303a14f4b496edfd74898",
+  "payload_md5": "dbefdb22e51303a14f4b496edfd74898",
+  "stripped_concurrently": false,
+  "version": "0375"
+ },
+ {
+  "file": "0376_r19_anchor_fingerprint_source.sql",
+  "file_md5": "4e4b0963bff76b4cb601eeeff0603c7b",
+  "payload_md5": "4e4b0963bff76b4cb601eeeff0603c7b",
+  "stripped_concurrently": false,
+  "version": "0376"
+ },
+ {
+  "file": "0377_sec_recon_revoke_unguarded_rpc_family.sql",
+  "file_md5": "a7955cea313ea67156f7d6afe2ef9b4d",
+  "payload_md5": "a7955cea313ea67156f7d6afe2ef9b4d",
+  "stripped_concurrently": false,
+  "version": "0377"
+ },
+ {
+  "file": "0378_sec_recon_revoke_deferred_security_definer_grants.sql",
+  "file_md5": "8be1201c6e0a64b307cf2061565503a2",
+  "payload_md5": "8be1201c6e0a64b307cf2061565503a2",
+  "stripped_concurrently": false,
+  "version": "0378"
+ },
+ {
+  "file": "0379_f3_recover_submitted_null_txid.sql",
+  "file_md5": "3eb1de0e349e8dcc4be56a0324f5471b",
+  "payload_md5": "3eb1de0e349e8dcc4be56a0324f5471b",
+  "stripped_concurrently": false,
+  "version": "0379"
+ },
+ {
+  "file": "0380_f5_anchor_stats_fn_ownership_guard.sql",
+  "file_md5": "1670f236687786e27fe1d947887d0ca2",
+  "payload_md5": "1670f236687786e27fe1d947887d0ca2",
+  "stripped_concurrently": false,
+  "version": "0380"
+ },
+ {
+  "file": "0381_docusign_envelope_metadata_lookup_indexes.sql",
+  "file_md5": "9035e623e5730fea0cdc9f1ab17779a8",
+  "payload_md5": "fc2d92ab4fc1e7b2ab7248e9a05aec35",
+  "stripped_concurrently": true,
+  "version": "0381"
+ },
+ {
+  "file": "0382_scrum2535_validate_api_key_expiry_and_revocation.sql",
+  "file_md5": "712e6f4fa6f8dac439978a5e81696185",
+  "payload_md5": "712e6f4fa6f8dac439978a5e81696185",
+  "stripped_concurrently": false,
+  "version": "0382"
+ },
+ {
+  "file": "0383_scrum2913_get_public_anchor_restore_hmac_and_registry_keys.sql",
+  "file_md5": "4437623283de26d1e036972cd1b19589",
+  "payload_md5": "4437623283de26d1e036972cd1b19589",
+  "stripped_concurrently": false,
+  "version": "0383"
+ },
+ {
+  "file": "0384_scrum2481_anchor_evidence_claim_authority.sql",
+  "file_md5": "c94adfb29f599c93d5e51d27487f9fab",
+  "payload_md5": "c94adfb29f599c93d5e51d27487f9fab",
+  "stripped_concurrently": false,
+  "version": "0384"
+ },
+ {
+  "file": "0385_public_anchor_academic_record_pii_projection.sql",
+  "file_md5": "95e0082a0608d20b1b2e16b95cdd7c33",
+  "payload_md5": "95e0082a0608d20b1b2e16b95cdd7c33",
+  "stripped_concurrently": false,
+  "version": "0385"
+ },
+ {
+  "file": "0386_fingerprint_lookup_secured_only.sql",
+  "file_md5": "e8398790360d224430506c3e38f51230",
+  "payload_md5": "e8398790360d224430506c3e38f51230",
+  "stripped_concurrently": false,
+  "version": "0386"
+ },
+ {
+  "file": "0387_public_search_learner_name_leak.sql",
+  "file_md5": "d07c6d2c504aea98e86a7ee971f9a531",
+  "payload_md5": "d07c6d2c504aea98e86a7ee971f9a531",
+  "stripped_concurrently": false,
+  "version": "0387"
+ },
+ {
+  "file": "0388_sec_revoke_sanitize_metadata_helper_grants.sql",
+  "file_md5": "4167518f25328f464239759b9451f6a0",
+  "payload_md5": "4167518f25328f464239759b9451f6a0",
+  "stripped_concurrently": false,
+  "version": "0388"
+ },
+ {
+  "file": "0389_anchors_ce_registry_ctid_partial_index.sql",
+  "file_md5": "0730beb1723f09de475385f46117f5b3",
+  "payload_md5": "c44e21afa4246f996f9452a3de77d84f",
+  "stripped_concurrently": true,
+  "version": "0389"
+ },
+ {
+  "file": "0390_public_anchor_unknown_credential_type_fail_closed.sql",
+  "file_md5": "cd2e6b14a3bce26dc65640329097f345",
+  "payload_md5": "cd2e6b14a3bce26dc65640329097f345",
+  "stripped_concurrently": false,
+  "version": "0390"
+ },
+ {
+  "file": "0391_f5b_anchor_stats_null_identity_guard.sql",
+  "file_md5": "10a7e936bde993460f0b491de124f986",
+  "payload_md5": "10a7e936bde993460f0b491de124f986",
+  "stripped_concurrently": false,
+  "version": "0391"
+ },
+ {
+  "file": "0392_f5c_monthly_anchor_count_null_identity_guard.sql",
+  "file_md5": "8ed04d60519d92de391d3abc56950680",
+  "payload_md5": "8ed04d60519d92de391d3abc56950680",
+  "stripped_concurrently": false,
+  "version": "0392"
+ },
+ {
+  "file": "0393_scrum2940_anchors_folder_update_org_admin.sql",
+  "file_md5": "56da6c683d5366c8e2672dc61b8481c5",
+  "payload_md5": "56da6c683d5366c8e2672dc61b8481c5",
+  "stripped_concurrently": false,
+  "version": "0393"
+ },
+ {
+  "file": "0394_sec_ce_provenance_key_authority.sql",
+  "file_md5": "4a382f25ad041fa1e813c52528617490",
+  "payload_md5": "4a382f25ad041fa1e813c52528617490",
+  "stripped_concurrently": false,
+  "version": "0394"
+ },
+ {
+  "file": "0395_fix_0393_trigger_blocks_secdef_admin_rpcs.sql",
+  "file_md5": "1a21cbb211145002ebf2e98c538a5738",
+  "payload_md5": "1a21cbb211145002ebf2e98c538a5738",
+  "stripped_concurrently": false,
+  "version": "0395"
+ },
+ {
+  "file": "0396_sec_credits_verification_rpc_identity_guard.sql",
+  "file_md5": "0c8aef32ee2d66e3192502386170985b",
+  "payload_md5": "0c8aef32ee2d66e3192502386170985b",
+  "stripped_concurrently": false,
+  "version": "0396"
+ },
+ {
+  "file": "0397_fix_protect_anchor_fields_blocks_trusted_status_rpcs.sql",
+  "file_md5": "0dcb3ae3fde452ed3ff71838d6de507c",
+  "payload_md5": "0dcb3ae3fde452ed3ff71838d6de507c",
+  "stripped_concurrently": false,
+  "version": "0397"
+ },
+ {
+  "file": "0398_fix_audit_events_actor_email_dropped_column.sql",
+  "file_md5": "d3702810e117e07a35f1a1fd1217c964",
+  "payload_md5": "d3702810e117e07a35f1a1fd1217c964",
+  "stripped_concurrently": false,
+  "version": "0398"
+ },
+ {
+  "file": "0399_fix_rls_auth_uid_wrap_lint.sql",
+  "file_md5": "5ad7674adfb3d514a4736010ac1975b7",
+  "payload_md5": "5ad7674adfb3d514a4736010ac1975b7",
+  "stripped_concurrently": false,
+  "version": "0399"
+ },
+ {
+  "file": "0400_org_rule_action_type_instant_secure.sql",
+  "file_md5": "9325b3e173c9cb897a6972ac593273f3",
+  "payload_md5": "9325b3e173c9cb897a6972ac593273f3",
+  "stripped_concurrently": false,
+  "version": "0400"
+ },
+ {
+  "file": "0401_fix_create_pending_recipient_rpc_fk_and_role.sql",
+  "file_md5": "804c1531b6f717fcbfdab66e7f0a3068",
+  "payload_md5": "804c1531b6f717fcbfdab66e7f0a3068",
+  "stripped_concurrently": false,
+  "version": "0401"
+ },
+ {
+  "file": "0402_retire_activate_user_rpc.sql",
+  "file_md5": "df90f9fcdb39ee8b96f9222eb9e0281b",
+  "payload_md5": "df90f9fcdb39ee8b96f9222eb9e0281b",
+  "stripped_concurrently": false,
+  "version": "0402"
+ },
+ {
+  "file": "0403_fix_anonymize_user_data_verification_events_columns.sql",
+  "file_md5": "90f4b9212dd0fcab6ad31aad3b5e29c2",
+  "payload_md5": "90f4b9212dd0fcab6ad31aad3b5e29c2",
+  "stripped_concurrently": false,
+  "version": "0403"
+ },
+ {
+  "file": "0404_dpa_redact_raw_querying_ip_and_correct_ip_hash_comment.sql",
+  "file_md5": "c6f41d7be64cf67b74090bf7d1f578a4",
+  "payload_md5": "c6f41d7be64cf67b74090bf7d1f578a4",
+  "stripped_concurrently": false,
+  "version": "0404"
+ },
+ {
+  "file": "0405_org_field_policies_dpa_clause_4_6.sql",
+  "file_md5": "1a73023692bece7d3d900fe99f254a5c",
+  "payload_md5": "1a73023692bece7d3d900fe99f254a5c",
+  "stripped_concurrently": false,
+  "version": "0405"
+ },
+ {
+  "file": "0406_proof_coverage_window_and_reconstruction_classes.sql",
+  "file_md5": "513858127434c24b12ae090da2bc85c5",
+  "payload_md5": "513858127434c24b12ae090da2bc85c5",
+  "stripped_concurrently": false,
+  "version": "0406"
+ },
+ {
+  "file": "0407_widen_org_verification_status_for_kyb_rejection.sql",
+  "file_md5": "7ead2ca15eba688496470a43057e90a5",
+  "payload_md5": "7ead2ca15eba688496470a43057e90a5",
+  "stripped_concurrently": false,
+  "version": "0407"
+ },
+ {
+  "file": "0408_supplementary_proof_anchor.sql",
+  "file_md5": "41900313d5b0718ab1246a298ab93f4c",
+  "payload_md5": "41900313d5b0718ab1246a298ab93f4c",
+  "stripped_concurrently": false,
+  "version": "0408"
+ },
+ {
+  "file": "0409_lock_wait_observability_rpc.sql",
+  "file_md5": "0ae88e4bf08195bd63e417e0701d4abf",
+  "payload_md5": "0ae88e4bf08195bd63e417e0701d4abf",
+  "stripped_concurrently": false,
+  "version": "0409"
+ },
+ {
+  "file": "0414_sec_replay_missing_anon_revokes.sql",
+  "file_md5": "335f54bd51420f16f3844f588b6f83b6",
+  "payload_md5": "335f54bd51420f16f3844f588b6f83b6",
+  "stripped_concurrently": false,
+  "version": "0414"
+ }
+]

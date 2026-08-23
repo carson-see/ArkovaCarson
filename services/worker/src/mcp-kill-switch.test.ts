@@ -70,6 +70,52 @@ describe('isMcpEnabled', () => {
     expect(result).toBe(true);
   });
 
+  // ── BUG-021 / CTO ruling: fail-CLOSED on a fresh switchboard ───────────
+  // `get_flag(p_flag_key text, p_default boolean DEFAULT false)` returns
+  // `p_default` when the row is absent — it never returns NULL for a missing
+  // row. So a fresh environment with an empty `switchboard_flags` resolves to
+  // FALSE and the MCP surface serves `mcp_disabled`. That is DELIBERATE
+  // (CTO ruling, 2026-08): a fresh env's /api/v1 is dark for the same reason,
+  // and a kill switch that self-enables on missing config would invert the
+  // §1.4 posture. Serving MCP on a new environment requires an operator to
+  // seed the ENABLE_MCP_SERVER row. These tests pin the fail direction at the
+  // request body, not just the resolved boolean — a `p_default: true` sneaking
+  // into the call would flip the posture while every boolean-level test still
+  // passed.
+  it('does NOT override get_flag\'s p_default, so an ABSENT row fail-closes', async () => {
+    const fetchSpy = vi.fn(
+      async () => new Response(JSON.stringify(false), { status: 200 }),
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = fetchSpy;
+
+    await isMcpEnabled({ env: BASE_ENV });
+
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      p_flag_key: 'ENABLE_MCP_SERVER',
+    });
+  });
+
+  it('serves mcp_disabled on a fresh environment where the flag row does not exist', async () => {
+    // With no p_default override, get_flag answers `false` for a missing row.
+    const fetchSpy = vi.fn(
+      async () => new Response(JSON.stringify(false), { status: 200 }),
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = fetchSpy;
+    await expect(isMcpEnabled({ env: BASE_ENV })).resolves.toBe(false);
+  });
+
+  it('still trips when an operator explicitly sets the flag to false', async () => {
+    const fetchSpy = vi.fn(
+      async () => new Response(JSON.stringify(false), { status: 200 }),
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = fetchSpy;
+    await expect(isMcpEnabled({ env: BASE_ENV })).resolves.toBe(false);
+  });
+
   it('fail-opens on null flag value', async () => {
     const fetchSpy = vi.fn(
       async () => new Response(JSON.stringify(null), { status: 200 }),

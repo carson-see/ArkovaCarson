@@ -23,6 +23,8 @@ import {
   CredentialIssuedPayloadSchema,
   CredentialVerifiedPayloadSchema,
   CredentialStatusChangedPayloadSchema,
+  ComplianceDocumentExpiringPayloadSchema,
+  PAYLOAD_SCHEMAS_BY_EVENT_TYPE,
   validateWebhookPayload,
   WebhookPayloadValidationError,
 } from './payload-schemas.js';
@@ -666,5 +668,110 @@ describe('validateWebhookPayload helper', () => {
       reason: 'Issuer revocation',
     });
     expect(result.ok).toBe(true);
+  });
+});
+
+/**
+ * BUG-002 (2026-08 soak). `compliance.document_expiring` was EMITTED by
+ * `POST /cron/check-credential-expiry` but never REGISTERED here. Two
+ * consequences, and the second is the security one:
+ *
+ *   1. `VALID_WEBHOOK_EVENTS` is derived from `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`,
+ *      so no endpoint could subscribe and every dispatch matched zero endpoints.
+ *   2. An unregistered event type takes the `bypassed` branch of
+ *      `validateWebhookPayload` — no schema, no check. The emit site was
+ *      shipping `anchor_id` (the internal UUID, CLAUDE.md §6) in the data block,
+ *      one subscription away from being deliverable.
+ *
+ * Registering the type is what makes (2) impossible, not just what makes the
+ * feature work.
+ */
+describe('ComplianceDocumentExpiringPayloadSchema (BUG-002)', () => {
+  const valid = {
+    public_id: 'ARK-SEC-VMQ3R8',
+    credential_type: 'LICENSE',
+    status: 'SECURED' as const,
+    expires_at: '2026-08-22T00:00:00Z',
+    days_remaining: 7,
+    warning_level: '7_day' as const,
+    label: 'CPA License',
+  };
+
+  it('accepts a clean advance-warning payload', () => {
+    expect(ComplianceDocumentExpiringPayloadSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('rejects anchor_id — the exact field the unregistered emit site was shipping', () => {
+    const leaked = { ...valid, anchor_id: '550e8400-e29b-41d4-a716-446655440000' };
+    expect(ComplianceDocumentExpiringPayloadSchema.safeParse(leaked).success).toBe(false);
+  });
+
+  it.each(['fingerprint', 'org_id', 'user_id'])('rejects the banned field %s', (field) => {
+    expect(
+      ComplianceDocumentExpiringPayloadSchema.safeParse({ ...valid, [field]: 'x' }).success,
+    ).toBe(false);
+  });
+
+  it('requires status SECURED — an already-expired record is not "expiring"', () => {
+    for (const status of ['EXPIRED', 'REVOKED', 'PENDING']) {
+      expect(ComplianceDocumentExpiringPayloadSchema.safeParse({ ...valid, status }).success).toBe(false);
+    }
+  });
+
+  it('requires days_remaining to be a positive integer', () => {
+    for (const days of [0, -1, 3.5]) {
+      expect(
+        ComplianceDocumentExpiringPayloadSchema.safeParse({ ...valid, days_remaining: days }).success,
+      ).toBe(false);
+    }
+  });
+
+  it('constrains warning_level to the checker windows', () => {
+    for (const level of ['7_day', '30_day', '60_day', '90_day']) {
+      expect(
+        ComplianceDocumentExpiringPayloadSchema.safeParse({ ...valid, warning_level: level }).success,
+      ).toBe(true);
+    }
+    expect(
+      ComplianceDocumentExpiringPayloadSchema.safeParse({ ...valid, warning_level: '1_day' }).success,
+    ).toBe(false);
+  });
+
+  it('requires an ISO 8601 expires_at', () => {
+    expect(
+      ComplianceDocumentExpiringPayloadSchema.safeParse({ ...valid, expires_at: '2026-08-22' }).success,
+    ).toBe(false);
+  });
+
+  it('allows a null credential_type rather than inventing one', () => {
+    // `anchors.credential_type` is nullable. The pre-fix emit site substituted
+    // 'OTHER', asserting a classification nobody measured (CLAUDE.md §1.5).
+    expect(
+      ComplianceDocumentExpiringPayloadSchema.safeParse({ ...valid, credential_type: null }).success,
+    ).toBe(true);
+    const { credential_type: _omitted, ...withoutType } = valid;
+    expect(ComplianceDocumentExpiringPayloadSchema.safeParse(withoutType).success).toBe(true);
+  });
+
+  it('allows a null label and caps its length', () => {
+    expect(ComplianceDocumentExpiringPayloadSchema.safeParse({ ...valid, label: null }).success).toBe(true);
+    expect(
+      ComplianceDocumentExpiringPayloadSchema.safeParse({ ...valid, label: 'x'.repeat(201) }).success,
+    ).toBe(false);
+  });
+
+  it('is registered, so the type is subscribable and no longer bypasses validation', () => {
+    expect(Object.keys(PAYLOAD_SCHEMAS_BY_EVENT_TYPE)).toContain('compliance.document_expiring');
+
+    const clean = validateWebhookPayload('compliance.document_expiring', valid);
+    expect(clean.ok).toBe(true);
+    if (clean.ok) expect(clean.bypassed).toBeUndefined();
+
+    const leaked = validateWebhookPayload('compliance.document_expiring', {
+      ...valid,
+      anchor_id: '550e8400-e29b-41d4-a716-446655440000',
+    });
+    expect(leaked.ok).toBe(false);
+    if (!leaked.ok) expect(leaked.error.eventType).toBe('compliance.document_expiring');
   });
 });

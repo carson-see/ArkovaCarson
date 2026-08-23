@@ -58,7 +58,7 @@ function addSourceAndRun(path: string): ReturnType<typeof spawnSync> {
 
 afterEach(() => {
   while (repos.length > 0) {
-    rmSync(repos.pop()!, { recursive: true, force: true });
+    rmSync(repos.pop()!, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 

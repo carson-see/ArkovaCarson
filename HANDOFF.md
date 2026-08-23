@@ -14,28 +14,79 @@
 
 ## Now
 
-**State as of 2026-08-12T16:00Z, verified live.** (`### Soaks` refreshed again 2026-08-19 — the
-7-day window closed on schedule and a new chain-pair + rate-limit T3 soak started the same day; see
-the top of `### Soaks` below. `### Soaks` and `### PR board` were also refreshed
-2026-08-18 — Day 6 of the soak window; see the dated sub-blocks below for exact timestamps and
-linked verification artifacts. The prod worker/anchor sub-block was refreshed 2026-08-12; the
-remainder of this block still carries its 2026-08-03T02:49Z reading unless a sub-block says
-otherwise.) This block is the only current-state claim in this
-file; everything under `## History` is the dated record and is not re-asserted here. Canonical soak
-findings live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md); the
-2026-08 full-functionality soak has its own canonical register — `FD-1`…`FD-16` in
+**State as of 2026-08-23T19:45Z, verified live.** This block is the only current-state claim in
+this file; everything under `## History` is the dated record and is not re-asserted here. The prod,
+soak-warning and documentation sub-blocks below were all re-verified 2026-08-23 against live
+`/health`, `gcloud run services describe`, `gh variable get` and GitHub Actions run output; any
+other sub-block still carries its own earlier dated reading and says so. Canonical soak findings
+live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-08.md); the 2026-08
+full-functionality soak has its own register — `FD-1`…`FD-16` in
 [docs/staging/fullsoak-2026-08/manifest-DAY-0.md](docs/staging/fullsoak-2026-08/manifest-DAY-0.md) §11.
-`FD-CHAIN-1` (SCRUM-3151, throughput-ceiling re-characterization, 2026-08-17) is tracked in
-[docs/staging/fullsoak-2026-08/FD-CHAIN-1-throughput-ceiling-2026-08-17.md](docs/staging/fullsoak-2026-08/FD-CHAIN-1-throughput-ceiling-2026-08-17.md).
 
-> ⚠️ **A 7-day SOC 2 Type 2 soak is RUNNING (clock started 2026-08-12T15:51:30Z, closes
-> 2026-08-19T15:51:30Z). Read `### Soaks` before touching anything.** Do not deploy, redeploy, or
-> change any env var, secret, scheduler job, flag or GitHub variable on the rig — the clock is rig
-> uptime, and a revision change ends the window.
+> ⚠️ **TWO soaks are RUNNING tonight (2026-08-23). Read this before touching any rig, driver or PR.**
+> - **ferpa2314** (PR #2314, FD-FERPA-1) — isolated Supabase `wjuelohtpklodpjklvqy`; T3 clock closed
+>   **2026-08-23T19:24:30Z**. Supervisor healthy through 19:05:06Z (ok=419-440, fail=0 per cycle).
+> - **train-6** (PR #2249) — service `arkova-worker-wave2-2026-08-staging`, revision
+>   `…-00006-gik`; T3 clock closes **2026-08-23T20:33:58Z**.
+>
+> **★ BOTH supervisors stop four hours late, and neither runs its capture script — verified
+> 2026-08-23T19:28Z by reading `~/arkova-soak/*/supervisor.sh`, not inferred.** Each computes
+> `END_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "<end>Z" +%s ...)` **without `-u`**, so macOS parses
+> the window end as LOCAL time (EDT, UTC-4) and every window overruns by exactly 4 h:
+> ferpa2314 drives load until **23:24:30Z** (computed `END_EPOCH=1787527470`) and train-6 until
+> **00:33:58Z**. The loop also ends at `echo "supervisor done"` — **`close-capture.sh` is never
+> invoked automatically for either soak; it must be run by hand.**
+>
+> **Consequence for the evidence:** post-window cycles keep writing into
+> `docs/staging/pr2314-ferpa-2026-08/evidence/`. At 19:29Z there were 0 post-window files (107 total,
+> newest `load-20260823T190506Z.json`); the first lands ~19:30Z and roughly nine more by 23:24Z.
+> **Any close-out must filter `≤ 20260823T192430Z` for ferpa2314 and `≤ 20260823T203358Z` for
+> train-6** — a bare `evidence/*.json` glob silently folds post-close cycles into a sealed T3 window.
+>
+> Close-out material for BOTH is already pre-staged on branch `docs/closeout-prep-2026-08-23`
+> (`a9076a407`, 1,880 lines): per-soak evidence draft, `close-capture.sh`, maturity TEMPLATE and
+> `rollback-rehearsal.sh`, plus `docs/staging/train6-2026-08/2249-post-seal-plan.md`. The branch's
+> `close-capture.sh` is byte-identical to the deployed `~/arkova-soak/ferpa2314/` copy, so the
+> capture pipeline is wired. **Do not write a competing close-out.**
+>
+> **ferpa2314 head mismatch — recorded, not resolved.** Every cycle pins frozen head
+> `93747a6aa451`; the PR head is `99ea75fbfda0`, because three pushes landed 24.6 h into the
+> window (a violation of the don't-touch-soaking-PRs rule). Measured delta: `ferpa.ts`, migration
+> `0415` and the PII contract are **UNCHANGED**; `verify.ts` is +54 lines, all arriving from main
+> via the merge; the authored commits are tests-only. **Whether the evidence carries to the new
+> head is a §1.12 residual-risk call and is NOT decided here — do not claim the soak for
+> `99ea75fbf`.**
 
 ### Prod
 
-- Worker `git_sha f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58` (short `f5d1070fc`, merge of #2209),
+- Worker `git_sha 3db27b5402507213473bbb7de189dd6fcc696de5` (short `3db27b540`), revision
+  `arkova-worker-01319-lit` serving 100%. **Verified live 2026-08-23T18:12Z** by direct `/health`
+  read: `{"status":"healthy","git_sha":"3db27b5402507213473bbb7de189dd6fcc696de5",
+  "network":"mainnet","checks":{"database":"ok","anchoring":"ok","kms":"ok"}}`, cross-checked
+  against `gcloud run services describe arkova-worker --region us-central1 --project arkova1`
+  (`status.traffic` → `arkova-worker-01319-lit` 100). Landed by deploy-worker run
+  **32653121324**, `Build & Deploy (canary → full): success`, 2026-08-23T17:05:08Z.
+  _(2026-08-23 sub-block; supersedes the 2026-08-12 `f5d1070fc` / `arkova-worker-01310-god` claim.)_
+
+- **Prod is one deploy BEHIND main, deliberately.** `main` is `2667796b8`; prod is `3db27b540`.
+  Repository variable `DEPLOY_WORKER_PAUSED` reads **`true`** (`gh variable get
+  DEPLOY_WORKER_PAUSED`, 2026-08-23T18:12Z), and deploy-worker run **32656154658** — triggered by
+  #2410's merge at 17:51:03Z — shows `Deploy Gate (pause check): success` followed by
+  `Build & Deploy (canary → full): **skipped**`. So merges do NOT reach prod while the pause holds.
+  Lifting it is Carson's call and carries a standing debt: `pause_lift_obligation` in
+  [`docs/staging/rc-manifests/rc-deferred-2026-08-22.json`](docs/staging/rc-manifests/rc-deferred-2026-08-22.json)
+  requires a consolidated soak of merged main at the accumulated head BEFORE the variable flips.
+
+- **The week-long prod deploy blackout is CLEARED, and the cause was not the pause.** Deploy run
+  **32639370551 FAILED** on 2026-08-23T12:25:53Z at `Pre-deploy Quality Gates` — 10,610 tests
+  passed and **1** failed, an `ENOTEMPTY rmdir '/tmp/s33-producer-verifier-*/.git'` teardown flake.
+  That job gates deploy, so a single flaky teardown held prod on `c632256e3` for a week. Node's
+  `rmSync` defaults `maxRetries: 0`; a git child re-materialising `.git` mid-walk raises ENOTEMPTY
+  with no retry. Fixed durably in **#2410** (merged 17:51:00Z): all 16 recursive `rmSync` call
+  sites now carry `maxRetries: 3, retryDelay: 50`; non-recursive calls deliberately untouched.
+
+- _(superseded, 2026-08-12 — see the 2026-08-23 sub-block above)_ Worker
+  `git_sha f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58` (short `f5d1070fc`, merge of #2209),
   revision `arkova-worker-01310-god`. **Verified live 2026-08-12 ~14:00Z** by direct `/health` read:
   `{"status":"healthy","git_sha":"f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58","network":"mainnet",
   "checks":{"database":"ok","anchoring":"ok","kms":"ok"}}`, cross-checked against
@@ -216,6 +267,30 @@ separately). Full verdicts, defects, and landing-order constraints:
   non-mainnet deployment reports mainnet fee rates — that fix is T3 (`chain/`) and is tracked
   separately rather than folded in.
 
+### Documentation & ticket state (2026-08-23)
+
+- **Every PR merged in the 2026-08-17 → 2026-08-23 window (81 of them) now has a Jira story,
+  subtasks and a Confluence SOC 2 change record, all closed.** Coverage was verified as a clean
+  partition — no PR uncovered, none processed twice. Records live under Confluence space `A`
+  (parent `163950`); stories carry labels `backfill-2026-08` + `soc2` and hang off the existing
+  epics (`SCRUM-3160` FULLSOAK, `SCRUM-1041` SEC-HARDEN) rather than new ones.
+- Three groups are deliberately recorded as **one story each**, because they are one piece of work
+  and 17 near-identical stubs would have buried the only fact that matters:
+  - `SCRUM-3337` — the 10 RC-manifest restamps, written up as **FD-RC-1**, the head-binding
+    live-lock. Four merged inside 20 minutes, one re-pinning a head another restamp had just set.
+    **The live-lock is NOT fixed** and needs an ancestor-range pin in
+    `scripts/ci/check-staging-evidence.ts`.
+  - `SCRUM-3343` — the four 2026-08 soak evidence / close-out record PRs.
+  - `SCRUM-3340` — three Dependabot bumps.
+- **Backfill damage found and repaired.** The merge backfill matched tickets on any `SCRUM-NNNN`
+  merely *mentioned* in a PR body, a ~43% false-match rate. It overwrote the original defect
+  analysis on 8 pre-existing tickets (all restored, original text first, resolution appended) and
+  **falsely closed `SCRUM-3012`** — a P1 founder-reported bug — on PR #2275, which touches none of
+  its five defect sites and carries no migration. **SCRUM-3012 is reopened; org member invites
+  remain broken end-to-end in prod** (email silently no-ops, invite URL is tokenless and points at
+  `/login`, `activate_user` signature mismatch). Seven further wrong mappings were disarmed before
+  they could fire.
+
 ### Soaks
 
 - **TRAIN-6 CLOCK RESTARTED 2026-08-21T20:33:58Z — the 18:54:36Z window is VOID.** PR #2249 (T3,
@@ -395,12 +470,13 @@ separately). Full verdicts, defects, and landing-order constraints:
 `gcloud` on the dev Mac needs `CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14`; the
 bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
 
-_Last refreshed: 2026-08-19 by Claude Opus 5 (chain-pair soak standup) — `### Soaks` block updated;
-7-day-window-close and new-soak claims verified live against gcloud (`run revisions describe`,
-`run services describe`, `compute instances describe`, `logging read`), Supabase MCP
-(`execute_sql`, `staging-honesty-preflight.ts` output), and a direct `/health` + `/jobs/refresh-treasury-cache`
-probe on revision `arkova-worker-fullsoak-2026-08-staging-00022-suy` — not asserted from prior-session
-prose. Rest of `## Now` unchanged from the 2026-08-18 refresh._
+_Last refreshed: 2026-08-23 by Claude Opus 5 (CTO session) — claims verified against live output, not
+prior-session prose: prod `/health` read 2026-08-23T18:12Z (`git_sha 3db27b540`, `checks` all ok) cross-checked
+with `gcloud run services describe arkova-worker --region us-central1 --project arkova1`
+(`arkova-worker-01319-lit` 100%); `gh variable get DEPLOY_WORKER_PAUSED` → `true`; deploy-worker runs
+32639370551 (failure), 32653121324 (Build & Deploy success) and 32656154658 (Build & Deploy **skipped**)
+read from GitHub Actions; the soak-supervisor `-u` drift computed directly from
+`~/arkova-soak/*/supervisor.sh` and `date -j -f`._
 
 ---
 

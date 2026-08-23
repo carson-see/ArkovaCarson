@@ -4,7 +4,11 @@ import {
   CREDENTIAL_SOURCE_IMPORT_MAX_BYTES,
   CredentialSourceImportError,
   buildCredentialSourceImportPreview,
+  buildSourceImportFilename,
+  cleanText,
+  type CredentialSourceImportPreview,
 } from './credential-source-import.js';
+import { poisonAt, isWellFormedUtf16 } from '../tests/utf16-poison.js';
 
 const FIXED_NOW = new Date('2026-05-05T18:45:00.000Z');
 // SCRUM-2484: the recipient identifier hash is now a keyed HMAC; a pepper is
@@ -339,5 +343,44 @@ describe('credential-source-import', () => {
     })).rejects.toMatchObject({
       code: 'source_too_large',
     });
+  });
+});
+
+// ─── Surrogate-safe truncation (2026-08-17 poison-record class) ─────────────
+//
+// `cleanText` (feeds `credential_title` → `anchors.label`/`description`) and
+// `buildSourceImportFilename` (→ `anchors.filename`) both bound their output
+// with a code-unit cut before the value is persisted via PostgREST. A cut
+// inside a surrogate pair leaves a lone high surrogate that makes the whole
+// anchor insert body invalid JSON (PGRST102). Note `.trim()` does NOT remove
+// a lone surrogate — it is not whitespace.
+describe('surrogate-safe truncation', () => {
+  it('cleanText never splits a surrogate pair at its cap', () => {
+    const out = cleanText(poisonAt(500));
+    expect(out).toBeDefined();
+    expect(out!.length).toBeLessThanOrEqual(500);
+    expect(isWellFormedUtf16(out!)).toBe(true);
+  });
+
+  it('cleanText honors a custom maxLength surrogate-safely', () => {
+    const out = cleanText(poisonAt(80), 80);
+    expect(out).toBeDefined();
+    expect(out!.length).toBeLessThanOrEqual(80);
+    expect(isWellFormedUtf16(out!)).toBe(true);
+  });
+
+  it('cleanText leaves short astral text intact', () => {
+    expect(cleanText('Diploma 😀 2026')).toBe('Diploma 😀 2026');
+  });
+
+  it('buildSourceImportFilename never splits a surrogate pair at the 180-unit cap', () => {
+    const preview = {
+      normalized_source_url: 'https://credentials.example.edu/award/123',
+      credential_title: poisonAt(180),
+    } as CredentialSourceImportPreview;
+
+    const filename = buildSourceImportFilename(preview);
+    expect(filename.endsWith('.url')).toBe(true);
+    expect(isWellFormedUtf16(filename)).toBe(true);
   });
 });

@@ -70,7 +70,6 @@
     "00000000000000_baseline_at_main_HEAD.sql::public.prevent_metadata_edit_after_secured",
     "00000000000000_baseline_at_main_HEAD.sql::public.protect_anchor_status_transition",
     "00000000000000_baseline_at_main_HEAD.sql::public.protect_platform_admin_flag",
-    "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_anchor_status_counts",
     "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_anchor_type_counts",
     "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_by_source",
     "00000000000000_baseline_at_main_HEAD.sql::public.refresh_cache_pipeline_stats",
