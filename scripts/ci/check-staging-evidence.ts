@@ -2637,6 +2637,16 @@ const STAGING_TOOLING_ALLOW = [
   // waiver classified T1 and demanded a 2 h soak of a file prod never reads.
   /^\.gitleaks\.toml$/,
   /^\.gitleaksignore$/,
+  // CODEOWNERS is REVIEW governance, not runtime: GitHub reads it to decide who
+  // must approve a PR, and nothing imports, bundles, or deploys it — there is no
+  // surface a soak could exercise. Exactly the class the two gitleaks entries
+  // above document, and it bit the same way: SCRUM-3542's fix is a one-line
+  // CODEOWNERS entry, which made an otherwise CI-only change required-tier T1
+  // and demanded a 2 h soak of a file prod never reads. Anchored to the two
+  // locations GitHub actually honours outside `docs/` (which DOCS_ONLY_RE
+  // already covers), so `services/worker/src/CODEOWNERS` keeps its T2 tier and
+  // `CODEOWNERS.bak` is not swept in.
+  /^(?:\.github\/)?CODEOWNERS$/,
   /^scripts\/staging\//,
   // CI-only local-Supabase bootstrap for the types/tests/e2e jobs (sourced by
   // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.

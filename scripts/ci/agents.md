@@ -85,7 +85,19 @@ allowlist, matching `rcCurrentBaseCovered` — which needed no change, because i
 call is `ancestry(allowed, candidate)` and therefore already had the lower bound this one
 was missing.
 
-Tests: 37 red-first in the new `check-staging-evidence-integrity.test.ts`, plus edits to two
+**7. `CODEOWNERS` classified T1 (found while fixing 5).** SCRUM-3542's fix IS a CODEOWNERS
+line, and that made this otherwise CI-only change required-tier T1 — a 2h soak of a file
+prod never reads. CODEOWNERS is review governance: GitHub reads it to decide who must
+approve, nothing imports or deploys it, and there is no surface a soak could exercise. It is
+exactly the class the two `.gitleaks*` entries in `STAGING_TOOLING_ALLOW` already document
+("a one-line fingerprint waiver classified T1 and demanded a 2 h soak of a file prod never
+reads"), so it joined them as `/^(?:\.github\/)?CODEOWNERS$/` — anchored to the two
+locations GitHub honours outside `docs/`, so `services/worker/src/CODEOWNERS` keeps T2 and
+`CODEOWNERS.bak` is not swept in (both pinned). Separately, `CODEOWNERS` now owns itself:
+`.github/` was owned but this repo's CODEOWNERS is at the ROOT, so the file deciding who
+reviews auth/migrations/chain was covered by no rule.
+
+Tests: 41 red-first in the new `check-staging-evidence-integrity.test.ts`, plus edits to two
 existing blocks in `check-staging-evidence.test.ts` (the six roster-internals tests replaced
 by three that pin its removal; the ancestry test's stub taught the second bound, and a new
 sibling pinning that a pre-launch base FAILS). 433/433 green across the five affected

@@ -274,6 +274,29 @@ describe('PATH_RULES cover the published TypeScript SDK', () => {
   });
 });
 
+// CODEOWNERS is review governance, not runtime — same class as the
+// `.gitleaksignore` entry in STAGING_TOOLING_ALLOW, whose comment records the
+// identical bug: a one-line waiver classified T1 and demanded a 2h soak of a
+// file prod never reads. Found because SCRUM-3542's own fix is a CODEOWNERS
+// line, which made this otherwise CI-only change required-tier T1.
+describe('CODEOWNERS is T0 tooling', () => {
+  it('classifies a root CODEOWNERS change as T0', () => {
+    expect(requiredTierFor(['CODEOWNERS']).tier).toBe('T0');
+  });
+
+  it('classifies a .github/CODEOWNERS change as T0 (GitHub reads either location)', () => {
+    expect(requiredTierFor(['.github/CODEOWNERS']).tier).toBe('T0');
+  });
+
+  it('does not allowlist a CODEOWNERS lookalike on a runtime surface', () => {
+    expect(requiredTierFor(['services/worker/src/CODEOWNERS']).tier).not.toBe('T0');
+  });
+
+  it('does not allowlist a file that merely starts with CODEOWNERS', () => {
+    expect(requiredTierFor(['CODEOWNERS.bak']).tier).not.toBe('T0');
+  });
+});
+
 // ── RC-manifest integrity (DI-594 / DI-595 / DI-596) ──
 describe('RC manifest integrity', () => {
   const RC_PATH = 'docs/staging/rc-manifests/rc-2026-08-integrity.json';

@@ -37,3 +37,9 @@ docs/staging/rc-manifests/                       @carson-see
 
 # Root config files
 CLAUDE.md                                        @carson-see
+
+# This file owns itself (SCRUM-3542). `.github/` is already owned, but this
+# repo's CODEOWNERS lives at the root and was therefore covered by no rule —
+# so the file that decides who must review the security-critical paths above
+# could itself be edited without a code-owner review.
+CODEOWNERS                                       @carson-see
