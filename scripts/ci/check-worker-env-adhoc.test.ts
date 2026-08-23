@@ -50,7 +50,7 @@ describe('check-worker-env-adhoc (SCRUM-1258)', () => {
   });
 
   afterAll(() => {
-    rmSync(tmp, { recursive: true, force: true });
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('exits 0 when scanned files match the baseline exactly', () => {
@@ -149,7 +149,7 @@ describe('check-worker-env-adhoc (SCRUM-1258)', () => {
   it('honours dynamic-bracket entries in the baseline', () => {
     // Hermetic: this test rebuilds the tree so leftover files from prior
     // tests don't smuggle unbaselined identifiers in.
-    rmSync(join(tmp, 'services'), { recursive: true, force: true });
+    rmSync(join(tmp, 'services'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     seedTree(tmp, {
       'services/worker/src/known.ts': 'const v = process.env[someVar];',
       'scripts/ci/snapshots/worker-env-adhoc-baseline.json': JSON.stringify({

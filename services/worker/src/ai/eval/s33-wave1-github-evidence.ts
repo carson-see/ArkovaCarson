@@ -2049,7 +2049,7 @@ async function reauthenticatePrerequisiteInventory(options: {
       }
     }
   } finally {
-    rmSync(temporaryDirectory, { recursive: true, force: true });
+    rmSync(temporaryDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
   return liveInventory;
 }
