@@ -42,13 +42,20 @@ interface CiOpts {
   job?: string;
   /** An `if:` guard on the step, if any. */
   guard?: string | null;
+  /** The step's `name:`. Must keep the `typecheck` marker to be found at all. */
+  name?: string;
 }
 
 /** A ci.yml fragment with a services/worker typecheck step in job `job`. */
-function ciWorkflow({ run = EXPECTED_TYPECHECK_RUN, job = REQUIRED_CI_JOB, guard = null }: CiOpts = {}): string {
+function ciWorkflow({
+  run = EXPECTED_TYPECHECK_RUN,
+  job = REQUIRED_CI_JOB,
+  guard = null,
+  name = 'Typecheck worker (deploy-gate parity)',
+}: CiOpts = {}): string {
   const step = run
     ? [
-        '      - name: Typecheck worker (deploy-gate parity)',
+        `      - name: ${name}`,
         ...(guard ? [`        if: ${guard}`] : []),
         '        working-directory: services/worker',
         `        run: ${run}`,
@@ -135,6 +142,43 @@ describe('check-deploy-typecheck-parity — worker compile gate ≡ deploy gate'
     const r = auditDeployTypecheckParity(sources({ deployWorkflow: deployWorkflow('npx tsc --noEmit') }));
     expect(r.ok).toBe(false);
     expect(r.errors.some((e) => e.includes('deploy-worker.yml'))).toBe(true);
+  });
+
+  // The step's NAME is load-bearing: two sibling gates scan the same
+  // `working-directory: services/worker` lines and key off the step name.
+  // `check-deploy-lint-parity.ts` matches `name:.*[lL]int` and then demands
+  // `npm run lint`; `check-deploy-build-parity.ts` matches
+  // `name:.*deploy-parity` (case-insensitive) and then demands `npm run build`.
+  // A rename of this step into either marker — e.g. the very natural
+  // "Typecheck worker (deploy-parity)", matching the sibling JOB's own name —
+  // makes a sibling gate capture `tsc --noEmit` and go red for a reason that
+  // points at the wrong file. Pin it here so the rename is rejected with a
+  // message that names the actual constraint.
+  it('fails when the ci.yml step name carries the `lint` marker (collides with check-deploy-lint-parity)', () => {
+    const r = auditDeployTypecheckParity(
+      sources({ ciWorkflow: ciWorkflow({ name: 'Typecheck + Lint worker (deploy-gate parity)' }) }),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes('check-deploy-lint-parity'))).toBe(true);
+  });
+
+  it('fails when the ci.yml step name carries the `deploy-parity` marker (collides with check-deploy-build-parity)', () => {
+    const r = auditDeployTypecheckParity(
+      sources({ ciWorkflow: ciWorkflow({ name: 'Typecheck worker (deploy-parity)' }) }),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes('check-deploy-build-parity'))).toBe(true);
+  });
+
+  it('flags a deploy-worker.yml typecheck step renamed into the `lint` marker too', () => {
+    // check-deploy-lint-parity.ts scans deploy-worker.yml as well as ci.yml.
+    const deploy = deployWorkflow(EXPECTED_TYPECHECK_RUN).replace(
+      '- name: Typecheck',
+      '- name: Typecheck (lint-adjacent)',
+    );
+    const r = auditDeployTypecheckParity(sources({ deployWorkflow: deploy }));
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes('check-deploy-lint-parity'))).toBe(true);
   });
 
   it('is a pure file-reading invariant — no ciContext / git / process.env dependency', () => {

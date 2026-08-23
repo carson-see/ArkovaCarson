@@ -38,7 +38,11 @@ locally before the gate was added, per this file's "a gate must not be merged re
 Naming is load-bearing: the step is `Typecheck worker (deploy-gate parity)`, deliberately carrying
 neither `lint` (which `check-deploy-lint-parity.ts` keys on) nor the exact `deploy-parity` marker
 (which `check-deploy-build-parity.ts` keys on), so the two existing scanners do not capture it.
-Verified: the lint-parity gate still reports exactly 2 worker-lint steps.
+Verified: the lint-parity gate still reports exactly 2 worker-lint steps. **That naming rule is
+enforced, not just documented** — `check-deploy-typecheck-parity.ts` rejects a rename of this step
+into either sibling marker, because the trap ("Typecheck worker (deploy-parity)", mirroring the
+sibling JOB name `Worker Build (deploy-parity)`) would otherwise make a SIBLING gate capture
+`tsc --noEmit`, demand `npm run build`, and go red pointing at the wrong file.
 
 ## 2026-08-23 — the `commits` step hands off a FILE PATH, not the messages themselves (E2BIG)
 

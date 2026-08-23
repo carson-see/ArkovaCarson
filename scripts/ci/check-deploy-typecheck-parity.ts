@@ -156,6 +156,37 @@ function jobBlock(yaml: string, jobId: string): string | null {
   return lines.slice(start, end).join('\n');
 }
 
+/**
+ * The two sibling gates scan the SAME `working-directory: services/worker`
+ * lines this one does, and decide what a step is purely from its `name:`:
+ *
+ *   - `check-deploy-lint-parity.ts` matches `name:.*[lL]int` (both workflows)
+ *     and then demands the captured `run:` be `npm run lint`.
+ *   - `check-deploy-build-parity.ts` matches `name:.*deploy-parity`
+ *     (case-insensitive, ci.yml only) and then demands `npm run build`.
+ *
+ * So renaming the worker typecheck step into either marker makes a SIBLING gate
+ * capture `tsc --noEmit` and fail — pointing at the wrong file, for the wrong
+ * reason. "Typecheck worker (deploy-parity)" is the obvious trap: it mirrors the
+ * sibling JOB's own name, `Worker Build (deploy-parity)`. Reject it here, where
+ * the message can name the real constraint, instead of leaving the naming rule
+ * as prose in agents.md that nothing enforces.
+ */
+function siblingMarkerCollisions(step: WorkerTypecheckStep, workflow: string): string[] {
+  const errors: string[] = [];
+  if (/lint/i.test(step.nameLine)) {
+    errors.push(
+      `${workflow} ${step.nameLine} carries the \`lint\` marker in its name — check-deploy-lint-parity.ts would capture this step and demand \`npm run lint\`. Rename it so the name contains no "lint".`,
+    );
+  }
+  if (workflow === 'ci.yml' && /deploy-parity/i.test(step.nameLine)) {
+    errors.push(
+      `${workflow} ${step.nameLine} carries the \`deploy-parity\` marker in its name — check-deploy-build-parity.ts would capture this step and demand \`npm run build\`. Use a distinct name (e.g. "deploy-gate parity").`,
+    );
+  }
+  return errors;
+}
+
 export function auditDeployTypecheckParity(sources: TypecheckParitySources): ParityResult {
   const errors: string[] = [];
 
@@ -167,6 +198,7 @@ export function auditDeployTypecheckParity(sources: TypecheckParitySources): Par
     );
   }
   for (const s of deploySteps) {
+    errors.push(...siblingMarkerCollisions(s, 'deploy-worker.yml'));
     if (s.command !== EXPECTED_TYPECHECK_RUN) {
       errors.push(
         `deploy-worker.yml ${s.nameLine} runs \`${s.command}\` — must be exactly \`${EXPECTED_TYPECHECK_RUN}\` so the PR-time gate compiles what the deploy gate compiles.`,
@@ -188,6 +220,7 @@ export function auditDeployTypecheckParity(sources: TypecheckParitySources): Par
       );
     }
     for (const s of ciSteps) {
+      errors.push(...siblingMarkerCollisions(s, 'ci.yml'));
       if (s.command !== EXPECTED_TYPECHECK_RUN) {
         errors.push(
           `ci.yml ${s.nameLine} runs \`${s.command}\` — must be exactly \`${EXPECTED_TYPECHECK_RUN}\`, i.e. the plain tsconfig.json, which INCLUDES test files. \`-p tsconfig.build.json\` excludes src/**/*.test.ts and would reopen the deploy-typecheck blackout.`,
