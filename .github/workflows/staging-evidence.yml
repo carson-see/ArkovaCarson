@@ -114,6 +114,17 @@ jobs:
           DATA="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")"
           HEAD_SHA="$(jq -r '.head.sha // empty' <<<"${DATA}")"
           BASE_SHA="$(jq -r '.base.sha // empty' <<<"${DATA}")"
+          # SCRUM-3481: the PR author's login, so the evidence check can reject
+          # a residual-risk note whose `Approved by:` names the author. Read
+          # from the live API alongside the SHAs, never from the PR body — it
+          # must not be author-controlled. A GitHub login is
+          # `[A-Za-z0-9-]{1,39}`, so no shell-metacharacter sanitising is
+          # needed beyond pinning it to that shape; anything else is dropped.
+          AUTHOR_LOGIN="$(jq -r '.user.login // empty' <<<"${DATA}")"
+          if [[ ! "${AUTHOR_LOGIN}" =~ ^[A-Za-z0-9-]{1,39}$ ]]; then
+            echo "::warning::PR #${PR_NUMBER} author login did not match the expected GitHub login shape — the approver-vs-author cross-check will be skipped for this run."
+            AUTHOR_LOGIN=""
+          fi
           MERGE_SHA="$(jq -r '.merge_commit_sha // empty' <<<"${DATA}")"
           MERGEABLE_STATE="$(jq -r '.mergeable_state // empty' <<<"${DATA}")"
           if [[ -z "${HEAD_SHA}" || -z "${BASE_SHA}" ]]; then
@@ -141,6 +152,7 @@ jobs:
             echo "head_sha=${HEAD_SHA}"
             echo "base_sha=${BASE_SHA}"
             echo "checkout_sha=${CHECKOUT_SHA}"
+            echo "author_login=${AUTHOR_LOGIN}"
           } >> "${GITHUB_OUTPUT}"
           # SECURITY (adversarial review, 2026-07-28): the PR body is fully
           # author-controlled. A FIXED heredoc delimiter here would let an
@@ -184,6 +196,9 @@ jobs:
           PR_BODY: ${{ steps.live_pr.outputs.body }}
           HEAD_REF_SHA: ${{ steps.live_pr.outputs.head_sha }}
           BASE_REF_SHA: ${{ steps.live_pr.outputs.base_sha }}
+          # SCRUM-3481: live-resolved PR author login (never the PR body), used
+          # only to reject a residual-risk note that approves its own author.
+          PR_AUTHOR: ${{ steps.live_pr.outputs.author_login }}
           # CTO ruling 2026-07-28 (SCRUM-2980): hard precondition for the
           # deferred_consolidated_soak RC-manifest mode
           # (scripts/ci/check-staging-evidence.ts). `vars.*` is read fresh

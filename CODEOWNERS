@@ -25,5 +25,15 @@ services/worker/src/chain/                       @carson-see
 # Compliance documentation
 docs/compliance/                                 @carson-see
 
+# RC manifests are MERGE AUTHORITY, not documentation (SCRUM-3542).
+# check-staging-evidence.ts reads these files to decide whether a prod-affecting
+# PR has merge-grade soak evidence, and `docs/staging/**` classifies T0 — so
+# without an owner here a PR author could mint their own approval. The gate now
+# also refuses a PR that cites a manifest it changes in the same PR, which is
+# the half that holds even if branch protection's "Require review from Code
+# Owners" is off. Verify that setting on `main` separately; this line alone
+# gates nothing without it.
+docs/staging/rc-manifests/                       @carson-see
+
 # Root config files
 CLAUDE.md                                        @carson-see

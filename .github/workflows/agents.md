@@ -1,5 +1,25 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-08-23 — `staging-evidence.yml` also resolves the PR AUTHOR live (SCRUM-3481)
+
+The `Resolve live PR state` step now emits an `author_login` output alongside the SHAs, and
+the check step binds it as `PR_AUTHOR`. `scripts/ci/check-staging-evidence.ts` reads it for
+exactly one purpose: rejecting a `### Residual-risk note` whose `Approved by:` resolves to
+the PR author, so an author cannot self-grant the CLAUDE.md §1.12 exception that waives the
+preflight and soak-duration requirements.
+
+Two properties to keep if you touch it:
+
+- **It comes from `gh api`, never from the PR body.** The body is author-controlled; the
+  whole point of the check is that this value is not. It is read from the same `DATA` blob
+  the head/base SHAs come from.
+- **It is shape-validated before it reaches `$GITHUB_OUTPUT`.** A GitHub login is
+  `[A-Za-z0-9-]{1,39}`; anything else is dropped to the empty string with a `::warning::`
+  (the cross-check then simply does not run — "unknown author" is treated as unknown, not as
+  a match). That validation is what stops an unexpected value from injecting extra
+  `key=value` lines into the step's outputs, the same class the per-run random heredoc
+  delimiter below guards for the body.
+
 ## 2026-08-23 — the `commits` step hands off a FILE PATH, not the messages themselves (E2BIG)
 
 `policy-lints`' `Aggregate commit messages` step no longer inlines `git log`. It runs
