@@ -334,3 +334,117 @@ describe("ci.yml edge-worker suite is actually invoked", () => {
     ).toBe(true);
   });
 });
+
+/**
+ * The same blind spot, one language over — BUG-2026-08-12-007.
+ *
+ * `packages/arkova-py` is the ONLY Arkova SDK actually published (all three npm
+ * packages 404), and until 2026-08-15 nothing ran its pytest/ruff suite on a
+ * pull request. Its only invocation lived in publish-python-sdk.yml, which fires
+ * on an `arkova-py-v*` tag — after the release decision, never before it. So the
+ * published 2.2.0 wheel shipped a `compliance_controls` type that contradicted
+ * the API (breaking `verify()` for every record carrying controls), and the
+ * source fix then sat unreleased for two weeks with no PR ever executing the
+ * tests that would have shown source and artifact disagreeing.
+ *
+ * These assertions are the ratchet. A suite that gates nothing fails silently,
+ * which is precisely how this went unnoticed twice.
+ */
+describe("ci.yml Python SDK suite is actually invoked", () => {
+  const pythonJob = (): string => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const job = /\n {2}python-sdk-tests:\n([\s\S]*?)(?=\n {2}[a-z][\w-]*:\n)/u.exec(workflow)?.[0];
+    expect(
+      job,
+      "ci.yml must keep a 'python-sdk-tests' job — packages/arkova-py gates nothing without it",
+    ).toBeDefined();
+    return job as string;
+  };
+
+  it("runs pytest against packages/arkova-py", () => {
+    const job = pythonJob();
+    expect(job, "the Python suite must run from packages/arkova-py").toMatch(
+      /working-directory:\s*packages\/arkova-py/u,
+    );
+    expect(job, "the job must execute the suite, not merely install it").toMatch(
+      /run:\s*pytest\b/u,
+    );
+  });
+
+  it("keeps the ruff gate at PR time, not only at publish time", () => {
+    // publish-python-sdk.yml gates the PyPI upload on `ruff check src tests`.
+    // A finding that only surfaces there blocks a release instead of a review —
+    // exactly the ordering that let 2.2.0 ship unchecked.
+    expect(pythonJob()).toMatch(/run:\s*ruff check src tests/u);
+  });
+
+  it("installs the dev extras, which is where pytest and the pinned ruff live", () => {
+    expect(pythonJob()).toMatch(/pip install -e "\.\[dev\]"/u);
+  });
+
+  it("matches the publish workflow's interpreter", () => {
+    // Parity argument of CLAUDE.md §0.9: if the publish gate would reject it, a
+    // PR must reject it first. Different interpreters make that untrue.
+    const publish = readFileSync(
+      resolve(REPO, ".github/workflows/publish-python-sdk.yml"),
+      "utf8",
+    );
+    const publishVersion = /python-version:\s*["']?([\d.]+)["']?/u.exec(publish)?.[1];
+    const ciVersion = /python-version:\s*["']?([\d.]+)["']?/u.exec(pythonJob())?.[1];
+    expect(publishVersion, "publish-python-sdk.yml must pin a python-version").toBeDefined();
+    expect(ciVersion, "the CI job must pin a python-version").toBe(publishVersion);
+  });
+});
+
+/**
+ * FD-GATE-2 — the frozen event base must never be a diff anchor.
+ *
+ * ci.yml (9 sites) and merge-authority.yml (:47) pass
+ * `BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}` — a sha GitHub
+ * FREEZES at the base tip as of the PR's last head push — while their
+ * checkouts pin no `ref:`, so HEAD is the live refs/pull/N/merge preview that
+ * GitHub recomputes against current main. Diffing `frozenBase..HEAD` therefore
+ * charges every main commit landed since the last push to the PR itself:
+ * measured 2026-08-22, #2219 (6 real files) presented as 162 to the tier
+ * detector and the feedback-rules scans, and 15 of 28 open PRs were desynced.
+ *
+ * The fix is deliberately in scripts/ci/lib/ciContext.ts, not the workflows:
+ * `changedFiles` anchors its diff at the PR's own changeset (HEAD^1 for the
+ * merge preview, merge-base(base, HEAD) for raw heads) so the frozen env value
+ * is harmless everywhere at once. These pins keep that anchoring from
+ * regressing to a raw `base..HEAD`; the behavioral matrix lives in
+ * scripts/ci/lib/ciContext.test.ts.
+ */
+describe("changedFiles diff anchoring neutralizes the frozen event base (FD-GATE-2)", () => {
+  const CI_CONTEXT_PATH = resolve(REPO, "scripts/ci/lib/ciContext.ts");
+
+  it("changedFiles routes its diff range through resolveDiffBase, never the raw env base", () => {
+    const source = readFileSync(CI_CONTEXT_PATH, "utf8");
+    expect(
+      source,
+      "ciContext.changedFiles must compute its anchor via resolveDiffBase(base) — see FD-GATE-2",
+    ).toMatch(/const diffBase = resolveDiffBase\(base\)/u);
+    expect(
+      source,
+      "the diff range must start at the resolved anchor, not the (possibly frozen) env base",
+    ).toMatch(/`\$\{diffBase\}\.\.HEAD`/u);
+    expect(
+      source,
+      "a raw `${base}..HEAD` two-dot range is the FD-GATE-2 bug shape and must not return",
+    ).not.toMatch(/`\$\{base\}\.\.HEAD`/u);
+  });
+
+  it("resolveDiffBase keeps both anchoring strategies: HEAD^1 for the merge preview, merge-base for raw heads", () => {
+    const source = readFileSync(CI_CONTEXT_PATH, "utf8");
+    expect(source).toMatch(/refs\\\/pull\\\/\\d\+\\\/merge/u);
+    expect(source).toMatch(/HEAD\^1/u);
+    expect(source).toMatch(/tryMergeBase\(base, 'HEAD'\)/u);
+  });
+
+  it("compute-merge-authority (merge-authority.yml's consumer) reads its file set through ciContext.changedFiles", () => {
+    // merge-authority.yml also passes the frozen base; its tier/label math is
+    // only correct because it consumes the anchored changedFiles.
+    const source = readFileSync(resolve(REPO, "scripts/ci/compute-merge-authority.ts"), "utf8");
+    expect(source).toMatch(/import \{[^}]*\bchangedFiles\b[^}]*\} from '\.\/lib\/ciContext\.js'/u);
+  });
+});

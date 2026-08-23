@@ -1,6 +1,58 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-20 (workflow curl redirect-protocol ratchet)._
+_Last updated: 2026-08-23 (SonarCloud paydown in `check-staging-evidence.ts`)._
+
+## 2026-08-23 — `check-staging-evidence.ts` Sonar paydown: `RcPrClaim`, `rcEntryTierErrors()`
+
+Pure refactor, **no behavior change** — all 339 pre-existing tests pass untouched.
+It exists to retire three SonarCloud findings on this file that had been resolved
+as *Accepted* in the SonarCloud UI to unblock PR #2332 rather than fixed:
+
+| Rule | Was | Now |
+|---|---|---|
+| `typescript:S107` | `validateCoveredRcPr` took 8 params (max 7) | `declared` / `required` / `files` bundled as `RcPrClaim` → 6 params |
+| `typescript:S3776` | same function, cognitive complexity 16 (max 15) | tier block lifted into `rcEntryTierErrors()` → 10 |
+| `typescript:S6582` | `approvalStatusRaw === null \|\| approvalStatusRaw.trim()…` | `approvalStatusRaw?.trim()…` |
+
+Two things to know before touching it again:
+
+- **`RcPrClaim` is a grouping the callers already had.** Both `validateCoveredRcPr`
+  call sites and `deferredConsolidatedSoakCoverage` already thread that same trio.
+  Do not "simplify" it back into positional params — that re-breaks S107. Equally,
+  do not push `errors` / `notes` into a sink object to buy headroom: every other
+  validator in this file takes them positionally, and diverging here costs more
+  than it saves.
+- **The optional chain in the deferred `approval_status` check IS the null guard.**
+  `stringAt()` returns `null` for an absent or non-string field, `null?.trim()` is
+  `undefined`, and `undefined !== 'pending'` — so an omitted field still fails
+  closed. Four tests were added alongside this refactor to pin the branches that
+  had no coverage: malformed `risk_tier`, `risk_tier` below the **declared** tier
+  (previously only "below *required* tier" was asserted), and deferred manifests
+  that omit `approval_status` or give it a non-string value. Each was verified to
+  fail against a mutated implementation before being kept.
+
+Context worth carrying: SonarCloud **main-branch analysis has been dead since
+2026-05-06**, so every issue created after that date is absent from main's
+snapshot and gets attributed to whichever PR next touches the file — which is how
+three findings dated June/July/August landed on an 8-line PR. Paying findings down
+is therefore worth more than Accepting them: an Accepted issue stays Accepted, but
+the *next* untouched-line finding on this file will block the next PR the same way.
+
+## 2026-08-22 — preflight-timestamp residual-risk symmetry (PR #2329)
+
+`check-staging-evidence.ts`: `preflightTimestampErrors()` now shares the escape hatch `preflightResultErrors()` always had, via the new `preflightExceptionErrors()` helper. Both call `hasResidualRiskException()`, so both demand the same five sub-fields and the same real-approver guard.
+
+**Why it was a defect and not a nicety.** `Preflight result:` could say "dirty" behind a note. `Preflight timestamp:` could say nothing at all — and it is a REQUIRED field at T2/T3, so omitting it tripped `missingFields()` instead. That made "we ran a bad preflight" expressible and "we ran none" inexpressible, which rewards running a worthless preflight over running none and pressures an author toward pasting some OTHER window's timestamp to make the block parse. That is the stale-evidence reuse CLAUDE.md §1.11A forbids, and it nearly happened on the chain-pair window (a `clean_mirror` reading 8 days stale, belonging to rig provisioning rather than the soak). 19 PRs across three closed windows were blocked by authors who correctly refused to fabricate a value.
+
+**The predicate.** `classifyPreflightTimestamp()` returns exactly one of `ok` / `not-run` / `late` / `unparseable`. `not-run` and `late` are accepted ONLY behind a valid approved note; `unparseable` is still a hard error; `ok` is unchanged.
+
+Three properties to preserve if you touch this:
+
+- **The sentinel set is CLOSED and matched by exact membership** (`PREFLIGHT_NOT_RUN_SENTINELS`, a literal `Set`): `NOT RUN` / `NOT-RUN` / `NOTRUN`, `NO PREFLIGHT` / `NO-PREFLIGHT` / `NOPREFLIGHT`, `NONE`, `N/A` / `NA` / `N.A` / `N.A.`, `NOT APPLICABLE` / `NOT-APPLICABLE` / `NOTAPPLICABLE`. An optional trailing reason is cut at the first `PREFLIGHT_REASON_SEPARATOR_RE` hit, in which a plain hyphen must be preceded by whitespace so `NOT-RUN` is not read as `NOT` plus a reason. **Two SonarCloud findings shaped this and both were fixed by extraction, not suppression** — keep it that way: one big alternation regex tripped `typescript:S5843` (complexity 26 > 20), and the obvious replacement `(?:\s+[-—–:]|[—–:])\s*\S[\s\S]*$` tripped `typescript:S8786` because an unanchored `\s+` is retried from every position (quadratic on a long whitespace run). The surviving form is a Set plus two fixed-length, quantifier-free separator alternatives. Prose that merely *talks about* not running a preflight (`none of the preflight checks were captured`) is NOT a member and still hard-fails. Do not relax this to a substring or keyword match — free text through this field is how the gate stops being a gate. Eight near-miss tests pin it, and forcing the membership test to `true` reds 24 tests.
+- **Sentinels are matched BEFORE `Date.parse`.** Reversing that order would let any sentinel V8 happens to parse be silently accepted as a real reading.
+- **An absent label is still owned by `missingFields()`.** `preflightTimestampErrors()` returns `[]` for a null value on purpose — it is not waiving anything, the required-field check already rejected the body. The note buys the ability to say `NOT RUN` out loud, not the ability to stay silent.
+
+**The note is not a blanket bypass.** It is scoped to the preflight fields only: soak duration, head/base SHA identity, evidence scope, and the deploy-artifact value checks all run independently, pinned by two explicit "does not waive" tests. And `preflightExceptionNotes()` makes every acceptance announce itself — without it a `clean_mirror`-but-late reading would pass silently, since `preflightIsClean` is true in that case and the pre-existing result-note branch never fires.
 
 ## 2026-08-20 — `check-workflow-curl-redirect-protocol.test.ts` (new)
 
@@ -9,10 +61,32 @@ Repo-wide ratchet for SonarCloud `githubactions:S6506`: no `curl` in `.github/wo
 ## 2026-08-17 — `mergify-orphaned-export-gate.test.ts` (new)
 
 Contract test pinning `check-success = Orphaned Export Lint` into EVERY `.mergify.yml` queue rule's `merge_conditions`, plus the exact `name: Orphaned Export Lint` job name in `ci.yml` so the pair cannot silently drift. Exists because the `orphaned-export-lint` job (CTO ruling R14, fail-closed `continue-on-error: false`) ran on every PR since 2026-07-28 but was never listed in `merge_conditions` — a CI job absent from that list reports without blocking (the "NEW job not in .mergify.yml gates NOTHING" class). Raw-content style follows `s33-wave2-workflow-contract.test.ts`. NOTE: branch protection's required-check set is a separate, Carson/admin-only surface — this test pins only the in-repo Mergify layer.
+_Last updated: 2026-08-18 (mergify-python-sdk-gate contract test)._
+
+## 2026-08-18 — `mergify-python-sdk-gate.test.ts` (new)
+
+Contract test pinning `check-success = Python SDK Tests (packages/arkova-py)` into EVERY `.mergify.yml` queue rule's `merge_conditions`, plus the exact `name: Python SDK Tests (packages/arkova-py)` job name in `ci.yml` so the pair cannot silently drift. Exists because the `python-sdk-tests` job (BUG-2026-08-12-007) was added to ci.yml without being listed in `merge_conditions` — a CI job absent from that list reports without blocking (the "NEW job not in .mergify.yml gates NOTHING" class), which would have reproduced the original never-gated-on-a-PR blindness one layer up. Also pins that the job stays free of a job-level `if:`: an unreported check never satisfies `check-success`, so a path-filtered gated job would deadlock every non-SDK PR in the queue (path conditioning here is step-level `if:` inside always-reporting jobs, e.g. ai-eval-gate). Raw-content style follows `s33-wave2-workflow-contract.test.ts`; queue-gate shape follows `mergify-orphaned-export-gate.test.ts` (PR #2257). NOTE: branch protection's required-check set is a separate, Carson/admin-only surface — this test pins only the in-repo Mergify layer.
 
 CI gate scripts. Each one fails the build with a structured exit code + an
 actionable message when a guardrail trips. Run via
 `npx tsx scripts/ci/<name>.ts` from a CI workflow.
+
+## 2026-08-18 — `platform-health-digest-cron.ts` registered against two guards (`feat/platform-admin-daily-health-digest`, draft, T2)
+
+New job hit two independent CI gates on first push, both fixed in the same PR rather than worked around:
+
+- **`config-drift/flag-inventory.json`** gained an `ENABLE_PLATFORM_HEALTH_DIGEST` entry
+  (`soak: must-be-on`, `customerReachable: false` — recipients are `profiles.is_platform_admin`,
+  internal staff only). Without it, `check-config-drift.ts`'s flag-inventory reconciliation hard-fails
+  with `unregistered-flag` the moment `deploy-worker.yml` sets an `ENABLE_*` var the manifest has never
+  seen — see this file's 2026-08-11 entry above for why that reconciliation exists.
+- **`check-job-queue-parity.ts`'s `QUEUE_INTERNALS_ALLOWLIST`** gained
+  `services/worker/src/jobs/platform-health-digest-cron.ts`. `readJobQueueMetrics()` does one read-only
+  `.select('created_at').eq('status','pending')` against `job_queue` for a depth/oldest-age monitoring
+  metric — never `submitJob`/`claimJob`/`processNextJob`, never an insert. The guard flags ANY direct
+  `.from('job_queue')` outside the allow-list regardless of read vs. write (see the "`QUEUE_INTERNALS_ALLOWLIST` is by PATH, not by type name" bullet below), so a read-only monitoring query trips it exactly
+  like a raw enqueue would. Verified locally after the fix: `check-job-queue-parity.ts` exits 0 and its
+  13-test suite stays green.
 
 ## 2026-08-10 — `check-anchor-field-policy-coverage.ts` (new, wired into ci.yml)
 
@@ -181,6 +255,20 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - Wired as `npm run ci:job-queue-parity` in the `policy-lints` job of `ci.yml`. Per the "a gate is only real if it is wired" note above, check that step exists before citing this guard.
 - **The `live worker tree` tests scan once, in `beforeAll`, with an explicit 60s budget — do not drop that back to a per-test scan.** Walking and regex-scanning `services/worker/src` is ~1,200 files / ~16 MB of real work that grows with the repo, and each test in that block used to redo it. It passed in isolation and then timed out at vitest's 5s default in CI under full-suite parallelism (426 files) — a repo-size tripwire that reads exactly like a genuine parity break. The budget is the only thing that changed; the assertions did not, and the guard was re-confirmed to fail closed by planting an orphan producer and watching it go red.
 
+## `check-hot-table-ddl-lock-timeout.ts` — now reads INSIDE routine bodies (BUG-019, 2026-08)
+
+- **The gap it had.** The linter shipped right after the 2026-08-11 P0 and read a migration as a flat statement list, so a `SET LOCAL lock_timeout` anywhere earlier in the FILE counted as a guard for everything after it. That is correct for statements the migration runs and wrong for a `CREATE FUNCTION` body: the body is *stored* at apply time and *executed* later, in a cron's or an RPC caller's session, where the migration's `SET LOCAL` no longer exists.
+- **What it missed, concretely.** `cleanup_expired_data()` — SECURITY DEFINER, invoked daily by `POST /cron/cleanup-retention` — does `DROP TRIGGER` → `DELETE` → `CREATE TRIGGER` on `audit_events` with no bounded timeout anywhere. Same FIFO-barrier mechanism as the P0, re-armed every day, unwatched, and green under the ratchet built to catch exactly that. Fixed by migration `0411`.
+- **The classification.** Statements now carry a `context`. `top-level` (which includes `DO $$ ... $$`, because a DO block runs during the migration in its own transaction) keeps the old rule and the old `HOT_TABLES` set. `function-body` requires the guard to be inside that same body, or on the routine's own `SET lock_timeout TO '<non-zero>'` clause, and is checked against the wider `RUNTIME_DDL_TABLES`.
+- **Guards do not cross the boundary in either direction.** An in-body `SET LOCAL` cannot protect a later top-level statement (the body never ran at apply time), and a file-level `SET LOCAL` cannot protect a body. The whole deferred `CREATE FUNCTION` statement — SET clauses included — is removed from the top-level guard stream so it cannot fake one.
+- **`RUNTIME_DDL_TABLES` = `HOT_TABLES` + `audit_events`, and `audit_events` is deliberately NOT in `HOT_TABLES`.** Three merged migrations (`0295`, `0309`, `0404`) do one-shot top-level DDL on it under operator supervision; widening the top-level set would buy three new baseline entries and nothing else, and the baseline file forbids exactly that ("Do NOT add entries to shrink a red build"). DDL a cron re-runs forever against a table every write path appends to is the different risk.
+- **Regression-proved against the real defect, not a synthetic.** `src/tests/bug-019-cleanup-expired-data-lock-timeout.test.ts` slices the actual `cleanup_expired_data` body out of the baseline migration and asserts the linter flags both statements — and still flags them when a file-level `SET LOCAL` is prepended, which is the precise false negative. Baseline count moved 151 → 155 (the four newly-visible in-body statements, all inside the already-grandfathered baseline file); **0 new violations across the tree**.
+- Dollar-quote parsing handles tagged delimiters (`$fn$`) and never recurses into an open block, so a `$$` inside a `$fn$ ... $fn$` body is not mistaken for a delimiter. An unterminated block aborts the scan rather than guessing.
+
+## `views-security-invoker-baseline.json` — `calibration_features` removed (BUG-011, 2026-08)
+
+- The grandfather entry covered a bare definer view created by archived migration `0222`, which the Path C cutover dropped: the view was not in the prod `pg_dump` and **does not exist in production** (`information_schema.tables` count = 0), which is why `POST /jobs/calibration-refit` returned `PGRST205` on every run. Migration `0413` recreates it `WITH (security_invoker = true)`, so the entry had nothing left to cover and keeping it would have let a future bare redefinition through. Only `v_slow_queries` remains grandfathered.
+
 ## `check-mcp-claim-parity.ts` — MCP tool-claim parity across five surfaces (BUG-026, 2026-08-15)
 
 - **The defect it closes.** MCP tool descriptions are published in five places — `services/edge/src/mcp-tools.ts` (`TOOL_DEFINITIONS`, canonical), `public/.well-known/mcp/server-card.json`, `public/AGENTS.md`, `public/llms.txt` + `public/llms-full.txt`, and `docs/api/mcp-tools.md`. Nothing compared the description TEXT between them. `tests/infra/mcp-manifest-parity.test.ts` pins the NAME set, required arguments, property names, banned UI terms and registry over-claims — and says in its own header that descriptions are out of scope. That was the hole: BUG-026 (`search_credentials` advertising "semantic (vector) similarity matching" when the served path is an ILIKE substring scan) survived on six surfaces at once.
@@ -204,6 +292,22 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - **Verified against the real regression, not just fixtures.** Run against the pre-fix `ci.yml` and `staging-evidence.yml` from `HEAD` it reports all 17 step-level gaps plus the job-level one; against the fixed files, zero.
 - Runs in the existing `Tests` job via the `scripts/**/*.test.ts` vitest glob — no new CI job, so nothing needed adding to `.mergify.yml`'s required-check set.
 - **Naming debt flagged, not silently changed:** `Dependency Scanning` is a poor name for a ~25-step policy-lint job in which a failure almost never concerns dependencies. Renaming it means updating all three `.mergify.yml` queue rules and the branch-protection contexts in lockstep, and a mismatch there silently un-gates the queue. Left alone deliberately.
+
+## `check-staging-evidence.ts` — `.gitleaksignore` joins its sibling in `STAGING_TOOLING_ALLOW` (2026-08-22)
+
+- **The gap.** `STAGING_TOOLING_ALLOW` carried `/^\.gitleaks\.toml$/` under the comment "Secret-scanner policy is CI-only; it never ships to application runtime" — but not `.gitleaksignore`. The two files are one policy split across two formats: the `.toml` holds rules and allowlists, the ignore file holds per-finding `commit:path:rule:line` fingerprint waivers. Both are read only by the `scan` job in `.github/workflows/gitleaks.yml`; neither is imported, bundled, or deployed.
+- **What it cost.** A one-line fingerprint waiver classified `T1 — default frontend / additive change` and demanded a 2 h staging soak of a file production never reads. There is nothing for a soak to exercise, so the evidence such a PR produces is worker-health noise that does not cover the change — the shape CLAUDE.md §1.12 already calls out as inadmissible.
+- **Direction of the change, stated plainly.** This LOWERS a tier, against the gate's usual fail-closed-to-the-highest-tier posture. It is admissible for the same reason every other entry in that list is: the file has no prod runtime surface, so a higher tier buys no assurance. The entry is exact-anchored (`^…$`) — `services/worker/.gitleaksignore`, `.gitleaksignore.ts`, and `src/lib/gitleaksignore` are all still rejected, with a test for each.
+- **Tests.** `check-staging-evidence.test.ts` gains `passes for the secret-scanner policy pair` (asserts `isStagingToolingOnly` on both halves AND `requiredTierFor(['.gitleaksignore'])` → T0, so the classifier is pinned end-to-end, not just the predicate) and `rejects gitleaks-config lookalike filenames`. Verified red-before-green: against the pre-fix classifier the pair test fails on `.gitleaksignore`.
+
+## `check-staging-evidence.ts` — base-drift residual-risk third state + own-changeset anchoring (FD-GATE-2 / FD-GATE-3, 2026-08-23)
+
+- **The defect (FD-GATE-3).** `baseDriftImpactErrors` had exactly two outcomes above "no intersection": a `Base drift impact:` attestation hatch when the WHOLE drift was T0, and an unconditional re-soak for anything above T0. But `SHARED_PROD_RUNTIME_RULES` matches `services/worker/src/` wholesale, a T3 soak is 48 h, and main took 23 PRs on 2026-08-22 — so any T3 soak window contains T2+ drift and the re-soak can never converge (the [[FD-RC-1]] shape: individually reasonable rules, collectively unsatisfiable). CLAUDE.md names a third state in BOTH places it addresses this — "a new soak **or an explicit residual-risk note**" (§1.11A), "an explicit Carson-approved residual-risk exception" (§1.12) — and the gate implemented neither. Live victims at fix time: #2291 (complete sealed 12 h T2 evidence, red ONLY on this), #2235, #2314.
+- **The fix is the third state, not a narrower intersection.** The surface-intersection OR (own files ∪ shared prod-runtime surface) is deliberate and stays test-pinned — a PR owning zero chain files IS still exposed to chain drift because the soak ran against the same deployed substrate. What changes: above-T0 shared-surface drift now accepts an auditable **`### Base-drift residual-risk note`** (`Drift files:` — which must ENUMERATE every intersecting drift file, `Risk assessment:`, `Evidence still valid because:`, `Approved by:` with the shared real-approver guard; a `TBD`/blank approver is a self-waiver and fails). Without a valid note the branch still re-soaks, and the error names the note as the remedy.
+- **Two hard walls remain — cases no attestation can honestly cover:** (a) main edited an exact file this PR itself changed (or one matching an optional self-declared `Drift dependencies:` prefix — a declaration can only make the gate stricter) and that overlap classifies T2+: the completed soak provably describes code that no longer exists; (b) the PR owns a `supabase/migrations/` file AND main landed a migration in the interval: ledger ordering is shared mutable state. Same-file drift *below* T2 (e.g. `src/lib/copy.ts`, the actual #2235 overlap) is attestable — the wall is reserved for evidence that is provably stale, not merely adjacent.
+- **The T0 hatch is unchanged and the note is NOT a substitute for it** — the T0 `Base drift impact:` field carries a no-runtime-impact statement the note does not, and letting the note serve there would be strictly looser for a strictly safer drift class. Test-pinned.
+- **FD-GATE-2, fixed at the consumer.** `ciContext.changedFiles()` no longer two-dots from the (possibly frozen) env base — see `scripts/ci/lib/agents.md` for the `resolveDiffBase` anchoring contract. This corrects the gate's `ownFiles`, the tier detector, `compute-merge-authority`, and the feedback-rules scans in one place, without touching the workflows that still pass the frozen sha. Also fixes the raw-head fallback misattribution (FD-GATE-3 defect 2). Known boundary: `--diff-filter=AMR` still drops deletions — that is FD-GATE-4, deliberately not addressed here.
+- **This is a §1.12/§1.13 merge-gate semantics change:** landed as a T0 tooling PR, opened as DRAFT for named human review — the gate that decides whether other PRs may merge must not be self-merged on its own green checks.
 
 ---
 

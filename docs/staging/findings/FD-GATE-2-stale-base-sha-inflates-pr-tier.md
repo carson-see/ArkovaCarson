@@ -77,3 +77,89 @@ This does **not** license mass-rebasing the backlog on the theory that every gat
 Most gate failures are genuine evidence gaps. Three of the eight PRs handled in this batch were
 additionally `DIRTY` — real merge conflicts with `main` that would have blocked them regardless.
 Diagnose per PR with the commands above before concluding drift.
+
+---
+
+## Update 2026-08-22 — measured at scale, and the workflow attribution above is now STALE
+
+Re-verified from the clone against live PRs. The mechanism holds. Two things have changed since
+this was written, and one of them makes the section above misleading.
+
+### 1. `staging-evidence.yml` no longer has this bug — `ci.yml` and `merge-authority.yml` do
+
+The mechanism section blames `staging-evidence.yml` passing `pull_request.base.sha`. **That has
+been fixed.** It now live-resolves the base:
+
+```yaml
+# .github/workflows/staging-evidence.yml
+DATA="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")"
+BASE_SHA="$(jq -r '.base.sha // empty' <<<"${DATA}")"
+...
+BASE_REF_SHA: ${{ steps.live_pr.outputs.base_sha }}     # :186
+```
+
+and `scripts/ci/staging-evidence-workflow-contract.test.ts` pins that and forbids reverting to
+the event payload.
+
+**The frozen sha survives in the workflows this finding never named:**
+
+| File | Sites |
+|---|---|
+| `.github/workflows/ci.yml` | **9** — lines 34, 181, 439, 446, 452, 466, 482, 491, 530 (`:439` has a `\|\| 'HEAD~1'` fallback) |
+| `.github/workflows/merge-authority.yml` | `:47` |
+
+Both are `BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}`, and
+`merge-authority.yml`'s checkout is `fetch-depth: 0` with **no `ref:`**, so `HEAD` is
+`refs/pull/N/merge`. So the affected consumers are the **tiered-merge authority label**
+(`compute-merge-authority.ts`) and the **feedback-rules scans** — not the soak gate.
+
+### 2. The precise diagnostic, and it is not "is the PR behind main"
+
+The inflation happens only when GitHub has **recomputed the merge ref** while the event payload
+still carries an older base. The test is a one-liner:
+
+```
+git rev-parse refs/pull/<N>/merge^1     # the base the merge preview was built on
+gh pr view <N> --json baseRefOid        # the base the workflow env will carry
+```
+
+**Equal → no inflation is possible.** Different → the two-dot diff charges the gap to the PR.
+
+This is why a recently-pushed PR shows nothing: pushing fires a fresh `pull_request` event, which
+resyncs the payload to the merge ref. Measured on 2026-08-22:
+
+| PR | frozen base | merge-ref `^1` | files seen | files actually changed |
+|---|---|---|---|---|
+| #2235 | `406ead53a` | `406ead53a` — same | 32 | 32 |
+| #2314 | `d5a84d3c3` | `d5a84d3c3` — same | 14 | 14 |
+| **#2219** | `49358d607` | **`253c99996` — differs** | **162** | **6** |
+
+#2235 and #2314 had both been pushed that day, which is exactly why they look clean. **Do not
+conclude the bug is absent by sampling PRs you just pushed to** — that was the first reading
+here, and it was wrong.
+
+### 3. Scale: 15 of 28 open PRs, 54 %
+
+Sweeping every open PR with the `merge^1 != baseRefOid` test: **15 desynced, 13 synced.**
+Desynced: #2336, #2274, #2270, #2266, #2264, #2258, #2254, #2251, #2249, #2245, #2233, #2232,
+#2230, #2219, #2211 — i.e. most of the sat-upon backlog, which is precisely the population this
+finding predicted.
+
+**#2219 in detail.** It changes **6** files:
+`services/worker/src/api/{agents.md,partner-provisioning-router.ts,partner-provisioning-router.test.ts}`,
+`services/worker/src/index.ts`, `supabase/migrations/{0410_partner_accounts.sql,agents.md}`.
+`ci.yml`'s env makes the scans see **162**, adding `packages/embed/package-lock.json`,
+`sdks/agents.md`, `sdks/mcp-server/src/index.test.ts` and 150-odd more that `main` authored.
+
+A note on impact, stated honestly: **#2219's own tier does not move** — it owns a
+`supabase/migrations/` file, so it is T3 on its own merits. The measurable harm is to the
+**feedback-rules scans**, which are handed 156 files the PR did not write and can flag
+violations in `main`'s code against this PR. Tier inflation is the predicted harm for a PR whose
+own content is *below* T2; that specific case is not demonstrated here and should not be claimed
+without a measured example.
+
+### Workaround, unchanged
+
+Push to the PR (any commit, including a `main` merge). That fires a fresh event and resyncs the
+payload to the merge ref. It is a workaround, not a fix: the PR re-desyncs as soon as `main`
+moves again.

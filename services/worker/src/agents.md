@@ -3,6 +3,22 @@ _Last updated: 2026-08-03 (merge: PR #1944 Drive review rounds 2-3 create-then-s
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
+## 2026-08-18 — `config.ts` gains `enablePlatformHealthDigest` (`feat/platform-admin-daily-health-digest`, draft, T2)
+
+New `boolFlag(true)` (`ENABLE_PLATFORM_HEALTH_DIGEST`) gates `jobs/platform-health-digest-cron.ts`'s
+daily platform-admin summary digest — see `jobs/agents.md`'s dated entry for the full mechanism.
+Default **true** at both the code level and in `deploy-worker.yml` (unlike most new job flags in this
+file, which ship default-false) because this is a routine internal ops-visibility email with no
+customer-facing blast radius, not a new production capability that needs a deliberate opt-in rollout.
+## 2026-08-18 — QUEUE-07 `ENABLE_QUEUE_DIGEST` activation note (`feat/queue-digest-default-on`, draft, T2)
+
+`config.ts`'s `enableQueueDigest` (boolFlag, existing since QUEUE-07/SCRUM-2353) was never actually
+true anywhere — `.github/workflows/deploy-worker.yml` never set the env var, so prod ran on the code
+default `false`. No config.ts schema change here, only the comment updated to record that
+`deploy-worker.yml` now sets it explicitly (see that folder's `agents.md`) and that per-org enrollment
+in `jobs/queue-digest-cron.ts` is DEFAULT-ON as of this PR, not opt-in. See
+`jobs/agents.md`'s dated entry for the full mechanism.
+
 ## 2026-08-11 BUG-2026-08-11 — `index.ts` fee-estimator singleton was network-blind
 
 The module-level `feeEstimatorInstance` (the `/health` fee estimator, created once at boot to avoid
@@ -41,6 +57,24 @@ in `jobs/stuck-anchor-monitor.ts` (SCRUM-3017). See `jobs/agents.md` and `chain/
 writeup of this session's three fixes (SCRUM-3021 check-confirmations tip-height retry/fallback,
 SCRUM-3017 SUBMITTED watchdog, SCRUM-3016 MEMPOOL_API_URL `/api` contract). No new env var is
 *required* — the default (unset `STUCK_SUBMITTED_ALERT_HOURS`/`MEMPOOL_API_URL`) path is unchanged.
+
+## 2026-08-23 BUG-028 — `mcp-tools.test.ts` re-pinned to the submission-receipt contract
+
+Two `handleAnchorDocument` tests here asserted `public_id: 'ARK-2026-999'` — a value their own
+mocks fabricated. `public_records` has no `public_id` column (pinned against the baseline
+migration in `tests/infra/mcp-server.test.ts`), so the handler's old `record?.public_id` read was
+always `undefined` and the promised identifier never existed. This suite imports the edge handlers
+(`../../edge/src/mcp-tools.js`), so when BUG-028 fixed the receipt (explicit `public_id: null` +
+`verify_with` handle), these tests were the stale side. Mocks now return the real row shape.
+When mocking Supabase rows in this suite, use columns the table actually has.
+
+## 2026-08-15 BUG-024 — `/.well-known/arkova-keys.json` was never mounted
+
+`api/proof-keys.ts` was written, unit-tested, `COPY`d into the Docker image, and named by every signed proof bundle's `signing_key_id` — but `index.ts` never imported or mounted `proofKeysRouter`, so the route 404'd on every worker host from the day it shipped. Its sibling `didWebRouter` WAS mounted, so `/.well-known/did.json` returned 200 and the gap read as a routing/CDN problem rather than a missing line. External verifiers could not resolve the public key a bundle names.
+
+- `api/proof-keys.test.ts` could not catch it: that test builds its own Express app and mounts the router itself, so it proved the router works while saying nothing about whether the real app serves it. **A router test is not a mount test.** The composed-app assertion lives in `src/index.test.ts`.
+- The mount rides didWebRouter's existing `app.use(apiIpShadowGuard, didWebRouter, proofKeysRouter)` chain **on purpose**. A second `app.use(apiIpShadowGuard, ...)` would run the shared 60/min limiter twice per request against one bucket, halving the anonymous cap to 30/min — see the F-2 note below for what that class of re-shadowing already cost once.
+- Generally: when adding a public `/.well-known/*` route here, add a `src/index.test.ts` supertest that asserts `status !== 404` through the real `app`.
 
 ## 2026-07-28 SOAK FINDING F-2 — per-IP limiter shadows per-API-key limiter (HIGH, open)
 

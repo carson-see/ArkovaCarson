@@ -120,7 +120,12 @@ any cleanup here can silently regress.
   and a cutover — a project, not a command.
 - **`api-key-hmac-secret` is at v1, created 2026-03-15, never rotated** (§1.4 governs API-key
   HMAC).
-- **`arkova-staging-deployer@arkova1` has zero activity in 30 days** — dead SA, candidate for removal.
+- **`arkova-staging-deployer@arkova1` — DISABLED 2026-08-22** (was: zero activity in 30 days, candidate
+  for removal). Re-verified before acting: Policy Intelligence `serviceAccountLastAuthentication`
+  (window 2026-05-16 -> 2026-08-14) shows no authentication, no user-managed keys exist
+  (`--managed-by=user` is empty), and 30d of logs carry no entries for its principal. Disabled, not
+  deleted — reversible via `gcloud iam service-accounts enable`. See
+  `docs/staging/operator-actions-2026-08-22.md` §3.
 - **`sekura-deploy@` / `sekura-appliance@` remain enabled** (the former holds
   `compute.instanceAdmin.v1`, `networkAdmin`, `serviceUsageAdmin`). Neither holds a key and
   neither has ever authenticated. **Left enabled deliberately** — whether that vendor engagement
@@ -129,8 +134,12 @@ any cleanup here can silently regress.
 - **`docs/security/sekura-known-issues-2026-08-03.md` states "A scoped replacement SA is built."
   No such SA exists** in the live inventory. That is a false external-facing claim and falls under
   the R-7 claims-review gate — it needs correcting or building.
-- **~250 of 322 secrets are dead per-PR/per-soak `supabase-*-pr####-staging` artifacts**, each
-  readable by anything holding project-wide `secretmanager.secretAccessor`. Hygiene sweep item.
+- **Dead per-PR staging secrets — SWEPT 2026-08-22.** 100 `*pr<N>*` secrets whose PRs closed >30
+  days ago were deleted (owning PRs #712–#1471, latest close 2026-07-13), after excluding every
+  secret referenced by any Cloud Run service or recent revision (one pr-numbered exclusion:
+  `docusign-connect-hmac-secret-pr712-staging`). 326 -> 226 total. The original ~250 estimate
+  included per-soak/per-rig secrets, which were deliberately left — their disposition follows their
+  rigs'. Full deleted list: `docs/staging/operator-actions-2026-08-22.md` §4.
 
 ## Recommended next steps, in order
 
@@ -140,4 +149,6 @@ any cleanup here can silently regress.
    compute key.
 4. Enforce `iam.disableServiceAccountKeyCreation` once (3) is done.
 5. Scoped replacement SA for the compute SA's `roles/owner` (SCRUM-3023).
-6. Correct the Sekura doc claim; sweep dead secrets and the dead staging-deployer SA.
+6. ~~Correct the Sekura doc claim; sweep dead secrets and the dead staging-deployer SA.~~ **Done
+   2026-08-22** (doc corrected; 100 dead per-PR secrets deleted; SA disabled) — residual: per-soak
+   secrets, per `docs/staging/operator-actions-2026-08-22.md`.

@@ -28,7 +28,8 @@ import { extractCleMetadataView } from '@/components/credentials/cleMetadataView
 import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
-import { ANCHOR_STATUS_LABELS, LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, CONFIRMATION_PROGRESS_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
+import { ANCHOR_STATUS_LABELS, LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, CONFIRMATION_PROGRESS_LABELS, CONNECTOR_FINGERPRINT_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
+import { isConnectorSourcedAnchorMetadata } from '@/lib/connectorFingerprint';
 import { sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
 import { isFraudMetadataKey } from '@/lib/fraudDetection';
 import {
@@ -113,6 +114,17 @@ interface AssetDetailViewProps {
   canRevoke?: boolean;
   /** Called after a successful revoke so the parent can refresh the anchor. */
   onRevoked?: () => void;
+  /**
+   * Rename honesty gate (founder-reported, 2026-08-17): only the record OWNER
+   * can rename — RLS `anchors_update_own` requires user_id = auth.uid(), and
+   * migration 0393's trigger `restrict_org_admin_folder_update` narrows the
+   * org-admin update policy to folder_id only. The parent computes ownership
+   * (anchor.user_id === auth uid) and passes it here, mirroring how
+   * `canRevoke` is parent-computed. Defaults false (fail-closed): without it
+   * a non-owner's pencil click yields either a raw 42501 error toast or a
+   * silent zero-row false success.
+   */
+  canRename?: boolean;
   /**
    * CPE-R1 (SCRUM-1847) — whether the viewer holds the
    * `credential_source_import` entitlement. The parent resolves it read-only
@@ -362,7 +374,7 @@ function AnchorRecordGrid({ anchor, status, formatDate }: Readonly<AnchorRecordG
   );
 }
 
-export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile, canRevoke = false, onRevoked, hasImportEntitlement = false }: Readonly<AssetDetailViewProps>) {
+export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile, canRename = false, canRevoke = false, onRevoked, hasImportEntitlement = false }: Readonly<AssetDetailViewProps>) {
   const [copied, setCopied] = useState(false);
   const [verificationState, setVerificationState] = useState<VerificationState>('idle');
   const [showVerifyDropzone, setShowVerifyDropzone] = useState(false);
@@ -378,6 +390,10 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
   const status = statusConfig[anchor.status];
   const StatusIcon = status.icon;
   const sourceProvenance = buildAnchorSourceProvenance(anchor.metadata);
+  // BUG-2026-08-13-010 (§1.5/§1.6A): connector-sourced fingerprints commit the
+  // exact bytes as retrieved at securing time — a fresh download from the
+  // source may legitimately differ. Gates the re-verify caveat + mismatch hint.
+  const isConnectorSourced = isConnectorSourcedAnchorMetadata(anchor.metadata);
   const credentialMetadata = anchor.metadata ?? undefined;
   const visibleMetadata = buildAnchorCredentialMetadata(anchor.metadata);
   // CPE-R1 (SCRUM-1847): the CPE section is gated on the credential_source_import
@@ -586,7 +602,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               ) : (
                 <div className="flex items-center gap-2">
                   <p className="text-lg font-medium truncate">{anchor.filename}</p>
-                  {onRenameFile && (
+                  {onRenameFile && canRename && (
                     <button
                       type="button"
                       className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
@@ -934,6 +950,14 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {isConnectorSourced && (
+            <p
+              data-testid="connector-fingerprint-reverify-note"
+              className="mb-4 rounded-md border border-border bg-muted/50 p-3 text-xs text-muted-foreground"
+            >
+              {CONNECTOR_FINGERPRINT_LABELS.REVERIFY_NOTE}
+            </p>
+          )}
           {verificationState === 'idle' && !showVerifyDropzone && (
             <Button
               variant="outline"
@@ -983,6 +1007,11 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 <strong>Verification Failed!</strong>
                 <br />
                 The document fingerprint does not match. This may be a modified or different document.
+                {isConnectorSourced && (
+                  <span data-testid="connector-fingerprint-mismatch-hint" className="mt-2 block">
+                    {CONNECTOR_FINGERPRINT_LABELS.REVERIFY_MISMATCH_HINT}
+                  </span>
+                )}
               </AlertDescription>
             </Alert>
           )}

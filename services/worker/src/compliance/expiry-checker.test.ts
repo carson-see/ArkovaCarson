@@ -10,10 +10,10 @@ function daysFromNow(days: number): string {
 }
 
 const makeAnchor = (overrides: Partial<ExpiryAnchor> = {}): ExpiryAnchor => ({
-  id: 'a1',
+  public_id: 'ARK-SEC-A1',
   org_id: 'org-1',
   credential_type: 'LICENSE',
-  title: 'CPA License',
+  label: 'CPA License',
   expiry_date: daysFromNow(15),
   ...overrides,
 });
@@ -21,10 +21,10 @@ const makeAnchor = (overrides: Partial<ExpiryAnchor> = {}): ExpiryAnchor => ({
 describe('categorizeExpiringDocuments', () => {
   it('categorizes documents into correct urgency windows', () => {
     const anchors: ExpiryAnchor[] = [
-      makeAnchor({ id: 'a1', expiry_date: daysFromNow(5) }),   // 7-day window
-      makeAnchor({ id: 'a2', expiry_date: daysFromNow(20) }),  // 30-day window
-      makeAnchor({ id: 'a3', expiry_date: daysFromNow(45) }),  // 60-day window
-      makeAnchor({ id: 'a4', expiry_date: daysFromNow(75) }),  // 90-day window
+      makeAnchor({ public_id: 'a1', expiry_date: daysFromNow(5) }),   // 7-day window
+      makeAnchor({ public_id: 'a2', expiry_date: daysFromNow(20) }),  // 30-day window
+      makeAnchor({ public_id: 'a3', expiry_date: daysFromNow(45) }),  // 60-day window
+      makeAnchor({ public_id: 'a4', expiry_date: daysFromNow(75) }),  // 90-day window
     ];
 
     const result = categorizeExpiringDocuments(anchors);
@@ -44,7 +44,7 @@ describe('categorizeExpiringDocuments', () => {
 
   it('ignores already-expired documents', () => {
     const anchors: ExpiryAnchor[] = [
-      makeAnchor({ id: 'a1', expiry_date: daysFromNow(-5) }),
+      makeAnchor({ public_id: 'a1', expiry_date: daysFromNow(-5) }),
     ];
     const result = categorizeExpiringDocuments(anchors);
     for (const [, ancs] of result) {
@@ -54,10 +54,10 @@ describe('categorizeExpiringDocuments', () => {
 
   it('categorizes boundary values correctly', () => {
     const anchors: ExpiryAnchor[] = [
-      makeAnchor({ id: 'a1', expiry_date: daysFromNow(7) }),
-      makeAnchor({ id: 'a2', expiry_date: daysFromNow(30) }),
-      makeAnchor({ id: 'a3', expiry_date: daysFromNow(60) }),
-      makeAnchor({ id: 'a4', expiry_date: daysFromNow(90) }),
+      makeAnchor({ public_id: 'a1', expiry_date: daysFromNow(7) }),
+      makeAnchor({ public_id: 'a2', expiry_date: daysFromNow(30) }),
+      makeAnchor({ public_id: 'a3', expiry_date: daysFromNow(60) }),
+      makeAnchor({ public_id: 'a4', expiry_date: daysFromNow(90) }),
     ];
     const result = categorizeExpiringDocuments(anchors);
     // 7 is within 7-day window
@@ -69,9 +69,9 @@ describe('categorizeExpiringDocuments', () => {
 
   it('groups by org_id', () => {
     const anchors: ExpiryAnchor[] = [
-      makeAnchor({ id: 'a1', org_id: 'org-1', expiry_date: daysFromNow(5) }),
-      makeAnchor({ id: 'a2', org_id: 'org-1', expiry_date: daysFromNow(3) }),
-      makeAnchor({ id: 'a3', org_id: 'org-2', expiry_date: daysFromNow(6) }),
+      makeAnchor({ public_id: 'a1', org_id: 'org-1', expiry_date: daysFromNow(5) }),
+      makeAnchor({ public_id: 'a2', org_id: 'org-1', expiry_date: daysFromNow(3) }),
+      makeAnchor({ public_id: 'a3', org_id: 'org-2', expiry_date: daysFromNow(6) }),
     ];
     const result = categorizeExpiringDocuments(anchors);
     expect(result.get('7_day')!).toHaveLength(3);

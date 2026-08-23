@@ -1,0 +1,42 @@
+{
+  "artifact": "fullsoak-2026-08 daily E2E",
+  "timestamp_utc": "2026-08-13T163730Z",
+  "supabase_project_ref": "ehqqearcitrgloibtjqx",
+  "browser_project": "chromium",
+  "workers": 1,
+  "playwright_exit_code": 0,
+  "verdict": "PASS",
+  "totals": {
+    "passed": 13,
+    "failed": 0,
+    "skipped": 0,
+    "flaky": 0
+  },
+  "per_spec": {
+    "auth.setup.ts": {
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "flaky": 0
+    },
+    "auth.spec.ts": {
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "flaky": 0
+    },
+    "cross-tenant.spec.ts": {
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "flaky": 0
+    },
+    "legal-pages.spec.ts": {
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "flaky": 0
+    }
+  },
+  "failures": []
+}

@@ -74,6 +74,14 @@ export interface Env {
   // wrangler var/secret at deploy — do NOT hardcode a prod URL in source.
   WORKER_BASE_URL?: string;
 
+  // BUG-008/027 (CTO ruling R-1 STRENGTHENED): capability gate for the MCP
+  // `nessie_query` tool. Nessie is permanently disabled by standing founder
+  // directive. FAIL CLOSED — anything other than the exact string "true"
+  // (including unset) disables the tool, which then returns an explicit
+  // `nessie_disabled` error instead of degrading to the lexical text fallback
+  // and answering with a success-shaped `{total, results}` payload.
+  ENABLE_NESSIE_QUERY?: string;
+
   // SCRUM-926 / MCP-SEC-07: HS256 secret used to verify caller-supplied
   // bearer JWTs locally before round-tripping to /auth/v1/user. Required —
   // edge worker must reject all bearer auth if unset (fail-closed).
