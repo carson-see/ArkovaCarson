@@ -46,7 +46,7 @@ REQ_LOG='projects/arkova1/logs/run.googleapis.com%2Frequests'
 SYS_LOG='projects/arkova1/logs/run.googleapis.com%2Fvarlog%2Fsystem'
 
 # --- guard: never close early -------------------------------------------------
-END_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$CLOCK_END" +%s 2>/dev/null || date -d "$CLOCK_END" +%s)
+END_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$CLOCK_END" +%s 2>/dev/null || date -u -d "$CLOCK_END" +%s)
 NOW_EPOCH=$(date -u +%s)
 if [ "$NOW_EPOCH" -lt "$END_EPOCH" ]; then
   echo "REFUSING: window closes $CLOCK_END; now $(date -u +%FT%TZ)." >&2

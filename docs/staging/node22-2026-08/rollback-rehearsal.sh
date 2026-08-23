@@ -44,13 +44,14 @@ HOME_DIR="/Users/carson/arkova-soak/node22"
 REPO_REMOTE="https://github.com/carson-see/ArkovaCarson.git"
 
 # --- guards: post-close only, and only after close-capture sealed the clock ---
-END_EPOCH=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$CLOCK_END" +%s 2>/dev/null || date -d "$CLOCK_END" +%s)
+END_EPOCH=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$CLOCK_END" +%s 2>/dev/null || date -u -d "$CLOCK_END" +%s)
 if [ "$(date -u +%s)" -lt "$END_EPOCH" ]; then
   echo "REFUSING: the soak window is still OPEN (closes $CLOCK_END)." >&2
   echo "A redeploy now creates a new revision and RESETS THE CLOCK. Aborting." >&2
   exit 1
 fi
-CLOSE_DIR="$(ls -d "$HOME_DIR"/close-* 2>/dev/null | tail -1 || true)"
+CLOSE_DIR="$(ls -d "$HOME_DIR"/close-*/ 2>/dev/null | tail -1 || true)"
+CLOSE_DIR="${CLOSE_DIR%/}"
 if [ -z "$CLOSE_DIR" ]; then
   echo "REFUSING: no $HOME_DIR/close-* dir found — run close-capture.sh FIRST." >&2
   echo "The clock must be sealed by the close capture before any serving-state change." >&2
