@@ -4732,7 +4732,7 @@ export function createS33Wave1AcceptanceArtifactFromAuthenticatedEvidence(
       artifactDigestSha256: sha256(canonicaliseJson(withoutDigest)),
     });
   } finally {
-    rmSync(evidenceDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    rmSync(evidenceDirectory, { recursive: true, force: true });
   }
 }
 
