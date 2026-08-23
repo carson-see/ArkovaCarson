@@ -58,6 +58,16 @@ writeup of this session's three fixes (SCRUM-3021 check-confirmations tip-height
 SCRUM-3017 SUBMITTED watchdog, SCRUM-3016 MEMPOOL_API_URL `/api` contract). No new env var is
 *required* — the default (unset `STUCK_SUBMITTED_ALERT_HOURS`/`MEMPOOL_API_URL`) path is unchanged.
 
+## 2026-08-23 BUG-028 — `mcp-tools.test.ts` re-pinned to the submission-receipt contract
+
+Two `handleAnchorDocument` tests here asserted `public_id: 'ARK-2026-999'` — a value their own
+mocks fabricated. `public_records` has no `public_id` column (pinned against the baseline
+migration in `tests/infra/mcp-server.test.ts`), so the handler's old `record?.public_id` read was
+always `undefined` and the promised identifier never existed. This suite imports the edge handlers
+(`../../edge/src/mcp-tools.js`), so when BUG-028 fixed the receipt (explicit `public_id: null` +
+`verify_with` handle), these tests were the stale side. Mocks now return the real row shape.
+When mocking Supabase rows in this suite, use columns the table actually has.
+
 ## 2026-08-15 BUG-024 — `/.well-known/arkova-keys.json` was never mounted
 
 `api/proof-keys.ts` was written, unit-tested, `COPY`d into the Docker image, and named by every signed proof bundle's `signing_key_id` — but `index.ts` never imported or mounted `proofKeysRouter`, so the route 404'd on every worker host from the day it shipped. Its sibling `didWebRouter` WAS mounted, so `/.well-known/did.json` returned 200 and the gap read as a routing/CDN problem rather than a missing line. External verifiers could not resolve the public key a bundle names.
