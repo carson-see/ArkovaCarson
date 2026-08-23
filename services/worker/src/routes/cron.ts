@@ -338,11 +338,12 @@ cronRouter.post('/check-confirmations', async (_req, res) => {
 
 // PROOF-03 (SCRUM-2336): confirmation-proof backfill.
 //
-// PRODUCTION TRIGGER. The real-network soak proved the in-process node-cron
-// schedule (routes/scheduled.ts) NEVER fires on Cloud Run — node-cron is
-// dormant while CPU is throttled between requests. Prod drives cron via Cloud
-// Scheduler → HTTP, so the backfill needs this endpoint to run at all. The
-// in-process schedule stays as the dev/test backup. `runConfirmationProofBackfill`
+// PRODUCTION TRIGGER. The real-network soak found the in-process node-cron
+// schedule (routes/scheduled.ts) never fired on that rig — which is what a
+// revision scaled to zero does, NOT a property of Cloud Run in general
+// (SCRUM-3384). Prod drives cron via Cloud Scheduler → HTTP because that is the
+// trigger with retries, an attempt deadline and observability; the in-process
+// schedule is the dev/test backup and also fires on every warm prod instance. `runConfirmationProofBackfill`
 // already no-ops (skipped:true) in mock mode / when prod anchoring is off, and
 // needs no mutex (idempotent — the populated block_header is the watermark and
 // the last writer writes identical bytes). Same cronAuth + JSON-result /
@@ -362,8 +363,8 @@ cronRouter.post('/populate-confirmation-proofs', async (_req, res) => {
 // MANUAL TRIGGER ONLY — deliberately NOT scheduled (no Cloud Scheduler
 // binding, no in-process backup): the census is an operator-driven run, and
 // any future write mode is Carson-gated. Follows the Cloud Scheduler → HTTP
-// pattern anyway (node-cron is dormant under Cloud Run CPU throttling, so an
-// authenticated POST is the only trigger that actually fires in prod).
+// pattern anyway: an authenticated POST is the only trigger this route has, so
+// it runs when and only when an operator asks for it.
 //
 // DRY-RUN BY DEFAULT: emits the per-class plan {direct_anchored,
 // batch_provable, already_complete, ambiguous} with zero writes to the proof
@@ -644,8 +645,8 @@ cronRouter.post('/proof-coverage-monitor', async (req, res) => {
 
 // QUEUE-07 (SCRUM-2353): daily review digest to org admins.
 //
-// PRODUCTION TRIGGER (Cloud Scheduler → HTTP; node-cron is dormant under Cloud
-// Run CPU throttling). One row per org admin, scoped to the admin's org + owned
+// PRODUCTION TRIGGER (Cloud Scheduler → HTTP; this digest has no in-process
+// registration at all). One row per org admin, scoped to the admin's org + owned
 // sub-orgs. Counts-only — never document content (§1.6). Idempotent per
 // (admin, org, UTC date) via the audit-events-backed delivery log, so a daily
 // re-trigger or Scheduler retry does not double-send. Gated by
@@ -874,9 +875,11 @@ cronRouter.post('/org-queue-scheduler', async (req, res) => {
 
 // ─── QUEUE-06 (SCRUM-2352): connector_artifact drain consumer ───
 //
-// PRODUCTION TRIGGER. Cloud Scheduler hits this HTTP endpoint because in-process
-// node-cron is dormant under Cloud Run CPU throttling (the PROOF-03 soak proved
-// the dev/test backup never fires in prod). `runConnectorArtifactDrain` no-ops
+// PRODUCTION TRIGGER. Cloud Scheduler hits this HTTP endpoint because it is the
+// trigger with retries and an attempt deadline; the in-process registration in
+// routes/scheduled.ts is a backup that ALSO fires on every warm prod instance
+// (SCRUM-3384), which the compare-and-set claim below makes safe either way.
+// `runConnectorArtifactDrain` no-ops
 // (`skipped:true`) when ENABLE_CONNECTOR_ARTIFACT_DRAIN is false, drains each org
 // with at least one pending|queued row, and charges credits ONLY at SECURING via
 // debit_and_enqueue_anchor. Idempotent (compare-and-set claim) → no mutex needed.
@@ -952,9 +955,9 @@ cronRouter.post('/docusign-envelope-completed', async (req, res) => {
 // ─── SCRUM-2903 (GD-PROD): Google Drive file-changed job queue ───
 //
 // Drive twin of /docusign-envelope-completed above. PRODUCTION TRIGGER —
-// Cloud Scheduler hits this HTTP endpoint (in-process node-cron is the
-// dev/test backup in routes/scheduled.ts; it's dormant under Cloud Run CPU
-// throttling per the PROOF-03 finding). Drains the `google_drive.file_changed`
+// Cloud Scheduler hits this HTTP endpoint (in-process node-cron in
+// routes/scheduled.ts is the backup, and it fires on every warm prod instance
+// too — SCRUM-3384). Drains the `google_drive.file_changed`
 // job_queue type that drive-changes-runner.ts writes on a matched change:
 // fetch bytes -> SHA-256 in memory -> discard -> enqueue_connector_artifact
 // (§1.6A). `runDriveFileChangedJobs` no-ops the hash/enqueue step (returns
@@ -1011,9 +1014,11 @@ cronRouter.post('/docusign-notarization-completed', async (req, res) => {
 // dead-letters with a Sentry event on the final attempt.
 //
 // PRODUCTION TRIGGER: Cloud Scheduler (`ai-credit-reconcile`, every 15 min —
-// see scripts/gcp-setup/cloud-scheduler.sh). In-process node-cron is NOT used:
-// it is dormant under Cloud Run CPU throttling (PROOF-03 finding), which is
-// precisely how a "wired" drain can silently never run.
+// see scripts/gcp-setup/cloud-scheduler.sh). There is deliberately NO
+// in-process registration for this drain: a process-local timer has no retry,
+// no attempt deadline and no run history, which is precisely how a "wired"
+// drain can silently never run — and on a revision that scales to zero it does
+// not fire at all.
 cronRouter.post('/ai-credit-reconcile', async (req, res) => {
   try {
     const rawLimit = req.query.limit ?? req.body?.limit;

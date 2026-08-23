@@ -1,8 +1,24 @@
 /**
  * Scheduled Cron Jobs (In-Process)
  *
- * Belt-and-suspenders backup for dev/test.
- * In production, Cloud Scheduler triggers HTTP endpoints (cronRouter) instead.
+ * Belt-and-suspenders backup for dev/test. In production, Cloud Scheduler is
+ * the intended trigger — it hits the HTTP endpoints in `cron.ts` and brings
+ * retries, an attempt deadline and per-job observability that a process-local
+ * timer has none of.
+ *
+ * BUT "intended" is not "only" (SCRUM-3384). This file used to argue that the
+ * schedule below was inert in production, because CPU throttling puts node-cron
+ * to sleep between requests. That argument was wrong, and it was load-bearing.
+ * A node-cron timer only stops firing once its revision has scaled to ZERO; on
+ * any instance that is alive it fires on schedule. Prod `arkova-worker` deploys
+ * `--min-instances 2 --max-instances 10`
+ * (`.github/workflows/deploy-worker.yml`) and `DISABLE_IN_PROCESS_ANCHOR_CRON`
+ * is left unset, so EVERY job registered below runs on 2-10 warm instances
+ * concurrently, alongside the Cloud Scheduler call.
+ *
+ * So a job registered here needs a real concurrency answer, not the dormancy
+ * argument. `in-process-cron-audit.ts` records that answer per job and its test
+ * fails the build if a new registration lands without one.
  *
  * Extracted from index.ts as part of ARCH-1 refactor.
  */
@@ -327,10 +343,12 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   // QUEUE-06 (SCRUM-2352): connector-artifact drain every 5 minutes. Drains
   // pending|queued connector_artifact rows → materialize PENDING anchor →
   // charge at SECURING (debit_and_enqueue_anchor) → batch-anchor. Default OFF —
-  // enabled per-environment via ENABLE_CONNECTOR_ARTIFACT_DRAIN. In-process is
-  // the dev/test BACKUP ONLY: node-cron is dormant under Cloud Run CPU
-  // throttling, so prod drives this via Cloud Scheduler → POST
-  // /jobs/drain-connector-artifacts. Idempotent (compare-and-set claim).
+  // enabled per-environment via ENABLE_CONNECTOR_ARTIFACT_DRAIN. Prod drives
+  // this via Cloud Scheduler → POST /jobs/drain-connector-artifacts, which is
+  // the trigger with retries, an attempt deadline and observability; this
+  // in-process registration is the dev/test backup, and it ALSO fires on every
+  // warm prod instance (see the file header). Safe either way — the drain
+  // claims each row with a compare-and-set.
   if (config.enableConnectorArtifactDrain) {
     scheduleInProcess('drain-connector-artifacts', '*/5 * * * *', async () => {
       logger.debug('Running connector-artifact drain');
@@ -355,9 +373,10 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   // drain to anchor. Default OFF alongside ENABLE_CONNECTOR_ARTIFACT_ENQUEUE —
   // when that flag is false the job runs but no-ops the hash/enqueue step per
   // job (returns the disabled sentinel), so there's nothing to gain by polling.
-  // In-process is the dev/test BACKUP ONLY: prod runs via Cloud Scheduler ->
-  // POST /jobs/drive-file-changed (node-cron is dormant under Cloud Run CPU
-  // throttling, same as connector-artifact-drain above).
+  // Prod runs via Cloud Scheduler -> POST /jobs/drive-file-changed; this
+  // in-process registration is the dev/test backup and also fires on every warm
+  // prod instance, same as connector-artifact-drain above. Safe either way —
+  // the drain claims each job row through claim_next_job.
   if (config.enableConnectorArtifactEnqueue) {
     scheduleInProcess('drive-file-changed', '*/5 * * * *', async () => {
       logger.debug('Running Drive file-changed job drain');

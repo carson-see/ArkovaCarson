@@ -27,9 +27,9 @@
  * filename, fingerprint, or body. `assertNoRawContent` in the engine is the
  * runtime backstop. §1.4: service-role db only; no secrets logged.
  *
- * Cron: intended for a daily Cloud Scheduler → HTTP trigger (in-process
- * node-cron is dormant under Cloud Run CPU throttling — see the
- * cloudrun-in-process-cron gotcha). Gated by ENABLE_QUEUE_DIGEST.
+ * Cron: intended for a daily Cloud Scheduler → HTTP trigger; there is no
+ * in-process registration for this digest, so Cloud Scheduler is its only
+ * trigger. Gated by ENABLE_QUEUE_DIGEST.
  */
 
 import { db } from '../utils/db.js';

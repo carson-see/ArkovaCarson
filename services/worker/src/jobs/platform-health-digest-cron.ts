@@ -25,9 +25,9 @@
  * coerced to a false `0`. One section's read failure never sinks the whole
  * digest — see `assemblePlatformHealthSnapshot`.
  *
- * Cron: daily Cloud Scheduler → HTTP trigger (in-process node-cron is
- * dormant under Cloud Run CPU throttling — see the cloudrun-in-process-cron
- * gotcha). Gated by ENABLE_PLATFORM_HEALTH_DIGEST.
+ * Cron: daily Cloud Scheduler → HTTP trigger; there is no in-process
+ * registration for this digest, so Cloud Scheduler is its only trigger.
+ * Gated by ENABLE_PLATFORM_HEALTH_DIGEST.
  */
 
 import { db } from '../utils/db.js';
