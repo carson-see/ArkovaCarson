@@ -26,7 +26,7 @@
     },
     {
       "number": 2220,
-      "head_sha": "80e16527a39957c88e9901ead6fcab6b2bc27ab1",
+      "head_sha": "fdc2a9370099aa98b16eb54ee210bf211c099d75",
       "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
@@ -131,7 +131,7 @@
     },
     {
       "number": 2267,
-      "head_sha": "be0c8d82cfd6b92b00253f9bba81e6c8477f3814",
+      "head_sha": "f91163639d4469f02672a684c76d7dec3a1c48f3",
       "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
@@ -227,7 +227,7 @@
       "reason": "migration-T3 union member (0411-0413) NOT covered by this manifest: it is not in the CTO merge ruling this manifest executes. Its disposition is unresolved and owed a decision - flagged in the authoring session's report."
     }
   ],
-  "notes": "Deferred-consolidated-soak exit from the 2026-08 base-drift wall (CTO ruling, executed 2026-08-22). The 14 included PRs each completed a closed union soak window (TRAIN-4 12h T2, TRAIN-5 12h T2, migration-T3 48h T3 - see per-entry maturity_record), but main took runtime commits (#2216/#2250 chain fixes, run-lease) after those windows closed; drift classifies T3 and every future merge re-creates drift for the rest, so per-PR re-soaking against a moving main is a livelock. Merge is decoupled from prod deploy by DEPLOY_WORKER_PAUSED=true (positively re-confirmed by the gate on every covered run - the deferred path fails closed without it). Head SHAs above were fetched live at authoring time (2026-08-22T18:27:50Z); exact-head binding means any push to a covered PR invalidates its entry and requires a manifest update before that PR can pass the gate.",
+  "notes": "Deferred-consolidated-soak exit from the 2026-08 base-drift wall (CTO ruling, executed 2026-08-22). The 14 included PRs each completed a closed union soak window (TRAIN-4 12h T2, TRAIN-5 12h T2, migration-T3 48h T3 - see per-entry maturity_record), but main took runtime commits (#2216/#2250 chain fixes, run-lease) after those windows closed; drift classifies T3 and every future merge re-creates drift for the rest, so per-PR re-soaking against a moving main is a livelock. Merge is decoupled from prod deploy by DEPLOY_WORKER_PAUSED=true (positively re-confirmed by the gate on every covered run - the deferred path fails closed without it). Head SHAs above were fetched live at authoring time (2026-08-22T18:27:50Z); exact-head binding means any push to a covered PR invalidates its entry and requires a manifest update before that PR can pass the gate. HEAD RESTAMP 2026-08-23: two covered entries re-pinned to their live heads after post-authoring merges of origin/main into the PR branches (merge commits only, never rebase). #2267: be0c8d82… -> f91163639d… (delta = exactly one merge commit of origin/main; git rev-list be0c8d82..f9116363 --not origin/main returns only the merge commit; own-files contribution vs main byte-identical). #2220: 80e16527… -> fdc2a9370… (branch was DIRTY against main; conflict in scripts/staging/provision-isolated-rig.test.ts resolved by recomputing CANONICAL_CROSS_LANE_AGENTS_SHA256 to sha256 of the merged scripts/staging/agents.md — the one non-main change, test-only, 218/218 pass; every other own-file contribution vs main byte-identical across the merge; full per-file audit in the PR #2220 body). Soak windows, rigs and readings unchanged and not re-claimed; the consolidated-soak obligation below is unaffected.",
   "pause_lift_obligation": "DEBT, IMPOSSIBLE TO MISS: before the DEPLOY_WORKER_PAUSED repository variable flips to false, a consolidated soak of merged main at the accumulated head MUST run, and this manifest MUST be converted to real evidence through the normal path - remove soak_mode, fill in real environment/soak/migration_plan evidence from that consolidated soak, and only then flip approval_status to approved. Until that happens, every PR this manifest admitted is merged WITHOUT satisfied soak evidence, and lifting the pause without the consolidated soak would deploy unsoaked integrated code to prod. The same obligation is recorded in HANDOFF.md under '## Now' > '### Soaks'.",
   "exceptions": []
 }
