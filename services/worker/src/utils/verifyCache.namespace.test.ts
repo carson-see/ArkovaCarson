@@ -9,7 +9,7 @@
  * Production, shared staging and the connector side-rig are all bound to ONE
  * Upstash database via the same un-suffixed `UPSTASH_REDIS_REST_URL` /
  * `UPSTASH_REDIS_REST_TOKEN` secrets, and the cache key was
- * `verify:v5:` + `publicId` — a value that is identical across environments by
+ * `verify:v5:` (the then-current version prefix) + `publicId` — a value that is identical across environments by
  * construction, because a publicId is the SAME public identifier wherever it is
  * queried. Nothing else in the key identifies the environment.
  *
@@ -156,18 +156,18 @@ describe('BUG-018 — verify cache isolation on one shared Upstash database', ()
       await mod.setCachedVerification(PUBLIC_ID, { verified: true });
     }
 
-    // Pre-fix all three collapse onto the single key `verify:v5:<publicId>`.
+    // Pre-fix all three collapse onto the single key `verify:v5:<publicId>` (then-current version).
     expect(redis.distinctKeys()).toHaveLength(3);
   });
 
-  it('namespaces the key as verify:v5:<env>:<publicId>', async () => {
+  it('namespaces the key as verify:v6:<env>:<publicId>', async () => {
     const prod = await verifyCacheForService('arkova-worker');
     await prod.setCachedVerification(PUBLIC_ID, { verified: true });
-    expect(redis.peek(`verify:v5:prod:${PUBLIC_ID}`)).toBeDefined();
+    expect(redis.peek(`verify:v6:prod:${PUBLIC_ID}`)).toBeDefined();
 
     const staging = await verifyCacheForService('arkova-worker-staging');
     await staging.setCachedVerification(PUBLIC_ID, { verified: true });
-    expect(redis.peek(`verify:v5:arkova-worker-staging:${PUBLIC_ID}`)).toBeDefined();
+    expect(redis.peek(`verify:v6:arkova-worker-staging:${PUBLIC_ID}`)).toBeDefined();
   });
 
   it('scopes invalidation to its own environment — staging must not evict prod', async () => {
@@ -200,11 +200,11 @@ describe('BUG-018 — verify cache isolation on one shared Upstash database', ()
     // No K_SERVICE: a local shell, a `docker run`, a CI job.
     const local = await verifyCacheForService(undefined);
     expect(await local.getCachedVerification(PUBLIC_ID)).toBeNull();
-    expect(redis.peek(`verify:v5:local-production:${PUBLIC_ID}`)).toBeUndefined();
+    expect(redis.peek(`verify:v6:local-production:${PUBLIC_ID}`)).toBeUndefined();
 
     await local.setCachedVerification(PUBLIC_ID, { verified: true, source: 'LOCAL' });
-    expect(redis.peek(`verify:v5:local-production:${PUBLIC_ID}`)).toBeDefined();
-    expect(redis.peek(`verify:v5:prod:${PUBLIC_ID}`)).toBe(
+    expect(redis.peek(`verify:v6:local-production:${PUBLIC_ID}`)).toBeDefined();
+    expect(redis.peek(`verify:v6:prod:${PUBLIC_ID}`)).toBe(
       JSON.stringify({ verified: true, source: 'PRODUCTION' }),
     );
   });
@@ -251,6 +251,6 @@ describe('PR #2223 / PERF-12 — one environment must still share ONE cache', ()
       await instance.setCachedVerification(PUBLIC_ID, { verified: true });
     }
 
-    expect(redis.distinctKeys()).toEqual([`verify:v5:prod:${PUBLIC_ID}`]);
+    expect(redis.distinctKeys()).toEqual([`verify:v6:prod:${PUBLIC_ID}`]);
   });
 });

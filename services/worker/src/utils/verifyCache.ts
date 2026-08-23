@@ -40,7 +40,7 @@ const KEY_PREFIX = 'verify:v6:';
 
 /**
  * BUG-018 / D-8 (follow-up to #2231) — every key carries an environment
- * segment: `verify:v5:<env>:<publicId>`.
+ * segment: `verify:v6:<env>:<publicId>`.
  *
  * Production, shared staging and the connector side-rig are all bound to ONE
  * Upstash database through the same un-suffixed UPSTASH_REDIS_REST_URL/_TOKEN
