@@ -2,6 +2,52 @@
 
 Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
+## 2026-08-17 — `sentry.ts`: `event.extra` is now walked recursively (§1.1 hole)
+
+**The gap.** `scrubPiiFromEvent` ran `scrubString` over exception values, the message, the
+transaction name, tags and `request.url` — but for `event.extra` it did something else entirely: it
+replaced *exact top-level keys* from `SENSITIVE_EXTRA_KEYS` with `[FILTERED]` and stopped. So:
+
+1. Any **other** top-level key's string value was emitted verbatim. `{ notes: 'escalated to
+   x@y.com' }` shipped the address.
+2. **Nested** extras were never key-filtered at all — `{ ctx: { email: … } }` passed straight
+   through, because `'email' in event.extra` is false.
+
+`captureCreditRpcFailureAlert` spreads caller-supplied `...args.extra` into that bag, so every call
+site handing it a nested object was a live path for an email / document fingerprint / API key into
+Sentry. §1.1 forbids all three outright.
+
+**The fix.** `scrubExtraValue()` walks `event.extra` recursively, applying **both** the key filter
+and `scrubString` at every level. It runs *after* `scrubBinaryValues`, so the SCRUM-2492 type-based
+binary drop still happens first and the `[REDACTED_BYTES]` tokens it leaves are inert to the string
+pass.
+
+**Depth is a bound, not a bypass.** Past `MAX_SCRUB_DEPTH` the walk returns `REDACTED_DEPTH_TOKEN`
+rather than the subtree — "we could not check this" must never render as "this is fine", the same
+reasoning as `orgFieldPolicy`'s truncated-payload rejection. Two consequences worth knowing: it also
+terminates a cyclic `extra`, and it closes the matching depth hole in `scrubBinaryValues` (which
+returns deep values verbatim) for anything riding on `extra`. Strings are handled *before* the depth
+guard, so a deep string is redacted rather than dropped.
+
+**One existing contract was deliberately NARROWED — read this before you "fix" the test.**
+SCRUM-2900's scheduler-pause dead-man wants `actor_principal` in `extra` to survive, and the old test
+demonstrated that with a **human** email (`carson@arkova.ai`). It survived only because `extra` was
+never walked — i.e. by the same defect. The surviving exemption is now anchored to the GCP
+service-account shape (`/^[a-z0-9][a-z0-9-]*@[a-z0-9][a-z0-9-]*\.iam\.gserviceaccount\.com$/`), which
+is what the production caller actually passes. A human email in that field is scrubbed to `[EMAIL]`;
+§1.1 has no person-shaped exemption. The pattern is anchored end-to-end so nothing can ride alongside
+a principal. Attribution degrades rather than disappears — the Cloud Scheduler audit log still holds
+the identity.
+
+**Known trade-off, accepted.** `scrubString`'s regexes cannot distinguish a 64-hex Bitcoin txid from
+a 64-hex document fingerprint, or a 10-digit id string from a phone number, so operational strings of
+those shapes inside `extra` now redact too. That is the cost of §1.1 being absolute about
+fingerprints. Routing and triage key on Sentry **tags**, not extras, and the tag pass is unchanged.
+Prefer numbers over numeric strings in new `extra` payloads.
+
+Tests: `sentry-extra-scrub.test.ts` (15 cases, red-first) plus the narrowed + added
+`captureSchedulerPauseAlert` cases in `sentry.test.ts`. T2 (worker behavior).
+
 ## 2026-08-10 — new `orgFieldPolicy.ts`: org-scoped request-field rejection (DPA Schedule 1 / clause 4.6)
 
 The first per-org *request shape* control in the worker. `switchboard_flags` is global (no `org_id`)
