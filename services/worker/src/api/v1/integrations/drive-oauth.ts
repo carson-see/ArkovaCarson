@@ -264,10 +264,15 @@ const DENY_HTTP: Record<DriveConnectDenyReason, { status: 403 | 500; code: strin
   // bump). Callers that already branch on `not_authorized` keep working; this
   // one tells a client that CAN retry exactly how: resend with `org_id`.
   org_scope_required: { status: 403, code: 'org_scope_required' },
+  // FD-D1: replaces `needs_paid_plan` + `individual_not_verified`. Those two
+  // told a solo user that upgrading or verifying would let them connect a
+  // personal Drive; it never could, because the callback persists into
+  // `org_integrations.org_id` (NOT NULL). This code says the true thing — the
+  // scope itself is unsupported — and it is now returned at oauth/START, so the
+  // user is never sent through a Google consent that cannot be honoured.
+  individual_scope_unsupported: { status: 403, code: 'individual_scope_unsupported' },
   org_unverified: { status: 403, code: 'org_unverified' },
   org_suspended: { status: 403, code: 'org_suspended' },
-  needs_paid_plan: { status: 403, code: 'needs_paid_plan' },
-  individual_not_verified: { status: 403, code: 'individual_not_verified' },
   lookup_failed: { status: 500, code: 'lookup_failed' },
 };
 
@@ -459,12 +464,18 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
     }
 
     // The persisted connection is org-scoped (org_integrations.org_id is NOT
-    // NULL). A personal-Drive individual passes the gate but has no org row to
-    // write — deny persistence here until the personal-connect storage path
-    // (separate story) lands, rather than crash on a NOT NULL insert.
+    // NULL). As of FD-D1 the eligibility gate above no longer admits individual
+    // scope, so this branch is unreachable through the normal flow — it is kept
+    // as a NOT-NULL insert guard, deliberately BELOW the gate rather than in
+    // place of it. It is the last line of defence, not the policy: the policy
+    // has to run at oauth/start, before Google consent is requested, which is
+    // exactly what this check could never do from here.
     if (!payload.orgId) {
-      logger.warn({ userId: payload.userId }, 'Drive OAuth callback: personal-Drive connect not yet persistable');
-      res.redirect(302, appendResult(returnTo, 'drive_error', 'personal_connect_unavailable'));
+      logger.error(
+        { userId: payload.userId },
+        'Drive OAuth callback reached the org-scope guard with no orgId — the FD-D1 eligibility gate should have denied at start',
+      );
+      res.redirect(302, appendResult(returnTo, 'drive_error', 'individual_scope_unsupported'));
       return;
     }
     const callbackOrgId: string = payload.orgId;

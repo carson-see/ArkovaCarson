@@ -61,7 +61,7 @@
     },
     {
       "name": "search_credentials",
-      "description": "Search for credentials using natural language queries. Uses semantic similarity matching against the credential database. Returns ranked results with verification status and relevance scores.",
+      "description": "Search anchored public credentials by keyword. The served behaviour is LEXICAL: a case-insensitive substring match on credential title/description, with no relevance score and no understanding of meaning — a query only matches text that literally appears in the record, so paraphrases and synonyms will not match, and a fragment of a longer word will. Semantic (vector) similarity is used ONLY WHEN the deployment has semantic search enabled and reachable; it is not guaranteed and must not be assumed. Every result reports `search_mode`: \"lexical_substring\" for the substring path, or \"semantic_vector\" when a real vector match ran (that mode alone carries a `similarity` score). Read `search_mode` before presenting results as semantically ranked.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -229,7 +229,7 @@
     },
     {
       "name": "nessie_query",
-      "description": "Query Arkova's verified intelligence engine (Nessie). Searches anchored public records (SEC filings, patents, regulatory documents) using semantic similarity. In \"context\" mode, returns a synthesized answer with citations linking to anchored documents with proof.",
+      "description": "DISABLED. Arkova's Nessie intelligence engine is not currently served: this tool returns an explicit `nessie_disabled` error, never results. It does not search, and an empty answer from it must not be read as \"no matching documents\". Use `search` or `search_credentials` for record lookup instead.",
       "inputSchema": {
         "type": "object",
         "properties": {

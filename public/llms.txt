@@ -20,7 +20,7 @@ Public verification (no authentication required):
 
 API-key required (`X-API-Key` header, obtain at https://app.arkova.ai/settings/api-keys):
 
-- `GET https://app.arkova.ai/api/v1/verify/search?q=<query>&max_results=<n>` — Semantic search across verified credentials
+- `GET https://app.arkova.ai/api/v1/verify/search?q=<query>&max_results=<n>` — Credential search. Semantic (vector) matching only when semantic search is enabled on the deployment; returns 503 otherwise
 - `POST https://app.arkova.ai/api/v1/verify/batch` — Batch verification by publicId
 - `POST https://app.arkova.ai/api/v1/verify/entity` — Entity verification
 
@@ -47,7 +47,7 @@ MCP server for AI agent access:
 - **Endpoint:** `https://edge.arkova.ai/mcp`
 - **Transport:** Streamable HTTP
 - `verify_credential` — Verify by public_id
-- `search_credentials` — Search by query with max_results
+- `search_credentials` — Keyword search by query with max_results. Lexical substring match, not meaning-based; check the `search_mode` field on every result
 - `verify_fingerprint` — Check SHA-256 fingerprint match
 
 ## Traction

@@ -418,6 +418,19 @@
       "soak": "must-be-off",
       "why": "Standing founder directive (2026-08-01): Nessie stays OFF. Never plan or run work that activates it."
     },
+    "ENABLE_NESSIE_QUERY": {
+      "sources": ["env"],
+      "resolvers": [
+        "config.ts enableNessieQuery (default false)",
+        "services/worker/src/middleware/nessieCapabilityGate.ts (503 nessie_disabled)",
+        "services/edge/src/mcp-server.ts nessieEnabled (ENABLE_NESSIE_QUERY === 'true')"
+      ],
+      "prodDbRow": "absent",
+      "prodResolved": false,
+      "customerReachable": true,
+      "soak": "must-be-off",
+      "why": "BUG-008/027, CTO ruling R-1 STRENGTHENED (2026-08-12). Capability gate for /api/v1/nessie/query and the MCP nessie_query tool. Deliberately ENV-backed, not a switchboard_flags row: a capability disabled by standing founder directive must not be re-enablable by a DB write. Before this flag the route was mounted unconditionally and answered 200 {\"results\":[],\"count\":0}, so a permanently-disabled capability was indistinguishable from an empty result. Must stay OFF."
+    },
     "ENABLE_DEMO_INJECTOR": {
       "sources": ["env"],
       "resolvers": ["config.ts enableDemoInjector (default false)"],

@@ -132,53 +132,97 @@ describe('resolveDriveConnectEligibility — org-admin path', () => {
   });
 });
 
-describe('resolveDriveConnectEligibility — paid-verified-individual path (no org)', () => {
-  it('allows a paid + identity-verified individual (personal connect)', async () => {
+/**
+ * FD-D1 (CTO ruling, `docs/staging/fullsoak-2026-08/cto-claims-rulings-2026-08-12.md`).
+ *
+ * The gate used to ADMIT `scope: 'individual'` for a paid, identity-verified
+ * solo user — and the OAuth callback then refused exactly that case, because
+ * `org_integrations.org_id` is NOT NULL. Net effect: a paying solo user granted
+ * Google access to their entire Drive and silently got nothing back. The consent
+ * was real; the capability was not.
+ *
+ * Ruling: do NOT build personal-connect storage. Stop admitting the case, at the
+ * gate, with a reason the user can act on — BEFORE the OAuth round-trip, so no
+ * Drive grant is ever issued for a scope that cannot be persisted.
+ */
+describe('resolveDriveConnectEligibility — individual scope is NOT admitted (FD-D1)', () => {
+  it('denies a paid + identity-verified solo user instead of admitting a scope that cannot persist', async () => {
     mockOrgId.mockResolvedValue({ value: null, error: false });
     const db = makeDb({
       profile: { subscription_tier: 'professional', identity_verified_at: '2026-01-01T00:00:00Z' },
     });
 
     const result = await resolveDriveConnectEligibility({ userId: USER, db });
-    expect(result).toEqual({ allowed: true, scope: 'individual', orgId: null });
+
+    expect(result).toEqual({ allowed: false, reason: 'individual_scope_unsupported' });
     // No org → admin resolver must NOT be consulted.
     expect(mockAdmin).not.toHaveBeenCalled();
   });
 
-  it('denies a FREE individual (no paid plan)', async () => {
+  it('never returns an `allowed` individual result for ANY solo-user entitlement shape', async () => {
+    mockOrgId.mockResolvedValue({ value: null, error: false });
+
+    const fixtures = [
+      { subscription_tier: 'enterprise', identity_verified_at: '2026-01-01T00:00:00Z' },
+      { subscription_tier: 'free', identity_verified_at: '2026-01-01T00:00:00Z' },
+      { subscription_tier: 'professional', identity_verified_at: null },
+    ];
+
+    for (const profile of fixtures) {
+      const result = await resolveDriveConnectEligibility({
+        userId: USER,
+        db: makeDb({ profile }),
+      });
+      expect(result).toEqual({ allowed: false, reason: 'individual_scope_unsupported' });
+    }
+
+    // …and with no profile row at all.
+    const noProfile = await resolveDriveConnectEligibility({
+      userId: USER,
+      db: makeDb({ profile: null }),
+    });
+    expect(noProfile).toEqual({ allowed: false, reason: 'individual_scope_unsupported' });
+  });
+
+  it('does not read profile entitlement at all — the tier is no longer load-bearing', async () => {
     mockOrgId.mockResolvedValue({ value: null, error: false });
     const db = makeDb({
-      profile: { subscription_tier: 'free', identity_verified_at: '2026-01-01T00:00:00Z' },
+      profile: { subscription_tier: 'professional', identity_verified_at: '2026-01-01T00:00:00Z' },
     });
 
-    const result = await resolveDriveConnectEligibility({ userId: USER, db });
-    expect(result).toEqual({ allowed: false, reason: 'needs_paid_plan' });
+    await resolveDriveConnectEligibility({ userId: USER, db });
+
+    // Upgrading a plan cannot open this path, so the gate must not imply it can
+    // by consulting the plan. A `needs_paid_plan` denial here would have been a
+    // false promise: paying does not unlock personal connect.
+    expect(db.getProfileEntitlement).not.toHaveBeenCalled();
   });
 
-  it('denies a paid individual who has NOT completed identity verification', async () => {
-    mockOrgId.mockResolvedValue({ value: null, error: false });
-    const db = makeDb({
-      profile: { subscription_tier: 'professional', identity_verified_at: null },
-    });
+  it('still fails closed to lookup_failed when the org lookup itself errors', async () => {
+    mockOrgId.mockResolvedValue({ value: null, error: true });
 
-    const result = await resolveDriveConnectEligibility({ userId: USER, db });
-    expect(result).toEqual({ allowed: false, reason: 'individual_not_verified' });
-  });
-
-  it('denies when no profile row is found', async () => {
-    mockOrgId.mockResolvedValue({ value: null, error: false });
-    const db = makeDb({ profile: null });
-
-    const result = await resolveDriveConnectEligibility({ userId: USER, db });
-    expect(result).toEqual({ allowed: false, reason: 'needs_paid_plan' });
-  });
-
-  it('fails closed to lookup_failed on a profile-lookup DB error', async () => {
-    mockOrgId.mockResolvedValue({ value: null, error: false });
-    const db = makeDb({ profileError: true });
-
-    const result = await resolveDriveConnectEligibility({ userId: USER, db });
+    const result = await resolveDriveConnectEligibility({ userId: USER, db: makeDb({}) });
+    // Retryable, and distinct from the policy denial — the UI must offer a
+    // retry here, not a dead-end "you need an organization".
     expect(result).toEqual({ allowed: false, reason: 'lookup_failed' });
+  });
+
+  it('keeps individual_scope_unsupported distinct from org_scope_required', async () => {
+    // Two different users of the personal path: one HAS an org (retry with
+    // org_id — actionable), one has none (needs an org at all). Collapsing
+    // these tells the second user to "resend with org_id" they do not have.
+    const db = makeDb({
+      profile: { subscription_tier: 'professional', identity_verified_at: '2026-01-01T00:00:00Z' },
+    });
+
+    mockOrgId.mockResolvedValue({ value: ORG, error: false });
+    const hasOrg = await resolveDriveConnectEligibility({ userId: USER, db });
+
+    mockOrgId.mockResolvedValue({ value: null, error: false });
+    const noOrg = await resolveDriveConnectEligibility({ userId: USER, db });
+
+    expect(hasOrg).toEqual({ allowed: false, reason: 'org_scope_required' });
+    expect(noOrg).toEqual({ allowed: false, reason: 'individual_scope_unsupported' });
   });
 
   /**
