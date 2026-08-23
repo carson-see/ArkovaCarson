@@ -168,17 +168,24 @@ Two design points to preserve if you touch it:
   was held red by the other. `main()` keeps these violations out of `blocking`;
   a unit test pins that contract.
 - **A gate is only real if it is wired.** Several scripts here were written but
-  never made required — check `ci.yml`, `.mergify.yml` merge_conditions, and
-  branch protection before assuming a script gates anything. `worker-build-parity`
-  / `verifier-build` are deliberately NON-REQUIRED pending a Carson-gated
-  required-flip.
-- **`evidence-identity` and `anti-hollow-soak` are now FAIL-CLOSED** (SCRUM-2897 /
-  SCRUM-2965 / SCRUM-2977). Both shipped REPORT-ONLY (`--report-only`,
-  `::warning::`, `continue-on-error`, `|| true`) under the W3-freeze CTO
-  carve-out and gated nothing; all of those were removed together and both check
-  names were added to every `.mergify.yml` queue rule, because a check absent
-  from merge_conditions can be red while Mergify merges anyway. Two safety
-  preconditions came with the flip and must not be undone:
+  never made required — check `ci.yml` (and branch protection) before assuming
+  a script gates anything. `evidence-identity-report` is deliberately
+  REPORT-ONLY (`--report-only`, `::warning::`, `continue-on-error`) until a real
+  green soak calibrates it; `worker-build-parity` / `verifier-build` are
+  deliberately NON-REQUIRED pending a Carson-gated required-flip.
+  **⚠️ Partly superseded 2026-08-23:** the `evidence-identity-report` sentence
+  above is stale — that job is now `evidence-identity` and is FAIL-CLOSED (see
+  the next bullet). The sentence is kept verbatim only because this file is
+  append-only. `worker-build-parity` / `verifier-build` remain NON-REQUIRED, and
+  the wiring checklist itself now has three places to look, not two:
+  `ci.yml`, **`.mergify.yml` merge_conditions**, and branch protection.
+- **`evidence-identity` and `anti-hollow-soak` are FAIL-CLOSED** as of 2026-08-23
+  (SCRUM-2897 / SCRUM-2965 / SCRUM-2977). Both shipped REPORT-ONLY
+  (`--report-only`, `::warning::`, `continue-on-error`, `|| true`) under the
+  W3-freeze CTO carve-out and gated nothing; all of those were removed together
+  and both check names were added to every `.mergify.yml` queue rule, because a
+  check absent from merge_conditions can be red while Mergify merges anyway.
+  Two safety preconditions came with the flip and must not be undone:
   `evidence-identity` **skips Mergify's speculative `mergify/merge-queue/*` PRs**
   (they carry Mergify's body, not the original evidence block — without the skip
   every queued merge deadlocks), and it resolves PR body/head/draft **LIVE via
@@ -186,6 +193,9 @@ Two design points to preserve if you touch it:
   `pull_request` trigger declares no `types:` and so never fires on a body
   `edited` — a frozen binding would make a `gh pr edit` head-SHA fix
   unobservable, i.e. a red check with no remedy (SCRUM-3026 replay class).
+  A declared `Tier: T0` short-circuits to skip BEFORE `hasEvidenceSection()`,
+  which deliberately matches a bare `Tier: T0` line; without that ordering a
+  fail-closed gate reds every T0 PR in the repo.
   `scripts/ci/soak-integrity-gates-failclosed.test.ts` pins all of it.
   Branch-protection required-check status is repo-admin state and is NOT set by
   this repo's config — verify it separately before claiming these block a merge
