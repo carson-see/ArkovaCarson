@@ -36,6 +36,13 @@ held at least 3.3M SECURED records. Figures now come from `PLATFORM_METRICS` in
 a flag or in a collapsed section is still a published claim. It fails on any bare
 `>N.NM+<` JSX text node in either page, so the fix cannot be undone by someone
 re-typing a number inline. Do not "simplify" the pages by inlining the values.
+
+Review addendum 2026-08-23: that `>N.NM+<` pattern only recognises an `M`/`K`
+suffixed figure, so the `21` and `87.2%` tiles could still have been re-typed
+inline undetected. A second assertion now derives its needles from
+`PLATFORM_METRICS` itself — every current `value` must not ALSO appear as a JSX
+text node — so all four tiles are covered and changing a value in `copy.ts`
+moves the assertion with it instead of adding another magic number to maintain.
 UAT 2026-08-23 at 1280px and 375px on both routes: correct figures, as-of line
 present, no horizontal overflow, 0 console errors.
 

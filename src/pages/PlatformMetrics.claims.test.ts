@@ -38,6 +38,9 @@ const PAGES = [
 /** The stale literal this ratchet exists to keep out, in every spelling. */
 const STALE_FIGURES = ['1.39M', '1,390,000', '1390000'];
 
+/** Metric values carry `.`, `+` and `%`, so they must be quoted before reuse in a pattern. */
+const escapeRegExp = (literal: string) => literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 describe('public traction claims — R-7 ratchet', () => {
   describe.each(PAGES)('%s', (_name, source) => {
     it('carries no stale hardcoded records-secured figure', () => {
@@ -63,6 +66,25 @@ describe('public traction claims — R-7 ratchet', () => {
     it('states no records count as a bare JSX literal', () => {
       const bareCounts = source.match(/>\s*\d+(?:\.\d+)?\s*[MK]\+?\s*</g) ?? [];
       expect(bareCounts).toEqual([]);
+    });
+
+    /**
+     * Companion to the check above, which only recognises an `M`/`K`-suffixed
+     * figure. Two of the four tiles (`21`, `87.2%`) carry neither suffix, so
+     * re-typing one of THOSE inline would slip straight past it — and the
+     * single-source rule is meant to cover every tile, not just the count.
+     *
+     * Derived from `PLATFORM_METRICS` rather than a second list of magic
+     * numbers: whatever the source of truth currently claims must not ALSO
+     * appear as a JSX text node in a page. Changing a value in `copy.ts`
+     * therefore moves this assertion with it, for free.
+     */
+    it('re-states no current metric value as a bare JSX literal', () => {
+      const inlined = Object.values(PLATFORM_METRICS)
+        .map((metric) => metric.value)
+        .filter((value) => new RegExp(`>\\s*${escapeRegExp(value)}\\s*<`).test(source));
+
+      expect(inlined).toEqual([]);
     });
   });
 });
