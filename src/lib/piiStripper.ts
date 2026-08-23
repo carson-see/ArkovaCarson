@@ -93,8 +93,28 @@ function keywordPattern(alternatives: string[]): RegExp {
 // SSN: XXX-XX-XXXX, XXX XX XXXX, or XXXXXXXXX
 const SSN_PATTERN = /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/g;
 
-// Email
-const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+// Email.
+//
+// The quantifiers are BOUNDED, not open-ended, and the bounds are the RFC 5321
+// §4.5.3.1 size limits: a local-part is at most 64 octets and a domain at most
+// 255. An unbounded `+` on the local-part makes this pattern non-linear
+// (Sonar typescript:S8786): because the match is unanchored, the engine retries
+// at every offset of a long contiguous run of local-part-valid characters, and
+// each retry re-scans the rest of the run — quadratic. That is the 64 s browser
+// tab freeze recorded in src/lib/agents.md (2026-08-22): `stripPII` runs on raw
+// OCR text in the browser, where a single scanned document supplies exactly
+// such a run. Bounding the local-part caps the per-offset work at 64 characters,
+// which makes the whole scan linear in the input length.
+//
+// Redaction is unchanged for every address RFC 5321 permits — a 200k-case
+// differential fuzz against the previous pattern found zero inputs redacted
+// less and zero redacted differently. The one deliberate difference: on a
+// local-part-valid run LONGER than 64 characters, the previous pattern
+// swallowed the entire run, while this one redacts the trailing 64 characters
+// plus the domain. Nothing that is part of a valid email address survives —
+// a >64-octet local-part is not a legal address — so the leading remainder is
+// adjacent text, not the address.
+const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]{1,64}@[a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,}/g;
 
 // Phone: US formats + international prefixes (PII-06: intl phone support)
 // US: (XXX) XXX-XXXX, XXX-XXX-XXXX, XXX.XXX.XXXX, +1XXXXXXXXXX

@@ -102,28 +102,18 @@ describe('piiStripper adversarial tests (CISO THREAT-5)', () => {
       expect(result.strippedText).not.toMatch(/QQ\s*12/);
     });
 
-    it('strips Aadhaar without spaces (12 continuous digits)', () => {
-      const result = stripPII('Aadhaar: 123456789012');
-      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
-    });
-
-    it('strips DNI (Spanish national ID)', () => {
-      const result = stripPII('DNI: 12345678Z');
-      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
-    });
-
-    it('strips SIN (Canadian Social Insurance Number)', () => {
-      const result = stripPII('SIN Number: 123 456 789');
-      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
-    });
-
-    it('strips Cedula (Latin American ID)', () => {
-      const result = stripPII('Cedula: 1234567890');
-      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
-    });
-
-    it('strips passport with slash separator', () => {
-      const result = stripPII('Passport No. AB/1234567');
+    // These five differ only in the input string and share one assertion, so
+    // they are a table rather than five copies of the same test body (Sonar
+    // typescript:S5976). Adding a national-ID form is now one row. The UK NINO
+    // case above stays separate: it carries an extra negative assertion.
+    it.each([
+      { form: 'Aadhaar without spaces (12 continuous digits)', input: 'Aadhaar: 123456789012' },
+      { form: 'DNI (Spanish national ID)', input: 'DNI: 12345678Z' },
+      { form: 'SIN (Canadian Social Insurance Number)', input: 'SIN Number: 123 456 789' },
+      { form: 'Cedula (Latin American ID)', input: 'Cedula: 1234567890' },
+      { form: 'passport with slash separator', input: 'Passport No. AB/1234567' },
+    ])('strips $form', ({ input }) => {
+      const result = stripPII(input);
       expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
     });
   });
@@ -474,6 +464,58 @@ describe('piiStripper adversarial tests (CISO THREAT-5)', () => {
       expect(result.strippedText).not.toContain('carson@arkova.io');
       expect(result.strippedText).not.toContain('admissions@school.edu');
       expect(result.strippedText.match(/\[EMAIL_REDACTED\]/g)).toHaveLength(2);
+      expect(result.piiFound).toContain('email');
+    });
+
+    // The `@`-less fast path above cannot help here: the '@' IS present, so
+    // stripPII runs EMAIL_PATTERN. This is the residual the fast-path commit
+    // recorded as open. It is closed by bounding the local-part quantifier to
+    // RFC 5321's 64 octets, which caps the work the unanchored scan can redo
+    // at each offset. Measured 3,677 ms with the unbounded `+` and 14 ms with
+    // the bound, so the 2 s ceiling sits far below the broken runtime and
+    // ~140x above the fixed one — it cannot flake either way.
+    it('handles a long local-part run followed by an invalid domain in linear time', () => {
+      const input = `${'a'.repeat(40000)}@${'b'.repeat(40000)}`;
+      const started = performance.now();
+      stripPII(input);
+      expect(performance.now() - started).toBeLessThan(2000);
+    });
+
+    // Same class, ambiguous-domain half: every '.' is a candidate split point
+    // for the `\.` that follows the domain class, and no valid TLD ever ends
+    // the run. Bounding the domain to RFC 5321's 255 octets caps that too.
+    // Sized so the ceiling is a real ratchet: 3,750 ms unbounded vs 14 ms
+    // bounded at this length, the same ~140x margin as the case above.
+    it('handles an ambiguous dotted domain that never completes in linear time', () => {
+      const input = `x@${'a.'.repeat(45000)}1`;
+      const started = performance.now();
+      stripPII(input);
+      expect(performance.now() - started).toBeLessThan(2000);
+    });
+
+    // Bounding the quantifiers must not narrow redaction. These pin the
+    // edge cases where a naive "anchor the local-part" fix silently
+    // under-redacts: a second address starting mid-run, and domains whose
+    // dots sit in positions a label-based rewrite rejects.
+    it.each([
+      { name: 'two addresses where the second starts mid-run', input: 'a@b.co1x@d.com', redactions: 2 },
+      { name: 'consecutive dots in the domain', input: 'mail foo@a..b.com end', redactions: 1 },
+      { name: 'leading dot in the domain', input: 'mail foo@.b.com end', redactions: 1 },
+      { name: 'multi-label domain', input: 'user.name+tag%x@sub.example.co.uk', redactions: 1 },
+    ])('still redacts $name', ({ input, redactions }) => {
+      const result = stripPII(input);
+      expect(result.strippedText.match(/\[EMAIL_REDACTED\]/g)).toHaveLength(redactions);
+      expect(result.strippedText).not.toContain('@');
+    });
+
+    // A >64-octet local-part is not a legal RFC 5321 address. The bound means
+    // the leading remainder of such a run is no longer swallowed — but the
+    // address itself, and critically the domain, still are.
+    it('redacts the address when the local-part run exceeds the RFC 5321 bound', () => {
+      const result = stripPII(`${'x'.repeat(80)}@mail.example.com`);
+      expect(result.strippedText).toContain('[EMAIL_REDACTED]');
+      expect(result.strippedText).not.toContain('mail.example.com');
+      expect(result.strippedText).not.toContain('@');
       expect(result.piiFound).toContain('email');
     });
   });
