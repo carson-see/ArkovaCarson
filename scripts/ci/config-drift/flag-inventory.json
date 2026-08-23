@@ -255,6 +255,15 @@
       "soak": "must-be-on",
       "why": "Treasury/spend alerting. OFF, a treasury drain during a 7-day soak would go unannounced."
     },
+    "ENABLE_PLATFORM_HEALTH_DIGEST": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enablePlatformHealthDigest (default true)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": false,
+      "soak": "must-be-on",
+      "why": "New platform-admin daily health digest (feat/platform-admin-daily-health-digest, draft T2). Internal-staff-only recipient (profiles.is_platform_admin), not customer-reachable. A soak should observe this new cron path (anchors-by-status, job_queue depth, batch flush, connector rollup, quota anomalies) assembling and sending without error across daily cycles."
+    },
     "ENABLE_GRC_INTEGRATIONS": {
       "sources": ["env"],
       "resolvers": ["config.ts enableGrcIntegrations (default false)", "grcFeatureGate.ts (raw process.env)", "integrationKillSwitch.ts (raw process.env)"],
