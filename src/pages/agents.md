@@ -1,5 +1,43 @@
 # agents.md — pages
-_Last updated: 2026-08-15_
+_Last updated: 2026-08-23_
+
+## 2026-08-23 CLE-R1 — `RecordDetailPage.tsx` now feeds `cleMetadata` (SCRUM-1869 was Done with no user-visible outcome)
+
+`AssetDetailView` has declared `cleMetadata` since CLE-R1, calls
+`extractCleMetadataView(anchor.cleMetadata, …)` and renders the result — but
+`RecordDetailPage` passed only `cpeMetadata` and silently dropped
+`cle_metadata`, so the CLE detail section rendered nothing for **every** record.
+The prop was wired and waiting with nothing feeding it; the story was marked Done
+on the strength of the components existing. `src/components/credentials/agents.md`
+had listed this exact line as an open prereq since 2026-05-31.
+
+The fix is one line mirroring the `cpeMetadata` line directly above it (same
+`useAnchor` `select('*')` source, same entitlement gate). **Keep the two lines
+together** — they are a pair, and the failure mode here was one of them being
+added alone. `RecordDetailPage.cle-metadata.test.tsx` captures the props handed to
+`AssetDetailView` and asserts both columns arrive, so dropping either fails.
+
+Still true after this change: the section stays invisible until the
+`credential_source_import` entitlement is seeded (nothing writes that row yet —
+`useHasCredentialImportEntitlement` fails closed for everyone), so this un-blocks
+the path rather than lighting it up. The PUBLIC verification path was never
+affected — `PublicVerification.tsx` reads `cle_metadata` off the RPC directly.
+
+## 2026-08-23 R-7 — traction figures on `/about` + `/developers` are single-sourced and dated
+
+Both pages hardcoded `1.39M+` "Records Secured" as a bare JSX literal while prod
+held at least 3.3M SECURED records. Figures now come from `PLATFORM_METRICS` in
+`copy.ts` (see `src/lib/agents.md` for the measurement method and the
+"never date a figure you did not measure" rule), and each page renders
+`PLATFORM_METRICS_AS_OF` beneath the tiles.
+
+`PlatformMetrics.claims.test.ts` is the ratchet, and like the sibling
+`DevelopersPage.claims.test.ts` it reads **source, not render** — a figure behind
+a flag or in a collapsed section is still a published claim. It fails on any bare
+`>N.NM+<` JSX text node in either page, so the fix cannot be undone by someone
+re-typing a number inline. Do not "simplify" the pages by inlining the values.
+UAT 2026-08-23 at 1280px and 375px on both routes: correct figures, as-of line
+present, no horizontal overflow, 0 console errors.
 
 ## 2026-08-15 — `RecordDetailPage.test.tsx` new (BUG-2026-08-13-017 not-found flash)
 

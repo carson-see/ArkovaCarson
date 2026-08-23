@@ -1,6 +1,35 @@
 # agents.md — lib
 
-_Last updated: 2026-08-15_
+_Last updated: 2026-08-23_
+
+## 2026-08-23 R-7 — `PLATFORM_METRICS` in `copy.ts` is the only home for a public traction figure
+
+The four `/about` + `/developers` traction tiles were bare JSX literals duplicated
+across two pages, and the records-secured one had rotted to `1.39M+` while prod
+held **at least 3.3M** SECURED records. A public number is a CLAIM (§1.5 / R-7):
+it must say what it measures and when it was measured. `copy.ts` now owns
+`PLATFORM_METRICS` (`value` / `label` / `shortLabel` / `asOf`) plus
+`PLATFORM_METRICS_AS_OF`, and both pages map over it — neither re-states a figure
+inline. `src/pages/PlatformMetrics.claims.test.ts` is the ratchet; it reads page
+SOURCE (a figure behind a flag is still a published claim) and fails on any bare
+`>N.NM+<` JSX literal, so re-adding one is caught rather than reviewed for.
+
+Two rules when you touch this block:
+
+- **A floor, not a point estimate.** `RECORDS_SECURED` ends in `+` because that is
+  the only shape that stays true as prod grows. The value came from a bounded
+  count that stops early and therefore PROVES a lower bound —
+  `SELECT count(*) FROM (SELECT 1 FROM anchors WHERE status='SECURED' LIMIT 3300000) t;`
+  returned `3300000` on prod 2026-08-23. An exact `count(*)` **times out** at this
+  table size, and `pg_class.reltuples` (what `/api/treasury` totalSecured derives
+  from) reads high, so neither is usable as a published claim. Re-measure the same
+  way before raising the number, and move `asOf` with it.
+- **Never date a figure you did not measure.** `PUBLIC_RECORDS_INDEXED` /
+  `DOCUMENT_TYPES` / `EXTRACTION_F1` are carried forward from the original GEO-16
+  block with `asOf: null` because their provenance was never recorded. Giving one
+  a date to make the block look uniform re-creates the exact defect in a new place.
+  Re-measure first, then date it. These three remain **unverified** — a known
+  residual, not something this change fixed.
 
 ## 2026-08-15 BUG-2026-08-13-010 — `connectorFingerprint.ts` + `CONNECTOR_FINGERPRINT_LABELS`/`_TRIAD` in `copy.ts`
 
