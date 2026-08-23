@@ -2,6 +2,46 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-23 — DI-398: `GET /anchor/:publicId/evidence` 404'd for EVERY anchor (three phantom columns)
+
+`anchor-evidence.ts`'s `defaultLookup.byPublicId` selected `jurisdiction, merkle_root,
+recipient_hash` from `anchors`. **None of the three is a column on that table** — not in the baseline
+`CREATE TABLE`, not added by any migration, and absent from the generated `anchors` Row in both
+`database.types.ts` copies. PostgREST answered `42703`, the handler destructured only `{ data }`, and
+`if (!data) return null` sent the route to its 404 branch. The endpoint was anon-reachable
+(`router.use('/anchor', anchorAnonAllow, anchorEvidenceRouter)`) and had **never** returned a row.
+
+Predicted-but-understated by PR #1316, which fixed the identical class in `verify.ts` and noted the
+sibling "has the same latent gap". It was not latent: `verify.ts` hardcoded `null` and lost data,
+`anchor-evidence.ts` could not return a row at all.
+
+**Why nothing caught it.** Every existing test injected `_testEvidenceLookup`, so the production
+select string was never executed by anything; there is no `/evidence` E2E. A mocked lookup cannot
+fail on a column that does not exist.
+
+**Fix, mirroring `verify.ts`:** `merkle_root` from the `anchor_proofs(merkle_root)` embed (to-one, so
+object OR one-element array — both handled) with the legacy `metadata->>'merkle_root'` fallback;
+`jurisdiction` from `anchors.metadata`; `recipient_hash` hard-`null`.
+
+**`recipient_identifier` is null on purpose and is not a TODO.** The public value is a *peppered
+HMAC* computed inside the `get_public_anchor` SECURITY DEFINER RPC (0356/0383/0385) with a
+server-side pepper the worker does not hold. Emitting the raw recipient from an anon route would be a
+§1.6 PII leak, so null is the only correct worker-side answer — same posture as `verify.ts`.
+
+**A PostgREST error is now a 500, never a 404.** The old code collapsed 42703, a 42501 RLS
+regression, and a full DB outage into "Anchor not found", which hid outages and made the 404 an
+unreliable existence signal on a route partners treat as authoritative. Only `PGRST116` (zero rows —
+unambiguous here, `anchors_public_id_key` is UNIQUE) still 404s; anything else throws to the route's
+catch. Same split as `anchor-revoke.ts` and `webhooks/delivery.ts`.
+
+**Don't go back to a bare select string.** The column list is now
+`EVIDENCE_ANCHOR_COLUMNS ... as const satisfies readonly (keyof Database['public']['Tables']['anchors']['Row'])[]`,
+so a phantom column is a `typecheck` failure rather than a silent production outage. It is
+double-ratcheted: `anchor-evidence.test.ts` also drives the route through the **real** `defaultLookup`
+against a schema-faithful `db` double that parses the known-column set out of the generated
+`database.types.ts` and returns 42703 for anything else. Verified both arms bite — re-adding
+`'jurisdiction'` produces `TS2322` *and* 8 red tests.
+
 ## 2026-08-12 — FD-P7: key revocation/deletion were unreachable from every client (CC6.8)
 
 `toPublicKey` (keys.ts) stripped `id` from create AND list responses (SCRUM-1271-D) while the frozen

@@ -15,7 +15,10 @@ vi.mock('../../config.js', () => ({
   config: { bitcoinNetwork: 'mainnet', frontendUrl: 'https://app.arkova.ai' },
 }));
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Request, Response } from 'express';
+import { db } from '../../utils/db.js';
 import {
   anchorEvidenceRouter,
   buildEvidencePackage,
@@ -310,5 +313,286 @@ describe('GET /anchor/:publicId/evidence handler', () => {
     expect(body.lifecycle[0].actor_public_id).toBe('PROFILE-PID-1');
     expect(JSON.stringify(body)).not.toContain('uuid-actor-1');
     expect(lookup.profilePublicIdsByActorIds).toHaveBeenCalledWith(['uuid-actor-1']);
+  });
+});
+
+/**
+ * DI-398 / SCRUM-3376 — the REAL `defaultLookup` DB select.
+ *
+ * Every test above injects `_testEvidenceLookup`, so the production select
+ * string was never exercised: it asked `anchors` for `jurisdiction`,
+ * `merkle_root` and `recipient_hash`, none of which are columns on that table.
+ * PostgREST answered 42703, the handler discarded `error`, and the route
+ * returned 404 "Anchor not found" for EVERY anchor.
+ *
+ * These tests drive the route through the real `defaultLookup` against a
+ * schema-faithful `db` double that rejects unknown columns exactly as PostgREST
+ * does, with the known-column set parsed from the GENERATED
+ * `database.types.ts` — so a future phantom column fails here rather than in
+ * production.
+ */
+const TYPES_PATH = fileURLToPath(new URL('../../types/database.types.ts', import.meta.url));
+
+/** Column names on `public.anchors` per the generated Supabase types. */
+function anchorsRowColumns(): Set<string> {
+  const src = readFileSync(TYPES_PATH, 'utf8');
+  const tableIdx = src.indexOf('      anchors: {');
+  if (tableIdx < 0) throw new Error('anchors table not found in database.types.ts');
+  const rowIdx = src.indexOf('        Row: {', tableIdx);
+  const endIdx = src.indexOf('\n        }', rowIdx);
+  const cols = new Set<string>();
+  for (const line of src.slice(rowIdx, endIdx).split('\n').slice(1)) {
+    const m = /^\s{10}([A-Za-z_][A-Za-z0-9_]*)\??:/.exec(line);
+    if (m) cols.add(m[1]);
+  }
+  if (cols.size === 0) throw new Error('parsed zero anchors columns — parser drifted');
+  return cols;
+}
+
+/** Split a PostgREST select on top-level commas (embeds keep their parens). */
+function splitTopLevel(select: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of select) {
+    if (ch === '(') depth++;
+    if (ch === ')') depth--;
+    if (ch === ',' && depth === 0) {
+      parts.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  parts.push(cur);
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+/** Scalar columns requested from the BASE table (embeds excluded). */
+function baseColumnsOf(select: string): string[] {
+  return splitTopLevel(select)
+    .filter((p) => !p.includes('('))
+    .map((p) => (p.includes(':') ? p.slice(p.indexOf(':') + 1) : p).trim());
+}
+
+interface PostgrestResult {
+  data: Record<string, unknown> | null;
+  error: { code: string; message: string } | null;
+}
+
+/** Return only the keys the select actually asked for (embeds by alias). */
+function projectRow(select: string, source: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const part of splitTopLevel(select)) {
+    const key = part.includes('(')
+      ? (part.includes(':')
+          ? part.slice(0, part.indexOf(':'))
+          : part.slice(0, part.indexOf('('))
+        ).trim()
+      : part.trim();
+    out[key] = source[key] ?? null;
+  }
+  return out;
+}
+
+const ANCHOR_SOURCE_ROW: Record<string, unknown> = {
+  id: 'anchor-uuid-real-1',
+  public_id: 'ARK-2026-REAL',
+  fingerprint: 'c'.repeat(64),
+  status: 'SECURED',
+  chain_tx_id: 'b8e381df09ca404eaae2e5e9d9b3d27567fe97ece39ead718f6d2c77ca60eb57',
+  chain_block_height: 900_123,
+  chain_timestamp: '2026-04-02T00:00:01Z',
+  created_at: '2026-04-02T00:00:00Z',
+  credential_type: 'CONTRACT',
+  issued_at: '2026-04-01T00:00:00Z',
+  expires_at: null,
+  description: 'HakiChain grant agreement',
+  org_id: 'org-real-1',
+  metadata: { jurisdiction: 'KE', recipient_email: 'beneficiary@example.com' },
+  organization: { display_name: 'HakiChain Demo NGO' },
+  anchor_proofs: { merkle_root: 'e'.repeat(64) },
+};
+
+interface FaithfulDbOpts {
+  anchorRow?: Record<string, unknown> | null;
+  /** Force a PostgREST error on the anchors select (DB outage / RLS regression). */
+  anchorError?: { code: string; message: string };
+  auditRows?: AuditEventRow[];
+}
+
+/**
+ * `db` double that behaves like PostgREST: an unknown column on `anchors`
+ * yields 42703 rather than silently returning null.
+ */
+function installFaithfulDb(opts: FaithfulDbOpts = {}) {
+  const known = anchorsRowColumns();
+  const captured = { anchorsSelect: '' };
+
+  const resolveAnchors = (select: string): PostgrestResult => {
+    captured.anchorsSelect = select;
+    const unknown = baseColumnsOf(select).filter((c) => !known.has(c));
+    if (unknown.length > 0) {
+      return {
+        data: null,
+        error: { code: '42703', message: `column anchors.${unknown[0]} does not exist` },
+      };
+    }
+    if (opts.anchorError) return { data: null, error: opts.anchorError };
+    const source = opts.anchorRow === undefined ? ANCHOR_SOURCE_ROW : opts.anchorRow;
+    if (source === null) {
+      return {
+        data: null,
+        error: {
+          code: 'PGRST116',
+          message: 'JSON object requested, multiple (or no) rows returned',
+        },
+      };
+    }
+    return { data: projectRow(select, source), error: null };
+  };
+
+  (db.from as unknown as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+    let select = '';
+    const builder: Record<string, unknown> = {};
+    Object.assign(builder, {
+      select: (s: string) => {
+        select = s;
+        return builder;
+      },
+      eq: () => builder,
+      is: () => builder,
+      order: () => Promise.resolve({ data: opts.auditRows ?? [], error: null }),
+      single: () =>
+        Promise.resolve(
+          table === 'anchors' ? resolveAnchors(select) : { data: null, error: null },
+        ),
+    });
+    return builder;
+  });
+
+  return captured;
+}
+
+describe('DI-398 / SCRUM-3376: real defaultLookup select against the anchors schema', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('requests only columns that exist on public.anchors', async () => {
+    const handler = getGetHandler();
+    const captured = installFaithfulDb();
+    const { req, res } = createMockReqRes({ publicId: 'ARK-2026-REAL' });
+    await handler!(req, res);
+
+    const unknown = baseColumnsOf(captured.anchorsSelect).filter(
+      (c) => !anchorsRowColumns().has(c),
+    );
+    expect(unknown).toEqual([]);
+  });
+
+  it('returns 200 with the evidence package (not 404) for an anchor that exists', async () => {
+    const handler = getGetHandler();
+    installFaithfulDb();
+    const { req, res } = createMockReqRes({ publicId: 'ARK-2026-REAL' });
+    await handler!(req, res);
+
+    expect(res.status).not.toHaveBeenCalledWith(404);
+    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(body.public_id).toBe('ARK-2026-REAL');
+    expect(body.verified).toBe(true);
+    expect(body.issuer_name).toBe('HakiChain Demo NGO');
+  });
+
+  it('resolves merkle_proof_hash from the anchor_proofs embed', async () => {
+    const handler = getGetHandler();
+    installFaithfulDb();
+    const { req, res } = createMockReqRes({ publicId: 'ARK-2026-REAL' });
+    await handler!(req, res);
+
+    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(body.merkle_proof_hash).toBe('e'.repeat(64));
+  });
+
+  it('accepts the anchor_proofs embed as a one-element array (PostgREST to-one shape)', async () => {
+    const handler = getGetHandler();
+    installFaithfulDb({
+      anchorRow: { ...ANCHOR_SOURCE_ROW, anchor_proofs: [{ merkle_root: 'f'.repeat(64) }] },
+    });
+    const { req, res } = createMockReqRes({ publicId: 'ARK-2026-REAL' });
+    await handler!(req, res);
+
+    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(body.merkle_proof_hash).toBe('f'.repeat(64));
+  });
+
+  it('falls back to legacy metadata.merkle_root when no proof row is joined', async () => {
+    const handler = getGetHandler();
+    installFaithfulDb({
+      anchorRow: {
+        ...ANCHOR_SOURCE_ROW,
+        anchor_proofs: null,
+        metadata: { jurisdiction: 'KE', merkle_root: 'a'.repeat(64) },
+      },
+    });
+    const { req, res } = createMockReqRes({ publicId: 'ARK-2026-REAL' });
+    await handler!(req, res);
+
+    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(body.merkle_proof_hash).toBe('a'.repeat(64));
+  });
+
+  it('resolves jurisdiction from anchors.metadata', async () => {
+    const handler = getGetHandler();
+    installFaithfulDb();
+    const { req, res } = createMockReqRes({ publicId: 'ARK-2026-REAL' });
+    await handler!(req, res);
+
+    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(body.jurisdiction).toBe('KE');
+  });
+
+  it('omits jurisdiction entirely when metadata carries no tag (frozen schema 1.8)', async () => {
+    const handler = getGetHandler();
+    installFaithfulDb({ anchorRow: { ...ANCHOR_SOURCE_ROW, metadata: { merkle_root: null } } });
+    const { req, res } = createMockReqRes({ publicId: 'ARK-2026-REAL' });
+    await handler!(req, res);
+
+    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect('jurisdiction' in body).toBe(false);
+  });
+
+  it('never leaks raw metadata, the internal anchor UUID, or recipient PII', async () => {
+    const handler = getGetHandler();
+    installFaithfulDb();
+    const { req, res } = createMockReqRes({ publicId: 'ARK-2026-REAL' });
+    await handler!(req, res);
+
+    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain('anchor-uuid-real-1');
+    expect(serialized).not.toContain('beneficiary@example.com');
+    expect(body.recipient_identifier).toBeNull();
+  });
+
+  it('500s (never 404s) on a real PostgREST error — no existence-leak answer', async () => {
+    const handler = getGetHandler();
+    installFaithfulDb({
+      anchorError: { code: '42501', message: 'permission denied for table anchors' },
+    });
+    const { req, res } = createMockReqRes({ publicId: 'ARK-2026-REAL' });
+    await handler!(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.status).not.toHaveBeenCalledWith(404);
+  });
+
+  it('still 404s when PostgREST reports no matching row (PGRST116)', async () => {
+    const handler = getGetHandler();
+    installFaithfulDb({ anchorRow: null });
+    const { req, res } = createMockReqRes({ publicId: 'ARK-2026-GONE' });
+    await handler!(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(404);
   });
 });
