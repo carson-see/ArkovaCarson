@@ -27,6 +27,7 @@ import { v1DeprecationHeaders } from './api/v1/deprecation.js';
 import { docsRouter } from './api/v1/docs.js';
 import { badgeRouter } from './api/badge.js';
 import { didWebRouter } from './api/did-web.js';
+import { proofKeysRouter } from './api/proof-keys.js';
 
 // Extracted routers (ARCH-1)
 import { billingRouter } from './routes/billing.js';
@@ -443,6 +444,14 @@ app.get('/.well-known/openapi.json', (_req, res) => {
 // anchor-creates still returned 429 after that fix deployed. It must carry
 // the same skip predicate, or it silently re-shadows apiV1Router's
 // 1,000/min-per-key limiter (Constitution §1.10).
+// BUG-024: `proofKeysRouter` (GET /.well-known/arkova-keys.json) was written,
+// tested (api/proof-keys.test.ts), shipped in the Docker image, and referenced
+// by kms-signer.ts and every signed proof bundle's `signing_key_id` — but was
+// never mounted here, so it 404'd on every worker host while its sibling
+// didWebRouter returned 200. Verifiers could not resolve the public key a
+// bundle names. It rides the SAME `app.use` chain as didWebRouter deliberately —
+// see the double-mount note just below for why a separate `app.use` would be
+// wrong on a store without per-instance counting.
 //
 // 2026-08-12 — this is the SECOND mount of the same `apiIpShadowGuard`
 // instance (the first is at the `/api` mount above). That is intentional and
@@ -454,7 +463,7 @@ app.get('/.well-known/openapi.json', (_req, res) => {
 // request at most once per limiter INSTANCE (see `utils/rateLimit.ts`,
 // COUNTED_LIMITERS), which is what makes mounting one limiter twice safe.
 // Do not "simplify" this by deleting a mount; see rateLimitDoubleMount.test.ts.
-app.use(apiIpShadowGuard, didWebRouter);
+app.use(apiIpShadowGuard, didWebRouter, proofKeysRouter);
 
 // 2026-04-26 — bug-bounty F4. Spec was already publicly inlined in
 // `/api/docs/swagger-ui-init.js`, but `/api/v1/openapi.json` returned 401

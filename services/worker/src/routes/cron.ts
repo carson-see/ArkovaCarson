@@ -23,6 +23,7 @@ import { db } from '../utils/db.js';
 import { callRpc } from '../utils/rpc.js';
 import { verifyAuthToken } from '../auth.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
+import { runIngestionRoute } from './ingestionResponse.js';
 import { processPendingAnchors } from '../jobs/anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { runConfirmationProofBackfill } from '../jobs/confirmation-proof-backfill.js';
@@ -1055,47 +1056,46 @@ cronRouter.post('/workspace-subscription-renewal', async (_req, res) => {
 // ─── Phase 1.5 Pipeline Jobs ───
 
 cronRouter.post('/fetch-edgar', async (_req, res) => {
-  try {
-    const result = await fetchEdgarFilings(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'EDGAR fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-edgar',
+    client: db,
+    run: () => fetchEdgarFilings(db),
+  });
 });
 
+// DECLARED-UNTESTED (BUG-023): no bulk patent source is reachable without a
+// USPTO ODP credential Arkova does not hold. The fetcher refuses to run unless
+// `USPTO_BULK_TSV_URL` is set, and this route now answers 502 rather than the
+// old `200 {"status":"download_failed","errors":0}`. See jobs/usptoFetcher.ts.
 cronRouter.post('/fetch-uspto', async (_req, res) => {
-  try {
-    const result = await withCronMonitoring(
-      'fetch-uspto',
-      '*/15 * * * *',
-      () => fetchUsptoPAtents(db),
-    )();
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'USPTO fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-uspto',
+    client: db,
+    run: () =>
+      withCronMonitoring(
+        'fetch-uspto',
+        '*/15 * * * *',
+        () => fetchUsptoPAtents(db),
+      )(),
+  });
 });
 
 cronRouter.post('/fetch-federal-register', async (_req, res) => {
-  try {
-    await fetchFederalRegisterDocuments(db);
-    res.json({ status: 'complete' });
-  } catch (error) {
-    logger.error({ error }, 'Federal Register fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-federal-register',
+    client: db,
+    // BUG-020: this used to answer a hardcoded `{status: 'complete'}` and drop
+    // the fetcher's own tally on the floor. The fetcher now returns counters.
+    run: () => fetchFederalRegisterDocuments(db),
+  });
 });
 
 cronRouter.post('/fetch-openalex', async (_req, res) => {
-  try {
-    const result = await fetchOpenAlexWorks(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'OpenAlex fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-openalex',
+    client: db,
+    run: () => fetchOpenAlexWorks(db),
+  });
 });
 
 cronRouter.post('/openalex-bulk', async (req, res) => {
@@ -1108,8 +1108,11 @@ cronRouter.post('/openalex-bulk', async (req, res) => {
     const maxPages = parseInt(String(req.query.maxPages ?? req.body?.maxPages ?? '500'), 10);
     const resumeCursor = req.body?.resumeCursor;
 
-    const result = await fetchOpenAlexBulk(db, { startDate, endDate, minCitations, maxPages, resumeCursor });
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'openalex-bulk',
+      client: db,
+      run: () => fetchOpenAlexBulk(db, { startDate, endDate, minCitations, maxPages, resumeCursor }),
+    });
   } catch (error) {
     logger.error({ error }, 'Bulk OpenAlex ingestion failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1126,8 +1129,11 @@ cronRouter.post('/fetch-courtlistener', async (req, res) => {
     const courtFilter = req.body?.courtFilter;
     const statusFilter = req.body?.statusFilter ?? 'Published';
 
-    const result = await fetchCourtOpinions(db, { startDate, endDate, maxPages, courtFilter, statusFilter });
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'fetch-courtlistener',
+      client: db,
+      run: () => fetchCourtOpinions(db, { startDate, endDate, maxPages, courtFilter, statusFilter }),
+    });
   } catch (error) {
     logger.error({ error }, 'CourtListener fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1143,8 +1149,11 @@ cronRouter.post('/fetch-state-courts', async (req, res) => {
     const endDate = explicitEndDate ? String(explicitEndDate) : undefined;
     const maxPagesPerCourt = parseInt(String(req.query.maxPagesPerCourt ?? req.body?.maxPagesPerCourt ?? '500'), 10);
 
-    const result = await fetchStateCourts(db, stateCode, { startDate, endDate, maxPagesPerCourt });
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'fetch-state-courts',
+      client: db,
+      run: () => fetchStateCourts(db, stateCode, { startDate, endDate, maxPagesPerCourt }),
+    });
   } catch (error) {
     logger.error({ error }, 'State court fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1156,8 +1165,11 @@ cronRouter.post('/fetch-state-bills', async (req, res) => {
     const stateCode = String(req.query.state ?? req.body?.state ?? 'CA').toUpperCase();
     const maxPages = parseInt(String(req.query.maxPages ?? req.body?.maxPages ?? '300'), 10);
 
-    const result = await fetchStateBills(db, { stateCode, maxPages });
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'fetch-state-bills',
+      client: db,
+      run: () => fetchStateBills(db, { stateCode, maxPages }),
+    });
   } catch (error) {
     logger.error({ error }, 'State bills fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1169,8 +1181,11 @@ cronRouter.post('/fetch-all-state-bills', async (req, res) => {
     const states = (req.body?.states as string[] | undefined) ?? ['CA', 'NY', 'TX'];
     const maxPagesPerState = parseInt(String(req.query.maxPagesPerState ?? req.body?.maxPagesPerState ?? '300'), 10);
 
-    const result = await fetchMultipleStateBills(db, states, { maxPagesPerState });
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'fetch-all-state-bills',
+      client: db,
+      run: () => fetchMultipleStateBills(db, states, { maxPagesPerState }),
+    });
   } catch (error) {
     logger.error({ error }, 'Multi-state bills fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1178,13 +1193,12 @@ cronRouter.post('/fetch-all-state-bills', async (req, res) => {
 });
 
 cronRouter.post('/embed-public-records', async (_req, res) => {
-  try {
-    const result = await embedPublicRecords();
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'Public record embedding failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'embed-public-records',
+    flagKey: 'ENABLE_PUBLIC_RECORD_EMBEDDINGS',
+    client: db,
+    run: () => embedPublicRecords(),
+  });
 });
 
 cronRouter.post('/anchor-public-records', async (_req, res) => {
@@ -1200,8 +1214,11 @@ cronRouter.post('/anchor-public-records', async (_req, res) => {
 cronRouter.post('/edgar-backfill', async (req, res) => {
   try {
     const batchIndex = parseInt(String(req.query.batch ?? req.body?.batch ?? '0'), 10);
-    const result = await fetchEdgarHistoricalBackfill(db, batchIndex);
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'edgar-backfill',
+      client: db,
+      run: () => fetchEdgarHistoricalBackfill(db, batchIndex),
+    });
   } catch (error) {
     logger.error({ error }, 'EDGAR historical backfill failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1215,8 +1232,11 @@ cronRouter.post('/edgar-bulk', async (req, res) => {
     const maxQueries = parseInt(String(req.query.maxQueries ?? req.body?.maxQueries ?? '200'), 10);
     const formTypes = req.body?.formTypes; // optional array override
 
-    const result = await fetchEdgarBulk(db, { startYear, endYear, maxQueriesPerInvocation: maxQueries, formTypes });
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'edgar-bulk',
+      client: db,
+      run: () => fetchEdgarBulk(db, { startYear, endYear, maxQueriesPerInvocation: maxQueries, formTypes }),
+    });
   } catch (error) {
     logger.error({ error }, 'Bulk EDGAR ingestion failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1224,23 +1244,19 @@ cronRouter.post('/edgar-bulk', async (req, res) => {
 });
 
 cronRouter.post('/fetch-dapip', async (_req, res) => {
-  try {
-    const result = await fetchDapipInstitutions(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'DAPIP fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-dapip',
+    client: db,
+    run: () => fetchDapipInstitutions(db),
+  });
 });
 
 cronRouter.post('/fetch-acnc', async (_req, res) => {
-  try {
-    const result = await fetchAcncCharities(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'ACNC fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-acnc',
+    client: db,
+    run: () => fetchAcncCharities(db),
+  });
 });
 
 cronRouter.post('/anchor-attestations', async (_req, res) => {
@@ -1418,17 +1434,26 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
     }
     const { categorizeExpiringDocuments, groupByOrg } = await import('../compliance/expiry-checker.js');
 
-    // Query anchors with expiry dates within 90 days
+    // BUG-002: this query used to select `not_after` and `document_title`.
+    // Neither column exists on `public.anchors` — not in the rig, not in prod —
+    // so PostgREST answered `42703 column anchors.document_title does not exist`
+    // and this route returned 500 on every single run since SCRUM-600 shipped.
+    // The real schema carries `expires_at` and `label`, and `public_id` is the
+    // only identifier allowed to leave the worker (CLAUDE.md §6).
+    //
+    // `deleted_at IS NULL` is new and deliberate: a soft-deleted document is not
+    // something to warn an issuer about renewing.
     const cutoff = new Date(Date.now() + 90 * 86_400_000).toISOString();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dbAny = db as any;
-    const { data: expiring, error } = await dbAny
+    const { data: expiring, error } = await db
       .from('anchors')
-      .select('id, org_id, credential_type, document_title, not_after')
+      .select('public_id, org_id, credential_type, label, expires_at')
       .eq('status', 'SECURED')
-      .not('not_after', 'is', null)
-      .gt('not_after', new Date().toISOString())
-      .lte('not_after', cutoff);
+      .is('deleted_at', null)
+      .not('public_id', 'is', null)
+      .not('org_id', 'is', null)
+      .not('expires_at', 'is', null)
+      .gt('expires_at', new Date().toISOString())
+      .lte('expires_at', cutoff);
 
     if (error) {
       logger.error({ error }, 'Failed to query expiring credentials');
@@ -1436,20 +1461,28 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
       return;
     }
 
-    const anchors = (expiring ?? []).map((a: Record<string, unknown>) => ({
-      id: a.id as string,
-      org_id: a.org_id as string,
-      credential_type: (a.credential_type as string) ?? 'OTHER',
-      title: (a.title as string) ?? null,
-      expiry_date: a.not_after as string,
-    }));
+    // `public_id` / `org_id` are nullable in the schema even though both are
+    // filtered above — narrow them here rather than assert, so a row that slips
+    // through is dropped instead of dispatching a webhook keyed on `null`.
+    const anchors = (expiring ?? []).flatMap((a) =>
+      a.public_id && a.org_id && a.expires_at
+        ? [{
+            public_id: a.public_id,
+            org_id: a.org_id,
+            credential_type: a.credential_type ?? null,
+            label: a.label ?? null,
+            expiry_date: a.expires_at,
+          }]
+        : [],
+    );
 
     const categories = categorizeExpiringDocuments(anchors);
     const urgentAnchors = categories.get('7_day') ?? [];
     const orgGroups = groupByOrg(urgentAnchors);
 
-    let emailsSent = 0;
+    let orgsNotified = 0;
     let webhooksSent = 0;
+    let webhooksFailed = 0;
 
     const { dispatchWebhookEvent } = await import('../webhooks/delivery.js');
     const now = Date.now();
@@ -1459,16 +1492,21 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
         const results = await Promise.allSettled(
           orgAnchors.map(anchor => {
             const daysRemaining = Math.ceil((new Date(anchor.expiry_date).getTime() - now) / 86_400_000);
-            const eventId = `expiry-${anchor.id}-${Date.now()}`;
+            const eventId = `expiry-${anchor.public_id}-${Date.now()}`;
+            // Payload shape is locked by ComplianceDocumentExpiringPayloadSchema
+            // (strict). The pre-BUG-002 version shipped `anchor_id` — the
+            // internal UUID — and got away with it only because the event type
+            // was unregistered and therefore unvalidated.
             return dispatchWebhookEvent(
               orgId,
               'compliance.document_expiring',
               eventId,
               {
-                anchor_id: anchor.id,
+                public_id: anchor.public_id,
                 credential_type: anchor.credential_type,
-                title: anchor.title,
-                expiry_date: anchor.expiry_date,
+                label: anchor.label,
+                status: 'SECURED',
+                expires_at: anchor.expiry_date,
                 days_remaining: daysRemaining,
                 warning_level: '7_day',
               },
@@ -1476,7 +1514,12 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
           })
         );
         webhooksSent += results.filter(r => r.status === 'fulfilled').length;
-        emailsSent++;
+        const failed = results.filter(r => r.status === 'rejected');
+        webhooksFailed += failed.length;
+        for (const f of failed) {
+          logger.warn({ error: f.reason, orgId }, 'Expiry alert webhook dispatch failed');
+        }
+        orgsNotified++;
       } catch (err) {
         logger.warn({ error: err, orgId }, 'Failed to send expiry alert');
       }
@@ -1489,7 +1532,10 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
       '90_day': (categories.get('90_day') ?? []).length,
     };
 
-    res.json({ processed: anchors.length, categories: totalExpiring, emailsSent, webhooksSent });
+    // `emailsSent` used to be reported here. It counted orgs and no email was
+    // ever sent — a fabricated metric (CLAUDE.md §1.13 R-7). Renamed to what it
+    // actually measures; email delivery is not implemented on this path.
+    res.json({ processed: anchors.length, categories: totalExpiring, orgsNotified, webhooksSent, webhooksFailed });
   } catch (error) {
     logger.error({ error }, 'Credential expiry check failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1509,43 +1555,40 @@ cronRouter.post('/pipeline-health', async (_req, res) => {
 
 // ─── California State Bar attorney ingestion ───
 cronRouter.post('/fetch-calbar', async (_req, res) => {
-  try {
-    const result = await fetchCalBarAttorneys(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'CalBar fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-calbar',
+    client: db,
+    run: () => fetchCalBarAttorneys(db),
+  });
 });
 
 // ─── FINRA BrokerCheck ingestion ───
 cronRouter.post('/fetch-finra', async (_req, res) => {
-  try {
-    const result = await fetchFinraBrokers(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'FINRA BrokerCheck fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-finra',
+    client: db,
+    run: () => fetchFinraBrokers(db),
+  });
 });
 
 // ─── SEC IAPD investment adviser ingestion ───
 cronRouter.post('/fetch-sec-iapd', async (_req, res) => {
-  try {
-    const result = await fetchSecIapdFirms(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'SEC IAPD fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-sec-iapd',
+    client: db,
+    run: () => fetchSecIapdFirms(db),
+  });
 });
 
 // ─── SEC EDGAR Form ADV (investment adviser — IAPD WAF workaround, SCRUM-727) ───
 cronRouter.post('/fetch-edgar-form-adv', async (req, res) => {
   try {
     const maxRecords = req.body?.maxRecords ? parseInt(String(req.body.maxRecords), 10) : undefined;
-    const result = await fetchEdgarFormAdv(db, { maxRecords });
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'fetch-edgar-form-adv',
+      client: db,
+      run: () => fetchEdgarFormAdv(db, { maxRecords }),
+    });
   } catch (error) {
     logger.error({ error }, 'EDGAR Form ADV fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1557,8 +1600,11 @@ cronRouter.post('/fetch-npi', async (req, res) => {
   try {
     const states = req.body?.states as string[] | undefined;
     const maxPerRun = req.body?.maxPerRun ? parseInt(String(req.body.maxPerRun), 10) : undefined;
-    const result = await fetchNpiProviders(db, { states, maxPerRun });
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'fetch-npi',
+      client: db,
+      run: () => fetchNpiProviders(db, { states, maxPerRun }),
+    });
   } catch (error) {
     logger.error({ error }, 'NPI Registry fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1570,8 +1616,11 @@ cronRouter.post('/fetch-cms-physicians', async (req, res) => {
   try {
     const states = req.body?.states as string[] | undefined;
     const maxPerRun = req.body?.maxPerRun ? parseInt(String(req.body.maxPerRun), 10) : undefined;
-    const result = await fetchCmsPhysicians(db, { states, maxPerRun });
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'fetch-cms-physicians',
+      client: db,
+      run: () => fetchCmsPhysicians(db, { states, maxPerRun }),
+    });
   } catch (error) {
     logger.error({ error }, 'CMS Physician Compare fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1583,8 +1632,11 @@ cronRouter.post('/fetch-medical-boards', async (req, res) => {
   try {
     const states = req.body?.states as string[] | undefined;
     const maxPerRun = req.body?.maxPerRun ? parseInt(String(req.body.maxPerRun), 10) : undefined;
-    const result = await fetchStateMedicalBoards(db, { states, maxPerRun });
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'fetch-medical-boards',
+      client: db,
+      run: () => fetchStateMedicalBoards(db, { states, maxPerRun }),
+    });
   } catch (error) {
     logger.error({ error }, 'State Medical Board fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1596,8 +1648,11 @@ cronRouter.post('/fetch-sam-entities', async (req, res) => {
   try {
     const states = req.body?.states as string[] | undefined;
     const maxPerRun = req.body?.maxPerRun ? parseInt(String(req.body.maxPerRun), 10) : undefined;
-    const result = await fetchSamEntities(db, { states, maxPerRun });
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'fetch-sam-entities',
+      client: db,
+      run: () => fetchSamEntities(db, { states, maxPerRun }),
+    });
   } catch (error) {
     logger.error({ error }, 'SAM.gov entity fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1605,21 +1660,22 @@ cronRouter.post('/fetch-sam-entities', async (req, res) => {
 });
 
 cronRouter.post('/fetch-sam-exclusions', async (_req, res) => {
-  try {
-    const result = await fetchSamExclusions(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'SAM.gov exclusions fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-sam-exclusions',
+    client: db,
+    run: () => fetchSamExclusions(db),
+  });
 });
 
 // ─── FCC ULS (spectrum licenses) ───
 cronRouter.post('/fetch-fcc', async (req, res) => {
   try {
     const maxPerRun = req.body?.maxPerRun ? parseInt(String(req.body.maxPerRun), 10) : undefined;
-    const result = await fetchFccLicenses(db, { maxPerRun });
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'fetch-fcc',
+      client: db,
+      run: () => fetchFccLicenses(db, { maxPerRun }),
+    });
   } catch (error) {
     logger.error({ error }, 'FCC ULS fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1630,8 +1686,11 @@ cronRouter.post('/fetch-fcc', async (req, res) => {
 cronRouter.post('/fetch-sos', async (req, res) => {
   try {
     const state = req.body?.state ?? req.query.state;
-    const results = await fetchSosEntities(db, state as string | undefined);
-    res.json({ results });
+    await runIngestionRoute(res, {
+      route: 'fetch-sos',
+      client: db,
+      run: async () => ({ results: await fetchSosEntities(db, state as string | undefined) }),
+    });
   } catch (error) {
     logger.error({ error }, 'SOS entity fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1642,8 +1701,13 @@ cronRouter.post('/fetch-sos', async (req, res) => {
 cronRouter.post('/fetch-licensing-board', async (req, res) => {
   try {
     const board = req.body?.board ?? req.query.board;
-    const results = await fetchLicensingBoardRecords(db, board as string | undefined);
-    res.json({ results });
+    await runIngestionRoute(res, {
+      route: 'fetch-licensing-board',
+      client: db,
+      run: async () => ({
+        results: await fetchLicensingBoardRecords(db, board as string | undefined),
+      }),
+    });
   } catch (error) {
     logger.error({ error }, 'Licensing board fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1654,8 +1718,13 @@ cronRouter.post('/fetch-licensing-board', async (req, res) => {
 cronRouter.post('/fetch-insurance-licenses', async (req, res) => {
   try {
     const source = req.body?.source ?? req.query.source;
-    const results = await fetchInsuranceLicenses(db, source as string | undefined);
-    res.json({ results });
+    await runIngestionRoute(res, {
+      route: 'fetch-insurance-licenses',
+      client: db,
+      run: async () => ({
+        results: await fetchInsuranceLicenses(db, source as string | undefined),
+      }),
+    });
   } catch (error) {
     logger.error({ error }, 'Insurance license fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1666,8 +1735,11 @@ cronRouter.post('/fetch-insurance-licenses', async (req, res) => {
 cronRouter.post('/fetch-cle', async (req, res) => {
   try {
     const source = req.body?.source ?? req.query.source;
-    const results = await fetchCleRecords(db, source as string | undefined);
-    res.json({ results });
+    await runIngestionRoute(res, {
+      route: 'fetch-cle',
+      client: db,
+      run: async () => ({ results: await fetchCleRecords(db, source as string | undefined) }),
+    });
   } catch (error) {
     logger.error({ error }, 'CLE fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1678,8 +1750,13 @@ cronRouter.post('/fetch-cle', async (req, res) => {
 cronRouter.post('/fetch-certifications', async (req, res) => {
   try {
     const source = req.body?.source ?? req.query.source;
-    const results = await fetchCertificationRecords(db, source as string | undefined);
-    res.json({ results });
+    await runIngestionRoute(res, {
+      route: 'fetch-certifications',
+      client: db,
+      run: async () => ({
+        results: await fetchCertificationRecords(db, source as string | undefined),
+      }),
+    });
   } catch (error) {
     logger.error({ error }, 'Certification fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -1688,123 +1765,101 @@ cronRouter.post('/fetch-certifications', async (req, res) => {
 
 // ─── NPH-10: IPEDS Education Institution Fetcher ───
 cronRouter.post('/fetch-ipeds', async (_req, res) => {
-  try {
-    const result = await fetchIpedsInstitutions(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'IPEDS fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-ipeds',
+    client: db,
+    run: () => fetchIpedsInstitutions(db),
+  });
 });
 
 // ─── KAU-01/02: Kenya Compliance Data Fetcher ───
 cronRouter.post('/fetch-kenya', async (_req, res) => {
-  try {
-    const result = await fetchKenyaComplianceData(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'Kenya compliance data fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-kenya',
+    client: db,
+    run: () => fetchKenyaComplianceData(db),
+  });
 });
 
 // ─── KAU-03/04: Australia Compliance Data Fetcher ───
 cronRouter.post('/fetch-australia', async (_req, res) => {
-  try {
-    const result = await fetchAustraliaComplianceData(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'Australia compliance data fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-australia',
+    client: db,
+    run: () => fetchAustraliaComplianceData(db),
+  });
 });
 
 // ─── INTL-01: Brazil LGPD compliance data ───
 cronRouter.post('/fetch-brazil-compliance', async (_req, res) => {
-  try {
-    const result = await fetchBrazilComplianceData(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'Brazil compliance data fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-brazil-compliance',
+    client: db,
+    run: () => fetchBrazilComplianceData(db),
+  });
 });
 
 // ─── INTL-02: Singapore PDPA compliance data ───
 cronRouter.post('/fetch-singapore-compliance', async (_req, res) => {
-  try {
-    const result = await fetchSingaporeComplianceData(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'Singapore compliance data fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-singapore-compliance',
+    client: db,
+    run: () => fetchSingaporeComplianceData(db),
+  });
 });
 
 // ─── INTL-03: Mexico LFPDPPP compliance data ───
 cronRouter.post('/fetch-mexico-compliance', async (_req, res) => {
-  try {
-    const result = await fetchMexicoComplianceData(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'Mexico compliance data fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-mexico-compliance',
+    client: db,
+    run: () => fetchMexicoComplianceData(db),
+  });
 });
 
 // ─── NCX-01: eCFR Federal Regulations Fetcher ───
 cronRouter.post('/fetch-ecfr', async (_req, res) => {
-  try {
-    const result = await fetchEcfrRegulations(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'eCFR fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-ecfr',
+    client: db,
+    run: () => fetchEcfrRegulations(db),
+  });
 });
 
 // ─── NCX-02: Enforcement Actions Fetcher ───
 cronRouter.post('/fetch-enforcement', async (_req, res) => {
-  try {
-    const result = await fetchEnforcementActions(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'Enforcement action fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-enforcement',
+    client: db,
+    run: () => fetchEnforcementActions(db),
+  });
 });
 
 // ─── NCX-03/04: Continuing Education (NASBA + ACCME) ───
 cronRouter.post('/fetch-continuing-education', async (_req, res) => {
-  try {
-    const result = await fetchContinuingEducationData(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'Continuing education fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-continuing-education',
+    client: db,
+    run: () => fetchContinuingEducationData(db),
+  });
 });
 
 // ─── International: Singapore (ACRA + MOH) ───
 
 cronRouter.post('/fetch-acra-sg', async (_req, res) => {
-  try {
-    const result = await fetchAcraSgCompanies(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'ACRA SG fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-acra-sg',
+    client: db,
+    run: () => fetchAcraSgCompanies(db),
+  });
 });
 
 cronRouter.post('/fetch-moh-sg', async (_req, res) => {
-  try {
-    const result = await fetchMohSgProviders(db);
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'MOH SG fetch failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
+  await runIngestionRoute(res, {
+    route: 'fetch-moh-sg',
+    client: db,
+    run: () => fetchMohSgProviders(db),
+  });
 });
 
 // ─── International: Brazil (CNPJ) ───
@@ -1812,8 +1867,11 @@ cronRouter.post('/fetch-moh-sg', async (_req, res) => {
 cronRouter.post('/fetch-cnpj-br', async (req, res) => {
   try {
     const customCnpjs = req.body?.cnpjs as string[] | undefined;
-    const result = await fetchCnpjBrCompanies(db, customCnpjs);
-    res.json(result);
+    await runIngestionRoute(res, {
+      route: 'fetch-cnpj-br',
+      client: db,
+      run: () => fetchCnpjBrCompanies(db, customCnpjs),
+    });
   } catch (error) {
     logger.error({ error }, 'CNPJ BR fetch failed');
     res.status(500).json({ error: 'Processing failed' });
@@ -2455,12 +2513,20 @@ async function runSmokeTestSuite(): Promise<SmokeCheckResult[]> {
     if (error) {
       results.push({ name: 'anchor-count', status: 'fail', durationMs: Date.now() - anchorStart, error: error.message });
     } else {
+      // BUG-009: `total` is `-1` when the count could not be established (no
+      // usable pg_class statistics and the exact fallback did not finish). That
+      // is "unknown", not "zero" — both fail the check, but only one of them
+      // means the database is empty, and an operator paged at 3am needs to be
+      // told which. Anything negative or non-finite reads as unavailable.
       const total = Number(data?.total ?? 0);
+      const measured = Number.isFinite(total) && total >= 0;
       results.push({
         name: 'anchor-count',
-        status: total > 0 ? 'pass' : 'fail',
+        status: measured && total > 0 ? 'pass' : 'fail',
         durationMs: Date.now() - anchorStart,
-        detail: `${total} total anchors`,
+        detail: measured
+          ? `${total} total anchors`
+          : 'anchor count unavailable (sentinel) — dashboard cache has no trustworthy total',
       });
     }
   } catch (err) {

@@ -202,7 +202,31 @@ EDGAR_USER_AGENT=                   # required by SEC for EDGAR API
 COURTLISTENER_API_TOKEN=
 OPENSTATES_API_KEY=
 SAM_GOV_API_KEY=
+USPTO_BULK_TSV_URL=                 # unset by default — see below
 ```
+
+**`USPTO_BULK_TSV_URL` (BUG-023).** `jobs/usptoFetcher.ts` used to hardcode
+`https://s3.amazonaws.com/data.patentsview.org/download/g_patent.tsv.zip`. That
+bucket now returns `AccessDenied` (HTTP 403) — confirmed from a **non-cloud**
+residential IP, so it is not blocked Cloud Run egress. PatentsView migrated to
+the USPTO Open Data Portal on 2026-03-20; the replacement (`api.uspto.gov`)
+answers **401 without an ODP API key**, and since 2026-06-18 obtaining one
+requires a USPTO.gov account with MFA. Arkova holds no such credential.
+
+So there is deliberately **no default**. With the variable unset `/fetch-uspto`
+makes no request and answers **502** `source_unavailable` instead of the old
+`200 {"status":"download_failed","errors":0}`. The route is marked
+DECLARED-UNTESTED in code. Setting this variable is how a future operator
+re-arms it once a reachable bulk source exists — the TSV column contract in the
+fetcher is unverified against any ODP product, so treat the first run as new
+work, not a resumption.
+
+**Missing credentials are now loud.** A fetcher that gives up before reaching
+upstream because its key is unset returns `status: 'unconfigured_source'`, which
+`routes/ingestionResponse.ts` classifies as a failure. `SAM_GOV_API_KEY` was
+rejected 401 and `COURTLISTENER_API_TOKEN` was over quota (429 — *worse than no
+token*, which returns 200) during the 2026-08 side-rig run; both now surface as
+non-2xx rather than as an all-zeros HTTP 200.
 
 ## Redis rate limiting (optional)
 ```bash
