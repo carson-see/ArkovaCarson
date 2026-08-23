@@ -56,6 +56,7 @@ hook's own deny message.
 | `feedback_worker_hands_off.md` | Documentation only (agent-author detection unreliable) | 📖 docs only |
 | `feedback_nvi_lawyer_scope.md` | Documentation only (Jira scoping decision, 2026-04-27) | 📖 docs only |
 | `feedback_verify_cloud_project_before_auth.md` | Documentation only (no reliable detector for a wrong project ID) | 📖 docs only |
+| `feedback_read_the_emitting_code.md` | Documentation only (no detector for "did not read the function") | 📖 docs only |
 
 ## Override pattern
 
