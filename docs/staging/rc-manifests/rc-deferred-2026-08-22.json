@@ -183,14 +183,14 @@
     },
     {
       "number": 2219,
-      "head_sha": "cec6c77490c8d10a447a846f234d91c1e64abc57",
+      "head_sha": "011b0247256a2e3734e2ea15d0befc9e3b338bcb",
       "base_sha": "3cc8e9d3eb1a13fcecccee000fc6b42d141c9083",
       "risk_tier": "T3",
       "owner": "carson@arkova.io",
       "soak_train": "migration-T3",
       "soak_window": "2026-08-20T14:00:22Z to 2026-08-22T14:00:22Z (48h T3, closed)",
       "maturity_record": "docs/staging/migration-t3-soak-2026-08/maturity-2026-08-22T1400Z.md",
-      "ci_summary": "Partner-provisioning HTTP router for the SCRUM-2990 state machine (HakiChain onboarding path) + migration 0410_partner_accounts.sql (T3: migration). migration-T3 union member (union head 3baf16015ed61b4063daa6e53bead2399657ecd6 = #2219 + #2235 + #2248, rig arkova-worker-staging on fizyjojbebyalirtjjht); the maturity record's substantive evidence for 0410 is targeted SQL against the rig database, and it states plainly the HTTP window evidences worker health only. Merge-grade evidence for this head is owed by the consolidated soak of merged main. Restamped 2026-08-23 after a clean origin/main merge (no conflicts; the PR's own 6-file surface and 0410_partner_accounts.sql byte-unchanged by the merge, verified by 3-dot diff and per-file diff against the prior head 235ed69d57).",
+      "ci_summary": "Partner-provisioning HTTP router for the SCRUM-2990 state machine (HakiChain onboarding path) + migration 0410_partner_accounts.sql (T3: migration). migration-T3 union member (union head 3baf16015ed61b4063daa6e53bead2399657ecd6 = #2219 + #2235 + #2248, rig arkova-worker-staging on fizyjojbebyalirtjjht); the maturity record's substantive evidence for 0410 is targeted SQL against the rig database, and it states plainly the HTTP window evidences worker health only. Merge-grade evidence for this head is owed by the consolidated soak of merged main. Restamped 2026-08-23 after a clean origin/main merge (no conflicts; the PR's own 6-file surface and 0410_partner_accounts.sql byte-unchanged by the merge, verified by 3-dot diff and per-file diff against the prior head 235ed69d57). Final head includes the prod-tables snapshot addition for partner_accounts (verified live in prod before adding).",
       "rollback_note": "CORRECTED 2026-08-23: migration 0410 IS applied to prod (supabase_migrations.schema_migrations version=0410 name=0410_partner_accounts, verified live via MCP on 2026-08-23) \u2014 the prior note claiming rig-only application was stale. Merging this PR is therefore the RECONCILING action for a prod-ahead ledger row, exactly as #2235 was for 0411-0413. Worker-code rollback: git revert -m 1 <merge-sha> (router is additive; index.ts mount is the only shared touch). Migration rollback if ever needed: compensating migration per the file's -- ROLLBACK block; never revert the applied row.",
       "migration_files": [
         "supabase/migrations/0410_partner_accounts.sql"
