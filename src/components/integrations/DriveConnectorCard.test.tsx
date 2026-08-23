@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { toast } from 'sonner';
 import { DriveConnectorCard } from './DriveConnectorCard';
+import { CONNECTIONS_LABELS } from '@/lib/copy';
 
 // The component queries two different tables (org_integrations, anchors) via
 // supabase.from(table) — route each to its own chainable query double so
@@ -288,6 +289,70 @@ describe('DriveConnectorCard', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Unable to load Drive connection status.')).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * FD-D1 / FD-D3. The worker's denial `code` is the specific reason; the
+   * `error` field beside it is a generic "Not eligible to connect Google
+   * Drive". Rendering only the generic string is how a user ends up with no
+   * idea what to do — which is exactly the diagnosis cost FD-D3 paid.
+   */
+  describe('connect denial reasons are surfaced from copy.ts, not the generic error', () => {
+    async function clickConnectWith(body: Record<string, unknown>) {
+      workerFetch.mockResolvedValue({
+        ok: false,
+        json: () => Promise.resolve(body),
+      });
+      render(<DriveConnectorCard orgId={ORG_ID} />);
+      const connectButton = await screen.findByRole('button', { name: /connect drive/i });
+      await waitFor(() => expect(connectButton).toBeEnabled());
+      fireEvent.click(connectButton);
+    }
+
+    it('renders the individual-scope copy for `individual_scope_unsupported` (FD-D1)', async () => {
+      await clickConnectWith({
+        error: 'Not eligible to connect Google Drive',
+        code: 'individual_scope_unsupported',
+      });
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(CONNECTIONS_LABELS.DRIVE_INDIVIDUAL_SCOPE_UNSUPPORTED),
+        ).toBeInTheDocument();
+      });
+      // The generic worker string must NOT be what the user reads.
+      expect(screen.queryByText('Not eligible to connect Google Drive')).not.toBeInTheDocument();
+    });
+
+    it('renders the retry-with-org copy for `org_scope_required` (FD-D3)', async () => {
+      await clickConnectWith({
+        error: 'Not eligible to connect Google Drive',
+        code: 'org_scope_required',
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(CONNECTIONS_LABELS.DRIVE_ORG_SCOPE_REQUIRED)).toBeInTheDocument();
+      });
+    });
+
+    it('distinguishes not_admin from org_scope_required in what the user is shown', async () => {
+      await clickConnectWith({ error: 'x', code: 'not_admin' });
+
+      await waitFor(() => {
+        expect(screen.getByText(CONNECTIONS_LABELS.DRIVE_NOT_ADMIN)).toBeInTheDocument();
+      });
+      expect(
+        screen.queryByText(CONNECTIONS_LABELS.DRIVE_ORG_SCOPE_REQUIRED),
+      ).not.toBeInTheDocument();
+    });
+
+    it('falls back to the worker error string for an unmapped code (no blank error)', async () => {
+      await clickConnectWith({ error: 'Something else went wrong', code: 'some_future_code' });
+
+      await waitFor(() => {
+        expect(screen.getByText('Something else went wrong')).toBeInTheDocument();
+      });
     });
   });
 });

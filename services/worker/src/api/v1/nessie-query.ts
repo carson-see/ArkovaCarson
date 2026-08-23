@@ -10,13 +10,21 @@
  * Nessie is a compliance intelligence engine — it analyzes documents and makes
  * recommendations. It does NOT do metadata extraction (that's Gemini Golden's job).
  *
- * Gated by ENABLE_PUBLIC_RECORD_EMBEDDINGS switchboard flag.
+ * Gated by TWO independent flags, in this order:
+ *   1. ENABLE_NESSIE_QUERY (env, default FALSE) — the capability gate. Nessie is
+ *      permanently disabled by standing founder directive, so this route fails
+ *      CLOSED with an explicit disabled envelope (BUG-008/027). See
+ *      middleware/nessieCapabilityGate.ts.
+ *   2. ENABLE_PUBLIC_RECORD_EMBEDDINGS (switchboard) — governs the public-record
+ *      embedding INDEX, not this capability. It is legitimately on, which is why
+ *      it never stopped a disabled Nessie from answering 200.
  *
  * Constitution 4A: Only PII-stripped metadata searched/returned.
  */
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
 import { createEmbeddingProvider } from '../../ai/factory.js';
 import { GEMINI_GENERATION_MODEL } from '../../ai/gemini-config.js';
 import { traceAiProviderCall } from '../../ai/observability.js';
@@ -24,6 +32,11 @@ import { buildIntelligenceSystemPrompt } from '../../ai/prompts/intelligence.js'
 import type { IntelligenceMode } from '../../ai/prompts/intelligence.js';
 import { hybridSearch } from '../../ai/hybrid-search.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
+import {
+  NESSIE_DISABLED_STATUS,
+  isNessieQueryEnabled,
+  nessieDisabledBody,
+} from '../../middleware/nessieCapabilityGate.js';
 import { db } from '../../utils/db.js';
 import { readInChunks } from '../../utils/chunkedRead.js';
 import { logger } from '../../utils/logger.js';
@@ -193,6 +206,18 @@ router.get('/', async (req: Request, res: Response) => {
 
   const { q, threshold, limit, mode, task } = parsed.data;
   const taskType: IntelligenceMode = task ?? 'compliance_qa';
+
+  // BUG-008/027 (CTO ruling R-1 STRENGTHENED): the capability gate runs at the
+  // mount in api/v1/router.ts, but it is repeated HERE so the router cannot be
+  // mounted dark by a future refactor. This check is deliberately FIRST — ahead
+  // of the ENABLE_PUBLIC_RECORD_EMBEDDINGS read below, which is a DIFFERENT
+  // flag (it governs the public-record embedding index, is legitimately ON, and
+  // passing it is precisely how a permanently-disabled capability came to
+  // answer 200 with `{"results":[],"count":0}`).
+  if (!isNessieQueryEnabled()) {
+    res.status(NESSIE_DISABLED_STATUS).json(nessieDisabledBody());
+    return;
+  }
 
   try {
     // Check switchboard flag
@@ -674,13 +699,16 @@ function buildDeterministicContextFallback(
   };
 }
 
-function buildCitationExcerpt(doc: NessieResult): string {
+// Exported for tests: excerpt bounding must be surrogate-safe (2026-08-17
+// poison-record class) — public-record abstracts are external text and a cut
+// inside a surrogate pair leaves a lone high surrogate in the citation.
+export function buildCitationExcerpt(doc: NessieResult): string {
   const meta = doc.metadata ?? {};
   const abstract = typeof meta.abstract === 'string' ? meta.abstract.trim() : '';
-  if (abstract) return abstract.slice(0, 500);
+  if (abstract) return truncateUtf16Safe(abstract, 500);
 
   const fullText = typeof meta.full_text === 'string' ? meta.full_text.trim() : '';
-  if (fullText) return fullText.slice(0, 500);
+  if (fullText) return truncateUtf16Safe(fullText, 500);
 
   return `${doc.record_type}: ${doc.title ?? 'Untitled verified record'}`;
 }

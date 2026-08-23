@@ -1,0 +1,10 @@
+{
+  "run_ts": "2026-08-12T16:22:10Z",
+  "mode": "full",
+  "rig_service": "https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app",
+  "rig_supabase_ref": "gnkuaywlpmsaezwvlvhk",
+  "git_head": "550320dc8f7a48852177336c80999374b7e758b2",
+  "pass": 5, "fail": 0, "skip": 0,
+  "verdict": "PASS",
+  "probes": [{"id": "P4a", "desc": "ORG_ADMIN JWT creates a folder", "expected": "201 + id", "observed": "http 201, id=1142548d\u2026", "result": "PASS"},{"id": "P4b", "desc": "Folder rename returns the updated row (not a silent 0-row PATCH)", "expected": ">=1 row", "observed": "1 rows", "result": "PASS"},{"id": "P4c", "desc": "Anchor filed into folder (row-count proven, not status-only)", "expected": ">=1 row returned", "observed": "1 rows", "result": "PASS"},{"id": "P4d", "desc": "Org B JWT cannot re-file an Org A anchor", "expected": "0 rows", "observed": "0 rows", "result": "PASS"},{"id": "P4e", "desc": "Folder delete releases filed anchors (ON DELETE SET NULL)", "expected": "0 anchors left pointing at it", "observed": "http 200, 0", "result": "PASS"}]
+}

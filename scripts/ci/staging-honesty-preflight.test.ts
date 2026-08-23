@@ -6,6 +6,8 @@
  * arrays passed into the analysis layer.
  */
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   classifyMigrationRow,
@@ -24,12 +26,16 @@ import {
   mapManagementProdFacts,
   queryManagementApi,
   isOrgSeedName,
+  isOrgRowSeeded,
+  checkOrgTopologyUnavailable,
+  ORG_NAME_COLUMNS,
   buildReport,
   parseArgs,
   type MigrationRow,
   type CheckResult,
   type EnvironmentType,
   type OrgTopologyData,
+  type OrgNameRow,
   type ProdFactsData,
 } from './staging-honesty-preflight.js';
 
@@ -1037,5 +1043,129 @@ describe('buildReport with org topology and prod facts', () => {
       prodFacts: { cronJobNames: [], functionExists: false },
     });
     expect(report.checks.some((c) => !c.passed)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FD-PREFLIGHT-1 — Check 7 (org_topology) was dead code.
+//
+// The runner selected a column `name` from public.organizations. That column
+// does not exist (the table has `legal_name` / `display_name`), so PostgREST
+// answered 42703, the `if (!orgError && orgData)` guard fell through, and
+// `orgTopology` stayed undefined — which buildReport treats as "caller did not
+// ask for this check". Result: Check 7 has never run on any rig, and its
+// absence looked identical to a clean report. Observed live on
+// gnkuaywlpmsaezwvlvhk and tkciooifwxwnkoizgalp on 2026-08-21: six checks
+// emitted, no `org_topology` among them, exit 0 / clean_mirror.
+//
+// A check that cannot run must FAIL the preflight. Silently skipping it is the
+// exact failure mode the script exists to prevent.
+// ---------------------------------------------------------------------------
+
+describe('ORG_NAME_COLUMNS (FD-PREFLIGHT-1)', () => {
+  it('names only columns public.organizations actually has', () => {
+    expect([...ORG_NAME_COLUMNS]).toEqual(['legal_name', 'display_name']);
+  });
+
+  it('never names the non-existent "name" column', () => {
+    expect([...ORG_NAME_COLUMNS] as string[]).not.toContain('name');
+  });
+});
+
+describe('isOrgRowSeeded (FD-PREFLIGHT-1)', () => {
+  it('flags a seed-prefixed legal_name', () => {
+    const row: OrgNameRow = { legal_name: 'STG Org 001', display_name: 'Something Else' };
+    expect(isOrgRowSeeded(row)).toBe(true);
+  });
+
+  it('flags a seed-prefixed display_name even when legal_name looks real', () => {
+    const row: OrgNameRow = { legal_name: 'Acme Corporation', display_name: 'staging_seed_alpha' };
+    expect(isOrgRowSeeded(row)).toBe(true);
+  });
+
+  it('does not flag a real org on either column', () => {
+    const row: OrgNameRow = { legal_name: 'Acme Corporation', display_name: 'Acme Corp' };
+    expect(isOrgRowSeeded(row)).toBe(false);
+  });
+
+  it('tolerates nulls without throwing', () => {
+    const row: OrgNameRow = { legal_name: null, display_name: null };
+    expect(isOrgRowSeeded(row)).toBe(false);
+  });
+});
+
+describe('checkOrgTopologyUnavailable (FD-PREFLIGHT-1)', () => {
+  it('FAILS — a check that could not run is not a check that passed', () => {
+    const result = checkOrgTopologyUnavailable('column organizations.name does not exist');
+    expect(result.name).toBe('org_topology');
+    expect(result.passed).toBe(false);
+    expect(result.details).toMatch(/could not be evaluated/i);
+    expect(result.details).toMatch(/column organizations\.name does not exist/);
+  });
+});
+
+describe('buildReport treats an unevaluable org_topology as a FAILURE (FD-PREFLIGHT-1)', () => {
+  const DEFAULT_PROD = ['00000000000000', '0294', '0295', '0296', '0297'];
+
+  it('emits a failed org_topology check when the query errored', () => {
+    const report = buildReport({
+      projectRef: 'test-ref',
+      migrationRows: CLEAN_ROWS,
+      submittedAnchorCount: 5,
+      prodVersions: DEFAULT_PROD,
+      orgTopologyError: 'column organizations.name does not exist',
+    });
+    const check = report.checks.find((c) => c.name === 'org_topology');
+    expect(check).toBeDefined();
+    expect(check!.passed).toBe(false);
+  });
+
+  it('refuses clean_mirror when org_topology could not be evaluated', () => {
+    const report = buildReport({
+      projectRef: 'test-ref',
+      migrationRows: CLEAN_ROWS,
+      submittedAnchorCount: 5,
+      prodVersions: DEFAULT_PROD,
+      orgTopologyError: 'boom',
+    });
+    expect(report.environment_type).not.toBe('clean_mirror');
+  });
+
+  it('prefers real data over the error when both are somehow supplied', () => {
+    const report = buildReport({
+      projectRef: 'test-ref',
+      migrationRows: CLEAN_ROWS,
+      submittedAnchorCount: 5,
+      prodVersions: DEFAULT_PROD,
+      orgTopology: { totalOrgs: 5, seedOrgs: 0 },
+      orgTopologyError: 'stale error',
+    });
+    const check = report.checks.find((c) => c.name === 'org_topology');
+    expect(check!.passed).toBe(true);
+  });
+});
+
+describe('preflight source ratchet (FD-PREFLIGHT-1)', () => {
+  // Resolved from the vitest root (the repo root) rather than import.meta.url:
+  // this suite runs in a non-file:// module context.
+  const SRC = readFileSync(
+    resolve(process.cwd(), 'scripts/ci/staging-honesty-preflight.ts'),
+    'utf8',
+  );
+
+  it('selects organizations columns from ORG_NAME_COLUMNS, never a hardcoded "name"', () => {
+    const match = SRC.match(/\.from\('organizations'\)\s*\r?\n?\s*\.select\(([^)]*)\)/);
+    expect(match, 'no .from(\'organizations\').select(...) found').not.toBeNull();
+    const selectArg = match![1];
+    expect(selectArg).toContain('ORG_NAME_COLUMNS');
+    expect(selectArg.trim()).not.toMatch(/^['"`]name['"`]$/);
+  });
+
+  it('does not silently swallow an org-topology query failure', () => {
+    // The old code path was: `if (!orgError && orgData) { ... }` with no else,
+    // followed by a bare `catch {}`. Both branches must now record a reason.
+    expect(SRC).toContain('orgTopologyError');
+    const swallow = SRC.match(/catch\s*\{\s*\r?\n\s*\/\/ Org topology check skipped/);
+    expect(swallow, 'the silent org-topology catch is still present').toBeNull();
   });
 });

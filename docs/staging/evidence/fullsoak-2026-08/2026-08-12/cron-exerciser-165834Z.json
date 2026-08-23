@@ -1,0 +1,10 @@
+{
+  "run_ts": "2026-08-12T16:58:34Z",
+  "rig_service": "arkova-worker-fullsoak-2026-08-staging",
+  "rig_git_sha": "f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58",
+  "route_source": "rig frozen SHA f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58",
+  "routes_total": 110, "bound": 25,
+  "ok": 1, "findings": 0, "denied": 0,
+  "cohort": {"anchors_before": "12", "anchors_after": "12", "proofs_before": "12", "proofs_after": "12", "state": "intact"},
+  "routes": [{"route":"/professional-education-extraction","verdict":"BY-DESIGN","verb":"POST","http":"503","ms":"138","delta_table":"job_queue","before":"5","after":"5","body":"{\"error\":\"professional_education_schema_unavailable\",\"message\":\"Professional education schema is not ready in this environment; PR #841 CPE/CLE runtime paths are disabled until schema and migration-ledger reconciliation \u2026"}]
+}

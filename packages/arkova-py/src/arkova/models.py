@@ -58,11 +58,19 @@ class SearchResponse(ArkovaModel):
 
 class RichVerificationFields(ArkovaModel):
     description: str | None = None
-    # SCRUM-2227: the API emits this as a LIST of control-ID strings. Declared
-    # dict-only, pydantic raised ValidationError on a real payload and failed
-    # the whole verify() call — proof the dict form had no working consumer.
-    # `compliance_controls_note` states what these identifiers do NOT assert
-    # and is present whenever controls are.
+    # SCRUM-2227 / BUG-2026-08-12-007: the API emits this as a LIST of control-ID
+    # strings. Declared dict-only, pydantic raised ValidationError on a real
+    # payload and failed the whole verify() call — proof the dict form had no
+    # working consumer. `compliance_controls_note` states what these identifiers
+    # do NOT assert and is present whenever controls are.
+    #
+    # `None` here means OMITTED, which is what the wire actually does:
+    # `sanitizeStoredComplianceControls` returns `string[] | null` (never an
+    # object, never `[]`), and `buildVerificationResult` then skips the key for a
+    # null/empty value AND for any record that is not a current anchored
+    # credential. So the field is a NON-EMPTY list or absent — never null, never
+    # an object. The `| None` covers absence and, defensively, the `nullable:
+    # true` the published OpenAPI schema still declares.
     compliance_controls: list[str] | None = None
     compliance_controls_note: str | None = None
     chain_confirmations: int | None = None
@@ -74,6 +82,15 @@ class RichVerificationFields(ArkovaModel):
     file_size: int | None = None
     confidence_scores: dict[str, Any] | None = None
     sub_type: str | None = None
+    # R19 (SCRUM-2481): evidence class for how `fingerprint` was computed —
+    # 'document_bytes' or 'issuer_record_attestation'; omitted when unclassified.
+    # Part of the same API-RICH key loop as the fields above.
+    #
+    # `str`, NOT `Literal`. Over-narrow typing built from an API snapshot is the
+    # exact defect BUG-2026-08-12-007 records, and this column is bare `text`
+    # with no CHECK constraint. A value we have not seen must not raise inside a
+    # consumer's verify() call. Same reasoning for `proof_availability` below.
+    fingerprint_source: str | None = None
 
 
 class FingerprintVerification(RichVerificationFields):
@@ -104,6 +121,20 @@ class VerificationResult(RichVerificationFields):
     explorer_url: str | None = None
     ferpa_notice: str | None = None
     directory_info_suppressed: bool | None = None
+    # SCRUM-2575: whether a per-document proof can actually be retrieved for this
+    # record ('per_document') or only the on-chain commitment exists
+    # ('root_only'). Emitted ONLY by GET /api/v1/verify/{public_id}, and only
+    # when the branch question was measured on a settled status that carries a
+    # chain receipt — so it lives here rather than on RichVerificationFields.
+    # Batch and oracle responses omit the pair entirely (they measure nothing).
+    #
+    # `proof_availability_note` is emitted exactly when `proof_availability` is:
+    # the class never travels without its measured / asserted / NOT-asserted
+    # statement (§1.5). Read them as a pair.
+    #
+    # `str` rather than `Literal`, for the reason on `fingerprint_source`.
+    proof_availability: str | None = None
+    proof_availability_note: str | None = None
     error: str | None = None
 
 

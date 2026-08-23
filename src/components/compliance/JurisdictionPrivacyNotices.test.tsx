@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { JurisdictionPrivacyNotices } from './JurisdictionPrivacyNotices';
+import { PRIVACY_NOTICE_LABELS } from '@/lib/copy';
 
 describe('JurisdictionPrivacyNotices — REG-14', () => {
   it('renders all jurisdictions when no filter is provided', () => {
@@ -43,7 +44,10 @@ describe('JurisdictionPrivacyNotices — REG-14', () => {
   it('shows breach timelines for each jurisdiction', () => {
     render(<JurisdictionPrivacyNotices />);
 
-    expect(screen.getByText(/72 hours.*ODPC/)).toBeDefined();
+    // Kenya's "72 hours (controller to ODPC)" is deliberately absent as of
+    // 2026-08-18 (Tranche 0, counsel-ordered) — see the dedicated Kenya test
+    // below. Other jurisdictions are unaffected.
+    expect(screen.queryByText(/72 hours.*ODPC/)).toBeNull();
     expect(screen.getByText(/60 calendar days/)).toBeDefined();
     expect(screen.getByText(/30-day assessment/)).toBeDefined();
   });
@@ -158,15 +162,119 @@ describe('JurisdictionPrivacyNotices — REG-14', () => {
     expect(allText).toContain('file a complaint');
   });
 
-  it('shows cross-border transfer basis for all jurisdictions', () => {
+  it('shows cross-border transfer basis for jurisdictions that have one', () => {
     render(<JurisdictionPrivacyNotices />);
 
     const allText = document.body.textContent ?? '';
     // SA
     expect(allText).toContain('Section 72 binding agreement');
-    // Nigeria
+    // Nigeria — flagged separately (hotfix/kenya-transfer-basis-removal PR
+    // description) as the same SCC/Kenya-DPA-style conflation, unresolved
+    // pending counsel; not touched in this fix, Kenya only.
     expect(allText).toContain('Standard Contractual Clauses');
-    // Kenya
-    expect(allText).toContain('Section 48');
+  });
+
+  /**
+   * Counsel-ordered removal, 2026-08-18 (hotfix/kenya-transfer-basis-removal,
+   * first commit). The live bundle asserted "Standard Contractual Clauses
+   * (Section 48)" as Kenya's cross-border transfer basis. SCCs are an EU GDPR
+   * mechanism; Kenya DPA 2019 §48 is Kenya's own transfer regime and does not
+   * name SCCs — the claim was wrong, not just imprecise. Counsel said
+   * removed, not reworded, so this pins removal: no transfer-basis row
+   * renders for Kenya. As of the second commit (below), title, regulator,
+   * and Information Officer are what remains unaffected — rights and breach
+   * timeline are now ALSO removed, not "unaffected".
+   */
+  it('omits the cross-border transfer basis row for Kenya (counsel-ordered removal)', () => {
+    render(<JurisdictionPrivacyNotices jurisdictions={['kenya']} />);
+
+    const allText = document.body.textContent ?? '';
+    expect(allText).not.toContain('Section 48');
+    expect(allText).not.toContain('Standard Contractual Clauses');
+    expect(allText).not.toContain(PRIVACY_NOTICE_LABELS.TRANSFER_BASIS_LABEL);
+
+    // Rest of the Kenya notice still renders.
+    expect(allText).toContain('Kenya Data Protection Act 2019');
+    expect(allText).toContain('Office of the Data Protection Commissioner');
+
+    const officerLink = document.querySelector('a[href="mailto:privacy@arkova.ai"]');
+    expect(officerLink).not.toBeNull();
+  });
+
+  /**
+   * Counsel-ordered removal, 2026-08-18 (hotfix/kenya-transfer-basis-removal,
+   * second commit — Tranche 0 of the Sarah/Carson privacy-policy addendum,
+   * item 1, quoted verbatim in the PR body): "Neutralise the Kenya card:
+   * remove the Standard Contractual Clauses under Section 48 transfer basis,
+   * the rights list citing Sections 25 to 38, and the 72-hour controller
+   * notification timeline. Replace with the counsel-pending placeholder
+   * pattern already used for the EU to US basis. Subtraction only. Do not
+   * substitute an alternative safeguard."
+   *
+   * This test pins the two things that make it a subtraction and not a
+   * reword: the specific, never-counsel-reviewed content is gone (no
+   * "Sections 25-38", no rights badges, no "72 hours"), AND nothing invented
+   * takes its place — the only new text is the same counsel-pending sentence
+   * already live on the EU–US card, reused verbatim (same "under review by
+   * legal counsel and will be published here once confirmed" substring the
+   * `eu-us-transfer` test above pins).
+   */
+  it('Kenya card: rights list and breach timeline removed, counsel-pending placeholder present', () => {
+    render(<JurisdictionPrivacyNotices jurisdictions={['kenya']} />);
+
+    const allText = document.body.textContent ?? '';
+
+    // The removed, never-counsel-reviewed content is gone.
+    expect(allText).not.toContain('Sections 25-38');
+    expect(allText).not.toContain('25-38');
+    expect(allText).not.toContain('72 hours');
+    expect(allText).not.toContain('Rectification');
+    expect(allText).not.toContain('Erasure');
+    expect(allText).not.toContain('Data portability');
+    expect(allText).not.toContain('Object to processing');
+    expect(allText).not.toContain(PRIVACY_NOTICE_LABELS.RIGHTS_LABEL);
+    expect(allText).not.toContain(PRIVACY_NOTICE_LABELS.BREACH_TIMELINE_LABEL);
+
+    // No alternative safeguard is substituted (counsel: "do not substitute").
+    expect(allText).not.toMatch(/standard contractual clauses/i);
+    expect(allText).not.toMatch(/72-hour/i);
+
+    // The counsel-pending placeholder is present, mirroring the EU–US
+    // pattern (same substring as PRIVACY_NOTICE_LABELS.DPF_DESCRIPTION).
+    expect(allText).toContain('under review by legal counsel and will be published here once confirmed');
+
+    // Unaffected: title, regulator, Information Officer.
+    expect(allText).toContain('Kenya Data Protection Act 2019');
+    expect(allText).toContain('Office of the Data Protection Commissioner');
+    const officerLink = document.querySelector('a[href="mailto:privacy@arkova.ai"]');
+    expect(officerLink).not.toBeNull();
+  });
+
+  /**
+   * The Kenya-only removal must not leak into any other jurisdiction's rights
+   * list or breach timeline. Full unfiltered render, same assertions the
+   * pre-existing tests above already made per-jurisdiction — restated here
+   * together as the explicit "other jurisdictions unaffected" regression
+   * guard for this change.
+   */
+  it('other jurisdictions keep their rights lists and breach timelines (Kenya-only change)', () => {
+    render(<JurisdictionPrivacyNotices />);
+
+    const allText = document.body.textContent ?? '';
+
+    // Breach timelines, still present.
+    expect(allText).toContain('72 hours (controller to NDPC)'); // Nigeria
+    expect(allText).toContain('60 calendar days'); // HIPAA
+    expect(allText).toContain('30-day assessment'); // Australia
+
+    // Rights lists, still present.
+    expect(allText).toContain('Rectification'); // Nigeria (rights shape formerly shared with Kenya)
+    expect(allText).toContain('Section 23'); // South Africa
+    expect(allText).toContain('ARCO'); // Mexico
+
+    // Only Kenya's card omits the "Your Rights" section entirely — every
+    // other jurisdiction still renders the label at least once.
+    const rightsLabelCount = allText.split(PRIVACY_NOTICE_LABELS.RIGHTS_LABEL).length - 1;
+    expect(rightsLabelCount).toBeGreaterThan(0);
   });
 });

@@ -13,7 +13,7 @@ Email sending infrastructure powered by Resend SDK. Handles transactional email 
 ## Rules
 
 - No document content in emails (Constitution 1.6 — client-side processing boundary).
-- No blockchain terminology in user-facing email copy (Constitution 1.3).
+- No blockchain terminology in user-facing email copy (Constitution 1.3). **CI-enforced since 2026-08-20:** this whole directory is a `WORKER_COPY_ROOT` in `scripts/check-copy-terms.ts`, so `npm run lint:copy` (ci.yml + the deploy-worker gate) scans every subject and body here. Scope + escape hatch: `scripts/agents.md` → "Worker-email scope".
 - API keys loaded from env, never logged (Constitution 1.4).
 - No PII beyond email address in audit logs.
 - A missing/misconfigured provider must never report a fake success in production — see `sendEmail`'s `nodeEnv` branch above. Any new `emailType` inherits this for free (the guard is provider-level, not per-template).

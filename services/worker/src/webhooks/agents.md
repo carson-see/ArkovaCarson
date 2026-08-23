@@ -52,3 +52,12 @@ System description for this module is documented in Confluence under SCRUM-1735.
 ## SSRF guard extract (SCRUM-2483)
 
 - The private-IP classifier (`isPrivateIp`, `PRIVATE_IP_PATTERNS`, `BLOCKED_HOSTNAMES`) + DNS-resolution helper were lifted **byte-identically** from `delivery.ts` into `../lib/ssrf-guard.ts` so this webhook guard and the new `safeFetch` egress primitive share ONE source of truth. `delivery.ts` re-exports them, so `isPrivateUrl`/`isPrivateUrlResolved` and every importer (`api/v1/webhooks.ts`, `credential-sources.ts`) are unchanged — no behaviour delta on the webhook delivery path. Edit the blocklist in `ssrf-guard.ts`, not here.
+
+## 2026-08-17 — `response_body`/`error_message` truncation is surrogate-safe
+
+`delivery.ts` bounded `webhook_delivery_logs.response_body` (1000) and `error_message` (500) with
+bare `.slice(0, N)`. The receiving endpoint controls the response bytes: a body whose cap boundary
+split a surrogate pair made the delivery-log `.update()` itself PGRST102 — status bookkeeping
+failing on attacker-controlled input (2026-08-17 poison-record class, PR #2266). All four sites now
+use `utils/utf16-truncate.ts` `truncateUtf16Safe`. Poison regression tests live in
+`src/tests/webhook-delivery-roundtrip.test.ts` (`response_body surrogate-safe truncation`).
