@@ -17,6 +17,7 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
 import { createEmbeddingProvider } from '../../ai/factory.js';
 import { GEMINI_GENERATION_MODEL } from '../../ai/gemini-config.js';
 import { traceAiProviderCall } from '../../ai/observability.js';
@@ -674,13 +675,16 @@ function buildDeterministicContextFallback(
   };
 }
 
-function buildCitationExcerpt(doc: NessieResult): string {
+// Exported for tests: excerpt bounding must be surrogate-safe (2026-08-17
+// poison-record class) — public-record abstracts are external text and a cut
+// inside a surrogate pair leaves a lone high surrogate in the citation.
+export function buildCitationExcerpt(doc: NessieResult): string {
   const meta = doc.metadata ?? {};
   const abstract = typeof meta.abstract === 'string' ? meta.abstract.trim() : '';
-  if (abstract) return abstract.slice(0, 500);
+  if (abstract) return truncateUtf16Safe(abstract, 500);
 
   const fullText = typeof meta.full_text === 'string' ? meta.full_text.trim() : '';
-  if (fullText) return fullText.slice(0, 500);
+  if (fullText) return truncateUtf16Safe(fullText, 500);
 
   return `${doc.record_type}: ${doc.title ?? 'Untitled verified record'}`;
 }
