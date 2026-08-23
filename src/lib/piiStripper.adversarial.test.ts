@@ -471,9 +471,9 @@ describe('piiStripper adversarial tests (CISO THREAT-5)', () => {
     // stripPII runs EMAIL_PATTERN. This is the residual the fast-path commit
     // recorded as open. It is closed by bounding the local-part quantifier to
     // RFC 5321's 64 octets, which caps the work the unanchored scan can redo
-    // at each offset. Measured 3,677 ms with the unbounded `+` and 14 ms with
+    // at each offset. Measured 3,583 ms with the unbounded `+` and 15 ms with
     // the bound, so the 2 s ceiling sits far below the broken runtime and
-    // ~140x above the fixed one — it cannot flake either way.
+    // ~130x above the fixed one — it cannot flake either way.
     it('handles a long local-part run followed by an invalid domain in linear time', () => {
       const input = `${'a'.repeat(40000)}@${'b'.repeat(40000)}`;
       const started = performance.now();
@@ -483,8 +483,10 @@ describe('piiStripper adversarial tests (CISO THREAT-5)', () => {
 
     // Same class, ambiguous-domain half: every '.' is a candidate split point
     // for the `\.` that follows the domain class, and no valid TLD ever ends
-    // the run. Bounding the domain to RFC 5321's 255 octets caps that too.
-    // Sized so the ceiling is a real ratchet: 3,750 ms unbounded vs 14 ms
+    // the run. The LOCAL-PART bound fixes this one too — the cost was the
+    // unanchored local-part rescan walking over the domain text, since '.'
+    // and '-' are local-part characters, not the domain quantifier itself.
+    // Sized so the ceiling is a real ratchet: 3,747 ms unbounded vs 14 ms
     // bounded at this length, the same ~140x margin as the case above.
     it('handles an ambiguous dotted domain that never completes in linear time', () => {
       const input = `x@${'a.'.repeat(45000)}1`;
@@ -510,13 +512,36 @@ describe('piiStripper adversarial tests (CISO THREAT-5)', () => {
 
     // A >64-octet local-part is not a legal RFC 5321 address. The bound means
     // the leading remainder of such a run is no longer swallowed — but the
-    // address itself, and critically the domain, still are.
-    it('redacts the address when the local-part run exceeds the RFC 5321 bound', () => {
-      const result = stripPII(`${'x'.repeat(80)}@mail.example.com`);
-      expect(result.strippedText).toContain('[EMAIL_REDACTED]');
-      expect(result.strippedText).not.toContain('mail.example.com');
-      expect(result.strippedText).not.toContain('@');
-      expect(result.piiFound).toContain('email');
-    });
+    // address itself, and critically the domain, still are. The bound must
+    // degrade THIS way (match starts later) and never by failing to match:
+    // these lengths straddle and far exceed it.
+    it.each([80, 300, 5000])(
+      'still redacts the @ and the domain when the local-part run is %i characters',
+      (len) => {
+        const result = stripPII(`${'x'.repeat(len)}@mail.example.com`);
+        expect(result.strippedText).toContain('[EMAIL_REDACTED]');
+        expect(result.strippedText).not.toContain('mail.example.com');
+        expect(result.strippedText).not.toContain('@');
+        expect(result.piiFound).toContain('email');
+      },
+    );
+
+    // Regression pin for a bug caught in review before it shipped. Bounding the
+    // DOMAIN quantifier to RFC 5321's 255 octets looked symmetric with the
+    // local-part bound and is not: a domain-character run longer than the bound
+    // cannot reach the `\.` that must follow it, so the pattern matches NOTHING
+    // and the entire address — '@' and registrable domain included — survives in
+    // the clear. That is strictly worse than the unbounded pattern it replaced.
+    // The domain quantifier must stay unbounded; the local-part bound alone
+    // already makes the scan linear.
+    it.each([300, 400, 2000])(
+      'still redacts the registrable domain when the domain run is %i characters',
+      (len) => {
+        const result = stripPII(`mail user@${'a'.repeat(len)}.example.com end`);
+        expect(result.strippedText).not.toContain('example.com');
+        expect(result.strippedText).not.toContain('@');
+        expect(result.strippedText).toContain('[EMAIL_REDACTED]');
+      },
+    );
   });
 });
