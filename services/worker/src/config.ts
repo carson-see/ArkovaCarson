@@ -421,6 +421,15 @@ const ConfigSchema = z.object({
   enableQueueReminders: boolFlag(true),
   /** ENABLE_TREASURY_ALERTS — fan-out treasury low-balance to Slack/email. Default true. */
   enableTreasuryAlerts: boolFlag(true),
+  /**
+   * ENABLE_PLATFORM_HEALTH_DIGEST — daily platform-admin health digest
+   * (`jobs/platform-health-digest-cron.ts`): anchors by status, job_queue
+   * depth, last night's batch flush, connector health rollup, quota
+   * anomalies. Default true (code level AND deploy-worker.yml) — a routine
+   * ops-visibility email, not a customer-facing send; keep the existing
+   * hardcoded-recipient stuck-anchor alert in `pipeline-health.ts` separate.
+   */
+  enablePlatformHealthDigest: boolFlag(true),
   /** ENABLE_WEBHOOK_HMAC — verify HMAC on inbound vendor webhooks. CLAUDE.md SEC-01. Default true. */
   enableWebhookHmac: boolFlag(true),
   /** ENABLE_RULE_ACTION_DISPATCHER — claim-loop driver for rule actions. Default true. */
@@ -926,6 +935,7 @@ function loadConfig(): Config {
     enableRulesEngine: process.env.ENABLE_RULES_ENGINE,
     enableQueueReminders: process.env.ENABLE_QUEUE_REMINDERS,
     enableTreasuryAlerts: process.env.ENABLE_TREASURY_ALERTS,
+    enablePlatformHealthDigest: process.env.ENABLE_PLATFORM_HEALTH_DIGEST,
     enableWebhookHmac: process.env.ENABLE_WEBHOOK_HMAC,
     enableRuleActionDispatcher: process.env.ENABLE_RULE_ACTION_DISPATCHER,
     enableAllocationRollover: process.env.ENABLE_ALLOCATION_ROLLOVER,
