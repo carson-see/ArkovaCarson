@@ -49,6 +49,7 @@ vi.mock('../../webhooks/delivery.js', async () => {
 
 import { webhooksSelfServiceRouter } from './webhooks-self-service.js';
 import { db } from '../../utils/db.js';
+import { poisonAt, isWellFormedUtf16 } from '../../tests/utf16-poison.js';
 import {
   isPrivateUrlResolved,
   replayDelivery,
@@ -199,6 +200,38 @@ describe('webhooksSelfServiceRouter', () => {
       expect(calledUrl).toBe(ENDPOINT_ROW.url);
       expect(init.headers['X-Arkova-Signature']).toMatch(/^[0-9a-f]{64}$/);
       expect(init.headers['X-Arkova-Event']).toBe('test.ping');
+
+      vi.unstubAllGlobals();
+    });
+
+    // 2026-08-17 poison-record class: the endpoint controls the response body;
+    // a bare `.slice(0, 500)` cutting inside a surrogate pair leaves a lone
+    // high surrogate in `response_body`. Serialization escapes it rather than
+    // throwing, but the string is no longer valid Unicode — it corrupts on any
+    // UTF-8 hop and would poison `webhook_delivery_logs` if ever persisted.
+    it('returns a well-formed response_body when the endpoint replies with poison at the 500-unit cap', async () => {
+      (db.from as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(mockQuery({ data: PROFILE_ADMIN }))
+        .mockReturnValueOnce(mockQuery({ data: ENDPOINT_ROW }));
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          text: vi.fn().mockResolvedValue(poisonAt(500)),
+        }),
+      );
+
+      const app = createApp();
+      const res = await request(app)
+        .post('/webhooks/self-service/ep-1/test')
+        .set('x-test-user-id', 'user-1');
+
+      expect(res.status).toBe(200);
+      expect(typeof res.body.response_body).toBe('string');
+      expect(res.body.response_body.length).toBeLessThanOrEqual(500);
+      expect(isWellFormedUtf16(res.body.response_body)).toBe(true);
 
       vi.unstubAllGlobals();
     });

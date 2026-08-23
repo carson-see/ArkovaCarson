@@ -67,7 +67,8 @@ vi.mock('../../config.js', () => ({
 
 import express from 'express';
 import request from 'supertest';
-import { nessieQueryRouter, clearContextCache } from './nessie-query.js';
+import { nessieQueryRouter, clearContextCache, buildCitationExcerpt } from './nessie-query.js';
+import { poisonAt, isWellFormedUtf16 } from '../../tests/utf16-poison.js';
 
 function buildApp() {
   const app = express();
@@ -382,5 +383,38 @@ describe('GET /nessie/query', () => {
       expect(res.status).toBe(200);
       expect(res.body.task_type).toBe('compliance_qa');
     });
+  });
+});
+
+// ─── Surrogate-safe citation excerpts (2026-08-17 poison-record class) ──────
+//
+// `buildCitationExcerpt` bounds abstract/full_text to 500 UTF-16 units for the
+// citation payload. Public-record metadata is ingested from external sources
+// (OpenAlex et al. — the incident record was an OpenAlex abstract with
+// astral-plane math symbols), so a cap boundary can land mid-surrogate-pair.
+describe('buildCitationExcerpt surrogate safety', () => {
+  function docWithMeta(metadata: Record<string, unknown>) {
+    return {
+      record_id: 'rec-1',
+      source: 'openalex',
+      source_url: 'https://openalex.example/W1',
+      title: 'T',
+      record_type: 'scholarly_work',
+      relevance_score: 1,
+      anchor_proof: null,
+      metadata,
+    } as never;
+  }
+
+  it('never splits a surrogate pair when the abstract cuts at the 500-unit cap', () => {
+    const excerpt = buildCitationExcerpt(docWithMeta({ abstract: poisonAt(500) }));
+    expect(excerpt.length).toBeLessThanOrEqual(500);
+    expect(isWellFormedUtf16(excerpt)).toBe(true);
+  });
+
+  it('never splits a surrogate pair when full_text cuts at the 500-unit cap', () => {
+    const excerpt = buildCitationExcerpt(docWithMeta({ full_text: poisonAt(500) }));
+    expect(excerpt.length).toBeLessThanOrEqual(500);
+    expect(isWellFormedUtf16(excerpt)).toBe(true);
   });
 });
