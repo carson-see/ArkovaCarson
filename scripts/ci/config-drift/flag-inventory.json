@@ -237,6 +237,15 @@
       "soak": "must-be-on",
       "why": "Queue reminder/digest behaviour — a cron surface the soak should observe across daily cycles."
     },
+    "ENABLE_QUEUE_DIGEST": {
+      "sources": ["env"],
+      "resolvers": ["config.ts enableQueueDigest (default false)"],
+      "prodDbRow": "absent",
+      "prodResolved": true,
+      "customerReachable": true,
+      "soak": "must-be-on",
+      "why": "QUEUE-07 daily org-admin review-queue digest (feat/queue-digest-default-on, draft T2). Previously absent from deploy-worker.yml entirely, so it resolved false via the config.ts code default and POST /jobs/queue-digest was a standing no-op — found by a read-only capability audit, not by this gate. Now true. Per-org enrollment is separately DEFAULT-ON (opt-out via an organization_rules row), so a soak should observe this cron path actually enumerating admins and sending mail across daily cycles, not just staying dark."
+    },
     "ENABLE_TREASURY_ALERTS": {
       "sources": ["env"],
       "resolvers": ["config.ts enableTreasuryAlerts (default true)"],
