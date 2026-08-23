@@ -1778,6 +1778,57 @@ describe('check-staging-evidence', () => {
         expect(r.notes.join(' ')).toMatch(/RC manifest/i);
       });
 
+      // --- risk_tier branches of the covering included_prs[] entry --------
+      // Only "below required tier" was previously asserted. These pin the
+      // other two outcomes, which is the safety net for lifting the tier
+      // check out of validateCoveredRcPr() into rcEntryTierErrors().
+
+      it('fails when the covering included_prs[] entry has a risk_tier outside T1/T2/T3', () => {
+        const r = runWithManifest(manifest({
+          included_prs: [{
+            number: 1047,
+            head_sha: headSha,
+            base_sha: baseSha,
+            risk_tier: 'T4',
+            owner: 'release',
+            ci_summary: 'required checks green',
+            rollback_note: 'revert PR and re-apply prior migration state',
+            migration_files: ['supabase/migrations/0332_free_tier_cap.sql'],
+          }],
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/risk_tier must be T1, T2, or T3/i);
+      });
+
+      it('fails when the manifest risk_tier is below the tier the PR body DECLARES, even though it clears the detector-required tier', () => {
+        // Public-API worker files require T2, so a T2 manifest entry clears
+        // "required" outright. The body over-declares T3, and over-declaration
+        // is binding — the declared-tier comparison is the only thing that can
+        // reject this manifest, which is what makes it a clean pin.
+        const rc = manifest({
+          included_prs: [{
+            number: 1047,
+            head_sha: headSha,
+            base_sha: baseSha,
+            risk_tier: 'T2',
+            owner: 'release',
+            ci_summary: 'required checks green',
+            rollback_note: 'revert PR and re-apply prior migration state',
+            migration_files: [],
+          }],
+        });
+        const r = check({
+          body: rcBody,
+          files: ['services/worker/src/api/v1/anchors.ts'],
+          headSha,
+          baseSha,
+          nowMs: Date.parse('2026-06-10T01:00:00Z'),
+          rcManifestLoader: () => JSON.stringify(rc),
+        });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/risk_tier T2 is below declared tier T3/i);
+      });
+
       it('fails when the RC manifest path is outside the approved local directory', () => {
         const r = runWithManifest(manifest(), `## Staging Soak Evidence
 - Tier: T3
@@ -2395,6 +2446,24 @@ describe('check-staging-evidence', () => {
         const r = runDeferred(deferredManifest({ approval_status: 'approved' }), { deployWorkerPaused: true });
         expect(r.ok).toBe(false);
         expect(r.errors.join(' ')).toMatch(/pending/i);
+      });
+
+      // Deferred mode reads approval_status with an optional chain rather than
+      // an explicit null guard, so the absent/non-string cases are pinned here:
+      // `null?.trim()` is `undefined`, which is never 'pending', so a manifest
+      // that simply omits the field must still be rejected.
+      it('rejects a deferred manifest that omits approval_status entirely', () => {
+        const rc: Record<string, unknown> = deferredManifest();
+        delete rc.approval_status;
+        const r = runDeferred(rc, { deployWorkerPaused: true });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/not the literal string "pending"/i);
+      });
+
+      it('rejects a deferred manifest whose approval_status is not a string', () => {
+        const r = runDeferred(deferredManifest({ approval_status: 42 }), { deployWorkerPaused: true });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/not the literal string "pending"/i);
       });
 
       it('rejects an unrecognized soak_mode value rather than silently falling through', () => {
