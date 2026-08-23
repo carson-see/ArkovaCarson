@@ -1,0 +1,17 @@
+fullsoak-daily-probes — behavioural probe run
+run_ts           : 2026-08-12T16:21:32Z
+mode             : full (only P4)
+rig service      : https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app
+rig supabase ref : gnkuaywlpmsaezwvlvhk
+prod supabase ref: vzwyaatejekddvltxyye
+host             : Arkovas-Mac-mini.local
+git HEAD         : 550320dc8f7a48852177336c80999374b7e758b2
+mgmt SQL (reads) : available
+----------------------------------------------------------------------
+FAIL  P4a  ORG_ADMIN JWT creates a folder
+         expected: 201 + id
+         observed: http 403, body={"code":"42501","details":null,"hint":null,"message":"new row violates row-level security policy for table \"folders\""}
+----------------------------------------------------------------------
+PASS=0 FAIL=1 SKIP=0
+DAILY_PROBES: FAIL
+artifact: /Volumes/Extreme/Arkova/_legacy/home-Arkova-2026-05-15/arkova-mvpcopy-main/docs/staging/evidence/fullsoak-2026-08/2026-08-12/probes-162132Z.txt

@@ -5,7 +5,7 @@
     "title": "Arkova Verification MCP Server",
     "version": "1.0.0",
     "description": "Read Arkova verification records and search public-safe credential metadata through MCP.",
-    "vendor": "Arkova Technologies, Inc.",
+    "vendor": "Bloc Doc Inc.",
     "homepage": "https://app.arkova.ai",
     "documentation": "https://app.arkova.ai/developers"
   },

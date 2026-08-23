@@ -15,12 +15,13 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useOrganization } from '@/hooks/useOrganization';
 import { useOrgMembers } from '@/hooks/useOrgMembers';
+import { useOrgInvitations, type OrgInvitation } from '@/hooks/useOrgInvitations';
 import { useAdminOrgMembers } from '@/hooks/useAdminOrgMembers';
 import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
 import { useInviteMember } from '@/hooks/useInviteMember';
 import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/layout';
-import { OrgRegistryTable, MembersTable, IssueCredentialForm, RevokeDialog, InviteMemberModal, AddExistingMemberModal } from '@/components/organization';
+import { OrgRegistryTable, MembersTable, PendingInvitationsList, IssueCredentialForm, RevokeDialog, InviteMemberModal, AddExistingMemberModal } from '@/components/organization';
 import { SecureDocumentDialog } from '@/components/anchor';
 import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
 import { useIssueCredentialSplit } from '@/hooks/useIssueCredentialSplit';
@@ -64,6 +65,15 @@ export function OrgProfilePage() {
   const [roleLoading, setRoleLoading] = useState(true);
   const isAdmin = userRole === 'owner' || userRole === 'admin' || isPlatformAdmin(profile);
   const issueCredentialRole = isAdmin ? 'ORG_ADMIN' : 'INDIVIDUAL';
+
+  // Admin-only: the "Org admins can view invitations" RLS policy already
+  // scopes reads to ORG_ADMIN, but gating the query too avoids a predictably
+  // empty round-trip for non-admin viewers.
+  const {
+    invitations: pendingInvitations,
+    loading: invitationsLoading,
+    refreshInvitations,
+  } = useOrgInvitations(isAdmin ? orgId ?? null : null);
 
   // Platform-admin-viewing-a-foreign-org: the admin is NOT a member of this org,
   // so the browser's RLS-scoped queries (useOrgMembers, profiles search) return 0
@@ -334,7 +344,26 @@ export function OrgProfilePage() {
       orgName: organization?.display_name ?? 'Your Organization',
       inviterName: profile?.full_name ?? undefined,
     });
-  }, [inviteMember, orgId, organization?.display_name, profile?.full_name]);
+    await refreshInvitations();
+  }, [inviteMember, orgId, organization?.display_name, profile?.full_name, refreshInvitations]);
+
+  // Resend = a fresh invite_member RPC call + a fresh /api/send-invitation-email
+  // send (same path as the original Invite Member action) rather than
+  // re-emailing the old token: the old invitation's expires_at never moves,
+  // so re-sending the SAME link would still read as expired the moment the
+  // invitee clicks it. Refreshing the list afterward picks up the new
+  // pending row created by the RPC alongside the stale one it doesn't touch.
+  const handleResendInvitation = useCallback(async (invitation: OrgInvitation) => {
+    if (!orgId) return;
+    await inviteMember({
+      email: invitation.email,
+      role: invitation.role === 'ORG_ADMIN' ? 'ORG_ADMIN' : 'INDIVIDUAL',
+      orgId,
+      orgName: organization?.display_name ?? 'Your Organization',
+      inviterName: profile?.full_name ?? undefined,
+    });
+    await refreshInvitations();
+  }, [inviteMember, orgId, organization?.display_name, profile?.full_name, refreshInvitations]);
 
   const handleChangeRole = useCallback(async (member: { id: string; fullName: string | null; email: string }, newRole: 'ORG_ADMIN' | 'INDIVIDUAL') => {
     const { error } = await supabase
@@ -608,6 +637,13 @@ export function OrgProfilePage() {
             currentUserId={user?.id}
             onChangeRole={isAdmin ? handleChangeRole : undefined}
           />
+          {isAdmin && (
+            <PendingInvitationsList
+              invitations={pendingInvitations}
+              loading={invitationsLoading}
+              onResend={handleResendInvitation}
+            />
+          )}
         </TabsContent>
 
         {/* Settings Tab (admin only) */}

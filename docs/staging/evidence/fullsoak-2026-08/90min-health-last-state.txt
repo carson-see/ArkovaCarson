@@ -1,0 +1,3 @@
+last_uptime=135404
+last_secured=25845
+last_check_utc=2026-08-18T123340Z

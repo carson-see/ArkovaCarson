@@ -108,6 +108,117 @@ describe('piiStripper', () => {
     });
   });
 
+  // ─── Separator-insensitive ID labels ──────────────────────────────────
+  // CSV headers are overwhelmingly snake_case. The keyword patterns used to
+  // join their tokens with `\s+`, so the free-text form redacted while the
+  // CSV form flowed through to /api/v1/ai/extract-batch unredacted. A student
+  // or employee ID identifies an education/employment record (FERPA), so §1.6
+  // requires it stripped in every separator form, not just the spaced one.
+  describe('student ID labels are separator-insensitive', () => {
+    // Every separator form of every person-role ID label, in the CSV
+    // `<column>: <value>` shape. The spaced forms are the no-regression cases;
+    // the rest are what used to flow through unredacted. Parameterised so a
+    // failure names the exact label rather than stopping at the first one.
+    it.each([
+      ['student_id', '88213'],
+      ['student-id', '88213'],
+      ['studentid', '88213'],
+      ['Student ID', '88213'],
+      ['id_number', 'A12345678'],
+      ['employee_id', '88213'],
+      ['employee-id', '88213'],
+      ['employeeid', '88213'],
+      ['Employee ID', '88213'],
+      ['member_id', '88213'],
+      ['member-id', '88213'],
+      ['memberid', '88213'],
+      ['Member ID', '88213'],
+    ])('redacts the value under %s', (label, value) => {
+      const result = stripPII(`${label}: ${value}`);
+      expect(result.strippedText).toBe(`${label}: [STUDENT_ID_REDACTED]`);
+      expect(result.piiFound).toContain('studentId');
+    });
+  });
+
+  describe('DOB / address / national ID labels are separator-insensitive', () => {
+    it('strips snake_case date_of_birth', () => {
+      const result = stripPII('date_of_birth: 01/15/1990');
+      expect(result.strippedText).toBe('date_of_birth: [DOB_REDACTED]');
+      expect(result.piiFound).toContain('dob');
+    });
+
+    it('strips snake_case birth_date', () => {
+      const result = stripPII('birth_date: 1985-06-15');
+      expect(result.strippedText).toBe('birth_date: [DOB_REDACTED]');
+      expect(result.piiFound).toContain('dob');
+    });
+
+    it('strips snake_case postal_code', () => {
+      const result = stripPII('postal_code: SW1A 2AA');
+      expect(result.strippedText).toContain('[ADDRESS_REDACTED]');
+      expect(result.strippedText).not.toContain('SW1A 2AA');
+      expect(result.piiFound).toContain('address');
+    });
+
+    it('strips snake_case national_id', () => {
+      const result = stripPII('national_id: AB.123/456');
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+      expect(result.strippedText).not.toContain('AB.123/456');
+      expect(result.piiFound).toContain('nationalId');
+    });
+
+    // `steuer_id` is the underscore form of Steuer-ID.
+    it.each([
+      ['tax_id', '12-3456789'],
+      ['passport_number', 'X1234567'],
+      ['steuer_id', '12345678901'],
+    ])('strips snake_case %s', (label, value) => {
+      const result = stripPII(`${label}: ${value}`);
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+      expect(result.strippedText).not.toContain(value);
+    });
+  });
+
+  // Precision matters as much as recall: this module is SHARED with the
+  // document path via stripPIIEnhanced, so a broadened keyword matcher must
+  // not start eating ordinary structured columns.
+  describe('precision: non-identifier columns are NOT redacted', () => {
+    it('leaves scalar academic columns untouched', () => {
+      const result = stripPII('credit_hours: 3\nscore: 88\nyear: 2024');
+      expect(result.strippedText).toBe('credit_hours: 3\nscore: 88\nyear: 2024');
+      expect(result.redactionCount).toBe(0);
+      expect(result.piiFound).toEqual([]);
+    });
+
+    it('redacts identifier columns while preserving the rest of a CSV row', () => {
+      const rowText = [
+        'student_id: 88213',
+        'employee_id: E44718',
+        'member_id: M90210',
+        'credential_name: Advanced Cardiac Life Support',
+        'credit_hours: 3',
+        'score: 88',
+        'year: 2024',
+        'issue_date: 2024-06-01',
+      ].join('\n');
+
+      const result = stripPII(rowText);
+
+      // Identifiers gone
+      expect(result.strippedText).not.toContain('88213');
+      expect(result.strippedText).not.toContain('E44718');
+      expect(result.strippedText).not.toContain('M90210');
+      expect(result.piiFound).toContain('studentId');
+
+      // Everything the extractor actually needs survives
+      expect(result.strippedText).toContain('credential_name: Advanced Cardiac Life Support');
+      expect(result.strippedText).toContain('credit_hours: 3');
+      expect(result.strippedText).toContain('score: 88');
+      expect(result.strippedText).toContain('year: 2024');
+      expect(result.strippedText).toContain('issue_date: 2024-06-01');
+    });
+  });
+
   describe('name matching against provided names', () => {
     it('strips names when recipient names are provided', () => {
       const result = stripPII('Awarded to John Michael Smith for excellence', {
@@ -308,6 +419,116 @@ describe('piiStripper', () => {
       const result = stripPII(text);
       expect(result.strippedText).not.toContain('123 Main St');
       expect(result.strippedText).not.toContain('New York, NY 10001');
+      expect(result.piiFound).toContain('address');
+    });
+  });
+
+  // ─── Address coverage the separator fix did not reach (PR #2313) ────
+  //
+  // #2312 made every keyword separator-insensitive, which covers `postal_code`
+  // and `postcode`. Three address-specific holes survived it, all of them on the
+  // CSV bulk-upload path where each column is its own `"<column>: <value>"` line.
+  describe('address labels carrying a qualifier', () => {
+    // `home_address` already matched, because `_` is a keyword boundary and the
+    // bare `address` alternative picks up from there. The camelCase and
+    // unseparated forms did NOT: the character before `Address` is a letter, so
+    // the boundary fails and the whole value shipped in the clear.
+    const qualified = [
+      ['homeAddress', '123 Main Street'],
+      ['mailingAddress', '1 Rue de Rivoli'],
+      ['postalAddress', '10 Downing Street'],
+      ['streetAddress', '742 Evergreen Terrace'],
+      ['businessAddress', '30 St Mary Axe'],
+      ['workAddress', '55 Water Street'],
+      ['permanentAddress', '221B Baker Street'],
+      ['currentAddress', '4 Privet Drive'],
+      ['residentialAddress', '12 Grimmauld Place'],
+      ['homeaddress', '9 Bond Street'],
+    ] as const;
+
+    it.each(qualified)('redacts %s and keeps the label intact', (label, value) => {
+      const result = stripPII(`${label}: ${value}`);
+      expect(result.strippedText).toBe(`${label}: [ADDRESS_REDACTED]`);
+      expect(result.strippedText).not.toContain(value);
+      expect(result.piiFound).toContain('address');
+    });
+
+    it('redacts a qualified street label', () => {
+      const result = stripPII('businessStreet: 12 Long Acre');
+      expect(result.strippedText).toBe('businessStreet: [ADDRESS_REDACTED]');
+      expect(result.piiFound).toContain('address');
+    });
+
+    // Regression on the OTHER failure mode: `street_address` DID redact, but it
+    // matched only its `street` half, so the value pattern swallowed the rest of
+    // the label and emitted `street[ADDRESS_REDACTED]`. The column name is
+    // metadata the extractor reads — destroying it is a bug in its own right.
+    it('keeps the whole street_address label instead of eating half of it', () => {
+      const result = stripPII('street_address: 123 Main St');
+      expect(result.strippedText).toBe('street_address: [ADDRESS_REDACTED]');
+    });
+
+    it('keeps the whole "street address" label', () => {
+      const result = stripPII('street address: 123 Main St');
+      expect(result.strippedText).toBe('street address: [ADDRESS_REDACTED]');
+    });
+  });
+
+  describe('post_code / post-code separator forms', () => {
+    it.each(['postcode', 'post_code', 'post-code'])('redacts %s', (label) => {
+      const result = stripPII(`${label}: SW1A 1AA`);
+      expect(result.strippedText).toBe(`${label}: [ADDRESS_REDACTED]`);
+      expect(result.piiFound).toContain('address');
+    });
+
+    // Precision boundary: this module is SHARED with the OCR document path, and
+    // "post code" is an ordinary prose bigram. Only the `_` / `-` / unseparated
+    // header forms are address keywords — a plain space is not, and neither is a
+    // longer word that merely contains the keyword.
+    it.each([
+      'Please post code to the repository before the review',
+      'postcodes are validated on submission',
+      'compost code: nothing personal here',
+    ])('leaves %j untouched', (text) => {
+      expect(stripPII(text).strippedText).toBe(text);
+    });
+  });
+
+  // The multi-line address capture predates the CSV path. On a per-line
+  // "<column>: <value>" row it read the NEXT columns as continuation lines and
+  // collapsed up to two of them into the redaction token, so the extractor never
+  // saw them. Same line-crossing class #2312 fixed for NATIONAL_ID, address rule.
+  describe('multi-line address capture stops at the next column', () => {
+    it('does not swallow the column after postal_code', () => {
+      const result = stripPII('postal_code: SW1A 1AA\nissue_date: 2026-03-14');
+      expect(result.strippedText).toBe('postal_code: [ADDRESS_REDACTED]\nissue_date: 2026-03-14');
+    });
+
+    it('does not swallow the two columns after an address column', () => {
+      const result = stripPII(
+        'address: 123 Main St\nissue_date: 2026-03-14\ncourse_name: Advanced Cardiac Life Support',
+      );
+      expect(result.strippedText).toBe(
+        'address: [ADDRESS_REDACTED]\nissue_date: 2026-03-14\ncourse_name: Advanced Cardiac Life Support',
+      );
+    });
+
+    it('does not swallow the column after zip_code', () => {
+      const result = stripPII('zip_code: 90210\nissue_date: 2026-03-14');
+      expect(result.strippedText).toBe('zip_code: [ADDRESS_REDACTED]\nissue_date: 2026-03-14');
+    });
+
+    it('stops at a labelled column that follows a genuine continuation line', () => {
+      const result = stripPII('address: 123 Main St\nSuite 400\ncourse_name: ACLS');
+      expect(result.strippedText).toBe('address: [ADDRESS_REDACTED]\ncourse_name: ACLS');
+      expect(result.strippedText).not.toContain('Suite 400');
+    });
+
+    // The guard must not cost the OCR case it was written for: real address
+    // continuations carry no `<label>:` opener and are still captured.
+    it('still captures an unlabelled multi-line postal address', () => {
+      const result = stripPII('Address: 123 Main St\nApt 4B\nNew York, NY 10001');
+      expect(result.strippedText).toBe('Address: [ADDRESS_REDACTED]');
       expect(result.piiFound).toContain('address');
     });
   });

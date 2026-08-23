@@ -1,0 +1,12 @@
+{
+  "run_ts": "2026-08-17T14:30:05Z",
+  "prod_url": "https://arkova-worker-kvojbeutfa-uc.a.run.app",
+  "prod_git_sha": "f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58",
+  "prod_network": "mainnet",
+  "anchors_created_24h": "2763", "anchors_secured_24h": "2763",
+  "latest_txid": "3c63d19cdd43efb7517a073cd93309e6cfb0d7d911a3abb78cb026704d0a627f", "latest_block_height": "962887", "latest_public_id": "ARK-SEC-RGZB6N",
+  "anchor_proofs_total": "568723", "anchor_proofs_24h": "2763",
+  "explorer_mempool": "True|962887|00000000000000000001531d", "explorer_blockstream": "True|962887|00000000000000000001531d",
+  "pass": 10, "fail": 0, "skip": 0, "verdict": "PASS",
+  "assertions": [{"id":"M1","desc":"Production worker reports healthy","expected":"http 200 + status=healthy","observed":"http 200, status=healthy, checks={\"database\": \"ok\", \"anchoring\": \"ok\", \"kms\": \"ok\"}","result":"PASS"},{"id":"M2","desc":"Production is on the Bitcoin MAINNET network","expected":"network=mainnet","observed":"network=mainnet, git_sha=f5d1070fcca2027fd7ab56a596d8e1ae27ae4a58, uptime=58288s","result":"PASS"},{"id":"M3","desc":"Prod created anchors in the last 24 h","expected":">0","observed":"2763 created, 2763 of them SECURED","result":"PASS"},{"id":"M4","desc":"Prod carries a recent mainnet chain_tx_id + block height","expected":"64-hex txid + height","observed":"`3c63d19cdd43efb7517a\u2026` at height 962887 (2026-08-17 12:18:43+00, `ARK-SEC-RGZB6N`)","result":"PASS"},{"id":"M5","desc":"The block height is a real mainnet height, not a mock seed","expected":">850000 (mock seeds 800000)","observed":"962887","result":"PASS"},{"id":"M6","desc":"Prod proof rows counted (the G8 coverage gap, stated not hidden)","expected":"a count, whatever it is","observed":"anchor_proofs total=568723, +2763 in 24 h, against ~3643824 anchors (planner estimate)","result":"PASS"},{"id":"M7","desc":"mempool.space confirms the prod txid on mainnet","expected":"confirmed=True","observed":"True|962887|00000000000000000001531d","result":"PASS"},{"id":"M8","desc":"blockstream.info independently confirms the same txid","expected":"confirmed=True","observed":"True|962887|00000000000000000001531d","result":"PASS"},{"id":"M9","desc":"Both explorers and the Arkova DB agree on the block height","expected":"all three equal","observed":"db=962887 mempool=962887 blockstream=962887","result":"PASS"},{"id":"M10","desc":"The RIG holds no mainnet-height anchor \u2014 it did not touch mainnet","expected":"0 rig anchors above height 850000","observed":"0","result":"PASS"}]
+}
