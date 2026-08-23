@@ -11,7 +11,13 @@
  * These tests exercise the pure helpers (parsePrNumber / fetchLiveLabels /
  * resolvePrLabels) with the gh child-process call mocked — no network.
  */
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/** Repo root, for the cross-script assertions at the bottom of this file. */
+const REPO_ROOT = resolve(import.meta.dirname, '..', '..', '..');
 
 // Mock the child_process the module uses. We provide a default git passthrough
 // so the module's import-time `resolveCommitOrFail` (git rev-parse) does not
@@ -578,5 +584,125 @@ describe('hasLabel (live-aware)', () => {
     mod = await import('./ciContext.js');
     expect(mod.hasLabel('count-exact-allowed')).toBe(false);
     expect(mod.hasLabel('foo')).toBe(true);
+  });
+});
+
+/**
+ * PR_COMMITS_MSGS by file, not by env string (E2BIG).
+ *
+ * The aggregated commit messages used to reach check-handoff-claims.ts and
+ * check-confluence-coverage.ts as a single environment VARIABLE. Linux caps a
+ * single envp string at MAX_ARG_STRLEN = 131,072 bytes, so a large enough
+ * aggregate made `execve` of the consuming step's /usr/bin/bash fail with
+ * E2BIG ("Argument list too long") before any script logic ran — no override
+ * label can rescue a failure at process spawn. Measured on PR #2346 (run
+ * 32666797304): 138,166 bytes, killing the HANDOFF.md verification lint step.
+ *
+ * The payload now travels as a FILE path (PR_COMMITS_MSGS_FILE), which has no
+ * such ceiling. PR_COMMITS_MSGS survives only as a size-capped fallback for
+ * local runs and for any caller that has not been re-plumbed.
+ */
+describe('resolvePrCommitsMsgs — file-first, env fallback (E2BIG)', () => {
+  const MAX_ARG_STRLEN = 131_072;
+  let msgsTmp: string;
+
+  beforeEach(() => {
+    msgsTmp = mkdtempSync(join(tmpdir(), 'arkova-ctx-msgs-'));
+    delete process.env.PR_COMMITS_MSGS;
+    delete process.env.PR_COMMITS_MSGS_FILE;
+  });
+
+  afterEach(() => {
+    rmSync(msgsTmp, { recursive: true, force: true });
+  });
+
+  it('reads the file when PR_COMMITS_MSGS_FILE is set', async () => {
+    const path = join(msgsTmp, 'msgs.txt');
+    writeFileSync(path, 'feat: from file\n');
+    process.env.PR_COMMITS_MSGS_FILE = path;
+    process.env.PR_COMMITS_MSGS = 'feat: from env\n';
+    mod = await import('./ciContext.js');
+
+    expect(mod.resolvePrCommitsMsgs()).toBe('feat: from file\n');
+    expect(mod.prCommitsMsgs()).toBe('feat: from file\n');
+  });
+
+  it('carries a payload larger than MAX_ARG_STRLEN, which is the whole point', async () => {
+    const big = `${'y'.repeat(138_166)}\n`;
+    const path = join(msgsTmp, 'big.txt');
+    writeFileSync(path, big);
+    process.env.PR_COMMITS_MSGS_FILE = path;
+    mod = await import('./ciContext.js');
+
+    const resolved = mod.resolvePrCommitsMsgs();
+    expect(Buffer.byteLength(resolved)).toBeGreaterThan(MAX_ARG_STRLEN);
+    expect(resolved).toBe(big);
+  });
+
+  it('falls back to PR_COMMITS_MSGS when no file is declared (unchanged legacy behavior)', async () => {
+    process.env.PR_COMMITS_MSGS = 'feat: env only\n';
+    mod = await import('./ciContext.js');
+
+    expect(mod.resolvePrCommitsMsgs()).toBe('feat: env only\n');
+  });
+
+  it('returns empty string when neither source is present', async () => {
+    mod = await import('./ciContext.js');
+    expect(mod.resolvePrCommitsMsgs()).toBe('');
+  });
+
+  it('ANNOTATES the fallback when a declared file cannot be read — never silently', async () => {
+    // Silence here would degrade the gates to a truncated (or empty) haystack
+    // while still reporting green. The annotation is what makes that visible.
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    process.env.PR_COMMITS_MSGS_FILE = join(msgsTmp, 'does-not-exist.txt');
+    process.env.PR_COMMITS_MSGS = 'feat: capped fallback\n';
+    mod = await import('./ciContext.js');
+
+    expect(mod.resolvePrCommitsMsgs()).toBe('feat: capped fallback\n');
+    expect(err).toHaveBeenCalled();
+    const annotation = err.mock.calls.flat().join(' ');
+    expect(annotation).toContain('::error::');
+    expect(annotation).toContain('PR_COMMITS_MSGS_FILE');
+  });
+
+  it('ignores a whitespace-only file path rather than treating it as a real target', async () => {
+    process.env.PR_COMMITS_MSGS_FILE = '   ';
+    process.env.PR_COMMITS_MSGS = 'feat: env\n';
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+
+    expect(mod.resolvePrCommitsMsgs()).toBe('feat: env\n');
+    expect(err).not.toHaveBeenCalled();
+  });
+
+  it('does NOT read the file at import time — the producer imports this module before writing it', async () => {
+    // scripts/ci/aggregate-commit-messages.ts imports ciContext to borrow
+    // resolveDiffBase and runs BEFORE the file exists. An eager read there
+    // fired the not-readable ::error:: annotation on every CI run, from the
+    // very step whose job is to create the file.
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    process.env.PR_COMMITS_MSGS_FILE = join(msgsTmp, 'not-yet-written.txt');
+    mod = await import('./ciContext.js');
+
+    expect(err, 'importing ciContext must not touch PR_COMMITS_MSGS_FILE').not.toHaveBeenCalled();
+
+    // Reading it is what triggers resolution — and it is memoized thereafter.
+    expect(mod.prCommitsMsgs()).toBe('');
+    expect(err).toHaveBeenCalledTimes(1);
+    mod.prCommitsMsgs();
+    expect(err, 'the payload must be memoized, not re-read per call').toHaveBeenCalledTimes(1);
+  });
+
+  it('is honored by both governance gates through the shared export', async () => {
+    // check-handoff-claims.ts and check-confluence-coverage.ts both read
+    // `prCommitsMsgs`; a fix applied to only one of them would leave the other
+    // spawning with the oversized env var.
+    for (const script of ['check-handoff-claims.ts', 'check-confluence-coverage.ts']) {
+      const source = readFileSync(resolve(REPO_ROOT, 'scripts/ci', script), 'utf8');
+      expect(source, `${script} must read commit messages via ciContext`).toMatch(
+        /\bprCommitsMsgs\(\)/u,
+      );
+    }
   });
 });

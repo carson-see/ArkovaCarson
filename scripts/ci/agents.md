@@ -1,6 +1,48 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-23 (SonarCloud paydown in `check-staging-evidence.ts`)._
+_Last updated: 2026-08-23 (commit-message E2BIG: `aggregate-commit-messages.ts`, file transport)._
+
+## 2026-08-23 — `aggregate-commit-messages.ts` (new): commit messages ship by FILE, not by env var (E2BIG)
+
+`policy-lints` aggregated `git log --format=%B "$BASE_SHA"..HEAD` into the `commits` step's `msgs`
+output, and ci.yml injected it as the `PR_COMMITS_MSGS` **environment variable** into `HANDOFF.md
+verification lint` and `Confluence page coverage`. Linux caps a single argv/envp string at
+`MAX_ARG_STRLEN` = 131,072 bytes, so a large enough aggregate made `execve` of the consuming step's
+`/usr/bin/bash` fail with **E2BIG — "Argument list too long"**. That is raised at process spawn,
+BEFORE any script logic runs: no override label can clear it, and the red check carries no lint
+diagnosis at all. Confirmed on PR #2346 (run 32666797304, job 97261336883, 2026-08-23) at 153
+commits / 138,166 bytes, killing the `HANDOFF.md verification lint` step.
+
+Two causes compounded, and both are closed:
+
+1. **Transport.** `scripts/ci/aggregate-commit-messages.ts` writes the full payload to
+   `$RUNNER_TEMP/pr-commit-msgs.txt`; ci.yml publishes only the PATH as the `msgs_file` output and
+   binds it as `PR_COMMITS_MSGS_FILE`. `lib/ciContext.prCommitsMsgs()` reads that file. A file has
+   no per-string ceiling. `PR_COMMITS_MSGS` survives as a `head -c 100000` capped fallback (local
+   runs, callers not re-plumbed) — spawnable by construction, and falling back to it emits an
+   `::error::` annotation, never silence, because a truncated haystack would let both gates report
+   green on evidence they never saw. Measured: a `SCRUM-` ref at byte 144,000 is seen through the
+   file and invisible through the capped env var.
+2. **Range.** `github.event.pull_request.base.sha` is refreshed by `synchronize` but NOT by
+   close/reopen, so #2346 stayed pinned at its 2026-08-22 creation base and inherited a long-lived
+   branch's history when #2219 merged at 20:57Z — six real commits presenting as 153. The aggregator
+   anchors via `lib/ciContext.resolveDiffBase` (now exported), the same FD-GATE-2 anchoring
+   `changedFiles()` uses, instead of re-deriving a range in shell. **A plain `git merge-base` would
+   NOT have fixed this**: the frozen base is an ancestor of the recomputed merge preview, so
+   `merge-base(base, HEAD)` returns the frozen base unchanged. `HEAD^1` is what collapses the range.
+
+Pinned by `aggregate-commit-messages.test.ts` (range anchoring, fail-closed on a missing target,
+>MAX_ARG_STRLEN round-trip, `maxBuffer` above execFileSync's 1MB default) and by a new
+`ci-workflow-contract.test.ts` block (file transport under `$RUNNER_TEMP`, `head -c` cap strictly
+below 131,072, every `PR_COMMITS_MSGS` consumer also binding `PR_COMMITS_MSGS_FILE` from the
+`commits` step, no raw `$BASE_SHA..HEAD` in shell — with 6 mutation tests). The existing per-run
+random heredoc delimiter is retained: the capped fallback is still PR-author-controlled text framed
+in `$GITHUB_OUTPUT`.
+
+NOTE: `Policy Lints` is in neither `.mergify.yml`'s required-check set nor `main`'s
+branch-protection `required_status_checks` (verified 2026-08-23: `main` has no
+`required_status_checks` object at all), so this class fails loudly in the run log while gating
+nothing. Fixing the crash does not make the job a merge gate.
 
 ## 2026-08-23 — `check-staging-evidence.ts` Sonar paydown: `RcPrClaim`, `rcEntryTierErrors()`
 

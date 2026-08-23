@@ -10,6 +10,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
@@ -280,7 +281,60 @@ export function resolvePrLabels(env: NodeJS.ProcessEnv = process.env): string[] 
 export const prLabels = resolvePrLabels();
 export const prTitle = process.env.PR_TITLE ?? '';
 export const prBody = process.env.PR_BODY ?? '';
-export const prCommitsMsgs = process.env.PR_COMMITS_MSGS ?? '';
+/**
+ * The PR's aggregated commit messages — read from a FILE, not an env string.
+ *
+ * These used to arrive as the PR_COMMITS_MSGS environment variable, which
+ * Linux caps at MAX_ARG_STRLEN = 131,072 bytes for any single argv/envp
+ * string. Once the aggregate crossed that, `execve` of the consuming step's
+ * `/usr/bin/bash` failed with E2BIG — "Argument list too long" — before any
+ * script logic ran, so no override label could clear it and the failure
+ * carried no lint diagnosis at all. Measured on PR #2346 (run 32666797304,
+ * job 97261336883, 2026-08-23): 153 commits / 138,166 bytes killed the
+ * `HANDOFF.md verification lint` step. Pushing a commit refreshed the frozen
+ * base and incidentally cleared it, but any sufficiently old PR — or the next
+ * long-lived branch to merge — re-triggers it.
+ *
+ * `scripts/ci/aggregate-commit-messages.ts` now writes the full payload to
+ * $RUNNER_TEMP and ci.yml passes only the PATH, which has no such ceiling.
+ * PR_COMMITS_MSGS survives as a `head -c` capped fallback for local runs and
+ * any caller not yet re-plumbed; falling back to it is ANNOTATED, never
+ * silent, because a truncated haystack would let both gates report green on
+ * evidence they never saw.
+ */
+export function resolvePrCommitsMsgs(env: NodeJS.ProcessEnv = process.env): string {
+  const path = env.PR_COMMITS_MSGS_FILE?.trim();
+  if (path) {
+    try {
+      return readFileSync(path, 'utf8');
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(
+        `::error::Could not read PR_COMMITS_MSGS_FILE '${path}' (${reason}). ` +
+          'Falling back to the size-capped PR_COMMITS_MSGS env var — commit messages ' +
+          'beyond the cap are NOT visible to this gate.',
+      );
+    }
+  }
+  return env.PR_COMMITS_MSGS ?? '';
+}
+
+let _prCommitsMsgs: string | undefined;
+
+/**
+ * Memoized accessor for {@link resolvePrCommitsMsgs}.
+ *
+ * Deliberately a FUNCTION, not an eagerly-evaluated `const` like `prBody` /
+ * `prTitle`: `scripts/ci/aggregate-commit-messages.ts` imports this module to
+ * borrow {@link resolveDiffBase}, and it runs BEFORE the file exists. An eager
+ * read there fired the not-readable ::error:: annotation on every run — an
+ * error annotation from the very step whose job is to create the file.
+ */
+export function prCommitsMsgs(): string {
+  _prCommitsMsgs ??= resolvePrCommitsMsgs();
+  return _prCommitsMsgs;
+}
+
 export const headRef = process.env.GITHUB_HEAD_REF ?? process.env.GITHUB_REF_NAME ?? '';
 export const repository = process.env.GITHUB_REPOSITORY ?? '';
 export const scanAll = process.env.FEEDBACK_RULES_SCAN_ALL === '1';
@@ -383,7 +437,7 @@ const PULL_MERGE_REF_RE = /^refs\/pull\/\d+\/merge$/;
  *   3. merge-base unresolvable (disjoint/shallow history) → the env base
  *      itself: the legacy anchor. Never `[]` — a diff failure still throws.
  */
-function resolveDiffBase(base: string): string {
+export function resolveDiffBase(base: string): string {
   if (PULL_MERGE_REF_RE.test(process.env.GITHUB_REF ?? '')) {
     const parents = headParentShas();
     if (parents.length === 2 && isAncestorOf(base, parents[0])) return 'HEAD^1';
