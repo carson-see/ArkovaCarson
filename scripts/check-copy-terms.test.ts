@@ -22,8 +22,10 @@ import {
   type BaselineEntry,
   type Violation,
   checkFile,
+  collectCandidateFiles,
   findRawEnumRenders,
   findTermViolations,
+  isEmailCopyComposer,
   isNonSuppressibleTerm,
   loadAllowlist,
   loadBaseline,
@@ -1360,6 +1362,419 @@ describe('upstream suppression cannot hide a secret / launch-blocker leak', () =
       expect(checkFile(tmp)).toEqual([]);
     } finally {
       fs.unlinkSync(tmp);
+    }
+  });
+});
+
+// =============================================================================
+// §1.3 worker-email parity — outbound EMAIL copy is generated in
+// `services/worker/`, which INCLUDE_ROOTS never reached: `npm run lint:copy`
+// stayed green while customer-facing subjects and bodies (email templates, the
+// queue digest, the platform-health digest) went entirely unscanned. Customer
+// email is exactly the surface §1.3 exists to protect, and both
+// `services/worker/src/email/agents.md` and `.../emails/agents.md` already
+// carried the rule ("No blockchain terminology in user-facing email copy")
+// with NOTHING enforcing it.
+//
+// Scope is deliberately NOT all of services/worker/src (internal code may use
+// technical names, §1.3): the dedicated email roots plus files the CONTENT
+// detector proves compose email copy. A hand-maintained path census would rot
+// the moment the next digest job lands.
+// =============================================================================
+
+const REPO_ROOT = path.resolve(HERE, '..');
+const QUEUE_DIGEST = 'services/worker/src/jobs/queue-digest.ts';
+
+function repoRel(abs: string): string {
+  return path.relative(REPO_ROOT, abs).split(path.sep).join('/');
+}
+
+function freshTerms(content: string, file: string): string[] {
+  // Mirrors main(): scan → pardon sanctioned → grandfather debt → what's left fails CI.
+  const { remaining } = partitionAgainstAllowlist(scanFileContent(content, file), loadAllowlist());
+  const { fresh } = partitionAgainstBaseline(remaining, loadBaseline());
+  return fresh.map((v) => v.term.toLowerCase());
+}
+
+describe('worker email copy — the gate actually VISITS the email surfaces', () => {
+  it('walks the dedicated email roots and the detected digest composers', () => {
+    const files = collectCandidateFiles(REPO_ROOT).map(repoRel);
+    expect(files).toContain('services/worker/src/email/templates.ts');
+    expect(files).toContain('services/worker/src/emails/grace-warning.ts');
+    expect(files).toContain('services/worker/src/emails/parent-delinquent-split.ts');
+    // The blind spot that motivated this change: a digest that BUILDS email
+    // copy from `jobs/`, outside any email directory.
+    expect(files).toContain(QUEUE_DIGEST);
+    // A user-facing compliance email, also composed from `jobs/`.
+    expect(files).toContain('services/worker/src/jobs/regulatory-change-cron.ts');
+  });
+
+  it('scans the internal-ops alerts too — no ops-exemption list is pre-dug', () => {
+    // Both pass clean today, so excluding them would be a hole with no
+    // demonstrated need. If an ops-only alert ever genuinely needs technical
+    // vocabulary, that PR adds an EXCLUDE_PATTERNS entry with a recipient-based
+    // rationale (the src/components/admin/treasury/** precedent) — and this
+    // assertion is where that decision becomes visible in review.
+    const files = collectCandidateFiles(REPO_ROOT).map(repoRel);
+    expect(files).toContain('services/worker/src/jobs/pipeline-health.ts');
+    expect(files).toContain('services/worker/src/jobs/treasury-alert-dispatcher.ts');
+  });
+
+  it('does NOT drag in worker code that merely sends, or is unrelated to, email', () => {
+    const files = collectCandidateFiles(REPO_ROOT).map(repoRel);
+    // Internal code is explicitly allowed to use technical names (§1.3).
+    expect(files).not.toContain('services/worker/src/index.ts');
+    expect(files).not.toContain('services/worker/src/chain/bitcoinClient.ts');
+    // Senders whose subject/html come from a builder in email/templates.ts:
+    // the copy is scanned once, at the builder, not at every call site.
+    expect(files).not.toContain('services/worker/src/api/invitations.ts');
+    expect(files).not.toContain('services/worker/src/routes/anchor.ts');
+    expect(files).not.toContain('services/worker/src/api/v1/orgVerification.ts');
+    // `subject:` here is connector EVENT metadata, not an email subject.
+    expect(files).not.toContain('services/worker/src/api/demo-event-injector.ts');
+    // Tests are excluded everywhere.
+    expect(files).not.toContain('services/worker/src/jobs/queue-digest.test.ts');
+  });
+
+  it('the real worker email surfaces are CLEAN today (the gate ships green)', () => {
+    const workerFiles = collectCandidateFiles(REPO_ROOT)
+      .map(repoRel)
+      .filter((f) => f.startsWith('services/worker/'));
+    expect(workerFiles.length).toBeGreaterThan(0);
+    for (const f of workerFiles) {
+      const content = fs.readFileSync(path.join(REPO_ROOT, f), 'utf-8');
+      expect({ file: f, fresh: freshTerms(content, f) }).toEqual({ file: f, fresh: [] });
+    }
+  });
+});
+
+describe('worker email copy — banned terms in an email are caught', () => {
+  const digestSource = (): string => fs.readFileSync(path.join(REPO_ROOT, QUEUE_DIGEST), 'utf-8');
+
+  it('flags a banned term in a digest email SUBJECT', () => {
+    const src = digestSource().replace('Your daily review summary', 'Your daily blockchain summary');
+    expect(shouldCheck(QUEUE_DIGEST, src)).toBe(true);
+    expect(freshTerms(src, QUEUE_DIGEST)).toContain('blockchain');
+  });
+
+  it('flags a banned term in a digest email BODY (HTML paragraph)', () => {
+    const src = digestSource().replace(
+      '<p>Here is what is waiting in your review queue as of ${measured}.</p>',
+      '<p>Here is what is waiting in your Bitcoin wallet as of ${measured}.</p>',
+    );
+    const terms = freshTerms(src, QUEUE_DIGEST);
+    expect(terms).toContain('bitcoin');
+    expect(terms).toContain('wallet');
+  });
+
+  it('flags a banned term in WRAPPED PROSE inside an email template literal', () => {
+    // The worker analogue of the multi-line JSX blind spot (PR #1433): the
+    // enclosing `<p>` and `</p>` are on OTHER lines, so the middle line has no
+    // quote and no angle bracket and the per-line scanner used to skip it.
+    const src = digestSource().replace(
+      'This summary shows counts only. Open the review queue to act on individual items.',
+      [
+        '',
+        '      Every item in this summary was secured to the Bitcoin blockchain and',
+        '      can be verified at any time.',
+        '    ',
+      ].join('\n'),
+    );
+    // The banned terms now sit on a line with no quote, no backtick and no
+    // angle bracket — invisible to the per-line scanner without the tracker.
+    expect(src).toMatch(/^\s+Every item in this summary was secured to the Bitcoin blockchain and$/m);
+    const terms = freshTerms(src, QUEUE_DIGEST);
+    expect(terms).toContain('bitcoin');
+    expect(terms).toContain('blockchain');
+  });
+
+  it('flags a banned term in a plain-string email line (text-first digests)', () => {
+    const line = `  return 'BATCH FLUSH: broadcast to the Bitcoin network';`;
+    const terms = findTermViolations(line, 12, QUEUE_DIGEST).map((v) => v.term.toLowerCase());
+    expect(terms).toContain('broadcast');
+    expect(terms).toContain('bitcoin');
+  });
+});
+
+describe('isEmailCopyComposer — content detector (no hand-maintained path census)', () => {
+  it('detects a NEW digest job that composes subject + body, wherever it lives', () => {
+    const newDigest = [
+      `import { esc, wrapTemplate } from '../emails/_template.js';`,
+      `export function build() {`,
+      `  const subject = \`Your weekly summary\`;`,
+      `  const html = wrapTemplate(\`<p>Hello</p>\`);`,
+      `  return { subject, html };`,
+      `}`,
+    ].join('\n');
+    expect(isEmailCopyComposer(newDigest)).toBe(true);
+    expect(shouldCheck('services/worker/src/jobs/weekly-digest.ts', newDigest)).toBe(true);
+  });
+
+  it('the real queue digest is a detected composer', () => {
+    expect(isEmailCopyComposer(fs.readFileSync(path.join(REPO_ROOT, QUEUE_DIGEST), 'utf-8'))).toBe(
+      true,
+    );
+  });
+
+  it('email/templates.ts is in scope by ROOT, not by detection (it composes but never sends)', () => {
+    const templates = 'services/worker/src/email/templates.ts';
+    expect(isEmailCopyComposer(fs.readFileSync(path.join(REPO_ROOT, templates), 'utf-8'))).toBe(
+      false,
+    );
+    expect(shouldCheck(templates)).toBe(true);
+  });
+
+  it('a pure SENDER (subject comes from a builder) is NOT a composer', () => {
+    const sender = [
+      `import { sendEmail } from '../email/sender.js';`,
+      `const { subject, html } = buildInvitationEmail({ orgName });`,
+      `await sendEmail({ to, subject, html, emailType: 'invitation' });`,
+    ].join('\n');
+    expect(isEmailCopyComposer(sender)).toBe(false);
+  });
+
+  it('a non-email module with a `subject` field is NOT a composer', () => {
+    const connectorEvent = [
+      `export const DEMO = {`,
+      `  EMAIL_INTAKE: { subject: 'Demo: Signed contract for review' },`,
+      `};`,
+    ].join('\n');
+    expect(isEmailCopyComposer(connectorEvent)).toBe(false);
+    expect(shouldCheck('services/worker/src/api/demo-event-injector.ts', connectorEvent)).toBe(false);
+  });
+
+  it('worker internal code is out of scope even when content is available', () => {
+    const internal = `const txid = await broadcastTransaction(hash); // mainnet utxo`;
+    expect(shouldCheck('services/worker/src/chain/broadcast.ts', internal)).toBe(false);
+  });
+});
+
+describe('inline CSS is presentation, not copy', () => {
+  it('does not flag `display: block` in an inline style attribute', () => {
+    const line = `      <a href="\${url}" style="display: block; padding: 12px;">Open your account</a>`;
+    expect(findTermViolations(line, 1, 'services/worker/src/email/templates.ts')).toEqual([]);
+  });
+
+  it('still flags visible copy sitting next to that style attribute', () => {
+    const line = `      <a href="\${url}" style="display: block;">Open your Bitcoin wallet</a>`;
+    const terms = findTermViolations(line, 1, 'services/worker/src/email/templates.ts').map((v) =>
+      v.term.toLowerCase(),
+    );
+    expect(terms).toContain('bitcoin');
+    expect(terms).toContain('wallet');
+  });
+});
+
+// =============================================================================
+// §1.3 FRONTEND `.ts` parity — the SAME cross-line blind spot, one root over.
+//
+// PR #1433 closed it for `.tsx` (the JSX element-text machine) and the
+// worker-email parity change closed it for `services/worker/src` (the
+// template-literal tracker). Both trackers were scoped narrowly, so the
+// frontend `.ts` files that INCLUDE_ROOTS *already admits* — `src/lib`,
+// `src/hooks`, and the PUBLIC embeddable widget `packages/embed/src` — kept
+// the hole: the JSX machine only runs on `.tsx`, and the template tracker only
+// ran under the worker root.
+//
+// The motivating file is `src/lib/copy.ts` itself. `DISCLAIMER_LABELS.body` is
+// a multi-line template literal carrying the platform legal disclaimer — the
+// most compliance-sensitive string we ship — and every line after the first
+// carries no quote, no backtick and no angle bracket, so
+// findTermViolations()'s `!hasString && !hasJsxText` short-circuit skipped all
+// of it. `lint:copy` was green over the one paragraph §1.3 most exists to
+// police, in the file the failure message points offenders AT.
+//
+// Scope here is deliberately the WHOLE non-`.tsx` in-scope set rather than a
+// second root list: INCLUDE_ROOTS is already the curated "this is user-visible
+// copy" admission decision, so re-litigating it with a content detector (the
+// worker's `isEmailCopyComposer` approach) would be the wrong tool — the
+// worker needed one because `services/worker/src` is overwhelmingly internal
+// code, which §1.3 explicitly permits to use technical names. The frontend
+// roots are the opposite. A second list would also be free to drift from
+// INCLUDE_ROOTS, which is the exact failure `collectCandidateFiles` exists to
+// prevent.
+// =============================================================================
+
+const COPY_TS = 'src/lib/copy.ts';
+const copySource = (): string => fs.readFileSync(path.join(REPO_ROOT, COPY_TS), 'utf-8');
+
+describe('frontend .ts copy — wrapped prose inside a template literal is scanned', () => {
+  it('flags a banned term in WRAPPED PROSE inside the real src/lib/copy.ts disclaimer', () => {
+    // The bullet lines of DISCLAIMER_LABELS.body: no quote, no backtick, no
+    // angle bracket. Without the tracker this line is invisible to the scan.
+    const src = copySource().replace(
+      '• Guarantee the authenticity of the original document',
+      '• Guarantee that the Bitcoin blockchain anchor replaces notarization',
+    );
+    expect(src).toMatch(/^• Guarantee that the Bitcoin blockchain anchor replaces notarization$/m);
+    const terms = freshTerms(src, COPY_TS);
+    expect(terms).toContain('bitcoin');
+    expect(terms).toContain('blockchain');
+  });
+
+  it('the OPENING line is shouldSkipLine()-skipped yet still opens the template', () => {
+    // `body: \`Arkova provides timestamped cryptographic verification …\`` trips
+    // the `cryptographic` skip, so it never reaches the normal scan — but it
+    // carries the backtick that opens the literal. If the state machines were
+    // advanced AFTER the skip `continue` instead of before it, `inTemplate`
+    // would never open and every assertion above would silently pass-by-doing-
+    // nothing. This pins that ordering from the frontend side.
+    const opener = copySource()
+      .split('\n')
+      .find((l) => l.includes('body: `Arkova provides timestamped cryptographic'));
+    expect(opener).toBeDefined();
+    expect(shouldSkipLine(opener as string, (opener as string).trim())).toBe(true);
+    expect(opener).toContain('`');
+  });
+
+  it('flags wrapped prose in a src/hooks module', () => {
+    const src = [
+      'export function useAnchorHelp() {',
+      '  const help = `',
+      '    Your document is being secured. Once the Bitcoin network confirms it,',
+      '    the record becomes permanent.',
+      '  `;',
+      '  return help;',
+      '}',
+    ].join('\n');
+    expect(freshTerms(src, 'src/hooks/useAnchorHelp.ts')).toContain('bitcoin');
+  });
+
+  it('flags wrapped prose in the PUBLIC packages/embed widget', () => {
+    // packages/embed ships to third-party sites — banned terms there are the
+    // most expensive kind, because we do not control where the markup renders.
+    const src = [
+      'export function renderNote(): string {',
+      '  return `',
+      '    This badge reflects a record that was broadcast to the blockchain and',
+      '    can be checked at any time.',
+      '  `;',
+      '}',
+    ].join('\n');
+    const terms = freshTerms(src, 'packages/embed/src/note.ts');
+    expect(terms).toContain('broadcast');
+    expect(terms).toContain('blockchain');
+  });
+
+  it('src/lib/copy.ts is actually in the candidate set (it is allowlisted, not excluded)', () => {
+    // copy.ts holds the §1.3 vocabulary, so "is it excluded?" is a fair
+    // question to ask of EXCLUDE_PATTERNS. It is not — the SCRUM-1672 carve-out
+    // rides on the allowlist, and the file is scanned like any other.
+    expect(collectCandidateFiles(REPO_ROOT).map(repoRel)).toContain(COPY_TS);
+  });
+});
+
+describe('frontend .ts copy — the false-positive vectors that deferred this stay suppressed', () => {
+  it('does NOT flag engineering prose in a block comment, even with stray backticks', () => {
+    // The largest source of banned terms in a `.ts` file is its own commentary,
+    // and JSDoc routinely leaves an ODD backtick count on a line. This is safe
+    // structurally, not by luck: scanFileContent `continue`s on block-comment
+    // lines BEFORE advancing the tracker, so comment backticks cannot open a
+    // template at all. `src/hooks/useAsyncAction.ts` is a real instance.
+    const src = [
+      '/**',
+      ' * Broadcast helper. Previously this used `bitcoinClient.broadcast(tx) ?',
+      ' *   tx.hash : null`, i.e. every Bitcoin transaction hash was trusted.',
+      ' * The blockchain wallet balance is read from mempool.space.',
+      ' */',
+      'export const NOOP = 1;',
+    ].join('\n');
+    expect(freshTerms(src, 'src/lib/broadcastHelper.ts')).toEqual([]);
+  });
+
+  it('a single-line template literal opens no continuation', () => {
+    // The overwhelming majority of frontend backticks are interpolated
+    // one-liners; they open and close on their own line and must leave the
+    // following code lines on the normal per-line path.
+    const src = [
+      'export function build(id: string) {',
+      '  const url = `/api/v1/verify/${id}`;',
+      '  const blockHeight = lookup(id);',
+      '  return { url, blockHeight };',
+      '}',
+    ].join('\n');
+    expect(freshTerms(src, 'src/lib/urls.ts')).toEqual([]);
+  });
+
+  it('an interpolation-only line inside a template literal does not flag', () => {
+    // `packages/embed/src/report-block.ts:172` (`${rows.join(...)}`) is the
+    // real instance: blankJsxExpressions() blanks balanced `${…}` before the
+    // term scan, so the expression is scanned via its own definition instead.
+    const src = [
+      'export function report(rows: string[], hash: string) {',
+      '  return `',
+      '    ${rows.join(hash)}',
+      '  `;',
+      '}',
+    ].join('\n');
+    expect(freshTerms(src, 'packages/embed/src/report.ts')).toEqual([]);
+  });
+
+  it('a markup line inside a template literal keeps the normal per-line path', () => {
+    // `src/lib/badgeSvg.ts` builds a multi-line SVG. Every line carries `<`,
+    // so the `!line.includes('<')` guard keeps raw-copy mode off and the
+    // existing tag-aware rules (URL and quoted-value suppressions intact)
+    // continue to apply unchanged.
+    const src = [
+      'export function badge(id: string) {',
+      '  return `',
+      '    <linearGradient id="bg-${id}" x1="0" y1="0">',
+      '    <stop offset="1" stop-color="#1e293b"/>',
+      '  `;',
+      '}',
+    ].join('\n');
+    expect(freshTerms(src, 'src/lib/badgeSvg.ts')).toEqual([]);
+  });
+
+  it('.tsx keeps the JSX machine and does NOT also run the template tracker', () => {
+    // Double-tracking a .tsx file would let a className template literal
+    // (`className={\`text-${x}\`}` spanning lines) put prose lines into raw-copy
+    // mode with the JSX machine already handling them.
+    const src = [
+      'export function Panel({ x }: { x: string }) {',
+      '  const cls = `',
+      '    grid gap-2',
+      '  `;',
+      '  return <div className={cls}>{x}</div>;',
+      '}',
+    ].join('\n');
+    expect(freshTerms(src, 'src/components/Panel.tsx')).toEqual([]);
+  });
+
+  it('KNOWN RESIDUAL: a bare column name in a multi-line SQL literal WOULD flag', () => {
+    // Pinned deliberately rather than papered over. This is the one shape the
+    // deferral worried about that raw-copy mode really does reach: a
+    // multi-line, non-markup, non-comment literal whose lines are code-ish
+    // prose. It is not hypothetical-but-lucky that the repo is clean — the
+    // measured raw-copy surface across ALL in-scope frontend `.ts` files is 7
+    // lines (6 of them the copy.ts disclaimer, 1 an interpolation), and there
+    // is no such literal today. If one lands, the remedy is the one the gate
+    // already offers every other false positive: qualify the identifier
+    // (`a.tx_hash` — `_` is a boundary, so it never matched), keep the literal
+    // on one line, or file a baseline entry with a rationale.
+    const src = [
+      'export const Q = `',
+      '  select id, hash',
+      '  from anchors',
+      '`;',
+    ].join('\n');
+    expect(freshTerms(src, 'src/lib/queries.ts')).toContain('hash');
+  });
+});
+
+describe('frontend .ts copy — the widened scope ships green', () => {
+  it('every in-scope frontend .ts file is clean today', () => {
+    // The ratchet: proves the widening is a no-op on the tree it lands on, and
+    // fails the moment wrapped prose in one of these roots picks up a banned
+    // term. Mirrors the worker-email equivalent above.
+    const frontendTs = collectCandidateFiles(REPO_ROOT)
+      .map(repoRel)
+      .filter((f) => !f.endsWith('.tsx') && !f.startsWith('services/worker/'));
+    expect(frontendTs.length).toBeGreaterThan(0);
+    expect(frontendTs).toContain(COPY_TS);
+    for (const f of frontendTs) {
+      const content = fs.readFileSync(path.join(REPO_ROOT, f), 'utf-8');
+      expect({ file: f, fresh: freshTerms(content, f) }).toEqual({ file: f, fresh: [] });
     }
   });
 });

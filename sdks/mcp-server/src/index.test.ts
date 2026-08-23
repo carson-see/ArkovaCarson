@@ -15,8 +15,23 @@ beforeEach(() => {
 });
 
 describe('Tool Definitions', () => {
-  it('should define 6 tools', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(6);
+  it('should define exactly the 10 registered tools', () => {
+    // Exact-name ratchet: adding or removing a tool must update this list
+    // deliberately. 6 arkova_ verification tools (PH2-AGENT-06 / SCRUM-403,
+    // arkova_verify_signature added in Phase III) + 4 nessie_ compliance
+    // intelligence tools (NCE-19).
+    expect(TOOL_DEFINITIONS.map(t => t.name)).toEqual([
+      'arkova_verify_credential',
+      'arkova_credential_status',
+      'arkova_search_credentials',
+      'arkova_create_attestation',
+      'arkova_batch_verify',
+      'nessie_compliance_score',
+      'nessie_gap_analysis',
+      'nessie_ask',
+      'nessie_cross_reference',
+      'arkova_verify_signature',
+    ]);
   });
 
   it('should have valid input schemas', () => {
@@ -28,9 +43,11 @@ describe('Tool Definitions', () => {
     }
   });
 
-  it('should use arkova_ prefix on all tool names (DX-04)', () => {
+  it('should use an arkova_ or nessie_ namespace prefix on all tool names (DX-04)', () => {
+    // DX-04 namespace consistency: arkova_ for verification tools,
+    // nessie_ for the NCE-19 compliance intelligence tools.
     for (const tool of TOOL_DEFINITIONS) {
-      expect(tool.name).toMatch(/^arkova_/);
+      expect(tool.name).toMatch(/^(arkova|nessie)_/);
     }
   });
 
@@ -105,6 +122,60 @@ describe('handleToolCall', () => {
     expect(result.content[0].text).toContain('Invalid JSON');
   });
 
+  it('should handle nessie_compliance_score', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ score: 87, grade: 'B', missing: [] }),
+    });
+
+    const result = await handleToolCall('nessie_compliance_score', { jurisdiction: 'US-CA', industry: 'accounting' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('87');
+  });
+
+  it('should handle nessie_gap_analysis', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ gaps: [{ document: 'W-9', priority: 'required' }] }),
+    });
+
+    const result = await handleToolCall('nessie_gap_analysis', { jurisdiction: 'US-NY', industry: 'legal' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('W-9');
+  });
+
+  it('should handle nessie_ask', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ answer: 'Analysis complete', citations: [] }),
+    });
+
+    const result = await handleToolCall('nessie_ask', { query: 'What licenses do I need?', task: 'compliance_qa' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('Analysis complete');
+  });
+
+  it('should handle nessie_cross_reference', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ inconsistencies: [], compared: 2 }),
+    });
+
+    const result = await handleToolCall('nessie_cross_reference', { anchor_ids: '["a1","a2"]' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain('compared');
+  });
+
+  it('should reject nessie_cross_reference with fewer than 2 anchor IDs', async () => {
+    const result = await handleToolCall('nessie_cross_reference', { anchor_ids: '["only-one"]' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Minimum 2');
+  });
+
   it('should return error for unknown tool', async () => {
     const result = await handleToolCall('nonexistent_tool', {});
 
@@ -119,5 +190,72 @@ describe('handleToolCall', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Connection refused');
+  });
+});
+
+/**
+ * BUG-008/027 — CTO ruling R-1 STRENGTHENED.
+ *
+ * `nessie_ask` calls the worker in `mode=context`. Before the worker was gated,
+ * that returned HTTP 200 and
+ * `{"answer":"No relevant verified documents were found…","confidence":0}` —
+ * which this tool passed through verbatim. An agent reads that as a completed
+ * search over an empty corpus, not as "the feature is off".
+ */
+describe('nessie_ask — disabled must not read as an empty answer', () => {
+  const disabledBody = {
+    error: 'capability_disabled',
+    code: 'nessie_disabled',
+    capability: 'nessie',
+    enabled: false,
+    message: 'The Nessie intelligence query capability is disabled and is not being served.',
+  };
+
+  it('flags the disabled capability as an error, not a result', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: () => Promise.resolve(disabledBody),
+    });
+
+    const result = await handleToolCall('nessie_ask', { query: 'any compliance question' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('disabled');
+  });
+
+  it('says explicitly that this is NOT an empty result', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: () => Promise.resolve(disabledBody),
+    });
+
+    const result = await handleToolCall('nessie_ask', { query: 'q' });
+
+    expect(result.content[0].text).toContain('NOT an empty result');
+    // The fluent no-documents sentence must never appear on the disabled path.
+    expect(result.content[0].text).not.toContain('No relevant verified documents were found');
+    expect(result.content[0].text).not.toContain('"confidence": 0');
+  });
+
+  it('still reports an ordinary upstream failure distinctly from "disabled"', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: 'boom' }),
+    });
+
+    const result = await handleToolCall('nessie_ask', { query: 'q' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('500');
+    expect(result.content[0].text).not.toContain('disabled');
+  });
+
+  it('advertises the disabled state in the published tool description', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'nessie_ask');
+    expect(tool).toBeDefined();
+    expect(tool!.description).toContain('DISABLED');
   });
 });

@@ -121,7 +121,7 @@ describe('handleSetOrgQuota (SCRUM-2225)', () => {
  * error-code -> HTTP-status mapping.
  */
 describe('handleAdjustOrgCredit (L2-A5)', () => {
-  const IDEMPOTENCY_KEY = 'aaaaaaaa-0000-0000-0000-000000000001';
+  const IDEMPOTENCY_KEY = 'aaaaaaaa-0000-4000-8000-000000000001';
 
   beforeEach(() => {
     vi.clearAllMocks();

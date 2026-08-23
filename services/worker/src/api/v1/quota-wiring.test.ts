@@ -40,10 +40,14 @@ describe('verified x402 payer limiter wiring', () => {
   it('places the payer limiter between payment validation and the AI limiter on Nessie only', () => {
     const router = source('./router.ts');
 
-    expect(router).toContain(
-      "router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), x402PayerRateLimit, aiRateLimiter, nessieQueryRouter)",
+    // BUG-008/027: the capability gate is FIRST in the chain — ahead of the
+    // payment gate — so a permanently-disabled capability never charges a
+    // caller on the way to telling them it is disabled. Order is the contract;
+    // this regex pins it rather than the old single-line literal.
+    expect(router).toMatch(
+      /router\.use\(\s*'\/nessie\/query',\s*nessieCapabilityGate\(\),\s*x402PaymentGate\('\/api\/v1\/nessie\/query'\),\s*x402PayerRateLimit,\s*aiRateLimiter,\s*nessieQueryRouter,?\s*\)/,
     );
-    expect(router.match(/, x402PayerRateLimit,/g)).toHaveLength(1);
+    expect(router.match(/\bx402PayerRateLimit,/g)).toHaveLength(1);
   });
 
   it('exposes canonical org and payer quota headers to browser consumers', () => {

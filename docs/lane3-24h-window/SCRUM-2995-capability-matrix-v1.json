@@ -48,9 +48,9 @@
     "ctdl_ce_compliance": {
       "description": "Credential Engine / CTDL interoperability.",
       "import_parse": {
-        "status": "built_draft",
+        "status": "built_merged_deployed",
         "claim_status": "measured",
-        "evidence": "SCRUM-2913 CTDL importer (PR #1603, 26 tests): @graph walk, language-map name, ownedBy→issuer, ctid→sourceId, dateEffective→issuedAt, expirationDate-vs-status override (SCRUM-2599). Draft, not merged."
+        "evidence": "SCRUM-2913 CTDL importer (PR #1603, 26 tests): @graph walk, language-map name, ownedBy→issuer, ctid→sourceId, dateEffective→issuedAt, expirationDate-vs-status override (SCRUM-2599). Merged 2026-07-23, deployed to prod; verified 2026-08-12."
       },
       "registry_read_consume": {
         "status": "endpoint_reachable_and_invite_active",

@@ -260,3 +260,138 @@ describe("ci.yml commit-message heredoc delimiter contract", () => {
     expect(() => assertWorkflowContract(workflow)).not.toThrow();
   });
 });
+
+/**
+ * Every suite CI claims to run must actually be invoked by a required job.
+ *
+ * services/edge has had a working vitest harness since 2026-06-05
+ * (services/edge/vitest.config.ts), but for ~10 weeks NOTHING in CI ran it:
+ * the only edge step was `tsc --noEmit` in typecheck-lint, which compiles the
+ * tests without executing them. The root suite could not collect them either —
+ * root vitest.config.ts globs `tests/**`, `src/**`, `scripts/**` relative to the
+ * REPO ROOT, and `services/edge/` matches none of those. So
+ * services/edge/src/mcp-tools.test.ts (36 assertions over the MCP tool surface)
+ * ran nowhere and could sit red indefinitely without failing a PR.
+ *
+ * Wired into the `Tests` job on 2026-08-15. These assertions are the ratchet:
+ * deleting the step, dropping the install, or forgetting the aggregate wiring
+ * puts the suite back to gating nothing — silently, which is exactly how it went
+ * unnoticed the first time. A step that runs but is absent from the aggregate map
+ * is the same class of bug the aggregate gate was built for.
+ */
+function edgeStep(workflow: string, name: string): string {
+  const step = workflowSteps(workflow).find((block) =>
+    new RegExp(`^\\s+- name: ${name}\\s*$`, "mu").test(block),
+  );
+  expect(step, `ci.yml must keep a '${name}' step — the edge suite gates nothing without it`).toBeDefined();
+  return step as string;
+}
+
+describe("ci.yml edge-worker suite is actually invoked", () => {
+  it("runs the services/edge vitest suite, not just its typecheck", () => {
+    const step = edgeStep(readFileSync(WORKFLOW_PATH, "utf8"), "Run edge worker tests");
+    expect(step, "the edge suite must run from services/edge").toMatch(
+      /working-directory:\s*services\/edge/u,
+    );
+    expect(step, "the edge step must execute the suite (npm test), not merely typecheck it").toMatch(
+      /run:\s*npm test\b/u,
+    );
+  });
+
+  it("installs services/edge deps with lifecycle scripts suppressed", () => {
+    // services/edge has its OWN package-lock.json and is not in the root npm
+    // workspace, so without a dedicated install the suite cannot run at all.
+    const step = edgeStep(readFileSync(WORKFLOW_PATH, "utf8"), "Install edge dependencies");
+    expect(step).toMatch(/working-directory:\s*services\/edge/u);
+    expect(step, "supply-chain: CI installs must pass --ignore-scripts").toMatch(
+      /npm ci --ignore-scripts/u,
+    );
+  });
+
+  it("wires both edge steps into the aggregate gate's map AND its iteration list", () => {
+    const aggregate = edgeStep(readFileSync(WORKFLOW_PATH, "utf8"), "Aggregate test suite results");
+    const loop = /for name in ([^;]+);/u.exec(aggregate)?.[1].trim().split(/\s+/u) ?? [];
+
+    for (const id of ["edge-deps", "edge-tests"]) {
+      expect(aggregate, `aggregate map must read steps.${id}.outcome`).toContain(
+        `[${id}]="\${{ steps.${id}.outcome }}"`,
+      );
+      // A key present in the map but absent from the loop is never evaluated —
+      // it looks wired while failing open.
+      expect(loop, `'${id}' must be iterated, or its outcome is collected and never checked`).toContain(id);
+    }
+  });
+
+  it("keeps the edge lockfile in the Tests job npm cache key", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const setupNode = workflowSteps(workflow).filter(
+      (block) => /cache-dependency-path:/u.test(block) && /services\/worker\/package-lock\.json/u.test(block),
+    );
+    expect(setupNode.length, "expected the Tests job setup-node cache block").toBeGreaterThan(0);
+    expect(
+      setupNode.some((block) => /services\/edge\/package-lock\.json/u.test(block)),
+      "services/edge/package-lock.json must be in cache-dependency-path so the edge install is cached and cache-busted correctly",
+    ).toBe(true);
+  });
+});
+
+/**
+ * The same blind spot, one language over — BUG-2026-08-12-007.
+ *
+ * `packages/arkova-py` is the ONLY Arkova SDK actually published (all three npm
+ * packages 404), and until 2026-08-15 nothing ran its pytest/ruff suite on a
+ * pull request. Its only invocation lived in publish-python-sdk.yml, which fires
+ * on an `arkova-py-v*` tag — after the release decision, never before it. So the
+ * published 2.2.0 wheel shipped a `compliance_controls` type that contradicted
+ * the API (breaking `verify()` for every record carrying controls), and the
+ * source fix then sat unreleased for two weeks with no PR ever executing the
+ * tests that would have shown source and artifact disagreeing.
+ *
+ * These assertions are the ratchet. A suite that gates nothing fails silently,
+ * which is precisely how this went unnoticed twice.
+ */
+describe("ci.yml Python SDK suite is actually invoked", () => {
+  const pythonJob = (): string => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const job = /\n {2}python-sdk-tests:\n([\s\S]*?)(?=\n {2}[a-z][\w-]*:\n)/u.exec(workflow)?.[0];
+    expect(
+      job,
+      "ci.yml must keep a 'python-sdk-tests' job — packages/arkova-py gates nothing without it",
+    ).toBeDefined();
+    return job as string;
+  };
+
+  it("runs pytest against packages/arkova-py", () => {
+    const job = pythonJob();
+    expect(job, "the Python suite must run from packages/arkova-py").toMatch(
+      /working-directory:\s*packages\/arkova-py/u,
+    );
+    expect(job, "the job must execute the suite, not merely install it").toMatch(
+      /run:\s*pytest\b/u,
+    );
+  });
+
+  it("keeps the ruff gate at PR time, not only at publish time", () => {
+    // publish-python-sdk.yml gates the PyPI upload on `ruff check src tests`.
+    // A finding that only surfaces there blocks a release instead of a review —
+    // exactly the ordering that let 2.2.0 ship unchecked.
+    expect(pythonJob()).toMatch(/run:\s*ruff check src tests/u);
+  });
+
+  it("installs the dev extras, which is where pytest and the pinned ruff live", () => {
+    expect(pythonJob()).toMatch(/pip install -e "\.\[dev\]"/u);
+  });
+
+  it("matches the publish workflow's interpreter", () => {
+    // Parity argument of CLAUDE.md §0.9: if the publish gate would reject it, a
+    // PR must reject it first. Different interpreters make that untrue.
+    const publish = readFileSync(
+      resolve(REPO, ".github/workflows/publish-python-sdk.yml"),
+      "utf8",
+    );
+    const publishVersion = /python-version:\s*["']?([\d.]+)["']?/u.exec(publish)?.[1];
+    const ciVersion = /python-version:\s*["']?([\d.]+)["']?/u.exec(pythonJob())?.[1];
+    expect(publishVersion, "publish-python-sdk.yml must pin a python-version").toBeDefined();
+    expect(ciVersion, "the CI job must pin a python-version").toBe(publishVersion);
+  });
+});

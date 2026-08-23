@@ -4,7 +4,7 @@
 
 ## MCP Server
 
-Arkova exposes a Model Context Protocol (MCP) server for AI agent access to credential verification and semantic search.
+Arkova exposes a Model Context Protocol (MCP) server for AI agent access to credential verification and keyword search.
 
 **Endpoint:** `https://edge.arkova.ai/mcp`
 
@@ -70,7 +70,19 @@ Verify a credential's authenticity and current status by its public identifier.
 
 ### `search_credentials`
 
-Search for credentials using natural language queries. Uses semantic similarity matching against the credential database.
+Search anchored public credentials by keyword.
+
+The served behaviour is **lexical**: a case-insensitive substring match on
+credential title/description, with no relevance score and no understanding of
+meaning. A query matches only text that literally appears in the record, so
+paraphrases and synonyms will **not** match, and a fragment of a longer word
+**will**. Semantic (vector) similarity is used **only when** the deployment has
+semantic search enabled and reachable; it is not guaranteed.
+
+Every result reports `search_mode` — `"lexical_substring"` for the substring
+path, or `"semantic_vector"` when a real vector match ran (that mode alone
+carries a `similarity` score). Read `search_mode` before presenting results as
+semantically ranked.
 
 **Input Schema:**
 ```json
@@ -79,7 +91,7 @@ Search for credentials using natural language queries. Uses semantic similarity 
   "properties": {
     "query": {
       "type": "string",
-      "description": "Natural language search query (e.g., 'University of Michigan computer science degree')"
+      "description": "Keyword search query (e.g., 'University of Michigan')"
     },
     "max_results": {
       "type": "number",
@@ -90,7 +102,9 @@ Search for credentials using natural language queries. Uses semantic similarity 
 }
 ```
 
-**Returns:** Ranked list of matching credentials with verification status and relevance scores.
+**Returns:** List of matching credentials with verification status, plus a
+`search_mode` marker. Relevance scores are present only on the
+`semantic_vector` path.
 
 ## Usage Examples
 
@@ -103,8 +117,11 @@ Input: { "public_id": "ARK-2026-001" }
 ### Search for credentials from a specific institution
 ```
 Tool: search_credentials
-Input: { "query": "Stanford University computer science master's degree 2025" }
+Input: { "query": "Stanford University" }
 ```
+Keep queries to literal keywords. A long descriptive phrase is matched as one
+substring, so "Stanford University computer science master's degree 2025" finds
+nothing unless that exact string appears in a record.
 
 ### Bulk verification workflow
 ```

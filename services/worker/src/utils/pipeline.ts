@@ -20,6 +20,30 @@ export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Result `status` literals that mean "this run failed", even when the fetcher
+ * left its `errors` counter at zero (BUG-020).
+ *
+ * `/fetch-uspto` is the reference case: a hard 403 from the PatentsView bucket
+ * surfaced as `{"status":"download_failed","inserted":0,"errors":0}` and the
+ * route returned HTTP 200. Any fetcher that gives up before reaching upstream —
+ * missing credential, dead endpoint, unusable source — must set one of these so
+ * `routes/ingestionResponse.ts` can refuse to call the run a success.
+ */
+export const INGESTION_FAILURE_STATUSES: ReadonlySet<string> = new Set([
+  'download_failed',
+  'fetch_failed',
+  'source_unavailable',
+  'unconfigured_source',
+  'failed',
+  'error',
+]);
+
+/** True when a fetcher result's `status` declares the run a failure. */
+export function isIngestionFailureStatus(status: unknown): boolean {
+  return typeof status === 'string' && INGESTION_FAILURE_STATUSES.has(status);
+}
+
 /** Check the ENABLE_PUBLIC_RECORDS_INGESTION switchboard flag. */
 export async function isIngestionEnabled(supabase: SupabaseClient): Promise<boolean> {
   const { data: enabled } = await supabase.rpc('get_flag', {

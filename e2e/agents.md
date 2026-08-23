@@ -1,6 +1,33 @@
 # agents.md — e2e/
 
-_Last updated: 2026-07-28 (newest dated entry in this file; stamp was stale at 2026-05-30)._
+_Last updated: 2026-08-23 (newest dated entry in this file)._
+
+## 2026-08-23 — api-keys.spec.ts revoke-flip de-flaked (locator + shared 429 bucket)
+
+The #2220 revoke block flaked on every post-#2220 tree (main run 32623769492: ✘✘✓ on
+`api-keys.spec.ts:169`). Two independent causes, both fixed test-side:
+
+1. **Self-contradictory keyCard locator.** The card locator filtered on the key name AND a
+   Revoke button; ApiKeySettings.tsx unmounts that button on revoke, so the post-revoke
+   assertions re-resolved against nothing (clean list) or an ancestor div containing another
+   key's Revoke button — pass/fail depended on leftover keys. Now anchored on the card root
+   (`div.shadow-card-rest`) + key name + the delete button (present in every key state).
+2. **Shared per-IP rate-limit bucket saturation.** Every worker limiter with default options
+   keys on bare `req.ip` with empty scope, so the whole suite shares ONE `::1` bucket, each
+   dashboard call costs 3 increments (`apiIpShadowGuard` ×2 mounts + v1 anon limiter), and the
+   strictest gate 429s at 60/60s — the revoke PATCH raced the rest of the suite's traffic. The
+   spec now gates the create→revoke→delete flow on measured headroom via
+   `waitForSharedRateLimitHeadroom` (page-context probe of a /api/v1 404 path, reading the
+   exposed X-RateLimit-*/Retry-After headers). Test-side only: no limiter raised, no bypass.
+   If OTHER specs start 429-flaking the same way, reuse the helper — do NOT bump the worker
+   limits for CI.
+
+## 2026-08-12 — api-keys.spec.ts now covers revoke + delete (FD-P7 / CC6.8)
+
+The create-key test's success branch continues into revoke-with-confirmation (badge flips to
+Revoked, Revoke button disappears) and then deletes the key so e2e runs do not accrete keys. This
+flow was unreachable before the FD-P7 fix (server stripped `id` from key responses); if the revoke
+step starts failing with a 404 on `/api/v1/keys/undefined`, the id-strip regressed server-side.
 
 Playwright E2E test specs and shared fixtures for the Arkova application.
 
@@ -89,6 +116,20 @@ Playwright E2E test specs and shared fixtures for the Arkova application.
   turned previously-CSP-blocked enrichment legs into live calls and broke
   `treasury-errors.spec.ts` on every PR run until the legs were explicitly
   stubbed to fail fast.
+- **Never call bare `auth.signOut()` in a spec — supabase-js defaults it to
+  `scope: 'global'`, which revokes EVERY session for that seed user,** including
+  the `.auth/*.json` storageState session `auth.setup.ts` minted and every later
+  spec in a single-invocation run reuses. 2026-08-15, fullsoak side-rig:
+  `cross-tenant.spec.ts`'s PostgREST-leg `afterAll` (added by #2213) global-signed-out
+  demo-admin; every subsequent `orgAdminPage` spec (csv-upload, dashboard,
+  error-states, integrations-docusign*, member-invite, org-admin…) bounced to
+  /login while the storageState JWT was still 55 min from expiry — GoTrue
+  answered 403 `session_not_found` for it. Two things masked it: CI's local
+  GoTrue does not bounce the app on a revoked session, and per-spec
+  invocations re-mint sessions every spec. Pass an explicit scope
+  (`{ scope: 'local' }`, the same convention as `src/hooks/useAuth.ts`);
+  `tests/infra/signout-scope-guard.test.ts` now ratchets this over every
+  `e2e/**/*.ts` file.
 
 ## File Inventory
 

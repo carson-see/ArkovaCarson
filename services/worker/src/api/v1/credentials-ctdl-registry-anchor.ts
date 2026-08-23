@@ -85,6 +85,7 @@ import {
 } from './credentials-ctdl-import.js';
 import { buildSelfImportRecipientHash } from '../../lib/credential-source-import.js';
 import { db } from '../../utils/db.js';
+import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit, type DeductionResult } from '../../utils/orgCredits.js';
 import { enforceOrgFieldPolicy } from '../../utils/orgFieldPolicy.js';
@@ -232,11 +233,11 @@ async function insertRegistryAnchor(
         status: 'PENDING',
         org_id: orgId,
         user_id: userId,
-        filename: `${label}.jsonld`.slice(0, 255),
+        filename: truncateUtf16Safe(`${label}.jsonld`, 255),
         file_mime: 'application/ld+json',
         credential_type: 'OTHER',
-        label: label.slice(0, 500),
-        description: description.slice(0, 500),
+        label: truncateUtf16Safe(label, 500),
+        description: truncateUtf16Safe(description, 500),
         metadata,
       })
       .select('id, public_id, fingerprint, status, created_at')

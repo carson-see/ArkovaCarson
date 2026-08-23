@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { stripTsComments } from '../ctdl/strip-ts-comments.js';
 // Force the professional-education schema gate to report the pipeline LIVE, without
 // transitively loading config.ts (which needs runtime env). This lets the LEGAL-exclusion
 // suite prove the guard holds even when ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY is on.
@@ -19,9 +23,14 @@ import {
   normalizeCleMetadata,
   normalizeCpeMetadata,
   resolveCpeNasbaStatus,
+  type ProfessionalEducationAnchorRow,
+  type ProfessionalEducationExtractionResult,
 } from './professional-education.js';
 import type { IAIProvider } from '../ai/types.js';
 import type { ExtractedFields } from '../ai/types.js';
+
+const COMPLIANCE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const API_V1_DIR = path.resolve(COMPLIANCE_DIR, '..', 'api', 'v1');
 
 describe('professional education metadata schemas', () => {
   it('keeps the NASBA field and CPE delivery vocabularies complete', () => {
@@ -310,6 +319,142 @@ describe('LEGAL credential type is never routed to AI extraction (DPA clause 4.7
     // a distinct credential_type from LEGAL. The DPA warrants LEGAL specifically; excluding
     // CLE would defeat the feature and is not required.
     expect(classifyProfessionalEducationAnchor({ credentialType: 'CLE', metadata: barShapedMetadata })).toBe('CLE');
+  });
+});
+
+/**
+ * Counsel's durability question (2026-08-18, DPA clause 4.7(b)): "Is there a test that
+ * would fail if someone removed [the LEGAL exclusion]?" The suite above already answers
+ * yes for the classifier's own return value — but it never invokes an AI provider, so it
+ * cannot by itself distinguish "the classifier says no" from "and therefore the provider
+ * was never called." This suite closes that gap with an OBSERVABLE-behavior test: it walks
+ * the exact same function chain the two production call sites use
+ * (api/v1/anchor-submit.ts and api/v1/anchor-bulk.ts both call
+ * buildProfessionalEducationJobPayload() and only enqueue when it is non-null; the async
+ * job processor then calls extractAndPersistProfessionalEducationMetadata(), the ONLY call
+ * site of provider.extractMetadata()) and asserts a mocked provider is invoked zero times
+ * for a LEGAL anchor — including when ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY is ON,
+ * which is the exact scenario counsel fears.
+ */
+describe('DPA 4.7(b) ratchet: the full enqueue -> extract pipeline never reaches the AI provider for LEGAL', () => {
+  const barShapedLegalMetadata = {
+    credential_title: 'Continuing Legal Education Seminar',
+    credential_issuer: 'California State Bar Association',
+    source_provider: 'State Bar of California',
+    source_url: 'https://calbar.example.org/cle/seminar',
+  };
+
+  function makeLegalAnchor(metadata: Record<string, unknown> | null): ProfessionalEducationAnchorRow {
+    return {
+      id: '550e8400-e29b-41d4-a716-446655440199',
+      public_id: 'ARK-2026-LEGAL-RATCHET',
+      credential_type: 'LEGAL',
+      fingerprint: 'e'.repeat(64),
+      org_id: 'org-1',
+      user_id: 'user-1',
+      metadata,
+    };
+  }
+
+  function makeSpyProvider(): { provider: Pick<IAIProvider, 'extractMetadata' | 'name'>; extractMetadata: ReturnType<typeof vi.fn> } {
+    const extractMetadata = vi.fn().mockResolvedValue({
+      fields: { creditHours: 1 } as ExtractedFields,
+      confidence: 0.9,
+      provider: 'ratchet-spy-provider',
+      modelVersion: 'test-v1',
+    });
+    return { provider: { name: 'ratchet-spy-provider', extractMetadata }, extractMetadata };
+  }
+
+  /**
+   * Reproduces (does not import — both call sites are private route-handler functions)
+   * the exact sequence api/v1/anchor-submit.ts's and api/v1/anchor-bulk.ts's
+   * `enqueueProfessionalEducationExtraction()` + the async job processor perform:
+   * build the payload, bail out if it is null, otherwise hand the anchor to the ONLY
+   * function that calls the AI provider.
+   */
+  async function attemptFullExtractionPipeline(params: {
+    anchor: ProfessionalEducationAnchorRow;
+    provider: Pick<IAIProvider, 'extractMetadata' | 'name'>;
+  }): Promise<'no_ai_route' | ProfessionalEducationExtractionResult> {
+    const payload = buildProfessionalEducationJobPayload(params.anchor);
+    if (!payload) return 'no_ai_route';
+
+    return extractAndPersistProfessionalEducationMetadata({
+      db: makeProfessionalEducationDb(),
+      provider: params.provider,
+      anchor: params.anchor,
+      educationKind: payload.educationKind,
+      evidence: payload.evidence,
+    });
+  }
+
+  it('positive control: a genuine CLE anchor DOES reach the AI provider (proves this harness can detect a call)', async () => {
+    const { provider, extractMetadata } = makeSpyProvider();
+
+    const outcome = await attemptFullExtractionPipeline({
+      anchor: makeAnchor('CLE', {
+        source_url: 'https://legal.thomsonreuters.com/cle/course/WL-CLE-2026-ETH',
+        credential_title: 'Professional Responsibility Update',
+        credential_issuer: 'Westlaw CLE',
+      }),
+      provider,
+    });
+
+    expect(outcome).not.toBe('no_ai_route');
+    expect(extractMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  it('flag ON + LEGAL anchor with CLE-matching metadata: the classifier refuses before any provider call (zero calls)', async () => {
+    // Exact scenario counsel fears: the flag is live AND the anchor's metadata reads as CLE
+    // ("bar association" / "state bar" / "continuing legal education").
+    expect(schemaGate.isProfessionalEducationSchemaReady()).toBe(true);
+    const { provider, extractMetadata } = makeSpyProvider();
+
+    const outcome = await attemptFullExtractionPipeline({
+      anchor: makeLegalAnchor(barShapedLegalMetadata),
+      provider,
+    });
+
+    expect(outcome).toBe('no_ai_route');
+    expect(extractMetadata).not.toHaveBeenCalled();
+  });
+
+  it('flag ON + LEGAL anchor with no metadata at all: still zero provider calls', async () => {
+    expect(schemaGate.isProfessionalEducationSchemaReady()).toBe(true);
+    const { provider, extractMetadata } = makeSpyProvider();
+
+    const outcome = await attemptFullExtractionPipeline({
+      anchor: makeLegalAnchor(null),
+      provider,
+    });
+
+    expect(outcome).toBe('no_ai_route');
+    expect(extractMetadata).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The behavioral ratchet above proves the AI provider is never reached IF the two route
+ * handlers keep calling buildProfessionalEducationJobPayload() and keep bailing out on a
+ * null payload — but it reproduces that sequence rather than executing
+ * api/v1/anchor-submit.ts / api/v1/anchor-bulk.ts themselves, so it cannot see a future
+ * edit to those two files that adds a second, unguarded route to the AI provider (e.g. a
+ * "fast path" that calls extractAndPersistProfessionalEducationMetadata() directly instead
+ * of going through the classifier-gated job payload). A source-shape guard closes exactly
+ * that named gap; it is deliberately narrow and is not a substitute for the behavioral test
+ * above.
+ */
+describe('DPA 4.7(b) source-shape guard: route handlers never extract inline', () => {
+  const routeFiles = ['anchor-submit.ts', 'anchor-bulk.ts'];
+
+  it('anchor-submit.ts and anchor-bulk.ts only ever build a job payload — they never call extractAndPersistProfessionalEducationMetadata() directly', () => {
+    for (const file of routeFiles) {
+      const raw = fs.readFileSync(path.join(API_V1_DIR, file), 'utf-8');
+      const source = stripTsComments(raw);
+      expect(source).toContain('buildProfessionalEducationJobPayload');
+      expect(source).not.toContain('extractAndPersistProfessionalEducationMetadata');
+    }
   });
 });
 

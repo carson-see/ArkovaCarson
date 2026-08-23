@@ -337,7 +337,18 @@ test.describe('Cross-Tenant Isolation — direct PostgREST (RLS)', () => {
     for (const id of createdAnchorIds) {
       await deleteTestAnchor(serviceClient, id);
     }
-    await accessorClient?.auth.signOut().catch(() => {});
+    // scope:'local' is load-bearing: supabase-js signOut() defaults to
+    // scope:'global', which revokes EVERY session for demo-admin — including
+    // the .auth/orgAdmin.json storageState session that auth.setup.ts minted
+    // and every later spec in a single-invocation run reuses. Against hosted
+    // GoTrue that bounced every subsequent orgAdminPage spec to /login
+    // (observed 2026-08-15 on the fullsoak side-rig: csv-upload, dashboard,
+    // error-states, integrations-docusign*, org-admin… all failed the moment
+    // this afterAll ran). CI's local GoTrue masks it, per-spec invocations
+    // mask it; one full-suite invocation against a hosted project does not.
+    // Matches the app's own convention (src/hooks/useAuth.ts uses
+    // scope:'local' everywhere).
+    await accessorClient?.auth.signOut({ scope: 'local' }).catch(() => {});
   });
 
   test('RLS silently filters cross-tenant anchor reads for an authenticated org-admin JWT', async () => {
