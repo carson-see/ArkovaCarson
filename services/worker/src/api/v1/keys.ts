@@ -25,22 +25,32 @@ import { FERPA_EXCEPTION_CATEGORIES, INSTITUTION_TYPES } from '../../constants/f
 import { recordAuditEvent } from '../../utils/auditEvent.js';
 
 /**
- * SCRUM-1271-D — strip the internal `id` UUID from outbound key responses.
+ * Strip secrets from outbound key responses: `key_hash` (the credential
+ * derivative) and `org_id` (internal tenant UUID).
  *
- * Customers should reference keys by `key_prefix` (already human-readable +
- * unique) rather than the api_keys.id UUID per CLAUDE.md §6. The PATCH
- * endpoint URL still takes `:keyId` (= the internal UUID) as the path param
- * because v1 routes are frozen — that surface migrates to v2 in the
- * follow-on. Today's fix is purely additive-removal in the response body.
+ * `id` is deliberately KEPT (FD-P7, fullsoak 2026-08). SCRUM-1271-D stripped
+ * it intending by-prefix v2 routes to follow; they never shipped, and the
+ * frozen v1 PATCH/DELETE routes are addressed by `:keyId` — so no client
+ * could revoke or delete a key at all (a CC6.8 control failure). `key_prefix`
+ * cannot substitute as the address: it has no unique constraint and only 4
+ * visible hex chars of entropy. This surface is ORG_ADMIN-only and org-scoped,
+ * and the row's own id is not a secret.
  */
-function toPublicKey<T extends Record<string, unknown>>(row: T | null | undefined): Partial<T> {
+export function toPublicKey<T extends Record<string, unknown>>(row: T | null | undefined): Partial<T> {
   if (!row) return {};
   const sanitized = { ...row };
-  delete (sanitized as Record<string, unknown>).id;
   delete (sanitized as Record<string, unknown>).org_id;
   delete (sanitized as Record<string, unknown>).key_hash;
   return sanitized;
 }
+
+/**
+ * Columns safe to return to an org admin (everything but org_id + key_hash).
+ * One constant, used by every route — the FD-P7 regression started as three
+ * hand-maintained copies of this list drifting apart.
+ */
+const KEY_RESPONSE_COLUMNS =
+  'id, key_prefix, name, scopes, rate_limit_tier, is_active, created_at, expires_at, last_used_at, revoked_at, revocation_reason';
 
 /** Zod schema for key creation */
 const ApiKeyScopeSchema = z.enum(API_KEY_SCOPES);
@@ -59,7 +69,14 @@ export const CreateKeySchema = z.object({
 export const UpdateKeySchema = z.object({
   name: z.string().min(1).max(100).optional(),
   is_active: z.boolean().optional(),
-});
+  revocation_reason: z.string().max(500).optional(),
+}).refine(
+  (d) => d.revocation_reason === undefined || d.is_active === false,
+  {
+    message: 'revocation_reason is only accepted when is_active is false',
+    path: ['revocation_reason'],
+  },
+);
 
 /**
  * Log an audit event (fire-and-forget).
@@ -147,7 +164,7 @@ router.post('/', async (req, res) => {
         access_purpose: access_purpose ?? null,
         ferpa_verified: !!ferpa_exception_category,
       })
-      .select('id, key_prefix, name, scopes, rate_limit_tier, is_active, created_at, expires_at')
+      .select(KEY_RESPONSE_COLUMNS)
       .single();
 
     if (error || !inserted) {
@@ -159,7 +176,7 @@ router.post('/', async (req, res) => {
     // Log audit event
     logAuditEvent(userId, 'api_key.created', 'api_key', inserted.id, JSON.stringify({ key_prefix: prefix, name, scopes }), profile.org_id);
 
-    // Return raw key ONCE — Constitution 1.4. SCRUM-1271-D: omit internal id.
+    // Return raw key ONCE — Constitution 1.4.
     res.status(201).json({
       ...toPublicKey(inserted),
       key: raw,
@@ -201,7 +218,7 @@ router.get('/', async (req, res) => {
     }
 
     const { data: keys, error } = await db.from('api_keys')
-      .select('id, key_prefix, name, scopes, rate_limit_tier, is_active, created_at, expires_at, last_used_at')
+      .select(KEY_RESPONSE_COLUMNS)
       .eq('org_id', profile.org_id)
       .order('created_at', { ascending: false });
 
@@ -258,7 +275,7 @@ router.patch('/:keyId', async (req, res) => {
 
     // Verify key belongs to user's org
     const { data: existing } = await db.from('api_keys')
-      .select('id, org_id')
+      .select('id, org_id, revoked_at')
       .eq('id', keyId)
       .eq('org_id', profile.org_id)
       .single();
@@ -270,13 +287,53 @@ router.patch('/:keyId', async (req, res) => {
 
     const updateData: TypeSafeTablesUpdate<'api_keys'> = {};
     if (parsed.data.name !== undefined) updateData.name = parsed.data.name;
-    if (parsed.data.is_active !== undefined) updateData.is_active = parsed.data.is_active;
+    if (parsed.data.is_active === false) {
+      updateData.is_active = false;
+      // CC6.8: a revoke stamps the designation, not just the boolean — the
+      // first revocation wins so a repeat PATCH cannot rewrite the record.
+      // The stamp is its own UPDATE guarded by `revoked_at IS NULL`: the
+      // ownership probe above is read-then-write, so two concurrent first
+      // revokes could both observe NULL and both stamp, the later write
+      // silently shifting the timestamp and replacing the reason. With the
+      // guard the database arbitrates — the losing stamp matches zero rows
+      // and the persisted record survives.
+      if (!existing.revoked_at) {
+        const { error: stampError } = await db.from('api_keys')
+          .update({
+            revoked_at: new Date().toISOString(),
+            revocation_reason: parsed.data.revocation_reason ?? null,
+          })
+          .eq('id', keyId)
+          .eq('org_id', profile.org_id)
+          .is('revoked_at', null);
+
+        if (stampError) {
+          res.status(500).json({ error: 'Failed to update API key' });
+          return;
+        }
+      }
+    } else if (parsed.data.is_active === true) {
+      // Revocation is one-way: validate_api_key (migration 0382) never
+      // authenticates a key with revoked_at set, so flipping is_active back
+      // would create a row that claims active while every auth path refuses
+      // it. Issue a new key instead.
+      if (existing.revoked_at) {
+        res.status(409).json({
+          // Machine-readable code, matching apiKeyAuth's error style
+          // (`api_key_revoked` / `api_key_expired`).
+          error: 'api_key_already_revoked',
+          message: 'This API key was revoked and cannot be reactivated. Create a new key instead.',
+        });
+        return;
+      }
+      updateData.is_active = true;
+    }
 
     const { data: updated, error } = await db.from('api_keys')
       .update(updateData)
       .eq('id', keyId)
       .eq('org_id', profile.org_id)
-      .select('id, key_prefix, name, scopes, rate_limit_tier, is_active, created_at, expires_at, last_used_at')
+      .select(KEY_RESPONSE_COLUMNS)
       .single();
 
     if (error || !updated) {
@@ -284,9 +341,24 @@ router.patch('/:keyId', async (req, res) => {
       return;
     }
 
-    // Log revocation to audit_events
+    // Log revocation to audit_events. The payload carries the PERSISTED
+    // designation — `updated` is the post-update row — so a repeat revoke
+    // logs the original revoked_at/revocation_reason rather than whatever
+    // the repeat request supplied. An audit row must never contradict the
+    // table it describes.
     if (parsed.data.is_active === false) {
-      logAuditEvent(userId, 'api_key.revoked', 'api_key', keyId, JSON.stringify({ key_prefix: updated.key_prefix }), profile.org_id);
+      logAuditEvent(
+        userId,
+        'api_key.revoked',
+        'api_key',
+        keyId,
+        JSON.stringify({
+          key_prefix: updated.key_prefix,
+          revoked_at: updated.revoked_at ?? null,
+          revocation_reason: updated.revocation_reason ?? null,
+        }),
+        profile.org_id,
+      );
     }
 
     res.json(toPublicKey(updated));

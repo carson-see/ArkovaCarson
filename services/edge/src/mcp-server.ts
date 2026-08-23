@@ -577,9 +577,12 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           '  get_fingerprint      — Fetch record details by SHA-256 fingerprint',
           '  get_document         — Fetch document details by Arkova public ID',
           '  verify_credential    — Verify a credential by its public ID (e.g., ARK-DEG-ABC123)',
-          '  search_credentials   — Semantic search across the anchored records corpus',
+          // BUG-026 / BUG-008 / R-1: this listing is a published claim. Keep it
+          // matched to what the tools actually do — search_credentials is served
+          // lexically, and nessie_query is disabled.
+          '  search_credentials   — Keyword (substring) search across the anchored records corpus',
           '  oracle_batch_verify  — Batch-verify up to 25 credentials with query-envelope metadata',
-          '  nessie_query         — RAG search over SEC filings, patents, and regulatory docs',
+          '  nessie_query         — DISABLED: returns an explicit nessie_disabled error, never results',
           ...(telemetry.anchorDocumentEnabled
             ? ['  anchor_document      — Submit a SHA-256 fingerprint for batch anchoring']
             : ['  anchor_document      — Disabled for read-only launch unless MCP_ENABLE_ANCHOR_DOCUMENT=true and caller has write:anchors or anchor:write']),
@@ -1008,6 +1011,8 @@ export async function handleMcpRequest(
     // + per-caller rate limits). Otherwise it degrades to the text fallback.
     workerBaseUrl: env.WORKER_BASE_URL,
     callerApiKey: auth.callerApiKey ?? undefined,
+    // BUG-008/027: fail closed — only the exact string "true" enables Nessie.
+    nessieEnabled: env.ENABLE_NESSIE_QUERY === 'true',
   };
 
   const clientIp = earlyClientIp;

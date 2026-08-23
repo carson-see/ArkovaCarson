@@ -334,3 +334,64 @@ describe("ci.yml edge-worker suite is actually invoked", () => {
     ).toBe(true);
   });
 });
+
+/**
+ * The same blind spot, one language over — BUG-2026-08-12-007.
+ *
+ * `packages/arkova-py` is the ONLY Arkova SDK actually published (all three npm
+ * packages 404), and until 2026-08-15 nothing ran its pytest/ruff suite on a
+ * pull request. Its only invocation lived in publish-python-sdk.yml, which fires
+ * on an `arkova-py-v*` tag — after the release decision, never before it. So the
+ * published 2.2.0 wheel shipped a `compliance_controls` type that contradicted
+ * the API (breaking `verify()` for every record carrying controls), and the
+ * source fix then sat unreleased for two weeks with no PR ever executing the
+ * tests that would have shown source and artifact disagreeing.
+ *
+ * These assertions are the ratchet. A suite that gates nothing fails silently,
+ * which is precisely how this went unnoticed twice.
+ */
+describe("ci.yml Python SDK suite is actually invoked", () => {
+  const pythonJob = (): string => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const job = /\n {2}python-sdk-tests:\n([\s\S]*?)(?=\n {2}[a-z][\w-]*:\n)/u.exec(workflow)?.[0];
+    expect(
+      job,
+      "ci.yml must keep a 'python-sdk-tests' job — packages/arkova-py gates nothing without it",
+    ).toBeDefined();
+    return job as string;
+  };
+
+  it("runs pytest against packages/arkova-py", () => {
+    const job = pythonJob();
+    expect(job, "the Python suite must run from packages/arkova-py").toMatch(
+      /working-directory:\s*packages\/arkova-py/u,
+    );
+    expect(job, "the job must execute the suite, not merely install it").toMatch(
+      /run:\s*pytest\b/u,
+    );
+  });
+
+  it("keeps the ruff gate at PR time, not only at publish time", () => {
+    // publish-python-sdk.yml gates the PyPI upload on `ruff check src tests`.
+    // A finding that only surfaces there blocks a release instead of a review —
+    // exactly the ordering that let 2.2.0 ship unchecked.
+    expect(pythonJob()).toMatch(/run:\s*ruff check src tests/u);
+  });
+
+  it("installs the dev extras, which is where pytest and the pinned ruff live", () => {
+    expect(pythonJob()).toMatch(/pip install -e "\.\[dev\]"/u);
+  });
+
+  it("matches the publish workflow's interpreter", () => {
+    // Parity argument of CLAUDE.md §0.9: if the publish gate would reject it, a
+    // PR must reject it first. Different interpreters make that untrue.
+    const publish = readFileSync(
+      resolve(REPO, ".github/workflows/publish-python-sdk.yml"),
+      "utf8",
+    );
+    const publishVersion = /python-version:\s*["']?([\d.]+)["']?/u.exec(publish)?.[1];
+    const ciVersion = /python-version:\s*["']?([\d.]+)["']?/u.exec(pythonJob())?.[1];
+    expect(publishVersion, "publish-python-sdk.yml must pin a python-version").toBeDefined();
+    expect(ciVersion, "the CI job must pin a python-version").toBe(publishVersion);
+  });
+});

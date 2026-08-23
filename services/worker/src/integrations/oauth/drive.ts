@@ -9,8 +9,11 @@
  *   4. files.get(parents, name) for the folder-path resolver
  *
  * Every function takes a fetch impl so tests stub without touching the
- * real network. Scopes are intentionally limited to Drive file access plus
- * Drive Activity read-only visibility; refresh tokens are stored by the
+ * real network. Scopes are intentionally limited to Drive file access,
+ * Drive Activity read-only visibility, and the non-sensitive userinfo.email
+ * identity scope (see DRIVE_DEFAULT_SCOPES); the consent URL never sets
+ * `include_granted_scopes`, so a connect cannot inherit unrelated scopes
+ * previously granted to the OAuth client. Refresh tokens are stored by the
  * connector service in Secret Manager, not Postgres.
  *
  * Constitution refs:
@@ -24,9 +27,27 @@ const DRIVE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DRIVE_OAUTH_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 
+/**
+ * SECURITY — complete Google scope allowlist (FULLSOAK 2026-08 finding,
+ * shared-resource register #9). Scope ↔ runtime consumer:
+ *
+ *   - drive.file: files.get / files.export / changes.* / channels.stop —
+ *     every Drive API call in this module.
+ *   - drive.activity.readonly: Drive Activity read-only visibility (the
+ *     connector's declared surface; no direct Activity API caller yet).
+ *   - userinfo.email: the callback's account-identity lookup
+ *     (drive-oauth.ts fetchGoogleIdentity → oauth2/v3/userinfo). Without an
+ *     identity scope that endpoint 401s and account_id degrades to a
+ *     constant, collapsing the org_integrations (org_id, provider,
+ *     account_id) upsert key. Non-sensitive; returns sub + email only.
+ *
+ * Do NOT add scopes here without a security review — this list is exactly
+ * what a leaked refresh token can reach.
+ */
 export const DRIVE_DEFAULT_SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/drive.activity.readonly',
+  'https://www.googleapis.com/auth/userinfo.email',
 ];
 
 const OAuthTokenResponse = z.object({
@@ -133,6 +154,13 @@ export function buildAuthorizationUrl(args: {
   const env = args.env ?? process.env;
   const { clientId } = requireClient(env);
   const scopes = (args.scopes ?? DRIVE_DEFAULT_SCOPES).join(' ');
+  // SECURITY: never send `include_granted_scopes` (FULLSOAK 2026-08,
+  // shared-resource register #9). With it set to true, Google folds EVERY
+  // scope the OAuth client was ever granted by this Google account into the
+  // new grant — on the shared client a single Drive connect was observed
+  // minting a 33-scope token (full drive, gmail.modify, calendar, contacts,
+  // classroom.*, chat.*). Absent, the parameter defaults to false and the
+  // grant is limited to the `scope` list above.
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: args.redirectUri,
@@ -140,7 +168,6 @@ export function buildAuthorizationUrl(args: {
     scope: scopes,
     access_type: 'offline',
     prompt: 'consent',
-    include_granted_scopes: 'true',
     state: args.state,
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;

@@ -3228,12 +3228,56 @@ function validateRcManifestMetadata(
   requireRcTimestamp(errors, manifest, 'approval_time', 'approval_time');
 }
 
+/**
+ * The PR-side facts an `included_prs[]` entry is checked against: the tier the
+ * PR body declares, the tier the path detector requires (with its reason), and
+ * the PR's changed files.
+ *
+ * These three always travel together — both `validateCoveredRcPr` call sites
+ * and `deferredConsolidatedSoakCoverage` already thread the same trio — so
+ * bundling them is a grouping the callers have, not one invented to shorten a
+ * signature. It also keeps `validateCoveredRcPr` inside the S107 parameter
+ * limit without pushing `errors`/`notes` into a sink object, which would make
+ * this one function diverge from every other validator in this file.
+ */
+interface RcPrClaim {
+  declared: Tier;
+  required: { tier: Tier; reason: string };
+  files: string[];
+}
+
+/**
+ * Tier checks for the manifest entry covering the current PR: the entry's
+ * `risk_tier` must parse, and must not sit below either the detector-required
+ * tier or the tier the PR body declares.
+ *
+ * Extracted from `validateCoveredRcPr` so that function stays under the S3776
+ * cognitive-complexity limit; the two rank comparisons are the only nested
+ * branches it had.
+ */
+function rcEntryTierErrors(
+  coveredPr: Record<string, unknown>,
+  claim: RcPrClaim,
+): string[] {
+  const manifestTier = rcTier(stringAt(coveredPr, 'risk_tier'));
+  if (manifestTier === null) {
+    return ['RC manifest current PR entry risk_tier must be T1, T2, or T3.'];
+  }
+
+  const errors: string[] = [];
+  if (TIER_RANK[manifestTier] < TIER_RANK[claim.required.tier]) {
+    errors.push(`RC manifest risk_tier ${manifestTier} is below required tier ${claim.required.tier} for this PR. Reason: ${claim.required.reason}.`);
+  }
+  if (TIER_RANK[manifestTier] < TIER_RANK[claim.declared]) {
+    errors.push(`RC manifest risk_tier ${manifestTier} is below declared tier ${claim.declared}.`);
+  }
+  return errors;
+}
+
 function validateCoveredRcPr(
   manifest: Record<string, unknown>,
   includedPrs: unknown[],
-  declared: Tier,
-  required: { tier: Tier; reason: string },
-  files: string[],
+  claim: RcPrClaim,
   opts: CheckOptions,
   errors: string[],
   notes: string[],
@@ -3267,21 +3311,11 @@ function validateCoveredRcPr(
     errors.push('RC manifest current PR entry base SHA does not match the current base, train launch SHA, target main SHA, an allowed base SHA, or an ancestor of the current base.');
   }
 
-  const manifestTier = rcTier(stringAt(coveredPr, 'risk_tier'));
-  if (manifestTier === null) {
-    errors.push('RC manifest current PR entry risk_tier must be T1, T2, or T3.');
-  } else {
-    if (TIER_RANK[manifestTier] < TIER_RANK[required.tier]) {
-      errors.push(`RC manifest risk_tier ${manifestTier} is below required tier ${required.tier} for this PR. Reason: ${required.reason}.`);
-    }
-    if (TIER_RANK[manifestTier] < TIER_RANK[declared]) {
-      errors.push(`RC manifest risk_tier ${manifestTier} is below declared tier ${declared}.`);
-    }
-  }
+  errors.push(...rcEntryTierErrors(coveredPr, claim));
   requireRcString(errors, coveredPr, 'owner', 'included_prs[].owner');
   requireRcString(errors, coveredPr, 'ci_summary', 'included_prs[].ci_summary');
   requireRcString(errors, coveredPr, 'rollback_note', 'included_prs[].rollback_note');
-  if (files.some(touchesMigrationFile) && stringArrayAt(coveredPr, 'migration_files').length === 0) {
+  if (claim.files.some(touchesMigrationFile) && stringArrayAt(coveredPr, 'migration_files').length === 0) {
     errors.push('RC manifest included_prs[].migration_files must list migration files for a migration-bearing PR.');
   }
   return coveredPr;
@@ -3418,8 +3452,11 @@ function deferredConsolidatedSoakMetadataErrors(
   // INCOMPLETE_VALUE_PATTERNS, for the unrelated "someone forgot to fill this
   // in" case elsewhere in this file) and would reject it before the actual
   // comparison below ever ran.
+  // The optional chain is the null check: `stringAt` returns null when the
+  // field is absent or not a string, and `null?.trim()` short-circuits to
+  // `undefined`, which is never 'pending' — so a missing field still fails.
   const approvalStatusRaw = stringAt(manifest, 'approval_status');
-  if (approvalStatusRaw === null || approvalStatusRaw.trim().toLowerCase() !== 'pending') {
+  if (approvalStatusRaw?.trim().toLowerCase() !== 'pending') {
     errors.push(
       'RC manifest declares soak_mode="deferred_consolidated_soak" but approval_status is not '
       + 'the literal string "pending". Deferred mode is, by definition, evidence that has not yet '
@@ -3463,7 +3500,7 @@ function deferredConsolidatedSoakCoverage(
   deferredConsolidatedSoakMetadataErrors(parsed, opts, errors);
 
   const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
-  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors, notes);
+  const coveredPr = validateCoveredRcPr(parsed, includedPrs, { declared, required, files }, opts, errors, notes);
   if (coveredPr === null) return { errors, notes };
 
   if (errors.length === 0) {
@@ -3530,7 +3567,7 @@ function rcManifestCoverage(
 
   validateRcManifestMetadata(parsed, opts, errors);
   const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
-  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors, notes);
+  const coveredPr = validateCoveredRcPr(parsed, includedPrs, { declared, required, files }, opts, errors, notes);
   const effectiveTier = rcEffectiveTier(coveredPr, declared);
   validateRcEnvironment(parsed, errors);
   validateRcSoak(parsed, effectiveTier, opts, errors);

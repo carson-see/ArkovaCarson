@@ -2,6 +2,73 @@
 
 Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
+## 2026-08-17 — new `utf16-truncate.ts`: surrogate-safe truncation (poison-record incident)
+
+`truncateUtf16Safe(input, maxUnits)` replaces bare `.slice(0, N)` wherever a truncated string is
+persisted or JSON-serialized. `.slice` cuts at UTF-16 code-unit boundaries; a cut inside a surrogate
+pair leaves a lone high surrogate, which cannot encode as UTF-8 and makes the enclosing PostgREST
+request body invalid JSON (`PGRST102`). One such string in `anchors.description` — an OpenAlex
+abstract with astral-plane math symbols, split exactly at unit 500 — poisoned the head of the
+public-record anchoring queue for 16 days
+(`docs/staging/fullsoak-2026-08/prod-repair-poison-record-2026-08-17.md`).
+
+Mechanism: slice → drop a trailing lone high surrogate (the whole fix for well-formed input, and it
+avoids `toWellFormed()`'s visible U+FFFD in user-facing strings) → feature-detected
+`String.prototype.toWellFormed()` (ES2024, Node ≥ 20 — our engines floor is 20.14) as a final
+invariant guard for already-malformed input. The feature-detect also keeps `"lib": ["ES2022"]`
+tsconfig untouched.
+
+Known remaining `.slice(0, N)`-before-persist sites NOT migrated in that PR (each needs its own
+look at whether the destination is a JSON write path): `jobQueue.ts` `sanitizeLastError` (1000),
+`api/v1/credentials-ctdl-registry-anchor.ts` (500 ×2), `api/v1/webhooks*.ts` `response_body` (500),
+`api/v1/nessie-query.ts` (500 ×2), `lib/credential-source-import.ts` (180). A lint rule banning
+truncate-then-persist via bare slice would beat this census — see the PR body follow-ups.
+## 2026-08-17 — `sentry.ts`: `event.extra` is now walked recursively (§1.1 hole)
+
+**The gap.** `scrubPiiFromEvent` ran `scrubString` over exception values, the message, the
+transaction name, tags and `request.url` — but for `event.extra` it did something else entirely: it
+replaced *exact top-level keys* from `SENSITIVE_EXTRA_KEYS` with `[FILTERED]` and stopped. So:
+
+1. Any **other** top-level key's string value was emitted verbatim. `{ notes: 'escalated to
+   x@y.com' }` shipped the address.
+2. **Nested** extras were never key-filtered at all — `{ ctx: { email: … } }` passed straight
+   through, because `'email' in event.extra` is false.
+
+`captureCreditRpcFailureAlert` spreads caller-supplied `...args.extra` into that bag, so every call
+site handing it a nested object was a live path for an email / document fingerprint / API key into
+Sentry. §1.1 forbids all three outright.
+
+**The fix.** `scrubExtraValue()` walks `event.extra` recursively, applying **both** the key filter
+and `scrubString` at every level. It runs *after* `scrubBinaryValues`, so the SCRUM-2492 type-based
+binary drop still happens first and the `[REDACTED_BYTES]` tokens it leaves are inert to the string
+pass.
+
+**Depth is a bound, not a bypass.** Past `MAX_SCRUB_DEPTH` the walk returns `REDACTED_DEPTH_TOKEN`
+rather than the subtree — "we could not check this" must never render as "this is fine", the same
+reasoning as `orgFieldPolicy`'s truncated-payload rejection. Two consequences worth knowing: it also
+terminates a cyclic `extra`, and it closes the matching depth hole in `scrubBinaryValues` (which
+returns deep values verbatim) for anything riding on `extra`. Strings are handled *before* the depth
+guard, so a deep string is redacted rather than dropped.
+
+**One existing contract was deliberately NARROWED — read this before you "fix" the test.**
+SCRUM-2900's scheduler-pause dead-man wants `actor_principal` in `extra` to survive, and the old test
+demonstrated that with a **human** email (`carson@arkova.ai`). It survived only because `extra` was
+never walked — i.e. by the same defect. The surviving exemption is now anchored to the GCP
+service-account shape (`/^[a-z0-9][a-z0-9-]*@[a-z0-9][a-z0-9-]*\.iam\.gserviceaccount\.com$/`), which
+is what the production caller actually passes. A human email in that field is scrubbed to `[EMAIL]`;
+§1.1 has no person-shaped exemption. The pattern is anchored end-to-end so nothing can ride alongside
+a principal. Attribution degrades rather than disappears — the Cloud Scheduler audit log still holds
+the identity.
+
+**Known trade-off, accepted.** `scrubString`'s regexes cannot distinguish a 64-hex Bitcoin txid from
+a 64-hex document fingerprint, or a 10-digit id string from a phone number, so operational strings of
+those shapes inside `extra` now redact too. That is the cost of §1.1 being absolute about
+fingerprints. Routing and triage key on Sentry **tags**, not extras, and the tag pass is unchanged.
+Prefer numbers over numeric strings in new `extra` payloads.
+
+Tests: `sentry-extra-scrub.test.ts` (15 cases, red-first) plus the narrowed + added
+`captureSchedulerPauseAlert` cases in `sentry.test.ts`. T2 (worker behavior).
+
 ## 2026-08-10 — new `orgFieldPolicy.ts`: org-scoped request-field rejection (DPA Schedule 1 / clause 4.6)
 
 The first per-org *request shape* control in the worker. `switchboard_flags` is global (no `org_id`)
@@ -73,6 +140,7 @@ earlier test already resolved must call it, or it reads the earlier answer.
 - **`db.ts`** — the service-role Supabase client + DB circuit breaker + `withDbTimeout`. **WH-1 (SCRUM-2899 / ARKOVA-WORKER-C):** the client is created with a custom `global.fetch` built from a dedicated bounded `undici.Agent` (short `keepAliveTimeout`) via `createResilientFetch()`, which retries ONCE on a connection-level failure (`isTransientConnectionError` — `fetch failed`/`ECONNRESET`/`UND_ERR_*`/nested `cause`). This ends the "TypeError: fetch failed" webhook drops caused by rotten keep-alive sockets on throttled Cloud Run — it fixes EVERY PostgREST/RPC caller, not just webhooks. Do NOT remove the custom fetch or widen the retry to HTTP-response errors (only transport failures are safe to retry). **WH-2:** `SUPABASE_POOLER_URL` is accepted as the REST base ONLY when its scheme is `http(s)`; a `postgres://`/`postgresql://` connection string is logged + ignored (falls back to `config.supabaseUrl`) so it can't silently become the REST base and 500 every call.
 - `sentry.ts` — Sentry init + mandatory PII scrubbing. SCRUM-2249: scrubbers collapse UUID identifiers → `[UUID]` (incl. `event.transaction` + `event.request.url`) and Supabase project-ref → `[SUPABASE_PROJECT]`. SCRUM-2492: the PII regexes + `scrubString`/`scrubUrl` now live in `pii-scrub.ts` (re-exported here); a type-based `scrubBinaryValues` pass drops document bytes from the whole event before the key-name PII passes. `release` = real `BUILD_SHA` (same value `/health` exposes), `serverName` = typed config Cloud Run `K_REVISION`/`K_SERVICE`. `IGNORED_ERROR_PATTERNS` drops GoTrue Navigator-lock + AbortError noise. `captureStuckAnchorAlert()` + `STUCK_ANCHOR_FINGERPRINT` are the stable seam PR #1055 (SCRUM-2234 stuck-anchor monitor) wires into so hourly re-fires collapse to one issue while preserving the caller's warning/error severity. `capturePipelineThroughputAlert()` + `PIPELINE_THROUGHPUT_FINGERPRINT` (SCRUM-2901) are the same pattern for the pipeline-throughput dead-man (`jobs/pipelineThroughputMonitor.ts`). **SCRUM-3050 changed it in two ways.** (1) It now emits real Sentry **TAGS** (`source`/`story`/`alert_type`/`sustained_bucket`), not just `extra` — Sentry issue-alert rules filter on `TaggedEventFilter`, so the previous extra-only version could never have been matched by any rule even once someone created one. (2) The fingerprint takes an optional duration-bucket suffix so a sustained condition opens a genuinely NEW issue at each escalation boundary instead of aging silently in one; level rises `error` → `fatal` past 72h. Passing no third argument preserves the pre-SCRUM-3050 fingerprint exactly. When adding a new fingerprinted alert helper here, emit tags, not extras.
 - `sentry.ts` — Sentry init + mandatory PII scrubbing. SCRUM-2249: scrubbers collapse UUID identifiers → `[UUID]` (incl. `event.transaction` + `event.request.url`) and Supabase project-ref → `[SUPABASE_PROJECT]`. SCRUM-2492: the PII regexes + `scrubString`/`scrubUrl` now live in `pii-scrub.ts` (re-exported here); a type-based `scrubBinaryValues` pass drops document bytes from the whole event before the key-name PII passes. `release` = real `BUILD_SHA` (same value `/health` exposes), `serverName` = typed config Cloud Run `K_REVISION`/`K_SERVICE`. `IGNORED_ERROR_PATTERNS` drops GoTrue Navigator-lock + AbortError noise. `captureStuckAnchorAlert()` + `STUCK_ANCHOR_FINGERPRINT` are the stable seam PR #1055 (SCRUM-2234 stuck-anchor monitor) wires into so hourly re-fires collapse to one issue while preserving the caller's warning/error severity. `capturePipelineThroughputAlert()` + `PIPELINE_THROUGHPUT_FINGERPRINT` (SCRUM-2901) are the same pattern for the pipeline-throughput dead-man (`jobs/pipelineThroughputMonitor.ts`) — always `error` level (no severity param; both fire conditions are page-worthy), aggregate-count context only.
+- **`sentry.ts` (fix/sentry-cron-checkins-prod-only, CTO directive 2026-08):** `withCronMonitoring()`'s Sentry Crons check-in reporting (`Sentry.captureCheckIn`) is now gated to the real prod service ONLY, via the single choke point `shouldSendCronCheckIns()` — every soak rig runs the same worker cron jobs (`webhook-retries`, `check-confirmations`, `process-revocations`, `grace-expiry-sweep`) and each one was reporting check-ins tagged with its own `K_SERVICE`, auto-creating a permanent Sentry monitor environment that starts paging "missed check-in" the moment the rig is torn down (5 dead rig envs × 4 cron monitors = 16 zombie env/monitor pairs, ~93k events as of 2026-08). Gate logic: fires when `K_SERVICE === PROD_SERVICE_NAME` (`'arkova-worker'`, the same constant `resolveSentryEnvironment` above pins) OR the escape hatch `ENABLE_SENTRY_CRON_CHECKINS=true` is set (for a rig where cron observability via Sentry Crons is deliberately wanted); suppressed otherwise, including local dev (no `K_SERVICE` at all). **The gate NEVER touches whether the wrapped cron job runs** — only whether Sentry hears about it; a suppressed check-in still executes `fn()` and still propagates its result/error normally. Fail-safe direction is deliberate: if the gate ever breaks and suppresses PROD check-ins too, the prod monitor's own missed-check-in alert fires loudly within one missed interval — never a silent failure for the surface that matters. Tests: `shouldSendCronCheckIns` describe block pins `PROD_SERVICE_NAME` + covers prod/rig/escape-hatch/no-K_SERVICE/non-'true'-value branches; the `withCronMonitoring` integration describe block covers the same four cases end-to-end (job still runs, check-in fires or doesn't).
 - **`verifyCache.ts` (PERF-12)** — Upstash Redis cache for `GET /api/v1/verify/:publicId`, 5-minute TTL. **`KEY_PREFIX` must be bumped on any change to what the cached body CONTAINS, not only on shape changes.** `verify:v2:` → `verify:v3:` (2026-08-02) for the outbound PII gate on `buildVerificationResult`: the gate runs before `setCachedVerification`, so new writes were safe either way, but entries written by the pre-fix build carried a raw `description` and would have kept serving it to anonymous callers for the rest of the TTL after deploy. A new prefix orphans them instantly; old keys age out on their own. Treat a redaction/suppression change as a cache-invalidating change.
 - **`postgrest-filter.ts` (2026-08-01)** — PostgREST request-line limits and the ONLY supported way to build an `.in()` filter over a caller-sized list. Owns `POSTGREST_ROW_LIMIT` / `POSTGREST_URL_FILTER_BUDGET_BYTES` / `POSTGREST_IN_FILTER_CHUNK`, `wireLength` / `inFilterValueWireLength`, `chunkForInFilter`, and `assertNotAllChunksFailed`. `chunkForInFilter` takes **no size parameter** (both production defects in this class were a call site picking the wrong constant), accepts **`string[]` only** (so the values chunked are provably the values sent), and bounds each chunk by **encoded wire bytes as well as count** — measured with `URLSearchParams`, which is what postgrest-js uses, and including the double quotes it adds around values containing `,`, `(` or `)`. Do NOT measure with `encodeURIComponent`: it is a different encoder, and 200 docket-shaped ids that measure 6,402 bytes under it are 9,206 on the wire. `assertNotAllChunksFailed` is the other half — a chunked loop that logs-and-continues returns `[]` when every chunk 400s, which downstream cannot tell from "no rows"; that silent success is what hid a 70-hour outage. Callers that must not throw (a revert inside another failure path) opt out explicitly. Full context: `jobs/agents.md`, 2026-08-01 entry.
 - **`chunkedRead.ts` (2026-08-02)** — `readInChunks(label, values, fetchChunk)`, the second half of the
@@ -266,6 +334,27 @@ oracle call in this service and `jobs/treasury-cache.ts` owns it (every 10 min �
 - **`BTC_PRICE_MEMO_TTL_MS` (60 s) must stay well under the cron's 10-minute period**, or the memo
   becomes staler than the row it caches. Failures memoize too, and concurrent callers share one
   in-flight read — an outage must not turn every gated request into a DB round trip.
+
+## 2026-08-17 — surrogate-safe truncation sweep (follow-up to `utf16-truncate.ts`)
+
+> Placed at EOF deliberately: PR #2266 introduces `utf16-truncate.ts` and inserts its section near
+> the top of this file; this sweep lands as a sibling PR carrying byte-identical copies of that
+> util + its test (add/add-identical merges cleanly in either order), so this note must not overlap
+> that hunk.
+
+`sanitizeLastError` now bounds via `truncateUtf16Safe(text, 1000)` instead of a bare `.slice` —
+`job_queue.last_error` is failure bookkeeping, and a poisoned error message used to make `failJob`'s
+own PostgREST body invalid JSON (PGRST102): the job's failure handling itself failed. The same sweep
+migrated `webhooks/delivery.ts` (`response_body` ×3 + `error_message` — endpoint-controlled bytes),
+`credentials-ctdl-registry-anchor.ts` (filename/label/description), `compliance-audit.ts`
+(`error_message`), `credential-source-import.ts` (`cleanText` + filename), the two test-ping
+`response_body` echoes, and `nessie-query.ts` citation excerpts. CI ratchet:
+`scripts/ci/feedback-rules/surrogate-safe-truncate.ts` (baseline burn-down in
+`surrogate-truncate-baseline.json`; merge-time gate is its colocated `.test.ts` in `Tests`).
+
+## 2026-08-15 BUG-2026-08-13-010 — `verifyCache.ts` KEY_PREFIX v5 → v6
+
+Response-shape change per the bump rule in the file header: connector-sourced records now carry the `fingerprint_rederivability` class + §1.5 note (see `constants/connectorFingerprint.ts`). Without the bump, a connector anchor cached pre-deploy serves a response with NO re-derivability statement for the whole TTL — the exact honesty gap the change closes.
 
 ## 2026-08-12 — F-D0-5 `body-read-timeout.ts`
 

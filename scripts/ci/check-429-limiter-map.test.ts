@@ -155,8 +155,12 @@ describe('429 limiter map — mounted/excluded wiring stays exact', () => {
     expect(consumers.map((file) => file.slice(REPO_ROOT.length + 1))).toEqual([
       'services/worker/src/api/v1/router.ts',
     ]);
-    expect(readFileSync(consumers[0], 'utf8')).toContain(
-      "router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), x402PayerRateLimit, aiRateLimiter, nessieQueryRouter)",
+    // BUG-008/027: `nessieCapabilityGate()` now leads the chain, ahead of the
+    // payment gate — a permanently-disabled capability must not charge a caller
+    // on the way to telling them it is disabled. The mount is multi-line, so the
+    // ordering is pinned by regex rather than a single-line literal.
+    expect(readFileSync(consumers[0], 'utf8')).toMatch(
+      /router\.use\(\s*'\/nessie\/query',\s*nessieCapabilityGate\(\),\s*x402PaymentGate\('\/api\/v1\/nessie\/query'\),\s*x402PayerRateLimit,\s*aiRateLimiter,\s*nessieQueryRouter,?\s*\)/,
     );
   });
 });

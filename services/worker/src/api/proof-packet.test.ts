@@ -12,6 +12,10 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Request, Response } from 'express';
+import {
+  FINGERPRINT_REDERIVABILITY,
+  FINGERPRINT_REDERIVABILITY_NOTE,
+} from '../constants/connectorFingerprint.js';
 
 const profilesMaybeSingle = vi.fn();
 const executionsMaybeSingle = vi.fn();
@@ -248,6 +252,38 @@ describe('handleProofPacketExport (SCRUM-1149)', () => {
     expect(packet.anchor_receipt.public_id).toBe('pid_acmemsa1');
     expect(packet.anchor_receipt.verification_uri).toBe('https://app.arkova.io/verify/pid_acmemsa1');
     expect(packet.actor.user_id).toBe(USER_ID);
+  });
+
+  it('states the connector fetch-time fingerprint caveat on the anchor receipt (BUG-2026-08-13-010, §1.5/§1.6A)', async () => {
+    // Every packet is connector-execution-scoped by construction (the anchor is
+    // resolved via metadata->>external_file_id), so an anchored packet must
+    // carry the re-derivability statement: the fingerprint attests the exact
+    // bytes fetched from the connector at fetch time, NOT that re-fetching the
+    // source document reproduces it.
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    expect(ctx.status).toHaveBeenCalledWith(200);
+    const packet = ctx.body as {
+      anchor_receipt: {
+        fingerprint_rederivability?: string;
+        fingerprint_rederivability_note?: string;
+      };
+    };
+    expect(packet.anchor_receipt.fingerprint_rederivability).toBe(
+      FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT,
+    );
+    expect(packet.anchor_receipt.fingerprint_rederivability_note).toBe(
+      FINGERPRINT_REDERIVABILITY_NOTE[FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT],
+    );
+  });
+
+  it('omits the connector fingerprint caveat on the not_anchored sentinel (no fingerprint to describe)', async () => {
+    anchorMaybeSingle.mockResolvedValueOnce({ data: null, error: null });
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    const packet = ctx.body as { anchor_receipt: Record<string, unknown> };
+    expect('fingerprint_rederivability' in packet.anchor_receipt).toBe(false);
+    expect('fingerprint_rederivability_note' in packet.anchor_receipt).toBe(false);
   });
 
   it('writes a PROOF_PACKET_EXPORTED audit row scoped to caller org', async () => {

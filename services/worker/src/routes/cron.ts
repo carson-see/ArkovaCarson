@@ -34,6 +34,7 @@ import {
 } from '../jobs/proof-materializer.js';
 import { runProofCoverageCheck } from '../jobs/proof-coverage-monitor.js';
 import { runDailyQueueDigest } from '../jobs/queue-digest-cron.js';
+import { runPlatformHealthDigest } from '../jobs/platform-health-digest-cron.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
@@ -658,6 +659,28 @@ cronRouter.post('/queue-digest', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Daily queue digest failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// Platform-admin daily health digest (email/auth/admin capability audit,
+// 2026-08). Same production-trigger / idempotency shape as queue-digest
+// above: Cloud Scheduler → HTTP, daily, idempotent per (admin, UTC date) via
+// an audit-events-backed delivery log. Recipients are
+// `profiles.is_platform_admin = true` — never a hardcoded address; the
+// existing hardcoded-recipient stuck-anchor alert in `pipeline-health.ts` is
+// a separate, unchanged signal. Gated by ENABLE_PLATFORM_HEALTH_DIGEST
+// (no-op when 'false').
+cronRouter.post('/platform-health-digest', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'platform-health-digest',
+      '0 13 * * *',
+      () => runPlatformHealthDigest(),
+    )();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Platform health digest failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

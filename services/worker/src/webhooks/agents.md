@@ -67,3 +67,11 @@ Registering it is what makes (2) impossible, not just what turns the feature on:
 - `credential_type` is nullable rather than defaulted. `anchors.credential_type` is nullable and the pre-fix emit site substituted `'OTHER'`, asserting a classification nobody measured (§1.5).
 - Catalog entry is `live: true` — the emit point is real, behind `ENABLE_EXPIRY_ALERTS`. Registration points kept in lockstep (all test-guarded): `WebhookSettings.tsx` `AVAILABLE_EVENTS`, its pinned drift-guard list, `WebhookEventCatalog.tsx` `CATALOG_DATA`, `src/lib/copy.ts` `WEBHOOK_EVENT_DESCRIPTIONS`, `packages/sdk/src/types.ts`, `integrations/zapier/src/constants.ts`, `docs/api/webhooks.md`.
 - **Known pre-existing drift, NOT introduced here:** `anchor.superseded` is in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` but absent from `AVAILABLE_EVENTS` and the pinned list. Left alone rather than folded into this fix.
+## 2026-08-17 — `response_body`/`error_message` truncation is surrogate-safe
+
+`delivery.ts` bounded `webhook_delivery_logs.response_body` (1000) and `error_message` (500) with
+bare `.slice(0, N)`. The receiving endpoint controls the response bytes: a body whose cap boundary
+split a surrogate pair made the delivery-log `.update()` itself PGRST102 — status bookkeeping
+failing on attacker-controlled input (2026-08-17 poison-record class, PR #2266). All four sites now
+use `utils/utf16-truncate.ts` `truncateUtf16Safe`. Poison regression tests live in
+`src/tests/webhook-delivery-roundtrip.test.ts` (`response_body surrogate-safe truncation`).

@@ -33,6 +33,10 @@ const CONFIG = {
   supabaseUrl: 'https://test.supabase.co',
   supabaseKey: 'test-key',
   userId: 'test-user-id',
+  // BUG-008/027: `nessieEnabled` is fail-closed (absent === disabled). These
+  // suites exercise the ENABLED behaviour, so the fixture opts in explicitly.
+  // The disabled contract is pinned in services/edge/src/mcp-tools.test.ts.
+  nessieEnabled: true,
 };
 
 const mockFetch = vi.fn();
