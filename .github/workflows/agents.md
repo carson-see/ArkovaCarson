@@ -1,5 +1,29 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-08-23 — the `commits` step hands off a FILE PATH, not the messages themselves (E2BIG)
+
+`policy-lints`' `Aggregate commit messages` step no longer inlines `git log`. It runs
+`scripts/ci/aggregate-commit-messages.ts`, which writes the aggregate to
+`$RUNNER_TEMP/pr-commit-msgs.txt`; the step publishes the PATH as the `msgs_file` output, and both
+consuming steps bind `PR_COMMITS_MSGS_FILE: ${{ steps.commits.outputs.msgs_file }}` alongside the
+now-`head -c 100000`-capped `PR_COMMITS_MSGS`.
+
+Why: passing the aggregate as an environment variable hit Linux's `MAX_ARG_STRLEN` (131,072 bytes
+per single argv/envp string). PR #2346 (run 32666797304, job 97261336883) reached 138,166 bytes and
+`execve` of the next step's `/usr/bin/bash` failed with `Argument list too long` — at spawn, before
+any lint ran, so no override label applied and the failure carried no diagnosis. Pushing a commit
+refreshed the frozen `base.sha` and incidentally cleared it, which is a workaround, not a fix: any
+sufficiently old PR, or the next long-lived branch to merge, re-triggers it.
+
+The step env var was renamed `BASE_SHA` → `BASE_REF_SHA` because the range is now resolved by
+`lib/ciContext` (`resolveDiffBase`, the FD-GATE-2 anchoring) rather than by shell. Empty on push
+builds still means "tip commit only", exactly as the old `if [ -n "$BASE_SHA" ]` branch did.
+
+The per-run random `$GITHUB_OUTPUT` heredoc delimiter documented below is UNCHANGED and still
+required — the capped fallback written into `msgs` is still PR-author-controlled text. New ratchets
+in `scripts/ci/ci-workflow-contract.test.ts` pin the file transport, the sub-`MAX_ARG_STRLEN` cap,
+and the requirement that every `PR_COMMITS_MSGS` consumer also binds the file.
+
 ## 2026-08-20 — every third-party action is pinned to a commit SHA, ratcheted by a detector
 
 `actions/checkout@v4` in `gitleaks.yml` was the reported finding. A tag is a mutable pointer: whoever can move `v4` upstream changes what our runner executes, with `secrets` and `GITHUB_TOKEN` in scope — the `tj-actions/changed-files` shape, where one retagged action dumped runner memory into ~23,000 repositories' logs. In the workflow whose entire job is catching leaked secrets, that is the weakest link in the gate.

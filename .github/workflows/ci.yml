@@ -406,13 +406,46 @@ jobs:
       - name: Aggregate commit messages
         id: commits
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # ciContext reads BASE_REF_SHA (this was BASE_SHA while the range was
+          # derived inline). Empty on push builds -> tip-commit fallback, the
+          # same behavior the old `if [ -n "$BASE_SHA" ]` branch gave.
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_COMMITS_MSGS_FILE: ${{ runner.temp }}/pr-commit-msgs.txt
         run: |
-          if [ -n "$BASE_SHA" ]; then
-            MSGS=$(git log --format=%B "$BASE_SHA"..HEAD)
-          else
-            MSGS=$(git log --format=%B -1)
-          fi
+          # E2BIG — PR #2346, run 32666797304, job 97261336883 (2026-08-23).
+          # This step used to inline `git log --format=%B "$BASE_SHA"..HEAD`
+          # into the `msgs` output, which ci.yml then injected as the
+          # PR_COMMITS_MSGS *environment variable* into the two gates below.
+          # Linux caps a single argv/envp string at MAX_ARG_STRLEN = 131,072
+          # bytes, so at 138,166 bytes `execve` of the NEXT step's
+          # /usr/bin/bash failed with "Argument list too long" — at process
+          # spawn, before any lint logic ran, which is why no override label
+          # could clear it and the red check carried no diagnosis.
+          #
+          # Two causes compounded and both are fixed:
+          #   1. Transport — the full payload now goes to a FILE (no per-string
+          #      ceiling); only the PATH is published as an output.
+          #   2. Range — `pull_request.base.sha` is refreshed by `synchronize`
+          #      but NOT by close/reopen, so #2346 sat pinned at its 2026-08-22
+          #      creation base and 6 real commits presented as 153 once #2219
+          #      merged a long-lived branch into range. The aggregator anchors
+          #      via ciContext.resolveDiffBase — the same FD-GATE-2 anchoring
+          #      `changedFiles` uses — instead of re-deriving it here. (A plain
+          #      `git merge-base` would NOT have fixed it: the frozen base is an
+          #      ancestor of the recomputed merge preview, so it returns the
+          #      frozen base unchanged. HEAD^1 is what collapses the range.)
+          node_modules/.bin/tsx scripts/ci/aggregate-commit-messages.ts
+          echo "msgs_file=${PR_COMMITS_MSGS_FILE}" >> "$GITHUB_OUTPUT"
+
+          # Size-capped env fallback, kept for local runs and any consumer not
+          # re-plumbed to the file. 100,000 < MAX_ARG_STRLEN leaves headroom for
+          # the rest of the environment, so this is spawnable by construction.
+          # Truncating here is only acceptable because lib/ciContext prefers the
+          # UNCAPPED file whenever it is readable and emits an ::error::
+          # annotation when it is not — the gates never silently narrow their
+          # haystack. A missing file makes `head -c` exit non-zero and fails the
+          # step under `bash -e`, which is the intended loud failure.
+          #
           # The commit messages framed below are fully PR-author-controlled
           # (any commit message in the PR). A FIXED heredoc delimiter here
           # would let a PR author put that exact string on its own line inside
@@ -430,7 +463,10 @@ jobs:
           MSGS_DELIM="ghadelim_$(openssl rand -hex 16)"
           {
             echo "msgs<<${MSGS_DELIM}"
-            echo "$MSGS"
+            head -c 100000 "$PR_COMMITS_MSGS_FILE"
+            # `head -c` can cut mid-line; this guarantees the closing delimiter
+            # still lands on a line of its own.
+            echo ""
             echo "${MSGS_DELIM}"
           } >> "$GITHUB_OUTPUT"
 
@@ -483,6 +519,7 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_COMMITS_MSGS: ${{ steps.commits.outputs.msgs }}
+          PR_COMMITS_MSGS_FILE: ${{ steps.commits.outputs.msgs_file }}
         run: node_modules/.bin/tsx scripts/ci/check-handoff-claims.ts
 
       - name: Confluence page coverage
@@ -493,6 +530,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_COMMITS_MSGS: ${{ steps.commits.outputs.msgs }}
+          PR_COMMITS_MSGS_FILE: ${{ steps.commits.outputs.msgs_file }}
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           FAIL_ON_MISSING_CONFLUENCE: 'false'
