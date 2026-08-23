@@ -1,6 +1,26 @@
 # agents.md — e2e/
 
-_Last updated: 2026-08-12 (newest dated entry in this file)._
+_Last updated: 2026-08-23 (newest dated entry in this file)._
+
+## 2026-08-23 — api-keys.spec.ts revoke-flip de-flaked (locator + shared 429 bucket)
+
+The #2220 revoke block flaked on every post-#2220 tree (main run 32623769492: ✘✘✓ on
+`api-keys.spec.ts:169`). Two independent causes, both fixed test-side:
+
+1. **Self-contradictory keyCard locator.** The card locator filtered on the key name AND a
+   Revoke button; ApiKeySettings.tsx unmounts that button on revoke, so the post-revoke
+   assertions re-resolved against nothing (clean list) or an ancestor div containing another
+   key's Revoke button — pass/fail depended on leftover keys. Now anchored on the card root
+   (`div.shadow-card-rest`) + key name + the delete button (present in every key state).
+2. **Shared per-IP rate-limit bucket saturation.** Every worker limiter with default options
+   keys on bare `req.ip` with empty scope, so the whole suite shares ONE `::1` bucket, each
+   dashboard call costs 3 increments (`apiIpShadowGuard` ×2 mounts + v1 anon limiter), and the
+   strictest gate 429s at 60/60s — the revoke PATCH raced the rest of the suite's traffic. The
+   spec now gates the create→revoke→delete flow on measured headroom via
+   `waitForSharedRateLimitHeadroom` (page-context probe of a /api/v1 404 path, reading the
+   exposed X-RateLimit-*/Retry-After headers). Test-side only: no limiter raised, no bypass.
+   If OTHER specs start 429-flaking the same way, reuse the helper — do NOT bump the worker
+   limits for CI.
 
 ## 2026-08-12 — api-keys.spec.ts now covers revoke + delete (FD-P7 / CC6.8)
 
