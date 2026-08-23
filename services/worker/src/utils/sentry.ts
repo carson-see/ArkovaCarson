@@ -728,10 +728,57 @@ export function captureCreditRpcFailureAlert(args: CreditRpcFailureArgs): void {
 // ---------------------------------------------------------------------------
 // Sentry Cron Monitoring (Phase 4, Item 18)
 // ---------------------------------------------------------------------------
+//
+// Cron check-in gate — prod service only (kills the zombie monitor-env class)
+// ---------------------------------------------------------------------------
+//
+// Every soak rig runs the same worker cron jobs (webhook-retries,
+// check-confirmations, process-revocations, grace-expiry-sweep) and each one
+// reports Sentry Crons check-ins tagged with the rig's own K_SERVICE. Sentry
+// auto-creates a monitor ENVIRONMENT per distinct K_SERVICE it sees. When the
+// rig is torn down that environment doesn't go away — it just stops checking
+// in, and Sentry pages "missed check-in" for an environment that no longer
+// exists, forever. 2026-08: 5 dead rig envs x 4 cron monitors = 16 zombie
+// env/monitor pairs, ~93k events.
+//
+// CTO fix: check-ins fire ONLY for the real prod service (K_SERVICE ===
+// PROD_SERVICE_NAME — same constant `resolveSentryEnvironment` above pins),
+// with an explicit escape hatch (ENABLE_SENTRY_CRON_CHECKINS=true) for a rig
+// where cron observability via Sentry Crons is deliberately wanted.
+//
+// This gate suppresses ONLY the Sentry check-in report — `withCronMonitoring`
+// always runs the wrapped job either way, so a suppressed check-in can never
+// suppress the job itself. Fail-safe direction: if this gate ever breaks and
+// suppresses PROD check-ins too, the prod monitor's own missed-check-in alert
+// fires loudly within one missed interval — the failure mode is never silent
+// for the surface that matters.
+
+export interface CronCheckInGateInputs {
+  /** Cloud Run service name (K_SERVICE); unset off Cloud Run / local dev. */
+  kService?: string;
+  /** Escape hatch: exactly 'true' forces check-ins on regardless of kService. */
+  enableCronCheckIns?: string;
+}
+
+export function shouldSendCronCheckIns(
+  inputs: CronCheckInGateInputs = {
+    kService: process.env.K_SERVICE,
+    enableCronCheckIns: process.env.ENABLE_SENTRY_CRON_CHECKINS,
+  },
+): boolean {
+  if (inputs.enableCronCheckIns === 'true') {
+    return true;
+  }
+  return inputs.kService === PROD_SERVICE_NAME;
+}
 
 /**
  * Wraps a cron job function with Sentry Crons monitoring.
  * Reports check-in start, success, or failure to Sentry for visibility.
+ *
+ * Check-in reporting is gated to the production service by
+ * `shouldSendCronCheckIns()` (see above) — the job itself is NEVER gated,
+ * only whether Sentry hears about it.
  *
  * @param monitorSlug - Unique slug for this cron monitor in Sentry
  * @param schedule - Cron schedule expression (for auto-creating monitors)
@@ -743,6 +790,10 @@ export function withCronMonitoring<T>(
   fn: () => Promise<T>,
 ): () => Promise<T> {
   return async () => {
+    if (!shouldSendCronCheckIns()) {
+      return fn();
+    }
+
     const checkInId = Sentry.captureCheckIn({
       monitorSlug,
       status: 'in_progress',
