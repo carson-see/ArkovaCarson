@@ -102,28 +102,18 @@ describe('piiStripper adversarial tests (CISO THREAT-5)', () => {
       expect(result.strippedText).not.toMatch(/QQ\s*12/);
     });
 
-    it('strips Aadhaar without spaces (12 continuous digits)', () => {
-      const result = stripPII('Aadhaar: 123456789012');
-      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
-    });
-
-    it('strips DNI (Spanish national ID)', () => {
-      const result = stripPII('DNI: 12345678Z');
-      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
-    });
-
-    it('strips SIN (Canadian Social Insurance Number)', () => {
-      const result = stripPII('SIN Number: 123 456 789');
-      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
-    });
-
-    it('strips Cedula (Latin American ID)', () => {
-      const result = stripPII('Cedula: 1234567890');
-      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
-    });
-
-    it('strips passport with slash separator', () => {
-      const result = stripPII('Passport No. AB/1234567');
+    // These five differ only in the input string and share one assertion, so
+    // they are a table rather than five copies of the same test body (Sonar
+    // typescript:S5976). Adding a national-ID form is now one row. The UK NINO
+    // case above stays separate: it carries an extra negative assertion.
+    it.each([
+      { form: 'Aadhaar without spaces (12 continuous digits)', input: 'Aadhaar: 123456789012' },
+      { form: 'DNI (Spanish national ID)', input: 'DNI: 12345678Z' },
+      { form: 'SIN (Canadian Social Insurance Number)', input: 'SIN Number: 123 456 789' },
+      { form: 'Cedula (Latin American ID)', input: 'Cedula: 1234567890' },
+      { form: 'passport with slash separator', input: 'Passport No. AB/1234567' },
+    ])('strips $form', ({ input }) => {
+      const result = stripPII(input);
       expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
     });
   });
@@ -446,5 +436,112 @@ describe('piiStripper adversarial tests (CISO THREAT-5)', () => {
       expect(result.strippedText).toContain('score: 88');
       expect(result.strippedText).toContain('year: 2024');
     });
+  });
+
+  // ─── Performance ratchet (quadratic EMAIL_PATTERN, src/lib/agents.md 2026-08-22) ───
+  describe('email pattern performance', () => {
+    it('handles a large @-less OCR text in linear time (quadratic scan froze the tab)', () => {
+      // One CONTIGUOUS ~100k-char run of local-part-valid characters with no
+      // '@' anywhere (dots and dashes are local-part chars, so a dotted OCR
+      // token stream forms a single run): EMAIL_PATTERN's unanchored
+      // local-part quantifier re-scans the remainder of the run from every
+      // start position on such input — quadratic (measured 64s at this size
+      // in the browser profile, ~5s under vitest/node on this machine; see
+      // src/lib/agents.md 2026-08-22). With the no-'@' fast path the whole
+      // stripPII call completes in single-digit milliseconds, so the 2s bound
+      // sits ~1000x above the fixed runtime and beneath every observed broken
+      // one — it cannot flake in either direction on a loaded CI runner.
+      const input = 'certificate.of.completion.credential-record.'.repeat(2273);
+      const started = performance.now();
+      const result = stripPII(input);
+      const elapsed = performance.now() - started;
+      expect(elapsed).toBeLessThan(2000);
+      expect(result.piiFound).not.toContain('email');
+    });
+
+    it('still redacts emails identically when an @ is present', () => {
+      const result = stripPII('contact carson@arkova.io or admissions@school.edu today');
+      expect(result.strippedText).not.toContain('carson@arkova.io');
+      expect(result.strippedText).not.toContain('admissions@school.edu');
+      expect(result.strippedText.match(/\[EMAIL_REDACTED\]/g)).toHaveLength(2);
+      expect(result.piiFound).toContain('email');
+    });
+
+    // The `@`-less fast path above cannot help here: the '@' IS present, so
+    // stripPII runs EMAIL_PATTERN. This is the residual the fast-path commit
+    // recorded as open. It is closed by bounding the local-part quantifier to
+    // RFC 5321's 64 octets, which caps the work the unanchored scan can redo
+    // at each offset. Measured 3,583 ms with the unbounded `+` and 15 ms with
+    // the bound, so the 2 s ceiling sits far below the broken runtime and
+    // ~130x above the fixed one — it cannot flake either way.
+    it('handles a long local-part run followed by an invalid domain in linear time', () => {
+      const input = `${'a'.repeat(40000)}@${'b'.repeat(40000)}`;
+      const started = performance.now();
+      stripPII(input);
+      expect(performance.now() - started).toBeLessThan(2000);
+    });
+
+    // Same class, ambiguous-domain half: every '.' is a candidate split point
+    // for the `\.` that follows the domain class, and no valid TLD ever ends
+    // the run. The LOCAL-PART bound fixes this one too — the cost was the
+    // unanchored local-part rescan walking over the domain text, since '.'
+    // and '-' are local-part characters, not the domain quantifier itself.
+    // Sized so the ceiling is a real ratchet: 3,747 ms unbounded vs 14 ms
+    // bounded at this length, the same ~140x margin as the case above.
+    it('handles an ambiguous dotted domain that never completes in linear time', () => {
+      const input = `x@${'a.'.repeat(45000)}1`;
+      const started = performance.now();
+      stripPII(input);
+      expect(performance.now() - started).toBeLessThan(2000);
+    });
+
+    // Bounding the quantifiers must not narrow redaction. These pin the
+    // edge cases where a naive "anchor the local-part" fix silently
+    // under-redacts: a second address starting mid-run, and domains whose
+    // dots sit in positions a label-based rewrite rejects.
+    it.each([
+      { name: 'two addresses where the second starts mid-run', input: 'a@b.co1x@d.com', redactions: 2 },
+      { name: 'consecutive dots in the domain', input: 'mail foo@a..b.com end', redactions: 1 },
+      { name: 'leading dot in the domain', input: 'mail foo@.b.com end', redactions: 1 },
+      { name: 'multi-label domain', input: 'user.name+tag%x@sub.example.co.uk', redactions: 1 },
+    ])('still redacts $name', ({ input, redactions }) => {
+      const result = stripPII(input);
+      expect(result.strippedText.match(/\[EMAIL_REDACTED\]/g)).toHaveLength(redactions);
+      expect(result.strippedText).not.toContain('@');
+    });
+
+    // A >64-octet local-part is not a legal RFC 5321 address. The bound means
+    // the leading remainder of such a run is no longer swallowed — but the
+    // address itself, and critically the domain, still are. The bound must
+    // degrade THIS way (match starts later) and never by failing to match:
+    // these lengths straddle and far exceed it.
+    it.each([80, 300, 5000])(
+      'still redacts the @ and the domain when the local-part run is %i characters',
+      (len) => {
+        const result = stripPII(`${'x'.repeat(len)}@mail.example.com`);
+        expect(result.strippedText).toContain('[EMAIL_REDACTED]');
+        expect(result.strippedText).not.toContain('mail.example.com');
+        expect(result.strippedText).not.toContain('@');
+        expect(result.piiFound).toContain('email');
+      },
+    );
+
+    // Regression pin for a bug caught in review before it shipped. Bounding the
+    // DOMAIN quantifier to RFC 5321's 255 octets looked symmetric with the
+    // local-part bound and is not: a domain-character run longer than the bound
+    // cannot reach the `\.` that must follow it, so the pattern matches NOTHING
+    // and the entire address — '@' and registrable domain included — survives in
+    // the clear. That is strictly worse than the unbounded pattern it replaced.
+    // The domain quantifier must stay unbounded; the local-part bound alone
+    // already makes the scan linear.
+    it.each([300, 400, 2000])(
+      'still redacts the registrable domain when the domain run is %i characters',
+      (len) => {
+        const result = stripPII(`mail user@${'a'.repeat(len)}.example.com end`);
+        expect(result.strippedText).not.toContain('example.com');
+        expect(result.strippedText).not.toContain('@');
+        expect(result.strippedText).toContain('[EMAIL_REDACTED]');
+      },
+    );
   });
 });
