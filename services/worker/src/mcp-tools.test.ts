@@ -602,9 +602,13 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
   });
 
   it('submits anchor request successfully', async () => {
+    // BUG-028: the RPC/table row carries no public_id column — mocking one
+    // here is how the old, never-held "anchor receipt with a public
+    // identifier" contract survived. The receipt is a SUBMISSION receipt:
+    // public_id is an explicit null and the fingerprint is the handle.
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{ id: 'anchor-1', public_id: 'ARK-2026-999' }]),
+      json: async () => ([{ id: 'anchor-1', content_hash: validHash, anchor_id: null }]),
     });
 
     const result = await handleAnchorDocument(
@@ -615,16 +619,21 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.status).toBe('submitted');
     expect(parsed.content_hash).toBe(validHash);
-    expect(parsed.public_id).toBe('ARK-2026-999');
+    // Explicit null, not a dropped key: no anchor exists yet, so no public_id.
+    expect(parsed).toHaveProperty('public_id', null);
+    expect(parsed.verify_with).toEqual({ tool: 'verify_document', content_hash: validHash });
     expect(parsed).not.toHaveProperty('record_id');
   });
 
   it('uses idempotency_key for 5-minute retry dedupe without leaking internal ids', async () => {
     const retryKey = ['123e4567', 'e89b', '12d3', 'a456', '426614174000'].join('-');
 
+    // BUG-028: dedupe returns the same submission-receipt shape as a fresh
+    // submission — public_id explicit null (no anchor exists yet), and the
+    // internal public_records UUID never leaks as a substitute identifier.
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{ id: 'internal-rec-1', public_id: 'ARK-2026-999' }]),
+      json: async () => ([{ id: 'internal-rec-1', content_hash: validHash, anchor_id: null }]),
     });
 
     const result = await handleAnchorDocument(
@@ -637,7 +646,8 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
 
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.status).toBe('already_submitted');
-    expect(parsed.public_id).toBe('ARK-2026-999');
+    expect(parsed).toHaveProperty('public_id', null);
+    expect(parsed.verify_with).toEqual({ tool: 'verify_document', content_hash: validHash });
     expect(parsed).not.toHaveProperty('record_id');
     expect(JSON.stringify(parsed)).not.toContain('internal-rec-1');
     expect(mockFetch).toHaveBeenCalledTimes(1);

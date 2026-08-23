@@ -243,7 +243,7 @@
     },
     {
       "name": "anchor_document",
-      "description": "Submit a document fingerprint for anchoring to the public ledger. The document itself is never sent — only its SHA-256 fingerprint. Returns an anchor receipt with a public identifier for later verification. Conditionally available: registered only when MCP_ENABLE_ANCHOR_DOCUMENT=true and the caller holds a write:anchors or anchor:write scope. Absent that, this tool will not appear in a live tools/list call even though it is part of the documented server surface.",
+      "description": "Submit a document fingerprint for anchoring to the public ledger. The document itself is never sent — only its SHA-256 fingerprint. Anchoring is asynchronous (batched), so this returns a submission receipt, NOT a completed anchor: public_id is null and no network receipt exists yet. Follow up with verify_document using the SAME content_hash — it reports status UNKNOWN until anchoring completes, then returns the public_id and proof. Conditionally available: registered only when MCP_ENABLE_ANCHOR_DOCUMENT=true and the caller holds a write:anchors or anchor:write scope. Absent that, this tool will not appear in a live tools/list call even though it is part of the documented server surface.",
       "inputSchema": {
         "type": "object",
         "properties": {
