@@ -612,9 +612,10 @@ fi
 # to assert against.
 # ═════════════════════════════════════════════════════════════════════════════
 if want P7 && [ -n "$JWT_A" ]; then
-  # Accretion guard. While FD-P7 stands (no key id is exposed, so the probe
-  # cannot delete its own key), every run leaves one key behind. Cap it so a
-  # scheduling mistake or a retry loop cannot mint dozens on a live soak rig.
+  # Accretion backstop. P7e deletes the probe key at the end of each run —
+  # reachable since the FD-P7 fix restored `id` on key responses. The cap only
+  # matters if that delete regresses or a retry loop goes wrong; it must never
+  # mint dozens of keys on a live soak rig.
   EXISTING_PROBE_KEYS="$(sql1 "$RIG_SUPABASE_REF" \
     "select count(*)::text as n from api_keys where name like 'soak-daily-revocation-probe%'" n)"
   PROBE_KEY_CAP="${PROBE_KEY_CAP:-8}"
@@ -640,11 +641,13 @@ if want P7 && [ -n "$JWT_A" ] && [ "${P7_SKIP_MINT:-0}" -eq 0 ]; then
     record P7a "Probe API key minted through the real POST /api/v1/keys flow" \
       "200/201 + raw key returned once" "http $N_H, prefix=$KEYPFX" PASS
 
-    # SCRUM-1271-D: create deliberately omits the internal id, so the id must be
-    # recovered by LISTING and matching key_prefix — exactly what a real client
-    # has to do. Guessing an `id` field here is how P7 first SKIPped itself.
+    # FD-P7 fixed: create and list both carry the addressable `id`. Prefer the
+    # create response; fall back to list-matching by key_prefix (what the UI
+    # does) so the probe still finds its key if create's shape ever drifts.
+    KEYID="$(jbody "$TMPD/p7new" "d.get('id') or ''")"
     xcurl "$TMPD/p7list" GET "$RIG_URL/api/v1/keys" "$W_IAM" "Authorization: Bearer $JWT_A" >/dev/null
-    KEYID="$(python3 -c "
+    if [ -z "$KEYID" ]; then
+      KEYID="$(python3 -c "
 import json
 try: d=json.load(open('$TMPD/p7list.body'))
 except Exception: print(''); raise SystemExit
@@ -652,12 +655,11 @@ for k in (d.get('keys') or []):
     if k.get('key_prefix')=='$KEYPFX': print(k.get('id') or ''); break
 else: print('')
 ")"
-    # FD-P7: `toPublicKey` (keys.ts:36) deletes `id` from BOTH the create
-    # response and every list row, while the UI's revoke/delete handlers are
-    # keyed by `keyId` (src/hooks/useApiKeys.ts:118,134) and `ApiKeyMasked`
-    # declares `id: string`. If no list row carries an id, key revocation and
-    # deletion are unreachable through the product surface — assert it, do not
-    # let the probe SKIP its way past it.
+    fi
+    # FD-P7 regression assertion: the UI's revoke/delete handlers address keys
+    # by the `id` on list rows (src/hooks/useApiKeys.ts). If list rows stop
+    # exposing it, revocation is unreachable from every client again — assert
+    # it, do not let the probe SKIP its way past it.
     HAS_ID="$(python3 -c "
 import json
 try: d=json.load(open('$TMPD/p7list.body'))
@@ -706,19 +708,30 @@ print('yes' if ks and any('id' in k for k in ks) else ('no' if ks else 'no-keys'
                    "401/403 after PATCH is_active=false" "revoke http $R_H, reuse http $D_H — REVOCATION INEFFECTIVE" FAIL ;;
       esac
 
+      # The designation is stamped, not just the boolean flipped — a CC6.8
+      # export reads revoked_at, and pre-FD-P7 it stayed NULL after a revoke.
+      RVK_AT="$(jbody "$TMPD/p7rev" "d.get('revoked_at') or ''")"
+      if [ -n "$RVK_AT" ]; then
+        record P7g "Revoke stamps revoked_at (CC6.8 designation, not just is_active)" \
+          "non-null revoked_at in PATCH response" "revoked_at=$RVK_AT" PASS
+      else
+        record P7g "Revoke stamps revoked_at (CC6.8 designation, not just is_active)" \
+          "non-null revoked_at in PATCH response" "revoked_at empty — designation export would read revoked=false" FAIL
+      fi
+
       # Clean up so the CC6.8 designation table does not accrete one probe key
       # per soak day. The assertion above is re-proved from scratch each run.
       xcurl "$TMPD/p7clean" DELETE "$RIG_URL/api/v1/keys/$KEYID" "$W_IAM" "Authorization: Bearer $JWT_A" >/dev/null
       record P7e "Probe key cleaned up (no per-day key accretion)" "204" "http $(http_of "$TMPD/p7clean")" \
         "$([ "$(http_of "$TMPD/p7clean")" = "204" ] && echo PASS || echo FAIL)"
     else
-      # Not a SKIP. The CC6.8 control the runbook promises to exercise daily is
-      # UNREACHABLE through the product surface, and an unreachable control is a
-      # finding, not an absent test. The probe key is left in place (it cannot be
-      # deleted either) and named for the operator to clean up out-of-band.
+      # FD-P7 regression: neither the create response nor any list row carried
+      # an id, so PATCH/DELETE /api/v1/keys/:keyId cannot be addressed. P7f has
+      # already FAILed above; fail the control assertion too and name the
+      # leftover key for out-of-band cleanup.
       record P7d "REVOKED key is refused (CC6.8 daily assertion)" \
         "401/403 after revoke through the product surface" \
-        "UNREACHABLE — no key id is exposed by create or list, so PATCH/DELETE /api/v1/keys/:keyId cannot be addressed by any client. Probe key $KEYPFX left active." FAIL
+        "no key id in create or list response (FD-P7 regression) — probe key $KEYPFX left active" FAIL
     fi
   else
     record P7a "Probe API key minted through the real POST /api/v1/keys flow" "200/201 + raw key" "http $N_H" FAIL
