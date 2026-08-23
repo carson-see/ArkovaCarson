@@ -253,24 +253,12 @@ function rowToRecord(row: PartnerAccountRow): PartnerAccountRecord {
   };
 }
 
+// The persisted row and the API response are the same snake_case projection of
+// the record, so they are produced by one mapping and cannot silently drift.
+// If the wire shape ever has to diverge from the column set, split this
+// deliberately rather than by editing one of two copies.
 function recordToRow(r: PartnerAccountRecord): Record<string, unknown> {
-  return {
-    id: r.id,
-    status: r.status,
-    partner_name: r.partnerName,
-    partner_contact_email: r.partnerContactEmail,
-    sponsor_org_id: r.sponsorOrgId,
-    requested_by: r.requestedBy,
-    requested_at: r.requestedAt,
-    approved_by: r.approvedBy ?? null,
-    approved_at: r.approvedAt ?? null,
-    rejected_by: r.rejectedBy ?? null,
-    rejected_at: r.rejectedAt ?? null,
-    rejection_reason: r.rejectionReason ?? null,
-    partner_org_id: r.partnerOrgId ?? null,
-    provisioned_by: r.provisionedBy ?? null,
-    provisioned_at: r.provisionedAt ?? null,
-  };
+  return { ...toResponse(r) };
 }
 
 export function createDefaultPartnerAccountStore(
@@ -671,42 +659,43 @@ export function createPartnerProvisioningRouter(
   });
 
   // ---- POST /:id/reject ----------------------------------------------------
-  router.post('/:id/reject', async (req: Request, res: Response) => {
-    try {
-      const ctx = await loadForReview(req, res);
-      if (!ctx) return;
-      const parsed = ReasonBody.safeParse(req.body);
-      if (!parsed.success) {
-        fail(res, 400, 'invalid_body', 'a non-empty `reason` is required');
-        return;
+  /**
+   * Reject and cancel are the same request shape: load the record for review,
+   * require a non-empty `reason`, then apply one machine transition. Only the
+   * transition and the log tag differ.
+   */
+  function reasonedTransition(
+    op: string,
+    apply: (
+      record: PartnerAccountRecord,
+      actor: ProvisioningActor,
+      reason: string,
+      at: string,
+    ) => TransitionResult,
+  ) {
+    return async (req: Request, res: Response): Promise<void> => {
+      try {
+        const ctx = await loadForReview(req, res);
+        if (!ctx) return;
+        const parsed = ReasonBody.safeParse(req.body);
+        if (!parsed.success) {
+          fail(res, 400, 'invalid_body', 'a non-empty `reason` is required');
+          return;
+        }
+        const at = now();
+        await commit(res, ctx.record, ctx.actor, () =>
+          apply(ctx.record, ctx.actor, parsed.data.reason, at),
+        );
+      } catch (e) {
+        serverError(res, e, op);
       }
-      const at = now();
-      await commit(res, ctx.record, ctx.actor, () =>
-        rejectPartnerRequest(ctx.record, ctx.actor, parsed.data.reason, at),
-      );
-    } catch (e) {
-      serverError(res, e, 'reject');
-    }
-  });
+    };
+  }
+
+  router.post('/:id/reject', reasonedTransition('reject', rejectPartnerRequest));
 
   // ---- POST /:id/cancel ----------------------------------------------------
-  router.post('/:id/cancel', async (req: Request, res: Response) => {
-    try {
-      const ctx = await loadForReview(req, res);
-      if (!ctx) return;
-      const parsed = ReasonBody.safeParse(req.body);
-      if (!parsed.success) {
-        fail(res, 400, 'invalid_body', 'a non-empty `reason` is required');
-        return;
-      }
-      const at = now();
-      await commit(res, ctx.record, ctx.actor, () =>
-        cancelApprovedRequest(ctx.record, ctx.actor, parsed.data.reason, at),
-      );
-    } catch (e) {
-      serverError(res, e, 'cancel');
-    }
-  });
+  router.post('/:id/cancel', reasonedTransition('cancel', cancelApprovedRequest));
 
   // ---- POST /:id/provision -------------------------------------------------
   router.post('/:id/provision', async (req: Request, res: Response) => {
