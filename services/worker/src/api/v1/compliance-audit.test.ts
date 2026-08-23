@@ -24,6 +24,7 @@ import { complianceAuditRouter } from './compliance-audit.js';
 import { db } from '../../utils/db.js';
 import { getCallerOrgId } from '../../compliance/auth-helpers.js';
 import { buildApp as buildAppFromRouter, makeBuilder } from './__testHelpers.js';
+import { poisonAt, isWellFormedUtf16 } from '../../tests/utf16-poison.js';
 
 function buildApp(userId?: string) {
   return buildAppFromRouter(complianceAuditRouter, '/api/v1/compliance/audit', { userId });
@@ -410,6 +411,52 @@ describe('POST /api/v1/compliance/audit', () => {
 
     expect(res.body.idempotent).toBe(true);
     expect(res.body.id).toBe('existing-id');
+  });
+
+  // 2026-08-17 poison-record class: the FAILED-audit bookkeeping insert bounds
+  // `error_message` to 500 UTF-16 units. A bare `.slice(0, 500)` cutting inside
+  // a surrogate pair leaves a lone high surrogate, which makes the failure
+  // insert itself PGRST102 — the audit failure can no longer be recorded.
+  it('persists a well-formed error_message when the audit fails with a poisoned message', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+
+    const failureInsert = vi.fn().mockResolvedValue({ error: null });
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn().mockReturnValue(chain);
+      chain.eq = vi.fn().mockReturnValue(chain);
+      chain.gte = vi.fn().mockReturnValue(chain);
+      chain.in = vi.fn().mockReturnValue(chain);
+      chain.order = vi.fn().mockReturnValue(chain);
+      chain.limit = vi.fn().mockReturnValue(chain);
+      if (table === 'compliance_audits') {
+        // Idempotency probe finds nothing; the failure-bookkeeping insert is captured.
+        chain.maybeSingle = vi.fn().mockResolvedValue({ data: null });
+        chain.single = vi.fn().mockResolvedValue({ data: null });
+        chain.insert = failureInsert;
+      } else {
+        // Every data load rejects with a message that splits at the 500-unit cap.
+        const reject = () => Promise.reject(new Error(poisonAt(500)));
+        chain.maybeSingle = vi.fn().mockImplementation(reject);
+        chain.single = vi.fn().mockImplementation(reject);
+        chain.then = undefined;
+        chain.insert = vi.fn().mockResolvedValue({ error: null });
+      }
+      return chain as unknown as never;
+    });
+
+    const app = buildApp('user-1');
+    await request(app)
+      .post('/api/v1/compliance/audit')
+      .send({})
+      .expect(500);
+
+    expect(failureInsert).toHaveBeenCalledTimes(1);
+    const payload = failureInsert.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.status).toBe('FAILED');
+    expect(typeof payload.error_message).toBe('string');
+    expect((payload.error_message as string).length).toBeLessThanOrEqual(500);
+    expect(isWellFormedUtf16(payload.error_message as string)).toBe(true);
   });
 });
 

@@ -453,4 +453,46 @@ describe('runPipelineThroughputMonitor', () => {
     // drain always shows at least one flush inside the window (no false page).
     expect(DEFAULT_THROUGHPUT_WINDOW_HOURS).toBeGreaterThanOrEqual(24);
   });
+
+  it('unlinked-record probes exclude quarantined rows (2026-08-17 poison record)', async () => {
+    // A quarantined public_record still has anchor_id NULL forever — by
+    // design, the anchoring job skips it. If condition B keeps aging it, the
+    // quarantine converts a 16-day poison loop into a permanent fatal-alert
+    // stream, which is the exact alert-storm this monitor caused last time.
+    const recordsIsCalls: Array<[string, unknown]> = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recordsChain: any = {};
+    recordsChain.select = vi.fn(() => recordsChain);
+    recordsChain.is = vi.fn((column: string, value: unknown) => {
+      recordsIsCalls.push([column, value]);
+      return recordsChain;
+    });
+    recordsChain.order = vi.fn(() => recordsChain);
+    recordsChain.limit = vi.fn(() => Promise.resolve({ data: [], error: null }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const anchorsChain: any = {};
+    anchorsChain.select = vi.fn(() => anchorsChain);
+    anchorsChain.eq = vi.fn(() => anchorsChain);
+    anchorsChain.is = vi.fn(() => anchorsChain);
+    anchorsChain.not = vi.fn(() => anchorsChain);
+    anchorsChain.order = vi.fn(() => anchorsChain);
+    anchorsChain.limit = vi.fn(() => Promise.resolve({ data: [], error: null }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cacheChain: any = {};
+    cacheChain.select = vi.fn(() => cacheChain);
+    cacheChain.eq = vi.fn(() => cacheChain);
+    cacheChain.single = vi.fn(() => Promise.resolve({ data: { cache_value: {} }, error: null }));
+    const db = {
+      from: (table: string) => {
+        if (table === 'public_records') return recordsChain;
+        if (table === 'anchors') return anchorsChain;
+        return cacheChain;
+      },
+    };
+
+    await runPipelineThroughputMonitor(db, { now: NOW, windowHours: 24 });
+
+    expect(recordsIsCalls).toContainEqual(['anchor_id', null]);
+    expect(recordsIsCalls).toContainEqual(['metadata->anchor_insert_quarantined_at', null]);
+  });
 });

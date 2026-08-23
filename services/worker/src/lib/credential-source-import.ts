@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import * as cheerio from 'cheerio';
 import { z } from 'zod';
 import { hashRecipientEmail } from './recipient-identity.js';
+import { truncateUtf16Safe } from '../utils/utf16-truncate.js';
 import {
   ANCHOR_CREDENTIAL_TYPES,
   CREDENTIAL_EVIDENCE_SCHEMA_VERSION,
@@ -390,7 +391,10 @@ async function fetchPublicCredentialSource(
   throw new CredentialSourceImportError('source_redirect_limit', 'Credential source redirected too many times', 400);
 }
 
-function cleanText(value: unknown, maxLength = 500): string | undefined {
+// Exported for tests: the bound must be surrogate-safe (2026-08-17
+// poison-record class) — output flows into anchors.label/description via
+// PostgREST, and `.trim()` does NOT strip a lone surrogate.
+export function cleanText(value: unknown, maxLength = 500): string | undefined {
   if (typeof value !== 'string') return undefined;
   const sanitized = Array.from(value, (character) => {
     const codePoint = character.codePointAt(0) ?? 0;
@@ -398,7 +402,7 @@ function cleanText(value: unknown, maxLength = 500): string | undefined {
   }).join('');
   const cleaned = collapseWhitespace(sanitized);
   if (!cleaned) return undefined;
-  return cleaned.length > maxLength ? cleaned.slice(0, maxLength).trim() : cleaned;
+  return cleaned.length > maxLength ? truncateUtf16Safe(cleaned, maxLength).trim() : cleaned;
 }
 
 function safeSourceId(value: unknown): string | undefined {
@@ -920,5 +924,5 @@ export function buildSourceImportFilename(preview: CredentialSourceImportPreview
   }).join('');
   const titleForFilename = collapseWhitespace(title);
   const base = titleForFilename || `Credential source ${host}`;
-  return `${base.slice(0, 180)}.url`;
+  return `${truncateUtf16Safe(base, 180)}.url`;
 }

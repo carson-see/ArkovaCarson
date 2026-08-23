@@ -1,6 +1,12 @@
 # FD-CI-2 — `pull_request` workflow dispatch stalled repo-wide; PR check boards look green because the checks are ABSENT
 
-**Found:** 2026-08-21T21:32Z. **Status:** OPEN at time of writing. **Severity:** high — silently makes every PR look passing.
+**Found:** 2026-08-21T21:32Z. **Status:** **RECOVERED — dispatch verified live 2026-08-22T18:31Z.** **Severity:** high — silently makes every PR look passing.
+
+> **Recovery verification (2026-08-22):** `gh run list` shows `pull_request`-triggered runs created
+> 2026-08-22T18:31:15Z for the required repo workflows (CI, Merge Authority, Migration Drift Check,
+> gitleaks, Staging Soak Evidence — e.g. run `32587450261`), fired by an ordinary PR event. The stall
+> mechanism was never root-caused, so the operational rule below stands: verify the required checks are
+> PRESENT on the head SHA before trusting any PR board, and treat an absent check as a failure.
 **Not the same as [FD-CI-1]** (Actions budget exhaustion, 15:32–15:51Z). That one failed loudly, refusing every job in 2–4 s. This one fails **silently**.
 
 ## The finding
