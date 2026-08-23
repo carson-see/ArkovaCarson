@@ -869,6 +869,18 @@ The `!payload.orgId` branch in the callback is retained as a NOT-NULL insert gua
 `error` level — it is unreachable through the gate, so reaching it means the gate regressed. It is the
 last line of defence, not the policy: the policy has to run before Google consent is requested, which
 that check could never do from where it sits.
+## 2026-08-17 — surrogate-safe truncation sweep (poison-record class)
+
+Migrated to `utils/utf16-truncate.ts` `truncateUtf16Safe` (bare `.slice(0, N)` on text that reaches
+a PostgREST body can split a surrogate pair → lone high surrogate → whole request body rejected as
+invalid JSON, PGRST102): `credentials-ctdl-registry-anchor.ts` (anchors insert
+filename/label/description — CE Registry controls the record name), `compliance-audit.ts`
+(FAILED-audit `error_message`), `webhooks.ts` + `webhooks-self-service.ts` test-ping
+`response_body` echoes (response-surface hardening: grep confirms `response_body` is NOT persisted
+on these two paths — the persisted delivery-log sites are in `webhooks/delivery.ts`, migrated in the
+same sweep), and `nessie-query.ts` `buildCitationExcerpt` (exported for tests). CI ratchet:
+`scripts/ci/feedback-rules/surrogate-safe-truncate.ts`.
+
 ## 2026-08-15 BUG-2026-08-13-010 — connector fingerprints are fetch-time snapshots (§1.5/§1.6A)
 
 Soak-proven: re-fetching the same unchanged DocuSign envelope yields a DIFFERENT SHA-256 per request (the source re-renders the file), so a connector-sourced anchor's fingerprint is NOT re-derivable from the source system — it attests the exact bytes fetched at that moment, which is what the anchor receipt commits. Nothing told a verifier this.
