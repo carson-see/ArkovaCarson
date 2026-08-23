@@ -82,8 +82,13 @@ const REPO_ROOT = resolve(WORKER_SRC, '../../..');
 /**
  * Where the claim was asserted, so where it has to stay retracted: the worker
  * itself plus the two script trees that repeat the same reasoning about why
- * Cloud Scheduler is the production trigger. Each root is existence-checked so
- * the worker suite still runs if the package is ever extracted.
+ * Cloud Scheduler is the production trigger.
+ *
+ * `walkScannableFiles` tolerates a missing root so the walk cannot throw, but
+ * the sanity test below then FAILS on any root that produced no files. That is
+ * deliberate: a ratchet that silently scans nothing is worse than no ratchet,
+ * so extracting this package out of the monorepo must break this test loudly
+ * and force a decision about where the claim is still allowed to live.
  */
 const RETRACTION_SCAN_ROOTS = [
   'services/worker/src',

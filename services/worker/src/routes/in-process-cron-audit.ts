@@ -21,12 +21,13 @@
  * WHAT THIS FILE IS.
  *
  * The per-job answer to "what actually stops the second copy?", recorded once
- * so it does not have to be re-derived from thirteen call sites, and ratcheted
- * by `in-process-cron-audit.test.ts` so a new in-process cron cannot land
- * without answering the question. It follows `jobs/scheduler-manifest.ts`:
- * a declaration table plus a pure validator, no runtime behaviour.
+ * so it does not have to be re-derived from the 19 registrations spread across
+ * 16 modules, and ratcheted by `in-process-cron-audit.test.ts` so a new
+ * in-process cron cannot land without answering the question. It follows
+ * `jobs/scheduler-manifest.ts`: a declaration table plus a pure validator, no
+ * runtime behaviour.
  *
- * It is an AUDIT, not a fix. Six jobs are recorded `unguarded`; each names its
+ * It is an AUDIT, not a fix. Seven jobs are recorded `unguarded`; each names its
  * follow-up. Wrapping them in `withRunLease` is deliberately NOT done here,
  * because a `RunLeaseSpec` is only correct if its `slowestRecordedCadenceMs`
  * and `maxRunMs` come from the SLOWEST cadence observed across live Cloud
@@ -167,12 +168,15 @@ export const IN_PROCESS_CRON_AUDIT: readonly InProcessCronAuditEntry[] = [
     guard: 'unguarded',
     doubleFireImpact: 'money',
     rationale:
-      'Calls allocate_monthly_credits(), which holds no lock and loops over credits rows with '
-      + 'cycle_end <= now(). The UPDATE of credits.balance is value-idempotent (both writers '
-      + 'compute purchased + plan_allocation), but each iteration also INSERTs unconditional '
-      + 'ALLOCATION and EXPIRY rows into credit_transactions, and a concurrent run reads the '
-      + 'pre-UPDATE snapshot. Two instances therefore write two ledger entries for one '
-      + 'allocation. It fires at 0 0 1 * *, so every warm instance starts within the same second.',
+      'Calls allocate_monthly_credits(), which holds no lock (no advisory lock, no FOR UPDATE) '
+      + 'and loops over credits rows with cycle_end <= now(). The UPDATE of credits.balance is '
+      + 'value-idempotent (both writers compute purchased + plan_allocation), but each iteration '
+      + 'also INSERTs an unconditional ALLOCATION row into credit_transactions — plus an EXPIRY '
+      + 'row whose IF v_expired_monthly > 0 test both writers evaluate against the same '
+      + 'pre-UPDATE snapshot, so they take the same branch. Two instances therefore write two '
+      + 'ledger entries for one allocation while the balance moves once, which is precisely the '
+      + 'shape of a conservation break. It fires at 0 0 1 * *, so every warm instance starts '
+      + 'within the same second.',
     followUp:
       'Money-conservation exposure — this is exactly the drift reconcile-credit-conservation '
       + 'pages on. Needs either withRunLease on the caller or an advisory lock inside '
@@ -280,15 +284,18 @@ export const IN_PROCESS_CRON_AUDIT: readonly InProcessCronAuditEntry[] = [
     guard: 'unguarded',
     doubleFireImpact: 'duplicate-side-effect',
     rationale:
-      'Each run INSERTs a chain.fee_rate_sample audit row, then computes the "24h average" from '
-      + 'the most recent 200 of those samples. One instance at a 10-minute cadence produces 144 '
-      + 'samples a day, which fits the window; 2-10 instances produce 288-1440, so the LIMIT 200 '
-      + 'window silently shrinks to roughly the last one to two hours. The average that spike '
-      + 'detection compares against therefore tracks current fees, and a genuine spike stops '
-      + 'clearing the 5x multiplier — the monitor gets quieter the more instances run it.',
+      'Each run INSERTs a chain.fee_rate_sample audit row, then computes the "24h average" over a '
+      + '.gte(created_at, 24h ago).limit(200) read of those samples. One instance at a 10-minute '
+      + 'cadence produces 144 samples a day, so the cap never binds; 2-10 instances produce '
+      + '288-1440, so the cap binds and the average is taken over a fraction of the window. Note '
+      + 'the read carries NO order-by, so which 200 rows come back is unspecified rather than "the '
+      + 'most recent 200" — the average stops being a 24h average without ever being wrong enough '
+      + 'to notice, and a genuine spike can stop clearing the 5x multiplier. The monitor gets less '
+      + 'trustworthy the more instances run it.',
     followUp:
-      'Bound the average by created_at rather than row count, or lease the sampler. This one '
-      + 'degrades a detection control rather than corrupting state. File against SCRUM-3384.',
+      'Bound the average by created_at rather than row count, and add the missing order-by, or '
+      + 'lease the sampler. This one degrades a detection control rather than corrupting state. '
+      + 'File against SCRUM-3384.',
   },
   {
     jobName: 'populate-confirmation-proofs',
