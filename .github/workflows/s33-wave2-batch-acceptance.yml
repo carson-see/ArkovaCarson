@@ -62,7 +62,7 @@ jobs:
         if: steps.scope.outputs.relevant == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 22
       - name: Install trusted evaluator dependencies only
         if: steps.scope.outputs.relevant == 'true'
         working-directory: trusted
@@ -167,7 +167,7 @@ jobs:
       - name: Set up trusted Node runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 22
       - name: Install trusted evaluator dependencies before candidate fetch
         working-directory: trusted
         run: |
@@ -295,7 +295,7 @@ jobs:
         if: steps.scope.outputs.relevant == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 22
       - name: Install trusted evaluator dependencies before candidate fetch
         if: steps.scope.outputs.relevant == 'true'
         working-directory: trusted

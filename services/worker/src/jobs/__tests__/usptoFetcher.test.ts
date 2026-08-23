@@ -64,7 +64,7 @@ function createMockPatentZip(rows: string[][]): Buffer {
     execSync(`cd "${dir}" && zip -q g_patent.tsv.zip g_patent.tsv`);
     return readFileSync(join(dir, 'g_patent.tsv.zip'));
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 }
 
