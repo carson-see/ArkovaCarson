@@ -587,6 +587,27 @@ describe('DI-398 / SCRUM-3376: real defaultLookup select against the anchors sch
     expect(res.status).not.toHaveBeenCalledWith(404);
   });
 
+  it('500 body withholds DB internals from the anonymous caller (§0.2)', async () => {
+    // Review addendum: the lookup now THROWS with the PostgREST code + message
+    // so the failure is loud in the logs. That string must stay in the logs.
+    // This route is anon-reachable, so a future edit that pipes `err.message`
+    // into the response would hand unauthenticated callers the schema, the RLS
+    // posture, and the table names. Pin the generic body, not just the status.
+    const handler = getGetHandler();
+    installFaithfulDb({
+      anchorError: { code: '42501', message: 'permission denied for table anchors' },
+    });
+    const { req, res } = createMockReqRes({ publicId: 'ARK-2026-REAL' });
+    await handler!(req, res);
+
+    const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(body).toEqual({ error: 'Internal server error' });
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain('42501');
+    expect(serialized).not.toContain('permission denied');
+    expect(serialized).not.toContain('anchors');
+  });
+
   it('still 404s when PostgREST reports no matching row (PGRST116)', async () => {
     const handler = getGetHandler();
     installFaithfulDb({ anchorRow: null });
