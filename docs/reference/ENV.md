@@ -244,6 +244,22 @@ SENTRY_ENVIRONMENT=                  # MT-1 (SCRUM-2901): explicit override. Whe
 #  (no K_SERVICE) it falls back to NODE_ENV, and a bare NODE_ENV=production maps to 'local-production'
 #  (§1.5 honesty). Rationale: rigs run NODE_ENV=production, so NODE_ENV alone would flood prod
 #  alerting on every rig standup. Prod does NOT set this var — the K_SERVICE derivation is the mechanism.
+ENABLE_SENTRY_CRON_CHECKINS=         # fix/sentry-cron-checkins-prod-only (CTO directive, 2026-08):
+#  escape hatch, default unset/false. Sentry Crons check-in REPORTING (utils/sentry.ts
+#  withCronMonitoring / shouldSendCronCheckIns) is gated to the real prod service only —
+#  fires when K_SERVICE === 'arkova-worker' (PROD_SERVICE_NAME), suppressed for every other
+#  K_SERVICE (rigs, staging) and for local dev (no K_SERVICE at all). Reason: every soak rig's
+#  cron jobs (webhook-retries, check-confirmations, process-revocations, grace-expiry-sweep)
+#  were reporting check-ins tagged with the rig's own K_SERVICE, which auto-creates a Sentry
+#  monitor environment that pages "missed check-in" forever once the rig is torn down (5 dead
+#  rig envs x 4 cron monitors = 16 zombie env/monitor pairs, ~93k events as of 2026-08). Set
+#  ENABLE_SENTRY_CRON_CHECKINS=true (exact string 'true') on a rig only when cron observability
+#  via Sentry Crons is deliberately wanted for that rig — it overrides the K_SERVICE check.
+#  The gate ONLY suppresses the Sentry report; the cron job itself always runs regardless.
+#  Prod does NOT set this var — the K_SERVICE derivation is the mechanism, same as
+#  SENTRY_ENVIRONMENT above. Canonical Confluence topic-doc update (Doc Update Matrix has no
+#  exact row for "cron observability gating"; nearest is Switchboard/Feature flags) is a
+#  post-freeze gate item — see the PR body.
 ```
 
 ## AI
@@ -325,6 +341,29 @@ ENABLE_RULES_ENGINE=true
 # ARK-107 — scheduled queue reminders (SCRUM-1019)
 # When false, the /jobs/queue-reminders cron no-ops.
 ENABLE_QUEUE_REMINDERS=true
+
+# QUEUE-07 (SCRUM-2353) — daily org-admin review-queue digest email.
+# Read by config.ts as config.enableQueueDigest (boolFlag(false) code
+# default). Gates POST /jobs/queue-digest (services/worker/src/jobs/
+# queue-digest-cron.ts): when false/unset, runDailyQueueDigest no-ops before
+# enumerating admins or sending mail. Was previously ABSENT from this file and
+# from deploy-worker.yml's --set-env-vars, so prod ran on the false default
+# even though the job was fully built (0 emails ever sent). Now set true in
+# deploy-worker.yml.
+#
+# Enrollment is DEFAULT-ON, not opt-in: every org with an ORG_ADMIN is
+# enrolled unless it holds an explicit opt-out — an `organization_rules` row
+# with trigger_type='QUEUE_DIGEST' and enabled=false (the existing Rule
+# Builder toggle, reused as the opt-out store; absence of a row = enrolled).
+# An enrolled org whose review queue is entirely empty is still skipped
+# (no mail) so default-on does not become inbox noise. See
+# listQueueDigestPreferences / isOrgEnrolledInQueueDigest in
+# queue-digest-cron.ts.
+#
+# Still requires a Cloud Scheduler job → POST /jobs/queue-digest (CRON_SECRET
+# auth) to actually fire daily — this flag only gates the code path. See
+# scripts/gcp-setup/cloud-scheduler.sh's NOT_SCHEDULED entry for this route.
+ENABLE_QUEUE_DIGEST=true
 
 # ARK-103 — treasury low-balance alerting (SCRUM-1013)
 # When false, the /jobs/treasury-alert-check cron no-ops (no Slack/email fired).

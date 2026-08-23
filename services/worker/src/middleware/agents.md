@@ -2,6 +2,18 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-08-16 FD-RL-1 / FD-RL-2 — a 429 must not lie, and a denial must not consume quota
+
+Two customer-facing defects on `POST /api/v1/anchor`, both found on the fullsoak-2026-08 rig. Evidence: `docs/staging/fullsoak-2026-08/FD-RL-quota-headers-and-counter.md`.
+
+**FD-RL-2 — do not reintroduce: a rejected request must never consume the quota it was rejected by.** `perOrgRateLimit.ts` daily mode incremented `org_daily_usage` FIRST and evaluated the returned total, so every 429 also bumped the counter. On the rig, 98 real anchors plus 3,030 rejected retries recorded `count = 3132` — 32x overstated. The customer-visible failure is worse than the bad metric: a client with a naive retry-after-429 loop drives its own counter further past the cap with each retry and can never get back under it before the UTC reset, having created far fewer than its limit. Same signature seen twice before on other rigs (`HANDOFF.md` F-7 `current=102205` vs 32 anchors; `docs/staging/SOAK-FINDINGS-2026-08.md` `104,668`) and misread both times as a stale counter rather than a live increment-on-denial.
+
+Daily mode now reads the recorded `org_daily_usage` row, evaluates `recorded + delta` against the tier cap, and **only reserves via `increment_org_usage` when the projection fits**. A compensating decrement is not an option: `increment_org_usage` applies `GREATEST(p_delta, 0)`, so a negative delta is clamped to zero and refunding would need DDL. Residual, deliberately accepted and bounded: a request that passes the pre-check but loses the atomic-increment race is denied with its unit already recorded — bounded by in-flight concurrency at the cap boundary, never by retry volume.
+
+**Capacity mode never had this defect** and must stay that way: it derives from an authoritative `count(*)` over `CAPACITY_TABLES` and persists nothing, so a denial cannot drift from reality. A test pins that a capacity denial performs no `org_daily_usage` write.
+
+**FD-RL-1 — whichever limiter issues the 429 owns the rate-limit headers on that response.** `utils/rateLimit.ts` (per-minute, per-API-key) runs first, ALLOWS, and sets `X-RateLimit-*` for its own bucket; the org quota then denied and left them alone, shipping `x-ratelimit-remaining: 987` on a refused request. An SDK that reads the headroom retries immediately against a quota that will not reset for hours. `denyOverQuota()` now overwrites `X-RateLimit-Limit` / `-Remaining` / `-Reset` with the denying quota's own numbers, consistent with `Retry-After`. An ALLOWED request still leaves the per-minute headers untouched — they are accurate there. The JSON body is unchanged (CLAUDE.md §1.8): same `ORG_QUOTA_EXCEEDED` code, same fields; a test pins the exact key set.
+
 ## 2026-08-01 SILENT-WRITE CLASS — `void <supabase builder>` never executes (PR #1808)
 
 **Do not reintroduce:** supabase-js query builders are **lazy PromiseLikes**. `PostgrestBuilder.then()` is where the HTTP request is issued — nothing happens until something calls `then` (via `await`, `.then(...)`, or `Promise.all`). So

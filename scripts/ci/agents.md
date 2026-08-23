@@ -1,6 +1,42 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-22 (preflight-timestamp residual-risk symmetry)._
+_Last updated: 2026-08-23 (SonarCloud paydown in `check-staging-evidence.ts`)._
+
+## 2026-08-23 — `check-staging-evidence.ts` Sonar paydown: `RcPrClaim`, `rcEntryTierErrors()`
+
+Pure refactor, **no behavior change** — all 339 pre-existing tests pass untouched.
+It exists to retire three SonarCloud findings on this file that had been resolved
+as *Accepted* in the SonarCloud UI to unblock PR #2332 rather than fixed:
+
+| Rule | Was | Now |
+|---|---|---|
+| `typescript:S107` | `validateCoveredRcPr` took 8 params (max 7) | `declared` / `required` / `files` bundled as `RcPrClaim` → 6 params |
+| `typescript:S3776` | same function, cognitive complexity 16 (max 15) | tier block lifted into `rcEntryTierErrors()` → 10 |
+| `typescript:S6582` | `approvalStatusRaw === null \|\| approvalStatusRaw.trim()…` | `approvalStatusRaw?.trim()…` |
+
+Two things to know before touching it again:
+
+- **`RcPrClaim` is a grouping the callers already had.** Both `validateCoveredRcPr`
+  call sites and `deferredConsolidatedSoakCoverage` already thread that same trio.
+  Do not "simplify" it back into positional params — that re-breaks S107. Equally,
+  do not push `errors` / `notes` into a sink object to buy headroom: every other
+  validator in this file takes them positionally, and diverging here costs more
+  than it saves.
+- **The optional chain in the deferred `approval_status` check IS the null guard.**
+  `stringAt()` returns `null` for an absent or non-string field, `null?.trim()` is
+  `undefined`, and `undefined !== 'pending'` — so an omitted field still fails
+  closed. Four tests were added alongside this refactor to pin the branches that
+  had no coverage: malformed `risk_tier`, `risk_tier` below the **declared** tier
+  (previously only "below *required* tier" was asserted), and deferred manifests
+  that omit `approval_status` or give it a non-string value. Each was verified to
+  fail against a mutated implementation before being kept.
+
+Context worth carrying: SonarCloud **main-branch analysis has been dead since
+2026-05-06**, so every issue created after that date is absent from main's
+snapshot and gets attributed to whichever PR next touches the file — which is how
+three findings dated June/July/August landed on an 8-line PR. Paying findings down
+is therefore worth more than Accepting them: an Accepted issue stays Accepted, but
+the *next* untouched-line finding on this file will block the next PR the same way.
 
 ## 2026-08-22 — preflight-timestamp residual-risk symmetry (PR #2329)
 
@@ -25,6 +61,11 @@ Repo-wide ratchet for SonarCloud `githubactions:S6506`: no `curl` in `.github/wo
 ## 2026-08-17 — `mergify-orphaned-export-gate.test.ts` (new)
 
 Contract test pinning `check-success = Orphaned Export Lint` into EVERY `.mergify.yml` queue rule's `merge_conditions`, plus the exact `name: Orphaned Export Lint` job name in `ci.yml` so the pair cannot silently drift. Exists because the `orphaned-export-lint` job (CTO ruling R14, fail-closed `continue-on-error: false`) ran on every PR since 2026-07-28 but was never listed in `merge_conditions` — a CI job absent from that list reports without blocking (the "NEW job not in .mergify.yml gates NOTHING" class). Raw-content style follows `s33-wave2-workflow-contract.test.ts`. NOTE: branch protection's required-check set is a separate, Carson/admin-only surface — this test pins only the in-repo Mergify layer.
+_Last updated: 2026-08-18 (mergify-python-sdk-gate contract test)._
+
+## 2026-08-18 — `mergify-python-sdk-gate.test.ts` (new)
+
+Contract test pinning `check-success = Python SDK Tests (packages/arkova-py)` into EVERY `.mergify.yml` queue rule's `merge_conditions`, plus the exact `name: Python SDK Tests (packages/arkova-py)` job name in `ci.yml` so the pair cannot silently drift. Exists because the `python-sdk-tests` job (BUG-2026-08-12-007) was added to ci.yml without being listed in `merge_conditions` — a CI job absent from that list reports without blocking (the "NEW job not in .mergify.yml gates NOTHING" class), which would have reproduced the original never-gated-on-a-PR blindness one layer up. Also pins that the job stays free of a job-level `if:`: an unreported check never satisfies `check-success`, so a path-filtered gated job would deadlock every non-SDK PR in the queue (path conditioning here is step-level `if:` inside always-reporting jobs, e.g. ai-eval-gate). Raw-content style follows `s33-wave2-workflow-contract.test.ts`; queue-gate shape follows `mergify-orphaned-export-gate.test.ts` (PR #2257). NOTE: branch protection's required-check set is a separate, Carson/admin-only surface — this test pins only the in-repo Mergify layer.
 
 CI gate scripts. Each one fails the build with a structured exit code + an
 actionable message when a guardrail trips. Run via

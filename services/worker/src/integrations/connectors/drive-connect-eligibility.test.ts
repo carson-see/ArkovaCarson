@@ -180,6 +180,44 @@ describe('resolveDriveConnectEligibility — paid-verified-individual path (no o
     const result = await resolveDriveConnectEligibility({ userId: USER, db });
     expect(result).toEqual({ allowed: false, reason: 'lookup_failed' });
   });
+
+  /**
+   * FD-D3 (side-rig, 2026-08-13). This branch — "caller HAS an org but called the
+   * personal path without an org_id" — was the only one in this module with no
+   * test, and it returned the same `not_admin` reason the ORG path returns for a
+   * genuine non-admin. Two structurally different conditions, one indistinguishable
+   * 403 `not_authorized`, and no log on either. Diagnosing it cost a live founder
+   * OAuth consent: an actual org OWNER was reported as "not admin".
+   *
+   * The reason is now distinct, so the two are separable from the response alone.
+   */
+  it('denies an org-holder who called the PERSONAL path with a distinct, non-not_admin reason', async () => {
+    mockOrgId.mockResolvedValue({ value: ORG, error: false });
+    const db = makeDb({
+      profile: { subscription_tier: 'professional', identity_verified_at: '2026-01-01T00:00:00Z' },
+    });
+
+    const result = await resolveDriveConnectEligibility({ userId: USER, db });
+    expect(result).toEqual({ allowed: false, reason: 'org_scope_required' });
+    // The admin resolver is irrelevant here — the caller never named an org.
+    expect(mockAdmin).not.toHaveBeenCalled();
+  });
+
+  it('keeps org_scope_required distinct from the ORG path\'s not_admin', async () => {
+    // Same user, same org, same fixtures — only the presence of org_id differs.
+    mockOrgId.mockResolvedValue({ value: ORG, error: false });
+    mockAdmin.mockResolvedValue({ value: false, error: false });
+    const db = makeDb({
+      org: { verification_status: 'VERIFIED', suspended: false },
+      profile: { subscription_tier: 'professional', identity_verified_at: '2026-01-01T00:00:00Z' },
+    });
+
+    const personal = await resolveDriveConnectEligibility({ userId: USER, db });
+    const org = await resolveDriveConnectEligibility({ userId: USER, orgId: ORG, db });
+
+    expect(personal).toEqual({ allowed: false, reason: 'org_scope_required' });
+    expect(org).toEqual({ allowed: false, reason: 'not_admin' });
+  });
 });
 
 describe('assertDriveConnectAllowed — token-reuse / callback re-check', () => {

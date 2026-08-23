@@ -260,12 +260,47 @@ function makeEligibilityDb(db: DbClient): DriveEligibilityDb {
  */
 const DENY_HTTP: Record<DriveConnectDenyReason, { status: 403 | 500; code: string }> = {
   not_admin: { status: 403, code: 'not_authorized' },
+  // FD-D3: additive code (§1.8 — new nullable/extra values need no version
+  // bump). Callers that already branch on `not_authorized` keep working; this
+  // one tells a client that CAN retry exactly how: resend with `org_id`.
+  org_scope_required: { status: 403, code: 'org_scope_required' },
   org_unverified: { status: 403, code: 'org_unverified' },
   org_suspended: { status: 403, code: 'org_suspended' },
   needs_paid_plan: { status: 403, code: 'needs_paid_plan' },
   individual_not_verified: { status: 403, code: 'individual_not_verified' },
   lookup_failed: { status: 500, code: 'lookup_failed' },
 };
+
+/**
+ * FD-D3 (side-rig, 2026-08-13): log EVERY connect denial, on both legs.
+ *
+ * Until this existed the eligibility gate denied silently. A user could grant
+ * Google consent and be bounced with zero server-side trace, so the only way to
+ * tell `not_admin` (genuinely not an admin) from `org_scope_required` (an org
+ * OWNER whose client omitted `org_id`) was to reproduce it live — which is
+ * exactly what it cost: a founder OAuth consent, to discover a client-side
+ * argument omission.
+ *
+ * Bounded + PII-free by construction: ids, the requested scope, and a
+ * closed-set reason. Never an email, tier, verification timestamp, or token.
+ */
+function logConnectDenial(args: {
+  leg: 'start' | 'callback';
+  userId: string;
+  orgId: string | null;
+  reason: DriveConnectDenyReason;
+}): void {
+  logger.warn(
+    {
+      leg: args.leg,
+      userId: args.userId,
+      orgId: args.orgId,
+      requestedScope: args.orgId ? 'org' : 'individual',
+      reason: args.reason,
+    },
+    'Drive connect eligibility DENIED',
+  );
+}
 
 async function fetchGoogleIdentity(accessToken: string, deps: DriveOAuthDeps): Promise<{
   accountId: string;
@@ -341,6 +376,7 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
     } catch (gateErr) {
       if (gateErr instanceof DriveConnectDenied) {
         const { status, code } = DENY_HTTP[gateErr.reason];
+        logConnectDenial({ leg: 'start', userId, orgId, reason: gateErr.reason });
         res.status(status).json({ error: 'Not eligible to connect Google Drive', code });
         return;
       }
@@ -408,6 +444,12 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
     } catch (gateErr) {
       if (gateErr instanceof DriveConnectDenied) {
         const { code } = DENY_HTTP[gateErr.reason];
+        logConnectDenial({
+          leg: 'callback',
+          userId: payload.userId,
+          orgId: payload.orgId,
+          reason: gateErr.reason,
+        });
         res.redirect(302, appendResult(returnTo, 'drive_error', code));
         return;
       }

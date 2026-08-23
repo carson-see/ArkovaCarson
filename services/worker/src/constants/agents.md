@@ -22,3 +22,10 @@ Shared constant definitions used across the worker. Single source of truth for e
 - Reword in this file only — every surface renders it verbatim from this export. A reword also requires a `verifyCache.ts` `KEY_PREFIX` bump, because the note is baked into the cached verify payload.
 - Deliberately NOT the internal classifier vocabulary (`already_complete` / `direct_anchored` / `batch_provable` / `ambiguous` in `jobs/proof-backcatalog-classifier.ts`). That describes an operational census; this describes the one thing a caller can act on.
 
+
+## 2026-08-15 BUG-2026-08-13-010 — `connectorFingerprint.ts`
+
+- Single source for the `fetch_time_snapshot` re-derivability class, its §1.5 measured / asserted / NOT-asserted note, and the closed `metadata.connector_source` marker set (`docusign` / `google_drive` / `microsoft_365` / `connector`; deliberately EXCLUDES `manual_upload` / `batch_upload` — user-supplied bytes ARE reproducible from the retained file).
+- Soak-proven finding: four fetches of the same unchanged DocuSign envelope produced four different SHA-256s — connector fingerprints attest fetch-time bytes, NOT source re-derivability. Emitted by `/api/v1/verify/:publicId`, `/api/v1/verify/:publicId/proof` (response level, never inside the signable `proof_bundle`), and the `/api/proof-packet` anchor receipt.
+- Same rules as `proofAvailability.ts` directly above: the note is public API response copy with legal weight, drafted by engineering, NOT counsel-reviewed, rendered verbatim from this one export, and MUST stay vendor-neutral (the marker is org-writable on legacy paths — `bulk_create_anchors` persists client metadata verbatim — so a fixed generic statement is the only shape that cannot be laundered into a vendor provenance claim, R-7). A reword requires a `verifyCache.ts` `KEY_PREFIX` bump (v6 as of this entry).
+- The class+note pair is produced ONLY by `connectorFingerprintRederivabilityFields()` — indivisible by construction, same §1.5 rationale as `proofAvailabilityFields`.

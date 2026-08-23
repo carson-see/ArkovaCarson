@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-08-22-deferred-basedrift-exit",
+  "created_at": "2026-08-22T18:30:00Z",
+  "created_by": "carson@arkova.io",
+  "release_owner": "Carson",
+  "soak_mode": "deferred_consolidated_soak",
+  "approval_status": "pending",
+  "train_launch_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+  "target_main_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+  "allowed_base_shas": [],
+  "covered_main_shas": [],
+  "included_prs": [
+    {
+      "number": 2211,
+      "head_sha": "7143daebf55fe82e9676ce46fa894654e707ff5e",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-4",
+      "soak_window": "2026-08-21T13:57:35Z to 2026-08-22T01:57:35Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train4-2026-08/maturity-2026-08-22T0157Z.md",
+      "ci_summary": "ORG_ADMIN-gates the self-serve org-verification writers (public API surface, T2). Soaked as a TRAIN-4 union member on arkova-worker-wave3-2026-08-staging (union head 0333464d7b22e140c07b049718b1214ea98633e1); the closed window's clock, load continuity, and per-member coverage are recorded in the maturity record. That evidence predates the base drift this manifest exits; merge-grade evidence for this head is owed by the consolidated soak of merged main.",
+      "rollback_note": "Single revert of the PR merge. No schema, no data backfill, no flag. Revert restores the pre-gate writer behavior.",
+      "migration_files": []
+    },
+    {
+      "number": 2220,
+      "head_sha": "fdc2a9370099aa98b16eb54ee210bf211c099d75",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-4",
+      "soak_window": "2026-08-21T13:57:35Z to 2026-08-22T01:57:35Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train4-2026-08/maturity-2026-08-22T0157Z.md",
+      "ci_summary": "FD-P7 SOC 2 CC6.8 fix: API-key revocation/deletion reachable again, revoked_at designation stamped (public API surface, T2). TDD supertest lifecycle suite over real router + real apiKeyAuth. Soaked as a TRAIN-4 union member (union head 0333464d7b22e140c07b049718b1214ea98633e1); previously covered by RC-2026-08-12-fd-p7-cc68 at an older head. Merge-grade evidence for this head is owed by the consolidated soak of merged main.",
+      "rollback_note": "Single revert of the PR merge. No schema, no data backfill, no flag. Revert restores pre-fix behavior (revocation unreachable): operationally safe but re-opens the FD-P7 SOC 2 CC6.8 finding.",
+      "migration_files": []
+    },
+    {
+      "number": 2230,
+      "head_sha": "274ad17eb9af17f910b9b39d39d50434672d1928",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-4",
+      "soak_window": "2026-08-21T13:57:35Z to 2026-08-22T01:57:35Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train4-2026-08/maturity-2026-08-22T0157Z.md",
+      "ci_summary": "Drive connect-denial observability: separates org_scope_required from not_admin and logs every connect denial (worker integrations + drive-oauth route, T2). Soaked as a TRAIN-4 union member (union head 0333464d7b22e140c07b049718b1214ea98633e1). Merge-grade evidence for this head is owed by the consolidated soak of merged main. MUST MERGE BEFORE #2236 (see that entry's merge_sequencing).",
+      "rollback_note": "Single revert of the PR merge. No schema, no flag. Revert collapses the two denial reasons back into one and drops the denial logging.",
+      "migration_files": []
+    },
+    {
+      "number": 2236,
+      "head_sha": "945b4a64ddd3a8edadc7c963a6a94614a71b6ec3",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-4",
+      "soak_window": "2026-08-21T13:57:35Z to 2026-08-22T01:57:35Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train4-2026-08/maturity-2026-08-22T0157Z.md",
+      "merge_sequencing": "STACKED on PR #2230's branch (base = fix/drive-connect-deny-reason-observability, not main). Mergify will not merge it while its base is not main, and a manual merge would land it into the feature branch and orphan it. Sequence: #2230 merges to main first; GitHub then auto-retargets #2236 to main; only then does its gate evaluate against main and only then may it be readied. Do NOT retarget manually while #2230 is open (a manual retarget drops CI).",
+      "ci_summary": "Claims honesty fixes: Nessie fails closed with the priced offer retracted, Drive individual scope dropped, search described honestly (edge MCP server + SDK + docs/api contract surface, T2). Soaked as a TRAIN-4 union member (union head 0333464d7b22e140c07b049718b1214ea98633e1); the window's 5xx budget explicitly attributes the Nessie fail-closed 503s to this member as declared behavior. Merge-grade evidence for this head is owed by the consolidated soak of merged main.",
+      "rollback_note": "Single revert of the PR merge. No schema, no flag. Revert restores the prior (dishonest) claims copy and re-opens the claims-review finding it fixes; coordinate with #2230 which must remain merged or be reverted independently.",
+      "migration_files": []
+    },
+    {
+      "number": 2245,
+      "head_sha": "a6bd0763ddf9fa95c3ed317b7e233a26152bf5fe",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-5",
+      "soak_window": "2026-08-21T18:39:17Z to 2026-08-22T06:39:17Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train5-2026-08/maturity-2026-08-22T0639Z.md",
+      "ci_summary": "OAuth hygiene: requests minimal Drive scopes and stops inheriting granted scopes (worker oauth integration, T2). TRAIN-5 union member (union head dbe57d63856eb28b839b2dbfbaebcb9cab3b5938); the maturity record states this member had NO direct in-window coverage - its evidence debt is explicitly carried into the consolidated soak of merged main.",
+      "rollback_note": "Single revert of the PR merge. No schema, no flag. Revert restores the previous (broader) scope requests; existing grants are unaffected either way.",
+      "migration_files": []
+    },
+    {
+      "number": 2251,
+      "head_sha": "42c41e144e3cdf52b881751cebacdfddbe81c713",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-5",
+      "soak_window": "2026-08-21T18:39:17Z to 2026-08-22T06:39:17Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train5-2026-08/maturity-2026-08-22T0639Z.md",
+      "ci_summary": "FD-RL-1/FD-RL-2 quota fix: a denied org-quota request no longer consumes quota or lies in its headers (perOrgRateLimit middleware, T2). TRAIN-5 union member (union head dbe57d63856eb28b839b2dbfbaebcb9cab3b5938); the maturity record notes the specific changed branch was only partially exercised in-window - remainder owed by the consolidated soak of merged main.",
+      "rollback_note": "Single revert of the PR merge. No schema (the follow-up migration was deliberately split out), no flag. Revert restores the over-counting denial behavior.",
+      "migration_files": []
+    },
+    {
+      "number": 2254,
+      "head_sha": "81d76ae8a908c4ea281deeca2ab4721fefb1f8bf",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-5",
+      "soak_window": "2026-08-21T18:39:17Z to 2026-08-22T06:39:17Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train5-2026-08/maturity-2026-08-22T0639Z.md",
+      "ci_summary": "Monitor correctness: count floor on pipeline linker-stall detection and stops the cache contradicting the live probe (worker jobs, T2). TRAIN-5 union member (union head dbe57d63856eb28b839b2dbfbaebcb9cab3b5938). Merge-grade evidence for this head is owed by the consolidated soak of merged main.",
+      "rollback_note": "Single revert of the PR merge. No schema, no flag. Revert restores the floor-less monitor thresholds (alert-noise regression only, no data path).",
+      "migration_files": []
+    },
+    {
+      "number": 2258,
+      "head_sha": "01e92774b6376718e31970fc5cbed35ec6e628fa",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-5",
+      "soak_window": "2026-08-21T18:39:17Z to 2026-08-22T06:39:17Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train5-2026-08/maturity-2026-08-22T0639Z.md",
+      "ci_summary": "Sentry PII hardening: scrubs event.extra recursively - key filter AND scrubString at every depth (worker utils, T2). TRAIN-5 union member (union head dbe57d63856eb28b839b2dbfbaebcb9cab3b5938); the maturity record states this member had NO direct in-window coverage - its evidence debt is explicitly carried into the consolidated soak of merged main.",
+      "rollback_note": "Single revert of the PR merge. No schema, no flag. Revert restores the shallower scrub (a PII-exposure regression in Sentry events, so revert only under a worse failure).",
+      "migration_files": []
+    },
+    {
+      "number": 2266,
+      "head_sha": "6b6c8f94b1fde681307b719f48d234217eae775c",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-5",
+      "soak_window": "2026-08-21T18:39:17Z to 2026-08-22T06:39:17Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train5-2026-08/maturity-2026-08-22T0639Z.md",
+      "ci_summary": "publicRecordAnchor hardening after the 2026-08-17 poison record: surrogate-safe truncation + insert-failure quarantine (worker jobs, T2). TRAIN-5 union member (union head dbe57d63856eb28b839b2dbfbaebcb9cab3b5938); the maturity record notes the changed branch was only partially exercised in-window - remainder owed by the consolidated soak of merged main.",
+      "rollback_note": "Single revert of the PR merge. No schema, no flag. Revert restores the pre-quarantine behavior in which a poison record can wedge the publicRecordAnchor job (known production incident class).",
+      "migration_files": []
+    },
+    {
+      "number": 2267,
+      "head_sha": "f91163639d4469f02672a684c76d7dec3a1c48f3",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-5",
+      "soak_window": "2026-08-21T18:39:17Z to 2026-08-22T06:39:17Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train5-2026-08/maturity-2026-08-22T0639Z.md",
+      "ci_summary": "Surrogate-safe truncation sweep across PostgREST write payloads + CI ratchet (feedback-rules detector with baseline) (public API surface, T2). TRAIN-5 union member (union head dbe57d63856eb28b839b2dbfbaebcb9cab3b5938); the maturity record notes the changed branch was only partially exercised in-window - remainder owed by the consolidated soak of merged main.",
+      "rollback_note": "Single revert of the PR merge. No schema, no flag. Revert restores the unswept truncation call sites and removes the CI ratchet.",
+      "migration_files": []
+    },
+    {
+      "number": 2270,
+      "head_sha": "d1fc1a256709dfa6306dbf700a51984b808854a1",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-5",
+      "soak_window": "2026-08-21T18:39:17Z to 2026-08-22T06:39:17Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train5-2026-08/maturity-2026-08-22T0639Z.md",
+      "ci_summary": "Sentry cron check-ins gated to the prod service - kills the zombie monitor-env class (worker utils + env baseline, T2 by path detector even though self-described T1). TRAIN-5 union member (union head dbe57d63856eb28b839b2dbfbaebcb9cab3b5938); the maturity record states this member had NO direct in-window coverage - its evidence debt is explicitly carried into the consolidated soak of merged main.",
+      "rollback_note": "Single revert of the PR merge. No schema, no flag. Revert restores non-prod cron check-ins (monitoring noise only, no data path).",
+      "migration_files": []
+    },
+    {
+      "number": 2272,
+      "head_sha": "0a06ea0ad307094da1fe28d389d22d08b0be0c39",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-5",
+      "soak_window": "2026-08-21T18:39:17Z to 2026-08-22T06:39:17Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train5-2026-08/maturity-2026-08-22T0639Z.md",
+      "ci_summary": "Activates ENABLE_QUEUE_DIGEST and flips enrollment default-on (worker config + deploy-worker.yml + queue-digest cron, T2). TRAIN-5 union member (union head dbe57d63856eb28b839b2dbfbaebcb9cab3b5938). Merge-grade evidence for this head is owed by the consolidated soak of merged main. Note: merging does not deploy while DEPLOY_WORKER_PAUSED=true; the flag flip reaches prod only at the post-soak cutover.",
+      "rollback_note": "Single revert of the PR merge, or operationally set ENABLE_QUEUE_DIGEST=false (documented in docs/reference/ENV.md) without a revert. No schema.",
+      "migration_files": []
+    },
+    {
+      "number": 2276,
+      "head_sha": "0d656dfe258064d3838353614253dcfc30eb5fe8",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "soak_train": "TRAIN-5",
+      "soak_window": "2026-08-21T18:39:17Z to 2026-08-22T06:39:17Z (12h T2, closed)",
+      "maturity_record": "docs/staging/train5-2026-08/maturity-2026-08-22T0639Z.md",
+      "ci_summary": "Daily platform-admin health digest job + cron route (worker jobs + cron route + deploy-worker.yml, T2). TRAIN-5 union member (union head dbe57d63856eb28b839b2dbfbaebcb9cab3b5938). Merge-grade evidence for this head is owed by the consolidated soak of merged main. Merging does not deploy while DEPLOY_WORKER_PAUSED=true.",
+      "rollback_note": "Single revert of the PR merge. No schema. The digest job is additive; revert removes the cron route and job with no data-path impact.",
+      "migration_files": []
+    },
+    {
+      "number": 2219,
+      "head_sha": "235ed69d574f9ba57c621397c7b3bd488d0279ed",
+      "base_sha": "48bdd4faea62badc816226d3c66d3fef1e0b5284",
+      "risk_tier": "T3",
+      "owner": "carson@arkova.io",
+      "soak_train": "migration-T3",
+      "soak_window": "2026-08-20T14:00:22Z to 2026-08-22T14:00:22Z (48h T3, closed)",
+      "maturity_record": "docs/staging/migration-t3-soak-2026-08/maturity-2026-08-22T1400Z.md",
+      "ci_summary": "Partner-provisioning HTTP router for the SCRUM-2990 state machine (HakiChain onboarding path) + migration 0410_partner_accounts.sql (T3: migration). migration-T3 union member (union head 3baf16015ed61b4063daa6e53bead2399657ecd6 = #2219 + #2235 + #2248, rig arkova-worker-staging on fizyjojbebyalirtjjht); the maturity record's substantive evidence for 0410 is targeted SQL against the rig database, and it states plainly the HTTP window evidences worker health only. Merge-grade evidence for this head is owed by the consolidated soak of merged main.",
+      "rollback_note": "Revert the PR merge before the deploy pause lifts. Migration 0410 has been applied to the isolated soak rig (fizyjojbebyalirtjjht, rollback-rehearsed there per the soak stand-up record), not to prod; if the revert lands before prod cutover, 0410 simply never ships and its -- ROLLBACK block is the rehearsed exit if it has been applied anywhere else.",
+      "migration_files": [
+        "supabase/migrations/0410_partner_accounts.sql"
+      ]
+    }
+  ],
+  "excluded_prs": [
+    {
+      "number": 2232,
+      "reason": "TRAIN-4 member, EXCLUDED: genuinely red code - Tests failures on its head. An evidence mode cannot fix failing code; it stays out until the code is green."
+    },
+    {
+      "number": 2233,
+      "reason": "TRAIN-4 member, EXCLUDED: genuinely red code - Tests failures on its head. An evidence mode cannot fix failing code; it stays out until the code is green."
+    },
+    {
+      "number": 2314,
+      "reason": "EXCLUDED: mid-soak (FERPA rig arkova-worker-ferpa2314-staging, window closes 2026-08-23T19:24:30Z). Not touched; it finishes its own window."
+    },
+    {
+      "number": 2249,
+      "reason": "EXCLUDED: mid-soak (TRAIN-6, arkova-worker-wave2-2026-08-staging, window closes 2026-08-23T20:33:58Z). Not touched; it finishes its own window."
+    },
+    {
+      "number": 2246,
+      "reason": "TRAIN-5 member, already MERGED 2026-08-22T18:13:38Z (merge dcded27f26846c4e687af0d7b73dd106d2939474) before this manifest was authored; needs no coverage."
+    },
+    {
+      "number": 2248,
+      "reason": "migration-T3 member, already MERGED 2026-08-22T18:14:16Z (merge 4c8a289ee9a5837daa0f1c599f6058039087cd9e) before this manifest was authored; needs no coverage."
+    },
+    {
+      "number": 2235,
+      "reason": "migration-T3 union member (0411-0413) NOT covered by this manifest: it is not in the CTO merge ruling this manifest executes. Its disposition is unresolved and owed a decision - flagged in the authoring session's report."
+    }
+  ],
+  "notes": "Deferred-consolidated-soak exit from the 2026-08 base-drift wall (CTO ruling, executed 2026-08-22). The 14 included PRs each completed a closed union soak window (TRAIN-4 12h T2, TRAIN-5 12h T2, migration-T3 48h T3 - see per-entry maturity_record), but main took runtime commits (#2216/#2250 chain fixes, run-lease) after those windows closed; drift classifies T3 and every future merge re-creates drift for the rest, so per-PR re-soaking against a moving main is a livelock. Merge is decoupled from prod deploy by DEPLOY_WORKER_PAUSED=true (positively re-confirmed by the gate on every covered run - the deferred path fails closed without it). Head SHAs above were fetched live at authoring time (2026-08-22T18:27:50Z); exact-head binding means any push to a covered PR invalidates its entry and requires a manifest update before that PR can pass the gate. HEAD RESTAMP 2026-08-23: two covered entries re-pinned to their live heads after post-authoring merges of origin/main into the PR branches (merge commits only, never rebase). #2267: be0c8d82… -> f91163639d… (delta = exactly one merge commit of origin/main; git rev-list be0c8d82..f9116363 --not origin/main returns only the merge commit; own-files contribution vs main byte-identical). #2220: 80e16527… -> fdc2a9370… (branch was DIRTY against main; conflict in scripts/staging/provision-isolated-rig.test.ts resolved by recomputing CANONICAL_CROSS_LANE_AGENTS_SHA256 to sha256 of the merged scripts/staging/agents.md — the one non-main change, test-only, 218/218 pass; every other own-file contribution vs main byte-identical across the merge; full per-file audit in the PR #2220 body). Soak windows, rigs and readings unchanged and not re-claimed; the consolidated-soak obligation below is unaffected.",
+  "pause_lift_obligation": "DEBT, IMPOSSIBLE TO MISS: before the DEPLOY_WORKER_PAUSED repository variable flips to false, a consolidated soak of merged main at the accumulated head MUST run, and this manifest MUST be converted to real evidence through the normal path - remove soak_mode, fill in real environment/soak/migration_plan evidence from that consolidated soak, and only then flip approval_status to approved. Until that happens, every PR this manifest admitted is merged WITHOUT satisfied soak evidence, and lifting the pause without the consolidated soak would deploy unsoaked integrated code to prod. The same obligation is recorded in HANDOFF.md under '## Now' > '### Soaks'.",
+  "exceptions": []
+}
