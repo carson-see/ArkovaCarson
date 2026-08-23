@@ -260,6 +260,118 @@ run_case "refspec: + in a pathspec"         $ALLOWED 'git add "src/a+main.ts"'
 run_case "refspec: + in a log range"        $ALLOWED 'git log --grep="+main" --oneline'
 
 echo ""
+echo "--- BYPASS: whole-repo force push names no branch ---------------"
+# Rules 2 and 2b both decide on a NAME -- rule 2 needs a literal main/master on
+# the line, rule 2b needs main/master as a `+`-refspec destination. These two
+# forms force-update every branch on the remote, main included, and name none
+# of them, so neither rule could fire. Both returned exit 0 against the pre-fix
+# hook (probed, not theorised). First recorded as open in PR #2178/#2181; the
+# fix in #2181 merged into a stacked base and never reached main (SCRUM-3492).
+run_case "whole-repo: --force --all"            $BLOCKED 'git push --force --all origin'
+run_case "whole-repo: --all --force"            $BLOCKED 'git push --all --force origin'
+run_case "whole-repo: -f --all"                 $BLOCKED 'git push -f --all origin'
+run_case "whole-repo: --force-with-lease --all" $BLOCKED \
+  'git push --force-with-lease --all origin'
+# --mirror needs no force flag: it force-updates every ref by definition, and
+# additionally DELETES remote refs that are absent locally.
+run_case "whole-repo: --mirror"                 $BLOCKED 'git push --mirror origin'
+run_case "whole-repo: --mirror, no remote"      $BLOCKED 'git push --mirror'
+run_case "whole-repo: --mirror at end of line"  $BLOCKED 'git push origin --mirror'
+# Composes with the global-option normalization, same as rule 2b does.
+run_case "whole-repo: -c global then --mirror"  $BLOCKED \
+  'git -c user.name=x push --mirror origin'
+run_case "whole-repo: -C global then --all"     $BLOCKED \
+  'git -C /some/path push --force --all origin'
+run_case "whole-repo: after &&"                 $BLOCKED \
+  'npm test && git push --force --all origin'
+
+echo ""
+echo "--- the whole-repo rule must not over-match ---------------------"
+# An UNFORCED push of every branch is not destructive -- it is still rejected
+# non-fast-forward -- so `--all` blocks only alongside a force flag.
+run_case "whole-repo: --all, no force flag" $ALLOWED 'git push --all origin'
+run_case "whole-repo: --tags"               $ALLOWED 'git push --tags origin'
+# `--mirror` is a clone flag too, and there it is read-only.
+run_case "whole-repo: clone --mirror"       $ALLOWED \
+  'git clone --mirror https://example.invalid/r.git'
+# The rule keeps each match inside ONE shell command, so a later unrelated
+# `git clone --mirror` is not attributed back to the push before it.
+run_case "whole-repo: push then clone"      $ALLOWED \
+  'git push origin feature && git clone --mirror https://example.invalid/r.git'
+run_case "whole-repo: message mentioning it" $ALLOWED \
+  'git commit -m "docs: explain push --mirror"'
+
+echo ""
+echo "--- BYPASS: a wildcard destination expands to main --------------"
+# The same "no name on the line" gap as above, one step subtler. Rule 2b
+# requires a literal main/master destination COMPONENT, so a refspec whose
+# destination is a glob at branch level slipped past it while expanding to
+# every branch on the remote. Each case returned exit 0 against the pre-fix
+# hook. Recovered from the orphaned PR #2181 diff and re-probed here.
+run_case "wildcard: +refs/heads/*:refs/heads/*" $BLOCKED \
+  'git push origin +refs/heads/*:refs/heads/*'
+run_case "wildcard: +refs/*:refs/*"             $BLOCKED 'git push origin +refs/*:refs/*'
+run_case "wildcard: +refs/heads/*"              $BLOCKED 'git push origin +refs/heads/*'
+run_case "wildcard: +*:*"                       $BLOCKED 'git push origin +*:*'
+run_case "wildcard: quoted"                     $BLOCKED \
+  'git push origin "+refs/heads/*:refs/heads/*"'
+run_case "wildcard: -c global then +refs/*"     $BLOCKED \
+  'git -c a=b push origin +refs/heads/*:refs/heads/*'
+# Forced by FLAG instead of by `+` -- the same push, spelled the other way.
+run_case "wildcard: force flag, no +"           $BLOCKED \
+  'git push --force origin refs/heads/*:refs/heads/*'
+run_case "wildcard: -f, no +"                   $BLOCKED 'git push -f origin refs/*:refs/*'
+run_case "wildcard: force flag after refspec"   $BLOCKED \
+  'git push origin refs/heads/*:refs/heads/* --force'
+
+echo ""
+echo "--- the wildcard rule must not over-match -----------------------"
+# Branch LEVEL is what decides, not the mere presence of a `*`. The wildcard
+# has to sit where the branch's own name sits -- bare `*`, `refs/*`,
+# `refs/heads/*` -- to be able to expand to main. One level deeper it cannot.
+run_case "wildcard: unforced refs/heads/*"  $ALLOWED \
+  'git push origin refs/heads/*:refs/heads/*'
+run_case "wildcard: dst below branch level" $ALLOWED \
+  'git push origin +feature:refs/heads/feature/*'
+run_case "wildcard: dst below level, flag"  $ALLOWED \
+  'git push --force origin refs/heads/feature/*:refs/heads/feature/*'
+run_case "wildcard: +refs/heads/feature/*"  $ALLOWED 'git push origin +refs/heads/feature/*'
+# Tags are not branches; this cannot touch main's history.
+run_case "wildcard: tags glob"              $ALLOWED 'git push origin +refs/tags/*:refs/tags/*'
+# A shell glob in a LATER command must not be read as this push's destination.
+run_case "wildcard: glob in a later command" $ALLOWED \
+  'git push --force origin claude/my-feature && ls *.ts'
+run_case "wildcard: glob after a ;"         $ALLOWED \
+  'git push --force origin claude/my-feature; echo *'
+run_case "wildcard: glob in a message"      $ALLOWED 'git commit -m "ci: match refs/heads/*"'
+
+echo ""
+echo "--- BYPASS: a backslash-newline continuation splits the line ----"
+# Every rule here greps, and grep is LINE-oriented. A shell line continuation
+# is one command to bash but two lines to grep, so the anchor and the flag land
+# on opposite sides of the split and no rule can see both. This defeats every
+# rule family in the file at once, rule 1 included. Probed: all exit 0.
+run_case "continuation: before +main"       $BLOCKED $'git push origin \\\n  +main'
+run_case "continuation: before --force"     $BLOCKED $'git push \\\n  --force origin main'
+run_case "continuation: before --no-verify" $BLOCKED $'git commit -m x \\\n  --no-verify'
+run_case "continuation: inside gh pr merge" $BLOCKED $'gh pr \\\n  merge 123 --squash'
+run_case "continuation: after git"          $BLOCKED $'git \\\n  push --force origin main'
+run_case "continuation: before --mirror"    $BLOCKED $'git push \\\n  --mirror origin'
+
+echo ""
+echo "--- joining continuations must not join separate commands -------"
+# Only a BACKSLASH-newline is a continuation. A bare newline is a command
+# SEPARATOR, and joining those too would splice unrelated commands into one
+# line -- the case below would become "...claude/my-feature git log main" and
+# trip rule 2. That is the difference between a stricter guard and a broken one.
+run_case "separator: two commands, no backslash" $ALLOWED \
+  $'git push --force origin claude/my-feature\ngit log main'
+run_case "separator: benign continuation"        $ALLOWED \
+  $'git push --set-upstream \\\n  origin claude/my-feature'
+run_case "separator: continuation in a commit"   $ALLOWED \
+  $'git commit -m "wip" \\\n  --allow-empty'
+
+echo ""
 echo "--- the normalizer itself is present and parses -----------------"
 # The hook falls back to the raw command when the normalizer cannot be run, so
 # a missing or syntactically broken normalize-git-command.py silently returns
@@ -301,6 +413,17 @@ run_case_bounded "200 global options, no subcommand"     $ALLOWED \
   "git ${big_flags}!" 10
 run_case_bounded "200 global options then benign work"   $ALLOWED \
   "git ${big_flags}status --porcelain" 10
+
+# Rules 2c and 2d scan forward from `git push` with `[^;&|]*` before matching,
+# so a long single-command push line is the shape that exercises THEM (the
+# cases above exit at rule 2, or never reach a push at all). A long refspec
+# list that matches nothing forces the full failed scan.
+big_refspecs=""
+for _ in $(seq 1 200); do big_refspecs+="claude/feature-branch "; done
+run_case_bounded "200 refspecs, none of them main"       $ALLOWED \
+  "git push origin ${big_refspecs}" 10
+run_case_bounded "200 refspecs then a wildcard dst"      $BLOCKED \
+  "git push --force origin ${big_refspecs}refs/heads/*" 10
 
 echo ""
 echo "--- summary ----------------------------------------------------"

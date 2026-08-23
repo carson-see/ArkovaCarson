@@ -3,7 +3,7 @@
 Local agent bootstrap helpers. These scripts are guardrails for agent behavior only; they must not mutate production, staging, Jira, Confluence, GitHub PR bodies, or audit evidence unless a script name and help text explicitly says so.
 
 - `ack-claude-bootstrap.sh` records the current `CLAUDE.md` SHA-256 in git-local state after an agent has read the file. It then runs `check-git-merge-config.sh` and exits non-zero if that guard trips.
-- `block-pr-merge.test.sh` is the pure-bash test for the `gh pr merge` / force-push / `--no-verify` PreToolUse hook (77 cases: the three rule families firing, legitimate work still allowed, 17 git global-option bypasses, 13 `+`-refspec force-push bypasses, 24 over-match cases that keep both fixes honest, the normalizer's presence, and wall-clocked pathological inputs).
+- `block-pr-merge.test.sh` is the pure-bash test for the `gh pr merge` / force-push / `--no-verify` PreToolUse hook (120 cases: the three rule families firing, legitimate work still allowed, 17 git global-option bypasses, 13 `+`-refspec force-push bypasses, 10 whole-repo (`--force --all` / `--mirror`) bypasses, 9 wildcard-destination bypasses, 6 backslash-newline continuation bypasses, 40 over-match cases that keep every fix honest, the normalizer's presence, and wall-clocked pathological inputs).
 - `check-claude-bootstrap.test.sh` is the pure-bash test for the Claude PreToolUse bootstrap hook (29 cases).
 - `check-constitution-on-edit.test.sh` is the pure-bash test for the Edit/Write constitution hook (20 cases).
 - `check-git-merge-config.sh` refuses a `merge.<builtin>.driver` config entry (`union`/`text`/`binary`) or a no-op driver command at any config scope. Read-only against git config. A no-op is matched on the command WORD, not the whole string, because drivers are conventionally written with `gitattributes(5)` placeholders — `true %O %A %B` is the same silent no-op as bare `true`. `cat %A` counts too: it prints ours and leaves `%A` untouched. It also has a `--command '<shell command>'` mode that scans one command string for a TRANSIENT driver override instead of reading config; that mode is what `.claude/hooks/check-git-merge-driver-flag.sh` calls, and it is a pure function of its argument (no repo, no config, no side effects).
@@ -171,6 +171,13 @@ Still open from the list above, both unchanged: the user-alias resolution
 (`-c alias.p=push p --force origin main`) and the missing word boundary before
 `git` (which over-blocks, harmlessly).
 
+> **This residual list was incomplete — see the 2026-08-23 section.** Three
+> further bypasses (`--force --all` / `--mirror`, wildcard refspec destinations,
+> and backslash-newline continuations) were open at the time this was written.
+> The PR that found them merged into a stacked base instead of `main`, so its
+> fix and its note here were both lost while this "closed (rule 2b)" heading
+> remained. Do not read this section as the current state of the guard.
+
 ## 2026-08-11 — the union-driver loss recurred, transiently (PR #2061)
 
 The 2026-07-28 guard above closed the **config** hole and did not close the
@@ -222,3 +229,84 @@ both halves of that (`override AFTER heredoc still denied`) when touching it —
 loosening a matcher is exactly where a guard silently starts failing open.
 
 Rule of record: `memory/feedback_git_merge_driver_override.md`.
+
+## 2026-08-23 — the force-push guard closed on three more forms (rules 2c, 2d, and the continuation fold)
+
+**Read the section above this one before believing it.** It ends "Still open
+from the list above, both unchanged", naming only the user-alias and
+word-boundary residuals. That list was incomplete, and the way it became
+incomplete is the more useful lesson: PR #2181 found, fixed and documented three
+further bypasses, but it was opened against a stacked base
+(`claude/serene-hodgkin-635c85`) rather than `main`. Its merge commit
+`de5eb84d3` is not an ancestor of `main`, so the fix, its 13 extra cases and the
+agents.md paragraph recording the hole all vanished while the sibling PR #2178's
+heading — "the refspec force-push residual, closed (rule 2b)" — stayed. The repo
+therefore *documented a guard that was stronger than the guard it shipped*. A
+stacked PR that merges into its base rather than `main` reports MERGED while its
+work is orphaned; check `git merge-base --is-ancestor <merge-sha> origin/main`
+before trusting a "fixed in #NNNN" claim. Jira: SCRUM-3492 (SCRUM-3501 is the
+duplicate harvested from #2181).
+
+All three were re-probed against `main`'s hook before being fixed, not taken on
+the PR's word — each returned exit 0:
+
+- **Whole-repo force push (now rule 2c).** `git push --force --all origin` and
+  `git push --mirror origin` force-update every branch on the remote, main
+  included, and name none of them. Rules 2 and 2b both decide on a NAME — a
+  literal `main`/`master` on the line, or as a `+`-refspec destination — so
+  neither could ever fire. `--mirror` additionally DELETES remote refs absent
+  locally.
+- **Wildcard destination (now rule 2d).** `+refs/heads/*:refs/heads/*`,
+  `+refs/*:refs/*` and the flag-spelled `--force ... refs/heads/*:refs/heads/*`
+  expand to every branch, main included. Rule 2b requires a literal
+  `main`/`master` destination *component*, which a glob is not.
+- **Backslash-newline continuation (folded in the extraction step).** Every rule
+  here greps, and grep matches line by line. A `\`-newline is one command to
+  bash but two lines to grep, so `git push origin \`⏎`+main`,
+  `gh pr \`⏎`merge 123` and `git commit -m x \`⏎`--no-verify` split the anchor
+  from the operator and defeated *every* rule family at once, rule 1 included.
+
+- **DO** keep `--all` gated behind a force flag. An unforced push of every
+  branch is still rejected non-fast-forward, so `git push --all origin` is
+  ordinary work and must stay allowed. `--mirror` needs no such gate: it is a
+  forced push by definition. `git clone --mirror` is read-only and is a
+  different subcommand — pinned as an over-match case.
+- **DO** decide rule 2d on branch LEVEL, not on the presence of a `*`. The
+  wildcard has to sit where the branch's own name sits — bare `*`, `refs/*`,
+  `refs/heads/*` — to be able to expand to `refs/heads/main`. One level deeper
+  it cannot, so `+feature:refs/heads/feature/*` and `+refs/tags/*:refs/tags/*`
+  stay allowed. That is what the "no `/` after the optional `refs/heads/`
+  prefix" in the destination pattern buys, and it is why the leading boundary is
+  rule 2b's explicit character class rather than `\b` — `/` must never be read
+  as the start of a destination.
+- **DO NOT** widen the continuation fold to bare newlines. A bare newline is a
+  command SEPARATOR. Folding those too splices unrelated commands into one line:
+  a benign force-push to a feature branch followed by `git log main` would read
+  as a force-push to main. One case pins exactly that, and it is the difference
+  between a stricter guard and a broken one.
+- **DO** keep the fold in the extraction step rather than in
+  `normalize-git-command.py`. The hook deliberately falls back to the raw
+  command when the normalizer cannot be run; a fail-open there would restore the
+  whole hole, and this one defeats rule 1 as well, which never sees `$norm`.
+- **DO** keep `[^;&|]*` in rules 2c and 2d rather than the `.*` the older rules
+  use. It holds each match inside one shell command, so a later unrelated
+  `git clone --mirror` is not attributed to the push in front of it. Two
+  over-match cases pin it.
+
+Suite is now 120 cases, and the two new wall-clocked cases (`200 refspecs ...`)
+exist because rules 2c/2d scan forward from `git push` — the pre-existing
+pathological cases all exit at rule 2 or never reach a push, so they would not
+have caught a backtracking regression in the new rules.
+
+Still open, all pre-existing and none of them this class:
+
+- The **user-alias** residual (`git -c alias.p=push p --force origin main`) —
+  `p` only becomes `push` inside git.
+- The **missing word boundary before `git`** — over-blocks, harmlessly.
+- **A newline inside a QUOTED string** still splits the line for grep, e.g. a
+  `git commit -m "…⏎…" --no-verify`. This is NOT the continuation class above
+  and the fold does not touch it: closing it needs quote-aware parsing, which is
+  a loosening-shaped change to a security control and wants its own red-first
+  cases in both directions.
+- The hook still **over-blocks its own commit message** (see the previous
+  section); the commit for this change had to be worded around rules 2c/2d.

@@ -19,8 +19,25 @@
 
 set -u
 input="$(cat)"
-cmd="$(printf '%s' "$input" | /usr/bin/python3 -c 'import json,sys
-try: print(json.load(sys.stdin).get("tool_input",{}).get("command",""))
+
+# Fold shell LINE CONTINUATIONS away before any rule runs.
+#
+# Every rule below greps, and grep matches line by line. A backslash-newline is
+# one command to bash but two lines to grep, so the anchor and the operator land
+# on opposite sides of the split and no rule can see both. Probed: `git push
+# origin \<nl> +main`, `git push \<nl> --force origin main`, `gh pr \<nl> merge
+# 123` and `git commit -m x \<nl> --no-verify` all returned exit 0. This defeats
+# every rule family in this file at once, rule 1 included, which is why it is
+# folded HERE rather than in the normalizer -- the hook is allowed to fall back
+# from the normalizer, and a fail-open on this one would restore the whole hole.
+#
+# Only backslash-newline is folded. A BARE newline is a command SEPARATOR, and
+# folding those too would splice unrelated commands into a single line: a benign
+# force-push to a feature branch followed by `git log main` would then read as a
+# force-push to main. Both directions are pinned by
+# scripts/agent/block-pr-merge.test.sh; do not widen this to all newlines.
+cmd="$(printf '%s' "$input" | /usr/bin/python3 -c 'import json,re,sys
+try: print(re.sub(r"\\\n\s*", " ", json.load(sys.stdin).get("tool_input",{}).get("command","")))
 except: pass' 2>/dev/null || true)"
 
 [ -z "$cmd" ] && exit 0
@@ -120,6 +137,76 @@ fi
 # Matches on "$norm" so a global option before `push` cannot split the run.
 if printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push.*[^-_./A-Za-z0-9]\+([^[:space:]:]*:)?(refs/heads/)?(main|master)([^-_./:A-Za-z0-9]|$)'; then
   printf 'BLOCKED: forced refspec push to main/master -- a leading `+` on a refspec forces the update with no --force flag. CLAUDE.md forbids destructive git ops without explicit approval.\n' >&2
+  exit 2
+fi
+
+# 2c. Whole-repo force push. Rewrites main WITHOUT ever naming it.
+#
+# Rules 2 and 2b both decide on a NAME: rule 2 needs a literal main/master
+# somewhere on the line, rule 2b needs main/master as the destination component
+# of a `+` refspec. Two push forms force-update every branch on the remote,
+# main included, and name none of them, so neither rule can fire:
+#
+#   git push --force --all origin   -- force-updates every local branch
+#   git push --mirror origin        -- force-updates every ref AND deletes the
+#                                      remote refs that are absent locally
+#
+# Both returned exit 0 against the pre-fix hook (probed, not theorised). They
+# were first recorded as open in PR #2178/#2181; #2181's fix merged into a
+# stacked base and never reached main, so the repo's own agents.md has claimed
+# since 2026-08-11 that this guard is stronger than it is. SCRUM-3492.
+#
+# `--all` alone is NOT destructive -- an unforced push of every branch is still
+# rejected non-fast-forward -- so it blocks only TOGETHER with a force flag.
+# The two halves are separate greps, each anchored at `git push`, so flag ORDER
+# does not matter and neither half is duplicated. `--mirror` needs no flag: it
+# is a forced push by definition.
+#
+# `[^;&|]*` keeps every match inside ONE shell command. A later, unrelated
+# `git clone --mirror` in a compound line must not be attributed to the push
+# in front of it -- pinned in scripts/agent/block-pr-merge.test.sh.
+#
+# Matches on "$norm" so a global option before `push` cannot split the run.
+if { printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push[^;&|]*(--force\b|-f\b|--force-with-lease\b)' \
+     && printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push[^;&|]*--all([[:space:]]|$)'; } \
+   || printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push[^;&|]*--mirror([[:space:]]|$)'; then
+  printf 'BLOCKED: whole-repo force-push (`--force --all` / `--mirror`) rewrites main without naming it, so the main/master rules above cannot see it. CLAUDE.md forbids destructive git ops without explicit approval.\n' >&2
+  exit 2
+fi
+
+# 2d. Forced push to a WILDCARD destination. Same "no name on the line" gap as
+# 2c, one step subtler. Rule 2b requires a literal main/master destination
+# component, so a refspec whose destination is a glob at branch level walked
+# past it while expanding to every branch on the remote:
+#
+#   git push origin +refs/heads/*:refs/heads/*
+#   git push origin +refs/*:refs/*
+#   git push --force origin refs/heads/*:refs/heads/*
+#
+# All returned exit 0 against the pre-fix hook. Recovered from PR #2181's
+# orphaned diff and re-probed here.
+#
+# Branch LEVEL decides, not the mere presence of a `*`. The wildcard has to sit
+# where the branch's own name sits -- bare `*`, `refs/*`, `refs/heads/*` -- for
+# the pattern to be able to expand to `refs/heads/main`. One level deeper it
+# cannot: `+feature:refs/heads/feature/*` and `+refs/tags/*:refs/tags/*` leave
+# main alone and stay allowed. That is why the destination pattern forbids `/`
+# after the optional `refs/heads/` prefix; those over-match cases are as
+# load-bearing as the bypass cases, exactly as for rule 2b.
+#
+# Forced two ways, mirroring rules 2b and 2: a leading `+` on the refspec, or a
+# force flag anywhere on the same command. Leading boundaries are the same
+# explicit character class rule 2b uses, so `/` is never read as the start of a
+# destination and a nested glob cannot be re-anchored mid-path.
+#
+# Matches on "$norm" so a global option before `push` cannot split the run.
+if printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push[^;&|]*[^-_./A-Za-z0-9]\+([^[:space:]:]*:)?(refs/(heads/)?)?[^[:space:]:/]*\*'; then
+  printf 'BLOCKED: forced push to a wildcard destination -- the glob expands to every branch on the remote, main included. CLAUDE.md forbids destructive git ops without explicit approval.\n' >&2
+  exit 2
+fi
+if printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push[^;&|]*(--force\b|-f\b|--force-with-lease\b)' \
+   && printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push[^;&|]*[^-_./A-Za-z0-9](refs/(heads/)?)?[^[:space:]:/]*\*'; then
+  printf 'BLOCKED: forced push to a wildcard destination -- the glob expands to every branch on the remote, main included. CLAUDE.md forbids destructive git ops without explicit approval.\n' >&2
   exit 2
 fi
 
