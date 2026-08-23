@@ -127,6 +127,48 @@ describe('runEvidenceIdentity — scoping', () => {
     expect(r.ok).toBe(true);
   });
 
+  // Fail-closed activation (SCRUM-2965): once this gate can red a PR, an
+  // explicitly-declared T0 must SKIP. CLAUDE.md §1.12 requires no evidence
+  // block at T0, but `hasEvidenceSection()` matches a bare `Tier: T0` line —
+  // so a T0 PR that merely states its tier (the normal, required thing to do)
+  // fell through to checkHeadShaIdentity and failed on the absent
+  // `PR head SHA:`. Harmless while report-only; blocks every T0 PR the moment
+  // the gate is real.
+  it('skips a PR that explicitly declares Tier: T0', () => {
+    const r = runEvidenceIdentity({
+      body: 'Tier: T0\nCI/tooling-only change; no staging evidence required.',
+      actualHeadSha: HEAD,
+      isDraft: false,
+    });
+    expect(r.skipped).toBe(true);
+    expect(r.skipReason).toMatch(/T0/u);
+    expect(r.findings).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('skips a Tier: T0 PR even when it carries a Staging Soak Evidence heading', () => {
+    const r = runEvidenceIdentity({
+      body: '## Staging Soak Evidence\nTier: T0\nNo soak required (docs/CI only).',
+      actualHeadSha: HEAD,
+      isDraft: false,
+    });
+    expect(r.skipped).toBe(true);
+    expect(r.ok).toBe(true);
+  });
+
+  it('still runs on an evidence block whose tier cannot be parsed', () => {
+    // Unparseable tier + an evidence heading is ambiguous, not T0 — fail closed
+    // and check identity rather than skipping on a malformed tier line.
+    const r = runEvidenceIdentity({
+      body: '## Staging Soak Evidence\nTier: (tbd)\nBase SHA: 1111111111111111111111111111111111111111',
+      actualHeadSha: HEAD,
+      isDraft: false,
+    });
+    expect(r.skipped).toBe(false);
+    expect(r.ok).toBe(false);
+    expect(r.findings.some((f) => f.name === 'head-sha-identity')).toBe(true);
+  });
+
   it('runs on a Ready soak-tier PR and passes when identity holds', () => {
     const r = runEvidenceIdentity(healthyInput());
     expect(r.skipped).toBe(false);
@@ -192,5 +234,37 @@ describe('main (CLI)', () => {
 
   it('returns 0 for a Draft PR (skipped)', () => {
     expect(main([], { ...mismatchEnv, PR_IS_DRAFT: 'true' })).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // SCRUM-2965 — "[Verify] Invalid T2/T3 evidence fails the gate (red-first)".
+  // The default (no-flag) invocation is what ci.yml now runs, so these pin the
+  // fail-closed contract at the exact surface CI executes.
+  // -------------------------------------------------------------------------
+
+  it('returns 1 for a T2 PR whose preflight is not clean_mirror', () => {
+    const env = {
+      PR_BODY: t2Body({ preflight: 'environment_type=soak_artifact' }),
+      PR_HEAD_SHA: HEAD,
+      PR_IS_DRAFT: 'false',
+    };
+    expect(main([], env)).toBe(1);
+  });
+
+  it('returns 1 for a T3 PR whose preflight was captured against a different head', () => {
+    const body = t2Body({ preflight: `environment_type=clean_mirror head=${OTHER}` }).replace(
+      'Tier: T2',
+      'Tier: T3',
+    );
+    expect(main([], { PR_BODY: body, PR_HEAD_SHA: HEAD, PR_IS_DRAFT: 'false' })).toBe(1);
+  });
+
+  it('returns 0 for an explicitly declared T0 PR (no evidence required)', () => {
+    const env = {
+      PR_BODY: '## Staging Soak Evidence\nTier: T0\nCI-only change.',
+      PR_HEAD_SHA: HEAD,
+      PR_IS_DRAFT: 'false',
+    };
+    expect(main([], env)).toBe(0);
   });
 });

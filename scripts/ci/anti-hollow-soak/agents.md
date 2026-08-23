@@ -30,15 +30,24 @@ wall-time while the changed behavior is never exercised.
 5. `base-is-main-premerge` — PR based on an agent/codex branch, not `main`
    (base-drift, #1367/#1380 family).
 
-## CI wiring (REPORT-ONLY / non-gating)
-Wired into `.github/workflows/ci.yml` as the `anti-hollow-soak-report` job under
-the W3-freeze CTO carve-out: report-only / warn mode only. The CLI `--report-only`
-flag makes `main()` ALWAYS exit 0 (prints `::notice::`/`::warning::` annotations,
-never `::error::`); the job step also carries `continue-on-error: true`. It scans
+## CI wiring (FAIL-CLOSED)
+Wired into `.github/workflows/ci.yml` as the `anti-hollow-soak` job. It scans
 `docs/staging/soak-preflight/*.json` (a convention; none committed yet → notice +
-no-op). Fail-closed activation (dropping `--report-only`) is DEFERRED until >=1
-real green soak calibrates the guards, mirroring the #1617 T0-CI-infra precedent.
+no-op), and a hollow signature now reds the job. This previously shipped
+report-only under the W3-freeze CTO carve-out and gated nothing; activation
+required removing all four hollow mechanisms together — the `--report-only` flag
+(which makes `main()` ALWAYS exit 0, printing `::notice::`/`::warning::`
+annotations, never `::error::`), the `|| true` on the invocation, the job step's
+`continue-on-error: true`, and the check's absence from `.mergify.yml`
+merge_conditions. Dropping fewer than all four leaves the gate decorative;
+`scripts/ci/soak-integrity-gates-failclosed.test.ts` pins every one of them.
+
+⚠️ Fail-closed `main()` returns the USAGE code **2** when given no `--input`, so
+the "no preflight committed" branch in ci.yml must NOT invoke the CLI at all — it
+emits a `::notice::` and exits 0. `--report-only` survives only as a local
+dry-run opt-in.
 
 Run locally:
 - unit tests: `npx vitest run scripts/ci/anti-hollow-soak/guards.test.ts`
+- CLI as CI runs it: `npx tsx scripts/ci/anti-hollow-soak/guards.ts --input <preflight.json>`
 - CLI report-only: `npx tsx scripts/ci/anti-hollow-soak/guards.ts --report-only --input <preflight.json>`

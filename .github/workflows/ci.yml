@@ -1962,7 +1962,7 @@ jobs:
         if: steps.changed.outputs.changed != 'true'
         run: echo "No packages/verifier changes detected — verifier compile gate skipped; reporting green."
 
-  # SCRUM-2897 — evidence-identity gate, REPORT-ONLY.
+  # SCRUM-2897 / SCRUM-2965 — evidence-identity gate. FAIL-CLOSED.
   # Asserts that a Ready, soak-tier PR's Staging Soak Evidence block binds to the
   # exact commit + clean environment it claims:
   #   A. declared `PR head SHA:` == the actual PR head SHA (a commit pushed after
@@ -1972,21 +1972,89 @@ jobs:
   #      head (evidence may not be copied across heads — CLAUDE.md §1.11A).
   # Drafts and T0 / no-evidence PRs are skipped.
   #
-  # W3-freeze CTO carve-out: REPORT-ONLY / warn mode only — `--report-only`
-  # makes the CLI always exit 0 (notice/warning annotations, never ::error::),
-  # plus continue-on-error. Gates nothing. Fail-closed activation is deferred
-  # until >=1 real green soak calibrates it (#1617 T0-CI-infra precedent).
-  # Runs only on pull_request events (needs PR head/draft context). NON-REQUIRED.
-  evidence-identity-report:
-    name: Evidence-identity gate (report-only)
+  # Activated fail-closed (was report-only under the W3-freeze CTO carve-out).
+  # THREE independent mechanisms had to go, because any one of them left the
+  # gate hollow: the report-only CLI flag, the step's continue-on-error, and the
+  # check's absence from .mergify.yml merge_conditions (a check Mergify does not
+  # evaluate can be red while Mergify merges anyway).
+  # scripts/ci/soak-integrity-gates-failclosed.test.ts pins all three, plus the
+  # two preconditions that make the flip safe rather than a trap:
+  #
+  # SAFETY 1 — Mergify's speculative merge-queue PRs carry Mergify's own body,
+  # not the original PR's evidence block. They MUST be skipped or every queued
+  # merge deadlocks. Same skip staging-evidence.yml already carries.
+  # SAFETY 2 — this workflow's `pull_request:` trigger declares no `types:`, so
+  # it defaults to [opened, synchronize, reopened]: a PR-body edit never fires
+  # it, and the frozen `github.event.pull_request.*` payload replays untouched
+  # on a bare rerun (SCRUM-3026). An author who fixes a stale `PR head SHA:`
+  # with `gh pr edit` could therefore never turn a frozen-payload check green —
+  # a permanent block with no remedy. PR body/head/draft are resolved LIVE via
+  # `gh api` instead, exactly as staging-evidence.yml does.
+  #
+  # Runs only on pull_request events (needs PR head/draft context).
+  evidence-identity:
+    name: Evidence-identity gate
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read
     steps:
+      - name: Skip for Mergify merge queue
+        if: startsWith(github.head_ref, 'mergify/merge-queue/')
+        run: |
+          echo "Mergify merge queue speculative check — skipping evidence-identity gate."
+          echo "The original PR passed this gate before entering the queue."
+
+      # SCRUM-3026: resolve the PR's CURRENT head SHA, draft flag, and body via
+      # the GitHub API — never the frozen event payload. Runs on every execution
+      # including a bare rerun of an old run, so staleness cannot survive a
+      # re-check. Fails CLOSED: an unresolvable head SHA stops the job rather
+      # than silently evaluating against an unknown state.
+      - name: Resolve live PR state
+        id: live_pr
+        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          if [[ -z "${PR_NUMBER}" ]]; then
+            echo "::error::No pull_request.number in event context; cannot resolve live PR state."
+            exit 1
+          fi
+          DATA="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")"
+          HEAD_SHA="$(jq -r '.head.sha // empty' <<<"${DATA}")"
+          IS_DRAFT="$(jq -r '.draft // false' <<<"${DATA}")"
+          if [[ -z "${HEAD_SHA}" ]]; then
+            echo "::error::gh api returned an empty head SHA for PR #${PR_NUMBER} — cannot resolve live PR state."
+            exit 1
+          fi
+          {
+            echo "head_sha=${HEAD_SHA}"
+            echo "is_draft=${IS_DRAFT}"
+          } >> "${GITHUB_OUTPUT}"
+          # SECURITY: the PR body is fully author-controlled. A FIXED heredoc
+          # delimiter here would let an author terminate the multiline value
+          # early by putting the literal delimiter on its own line in their PR
+          # body, then inject arbitrary `key=value` lines into the rest of this
+          # step's $GITHUB_OUTPUT — including overwriting head_sha written above
+          # (Actions takes the LAST occurrence of a given output name). That
+          # would let a PR author forge the very identity this gate exists to
+          # make unforgeable. Use a per-run random delimiter, per GitHub's own
+          # guidance and the identical step in staging-evidence.yml.
+          BODY_DELIM="ghadelim_$(openssl rand -hex 16)"
+          {
+            echo "body<<${BODY_DELIM}"
+            jq -r '.body // ""' <<<"${DATA}"
+            echo "${BODY_DELIM}"
+          } >> "${GITHUB_OUTPUT}"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
 
       - name: Setup Node.js
+        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20'
@@ -1994,31 +2062,37 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install root dependencies
+        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
         run: npm ci --ignore-scripts
 
-      - name: Run evidence-identity gate (report-only, non-gating)
-        continue-on-error: true
+      - name: Run evidence-identity gate
+        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
-        run: node_modules/.bin/tsx scripts/ci/check-evidence-identity.ts --report-only
+          # Live-resolved (SCRUM-3026) — supersedes the frozen event payload for
+          # exactly the fields that go stale on a bare rerun.
+          PR_BODY: ${{ steps.live_pr.outputs.body }}
+          PR_HEAD_SHA: ${{ steps.live_pr.outputs.head_sha }}
+          PR_IS_DRAFT: ${{ steps.live_pr.outputs.is_draft }}
+        run: node_modules/.bin/tsx scripts/ci/check-evidence-identity.ts
 
-  # SCRUM-2977 — anti-hollow-soak pre-clock guards, REPORT-ONLY.
+  # SCRUM-2977 — anti-hollow-soak pre-clock guards. FAIL-CLOSED.
   # A "hollow soak" burns real wall-clock while the PR's changed behavior is
   # never exercised (flag off / no OIDC / unfunded rig / no provenance / base
-  # drift). scripts/ci/anti-hollow-soak/guards.ts runs the five pre-clock
-  # checks over a soak-preflight JSON and would block the clock on any hollow
-  # signature.
+  # drift). The five pre-clock checks in scripts/ci/anti-hollow-soak/ run over a
+  # soak-preflight JSON and block the clock on any hollow signature.
   #
-  # W3-freeze CTO carve-out: this job is wired in REPORT-ONLY / warn mode only —
-  # it prints findings and ALWAYS exits 0, gating nothing. Fail-closed
-  # activation (dropping `--report-only`) is deferred until >=1 real green soak
-  # calibrates the guards, mirroring the #1617 T0-CI-infra precedent. The step
-  # also carries continue-on-error as belt-and-suspenders so this can never
-  # block a merge during calibration. NON-REQUIRED.
-  anti-hollow-soak-report:
-    name: Anti-hollow-soak guards (report-only)
+  # Activated fail-closed (was report-only under the W3-freeze CTO carve-out):
+  # the report-only flag, the exit-code-swallowing shell fallback, and the
+  # step's continue-on-error were removed together, and the check was added to
+  # every .mergify.yml queue rule. Removing fewer than all of them leaves the
+  # gate decorative.
+  #
+  # Scope: every committed docs/staging/soak-preflight/*.json. None are
+  # committed today, and an absent convention directory is not a hollow soak —
+  # that case emits a notice and exits 0 WITHOUT invoking the CLI, because
+  # fail-closed main() returns the USAGE code 2 when handed no input path.
+  anti-hollow-soak:
+    name: Anti-hollow-soak guards
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2035,18 +2109,22 @@ jobs:
       - name: Install root dependencies
         run: npm ci --ignore-scripts
 
-      - name: Run anti-hollow-soak guards (report-only, non-gating)
-        continue-on-error: true
+      - name: Run anti-hollow-soak guards
         run: |
           shopt -s nullglob
           preflights=(docs/staging/soak-preflight/*.json)
           if [ ${#preflights[@]} -eq 0 ]; then
-            echo "::notice::No soak-preflight JSON under docs/staging/soak-preflight/ — anti-hollow-soak guards have nothing to check (report-only, non-gating)."
-            node_modules/.bin/tsx scripts/ci/anti-hollow-soak/guards.ts --report-only || true
+            echo "::notice::No soak-preflight JSON under docs/staging/soak-preflight/ — no soak clock to gate."
             exit 0
           fi
+          failed=0
           for f in "${preflights[@]}"; do
-            echo "== anti-hollow-soak (report-only) :: $f =="
-            node_modules/.bin/tsx scripts/ci/anti-hollow-soak/guards.ts --report-only --input "$f" || true
+            echo "== anti-hollow-soak :: $f =="
+            if ! node_modules/.bin/tsx scripts/ci/anti-hollow-soak/guards.ts --input "$f"; then
+              failed=1
+            fi
           done
-          exit 0
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::One or more soak preflights carry a hollow-soak signature — the soak clock must not start."
+            exit 1
+          fi

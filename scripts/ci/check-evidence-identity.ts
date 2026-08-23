@@ -20,10 +20,17 @@
  * exact-head identity is meaningful at mark-ready, not while a Draft's head is
  * still moving.
  *
- * CI wiring: per the W3-freeze CTO carve-out, this is wired into ci.yml in
- * REPORT-ONLY / warn mode first (`--report-only` → always exit 0, annotate
- * only). Fail-closed activation is deferred until >=1 real green soak calibrates
- * it, mirroring the #1617 T0-CI-infra precedent.
+ * CI wiring: FAIL-CLOSED as of SCRUM-2965. The `evidence-identity` job in
+ * ci.yml runs this CLI with no flags (non-zero exit reds the job, no
+ * `continue-on-error`), and `.mergify.yml` lists `Evidence-identity gate` in
+ * every queue rule's merge_conditions — a check absent from those conditions
+ * can be red while Mergify merges anyway.
+ *
+ * `--report-only` survives as an explicit opt-in for local dry-runs and for
+ * re-parking the gate during a calibration window. It makes `main()` always
+ * exit 0 and emit `::warning::` instead of `::error::`; it is NOT what CI runs,
+ * and `soak-integrity-gates-failclosed.test.ts` fails if it reappears in the
+ * workflow invocation.
  */
 
 export type Tier = 'T0' | 'T1' | 'T2' | 'T3';
@@ -210,6 +217,23 @@ export function runEvidenceIdentity(
 
   const tier = input.declaredTier ?? extractDeclaredTier(body);
   const soakTier = tier === 'T1' || tier === 'T2' || tier === 'T3';
+
+  // An explicitly declared T0 requires no evidence block at all (CLAUDE.md
+  // §1.12), and `hasEvidenceSection()` deliberately matches a bare `Tier: T0`
+  // line — so the tier check MUST come before it. Otherwise a T0 PR that
+  // simply states its tier (the required thing to do) falls through to
+  // checkHeadShaIdentity and fails on the absent `PR head SHA:`. That was
+  // invisible while the gate was report-only; fail-closed it would red every
+  // T0 PR in the repo.
+  if (tier === 'T0') {
+    return {
+      skipped: true,
+      skipReason:
+        'PR declares Tier: T0 — no staging soak evidence required (CLAUDE.md §1.12).',
+      findings: [],
+      ok: true,
+    };
+  }
 
   if (!soakTier && !hasEvidenceSection(body)) {
     return {
