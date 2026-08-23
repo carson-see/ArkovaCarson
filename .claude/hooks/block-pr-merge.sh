@@ -166,10 +166,20 @@ fi
 # `git clone --mirror` in a compound line must not be attributed to the push
 # in front of it -- pinned in scripts/agent/block-pr-merge.test.sh.
 #
+# The flag TERMINATOR is a negated ref-name class, not `[[:space:]]`. bash ends
+# a word at `;`, `&`, `|`, `>`, `<` and `)` with no space in between, so a
+# whitespace-or-EOL terminator left this whole rule bypassable by typing one
+# extra character: `git push --mirror;echo done` and `git push --force --all>log`
+# are the same whole-repo force pushes and returned exit 0. Ending on "not a
+# ref-name character" instead still stops at the flag itself -- `--mirrored` and
+# `--allow-x` are different options and stay allowed -- and fails CLOSED on
+# `--mirror=x`, which is not valid git but is not this guard's call to make.
+# Both directions are pinned in scripts/agent/block-pr-merge.test.sh.
+#
 # Matches on "$norm" so a global option before `push` cannot split the run.
 if { printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push[^;&|]*(--force\b|-f\b|--force-with-lease\b)' \
-     && printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push[^;&|]*--all([[:space:]]|$)'; } \
-   || printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push[^;&|]*--mirror([[:space:]]|$)'; then
+     && printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push[^;&|]*--all([^A-Za-z0-9_-]|$)'; } \
+   || printf '%s' "$norm" | /usr/bin/grep -qE 'git[[:space:]]+push[^;&|]*--mirror([^A-Za-z0-9_-]|$)'; then
   printf 'BLOCKED: whole-repo force-push (`--force --all` / `--mirror`) rewrites main without naming it, so the main/master rules above cannot see it. CLAUDE.md forbids destructive git ops without explicit approval.\n' >&2
   exit 2
 fi

@@ -3,7 +3,7 @@
 Local agent bootstrap helpers. These scripts are guardrails for agent behavior only; they must not mutate production, staging, Jira, Confluence, GitHub PR bodies, or audit evidence unless a script name and help text explicitly says so.
 
 - `ack-claude-bootstrap.sh` records the current `CLAUDE.md` SHA-256 in git-local state after an agent has read the file. It then runs `check-git-merge-config.sh` and exits non-zero if that guard trips.
-- `block-pr-merge.test.sh` is the pure-bash test for the `gh pr merge` / force-push / `--no-verify` PreToolUse hook (120 cases: the three rule families firing, legitimate work still allowed, 17 git global-option bypasses, 13 `+`-refspec force-push bypasses, 10 whole-repo (`--force --all` / `--mirror`) bypasses, 9 wildcard-destination bypasses, 6 backslash-newline continuation bypasses, 40 over-match cases that keep every fix honest, the normalizer's presence, and wall-clocked pathological inputs).
+- `block-pr-merge.test.sh` is the pure-bash test for the `gh pr merge` / force-push / `--no-verify` PreToolUse hook (130 cases: the three rule families firing, legitimate work still allowed, 17 git global-option bypasses, 13 `+`-refspec force-push bypasses, 18 whole-repo (`--force --all` / `--mirror`) bypasses, 9 wildcard-destination bypasses, 6 backslash-newline continuation bypasses, 42 over-match cases that keep every fix honest, the normalizer's presence, and wall-clocked pathological inputs).
 - `check-claude-bootstrap.test.sh` is the pure-bash test for the Claude PreToolUse bootstrap hook (29 cases).
 - `check-constitution-on-edit.test.sh` is the pure-bash test for the Edit/Write constitution hook (20 cases).
 - `check-git-merge-config.sh` refuses a `merge.<builtin>.driver` config entry (`union`/`text`/`binary`) or a no-op driver command at any config scope. Read-only against git config. A no-op is matched on the command WORD, not the whole string, because drivers are conventionally written with `gitattributes(5)` placeholders — `true %O %A %B` is the same silent no-op as bare `true`. `cat %A` counts too: it prints ours and leaves `%A` untouched. It also has a `--command '<shell command>'` mode that scans one command string for a TRANSIENT driver override instead of reading config; that mode is what `.claude/hooks/check-git-merge-driver-flag.sh` calls, and it is a pure function of its argument (no repo, no config, no side effects).
@@ -292,8 +292,19 @@ the PR's word — each returned exit 0:
   use. It holds each match inside one shell command, so a later unrelated
   `git clone --mirror` is not attributed to the push in front of it. Two
   over-match cases pin it.
+- **DO** terminate rule 2c's flags on "not a ref-name character", never on
+  `[[:space:]]`. Found in review of this change, before it was pushed: bash ends
+  a word at `;`, `&`, `|`, `>`, `<` and `)` with no space in between, so a
+  whitespace-or-end-of-line terminator left rule 2c bypassable by typing one
+  extra character — `git push --mirror;echo done`, `git push --mirror>log` and
+  `git push --force --all&&echo done` all returned exit 0 against the first cut
+  of the rule. This is the same shape as the global-option and continuation
+  bypasses above: a guard that assumed the shape of *tidily spaced* input. The
+  negated class still ends at the flag, so `--mirrored` and `--allow-x` are
+  different options and stay allowed (both pinned), and it fails CLOSED on
+  `--mirror=x`. Eight bypass cases and two boundary cases pin it.
 
-Suite is now 120 cases, and the two new wall-clocked cases (`200 refspecs ...`)
+Suite is now 130 cases, and the two new wall-clocked cases (`200 refspecs ...`)
 exist because rules 2c/2d scan forward from `git push` — the pre-existing
 pathological cases all exit at rule 2 or never reach a push, so they would not
 have caught a backtracking regression in the new rules.
@@ -310,3 +321,10 @@ Still open, all pre-existing and none of them this class:
   cases in both directions.
 - The hook still **over-blocks its own commit message** (see the previous
   section); the commit for this change had to be worded around rules 2c/2d.
+  Measured, not assumed: `git commit -m "docs: git push --force main"`,
+  `echo "git push --force origin main"` and a `gh pr create --body` containing
+  the same literal all exit 2 on `main`'s hook *and* on this one — the class is
+  pre-existing to rule 2, and rules 2c/2d simply add `git push --mirror` and
+  `git push --force --all` to the set of literals you cannot quote. It fails in
+  the SAFE direction (over-block), so it is recorded rather than fixed; the fix
+  is the same quote-aware parsing the residual above is waiting on.

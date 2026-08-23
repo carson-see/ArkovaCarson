@@ -284,6 +284,22 @@ run_case "whole-repo: -C global then --all"     $BLOCKED \
   'git -C /some/path push --force --all origin'
 run_case "whole-repo: after &&"                 $BLOCKED \
   'npm test && git push --force --all origin'
+# A shell OPERATOR may follow the flag with no space in between -- bash ends the
+# word at `;`, `&`, `|`, `>`, `<` and `)` on its own. Terminating the flag on
+# whitespace-or-end-of-line alone therefore left the whole rule bypassable by
+# typing one extra character: `git push --mirror;echo done` is the same
+# whole-repo force push as `git push --mirror`, and returned exit 0. Found in
+# review of this change; the flag boundary is a negated ref-name class instead.
+run_case "whole-repo: --mirror then &&"         $BLOCKED 'git push --mirror&&echo done'
+run_case "whole-repo: --mirror then ;"          $BLOCKED 'git push --mirror;echo done'
+run_case "whole-repo: --mirror then |"          $BLOCKED 'git push --mirror|tee log'
+run_case "whole-repo: --mirror then redirect"   $BLOCKED 'git push --mirror>log'
+run_case "whole-repo: --mirror in a subshell"   $BLOCKED '(git push --mirror)'
+run_case "whole-repo: --all then &&"            $BLOCKED 'git push --force --all&&echo done'
+run_case "whole-repo: --all then redirect"      $BLOCKED 'git push --force --all>log 2>&1'
+# `--mirror` takes no value, so `--mirror=x` is not valid git -- but the guard
+# must not be the thing that decides that. Fail closed on the prefix.
+run_case "whole-repo: --mirror=x"               $BLOCKED 'git push --mirror=x origin'
 
 echo ""
 echo "--- the whole-repo rule must not over-match ---------------------"
@@ -291,6 +307,11 @@ echo "--- the whole-repo rule must not over-match ---------------------"
 # non-fast-forward -- so `--all` blocks only alongside a force flag.
 run_case "whole-repo: --all, no force flag" $ALLOWED 'git push --all origin'
 run_case "whole-repo: --tags"               $ALLOWED 'git push --tags origin'
+# The flag boundary widened above must still end at the FLAG. A longer option
+# that merely starts with the same letters is a different option and must not
+# be read as `--all` / `--mirror`.
+run_case "whole-repo: longer --all* flag"   $ALLOWED 'git push --force --allow-x origin'
+run_case "whole-repo: longer --mirror* flag" $ALLOWED 'git push --mirrored origin'
 # `--mirror` is a clone flag too, and there it is read-only.
 run_case "whole-repo: clone --mirror"       $ALLOWED \
   'git clone --mirror https://example.invalid/r.git'
