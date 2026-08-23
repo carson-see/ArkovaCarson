@@ -75,7 +75,7 @@ import { parseArgs } from 'node:util';
 import { resolveStagingApiBase } from './load-harness-env';
 import { resolveRigTarget, runOrgId } from './batch-drain-harness-lib';
 
-const BASELINE_FIXTURE_PROFILE_ID = '5eed0000-0000-0000-0000-0000000000a1';
+const BASELINE_FIXTURE_PROFILE_ID = '5eed0000-0000-4000-8000-0000000000a1';
 
 const { values: args } = parseArgs({
   options: {

@@ -69,6 +69,11 @@ vi.mock('../email/index.js', () => ({
   buildAnchorSecuredEmail: vi.fn(),
 }));
 vi.mock('../utils/verifyCache.js', () => ({ invalidateVerificationCache: vi.fn() }));
+// `utils/sentry.js` initializes the real @sentry/node SDK at import time — an
+// import-time hard failure on a workspace without the optional native
+// profiling dep, which would hide every assertion in this file behind an
+// unrelated error. Mocked, as in check-confirmations.test.ts.
+vi.mock('../utils/sentry.js', () => ({ captureConfirmationTipHeightUnavailable: vi.fn() }));
 
 // ---- System under test ----
 import { fanOutBulkSecuredWebhooks, fanOutSecuredAnchorWebhooks } from './check-confirmations.js';

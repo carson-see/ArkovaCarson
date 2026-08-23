@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "rc_id": "rc-2026-08-21-wave3",
+  "created_at": "2026-08-21T13:00:00Z",
+  "created_by": "cto@arkova.io",
+  "release_owner": "cto@arkova.io",
+  "approval_status": "approved",
+  "approval_actor": "CTO acting as RM (Carson standing directive: the CTO makes technical calls without per-decision founder sign-off)",
+  "approval_time": "2026-08-21T13:00:00Z",
+  "train_launch_sha": "b6cfad73c73fbaf45bea08e3b155d61501a49daa",
+  "target_main_sha": "c0d963490892cedce354620c810a214140ae82ab",
+  "allowed_base_shas": [
+    "b6cfad73c73fbaf45bea08e3b155d61501a49daa",
+    "c0d963490892cedce354620c810a214140ae82ab"
+  ],
+  "covered_main_shas": [
+    "b6cfad73c73fbaf45bea08e3b155d61501a49daa",
+    "c0d963490892cedce354620c810a214140ae82ab"
+  ],
+  "scope_note": "DELIBERATELY NARROW. The wave3 union soaked nine member PRs, but this manifest covers ONLY the two whose changed behaviour the soak driver actually exercised. The wave3 load driver POSTs /jobs/queue-digest and /jobs/platform-health-digest every 5 minutes; across the window it produced 86 cron fires inside 14,368 successful requests with zero failures. Members #2220, #2230, #2232 and #2236 were NEVER probed by the driver and are excluded. Members #2247, #2252 and #2274 are offline package/packaging surfaces that no worker rig can exercise; they belong on the architecturally-unsoakable evidence path (isUnsoakableEvidencePath in scripts/ci/check-staging-evidence.ts), not here. Including any of those seven would be a hollow-soak claim of the exact kind the anti-hollow guards exist to catch. Full per-member analysis: docs/staging/wave3-2026-08/maturity-2026-08-21T0950Z.md (commit c0d96349).",
+  "included_prs": [
+    {
+      "number": 2272,
+      "head_sha": "7e59e4b8e88175a05d2d235e65980ecf04610c4c",
+      "base_sha": "b6cfad73c73fbaf45bea08e3b155d61501a49daa",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "QUEUE-07 daily queue digest: flips per-org enrollment from opt-in to platform default-on with explicit opt-out, and sets ENABLE_QUEUE_DIGEST=true in deploy-worker.yml. Soaked in the wave3 union on rig arkova-worker-wave3-2026-08-staging revision 00004-cjk, image sha256:90ea4e06, isolated Supabase jiotjhqmedkajdsojsbn, 12h loaded window 2026-08-20T21:50Z->2026-08-21T09:50Z. CHANGED BEHAVIOUR DIRECTLY EXERCISED: the driver POSTed /jobs/queue-digest every 5 minutes for the whole window (86 cron fires across both digest endpoints), authenticated by cron secret. Zero failures across 14,368 requests; zero 5xx; zero container terminations; only revision 00004-cjk served traffic. CI at frozen head 08014061b: 32/37 SUCCESS with the Staging Soak Evidence Gate the sole red check (this manifest resolves it). Local unit tests 39/39 queue-digest-cron.test.ts and 66/66 including queue-digest.test.ts.",
+      "rollback_note": "Revert the PR; ENABLE_QUEUE_DIGEST returns to unset/false and per-org enrollment returns to opt-in. No migration, no schema state to unwind. The flag can also be flipped off in deploy-worker.yml without a revert if only the default-on behaviour needs disabling.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "b6cfad73c73fbaf45bea08e3b155d61501a49daa",
+        "c0d963490892cedce354620c810a214140ae82ab"
+      ],
+      "soaked_head_sha": "08014061b40fd142e21dfbc0f602746dde482741",
+      "head_restack_note": "Restacked onto main so the RC manifest exists in this PR's checked-out tree (the gate loads the manifest from the PR head, not the merge preview). The restack is a MERGE of origin/main with NO content change to this PR's contribution: the changed-file set is identical before and after, and the patch for services/worker/src/jobs/queue-digest-cron.ts is byte-identical (md5 610639d1c12511116398653368b35e4e both sides). soaked_head_sha records the head the wave3 soak actually ran; head_sha is the restacked head the gate binds against. The soaked CODE is unchanged."
+    },
+    {
+      "number": 2276,
+      "head_sha": "0c40fea9793ea8b18df3bb8882c90698d9948312",
+      "base_sha": "b6cfad73c73fbaf45bea08e3b155d61501a49daa",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Daily platform-admin health digest job plus its cron route. Soaked in the wave3 union on rig arkova-worker-wave3-2026-08-staging revision 00004-cjk, image sha256:90ea4e06, isolated Supabase jiotjhqmedkajdsojsbn, 12h loaded window 2026-08-20T21:50Z->2026-08-21T09:50Z. CHANGED BEHAVIOUR DIRECTLY EXERCISED: the driver POSTed /jobs/platform-health-digest every 5 minutes for the whole window (86 cron fires across both digest endpoints), authenticated by cron secret. Zero failures across 14,368 requests; zero 5xx; zero container terminations; only revision 00004-cjk served traffic. Unlike the wave2 and migration rigs, this rig carries ENABLE_VERIFICATION_API=true in switchboard_flags, so /api/v1 was live rather than failing closed at sub-10ms 503s. CI at frozen head 0c40fea97: 32/37 SUCCESS with the Staging Soak Evidence Gate the sole red check (this manifest resolves it).",
+      "rollback_note": "Revert the PR; the digest job and its cron route are removed. No migration, no schema state to unwind. The Cloud Scheduler job for the route can be disabled independently if only delivery needs stopping.",
+      "migration_files": [],
+      "allowed_base_shas": [
+        "b6cfad73c73fbaf45bea08e3b155d61501a49daa",
+        "c0d963490892cedce354620c810a214140ae82ab"
+      ]
+    }
+  ],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging",
+    "staging_api_base": "https://arkova-worker-wave3-2026-08-staging-kvojbeutfa-uc.a.run.app",
+    "staging_url": "https://arkova-worker-wave3-2026-08-staging-kvojbeutfa-uc.a.run.app",
+    "revision": "arkova-worker-wave3-2026-08-staging-00004-cjk",
+    "deploy_tag": "none (dedicated single-tenant rig; traffic 100% to the serving revision)",
+    "image_digest": "sha256:90ea4e06b1c563045da151a6f7da934d91d20cfbaa667234bb3154976a08bd81",
+    "supabase_project_ref": "jiotjhqmedkajdsojsbn",
+    "deploy_log_id": "wave3-2026-08-standup-00004-cjk",
+    "preflight_result": "environment_type=clean_mirror (all 6 checks passed, scripts/ci/staging-honesty-preflight.ts run 2026-08-20T16:06:52Z)"
+  },
+  "soak": {
+    "start": "2026-08-20T21:50:00Z",
+    "end": "2026-08-21T09:50:00Z",
+    "duration_hours": 12.0,
+    "result": "pass \u2014 revision 00004-cjk unchanged for the whole window, traffic 100%, only that revision served requests (1,200-request sample), zero container terminations, zero 5xx, health 3/3 at close",
+    "harness_version": "scripts/staging/wave3-load-loop.sh (dedicated wave3 driver; 18 cycles, 14,368 successful requests, 0 failures, 86 cron fires; 6.98h loaded of the 12.00h window = 58.1%)",
+    "evidence_links": [
+      "docs/staging/wave3-2026-08/maturity-2026-08-21T0950Z.md",
+      "docs/staging/findings/FD-WAVE3-1-load-driver-sent-empty-bearer-for-5h.md",
+      "docs/staging/findings/FD-CLOCK-1-instance-uptime-is-the-wrong-soak-clock.md"
+    ],
+    "expires_at": "2026-08-23T09:50:00Z"
+  },
+  "known_limitations": [
+    "The revision clock started 2026-08-20T16:40:21.746594Z but the load window in this manifest starts 21:50Z. Per FD-WAVE3-1 the driver's refresh_token was only called from inside the request loop, gated on a timer pre-seeded to start_ts, so the token file was never created within a 25-minute run and every request carried an empty bearer for the first 5h10m. Fixed and verified (41/41 at HTTP 200 immediately after), and the window was extended so this manifest counts 12h of LOADED soak rather than the empty head.",
+    "Loaded coverage is 58.1%, not 100%. The load agent's launchd StartInterval schedules from job EXIT rather than start, so a 25-minute run on a 1800s interval produced ~55-minute cycles until the interval was corrected to 300s at 04:32Z. Per-cycle successful requests rose from ~700 to ~925 after that correction.",
+    "Trigger C (fee ceiling) is not exercisable on demand and was NOT simulated. It remains un-exercised for this train.",
+    "Simultaneous two-org org-queue runs remain un-exercised."
+  ]
+}

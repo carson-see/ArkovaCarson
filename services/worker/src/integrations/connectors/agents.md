@@ -162,3 +162,6 @@ it stays on `DriveEligibilityDb` for the org-scoped consumers.
 The module remains **logger-free on purpose** (see the FD-D3 note in `drive-oauth.ts`): importing the
 logger pulls in `config.ts`, whose Zod boot validation would force a full env fixture into every
 consumer's unit test. Denials are logged by the route via `logConnectDenial`, on both legs.
+## 2026-08-15 Drive OAuth scope minimality (FULLSOAK finding)
+
+`buildGoogleDriveAuthorizationUrl` inherits its scope set + URL params from `oauth/drive.ts` `buildAuthorizationUrl`. That URL no longer sends `include_granted_scopes` (it let a connect inherit a 33-scope grant from the shared OAuth client) and the scope set is the exact three-scope allowlist in `DRIVE_DEFAULT_SCOPES`. Pinned in `googleDrive.test.ts`; do not loosen either assertion.

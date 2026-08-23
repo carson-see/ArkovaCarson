@@ -1,0 +1,61 @@
+{
+  "startedAt": "2026-08-20T17:04:50.353Z",
+  "endedAt": "2026-08-20T17:29:50.364Z",
+  "durationSec": 1500.011,
+  "apiBase": "https://train-w2---arkova-worker-wave2-2026-08-staging-kvojbeutfa-uc.a.run.app",
+  "mode": "mixed",
+  "concurrency": 10,
+  "totalRequests": 4010,
+  "byMode": {
+    "cron": {
+      "ok": 25,
+      "fail": 0,
+      "errorRate": 0,
+      "p50Ms": 478,
+      "p95Ms": 1015,
+      "p99Ms": 1268,
+      "byStatus": {
+        "200": 25
+      }
+    },
+    "events": {
+      "ok": 0,
+      "fail": 2488,
+      "errorRate": 1,
+      "p50Ms": 122,
+      "p95Ms": 189,
+      "p99Ms": 342,
+      "byStatus": {
+        "401": 67,
+        "429": 2421
+      }
+    },
+    "reads": {
+      "ok": 0,
+      "fail": 1247,
+      "errorRate": 1,
+      "p50Ms": 120,
+      "p95Ms": 272,
+      "p99Ms": 466,
+      "byStatus": {
+        "401": 17,
+        "404": 80,
+        "429": 987,
+        "503": 163
+      }
+    },
+    "webhook": {
+      "ok": 0,
+      "fail": 250,
+      "errorRate": 1,
+      "p50Ms": 151,
+      "p95Ms": 386,
+      "p99Ms": 537,
+      "byStatus": {
+        "401": 50,
+        "429": 49,
+        "503": 151
+      }
+    }
+  }
+}

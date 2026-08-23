@@ -18,11 +18,15 @@
  *       fully-stalled securing path while feeders are demonstrably active.
  *
  *   B — LINKER STALL: the OLDEST unlinked public record's age exceeds the
- *       stall threshold (default 48h). This is the exact motivating incident
- *       shape: a 255k+ backlog sits unlinked for weeks while OTHER anchor
- *       paths keep securing — condition A alone would never fire because
- *       prod's secured count always advances (independent-review CRITICAL,
- *       2026-07-17).
+ *       stall threshold (default 48h) AND the backlog clears a minimum-count
+ *       floor (default 500 — see DEFAULT_LINKER_STALL_MIN_BACKLOG). This is
+ *       the exact motivating incident shape: a 255k+ backlog sits unlinked for
+ *       weeks while OTHER anchor paths keep securing — condition A alone would
+ *       never fire because prod's secured count always advances
+ *       (independent-review CRITICAL, 2026-07-17). The count floor was added
+ *       2026-08-17 after ONE stuck row aged to 388h and paged fatal every 30
+ *       minutes for 16 days; below the floor the finding degrades to a
+ *       warn-level log instead of a Sentry page.
  *
  * Scope boundary: FEEDER death (Cloud Scheduler drift / paused feeder crons —
  * no new records arriving at all) is owned by SCRUM-2900, not this monitor.
@@ -63,6 +67,17 @@
  *     best-effort context, never a 255k-row count on the hot path. The
  *     refresh function writes -1 sentinels on statement timeout; those are
  *     mapped to null (unavailable), never treated as a real count.
+ *     **unlinked_total is an ESTIMATE, not a count.** The deployed
+ *     `refresh_cache_pipeline_stats()` derives it from
+ *     `round(pg_class.reltuples * pg_stats.null_frac)` and self-declares
+ *     `pending_record_links_approximate: true`. `null_frac` is an ANALYZE
+ *     sample statistic quantized to multiples of 1/sample_size, so at prod's
+ *     ~3.5M rows its smallest non-zero estimate is ~118 records: a genuine
+ *     backlog of 1 reads as 0 in most ANALYZE epochs — and as ~118 in the
+ *     epochs whose sample happens to catch the row.
+ *     `resolveUnlinkedBacklog` reconciles it against the LIMIT-1 probes (which
+ *     are exact existence tests) so the alert can never again claim
+ *     "backlog 0" while reporting a stuck record.
  *
  * Alert semantics
  * ---------------
@@ -105,9 +120,58 @@ export const DEFAULT_THROUGHPUT_WINDOW_HOURS = 24;
  */
 export const DEFAULT_LINKER_STALL_THRESHOLD_HOURS = 48;
 
+/**
+ * Minimum unlinked backlog for condition B to escalate on AGE (2026-08 alert
+ * storm).
+ *
+ * Condition B originally fired on the age of the oldest unlinked record with no
+ * magnitude qualifier at all. On 2026-08-17 prod held 3,538,743 public records,
+ * 3,538,742 of them linked and exactly ONE unlinked. That single orphan was
+ * ~388h old, which maps to the `t168h` bucket, which returns `fatal` — so a
+ * monitor on a ~30-minute cadence emitted a FATAL Sentry event every half hour
+ * for ~16 days (~670 events) over one row. A stuck row is an operational
+ * nuisance with a per-row remedy; it is not the pipeline-integrity outage this
+ * dead-man exists to catch.
+ *
+ * Why 500 specifically:
+ *
+ *  - **Lower bound — the floor must clear the estimator's SMALLEST EXPRESSIBLE
+ *    non-zero value, with headroom.** `unlinked_total` comes from
+ *    `pipeline_dashboard_cache`, whose `refresh_cache_pipeline_stats()`
+ *    computes `round(pg_class.reltuples * pg_stats.null_frac)`. `null_frac` is
+ *    an ANALYZE sample statistic (~30k rows at the default statistics target),
+ *    so it is QUANTIZED to multiples of 1/sample_size: at prod's ~3.5M rows,
+ *    ONE sampled stuck row estimates round(3.5M / 30k) ≈ 118 — the estimator
+ *    can emit 0 or ~118, never anything in between. The floor's first value
+ *    (100) sat BELOW that quantum, so in the ~1% of ANALYZE cycles whose
+ *    sample happened to catch the single stuck row, the cache read ≈118 ≥ 100
+ *    and the fatal storm re-armed for that ANALYZE epoch. The quantum also
+ *    grows linearly with the table (rows / sample), so the floor needs growth
+ *    headroom: 500 stays above one quantum until ~15M rows (~4x today's
+ *    table).
+ *  - **Upper bound — a real stall crosses it immediately.** The nightly flush
+ *    moves ~10,000 anchors per drain, so one missed linker cycle leaves 20x
+ *    this floor. The motivating 2026-07 incident was 259,000 — 500x. The floor
+ *    therefore costs no sensitivity for the incident class the monitor was
+ *    built for.
+ *  - **It stays honest for a small tenant.** A floor at batch scale (10,000)
+ *    would blind the monitor to a pipeline whose entire daily volume is a few
+ *    hundred records. 500 clears the estimator's quantum with headroom while
+ *    staying an order of magnitude under one drain.
+ *
+ * Below the floor the finding is NOT discarded — it degrades to a warn-level
+ * structured log (see `runPipelineThroughputMonitor`). Sentry is the paging
+ * channel; a sub-floor stuck row belongs in the ops log, not on a pager.
+ */
+export const DEFAULT_LINKER_STALL_MIN_BACKLOG = 500;
+
 const MS_PER_HOUR = 60 * 60 * 1000;
 
-export type AlertSeverity = 'info' | 'error' | 'fatal';
+/**
+ * `warning` is the sub-floor condition-B verdict: a real finding that is
+ * deliberately routed to a structured log instead of a Sentry page.
+ */
+export type AlertSeverity = 'info' | 'warning' | 'error' | 'fatal';
 
 // ─── Sustained-failure escalation (SCRUM-3050) ───────────────────────────────
 //
@@ -171,8 +235,21 @@ export interface ThroughputAlertInput {
   last_secured_age_hours: number | null;
   /** Total unlinked backlog from pipeline_dashboard_cache; null when unavailable. */
   unlinked_total: number | null;
+  /**
+   * True when `unlinked_total` is a sampled ESTIMATE rather than a count — the
+   * deployed `refresh_cache_pipeline_stats()` sets
+   * `pending_record_links_approximate: true` alongside the figure. Drives the
+   * `~` marker in the reason string so an estimate is never reported as a
+   * measurement (§1.5). Defaults to false when the cache row does not say.
+   */
+  unlinked_total_approximate?: boolean;
   window_hours: number;
   linker_stall_threshold_hours: number;
+  /**
+   * Minimum backlog for condition B to escalate on age alone. Defaults to
+   * `DEFAULT_LINKER_STALL_MIN_BACKLOG`.
+   */
+  linker_stall_min_backlog?: number;
 }
 
 export interface ThroughputAlertDecision {
@@ -186,6 +263,78 @@ export interface ThroughputAlertDecision {
   sustained_hours: number | null;
   /** Escalation bucket; appended to the Sentry fingerprint. */
   sustained_bucket: SustainedBucket;
+  /**
+   * True when condition B held but the measured backlog is below
+   * `linker_stall_min_backlog`. Such a finding is logged, never paged.
+   */
+  below_backlog_floor: boolean;
+}
+
+/** What is actually KNOWN about the unlinked backlog for this evaluation. */
+export interface UnlinkedBacklogView {
+  /**
+   * Best available figure, already reconciled against the live probe; `null`
+   * when the cache is unavailable and nothing can honestly be claimed.
+   */
+  value: number | null;
+  /** True when a LIMIT-1 probe actually found an unlinked record. */
+  live_unlinked_observed: boolean;
+  /** True when the cached figure claims 0 while the live probe found a row. */
+  cache_contradicted: boolean;
+  /** Carried through from the cache row's self-declared approximation flag. */
+  approximate: boolean;
+}
+
+/**
+ * Reconcile the cache-backed backlog figure against the live LIMIT-1 probes.
+ *
+ * The cached `pending_record_links` is `round(reltuples * null_frac)` — a
+ * sampled estimate with a resolution floor of roughly (rows / sample size).
+ * At prod scale that is ~118 rows, so a genuine backlog of 1 reads as 0. The
+ * probes, meanwhile, are exact existence tests: if `oldest_unlinked_age_hours`
+ * is non-null, a row was returned, so the true backlog is at least 1. When the
+ * two disagree the probe wins and the disagreement is reported, because the
+ * alternative is the alert text that started this: "oldest unlinked public
+ * record is 388h old ... (total unlinked backlog 0)".
+ */
+export function resolveUnlinkedBacklog(input: ThroughputAlertInput): UnlinkedBacklogView {
+  const liveUnlinkedObserved =
+    input.oldest_unlinked_age_hours !== null || input.latest_unlinked_age_hours !== null;
+  const approximate = input.unlinked_total_approximate === true;
+
+  if (input.unlinked_total === null) {
+    return {
+      value: null,
+      live_unlinked_observed: liveUnlinkedObserved,
+      cache_contradicted: false,
+      approximate,
+    };
+  }
+
+  const cacheContradicted = liveUnlinkedObserved && input.unlinked_total < 1;
+  return {
+    value: cacheContradicted ? 1 : input.unlinked_total,
+    live_unlinked_observed: liveUnlinkedObserved,
+    cache_contradicted: cacheContradicted,
+    approximate,
+  };
+}
+
+/**
+ * Reason-string suffix describing the backlog. Never asserts a figure the
+ * evidence does not support: unavailable stays "unavailable", a contradicted
+ * zero becomes the probe-proven lower bound, and a sampled estimate is marked
+ * with `~` rather than presented as a count.
+ */
+function describeUnlinkedBacklog(view: UnlinkedBacklogView): string {
+  if (view.value === null) return ' (total unlinked backlog unavailable)';
+  if (view.cache_contradicted) {
+    return (
+      ' (total unlinked backlog at least 1 — the cached figure read 0, which the live probe ' +
+      'contradicts: pending_record_links is a sampled estimate, not a count)'
+    );
+  }
+  return ` (total unlinked backlog ${view.approximate ? '~' : ''}${view.value})`;
 }
 
 /**
@@ -196,10 +345,8 @@ export interface ThroughputAlertDecision {
 export function decidePipelineThroughputAlert(
   input: ThroughputAlertInput,
 ): ThroughputAlertDecision {
-  const totalSuffix =
-    input.unlinked_total != null
-      ? ` (total unlinked backlog ${input.unlinked_total})`
-      : '';
+  const backlog = resolveUnlinkedBacklog(input);
+  const totalSuffix = describeUnlinkedBacklog(backlog);
 
   const newUnlinkedInWindow =
     input.latest_unlinked_age_hours !== null &&
@@ -224,6 +371,10 @@ export function decidePipelineThroughputAlert(
       severity: severityForSustainedBucket(bucket),
       sustained_hours: sustainedHours,
       sustained_bucket: bucket,
+      // The count floor gates condition B only. Condition A means NOTHING
+      // secured network-wide inside the window while feeders demonstrably
+      // produced a record — an outage regardless of how many records wait.
+      below_backlog_floor: false,
       reason:
         `Pipeline throughput dead-man: new unlinked public record(s) arrived (latest ` +
         `${input.latest_unlinked_age_hours}h ago) while 0 anchors secured network-wide in the ` +
@@ -242,11 +393,36 @@ export function decidePipelineThroughputAlert(
     // Duration of the stall = how long the oldest unlinked record has waited.
     const sustainedHours = input.oldest_unlinked_age_hours;
     const bucket = sustainedBucketFor(sustainedHours);
+    const minBacklog = input.linker_stall_min_backlog ?? DEFAULT_LINKER_STALL_MIN_BACKLOG;
+
+    // Count floor. A KNOWN-small backlog cannot escalate on age alone — that is
+    // the 2026-08 alert storm (one 388h-old orphan paging fatal every 30
+    // minutes for 16 days). An UNKNOWN backlog (cache unavailable, value null)
+    // deliberately does NOT take this branch: resolving "no data" to "small"
+    // would be the same fail-quiet bug `sustainedBucketFor` already refuses for
+    // an unbounded duration.
+    if (backlog.value !== null && backlog.value < minBacklog) {
+      return {
+        should_fire: true,
+        severity: 'warning',
+        sustained_hours: sustainedHours,
+        sustained_bucket: bucket,
+        below_backlog_floor: true,
+        reason:
+          `Pipeline linker stall (sub-threshold backlog): oldest unlinked public record is ` +
+          `${input.oldest_unlinked_age_hours}h old, exceeds ` +
+          `${input.linker_stall_threshold_hours}h threshold${totalSuffix} — below the ` +
+          `${minBacklog}-record escalation floor, so this is a stuck-record nuisance to clear ` +
+          'by hand, not a pipeline stall to page on',
+      };
+    }
+
     return {
       should_fire: true,
       severity: severityForSustainedBucket(bucket),
       sustained_hours: sustainedHours,
       sustained_bucket: bucket,
+      below_backlog_floor: false,
       reason:
         `Pipeline linker stall: oldest unlinked public record is ` +
         `${input.oldest_unlinked_age_hours}h old, exceeds ` +
@@ -261,6 +437,7 @@ export function decidePipelineThroughputAlert(
       severity: 'info',
       sustained_hours: null,
       sustained_bucket: 't0',
+      below_backlog_floor: false,
       reason:
         'No unlinked public records — nothing to convert (feeder-death monitoring is ' +
         'SCRUM-2900, not this monitor)',
@@ -272,6 +449,7 @@ export function decidePipelineThroughputAlert(
     severity: 'info',
     sustained_hours: null,
     sustained_bucket: 't0',
+    below_backlog_floor: false,
     reason:
       `Pipeline converting: last securing ` +
       `${input.last_secured_age_hours !== null ? `${input.last_secured_age_hours}h ago` : 'not observed'}; ` +
@@ -284,9 +462,18 @@ export function decidePipelineThroughputAlert(
 
 export interface PipelineThroughputResult {
   healthy: boolean;
+  /**
+   * True only when a Sentry alert was actually emitted. A sub-floor condition-B
+   * finding is `healthy: false, alertFired: false` — a real finding that was
+   * deliberately logged rather than paged.
+   */
   alertFired: boolean;
   windowHours: number;
   linkerStallThresholdHours: number;
+  /** Minimum backlog for condition B to escalate on age (2026-08 alert storm). */
+  linkerStallMinBacklog: number;
+  /** True when condition B held but the backlog is below the escalation floor. */
+  belowBacklogFloor: boolean;
   /** Age in hours of the newest unlinked public record; null when none. */
   latestUnlinkedAgeHours: number | null;
   /** Age in hours of the oldest unlinked public record; null when none. */
@@ -295,6 +482,13 @@ export interface PipelineThroughputResult {
   lastSecuredAgeHours: number | null;
   /** Cache-backed total unlinked backlog (pipeline_stats.pending_record_links); null when unavailable. */
   unlinkedTotal: number | null;
+  /**
+   * True when the cache row self-declares `pending_record_links_approximate`.
+   * The deployed fast-stats refresh derives the figure from
+   * `reltuples * null_frac`, so it is a sampled estimate — reported as such
+   * rather than as a count (§1.5 measured vs asserted).
+   */
+  unlinkedTotalApproximate: boolean;
   /** Cache-backed anchors-by-status counts (anchor_status_counts); null when unavailable. */
   batchProgress: Record<string, number> | null;
   reason: string;
@@ -403,6 +597,19 @@ function parseUnlinkedTotal(cacheValue: Record<string, unknown> | null): number 
   return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : null;
 }
 
+/**
+ * Whether the cached backlog figure is a sampled ESTIMATE.
+ *
+ * The deployed `refresh_cache_pipeline_stats()` (SCRUM-1708 fast stats) writes
+ * `pending_record_links_approximate: true` next to a value it derived from
+ * `round(pg_class.reltuples * pg_stats.null_frac)`. Older refresh variants
+ * wrote a real `count(*)` and no flag, so absence means "exact" and the marker
+ * is only claimed when the cache row asserts it.
+ */
+function parseUnlinkedTotalApproximate(cacheValue: Record<string, unknown> | null): boolean {
+  return cacheValue?.pending_record_links_approximate === true;
+}
+
 /** Numeric-only status counts from the `anchor_status_counts` cache row. */
 function parseBatchProgress(
   cacheValue: Record<string, unknown> | null,
@@ -465,18 +672,31 @@ function emitThroughputAlert(
 
 /**
  * End-to-end cron entry point. Runs the three LIMIT-1 timestamp probes plus
- * best-effort cache context, evaluates both dead-man conditions, and on a
- * stall logs at error level + fires the stable-fingerprint Sentry alert.
+ * best-effort cache context, evaluates both dead-man conditions, and:
+ *
+ *   - fires the stable-fingerprint Sentry alert + an error log on a real stall;
+ *   - logs at WARN and fires nothing when condition B held but the backlog is
+ *     below `linkerStallMinBacklog` (the 2026-08 alert storm — see
+ *     `DEFAULT_LINKER_STALL_MIN_BACKLOG`);
+ *   - logs at INFO when converting normally.
+ *
  * Throws on a broken core probe (route → 500 → Scheduler retry).
  */
 export async function runPipelineThroughputMonitor(
   db: SupabaseDb,
-  overrides: { windowHours?: number; linkerStallThresholdHours?: number; now?: Date } = {},
+  overrides: {
+    windowHours?: number;
+    linkerStallThresholdHours?: number;
+    linkerStallMinBacklog?: number;
+    now?: Date;
+  } = {},
 ): Promise<PipelineThroughputResult> {
   const now = overrides.now ?? new Date();
   const windowHours = overrides.windowHours ?? DEFAULT_THROUGHPUT_WINDOW_HOURS;
   const linkerStallThresholdHours =
     overrides.linkerStallThresholdHours ?? DEFAULT_LINKER_STALL_THRESHOLD_HOURS;
+  const linkerStallMinBacklog =
+    overrides.linkerStallMinBacklog ?? DEFAULT_LINKER_STALL_MIN_BACKLOG;
 
   // Core probes: fail loud (throw → 500). Cache context: best-effort (null).
   const [
@@ -497,6 +717,7 @@ export async function runPipelineThroughputMonitor(
   const latestUnlinkedAgeHours = computeAgeHours('newest_unlinked_record', newestUnlinkedCreatedAt, now);
   const lastSecuredAgeHours = computeAgeHours('last_secured_anchor', lastSecuredChainTimestamp, now);
   const unlinkedTotal = parseUnlinkedTotal(pipelineStatsCache);
+  const unlinkedTotalApproximate = parseUnlinkedTotalApproximate(pipelineStatsCache);
   const batchProgress = parseBatchProgress(statusCountsCache);
 
   const input: ThroughputAlertInput = {
@@ -504,8 +725,10 @@ export async function runPipelineThroughputMonitor(
     oldest_unlinked_age_hours: oldestUnlinkedAgeHours,
     last_secured_age_hours: lastSecuredAgeHours,
     unlinked_total: unlinkedTotal,
+    unlinked_total_approximate: unlinkedTotalApproximate,
     window_hours: windowHours,
     linker_stall_threshold_hours: linkerStallThresholdHours,
+    linker_stall_min_backlog: linkerStallMinBacklog,
   };
   const decision = decidePipelineThroughputAlert(input);
 
@@ -514,10 +737,13 @@ export async function runPipelineThroughputMonitor(
     alertFired: false,
     windowHours,
     linkerStallThresholdHours,
+    linkerStallMinBacklog,
+    belowBacklogFloor: decision.below_backlog_floor,
     latestUnlinkedAgeHours,
     oldestUnlinkedAgeHours,
     lastSecuredAgeHours,
     unlinkedTotal,
+    unlinkedTotalApproximate,
     batchProgress,
     reason: decision.reason,
     sustainedHours: decision.sustained_hours,
@@ -530,11 +756,21 @@ export async function runPipelineThroughputMonitor(
     oldestUnlinkedAgeHours,
     lastSecuredAgeHours,
     unlinkedTotal,
+    unlinkedTotalApproximate,
     windowHours,
     linkerStallThresholdHours,
+    linkerStallMinBacklog,
   };
 
-  if (decision.should_fire) {
+  if (decision.below_backlog_floor) {
+    // Visible, not paged. Sentry is the paging channel and a sub-floor stuck
+    // row has a per-row remedy, so it lands in Cloud Logging at warn level with
+    // a stable marker a log-based metric can key on without a code change.
+    logger.warn(
+      { ...logContext, belowBacklogFloor: true, pipelineStuckRecordSubFloor: true },
+      `Pipeline throughput monitor: ${decision.reason}`,
+    );
+  } else if (decision.should_fire) {
     logger.error(logContext, `Pipeline throughput monitor: ${decision.reason}`);
     emitThroughputAlert(decision, input);
     result.alertFired = true;

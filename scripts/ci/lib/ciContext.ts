@@ -174,6 +174,59 @@ const ENV_LABELS_SPLIT = (raw: string | undefined): string[] =>
   (raw ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 /**
+ * Emitted at most once per process. A single job runs ~11 label-gated steps and
+ * `hasLabel()` re-resolves on every call, so an un-deduped warning would paper
+ * the log with the same line dozens of times.
+ */
+let _liveLabelFetchWarned = false;
+
+/** Test seam: reset the once-per-process warning latch. */
+export function __resetLiveLabelWarningForTests(): void {
+  _liveLabelFetchWarned = false;
+}
+
+/** First non-empty line of a child-process failure, bounded so a long API body cannot flood the log. */
+function ghFailureDetail(err: unknown): string {
+  const e = err as { stderr?: Buffer | string; message?: string } | null;
+  const raw = String(e?.stderr ?? '').trim() || String(e?.message ?? '').trim();
+  const line = raw.split('\n').map((s) => s.trim()).find(Boolean) ?? '';
+  return line.length > 300 ? `${line.slice(0, 300)}…` : line;
+}
+
+/**
+ * Report a live-label fetch failure as a non-fatal Actions annotation.
+ *
+ * This exists because the failure used to be structurally invisible: the `gh`
+ * call was wrapped in a bare `catch { return [] }` with stderr routed to
+ * `ignore`, so a job missing its token degraded to frozen-payload labels with
+ * NOTHING in the log. Every label-gated override in that job was inert and the
+ * only symptom was "I applied the label, re-ran, and it still failed"
+ * (observed on PR #2322, 2026-08-22).
+ */
+function warnLiveLabelFetchFailed(env: NodeJS.ProcessEnv, prNumber: number, err: unknown): void {
+  if (_liveLabelFetchWarned) return;
+  _liveLabelFetchWarned = true;
+  const hasToken = Boolean((env.GH_TOKEN ?? '').trim() || (env.GITHUB_TOKEN ?? '').trim());
+  // `gh` authenticates ONLY from GH_TOKEN / GITHUB_TOKEN (or a hosts.yml that
+  // CI runners do not have). actions/checkout persists credentials into git
+  // config, which `gh` never reads — so a job with `pull-requests: read` but no
+  // token env is exactly as unauthenticated as one with no permission at all.
+  const cause = hasToken
+    ? 'a token IS present, so this is a `gh` binary/API/timeout failure rather than an auth gap'
+    : 'neither GH_TOKEN nor GITHUB_TOKEN is set for this step, so `gh` cannot authenticate '
+      + '(actions/checkout persists git credentials, which `gh` does not read; the job\'s '
+      + '`pull-requests: read` permission alone grants nothing without the token env)';
+  const detail = ghFailureDetail(err);
+  console.warn(
+    `::warning title=Live PR label fetch failed::Could not read PR #${prNumber} labels from the `
+    + `GitHub API — ${cause}. Falling back to the FROZEN pull_request payload in PR_LABELS: an `
+    + 'override label applied AFTER this run\'s webhook fired will NOT take effect on a re-run. '
+    + 'Fix: add `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` to this job\'s `env:` in the workflow.'
+    + (detail ? ` (gh: ${detail})` : ''),
+  );
+}
+
+/**
  * Fetch the PR's labels LIVE from the GitHub API via `gh`.
  *
  * Why this exists: ci.yml seeds `PR_LABELS` from the FROZEN `pull_request`
@@ -183,9 +236,18 @@ const ENV_LABELS_SPLIT = (raw: string | undefined): string[] =>
  * non-functional on re-runs. Reading labels live closes that hole.
  *
  * Synchronous (matches the module's existing execFileSync style), short
- * timeout, and swallows ALL errors to an empty list so a missing `gh`, an
- * API error, or a non-PR context degrades gracefully to env-only behavior.
- * Requires `pull-requests: read` on the calling job.
+ * timeout, and never throws — a missing `gh`, an API error, or a non-PR context
+ * all degrade to env-only behavior so this can never fail a gate on its own.
+ *
+ * Two outcomes are deliberately NOT conflated:
+ *   - No PR context (push / main / local run): legitimately empty, silent. A
+ *     warning here would fire on every push build and train people to ignore it.
+ *   - The `gh` call failed while a PR context DID exist: annotated, because the
+ *     caller is now silently reading stale labels.
+ *
+ * Requires BOTH `pull-requests: read` on the calling job AND a `GH_TOKEN` /
+ * `GITHUB_TOKEN` in its env. The permission without the token is a no-op; the
+ * `check-pr-labels-token-parity` lint enforces the pairing.
  */
 export function fetchLiveLabels(env: NodeJS.ProcessEnv = process.env): string[] {
   const prNumber = parsePrNumber(env);
@@ -195,10 +257,13 @@ export function fetchLiveLabels(env: NodeJS.ProcessEnv = process.env): string[] 
     const out = execFileSync(
       GH_BIN,
       ['api', `repos/${repo}/issues/${prNumber}/labels`, '--jq', '.[].name'],
-      { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 },
+      // stderr is PIPEd (was `ignore`) so the failure reason can be surfaced in
+      // the annotation below. It is still never echoed on the success path.
+      { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10_000 },
     );
     return out.split('\n').map((s) => s.trim()).filter(Boolean);
-  } catch {
+  } catch (err) {
+    warnLiveLabelFetchFailed(env, prNumber, err);
     return [];
   }
 }

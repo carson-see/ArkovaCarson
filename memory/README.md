@@ -40,6 +40,7 @@ hook's own deny message.
 | `feedback_migration_number_vs_reservations.md` | `.claude/hooks/check-constitution-on-edit.sh` — **BLOCK**; named in the deny message | ✅ live |
 | `feedback_no_credit_limits_beta.md` | CI lint (`no-credit-limits-beta.ts`) | ✅ live (R0-7) |
 | `feedback_no_aws.md` | CI lint (`no-aws.ts`) | ✅ live (R0-7) |
+| `feedback_bounded_body_reads.md` | CI lint (`bounded-body-reads.ts`) — raw `.json()`/`.text()` on a fetch response under `services/worker/src/**`, scoped to lines the PR **adds** (145 pre-existing sites; see the rule's header for why whole-file would be wrong here). Override `unbounded-body-read-reviewed`. The companion `maxRunMs >= ttlMs` half is test-enforced in `jobs/__tests__/run-lease.deadline.test.ts`. | ✅ live (R0-7 / F-D0-5) |
 | `feedback_pr_target_repo.md` | CI lint (`pr-target-repo.ts`) | ✅ live (R0-7) |
 | `feedback_no_worktree_isolation.md` | CI lint (`no-worktree-isolation.ts`) | ✅ live (R0-7) |
 | `feedback_local_matches_prod.md` | CI lint (`feedback_local_matches_prod.ts`) — snapshot diff vs `scripts/ci/snapshots/prod-tables.json`; fails closed. Live-MCP comparison still deferred. | ✅ live (SCRUM-1306 / R0-7-FU1) |
@@ -48,11 +49,14 @@ hook's own deny message.
 | `feedback_confluence_every_story.md` | Atlassian Automation R4 (Done-transition DoD gate) + CI drift guard `scripts/ci/check-confluence-coverage.ts` (warn-only) | ✅ live (R0-5 / SCRUM-1207) |
 | `feedback_never_merge_without_ok.md` | Agent hook `.claude/hooks/block-pr-merge.sh` (exit 2 on `gh pr merge`) + Mergify queue policy in `.mergify.yml`. *Not* Atlassian R5 — that rule gates Jira Done on red checks. | ✅ live |
 | `feedback_git_merge_driver_override.md` | Agent hook `.claude/hooks/check-git-merge-driver-flag.sh` (exit 2 on a transient `-c merge.*.driver=` override) + bootstrap config scan `scripts/agent/check-git-merge-config.sh` + cause-agnostic CI backstop `scripts/ci/check-agents-md-append-only.ts`. No override label — a no-op driver is never intentional. | ✅ live |
+| `feedback_secdef_function_grants.md` | CI lint (`secdef-function-grants.ts`), auto-loaded by the `check-feedback-rules.ts` orchestrator's `Policy Lints` job; merge-time gate is `secdef-function-grants.test.ts` in `Tests`. Burn-down baseline in `scripts/ci/feedback-rules/secdef-grants-baseline.json`. | ✅ live (R0-7) |
 | `feedback_merges_go_through_mergify.md` | `.mergify.yml` queue rules + `.github/workflows/merge-authority.yml` tier marker | 📖 docs only (policy) |
 | `feedback_confluence_is_the_doc.md` | Documentation only (CLAUDE.md §0 rule 4, §3 gate 3, §4 Doc Update Matrix) | 📖 docs only |
 | `feedback_vertex_endpoint_hygiene.md` | Documentation only (CLAUDE.md §0 rule 7 + §7 end-of-sprint infra sweep) | 📖 docs only |
 | `feedback_worker_hands_off.md` | Documentation only (agent-author detection unreliable) | 📖 docs only |
 | `feedback_nvi_lawyer_scope.md` | Documentation only (Jira scoping decision, 2026-04-27) | 📖 docs only |
+| `feedback_verify_cloud_project_before_auth.md` | Documentation only (no reliable detector for a wrong project ID) | 📖 docs only |
+| `feedback_read_the_emitting_code.md` | Documentation only (no detector for "did not read the function") | 📖 docs only |
 
 ## Override pattern
 
@@ -64,6 +68,8 @@ and documented in the rule script. Examples:
 - `local-matches-prod-skip` → overrides `feedback_local_matches_prod`
 - `confluence-drift-skip` → overrides the Confluence coverage drift guard
 - `handoff-narrative-only` → overrides R0-6 HANDOFF.md lint
+- `secdef-grants-skip` → overrides `feedback_secdef_function_grants`
+- `unbounded-body-read-reviewed` → overrides `feedback_bounded_body_reads`
 
 `feedback_pr_target_repo` and `feedback_no_worktree_isolation` have **no**
 override label. `feedback_dont_recommend_do` needs none — it cannot fail.

@@ -1137,9 +1137,17 @@ export class BitcoinChainClient implements ChainClient {
     try {
       const utxos = await this.provider.listUnspent(this.address);
       if (utxos.length === 0) {
+        // FD-CHAIN-1: this branch observes that the provider returned no rows.
+        // It does NOT establish that the treasury is unfunded — a UTXO source
+        // can return empty while the address holds real value (a wallet RPC
+        // that does not track the address, an address index behind on sync, a
+        // provider degraded to a bare 200). The previous wording asserted the
+        // stronger claim and sent a live diagnosis at the wallet instead of
+        // the provider while the address held 742,637 sat. Constitution §1.5:
+        // report what is measured. `provider` names the source that answered.
         logger.warn(
-          { address: this.address },
-          'Treasury has no UTXOs — batch processing will be skipped until funded',
+          { address: this.address, provider: this.provider.name },
+          'No UTXO source returned data for the treasury address — batch processing skipped this cycle. This does NOT confirm the treasury is unfunded; check the balance against an independent explorer and the provider fallback path before topping up.',
         );
         return false;
       }

@@ -19,8 +19,8 @@ vi.mock('@/hooks/useOrgCpeMemberSummary', () => ({
   useOrgCpeMemberSummary: (...args: unknown[]) => useOrgCpeMemberSummaryMock(...args),
 }));
 
-const ORG_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
-const USER_ID = '44444444-0000-0000-0000-000000000001';
+const ORG_ID = 'aaaaaaaa-0000-4000-8000-000000000001';
+const USER_ID = '44444444-0000-4000-8000-000000000001';
 
 function hookReturn(overrides: Partial<UseOrgCpeMemberSummaryReturn>): UseOrgCpeMemberSummaryReturn {
   return {

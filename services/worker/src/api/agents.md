@@ -294,3 +294,7 @@ thing that was true at the time.
 Rule for this folder: **any `create*` factory that builds a mempool.space URL must be handed
 `config.bitcoinNetwork` explicitly.** The two defects here — the wallet leg's balance bug and the
 fee leg's rate bug — were both "call site omitted the network, factory defaulted to something".
+
+## 2026-08-15 BUG-2026-08-13-010 — proof-packet anchor receipt states the fetch-time caveat
+
+`proof-packet.ts` `anchor_receipt` now carries `fingerprint_rederivability: 'fetch_time_snapshot'` + the §1.5 note (from `constants/connectorFingerprint.ts`) whenever an anchor is present — every packet anchor is connector-materialized BY CONSTRUCTION (resolved via `metadata->>external_file_id`), and the auditor challenge this packet answers is exactly the flow where someone re-downloads from the source and compares fingerprints. The `not_anchored` sentinel carries neither field (no fingerprint to describe). Additive keys on an org-scoped export; no internal UUIDs added.

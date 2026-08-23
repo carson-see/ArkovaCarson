@@ -16,7 +16,7 @@
 | Anchoring | SHA-256 integrity + timestamp, any format | — | anchoring as legal proof of authenticity of *content* |
 | Extraction | — | PDF, DOCX, PNG/JPG/WEBP/GIF (static code-path; no live OCR run this window) | runtime-verified OCR this window; HEIC/TIFF OCR; **audio/video content extraction** |
 | AI template | — | structured template for supported docs | current richness/accuracy figures (SCRUM-2999 open) |
-| CTDL | import/parse implemented + tested (PR #1603) | serializer round-trip | **"natively CTDL-compliant"** (SCRUM-2998 owns) |
+| CTDL | import/parse implemented, tested, merged and deployed (PR #1603, 2026-07-23) | serializer round-trip | **"natively CTDL-compliant"** (SCRUM-2998 owns) |
 | CE registry | sandbox GET-by-CTID read works | — | real-envelope consume; publish access; "fully integrated" |
 | Multilingual | — | — | non-English OCR (English-only; disclose) |
 | Fraud detection | UI removed | — | fraud detection as a product feature |

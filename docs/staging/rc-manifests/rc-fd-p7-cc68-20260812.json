@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-08-12-fd-p7-cc68",
+  "created_at": "2026-08-12T17:30:00Z",
+  "created_by": "carson@arkova.io",
+  "release_owner": "Carson",
+  "soak_mode": "deferred_consolidated_soak",
+  "approval_status": "pending",
+  "train_launch_sha": "49358d607b47217cfe81caf44d17b5e4a595cc88",
+  "target_main_sha": "49358d607b47217cfe81caf44d17b5e4a595cc88",
+  "allowed_base_shas": [],
+  "covered_main_shas": [],
+  "included_prs": [
+    {
+      "number": 2220,
+      "head_sha": "9f67e98b6c09001f080b12dcc23301c0b206dfb2",
+      "base_sha": "49358d607b47217cfe81caf44d17b5e4a595cc88",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "FD-P7 CC6.8 fix: key revocation/deletion reachable, revoked_at designation stamped. TDD supertest lifecycle suite (create->list->revoke->refused 401->delete) over real router + real apiKeyAuth. 2026-08-20 rebase onto main b6cfad73c (7 Wave-0 PRs + dependabot CI bump, incl. the provision-isolated-rig.test.ts load-flake fix): 2 staging-pin conflicts recomputed fresh from the merged agents.md (not either side's stale value); worker tsc --noEmit 0 errors, worker lint clean, root tsc 0 errors, root lint clean, lint:copy compliant; worker suite 48/48 (all 4 touched files incl. keys-revocation.test.ts) and frontend suite 40/40 green with node_modules installed.",
+      "rollback_note": "Single revert of the PR merge \u2014 no schema, no data backfill, no flag. Revert restores pre-fix behavior (revocation unreachable): safe operationally but re-opens the FD-P7 SOC 2 CC6.8 finding.",
+      "migration_files": []
+    }
+  ],
+  "excluded_prs": [],
+  "notes": "Deferred-consolidated-soak coverage for the FD-P7 fix (fullsoak 2026-08 founder-coverage item 17). Merging is decoupled from prod deploy by DEPLOY_WORKER_PAUSED=true; the 2026-08 fullsoak rig (arkova-worker-fullsoak-2026-08-staging, frozen until 2026-08-19T15:51:30Z) must not be deployed to during the window. Real soak evidence is owed by the consolidated soak of the integrated head after the freeze lifts; the rig's daily P7 probe (scripts/staging/fullsoak-daily-probes.sh) then exercises exactly the changed path (mint -> scope -> revoke -> refused -> delete) every run. approval_status stays pending until that soak completes and this manifest returns to the normal evidence path."
+}

@@ -5,6 +5,7 @@ import json
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from arkova import (
     BULK_ANCHOR_MAX_ROWS,
@@ -14,7 +15,9 @@ from arkova import (
     AsyncArkova,
     BulkAnchorInput,
     FingerprintVerification,
+    VerificationResult,
 )
+from arkova.models import RichVerificationFields
 
 
 def json_response(
@@ -1037,3 +1040,251 @@ def test_async_anchor_bulk_empty_input_no_network_call() -> None:
             return result.queued
 
     assert asyncio.run(run()) == 0
+
+
+# ---------------------------------------------------------------------------
+# BUG-2026-08-12-007 — `compliance_controls` is a LIST, not a dict.
+#
+# Published PyPI `arkova` 2.2.0 (tag `arkova-py-v2.2.0`, commit 8818d3af3) types
+# `RichVerificationFields.compliance_controls` as `dict[str, Any] | None`. The
+# API has only ever emitted a JSON ARRAY of control-ID strings, so `verify()` —
+# the headline method — raised pydantic's "Input should be a valid dictionary"
+# on every record that actually carries controls. Records with no controls
+# parsed fine, which is why it survived the whole life of the release.
+#
+# The source fix landed 2026-08-01 in a1592b975, FOUR HOURS after that tag was
+# cut, and was never republished — so the defect exists only in the published
+# artifact. These tests are the ratchet: they pin the wire contract so source
+# and artifact cannot drift apart again silently.
+#
+# Every shape below is taken from the API source, not invented:
+#   * services/worker/src/api/v1/verify.ts          — buildVerificationResult
+#   * services/worker/src/api/v1/docs.ts            — OpenAPI: array of string
+#   * services/worker/src/utils/complianceMapping.ts — COMPLIANCE_CONTROLS_NOTE,
+#     UNIVERSAL_CONTROLS + TYPE_SPECIFIC_CONTROLS.LEGAL, and
+#     sanitizeStoredComplianceControls (returns `string[] | null`, never an object)
+#   * services/worker/src/constants/proofAvailability.ts — the note pair
+# ---------------------------------------------------------------------------
+
+# Verbatim from services/worker/src/utils/complianceMapping.ts.
+COMPLIANCE_CONTROLS_NOTE = (
+    "Compliance control identifiers are informational metadata only. They indicate "
+    "which regulatory controls Arkova maps to this record's credential type. They are "
+    "not an audit, certification, conformity assessment, or attestation that this "
+    "record, its issuer, or Arkova satisfies any listed control, framework, or "
+    "regulation. In particular, no identifier listed here asserts a qualified trust "
+    "service, qualified electronic signature, or qualified electronic seal under "
+    "eIDAS. Compliance determination remains the responsibility of the relying party "
+    "and its auditors."
+)
+
+# UNIVERSAL_CONTROLS + TYPE_SPECIFIC_CONTROLS.LEGAL, deduped in insertion order
+# exactly as getComplianceControlIds() builds the set.
+LEGAL_COMPLIANCE_CONTROLS = [
+    "SOC2-CC6.1",
+    "SOC2-CC6.7",
+    "GDPR-5.1f",
+    "GDPR-25",
+    "ISO27001-A.10",
+    "eIDAS-25",
+    "eIDAS-35",
+    "ISO27001-A.14",
+    "LGPD-33",
+    "PDPA-26",
+    "LFPDPPP-36",
+]
+
+# Verbatim from services/worker/src/constants/proofAvailability.ts
+# (PROOF_AVAILABILITY_NOTE.root_only — the class the overwhelming majority of
+# prod anchors carry: ~2.97M SECURED, only ~6,110 with a stored branch).
+ROOT_ONLY_NOTE = (
+    "Measured: Arkova does not store a per-document inclusion proof for this "
+    "record. "
+    "Asserted: the document fingerprint shown here was committed to the Bitcoin "
+    "network in the referenced anchor receipt at the recorded time. "
+    "Not asserted: that a self-contained per-document proof bundle is available "
+    "from Arkova for offline verification of this record. Verifying this record "
+    "requires retrieving the referenced anchor receipt from the network. The "
+    "absence of a stored per-document proof is not evidence that the record is "
+    "invalid, and says nothing about the accuracy or legal effect of the "
+    "underlying document."
+)
+
+
+def prod_shaped_legal_verification() -> dict:
+    """The wire body `GET /api/v1/verify/ARK-2026-C3A718D0` returns.
+
+    An ACTIVE `credential_type=LEGAL` record — the reproduction case for
+    BUG-2026-08-12-007. Field set and omissions follow buildVerificationResult:
+    `compliance_controls` is a non-empty array, `compliance_controls_note` rides
+    with it, `version_number` is omitted (it equals 1), `ferpa_notice` is omitted
+    (LEGAL is not a FERPA education type), `sub_type`/`parent_public_id` are
+    omitted (null values are skipped, never serialised as null), and the proof
+    pair is present because the branch question was measured on a settled status
+    that carries a chain receipt.
+
+    Values other than `public_id` and `credential_type` are synthetic: this file
+    ships in the PyPI sdist, so the fixture carries no real issuer identity and
+    no recipient field. `public_id` is kept verbatim because it is the documented
+    reproduction case, and a public id is the one identifier this system is
+    designed to expose (CLAUDE.md §6).
+    """
+    return {
+        "verified": True,
+        "status": "ACTIVE",
+        "issuer_name": "Example Legal Services LLP",
+        "credential_type": "LEGAL",
+        "issued_date": "2026-03-11",
+        "expiry_date": None,
+        "anchor_timestamp": "2026-03-11T18:22:41.000Z",
+        "bitcoin_block": 901_447,
+        "network_receipt_id": (
+            "3c1f9a7e2b6d48f0a5c3e9b17d24f8a0c6e5b3d1f9a72e4c8b06d5a1f3e7c9b24"
+        ),
+        "merkle_proof_hash": None,
+        "record_uri": "https://app.arkova.ai/verify/ARK-2026-C3A718D0",
+        "jurisdiction": "KE",
+        "explorer_url": (
+            "https://mempool.space/tx/"
+            "3c1f9a7e2b6d48f0a5c3e9b17d24f8a0c6e5b3d1f9a72e4c8b06d5a1f3e7c9b24"
+        ),
+        "compliance_controls": LEGAL_COMPLIANCE_CONTROLS,
+        "compliance_controls_note": COMPLIANCE_CONTROLS_NOTE,
+        "chain_confirmations": 412,
+        "file_mime": "application/pdf",
+        "file_size": 184_320,
+        "confidence_scores": {"overall": 0.94, "fields": {"issuerName": 0.97}},
+        "fingerprint_source": "document_bytes",
+        "proof_availability": "root_only",
+        "proof_availability_note": ROOT_ONLY_NOTE,
+    }
+
+
+def verifying_client(payload: dict) -> Arkova:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(payload)
+
+    return Arkova(api_key="ak_test", transport=httpx.MockTransport(handler))
+
+
+def test_verify_parses_a_prod_shaped_record_carrying_compliance_controls() -> None:
+    """The headline regression: `verify()` must not raise on a real record.
+
+    On published 2.2.0 this fails with `1 validation error for
+    VerificationResult / compliance_controls / Input should be a valid dictionary`.
+    """
+    with verifying_client(prod_shaped_legal_verification()) as client:
+        result = client.verify("ARK-2026-C3A718D0")
+
+    assert result.verified is True
+    assert result.credential_type == "LEGAL"
+    assert result.compliance_controls == LEGAL_COMPLIANCE_CONTROLS
+    # A control list must never arrive without the statement of what it does NOT
+    # assert (§1.5 / R-7). The API emits the pair together; the SDK surfaces both.
+    assert result.compliance_controls_note == COMPLIANCE_CONTROLS_NOTE
+
+
+def test_compliance_controls_is_declared_as_a_list_of_strings() -> None:
+    """Pin the annotation itself, not just one round-trip.
+
+    A test that only parses a list payload would still pass if someone widened
+    the field to `Any` — which accepts everything and types nothing. This is the
+    ratchet that makes a revert to the dict form, or a silent widening, fail.
+    """
+    assert RichVerificationFields.model_fields["compliance_controls"].annotation == (
+        list[str] | None
+    )
+
+    # Same inherited field on every model that mirrors this response — the drift
+    # hit all three at once, so the ratchet covers all three.
+    for model in (VerificationResult, FingerprintVerification, Anchor):
+        assert model.model_fields["compliance_controls"].annotation == (list[str] | None)
+        assert model.model_fields["compliance_controls_note"].annotation == (str | None)
+
+
+def test_dict_shaped_compliance_controls_is_rejected() -> None:
+    """The dict form is not merely unused — it is unrepresentable on the wire.
+
+    `sanitizeStoredComplianceControls` fails a non-array stored value CLOSED to
+    `null` before it can reach a response, so an object arriving here means the
+    payload did not come from this API. Quietly accepting it would re-open the
+    very ambiguity this bug came from.
+
+    Also pins how a shape mismatch SURFACES, which is half of why this bug was
+    hard to spot: `_parse_json` converts the pydantic error into a generic
+    `ArkovaError("Arkova API returned an unexpected response shape")`. The field
+    that actually failed is only visible on `__cause__`, so a caller reading the
+    top-level message alone learns nothing about which field drifted.
+    """
+    payload = prod_shaped_legal_verification()
+    payload["compliance_controls"] = {"SOC2-CC6.1": True}
+
+    with verifying_client(payload) as client, pytest.raises(ArkovaError) as excinfo:
+        client.verify("ARK-2026-C3A718D0")
+
+    cause = excinfo.value.__cause__
+    assert isinstance(cause, ValidationError)
+    assert "compliance_controls" in str(cause)
+
+
+def test_verify_still_parses_records_with_no_compliance_controls() -> None:
+    """The path that always worked must keep working.
+
+    This is why the bug survived a release. `buildVerificationResult` OMITS the
+    key whenever the sanitized value is null/empty, and withholds it entirely for
+    any record that is not a current anchored credential (REVOKED / EXPIRED /
+    SUPERSEDED / not yet anchored — BUG-2026-06-24-007). Most payloads therefore
+    never exercised the broken branch.
+    """
+    payload = prod_shaped_legal_verification()
+    del payload["compliance_controls"]
+    del payload["compliance_controls_note"]
+
+    with verifying_client(payload) as client:
+        result = client.verify("ARK-2026-C3A718D0")
+
+    assert result.verified is True
+    assert result.compliance_controls is None
+    assert result.compliance_controls_note is None
+
+
+def test_verify_tolerates_an_explicit_null_compliance_controls() -> None:
+    """Belt-and-braces around the omitted case.
+
+    `/api/v1/verify` omits rather than nulls this key, but it is declared
+    `nullable: true` in the published OpenAPI schema and sibling worker surfaces
+    carry it as `null` internally (`EMPTY_API_RICH_FIELDS`). A client that fell
+    over on an explicit null would be brittle for no benefit.
+    """
+    payload = prod_shaped_legal_verification()
+    payload["compliance_controls"] = None
+    payload["compliance_controls_note"] = None
+
+    with verifying_client(payload) as client:
+        result = client.verify("ARK-2026-C3A718D0")
+
+    assert result.compliance_controls is None
+
+
+def test_verify_types_the_proof_and_fingerprint_evidence_fields() -> None:
+    """Same stale-snapshot drift class, found by the same audit.
+
+    `fingerprint_source` (R19) and the `proof_availability` / `_note` pair
+    (SCRUM-2575) are emitted by `buildVerificationResult` but were absent from
+    the model. `extra="allow"` meant they parsed, so nothing broke — they were
+    simply invisible to type checkers, IDE completion and `model_fields`.
+
+    Typed as plain `str`, deliberately NOT `Literal`: over-narrow typing built
+    from an API snapshot is exactly what caused BUG-2026-08-12-007, and a future
+    member of either enum must not raise inside a consumer's `verify()` call.
+    """
+    for name in ("fingerprint_source", "proof_availability", "proof_availability_note"):
+        assert name in VerificationResult.model_fields, f"{name} must be a declared field"
+        assert VerificationResult.model_fields[name].annotation == (str | None)
+
+    with verifying_client(prod_shaped_legal_verification()) as client:
+        result = client.verify("ARK-2026-C3A718D0")
+
+    assert result.fingerprint_source == "document_bytes"
+    assert result.proof_availability == "root_only"
+    assert result.proof_availability_note == ROOT_ONLY_NOTE
