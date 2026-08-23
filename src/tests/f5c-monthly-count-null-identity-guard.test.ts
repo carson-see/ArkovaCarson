@@ -149,7 +149,7 @@ describe('F-5c: check-null-identity-guard lint actually detects the bug class', 
       const err = e as { status?: number; stdout?: string; stderr?: string };
       return { code: err.status ?? 1, out: `${err.stdout ?? ''}${err.stderr ?? ''}` };
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   }
 
