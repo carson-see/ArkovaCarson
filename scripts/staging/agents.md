@@ -287,3 +287,42 @@ Complement to `fullsoak-daily-check.sh`, not a replacement. **Run both, every so
   HTTP 200 `{"error":"Record not found"}`, so the assertion tests the payload, not the status.
 - First full run 2026-08-12T16:26:33Z against rev `00013-mrw`: **35 PASS · 2 FAIL (both FD-P7) · 2 SKIP**.
   Coverage narrative and the founder-lever list: `docs/staging/fullsoak-2026-08/founder-coverage-checklist.md`.
+## Orphan tag cleanup covers EVERY tag, not just `pr-<N>` (BUG-2026-08-22-001, 2026-08-22)
+
+A Cloud Run traffic **tag** keeps its revision REFERENCED by the service, and a
+referenced revision whose own template carries `autoscaling.knative.dev/minScale >= 1`
+keeps a warm instance — which goes on running the in-process `node-cron` schedule
+in `services/worker/src/routes/scheduled.ts` against whatever `SUPABASE_URL`
+resolves to *now*, not what it resolved to when that revision was deployed.
+
+Measured on `arkova-worker-staging`, 2026-08-22. Of 250 revisions, 47 are tagged
+and 16 carry `minScale = 1`. The intersection is exactly 9 — the serving revision
+plus 8 retired ones — and exactly those 9 emit logs. The other 7 `minScale = 1`
+revisions are untagged and silent; the other 38 tagged revisions have no
+`minScale` and are silent. The rule is therefore:
+
+> a revision stays warm **iff** `minScale >= 1` **AND** it is referenced in the
+> service's traffic block.
+
+Consequences that were live for weeks: instances started before the
+2026-08-19T19:53Z rotation of `supabase-url-staging` still held the DELETED
+project URL and logged `getaddrinfo ENOTFOUND` on every cron tick; instances
+started after it resolved `latest` to the LIVE rig and **wrote to it** — at
+2026-08-22T02:00Z four revisions each ran the GDPR retention cron against
+`fizyjojbebyalirtjjht` within ten seconds. CLAUDE.md §1.11A's "exclusive use of
+clean shared staging" cannot hold on a service in that state.
+
+`cleanup-orphan-tags.sh` is the control, and it under-covered: its selector was
+`^pr-[0-9]+$`, so the four `train-c-*` tags were invisible to it — including two
+of the eight warm revisions (`train-c-ce`, `train-c-1154-cfaee18e`). It now
+selects **every** tag. `pr-<N>` tags still age out on their PR's close date;
+every other tag ages out on its revision's `creationTimestamp`, because there is
+no PR to consult. A revision serving traffic is never untagged at any age, so an
+in-flight soak's tag URL is safe.
+
+**It has never been scheduled.** `gcloud scheduler jobs list --project=arkova1`
+carries no tag-cleanup job, which is why 46 orphan tags accumulated over 84 days.
+Untagging is also the CHEAP fix: it does not create a new revision, so it can be
+run against a service whose soak has closed without disturbing the revision that
+soak was measured on. Deleting the revisions is a separate, irreversible step
+that buys no further operational benefit once the tag is gone.

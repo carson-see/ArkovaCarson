@@ -2,6 +2,11 @@
   "_comment": "Append-only audit trail lives in _history (newest first), one object per entry, so a diff shows only the lines a PR actually added. It used to be a single ~22k-character string, which rendered every edit as one whole-line delete plus one whole-line add and made it impossible to see at review time whether prior entries had been preserved. Only exemptPrefixes is read by CI (scripts/ci/check-ledger-numeric-integrity.ts); _history is documentation. INVARIANT: a prefix belongs here if and only if it is present in the prod ledger AND its source .sql is absent from main. Present in both = stale, and auditStaleExemptions() now warns about it on every PR.",
   "_history": [
     {
+      "date": "2026-08-22",
+      "author": "release-engineering session (deferred-soak manifest PR #2345), same-motion exemption",
+      "note": "ADDED 0410, 0411, 0412, 0413 -- the migration-T3 wave (soaked 48h on arkova-worker-staging/fizyjojbebyalirtjjht, window closed 2026-08-22T14:00:22Z, maturity record docs/staging/migration-t3-soak-2026-08/maturity-2026-08-22T1400Z.md) was applied to prod out of band between 2026-08-22T17:52Z (a drift run on #2219 still reported 0410 'matching prod rows: none') and 19:55Z (this PR's drift run reported all four as orphan rows), WITHOUT the exemption landing in the same motion -- re-creating the exact 0384-lesson failure the history below documents: every open PR's orphan-row audit went red at once. This entry is the same-motion repair, landing in the deferred-soak manifest PR (#2345) that the blocked wave needs anyway. Ownership: 0410_partner_accounts is OWNED BY PR #2219 (covered by rc-deferred-2026-08-22.json) -- REMOVE when it merges. 0411/0412/0413 (bug019 cleanup lock_timeout, bug009 stale-estimate sentinel, bug011 calibration view) are OWNED BY PR #2235, which is NOT in the CTO deferred-merge ruling and whose disposition is unresolved -- REMOVE each when #2235 (or a successor carrying its files) merges. 0414 (also in the soaked wave) is NOT exempted: #2248 merged 2026-08-22T18:14Z, so its source is on main and the row is reconciled, exactly per the invariant. Verification: orphan set read from the failing required check itself (run 32595134736), not assumed; the prod apply was NOT performed by this session and the applying operator should confirm ledger reconciliation per CLAUDE.md 0 rule 10."
+    },
+    {
       "date": "2026-08-11",
       "author": "PR #2081 merge-of-main resolution",
       "note": "exemptPrefixes -> [] on this branch. Verified empirically, not assumed: every prod ledger row (list_migrations against vzwyaatejekddvltxyye, head 0407) was cross-checked against the NNNN_ prefixes of supabase/migrations/*.sql on origin/main -- 0405 was the ONLY prod prefix with no source on main, and this PR is the owning PR that lands 0405_org_field_policies_dpa_clause_4_6.sql, so the exemption and the file land in the same motion exactly as the 0384 lesson requires. REMOVED 0406 as well: 0406_proof_coverage_window_and_reconstruction_classes.sql is already present on origin/main (its owning PR merged), so that entry was stale, and a stale exemption is worse than no exemption -- it masks a future real drift on that prefix. Ledger audit re-run locally against the real prod payload with exemptPrefixes=[] and this branch's migrations dir: 0 violations. NOTE 0408 (PR #2140) and 0409 (PR #2176) are file-only and NOT applied to prod, so they are correctly absent here -- this snapshot only ever exempts prod-AHEAD-of-repo rows."
@@ -117,5 +122,10 @@
       "note": "REMOVED 15 now-stale exemptions whose owning PRs merged today and whose source .sql is present on main — 0350, 0351, 0352, 0353, 0359, 0360, 0362, 0363, 0364, 0375, 0379, 0380, 0383, 0385, 0390. Verified by listing supabase/migrations/ on origin/main, not assumed. A stale exemption is worse than no exemption: it masks a future real drift on that prefix. STILL EXEMPT (source not yet on main): 0381 (#1782 merged but file landed via that PR — recheck), 0382 (#1808), 0386 (#1854), 0387 (its branch has no PR), 0388 (#1863)."
     }
   ],
-  "exemptPrefixes": []
+  "exemptPrefixes": [
+    "0410",
+    "0411",
+    "0412",
+    "0413"
+  ]
 }
