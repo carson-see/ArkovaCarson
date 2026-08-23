@@ -73,6 +73,55 @@ beforeEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * BUG-023: the hardcoded PatentsView S3 URL now returns 403 AccessDenied, so
+ * the bulk source must be supplied explicitly. Tests that exercise the
+ * streaming path pass it as an option.
+ */
+const TEST_SOURCE_URL = 'https://example.invalid/g_patent.tsv.zip';
+
+describe('usptoFetcher — dead bulk source (BUG-023)', () => {
+  it('refuses to run — loudly — when no bulk source is configured', async () => {
+    mockRpc.mockResolvedValue({ data: true });
+    mockSelectChain.limit.mockResolvedValue({ data: [] });
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    delete process.env.USPTO_BULK_TSV_URL;
+
+    const { fetchUsptoPAtents } = await import('../usptoFetcher.js');
+    const result = await fetchUsptoPAtents(makeMock().client);
+
+    // No request at all — the legacy S3 URL must not be reachable from code.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.status).toBe('source_unavailable');
+    // The masked-failure regression: this must NOT report errors: 0.
+    expect(result.errors).toBeGreaterThan(0);
+  });
+
+  it('does not carry the revoked PatentsView S3 URL as a default', async () => {
+    const source = await import('node:fs/promises').then((fs) =>
+      fs.readFile(new URL('../usptoFetcher.ts', import.meta.url), 'utf-8'),
+    );
+    // The dead bucket may only appear in prose explaining why it is dead.
+    const codeLines = source
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('*') && !line.trimStart().startsWith('//'));
+    expect(codeLines.join('\n')).not.toContain('s3.amazonaws.com/data.patentsview.org');
+  });
+
+  it('counts a hard upstream failure as an error, not errors: 0', async () => {
+    mockRpc.mockResolvedValue({ data: true });
+    mockSelectChain.limit.mockResolvedValue({ data: [] });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403, body: null }));
+
+    const { fetchUsptoPAtents } = await import('../usptoFetcher.js');
+    const result = await fetchUsptoPAtents(makeMock().client, { sourceUrl: TEST_SOURCE_URL });
+
+    expect(result.status).toBe('download_failed');
+    expect(result.errors).toBeGreaterThan(0);
+  });
+});
+
 describe('usptoFetcher', () => {
   it('returns early when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
@@ -111,7 +160,7 @@ describe('usptoFetcher', () => {
     }));
 
     const { fetchUsptoPAtents } = await import('../usptoFetcher.js');
-    const result = await fetchUsptoPAtents(makeMock().client);
+    const result = await fetchUsptoPAtents(makeMock().client, { sourceUrl: TEST_SOURCE_URL });
 
     expect(fetch).toHaveBeenCalled();
     expect(result.status).toBe('complete');
@@ -160,7 +209,7 @@ describe('usptoFetcher', () => {
     }));
 
     const { fetchUsptoPAtents } = await import('../usptoFetcher.js');
-    const result = await fetchUsptoPAtents(makeMock().client);
+    const result = await fetchUsptoPAtents(makeMock().client, { sourceUrl: TEST_SOURCE_URL });
 
     expect(result.inserted).toBe(1);
     expect(result.skipped).toBe(2);
@@ -177,7 +226,7 @@ describe('usptoFetcher', () => {
     }));
 
     const { fetchUsptoPAtents } = await import('../usptoFetcher.js');
-    const result = await fetchUsptoPAtents(makeMock().client);
+    const result = await fetchUsptoPAtents(makeMock().client, { sourceUrl: TEST_SOURCE_URL });
 
     expect(result.status).toBe('download_failed');
     expect(result.inserted).toBe(0);
@@ -190,7 +239,7 @@ describe('usptoFetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network timeout')));
 
     const { fetchUsptoPAtents } = await import('../usptoFetcher.js');
-    const result = await fetchUsptoPAtents(makeMock().client);
+    const result = await fetchUsptoPAtents(makeMock().client, { sourceUrl: TEST_SOURCE_URL });
 
     expect(result.status).toBe('download_failed');
     expect(result.inserted).toBe(0);

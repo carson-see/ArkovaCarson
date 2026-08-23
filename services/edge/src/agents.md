@@ -10,7 +10,31 @@ Cloudflare Worker (`arkova-edge`) — Zero-Trust edge layer for x402 facilitator
 - `mcp-anomaly-detection.ts` — heuristics for unusual MCP tool-call patterns.
 - `mcp-tools.ts`, `mcp-tool-schemas.ts` — tool catalog and schemas.
 - `mcp-audit-log.ts` — fire-and-forget audit log writer via `ctx.waitUntil(...)`. Caller IPs are **keyed** HMAC-SHA256 (`MCP_IP_HASH_PEPPER`), not bare sha256 — see below.
-- `mcp-kill-switch.ts` — checks switchboard flag `ENABLE_MCP_SERVER`.
+- `mcp-kill-switch.ts` — checks switchboard flag `ENABLE_MCP_SERVER`. **Fails CLOSED on a fresh/empty switchboard — CTO ruling, see below. Do not pass `p_default: true`.**
+
+## Fresh-switchboard behaviour is fail-CLOSED (BUG-021 investigation + CTO ruling, 2026-08)
+
+`get_flag(p_flag_key text, p_default boolean DEFAULT false)` returns `p_default` when the row is
+absent — it does **not** return NULL for a missing row. This file calls it with only `p_flag_key`, so a
+fresh, never-seeded `switchboard_flags` resolves to `false` and the gate serves `mcp_disabled` (503).
+The in-file `data === null → true` branch is therefore unreachable from a real database (it only covers
+a malformed response), and the "missing flag row → fail-open" comment next to it overstates what
+happens. That mismatch was investigated as BUG-021, and a fix passing `p_default: true` was drafted —
+then **REVERSED by CTO ruling**: Arkova's established posture is fail-closed on an empty switchboard.
+A fresh environment's `/api/v1` is deliberately dark for exactly this reason (`get_flag` fails closed
+on an empty `switchboard_flags`), and a kill switch that self-enables its surface on missing config
+would invert that posture and §1.4. Serving MCP on a new environment is an explicit operator action:
+seed the `ENABLE_MCP_SERVER` row.
+
+The rule this generalises to still holds: **`get_flag` collapses "absent" into `p_default`, so the fail
+direction is the caller's declaration, not the function's** — and every Arkova gate (`featureGate.ts`,
+`partnerProvisioningGate.ts`, this file) declares `false`. "Fail-open" in this file's header refers
+only to **transient read failures** (RPC error/timeout → uncached `null` → serve this request, retry
+next), never to absent configuration. A caller that must tell "absent" from "explicitly false" cannot
+use this RPC at all and has to read `switchboard_flags` directly;
+`services/worker/src/routes/ingestionResponse.ts` is the worked example. Fail-closed-on-absent is
+pinned by `services/worker/src/mcp-kill-switch.test.ts`, which asserts the request body (no
+`p_default` override), not just the resolved boolean.
 
 ## Nessie worker proxy timeout (2026-06-07)
 
