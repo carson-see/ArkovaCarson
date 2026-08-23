@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-08-20-WAVE3",
+  "created_at": "2026-08-20T17:20:00Z",
+  "created_by": "claude-code-agent",
+  "release_owner": "Carson",
+  "approval_status": "pending",
+  "approval_actor": "",
+  "approval_time": "",
+  "train_launch_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+  "target_main_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+  "allowed_base_shas": ["6b4847c0b257cfb28085afdf6570971493bf4c85"],
+  "covered_main_shas": ["6b4847c0b257cfb28085afdf6570971493bf4c85"],
+  "included_prs": [
+    {
+      "number": 2272,
+      "head_sha": "08014061b40fd142e21dfbc0f602746dde482741",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "release-owner@example.com",
+      "ci_summary": "Queue digest default-on; union head green (root 6344/6344, worker clean minus one pre-existing shallow-clone-limited file).",
+      "rollback_note": "No migrations. Revert PR; ENABLE_QUEUE_DIGEST env var removal reverts to prior dark state.",
+      "migration_files": []
+    },
+    {
+      "number": 2276,
+      "head_sha": "0c40fea9793ea8b18df3bb8882c90698d9948312",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "release-owner@example.com",
+      "ci_summary": "Platform-admin health digest; conflicted with #2272 on deploy-worker.yml/cloud-scheduler.sh, union-resolved additively.",
+      "rollback_note": "No migrations. Revert PR; ENABLE_PLATFORM_HEALTH_DIGEST env var removal reverts to prior dark state.",
+      "migration_files": []
+    },
+    {
+      "number": 2232,
+      "head_sha": "7b7a7d42abe24adb3b72e5566e5a1cc516186459",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "release-owner@example.com",
+      "ci_summary": "MCP audit log P0 + proof-keys mount + anchor_document contract fix. Required two fallout fixes in the union (mcp-claim-parity.test.ts, mcp-tools.test.ts) — both real, both fixed, commit 25465f5da.",
+      "rollback_note": "No migrations. Revert PR restores unmounted proof-keys route and non-writing audit log.",
+      "migration_files": []
+    },
+    {
+      "number": 2246,
+      "head_sha": "d7f666004e92a435ccf19204f59cbd705929f453",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T1",
+      "owner": "release-owner@example.com",
+      "ci_summary": "Connector fingerprint proof caveat (§1.5) — copy-only + response field addition.",
+      "rollback_note": "No migrations. Revert PR drops the fingerprint_rederivability field.",
+      "migration_files": []
+    },
+    {
+      "number": 2220,
+      "head_sha": "9f67e98b6c09001f080b12dcc23301c0b206dfb2",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "release-owner@example.com",
+      "ci_summary": "API-key revocation/deletion reachable; revoke stamps CC6.8 designation. Revoke-then-reject proven live via X-API-Key HTTP round trip.",
+      "rollback_note": "No migrations. Revert PR restores prior (broken) revocation path.",
+      "migration_files": []
+    },
+    {
+      "number": 2252,
+      "head_sha": "ddbe9a108791d391cbc17e9f019a49b5d352b820",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "release-owner@example.com",
+      "ci_summary": "sdk-py model-drift audit closeout, supersedes #2247. SDK-only path; §1.12 exception granted by founder — deploys nothing, no rig soak performed.",
+      "rollback_note": "No migrations. Python package only.",
+      "migration_files": []
+    },
+    {
+      "number": 2274,
+      "head_sha": "a6755f3256b74e3339be7951454430c8a9653233",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "release-owner@example.com",
+      "ci_summary": "npm publication prep (arkova + arkova-mcp-server). SDK-only path; §1.12 exception granted by founder — deploys nothing, no rig soak performed. NOTE: PR's own branch already carries a pre-existing agents.md content supersession (packages/sdk/agents.md, packages/sdk/examples/agents.md, sdks/mcp-server/agents.md) predating this union merge, not agents-md-deletion-approved labeled yet.",
+      "rollback_note": "No migrations. npm package metadata only; nothing published yet regardless.",
+      "migration_files": []
+    },
+    {
+      "number": 2230,
+      "head_sha": "274ad17eb9af17f910b9b39d39d50434672d1928",
+      "base_sha": "6b4847c0b257cfb28085afdf6570971493bf4c85",
+      "risk_tier": "T2",
+      "owner": "release-owner@example.com",
+      "ci_summary": "Drive connect deny-reason separation (org_scope_required vs not_admin) + connect-denial logging. Base of the #2230->#2236 stack.",
+      "rollback_note": "No migrations. Revert PR collapses deny reasons back to a single not_admin/needs_paid_plan shape.",
+      "migration_files": []
+    },
+    {
+      "number": 2236,
+      "head_sha": "945b4a64ddd3a8edadc7c963a6a94614a71b6ec3",
+      "base_sha": "274ad17eb9af17f910b9b39d39d50434672d1928",
+      "risk_tier": "T2",
+      "owner": "release-owner@example.com",
+      "ci_summary": "Nessie fails closed (CTO ruling R-1 STRENGTHENED) + priced offer retracted + Drive individual scope dropped. Stacked on #2230 (single-commit stack, confirmed via merge-base --is-ancestor). Conflicted with #2274 on packages/sdk/README.md and sdks/mcp-server/src/index.ts (Nessie copy, #2236's version is current/correct), union-resolved.",
+      "rollback_note": "No migrations. Revert PR restores prior Nessie 'not yet enabled' copy (stale) and re-admits Drive individual scope.",
+      "migration_files": []
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "isolated dedicated rig (new Cloud Run service + new Supabase project, not tag-routed on shared staging)",
+    "staging_api_base": "https://arkova-worker-wave3-2026-08-staging-270018525501.us-central1.run.app",
+    "staging_url": "https://arkova-worker-wave3-2026-08-staging-270018525501.us-central1.run.app",
+    "cloud_run_service": "arkova-worker-wave3-2026-08-staging",
+    "revision": "arkova-worker-wave3-2026-08-staging-00004-cjk",
+    "deploy_tag": "none (dedicated service, no shared-service tag routing)",
+    "image_digest": "sha256:90ea4e06b1c563045da151a6f7da934d91d20cfbaa667234bb3154976a08bd81",
+    "supabase_project_ref": "jiotjhqmedkajdsojsbn",
+    "deploy_log_id": "n/a (no staging_deploy_log row — this rig does not use scripts/staging/deploy.sh's tag-routed lease flow, it is a standalone service deployed directly via gcloud run deploy)",
+    "preflight_result": "environment_type=clean_mirror (2026-08-20T16:06:52Z, all 6 checks passed)"
+  },
+  "soak": {
+    "start": "2026-08-20T16:40:21Z",
+    "end": "",
+    "duration_hours": 12,
+    "harness_version": "scripts/staging/wave3-load-loop.sh (custom — scripts/staging/load-harness.ts's STAGING_API_BASE validator refuses non-tag-routed URLs by design; see docs/staging/wave3-2026-08/soak-start-2026-08-20.md)",
+    "result": "in_progress",
+    "evidence_links": [
+      "docs/staging/wave3-2026-08/soak-start-2026-08-20.md",
+      "docs/staging/wave3-2026-08/soak-load-chunk1-20260820.json"
+    ],
+    "expires_at": ""
+  },
+  "migration_plan": {
+    "order": [],
+    "rollback_proof": "N/A — zero supabase/migrations/*.sql changes across all 9 members (confirmed via git diff origin/main..union-head -- supabase/migrations/).",
+    "reapply_proof": "N/A",
+    "stop_conditions": [
+      "SHA mismatch",
+      "dirty preflight",
+      "any real (non-flake) test regression found while running full gates"
+    ]
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": ""
+  },
+  "exceptions": [
+    {
+      "prs": [2252, 2274],
+      "rule": "CLAUDE.md §1.12 soak tier matrix",
+      "description": "SDK-only paths (packages/sdk, sdks/mcp-server, packages/arkova-py) force T2 with no override label per memory/project_sdk_paths_are_hard_t2.md, but an SDK-only PR deploys nothing — there is no worker/rig surface to soak. Founder-granted exception: record the exception rather than fabricate a soak.",
+      "approved_by": "Carson (founder, per task instruction 2026-08-20)"
+    },
+    {
+      "prs": [2220, 2230, 2236],
+      "rule": "CLAUDE.md §1.12 full HTTP round-trip evidence",
+      "description": "The JWT-gated HTTP routes for these PRs (POST/PATCH/DELETE /api/v1/keys*, POST /api/v1/integrations/google_drive/oauth/start) require a Supabase user JWT in the same Authorization header Cloud Run's own IAM check consumes on this --no-allow-unauthenticated service — the two cannot coexist in one header. This is a pre-existing limitation of every IAM-protected rig in this repo (docs/reference/STAGING_RIG.md already documents it for the shared arkova-worker-staging rig: 'JWT-protected client paths aren't load-tested by the soak harness'), not introduced by or specific to Wave 3. Underlying business logic for all three was proven directly against real rig data instead (see docs/staging/wave3-2026-08/soak-start-2026-08-20.md per-member evidence); the HTTP transport layer itself was not round-tripped.",
+      "approved_by": "not yet approved — flagged for Carson/CTO review before this manifest can move to approved"
+    }
+  ]
+}

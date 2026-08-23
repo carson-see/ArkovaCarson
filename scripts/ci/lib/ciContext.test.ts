@@ -178,6 +178,120 @@ describe('resolvePrLabels', () => {
   });
 });
 
+/**
+ * The degradation used to be structurally invisible: the `gh` call was wrapped
+ * in a bare `catch { return [] }` with stderr routed to `ignore`, so a job whose
+ * env carries no GH_TOKEN/GITHUB_TOKEN fell back to the FROZEN pull_request
+ * payload with NOTHING in the log. Every label-gated override in that job was
+ * inert and the only symptom was "I applied the label, re-ran the job, and it
+ * still failed" (PR #2322, 2026-08-22).
+ *
+ * The fallback stays non-fatal — these tests pin that it is now also LOUD, and
+ * that the genuinely-empty case does NOT cry wolf.
+ */
+describe('fetchLiveLabels failure is annotated, not silent', () => {
+  const PR_ENV = { GITHUB_REF: 'refs/pull/2322/merge', GITHUB_REPOSITORY: 'carson/arkova' };
+
+  function failGh(message = 'gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.') {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'gh') throw Object.assign(new Error('Command failed'), { stderr: `${message}\n` });
+      return gitPassthrough(cmd, args);
+    });
+  }
+
+  it('emits a ::warning when the gh call fails inside a real PR context', async () => {
+    failGh();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    mod.resolvePrLabels({ ...PR_ENV, PR_LABELS: 'foo' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('::warning title=Live PR label fetch failed::');
+    expect(warn.mock.calls[0][0]).toContain('#2322');
+  });
+
+  it('still returns the env-only labels — the annotation must not turn this fatal', async () => {
+    failGh();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    expect(mod.resolvePrLabels({ ...PR_ENV, PR_LABELS: 'foo,bar' }).sort()).toEqual(['bar', 'foo']);
+  });
+
+  it('names the missing token as the cause when neither GH_TOKEN nor GITHUB_TOKEN is set', async () => {
+    failGh();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    mod.resolvePrLabels({ ...PR_ENV });
+    const msg = String(warn.mock.calls[0][0]);
+    expect(msg).toContain('neither GH_TOKEN nor GITHUB_TOKEN is set');
+    // The remediation must be actionable without reading this source file.
+    expect(msg).toContain('secrets.GITHUB_TOKEN');
+    // And it must surface gh's own reason, not just our narrative.
+    expect(msg).toContain('set the GH_TOKEN environment variable');
+  });
+
+  it('does NOT blame a missing token when one is present (real gh/API/timeout failure)', async () => {
+    failGh('gh: Not Found (HTTP 404)');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    mod.resolvePrLabels({ ...PR_ENV, GH_TOKEN: 'ghs_live' });
+    const msg = String(warn.mock.calls[0][0]);
+    expect(msg).toContain('a token IS present');
+    expect(msg).not.toContain('neither GH_TOKEN nor GITHUB_TOKEN is set');
+  });
+
+  it('stays SILENT with no PR context — a push build is legitimately empty, not broken', async () => {
+    failGh();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    expect(mod.resolvePrLabels({ GITHUB_REF: 'refs/heads/main', PR_LABELS: 'foo' })).toEqual(['foo']);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('stays silent when the gh call succeeds', async () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'gh') return 'agents-md-deletion-approved\n';
+      return gitPassthrough(cmd, args);
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    expect(mod.resolvePrLabels({ ...PR_ENV })).toEqual(['agents-md-deletion-approved']);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('warns once per process, not once per hasLabel() call', async () => {
+    // dependency-scan runs ~11 label-gated steps and hasLabel() re-resolves on
+    // every call — an un-deduped warning would bury the log.
+    failGh();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    process.env.GITHUB_REF = PR_ENV.GITHUB_REF;
+    process.env.GITHUB_REPOSITORY = PR_ENV.GITHUB_REPOSITORY;
+    mod.hasLabel('dep-range-intentional');
+    mod.hasLabel('csp-runtime-deps-intentional');
+    mod.resolvePrLabels({ ...PR_ENV });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds a pathological gh error body so it cannot flood the log', async () => {
+    failGh('x'.repeat(5_000));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mod = await import('./ciContext.js');
+    mod.resolvePrLabels({ ...PR_ENV });
+    expect(String(warn.mock.calls[0][0]).length).toBeLessThan(1_200);
+  });
+
+  it('pipes gh stderr so the reason is capturable (it used to be routed to `ignore`)', async () => {
+    execFileSyncMock.mockImplementation((cmd: string, args: string[]) => {
+      if (cmd === 'gh') return 'foo\n';
+      return gitPassthrough(cmd, args);
+    });
+    mod = await import('./ciContext.js');
+    mod.resolvePrLabels({ ...PR_ENV });
+    const ghCall = execFileSyncMock.mock.calls.find((c) => c[0] === 'gh');
+    expect((ghCall?.[2] as { stdio?: string[] })?.stdio).toEqual(['ignore', 'pipe', 'pipe']);
+  });
+});
+
 describe('getBaseRef — lazy, memoized, fail-closed (ci/ciContext-lazy-baseref)', () => {
   it('does NOT invoke git on a labels/body-only import (no eager base resolution)', async () => {
     // The whole point of the lazy split: importing ciContext to read labels /

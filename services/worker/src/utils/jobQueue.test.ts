@@ -27,7 +27,8 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-import { processNextJob, type Job } from './jobQueue.js';
+import { processNextJob, sanitizeLastError, type Job } from './jobQueue.js';
+import { poisonAt, isWellFormedUtf16 } from '../tests/utf16-poison.js';
 
 function job(overrides: Partial<Job<{ envelope_id: string }>> = {}): Job<{ envelope_id: string }> {
   return {
@@ -142,5 +143,46 @@ describe('processNextJob', () => {
       error: 'job_fail_update_failed:job-1',
     });
     expect(updates[0]).toMatchObject({ status: 'failed' });
+  });
+});
+
+// ─── Surrogate-safe `last_error` truncation (2026-08-17 poison-record class) ─
+//
+// `sanitizeLastError` bounds `last_error` to 1000 UTF-16 units before it is
+// persisted to `job_queue.last_error` via PostgREST. A bare `.slice(0, 1000)`
+// can cut inside a surrogate pair; the lone high surrogate makes the WHOLE
+// failJob request body invalid JSON (PGRST102) — the job's failure handling
+// itself fails, which is the worst possible place for this class.
+describe('sanitizeLastError surrogate safety', () => {
+  it('never returns a string that splits a surrogate pair at the 1000-unit cap', () => {
+    const out = sanitizeLastError(poisonAt(1000));
+    expect(out.length).toBeLessThanOrEqual(1000);
+    expect(isWellFormedUtf16(out)).toBe(true);
+  });
+
+  it('survives UTF-8 encoding round-trip after truncation', () => {
+    const out = sanitizeLastError(poisonAt(1000));
+    expect(Buffer.from(out, 'utf8').toString('utf8')).toBe(out);
+  });
+
+  it('leaves short well-formed messages untouched', () => {
+    expect(sanitizeLastError('plain error 😀')).toBe('plain error 😀');
+  });
+
+  it('persists a well-formed last_error when a handler throws a poisoned message', async () => {
+    updates.length = 0;
+    mockRpc.mockResolvedValue({ data: [job({ attempts: 2, max_attempts: 5 })], error: null });
+
+    await processNextJob('docusign.envelope_completed', async () => {
+      throw new Error(poisonAt(1000));
+    });
+
+    const failUpdate = updates.find((u) => u.status === 'failed');
+    expect(failUpdate).toBeDefined();
+    expect(typeof failUpdate!.last_error).toBe('string');
+    expect(isWellFormedUtf16(failUpdate!.last_error as string)).toBe(true);
+    // The payload must survive JSON serialization + UTF-8 — what PostgREST does.
+    const encoded = Buffer.from(JSON.stringify(failUpdate), 'utf8').toString('utf8');
+    expect(JSON.parse(encoded)).toEqual(JSON.parse(JSON.stringify(failUpdate)));
   });
 });

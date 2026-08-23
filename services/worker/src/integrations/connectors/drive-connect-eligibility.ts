@@ -2,11 +2,19 @@
  * DRIVE-01 (SCRUM-2366) — verified-only Google Drive connect eligibility gate.
  *
  * The connector OAuth path (oauth/start + oauth/callback) must DENY unverified
- * and free accounts before any Drive grant is issued or persisted. There are
- * three distinct entitlement paths:
+ * and free accounts before any Drive grant is issued or persisted. There is
+ * exactly ONE entitlement path:
  *
  *   - ORG admin (or sub-org admin) of a VERIFIED, non-suspended organization.
- *   - Paid + identity-verified INDIVIDUAL connecting a personal Drive.
+ *
+ * FD-D1 (CTO ruling 2026-08-12): the personal/individual path was REMOVED. It
+ * admitted a paid, identity-verified solo user at the gate, and the callback
+ * then refused that exact case because `org_integrations.org_id` is NOT NULL —
+ * so the user granted Google access to their Drive and silently got nothing.
+ * The ruling is to drop the scope, not to build personal-connect storage. The
+ * denial now happens BEFORE the OAuth round-trip, so no Drive grant is ever
+ * issued for a scope that cannot be persisted, and the reason is specific
+ * enough that the user learns why.
  *
  * Every org-membership / admin decision routes through the canonical
  * owner-inclusive resolver in `api/_org-auth.ts` (`getCallerOrgIdResult` /
@@ -27,29 +35,22 @@ import {
   isCallerOrgAdminResult,
 } from '../../api/_org-auth.js';
 
-/**
- * Paid subscription tiers that satisfy the individual-connect entitlement.
- * `free` / `org_free` are explicitly excluded. Mirrors the shipped
- * `profiles.subscription_tier` CHECK domain.
- */
-const PAID_INDIVIDUAL_TIERS = new Set<string>([
-  'starter',
-  'professional',
-  'enterprise',
-  'individual',
-  'verified_individual',
-  'organization',
-  'small_business',
-  'medium_business',
-]);
-
 export interface DriveEligibilityDb {
   /** Load the org's verification gate columns. `error:true` on DB failure. */
   getOrganization(orgId: string): Promise<{
     row: { verification_status?: string; suspended?: boolean | null } | null;
     error: boolean;
   }>;
-  /** Load the caller's individual-entitlement signals. `error:true` on DB failure. */
+  /**
+   * Load the caller's individual-entitlement signals. `error:true` on DB failure.
+   *
+   * FD-D1: NO LONGER CONSULTED by this module — individual scope is not
+   * admitted at all, so plan tier and identity-verification state cannot change
+   * the outcome. Retained on the interface (and still supplied by
+   * `makeEligibilityDb`) because the callback leg's audit/observability wiring
+   * and future org-scoped entitlement checks read from the same injected shape;
+   * a consumer that stubs it is not lying about anything.
+   */
   getProfileEntitlement(userId: string): Promise<{
     row: { subscription_tier?: string; identity_verified_at?: string | null } | null;
     error: boolean;
@@ -58,15 +59,38 @@ export interface DriveEligibilityDb {
 
 export type DriveConnectDenyReason =
   | 'not_admin'
+  /**
+   * The caller belongs to an org but invoked the PERSONAL path (no `org_id`).
+   * Distinct from `not_admin` on purpose: this is a wrong-scope call by a user
+   * who may well be an org OWNER, not an authorization failure. Collapsing the
+   * two — as this module did until FD-D3 — makes an org owner read as "not
+   * admin", which is both wrong and undiagnosable from the response.
+   */
+  | 'org_scope_required'
+  /**
+   * FD-D1: the caller has NO organization at all, and individual (personal
+   * Drive) scope is not supported. Distinct from `org_scope_required`, which is
+   * an actionable "retry with your org_id" — this caller has no org_id to
+   * resend, so telling them to resend one would be a dead end.
+   *
+   * Replaces `needs_paid_plan` / `individual_not_verified`, both of which
+   * implied that upgrading a plan or completing identity verification would
+   * open this path. Neither ever could: the OAuth callback persists into
+   * `org_integrations.org_id`, which is NOT NULL.
+   */
+  | 'individual_scope_unsupported'
   | 'org_unverified'
   | 'org_suspended'
-  | 'needs_paid_plan'
-  | 'individual_not_verified'
   | 'lookup_failed';
 
+/**
+ * FD-D1: there is exactly ONE allowed shape — an org-scoped connect. The
+ * `{ scope: 'individual' }` variant is deliberately gone rather than merely
+ * unreachable, so re-admitting individual scope without also building the
+ * personal-connect storage path is a type error, not a silent regression.
+ */
 export type DriveConnectEligibility =
   | { allowed: true; scope: 'org'; orgId: string }
-  | { allowed: true; scope: 'individual'; orgId: null }
   | { allowed: false; reason: DriveConnectDenyReason };
 
 /**
@@ -74,8 +98,11 @@ export type DriveConnectEligibility =
  *
  * When `orgId` is supplied the ORG path is taken: the caller must be an admin
  * (owner-inclusive) of that org AND the org must be VERIFIED + not suspended.
- * When `orgId` is omitted the INDIVIDUAL path is taken: the caller must be on a
- * paid plan AND identity-verified.
+ * That is the ONLY path that can succeed.
+ *
+ * When `orgId` is omitted the personal path is taken and ALWAYS denies (FD-D1),
+ * with one of two distinct reasons: `org_scope_required` if the caller does have
+ * an org (retry naming it), `individual_scope_unsupported` if they do not.
  */
 export async function resolveDriveConnectEligibility(args: {
   userId: string;
@@ -84,6 +111,11 @@ export async function resolveDriveConnectEligibility(args: {
 }): Promise<DriveConnectEligibility> {
   const { userId, orgId, db } = args;
 
+  // NOTE: this module stays logger-free ON PURPOSE — importing the logger pulls
+  // in `config.ts`, whose Zod boot validation would make every consumer's unit
+  // test require a full env fixture. Denials are logged by the OAuth route
+  // (`logConnectDenial` in api/v1/integrations/drive-oauth.ts), which owns both
+  // the start and callback legs and already has the logger + request context.
   if (orgId) {
     return resolveOrgPath(userId, orgId, db);
   }
@@ -116,30 +148,45 @@ async function resolveOrgPath(
   return { allowed: true, scope: 'org', orgId };
 }
 
+/**
+ * The personal (no `org_id`) path. ALWAYS denies — see FD-D1 on the type above.
+ *
+ * It still runs the org lookup, because WHICH denial the caller gets is the
+ * whole point: `org_scope_required` is a retry instruction, and
+ * `individual_scope_unsupported` is a statement that this scope does not exist.
+ * Handing the second user the first message sends them to look for an `org_id`
+ * they do not have.
+ *
+ * Note what is NOT here any more: the plan-tier and identity-verification
+ * checks. Their denials (`needs_paid_plan`, `individual_not_verified`) told a
+ * solo user that paying or verifying would unlock personal connect. It never
+ * could — `org_integrations.org_id` is NOT NULL, so the callback rejected the
+ * case the gate had just admitted. Keeping those reasons would keep the false
+ * promise alive one layer down.
+ */
 async function resolveIndividualPath(
   userId: string,
   db: DriveEligibilityDb,
 ): Promise<DriveConnectEligibility> {
-  // Confirm the caller genuinely has NO org before treating them as an
-  // individual — routed through the canonical resolver (owner-inclusive), so an
-  // owner linked only via profiles.org_id is NOT mis-bucketed as an individual.
+  void db; // FD-D1: no entitlement lookup — nothing about this caller can allow it.
+
+  // Routed through the canonical resolver (owner-inclusive), so an owner linked
+  // only via profiles.org_id is NOT mis-bucketed as having no org — that owner
+  // gets the actionable `org_scope_required`, not the dead-end reason.
   const orgResult = await getCallerOrgIdResult(userId);
   if (orgResult.error) return { allowed: false, reason: 'lookup_failed' };
   if (orgResult.value) {
     // Caller actually belongs to an org but called the personal path without an
-    // org id — deny; they must use the org connect path (needs admin).
-    return { allowed: false, reason: 'not_admin' };
+    // org id — deny; they must retry the ORG connect path, supplying `org_id`.
+    //
+    // FD-D3: this used to return `not_admin`, which is what an org OWNER saw
+    // when the client omitted `org_id`. The caller's admin status was never
+    // even checked here, so reporting "not admin" was not merely confusing, it
+    // was unfounded. `org_scope_required` says the actionable thing instead.
+    return { allowed: false, reason: 'org_scope_required' };
   }
 
-  const { row, error } = await db.getProfileEntitlement(userId);
-  if (error) return { allowed: false, reason: 'lookup_failed' };
-  if (!row || !row.subscription_tier || !PAID_INDIVIDUAL_TIERS.has(row.subscription_tier)) {
-    return { allowed: false, reason: 'needs_paid_plan' };
-  }
-  if (!row.identity_verified_at) {
-    return { allowed: false, reason: 'individual_not_verified' };
-  }
-  return { allowed: true, scope: 'individual', orgId: null };
+  return { allowed: false, reason: 'individual_scope_unsupported' };
 }
 
 /**

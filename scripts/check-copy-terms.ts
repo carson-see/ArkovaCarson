@@ -67,13 +67,15 @@ export const FORBIDDEN_TERMS = [
   // inside identifiers where adjacent chars include `_`, e.g. the env-var name
   // SUPABASE_SERVICE_ROLE_KEY leaking into an error string. \w includes `_`
   // which used to defeat the boundary and miss the most common leak vector.
-  String.raw`(?<![A-Za-z0-9])service_role(?![A-Za-z0-9])`,
-  String.raw`(?<![A-Za-z0-9])service role(?![A-Za-z0-9])`,
+  // (Plain quotes, not String.raw: these three patterns carry no backslash,
+  // so String.raw would be pure noise — SonarCloud S7780.)
+  '(?<![A-Za-z0-9])service_role(?![A-Za-z0-9])',
+  '(?<![A-Za-z0-9])service role(?![A-Za-z0-9])',
   // CIBA-HARDEN-05: PostgRESTError is the common TitleCase variant — match it
   // too. Keep only the left ASCII-alnum boundary (no right boundary) so
   // CamelCase continuations like "PostgRESTError" hit while genuine words
   // (there's nothing English starting with "postgrest") don't false-positive.
-  String.raw`(?<![A-Za-z0-9])postgrest`,
+  '(?<![A-Za-z0-9])postgrest',
 
   // SCRUM-1092 / SCRUM-1672: the generic document action is "Secure Document".
   // "Issue Credential" is allowed only in src/lib/copy.ts for the restricted
@@ -101,6 +103,58 @@ const INCLUDE_ROOTS = [
   'src/hooks/',
   'packages/embed/src/',
 ];
+
+// §1.3 worker-email parity: outbound EMAIL is user-visible copy generated in
+// `services/worker/`, which INCLUDE_ROOTS never reached — `lint:copy` stayed
+// green while customer subjects/bodies went unscanned, even though both email
+// agents.md files already carried the rule with nothing enforcing it.
+//
+// Scope is deliberately NOT all of services/worker/src: §1.3 bans these terms
+// in USER-VISIBLE strings and explicitly allows internal code to use technical
+// names, so scanning the worker wholesale would bury the gate in false
+// positives (`.select('tx_hash')`, `crypto.randomBytes`, 'broadcast' log
+// lines). Two admission paths instead:
+//
+//   ROOTS      — modules whose ENTIRE contents are email copy by construction
+//                (template builders + the shared branded layout helpers).
+//   COMPOSERS  — files elsewhere under services/worker/src that the CONTENT
+//                detector proves build email copy (a `subject`/`html` literal
+//                or a wrapTemplate() call, in a module wired to the email
+//                infrastructure). Content-derived on purpose: a hand-maintained
+//                path census rots the moment the next digest job lands, which
+//                is exactly how `jobs/queue-digest.ts` came to be unscanned.
+const WORKER_COPY_ROOTS = [
+  'services/worker/src/email/',
+  'services/worker/src/emails/',
+];
+
+/** Walk root for COMPOSER detection (a superset of WORKER_COPY_ROOTS). */
+const WORKER_SRC_ROOT = 'services/worker/src/';
+
+// Wired to the email infrastructure: imports the sender / shared template
+// helpers, or calls sendEmail(). Necessary but NOT sufficient — a pure sender
+// (`sendEmail({ to, subject, html })` where both came from a builder) composes
+// no copy of its own and stays out of scope; its copy is scanned once, at the
+// builder in email/templates.ts.
+const EMAIL_INFRA_RE =
+  /from\s+['"][^'"]*(?:email\/sender|email\/index|emails\/_template)(?:\.js)?['"]|\bsendEmail\s*\(/;
+
+// Composes copy: a `subject` assigned a STRING/TEMPLATE literal, an `html`
+// template literal, or a wrapTemplate() call. `subject: string;` (a type
+// member) and `subject,` (shorthand pass-through) deliberately do not match.
+const EMAIL_COPY_LITERAL_RE =
+  /\bwrapTemplate\s*\(|\bsubject\s*[:=]\s*[`'"]|\bhtml\s*[:=]\s*`/;
+
+/**
+ * True when `content` both reaches the email infrastructure AND builds email
+ * copy of its own — i.e. the file is an email-copy COMPOSER whose strings ship
+ * to a recipient's inbox. Conservative by construction: a comment that merely
+ * mentions `wrapTemplate` only ever widens the scan (more copy checked), never
+ * narrows it. Exported for unit tests.
+ */
+export function isEmailCopyComposer(content: string): boolean {
+  return EMAIL_INFRA_RE.test(content) && EMAIL_COPY_LITERAL_RE.test(content);
+}
 
 // Files/patterns to exclude
 const EXCLUDE_PATTERNS = [
@@ -164,25 +218,47 @@ function getAllFiles(dir: string, files: string[] = []): string[] {
   return files;
 }
 
+/** Repo-relative POSIX form of `filePath` (absolute paths are made relative). */
+function toRelativePosix(filePath: string, root: string = process.cwd()): string {
+  return (path.isAbsolute(filePath) ? path.relative(root, filePath) : filePath)
+    .split(path.sep)
+    .join('/');
+}
+
 /**
  * True when `filePath` is in scope for the copy-term scan. Exported for unit
  * tests. Accepts absolute or repo-relative paths and normalises to POSIX
  * separators so the prefix/glob checks behave identically on Windows.
+ *
+ * `content` is OPTIONAL and only ever WIDENS scope: a file under
+ * services/worker/src that is not in a worker copy root is admitted when — and
+ * only when — its content proves it composes email copy
+ * ({@link isEmailCopyComposer}). Without content the answer for such a path is
+ * `false`, so every caller that wants worker-email coverage must read the file
+ * (see collectCandidateFiles) rather than guessing from the path.
  */
-export function shouldCheck(filePath: string): boolean {
-  const relativePath = (
-    path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath
-  ).split(path.sep).join('/');
+function isExcluded(relativePath: string): boolean {
+  return EXCLUDE_PATTERNS.some((pattern) => globToRegex(pattern).test(relativePath));
+}
 
-  // Check exclusions first (copy.ts vocabulary file, tests, ui primitives,
-  // treasury admin, node_modules/dist).
-  for (const pattern of EXCLUDE_PATTERNS) {
-    if (globToRegex(pattern).test(relativePath)) {
-      return false;
-    }
+export function shouldCheck(filePath: string, content?: string): boolean {
+  const relativePath = toRelativePosix(filePath);
+
+  // Check exclusions first (tests, ui primitives, treasury admin,
+  // node_modules/dist).
+  if (isExcluded(relativePath)) return false;
+
+  if (INCLUDE_ROOTS.some((root) => relativePath.startsWith(root))) return true;
+  if (WORKER_COPY_ROOTS.some((root) => relativePath.startsWith(root))) return true;
+
+  // Worker email-copy composers outside those roots (jobs/*-digest.ts …).
+  // Everything else under services/worker/src is internal code, which §1.3
+  // explicitly permits to use technical names.
+  if (relativePath.startsWith(WORKER_SRC_ROOT) && content !== undefined) {
+    return isEmailCopyComposer(content);
   }
 
-  return INCLUDE_ROOTS.some((root) => relativePath.startsWith(root));
+  return false;
 }
 
 // Pre-compile once. Building a new RegExp per line × 13 terms × 224 files was
@@ -231,15 +307,32 @@ export function shouldSkipLine(line: string, trimmed: string): boolean {
 }
 
 /**
+ * Neutralise the one CSS declaration that collides with a banned term.
+ *
+ * §1.3 worker-email parity: HTML email bodies carry INLINE CSS
+ * (`style="display: block; padding: 12px;"` on a button) because email clients
+ * strip stylesheets — and `display: block` is the only banned term that is a
+ * legitimate CSS value. The frontend never hit this: `className` values are
+ * stripped wholesale and `style={{ display: 'block' }}` is a bare in-code value
+ * string. Only the `display:`/`block` PAIR is blanked — never the whole
+ * attribute — so visible copy sitting beside the style attribute is still
+ * scanned (`style="display: block">Open your Bitcoin wallet</a>` still flags).
+ */
+function stripCssPresentation(line: string): string {
+  return line.replaceAll(/\bdisplay\s*:\s*block\b/gi, 'display:_');
+}
+
+/**
  * Sanitises a JSX/TS line so the term scan only sees user-visible copy.
  * Strips className/class attribute values (Tailwind utilities like
- * "inline-block" are noise) and JSX comments (so engineering notes can mention
- * banned terms without tripping the lint).
+ * "inline-block" are noise), inline `display: block` CSS, and JSX comments (so
+ * engineering notes can mention banned terms without tripping the lint).
  *
  * Exported for unit tests.
  */
 export function stripClassNameAttributes(line: string): string {
-  let out = line.replaceAll(/className\s*=\s*"[^"]*"/g, 'className=""');
+  let out = stripCssPresentation(line);
+  out = out.replaceAll(/className\s*=\s*"[^"]*"/g, 'className=""');
   out = out.replaceAll(/className\s*=\s*'[^']*'/g, "className=''");
   // Brace-walk so `className={\`text-${x} block\`}` and
   // `className={cn('a', isOpen && 'b')}` strip cleanly — a naive `.*?` would
@@ -512,7 +605,7 @@ function normaliseTerm(term: string): string {
   return term.trim().toLowerCase();
 }
 
-const MATCH_KEY_SEP = '\\0';
+const MATCH_KEY_SEP = String.raw`\0`;
 
 // Match key = normalised file + line + normalised term. SCRUM-2149 fix2:
 // `term` is part of the key (NUL-separated at runtime so it can never collide with the
@@ -665,58 +758,85 @@ export function partitionAgainstAllowlist(
 }
 
 /**
- * @param jsxTextContinuation PR #1433 follow-up: true when {@link scanFileContent}
- *   determined this line is RAW JSX ELEMENT TEXT continued from a previous line
- *   (e.g. the middle of a wrapped `<p>…</p>` paragraph). Such a line often has
- *   neither a quote char nor a same-line `<`/`>` pair, so the quote/JSX
- *   short-circuit below would skip it — the blind spot that let the literal
- *   "Bitcoin blockchain" ship to prod in src/components/verification. In this
- *   mode the line is user-visible copy BY CONSTRUCTION: balanced `{…}` JSX
- *   expressions are blanked out (they are code, scanned via their own lines'
- *   normal path) and every remaining forbidden-term match flags with no
- *   isCodeIdentifier suppression (there are no code positions in raw text).
+ * Collect one {@link Violation} per match of every regex in `regexes` against
+ * `haystack`. Extracted so the three scan passes in {@link findTermViolations}
+ * (launch-blocker terms, raw-copy terms, code-aware terms) share one loop
+ * instead of three copies of the same regex/exec/push nest.
+ *
+ * `context` is supplied by the caller rather than derived from `haystack`: a
+ * pass may scan a transformed variant of the line (raw-copy mode blanks `{…}`
+ * expressions) while still reporting the original cleaned line as the snippet.
+ * `isSuppressed` — when supplied — drops a match the pass considers a code
+ * position rather than copy.
+ */
+function collectTermMatches(
+  regexes: RegExp[],
+  haystack: string,
+  lineNum: number,
+  filePath: string,
+  context: string,
+  isSuppressed?: (haystack: string, match: RegExpExecArray) => boolean,
+): Violation[] {
+  const found: Violation[] = [];
+  for (const regex of regexes) {
+    regex.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(haystack)) !== null) {
+      if (isSuppressed?.(haystack, match)) continue;
+      found.push({ file: filePath, line: lineNum, term: match[0], context });
+    }
+  }
+  return found;
+}
+
+/**
+ * True when a forbidden-term match sits in a code position that is never copy
+ * ({@link isCodeIdentifier}) AND the term is one the structural filter is
+ * ALLOWED to silence. A secret / launch-blocker leak is never suppressed —
+ * see the non-suppressible guard in {@link isNonSuppressibleTerm}.
+ */
+function isSuppressedCodePosition(haystack: string, match: RegExpExecArray): boolean {
+  return (
+    isCodeIdentifier(haystack, match.index, match[0].length) && !isNonSuppressibleTerm(match[0])
+  );
+}
+
+/**
+ * @param rawCopyContinuation PR #1433 follow-up: true when {@link scanFileContent}
+ *   determined this line is RAW COPY continued from a previous line — the
+ *   middle of a wrapped `<p>…</p>` JSX paragraph, or the middle of a wrapped
+ *   paragraph inside a multi-line template literal (worker email HTML, the
+ *   src/lib/copy.ts disclaimer, an embed-widget string). Such a
+ *   line often has neither a quote char nor a same-line `<`/`>` pair, so the
+ *   quote/JSX short-circuit below would skip it — the blind spot that let the
+ *   literal "Bitcoin blockchain" ship to prod in src/components/verification.
+ *   In this mode the line is user-visible copy BY CONSTRUCTION: balanced `{…}`
+ *   expressions are blanked out (they are code — including a template's
+ *   `${…}` interpolations — and are scanned via their own lines' normal path)
+ *   and every remaining forbidden-term match flags with no isCodeIdentifier
+ *   suppression (there are no code positions in raw text).
  */
 export function findTermViolations(
   line: string,
   lineNum: number,
   filePath: string,
-  jsxTextContinuation = false,
+  rawCopyContinuation = false,
 ): Violation[] {
-  const results: Violation[] = [];
   const cleaned = stripClassNameAttributes(line);
+  // Reported snippet. Always derived from the CLEANED line, never from the
+  // haystack a pass scans — raw-copy mode scans a brace-blanked variant.
+  const context = cleaned.trim().substring(0, 80);
 
-  for (const regex of LAUNCH_BLOCKER_REGEXES) {
-    regex.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(cleaned)) !== null) {
-      results.push({
-        file: filePath,
-        line: lineNum,
-        term: match[0],
-        context: cleaned.trim().substring(0, 80),
-      });
-    }
-  }
+  const results = collectTermMatches(LAUNCH_BLOCKER_REGEXES, cleaned, lineNum, filePath, context);
 
   // SCRUM-2149(c): raw DB-enum render heuristic (JSX-child {X.status}). Runs on
   // the cleaned line (so className braces are already neutralised) and is gated
   // to .tsx inside findRawEnumRenders.
   results.push(...findRawEnumRenders(cleaned, lineNum, filePath));
 
-  if (jsxTextContinuation) {
+  if (rawCopyContinuation) {
     const textOnly = blankJsxExpressions(cleaned);
-    for (const regex of FORBIDDEN_REGEXES) {
-      regex.lastIndex = 0;
-      let match: RegExpExecArray | null;
-      while ((match = regex.exec(textOnly)) !== null) {
-        results.push({
-          file: filePath,
-          line: lineNum,
-          term: match[0],
-          context: cleaned.trim().substring(0, 80),
-        });
-      }
-    }
+    results.push(...collectTermMatches(FORBIDDEN_REGEXES, textOnly, lineNum, filePath, context));
     return results;
   }
 
@@ -726,24 +846,16 @@ export function findTermViolations(
   const hasJsxText = cleaned.includes('>') && cleaned.includes('<');
   if (!hasString && !hasJsxText) return results;
 
-  for (const regex of FORBIDDEN_REGEXES) {
-    regex.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(cleaned)) !== null) {
-      if (
-        isCodeIdentifier(cleaned, match.index, match[0].length) &&
-        !isNonSuppressibleTerm(match[0])
-      ) {
-        continue;
-      }
-      results.push({
-        file: filePath,
-        line: lineNum,
-        term: match[0],
-        context: cleaned.trim().substring(0, 80),
-      });
-    }
-  }
+  results.push(
+    ...collectTermMatches(
+      FORBIDDEN_REGEXES,
+      cleaned,
+      lineNum,
+      filePath,
+      context,
+      isSuppressedCodePosition,
+    ),
+  );
   return results;
 }
 
@@ -770,6 +882,9 @@ export function findTermViolations(
 /** One frame of nesting: JSX element text, or a `{…}` expression opened from it. */
 type JsxFrame = { kind: 'text' } | { kind: 'expr'; depth: number };
 
+/** The `{…}` half of {@link JsxFrame} — the only frame that carries depth. */
+type JsxExprFrame = Extract<JsxFrame, { kind: 'expr' }>;
+
 interface JsxTextState {
   /**
    * Context stack. Empty = plain code. `text` on top = inside JSX element
@@ -795,6 +910,22 @@ function newJsxTextState(): JsxTextState {
 }
 
 /**
+ * Index just past the `}` that balances the `{` at `start`, or the line length
+ * when it never closes — an unclosed `{` runs to EOL, because the rest of the
+ * line is the head of a multi-line expression, not copy.
+ */
+function balancedBraceEnd(chars: string[], start: number): number {
+  let depth = 1;
+  let j = start + 1;
+  while (j < chars.length && depth > 0) {
+    if (chars[j] === '{') depth++;
+    else if (chars[j] === '}') depth--;
+    j++;
+  }
+  return depth === 0 ? j : chars.length;
+}
+
+/**
  * Blank balanced `{…}` JSX expressions on a raw-text continuation line (they
  * are code — their values are scanned by the normal per-line rules when they
  * span lines, and are never element text). An UNCLOSED `{` blanks to EOL: the
@@ -802,18 +933,15 @@ function newJsxTextState(): JsxTextState {
  */
 function blankJsxExpressions(line: string): string {
   const out = line.split('');
-  for (let i = 0; i < out.length; i++) {
-    if (out[i] !== '{') continue;
-    let depth = 1;
-    let j = i + 1;
-    while (j < out.length && depth > 0) {
-      if (out[j] === '{') depth++;
-      else if (out[j] === '}') depth--;
-      j++;
+  let i = 0;
+  while (i < out.length) {
+    if (out[i] !== '{') {
+      i++;
+      continue;
     }
-    const end = depth === 0 ? j : out.length;
+    const end = balancedBraceEnd(out, i);
     for (let k = i; k < end; k++) out[k] = ' ';
-    i = end - 1;
+    i = end;
   }
   return out.join('');
 }
@@ -829,6 +957,19 @@ function skipQuoted(line: string, i: number): number {
     else j++;
   }
   return line.length;
+}
+
+/**
+ * Index of the backtick that closes a template literal opened at or before
+ * `i`, or a value >= `line.length` when it does not close on this line. A
+ * backslash escapes the next character, so an escaped backtick does not close
+ * the literal. Shared by the tag-attribute walker and the code-context walker
+ * so the two can never disagree about where a template ends.
+ */
+function skipToTemplateEnd(line: string, i: number): number {
+  let j = i;
+  while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
+  return j;
 }
 
 /** True when a `/` at `i` starts a REGEX literal rather than division: the
@@ -866,6 +1007,104 @@ const TAG_SPANS_LINES = -2;
 // matching just these two closes the generic-arrow hole (review finding 2).
 const GENERIC_PARAM_RE = /^[A-Za-z_$][\w$]*(?:\s+extends\b|\s*,)/;
 
+/** Attribute-scanning cursor for a tag, carried across lines while it is open. */
+type TagWalk = { braceDepth: number; inTemplate: boolean };
+
+/** {@link walkTagBody} reached end-of-line without the tag's `>`. */
+const TAG_UNTERMINATED = -1;
+
+/**
+ * Advance past ONE tag-body character that is not the tag's terminating `>`: a
+ * quoted attribute value is skipped wholesale, a backtick opens an attribute
+ * template literal, and braces track attribute-expression depth.
+ */
+function stepTagBodyChar(line: string, j: number, walk: TagWalk): number {
+  const c = line[j];
+  if (c === '"' || c === "'") return skipQuoted(line, j);
+  if (c === '`') {
+    walk.inTemplate = true;
+    return j + 1;
+  }
+  if (c === '{') {
+    walk.braceDepth++;
+    return j + 1;
+  }
+  if (c === '}') {
+    walk.braceDepth = Math.max(0, walk.braceDepth - 1);
+    return j + 1;
+  }
+  return j + 1;
+}
+
+/**
+ * Close an attribute template literal that is already open. Returns the index
+ * just past its backtick, or TAG_UNTERMINATED when the template runs past the
+ * end of this line — the tag then stays open (the ApiSandbox className shape).
+ */
+function closeTagTemplate(line: string, j: number, walk: TagWalk): number {
+  const end = skipToTemplateEnd(line, j);
+  if (end >= line.length) return TAG_UNTERMINATED;
+  walk.inTemplate = false;
+  return end + 1;
+}
+
+/**
+ * Walk tag-attribute characters from `j` to the tag's `>` at `{}`-depth 0,
+ * honouring quoted attribute values, attribute-expression braces, and template
+ * literals — a multi-line `` className={`… ${ `` template is opaque until its
+ * closing backtick (adversarial review round 2, ApiSandbox className shape).
+ * Returns the `>` index, or -1 when the tag continues on the next line (walk
+ * state updated for the caller to persist in pendingTag).
+ */
+function walkTagBody(line: string, j: number, walk: TagWalk): number {
+  let k = j;
+  while (k < line.length) {
+    if (walk.inTemplate) {
+      k = closeTagTemplate(line, k, walk);
+      if (k === TAG_UNTERMINATED) return TAG_UNTERMINATED;
+      continue;
+    }
+    if (line[k] === '>' && walk.braceDepth === 0) return k;
+    k = stepTagBodyChar(line, k, walk);
+  }
+  return TAG_UNTERMINATED;
+}
+
+/**
+ * Which stack transition a completed tag performs. A named kind rather than
+ * two boolean flags (SonarCloud S2301): the call site states which shape it
+ * just parsed, and a further shape would extend the union instead of adding
+ * another flag whose meaning is invisible at the call site.
+ */
+type TagEnd = 'close' | 'open' | 'self-close';
+
+/** Apply the stack transition for a completed tag. */
+function applyTagEnd(state: JsxTextState, end: TagEnd): void {
+  if (end === 'close') {
+    // `</p>` / `</>` closes the innermost text frame (back to parent context).
+    if (state.stack[state.stack.length - 1]?.kind === 'text') state.stack.pop();
+  } else if (end === 'open') {
+    state.stack.push({ kind: 'text' });
+  }
+  // 'self-close' (`<br />`) neither opens nor closes a frame.
+}
+
+/**
+ * True when a `<` that is neither `</` nor `<>` does NOT open a JSX tag: a
+ * non-letter follows it, or — in CODE context only — it is a comparison or a
+ * generic argument list (`Array<string>`, `x<y`) or one of the two TSX
+ * generic-arrow spellings. Inside element text (`prose`) an abutting previous
+ * character is ordinary copy (`text</b>`), never a disambiguator: the
+ * prev-char guard is a CODE-context tool only (review finding 1).
+ */
+function isNonTagAngle(line: string, i: number, next: string, prose: boolean): boolean {
+  if (!/[A-Za-z]/.test(next)) return true;
+  if (prose) return false;
+  const prev = i > 0 ? line[i - 1] : '';
+  if (/[\w$)\]]/.test(prev)) return true; // Array<string>, x<y
+  return GENERIC_PARAM_RE.test(line.slice(i + 1)); // <T extends …> / <T,>
+}
+
 /**
  * Try to consume a JSX tag starting at the `<` at index `i`. Returns the index
  * to continue from, TAG_NOT_A_TAG when this `<` is not a tag (comparison,
@@ -879,77 +1118,150 @@ function tryConsumeTag(line: string, i: number, state: JsxTextState, prose: bool
   const closing = next === '/';
   const fragmentOpen = next === '>';
 
-  if (!closing && !fragmentOpen) {
-    if (!/[A-Za-z]/.test(next)) return TAG_NOT_A_TAG;
-    if (!prose) {
-      const prev = i > 0 ? line[i - 1] : '';
-      if (/[\w$)\]]/.test(prev)) return TAG_NOT_A_TAG; // Array<string>, x<y
-      if (GENERIC_PARAM_RE.test(line.slice(i + 1))) return TAG_NOT_A_TAG; // <T extends …> / <T,>
-    }
-  }
+  if (!closing && !fragmentOpen && isNonTagAngle(line, i, next, prose)) return TAG_NOT_A_TAG;
 
   if (fragmentOpen) {
     state.stack.push({ kind: 'text' });
     return i + 2;
   }
 
-  const walk = { braceDepth: 0, inTemplate: false };
+  const walk: TagWalk = { braceDepth: 0, inTemplate: false };
   const gt = walkTagBody(line, i + (closing ? 2 : 1), walk);
-  if (gt === -1) {
+  if (gt === TAG_UNTERMINATED) {
     state.pendingTag = { closing, braceDepth: walk.braceDepth, inTemplate: walk.inTemplate };
     return TAG_SPANS_LINES;
   }
-  applyTagEnd(state, closing, line[gt - 1] === '/');
+  if (closing) applyTagEnd(state, 'close');
+  else applyTagEnd(state, line[gt - 1] === '/' ? 'self-close' : 'open');
   return gt + 1;
 }
 
-/**
- * Walk tag-attribute characters from `j` to the tag's `>` at `{}`-depth 0,
- * honouring quoted attribute values, attribute-expression braces, and template
- * literals — a multi-line `` className={`… ${ `` template is opaque until its
- * closing backtick (adversarial review round 2, ApiSandbox className shape).
- * Returns the `>` index, or -1 when the tag continues on the next line (walk
- * state updated for the caller to persist in pendingTag).
- */
-function walkTagBody(line: string, j: number, walk: { braceDepth: number; inTemplate: boolean }): number {
-  while (j < line.length) {
-    if (walk.inTemplate) {
-      while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
-      if (j >= line.length) return -1;
-      walk.inTemplate = false;
-      j++;
-      continue;
-    }
-    const c = line[j];
-    if (c === '"' || c === "'") { j = skipQuoted(line, j); continue; }
-    if (c === '`') { walk.inTemplate = true; j++; continue; }
-    if (c === '{') { walk.braceDepth++; j++; continue; }
-    if (c === '}') { walk.braceDepth = Math.max(0, walk.braceDepth - 1); j++; continue; }
-    if (c === '>' && walk.braceDepth === 0) return j;
-    j++;
-  }
-  return -1;
-}
-
-/** Apply the stack transition for a completed tag. */
-function applyTagEnd(state: JsxTextState, closing: boolean, selfClosing: boolean): void {
-  if (closing) {
-    // `</p>` / `</>` closes the innermost text frame (back to parent context).
-    if (state.stack[state.stack.length - 1]?.kind === 'text') state.stack.pop();
-  } else if (!selfClosing) {
-    state.stack.push({ kind: 'text' });
-  }
-}
 
 /** Resume a tag that spans lines; returns index past its `>` or -1 (still open). */
 function resumePendingTag(line: string, state: JsxTextState): number {
   const pending = state.pendingTag;
   if (pending === null) return 0;
   const gt = walkTagBody(line, 0, pending);
-  if (gt === -1) return -1;
-  applyTagEnd(state, pending.closing, gt > 0 && line[gt - 1] === '/');
+  if (gt === TAG_UNTERMINATED) return TAG_UNTERMINATED;
+  if (pending.closing) applyTagEnd(state, 'close');
+  else applyTagEnd(state, gt > 0 && line[gt - 1] === '/' ? 'self-close' : 'open');
   state.pendingTag = null;
   return gt + 1;
+}
+
+/** A step consumed the rest of the line; the caller stops walking it. */
+const LINE_CONSUMED = -1;
+
+/**
+ * Consume the tail of a construct opened on an EARLIER line — a block comment
+ * or a code-context template literal — and return the index to resume parsing
+ * from, or LINE_CONSUMED when that construct swallows this whole line.
+ */
+function resumeOpenConstruct(line: string, state: JsxTextState): number {
+  if (state.inBlockComment) {
+    const e = line.indexOf('*/');
+    if (e === -1) return LINE_CONSUMED;
+    state.inBlockComment = false;
+    return e + 2;
+  }
+  if (state.inTemplate) {
+    const end = skipToTemplateEnd(line, 0);
+    if (end >= line.length) return LINE_CONSUMED;
+    state.inTemplate = false;
+    return end + 1;
+  }
+  return 0;
+}
+
+/**
+ * Advance one character of JSX element TEXT. Only `{` (opens an expression
+ * frame) and `<` (a tag) are structural — apostrophes, quotes, slashes and a
+ * bare `>` are prose, so copy can never corrupt state (review finding 3).
+ */
+function stepTextContext(line: string, i: number, state: JsxTextState): number {
+  const ch = line[i];
+  if (ch === '{') {
+    state.stack.push({ kind: 'expr', depth: 1 });
+    return i + 1;
+  }
+  if (ch !== '<') return i + 1; // prose — quotes, slashes, `>` etc. are just copy
+  const r = tryConsumeTag(line, i, state, true);
+  if (r === TAG_SPANS_LINES) return LINE_CONSUMED;
+  return r === TAG_NOT_A_TAG ? i + 1 : r;
+}
+
+/**
+ * Handle a `/` in CODE context: a line comment ends the line, a block comment
+ * is skipped (and may stay open past it), a regex literal is skipped wholesale
+ * (review finding 4), and anything else is division.
+ */
+function stepCodeSlash(line: string, i: number, state: JsxTextState): number {
+  if (line[i + 1] === '/') return LINE_CONSUMED; // line comment
+  if (line[i + 1] === '*') {
+    const e = line.indexOf('*/', i + 2);
+    if (e === -1) {
+      state.inBlockComment = true;
+      return LINE_CONSUMED;
+    }
+    return e + 2;
+  }
+  if (startsRegexLiteral(line, i)) {
+    const e = skipRegexLiteral(line, i);
+    if (e !== -1) return e;
+  }
+  return i + 1; // unterminated on this line → it was division
+}
+
+/**
+ * Handle expression braces and tag starts in CODE/EXPR context; every other
+ * character advances by one. `{`/`}` count only inside an EXPR frame — at the
+ * bottom of the stack (plain code) they are ordinary block braces.
+ */
+function stepCodeBrace(
+  line: string,
+  i: number,
+  state: JsxTextState,
+  top: JsxExprFrame | undefined,
+): number {
+  const ch = line[i];
+  if (top !== undefined && ch === '{') {
+    top.depth++;
+    return i + 1;
+  }
+  if (top !== undefined && ch === '}') {
+    top.depth--;
+    if (top.depth === 0) state.stack.pop();
+    return i + 1;
+  }
+  if (ch !== '<') return i + 1;
+  const r = tryConsumeTag(line, i, state, false);
+  if (r === TAG_SPANS_LINES) return LINE_CONSUMED;
+  return r === TAG_NOT_A_TAG ? i + 1 : r;
+}
+
+/**
+ * Advance one character of CODE (empty stack) or of a `{…}` EXPR frame:
+ * strings, template literals, comments and regex literals are all skipped as
+ * code, then {@link stepCodeBrace} handles expression depth and tag starts.
+ */
+function stepCodeContext(
+  line: string,
+  i: number,
+  state: JsxTextState,
+  top: JsxExprFrame | undefined,
+): number {
+  const ch = line[i];
+  if (ch === '"' || ch === "'") return skipQuoted(line, i);
+  if (ch === '`') {
+    const end = skipToTemplateEnd(line, i + 1);
+    if (end >= line.length) {
+      state.inTemplate = true;
+      return LINE_CONSUMED;
+    }
+    return end + 1;
+  }
+  if (ch === '/') return stepCodeSlash(line, i, state);
+  return stepCodeBrace(line, i, state, top);
 }
 
 /**
@@ -964,148 +1276,245 @@ function resumePendingTag(line: string, state: JsxTextState): number {
  * guard. All tag ends honour `{}` depth and quoted attribute values.
  */
 function updateJsxTextState(line: string, state: JsxTextState): void {
-  let i = 0;
-
-  if (state.inBlockComment) {
-    const e = line.indexOf('*/');
-    if (e === -1) return;
-    state.inBlockComment = false;
-    i = e + 2;
-  } else if (state.inTemplate) {
-    let j = 0;
-    while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
-    if (j >= line.length) return;
-    state.inTemplate = false;
-    i = j + 1;
-  }
+  let i = resumeOpenConstruct(line, state);
+  if (i === LINE_CONSUMED) return;
 
   if (state.pendingTag !== null) {
     const r = resumePendingTag(line.slice(i), state);
-    if (r === -1) return;
+    if (r === TAG_UNTERMINATED) return;
     i += r;
   }
 
   while (i < line.length) {
     const top = state.stack[state.stack.length - 1];
-    const ch = line[i];
-
-    if (top?.kind === 'text') {
-      if (ch === '{') {
-        state.stack.push({ kind: 'expr', depth: 1 });
-        i++;
-      } else if (ch === '<') {
-        const r = tryConsumeTag(line, i, state, true);
-        if (r === TAG_SPANS_LINES) return;
-        i = r === TAG_NOT_A_TAG ? i + 1 : r;
-      } else {
-        i++; // prose — quotes, slashes, `>` etc. are just copy
-      }
-      continue;
-    }
-
-    // CODE (empty stack) or EXPR frame.
-    if (ch === '"' || ch === "'") { i = skipQuoted(line, i); continue; }
-    if (ch === '`') {
-      let j = i + 1;
-      while (j < line.length && line[j] !== '`') j += line[j] === '\\' ? 2 : 1;
-      if (j >= line.length) { state.inTemplate = true; return; }
-      i = j + 1;
-      continue;
-    }
-    if (ch === '/' && line[i + 1] === '/') return; // line comment
-    if (ch === '/' && line[i + 1] === '*') {
-      const e = line.indexOf('*/', i + 2);
-      if (e === -1) { state.inBlockComment = true; return; }
-      i = e + 2;
-      continue;
-    }
-    if (ch === '/' && startsRegexLiteral(line, i)) {
-      const e = skipRegexLiteral(line, i);
-      if (e !== -1) { i = e; continue; }
-      i++; // unterminated on this line → it was division
-      continue;
-    }
-    if (top !== undefined && ch === '{') { top.depth++; i++; continue; }
-    if (top !== undefined && ch === '}') {
-      top.depth--;
-      if (top.depth === 0) state.stack.pop();
-      i++;
-      continue;
-    }
-    if (ch === '<') {
-      const r = tryConsumeTag(line, i, state, false);
-      if (r === TAG_SPANS_LINES) return;
-      i = r === TAG_NOT_A_TAG ? i + 1 : r;
-      continue;
-    }
-    i++;
+    i =
+      top?.kind === 'text'
+        ? stepTextContext(line, i, state)
+        : stepCodeContext(line, i, state, top);
+    if (i === LINE_CONSUMED) return;
   }
+}
+
+// =============================================================================
+// Cross-line TEMPLATE-LITERAL text tracking — the non-JSX half of PR #1433.
+//
+// Copy inside a multi-line template literal has the SAME blind spot the JSX
+// tracker above closes for .tsx: a wrapped paragraph's middle line
+//     `      secured to the Bitcoin blockchain and can be verified at any time.`
+// carries no quote char and no same-line `<`/`>` pair, so findTermViolations
+// short-circuits on `!hasString && !hasJsxText` and the term ships. The JSX
+// machine cannot help — it only runs on .tsx.
+//
+// Worker email bodies were the first instance (HTML inside a template
+// literal). The frontend `.ts` roots INCLUDE_ROOTS already admits have it too,
+// and the motivating case is `src/lib/copy.ts` itself: DISCLAIMER_LABELS.body
+// is the platform legal disclaimer — the most compliance-sensitive string we
+// ship — and every line after the first was unscanned. So the gate was green
+// over the one paragraph §1.3 most exists to police, in the very file its
+// failure message points offenders at.
+//
+// Deliberately minimal: one boolean (are we inside an unterminated backtick
+// string?), no JSX/tag parsing. Only lines that are FULLY inside a template
+// literal — no backtick of their own, no `<` — are force-scanned as raw copy;
+// markup lines keep the normal per-line rules (which already flag visible text
+// between tags, with the URL/quoted-value suppressions intact).
+// =============================================================================
+
+/**
+ * True for every scanned file that is NOT .tsx — the exact complement of
+ * `trackJsx`, so each file gets exactly ONE cross-line raw-copy tracker.
+ *
+ * Scope is the whole non-.tsx in-scope set rather than a second root list:
+ * INCLUDE_ROOTS (+ the worker copy roots and detected composers) is already
+ * the curated "this is user-visible copy" admission decision, and a parallel
+ * list would be free to drift from it — the exact failure collectCandidateFiles
+ * exists to prevent. A content detector is the wrong tool here too: the worker
+ * needs `isEmailCopyComposer` because services/worker/src is overwhelmingly
+ * internal code, which §1.3 explicitly permits to use technical names; the
+ * frontend roots are the opposite, and such a detector would have excluded the
+ * copy.ts disclaimer that motivated this.
+ *
+ * The false-positive vectors this guards against are excluded structurally,
+ * not by luck: block-comment lines `continue` in scanFileContent BEFORE the
+ * tracker advances (so JSDoc's stray backticks can never open a literal),
+ * single-line literals open no continuation, and any line carrying `<` keeps
+ * the normal per-line path (SVG/HTML builders like src/lib/badgeSvg.ts).
+ * Measured over the in-scope frontend: 7 force-scanned lines total, 6 of them
+ * the copy.ts disclaimer and 1 a `${…}` interpolation.
+ */
+function tracksTemplateText(filePath: string): boolean {
+  return !filePath.endsWith('.tsx');
+}
+
+/** Template-literal tracker state: are we inside an unterminated backtick? */
+type TemplateTextState = { inTemplate: boolean };
+
+/**
+ * Advance one character while INSIDE a template literal, and return the next
+ * index. A backslash escapes the following character (so `` \` `` does not
+ * close the literal); an unescaped backtick closes it.
+ */
+function stepInsideTemplate(line: string, i: number, state: TemplateTextState): number {
+  const ch = line[i];
+  if (ch === '\\') return i + 2;
+  if (ch === '`') state.inTemplate = false;
+  return i + 1;
+}
+
+/**
+ * Advance one character while OUTSIDE a template literal, and return the next
+ * index. A quoted string is skipped wholesale (a backtick inside `'…'` opens
+ * nothing); a `//` comment ends the line (returns `line.length`); a backtick
+ * opens a template literal.
+ */
+function stepOutsideTemplate(line: string, i: number, state: TemplateTextState): number {
+  const ch = line[i];
+  if (ch === '/' && line[i + 1] === '/') return line.length; // line comment — not code
+  if (ch === '"' || ch === "'") return skipQuoted(line, i);
+  if (ch === '`') state.inTemplate = true;
+  return i + 1;
+}
+
+/**
+ * Advance the minimal template-literal tracker over one line. Skips quoted
+ * strings (a backtick inside `'…'` opens nothing) and line comments, and
+ * honours backslash escapes. The per-character work lives in the two
+ * {@link stepInsideTemplate} / {@link stepOutsideTemplate} halves so neither
+ * branch has to be read through the other.
+ */
+function updateTemplateTextState(line: string, state: TemplateTextState): void {
+  let i = 0;
+  while (i < line.length) {
+    i = state.inTemplate
+      ? stepInsideTemplate(line, i, state)
+      : stepOutsideTemplate(line, i, state);
+  }
+}
+
+/** Per-file cursor for the two cross-line trackers scanFileContent carries. */
+interface FileScanState {
+  /** JSX tag/text tracking is .tsx-only (see scanFileContent). */
+  trackJsx: boolean;
+  jsx: JsxTextState;
+  /** Email template-literal tracking is worker-non-.tsx-only. */
+  trackTemplateText: boolean;
+  template: TemplateTextState;
+}
+
+/**
+ * Classify one line against the running block-comment state and return both
+ * whether the line is skipped and the state to carry forward. Opening and
+ * continuing a block comment collapse to the same answer: the line is skipped,
+ * and the comment stays open unless the line closes it.
+ */
+function stepBlockComment(
+  trimmed: string,
+  inBlockComment: boolean,
+): { skip: boolean; inBlockComment: boolean } {
+  if (!inBlockComment && !trimmed.startsWith('/*')) return { skip: false, inBlockComment: false };
+  return { skip: true, inBlockComment: !trimmed.includes('*/') };
+}
+
+/**
+ * Violations still reported on a line that {@link shouldSkipLine} suppressed.
+ *
+ * A line-skip suppresses vocab false-positives (`crypto.subtle`→"crypto", the
+ * DOM `block:` param, URL `token` key). On a real CODE line it must NEVER hide
+ * a secret / launch-blocker leak in a same-line shipped string (e.g.
+ * `toast('service_role failed'); el.scrollIntoView()`), so those are still
+ * scanned for the non-suppressible terms. Comments and imports are exempt —
+ * they are not shipped copy and legitimately mention infra terms.
+ */
+function scanSkippedLine(
+  line: string,
+  trimmed: string,
+  lineNum: number,
+  filePath: string,
+): Violation[] {
+  const isCommentOrImport =
+    trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('import ');
+  if (isCommentOrImport) return [];
+  return findTermViolations(line, lineNum, filePath).filter((v) => isNonSuppressibleTerm(v.term));
+}
+
+/** Advance whichever cross-line trackers this file uses over one line. */
+function advanceScanState(line: string, scan: FileScanState): void {
+  if (scan.trackJsx) updateJsxTextState(line, scan.jsx);
+  if (scan.trackTemplateText) updateTemplateTextState(line, scan.template);
+}
+
+/**
+ * True when the line must be force-scanned as RAW COPY continued from an
+ * earlier line. Two sources, one rule:
+ *
+ *  - JSX element text is the current context (no tag or `{…}` expression is
+ *    spanning lines), or
+ *  - an email template literal is open and the line neither closes nor
+ *    reopens one.
+ *
+ * Either way the line must carry no tag start (`<`) — a bare `>` is fine, it
+ * is prose ("> 6 confirmations"); lines WITH tags go through the normal
+ * per-line rules.
+ */
+function isRawCopyContinuation(line: string, scan: FileScanState): boolean {
+  if (line.includes('<')) return false;
+
+  const inJsxText =
+    scan.trackJsx &&
+    scan.jsx.stack[scan.jsx.stack.length - 1]?.kind === 'text' &&
+    scan.jsx.pendingTag === null &&
+    !scan.jsx.inBlockComment &&
+    !scan.jsx.inTemplate;
+
+  const inEmailTemplate =
+    scan.trackTemplateText && scan.template.inTemplate && !line.includes('`');
+
+  return inJsxText || inEmailTemplate;
 }
 
 /**
  * Scan one file's CONTENT line-by-line, carrying block-comment state (as
- * before) plus the cross-line JSX-text state machine. A line is force-scanned
- * as raw copy (jsxTextContinuation) when we are inside JSX element text, no
- * tag or `{…}` expression is spanning lines, and the line itself has no angle
- * bracket (lines WITH tags are handled by the normal per-line rules).
- * Exported for unit tests; checkFile() delegates here.
+ * before) plus ONE cross-line raw-copy tracker per file: the JSX-text state
+ * machine for `.tsx`, the template-literal text tracker for everything else.
+ * A line is force-scanned as raw copy when we are inside JSX element text (or
+ * inside a template literal), no tag or `{…}` expression is spanning lines,
+ * and the line itself has no angle bracket (lines WITH tags are handled by the
+ * normal per-line rules). Exported for unit tests; checkFile() delegates here.
  */
 export function scanFileContent(content: string, filePath: string): Violation[] {
   const violations: Violation[] = [];
   const lines = content.split('\n');
+  const scan: FileScanState = {
+    // JSX can only appear in .tsx — running the tag tracker on plain .ts would
+    // misread generics/comparisons (`if (a <b)`) with no possible payoff.
+    trackJsx: filePath.endsWith('.tsx'),
+    jsx: newJsxTextState(),
+    trackTemplateText: tracksTemplateText(filePath),
+    template: { inTemplate: false },
+  };
   let inBlockComment = false;
-  // JSX can only appear in .tsx — running the tag tracker on plain .ts would
-  // misread generics/comparisons (`if (a <b)`) with no possible payoff.
-  const trackJsx = filePath.endsWith('.tsx');
-  const jsx = newJsxTextState();
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
 
-    if (inBlockComment) {
-      if (trimmed.includes('*/')) inBlockComment = false;
-      continue;
-    }
-
-    if (trimmed.startsWith('/*')) {
-      if (!trimmed.includes('*/')) inBlockComment = true;
-      continue;
-    }
+    const comment = stepBlockComment(trimmed, inBlockComment);
+    inBlockComment = comment.inBlockComment;
+    if (comment.skip) continue;
 
     if (shouldSkipLine(line, trimmed)) {
-      // A line-skip suppresses vocab false-positives (`crypto.subtle`→"crypto",
-      // the DOM `block:` param, URL `token` key). On a real CODE line it must
-      // NEVER hide a secret / launch-blocker leak in a same-line shipped string
-      // (e.g. `toast('service_role failed'); el.scrollIntoView()`), so we still
-      // scan those for the non-suppressible terms. Comments and imports are
-      // exempt — they are not shipped copy and legitimately mention infra terms.
-      const isCommentOrImport =
-        trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('import ');
-      if (!isCommentOrImport) {
-        violations.push(
-          ...findTermViolations(line, i + 1, filePath).filter((v) => isNonSuppressibleTerm(v.term)),
-        );
-      }
-      // Skipped for normal SCANNING only — the line still advances the JSX state
-      // machine (e.g. a copy line exempted via `cryptographic` is still text).
-      if (trackJsx) updateJsxTextState(line, jsx);
+      violations.push(...scanSkippedLine(line, trimmed, i + 1, filePath));
+      // Skipped for normal SCANNING only — the line still advances the JSX and
+      // template state machines (e.g. a copy line exempted via `cryptographic`
+      // is still element text; a skipped line can still open a template).
+      advanceScanState(line, scan);
       continue;
     }
 
-    // Force-scan as raw copy when element text is the current context and the
-    // line has no tag start (`<`). A bare `>` is fine — it is prose ("> 6
-    // confirmations"); lines WITH tags go through the normal per-line rules.
-    const isJsxTextContinuation =
-      trackJsx &&
-      jsx.stack[jsx.stack.length - 1]?.kind === 'text' &&
-      jsx.pendingTag === null &&
-      !jsx.inBlockComment &&
-      !jsx.inTemplate &&
-      !line.includes('<');
-
-    violations.push(...findTermViolations(line, i + 1, filePath, isJsxTextContinuation));
-    if (trackJsx) updateJsxTextState(line, jsx);
+    violations.push(
+      ...findTermViolations(line, i + 1, filePath, isRawCopyContinuation(line, scan)),
+    );
+    advanceScanState(line, scan);
   }
 
   return violations;
@@ -1116,22 +1525,44 @@ export function checkFile(filePath: string): Violation[] {
 }
 
 /**
- * Walk every INCLUDE_ROOT and return the de-duplicated set of in-scope files.
+ * Walk every in-scope root and return the de-duplicated set of files to scan.
  * SCRUM-2149(a): `packages/embed/src` lives OUTSIDE `src/`, so a single
  * `getAllFiles('src')` walk (the pre-2149 behaviour) could never reach the
  * public widget. We derive the walk roots from INCLUDE_ROOTS so coverage and
  * the `shouldCheck()` predicate can never silently drift apart.
+ *
+ * §1.3 worker-email parity adds `services/worker/src`: files under the two
+ * worker copy roots are admitted by path, and every other worker file is read
+ * once and admitted only if {@link isEmailCopyComposer} says it builds email
+ * copy. Exported (with an injectable `root`) so tests can prove the walker
+ * REACHES a file — admitting a path the walk never visits is the exact shape
+ * of the SCRUM-2149(a) bug.
  */
-function collectCandidateFiles(): string[] {
+export function collectCandidateFiles(root: string = process.cwd()): string[] {
   const seen = new Set<string>();
-  // Distinct top-level dirs to walk (`src` once, `packages/embed/src` once).
-  const walkDirs = new Set(
-    INCLUDE_ROOTS.map((root) => root.split('/')[0]).map((top) => path.join(process.cwd(), top)),
-  );
+  // Distinct top-level dirs to walk (`src` once, `packages/embed/src` once)
+  // plus the worker source root, walked directly rather than via its `services`
+  // top-level so composer detection never reads a sibling service's tree.
+  const walkDirs = new Set([
+    ...INCLUDE_ROOTS.map((r) => path.join(root, r.split('/')[0])),
+    path.join(root, WORKER_SRC_ROOT),
+  ]);
   const out: string[] = [];
   for (const dir of walkDirs) {
     for (const f of getAllFiles(dir)) {
-      if (!seen.has(f) && shouldCheck(f)) {
+      if (seen.has(f)) continue;
+      const rel = toRelativePosix(f, root);
+      // Path-only admission first — it is the cheap answer and covers every
+      // frontend root plus the two worker email roots.
+      if (shouldCheck(rel)) {
+        seen.add(f);
+        out.push(f);
+        continue;
+      }
+      // Content admission is reserved for worker files that survived the
+      // exclusion patterns: read once, ask the composer detector.
+      if (!rel.startsWith(WORKER_SRC_ROOT) || isExcluded(rel)) continue;
+      if (shouldCheck(rel, fs.readFileSync(f, 'utf-8'))) {
         seen.add(f);
         out.push(f);
       }
@@ -1146,7 +1577,9 @@ function main(): void {
   const filesToCheck = collectCandidateFiles();
 
   if (filesToCheck.length === 0) {
-    console.log('No UI files to check (src/components, src/pages, src/lib, src/hooks, packages/embed/src).');
+    console.log(
+      'No UI files to check (src/components, src/pages, src/lib, src/hooks, packages/embed/src, worker email copy).',
+    );
     console.log('This is expected if no UI components exist yet.\n');
     process.exit(0);
   }
@@ -1224,6 +1657,7 @@ function main(): void {
   console.log('  - block, transaction → use "record" / "Network Receipt"');
   console.log('  - crypto, bitcoin, blockchain, testnet, mainnet, utxo, broadcast → remove or rephrase');
   console.log('  - raw enum render ({x.status} / {x.credential_type} …) → route through a display mapper in src/lib/copy.ts');
+  console.log('  - worker EMAIL copy (services/worker/src/email*, detected digest builders) is in scope too');
   console.log('  - public launch blocker copy → remove placeholder/legal-review disclaimers from public UI');
   console.log('');
   console.log('See src/lib/copy.ts for approved terminology.');

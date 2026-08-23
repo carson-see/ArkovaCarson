@@ -1,0 +1,10 @@
+{
+  "run_ts": "2026-08-12T16:21:32Z",
+  "mode": "full",
+  "rig_service": "https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app",
+  "rig_supabase_ref": "gnkuaywlpmsaezwvlvhk",
+  "git_head": "550320dc8f7a48852177336c80999374b7e758b2",
+  "pass": 0, "fail": 1, "skip": 0,
+  "verdict": "FAIL",
+  "probes": [{"id": "P4a", "desc": "ORG_ADMIN JWT creates a folder", "expected": "201 + id", "observed": "http 403, body={\"code\":\"42501\",\"details\":null,\"hint\":null,\"message\":\"new row violates row-level security policy for table \\\"folders\\\"\"}", "result": "FAIL"}]
+}

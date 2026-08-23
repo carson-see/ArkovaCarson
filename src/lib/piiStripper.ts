@@ -4,8 +4,13 @@
  * CLIENT-SIDE ONLY — this module must NEVER be imported in services/worker/.
  *
  * Constitution 4A: PII must be stripped client-side before any data leaves
- * the browser. This module removes SSN, phone, email, DOB, student IDs,
- * and provided recipient names from raw OCR text.
+ * the browser. This module removes SSN, phone, email, DOB, student / employee /
+ * member IDs, and provided recipient names from raw OCR text.
+ *
+ * SHARED MODULE: reached from the document path (via `stripPIIEnhanced` in
+ * `aiExtraction.ts`) AND the CSV bulk-upload path. Keyword rules must therefore
+ * be judged on precision as well as recall — a matcher widened for CSV headers
+ * must not start eating ordinary prose.
  *
  * The stripped text + structured metadata may then be sent to the server
  * for AI processing. The raw OCR text and document bytes never leave the client.
@@ -29,6 +34,62 @@ export interface StrippingReport {
   strippedLength: number;
 }
 
+// ─── Separator-insensitive keyword labels ───────────────────────────────
+//
+// Keyword rules used to join their tokens with `\s+`, which made the SEPARATOR
+// an evasion channel: `Student ID: 88213` redacted, `student_id: 88213` did not.
+// CSV headers are overwhelmingly snake_case, so the CSV bulk-upload path shipped
+// those values to the server in the clear. A student/employee ID identifies an
+// education record under FERPA, so §1.6 requires every separator form stripped.
+//
+// The pieces below are deliberately boring: single quantifiers over
+// character classes, no nested quantifiers (no ReDoS), no lookbehind (Safari
+// <16.4 does not support it). Matching stays linear in input length.
+
+/** Separator between keyword tokens: space(s), underscore, hyphen, or nothing. */
+const KEYWORD_SEP = String.raw`[\s_-]*`;
+
+/**
+ * Left boundary. CONSUMING rather than a lookbehind, which Safari <16.4 lacks.
+ * Consuming is lossless here because every caller captures the whole keyword as
+ * `prefix` and re-emits it verbatim ahead of the redaction token.
+ *
+ * `[^A-Za-z0-9]` (not `\b`) so that `_` and `-` count as boundaries: this is
+ * what lets `intl_student_id` match while `valid_number` does not.
+ */
+const KEYWORD_START = '(?:^|[^A-Za-z0-9])';
+
+/**
+ * Right boundary. Without it, a zero-width separator lets a keyword match the
+ * PREFIX of an ordinary word — `tax id` inside "taxidermy", `student id` inside
+ * "studentidentifier", `zip` inside "zipper" — and the value pattern then eats
+ * the rest of the line. Digits are deliberately still allowed to follow, so
+ * unseparated forms like `ZIP90210` keep matching.
+ */
+const KEYWORD_END = '(?![A-Za-z])';
+
+/** Joins keyword tokens separator-insensitively: `tok('student','id')` → `student[\s_-]*id`. */
+const tok = (...tokens: string[]): string => tokens.join(KEYWORD_SEP);
+
+/**
+ * Separator for keyword pairs whose SPACED form is also an ordinary prose bigram.
+ * `post code` is the only one so far: "please post code to the repo" must not be
+ * read as an address label, while the `post_code` / `post-code` / `postcode` CSV
+ * header forms must. `_`, `-` or nothing — a space is not a separator here.
+ */
+const KEYWORD_SEP_TIGHT = '[_-]?';
+
+/** Joins keyword tokens without accepting a space: `tokTight('post','code')` → `post[_-]?code`. */
+const tokTight = (...tokens: string[]): string => tokens.join(KEYWORD_SEP_TIGHT);
+
+/** Builds a bounded, separator-insensitive keyword prefix pattern (keyword + optional `:`). */
+function keywordPattern(alternatives: string[]): RegExp {
+  return new RegExp(
+    String.raw`${KEYWORD_START}(?:${alternatives.join('|')})${KEYWORD_END}\s*:?\s*`,
+    'gi',
+  );
+}
+
 // SSN: XXX-XX-XXXX, XXX XX XXXX, or XXXXXXXXX
 const SSN_PATTERN = /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/g;
 
@@ -41,16 +102,61 @@ const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const PHONE_PATTERN = /(?:\+1\d{10}|\(\d{3}\)\s?\d{3}[-.]?\d{4}|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b|\+(?:4[0-9]|3[0-9]|2[0-9]|5[0-9]|6[0-9]|7[0-9]|8[0-9]|9[0-9])\d{7,11})/g;
 
 // DOB: MM/DD/YYYY or MM-DD-YYYY after DOB-like keywords, or YYYY-MM-DD after DOB keywords
-const DOB_KEYWORD_PATTERN = /(?:dob|date\s+of\s+birth|born|birthday|birth\s+date)\s*:?\s*/gi;
+// Covers `Date of Birth`, `date_of_birth`, `birth-date`, `birthdate`, ...
+const DOB_KEYWORD_PATTERN = keywordPattern([
+  'dob',
+  tok('date', 'of', 'birth'),
+  'born',
+  'birthday',
+  tok('birth', 'date'),
+]);
 const DATE_MMDDYYYY = /\d{2}[/-]\d{2}[/-]\d{4}/;
 const DATE_YYYYMMDD = /\d{4}-\d{2}-\d{2}/;
 
-// Student ID: after "Student ID", "ID Number", "Student No." keywords
-const STUDENT_ID_KEYWORD = /(?:student\s+id|id\s+number|student\s+no\.?)\s*:?\s*/gi;
+// Student / employee / member ID: after ID-bearing keywords, in any separator form
+// (`Student ID`, `student_id`, `student-id`, `studentid`, `employee_id`, ...).
+// employee/member IDs identify an employment or membership record and were not
+// covered by this rule in ANY form before — not just the snake_case one.
+const STUDENT_ID_KEYWORD = keywordPattern([
+  tok('student', 'id'),
+  tok('employee', 'id'),
+  tok('member', 'id'),
+  tok('id', 'number'),
+  String.raw`${tok('student', 'no')}\.?`,
+]);
 const ID_VALUE = /[A-Za-z0-9]{5,12}/;
 
+/**
+ * Qualifiers that precede `address` / `street` in real CSV headers.
+ *
+ * The separated forms (`home_address`, `home address`) already matched, because
+ * `_` and a space are keyword boundaries and the bare `address` alternative picks
+ * up from there. The camelCase and unseparated forms did not: the character before
+ * `Address` in `homeAddress` is a letter, `KEYWORD_START` fails, and the whole
+ * value shipped to the extractor in the clear.
+ */
+const ADDRESS_QUALIFIER =
+  'home|mailing|postal|street|business|work|permanent|current|residential';
+
 // PII-07: Postal/ZIP codes (context-aware — only after address keywords)
-const ADDRESS_KEYWORD = /(?:address|street|postal\s+code|zip\s*(?:code)?|postcode)\s*:?\s*/gi;
+const ADDRESS_KEYWORD = keywordPattern([
+  // Qualified forms come FIRST. Alternation is ordered, so with `street` ahead of
+  // it, `street_address:` matched only its `street` half and the value pattern ate
+  // the rest of the label — emitting `street[ADDRESS_REDACTED]` and destroying a
+  // column name the extractor is called to read.
+  tok(`(?:${ADDRESS_QUALIFIER})`, '(?:address|street)'),
+  'address',
+  'street',
+  tok('postal', 'code'),
+  tok('zip', '(?:code)?'),
+  tokTight('post', 'code'),
+]);
+
+/**
+ * A line that opens a new `<label>: <value>` field — the stop condition for the
+ * multi-line address capture in `stripAddressValues`.
+ */
+const FIELD_LABEL_LINE = String.raw`[ \t]*[A-Za-z][A-Za-z0-9 _-]{0,40}:`;
 
 // PII-06: EU-format DOB (DD/MM/YYYY, DD.MM.YYYY) after DOB keywords
 const DATE_DDMMYYYY = /\d{2}[/.-]\d{2}[/.-]\d{4}/;
@@ -58,7 +164,20 @@ const DATE_DDMMYYYY = /\d{2}[/.-]\d{2}[/.-]\d{4}/;
 // PII-07: National ID patterns (after relevant keywords)
 // CRIT-4: Expanded keyword list + broader value pattern to catch Aadhaar, passports with slashes/dots
 // Note: SSN is handled separately by SSN_PATTERN — do NOT add it here to avoid double-matching
-const NATIONAL_ID_KEYWORD = /(?:national\s+id|tax\s+id|steuer[-\s]?id|ni\s+number|nino|passport\s+(?:no\.?|number)|aadhaar|aadhar|pan\s+(?:no\.?|number|card)|cedula|dni|sin\s+(?:no\.?|number))\s*:?\s*/gi;
+const NATIONAL_ID_KEYWORD = keywordPattern([
+  tok('national', 'id'),
+  tok('tax', 'id'),
+  tok('steuer', 'id'),
+  tok('ni', 'number'),
+  'nino',
+  tok('passport', String.raw`(?:no\.?|number)`),
+  'aadhaar',
+  'aadhar',
+  tok('pan', String.raw`(?:no\.?|number|card)`),
+  'cedula',
+  'dni',
+  tok('sin', String.raw`(?:no\.?|number)`),
+]);
 
 /**
  * Strip PII from raw text. Returns the stripped text and a report of what was found.
@@ -161,7 +280,8 @@ function stripDOB(
 }
 
 /**
- * Strip ID values that appear after student ID keywords.
+ * Strip ID values that appear after student / employee / member ID keywords,
+ * in any separator form (`Student ID`, `student_id`, `student-id`, `studentid`).
  */
 function stripStudentIds(
   text: string,
@@ -201,9 +321,17 @@ function stripAddressValues(
   //   Address: 123 Main St
   //   Apt 4B
   //   New York, NY 10001
+  //
+  // A continuation line stops at anything that opens a new `<label>: <value>` field.
+  // Without that guard the CSV bulk-upload path — one column per line — lost up to
+  // two columns after every address column: `postal_code: SW1A 1AA` +
+  // `issue_date: 2026-03-14` collapsed to `postal_code: [ADDRESS_REDACTED]` and the
+  // issue date never reached the extractor. Same line-crossing class the national-ID
+  // rule already fixed. Genuine continuations (`Apt 4B`, `New York, NY 10001`) carry
+  // no label and are still captured.
   result = result.replace(
     new RegExp(
-      `(${ADDRESS_KEYWORD.source})([^\\n]{5,80}(?:\\n[^\\n]{3,80}){0,2})`,
+      String.raw`(${ADDRESS_KEYWORD.source})([^\n]{5,80}(?:\n(?!${FIELD_LABEL_LINE})[^\n]{3,80}){0,2})`,
       'gi',
     ),
     (_match, prefix: string) => {
@@ -230,8 +358,16 @@ function stripNationalIds(
 
   // CRIT-4: Broader value pattern — handles dots, slashes, and longer IDs (e.g. Aadhaar: 12 digits)
   // Negative lookahead prevents matching redaction tokens like [SSN_REDACTED]
+  //
+  // The value class holds space and tab but NOT a line break. It used to use
+  // `\s`, which includes `\n`, so a 10-char ID ran greedily past the end of its
+  // own line and swallowed the NEXT line's label — in the "<column>: <value>"
+  // per-line text the CSV bulk upload builds, `national_id: AB.123/456` ate the
+  // `course_name` header on the following line and destroyed the credential
+  // title the extractor reads. A national ID never spans lines, so this is
+  // strictly narrowing: no real ID stops matching.
   result = result.replace(
-    new RegExp(`(${NATIONAL_ID_KEYWORD.source})(?!\\[)([A-Za-z0-9\\s_./-]{4,30})`, 'gi'),
+    new RegExp(String.raw`(${NATIONAL_ID_KEYWORD.source})(?!\[)([A-Za-z0-9 \t_./-]{4,30})`, 'gi'),
     (_match, prefix: string) => {
       count++;
       piiFoundSet.add('nationalId');

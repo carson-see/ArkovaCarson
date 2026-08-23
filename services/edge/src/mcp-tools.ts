@@ -6,8 +6,10 @@
  *
  * Tools:
  *   - verify_credential: Verify a credential by public ID
- *   - search_credentials: Semantic search across credentials
- *   - nessie_query:      RAG query with verified citations (PH1-SDK-03)
+ *   - search_credentials: Lexical substring search across credentials; vector
+ *     search only when the deployment enables it (BUG-026)
+ *   - nessie_query:      DISABLED — returns an explicit `nessie_disabled`
+ *     error, never results (BUG-008/027, CTO ruling R-1)
  *   - anchor_document:   Anchor a document hash (PH1-SDK-03)
  *   - verify_document:   Verify a document by content hash (PH1-SDK-03)
  *   - verify_batch:      Verify up to 100 credentials in one call (INT-02)
@@ -172,6 +174,16 @@ export interface SupabaseConfig {
    * — NOT a shared service-account key. NEVER logged.
    */
   callerApiKey?: string;
+  /**
+   * BUG-008/027 (CTO ruling R-1 STRENGTHENED): is the Nessie query capability
+   * served at all? Sourced from the `ENABLE_NESSIE_QUERY` edge var.
+   *
+   * FAIL CLOSED — absent/undefined means DISABLED. Nessie is permanently
+   * disabled by standing founder directive, and this tool used to degrade to a
+   * lexical `nessieTextFallback` on any worker failure, so a disabled
+   * capability still answered with a success-shaped `{total, results}` payload.
+   */
+  nessieEnabled?: boolean;
 }
 
 const PUBLIC_ID_JSON_SCHEMA: ToolInputSchemaProperty = {
@@ -229,6 +241,38 @@ function textResult(data: unknown): ToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(data) }] };
 }
 
+/** Stable machine code for a disabled Nessie, shared with the worker envelope. */
+export const NESSIE_DISABLED_CODE = 'nessie_disabled';
+
+/**
+ * The disabled-capability result for `nessie_query` (BUG-008/027).
+ *
+ * `isError: true` so an MCP client cannot mistake it for an answer, and a body
+ * that carries `enabled: false` plus NONE of `total` / `results` / `answer` /
+ * `confidence` / `citations`. The absence of those keys is deliberate and
+ * tested: "disabled" and "found nothing" were previously the same payload, and
+ * an agent that only reads `total` would otherwise still conclude "0 results".
+ */
+function nessieDisabledResult(): ToolResult {
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          error: 'capability_disabled',
+          code: NESSIE_DISABLED_CODE,
+          capability: 'nessie',
+          enabled: false,
+          message:
+            'The Nessie intelligence query capability is disabled and is not being served. ' +
+            'This is not an empty result — no query was executed.',
+        }),
+      },
+    ],
+    isError: true,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tool Definitions
 // ---------------------------------------------------------------------------
@@ -252,15 +296,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: 'search_credentials',
+    // BUG-026: this description used to LEAD with "Uses semantic (vector)
+    // similarity matching". In practice the vector path requires a configured
+    // worker AND an open ENABLE_SEMANTIC_SEARCH gate; with the gate closed the
+    // worker answers 503 and every call is served lexically. Reproduced on the
+    // rig: the non-word fragment "aten" matched
+    // `Patent_Application_AI_Method.pdf`, while an English paraphrase of the
+    // same document returned nothing. Substring matching does that; vector
+    // matching does the opposite. The served behaviour now leads.
     description:
-      'Search for credentials using natural language queries. ' +
-      'Uses semantic (vector) similarity matching against anchored public ' +
-      'credentials, returning ranked results with verification status and a ' +
-      '`similarity` relevance score. ' +
-      'Every result reports `search_mode`: "semantic_vector" for vector ' +
-      'matching, or "lexical_substring" when the service falls back to ' +
-      'substring matching on title/description (no similarity score). ' +
-      'Check `search_mode` before presenting results as semantically ranked.',
+      'Search anchored public credentials by keyword. ' +
+      'The served behaviour is LEXICAL: a case-insensitive substring match on ' +
+      'credential title/description, with no relevance score and no ' +
+      'understanding of meaning — a query only matches text that literally ' +
+      'appears in the record, so paraphrases and synonyms will not match, and ' +
+      'a fragment of a longer word will. ' +
+      'Semantic (vector) similarity is used ONLY WHEN the deployment has ' +
+      'semantic search enabled and reachable; it is not guaranteed and must ' +
+      'not be assumed. ' +
+      'Every result reports `search_mode`: "lexical_substring" for the ' +
+      'substring path, or "semantic_vector" when a real vector match ran (that ' +
+      'mode alone carries a `similarity` score). ' +
+      'Read `search_mode` before presenting results as semantically ranked.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -278,10 +335,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: 'nessie_query',
+    // R-1 (CTO ruling 2026-08-12): Nessie is permanently disabled by standing
+    // founder directive. The tool stays registered so existing integrations get
+    // an explicit, machine-readable "disabled" answer rather than an unknown
+    // tool — but the description must not advertise a capability that is off.
     description:
-      'Query Arkova\'s verified intelligence engine (Nessie). Searches anchored public records ' +
-      '(SEC filings, patents, regulatory documents) using semantic similarity. ' +
-      'In "context" mode, returns a synthesized answer with citations linking to anchored documents with proof.',
+      'DISABLED. Arkova\'s Nessie intelligence engine is not currently served: this tool ' +
+      'returns an explicit `nessie_disabled` error, never results. It does not search, and ' +
+      'an empty answer from it must not be read as "no matching documents". ' +
+      'Use `search` or `search_credentials` for record lookup instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1048,6 +1110,13 @@ export async function handleNessieQuery(
   config: SupabaseConfig,
   _ai?: Ai,
 ): Promise<ToolResult> {
+  // BUG-008/027: FAIL CLOSED before anything else — no network call, no text
+  // fallback, no success shape. Nessie is permanently disabled by standing
+  // founder directive; an absent flag means disabled.
+  if (config.nessieEnabled !== true) {
+    return nessieDisabledResult();
+  }
+
   if (!input.query || input.query.trim().length === 0) {
     return errorResult('Error: query is required');
   }
@@ -1090,6 +1159,27 @@ export async function handleNessieQuery(
         ? 'Nessie query timed out'
         : `Nessie query failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
     return errorResult(msg);
+  }
+}
+
+/**
+ * Does a non-2xx worker response carry the canonical "Nessie is disabled"
+ * envelope (services/worker/src/middleware/nessieCapabilityGate.ts)?
+ *
+ * Body-read failures resolve to `false` — the caller then treats the response
+ * as an ordinary fault and degrades to the LABELLED lexical fallback, which is
+ * still honest. Never throws: this runs inside the proxy's error path.
+ */
+async function isWorkerNessieDisabled(response: {
+  status: number;
+  json: () => Promise<unknown>;
+}): Promise<boolean> {
+  if (response.status !== 503) return false;
+  try {
+    const body = (await response.json()) as { code?: unknown; enabled?: unknown };
+    return body?.code === NESSIE_DISABLED_CODE || body?.enabled === false;
+  } catch {
+    return false;
   }
 }
 
@@ -1192,6 +1282,16 @@ async function nessieWorkerQuery(
     });
 
     if (!response.ok) {
+      // BUG-008/027: a worker "capability disabled" is NOT a transient fault
+      // and must NOT become a lexical answer. Returning a ToolResult (rather
+      // than `null`) stops the caller's fallback dead. Any OTHER non-2xx is
+      // still a transient fault → `null` → labelled text fallback, unchanged.
+      const disabled = await isWorkerNessieDisabled(response);
+      if (disabled) {
+        console.warn('[nessie_query] worker reports the capability is disabled; NOT falling back');
+        return nessieDisabledResult();
+      }
+
       // Redacted log: status only, never the key or full URL with params.
       console.warn(`[nessie_query] worker proxy HTTP ${response.status}; falling back to text search`);
       return null;

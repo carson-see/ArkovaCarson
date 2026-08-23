@@ -5,7 +5,7 @@
  * No real API calls (Constitution 1.7).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // vi.mock factories are hoisted — cannot reference outer variables.
 // Use vi.hoisted() to safely share mock fns.
@@ -61,13 +61,23 @@ vi.mock('@google/generative-ai', () => {
   };
 });
 
-vi.mock('../../config.js', () => ({
-  config: { frontendUrl: 'https://app.arkova.ai' },
+// BUG-008/027: the route is now capability-gated on `config.enableNessieQuery`,
+// which defaults FALSE in real config (fail closed). These tests exercise the
+// ENABLED behaviour, so the mock turns it on; the disabled path has its own
+// describe block below, which flips it off.
+const { mockConfig } = vi.hoisted(() => ({
+  mockConfig: { frontendUrl: 'https://app.arkova.ai', enableNessieQuery: true } as {
+    frontendUrl: string;
+    enableNessieQuery: boolean;
+  },
 }));
+
+vi.mock('../../config.js', () => ({ config: mockConfig }));
 
 import express from 'express';
 import request from 'supertest';
-import { nessieQueryRouter, clearContextCache } from './nessie-query.js';
+import { nessieQueryRouter, clearContextCache, buildCitationExcerpt } from './nessie-query.js';
+import { poisonAt, isWellFormedUtf16 } from '../../tests/utf16-poison.js';
 
 function buildApp() {
   const app = express();
@@ -218,6 +228,92 @@ describe('GET /nessie/query', () => {
     const app = buildApp();
     const res = await request(app).get('/nessie/query?q=test&task=invalid_mode');
     expect(res.status).toBe(400);
+  });
+
+  /**
+   * BUG-008 / BUG-027 — CTO ruling R-1 STRENGTHENED.
+   *
+   * The defect: Nessie is permanently disabled by founder directive, yet the
+   * route answered **HTTP 200 with a success shape** — `{"results":[],
+   * "count":0}` in retrieval mode and a fluent
+   * `{"answer":"No relevant verified documents were found…","confidence":0}` in
+   * context mode. "Disabled" and "found nothing" were the same response.
+   *
+   * These tests pin the property that fixes it: the disabled response is
+   * distinguishable from an empty result WITHOUT heuristics — different status,
+   * and a body that carries `enabled:false` and none of the success-shape keys.
+   */
+  describe('capability disabled (BUG-008/027 — fails closed, distinguishably)', () => {
+    beforeEach(() => {
+      mockConfig.enableNessieQuery = false;
+    });
+
+    afterEach(() => {
+      mockConfig.enableNessieQuery = true;
+    });
+
+    it('answers 503 with an explicit disabled envelope, not 200', async () => {
+      const res = await request(buildApp()).get('/nessie/query?q=test');
+
+      expect(res.status).toBe(503);
+      expect(res.body).toMatchObject({
+        error: 'capability_disabled',
+        code: 'nessie_disabled',
+        capability: 'nessie',
+        enabled: false,
+      });
+    });
+
+    it('carries NO success-shape key in retrieval mode (results/count)', async () => {
+      const res = await request(buildApp()).get('/nessie/query?q=test');
+
+      expect(res.body).not.toHaveProperty('results');
+      expect(res.body).not.toHaveProperty('count');
+    });
+
+    it('carries NO success-shape key in context mode (answer/confidence/citations)', async () => {
+      const res = await request(buildApp()).get('/nessie/query?q=test&mode=context');
+
+      expect(res.status).toBe(503);
+      expect(res.body).not.toHaveProperty('answer');
+      expect(res.body).not.toHaveProperty('confidence');
+      expect(res.body).not.toHaveProperty('citations');
+    });
+
+    it('is separable from a genuine EMPTY result — the exact confusion BUG-008 reported', async () => {
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'get_flag') return Promise.resolve({ data: true, error: null });
+        if (name === 'search_public_record_embeddings') {
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      const disabled = await request(buildApp()).get('/nessie/query?q=nonexistent');
+
+      mockConfig.enableNessieQuery = true;
+      const empty = await request(buildApp()).get('/nessie/query?q=nonexistent');
+
+      // Enabled-but-no-matches is still the documented success shape…
+      expect(empty.status).toBe(200);
+      expect(empty.body.results).toEqual([]);
+      expect(empty.body.count).toBe(0);
+
+      // …and disabled is nothing like it, on status AND on shape.
+      expect(disabled.status).toBe(503);
+      expect(disabled.body.enabled).toBe(false);
+      expect(disabled.body).not.toHaveProperty('results');
+      expect(disabled.status).not.toBe(empty.status);
+    });
+
+    it('does not read the switchboard at all when the capability is off (fails closed first)', async () => {
+      mockRpc.mockClear();
+      await request(buildApp()).get('/nessie/query?q=test');
+
+      // No get_flag round-trip: a permanently-disabled capability must not
+      // depend on a DB read that could fail open.
+      expect(mockRpc).not.toHaveBeenCalled();
+    });
   });
 
   // PH1-INT-03: Verified context mode
@@ -382,5 +478,38 @@ describe('GET /nessie/query', () => {
       expect(res.status).toBe(200);
       expect(res.body.task_type).toBe('compliance_qa');
     });
+  });
+});
+
+// ─── Surrogate-safe citation excerpts (2026-08-17 poison-record class) ──────
+//
+// `buildCitationExcerpt` bounds abstract/full_text to 500 UTF-16 units for the
+// citation payload. Public-record metadata is ingested from external sources
+// (OpenAlex et al. — the incident record was an OpenAlex abstract with
+// astral-plane math symbols), so a cap boundary can land mid-surrogate-pair.
+describe('buildCitationExcerpt surrogate safety', () => {
+  function docWithMeta(metadata: Record<string, unknown>) {
+    return {
+      record_id: 'rec-1',
+      source: 'openalex',
+      source_url: 'https://openalex.example/W1',
+      title: 'T',
+      record_type: 'scholarly_work',
+      relevance_score: 1,
+      anchor_proof: null,
+      metadata,
+    } as never;
+  }
+
+  it('never splits a surrogate pair when the abstract cuts at the 500-unit cap', () => {
+    const excerpt = buildCitationExcerpt(docWithMeta({ abstract: poisonAt(500) }));
+    expect(excerpt.length).toBeLessThanOrEqual(500);
+    expect(isWellFormedUtf16(excerpt)).toBe(true);
+  });
+
+  it('never splits a surrogate pair when full_text cuts at the 500-unit cap', () => {
+    const excerpt = buildCitationExcerpt(docWithMeta({ full_text: poisonAt(500) }));
+    expect(excerpt.length).toBeLessThanOrEqual(500);
+    expect(isWellFormedUtf16(excerpt)).toBe(true);
   });
 });

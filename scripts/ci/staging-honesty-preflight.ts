@@ -81,6 +81,18 @@ export interface OrgTopologyData {
   seedOrgs: number;
 }
 
+/**
+ * One row of the org-name projection used by Check 7.
+ *
+ * FD-PREFLIGHT-1: this used to be `{ name: string }`. `public.organizations`
+ * has no `name` column — it has `legal_name` and `display_name` — so the
+ * PostgREST select failed 42703 on every rig and Check 7 never ran.
+ */
+export interface OrgNameRow {
+  legal_name: string | null;
+  display_name: string | null;
+}
+
 export interface ProdFactsData {
   cronJobNames: string[];
   functionExists: boolean;
@@ -134,6 +146,16 @@ const TIMESTAMP_VERSION_RE = /^\d{14,}$/;
 
 /** Prefixes in org names that indicate staging seed data (case-insensitive). */
 const SEED_ORG_PREFIXES = ['stg', 'staging_seed_', 'test_org_'];
+
+/**
+ * The columns on `public.organizations` that can carry a staging seed marker.
+ *
+ * FD-PREFLIGHT-1: there is no `organizations.name`. Selecting it made Check 7
+ * (`org_topology`) throw 42703 on every rig, and the caller-side guard turned
+ * that into a silent skip. Keep this list in sync with the table; the unit
+ * suite ratchets on both the list and the call site that uses it.
+ */
+export const ORG_NAME_COLUMNS = ['legal_name', 'display_name'] as const;
 
 const MANAGEMENT_API_BASE_URL = 'https://api.supabase.com/v1';
 const MANAGEMENT_API_TIMEOUT_MS = 30_000;
@@ -576,9 +598,92 @@ export function isOrgSeedName(name: string): boolean {
   return SEED_ORG_PREFIXES.some((p) => lower.startsWith(p));
 }
 
+/**
+ * True when EITHER org-name column carries a staging seed prefix.
+ *
+ * Both columns are considered because a rig can be seeded with a real-looking
+ * `legal_name` and a `stg`-prefixed `display_name`, or the reverse.
+ */
+export function isOrgRowSeeded(row: OrgNameRow): boolean {
+  return ORG_NAME_COLUMNS.some((column) => {
+    const value = row[column];
+    return typeof value === 'string' && isOrgSeedName(value);
+  });
+}
+
+/**
+ * Check 7 could not be evaluated — report it as a FAILURE.
+ *
+ * FD-PREFLIGHT-1. A preflight whose whole job is to refuse to vouch for a rig
+ * must never treat "I could not look" as "I looked and it was fine". If the
+ * organizations projection cannot be read, the environment is not certified
+ * clean; it is uncertified, and that is a failing outcome.
+ */
+export function checkOrgTopologyUnavailable(reason: string): CheckResult {
+  return {
+    name: 'org_topology',
+    passed: false,
+    details:
+      `org_topology could not be evaluated: ${reason}. ` +
+      'A check that cannot run is a FAILED check, not a skipped one — ' +
+      'this environment is uncertified for merge-grade soak evidence.',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Report builder
 // ---------------------------------------------------------------------------
+
+/**
+ * Check 6 (`prod_divergence`) as a standalone verdict.
+ *
+ * Split out of buildReport so the report builder stays readable: the
+ * baseline-squash-aware path and the legacy strict path are two different
+ * judgements that happen to share a check name.
+ */
+function buildProdDivergenceCheck(
+  migrationRows: MigrationRow[],
+  prodVersions: string[],
+  repoVersions: ReadonlySet<string> | undefined,
+  divergence: { missingFromStaging: string[]; extraVsProd: string[] },
+): CheckResult {
+  if (!repoVersions) {
+    const prodDiverged =
+      divergence.missingFromStaging.length > 0 || divergence.extraVsProd.length > 0;
+    return {
+      name: 'prod_divergence',
+      passed: !prodDiverged,
+      details: prodDiverged
+        ? `Missing from staging: [${divergence.missingFromStaging.join(', ')}]; Extra vs prod: [${divergence.extraVsProd.join(', ')}]`
+        : 'Staging versions match prod ledger.',
+    };
+  }
+
+  const verdict = analyzeProdDivergence(migrationRows, prodVersions, repoVersions);
+  if (verdict.passed) {
+    const subsumed =
+      verdict.baselinePresent && verdict.prodMissing.length > 0
+        ? ` ${verdict.prodMissing.length} pre-baseline/version-shape prod row(s) subsumed by the canonical baseline (informational).`
+        : '';
+    return {
+      name: 'prod_divergence',
+      passed: true,
+      details: `Rig ledger reconciles with repo migration files + canonical baseline.${subsumed}`,
+    };
+  }
+
+  const detailParts: string[] = [];
+  if (verdict.unexplainedExtras.length > 0) {
+    detailParts.push(`Unexplained extras (not in repo or prod): [${verdict.unexplainedExtras.join(', ')}]`);
+  }
+  if (verdict.missingRepoMigrations.length > 0) {
+    detailParts.push(`Repo migrations missing from rig: [${verdict.missingRepoMigrations.join(', ')}]`);
+  }
+  if (!verdict.baselinePresent && verdict.prodMissing.length > 0) {
+    detailParts.push(`Prod versions missing from rig (no baseline to subsume them): [${verdict.prodMissing.join(', ')}]`);
+  }
+  return { name: 'prod_divergence', passed: false, details: detailParts.join('; ') };
+}
 
 export function buildReport(opts: {
   projectRef: string;
@@ -593,6 +698,12 @@ export function buildReport(opts: {
    */
   repoVersions?: ReadonlySet<string>;
   orgTopology?: OrgTopologyData;
+  /**
+   * Why the org-topology projection could not be read. When set (and
+   * `orgTopology` is not), Check 7 is emitted as a FAILURE rather than
+   * omitted — see checkOrgTopologyUnavailable / FD-PREFLIGHT-1.
+   */
+  orgTopologyError?: string;
   prodFacts?: ProdFactsData;
 }): PreflightReport {
   const { projectRef, migrationRows, submittedAnchorCount, prodVersions, repoVersions } = opts;
@@ -665,46 +776,16 @@ export function buildReport(opts: {
   // claims. Without repoVersions, the legacy strict rule applies (any
   // divergence fails) — this preserves shared-staging behavior.
   const divergence = computeProdDivergence(migrationRows, prodVersions);
-  if (repoVersions) {
-    const verdict = analyzeProdDivergence(migrationRows, prodVersions, repoVersions);
-    const detailParts: string[] = [];
-    if (verdict.unexplainedExtras.length > 0) {
-      detailParts.push(`Unexplained extras (not in repo or prod): [${verdict.unexplainedExtras.join(', ')}]`);
-    }
-    if (verdict.missingRepoMigrations.length > 0) {
-      detailParts.push(`Repo migrations missing from rig: [${verdict.missingRepoMigrations.join(', ')}]`);
-    }
-    if (!verdict.baselinePresent && verdict.prodMissing.length > 0) {
-      detailParts.push(`Prod versions missing from rig (no baseline to subsume them): [${verdict.prodMissing.join(', ')}]`);
-    }
-    let passDetail: string;
-    if (verdict.passed) {
-      const subsumed = verdict.baselinePresent && verdict.prodMissing.length > 0
-        ? ` ${verdict.prodMissing.length} pre-baseline/version-shape prod row(s) subsumed by the canonical baseline (informational).`
-        : '';
-      passDetail = `Rig ledger reconciles with repo migration files + canonical baseline.${subsumed}`;
-    } else {
-      passDetail = detailParts.join('; ');
-    }
-    checks.push({
-      name: 'prod_divergence',
-      passed: verdict.passed,
-      details: passDetail,
-    });
-  } else {
-    const prodDiverged = divergence.missingFromStaging.length > 0 || divergence.extraVsProd.length > 0;
-    checks.push({
-      name: 'prod_divergence',
-      passed: !prodDiverged,
-      details: prodDiverged
-        ? `Missing from staging: [${divergence.missingFromStaging.join(', ')}]; Extra vs prod: [${divergence.extraVsProd.join(', ')}]`
-        : 'Staging versions match prod ledger.',
-    });
-  }
+  checks.push(
+    buildProdDivergenceCheck(migrationRows, prodVersions, repoVersions, divergence),
+  );
 
-  // Check 7: Org topology (single-tenant prod vs multi-org staging seeds)
+  // Check 7: Org topology (single-tenant prod vs multi-org staging seeds).
+  // An unreadable projection is a FAILED check, never an omitted one.
   if (opts.orgTopology) {
     checks.push(checkOrgTopology(opts.orgTopology));
+  } else if (opts.orgTopologyError) {
+    checks.push(checkOrgTopologyUnavailable(opts.orgTopologyError));
   }
 
   // Check 8: Prod facts (pg_cron, function existence, scheduling)
@@ -918,6 +999,66 @@ function loadRepoMigrationVersions(): ReadonlySet<string> | undefined {
   }
 }
 
+/**
+ * The narrow slice of a Supabase client queryOrgTopology needs. Structural, so
+ * the helper does not have to name supabase-js's generic client type — which
+ * varies with the schema type parameters and does not unify across call sites.
+ */
+interface OrgProjectionReader {
+  from(table: string): {
+    select(columns: string): PromiseLike<{
+      data: unknown;
+      error: { message: string } | null;
+    }>;
+  };
+}
+
+/**
+ * Check 7's data, or the reason it could not be read.
+ *
+ * FD-PREFLIGHT-1: this used to select a column `organizations.name` that does
+ * not exist. PostgREST answered 42703, the caller's `if (!error && data)` guard
+ * fell through with no else, and the check silently disappeared from the report
+ * — for every rig, indefinitely. Every branch here now yields either data or a
+ * reason, and the caller turns a reason into a FAILED check.
+ */
+async function queryOrgTopology(
+  publicClient: OrgProjectionReader,
+): Promise<{ orgTopology?: OrgTopologyData; orgTopologyError?: string }> {
+  try {
+    const { data, error } = await publicClient
+      .from('organizations')
+      .select(ORG_NAME_COLUMNS.join(','));
+    if (error) return { orgTopologyError: error.message };
+    if (!data) return { orgTopologyError: 'organizations projection returned no rows payload.' };
+    const rows = data as unknown as OrgNameRow[];
+    return { orgTopology: { totalOrgs: rows.length, seedOrgs: rows.filter(isOrgRowSeeded).length } };
+  } catch (err) {
+    return { orgTopologyError: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Check 8 fallback: read pg_cron jobs from the environment under test when no
+ * prod ref + Management API token were supplied. Returns undefined when the
+ * `cron` schema is not exposed via PostgREST, which is the common case and is
+ * why Check 8 stays optional (unlike Check 7 — see queryOrgTopology).
+ */
+async function queryCronFactsFromEnvironment(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+): Promise<ProdFactsData | undefined> {
+  try {
+    const cronClient = createClient(supabaseUrl, serviceRoleKey, { db: { schema: 'cron' } });
+    const { data, error } = await cronClient.from('job').select('jobname');
+    if (error || !data) return undefined;
+    const cronJobNames = data.map((j: { jobname: string }) => j.jobname);
+    return { cronJobNames, functionExists: cronJobNames.length > 0 };
+  } catch {
+    return undefined;
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
@@ -976,19 +1117,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Query org topology (best-effort — organizations table is in public schema).
-  let orgTopology: OrgTopologyData | undefined;
-  try {
-    const { data: orgData, error: orgError } = await publicClient
-      .from('organizations')
-      .select('name');
-    if (!orgError && orgData) {
-      const seedOrgs = orgData.filter((o: { name: string }) => isOrgSeedName(o.name)).length;
-      orgTopology = { totalOrgs: orgData.length, seedOrgs };
-    }
-  } catch {
-    // Org topology check skipped — table may not exist in this environment.
-  }
+  // Check 7. Every failure path records a reason, so the check is reported as
+  // FAILED instead of vanishing from the report — FD-PREFLIGHT-1.
+  const { orgTopology, orgTopologyError } = await queryOrgTopology(publicClient);
 
   let prodVersions = args.prodVersions;
   if (managementApiToken && prodProjectRef) {
@@ -1011,19 +1142,7 @@ async function main(): Promise<void> {
     }
   }
   if (!prodFacts && !(managementApiToken && prodProjectRef)) {
-    try {
-      const cronClient = createClient(supabaseUrl, serviceRoleKey, { db: { schema: 'cron' } });
-      const { data: cronData, error: cronError } = await cronClient
-        .from('job')
-        .select('jobname');
-      if (!cronError && cronData) {
-        const cronJobNames = cronData.map((j: { jobname: string }) => j.jobname);
-        const functionExists = cronJobNames.length > 0;
-        prodFacts = { cronJobNames, functionExists };
-      }
-    } catch {
-      // Prod facts check skipped — cron schema may not be exposed via PostgREST.
-    }
+    prodFacts = await queryCronFactsFromEnvironment(supabaseUrl, serviceRoleKey);
   }
 
   const repoVersions = loadRepoMigrationVersions();
@@ -1035,6 +1154,7 @@ async function main(): Promise<void> {
     prodVersions,
     repoVersions,
     orgTopology,
+    orgTopologyError,
     prodFacts,
   });
 

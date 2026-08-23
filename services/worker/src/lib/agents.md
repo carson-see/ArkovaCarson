@@ -56,3 +56,11 @@ Migration `0362_scrum2913_public_anchor_registry_url_allowlist.sql` widened `get
 - Absent-not-null (§1.8): when either check fails, `registry_url`/`ce_envelope_sha256` are OMITTED from `public_metadata` entirely (spread `...(ceRegistryProvenance ?? {})`) — never written as `null` into `anchors.metadata`. The top-level `preview.registry_url` / `preview.ce_envelope_sha256` fields are `string | null` (matching the existing preview-field convention) for the authenticated caller's own preview response.
 - Read side: `src/components/verification/PublicVerification.tsx` (`extractSourceProvenance`) + `src/components/verification/SourceProvenanceDisplay.tsx` render a "Registry reference" row — R-7 honest (`src/lib/copy.ts` `SOURCE_PROVENANCE_LABELS.REGISTRY_REFERENCE_*`): a provenance link, never a CE-listing/endorsement claim.
 - This module is allow-listed in `services/worker/src/ctdl/ctdl-claims-lint.test.ts` (`READ_ONLY_CE_TOOLING_ALLOWLIST`) against the CE-host INTEGRATION markers — it only ever issues a GET-only fetch, never writes to the Registry.
+
+## 2026-08-17 — `credential-source-import.ts`: surrogate-safe truncation
+
+`cleanText` (→ `credential_title` → `anchors.label`/`description` via `credential-sources.ts`
+`buildAnchorInsertPayload`) and `buildSourceImportFilename` (→ `anchors.filename`, 180-unit stem)
+now bound via `truncateUtf16Safe` — a code-unit cut at the cap could split a surrogate pair and
+PGRST102 the whole anchor insert (2026-08-17 poison-record class). `cleanText` is now exported for
+its poison tests. Note `.trim()` does NOT strip a lone surrogate — it is not whitespace.

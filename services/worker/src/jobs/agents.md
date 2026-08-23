@@ -42,6 +42,128 @@ URL is carried in code** — the source comes from `USPTO_BULK_TSV_URL` / the `s
 job refuses to run (`source_unavailable`, `errors: 1`, no request made) when it is unset. A test asserts
 the dead bucket cannot reappear as a default outside a comment. Do not ship a speculative ODP code path
 that nobody can exercise; that is the failure mode this whole cluster is made of.
+## 2026-08-17 — poison-record fixes: surrogate-safe truncation + insert-failure quarantine (`publicRecordAnchor.ts`, new `public-record-quarantine.ts`)
+
+Two durable fixes demanded by the 2026-08-17 prod repair
+(`docs/staging/fullsoak-2026-08/prod-repair-poison-record-2026-08-17.md`): a `public_records` row
+whose abstract carried 86 astral-plane characters had its surrogate pair split by
+`publicRecordDescription`'s `.slice(0, 500)` at exactly unit 500 → lone high surrogate in
+`description` → PostgREST `PGRST102 "Empty or invalid json"` on the anchor insert → the
+`created_at`-ascending fetch re-selected the same oldest row at the head of the queue every 10
+minutes for 16 days, feeding the SCRUM-3156 fatal-alert storm.
+
+- **Truncation.** Both truncation sites (`publicRecordDescription` 500, `buildAnchorFilename` title
+  180) now go through `utils/utf16-truncate.ts` `truncateUtf16Safe` — see that folder's `agents.md`
+  for the mechanism (drop the split surrogate, `toWellFormed()` guard). `publicRecordDescription` is
+  now exported for direct unit testing.
+- **Quarantine (defense-in-depth — the truncation fix removes the KNOWN poison class).**
+  `insertAnchorSerialFallback` (now exported) returns `{ created, failures }`; a non-23505 per-row
+  failure is joined back to its record via `(source, source_id)` (`pipelineSourceKey`) and counted
+  durably in `public_records.metadata` by `quarantineFailedSerialInserts`
+  (`public-record-quarantine.ts`). At `ANCHOR_INSERT_QUARANTINE_THRESHOLD` (3, spanning runs — an
+  in-memory skip dies with the process) the row gets `metadata.anchor_insert_quarantined_at` and is
+  excluded from BOTH unanchored fetch paths via
+  `.is('metadata->anchor_insert_quarantined_at', null)`. Only the Postgres error CODE is persisted
+  in metadata, never `error.message` (PostgREST messages can echo the payload; metadata feeds
+  public projections). Un-quarantine = remove the key. No schema change by design; a dedicated
+  column + partial index is the flagged follow-up.
+- **`pipelineThroughputMonitor.ts` MUST stay in sync:** its oldest-unlinked probe carries the same
+  quarantine exclusion. A quarantined row keeps `anchor_id IS NULL` forever, so without the filter
+  condition B ages it into a permanent fatal-alert stream — the exact storm this work exists to end.
+  If you add another `anchor_id IS NULL` consumer, pair it with
+  `ANCHOR_INSERT_QUARANTINE_FILTER_COLUMN` or justify why quarantined rows belong in it.
+
+Tests: `__tests__/publicRecordAnchor-poison-record.test.ts` (exact poison shape: 2,000 UTF-16
+units / 1,914 codepoints / 86 astral, pair split at unit 500), `public-record-quarantine.test.ts`,
+`utils/utf16-truncate.test.ts`, plus fetch-filter assertions in `publicRecordAnchor.test.ts` and
+`pipelineThroughputMonitor.test.ts`. T3 (cron-on-anchors).
+## 2026-08-18 — `db-health-monitor.ts` dead-tuple RATIO check gets the same absolute floor its autovacuum-age sibling already had
+
+**The alert.** Prod's `job_queue` (`n_live_tup=24, n_dead_tup=20`) actively fired ARKOVA-WORKER-2A. The
+ratio check (`n_dead_tup/n_live_tup > 0.5`, `computeAlerts()`) had **no absolute-count floor** — unlike
+`VACUUM_DEAD_TUPLE_THRESHOLD = 100_000`, which gates the autovacuum-age alert a few lines below it in
+the same function. `job_queue` sits in `HOT_TABLES` alongside `anchors`/`public_records`/`audit_events`
+(multi-million-row tables where the ratio is a real bloat signal), but at `job_queue`'s live scale —
+rows churn to `completed`/`dead` and get vacuumed away — a handful of rows moving between states swings
+the ratio by tens of percentage points: three snapshots taken minutes apart read **0.83, 1.46, and
+2.46** off the same table, while autovacuum ran demonstrably healthy the entire time (499 runs, last
+one minutes-fresh, `n_dead_tup=20` well under the table's own `50 + 0.2*n_live_tup ≈ 55` trigger point).
+Same defect class as yesterday's `DEFAULT_LINKER_STALL_MIN_BACKLOG` fix immediately below: an unfloored
+signal escalating on a magnitude it cannot resolve.
+
+**Fix.** `DEAD_RATIO_MIN_DEAD_TUPLES = 500` gates the ratio branch: `t.deadTuples >=
+DEAD_RATIO_MIN_DEAD_TUPLES && t.ratio > DEAD_RATIO_THRESHOLD`. 500 comfortably clears job_queue's
+live-scale churn while a genuinely bloated hot table (anchors/public_records/audit_events at their
+normal multi-million-row scale) crosses it on the very first missed vacuum cycle — no sensitivity lost
+for the incident class this check exists to catch. The floor gates escalation only: a sub-floor table
+still appears in the green-path `deadTuples` snapshot and the `db-health-monitor green` log line, it
+just doesn't page on noise the ratio can't distinguish from bloat.
+
+Tests: `db-health-monitor.test.ts`, new `describe('dead-tuple ratio absolute floor …')` block (4 cases,
+red-first) — the exact prod shape (24 live/20 dead) does not alert; the SAME 20-dead-tuple count stays
+sub-floor across the incident's observed live-tup volatility (ratios 0.83/1.46/2.46); a genuine
+10k-live/50k-dead bloat shape still fires; the floor is inclusive at its boundary (500 fires, 499
+doesn't). 75/75 across the five monitor test files (71 baseline + 4 net new, 0 regressions); tsc
+set-diff vs the pre-fix baseline is zero; eslint clean.
+
+## 2026-08-17 — `pipelineThroughputMonitor.ts` condition B gets a count floor, and the cache stops lying
+
+**The storm.** Prod `public_records` held 3,538,743 rows: 3,538,742 linked, exactly **one** unlinked,
+~388h old. Condition B fired on the AGE of the oldest unlinked record with no magnitude qualifier at
+all, 388h maps to the `t168h` bucket, and `severityForSustainedBucket('t168h')` is `fatal` — so a
+monitor on a ~30-minute cadence emitted a FATAL Sentry event every half hour for ~16 days (~670
+events) over one row. A dead-man that pages fatal on a single orphan is not calibrated; it trains
+responders to ignore it, which is the same failure mode SCRUM-3050 fixed from the opposite direction.
+
+**Floor = 500 records, and the number is not arbitrary.** `unlinked_total` comes from
+`pipeline_dashboard_cache.pipeline_stats.pending_record_links`, which the deployed
+`refresh_cache_pipeline_stats()` computes as `round(pg_class.reltuples * pg_stats.null_frac)`.
+`null_frac` is an ANALYZE **sample** statistic (~30k rows at the default statistics target), which
+makes the estimate **quantized**, not merely noisy: at 3.5M rows the smallest non-zero value it can
+express is roughly 3.5M/30k ≈ 118 — ONE sampled stuck row estimates ~118, never anything in 1..117.
+The floor must therefore sit ABOVE that quantum: a floor below it (100 was the first value shipped)
+re-arms the fatal storm in every ANALYZE epoch whose sample happens to catch the stuck row (~1% of
+cycles per stuck row), and the quantum grows linearly with the table, so headroom matters — 500
+stays above one quantum until ~15M rows (~4x today). On the other side, the nightly flush moves
+~10k anchors, so one missed linker cycle leaves 20x the floor and the 2026-07 incident was
+259,000 — the floor costs zero sensitivity for the incident class the monitor exists for. A floor
+at batch scale (10,000) would instead blind it to a small tenant whose entire daily volume is a few
+hundred records.
+
+**Graduated, not silenced.** Below the floor the decision is `should_fire: true, severity: 'warning',
+below_backlog_floor: true`, which routes to `logger.warn` with `pipelineStuckRecordSubFloor: true`
+and emits **no** Sentry event. The row is still stuck and still visible; it is just in the ops log
+rather than on a pager. `alertFired` now means "a Sentry alert was actually emitted", so the sub-floor
+result is honestly `healthy: false, alertFired: false`.
+
+**Three fail-loud properties deliberately preserved:**
+
+- `unlinked_total === null` (cache miss / `-1` timeout sentinel) does **not** take the sub-floor
+  branch. Resolving "unknown" to "small" is the same "no data therefore healthy" bug
+  `sustainedBucketFor` already refuses for an unbounded duration.
+- The floor gates **condition B only**. Condition A means nothing secured network-wide inside the
+  window while feeders demonstrably produced a record — an outage at any volume.
+- The floor is a lower bound on *escalation*, never on *detection*: the probes are unchanged.
+
+**The second defect: the cache disagreed with the live count, and the message printed both.** The
+alert read `oldest unlinked public record is 388h old ... (total unlinked backlog 0)`. The `0` is the
+sampled estimate above; the `388h` came from an exact `LIMIT 1` probe that was holding the very row
+the estimate says does not exist. `resolveUnlinkedBacklog()` now reconciles the two — the probe is an
+exact existence test, so when it returns a row the backlog is **at least 1** and the cached zero is
+reported as contradicted rather than asserted. `pending_record_links_approximate` (which the cache
+row already self-declares) is carried through and renders as a `~` marker, so an estimate is never
+printed as a measurement (§1.5). The DB-side estimator is **not** changed here: it is deliberately
+approximate to avoid the `count(*)` callsites R0-8/SCRUM-1254 banned, and making it exact would
+reintroduce the 60s PostgREST timeouts. The defect was consuming it as if it were exact.
+
+Route surface unchanged: `POST /cron/pipeline-throughput-monitor` still accepts only `window_hours`
+and `linker_stall_threshold_hours`. The floor is overridable in-process
+(`runPipelineThroughputMonitor(db, { linkerStallMinBacklog })`) but is not a query parameter — add
+one only if an incident actually needs it.
+
+Tests: `pipelineThroughputMonitor.backlogFloor.test.ts` (18 cases, red-first — including the
+minimum-expressible-estimate regression: a sampled-stuck-row epoch reading ≈117 must stay sub-floor,
+and a 259k-class backlog must still page fatal). T2 (worker behavior).
 
 ## 2026-08-11 SCRUM-3128 / BUG-2026-08-11 — the ECON-1 fee ceiling now fails CLOSED (`anchor.ts`)
 
@@ -876,6 +998,8 @@ depends on supabase-js `.eq()` path-string tolerance and warrants its own verifi
 - SCRUM-2904 — `docusign-anchor-reconciliation.ts` reconciles the TWO DocuSign anchor mechanisms so one envelope → one anchor. (A) DECLARED-HASH rules path (`rule-action-dispatcher.ts` AUTO_ANCHOR/FAST_TRACK_ANCHOR — anchor from an ASSERTED payload hash) vs (B) SERVER-FETCHED connector path (`docusign-envelope-completed.ts` → `connector-artifact-drain.ts` — anchor from the §1.6A MEASURED-bytes fingerprint). **Precedence:** the server-fetched connector path is AUTHORITATIVE. `connectorPathIsAuthoritative()` returns true only when the source has a server-fetch path AND **both** `enableConnectorArtifactEnqueue` **and** `enableConnectorArtifactDrain` are on (never defer into a path that can't complete — that would strand the envelope). When authoritative, the declared-hash path DEFERS (new outcome `deferred_to_connector` / routed_to `connector_pipeline`; no anchor, no credit). Belt-and-suspenders `findExistingEnvelopeAnchor()` (envelope-level guard, matches metadata `source_envelope_id`/`envelope_id`/`external_ref`) is wired into AUTO_ANCHOR + the connector drain's `defaultMaterializeAnchor` to catch the flag-flip-mid-flight race the `(user_id,fingerprint)` index misses (different asserted-vs-measured hashes). §1.6A preserved: reconciliation reads flags + coarse ids only, never bytes. (Restored 2026-07-28, lost by the union-merge-driver incident.)
 - **`credit-conservation-reconciler.ts` (S1-9 / SCRUM-2349 / PM-25)** — money-conservation reconciler daily-sweep CALLER. The reconciler LOGIC is the prod SQL function `org_credit_ledger_divergence(p_org_id uuid DEFAULT NULL)` (added by mig 0341, corrected by mig 0347; service_role EXECUTE, STABLE SECURITY DEFINER), which checks `balance == purchased + monthly_allocation + net(org_credit_allocations) + SUM(org_credit_deductions.amount)` per org. `decideCreditConservationAlert(rows)` is a pure decision fn; `runCreditConservationReconciler(db)` is the cron glue. **Read-only** → idempotent/safe to re-run, and NOT in `ANCHOR_TABLE_IN_PROCESS_JOBS` (a paused anchor pipeline must NOT silence credit-ledger integrity checks). **PII (§1.4):** logs + Sentry carry `org_id` + a COARSE divergence BUCKET only (`bucketDivergence()`) — never raw balance/granted/ledger_sum/expected/divergence. Cron route `/jobs/reconcile-credit-conservation`; in-process backup in `scheduled.ts` (daily `0 9 * * *`). (Restored 2026-07-28, lost by the union-merge-driver incident.)
 - **`queue-digest.ts` / `queue-digest-cron.ts` (QUEUE-07 / SCRUM-2353)** — daily review-queue digest email to org admins. `queue-digest.ts` is the **pure engine**: `buildDigestPayload()` (counts-only HTML: open / aged / failed-connector + action links; returns null for a quiet queue) and `deliverDigestToAdmin()` (suppression → idempotency → retry orchestration over an injected `DigestStore`). **§1.6 hard guard:** `assertNoRawContent()` runs on every scope/payload and throws on any forbidden document key (content/filename/fingerprint/sha256/ocr/…) **or any Buffer/typed-array value by type** — the digest carries COUNTS + action links only, never document bytes/PII (recipient email is the only PII). `queue-digest-cron.ts` is the **production wiring**: `runDailyQueueDigest()` resolves org admins, scopes each admin to their org + owned sub-orgs, reads counts-only metrics, and backs preferences/suppression/delivery-log/retry on `audit_events` — no new migration. Suppression **fails CLOSED** on a read error. Idempotent per (admin, org, UTC date). Gated by `ENABLE_QUEUE_DIGEST`. Prod trigger: `POST /jobs/queue-digest`. T2. (Restored 2026-07-28, lost by the union-merge-driver incident.)
+- **`platform-health-digest.ts` / `platform-health-digest-cron.ts`** (new, `feat/platform-admin-daily-health-digest`, draft T2, 2026-08-18) — daily platform-state summary email to platform admins. Same two-file split as `queue-digest`: `platform-health-digest.ts` is the **pure engine** (`buildPlatformHealthPayload()` + `deliverPlatformHealthDigestToAdmin()`, reuses `queue-digest.ts`'s `assertNoRawContent` guard directly rather than duplicating it); `platform-health-digest-cron.ts` is the **production wiring** (`listPlatformAdmins()` reads `profiles.is_platform_admin=true` — never a hardcoded address; `assemblePlatformHealthSnapshot()` reads anchors-by-status, `job_queue` depth, `anchor_txid_journal` for the last-24h batch flush, `connector_alert_state` for a platform-wide connector rollup, and `org_credits`/`anchors` for test-tier quota anomalies). Unlike the queue digest, content is **one snapshot fanned out identically to every recipient**, not per-admin scoped, and there is no suppression/opt-out (platform admins are staff, not a customer preference surface) — only idempotency/retry, same F3 reserve-before-send pattern, backed by NEW audit_events event types `PLATFORM_HEALTH_DIGEST_SENT`/`_FAILED` (no migration). Every section reader degrades to `null` ("not measured") on its own read error rather than sinking the whole digest or asserting a false zero — see `assemblePlatformHealthSnapshot`'s `Promise.all` + per-section `safe()` wrapper. Gated by `ENABLE_PLATFORM_HEALTH_DIGEST` (default **true**, unlike queue-digest's default-false — this is a routine internal digest, not a new customer-facing send). Prod trigger: `POST /jobs/platform-health-digest`; NOT yet bound to Cloud Scheduler (see `scripts/gcp-setup/agents.md`'s dated entry). Keeps the existing hardcoded-recipient stuck-anchor alert in `pipeline-health.ts` completely separate, on purpose — different signal shape (threshold alarm vs. routine digest).
+- **`queue-digest.ts` / `queue-digest-cron.ts` (QUEUE-07 / SCRUM-2353)** — daily review-queue digest email to org admins. `queue-digest.ts` is the **pure engine**: `buildDigestPayload()` (counts-only HTML: open / aged / failed-connector + action links; returns null for a quiet queue) and `deliverDigestToAdmin()` (suppression → idempotency → retry orchestration over an injected `DigestStore`). **§1.6 hard guard:** `assertNoRawContent()` runs on every scope/payload and throws on any forbidden document key (content/filename/fingerprint/sha256/ocr/…) **or any Buffer/typed-array value by type** — the digest carries COUNTS + action links only, never document bytes/PII (recipient email is the only PII). `queue-digest-cron.ts` is the **production wiring**: `runDailyQueueDigest()` resolves org admins, scopes each admin to their org + owned sub-orgs, reads counts-only metrics, and backs preferences/suppression/delivery-log/retry on `audit_events` — no new migration. Suppression **fails CLOSED** on a read error. Idempotent per (admin, org, UTC date). Gated by `ENABLE_QUEUE_DIGEST`. Prod trigger: `POST /jobs/queue-digest`. T2. (Restored 2026-07-28, lost by the union-merge-driver incident.) **Enrollment flipped DEFAULT-ON 2026-08-18 (`feat/queue-digest-default-on`, draft — see the dated entry at the end of this file) — do not read this bullet's "digest email to org admins" as still opt-in.**
 - `attestationAnchor.ts` — `processAttestationAnchoring()` Merkle-batches PENDING attestation fingerprints to Bitcoin via OP_RETURN. Gated by `ENABLE_ATTESTATION_ANCHORING` flag. Dispatches `attestation.active` webhooks and audit events.
 - `docusign-notarization-completed.ts` (SCRUM-1872) — `processDocusignNotarizationCompletedJob()` handles queued `docusign.notarization_completed` jobs. Looks up `legally_binding_attestations` by `docusign_envelope_id`, validates org match (cross-tenant guard) and status (`pending_notarization`), updates row to `notarized` with notary metadata, writes NOTARIZATION_COMPLETED audit event. `runDocusignNotarizationCompletedJobs()` is the queue runner. Handler throws on processor failure so `processNextJob` correctly marks the job as failed (not completed).
 - **`anchorExpirySweep.ts` (SCRUM-1736)** — daily 03:00 UTC sweep that flips `anchors.status` from SECURED to EXPIRED past `expires_at` and dispatches `anchor.expired` outbound webhook. Compare-and-set on UPDATE guards against concurrent revocation. Sentinel `anchor.expired_dispatch_failed` audit row written if dispatch throws so manual recovery is possible (per CodeRabbit PR #734 review). Adapter validates every write via Zod (`AnchorIdSchema`, `AuditEventRowSchema`).
@@ -1133,3 +1257,87 @@ What changed is who else depends on it: `middleware/x402PaymentGate.ts` now pric
 off the `btc_price_usd` this job writes. **This cron is on a money path.** If it stops running, the
 quote goes stale, the reader rejects it past 6 h, and anchor pricing silently loses its entire fee
 component. It was previously only feeding display and alerting.
+
+## 2026-08-18 — QUEUE-07 default-on flip (`feat/queue-digest-default-on`, draft, T2)
+
+CTO decision, per the read-only email/auth/admin capability audit that found the digest fully built
+and completely dark: `ENABLE_QUEUE_DIGEST` was absent from `.github/workflows/deploy-worker.yml`'s
+env block AND from `docs/reference/ENV.md` (undocumented lever), and delivery was **opt-in** via an
+`organization_rules` row that **zero orgs ever created** (prod `QUEUE_DIGEST`-enabled rule count = 0,
+`QUEUE_DIGEST_SENT` audit rows = 0, ever). Two independent gates both closed by construction — the
+flag would not have mattered even if it had been set.
+
+Two changes, both in `queue-digest-cron.ts`:
+
+1. **`ENABLE_QUEUE_DIGEST=true` added to `deploy-worker.yml`'s `--set-env-vars` and documented in
+   `docs/reference/ENV.md`.** The code-level `config.enableQueueDigest` default stays
+   `boolFlag(false)` — prod is now explicitly on, everything else (local/test/preview) stays dark by
+   default unless it also sets the var.
+2. **Enrollment flipped from opt-in to DEFAULT-ON, opt-out.** `listDigestOptedInOrgIds` (queried
+   `.eq('enabled', true)`, so a disabled/absent row both meant "not enrolled") is replaced by
+   `listQueueDigestPreferences` (drops the `enabled` filter — a disabled row must come back, because
+   disabled is now the SIGNAL) + `isOrgEnrolledInQueueDigest`. Same table
+   (`organization_rules`/`trigger_type='QUEUE_DIGEST'`), same Rule Builder UI, opposite polarity:
+   - No row at all → enrolled (the new default; was previously "not enrolled").
+   - `enabled=false` → explicit opt-out (was previously just "still not enrolled"; now it is THE
+     opt-out mechanism).
+   - `enabled=true` → still enrolled, and its `trigger_config.cron`/`timezone` still overrides cadence
+     (F4 unchanged) — this is the pre-flip shape, kept working for backward compatibility even though
+     no prod org currently has one.
+   - Preference-read failure → `listQueueDigestPreferences` returns `null` (not an empty Map) so
+     `isOrgEnrolledInQueueDigest` can fail CLOSED (nobody enrolled that pass) without confusing "read
+     failed" with "confirmed nobody has a preference row" (a real empty Map, which is the everyday
+     case today and correctly means "everyone enrolled").
+   - The existing empty-queue skip (`buildDigestPayload` → `SKIPPED_EMPTY` in `deliverDigestToAdmin`)
+     is untouched and does the "no noise" work: an org counted in `result.admins` can still land in
+     `result.skippedEmpty` with zero mail sent.
+
+**Known gap, deliberately not closed in this change (worker-only PR):** `src/lib/ruleTemplates.ts`'s
+`bgc-daily-digest` template still reads as an opt-IN affordance ("Queue every background check for
+daily review") and — per its own file header, "rules always ship disabled per SEC-02" — creates its
+`QUEUE_DIGEST` rule with `enabled=false` by default. Under the new polarity, an admin who adds this
+template and does nothing else has **silently opted their org out** of a digest they were never told
+existed, rather than opted in to one they wanted. Functionally harmless today (opt-out is a valid
+outcome), but the copy no longer matches the mechanism. Frontend follow-up, not filed against this PR.
+
+## 2026-08-12 — F-D0-5: the run lease could not bound a HUNG run (`run-lease.ts`, `check-confirmations.ts`)
+
+Found on the fullsoak rig running prod's image digest (revision `…-00012-f45`), evidence in
+the Day-0 BL-2 secured-E2E write-up §2.6a/§4 (under `docs/staging/fullsoak-2026-08/`; authored
+by the soak close-out session, not on `main` when this landed). A `check-confirmations`
+run started at 14:16:00Z logged "Checking SUBMITTED anchors grouped by tx_id" and never logged
+"Confirmation check complete". SUBMITTED→SECURED promotion was disabled for **every tenant** for
+35+ minutes, with **zero warn/error logs**, and 31 forced POSTs all answered
+`{"checked":0,"confirmed":0}` — the same body a healthy idle run returns.
+
+**The TTL bounds a DEAD holder; it cannot bound a hung-but-ALIVE one.** All three mechanisms
+pointed the same way: the heartbeat renews on schedule for as long as the event loop turns (its
+`setInterval` fired at 14:27:50 / 14:39:30 / 14:51:10, exactly ttl/3 apart — which also rules out
+timer starvation); `releaseRunLease` lives only in `withRunLease`'s `finally`, which a parked body
+never reaches; and the per-process `inFlight` Set is consulted BEFORE the store, so the holding
+instance self-blocked too. With `minScale=2, maxScale=10` in prod, one hung instance blocks the job
+globally — the lease row is shared.
+
+Three changes, each with tests that fail without it:
+
+1. **`maxRunMs` on every `RunLeaseSpec`** — `withRunLease` races `body()` against it. On expiry the
+   heartbeat stops, the lease is released, `inFlight` is cleared, and the caller gets a
+   `RunLeaseBodyTimeoutError`. It **abandons**, it does not kill (nothing cancels a promise in JS);
+   the abandoned promise is observed so a late rejection cannot crash the worker. Floor is the TTL,
+   asserted for every spec in `RUN_LEASE_SPECS`. `check-confirmations` gets the tightest bound
+   (45 min) for the same reason it has the shortest TTL; `batch-anchor` the longest (110 min),
+   because cutting off a run that is mid-signing is the dangerous direction.
+2. **Bounded body reads** (`utils/body-read-timeout.ts`) — `AbortSignal.timeout` bounds the
+   REQUEST; `await response.json()` is a separate await with no deadline, and a provider that sends
+   headers then stalls parks it forever. That is the suspected proximate cause here
+   (`fetchTxStatus`, `check-confirmations.ts:~925` inside `Promise.allSettled`). Wired through
+   `check-confirmations.ts`, `chain/utxo-provider.ts`, `chain/fee-estimator.ts` and
+   `treasury-cache.ts`; `BodyReadTimeoutError` classifies as retryable in `isRetryableError`.
+3. **A lease-blocked run says so.** `checkSubmittedConfirmations` returns
+   `skipped: 'run-lease-held'` (F-D0-2), and `withRunLease` escalates a skip streak to **warn**
+   once it has outlived a full TTL — one skip is healthy overlap, a streak past the TTL means the
+   holder is renewing without finishing.
+
+**Do not "fix" a future hang by shortening the TTL.** A TTL below the cadence lets the next tick
+steal the lease from a run that is still working — the SCRUM-3031 overlap this module exists to
+prevent. `maxRunMs` is the knob for a hung run; `ttlMs` is the knob for a dead one.

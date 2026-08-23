@@ -2,34 +2,45 @@
 
 > **Authoritative reference** for the `arkova-staging` rig. CLAUDE.md §1.11 points here. Every session should read this before touching `scripts/staging/*` or running a soak.
 
-## Live state (as of 2026-05-04 evening)
+## Live state (as of 2026-08-19 — rig rebuilt from scratch)
+
+> **2026-08-19 rebuild note:** the project standing here from 2026-05-04 (`ujtlwnoqfhtitcmsnrpq`) was
+> found to no longer exist (confirmed via Supabase MCP `list_projects` absence, DNS NXDOMAIN, and a
+> live 503 `database: error` from the worker — see
+> [docs/staging/staging-rig-rebuild-2026-08-19.md](../staging/staging-rig-rebuild-2026-08-19.md) for
+> the full diagnostic trail and rebuild evidence). Founder-approved a clean rebuild the same day. All
+> facts below reflect the new project; anything below this note that still reads "2026-05-04" is
+> carried over narrative from the original build and may no longer be current — trust this block's
+> header date over inline dates further down the doc.
 
 ### Supabase project
 | Field | Value |
 |---|---|
-| Project ref | `ujtlwnoqfhtitcmsnrpq` |
-| Name | `arkova-staging` |
+| Project ref | `fizyjojbebyalirtjjht` |
+| Name | `arkova-staging-2026-08` |
 | Organization | `byhkazrpmivhcsuqjtva` (carson-see's Org) |
 | Region | `us-east-2` (matches prod for soak fidelity) |
-| URL | https://ujtlwnoqfhtitcmsnrpq.supabase.co |
-| DB host | `db.ujtlwnoqfhtitcmsnrpq.supabase.co` |
-| Postgres version | 17.6.1.113 |
+| URL | https://fizyjojbebyalirtjjht.supabase.co |
+| DB host | `db.fizyjojbebyalirtjjht.supabase.co` |
+| Postgres version | 17.6.1.155 |
 | Cost | $10/month (Supabase Pro project; pause-when-idle if soaked rarely) |
-| Schema state | 270 ledger rows, 101 public tables, 97 RLS-enabled, 279 functions, anchors 37 cols (replayed 2026-05-04) |
+| Schema state | 111 ledger rows (head `0409`, exact match with prod `vzwyaatejekddvltxyye`), 115 public tables, 115 RLS-enabled, 370 functions (replayed 2026-08-19) |
+| Preflight | `environment_type=clean_mirror`, all 6 checks passed (verified 2026-08-19) |
 
 ### Cloud Run worker
 | Field | Value |
 |---|---|
-| Service name | `arkova-worker-staging` |
+| Service name | `arkova-worker-staging` (kept — name is referenced by CI; re-pointed, not recreated) |
 | Region | `us-central1` |
 | Service URL | https://arkova-worker-staging-kvojbeutfa-uc.a.run.app |
 | Project-suffix URL | https://arkova-worker-staging-270018525501.us-central1.run.app |
-| Initial revision | `arkova-worker-staging-00002-xzq` (2026-05-04 — first revision after `NODE_ENV=production` fix) |
-| Image | reuses prod's pinned image `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:30e56792d1b1cdb8b2d658782d1e7d88994eaaa5` |
+| Current revision (2026-08-19 rebuild) | `arkova-worker-staging-00252-696` — main-URL 100% traffic, `git_sha b6cfad73c73fbaf45bea08e3b155d61501a49daa` (origin/main tip at rebuild time), verified `/health`: `status: healthy`, `database/anchoring/kms: ok` |
+| Image | `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker@sha256:07742aceedbfbbad398d4e26f75dd9a29186991c0f4d0adc561b09b7e73f192d` (built fresh from `services/worker` at origin/main via Cloud Build, linux/amd64) |
 | Service account | `270018525501-compute@developer.gserviceaccount.com` (default compute SA, same as prod) |
 | Auth | `--no-allow-unauthenticated` (IAM-protected; principals need `roles/run.invoker`) |
-| Scaling | `--min-instances=0 --max-instances=2` (cost-controlled; cold start acceptable for soak) |
+| Scaling | `minScale=1 / maxScale=2` (live as of 2026-08-19; doc historically said `--min-instances=0` — not reconciled in this rebuild, out of scope) |
 | Resources | `--memory=1Gi --cpu=1 --timeout=300` |
+| ~45 stale PR-tagged revisions | Still present at 0% traffic (`pr-810` through `pr-1459`, plus a few `train-*` lanes) — all predate the 2026-05-04→2026-08-19 dead-project window and are safe to ignore or sweep via `scripts/staging/cleanup-orphan-tags.sh`; none were touched by this rebuild. |
 
 ### Staging-specific env-var deltas vs prod
 
@@ -73,7 +84,7 @@ For a clean rebuild from scratch, use this same procedure:
 
 ```bash
 export SUPABASE_ACCESS_TOKEN="$(gcloud secrets versions access latest --secret=supabase_access --project=arkova1)"
-supabase link --project-ref ujtlwnoqfhtitcmsnrpq
+supabase link --project-ref fizyjojbebyalirtjjht
 # Bootstrap: ensure required extensions are present in `extensions` schema
 # and the database default search_path includes them. Without this, 0013
 # fails with "function uuid_generate_v4() does not exist".
@@ -112,7 +123,7 @@ supabase db push --linked  # applies the rest
 # CREATE INDEX IF NOT EXISTS — so re-applying on a populated schema is safe).
 for f in /tmp/colliding_migrations/*.sql; do
   jq -Rs --arg n "$(basename "$f" .sql)" '{name: $n, query: .}' < "$f" | \
-    curl -s -X POST "https://api.supabase.com/v1/projects/ujtlwnoqfhtitcmsnrpq/database/query" \
+    curl -s -X POST "https://api.supabase.com/v1/projects/fizyjojbebyalirtjjht/database/query" \
       -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
       -H "Content-Type: application/json" -d @-
 done
@@ -120,6 +131,99 @@ done
 # Move them back so the worktree matches main.
 mv /tmp/colliding_migrations/*.sql supabase/migrations/
 ```
+
+### 2026-08-19 rebuild gotchas (read before repeating this procedure)
+
+The steps above are from the original 2026-05-04 build. Doing a full from-scratch
+replay again on 2026-08-19 (new project `fizyjojbebyalirtjjht`, main at `0409`)
+surfaced four things the section above does not cover:
+
+1. **The 11-file prefix-collision list above is now stale/moot.** By 2026-08-19,
+   `supabase/migrations/` on `main` has zero duplicate 4-digit prefixes — those
+   11 files were folded into `00000000000000_baseline_at_main_HEAD.sql` at some
+   point after 2026-05-04. A fresh `supabase db push --linked --include-all --yes`
+   needs no file-shuffling for THIS reason any more. Verify with
+   `ls supabase/migrations/*.sql | sed -E 's#.*/([0-9]{4})_.*#\1#' | sort | uniq -c | awk '$1>1'`
+   (empty output = no collisions) before assuming the old list still applies.
+2. **`pg_trgm` must be installed in the `public` schema, not `extensions`.**
+   The bootstrap block above installs it into `extensions` (correct for
+   `uuid-ossp`/`pgcrypto`, wrong for `pg_trgm`) — the current baseline squash
+   file hardcodes `CREATE INDEX ... USING "gin" ("description" "public"."gin_trgm_ops")`,
+   so a `pg_trgm` installed anywhere else fails the push with
+   `operator class "public.gin_trgm_ops" does not exist`. Confirmed against
+   prod (`vzwyaatejekddvltxyye`) via MCP `list_extensions`: prod has `pg_trgm`
+   in `public`. Fix: `CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;`
+   (drop it first if you already ran the stale `extensions`-schema command).
+3. **Migration files with *multiple* `CREATE INDEX CONCURRENTLY` statements
+   fail under `supabase db push`'s pipelined execution** with
+   `CREATE INDEX CONCURRENTLY cannot be executed within a pipeline (SQLSTATE 25001)`
+   — a Postgres wire-protocol restriction, not a transaction issue (files with
+   exactly one `CONCURRENTLY` statement push fine; as of `0409` the affected
+   files are `0381_docusign_envelope_metadata_lookup_indexes.sql` and
+   `0389_anchors_ce_registry_ctid_partial_index.sql` — check with
+   `grep -c "CREATE INDEX CONCURRENTLY" supabase/migrations/*.sql | awk -F: '$2>1'`).
+   Fix: set the offending file(s) aside (same `mv`-to-`/tmp`-and-back pattern
+   as the prefix-collision workaround), let `db push` finish everything else,
+   then apply each set-aside file directly via `psql` against the **session
+   pooler** (`host=aws-0-<region>.pooler.supabase.com port=5432
+   user=postgres.<ref> dbname=postgres sslmode=require` — the CLI's `db push`
+   and MCP `execute_sql`/`apply_migration` both wrap multi-statement bodies in
+   an implicit transaction or a pipeline, so neither can run `CONCURRENTLY`
+   either; `psql -f` sends each top-level statement as its own protocol
+   message and does not have this problem). After applying, manually insert
+   the ledger row so `list_migrations` shows it:
+   `INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('0381','docusign_envelope_metadata_lookup_indexes') ON CONFLICT (version) DO NOTHING;`
+   (name = filename minus the `NNNN_` prefix and `.sql`, matching how the CLI
+   itself names neighboring rows — verify by comparing to an adjacent
+   CLI-applied row in the same `list_migrations` output).
+4. **Direct DB connection (`db.<ref>.supabase.co:5432`) is IPv6-only and may
+   be unreachable** (`No route to host`) from an environment without IPv6
+   egress. The **session pooler** (`aws-0-<region>.pooler.supabase.com:5432`,
+   username `postgres.<ref>`) is IPv4-reachable and preserves per-session
+   state (needed for `CONCURRENTLY` above) — prefer it over the direct host
+   for any ad-hoc `psql` work against a fresh rig. `supabase link`/`db push`
+   already handle this internally and do not need the workaround.
+5. **`create_project` (MCP or CLI) does not surface the generated DB
+   password**, and the CLI's `link`/`db push` need one. Set a known password
+   via the Management API before linking:
+   `PATCH https://api.supabase.com/v1/projects/<ref>/database/password` with
+   body `{"password": "<generated>"}` — then export it as
+   `SUPABASE_DB_PASSWORD` for `supabase link --project-ref <ref>`. Store the
+   password in Secret Manager as `supabase-db-password-<ref>` (matches the
+   naming already used for several other rigs) so it is not lost after the
+   session ends.
+6. **`IP_HASH_PEPPER` is now a required-in-production secret** (added to
+   `services/worker/src/config.ts`'s boot-time `superRefine` after
+   2026-05-04, secret `ip-hash-pepper` created 2026-08-11) that the
+   `arkova-worker-staging` service's existing secret bindings did **not**
+   carry — a redeploy from a pre-2026-08-11 service config crash-loops on
+   boot with `Error: Invalid worker configuration` / `Production requires
+   IP_HASH_PEPPER`. This is a secret-binding repair, not a deploy — deploys still
+   go through `scripts/staging/deploy.sh` (SCRUM-1821); the binding must be
+   fixed first or every deploy through the wrapper crash-loops on boot.
+   <!-- staging-gcloud-ok: one-time secret-binding repair on a dead rig; not a deploy path -->
+   Fix: `gcloud run services update arkova-worker-staging
+   --region=us-central1 --project=arkova1
+   --update-secrets=IP_HASH_PEPPER=ip-hash-pepper:latest`. Re-check
+   `services/worker/src/config.ts`'s `superRefine` block for other
+   production-only requirements added since the service was last redeployed
+   before assuming the env/secret list above (§ "Staging-specific env-var
+   deltas vs prod") is still complete.
+<!-- staging-gcloud-ok: documents a gcloud output trap; warning text, not a deploy instruction -->
+7. **`gcloud run services update --image=...` prints a revision name in its
+   summary line that is not reliably the revision it just created**, when the
+   service's traffic is pinned to an explicit revision name rather than the
+   `LATEST` indirection (true for `arkova-worker-staging`, which pins traffic
+   to a fixed revision from historical PR-tag deploys). Do not trust the
+   printed "revision ... has been deployed and is serving N percent of
+   traffic" line — confirm the real new revision with
+   `gcloud run revisions list --service=arkova-worker-staging
+   --region=us-central1 --project=arkova1 --sort-by="~metadata.creationTimestamp" --limit=3`
+   and its actual traffic share with `gcloud run services describe ...
+   --format=json` (`status.traffic`), then move traffic explicitly with
+   <!-- staging-gcloud-ok: verification remediation for the trap above; deploys still use deploy.sh -->
+   `gcloud run services update-traffic ... --to-revisions=<real-new-revision>=100`.
+   `--to-latest` is not equivalent when traffic is pinned this way.
 
 ## Baseline data fixture (required for `clean_mirror`)
 
@@ -186,7 +290,7 @@ Key properties:
 When a soak session needs to apply a NEW migration (e.g. PR #695's
 `0291_msgraph_nonce_payload_hash_and_compound_rpc.sql` or PR #697's
 `0290_suborg_suspension_audit_and_service_role_fix.sql`), it MUST use
-Supabase MCP `apply_migration` against `project_id=ujtlwnoqfhtitcmsnrpq`,
+Supabase MCP `apply_migration` against `project_id=fizyjojbebyalirtjjht`,
 NOT `supabase db push --linked`. Reason: `db push` re-parses
 `supabase/migrations/` and trips on the 11 prefix-collision pairs
 described above (the second of each pair has no ledger row matching its
@@ -205,7 +309,7 @@ allows the same set of files to coexist with non-canonical ledger entries.
 1. **Acquire your lease** — multiple PRs may hold leases simultaneously, but only one per PR:
 
    ```bash
-   export STAGING_SUPABASE_URL="https://ujtlwnoqfhtitcmsnrpq.supabase.co"
+   export STAGING_SUPABASE_URL="https://fizyjojbebyalirtjjht.supabase.co"
    export STAGING_SUPABASE_SERVICE_ROLE_KEY="$(gcloud secrets versions access latest --secret=supabase-service-role-key-staging --project=arkova1)"
    ./scripts/staging/claim.sh acquire <pr-number> "<short reason>"
    ```
@@ -264,6 +368,7 @@ allows the same set of files to coexist with non-canonical ledger entries.
 
 ### Why tag-routed instead of "one soak at a time"
 
+<!-- staging-gcloud-ok: historical incident transcript explaining why the wrapper exists -->
 Pre-SCRUM-1803, the rig was single-tenant and the lease was advisory. `gcloud run services update` with no tag rewrites the main URL traffic for everybody. PR #742↔#743 collided on 2026-05-08; PR #742↔#755 contaminated a 4h SOC 2 T2 soak ~12 min in on 2026-05-09. Both happened despite a held lease, because nothing checked it before deploy.
 
 The tag URL pattern is Cloud Run's native isolation: `--tag pr-N --no-traffic` creates a revision reachable only at `https://pr-N---<service>-...run.app` while leaving the main URL untouched. Multiple PRs can hold revisions; load-harness traffic on each tag URL routes to that revision only. The lease scopes which PR is the legitimate author of deploys to a given tag; `deploy.sh` enforces it.
@@ -285,11 +390,11 @@ The forward path creates/uses `arkova-staging-deployer@arkova1.iam.gserviceaccou
 ## Cost discipline
 
 * The project is $10/month. If no soak has run for >7 days, pause it via the Supabase dashboard. Resume costs nothing per the Supabase Pro pricing model.
-* Do NOT spin up additional preview branches on top of `ujtlwnoqfhtitcmsnrpq`. Use the project itself; sequence soaks via `claim.sh`.
+* Do NOT spin up additional preview branches on top of `fizyjojbebyalirtjjht`. Use the project itself; sequence soaks via `claim.sh`.
 
 ## Future sessions: read this BEFORE picking up rig work
 
 If you find yourself about to:
 * `Supabase MCP create_branch` against prod project_ref → STOP. The standing rig is a standalone project, not a preview branch.
-* Hardcode `vzwyaatejekddvltxyye` (prod) anywhere in `scripts/staging/*` → STOP. Staging is `ujtlwnoqfhtitcmsnrpq`.
+* Hardcode `vzwyaatejekddvltxyye` (prod) anywhere in `scripts/staging/*` → STOP. Staging is `fizyjojbebyalirtjjht`.
 * Apply a migration via Supabase MCP `apply_migration` to staging → only do this for files in `migration-drift.yml` `exempt_regex` (those that haven't yet been promoted to prod). All other migrations apply via `db push --linked`.
