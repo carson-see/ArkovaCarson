@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   S33_LANE1_OFFLINE_EVIDENCE_FILES,
+  baseDriftImpactErrors,
   check,
   extractDeclaredTier,
   findS33RuntimeImporters,
@@ -2921,6 +2922,11 @@ describe('check-staging-evidence', () => {
     // test: intervening main movement invalidates a completed soak ONLY when it
     // touches THIS PR's soak surface (its own changed files ∪ the shared
     // prod-runtime surface). Disjoint drift preserves evidence with no attestation.
+    //
+    // FD-GATE-3 amends the same-surface branch: above-T0 SHARED-surface drift is
+    // no longer an unconditional re-soak — it accepts the §1.11A/§1.12
+    // residual-risk third state (see the nested FD-GATE-3 describe below).
+    // Same-file T2+ drift and migration-vs-migration drift remain unconditional.
     describe('path-aware base drift (surface intersection)', () => {
       const HEAD = '1234567890abcdef1234567890abcdef12345678';
       const EVIDENCE_BASE = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -3067,6 +3073,189 @@ describe('check-staging-evidence', () => {
         });
         expect(r.ok).toBe(false);
         expect(r.errors.join(' ')).toMatch(/Could not inspect changed files/i);
+      });
+
+      // ── FD-GATE-3: the residual-risk third state (§1.11A / §1.12) ──
+      // Above-T0 drift on the SHARED prod-runtime surface used to have exactly
+      // one outcome: unconditional re-soak. That cannot converge at current
+      // merge velocity (a 48 h T3 soak vs a main that took 23 PRs on
+      // 2026-08-22, with `services/worker/src/` matched wholesale), and it is
+      // harsher than the constitution, which names a third state in BOTH
+      // places it addresses this: "a new soak or an explicit residual-risk
+      // note" (§1.11A) and "an explicit Carson-approved residual-risk
+      // exception" (§1.12). The gate now implements it: an auditable, named,
+      // file-enumerating `### Base-drift residual-risk note` preserves
+      // completed evidence for shared-surface drift. Two cases stay
+      // unconditional because an attestation cannot honestly cover them:
+      //   (a) main edited an exact file this PR soaked (or declared as a
+      //       dependency) at T2+ — the evidence provably describes code that
+      //       no longer exists;
+      //   (b) the PR owns a migration AND main landed a migration in the
+      //       interval — ledger ordering is shared mutable state.
+      describe('FD-GATE-3: base-drift residual-risk note (third state)', () => {
+        const validNote = (files: string[]) => `
+### Base-drift residual-risk note
+- Drift files: ${files.join(', ')}
+- Risk assessment: the drifted surface shares no code path with the changed behavior this soak exercised; interaction risk is limited to process-wide worker startup, which the smoke re-run covers.
+- Evidence still valid because: the soaked behavior does not invoke the drifted surface, and targeted evidence re-ran green against the current head.
+- Approved by: Carson 2026-08-23.
+`;
+        const driftErrors = (
+          prFiles: string[],
+          driftFiles: string[],
+          note = '',
+        ) => baseDriftImpactErrors(t2Body + note, EVIDENCE_BASE, CURRENT_BASE, prFiles, driftFiles);
+
+        it('preserves evidence for shared-surface T3 chain drift with a complete note', () => {
+          // The #2291 shape: a complete sealed soak, red ONLY because main
+          // moved a shared T2+/T3 path the PR never touches.
+          const errors = driftErrors(
+            ['services/worker/src/api/v1/docusign.ts'],
+            ['services/worker/src/chain/client.ts'],
+            validNote(['services/worker/src/chain/client.ts']),
+          );
+          expect(errors).toEqual([]);
+        });
+
+        it('preserves evidence end-to-end through check() with a complete note', () => {
+          const r = check({
+            body: t2Body + validNote(['services/worker/src/chain/client.ts']),
+            files: ['services/worker/src/api/v1/docusign.ts'],
+            headSha: HEAD,
+            baseSha: CURRENT_BASE,
+            baseDriftFiles: ['services/worker/src/chain/client.ts'],
+          });
+          expect(r.ok).toBe(true);
+        });
+
+        it('preserves evidence for T1 drift on the PR\'s OWN sub-T2 file with a note (the #2235 shape)', () => {
+          // #2235's actual overlap: five own files whose worst tier is T1
+          // (src/lib/copy.ts). Same-file drift below T2 is attestable — the
+          // hard wall is reserved for T2+ same-file drift.
+          const errors = driftErrors(
+            ['services/worker/src/api/v1/docusign.ts', 'src/lib/copy.ts'],
+            ['src/lib/copy.ts'],
+            validNote(['src/lib/copy.ts']),
+          );
+          expect(errors).toEqual([]);
+        });
+
+        it('preserves evidence for shared migration drift when the PR owns NO migration', () => {
+          const errors = driftErrors(
+            ['services/worker/src/api/v1/docusign.ts'],
+            ['supabase/migrations/0420_added_by_main.sql'],
+            validNote(['supabase/migrations/0420_added_by_main.sql']),
+          );
+          expect(errors).toEqual([]);
+        });
+
+        it('names the note as the remedy when shared-surface drift has no note', () => {
+          const errors = driftErrors(
+            ['services/worker/src/api/v1/docusign.ts'],
+            ['services/worker/src/chain/client.ts'],
+          );
+          expect(errors).toHaveLength(1);
+          expect(errors[0]).toMatch(/touches this PR's soak surface/i);
+          expect(errors[0]).toContain('services/worker/src/chain/client.ts');
+          expect(errors[0]).toMatch(/Base-drift residual-risk note/);
+          expect(errors[0]).toMatch(/FD-GATE-3/);
+        });
+
+        it('fails a note that is missing required sub-fields', () => {
+          const partialNote = `
+### Base-drift residual-risk note
+- Drift files: services/worker/src/chain/client.ts
+- Approved by: Carson 2026-08-23.
+`;
+          const errors = driftErrors(
+            ['services/worker/src/api/v1/docusign.ts'],
+            ['services/worker/src/chain/client.ts'],
+            partialNote,
+          );
+          expect(errors).toHaveLength(1);
+          expect(errors[0]).toMatch(/incomplete/i);
+          expect(errors[0]).toMatch(/Risk assessment:/);
+          expect(errors[0]).toMatch(/Evidence still valid because:/);
+        });
+
+        it('fails a note whose approver is a placeholder (self-waiver)', () => {
+          const tbdNote = validNote(['services/worker/src/chain/client.ts'])
+            .replace('Approved by: Carson 2026-08-23.', 'Approved by: TBD');
+          const errors = driftErrors(
+            ['services/worker/src/api/v1/docusign.ts'],
+            ['services/worker/src/chain/client.ts'],
+            tbdNote,
+          );
+          expect(errors).toHaveLength(1);
+          expect(errors[0]).toMatch(/Approved by:/);
+        });
+
+        it('fails a note that does not enumerate every intersecting drift file', () => {
+          const errors = driftErrors(
+            ['services/worker/src/api/v1/docusign.ts'],
+            ['services/worker/src/chain/client.ts', 'services/worker/src/queues/batch-drain.ts'],
+            validNote(['services/worker/src/chain/client.ts']),
+          );
+          expect(errors).toHaveLength(1);
+          expect(errors[0]).toMatch(/enumerate/i);
+          expect(errors[0]).toContain('services/worker/src/queues/batch-drain.ts');
+        });
+
+        it('still fails same-file T2+ drift even with a complete note (carve-out a)', () => {
+          const errors = driftErrors(
+            ['services/worker/src/api/v1/docusign.ts'],
+            ['services/worker/src/api/v1/docusign.ts'],
+            validNote(['services/worker/src/api/v1/docusign.ts']),
+          );
+          expect(errors).toHaveLength(1);
+          expect(errors[0]).toMatch(/touches this PR's soak surface/i);
+          expect(errors[0]).toMatch(/no longer exists/i);
+          expect(errors[0]).not.toMatch(/add a[^.]*Base-drift residual-risk note/i);
+        });
+
+        it('still fails migration-vs-migration drift even with a complete note (carve-out b)', () => {
+          const errors = driftErrors(
+            ['supabase/migrations/0410_partner_accounts.sql'],
+            ['supabase/migrations/0421_added_by_main.sql'],
+            validNote(['supabase/migrations/0421_added_by_main.sql']),
+          );
+          expect(errors).toHaveLength(1);
+          expect(errors[0]).toMatch(/ledger ordering/i);
+          expect(errors[0]).not.toMatch(/add a[^.]*Base-drift residual-risk note/i);
+        });
+
+        it('hard-fails T2+ drift on a DECLARED dependency even with a complete note', () => {
+          // The PR does not touch the chain, but declares it as a dependency
+          // of the soaked behavior. Declared dependencies join the own-file
+          // surface for the T2+ hard wall — a self-declaration can make the
+          // gate stricter for you, never looser.
+          const depBody = t2Body.replace(
+            `- Base SHA: ${EVIDENCE_BASE}\n`,
+            `- Base SHA: ${EVIDENCE_BASE}\n- Drift dependencies: services/worker/src/chain/\n`,
+          );
+          const errors = baseDriftImpactErrors(
+            depBody + validNote(['services/worker/src/chain/client.ts']),
+            EVIDENCE_BASE,
+            CURRENT_BASE,
+            ['services/worker/src/api/v1/docusign.ts'],
+            ['services/worker/src/chain/client.ts'],
+          );
+          expect(errors).toHaveLength(1);
+          expect(errors[0]).toMatch(/no longer exists/i);
+        });
+
+        it('T0-only drift keeps the narrower `Base drift impact:` hatch, not the residual-risk note', () => {
+          // A residual-risk note must not substitute for the T0 attestation —
+          // the T0 hatch demands a no-runtime-impact statement the note does
+          // not carry.
+          const errors = driftErrors(
+            ['services/worker/src/api/v1/docusign.ts', 'services/worker/src/api/agents.md'],
+            ['services/worker/src/api/agents.md'],
+            validNote(['services/worker/src/api/agents.md']),
+          );
+          expect(errors).toHaveLength(1);
+          expect(errors[0]).toMatch(/Base drift impact/);
+        });
       });
     });
 
