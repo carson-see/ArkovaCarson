@@ -1826,18 +1826,28 @@ const RESIDUAL_RISK_REQUIRED_FIELDS = [
  * and the unsoakable-package note. Enforces the real-approver guard on
  * `Approved by:` for both.
  */
+/**
+ * The text of the `### <note>` section opened by `headerRe`, up to the next
+ * heading (or end of body), or `null` when the header is absent. Shared by
+ * {@link validateResidualRiskNote} and the base-drift file-enumeration check.
+ */
+function noteSection(body: string, headerRe: RegExp): string | null {
+  const headerMatch = headerRe.exec(body);
+  if (!headerMatch) return null;
+  const sectionStart = headerMatch.index + headerMatch[0].length;
+  const nextHeading = body.slice(sectionStart).search(/^#{1,3}\s/m);
+  return nextHeading === -1
+    ? body.slice(sectionStart)
+    : body.slice(sectionStart, sectionStart + nextHeading);
+}
+
 function validateResidualRiskNote(
   body: string,
   requiredFields: readonly string[],
   headerRe: RegExp = RESIDUAL_RISK_HEADER_RE,
 ): { valid: boolean; missing: string[] } {
-  const headerMatch = headerRe.exec(body);
-  if (!headerMatch) return { valid: false, missing: [] };
-  const sectionStart = headerMatch.index + headerMatch[0].length;
-  const nextHeading = body.slice(sectionStart).search(/^#{1,3}\s/m);
-  const section = nextHeading === -1
-    ? body.slice(sectionStart)
-    : body.slice(sectionStart, sectionStart + nextHeading);
+  const section = noteSection(body, headerRe);
+  if (section === null) return { valid: false, missing: [] };
   const missing: string[] = [];
   for (const field of requiredFields) {
     const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}`, 'im');
@@ -2166,6 +2176,74 @@ function impactNoteAttestsNoRuntimeEffect(value: string): boolean {
     && hasNamedApprover(value);
 }
 
+// ── FD-GATE-3: the base-drift residual-risk third state ────────────────────
+// CLAUDE.md names three outcomes for a completed soak whose base has drifted:
+// re-soak, OR "an explicit residual-risk note" (§1.11A), OR "an explicit
+// Carson-approved residual-risk exception" (§1.12). Until FD-GATE-3 the gate
+// implemented only re-soak for above-T0 same-surface drift — unconvergeable at
+// current merge velocity (a 48 h T3 soak vs a main taking 20+ PRs/day, with
+// `services/worker/src/` in the shared surface wholesale). The note below is
+// that third state: auditable, named, and file-enumerating.
+
+const BASE_DRIFT_RESIDUAL_HEADER_RE = /^###\s+Base-drift\s+residual-risk\s+note\b/im;
+
+const BASE_DRIFT_RESIDUAL_REQUIRED_FIELDS = [
+  'Drift files:',
+  'Risk assessment:',
+  'Evidence still valid because:',
+  'Approved by:',
+];
+
+/**
+ * Optional `Drift dependencies:` evidence field: comma/whitespace-separated
+ * path prefixes the PR DECLARES its soaked behavior depends on beyond its own
+ * diff. A drifted file matching a declared prefix is treated like one of the
+ * PR's own files for the T2+ hard wall — a self-declaration can only make the
+ * gate stricter for this PR, never looser.
+ */
+const DRIFT_DEPENDENCIES_FIELD = 'Drift dependencies:';
+
+function declaredDriftDependencies(body: string): string[] {
+  const value = extractEvidenceFieldValue(body, DRIFT_DEPENDENCIES_FIELD);
+  if (value === null || !isFilledValue(value)) return [];
+  return value.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+}
+
+function matchesDeclaredDependency(file: string, dependencies: string[]): boolean {
+  return dependencies.some((dep) => file === dep || file.startsWith(dep));
+}
+
+/**
+ * Validate the `### Base-drift residual-risk note` for a given set of
+ * intersecting drift files. Beyond the required sub-fields (with the shared
+ * real-approver guard), the note must ENUMERATE every intersecting drift file
+ * somewhere in its section — an attestation that does not name what it is
+ * attesting over is not auditable.
+ */
+export function hasBaseDriftResidualRiskNote(
+  body: string,
+  intersectingFiles: string[],
+): { valid: boolean; missing: string[] } {
+  const fieldCheck = validateResidualRiskNote(
+    body,
+    BASE_DRIFT_RESIDUAL_REQUIRED_FIELDS,
+    BASE_DRIFT_RESIDUAL_HEADER_RE,
+  );
+  if (!fieldCheck.valid) return fieldCheck;
+  const section = noteSection(body, BASE_DRIFT_RESIDUAL_HEADER_RE) ?? '';
+  const unenumerated = intersectingFiles.filter((f) => !section.includes(f));
+  if (unenumerated.length > 0) {
+    return {
+      valid: false,
+      missing: unenumerated.map((f) => `Drift files: must enumerate \`${f}\``),
+    };
+  }
+  return { valid: true, missing: [] };
+}
+
+/** The shared migration ledger — ordering is mutable state no note can cover. */
+const MIGRATION_LEDGER_RE = /^supabase\/migrations\//;
+
 /**
  * The set of file-path predicates whose intervening main-drift could invalidate
  * THIS PR's completed soak. It is the UNION of:
@@ -2208,17 +2286,29 @@ function driftFilesIntersectingSurface(
  *
  *   • DISJOINT (no drift file touches the PR's own files or the shared
  *     prod-runtime surface) → evidence preserved, no attestation required.
- *   • INTERSECTS → the soak ran against a now-stale version of a surface the PR
- *     depends on → hard fail (re-soak), with a strictly-narrower fallback: the
- *     operator MAY preserve evidence for the T0-only case by supplying an
- *     approved `Base drift impact:` attestation AND the intervening drift being
- *     classified strictly T0. That fallback exists only so no
- *     currently-passing (T0-drift + attested) PR regresses; it is NOT a general
- *     override for T1+ same-surface drift.
+ *   • INTERSECTS, whole drift strictly T0 → the strictly-narrower legacy
+ *     hatch: an approved `Base drift impact:` attestation (changed files +
+ *     no-runtime-impact statement + named approver) preserves evidence.
+ *   • INTERSECTS above T0 — two hard-fail carve-outs where an attestation
+ *     cannot honestly cover the risk (FD-GATE-3):
+ *       (a) main edited an exact file this PR itself changed — or one matching
+ *           a declared `Drift dependencies:` prefix — and that overlap is T2+:
+ *           the completed soak provably describes code that no longer exists;
+ *       (b) the PR owns a `supabase/migrations/` file AND main landed a
+ *           migration in the interval: ledger ordering is shared mutable
+ *           state and cannot be attested away.
+ *   • INTERSECTS above T0, outside the carve-outs (shared-surface /
+ *     cross-cutting drift) → the §1.11A/§1.12 residual-risk third state: an
+ *     auditable `### Base-drift residual-risk note` that enumerates every
+ *     intersecting drift file, assesses the risk, states why the evidence
+ *     remains valid, and names a real approver preserves the evidence.
+ *     Without it: re-soak. (Before FD-GATE-3 this branch was an unconditional
+ *     re-soak, which cannot converge — any 48 h window contains T2+ main
+ *     movement, so a T3 PR could be re-soaked forever.)
  *   • drift-file list unavailable (`changedFilesBetween` → null and no override)
  *     → fail closed (re-soak).
  */
-function baseDriftImpactErrors(
+export function baseDriftImpactErrors(
   body: string,
   evidenceBaseSha: string,
   currentBaseSha: string,
@@ -2242,7 +2332,10 @@ function baseDriftImpactErrors(
 
   // Same-surface drift. Preserve the strictly-narrower legacy escape hatch: an
   // approved `Base drift impact:` attestation for the case where the WHOLE
-  // intervening drift is T0-only. Anything above T0 is an unconditional re-soak.
+  // intervening drift is T0-only. (The residual-risk note is NOT a substitute
+  // here — the T0 hatch carries a no-runtime-impact statement the note does
+  // not, and the note path below would be strictly looser for a strictly
+  // safer drift class.)
   const driftTier = requiredTierFor(driftFiles);
   if (driftTier.tier === 'T0') {
     const impact = extractEvidenceFieldValue(body, BASE_DRIFT_IMPACT_FIELD);
@@ -2262,10 +2355,59 @@ function baseDriftImpactErrors(
     return [];
   }
 
+  // Carve-out (a): main edited an exact file this PR itself soaked (or one it
+  // declared as a dependency), and that overlap is itself T2+. The evidence
+  // provably describes code that no longer exists — no note can cover it.
+  const dependencies = declaredDriftDependencies(body);
+  const ownOverlap = driftFiles.filter(
+    (f) => surface.ownFiles.has(f) || matchesDeclaredDependency(f, dependencies),
+  );
+  if (ownOverlap.length > 0) {
+    const overlapTier = requiredTierFor(ownOverlap);
+    if (TIER_RANK[overlapTier.tier] >= TIER_RANK.T2) {
+      return [
+        `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\` touches this PR's soak surface: `
+        + `main edited file(s) this PR itself soaked or declared as dependencies (${ownOverlap.join(', ')}) `
+        + `at ${overlapTier.tier} (${overlapTier.reason}). The completed soak describes code that no longer exists; `
+        + 'a residual-risk note cannot cover same-file T2+ drift — re-soak on the current base (FD-GATE-3).',
+      ];
+    }
+  }
+
+  // Carve-out (b): shared migration ledger. Ledger ordering is mutable state
+  // every migration-owning PR shares; a note cannot make a soak that ran
+  // against a different ledger head order-valid again.
+  if (
+    prFiles.some((f) => MIGRATION_LEDGER_RE.test(f))
+    && driftFiles.some((f) => MIGRATION_LEDGER_RE.test(f))
+  ) {
+    return [
+      `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\`: main landed a migration in the interval and `
+      + 'this PR owns a migration. Ledger ordering is shared mutable state and cannot be attested away — '
+      + 're-soak on the current base (FD-GATE-3).',
+    ];
+  }
+
+  // Third state (§1.11A "a new soak or an explicit residual-risk note";
+  // §1.12 "an explicit Carson-approved residual-risk exception"): above-T0
+  // drift on the SHARED surface — paths the PR does not itself touch — is
+  // attestable via a named, file-enumerating note.
+  const note = hasBaseDriftResidualRiskNote(body, intersecting);
+  if (note.valid) return [];
+  if (note.missing.length > 0) {
+    return [
+      '`### Base-drift residual-risk note` is present but incomplete: '
+      + note.missing.map((f) => `\`${f}\``).join(', ')
+      + '. The note must carry every required sub-field and enumerate every intersecting drift file (FD-GATE-3).',
+    ];
+  }
   return [
     `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\` touches this PR's soak surface `
-    + `(${intersecting.join(', ')}) at ${driftTier.tier} (${driftTier.reason}); `
-    + 'existing soak evidence cannot be preserved without release-owner re-scope/retest.',
+    + `(${intersecting.join(', ')}) at ${driftTier.tier} (${driftTier.reason}). `
+    + 'Either refresh/re-soak on the current base, or add a `### Base-drift residual-risk note` section '
+    + `enumerating every intersecting drift file under \`Drift files:\`, with \`Risk assessment:\`, `
+    + '`Evidence still valid because:`, and a named `Approved by:` '
+    + '(CLAUDE.md §1.11A/§1.12 residual-risk exception; FD-GATE-3).',
   ];
 }
 

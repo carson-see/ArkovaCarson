@@ -395,3 +395,56 @@ describe("ci.yml Python SDK suite is actually invoked", () => {
     expect(ciVersion, "the CI job must pin a python-version").toBe(publishVersion);
   });
 });
+
+/**
+ * FD-GATE-2 — the frozen event base must never be a diff anchor.
+ *
+ * ci.yml (9 sites) and merge-authority.yml (:47) pass
+ * `BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}` — a sha GitHub
+ * FREEZES at the base tip as of the PR's last head push — while their
+ * checkouts pin no `ref:`, so HEAD is the live refs/pull/N/merge preview that
+ * GitHub recomputes against current main. Diffing `frozenBase..HEAD` therefore
+ * charges every main commit landed since the last push to the PR itself:
+ * measured 2026-08-22, #2219 (6 real files) presented as 162 to the tier
+ * detector and the feedback-rules scans, and 15 of 28 open PRs were desynced.
+ *
+ * The fix is deliberately in scripts/ci/lib/ciContext.ts, not the workflows:
+ * `changedFiles` anchors its diff at the PR's own changeset (HEAD^1 for the
+ * merge preview, merge-base(base, HEAD) for raw heads) so the frozen env value
+ * is harmless everywhere at once. These pins keep that anchoring from
+ * regressing to a raw `base..HEAD`; the behavioral matrix lives in
+ * scripts/ci/lib/ciContext.test.ts.
+ */
+describe("changedFiles diff anchoring neutralizes the frozen event base (FD-GATE-2)", () => {
+  const CI_CONTEXT_PATH = resolve(REPO, "scripts/ci/lib/ciContext.ts");
+
+  it("changedFiles routes its diff range through resolveDiffBase, never the raw env base", () => {
+    const source = readFileSync(CI_CONTEXT_PATH, "utf8");
+    expect(
+      source,
+      "ciContext.changedFiles must compute its anchor via resolveDiffBase(base) — see FD-GATE-2",
+    ).toMatch(/const diffBase = resolveDiffBase\(base\)/u);
+    expect(
+      source,
+      "the diff range must start at the resolved anchor, not the (possibly frozen) env base",
+    ).toMatch(/`\$\{diffBase\}\.\.HEAD`/u);
+    expect(
+      source,
+      "a raw `${base}..HEAD` two-dot range is the FD-GATE-2 bug shape and must not return",
+    ).not.toMatch(/`\$\{base\}\.\.HEAD`/u);
+  });
+
+  it("resolveDiffBase keeps both anchoring strategies: HEAD^1 for the merge preview, merge-base for raw heads", () => {
+    const source = readFileSync(CI_CONTEXT_PATH, "utf8");
+    expect(source).toMatch(/refs\\\/pull\\\/\\d\+\\\/merge/u);
+    expect(source).toMatch(/HEAD\^1/u);
+    expect(source).toMatch(/tryMergeBase\(base, 'HEAD'\)/u);
+  });
+
+  it("compute-merge-authority (merge-authority.yml's consumer) reads its file set through ciContext.changedFiles", () => {
+    // merge-authority.yml also passes the frozen base; its tier/label math is
+    // only correct because it consumes the anchored changedFiles.
+    const source = readFileSync(resolve(REPO, "scripts/ci/compute-merge-authority.ts"), "utf8");
+    expect(source).toMatch(/import \{[^}]*\bchangedFiles\b[^}]*\} from '\.\/lib\/ciContext\.js'/u);
+  });
+});
