@@ -27,6 +27,7 @@ import { v1DeprecationHeaders } from './api/v1/deprecation.js';
 import { docsRouter } from './api/v1/docs.js';
 import { badgeRouter } from './api/badge.js';
 import { didWebRouter } from './api/did-web.js';
+import { proofKeysRouter } from './api/proof-keys.js';
 
 // Extracted routers (ARCH-1)
 import { billingRouter } from './routes/billing.js';
@@ -443,7 +444,16 @@ app.get('/.well-known/openapi.json', (_req, res) => {
 // anchor-creates still returned 429 after that fix deployed. It must carry
 // the same skip predicate, or it silently re-shadows apiV1Router's
 // 1,000/min-per-key limiter (Constitution §1.10).
-app.use(apiIpShadowGuard, didWebRouter);
+// BUG-024: `proofKeysRouter` (GET /.well-known/arkova-keys.json) was written,
+// tested (api/proof-keys.test.ts), shipped in the Docker image, and referenced
+// by kms-signer.ts and every signed proof bundle's `signing_key_id` — but was
+// never mounted here, so it 404'd on every worker host while its sibling
+// didWebRouter returned 200. Verifiers could not resolve the public key a
+// bundle names. It rides the SAME `app.use` chain as didWebRouter deliberately:
+// a second `app.use(apiIpShadowGuard, ...)` would run the limiter twice per
+// request against one shared bucket, halving the anonymous cap to 30/min —
+// the exact re-shadowing failure the F-2 note above describes.
+app.use(apiIpShadowGuard, didWebRouter, proofKeysRouter);
 
 // 2026-04-26 — bug-bounty F4. Spec was already publicly inlined in
 // `/api/docs/swagger-ui-init.js`, but `/api/v1/openapi.json` returned 401

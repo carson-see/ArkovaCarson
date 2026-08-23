@@ -1117,6 +1117,54 @@ describe('worker server', () => {
       expect(missing.body).toMatchObject({ error: 'not_found' });
     });
 
+    // BUG-024 — /.well-known/arkova-keys.json 404'd on every worker host.
+    // `proofKeysRouter` was written, unit-tested (api/proof-keys.test.ts),
+    // COPYd into the Docker image, and named by every signed proof bundle's
+    // `signing_key_id`, but was never mounted in index.ts. Its sibling
+    // didWebRouter WAS mounted, so /.well-known/did.json returned 200 and the
+    // gap looked like a routing problem rather than a missing line.
+    //
+    // api/proof-keys.test.ts cannot catch this: it builds its own Express app
+    // and mounts the router itself, so it proves the router works while
+    // saying nothing about whether the real app serves it. This asserts the
+    // route through the composed application.
+    describe('GET /.well-known/arkova-keys.json (BUG-024 — proof key registry mount)', () => {
+      it('resolves through the real app instead of 404ing', async () => {
+        const res = await supertest(app).get('/.well-known/arkova-keys.json');
+
+        expect(res.status).not.toBe(404);
+        expect(res.status).toBe(200);
+        expect(Array.isArray(res.body.keys)).toBe(true);
+        expect(res.body.keys.length).toBeGreaterThan(0);
+      });
+
+      it('publishes an active Ed25519 key verifiers can match signing_key_id against', async () => {
+        const res = await supertest(app).get('/.well-known/arkova-keys.json');
+
+        const active = (res.body.keys as Array<Record<string, unknown>>)
+          .filter((k) => k.status === 'active');
+        expect(active.length).toBeGreaterThan(0);
+        for (const key of active) {
+          expect(key.alg).toBe('Ed25519');
+          expect(typeof key.id).toBe('string');
+          expect(String(key.public_key_pem)).toContain('BEGIN PUBLIC KEY');
+        }
+      });
+
+      it('stays CDN-cacheable (rotation requires a redeploy)', async () => {
+        const res = await supertest(app).get('/.well-known/arkova-keys.json');
+        expect(res.headers['cache-control']).toContain('max-age=300');
+      });
+
+      it('did.json still resolves — the shared mount chain did not regress', async () => {
+        // proofKeysRouter rides didWebRouter's `app.use(apiIpShadowGuard, ...)`
+        // chain rather than adding a second one, which would run the shared
+        // 60/min limiter twice per request and halve the anonymous cap.
+        const res = await supertest(app).get('/.well-known/did.json');
+        expect(res.status).not.toBe(404);
+      });
+    });
+
     it('runs raw-body handoff middleware for mounted vendor webhooks', async () => {
       const endpoints = [
         '/webhooks/middesk',
