@@ -35,6 +35,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
 import {
   getDeadLetterEntries,
   isPrivateUrlResolved,
@@ -189,7 +190,7 @@ router.post('/:id/test', async (req, res) => {
     res.json({
       success: response.ok,
       status_code: response.status,
-      response_body: responseBody.slice(0, 500),
+      response_body: truncateUtf16Safe(responseBody, 500),
       event_id: eventId,
     });
   } catch (err) {
