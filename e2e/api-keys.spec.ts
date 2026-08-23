@@ -148,6 +148,35 @@ test.describe('API Keys & Verification Flow', () => {
         await expect(
           orgAdminPage.getByText('Never used').first()
         ).toBeVisible();
+
+        // FD-P7 (CC6.8): revoke the key through the product path. This flow
+        // was unreachable before the fix — the server stripped `id` from
+        // every response while revoke/delete are addressed by it.
+        const keyCard = orgAdminPage
+          .locator('div')
+          .filter({ has: orgAdminPage.getByText(testKeyName, { exact: true }) })
+          .filter({ has: orgAdminPage.getByRole('button', { name: /^Revoke$/ }) })
+          .last();
+        await keyCard.getByRole('button', { name: /^Revoke$/ }).click();
+
+        const confirmDialog = orgAdminPage.getByRole('dialog');
+        await expect(
+          confirmDialog.getByRole('heading', { name: /Revoke API Key/i })
+        ).toBeVisible({ timeout: 5000 });
+        await confirmDialog.getByRole('button', { name: /^Revoke$/ }).click();
+
+        // The card flips to Revoked and loses its Revoke button.
+        await expect(keyCard.getByText('Revoked')).toBeVisible({ timeout: 10000 });
+        await expect(keyCard.getByRole('button', { name: /^Revoke$/ })).toHaveCount(0);
+
+        // Delete it so e2e runs do not accrete keys (same reason the soak
+        // probe deletes its own probe key).
+        await keyCard.locator('button.text-destructive').click();
+        await expect(
+          confirmDialog.getByRole('heading', { name: /Delete API Key/i })
+        ).toBeVisible({ timeout: 5000 });
+        await confirmDialog.getByRole('button', { name: /^Delete$/ }).click();
+        await expect(orgAdminPage.getByText(testKeyName)).toHaveCount(0, { timeout: 10000 });
       }
     });
 
