@@ -19,13 +19,33 @@
  * path ends in `next()`, 401, 403 or 500:
  *
  *   - **API key** (`req.apiKey`) — the key's own `scopes`, via the same
- *     `scopeSatisfies` vocabulary as `requireScope`. Identical 403 body, so the
- *     published error contract is unchanged (Constitution §1.8).
+ *     `scopeSatisfies` vocabulary as `requireScope` and the same
+ *     `insufficient_scope` / `required` / `granted` 403 body (only the human
+ *     `message` string differs, since the caller is not necessarily a key).
  *   - **Supabase JWT** (`req.authUserId` / `req.userId`, set by a real
  *     `requireAuth` upstream) — the caller's org role, optionally NARROWED by a
  *     `scopes` claim on the presented token.
  *   - **Neither** — 401. This is the branch that makes the guard impossible to
  *     mount as a no-op.
+ *
+ * ## Both credentials at once — EVERY presented credential must satisfy
+ *
+ * These are not exclusive branches. `apiKeyAuth` is mounted router-wide and
+ * also reads `X-API-Key`, so a request can carry an API key AND a JWT that
+ * `requireAuth` verified — on the PHI mounts, where `requireAuth` runs first,
+ * that combination is trivially constructible. An earlier revision checked the
+ * API key FIRST and returned, which meant the capability decision could be made
+ * entirely by a credential the route never authenticated with: a JWT caller who
+ * would be denied on their own (e.g. the no-profile-row case below) was
+ * admitted by attaching any org's key that happened to hold the scope, and the
+ * profile was never even read.
+ *
+ * So: every credential PRESENT on the request must independently satisfy the
+ * scope. That is strictly fail-closed — it never grants where checking one
+ * credential alone would have denied — and it removes "which branch wins" as a
+ * question. A caller who volunteers a key that lacks the scope is refused even
+ * if their JWT role would have sufficed; on a PHI surface, refusing the weaker
+ * of two credentials the caller chose to present is the right direction.
  *
  * ## Why claims can only narrow
  *
@@ -45,12 +65,21 @@
  *
  * ## Why the role mapping is coarse
  *
- * `compliance:read` for any org-affiliated caller, `compliance:write` for org
- * and platform admins. This layer is a CAPABILITY gate, not the tenant boundary
- * and not the per-route privilege check — `requireOrgId` still validates real
- * membership against `x-org-id`, and `requireOrgAdmin` still gates the
- * admin-only routes inside each router. Deriving anything finer here would
- * duplicate (and eventually drift from) those two.
+ * `compliance:read` for ANY caller with a `public.profiles` row — including one
+ * whose `org_id` is null — and `compliance:write` for org and platform admins.
+ * Read that first clause literally: for a JWT caller the read grant is close to
+ * a liveness check, and it is meant to be. This layer is a CAPABILITY gate, not
+ * the tenant boundary and not the per-route privilege check — `requireOrgId`
+ * still validates real membership against `x-org-id`, and `requireOrgAdmin`
+ * still gates the admin-only routes inside each router; those two are what
+ * actually authorize a caller against a specific org's PHI.
+ *
+ * It is deliberately NOT narrowed to `org_id != null`. `org_members.user_id`
+ * FKs to `auth.users`, and `isUserMemberOfOrg` honours an `org_members` row on
+ * its own, so a real org member whose `profiles.org_id` is null is
+ * schema-permissible — narrowing here would 403 them off the FERPA/HIPAA
+ * routes. Deriving anything finer would duplicate (and eventually drift from)
+ * `requireOrgId` / `requireOrgAdmin`.
  *
  * ## Residual — the one caller this can newly refuse
  *
@@ -68,13 +97,14 @@
 import type { Request, Response, NextFunction } from 'express';
 import { decodeJwt } from 'jose';
 import { getCallerProfileResult, type CallerProfile } from '../api/_org-auth.js';
+import { getAuthenticatedUserId } from './authContext.js';
 import { scopeSatisfies } from '../api/apiScopes.js';
 import { logger } from '../utils/logger.js';
 
 /** Scopes an org or platform administrator holds by virtue of their role. */
 export const ADMIN_JWT_SCOPES: readonly string[] = ['compliance:read', 'compliance:write'];
 
-/** Scopes any other org-affiliated caller holds by virtue of their role. */
+/** Scopes every other caller with a profile row holds. See the header. */
 export const MEMBER_JWT_SCOPES: readonly string[] = ['compliance:read'];
 
 /**
@@ -146,7 +176,9 @@ function denyInsufficientScope(res: Response, scope: string, granted: string[]):
 }
 
 /**
- * Require `scope` of an API-key caller OR a JWT caller. Never falls through.
+ * Require `scope` of an API-key caller AND/OR a JWT caller. Never falls
+ * through: with no credential at all it 401s, and every credential the request
+ * DOES carry must independently satisfy `scope` (see the header).
  *
  * Mount AFTER the route's `requireAuth` (so `req.authUserId` is populated) and
  * before the route's rate limiter, mirroring the `/keys` chain
@@ -154,20 +186,9 @@ function denyInsufficientScope(res: Response, scope: string, granted: string[]):
  */
 export function requireScopeAnyAuth(scope: string) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    // ─── API key mode ───
-    if (req.apiKey) {
-      const granted = req.apiKey.scopes ?? [];
-      if (!scopeSatisfies(granted, scope)) {
-        denyInsufficientScope(res, scope, granted);
-        return;
-      }
-      next();
-      return;
-    }
+    const userId = getAuthenticatedUserId(req);
 
-    // ─── JWT mode ───
-    const userId = req.authUserId ?? req.userId ?? null;
-    if (!userId) {
+    if (!req.apiKey && !userId) {
       // No API key AND no verified JWT identity. requireScope would call
       // next() here; this guard must not.
       res.status(401).json({
@@ -177,37 +198,49 @@ export function requireScopeAnyAuth(scope: string) {
       return;
     }
 
-    const { value: profile, error } = await getCallerProfileResult(userId);
-    if (error) {
-      // Fail closed but observable — never mask an operational fault as a 403
-      // (same rule as requireOrgId / requireOrgAdmin).
-      logger.error({ userId, scope }, 'requireScopeAnyAuth: profile lookup failed');
-      res.status(500).json({ error: 'Internal server error' });
-      return;
-    }
-    if (!profile) {
-      // A verified auth.users identity with no `profiles` row. The signup
-      // trigger normally creates one, but `org_members.user_id` FKs to
-      // `auth.users` (not `profiles`), so an org member without a profile is
-      // schema-permissible. On a PHI/PII surface that anomaly is denied, not
-      // granted — but it is logged at warn so a prod occurrence is diagnosable
-      // rather than an unexplained 403. See this file's "Residual" note.
-      logger.warn({ userId, scope }, 'requireScopeAnyAuth: no profile row for verified caller — denying');
-      denyInsufficientScope(res, scope, []);
-      return;
+    // ─── API key credential ───
+    if (req.apiKey) {
+      const granted = req.apiKey.scopes ?? [];
+      if (!scopeSatisfies(granted, scope)) {
+        denyInsufficientScope(res, scope, granted);
+        return;
+      }
     }
 
-    const roleScopes = scopesForProfile(profile);
-    const claimScopes = scopesFromJwtClaims(readPresentedClaims(req, userId));
-    // Intersection, never union: a claim may only subtract from the role's
-    // ceiling. See the module header before changing this.
-    const granted = claimScopes === null
-      ? roleScopes
-      : roleScopes.filter((candidate) => claimScopes.includes(candidate));
+    // ─── JWT credential ───
+    if (userId) {
+      const { value: profile, error } = await getCallerProfileResult(userId);
+      if (error) {
+        // Fail closed but observable — never mask an operational fault as a 403
+        // (same rule as requireOrgId / requireOrgAdmin).
+        logger.error({ userId, scope }, 'requireScopeAnyAuth: profile lookup failed');
+        res.status(500).json({ error: 'Internal server error' });
+        return;
+      }
+      if (!profile) {
+        // A verified auth.users identity with no `profiles` row. The signup
+        // trigger normally creates one, but `org_members.user_id` FKs to
+        // `auth.users` (not `profiles`), so an org member without a profile is
+        // schema-permissible. On a PHI/PII surface that anomaly is denied, not
+        // granted — but it is logged at warn so a prod occurrence is diagnosable
+        // rather than an unexplained 403. See this file's "Residual" note.
+        logger.warn({ userId, scope }, 'requireScopeAnyAuth: no profile row for verified caller — denying');
+        denyInsufficientScope(res, scope, []);
+        return;
+      }
 
-    if (!scopeSatisfies(granted, scope)) {
-      denyInsufficientScope(res, scope, granted);
-      return;
+      const roleScopes = scopesForProfile(profile);
+      const claimScopes = scopesFromJwtClaims(readPresentedClaims(req, userId));
+      // Intersection, never union: a claim may only subtract from the role's
+      // ceiling. See the module header before changing this.
+      const granted = claimScopes === null
+        ? roleScopes
+        : roleScopes.filter((candidate) => claimScopes.includes(candidate));
+
+      if (!scopeSatisfies(granted, scope)) {
+        denyInsufficientScope(res, scope, granted);
+        return;
+      }
     }
 
     next();

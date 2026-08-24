@@ -934,7 +934,10 @@ so mounting `requireScope` on them would have enforced nothing and *looked* like
 All four now mount `requireScopeAnyAuth('compliance:read')` (`../../middleware/requireScopeAnyAuth.ts`)
 between `requireAuth` and the rate limiter. That guard resolves a grant for **whichever** auth mode is
 in play and has **no pass-through branch** — API key → the key's `scopes`; JWT → the caller's org role,
-intersected with any `scopes` claim on the presented token; neither → 401.
+intersected with any `scopes` claim on the presented token; neither → 401. When a request carries
+BOTH (an `X-API-Key` alongside the JWT, which `apiKeyAuth`'s router-wide mount makes possible here),
+**each** credential must independently satisfy the scope — otherwise a key from an unrelated org could
+decide the capability for a JWT caller who would be denied on their own.
 
 **Order is the contract** and is pinned by `middleware/__tests__/phiScopeMount.test.ts`:
 `requireAuth` first (it populates `req.authUserId`, which the scope guard reads), then the scope guard,
@@ -950,6 +953,13 @@ mapping is deliberately coarse so it cannot drift from them.
 four routes (previously they reached `requireOrgId`, which admits on an `org_members` row alone —
 `org_members.user_id` FKs to `auth.users`, not `profiles`). Denied deliberately on a PHI/PII surface and
 logged at `warn`; see the "Residual" note in `requireScopeAnyAuth.ts`.
+
+**What this did NOT do:** the JWT role mapping grants `compliance:read` to any caller with a `profiles`
+row, so for dashboard callers the new layer is closer to a liveness + downscoped-token check than to an
+authorization decision. Real authorization against a specific org's PHI is still `requireOrgId` +
+`requireOrgAdmin` inside each router, exactly as before. What changed is that the routes can no longer
+be reached with no scope source at all, a downscoped token is now enforceable, an API key presented
+alongside is now checked, and the guard cannot be mounted as a no-op.
 
 **Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
 guard and a scope guard). The structural ratchet above covers these four mounts only.

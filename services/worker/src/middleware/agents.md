@@ -122,6 +122,7 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - **webhookHmac.ts** — Inbound connector webhook HMAC verification with 5-minute replay window.
 - **paymentTierRouter.ts** — Routes requests based on payment tier. Not yet mounted in `index.ts` (tested in isolation only). SCRUM-2971: the Tier-2 `tryStripeMetered` path now derives a request-scoped id (`Idempotency-Key` header → correlation id (`utils/correlationId.ts`) → random UUID fallback) and inserts the `billing_events` row with `idempotency_key = sha256(api_metered_usage:org_id:user_id:requestId)` (exported as `stripeMeteredIdempotencyKey`). A duplicate insert (23505, e.g. a client retry that resent the same `Idempotency-Key`) is swallowed as an idempotent no-op — the request still authorizes. See migration `0368`.
 - **requirePaymentCurrent.ts** — Rejects requests from orgs with lapsed payments.
+- **authContext.ts** — `getAuthenticatedUserId(req)`: the single source of truth for `req.authUserId ?? req.userId ?? null`. Two `requireAuth` implementations populate the caller identity under two different field names, so every guard must read both; `requireOrgId` / `requireOrgAdmin` / `requireScopeAnyAuth` all import it rather than keeping private copies that could drift.
 - **requireOrgId.ts** — Resolves + VALIDATES `org_id` on authenticated requests (membership-checked against `x-org-id`, never trusted verbatim — see 2026-07-28 SECURITY note above).
 - **requireOrgAdmin.ts** — Chains after `requireOrgId`; requires the caller be ORG_ADMIN of `req.orgId` (see 2026-07-28 SECURITY note above).
 - **requireScopeAnyAuth.ts** — Dual-mode scope gate for routes that authenticate with a Supabase JWT rather than an API key. Unlike `apiKeyAuth.requireScope` it has **no pass-through branch** (see the 2026-08-23 note below).
@@ -237,13 +238,22 @@ the top of `api/apiScopes.ts` had said so in prose since the vocabulary landed.
 pass-through branch — every path ends in `next()`, 401, 403 or 500:
 
 - **API key** → the key's `scopes`, through the same `scopeSatisfies` vocabulary and the same
-  `insufficient_scope` 403 body as `requireScope` (published error contract unchanged, §1.8).
+  `insufficient_scope` / `required` / `granted` 403 body as `requireScope` (only the human `message`
+  string differs — the machine-readable contract is unchanged, §1.8).
 - **JWT** (`req.authUserId ?? req.userId`, set by a real `requireAuth` upstream) → the caller's org
   role from `api/_org-auth.ts`'s new `getCallerProfileResult`, **intersected** with any `scopes` /
   `scope` claim on the presented token.
 - **Neither** → 401. This is the branch that makes the guard impossible to mount as a no-op.
 
-Three properties, none incidental:
+Four properties, none incidental:
+
+- **These are not exclusive branches — EVERY credential presented must satisfy the scope.** `apiKeyAuth`
+  is mounted router-wide and also reads `X-API-Key`, and the PHI mounts run `requireAuth` first, so
+  "API key AND verified JWT on the same request" is trivially constructible there. Checking the key
+  first and returning would let a credential the route never authenticated with decide the capability
+  outright — a JWT caller who would be denied alone (the no-profile-row case below) was admitted by
+  attaching any org's key holding the scope, without the profile ever being read. Evaluating both is
+  strictly fail-closed: it never grants where checking one alone would have denied.
 
 - **Claims can only NARROW, never widen.** The claims are read by *decoding* the bearer token, not by
   re-verifying it — safe, because this middleware only runs after a `requireAuth` that verified that
@@ -253,10 +263,13 @@ Three properties, none incidental:
 - **A profile-lookup DB error is 500, never a masked 403** — same fail-closed-but-observable rule as
   `requireOrgId` / `requireOrgAdmin`, which is why `_org-auth.ts` grew the `*Result` sibling
   `getCallerProfileResult` rather than reusing the error-collapsing `getCallerProfile`.
-- **The role mapping is deliberately coarse** (`compliance:read` for any org-affiliated caller,
-  `compliance:write` for org/platform admins). This is a capability gate, not the tenant boundary and
-  not the per-route privilege check — `requireOrgId` and `requireOrgAdmin` still own those. Anything
-  finer here would duplicate and then drift from them.
+- **The role mapping is deliberately coarse** — `compliance:read` for ANY caller with a `profiles` row
+  (including one whose `org_id` is null), `compliance:write` for org/platform admins. Read literally:
+  for a JWT caller the read grant is close to a liveness check, and that is intended. This is a
+  capability gate, not the tenant boundary and not the per-route privilege check — `requireOrgId` and
+  `requireOrgAdmin` still own those and are what actually authorize a caller against a specific org's
+  PHI. It is not narrowed to `org_id != null` on purpose: `org_members.user_id` FKs to `auth.users`, so
+  a real member whose `profiles.org_id` is null is schema-permissible and narrowing would 403 them.
 
 Residual, deliberately accepted: a verified `auth.users` identity with **no `profiles` row** now gets an
 empty grant and a 403 on these four routes. `org_members.user_id` FKs to `auth.users`, not `profiles`,

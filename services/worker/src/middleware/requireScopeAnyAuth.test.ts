@@ -197,6 +197,61 @@ describe('requireScopeAnyAuth — JWT mode, role-derived scopes', () => {
   });
 });
 
+describe('requireScopeAnyAuth — BOTH credentials on one request', () => {
+  // `apiKeyAuth` is mounted router-wide and also reads `X-API-Key`, and the PHI
+  // mounts run `requireAuth` first — so "API key AND verified JWT on the same
+  // request" is trivially constructible there, not a hypothetical. Checking the
+  // key first and returning would let a credential the route never
+  // authenticated with decide the capability outright.
+  it('does NOT let an API key stand in for a JWT caller who would be denied on their own', async () => {
+    getCallerProfileResult.mockResolvedValue({ value: null, error: false }); // no profile row → 403 alone
+    const app = buildApp('compliance:read', {
+      apiKey: { keyId: 'k-other-org', orgId: 'org-B', scopes: ['compliance:read'] },
+      authUserId: 'ghost',
+    });
+    const res = await request(app).get('/probe');
+    expect(res.status).toBe(403);
+    expect(res.body.ok).toBeUndefined();
+    // The JWT credential must actually be evaluated, not short-circuited past.
+    expect(getCallerProfileResult).toHaveBeenCalledWith('ghost');
+  });
+
+  it('does NOT let a JWT role stand in for an API key that lacks the scope', async () => {
+    getCallerProfileResult.mockResolvedValue({
+      value: { org_id: 'org-A', role: 'ORG_ADMIN', is_platform_admin: false },
+      error: false,
+    });
+    const app = buildApp('compliance:read', {
+      apiKey: { keyId: 'k1', scopes: ['usage:read'] },
+      authUserId: 'admin-A',
+    });
+    const res = await request(app).get('/probe');
+    expect(res.status).toBe(403);
+    expect(res.body.granted).toEqual(['usage:read']);
+  });
+
+  it('admits only when BOTH credentials satisfy the scope', async () => {
+    getCallerProfileResult.mockResolvedValue({
+      value: { org_id: 'org-A', role: 'ORG_ADMIN', is_platform_admin: false },
+      error: false,
+    });
+    const app = buildApp('compliance:read', {
+      apiKey: { keyId: 'k1', scopes: ['compliance:read'] },
+      authUserId: 'admin-A',
+    });
+    expect((await request(app).get('/probe')).status).toBe(200);
+  });
+
+  it('still surfaces a profile-lookup DB fault as 500 even when the key would have passed', async () => {
+    getCallerProfileResult.mockResolvedValue({ value: null, error: true });
+    const app = buildApp('compliance:read', {
+      apiKey: { keyId: 'k1', scopes: ['compliance:read'] },
+      authUserId: 'admin-A',
+    });
+    expect((await request(app).get('/probe')).status).toBe(500);
+  });
+});
+
 describe('requireScopeAnyAuth — JWT claims narrow the role-derived grant', () => {
   const orgAdmin = {
     value: { org_id: 'org-A', role: 'ORG_ADMIN', is_platform_admin: false },
