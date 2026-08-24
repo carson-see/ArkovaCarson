@@ -2,6 +2,12 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-23 — `openapi-ciba.ts`: `/api/queue/pending` documents its 403 (SCRUM-3569)
+
+Spec-only change, additive under §1.8: a `'403'` response and a description note on a path that was already there. Worth knowing WHY it is a doc fix and not a contract change — **the spec was already right and the implementation was wrong.** `queuePaths()` has tagged `/api/queue/pending` `['Queue', 'OrgAdmin']` with `security: [{ OrgAdminBearer: [] }]` since it was written, but the handler enforced org scope only (see `services/worker/src/api/agents.md`, SCRUM-3569). The gate now exists in `api/queue-resolution.ts`, so the documented `OrgAdminBearer` is finally load-bearing and the 403 it implies is spelled out.
+
+Note this path lives on `adminRouter`, not a v1 leaf router, so `docs.routeParity.test.ts`'s `MOUNTS` set does not cover it — the parity harness asserts route/path presence, not response codes, either way.
+
 ## 2026-08-12 — FD-P7: key revocation/deletion were unreachable from every client (CC6.8)
 
 `toPublicKey` (keys.ts) stripped `id` from create AND list responses (SCRUM-1271-D) while the frozen

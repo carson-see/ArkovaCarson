@@ -281,8 +281,20 @@ adminRouter.post('/admin/organizations/:id/credits/adjust', async (req, res) => 
 });
 
 // ─── ARK-101 (SCRUM-1011): Anchor queue resolution ───
-// Authz: `list_pending_resolution_anchors` returns only caller's org rows;
-// `resolve_anchor_queue` enforces ORG_ADMIN role inside the RPC.
+// Authz, corrected (SCRUM-3569): this comment used to claim
+// `list_pending_resolution_anchors` scoped the read and `resolve_anchor_queue`
+// enforced ORG_ADMIN "inside the RPC". SCRUM-2213 replaced the listing RPC with
+// a direct query, so that stopped being true for `/queue/pending` and the route
+// ran with no role gate at all. `adminRouter` has NO authorization middleware:
+// its only `.use()` calls are a path-scoping shim (`isAdminRouterPath`, which
+// forwards non-admin paths past this router), `corsMiddleware`, and
+// `rateLimiters.checkout` — so every handler owns its own gate:
+//   - `/queue/pending`  → `handleListPendingResolution` scopes by org AND
+//     requires ORG_ADMIN via `_org-auth.ts` (api/queue-resolution.ts).
+//   - `/queue/resolve`  → `resolve_anchor_queue_by_public_id` still enforces
+//     ORG_ADMIN inside the RPC, now against the explicitly-passed caller id.
+//   - `/queue/run`      → `authorizeManualRun` (same `_org-auth.ts` resolver).
+// Do not re-add a claim here without checking the handler still backs it.
 adminRouter.get('/queue/pending', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }

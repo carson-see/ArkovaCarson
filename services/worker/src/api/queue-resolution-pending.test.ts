@@ -8,6 +8,14 @@
  * org-scoped directly. These tests pin: auth gating, graceful empty state, the
  * `{items,count}` shape, sibling_count computed over the full pending set, and
  * that the display limit does not distort sibling_count.
+ *
+ * SCRUM-3569 (SEC): org-scoping alone was never the whole gate. The OpenAPI
+ * contract has always tagged this route `OrgAdmin` / `OrgAdminBearer`, and the
+ * route comment claimed the (since-removed) RPC enforced ORG_ADMIN — but after
+ * SCRUM-2213 replaced that RPC with a direct query, ANY authenticated member of
+ * an org could list every coworker's filenames + fingerprints. The
+ * `describe('ORG_ADMIN authorization (SCRUM-3569)')` block below pins the gate,
+ * every admissible admin signal, and the operational-error / true-negative split.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -58,6 +66,20 @@ function routeTables(map: Record<string, unknown>) {
   mockDbFrom.mockImplementation((table: string) => chain(map[table]));
 }
 
+/**
+ * A caller who administers `orgId` via the profile-level `ORG_ADMIN` role —
+ * the cheapest admissible admin signal, so the non-authz tests below can use
+ * it without also having to stage an `org_members` row.
+ */
+function adminProfile(orgId: string | null) {
+  return { data: { org_id: orgId, role: 'ORG_ADMIN', is_platform_admin: false }, error: null };
+}
+
+/** A rank-and-file member of `orgId`: no admin signal on any source. */
+function memberProfile(orgId: string | null) {
+  return { data: { org_id: orgId, role: 'ORG_MEMBER', is_platform_admin: false }, error: null };
+}
+
 beforeEach(() => vi.clearAllMocks());
 
 describe('handleListPendingResolution (GET /api/queue/pending)', () => {
@@ -86,7 +108,8 @@ describe('handleListPendingResolution (GET /api/queue/pending)', () => {
 
   it('500s when the anchors query errors', async () => {
     routeTables({
-      profiles: { data: { org_id: 'org-1' }, error: null },
+      profiles: adminProfile('org-1'),
+      org_members: { data: { role: 'admin' }, error: null },
       anchors: { data: null, error: { message: 'timeout' } },
     });
     const res = mockRes();
@@ -96,7 +119,8 @@ describe('handleListPendingResolution (GET /api/queue/pending)', () => {
 
   it('returns pending items with sibling_count computed over the full set', async () => {
     routeTables({
-      profiles: { data: { org_id: 'org-1' }, error: null },
+      profiles: adminProfile('org-1'),
+      org_members: { data: null, error: null },
       anchors: {
         data: [
           { public_id: 'p1', metadata: { external_file_id: 'A' }, filename: 'f1', fingerprint: 'h1', created_at: '2026-05-30T03:00:00Z' },
@@ -122,7 +146,8 @@ describe('handleListPendingResolution (GET /api/queue/pending)', () => {
 
   it('applies the display limit but computes sibling_count over the full pending set', async () => {
     routeTables({
-      profiles: { data: { org_id: 'org-1' }, error: null },
+      profiles: adminProfile('org-1'),
+      org_members: { data: null, error: null },
       anchors: {
         data: [
           { public_id: 'p1', metadata: { external_file_id: 'A' }, filename: 'f1', fingerprint: 'h1', created_at: '2026-05-30T03:00:00Z' },
@@ -140,5 +165,147 @@ describe('handleListPendingResolution (GET /api/queue/pending)', () => {
     expect(body.items.map((i) => i.public_id)).toEqual(['p1', 'p2']);
     // sibling_count reflects all 3 'A' rows (3 - 1 = 2), not just the 2 displayed.
     expect(body.items[0].sibling_count).toBe(2);
+  });
+});
+
+/**
+ * SCRUM-3569 (SEC) — GET /api/queue/pending must require ORG_ADMIN.
+ *
+ * The response body carries every pending anchor's `filename` and
+ * `fingerprint`. Org scoping keeps that inside one tenant, but a rank-and-file
+ * member has no business enumerating what their coworkers uploaded — and the
+ * published OpenAPI contract (`openapi-ciba.ts`, tags `['Queue','OrgAdmin']`,
+ * `security: [{ OrgAdminBearer: [] }]`) already promised this gate existed.
+ *
+ * Admin precedence is NOT re-implemented here: it delegates to the canonical
+ * `_org-auth.ts` resolver (`isCallerOrgAdminResult`) that `handleRunOrgAnchorQueue`
+ * in this same module and the `requireOrgAdmin` middleware already use, so all
+ * three admissible signals below stay in lockstep with the rest of the worker.
+ * `_org-auth.js` is deliberately NOT `vi.mock`ed — these drive the real resolver
+ * through the table-dispatching `db` double, mirroring `queue-resolution.test.ts`.
+ */
+describe('ORG_ADMIN authorization (SCRUM-3569)', () => {
+  it('403s a plain org member and never reaches the anchors table', async () => {
+    routeTables({
+      profiles: memberProfile('org-1'),
+      org_members: { data: { role: 'member' }, error: null },
+      anchors: {
+        data: [
+          { public_id: 'p1', metadata: { external_file_id: 'A' }, filename: 'payroll-2026.pdf', fingerprint: 'h1', created_at: '2026-05-30T03:00:00Z' },
+        ],
+        error: null,
+      },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq(), res, 'user-1');
+
+    expect(res.statusCode).toBe(403);
+    expect((res.body as { error: { code: string } }).error.code).toBe('forbidden');
+    // Fail closed BEFORE the read: a denied caller must not cause the
+    // coworker-filename query to run at all, let alone leak its rows.
+    expect(mockDbFrom).not.toHaveBeenCalledWith('anchors');
+    expect(JSON.stringify(res.body)).not.toContain('payroll-2026.pdf');
+  });
+
+  it('403s a member with no org_members row at all (no admin signal anywhere)', async () => {
+    routeTables({
+      profiles: memberProfile('org-1'),
+      org_members: { data: null, error: null },
+      anchors: { data: [], error: null },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq(), res, 'user-1');
+    expect(res.statusCode).toBe(403);
+    expect(mockDbFrom).not.toHaveBeenCalledWith('anchors');
+  });
+
+  it('allows an org_members owner', async () => {
+    routeTables({
+      profiles: memberProfile('org-1'),
+      org_members: { data: { role: 'owner' }, error: null },
+      anchors: { data: [], error: null },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq(), res, 'user-1');
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ items: [], count: 0 });
+  });
+
+  it('allows an org_members admin', async () => {
+    routeTables({
+      profiles: memberProfile('org-1'),
+      org_members: { data: { role: 'admin' }, error: null },
+      anchors: { data: [], error: null },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq(), res, 'user-1');
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('allows a profile-level ORG_ADMIN of their OWN org', async () => {
+    routeTables({
+      profiles: adminProfile('org-1'),
+      org_members: { data: null, error: null },
+      anchors: { data: [], error: null },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq(), res, 'user-1');
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('allows a platform admin', async () => {
+    routeTables({
+      profiles: { data: { org_id: 'org-1', role: 'ORG_MEMBER', is_platform_admin: true }, error: null },
+      org_members: { data: null, error: null },
+      anchors: { data: [], error: null },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq(), res, 'user-1');
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('500s (never a masked 403) when the admin lookup hits a DB error', async () => {
+    routeTables({
+      profiles: memberProfile('org-1'),
+      org_members: { data: null, error: { message: 'org_members unavailable' } },
+      anchors: { data: [], error: null },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq(), res, 'user-1');
+    expect(res.statusCode).toBe(500);
+    expect((res.body as { error: { code: string } }).error.code).toBe('internal');
+    expect(mockDbFrom).not.toHaveBeenCalledWith('anchors');
+  });
+
+  it('resolves admin status WITHOUT a second profiles round-trip', async () => {
+    routeTables({
+      profiles: adminProfile('org-1'),
+      org_members: { data: null, error: null },
+      anchors: { data: [], error: null },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq(), res, 'user-1');
+    expect(res.statusCode).toBe(200);
+    // The handler already loaded the profile; it must hand that row to
+    // `isCallerOrgAdminResult` rather than making the resolver re-fetch it.
+    const profileReads = mockDbFrom.mock.calls.filter(([t]) => t === 'profiles');
+    expect(profileReads).toHaveLength(1);
+  });
+
+  it('403 copy carries no banned terminology (§1.3 — AnchorQueuePage renders it verbatim)', async () => {
+    routeTables({
+      profiles: memberProfile('org-1'),
+      org_members: { data: null, error: null },
+      anchors: { data: [], error: null },
+    });
+    const res = mockRes();
+    await handleListPendingResolution(mockReq(), res, 'user-1');
+    const message = (res.body as { error: { message: string } }).error.message;
+    expect(message.length).toBeGreaterThan(0);
+    // AnchorQueuePage.tsx's fetchPending() throws `body.error.message` and
+    // renders it via setError — worker-assembled, but user-facing UI copy.
+    expect(message).not.toMatch(
+      /wallet|gas|hash|block|transaction|crypto|blockchain|bitcoin|testnet|mainnet|utxo|broadcast/i,
+    );
   });
 });

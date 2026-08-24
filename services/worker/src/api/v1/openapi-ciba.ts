@@ -394,7 +394,7 @@ function queuePaths(): Record<string, SpecPathItem> {
         security: [{ OrgAdminBearer: [] }],
         summary: 'List PENDING_RESOLUTION anchors (SCRUM-1011, public_id-keyed per SCRUM-1121)',
         description:
-          'Source-of-truth Zod is `services/worker/src/api/queue-resolution.ts`. Returns rows with `public_id` (not internal `anchors.id`) per CLAUDE.md §6.',
+          'Source-of-truth Zod is `services/worker/src/api/queue-resolution.ts`. Returns rows with `public_id` (not internal `anchors.id`) per CLAUDE.md §6. Org-scoped AND ORG_ADMIN-only (SCRUM-3569): rows carry filenames and fingerprints, so a rank-and-file member gets 403. A caller with no organization gets an empty 200, not a 403.',
         responses: {
           '200': {
             description: 'OK',
@@ -410,6 +410,7 @@ function queuePaths(): Record<string, SpecPathItem> {
               },
             },
           },
+          '403': { description: 'Forbidden (not org admin)', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
         },
       },
     },
