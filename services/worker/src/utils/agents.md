@@ -2,6 +2,35 @@
 
 Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
+## 2026-08-23 — `logger.ts`: `redact` now also drops credential-bearing URL fields (SCRUM-3439, §1.4)
+
+`CREDENTIAL_URL_REDACT_PATHS` (`rpcUrl` / `bitcoinRpcUrl` / `baseRpcUrl` + `*.` variants)
+joins `BYTE_FIELD_REDACT_PATHS` in the single pino `redact.paths` list. Driven by
+`chain/utxo-provider.ts`, whose `createUtxoProvider` construction log wrote the prod
+GetBlock access token to Cloud Logging on every cold start.
+
+Why neither existing guard could catch it — both reasons are worth keeping:
+
+* `formatters.log` → `redactBinaryValues` is **type**-based (Buffer / TypedArray / …). That
+  key-agnostic property is what makes it strong for bytes and useless here — a URL is an
+  ordinary string, indistinguishable by type from every other logged string.
+* The pii-scrub `URL_TOKEN_REGEX` matches `token=`-style **query** params. GetBlock puts the
+  credential in the URL **path** (`https://go.getblock.io/<ACCESS_TOKEN>`), so it never matched.
+
+These paths use `remove` (inherited from the shared `redact` config) rather than a censor
+token, and that is deliberate: call sites that genuinely want the endpoint log a sanitized
+origin under a **different** key, `rpcOrigin` (via `sanitizeRpcUrlForError` in
+`chain/utxo-provider.ts`). So `rpcUrl` carries no legitimate meaning any more — a log object
+with that key is always a mistake and is dropped whole.
+
+Public, credential-free endpoints are intentionally **excluded** from the list
+(`mempoolBaseUrl`, `baseUrl`): there the full path is the correlation value, and
+over-redacting would cost observability for no security gain.
+
+Pinned by `logger.error-serializer.test.ts`, which builds a REAL pino over an in-memory
+destination and asserts the emitted JSON line — `logger.test.ts` mocks pino wholesale and is
+structurally blind to redaction defects.
+
 ## 2026-08-17 — new `utf16-truncate.ts`: surrogate-safe truncation (poison-record incident)
 
 `truncateUtf16Safe(input, maxUnits)` replaces bare `.slice(0, N)` wherever a truncated string is

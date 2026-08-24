@@ -528,10 +528,15 @@ export interface RpcProviderConfig {
 /**
  * §1.4 (S3.3-F1): the RPC endpoint may carry its credential in the URL PATH —
  * prod `BITCOIN_RPC_URL` is `https://go.getblock.io/<ACCESS_TOKEN>` — so the
- * raw URL must never reach an Error message. `BodyReadTimeoutError` embeds
- * its `url` argument verbatim in `.message`, which then flows to
- * `retryWithBackoff`'s warn log on every retry, `emitRpcFallback` Sentry
- * breadcrumbs, and any propagated job error text; the pii-scrub
+ * raw URL must never reach an Error message NOR a log field (SCRUM-3439: it
+ * also labels the `createUtxoProvider` construction log, which wrote a live
+ * credential to Cloud Logging on every worker cold start — PR #1320 memoized
+ * that log to once-per-process, which is once too many).
+ *
+ * `BodyReadTimeoutError` embeds its `url` argument verbatim in `.message`,
+ * which then flows to `retryWithBackoff`'s warn log on every retry,
+ * `emitRpcFallback` Sentry breadcrumbs, and any propagated job error text;
+ * the pii-scrub
  * `URL_TOKEN_REGEX` only matches `token=`-style QUERY params, so a path
  * token passes it untouched. Origin-only keeps the correlation value (which
  * endpoint, which deadline) and provably drops path, query, and userinfo —
@@ -1149,7 +1154,10 @@ export interface UtxoProviderFactoryConfig {
 export function createUtxoProvider(factoryConfig: UtxoProviderFactoryConfig): UtxoProvider {
   if (factoryConfig.type === 'rpc') {
     if (!factoryConfig.rpcUrl) throw new Error('BITCOIN_RPC_URL is required for RPC UTXO provider');
-    logger.info({ provider: 'rpc', rpcUrl: factoryConfig.rpcUrl }, 'Creating RPC UTXO provider');
+    // SCRUM-3439 (§1.4): origin only — the raw URL may carry the credential in
+    // its PATH (`https://go.getblock.io/<ACCESS_TOKEN>`). Key is `rpcOrigin`,
+    // not `rpcUrl`, because `rpcUrl` is a logger redact path (utils/logger.ts).
+    logger.info({ provider: 'rpc', rpcOrigin: sanitizeRpcUrlForError(factoryConfig.rpcUrl) }, 'Creating RPC UTXO provider');
     return new RpcUtxoProvider({ rpcUrl: factoryConfig.rpcUrl, rpcAuth: factoryConfig.rpcAuth });
   }
   if (factoryConfig.type === 'getblock') {
@@ -1163,7 +1171,10 @@ export function createUtxoProvider(factoryConfig: UtxoProviderFactoryConfig): Ut
       factoryConfig.mempoolApiUrl,
       MEMPOOL_URLS[factoryConfig.network ?? 'mainnet'] ?? MEMPOOL_URLS.mainnet,
     );
-    logger.info({ provider: 'getblock', rpcUrl: factoryConfig.rpcUrl, mempoolBaseUrl }, 'Creating GetBlock hybrid UTXO provider');
+    // SCRUM-3439 (§1.4): see the RPC branch. `mempoolBaseUrl` stays in full —
+    // it is a public endpoint carrying no credential, and there the path IS
+    // the correlation value.
+    logger.info({ provider: 'getblock', rpcOrigin: sanitizeRpcUrlForError(factoryConfig.rpcUrl), mempoolBaseUrl }, 'Creating GetBlock hybrid UTXO provider');
     return new GetBlockHybridProvider({ rpcUrl: factoryConfig.rpcUrl, rpcAuth: factoryConfig.rpcAuth, mempoolBaseUrl });
   }
   if (factoryConfig.type === 'mempool') {
