@@ -130,7 +130,7 @@ Model Context Protocol endpoint for AI agents. New integrations should prefer th
 
 ### 7. Webhooks (outbound) — your URL
 
-Arkova POSTs HMAC-SHA256-signed JSON to your endpoint when anchors transition state. The most commonly subscribed types:
+Arkova POSTs HMAC-SHA256-signed JSON to your endpoint when anchors transition state. A representative subset:
 
 - `anchor.secured` — network confirmation complete
 - `anchor.revoked` — Org admin revoked the credential

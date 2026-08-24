@@ -7,7 +7,9 @@
  * Honesty rules (§1.13 R-7 launch-claims discipline):
  *  - `live: true` is asserted ONLY for events with a real emit point in the
  *    worker (verified against services/worker/src/webhooks/agents.md
- *    producer table + payload-schemas.ts): every anchor.* event.
+ *    producer table + payload-schemas.ts): every anchor.* event AND
+ *    compliance.document_expiring. Check that table — never infer
+ *    liveness from the `anchor.` prefix.
  *  - credential.* events are contract-defined (SCRUM-1743) but have NO emit
  *    points yet — they are shown as "Not yet active" so a subscriber is
  *    never led to believe they will receive them today.
