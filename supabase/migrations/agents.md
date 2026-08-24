@@ -772,3 +772,52 @@ Prod `vzwyaatejekddvltxyye` has 118 ledger rows, head `0419`, with a genuine gap
 |---|---|---|---|
 | `credits-2442` | `gsluatcqhwwynxpsidjy` | `0420` | PR #2442 — 48 h T3 clock RUNNING from 2026-08-29T15:10:53Z |
 | `cleanup-2335` | `bxgybbxkhuxwtgkgkwpe` | `0417` | PR #2335 — wired + `clean_mirror`, clock NOT started (driver blocker recorded in `docs/staging/cleanup-2335-2026-08-29/`) |
+## Recent migrations (SCRUM-3529 — public verify sub-type)
+
+Branch `fix/public-verify-subtype-projection`. FILE-ONLY: applied nowhere — not
+prod, not the shared staging rig, not any isolated rig. T3 (redefines the
+anon-callable `public.get_public_anchor` projection).
+
+**Prefix derivation.** `max(main head, agents.md reservations, open-PR claims,
+sibling-worktree files) + 1`. `origin/main` head file is `0409`. The reservation
+rows in this file claim `0410`–`0414`. `gh pr list --state open --json files`
+across all open PRs additionally claims `0415`
+(`0415_ferpa_directory_info_opt_out_public_projections.sql`), `0417`, `0418` and
+`0419`. A scan of every sibling worktree's `supabase/migrations/` shows the same
+set and nothing at `0420`. `0416` is an unclaimed GAP rather than a free slot —
+it is skipped deliberately, because taking a hole below other sessions' claims
+is how two files end up sharing a prefix. **Next author claims `0421` —
+re-derive, do not trust this line.**
+
+| `0420` | `fix/public-verify-subtype-projection` (this PR) | SCRUM-3529 | `0420_scrum3529_public_anchor_sub_type_projection.sql` | FILE-ONLY, applied nowhere. T3. |
+
+- **0420_scrum3529_public_anchor_sub_type_projection.sql** — adds ONE key,
+  `'sub_type', private.public_free_text_or_null(a.sub_type)`, to
+  `public.get_public_anchor`. `CredentialRenderer` falls back to the credential
+  sub-type whenever `CREDENTIAL_TYPE_LABELS` resolves to the generic `Other`
+  (SCRUM-952 / SCRUM-1482), but `0355` replaced this projection's `metadata`
+  pass-through with an allow-list that omitted `sub_type`, so from `0355` onward
+  every `OTHER`-typed record on `/verify/:publicId` rendered "Other". The
+  canonical value was never the metadata duplicate anyway: it is the
+  `anchors.sub_type` COLUMN (GRE-01), which is what this projects.
+  **VALUE-GATED, not structural** — `anchors.sub_type` is bare `text` with no
+  CHECK and no enum, exactly why `verify.ts` already routes it through
+  `publicFreeTextOrNull` (`verify_value_gated_fields`). **NOT
+  academic-suppressed**, also for parity: `GET /api/v1/verify/:publicId` already
+  publishes a gated `sub_type` for DEGREE/CERTIFICATE/TRANSCRIPT to anonymous
+  callers, so suppressing it only in SQL would remove nothing from public reach
+  while re-opening the SQL-vs-TS drift this contract exists to close. Emitted as
+  an explicit `null` rather than omitted, following `fingerprint_source` (0376),
+  the other additive nullable column key, and matching
+  `sub_type: row.sub_type ?? null` in `verify.ts`. Top-level rather than a
+  `metadata` member so the academic "no metadata" render mode is not flipped.
+  **The body is `0385`'s verbatim** (that file, lines 554–783, is the LATEST
+  redefinition — `0386` redefines only the `_by_fingerprint` sibling, which
+  DELEGATES here, and `0390` only the `is_academic_record_credential_type`
+  predicate) **plus that one key and its comment, and nothing else** — verified
+  by diffing the two function blocks. No GRANT/REVOKE: `CREATE OR REPLACE`
+  preserves the ACL, same as `0385`. No `database.types.ts` delta — the RPC
+  returns bare `jsonb`. Contract updated in the same commit
+  (`scripts/ci/public-pii-projection-contract.json`: `sub_type` added to
+  `projection_keys`, deliberately NOT to `structural_keys`, with the full
+  rationale in `$sub_type_note`). Rollback in the file header.

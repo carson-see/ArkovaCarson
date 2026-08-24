@@ -324,6 +324,61 @@ describe('public projection PII gate — the definition production runs', () => 
     ).toEqual([]);
   });
 
+  it('projects sub_type from the CANONICAL COLUMN, value-gated (SCRUM-3529)', () => {
+    // The regression this pins: 0355 replaced the `metadata` pass-through with
+    // an allow-list and dropped `sub_type`, which silently made the SCRUM-952
+    // "fall back to the sub-type when the type label is the generic 'Other'"
+    // path unreachable on the public verify page. Nothing noticed for months
+    // because every test asserted the HELPER, never the projected key.
+    const m = latestRedefiner();
+    const clause = projectedKeys(m).find(([key]) => key === 'sub_type')?.[1];
+    expect(
+      clause,
+      why(
+        m,
+        'does not project a `sub_type` key at all. The public verify page derives its credential ' +
+          'Type label from it and regresses to the generic "Other" without it.',
+      ),
+    ).toBeTruthy();
+
+    // Read the COLUMN, not a metadata member. `metadata->>'sub_type'` only ever
+    // held a duplicate some callers happened to write, which is precisely the
+    // weakness the original PR review called out; anchors.sub_type is the
+    // canonical value (GRE-01).
+    expect(
+      clause,
+      why(m, 'reads sub_type from metadata instead of the canonical anchors.sub_type column.'),
+    ).toMatch(/\ba\.sub_type\b/);
+    expect(
+      clause,
+      why(m, "reads metadata->>'sub_type' — that is the duplicate, not the canonical column."),
+    ).not.toMatch(/metadata\s*->>\s*'sub_type'/);
+
+    // Bare `text` in the schema — no CHECK, no enum — so it takes the value
+    // gate, exactly as verify.ts does (verify_value_gated_fields).
+    expect(
+      clause,
+      why(m, 'emits anchors.sub_type raw. It is bare text with no CHECK, so it must be gated.'),
+    ).toContain('public_free_text_or_null');
+    expect(
+      contract.structural_keys,
+      'sub_type must NOT be structural: bare text with no CHECK cannot be assumed free of ' +
+        'issuer-authored content. See $sub_type_note.',
+    ).not.toContain('sub_type');
+  });
+
+  it('keeps sub_type out of the academic suppression set, matching verify.ts', () => {
+    // Parity, not laxity: verify.ts already publishes a value-gated `sub_type`
+    // for DEGREE/CERTIFICATE/TRANSCRIPT to anonymous callers, so suppressing it
+    // in SQL alone would be pure drift — it would remove nothing from public
+    // reach while re-opening the four-way divergence this contract exists to
+    // close. If that call is ever revisited, BOTH sides move together.
+    expect(contract.verify_value_gated_fields).toContain('sub_type');
+    expect(contract.verify_academic_suppressed_fields).not.toContain('sub_type');
+    expect(contract.sql_academic_suppressed_fields).not.toContain('sub_type');
+    expect(contract.sql_academic_suppressed_fields).not.toContain('metadata.sub_type');
+  });
+
   it('never emits a raw filename, and never emits a NULL one', () => {
     const m = latestRedefiner();
     const clause = m.sql.match(/'filename',[\s\S]{0,600}?'file_size'/)?.[0];

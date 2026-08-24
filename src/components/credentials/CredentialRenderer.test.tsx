@@ -250,6 +250,67 @@ describe('CredentialRenderer', () => {
     });
   });
 
+  // SCRUM-3529: the canonical value is the anchors.sub_type COLUMN, surfaced by
+  // get_public_anchor as a top-level key (0420). Before that, the only route in
+  // was a metadata duplicate a caller happened to write — and once 0355 turned
+  // the public projection's metadata into an allow-list, that route was closed
+  // and the public verify page silently regressed to the generic 'Other'.
+  describe('subType prop (canonical anchors.sub_type column)', () => {
+    it('renders the Type label from the subType prop with no metadata at all', () => {
+      render(
+        <CredentialRenderer
+          credentialType="OTHER"
+          subType="professional_certification"
+          status="SECURED"
+        />
+      );
+
+      expect(screen.getByText('Professional Certification')).toBeInTheDocument();
+      expect(screen.queryByText('Other')).not.toBeInTheDocument();
+      expect(screen.queryByText('professional_certification')).not.toBeInTheDocument();
+    });
+
+    it('prefers the canonical prop over a stale metadata duplicate', () => {
+      render(
+        <CredentialRenderer
+          credentialType="OTHER"
+          subType="nursing_rn"
+          metadata={{ sub_type: 'professional_certification' }}
+          status="SECURED"
+        />
+      );
+
+      // The column wins for the headline Type label.
+      expect(screen.getByText('Nursing RN')).toBeInTheDocument();
+    });
+
+    it('falls back to the credential type label when subType is blank', () => {
+      // formatCredentialSubType('') returns the em-dash placeholder, so an
+      // unguarded prop would replace a real label with '—' on every record whose
+      // sub_type column is empty — strictly worse than the bug being fixed.
+      render(
+        <CredentialRenderer credentialType="LICENSE" subType="   " status="SECURED" />
+      );
+
+      expect(screen.getByText('License')).toBeInTheDocument();
+      expect(screen.queryByText('—')).not.toBeInTheDocument();
+    });
+
+    it('falls back to the metadata subtype when the column is absent', () => {
+      // Owner-side callers still pass only metadata; that path must not regress.
+      render(
+        <CredentialRenderer
+          credentialType="OTHER"
+          metadata={{ subType: 'nursing_rn' }}
+          status="SECURED"
+        />
+      );
+
+      expect(screen.getAllByText('Nursing RN').length).toBeGreaterThanOrEqual(1);
+      expect(screen.queryByText('Other')).not.toBeInTheDocument();
+    });
+  });
+
   describe('Mode 3: No Metadata', () => {
     it('renders filename and no-metadata message', () => {
       render(

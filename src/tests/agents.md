@@ -111,3 +111,12 @@ reintroduce the class in a different function with nothing to catch it
 Comment lines are stripped before asserting on SQL (`code()` helper) — every
 `-- ROLLBACK:` header quotes the old body, so a naive substring match on the raw
 file finds the defect in its own rollback note.
+
+## 2026-08-23 SCRUM-3529 — the projection contract test now pins `sub_type`
+
+Two assertions added to `public-anchor-pii-projection.contract.test.ts`:
+
+- **`projects sub_type from the CANONICAL COLUMN, value-gated`** — asserts the latest redefiner emits a `sub_type` key, reads it from `a.sub_type` (and explicitly NOT from `metadata->>'sub_type'`), routes it through `public_free_text_or_null`, and keeps it out of `structural_keys`.
+- **`keeps sub_type out of the academic suppression set, matching verify.ts`** — pins the SQL and TS sides of that decision together, so neither surface can be changed alone.
+
+The lesson worth keeping: this regression (migration `0355` dropping `sub_type` from the projection's metadata allow-list, silently disabling the SCRUM-952 "Other" fallback) survived for months **because every existing test asserted the `formatCredentialSubType` helper or the component props, never the RENDERED label**. Helper-level coverage cannot see a value that never reaches the browser. The end-to-end pin is `src/components/verification/PublicVerification.subtype.test.tsx`, which mounts the real `CredentialRenderer` and asserts visible text — prefer that shape for anything user-visible on the public verify page.

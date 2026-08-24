@@ -272,3 +272,12 @@ renderer, apply the filter or add an ALLOWLIST entry with a reason.
 _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see `docs/incidents/2026-07-28-agents-md-union-drop-remediation.md`)._
 
 EvidenceLayersSection "Not present for this record."; EvidenceLevelBadge + SourceProvenanceDisplay local fallback triads scrubbed in lockstep with the canonical copy.ts EVIDENCE_TRIAD/EVIDENCE_LEVEL_BADGE_ALT strings (credential → document). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
+
+## 2026-08-23 SCRUM-3529 — public verify page renders the credential sub-type, not "Other"
+
+`PublicVerification` now reads the top-level **`sub_type`** key from the `get_public_anchor` RPC (added by migration `0420`, value-gated through `private.public_free_text_or_null`) and passes it to `CredentialRenderer` as the first-class `subType` prop. `PublicAnchorData` gained `sub_type?: string | null`.
+
+- The regression: `0355` replaced this projection's `metadata` pass-through with an allow-list that omitted `sub_type`, so the SCRUM-952 "fall back to the sub-type when the type label is the generic `Other`" path went unreachable and every `OTHER`-typed record read "Other". The canonical value is the `anchors.sub_type` COLUMN, not a metadata duplicate — that is what is projected now.
+- The gate **OMITS rather than truncates**, so the key can be absent (not merely null) on a record whose sub_type carried PII. Null, absent and gate-dropped all fall back to the parent type label; all three are pinned.
+- **`PublicVerification.subtype.test.tsx` is a SEPARATE file on purpose.** `PublicVerification.test.tsx` mocks `CredentialRenderer` at module scope, so it can prove which props are handed over but never what the user SEES — which is exactly how this survived for months with a green suite. The new file leaves the renderer REAL and asserts visible text. If you add public-verify display coverage, ask whether it belongs there instead.
+- Not added to the schema.org JSON-LD block, so the `dangerouslySetInnerHTML` sink is unchanged.

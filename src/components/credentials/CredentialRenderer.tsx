@@ -176,17 +176,41 @@ function isSubTypeKey(key: string): boolean {
   return ['subtype', 'sub_type', 'subType'].includes(key);
 }
 
+/**
+ * A sub-type is only usable as a label when it is a non-blank string.
+ *
+ * `formatCredentialSubType('')` returns the em-dash placeholder, so an
+ * unguarded blank would REPLACE a real credential-type label with '—' — worse
+ * than the generic label it was meant to improve on. `anchors.sub_type` is bare
+ * `text` with no CHECK, so blanks are reachable.
+ */
+function formatSubTypeOrNull(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed ? formatCredentialSubType(trimmed) : null;
+}
+
 function extractSubTypeLabel(metadata: Record<string, unknown> | null | undefined): string | null {
   if (!metadata) return null;
   for (const key of ['subType', 'subtype', 'sub_type']) {
-    const value = metadata[key];
-    if (typeof value === 'string') return formatCredentialSubType(value);
+    const label = formatSubTypeOrNull(metadata[key]);
+    if (label) return label;
   }
   return null;
 }
 
 export interface CredentialRendererProps {
   credentialType?: string | null;
+  /**
+   * SCRUM-3529: the canonical `anchors.sub_type` column (GRE-01 —
+   * `official_undergraduate`, `nursing_rn`), surfaced by `get_public_anchor` as
+   * a top-level key (migration 0420) and by `GET /api/v1/verify/:publicId`.
+   *
+   * Takes precedence over any `sub_type` duplicate inside `metadata`, which is
+   * only whatever a writer happened to mirror there. Callers that have no
+   * column value may omit this; the metadata fallback still applies.
+   */
+  subType?: string | null;
   metadata?: Record<string, unknown> | null;
   template?: TemplateDisplayData | null;
   issuerName?: string | null;
@@ -243,6 +267,7 @@ function isMetadataDisplayHiddenKey(key: string): boolean {
 
 export function CredentialRenderer({
   credentialType,
+  subType,
   metadata,
   template,
   issuerName,
@@ -263,7 +288,8 @@ export function CredentialRenderer({
   const typeKey = credentialType ?? 'OTHER';
   const config = TYPE_CONFIG[typeKey] ?? TYPE_CONFIG.OTHER;
   const TypeIcon = config.icon;
-  const subTypeLabel = extractSubTypeLabel(metadata);
+  // The canonical column wins over the metadata duplicate (SCRUM-3529).
+  const subTypeLabel = formatSubTypeOrNull(subType) ?? extractSubTypeLabel(metadata);
 
   const credentialLabel = subTypeLabel ?? (credentialType
     ? (CREDENTIAL_TYPE_LABELS as Record<string, string>)[credentialType] ?? credentialType
