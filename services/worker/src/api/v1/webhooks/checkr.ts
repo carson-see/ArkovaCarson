@@ -171,6 +171,20 @@ checkrWebhookRouter.post('/', async (req: Request, res: Response) => {
    * genuinely duplicate deliveries is unchanged. Mirrors `middesk.ts`'s
    * `releaseNonce` and the `webhook_event_claims` release in
    * `stripe/handlers.ts`.
+   *
+   * RESIDUAL RISK — this is a deliberate at-least-once trade, not a free win.
+   * If the RPC *throws* after Postgres already committed the insert (e.g. the
+   * connection drops while awaiting the response), we cannot tell "enqueue
+   * happened" from "enqueue did not", and releasing the nonce lets the retry
+   * enqueue a SECOND `organization_rule_events` row. Nothing de-dupes that:
+   * `enqueue_rule_event` is a bare INSERT with no `ON CONFLICT`, and the
+   * executions idempotency index is `UNIQUE(rule_id, trigger_event_id)` where
+   * `trigger_event_id` is the rule-event id — freshly minted per enqueue, so
+   * two enqueues are two distinct keys. We accept a rare duplicate execution
+   * over the guaranteed silent loss this replaces; a background check that
+   * runs twice is recoverable, one that vanishes while the vendor is told
+   * `200` is not. Narrowing the window needs an idempotency key carried into
+   * `enqueue_rule_event` itself — out of scope here, tracked separately.
    */
   let nonceCommitted = false;
   async function releaseNonce(reason: string): Promise<void> {
@@ -232,9 +246,18 @@ checkrWebhookRouter.post('/', async (req: Request, res: Response) => {
         return;
       }
       logger.error({ error: nonceErr }, 'Checkr webhook: nonce insert failed');
-      // Fail open on the nonce write — the executions table's idempotency
-      // index still de-dupes downstream side effects. No row was committed,
-      // so `releaseNonce` must stay disarmed for this delivery.
+      // Fail open on the nonce write: prefer processing the event to dropping
+      // it. No row was committed, so `releaseNonce` must stay disarmed for
+      // this delivery.
+      //
+      // NOTE: the older comment here claimed "the executions table's
+      // idempotency index still de-dupes downstream side effects". That is
+      // not true for THIS path and was removed rather than left as false
+      // comfort — the index is `UNIQUE(rule_id, trigger_event_id)` and
+      // `trigger_event_id` is the per-enqueue rule-event id, so a
+      // re-delivery that enqueues again produces a different key and is not
+      // de-duped. Failing open here can therefore double-process; that is an
+      // accepted trade against losing the event, not a guarded no-op.
     } else {
       nonceCommitted = true;
     }
