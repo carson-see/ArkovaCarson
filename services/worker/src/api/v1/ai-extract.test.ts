@@ -239,11 +239,13 @@ describe('AI Extraction Endpoint', () => {
     expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
   });
 
-  // Pre-mortem finding: deduct_ai_credits failing silently let a FREE AI
-  // extraction proceed with only a logger.error — no page. Behavior
-  // (fail OPEN) is intentionally unchanged (RISK-6 product decision); this
-  // test locks in that the failure now also alerts Sentry.
-  it('proceeds with the extraction (fail OPEN, unchanged) AND alerts Sentry when deduct_ai_credits fails', async () => {
+  // SCRUM-3502 / DI-576 — deduct_ai_credits failing used to let a FREE AI
+  // extraction proceed (fail OPEN) with a Sentry page but no behavior change.
+  // The page named it correctly: "a REVENUE LEAK (free AI extraction)". The
+  // product decision is now fail CLOSED — `checkAICredits` said this org HAS
+  // credits, the debit did not land, so no credit was consumed and the paid
+  // work must not be performed. Reversing the RISK-6 fail-OPEN default.
+  it('fails CLOSED with 503 and never calls the provider when deduct_ai_credits fails', async () => {
     const handler = getPostHandler();
     const { req, res } = createMockReqRes(validBody, 'user-123');
 
@@ -256,31 +258,37 @@ describe('AI Extraction Endpoint', () => {
       hasCredits: true,
     });
 
-    (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
-      extractMetadata: vi.fn().mockResolvedValue({
-        fields: { credentialType: 'DEGREE' },
-        confidence: 0.9,
-        provider: 'gemini',
-        tokensUsed: 100,
-      }),
+    const extractMetadata = vi.fn().mockResolvedValue({
+      fields: { credentialType: 'DEGREE' },
+      confidence: 0.9,
+      provider: 'gemini',
+      tokensUsed: 100,
     });
+    (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({ extractMetadata });
 
     // Deduction fails (DB error), NOT insufficient balance.
     (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
     await handler!(req, res);
 
-    // Behavior unchanged: extraction still proceeds (200, not 402/500).
-    expect(res.status).not.toHaveBeenCalledWith(402);
-    const responseJson: AIExtractResponse = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(responseJson.fields).toEqual(expect.objectContaining({ credentialType: 'DEGREE' }));
+    // The paid work must NOT happen — this is the whole point of fail-closed.
+    expect(extractMetadata).not.toHaveBeenCalled();
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(responseJson).toEqual(
+      expect.objectContaining({ error: 'credit_system_unavailable' }),
+    );
+    // Must not claim the org is out of credits — checkAICredits just said the
+    // opposite, and telling them to buy more would be a lie.
+    expect(responseJson.error).not.toBe('insufficient_credits');
 
     expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);
     expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
       expect.objectContaining({
         rpc: 'deduct_ai_credits',
         operation: 'ai-extract.deductAICredits',
-        failMode: 'open',
+        failMode: 'closed',
         orgId: 'org-456',
         userId: 'user-123',
       }),

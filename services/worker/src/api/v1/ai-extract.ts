@@ -248,20 +248,35 @@ router.post('/', async (req: Request, res: Response) => {
 
     const deducted = await deductAICredits(orgId, userId, 1);
     if (!deducted && creditBalance) {
-      // Deduction failed but credits existed — DB error, not insufficient balance.
-      // Behavior is intentionally unchanged here (fail OPEN — proceed with the
-      // extraction) per the RISK-6 product decision; this is a REVENUE LEAK
-      // (free AI extraction) and must page, not just log.
-      logger.error({ orgId, userId }, 'AI credit deduction failed — proceeding with extraction');
+      // Deduction failed but credits existed — DB error, not insufficient
+      // balance (the exhausted case returned 402 above).
+      //
+      // SCRUM-3502: this now FAILS CLOSED. The RISK-6 product decision was to
+      // proceed anyway, and the previous comment here named the consequence
+      // exactly — "a REVENUE LEAK (free AI extraction)". No credit was
+      // consumed, so performing the extraction renders paid work for free, on
+      // a path that is live in production (ENABLE_AI_EXTRACTION defaults true,
+      // §1.6). Refusing costs the caller one retry; proceeding costs revenue on
+      // every occurrence.
+      logger.error({ orgId, userId }, 'AI credit deduction failed — refusing the extraction');
       captureCreditRpcFailureAlert({
         rpc: 'deduct_ai_credits',
         operation: 'ai-extract.deductAICredits',
-        failMode: 'open',
-        error: new Error('deduct_ai_credits failed — proceeding with FREE AI extraction'),
+        failMode: 'closed',
+        error: new Error('deduct_ai_credits failed — refusing AI extraction (fail CLOSED)'),
         orgId,
         userId,
         extra: { amount: 1 },
       });
+      // 503, not 402: `insufficient_credits` would tell the caller to buy more
+      // when `checkAICredits` just reported that they have some. The failure is
+      // ours and it is retryable.
+      res.status(503).json({
+        error: 'credit_system_unavailable',
+        message:
+          'Credit accounting is temporarily unavailable. No credits were consumed and no extraction was performed. Please retry.',
+      });
+      return;
     }
 
     // Call AI provider

@@ -140,7 +140,7 @@ describe('paymentTierRouter', () => {
       (db.rpc as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ data: 50, error: null }) // check_anchor_quota → not null = not beta
         .mockResolvedValueOnce({ data: { remaining: 100 }, error: null }) // check_unified_credits
-        .mockResolvedValueOnce({ data: null, error: null }); // deduct_unified_credits
+        .mockResolvedValueOnce({ data: true, error: null }); // deduct_unified_credits → debited
 
       const app = createApp('user-1', 'org-1');
       const res = await request(app).get('/api/v1/verify/test');
@@ -151,9 +151,17 @@ describe('paymentTierRouter', () => {
       expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
     });
 
-    it('falls through to Stripe metered billing AND alerts Sentry (fail-OPEN: org had credits, gets charged instead)', async () => {
-      // Not admin; subscriptions lookup returns an active subscription so
-      // tier 2 (Stripe metered) succeeds after tier 1 fails.
+    // SCRUM-3502 / DI-576 — fail CLOSED on a deduct_unified_credits RPC ERROR.
+    //
+    // The old behavior returned null here, which fell through to Tier 2 and
+    // billed the customer via Stripe for a request their already-purchased
+    // credit may well have been debited for — an RPC error leaves the debit in
+    // an UNKNOWN state, so falling through can double-charge and serving the
+    // request can give it away. Neither is acceptable for money: stop.
+    it('fails CLOSED with 503 when the deduct RPC errors — does NOT fall through to Stripe', async () => {
+      // Subscriptions lookup returns an ACTIVE subscription on purpose: if the
+      // router still fell through to Tier 2 this test would see 200 +
+      // stripe_metered. Seeing 503 proves the fall-through is gone.
       (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
@@ -172,23 +180,70 @@ describe('paymentTierRouter', () => {
       (db.rpc as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ data: 50, error: null }) // not beta
         .mockResolvedValueOnce({ data: { remaining: 100 }, error: null }) // check_unified_credits: org has credits
-        .mockResolvedValueOnce({ data: null, error: { message: 'deduct RPC failed' } }); // deduct_unified_credits fails
+        .mockResolvedValueOnce({ data: null, error: { message: 'deduct RPC failed' } }); // deduct errors
 
       const app = createApp('user-1', 'org-1');
       const res = await request(app).get('/api/v1/verify/test');
-      expect(res.status).toBe(200);
-      expect(res.body.tier).toBe('stripe_metered');
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toBe('credit_system_unavailable');
+      expect(res.body.tier).toBeUndefined();
 
       expect(captureCreditRpcFailureAlert).toHaveBeenCalledTimes(1);
       expect(captureCreditRpcFailureAlert).toHaveBeenCalledWith(
         expect.objectContaining({
           rpc: 'deduct_unified_credits',
           operation: 'paymentTierRouter.tryCredits',
-          failMode: 'open',
+          failMode: 'closed',
           orgId: 'org-1',
           userId: 'user-1',
         }),
       );
+    });
+
+    // SCRUM-3502 / DI-576 — the FREE-SERVICE hole.
+    //
+    // `deduct_unified_credits` returns BOOLEAN. It answers `false` (with NO
+    // error) when the row is missing or the balance is short — see the baseline
+    // body, `IF NOT FOUND THEN RETURN false`. The old code destructured only
+    // `error`, so a `false` return fell straight through to
+    // `return { tier: 'credits', authorized: true }`: the request was served,
+    // billed to nobody, and NO credit was consumed. Unbounded free usage for
+    // any org with no unified_credits row — precisely the org that
+    // check_unified_credits was handing a phantom 50 to (SCRUM-2538).
+    it('never authorizes on the credits tier when the deduct RPC returns false', async () => {
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: { is_platform_admin: false }, error: null }),
+            in: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'sub-1', stripe_subscription_id: 'sub_stripe_1', status: 'active', plan_id: 'p1' },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+      });
+
+      (db.rpc as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ data: 50, error: null }) // not beta
+        .mockResolvedValueOnce({ data: { remaining: 100 }, error: null }) // check says there is balance
+        .mockResolvedValueOnce({ data: false, error: null }); // ...but the debit did NOT happen
+
+      const app = createApp('user-1', 'org-1');
+      const res = await request(app).get('/api/v1/verify/test');
+
+      // No credit was consumed, so the next PAID tier is the correct landing
+      // spot — the customer is billed for what they used. What must never
+      // happen is `tier: 'credits'`, which is service rendered for free.
+      expect(res.body.tier).not.toBe('credits');
+      expect(res.status).toBe(200);
+      expect(res.body.tier).toBe('stripe_metered');
+
+      // Not an RPC failure and not a revenue leak — Stripe bills it. No page.
+      expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
     });
   });
 

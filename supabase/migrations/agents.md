@@ -678,3 +678,75 @@ another ref. `0411`–`0413` were the first three free slots. **Next author clai
   sessions; `calibration-refit.ts` reaches the view through an explicit cast and
   compiles either way. Whoever applies this runs `npm run gen:types` once
   afterwards (0400 / 0405 precedent).
+
+## Recent migrations (SCRUM-2538 / DI-380 — credit fail-closed)
+
+| `0420` | `fix/credits-fail-closed` (this PR) | SCRUM-2538 | `0420_scrum2538_check_unified_credits_fail_closed.sql` | FILE-ONLY, applied nowhere. T3. |
+
+- **0420_scrum2538_check_unified_credits_fail_closed.sql** — `check_unified_credits`
+  fails **OPEN**: a missing `unified_credits` row short-circuits to
+  `RETURN QUERY SELECT 50, 0, 50, true` (baseline:1425-1428), inventing
+  entitlement from the ABSENCE of a record on a money path. Confirmed live on
+  prod `vzwyaatejekddvltxyye` via `pg_get_functiondef`, not merely unfixed in the
+  repo; no later migration redefines it (only `0378`, and only to REVOKE/GRANT at
+  :265-266). **It is not a 50-call trial.** The sibling `deduct_unified_credits`
+  fails CLOSED on the SAME missing row (`IF NOT FOUND THEN RETURN false`), so the
+  pair disagrees, the balance never moves, and the phantom 50 regenerates on
+  every call. The worker's Tier-1 path compounded it by destructuring only
+  `error` from that RPC and ignoring the boolean entirely — fixed in
+  `services/worker/src/middleware/paymentTierRouter.ts` in the same PR.
+  **The backfill is part of the fix, not a nicety:** flipping the default to
+  0/false alone converts a revenue leak into an outage, so STEP 1 first
+  materializes real rows at the same 50 credits (org rows for every org; user
+  rows for org-less profiles ONLY, so the backfill never creates two matching
+  rows for one caller). **The backfill runs under a FORCE-RLS suspension, and
+  that is load-bearing:** `unified_credits` carries `FORCE ROW LEVEL SECURITY`
+  (baseline:9480), so the migration's own role is subject to its policies, and
+  both exclude it — `auth.role()`/`auth.uid()` are NULL inside a migration, so
+  `service_role_manage_unified_credits` (FOR ALL, `USING` only, which Postgres
+  reuses as the `WITH CHECK`) REJECTS the INSERTs outright, and the `NOT EXISTS`
+  idempotency guards read ZERO rows and report every owner as uncovered. That is
+  the **0404 failure mode**, and the read half is SILENT: a backfill that scans
+  before suspending reports "nothing to do" and commits a no-op that looks like
+  success. Suspension opens BEFORE the scan, is restored on the success path and
+  in an `EXCEPTION WHEN others` handler, and the block re-checks its own work and
+  RAISEs rather than committing a partial backfill (a fail-closed check over an
+  incomplete backfill zeroes real customers). No triggers to disable — unlike
+  0404, RLS is the only control suspended. Both functions also get identical deterministic row
+  selection — `unified_credits` has a PK on `id` and **no** unique constraint on
+  `org_id`/`user_id` (baseline:9477/10276), so the baseline's bare `LIMIT 1` and
+  unordered `SELECT ... FOR UPDATE` could READ the balance off one row and DEBIT
+  another. `DESC NULLS LAST`, not a bare `DESC`: the org-match comparison is NULL
+  (not false) when `uc.org_id` is NULL, and NULLs sort FIRST under a bare DESC.
+  Third fix in the same body: the monthly-rollover `carry_over` was recomputed
+  AFTER `v_record.used_this_month := 0`, so the row was written
+  `LEAST(alloc - used, 50)` while the caller was returned `LEAST(alloc, 50)` —
+  `remaining` overstated by exactly last month's usage. Now computed once into a
+  local and used for both. Grants re-asserted **unquoted** AFTER both
+  `CREATE OR REPLACE` statements (they re-trigger `ALTER DEFAULT PRIVILEGES`;
+  quoted `"public"."f"()` matches neither branch of `statementTargets` — the 0411
+  trap), verified by running the real `secdef-function-grants` linter, which
+  reports the file clean. `NOTIFY pgrst, 'reload schema'` — both bodies changed.
+  **Deliberately NOT done, with reasons in the file header:** the
+  `unified_credits.monthly_allocation` column default of 50 is left alone (a
+  column default applies to a row somebody deliberately INSERTed, and 50 is the
+  real free-tier grant — zeroing it trades this fail-open for a fail-closed of
+  the same shape); and the missing UNIQUE index on `(org_id)`/`(user_id)` is NOT
+  added, because it would ABORT the migration if prod already holds a duplicate
+  and that cannot be established from the repo. **Follow-up owed:** that unique
+  index, and row provisioning on org creation — nothing in the schema or worker
+  creates a `unified_credits` row on signup, so owners created after this applies
+  read 0/false. That is now honest rather than fabricated, and it is inert today
+  because the only enforcement consumer (`paymentTierRouter`) is not mounted in
+  `services/worker/src/index.ts`; it MUST land before that middleware is mounted.
+  `database.types.ts` NOT regenerated — signatures and return shapes are
+  unchanged (bodies only), and the shared local stack is concurrently mutated by
+  other worktree sessions (0400 / 0405 / 0413 precedent). Tier T3. Rollback in
+  the file header; the backfilled rows are deliberately NOT deleted on rollback.
+  **Prefix derivation:** `git log --all --diff-filter=A` over every ref shows
+  `0415` claimed TWICE (`0415_false_secured_offchain_anchor_quarantine.sql` and
+  `0415_ferpa_directory_info_opt_out_public_projections.sql` — an unresolved live
+  collision worth someone's attention; the FERPA one is also recorded in
+  `docs/staging/rig-reservations.json` as applied to an isolated rig), plus
+  `0416`, `0417`, `0418`, `0419`. `0420` is the first free prefix.
+  **Next author claims `0421` — re-derive, do not trust this line.**
