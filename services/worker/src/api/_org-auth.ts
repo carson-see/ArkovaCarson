@@ -23,7 +23,12 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
-interface CallerProfile {
+/**
+ * The caller columns every org-auth decision in this module reads. Exported so
+ * a handler can hold the row it already loaded and hand it back as
+ * `isCallerOrgAdminResult`'s `preloadedProfile` without redeclaring the shape.
+ */
+export interface CallerProfile {
   org_id: string | null;
   role: string | null;
   is_platform_admin: boolean | null;
@@ -70,6 +75,25 @@ async function loadCallerProfile(
 export async function getCallerProfile(userId: string): Promise<CallerProfile | null> {
   const { profile } = await loadCallerProfile(userId);
   return profile;
+}
+
+/**
+ * Profile fetch that ALSO reports whether the lookup hit a DB/operational
+ * error, so a handler can return 500 on a fault instead of collapsing it into
+ * the "no profile row" branch. `{ value: null, error: false }` is a true
+ * negative; `{ value: null, error: true }` is operational.
+ *
+ * Prefer this over hand-rolling a `profiles` select in a handler: the column
+ * list the admin precedence rule reads (`org_id, role, is_platform_admin`)
+ * then lives in exactly ONE place, so a handler can never hand
+ * `isCallerOrgAdminResult` a `preloadedProfile` that is silently missing the
+ * columns that decide the answer (SCRUM-3569).
+ */
+export async function getCallerProfileResult(
+  userId: string,
+): Promise<OrgAuthResult<CallerProfile | null>> {
+  const { profile, error } = await loadCallerProfile(userId);
+  return { value: profile, error };
 }
 
 /**

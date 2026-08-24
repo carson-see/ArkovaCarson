@@ -24,20 +24,9 @@ import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { recordOrgQueueRunResult } from '../jobs/org-queue-scheduler.js';
 import { mapRpcErrorToStatus } from './rpc-error-status.js';
-import { getCallerProfile, isCallerOrgAdminResult } from './_org-auth.js';
+import { getCallerProfile, getCallerProfileResult, isCallerOrgAdminResult } from './_org-auth.js';
 
 export { mapRpcErrorToStatus } from './rpc-error-status.js';
-
-/**
- * Shape of the `profiles` row `handleListPendingResolution` selects. Mirrors
- * `_org-auth.ts`'s module-private `CallerProfile` so the row can be handed to
- * `isCallerOrgAdminResult` as its `preloadedProfile` (structural match).
- */
-interface CallerProfileRow {
-  org_id: string | null;
-  role: string | null;
-  is_platform_admin: boolean | null;
-}
 
 /**
  * SCRUM-1121: row identifier round-tripped to clients is `public_id`, the
@@ -124,22 +113,19 @@ export async function handleListPendingResolution(
   }
 
   try {
-    // `role` + `is_platform_admin` are selected alongside `org_id` so the
-    // admin gate below can reuse THIS row instead of making the shared
-    // resolver re-read `profiles` (see the preloaded-profile argument).
-    const { data: profileRow, error: profileError } = await db
-      .from('profiles')
-      .select('org_id, role, is_platform_admin')
-      .eq('id', callerUserId)
-      .maybeSingle();
+    // ONE `profiles` read, owned by `_org-auth.ts`. Using the shared fetch (and
+    // not a local `select`) is what keeps the column list the admin precedence
+    // rule reads — `role`, `is_platform_admin` — from drifting away from the
+    // resolver that reads it. The row is handed straight back below as
+    // `preloadedProfile`, so the gate costs at most one extra `org_members`
+    // read and never a second `profiles` round-trip.
+    const { value: profile, error: profileError } = await getCallerProfileResult(callerUserId);
 
     if (profileError) {
-      logger.error({ error: profileError, userId: callerUserId }, 'queue/pending: profile lookup failed');
+      logger.error({ userId: callerUserId }, 'queue/pending: profile lookup failed');
       res.status(500).json({ error: { code: 'internal', message: 'Failed to list pending resolutions' } });
       return;
     }
-
-    const profile = (profileRow as CallerProfileRow | null) ?? null;
 
     // No profile or no org → empty queue (renders an empty state, never an error).
     // Deliberately still a 200 and NOT the 403 below: there is no org, so there

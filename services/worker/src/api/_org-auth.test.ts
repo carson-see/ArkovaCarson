@@ -24,6 +24,7 @@ import {
   isCallerOrgAdmin,
   getCallerOrgId,
   getCallerOrgIdResult,
+  getCallerProfileResult,
   isCallerOrgAdminResult,
   isUserMemberOfOrgResult,
 } from './_org-auth.js';
@@ -180,6 +181,41 @@ describe('getCallerOrgIdResult', () => {
   it('reports the org id with error:false on success', async () => {
     routeTables({ profiles: { data: { org_id: 'org-A', role: 'ORG_ADMIN', is_platform_admin: false }, error: null } });
     expect(await getCallerOrgIdResult('admin')).toEqual({ value: 'org-A', error: false });
+  });
+});
+
+describe('getCallerProfileResult', () => {
+  it('returns the whole profile row with error:false', async () => {
+    routeTables({ profiles: { data: { org_id: 'org-A', role: 'ORG_ADMIN', is_platform_admin: false }, error: null } });
+    expect(await getCallerProfileResult('admin')).toEqual({
+      value: { org_id: 'org-A', role: 'ORG_ADMIN', is_platform_admin: false },
+      error: false,
+    });
+  });
+
+  it('reports a missing profile as a true negative, NOT an error', async () => {
+    routeTables({ profiles: { data: null, error: null } });
+    expect(await getCallerProfileResult('ghost')).toEqual({ value: null, error: false });
+  });
+
+  it('reports error:true (operational) when the profile lookup errors', async () => {
+    routeTables({ profiles: { data: null, error: { message: 'boom' } } });
+    expect(await getCallerProfileResult('admin')).toEqual({ value: null, error: true });
+  });
+
+  // SCRUM-3569 ratchet. `isCallerOrgAdminResult` decides on `role` and
+  // `is_platform_admin`, so a row fetched WITHOUT those columns would hand the
+  // resolver a `preloadedProfile` that silently denies a real ORG_ADMIN — a
+  // fail-closed regression no handler-level test can see, because the query
+  // doubles ignore the column list. Narrowing this select is what this pins.
+  it('selects every column the admin precedence rule reads', async () => {
+    routeTables({ profiles: { data: null, error: null } });
+    await getCallerProfileResult('admin');
+    const chain = fromMock.mock.results[0]?.value as { select: ReturnType<typeof vi.fn> };
+    const columns = String(chain.select.mock.calls[0][0]);
+    for (const column of ['org_id', 'role', 'is_platform_admin']) {
+      expect(columns).toContain(column);
+    }
   });
 });
 
