@@ -920,3 +920,36 @@ Soak-proven: re-fetching the same unchanged DocuSign envelope yields a DIFFERENT
 - `AnchorByPublicId.connector_source` is tri-state like `has_stored_proof_branch`: marker = emit, `null` = measured-not-connector, absent = not measured (batch/oracle via `EMPTY_API_RICH_FIELDS` stay silent).
 - `verifyCache.ts` KEY_PREFIX bumped v5 → v6 (response-shape change; a pre-deploy cached connector record would otherwise serve no statement for the whole TTL).
 - Tests: `verify-connector-fingerprint.test.ts` (marker closed-set, pair inseparability, no-vendor-echo, bundle-untouched).
+
+## 2026-08-23 SECURITY — SCRUM-1272 / SCRUM-3514: the PHI/PII routes had no scope layer at all
+
+`requireScope` (from `../../middleware/apiKeyAuth.js`) is **API-key-only**. Its first two lines are
+`if (!req.apiKey) { next(); return; }`. That fall-through is correct where it is used — `/verify` and
+`/anchor` allow deliberate anonymous GETs (§1.10) — but it means the guard is a **silent no-op on any
+JWT-authenticated route**. SCRUM-1272 shipped the scope *vocabulary* and closed Done with its central
+acceptance criterion unmet for exactly this reason: the four routes its own "Why now" named
+(`/ferpa`, `/directory-opt-out`, `/hipaa/audit`, `/emergency-access`) authenticate with a Supabase JWT,
+so mounting `requireScope` on them would have enforced nothing and *looked* like it did.
+
+All four now mount `requireScopeAnyAuth('compliance:read')` (`../../middleware/requireScopeAnyAuth.ts`)
+between `requireAuth` and the rate limiter. That guard resolves a grant for **whichever** auth mode is
+in play and has **no pass-through branch** — API key → the key's `scopes`; JWT → the caller's org role,
+intersected with any `scopes` claim on the presented token; neither → 401.
+
+**Order is the contract** and is pinned by `middleware/__tests__/phiScopeMount.test.ts`:
+`requireAuth` first (it populates `req.authUserId`, which the scope guard reads), then the scope guard,
+then the rate limiter. Mirrors the existing `/keys` chain (`requireAuth, requireScope('keys:manage')`).
+
+**This layer is the capability gate only — it did not move the tenant boundary.** `requireOrgId` still
+validates real membership against `x-org-id` inside each router, and `requireOrgAdmin` still gates the
+admin-only routes (HIPAA audit read/export, FERPA disclosure list/export, emergency-access approve).
+Do not "simplify" by folding those into the scope check; they answer different questions and the scope
+mapping is deliberately coarse so it cannot drift from them.
+
+**Behaviour change to know about:** a verified caller with no `public.profiles` row is now 403 on these
+four routes (previously they reached `requireOrgId`, which admits on an `org_members` row alone —
+`org_members.user_id` FKs to `auth.users`, not `profiles`). Denied deliberately on a PHI/PII surface and
+logged at `warn`; see the "Residual" note in `requireScopeAnyAuth.ts`.
+
+**Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
+guard and a scope guard). The structural ratchet above covers these four mounts only.
