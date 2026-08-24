@@ -251,7 +251,6 @@ class FeatureFlagRegistry {
    * cannot turn every gate check into a DB round trip.
    */
   async refreshDbFlag(name: DbFlagName): Promise<boolean> {
-    const now = Date.now();
     try {
       // Schema: see SCRUM-1622 — select `enabled` keyed by `flag_key`.
       const { data, error } = await db
@@ -260,39 +259,54 @@ class FeatureFlagRegistry {
         .eq('flag_key', name)
         .single() as { data: { enabled: boolean } | null; error: unknown };
 
+      // A missing row reads as an error here (PostgREST PGRST116), which is
+      // the intended fail direction — see `resolveRefreshFallback`.
       if (error || !data) {
-        const fallback = this.resolveRefreshFallback(name);
-        logger.warn(
-          {
-            error,
-            flagKey: name,
-            fallback: fallback.value,
-            lastKnownGood: this.lastKnownGoodDb.get(name),
-          },
+        return this.applyRefreshFallback(
+          name,
+          error,
+          'warn',
           `Failed to refresh ${name} from switchboard_flags — using fail-direction fallback`,
         );
-        this.flags.set(name, { ...fallback, lastChecked: now });
-        return fallback.value;
       }
 
       const value = data.enabled === true;
       this.lastKnownGoodDb.set(name, value);
-      this.flags.set(name, { value, source: 'db', lastChecked: now });
+      this.flags.set(name, { value, source: 'db', lastChecked: Date.now() });
       return value;
     } catch (err) {
-      const fallback = this.resolveRefreshFallback(name);
-      logger.error(
-        {
-          error: err,
-          flagKey: name,
-          fallback: fallback.value,
-          lastKnownGood: this.lastKnownGoodDb.get(name),
-        },
+      return this.applyRefreshFallback(
+        name,
+        err,
+        'error',
         `Error refreshing ${name} from switchboard_flags — using fail-direction fallback`,
       );
-      this.flags.set(name, { ...fallback, lastChecked: now });
-      return fallback.value;
     }
+  }
+
+  /**
+   * Serve the fail-direction value for a refresh that could not read a fresh
+   * row, log why, and cache it for one TTL so an outage does not turn every
+   * gate check into a DB round trip.
+   */
+  private applyRefreshFallback(
+    name: DbFlagName,
+    error: unknown,
+    level: 'warn' | 'error',
+    message: string,
+  ): boolean {
+    const fallback = this.resolveRefreshFallback(name);
+    logger[level](
+      {
+        error,
+        flagKey: name,
+        fallback: fallback.value,
+        lastKnownGood: this.lastKnownGoodDb.get(name),
+      },
+      message,
+    );
+    this.flags.set(name, { ...fallback, lastChecked: Date.now() });
+    return fallback.value;
   }
 
   /**
@@ -301,15 +315,13 @@ class FeatureFlagRegistry {
    * re-consults `process.env`: a row that was read as false must not be
    * re-opened by an env var that says true (SCRUM-2247 fail-direction).
    */
-  private resolveRefreshFallback(name: DbFlagName): FlagState {
+  private resolveRefreshFallback(name: DbFlagName): Pick<FlagState, 'value' | 'source'> {
     const lastGood = this.lastKnownGoodDb.get(name);
-    if (lastGood !== undefined) {
-      return { value: lastGood, source: 'db', lastChecked: 0 };
-    }
-    const state = this.flags.get(name);
-    if (state) return { ...state };
+    if (lastGood !== undefined) return { value: lastGood, source: 'db' };
+    const snapshot = this.flags.get(name);
+    if (snapshot) return { value: snapshot.value, source: snapshot.source };
     // init() never ran (or the registry was reset): nothing to trust.
-    return { value: false, source: 'env', lastChecked: 0 };
+    return { value: false, source: 'env' };
   }
 
   /**

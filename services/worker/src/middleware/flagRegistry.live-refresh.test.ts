@@ -23,6 +23,8 @@ const state = vi.hoisted(() => ({
   initFails: false,
   /** Force the per-flag `.single()` refresh to error (transient blip). */
   readFails: false,
+  /** Force the per-flag `.single()` refresh to THROW (client-level failure). */
+  readThrows: false,
   /** How many per-flag refresh reads the registry issued. */
   singleCalls: 0,
 }));
@@ -54,6 +56,9 @@ vi.mock('../utils/db.js', () => ({
         eq: (_col: string, key: string) => ({
           single: () => {
             state.singleCalls += 1;
+            if (state.readThrows) {
+              throw new Error('supabase client blew up');
+            }
             if (state.readFails) {
               return Promise.resolve({ data: null, error: { message: 'transient read failure' } });
             }
@@ -82,6 +87,7 @@ describe('FeatureFlagRegistry — live refresh (DI-736 / SCRUM-3475)', () => {
     state.rows.clear();
     state.initFails = false;
     state.readFails = false;
+    state.readThrows = false;
     state.singleCalls = 0;
     for (const key of ENV_KEYS) delete process.env[key];
   });
@@ -203,6 +209,68 @@ describe('FeatureFlagRegistry — live refresh (DI-736 / SCRUM-3475)', () => {
 
     expect(flagRegistry.getFlag('ENABLE_EXPIRY_ALERTS')).toBe(true);
     expect(flagRegistry.getAllFlags().ENABLE_EXPIRY_ALERTS.source).toBe('db');
+  });
+
+  it('serves the cached value for the whole 60s window', async () => {
+    vi.useFakeTimers();
+    try {
+      state.rows.set('ENABLE_BATCH_ANCHORING', true);
+      await flagRegistry.init();
+      state.rows.set('ENABLE_BATCH_ANCHORING', false);
+
+      vi.advanceTimersByTime(59_000);
+
+      await expect(flagRegistry.getFlagLive('ENABLE_BATCH_ANCHORING')).resolves.toBe(true);
+      expect(state.singleCalls).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The whole claim of this change is "a flip takes effect within 60s". Pin the
+  // boundary itself, not just the _expireLiveCache test hook.
+  it('re-reads the switchboard once the 60s window elapses', async () => {
+    vi.useFakeTimers();
+    try {
+      state.rows.set('ENABLE_BATCH_ANCHORING', true);
+      await flagRegistry.init();
+      state.rows.set('ENABLE_BATCH_ANCHORING', false);
+
+      vi.advanceTimersByTime(61_000);
+
+      await expect(flagRegistry.getFlagLive('ENABLE_BATCH_ANCHORING')).resolves.toBe(false);
+      expect(state.singleCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The deliberate asymmetry with init(): a flag whose row never existed is
+  // env-configured, and a refresh that also finds no row must leave it that
+  // way. Getting this wrong would dark an env-configured rig's drain.
+  it('holds the boot env value when the row is absent at boot and at refresh', async () => {
+    process.env.ENABLE_BATCH_ANCHORING = 'true';
+    await flagRegistry.init();
+    expect(flagRegistry.getAllFlags().ENABLE_BATCH_ANCHORING.source).toBe('env');
+
+    flagRegistry._expireLiveCache();
+
+    await expect(flagRegistry.getFlagLive('ENABLE_BATCH_ANCHORING')).resolves.toBe(true);
+    expect(state.singleCalls).toBe(1);
+  });
+
+  // Same fail direction whether the read resolves an error or throws outright
+  // (a client/network-level failure never reaches the `error` field).
+  it('applies the same fail direction when the refresh throws', async () => {
+    process.env.ENABLE_BATCH_ANCHORING = 'true';
+    state.rows.set('ENABLE_BATCH_ANCHORING', false);
+    await flagRegistry.init();
+
+    state.readThrows = true;
+    flagRegistry._expireLiveCache();
+
+    // last-known-good is false; env saying true is not a re-open path.
+    await expect(flagRegistry.getFlagLive('ENABLE_BATCH_ANCHORING')).resolves.toBe(false);
   });
 
   it('_reset clears the last-known-good value as well as the snapshot', async () => {

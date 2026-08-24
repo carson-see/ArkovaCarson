@@ -30,10 +30,22 @@ a *live* refresh that stops finding its row holds last-known-good instead. A del
 row must not hand control back to an env var.
 
 `_expireLiveCache()` expires the TTL without clearing values (transient-blip tests); `_reset()`
-clears the snapshot AND last-known-good. Contract pinned by `flagRegistry.live-refresh.test.ts`;
-the two consumers' wiring is pinned behaviourally in `jobs/batch-anchor.intent.test.ts` and
+clears the snapshot AND last-known-good. Contract pinned by `flagRegistry.live-refresh.test.ts`,
+including the 60s boundary itself under fake timers (still cached at 59s, re-read at 61s) so the
+"a flip takes effect within 60s" claim is a ratchet rather than a comment, the absent-row case
+(no row at boot AND none on refresh keeps the env-derived boot value — an env-configured rig's
+drain must not go dark), and a refresh that THROWS rather than returning an error field.
+The two consumers' wiring is pinned behaviourally in `jobs/batch-anchor.intent.test.ts` and
 `routes/cron.test.ts`, whose mocks supply `getFlag` and `getFlagLive` separately so a regression
 back to the snapshot fails a test rather than reading stale state.
+
+**Known and accepted:** `getFlagLive` has no in-flight de-duplication, so N callers racing an
+expired TTL each issue one `.single()` read (e.g. the `DISPATCH_CONCURRENCY=8` fan-out in
+`rule-action-dispatcher.ts` reaches `processBatchAnchors` concurrently). Bounded at one burst per
+flag per TTL, and `featureGate.ts` / `aiFeatureGate.ts` do not de-duplicate either — not worth
+extra mutable state on the money path. The wider item is that this repo now carries THREE
+near-identical TTL + last-known-good switchboard resolvers; unifying them is its own change, not
+a rider on a kill-switch fix.
 
 **Still open (NOT fixed here):** `init()`'s env fallback on a DB error still applies to all
 `DB_FLAGS` including `MAINTENANCE_MODE`, so the BOOT snapshot can be fail-OPEN on a startup DB
