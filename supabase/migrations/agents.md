@@ -821,3 +821,15 @@ re-derive, do not trust this line.**
   (`scripts/ci/public-pii-projection-contract.json`: `sub_type` added to
   `projection_keys`, deliberately NOT to `structural_keys`, with the full
   rationale in `$sub_type_note`). Rollback in the file header.
+- **MERGE-ORDER DEPENDENCY with PR #2314 / `0415`.**
+  `0415_ferpa_directory_info_opt_out_public_projections.sql` (PR #2314, draft)
+  ALSO redefines `public.get_public_anchor`, adding the FERPA §99.37
+  directory-info suppression. Neither PR is merged, so `0420`'s body is built on
+  the current `main` head (`0385`) and does NOT contain `0415`'s changes —
+  despite carrying the higher number. **Whichever lands SECOND must rebuild its
+  body on the other's before merging**, or it reverts the first: the
+  0376-branched-from-0355 clobber, exactly. This cannot happen silently — both
+  PRs' contract suites resolve the LATEST redefiner rather than a pinned
+  filename, so the second lander is red in CI until reconciled. Reconcile by
+  rebuilding the body; never by pinning a filename or renumbering. Any future
+  PR that redefines this function inherits the same obligation.

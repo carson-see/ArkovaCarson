@@ -280,8 +280,11 @@ describe('CredentialRenderer', () => {
         />
       );
 
-      // The column wins for the headline Type label.
+      // The column wins for the headline Type label — and the loser is not
+      // rendered anywhere, which is what pins the PRECEDENCE rather than just
+      // "the column value appears somewhere on the card".
       expect(screen.getByText('Nursing RN')).toBeInTheDocument();
+      expect(screen.queryByText('Professional Certification')).not.toBeInTheDocument();
     });
 
     it('falls back to the credential type label when subType is blank', () => {
@@ -294,6 +297,18 @@ describe('CredentialRenderer', () => {
 
       expect(screen.getByText('License')).toBeInTheDocument();
       expect(screen.queryByText('—')).not.toBeInTheDocument();
+    });
+
+    it('falls back when the FORMATTED sub-type is blank, not just the raw value', () => {
+      // A raw value can be non-blank and still format to whitespace:
+      // formatCredentialSubType('_') splits on '_' into two empty segments and
+      // joins them with a space, yielding ' '. That is truthy, so guarding only
+      // the INPUT lets it win over a real credential-type label and render an
+      // empty Type banner. `anchors.sub_type` is bare `text` with no CHECK, so
+      // separator-only values are reachable from the public projection (0420).
+      render(<CredentialRenderer credentialType="LICENSE" subType="_" status="SECURED" />);
+
+      expect(screen.getByText('License')).toBeInTheDocument();
     });
 
     it('falls back to the metadata subtype when the column is absent', () => {

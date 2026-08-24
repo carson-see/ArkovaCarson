@@ -41,9 +41,12 @@
 -- deliberately absent from the contract's `structural_keys`. That is exactly
 -- the call `verify.ts` already made — `sub_type` sits in
 -- `verify_value_gated_fields`, NOT in `verify_structural_api_rich_keys`.
--- The gate OMITS rather than truncates, so a record whose sub_type carries
--- PII simply has no `sub_type` key and the page falls back to its parent
--- label, which is the correct fail-safe.
+-- The gate NULLS, it does not omit. `public_free_text_or_null` truncates at its
+-- length cap and returns NULL only for blank or high-confidence-PII input, and
+-- this projection's top-level object is NOT `jsonb_strip_nulls`-ed, so a
+-- dropped sub_type arrives as an explicit `"sub_type": null` and the page falls
+-- back to its parent label — the correct fail-safe. (`public_url_or_null` is
+-- the variant that omits; that property is not shared, do not carry it over.)
 --
 -- ─── WHY IT IS *NOT* ACADEMIC-SUPPRESSED ───────────────────────────────────
 --
@@ -82,6 +85,27 @@
 --
 -- `get_public_anchor_by_fingerprint` needs no change: it resolves a public_id
 -- and returns `public.get_public_anchor(v_public_id)`, so it inherits this.
+--
+-- ─── MERGE-ORDER DEPENDENCY — READ BEFORE MERGING ──────────────────────────
+--
+-- PR #2314 (`0415_ferpa_directory_info_opt_out_public_projections.sql`, DRAFT
+-- at the time of writing) ALSO redefines `public.get_public_anchor`, adding the
+-- FERPA §99.37 directory-info suppression via
+-- `private.is_directory_info_suppressed`. Its file number is LOWER than this
+-- one but its body is NOT in this one, because neither PR is merged and this
+-- body was derived from the current `main` head (0385).
+--
+-- Whichever of the two lands SECOND must be rebuilt on the other's body before
+-- it merges. Landing this file on top of 0415 unchanged would revert 0415 —
+-- that is precisely the 0376-branched-from-0355 clobber this projection has a
+-- whole anti-drift suite about.
+--
+-- It cannot happen SILENTLY, and that is deliberate on both sides: 0415's
+-- `src/tests/ferpa-directory-info-opt-out.contract.test.ts` and this PR's
+-- additions to `src/tests/public-anchor-pii-projection.contract.test.ts` both
+-- resolve the LATEST redefiner rather than a pinned filename, so the second
+-- lander goes red in CI until it is reconciled. Do not "fix" that failure by
+-- pinning a filename or renumbering — rebuild the body.
 --
 -- Additive nullable key on a frozen schema — §1.8 allows it with no version
 -- bump. It is emitted as an explicit `null` rather than omitted, which is a

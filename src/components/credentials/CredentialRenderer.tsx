@@ -172,27 +172,41 @@ const TYPE_CONFIG: Record<string, {
   },
 };
 
+/**
+ * The `metadata` keys that MIRROR the canonical `anchors.sub_type` column, in
+ * precedence order. One list: membership (`isSubTypeKey`) and lookup order
+ * (`extractSubTypeLabel`) drifting apart is how a key ends up hidden from the
+ * label but rendered in the metadata list, or the reverse.
+ */
+const SUB_TYPE_METADATA_KEYS: readonly string[] = ['subType', 'subtype', 'sub_type'];
+
 function isSubTypeKey(key: string): boolean {
-  return ['subtype', 'sub_type', 'subType'].includes(key);
+  return SUB_TYPE_METADATA_KEYS.includes(key);
 }
 
 /**
- * A sub-type is only usable as a label when it is a non-blank string.
+ * A sub-type is only usable as a label when it FORMATS to visible text.
  *
- * `formatCredentialSubType('')` returns the em-dash placeholder, so an
- * unguarded blank would REPLACE a real credential-type label with '—' — worse
- * than the generic label it was meant to improve on. `anchors.sub_type` is bare
- * `text` with no CHECK, so blanks are reachable.
+ * Two ways it does not, both reachable because `anchors.sub_type` is bare
+ * `text` with no CHECK and no enum:
+ *   - blank input — `formatCredentialSubType('')` returns the em-dash
+ *     placeholder, so an unguarded blank would REPLACE a real credential-type
+ *     label with '—', worse than the generic label it improves on;
+ *   - blank OUTPUT — separator-only input formats to whitespace
+ *     (`'_'` splits into two empty segments joined by a space), which is
+ *     truthy and would win the label with nothing to show.
+ * So the guard is on the formatted result, not just the raw value.
  */
 function formatSubTypeOrNull(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
-  return trimmed ? formatCredentialSubType(trimmed) : null;
+  if (!trimmed) return null;
+  return formatCredentialSubType(trimmed).trim() || null;
 }
 
 function extractSubTypeLabel(metadata: Record<string, unknown> | null | undefined): string | null {
   if (!metadata) return null;
-  for (const key of ['subType', 'subtype', 'sub_type']) {
+  for (const key of SUB_TYPE_METADATA_KEYS) {
     const label = formatSubTypeOrNull(metadata[key]);
     if (label) return label;
   }
@@ -289,7 +303,8 @@ export function CredentialRenderer({
   const config = TYPE_CONFIG[typeKey] ?? TYPE_CONFIG.OTHER;
   const TypeIcon = config.icon;
   // The canonical column wins over the metadata duplicate (SCRUM-3529).
-  const subTypeLabel = formatSubTypeOrNull(subType) ?? extractSubTypeLabel(metadata);
+  const canonicalSubTypeLabel = formatSubTypeOrNull(subType);
+  const subTypeLabel = canonicalSubTypeLabel ?? extractSubTypeLabel(metadata);
 
   const credentialLabel = subTypeLabel ?? (credentialType
     ? (CREDENTIAL_TYPE_LABELS as Record<string, string>)[credentialType] ?? credentialType
@@ -361,8 +376,15 @@ export function CredentialRenderer({
   } else if (hasMetadata) {
     for (const [key, value] of Object.entries(metadata)) {
       if (isMetadataDisplayHiddenKey(key)) continue;
+      // SCRUM-3529: a metadata sub-type is a MIRROR of anchors.sub_type. When
+      // the canonical column is present it already drives the headline Type
+      // label, so rendering the mirror as a second "Type" row would publish two
+      // Types for one record — and the mirror is the one that can be stale.
+      // Suppressed rather than shown-and-contradicted (§1.5: say it once, say
+      // the measured value).
+      if (canonicalSubTypeLabel && isSubTypeKey(key)) continue;
       const formatted = isSubTypeKey(key) && typeof value === 'string'
-        ? formatCredentialSubType(value)
+        ? formatSubTypeOrNull(value)
         : formatFieldValue(value);
       if (formatted) {
         displayFields.push({ label: formatFieldLabel(key), value: formatted });

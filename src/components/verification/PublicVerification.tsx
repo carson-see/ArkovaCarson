@@ -65,9 +65,12 @@ interface PublicAnchorData {
   verified: boolean;
   credential_type?: string;
   /** SCRUM-3529: canonical `anchors.sub_type` (GRE-01), surfaced by
-   * `get_public_anchor` as a value-gated top-level key (migration 0420). The
-   * gate OMITS rather than truncates, so this is absent — not just null — on a
-   * record whose sub_type carried PII. */
+   * `get_public_anchor` as a value-gated top-level key (migration 0420).
+   * `private.public_free_text_or_null` returns NULL when the value is blank or
+   * carries high-confidence PII, and the top-level object is not
+   * `jsonb_strip_nulls`-ed, so the key is emitted as an explicit `null` in that
+   * case. Optional as well because older callers and cached payloads predate
+   * 0420 — treat null and absent identically. */
   sub_type?: string | null;
   issuer_name?: string;
   issuer_public_id?: string;

@@ -129,7 +129,15 @@ export function formatCredentialSubType(raw: string | null | undefined): string 
   if (raw === 'unclassified') return 'Unclassified';
   return raw
     .split('_')
-    .map(seg => SUBTYPE_ACRONYMS[seg] ?? (seg.charAt(0).toUpperCase() + seg.slice(1)))
+    // OWN properties only. `SUBTYPE_ACRONYMS[seg]` is a plain-object lookup, so
+    // a segment named after an Object.prototype member resolved to the
+    // INHERITED value and `??` never fired — `sub_type = 'constructor'` rendered
+    // "function Object() { [native code] }" as a credential Type. SCRUM-3529
+    // put this column on the anonymous verify page, where the value is
+    // writer-controlled and the column is bare `text` with no CHECK.
+    .map(seg => (Object.hasOwn(SUBTYPE_ACRONYMS, seg)
+      ? SUBTYPE_ACRONYMS[seg]
+      : seg.charAt(0).toUpperCase() + seg.slice(1)))
     .join(' ');
 }
 

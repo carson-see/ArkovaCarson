@@ -51,5 +51,22 @@ CredentialRenderer display labels ("Academic Degree", "Professional Certificatio
 `CredentialRenderer` derives its Type label as `subTypeLabel ?? CREDENTIAL_TYPE_LABELS[credentialType] ?? credentialType`, so an `OTHER`-typed record is meant to show its fine-grained sub-type rather than the meaningless "Other" (SCRUM-952 / SCRUM-1482). Until now `subTypeLabel` could ONLY come from a `metadata` duplicate (`subType`/`subtype`/`sub_type`), which is whatever a writer happened to mirror into the blob — not the canonical value.
 
 - New optional prop **`subType`** = the canonical `anchors.sub_type` column (GRE-01: `official_undergraduate`, `nursing_rn`). It takes **precedence** over the metadata duplicate; callers with no column value may omit it and the metadata fallback still applies, so owner-side call sites (`AssetDetailView`) are unchanged.
-- New `formatSubTypeOrNull()` guards **blank** values and is now used by BOTH paths. This matters: `formatCredentialSubType('')` returns the em-dash placeholder, so an unguarded blank would have replaced a real credential-type label with `—` — worse than the generic label. `anchors.sub_type` is bare `text` with no CHECK, so blanks are reachable. `extractSubTypeLabel` also now SKIPS a blank key instead of returning `—` from it.
+- New `formatSubTypeOrNull()` guards values that do not FORMAT to visible text, and is now used by BOTH paths. This matters: `formatCredentialSubType('')` returns the em-dash placeholder, so an unguarded blank would have replaced a real credential-type label with `—` — worse than the generic label. `anchors.sub_type` is bare `text` with no CHECK, so blanks are reachable. `extractSubTypeLabel` also now SKIPS a blank key instead of returning `—` from it.
 - Why it mattered: migration `0355` turned `get_public_anchor`'s `metadata` into an allow-list without `sub_type`, which made the whole fallback unreachable on the public verify page for months. Every test that existed asserted the `formatCredentialSubType` HELPER or the props — none asserted the RENDERED label, which is why nothing caught it. The pin is now `src/components/verification/PublicVerification.subtype.test.tsx`, which mounts the REAL renderer and asserts visible text. Fixed server-side by migration `0420`.
+
+- Two follow-on guards found in review, both in this same helper's blast radius:
+  - The guard is on the FORMATTED result, not the raw input. `'_'` is a non-blank
+    value that formats to `' '` (two empty segments joined by a space), which is
+    truthy and would win the label with nothing to show. `.trim() || null`.
+  - When the canonical `subType` prop supplies the label, a `subType`/`subtype`/
+    `sub_type` key inside `metadata` is SKIPPED in the key-value list instead of
+    rendering a second "Type" row. The metadata copy is a mirror of the column
+    and is the one that can be stale, so showing both publishes two contradicting
+    Types for one record. Unreachable today (the public projection's metadata
+    allow-list has no sub_type, and `AssetDetailView` passes no prop) — it is a
+    guard for the next caller that passes both.
+- **`AssetDetailView` still passes no `subType`.** Its anchor view-model has no
+  such field, so the owner-side card keeps deriving the label from metadata only
+  and still reads "Other" for a record whose sub-type lives only in the column.
+  Wiring it needs a view-model/hook change and is deliberately out of SCRUM-3529,
+  which is the PUBLIC verify page.

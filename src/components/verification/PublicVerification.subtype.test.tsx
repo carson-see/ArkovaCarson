@@ -107,9 +107,13 @@ describe('PublicVerification — credential sub-type label (SCRUM-3529)', () => 
     expect(screen.queryByText('—')).not.toBeInTheDocument();
   });
 
-  it('renders a gate-dropped (absent) sub_type as the generic label, not a blank', async () => {
-    // private.public_free_text_or_null OMITS rather than truncates, so the key
-    // can be missing entirely on a record whose sub_type carried PII.
+  it('renders a pre-0420 payload with NO sub_type key as the generic label', async () => {
+    // 0420 always emits the key (the top-level object is not
+    // jsonb_strip_nulls-ed), so an ABSENT sub_type is not a shape the current
+    // projection produces. It is pinned anyway because it IS the shape every
+    // pre-0420 payload has — a cached response, a stale PostgREST schema cache,
+    // or a rollback to the 0385 body — and the page must degrade to the parent
+    // label rather than to `undefined`.
     rpcMock.mockResolvedValue({ data: { ...securedAnchor }, error: null });
 
     render(<PublicVerification publicId="ARK-DOC-123" />);
