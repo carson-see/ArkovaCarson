@@ -46,12 +46,38 @@ Every path in `services/worker/` that can return HTTP 429, with what it limits, 
 | Retry wrapper | `gemini.ts:1195-1237`, `MAX_RETRIES = 3` near `:54` | `withRetry()` generates one server-side UUID per provider invocation and supplies that same ID plus attempt identity (`1..3`) to every upstream HTTP-error logging path. `cloneSafeRetryError()` preserves only allowlisted status/attribution fields. Auth/validation statuses 400/401/403/422 do not retry; 429 and transient availability failures remain eligible for retry/fallback. |
 | Fallback classification | `services/worker/src/ai/fallback-chain.ts:51-98` | Validated status `429` classifies as `rate_limit`; 502/503/504 classify as `provider_unavailable`. Fallback metrics retain only the bounded classification, never a raw provider error string. |
 
+## 2a. Bucket scoping (SCRUM-3418 / SCRUM-2603) — read before joining logs
+
+Buckets are keyed `${scope}:${keyGenerator(req)}`. Until SCRUM-3418, `scope` defaulted to empty and
+every limiter that kept the default `req.ip` keyGenerator — the 60/min `apiIpShadowGuard`, the 10/min
+`checkout`, the 5/min `auth`, the 100/min `anonRateLimiter` — shared ONE Map entry per IP. Two
+consequences that invalidate any pre-fix attribution join: the lowest cap in a chain bound every
+surface sharing its IP (the checkout limiter logged `count: 60` against `maxRequests: 10`), and a
+request crossing N such limiters advanced the shared counter N times, so an effective budget was
+`min(caps) / N` rather than any documented tier.
+
+The measured case: anonymous `GET /api/v1/verify/{publicId}` crossed `apiIpShadowGuard` twice (it is
+mounted at `/api` AND prefix-less ahead of the did:web / proof-keys routers) plus `anonRateLimiter`,
+and first-429'd at request ~#31 — an effective ~30/min against §1.10's 100/min. `/api/v1/verify` now
+skips the IP guard and is capped by `publicVerifyAnonLimiter` (`v1-verify-anon`, 100/min) mounted in
+`index.ts` ahead of `verificationApiGate()`, so the contract holds whether or not the v1 surface is
+lit.
+
+Every limiter now owns a distinct bucket: an explicit `scope` where one is named, a private
+per-instance id otherwise. A `X-RateLimit-Limit` value is therefore now a truthful statement about
+one limiter rather than a shared counter's nearest ceiling.
+
 ## 2. Why the response body cannot attribute (client-blind)
 
 Every generic `rateLimit()` 429 returns the **identical body** `{ error: 'Too many requests', retry_after }` (`services/worker/src/utils/rateLimit.ts:139-142`). The client-visible and server-visible discriminators are:
 
 - **`X-RateLimit-Limit` header value** (`rateLimit.ts:135`; also set on non-429 responses at `:153` per §1.10): `100` → anon-IP, `1000` → keyed, `30` → aiRateLimiter, `10` → batch/credits (disambiguate by path).
-- **Server log key prefix** (`rateLimit.ts:129-132` logs `{ key, count, maxRequests }` at warn): `ai:` → aiRateLimiter, `credits:` → credits, raw keyId → keyed, raw IP → anon.
+- **Server log key prefix** (`rateLimit.ts` logs `{ key, count, maxRequests }` at warn): the key is
+  `<bucket-scope>:<keyGenerator output>`, so the scope IS the attribution — `v1-anon:` → anon-IP,
+  `v1-keyed:` → keyed, `v1-verify-anon:` → public verify, `api-ip-shadow-guard:` → the broad
+  `/api/*` IP backstop, `batch:` → batch, plus `ai:` / `credits:` from those limiters' own
+  keyGenerator prefixes. Before SCRUM-3418 every unscoped limiter logged a bare IP and the
+  prefix could not distinguish them — they were literally one bucket (see §2a).
 - Quota/bespoke emitters have distinct bodies (`usageTracking.ts:171` includes `limit: 10000`; `account-export.ts:86` prose; `rules-crud.ts:394` `code: 'rate_limited'`).
 
 Attribution is therefore a **header + log join**, per-request: harness records `(timestamp, request-id/label, status, X-RateLimit-Limit, path)`; worker logs supply the key prefix; upstream events come from the `gemini.ts` structured logs.

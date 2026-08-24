@@ -242,6 +242,117 @@ describe('rateLimit', () => {
     });
   });
 
+  // SCRUM-3418 — per-limiter default bucket scope. `scope` used to default to
+  // '' and the bucket key was the bare keyGenerator output, so EVERY limiter
+  // that kept the default `req.ip` keyGenerator read and wrote ONE shared Map
+  // entry per IP: the 60/min IP guard, the 10/min checkout limiter, the 5/min
+  // auth limiter and the 100/min v1 anon limiter. Two §1.10 violations fall
+  // out of that and both are pinned here.
+  describe('default bucket scope isolation (SCRUM-3418)', () => {
+    it('gives two default-configured limiters separate buckets for the same IP', () => {
+      const limiterA = rateLimit({ windowMs: 60000, maxRequests: 1 });
+      const limiterB = rateLimit({ windowMs: 60000, maxRequests: 1 });
+      const ip = '10.6.0.1';
+
+      // Exhaust limiter A for this IP.
+      const a1 = createMockReqResWithKey(ip, '/scope-iso-a');
+      limiterA(a1.req, a1.res, a1.next);
+      expect(a1.next).toHaveBeenCalled();
+
+      const a2 = createMockReqResWithKey(ip, '/scope-iso-a');
+      limiterA(a2.req, a2.res, a2.next);
+      expect(a2.res.status).toHaveBeenCalledWith(429);
+
+      // Limiter B owns its own budget for that IP — A exhausting its bucket
+      // must not spend B's.
+      const b1 = createMockReqResWithKey(ip, '/scope-iso-b');
+      limiterB(b1.req, b1.res, b1.next);
+      expect(b1.next).toHaveBeenCalled();
+      expect(b1.res.status).not.toHaveBeenCalled();
+    });
+
+    it('stops a high-cap limiter from spending a low-cap limiter budget', () => {
+      // The reported production symptom (SCRUM-3372): `rateLimiters.api`
+      // (60/min) and `rateLimiters.checkout` (10/min) shared one per-IP entry,
+      // so the checkout limiter logged `count: 60, maxRequests: 10` and 429'd
+      // callers that had never touched a checkout route.
+      const ip = '10.6.0.2';
+
+      for (let i = 0; i < 10; i++) {
+        const { req, res, next } = createMockReqResWithKey(ip, '/api/badge/ARK-X');
+        rateLimiters.api(req, res, next);
+        expect(next).toHaveBeenCalled();
+      }
+
+      const { req, res, next } = createMockReqResWithKey(ip, '/api/checkout/session');
+      rateLimiters.checkout(req, res, next);
+      expect(res.status).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('leaves the 100/min anon budget intact after a 60/min IP guard ran on the same IP', () => {
+      // §1.10 gives anonymous callers 100 req/min. With one shared per-IP
+      // entry the 60/min IP guard's counter WAS the anon limiter's counter, so
+      // the anon limiter could never enforce its own contract.
+      const ipGuard = rateLimit({ windowMs: 60000, maxRequests: 60 });
+      const anon = rateLimit({ windowMs: 60000, maxRequests: 100 });
+      const ip = '10.6.0.3';
+
+      // Spend the IP guard's bucket exactly.
+      for (let i = 0; i < 60; i++) {
+        const { req, res, next } = createMockReqResWithKey(ip, '/api/badge/ARK-X');
+        ipGuard(req, res, next);
+        expect(next).toHaveBeenCalled();
+      }
+
+      // The anon limiter still owes this IP its full 100.
+      for (let i = 0; i < 100; i++) {
+        const { req, res, next } = createMockReqResWithKey(ip, '/api/v1/verify/ARK-X');
+        anon(req, res, next);
+        expect(next, `anon request ${i + 1} of 100 must be allowed (\u00a71.10)`).toHaveBeenCalled();
+      }
+
+      // 101 is the first rejection, and it advertises the anon contract.
+      const over = createMockReqResWithKey(ip, '/api/v1/verify/ARK-X');
+      anon(over.req, over.res, over.next);
+      expect(over.res.status).toHaveBeenCalledWith(429);
+      expect(over.res.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', '100');
+    });
+
+    it('isolates two limiters that share identical windowMs/maxRequests', () => {
+      // Guards against a default scope derived from the limiter's CONFIG:
+      // checkout and quotaCheck are both 10 req / 60_000 ms and must still
+      // hold separate buckets.
+      const ip = '10.6.0.4';
+
+      for (let i = 0; i < 10; i++) {
+        const { req, res, next } = createMockReqResWithKey(ip, '/api/checkout/session');
+        rateLimiters.checkout(req, res, next);
+        expect(next).toHaveBeenCalled();
+      }
+
+      const { req, res, next } = createMockReqResWithKey(ip, '/api/v1/quota');
+      rateLimiters.quotaCheck(req, res, next);
+      expect(res.status).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('still lets an explicit scope name the bucket', () => {
+      // Explicit scopes remain the way to give a limiter a stable, readable
+      // bucket name; the auto-assigned default is only the collision floor.
+      const scoped = rateLimit({ windowMs: 60000, maxRequests: 1, scope: 'explicit-scope-test' });
+      const ip = '10.6.0.5';
+
+      const first = createMockReqResWithKey(ip, '/explicit-a');
+      scoped(first.req, first.res, first.next);
+      expect(first.next).toHaveBeenCalled();
+
+      const second = createMockReqResWithKey(ip, '/explicit-b');
+      scoped(second.req, second.res, second.next);
+      expect(second.res.status).toHaveBeenCalledWith(429);
+    });
+  });
+
   describe('skip predicate (F-2)', () => {
     it('bypasses the limiter entirely when skip returns true', () => {
       const limiter = rateLimit({ windowMs: 60000, maxRequests: 1, skip: () => true });

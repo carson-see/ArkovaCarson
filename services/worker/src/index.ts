@@ -21,7 +21,8 @@ import { callRpc } from './utils/rpc.js';
 import { initChainClient } from './chain/client.js';
 import { handleStripeWebhook } from './stripe/handlers.js';
 import { verifyWebhookSignature } from './stripe/client.js';
-import { rateLimiters, rateLimit } from './utils/rateLimit.js';
+import { rateLimiters } from './utils/rateLimit.js';
+import { apiIpShadowGuard, publicVerifyAnonLimiter } from './middleware/apiIpShadowGuard.js';
 import { apiV1Router } from './api/v1/router.js';
 import { v1DeprecationHeaders } from './api/v1/deprecation.js';
 import { docsRouter } from './api/v1/docs.js';
@@ -391,31 +392,21 @@ app.use(
   identityRouter,
 );
 
-// F-2 (2026-08 soak) — this 60/min-per-IP limiter was catching EVERY `/api/*`
-// request, including `/api/v1/*` traffic already carrying a valid API key.
-// apiV1Router (mounted below) applies its own 1,000/min-per-key limiter, but
-// requests never got there — this bucket exhausted at 60/min per source IP
-// first, capping every keyed customer regardless of tier (Constitution 1.10).
-// Fix: skip this specific limiter for `/api/v1/*` requests that present a
-// syntactically-formed API key credential (Bearer ak_… or X-API-Key: ak_…).
-// Those requests are still fully rate-limited downstream — either by
-// apiV1Router's keyedRateLimiter (1,000/min/key) or, for the handful of
-// /api/v1/* mounts registered outside apiV1Router (org, integrations,
-// rules/templates, versions, anchor, audit, partner-provisioning), by their
-// own explicit `rateLimiters.api` instance. Anonymous /api/v1 traffic and
-// everything outside /api/v1 (badge, checkout, verify-anchor, treasury,
-// admin) is unaffected and still capped here at 60/min per IP.
-const hasApiKeyCredential = (req: Request): boolean => {
-  const auth = req.headers.authorization;
-  if (typeof auth === 'string' && auth.startsWith('Bearer ak_')) return true;
-  const xApiKey = req.headers['x-api-key'];
-  return typeof xApiKey === 'string' && xApiKey.startsWith('ak_');
-};
-const apiIpShadowGuard = rateLimit({
-  windowMs: 60000,
-  maxRequests: 60,
-  skip: (req) => req.originalUrl.startsWith('/api/v1/') && hasApiKeyCredential(req),
-});
+// Public verification (Constitution 1.10: anonymous 100 req/min per IP).
+// Mounted here, ahead of both the broad `/api` routers and apiV1Router, because
+// apiV1Router runs `verificationApiGate()` before its own anon limiter — with
+// ENABLE_VERIFICATION_API off, a verify request 503s without ever reaching it.
+// This mount is middleware-only: it counts, sets the §1.10 headers and calls
+// next(), leaving the verify handlers where they are inside apiV1Router.
+app.use('/api/v1/verify', publicVerifyAnonLimiter);
+
+// The broad 60/min-per-IP backstop for anonymous `/api/*` traffic. It is NOT
+// the limiter that implements any Constitution 1.10 tier — each tier has its
+// own, correctly-keyed limiter further down the chain, and this guard carves
+// out the two families that would otherwise be shadowed by it: keyed
+// `/api/v1/*` requests (F-2) and the anonymous public verification surface
+// (SCRUM-2603, §1.10's 100/min). Both the cap and those carve-outs live in
+// `middleware/apiIpShadowGuard.ts` with the full writeup.
 app.use('/api', apiIpShadowGuard, badgeRouter); // /api/badge/:publicId
 app.use('/api', billingRouter);    // /api/checkout/session, /api/billing/portal
 app.use('/api', anchorRouter);     // /api/verify-anchor, /api/recipients, /api/account

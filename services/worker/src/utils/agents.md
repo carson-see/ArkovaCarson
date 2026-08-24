@@ -2,6 +2,45 @@
 
 Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
+## 2026-08-23 — `rateLimit.ts`: every limiter owns its own bucket (SCRUM-3418)
+
+**Do not reintroduce:** two limiters keying into the same `rateLimitStore` entry.
+
+Buckets are keyed `${bucketScope}:${keyGenerator(req)}`. `scope` used to default to `''`, and the key
+was then the bare keyGenerator output — so EVERY limiter that kept the default `req.ip` keyGenerator
+read and wrote ONE Map entry per IP. The 60/min `apiIpShadowGuard`, the 10/min `checkout`, the 5/min
+`auth` and the 100/min v1 `anonRateLimiter` were, at runtime, a single counter with four different
+opinions about its ceiling. Two §1.10 violations fall out of that, and they compound:
+
+1. **The lowest cap in a chain bound every surface sharing its IP.** The checkout limiter logged
+   `count: 60, maxRequests: 10` and 429'd callers who had never touched a checkout route.
+2. **One request that crossed N such limiters advanced the counter N times**, so the effective budget
+   was `min(caps) / N` — not any documented tier. Anonymous `/api/v1/verify` measured ~30/min against
+   a published 100/min because `apiIpShadowGuard` is mounted twice and `anonRateLimiter` added a
+   third increment to the same entry.
+
+`scope` now defaults to a private per-instance id (`rl-<n>`), so limiters cannot collide by accident.
+**Name it anyway** — every production limiter passes an explicit `scope`, because the scope is what
+appears in the `Rate limit exceeded` log line (the log key is the attribution: see
+`docs/staging/429-limiter-map-s33.md` §2a) and what keeps a bucket stable across restarts. The
+auto-id is derived from construction order: stable within a process, not across a change that
+reorders module imports — which matters only for a shared/persistent `IRateLimitStore`, since the
+in-memory default resets anyway.
+
+Two things that did NOT change and must not:
+
+- **A single limiter instance still shares ONE bucket across all its mount points and paths.** That
+  is the 2026-04-26 bug-bounty F5 fix (`/verify/ABC` and `/verify/XYZ` must not get separate
+  buckets). Never put `req.path` in a scope.
+- **A scope is not a substitute for a keyGenerator prefix, and vice versa.** Limiters that already
+  hand-prefix inside their keyGenerator (`credits:`, `ai:`, `ctdl-import:`) are isolated that way;
+  if you add a `scope` to one, drop the prefix or the key becomes `credits:credits:<user>` — the
+  same note `cpe-log-export.ts` carries.
+
+Store-size note: entries per caller went from 1 to (number of limiters that caller touches), a small
+constant. `RATE_LIMIT_MAX_SIZE` (50K) and the 60s sweep cover it; the old comment claiming the cap
+sized for "~800 IPs × ~60 paths" was stale — paths left the key with F5.
+
 ## 2026-08-17 — new `utf16-truncate.ts`: surrogate-safe truncation (poison-record incident)
 
 `truncateUtf16Safe(input, maxUnits)` replaces bare `.slice(0, N)` wherever a truncated string is
