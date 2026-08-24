@@ -7,7 +7,7 @@
  * Honesty rules (§1.13 R-7 launch-claims discipline):
  *  - `live: true` is asserted ONLY for events with a real emit point in the
  *    worker (verified against services/worker/src/webhooks/agents.md
- *    producer table + payload-schemas.ts): all five anchor.* events.
+ *    producer table + payload-schemas.ts): every anchor.* event.
  *  - credential.* events are contract-defined (SCRUM-1743) but have NO emit
  *    points yet — they are shown as "Not yet active" so a subscriber is
  *    never led to believe they will receive them today.
@@ -55,6 +55,16 @@ const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
   'anchor.expired': {
     live: true,
     fields: ['public_id', 'status', 'chain_tx_id', 'chain_block_height', 'expires_at', 'expired_at', 'org_public_id?'],
+  },
+  // DI-775 (SCRUM-3538): `live: true` — the emit point is real:
+  // `dispatchWebhookEvent(..., 'anchor.superseded', ...)` in
+  // services/worker/src/api/anchor-lineage.ts (SCRUM-2937), on the
+  // POST /api/anchor/:id/supersede path. Fields mirror
+  // AnchorSupersededPayloadSchema (strict); SUPERSEDED can only follow
+  // SECURED, so the chain fields are non-null there and are listed unmarked.
+  'anchor.superseded': {
+    live: true,
+    fields: ['public_id', 'status', 'chain_tx_id', 'chain_block_height', 'superseded_at', 'superseded_by_public_id?', 'supersession_reason?', 'org_public_id?'],
   },
   'anchor.batch_secured': {
     live: true,

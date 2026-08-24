@@ -658,6 +658,7 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'anchor.secured': 'A document record was secured and its Anchor Receipt details are available.',
   'anchor.revoked': 'A secured document record was revoked by its issuer.',
   'anchor.expired': 'A secured document record passed its expiration date.',
+  'anchor.superseded': 'A secured document record was replaced by a newer version.',
   'anchor.batch_secured': 'A group of document records was secured together in one Network Receipt.',
   'credential.issued': 'A credential was issued by a verified organization.',
   'credential.verified': 'A document record was confirmed as secured through a verification request.',

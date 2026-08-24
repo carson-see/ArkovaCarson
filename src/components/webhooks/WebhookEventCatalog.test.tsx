@@ -64,6 +64,10 @@ describe('WebhookEventCatalog', () => {
     'anchor.secured',
     'anchor.revoked',
     'anchor.expired',
+    // DI-775 (SCRUM-3538): emit point verified — `dispatchWebhookEvent(...,
+    // 'anchor.superseded', ...)` in services/worker/src/api/anchor-lineage.ts
+    // (SCRUM-2937), on the POST /api/anchor/:id/supersede path.
+    'anchor.superseded',
     'anchor.batch_secured',
     'compliance.document_expiring',
   ]);
@@ -91,6 +95,11 @@ describe('WebhookEventCatalog', () => {
 
     const batchRow = screen.getByTestId('catalog-event-anchor.batch_secured');
     expect(within(batchRow).getByText(/anchor_count/)).toBeInTheDocument();
+
+    // DI-775: the lineage pointer is the whole point of subscribing to
+    // supersession — a consumer needs the replacement record's public slug.
+    const supersededRow = screen.getByTestId('catalog-event-anchor.superseded');
+    expect(within(supersededRow).getByText(/superseded_by_public_id/)).toBeInTheDocument();
   });
 
   it('renders the redaction rules note', () => {

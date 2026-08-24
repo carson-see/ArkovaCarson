@@ -66,6 +66,7 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 | `anchor.secured` | Anchor transitions from `PENDING`/`SUBMITTED` → `SECURED` after network confirmation | Stable |
 | `anchor.revoked` | Anchor is revoked by an org admin (revocation receipt published on-chain) | Stable |
 | `anchor.expired` | Anchor's `expires_at` timestamp passes | Stable |
+| `anchor.superseded` | A `SECURED` anchor is atomically replaced by a re-issued child (`SECURED` → `SUPERSEDED`), via `POST /api/anchor/:id/supersede`. Subscribable since SCRUM-3538. | Stable |
 | `anchor.batch_secured` | Aggregate event for the merkle-batch path (fires once per merkle TX; per-anchor `anchor.secured` events still fan out alongside). Subscribable since SCRUM-1794. | Stable |
 
 ### Credential Lifecycle (SCRUM-1743)
@@ -81,6 +82,8 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 | Event | Fired When | Status |
 |---|---|---|
 | `compliance.document_expiring` | A `SECURED` record is inside its 7-day expiry window and has **not** expired yet. Advance warning — `anchor.expired` fires after the fact, once the sweep has already transitioned the record to `EXPIRED`. Emitted by the daily `check-credential-expiry` job, gated on `ENABLE_EXPIRY_ALERTS`. | Stable |
+
+`anchor.superseded` payload `data`: `public_id`, `status` (always `SUPERSEDED`), `chain_tx_id`, `chain_block_height`, `superseded_at`, plus optional `superseded_by_public_id` (the replacement record's public id — `null` when it is not resolvable at dispatch time), `supersession_reason` (free text, max 500 chars), and `org_public_id`. Follow `superseded_by_public_id` to walk the version chain without polling.
 
 `compliance.document_expiring` payload `data`: `public_id`, `status` (always `SECURED`), `expires_at`, `days_remaining` (positive integer), `warning_level` (`7_day`), plus optional `credential_type`, `label`, `org_public_id`.
 

@@ -18,6 +18,10 @@ export const VALID_EVENTS = [
   'anchor.secured',
   'anchor.revoked',
   'anchor.expired',
+  // DI-775: SECURED -> SUPERSEDED. Emitted by POST /api/anchor/:id/supersede
+  // (SCRUM-2937); it was subscribable in the worker long before it was listed
+  // here.
+  'anchor.superseded',
   'anchor.batch_secured',
   'credential.issued',
   'credential.verified',

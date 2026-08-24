@@ -20,6 +20,7 @@ Owner of the **outbound** webhook system. Inbound receivers (DocuSign, Adobe Sig
 | `anchor.secured` | `AnchorSecuredPayloadSchema` | `services/worker/src/jobs/check-confirmations.ts` | Live |
 | `anchor.revoked` | `AnchorRevokedPayloadSchema` | `services/worker/src/api/anchor-revoke.ts` (RPC `revoke_anchor`) | Live |
 | `anchor.expired` | `AnchorExpiredPayloadSchema` (SCRUM-1735) | `services/worker/src/jobs/anchorExpirySweep.ts` (SCRUM-1736 daily cron at 03:00 UTC; also `POST /jobs/anchor-expiry-sweep` for Cloud Scheduler) | Live |
+| `anchor.superseded` | `AnchorSupersededPayloadSchema` (SCRUM-2937) | `services/worker/src/api/anchor-lineage.ts` (`POST /api/anchor/:id/supersede`, RPC `supersede_anchor`) | Live |
 | `anchor.batch_secured` | `AnchorBatchSecuredPayloadSchema` | merkle-batch path (per-anchor `anchor.secured` events also fan out — SCRUM-1264) | Live |
 
 `anchor.expired` schema and producer are both live. The `anchorExpirySweep` cron transitions SECURED anchors past `expires_at` (filtering `deleted_at IS NULL`) to EXPIRED in deterministic `expires_at asc, id asc` order, writes a corresponding `audit_events` row, and dispatches `anchor.expired` with deterministic `event_id = "expired-${anchor.public_id}"` (uses public_id, not internal id, per CLAUDE.md §6) so retries dedupe via `webhook_delivery_logs.idempotency_key`. Dispatch failures write a sentinel `anchor.expired_dispatch_failed` audit event for manual recovery via the SCRUM-1738 retry path.
@@ -66,7 +67,7 @@ Registering it is what makes (2) impossible, not just what turns the feature on:
 - No chain fields. This event is about a calendar date, not an on-chain transition; the receipt already rides `anchor.secured`.
 - `credential_type` is nullable rather than defaulted. `anchors.credential_type` is nullable and the pre-fix emit site substituted `'OTHER'`, asserting a classification nobody measured (§1.5).
 - Catalog entry is `live: true` — the emit point is real, behind `ENABLE_EXPIRY_ALERTS`. Registration points kept in lockstep (all test-guarded): `WebhookSettings.tsx` `AVAILABLE_EVENTS`, its pinned drift-guard list, `WebhookEventCatalog.tsx` `CATALOG_DATA`, `src/lib/copy.ts` `WEBHOOK_EVENT_DESCRIPTIONS`, `packages/sdk/src/types.ts`, `integrations/zapier/src/constants.ts`, `docs/api/webhooks.md`.
-- **Known pre-existing drift, NOT introduced here:** `anchor.superseded` is in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` but absent from `AVAILABLE_EVENTS` and the pinned list. Left alone rather than folded into this fix.
+- ~~**Known pre-existing drift, NOT introduced here:** `anchor.superseded` is in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` but absent from `AVAILABLE_EVENTS` and the pinned list.~~ **Closed 2026-08-23 by DI-775 / SCRUM-3538** — see below.
 ## 2026-08-17 — `response_body`/`error_message` truncation is surrogate-safe
 
 `delivery.ts` bounded `webhook_delivery_logs.response_body` (1000) and `error_message` (500) with
@@ -75,3 +76,36 @@ split a surrogate pair made the delivery-log `.update()` itself PGRST102 — sta
 failing on attacker-controlled input (2026-08-17 poison-record class, PR #2266). All four sites now
 use `utils/utf16-truncate.ts` `truncateUtf16Safe`. Poison regression tests live in
 `src/tests/webhook-delivery-roundtrip.test.ts` (`response_body surrogate-safe truncation`).
+
+## 2026-08-23 — `anchor.superseded` registration surfaces closed (DI-775 / SCRUM-3538)
+
+The drift recorded above is fixed. `anchor.superseded` was the same bug class as
+SCRUM-1794 (`anchor.submitted` / `anchor.batch_secured`) and BUG-002
+(`compliance.document_expiring`), but with the halves reversed: the worker side
+was already complete — schema registered in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`
+(so `VALID_WEBHOOK_EVENTS` accepted a subscription), and
+`services/worker/src/api/anchor-lineage.ts` really dispatches it — while every
+*registration* surface omitted it. An org whose record was superseded was sent
+an event that no picker, catalog, typed SDK union, or Zap dropdown let it
+subscribe to.
+
+**No worker code changed.** The wire contract, the CRUD allowlist and the
+dispatch site are untouched; this was purely the registration surfaces catching
+up, so it adds no new data egress — `AnchorSupersededPayloadSchema` is still
+`.strict()` and `payload-schemas.test.ts` still rejects
+`anchor_id` / `fingerprint` / `user_id` / `org_id` on it.
+
+Surfaces now in lockstep (all test-guarded): `WebhookSettings.tsx`
+`AVAILABLE_EVENTS`, its pinned drift-guard list, `WebhookEventCatalog.tsx`
+`CATALOG_DATA` (`live: true` — real emit point), `src/lib/copy.ts`
+`WEBHOOK_EVENT_DESCRIPTIONS`, `packages/sdk/src/types.ts`,
+`integrations/zapier/src/constants.ts`, `docs/api/webhooks.md`.
+
+Two of those had no drift guard at all before this change and now do:
+`integrations/zapier/test/zapier.test.ts` pins the full ordered `VALID_EVENTS`
+set, and `packages/sdk/src/client.test.ts` pins `WebhookEventType` via an
+exhaustive `Record<WebhookEventType, true>` — that one bites in both directions
+(a missing union member fails `tsc --noEmit`; deleting the pin row to silence
+that fails `vitest run`). Adding an event type to
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` now fails four separate suites until every
+registration surface follows.

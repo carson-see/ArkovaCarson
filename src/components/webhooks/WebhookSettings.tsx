@@ -82,6 +82,11 @@ export const AVAILABLE_EVENTS = [
   { id: 'anchor.secured', label: 'Anchor Secured' },
   { id: 'anchor.revoked', label: 'Anchor Revoked' },
   { id: 'anchor.expired', label: 'Anchor Expired' },
+  // DI-775 (SCRUM-3538): the worker has dispatched this since SCRUM-2937
+  // (POST /api/anchor/:id/supersede → services/worker/src/api/anchor-lineage.ts)
+  // and the CRUD allowlist accepted it, but it was never offered here — so an
+  // org could be sent an event it had no way to subscribe to.
+  { id: 'anchor.superseded', label: 'Anchor Superseded' },
   { id: 'anchor.batch_secured', label: 'Anchor Batch Secured' },
   // Credential.* are contract-defined today but emit points land in Phase-2
   // follow-ups; the "coming soon" suffix sets the right expectation.
