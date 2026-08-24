@@ -34,13 +34,38 @@ unreliable existence signal on a route partners treat as authoritative. Only `PG
 unambiguous here, `anchors_public_id_key` is UNIQUE) still 404s; anything else throws to the route's
 catch. Same split as `anchor-revoke.ts` and `webhooks/delivery.ts`.
 
-**Don't go back to a bare select string.** The column list is now
+**Don't go back to a bare select string.** The column list is
 `EVIDENCE_ANCHOR_COLUMNS ... as const satisfies readonly (keyof Database['public']['Tables']['anchors']['Row'])[]`,
-so a phantom column is a `typecheck` failure rather than a silent production outage. It is
-double-ratcheted: `anchor-evidence.test.ts` also drives the route through the **real** `defaultLookup`
-against a schema-faithful `db` double that parses the known-column set out of the generated
-`database.types.ts` and returns 42703 for anything else. Verified both arms bite — re-adding
-`'jurisdiction'` produces `TS2322` *and* 8 red tests.
+and `AnchorEvidenceSelectRow` derives its scalar half from that same list
+(`Pick<anchors['Row'], (typeof EVIDENCE_ANCHOR_COLUMNS)[number]>`) instead of restating the fields by
+hand — a hand-written row shape is a second place for a phantom column to hide. A phantom column is a
+`typecheck` failure, not a silent production outage.
+
+Double-ratcheted: `anchor-evidence.test.ts` also drives the route through the **real** `defaultLookup`
+against a schema-faithful `db` double built from the generated `database.types.ts`. The double covers
+BOTH halves of the class — base scalars (`42703`) and, because `merkle_root` now arrives through an
+embed, the embedded relations as well: embed columns are checked against the referenced relation's
+generated `Row` (`anchor_proofs(recipient_hash)` → 42703), and an embed with no resolvable
+relationship answers `PGRST200`. A phantom column *inside an embed* is exactly as invisible to `tsc`
+as `jurisdiction` was. The guard is itself pinned by a self-test, because a double that quietly stops
+rejecting anything makes every other test in that block pass vacuously.
+
+Verified both arms bite, on the 27-test file: re-adding `'jurisdiction'` to the column list produces
+`TS2322` **and** `TS2344`, plus 9 red tests; reverting `anchor-evidence.ts` to its pre-fix content
+reds 10. The sets differ by design — a phantom column 500s the "PGRST116 still 404s" case, while the
+full revert 404s both 500-path cases. Only the double's own self-test is source-independent.
+Assertions in that block name the evidence package explicitly (`public_id`, `not 404`) — checking
+only for the ABSENCE of a field passes against the 404 body `{ error: 'Anchor not found' }`, which is
+how one of these tests originally passed against the broken code.
+
+**Known duplication, deliberately not fixed here.** `AnchorProofEmbed` / `proofEmbedRows` /
+`resolveMerkleRoot` / `resolveJurisdiction` are byte-identical to the private copies in `verify.ts`,
+whose own comment argues for one helper per reader because "a divergent copy fails SILENTLY to `[]`" —
+the same failure mode that produced `utils/profilePublicIds.ts`. The extraction is not in this PR
+because `verify.test.ts` cannot be executed in a worktree without the worker's own `node_modules`
+(`@sentry/profiling-node` unresolvable), and refactoring the hottest public endpoint with no local
+test run is not a trade worth making inside a P0 route fix. Extract to a shared util when the two
+files are next touched together.
 
 ## 2026-08-12 — FD-P7: key revocation/deletion were unreachable from every client (CC6.8)
 

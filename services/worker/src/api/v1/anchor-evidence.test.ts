@@ -333,20 +333,48 @@ describe('GET /anchor/:publicId/evidence handler', () => {
  */
 const TYPES_PATH = fileURLToPath(new URL('../../types/database.types.ts', import.meta.url));
 
-/** Column names on `public.anchors` per the generated Supabase types. */
-function anchorsRowColumns(): Set<string> {
-  const src = readFileSync(TYPES_PATH, 'utf8');
-  const tableIdx = src.indexOf('      anchors: {');
-  if (tableIdx < 0) throw new Error('anchors table not found in database.types.ts');
-  const rowIdx = src.indexOf('        Row: {', tableIdx);
+let typesSourceCache: string | null = null;
+function typesSource(): string {
+  typesSourceCache ??= readFileSync(TYPES_PATH, 'utf8');
+  return typesSourceCache;
+}
+
+/** Offset of a generated relation block (table or view), or -1. */
+function relationIndex(relation: string): number {
+  return typesSource().indexOf(`      ${relation}: {`);
+}
+
+/** Column names on `public.<relation>` per the generated Supabase types. */
+function rowColumnsOf(relation: string): Set<string> {
+  const src = typesSource();
+  const relIdx = relationIndex(relation);
+  if (relIdx < 0) throw new Error(`${relation} not found in database.types.ts`);
+  const rowIdx = src.indexOf('        Row: {', relIdx);
   const endIdx = src.indexOf('\n        }', rowIdx);
   const cols = new Set<string>();
   for (const line of src.slice(rowIdx, endIdx).split('\n').slice(1)) {
     const m = /^\s{10}([A-Za-z_][A-Za-z0-9_]*)\??:/.exec(line);
     if (m) cols.add(m[1]);
   }
-  if (cols.size === 0) throw new Error('parsed zero anchors columns — parser drifted');
+  if (cols.size === 0) throw new Error(`parsed zero ${relation} columns — parser drifted`);
   return cols;
+}
+
+/** `Relationships` declared ON a relation: local FK column -> referenced relation. */
+function foreignKeysOf(relation: string): Array<{ column: string; references: string }> {
+  const src = typesSource();
+  const relIdx = relationIndex(relation);
+  if (relIdx < 0) throw new Error(`${relation} not found in database.types.ts`);
+  const listIdx = src.indexOf('        Relationships: [', relIdx);
+  if (listIdx < 0) return [];
+  const endIdx = src.indexOf('\n        ]', listIdx);
+  const out: Array<{ column: string; references: string }> = [];
+  for (const entry of src.slice(listIdx, endIdx).split('foreignKeyName:').slice(1)) {
+    const column = /columns: \["([^"]+)"/.exec(entry);
+    const references = /referencedRelation: "([^"]+)"/.exec(entry);
+    if (column && references) out.push({ column: column[1], references: references[1] });
+  }
+  return out;
 }
 
 /** Split a PostgREST select on top-level commas (embeds keep their parens). */
@@ -373,6 +401,77 @@ function baseColumnsOf(select: string): string[] {
   return splitTopLevel(select)
     .filter((p) => !p.includes('('))
     .map((p) => (p.includes(':') ? p.slice(p.indexOf(':') + 1) : p).trim());
+}
+
+/** One embedded resource in a select: `alias:target(col, ...)`. */
+interface EmbedSpec {
+  target: string;
+  columns: string[];
+}
+
+/** Embedded resources requested by a select (`table(...)` or `alias:fk_column(...)`). */
+function embedsOf(select: string): EmbedSpec[] {
+  return splitTopLevel(select)
+    .filter((p) => p.includes('('))
+    .map((part) => {
+      const head = part.slice(0, part.indexOf('(')).trim();
+      const inner = part.slice(part.indexOf('(') + 1, part.lastIndexOf(')'));
+      const target = head.includes(':') ? head.slice(head.indexOf(':') + 1) : head;
+      return { target: target.trim(), columns: splitTopLevel(inner) };
+    });
+}
+
+/**
+ * Relations PostgREST could resolve an embed target to. A target is either a FK
+ * COLUMN on the base table (`organization:org_id(...)` — which may reference
+ * more than one relation, e.g. the `organizations` table and the
+ * `public_org_profiles` view), or the NAME of a related relation
+ * (`anchor_proofs(...)`, joined by its own FK back to `anchors`). Empty means
+ * no relationship exists, which PostgREST answers with PGRST200.
+ */
+function embedTargets(base: string, target: string): string[] {
+  const baseKeys = foreignKeysOf(base);
+  const byColumn = baseKeys.filter((fk) => fk.column === target).map((fk) => fk.references);
+  if (byColumn.length > 0) return byColumn;
+  if (relationIndex(target) < 0) return [];
+  if (baseKeys.some((fk) => fk.references === target)) return [target];
+  return foreignKeysOf(target).some((fk) => fk.references === base) ? [target] : [];
+}
+
+/**
+ * What PostgREST would answer for this select against `base` — null when every
+ * requested column AND embedded relationship really exists.
+ *
+ * Covers BOTH halves of the DI-398 class, not just the one that shipped: a
+ * phantom scalar column (`42703`), and — the half a base-columns-only check
+ * misses — a phantom column INSIDE an embed or an embed with no resolvable
+ * relationship (`PGRST200`). `anchor_proofs(merkle_root)` is exactly as
+ * invisible to `tsc` as `jurisdiction` was, so it needs the same runtime guard.
+ */
+function postgrestSelectError(
+  select: string,
+  base = 'anchors',
+): { code: string; message: string } | null {
+  const known = rowColumnsOf(base);
+  const unknown = baseColumnsOf(select).filter((c) => !known.has(c));
+  if (unknown.length > 0) {
+    return { code: '42703', message: `column ${base}.${unknown[0]} does not exist` };
+  }
+  for (const embed of embedsOf(select)) {
+    const relations = embedTargets(base, embed.target);
+    if (relations.length === 0) {
+      return {
+        code: 'PGRST200',
+        message: `Could not find a relationship between '${base}' and '${embed.target}'`,
+      };
+    }
+    for (const column of embed.columns) {
+      if (!relations.some((rel) => rowColumnsOf(rel).has(column))) {
+        return { code: '42703', message: `column ${relations[0]}.${column} does not exist` };
+      }
+    }
+  }
+  return null;
 }
 
 interface PostgrestResult {
@@ -426,18 +525,12 @@ interface FaithfulDbOpts {
  * yields 42703 rather than silently returning null.
  */
 function installFaithfulDb(opts: FaithfulDbOpts = {}) {
-  const known = anchorsRowColumns();
   const captured = { anchorsSelect: '' };
 
   const resolveAnchors = (select: string): PostgrestResult => {
     captured.anchorsSelect = select;
-    const unknown = baseColumnsOf(select).filter((c) => !known.has(c));
-    if (unknown.length > 0) {
-      return {
-        data: null,
-        error: { code: '42703', message: `column anchors.${unknown[0]} does not exist` },
-      };
-    }
+    const selectError = postgrestSelectError(select);
+    if (selectError) return { data: null, error: selectError };
     if (opts.anchorError) return { data: null, error: opts.anchorError };
     const source = opts.anchorRow === undefined ? ANCHOR_SOURCE_ROW : opts.anchorRow;
     if (source === null) {
@@ -479,16 +572,32 @@ describe('DI-398 / SCRUM-3376: real defaultLookup select against the anchors sch
     vi.clearAllMocks();
   });
 
-  it('requests only columns that exist on public.anchors', async () => {
+  it('requests only columns and relationships that exist on public.anchors', async () => {
     const handler = getGetHandler();
     const captured = installFaithfulDb();
     const { req, res } = createMockReqRes({ publicId: 'ARK-2026-REAL' });
     await handler!(req, res);
 
-    const unknown = baseColumnsOf(captured.anchorsSelect).filter(
-      (c) => !anchorsRowColumns().has(c),
-    );
-    expect(unknown).toEqual([]);
+    // Non-empty proves the REAL defaultLookup ran — an injected lookup would
+    // leave this at '' and the check below would pass vacuously.
+    expect(captured.anchorsSelect).not.toBe('');
+    expect(postgrestSelectError(captured.anchorsSelect)).toBeNull();
+  });
+
+  it('guard self-test: the double rejects every shape a phantom reference takes', () => {
+    // A test double that silently accepts anything makes every assertion in
+    // this block vacuous, so the guard itself is pinned. These are the three
+    // shapes DI-398 could have taken.
+    expect(postgrestSelectError('id, jurisdiction')).toMatchObject({ code: '42703' });
+    expect(postgrestSelectError('id, anchor_proofs(recipient_hash)')).toMatchObject({
+      code: '42703',
+    });
+    expect(postgrestSelectError('id, not_a_relation(id)')).toMatchObject({ code: 'PGRST200' });
+    expect(
+      postgrestSelectError(
+        'id, metadata, organization:org_id(display_name), anchor_proofs(merkle_root)',
+      ),
+    ).toBeNull();
   });
 
   it('returns 200 with the evidence package (not 404) for an anchor that exists', async () => {
@@ -559,6 +668,11 @@ describe('DI-398 / SCRUM-3376: real defaultLookup select against the anchors sch
     await handler!(req, res);
 
     const body = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    // Pin that this IS the evidence package: `'jurisdiction' in body` is also
+    // false for the 404 body `{ error: 'Anchor not found' }`, so without these
+    // two assertions the test passes against the pre-fix code.
+    expect(res.status).not.toHaveBeenCalledWith(404);
+    expect(body.public_id).toBe('ARK-2026-REAL');
     expect('jurisdiction' in body).toBe(false);
   });
 
@@ -615,5 +729,10 @@ describe('DI-398 / SCRUM-3376: real defaultLookup select against the anchors sch
     await handler!(req, res);
 
     expect(res.status).toHaveBeenCalledWith(404);
+    // Not a 500: over-correcting the error split would break "genuinely absent".
+    expect(res.status).not.toHaveBeenCalledWith(500);
+    expect((res.json as ReturnType<typeof vi.fn>).mock.calls[0][0]).toEqual({
+      error: 'Anchor not found',
+    });
   });
 });

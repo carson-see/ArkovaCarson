@@ -327,8 +327,25 @@ export const EVIDENCE_ANCHOR_SELECT = [
 ].join(', ');
 
 /**
- * Shape returned by the select above (not in the generated types — the embeds
- * are resolved at query time).
+ * Scalar half of the select row, DERIVED from the same generated `anchors` Row
+ * the column list is keyed to — so the requested columns and their types
+ * cannot drift apart. A hand-written copy of these 13 fields is a second place
+ * for a phantom column to hide, which is the defect this PR exists to close.
+ */
+type AnchorEvidenceScalars = Pick<
+  Database['public']['Tables']['anchors']['Row'],
+  (typeof EVIDENCE_ANCHOR_COLUMNS)[number]
+>;
+
+/**
+ * Shape returned by the select above (the embeds are resolved at query time, so
+ * they are not in the generated types and are declared here).
+ *
+ * Two deliberate overrides of the generated scalars:
+ *  - `public_id` is non-null — the query filters on it, so a matched row always
+ *    carries one, while the generated Row allows null.
+ *  - `metadata` is narrowed from `Json` to an object map, because the resolvers
+ *    below read named keys off it.
  *
  * NOTE on jurisdiction + merkle_root, mirroring `verify.ts`: neither is a
  * top-level `anchors` column. `merkle_root` lives on
@@ -338,20 +355,9 @@ export const EVIDENCE_ANCHOR_SELECT = [
  * a one-element array depending on how PostgREST resolves the to-one
  * relationship, so `anchor_proofs` accepts both.
  */
-export interface AnchorEvidenceSelectRow {
-  id: string;
+export interface AnchorEvidenceSelectRow
+  extends Omit<AnchorEvidenceScalars, 'public_id' | 'metadata'> {
   public_id: string;
-  fingerprint: string;
-  status: string;
-  chain_tx_id: string | null;
-  chain_block_height: number | null;
-  chain_timestamp: string | null;
-  created_at: string;
-  credential_type: string | null;
-  issued_at: string | null;
-  expires_at: string | null;
-  description: string | null;
-  org_id: string | null;
   /** anchors.metadata JSONB — source of jurisdiction + legacy merkle_root. */
   metadata: Record<string, unknown> | null;
   organization: { display_name: string } | null;
