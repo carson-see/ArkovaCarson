@@ -318,7 +318,8 @@ import { creditsRouter } from './credits.js';
 const creditsRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
-  keyGenerator: (req) => `credits:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'credits',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 router.use('/credits', requireAuth, creditsRateLimiter, creditsRouter);
 
@@ -326,13 +327,15 @@ router.use('/credits', requireAuth, creditsRateLimiter, creditsRouter);
 const aiRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 30,
-  keyGenerator: (req) => `ai:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'ai',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 const credentialSourceImportRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
-  keyGenerator: (req) => `credential-source-import:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'credential-source-import',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 // SCRUM-2913: the CTDL import consumer does a live outbound CE Registry fetch,
@@ -340,7 +343,8 @@ const credentialSourceImportRateLimiter = rateLimit({
 const ctdlImportRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
-  keyGenerator: (req) => `ctdl-import:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'ctdl-import',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 // L3-A6: the registry-anchor route ALSO does a live outbound CE Registry
@@ -349,7 +353,8 @@ const ctdlImportRateLimiter = rateLimit({
 const ctdlRegistryAnchorRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 5,
-  keyGenerator: (req) => `ctdl-registry-anchor:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  scope: 'ctdl-registry-anchor',
+  keyGenerator: (req) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 // AI endpoints — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S4)

@@ -63,16 +63,38 @@ export function hasApiKeyCredential(req: Request): boolean {
 }
 
 /**
+ * Path portion of a URL, lower-cased.
+ *
+ * Both carve-outs below must agree with how Express actually routes the
+ * request, and Express's `case sensitive routing` setting is OFF by default —
+ * `/API/v1/verify/ARK-X` reaches the verify handlers and is counted by
+ * `publicVerifyAnonLimiter` (mounted at `/api/v1/verify`) just like the
+ * lower-case form. A case-sensitive predicate here would fail to skip that URL
+ * form, so the 60/min guard would count it — twice, from its two mounts —
+ * putting it back on the ~30/min SCRUM-2603 ceiling while the lower-case form
+ * got its contractual 100/min.
+ */
+function normalizePath(originalUrl: string): string {
+  const queryStart = originalUrl.indexOf('?');
+  const path = queryStart === -1 ? originalUrl : originalUrl.slice(0, queryStart);
+  return path.toLowerCase();
+}
+
+/** Prefix test on an already-normalized path: exact match, or a `/`-delimited child. */
+function isUnder(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`);
+}
+
+/**
  * Is this the public verification surface?
  *
  * Matched on the path only — the query string is stripped so
  * `/api/v1/verify?pretty=1` counts — and the prefix must be followed by `/` or
  * end of path, so a neighbouring route such as `/api/v1/verify-anchor` does not
- * inherit the carve-out.
+ * inherit the carve-out. Case-insensitive; see `normalizePath`.
  */
 export function isPublicVerifyPath(originalUrl: string): boolean {
-  const path = originalUrl.split('?')[0];
-  return path === PUBLIC_VERIFY_PREFIX || path.startsWith(`${PUBLIC_VERIFY_PREFIX}/`);
+  return isUnder(normalizePath(originalUrl), PUBLIC_VERIFY_PREFIX);
 }
 
 /**
@@ -81,9 +103,9 @@ export function isPublicVerifyPath(originalUrl: string): boolean {
  * rate limiting, it hands it to the limiter that owns its §1.10 tier.
  */
 export function shouldSkipApiIpShadowGuard(req: Request): boolean {
-  const originalUrl = req.originalUrl ?? '';
-  if (isPublicVerifyPath(originalUrl)) return true;
-  return originalUrl.startsWith(V1_PREFIX) && hasApiKeyCredential(req);
+  const path = normalizePath(req.originalUrl ?? '');
+  if (isUnder(path, PUBLIC_VERIFY_PREFIX)) return true;
+  return path.startsWith(V1_PREFIX) && hasApiKeyCredential(req);
 }
 
 /** Backstop cap for anonymous, non-carved-out `/api/*` traffic. */

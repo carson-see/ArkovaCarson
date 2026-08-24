@@ -27,6 +27,9 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express, { type Request, type Response } from 'express';
 import supertest from 'supertest';
 
@@ -102,6 +105,13 @@ describe('isPublicVerifyPath', () => {
     '/api/v1/verify/ARK-2026-ABC123/proof',
     '/api/v1/verify/attestation/ARK-2026-ABC123',
     '/api/v1/verify?pretty=1',
+    // Express's `case sensitive routing` is OFF by default, so these reach the
+    // verify handlers and `publicVerifyAnonLimiter` exactly like the lower-case
+    // form. If the predicate missed them the 60/min guard would count them
+    // (twice, from its two mounts) and put that URL form back on the ~30/min
+    // SCRUM-2603 ceiling.
+    '/API/V1/VERIFY/ARK-2026-ABC123',
+    '/Api/V1/Verify',
   ])('matches the public verification surface: %s', (url) => {
     expect(isPublicVerifyPath(url)).toBe(true);
   });
@@ -110,6 +120,7 @@ describe('isPublicVerifyPath', () => {
     '/api/v1/verifyer',
     '/api/v1/verification',
     '/api/v1/verify-anchor',
+    '/API/V1/VERIFY-ANCHOR',
     '/api/v1/org',
     '/api/verify-anchor',
     '/api/badge/ARK-2026-ABC123',
@@ -167,6 +178,16 @@ describe('shouldSkipApiIpShadowGuard', () => {
 
   it('still guards anonymous badge traffic', () => {
     expect(shouldSkipApiIpShadowGuard(fakeReq('/api/badge/ARK-2026-ABC123'))).toBe(false);
+  });
+
+  it('skips a case-varied verify path, because Express routes it to verify anyway', () => {
+    expect(shouldSkipApiIpShadowGuard(fakeReq('/API/v1/verify/ARK-2026-ABC123'))).toBe(true);
+  });
+
+  it('skips case-varied keyed /api/v1 traffic (F-2)', () => {
+    expect(
+      shouldSkipApiIpShadowGuard(fakeReq('/API/V1/org', { authorization: 'Bearer ak_live_x' })),
+    ).toBe(true);
   });
 });
 
@@ -310,5 +331,60 @@ describe('publicVerifyAnonLimiter (\u00a71.10 anonymous verify tier)', () => {
     }
 
     expect(statuses.filter((s) => s === 429).length).toBe(0);
+  });
+});
+
+/**
+ * Mount guard — the half of this fix that does NOT live in this module.
+ *
+ * `shouldSkipApiIpShadowGuard` exempts `/api/v1/verify` from the 60/min guard
+ * unconditionally. The ONLY thing that puts a cap back on that traffic is a
+ * single line in `index.ts`:
+ *
+ *     app.use('/api/v1/verify', publicVerifyAnonLimiter);
+ *
+ * Delete that line, or move it below `app.use('/api/v1', apiV1Router)`, and
+ * anonymous verify silently loses its early limiter — and with
+ * `ENABLE_VERIFICATION_API` off it loses rate limiting ENTIRELY, because
+ * apiV1Router's `verificationApiGate()` 503s before its own `anonRateLimiter`
+ * ever runs. Every supertest case above would still pass, because they build
+ * their own app. So the wiring is pinned here, against the real source file —
+ * same technique as `paymentTierRouter.mount-guard.test.ts`.
+ */
+describe('index.ts wiring (mount guard)', () => {
+  const workerSrc = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const indexSource = readFileSync(resolve(workerSrc, 'index.ts'), 'utf8');
+
+  const verifyMount = /app\.use\(\s*['"]\/api\/v1\/verify['"]\s*,\s*publicVerifyAnonLimiter\s*\)/;
+  const v1RouterMount = /app\.use\(\s*['"]\/api\/v1['"]\s*,\s*apiV1Router\s*\)/;
+  const guardMount = /app\.use\(\s*['"]\/api['"]\s*,\s*apiIpShadowGuard\s*,/;
+
+  it('mounts publicVerifyAnonLimiter at /api/v1/verify', () => {
+    expect(
+      verifyMount.test(indexSource),
+      'the verify carve-out in shouldSkipApiIpShadowGuard is only safe while ' +
+        'index.ts mounts publicVerifyAnonLimiter at /api/v1/verify',
+    ).toBe(true);
+  });
+
+  it('mounts it ahead of apiV1Router, so it runs before verificationApiGate()', () => {
+    const verifyAt = indexSource.search(verifyMount);
+    const v1At = indexSource.search(v1RouterMount);
+
+    expect(verifyAt, 'publicVerifyAnonLimiter mount not found in index.ts').toBeGreaterThan(-1);
+    expect(v1At, 'apiV1Router mount not found in index.ts').toBeGreaterThan(-1);
+    expect(
+      verifyAt,
+      'publicVerifyAnonLimiter must be mounted BEFORE apiV1Router: the v1 router runs ' +
+        'verificationApiGate() before its own anon limiter, so with ENABLE_VERIFICATION_API ' +
+        'off a verify request 503s without ever being counted',
+    ).toBeLessThan(v1At);
+  });
+
+  it('still mounts apiIpShadowGuard on the broad /api prefix', () => {
+    expect(
+      guardMount.test(indexSource),
+      'the 60/min backstop for anonymous non-verify /api traffic must stay mounted',
+    ).toBe(true);
   });
 });

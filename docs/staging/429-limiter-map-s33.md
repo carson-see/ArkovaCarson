@@ -63,9 +63,17 @@ skips the IP guard and is capped by `publicVerifyAnonLimiter` (`v1-verify-anon`,
 `index.ts` ahead of `verificationApiGate()`, so the contract holds whether or not the v1 surface is
 lit.
 
-Every limiter now owns a distinct bucket: an explicit `scope` where one is named, a private
-per-instance id otherwise. A `X-RateLimit-Limit` value is therefore now a truthful statement about
-one limiter rather than a shared counter's nearest ceiling.
+Every limiter now owns a distinct bucket, and every production limiter names its scope explicitly —
+the auto-assigned per-instance id that `rateLimit()` falls back to is a collision floor for future
+code, not something anything in `services/worker/` relies on (it is derived from module construction
+order, so it would not be a stable log key). A `X-RateLimit-Limit` value is therefore now a truthful
+statement about one limiter rather than a shared counter's nearest ceiling, and the log key names
+which limiter said it.
+
+The one deliberate exception is `batch`: `router.ts`'s `batchRateLimiter` and `attestations.ts`'s
+`attestationBatchRateLimiter` pass the SAME explicit scope so the §1.10 batch tier is one 10/min
+budget across both surfaces. Post-SCRUM-3418 a shared explicit scope is the only way two limiters
+can share a bucket, which is what makes that sharing reviewable instead of accidental.
 
 ## 2. Why the response body cannot attribute (client-blind)
 
@@ -75,8 +83,9 @@ Every generic `rateLimit()` 429 returns the **identical body** `{ error: 'Too ma
 - **Server log key prefix** (`rateLimit.ts` logs `{ key, count, maxRequests }` at warn): the key is
   `<bucket-scope>:<keyGenerator output>`, so the scope IS the attribution — `v1-anon:` → anon-IP,
   `v1-keyed:` → keyed, `v1-verify-anon:` → public verify, `api-ip-shadow-guard:` → the broad
-  `/api/*` IP backstop, `batch:` → batch, plus `ai:` / `credits:` from those limiters' own
-  keyGenerator prefixes. Before SCRUM-3418 every unscoped limiter logged a bare IP and the
+  `/api/*` IP backstop, `batch:` → batch (shared, by design, between `/verify/batch` and the
+  attestation batch routes), `ai:` → the 30/min AI bucket, `credits:` → credits, `cron-jobs:` →
+  the cron trigger bucket. Before SCRUM-3418 every unscoped limiter logged a bare IP and the
   prefix could not distinguish them — they were literally one bucket (see §2a).
 - Quota/bespoke emitters have distinct bodies (`usageTracking.ts:171` includes `limit: 10000`; `account-export.ts:86` prose; `rules-crud.ts:394` `code: 'rate_limited'`).
 

@@ -117,13 +117,16 @@ interface RateLimitOptions {
  *      N times, so the effective budget was min(caps) / N rather than the
  *      documented per-tier cap.
  *
- * Each limiter instance now gets its own namespace. Pass an explicit `scope`
- * for a stable, readable bucket name; a limiter that omits one falls back to a
- * private per-instance id, which is a collision floor rather than a naming
- * scheme — it is derived from construction order, so it is stable within a
- * process but not across a code change that reorders module imports. That
- * matters only for a shared/persistent `IRateLimitStore` (a rolling deploy
- * would start fresh counters); the in-memory default resets on restart anyway.
+ * Each limiter instance now gets its own namespace. Every production limiter
+ * passes an explicit `scope`, which is what makes the bucket name stable and
+ * makes the `Rate limit exceeded` log line self-attributing. The fallback for a
+ * limiter that omits one is a private per-instance id — a collision floor, not
+ * a naming scheme: it is derived from construction order, so it is stable
+ * within a process but not across a code change that reorders module imports.
+ * Nothing in production relies on it; keep it that way, because for a
+ * shared/persistent `IRateLimitStore` two processes could disagree on which
+ * limiter owns `rl-3` (the in-memory default resets on restart, so it is inert
+ * there).
  *
  * A single limiter instance still shares ONE bucket across all of its mount
  * points and paths — that is the F5 behaviour below and is deliberate.
@@ -153,7 +156,7 @@ export function rateLimit(options: RateLimitOptions) {
 
   // SCRUM-3418: an unnamed limiter gets its OWN namespace, never the shared
   // bare-key bucket. Computed once per instance, not per request.
-  const bucketScope = scope && scope.length > 0 ? scope : `rl-${++limiterInstanceCount}`;
+  const bucketScope = scope || `rl-${++limiterInstanceCount}`;
 
   return (req: Request, res: Response, next: NextFunction): void => {
     if (skip?.(req)) {
