@@ -482,3 +482,59 @@ describe('RC manifest integrity', () => {
     expect(r.errors.join(' ')).toMatch(/base SHA/i);
   });
 });
+
+// ── REVIEW ADDENDUM (SCRUM-3481) — the THIRD residual-risk note ──
+//
+// `approverIndependenceErrors` shipped covering two of the three §1.12
+// residual-risk waivers this file implements: `### Residual-risk note` and the
+// unsoakable-surface note. The `### Base-drift residual-risk note` (FD-GATE-3)
+// is the third, carries the same `Approved by:` sub-field, and waives a control
+// of the same weight — it preserves COMPLETED soak evidence across main drift
+// that touched the PR's soak surface, which is precisely the "slip something
+// past finished evidence" class. It was not in APPROVER_NOTE_HEADERS, so
+// `Approved by: me` passed it while failing the other two.
+describe('base-drift residual-risk note is held to the same approver independence', () => {
+  const DRIFT_FILE = 'services/worker/src/chain/client.ts';
+  const PR_FILE = 'services/worker/src/api/v1/docusign.ts';
+
+  const baseDriftNote = (approverLine: string) => `
+### Base-drift residual-risk note
+- Drift files: ${DRIFT_FILE}
+- Risk assessment: the drifted surface shares no code path with the changed behavior this soak exercised.
+- Evidence still valid because: targeted evidence re-ran green against the current head.
+- ${approverLine}
+`;
+
+  const runDrift = (approverLine: string, prAuthor?: string) => check({
+    body: t2Body() + baseDriftNote(approverLine),
+    files: [PR_FILE],
+    headSha: HEAD,
+    baseSha: BASE,
+    baseDriftFiles: [DRIFT_FILE],
+    prAuthor,
+  });
+
+  it('control: a named third-party approver still preserves the evidence', () => {
+    const r = runDrift('Approved by: Carson 2026-08-23.', 'some-agent');
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects a base-drift note approved by the PR author handle', () => {
+    const r = runDrift('Approved by: @carson-see', 'carson-see');
+    expect(r.ok).toBe(false);
+    expect(r.errors.join(' ')).toMatch(/names the PR author/i);
+  });
+
+  it('rejects a base-drift note whose approver is a self-reference word', () => {
+    const r = runDrift('Approved by: me');
+    expect(r.ok).toBe(false);
+    expect(r.errors.join(' ')).toMatch(/self-approval/i);
+  });
+
+  it('rejects a bolded self-approval in a base-drift note', () => {
+    const r = runDrift('**Approved by:** *myself*');
+    expect(r.ok).toBe(false);
+    expect(r.errors.join(' ')).toMatch(/self-approval/i);
+  });
+});

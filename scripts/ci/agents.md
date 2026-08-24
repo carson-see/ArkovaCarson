@@ -35,6 +35,17 @@ does NOT map display names onto logins.** `Approved by: Carson (founder / releas
 on a PR authored by `carson-see` still passes, because the gate has no identity directory
 and a wrong guess would block real approvals. This is a ratchet, not a proof.
 
+It covers **all three** `Approved by:`-bearing waiver notes, via `approverNoteHeaders()`:
+`### Residual-risk note`, `### Unsoakable-surface note`, and `### Base-drift residual-risk
+note` (FD-GATE-3). The third was added in review — it waives a control of the same weight
+(it preserves COMPLETED soak evidence across main drift that touched the PR's soak surface)
+and was passing `Approved by: me` while the other two rejected it. `approverNoteHeaders()`
+is a function rather than a `const` array only because `BASE_DRIFT_RESIDUAL_HEADER_RE` is
+declared further down the file; a module-level array literal would read it inside its
+temporal dead zone and throw at import. **Still out of scope:** the T1 `Human approver:`
+field. Adding the author cross-check there would fire on every T1 PR (where Carson is
+routinely both author and approver), so it is a policy call, not a gate fix.
+
 **3. `packages/sdk` classified T0 (SCRUM-3509).** The SDK `PATH_RULE` named
 `packages/(arkova-py|embed|mcp-server|typescript|langchain)` — and `packages/sdk`, the
 published `@carsonarkova/sdk` whose client implements the frozen v1 verify contract, was

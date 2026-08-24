@@ -1991,16 +1991,33 @@ function approverNamesPrAuthor(approver: string, prAuthor: string | undefined): 
   return false;
 }
 
-const APPROVER_NOTE_HEADERS = [RESIDUAL_RISK_HEADER_RE, UNSOAKABLE_NOTE_HEADER_RE];
+/**
+ * Every `Approved by:`-bearing waiver note in this file, so the independence
+ * check covers the whole class rather than whichever members existed when it
+ * was written. All three waive a §1.12-weight control:
+ *   - `### Residual-risk note` — waives the preflight cleanliness fields;
+ *   - `### Unsoakable-surface note` — waives soak evidence for an offline
+ *     package/SDK surface that has no worker runtime to soak;
+ *   - `### Base-drift residual-risk note` (FD-GATE-3) — preserves COMPLETED
+ *     soak evidence across main drift that touched the PR's soak surface,
+ *     i.e. exactly the "slip something past finished evidence" class.
+ *
+ * A function, not a `const` array: {@link BASE_DRIFT_RESIDUAL_HEADER_RE} is
+ * declared further down the file, and a module-level array literal would read
+ * it inside its temporal dead zone and throw at import time.
+ */
+function approverNoteHeaders(): readonly RegExp[] {
+  return [RESIDUAL_RISK_HEADER_RE, UNSOAKABLE_NOTE_HEADER_RE, BASE_DRIFT_RESIDUAL_HEADER_RE];
+}
 
 /**
- * Rejects a residual-risk / unsoakable-surface note whose `Approved by:`
- * resolves to the PR author. Runs on every non-T0 path so it cannot be
- * side-stepped by choosing a different evidence mode.
+ * Rejects a residual-risk / unsoakable-surface / base-drift note whose
+ * `Approved by:` resolves to the PR author. Runs on every non-T0 path so it
+ * cannot be side-stepped by choosing a different evidence mode.
  */
 export function approverIndependenceErrors(body: string, prAuthor?: string): string[] {
   const errors: string[] = [];
-  for (const headerRe of APPROVER_NOTE_HEADERS) {
+  for (const headerRe of approverNoteHeaders()) {
     const section = noteSection(body, headerRe);
     if (section === null) continue;
     const approver = extractEvidenceFieldValue(section, 'Approved by:');

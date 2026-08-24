@@ -155,7 +155,7 @@ Both preflight fields have exactly one escape hatch, and it is the same one. Say
 
 The note must carry all five sub-fields, and `Approved by:` must name a real person — blank, `pending`, `TBD`, or `N/A` is a self-waiver and fails. The note is scoped to the preflight fields only: it does not waive the soak-duration floor, head/base SHA identity, evidence scope, or the deploy-artifact value checks.
 
-**The approver cannot be you (SCRUM-3481).** `Approved by: me` / `myself` / `self` / `the author` / `PR author` fails, and so does an `@handle` or bare login that matches the PR author's own GitHub login (resolved live by the workflow from the GitHub API, not from this body). Name the human who actually granted the exception.
+**The approver cannot be you (SCRUM-3481).** `Approved by: me` / `myself` / `self` / `the author` / `PR author` fails, and so does an `@handle` or bare login that matches the PR author's own GitHub login (resolved live by the workflow from the GitHub API, not from this body). Name the human who actually granted the exception. This applies to every `Approved by:` note the gate reads — `### Residual-risk note`, `### Unsoakable-surface note`, and `### Base-drift residual-risk note`.
 
 **Emphasis is decoration, not evidence (SCRUM-3481).** Bolding, italicising or code-wrapping a label or a value is fine — `**Approved by:** Carson (2026-08-23)`, `- [x] **Soak start:** …` — but it no longer hides a placeholder: `**Approved by:** TBD` is read as `TBD` and rejected exactly as the unbolded form is.
 
