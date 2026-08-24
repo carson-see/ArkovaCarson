@@ -20,7 +20,11 @@ export const VALID_EVENTS = [
   'anchor.expired',
   // DI-775: SECURED -> SUPERSEDED. Emitted by POST /api/anchor/:id/supersede
   // (SCRUM-2937); it was subscribable in the worker long before it was listed
-  // here.
+  // here. Listing it does NOT by itself give a Zap author a way to pick it —
+  // the packaged triggers (triggers/anchorSecured.ts, triggers/anchorRevoked.ts)
+  // and the makecom.json modules each subscribe to a hardcoded events array,
+  // and nothing in this app reads VALID_EVENTS. This constant is the mirror of
+  // the worker allowlist; a per-event trigger is separate follow-up work.
   'anchor.superseded',
   'anchor.batch_secured',
   'credential.issued',

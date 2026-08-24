@@ -65,3 +65,12 @@ Position matters: `AVAILABLE_EVENTS` order mirrors the worker's
 `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` declaration order (`anchor.superseded` sits
 between `anchor.expired` and `anchor.batch_secured`), because the pinned guard
 compares with `toEqual` on an array, not a set.
+
+The pin in `WebhookSettings.test.tsx` is a hardcoded list, so it only fires when
+someone edits `AVAILABLE_EVENTS` and forgets to update it — it stays green when
+the worker map grows and this file stands still, which is how this drift
+happened. `scripts/ci/check-webhook-event-registration-drift.ts` is the guard
+that keys off `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` itself and covers this file,
+`WebhookEventCatalog.tsx` and `src/lib/copy.ts` alongside the SDK, Zapier and
+docs mirrors. Keep both: the pin gives the local diff a readable failure, the
+drift check gives the class a real ratchet.

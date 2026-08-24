@@ -174,7 +174,14 @@ describe('Constants', () => {
   // separate workspace and cannot import that constant, so the next-best guard
   // is pinning the expected set (and its order) here. `anchor.superseded` was
   // dispatchable and subscribable in the worker for months while this list
-  // omitted it — a Zap author had no way to select it.
+  // omitted it.
+  //
+  // Two things this pin is NOT. It does not fire when the worker map grows and
+  // this list stands still — it is a hardcoded array, so it only catches an
+  // edit to VALID_EVENTS that forgets to update it here. And it does not run in
+  // PR CI: no workflow runs this package's suite. The gate that covers both
+  // holes is scripts/ci/check-webhook-event-registration-drift.ts, which parses
+  // the worker map and runs inside the required root `Tests` job.
   it('mirrors the worker allowlist exactly (drift guard)', () => {
     expect([...VALID_EVENTS]).toEqual([
       'anchor.submitted',

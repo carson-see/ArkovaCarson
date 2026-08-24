@@ -67,7 +67,8 @@ Registering it is what makes (2) impossible, not just what turns the feature on:
 - No chain fields. This event is about a calendar date, not an on-chain transition; the receipt already rides `anchor.secured`.
 - `credential_type` is nullable rather than defaulted. `anchors.credential_type` is nullable and the pre-fix emit site substituted `'OTHER'`, asserting a classification nobody measured (§1.5).
 - Catalog entry is `live: true` — the emit point is real, behind `ENABLE_EXPIRY_ALERTS`. Registration points kept in lockstep (all test-guarded): `WebhookSettings.tsx` `AVAILABLE_EVENTS`, its pinned drift-guard list, `WebhookEventCatalog.tsx` `CATALOG_DATA`, `src/lib/copy.ts` `WEBHOOK_EVENT_DESCRIPTIONS`, `packages/sdk/src/types.ts`, `integrations/zapier/src/constants.ts`, `docs/api/webhooks.md`.
-- ~~**Known pre-existing drift, NOT introduced here:** `anchor.superseded` is in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` but absent from `AVAILABLE_EVENTS` and the pinned list.~~ **Closed 2026-08-23 by DI-775 / SCRUM-3538** — see below.
+- **Known pre-existing drift, NOT introduced here:** `anchor.superseded` is in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` but absent from `AVAILABLE_EVENTS` and the pinned list. Left alone rather than folded into this fix.
+- _Superseded 2026-08-23 by DI-775 / SCRUM-3538 — that drift is closed; see the 2026-08-23 section below. The bullet above is left verbatim because this file is append-only (`scripts/ci/check-agents-md-append-only.ts`): rewriting a merge-base line to record its outcome reads as a deletion and reddens the required `Dependency Scanning` check._
 ## 2026-08-17 — `response_body`/`error_message` truncation is surrogate-safe
 
 `delivery.ts` bounded `webhook_delivery_logs.response_body` (1000) and `error_message` (500) with
@@ -104,8 +105,25 @@ Surfaces now in lockstep (all test-guarded): `WebhookSettings.tsx`
 Two of those had no drift guard at all before this change and now do:
 `integrations/zapier/test/zapier.test.ts` pins the full ordered `VALID_EVENTS`
 set, and `packages/sdk/src/client.test.ts` pins `WebhookEventType` via an
-exhaustive `Record<WebhookEventType, true>` — that one bites in both directions
-(a missing union member fails `tsc --noEmit`; deleting the pin row to silence
-that fails `vitest run`). Adding an event type to
-`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` now fails four separate suites until every
-registration surface follows.
+exhaustive `Record<WebhookEventType, true>` (a missing union member fails
+`tsc --noEmit`; deleting the pin row to silence that fails `vitest run`).
+
+**Know what those pins do and do not catch.** Every one of them is a hardcoded
+list in a workspace that cannot import the worker constant, so each fires only
+when someone edits THAT surface and forgets its own pin. None of them keys off
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE`, so none fires when the worker map GROWS and the
+mirrors stand still — which is the direction all three incidents (SCRUM-1794,
+BUG-002, DI-775) actually travelled. Measured, not assumed: adding a tenth-plus
+key to the map leaves `WebhookSettings.test.tsx` + `WebhookEventCatalog.test.tsx`
+(40 tests), the Zapier suite (23) and the SDK suite (62, plus `tsc --noEmit`
+exit 0) all green. Two of the four are not even reachable from a PR:
+`.github/workflows/publish-sdk.yml` runs the SDK tests only on an `sdk-v*` tag,
+and no workflow runs the Zapier tests at all.
+
+The ratchet that does key off the source of truth is
+`scripts/ci/check-webhook-event-registration-drift.ts`. It parses the map's keys
+and compares them against all six mirrors (picker, catalog, `copy.ts`, SDK
+union, Zapier constant, `docs/api/webhooks.md` tables), fails closed if any
+declaration stops resolving, and runs inside the already-required `Tests` job
+via the root vitest `scripts/**` glob — no workflow wiring needed. Register a
+schema in this file and that check goes red until every mirror follows.

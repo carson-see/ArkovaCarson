@@ -894,6 +894,16 @@ describe('verifyBatch', () => {
  *  - the runtime assertion pins the key set, so quietly deleting a row here to
  *    silence that compile error fails `vitest run`.
  *
+ * Both of those are LOCAL to this package, in two senses. This pin is a
+ * hardcoded list, so it stays green when the worker registers a new event and
+ * this union stands still — the direction the drift actually travelled. And
+ * neither command runs on a pull request: `.github/workflows/publish-sdk.yml`
+ * is the only workflow that typechecks or tests `packages/sdk`, and it triggers
+ * on an `sdk-v*` tag. The PR-time gate for the same class is
+ * `scripts/ci/check-webhook-event-registration-drift.ts`, which parses
+ * `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` and compares this union against it from
+ * inside the required root `Tests` job.
+ *
  * `anchor.superseded` is the reason this exists: the worker dispatched it
  * (services/worker/src/api/anchor-lineage.ts, SCRUM-2937) and the CRUD
  * allowlist accepted it, while this union omitted it — so a typed SDK consumer
