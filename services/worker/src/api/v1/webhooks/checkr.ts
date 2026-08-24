@@ -153,6 +153,64 @@ checkrWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
+  /**
+   * AUDIT-0424-10 / SCRUM-3479 — release the replay nonce before returning any
+   * post-nonce 5xx.
+   *
+   * The nonce row is committed BEFORE `enqueue_rule_event` runs, so without
+   * this compensation a transient enqueue failure is unrecoverable rather than
+   * retryable: Checkr re-presents the same delivery, the insert hits the
+   * `(report_id, payload_hash)` UNIQUE violation, and the handler answers
+   * `200 {duplicate:true}` — the completed background check is dropped AND the
+   * vendor is told it succeeded. The `webhook_dlq` row written alongside is a
+   * record of the loss, not a recovery path: nothing under `jobs/` drains it.
+   *
+   * Deleting the nonce restores exactly-once-on-success semantics — the row is
+   * the claim on in-flight work, so it is released only when that work did not
+   * happen. The success path never calls this, so replay protection for
+   * genuinely duplicate deliveries is unchanged. Mirrors `middesk.ts`'s
+   * `releaseNonce` and the `webhook_event_claims` release in
+   * `stripe/handlers.ts`.
+   */
+  let nonceCommitted = false;
+  async function releaseNonce(reason: string): Promise<void> {
+    // Only compensate a nonce THIS delivery committed. The insert below fails
+    // open on non-23505 errors, and the enclosing try also covers work that
+    // runs before the insert — in both cases a row matching this key could
+    // only belong to an EARLIER delivery, and deleting it would re-open that
+    // delivery to replay.
+    if (!nonceCommitted) return;
+    try {
+      // Filter on BOTH columns of the UNIQUE key
+      // (`checkr_webhook_nonces_report_id_payload_hash_key`). Deleting by
+      // `report_id` alone would drop the nonce for a different payload
+      // revision of the same report, disarming its replay protection.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: releaseErr } = await (db as any)
+        .from('checkr_webhook_nonces')
+        .delete()
+        .eq('report_id', completed.data.object.id)
+        .eq('payload_hash', payloadHash);
+      if (releaseErr) {
+        // Nothing further we can do — log loudly. The event is now stuck and
+        // needs a manual replay from the Checkr dashboard.
+        logger.error(
+          { error: releaseErr, reason },
+          'Failed to release Checkr webhook nonce — event will not be reprocessed on retry',
+        );
+        return;
+      }
+      nonceCommitted = false;
+      logger.warn({ reason }, 'Released Checkr webhook nonce so retry can reprocess');
+    } catch (releaseThrew) {
+      // Best-effort: never let the compensation mask the original failure.
+      logger.error(
+        { error: releaseThrew, reason },
+        'Checkr webhook nonce release threw — event will not be reprocessed on retry',
+      );
+    }
+  }
+
   try {
     const integration = await findIntegration(accountHeader(req));
     if (!integration) {
@@ -175,7 +233,10 @@ checkrWebhookRouter.post('/', async (req: Request, res: Response) => {
       }
       logger.error({ error: nonceErr }, 'Checkr webhook: nonce insert failed');
       // Fail open on the nonce write — the executions table's idempotency
-      // index still de-dupes downstream side effects.
+      // index still de-dupes downstream side effects. No row was committed,
+      // so `releaseNonce` must stay disarmed for this delivery.
+    } else {
+      nonceCommitted = true;
     }
 
     const canonical = adaptCheckr(completed, { org_id: integration.org_id });
@@ -204,6 +265,7 @@ checkrWebhookRouter.post('/', async (req: Request, res: Response) => {
         externalId: completed.data.object.id,
         payloadHash,
       });
+      await releaseNonce('rule_event_enqueue_failed');
       res.status(500).json({ error: { code: 'webhook_processing_failed' } });
       return;
     }
@@ -213,6 +275,7 @@ checkrWebhookRouter.post('/', async (req: Request, res: Response) => {
     const message = err instanceof Error ? err.message : 'unexpected';
     logger.error({ error: err }, 'Checkr webhook processing failed');
     await dlqInsert({ reason: message, externalId: completed.data.object.id, payloadHash });
+    await releaseNonce(message);
     res.status(500).json({ error: { code: 'webhook_processing_failed' } });
   }
 });
