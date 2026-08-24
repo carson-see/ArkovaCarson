@@ -141,6 +141,39 @@ Tests pin the literals `search_mode` / `lexical_substring` / `semantic_vector` i
 automated text-parity check with `TOOL_DEFINITIONS`; `tests/infra/mcp-manifest-parity.test.ts` checks
 names/schemas only. Update both by hand, together.
 
+## DI-038 (SCRUM-3398) — batch verification goes through a STRUCTURED seam, never a text round-trip
+
+`oracle_batch_verify` used to fan each member out through `handleVerifyCredential` and then
+`JSON.parse(result.content[0].text)`. That handler does **not** always return JSON: its catch branches
+return `errorResult('Verification lookup timed out')` / `errorResult('Verification lookup failed: …')`,
+and `errorResult` puts that BARE PROSE straight into `content[0].text`. `JSON.parse` therefore threw a
+SyntaxError, the rejection escaped `Promise.all`, and the tool's outer catch returned
+`safeErrorText(...)` — **one transient per-credential timeout discarded every credential in the batch
+that had already verified**, on a public agent-facing tool documented for bulk (max-25) workflows.
+`publicIdSchema` guards the empty-id branch; it does nothing about the timeout / transport branch.
+
+The fix is the seam, not a `try` around the parse:
+
+- **`verifyCredentialRecord(publicId, config)` (`mcp-tools.ts`)** is now the ONLY per-ID lookup, and it
+  never throws and never returns a `ToolResult`. Success → `shapeAnchorRow(data, publicId)`; failure →
+  `{ public_id, verified: false, error }`.
+- **`handleVerifyBatch` (`verify_batch`) and `buildOracleBatchEnvelope` (`oracle_batch_verify`) both map
+  over it**, so the two batch paths cannot drift in either the success shape or the failure shape. That
+  was already `handleVerifyBatch`'s behaviour — `oracle_batch_verify` is the one that was wrong.
+- The failure `error` strings are deliberately FIXED prose, never `error.message`. A transport failure
+  message can carry the resolved host/port and this envelope is public output. Note this is *stricter*
+  than single-credential `handleVerifyCredential`, which still interpolates `error.message`; do not
+  "harmonise" the batch path back onto that.
+- **`buildOracleBatchEnvelope` is exported from `mcp-server.ts` for tests** (same rationale as
+  `shouldFailClosedWhenSigningKeyMissing` / `applyMcpSecurityHeaders`); the tool registration is now a
+  one-line delegation. The envelope contract — `query_id` / `queried_at`, HMAC signing, the
+  `signed: false` marker, and the `EDGE_REQUIRE_MCP_SIGNING` fail-closed branch — is unchanged and pinned
+  by tests in the new `mcp-server.test.ts`.
+
+One deliberate shape alignment: `record_uri` for `oracle_batch_verify` members now derives from the
+REQUESTED public_id (via `shapeAnchorRow(data, id)`) rather than the RPC row's own `public_id`. These
+are the same value for a lookup keyed on that id, and it is what `verify_batch` has always done.
+
 ## Open work
 - SCRUM-1793 (PR #741 NEW) — `validate_api_key` RPC migration committed to repo; already applied to prod + staging via Supabase MCP.
 - HakiChain sandbox key (`api_key_id=c75d84b9-…`) has wildcard CIDR allowlist entry written 2026-05-08.
