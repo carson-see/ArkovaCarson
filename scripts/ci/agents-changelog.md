@@ -42,6 +42,16 @@ The durable gate inventory, conventions, and open work live in
   **Residual:** branch-protection required-check status is repo-admin state and
   is NOT set by this repo's config — these gates block the Mergify path only
   until that is confirmed separately.
+  Second review pass (same day) added: a scoping fix to `jobBlock()` in the
+  contract suite (it ran past the job's own steps into the NEXT job's header
+  comments, so the `--report-only` / `|| true` / `continue-on-error` negative
+  assertions were partly judging a neighbour's prose); check-B2's embedded-SHA
+  match narrowed to keyed-or-full-40-hex so a 7-digit row count or `ref=abc1234`
+  can no longer red a T2/T3 PR as "copied evidence"; and the `.mergify.yml`
+  comment corrected — it claimed the two checks "run unconditionally", but
+  ci.yml's `pull_request:` `paths-ignore` means a LICENSE/README/memory-only PR
+  posts neither check at all (pre-existing class, shared with `Orphaned Export
+  Lint`).
 - 2026-08-01 SonarCloud config reality-check: **`sonar-project.properties` was
   deleted — SonarCloud never read it.** The project runs **Automatic Analysis**
   (`sonar.autoscan.enabled = true`; CE tasks carry no `submitterLogin`; no

@@ -200,6 +200,19 @@ Two design points to preserve if you touch it:
   Branch-protection required-check status is repo-admin state and is NOT set by
   this repo's config — verify it separately before claiming these block a merge
   outside the Mergify path.
+  Two review addenda (2026-08-23, second pass):
+  (a) `checkCleanPreflightIdentity`'s check-B2 reads an embedded preflight SHA
+  only from a KEYED form (`head=` / `head_sha:` / `commit=` / `sha=`) or a bare
+  full 40-hex run. The old "first `\b[0-9a-f]{7,40}\b` anywhere in the value"
+  also matched a 7-digit row count and `ref=abc1234`; report-only that was a
+  spurious warning, merge-blocking it reds a T2/T3 PR on a message its author
+  cannot act on. The cost is a bare, unkeyed, SHORT sha no longer being matched.
+  (b) Neither gate is "always reports": both jobs live in `ci.yml`, whose
+  `pull_request:` trigger carries `paths-ignore` (`LICENSE`, `.gitignore`,
+  `README.md`, `memory/**.md`). A PR touching ONLY those paths runs no ci.yml
+  job, so the checks never post and a Mergify queue entry waits. Pre-existing
+  class — `Orphaned Export Lint` and `Python SDK Tests` share it — but do not
+  cite these gates as unconditional coverage.
 - **`check-staging-evidence.ts` is the tier detector AND the evidence gate.**
   It fails CLOSED to the highest tier. The alternate-evidence modes
   (frontend-T2, architecturally-unsoakable) are narrow and mutually exclusive:

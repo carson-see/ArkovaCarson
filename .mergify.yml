@@ -72,11 +72,17 @@ queue_rules:
       # listed here, so they were hollow twice over: the CLI could not exit
       # non-zero, and even a red job would not have blocked a merge. Activated
       # fail-closed together with the ci.yml wiring.
-      # `Evidence-identity gate` runs on every PR event and skips Mergify's own
-      # speculative merge-queue PRs by reporting success, so requiring it here
-      # cannot deadlock the queue. `Anti-hollow-soak guards` runs
-      # unconditionally (no job-level `if:`, no path filter) and no-ops green
-      # while no soak-preflight JSON is committed.
+      # `Evidence-identity gate` skips Mergify's own speculative merge-queue
+      # PRs per-STEP rather than at job level, so it reports success (not
+      # `skipped`, which never satisfies check-success) and cannot deadlock the
+      # queue. `Anti-hollow-soak guards` carries no job-level `if:` and no path
+      # filter, and no-ops green while no soak-preflight JSON is committed.
+      # Caveat, shared with `Orphaned Export Lint` / `Python SDK Tests` above
+      # and NOT introduced here: both jobs live in ci.yml, whose
+      # `pull_request:` trigger carries `paths-ignore` (LICENSE, .gitignore,
+      # README.md, memory/**.md). A PR touching ONLY those paths runs no ci.yml
+      # job at all, so none of these checks report and the queue waits. Read
+      # the lines above as "cannot deadlock ON A RUN", not "always runs".
       - check-success = Evidence-identity gate
       - check-success = Anti-hollow-soak guards
       - check-success = Staging Soak Evidence Gate
@@ -114,11 +120,17 @@ queue_rules:
       # listed here, so they were hollow twice over: the CLI could not exit
       # non-zero, and even a red job would not have blocked a merge. Activated
       # fail-closed together with the ci.yml wiring.
-      # `Evidence-identity gate` runs on every PR event and skips Mergify's own
-      # speculative merge-queue PRs by reporting success, so requiring it here
-      # cannot deadlock the queue. `Anti-hollow-soak guards` runs
-      # unconditionally (no job-level `if:`, no path filter) and no-ops green
-      # while no soak-preflight JSON is committed.
+      # `Evidence-identity gate` skips Mergify's own speculative merge-queue
+      # PRs per-STEP rather than at job level, so it reports success (not
+      # `skipped`, which never satisfies check-success) and cannot deadlock the
+      # queue. `Anti-hollow-soak guards` carries no job-level `if:` and no path
+      # filter, and no-ops green while no soak-preflight JSON is committed.
+      # Caveat, shared with `Orphaned Export Lint` / `Python SDK Tests` above
+      # and NOT introduced here: both jobs live in ci.yml, whose
+      # `pull_request:` trigger carries `paths-ignore` (LICENSE, .gitignore,
+      # README.md, memory/**.md). A PR touching ONLY those paths runs no ci.yml
+      # job at all, so none of these checks report and the queue waits. Read
+      # the lines above as "cannot deadlock ON A RUN", not "always runs".
       - check-success = Evidence-identity gate
       - check-success = Anti-hollow-soak guards
       # Risk-tiered staging evidence gate (CLAUDE.md §1.11)
@@ -178,11 +190,17 @@ queue_rules:
       # listed here, so they were hollow twice over: the CLI could not exit
       # non-zero, and even a red job would not have blocked a merge. Activated
       # fail-closed together with the ci.yml wiring.
-      # `Evidence-identity gate` runs on every PR event and skips Mergify's own
-      # speculative merge-queue PRs by reporting success, so requiring it here
-      # cannot deadlock the queue. `Anti-hollow-soak guards` runs
-      # unconditionally (no job-level `if:`, no path filter) and no-ops green
-      # while no soak-preflight JSON is committed.
+      # `Evidence-identity gate` skips Mergify's own speculative merge-queue
+      # PRs per-STEP rather than at job level, so it reports success (not
+      # `skipped`, which never satisfies check-success) and cannot deadlock the
+      # queue. `Anti-hollow-soak guards` carries no job-level `if:` and no path
+      # filter, and no-ops green while no soak-preflight JSON is committed.
+      # Caveat, shared with `Orphaned Export Lint` / `Python SDK Tests` above
+      # and NOT introduced here: both jobs live in ci.yml, whose
+      # `pull_request:` trigger carries `paths-ignore` (LICENSE, .gitignore,
+      # README.md, memory/**.md). A PR touching ONLY those paths runs no ci.yml
+      # job at all, so none of these checks report and the queue waits. Read
+      # the lines above as "cannot deadlock ON A RUN", not "always runs".
       - check-success = Evidence-identity gate
       - check-success = Anti-hollow-soak guards
       - check-success = Staging Soak Evidence Gate

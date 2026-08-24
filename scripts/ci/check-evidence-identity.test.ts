@@ -102,6 +102,44 @@ describe('checkCleanPreflightIdentity', () => {
     expect(findings.some((f) => /copied|different head|across heads/i.test(f.message))).toBe(true);
   });
 
+  // -------------------------------------------------------------------------
+  // Fail-closed activation (SCRUM-2965) makes b2's SHA extraction load-bearing.
+  // It used to take the FIRST `\b[0-9a-f]{7,40}\b` run in the free-text
+  // `Preflight result:` value, which also matches a 7+ digit decimal (a row
+  // count, a unix timestamp) and any short hex-looking identifier that is not a
+  // commit (`ref=abc1234`). Report-only that produced a spurious warning;
+  // merge-blocking it reds a T2/T3 PR with "Preflight result embeds head
+  // 3556355", which is both wrong and unactionable.
+  // -------------------------------------------------------------------------
+
+  it('does not read a 7+ digit count in the preflight as an embedded head SHA', () => {
+    const findings = checkCleanPreflightIdentity(
+      t2Body({ preflight: 'environment_type=clean_mirror, rows=3556355' }),
+      HEAD,
+      'T2',
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it('does not read an unrelated keyed identifier as an embedded head SHA', () => {
+    const findings = checkCleanPreflightIdentity(
+      t2Body({ preflight: 'environment_type=clean_mirror ref=abc1234' }),
+      HEAD,
+      'T2',
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it('FAILS on a bare full 40-char SHA that differs from the declared head', () => {
+    // Unkeyed but unambiguous: nothing else in a preflight line is 40 hex chars.
+    const findings = checkCleanPreflightIdentity(
+      t2Body({ preflight: `environment_type=clean_mirror captured at ${OTHER}` }),
+      HEAD,
+      'T2',
+    );
+    expect(findings.some((f) => /across heads/i.test(f.message))).toBe(true);
+  });
+
   it('does NOT require clean_mirror for a T1 PR', () => {
     expect(
       checkCleanPreflightIdentity(t2Body({ preflight: 'smoke ok' }), HEAD, 'T1'),

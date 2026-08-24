@@ -52,7 +52,17 @@ const ANTI_HOLLOW_SOAK_CHECK = 'check-success = Anti-hollow-soak guards';
 
 /**
  * Extract one top-level job block from ci.yml: from `  <jobId>:` up to (but not
- * including) the next top-level job key at the same 2-space indent.
+ * including) the next job — either its key or the comment header that
+ * introduces it, both at 2-space indent (a job's OWN keys and comments sit at
+ * 4+).
+ *
+ * The comment half matters. Stopping only at the next KEY swallowed the next
+ * job's header comments into this job's text — for `evidence-identity` that was
+ * 16 lines of prose that name `--report-only`, `|| true` and
+ * `continue-on-error`, i.e. exactly the strings the negative assertions below
+ * search for. Every one of them would then have been judging a neighbour's
+ * comment rather than this job's wiring, and the positive assertions could have
+ * been satisfied by that prose instead of by the job.
  */
 function jobBlock(jobId: string): string {
   const lines = ci.split('\n');
@@ -62,19 +72,26 @@ function jobBlock(jobId: string): string {
   const block = [lines[start]];
   for (let cursor = start + 1; cursor < lines.length; cursor += 1) {
     const line = lines[cursor];
-    // A new top-level job key (2-space indent, non-comment) ends this block.
-    if (/^ {2}[A-Za-z0-9_-]+:\s*$/u.test(line)) break;
+    if (/^ {2}(?:[A-Za-z0-9_-]+:\s*$|#)/u.test(line)) break;
     block.push(line);
   }
   return block.join('\n');
 }
 
-/** The queue_rules block: from `queue_rules:` to the next top-level key. */
+/**
+ * The queue_rules block: from `queue_rules:` to whatever top-level key comes
+ * next.
+ *
+ * Deliberately not anchored on `merge_queue:` by name — renaming or removing
+ * that unrelated key would silently run this slice to EOF and drag the
+ * `pull_request_rules` entries in as if they were queue rules.
+ */
 function queueRulesBlock(): string {
-  const start = mergify.indexOf('queue_rules:');
-  expect(start).toBeGreaterThanOrEqual(0);
-  const rest = mergify.slice(start);
-  const end = rest.search(/\nmerge_queue:/u);
+  const header = '\nqueue_rules:';
+  const start = mergify.indexOf(header);
+  expect(start, '.mergify.yml must define queue_rules').toBeGreaterThanOrEqual(0);
+  const rest = mergify.slice(start + header.length);
+  const end = rest.search(/\n[A-Za-z_][A-Za-z0-9_]*:/u);
   return end === -1 ? rest : rest.slice(0, end);
 }
 
@@ -90,6 +107,21 @@ function queueRules(): Array<{ name: string; body: string }> {
 // ---------------------------------------------------------------------------
 
 describe('ci.yml — evidence-identity gate is wired fail-closed', () => {
+  // Guards every assertion below. A jobBlock() that runs past this job's own
+  // steps into the NEXT job's header comments would have the negative
+  // assertions judging a neighbour's prose about `--report-only` / `|| true` /
+  // `continue-on-error`, and would let the positive ones be satisfied by that
+  // prose instead of by this job's wiring.
+  it('scopes the extracted block to this job only', () => {
+    const block = jobBlock('evidence-identity');
+    expect(block, "must not bleed into the next job's header comments").not.toMatch(
+      /anti-hollow-soak/u,
+    );
+    expect(block, 'and must still cover this job in full').toMatch(
+      /check-evidence-identity\.ts/u,
+    );
+  });
+
   it('names the job without a report-only qualifier', () => {
     const block = jobBlock('evidence-identity');
     expect(block, 'the job name is the check name Mergify matches').toMatch(
