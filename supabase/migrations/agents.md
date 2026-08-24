@@ -748,5 +748,18 @@ another ref. `0411`–`0413` were the first three free slots. **Next author clai
   `0415_ferpa_directory_info_opt_out_public_projections.sql` — an unresolved live
   collision worth someone's attention; the FERPA one is also recorded in
   `docs/staging/rig-reservations.json` as applied to an isolated rig), plus
-  `0416`, `0417`, `0418`, `0419`. `0420` is the first free prefix.
-  **Next author claims `0421` — re-derive, do not trust this line.**
+  `0416`, `0417`, `0418`, `0419`. `origin/main`'s head migration file is `0414`
+  and the highest prefix claimed by any OPEN PR is `0419` (#2355), so `0420` was
+  the first free prefix when this file was written.
+  **`0420` COLLIDES — first-claim-wins resolved in this PR's favour, and the
+  loser still has to move.** Re-deriving at review time turned up a SECOND
+  local claim on the same prefix:
+  `0420_scrum3529_public_anchor_sub_type_projection.sql`, on the unpushed
+  branches `fix/public-verify-subtype-projection` / `review/public-verify-subtype-projection`
+  (commit `a4509d220`). Both claims were made the same evening; this PR's commit
+  (`c835c32a6`, 2026-08-23 20:43:24 -0400) precedes it by 47 seconds and is the
+  one that reached `origin` first, so under the RTE first-claim-wins protocol
+  (the `0407`/`0408` precedent above) `0420` stays here and SCRUM-3529 renumbers
+  to `0421`. Neither migration is applied anywhere, so this is a rename on that
+  branch, not a compensating migration. **Next author claims `0422` — assume
+  SCRUM-3529 has taken `0421`, and re-derive rather than trusting this line.**

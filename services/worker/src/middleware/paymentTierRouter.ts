@@ -117,16 +117,33 @@ async function tryCredits(orgId: string, userId: string, cost: number): Promise<
       // whose already-purchased credit may have just been spent, and serving
       // the request would give it away. For money, neither guess is acceptable:
       // stop, page, and let the caller retry against a known state.
-      logger.error({ error: deductError, orgId, userId }, 'Credit deduction failed — failing closed');
-      captureCreditRpcFailureAlert({
-        rpc: 'deduct_unified_credits',
-        operation: 'paymentTierRouter.tryCredits',
-        failMode: 'closed',
-        error: deductError,
-        orgId,
-        userId,
-        extra: { amount: cost },
-      });
+      //
+      // Reporting is best-effort and deliberately isolated — one `try` each, so
+      // neither can suppress the other OR the return below. This function's
+      // outer `catch` returns `null`, i.e. the exact fall-through this branch
+      // exists to prevent, so an unguarded throw from the logger or from
+      // `captureCreditRpcFailureAlert` (which JSON.stringifies a non-`Error`
+      // `error` — see utils/sentry.ts) would be caught out there and silently
+      // reopen the leak. Losing the page is bad; losing the fail-closed is a
+      // double-charge.
+      try {
+        logger.error({ error: deductError, orgId, userId }, 'Credit deduction failed — failing closed');
+      } catch {
+        // Best-effort only.
+      }
+      try {
+        captureCreditRpcFailureAlert({
+          rpc: 'deduct_unified_credits',
+          operation: 'paymentTierRouter.tryCredits',
+          failMode: 'closed',
+          error: deductError,
+          orgId,
+          userId,
+          extra: { amount: cost },
+        });
+      } catch {
+        // Best-effort only.
+      }
       return { tier: 'credits', authorized: false, reason: 'credit_deduction_failed' };
     }
 

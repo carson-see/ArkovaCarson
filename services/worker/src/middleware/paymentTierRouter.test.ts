@@ -245,6 +245,47 @@ describe('paymentTierRouter', () => {
       // Not an RPC failure and not a revenue leak — Stripe bills it. No page.
       expect(captureCreditRpcFailureAlert).not.toHaveBeenCalled();
     });
+
+    // Review finding — the fail-closed return must not depend on alerting.
+    //
+    // `tryCredits` wraps its whole body in `try { ... } catch { return null; }`,
+    // and `null` is precisely the fall-through-to-Stripe this fix removes. So a
+    // throw out of the reporting calls in the fail-closed branch (the Sentry
+    // helper JSON.stringifies a non-Error `error`) would be swallowed by that
+    // outer catch and silently reopen the leak the branch exists to close.
+    it('still fails CLOSED when the Sentry alert itself throws', async () => {
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: { is_platform_admin: false }, error: null }),
+            in: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'sub-1', stripe_subscription_id: 'sub_stripe_1', status: 'active', plan_id: 'p1' },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+      });
+
+      (db.rpc as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ data: 50, error: null }) // not beta
+        .mockResolvedValueOnce({ data: { remaining: 100 }, error: null }) // org has credits
+        .mockResolvedValueOnce({ data: null, error: { message: 'deduct RPC failed' } }); // deduct errors
+
+      captureCreditRpcFailureAlert.mockImplementationOnce(() => {
+        throw new Error('Sentry transport exploded');
+      });
+
+      const app = createApp('user-1', 'org-1');
+      const res = await request(app).get('/api/v1/verify/test');
+
+      // Losing the page is bad; losing the fail-closed is a double-charge.
+      expect(res.status).toBe(503);
+      expect(res.body.error).toBe('credit_system_unavailable');
+      expect(res.body.tier).toBeUndefined();
+    });
   });
 
   describe('tier 2: stripe metered billing — SCRUM-2971 idempotency', () => {
