@@ -112,8 +112,16 @@ vi.mock('../webhooks/delivery.js', () => ({
 // (/check-credential-expiry, gated on ENABLE_EXPIRY_ALERTS), so a module-level
 // mock here cannot perturb any other route's behaviour.
 const mockGetFlag = vi.fn().mockReturnValue(true);
+// DI-736: the route resolves ENABLE_EXPIRY_ALERTS through `getFlagLive`
+// (TTL-refreshed switchboard read). `getFlag` is the boot snapshot and is
+// mocked separately so a regression back to it fails a test rather than
+// silently reading stale state.
+const mockGetFlagLive = vi.fn().mockResolvedValue(true);
 vi.mock('../middleware/flagRegistry.js', () => ({
-  flagRegistry: { getFlag: (...args: unknown[]) => mockGetFlag(...args) },
+  flagRegistry: {
+    getFlag: (...args: unknown[]) => mockGetFlag(...args),
+    getFlagLive: (...args: unknown[]) => mockGetFlagLive(...args),
+  },
 }));
 
 const mockProcessMonthlyCredits = vi.fn().mockResolvedValue(10);
@@ -2495,6 +2503,7 @@ describe('cron routes', () => {
 
     beforeEach(() => {
       mockGetFlag.mockReturnValue(true);
+      mockGetFlagLive.mockResolvedValue(true);
       mockDispatchWebhookEvent.mockResolvedValue(undefined);
     });
 
@@ -2591,6 +2600,20 @@ describe('cron routes', () => {
 
     it('skips cleanly when ENABLE_EXPIRY_ALERTS is off', async () => {
       mockGetFlag.mockReturnValue(false);
+      mockGetFlagLive.mockResolvedValue(false);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ skipped: true });
+      expect(db.from).not.toHaveBeenCalled();
+    });
+
+    // DI-736 / SCRUM-3475 — flipping the switchboard row must take effect
+    // without a worker restart, so the gate reads the live value, not the
+    // boot snapshot this process started with.
+    it('honours a switchboard flip that the boot snapshot has not seen', async () => {
+      mockGetFlag.mockReturnValue(true);
+      mockGetFlagLive.mockResolvedValue(false);
       const res = await request(createApp()).post('/cron/check-credential-expiry');
 
       expect(res.status).toBe(200);

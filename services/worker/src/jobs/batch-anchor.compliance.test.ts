@@ -43,7 +43,7 @@ vi.mock('../utils/complianceMapping.js', () => ({
 vi.mock('../utils/orgCredits.js', () => ({ deductOrgCredit: vi.fn() }));
 vi.mock('../utils/anchorProofs.js', () => ({ upsertAnchorProofs: vi.fn() }));
 vi.mock('../middleware/flagRegistry.js', () => ({
-  flagRegistry: { getFlag: vi.fn(async () => true) },
+  flagRegistry: { getFlag: vi.fn(() => true), getFlagLive: vi.fn(async () => true) },
 }));
 
 import { applyComplianceControls, BATCH_SIZE } from './batch-anchor.js';

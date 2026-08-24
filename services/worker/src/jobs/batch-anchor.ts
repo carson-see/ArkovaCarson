@@ -613,13 +613,19 @@ export async function processBatchAnchors(opts: ProcessBatchAnchorOptions = {}):
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
 
   // S3-P0 / AC7: hard enablement gate. ENABLE_BATCH_ANCHORING is a DB-backed
-  // switchboard flag (env fallback, fail-closed — flagRegistry.getFlag returns
-  // false for unknown/unloaded flags). OFF ⇒ the job cannot claim, sign,
-  // broadcast, or reconcile — even under ?force=true. DEPLOY PREREQUISITE:
-  // prod runs the nightly 3am batch drain through this function; the prod
-  // switchboard_flags row (or ENABLE_BATCH_ANCHORING env) MUST be verified ON
-  // before this change ships, or the drain halts.
-  if (!flagRegistry.getFlag('ENABLE_BATCH_ANCHORING')) {
+  // switchboard flag (env fallback, fail-closed — flagRegistry returns false
+  // for unknown/unloaded flags). OFF ⇒ the job cannot claim, sign, broadcast,
+  // or reconcile — even under ?force=true. DEPLOY PREREQUISITE: prod runs the
+  // nightly 3am batch drain through this function; the prod switchboard_flags
+  // row (or ENABLE_BATCH_ANCHORING env) MUST be verified ON before this change
+  // ships, or the drain halts.
+  //
+  // DI-736 / SCRUM-3475: resolved via getFlagLive (60s TTL re-read of
+  // switchboard_flags), NOT the boot-time getFlag snapshot. A kill switch that
+  // only takes effect on the next worker restart is not a kill switch, and this
+  // is the money path. A transient DB failure holds the last-known-good value
+  // rather than halting or resuming the drain — see flagRegistry.ts.
+  if (!(await flagRegistry.getFlagLive('ENABLE_BATCH_ANCHORING'))) {
     logger.info('Batch anchoring disabled (ENABLE_BATCH_ANCHORING off) — skipping batch run');
     return EMPTY;
   }

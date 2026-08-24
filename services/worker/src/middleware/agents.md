@@ -2,6 +2,44 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-08-23 DI-736 / SCRUM-3475 — `flagRegistry` is live-refreshable; `getFlag()` is a snapshot, not a resolver
+
+**Do not gate a code path on `flagRegistry.getFlag()`.** It returns whatever `init()` read at
+worker startup and nothing ever changed it: `refreshDbFlag()` had ZERO callers, so flipping
+`switchboard_flags.ENABLE_BATCH_ANCHORING` (the nightly 3am drain — the money path) or
+`ENABLE_EXPIRY_ALERTS` did nothing until the worker restarted. Those two were the registry's only
+real consumers; every other entry is startup logging. A kill switch that needs a redeploy to take
+effect is not a kill switch.
+
+**`getFlagLive(name)` is the resolver.** DB-backed flags are re-read from `switchboard_flags`
+through `refreshDbFlag()` once the cached value is older than 60s — the same TTL cadence as
+`featureGate.ts` and `aiFeatureGate.ts` — and the refreshed value is written back into the
+snapshot so `getAllFlags()`/startup diagnostics stop reporting a stale boot value. Env-backed
+flags short-circuit to the snapshot: `config.ts` parses them once at boot and a running Cloud Run
+revision cannot change them, so there is nothing to re-read and no DB round trip is issued.
+Unknown flags fail closed.
+
+**Fail direction on a failed refresh** (SCRUM-2247's contract, applied here): last-known-good DB
+value read this process lifetime → boot snapshot → `false`. The env var is deliberately NOT
+consulted, so a row that was read as `false` can never be re-opened by `ENABLE_X=true` in Cloud
+Run during a blip; symmetrically, a blip cannot halt a running drain either. A failed refresh is
+cached for the same TTL so an outage does not turn every gate check into a DB round trip.
+
+Note the deliberate asymmetry with `init()`, which falls back to the env var when a row is ABSENT:
+a *live* refresh that stops finding its row holds last-known-good instead. A deleted or unreadable
+row must not hand control back to an env var.
+
+`_expireLiveCache()` expires the TTL without clearing values (transient-blip tests); `_reset()`
+clears the snapshot AND last-known-good. Contract pinned by `flagRegistry.live-refresh.test.ts`;
+the two consumers' wiring is pinned behaviourally in `jobs/batch-anchor.intent.test.ts` and
+`routes/cron.test.ts`, whose mocks supply `getFlag` and `getFlagLive` separately so a regression
+back to the snapshot fails a test rather than reading stale state.
+
+**Still open (NOT fixed here):** `init()`'s env fallback on a DB error still applies to all
+`DB_FLAGS` including `MAINTENANCE_MODE`, so the BOOT snapshot can be fail-OPEN on a startup DB
+blip. A live refresh now self-heals that within a TTL once the DB recovers, but the boot window
+itself is unchanged — tracked separately as DI-737.
+
 ## 2026-08-12 — `apiKeyAuth` refuses `revoked_at`-stamped keys (FD-P7 companion)
 
 The middleware now selects `revoked_at` and returns 401 `api_key_revoked` when it is non-null even
@@ -104,6 +142,10 @@ Fixed: the DB row is source of truth. On a failed/empty read we resolve via:
   `featureGate` (now hardened), so this is a diagnostic/startup-log surface,
   not the request-path gate. Flagged as a follow-up (see HANDOFF.md / Jira) to
   apply the same fail-direction; out of scope for SCRUM-2247's request-gate fix.
+  **Amended 2026-08-23 (DI-736):** `refreshDbFlag` no longer falls back to the
+  env var — it resolves last-known-good → boot snapshot → false, i.e. this
+  fail-direction. `init()`'s boot-time env fallback is unchanged and is still
+  the open item (DI-737).
 
 **Ops note (out of code scope):** prod env vars (`ENABLE_SEMANTIC_SEARCH`,
 `ENABLE_AI_FRAUD`, etc. ON in Cloud Run) and the `switchboard_flags` rows must
@@ -113,7 +155,7 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 
 - **apiKeyAuth.ts** — API key authentication via HMAC-SHA256 hash comparison. Raw keys never stored (Constitution 1.4).
 - **featureGate.ts** — Gates `/api/v1/*` behind `ENABLE_VERIFICATION_API` switchboard flag. TTL-cached (60s). Fails closed on DB read errors.
-- **flagRegistry.ts** — Centralized feature flag registry combining env-based and DB-backed flags. Call `init()` once at startup. PROOF-03 (SCRUM-2336) registers the `ENABLE_CONFIRMATION_PROOF_BACKFILL` getter → `config.enableConfirmationProofBackfill` (default OFF) — gates the confirmation-proof backfill in-process schedule (`routes/scheduled.ts`) and the `POST /jobs/populate-confirmation-proofs` HTTP trigger.
+- **flagRegistry.ts** — Centralized feature flag registry combining env-based and DB-backed flags. Call `init()` once at startup. Gate code paths on `await getFlagLive(name)` (60s TTL switchboard re-read, fail-direction per the 2026-08-23 note above); `getFlag()` is the boot snapshot for logging/diagnostics only. PROOF-03 (SCRUM-2336) registers the `ENABLE_CONFIRMATION_PROOF_BACKFILL` getter → `config.enableConfirmationProofBackfill` (default OFF) — gates the confirmation-proof backfill in-process schedule (`routes/scheduled.ts`) and the `POST /jobs/populate-confirmation-proofs` HTTP trigger.
 - **errorSanitizer.ts** — Strips provider names, API versions, and stack details from error responses before they reach clients (CISO THREAT-4).
 - **idempotency.ts** — Idempotency-Key header middleware (Stripe pattern). In-memory or Upstash Redis store.
 - **upstashIdempotency.ts** — Upstash Redis-backed idempotency store for horizontal scaling.
@@ -138,6 +180,7 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 
 - Every inbound connector webhook MUST pass through `webhookHmac` middleware.
 - Feature gates fail closed by default — if the DB read fails, kill-switchable gates return 503. Exception: `ENABLE_AI_EXTRACTION` is launch-required (§1.6) and keeps its launch default; last-known-good DB value wins over the fail default on a transient blip (SCRUM-2247).
+- Never gate a code path on `flagRegistry.getFlag()` — it is a boot-time snapshot. Use `await flagRegistry.getFlagLive(name)` (DI-736).
 - `errorSanitizer` must be registered BEFORE the global error handler.
 - No raw API keys in logs or DB — HMAC-SHA256 only.
 - `paymentTierRouter.ts` `tryCredits()`: a `deduct_unified_credits` RPC failure falls through to Stripe metered billing (fail OPEN — the org gets charged instead of a credit it already paid for being consumed) and now calls `captureCreditRpcFailureAlert({ failMode: 'open', ... })` from `utils/sentry.ts` — previously only a `logger.warn`, no alert. Fail-open behavior itself is unchanged (product decision); this only adds observability.

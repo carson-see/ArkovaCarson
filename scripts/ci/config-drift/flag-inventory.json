@@ -1,6 +1,6 @@
 {
   "_note": "AUTHORITATIVE flag inventory — every flag any Arkova runtime exposes, with the resolver that actually decides its value, the value prod resolves through that resolver, whether a customer can reach it, and what the soak needs from it. Read by scripts/ci/config-drift/flagInventory.ts, wired into check-config-drift.ts. `prodDbRow` is the live switchboard_flags row ('absent' = NO row, which is NOT the same as a row set false). `prodResolved` is the value the REAL runtime resolver returns — for an env flag not listed in deploy-worker.yml --set-env-vars that is the config.ts Zod default, because --set-env-vars replaces the container's whole env set.",
-  "_resolverNote": "There is no single flag system. SIX independent resolvers exist, with DIFFERENT fail directions for the SAME flag name: (1) flagRegistry.init() — a BOOT-TIME snapshot; DB row if present else process.env; refreshDbFlag() has zero callers so the snapshot never refreshes; only TWO flags are actually gated on it (ENABLE_BATCH_ANCHORING in jobs/batch-anchor.ts, ENABLE_EXPIRY_ALERTS in routes/cron.ts) — every other registry entry is startup logging only. (2) featureGate.ts — get_flag RPC, 60s TTL, fails CLOSED. (3) aiFeatureGate.ts — direct switchboard read, 60s TTL, last-known-good then per-flag fail default; kill-switchable flags fail CLOSED and deliberately ignore env (SCRUM-2247), ENABLE_AI_EXTRACTION falls back to env. (4) adesFeatureGate.ts / grcFeatureGate.ts — read then fall back to process.env (fail OPEN if the env var were ever set). (5) integrationKillSwitch.ts — raw process.env at module-factory time, never the DB. (6) frontend src/lib/switchboard.ts getFlag() — get_flag RPC with the code default as fallback. Consequence: flagRegistry and aiFeatureGate resolve ENABLE_SEMANTIC_SEARCH differently the moment the switchboard row is missing (registry -> env -> true, gate -> false).",
+  "_resolverNote": "There is no single flag system. SIX independent resolvers exist, with DIFFERENT fail directions for the SAME flag name: (1) flagRegistry — TWO reads with different contracts. getFlag() is the BOOT-TIME snapshot from init() (DB row if present else process.env) and is diagnostics/startup-logging only. getFlagLive() (DI-736 / SCRUM-3475) re-reads switchboard_flags on a 60s TTL via refreshDbFlag() and is what the two real gates use (ENABLE_BATCH_ANCHORING in jobs/batch-anchor.ts, ENABLE_EXPIRY_ALERTS in routes/cron.ts); on a failed refresh it holds last-known-good, else the boot snapshot, else false — the env var is never a re-open path. Every other registry entry is startup logging only. (2) featureGate.ts — get_flag RPC, 60s TTL, fails CLOSED. (3) aiFeatureGate.ts — direct switchboard read, 60s TTL, last-known-good then per-flag fail default; kill-switchable flags fail CLOSED and deliberately ignore env (SCRUM-2247), ENABLE_AI_EXTRACTION falls back to env. (4) adesFeatureGate.ts / grcFeatureGate.ts — read then fall back to process.env (fail OPEN if the env var were ever set). (5) integrationKillSwitch.ts — raw process.env at module-factory time, never the DB. (6) frontend src/lib/switchboard.ts getFlag() — get_flag RPC with the code default as fallback. Consequence: flagRegistry and aiFeatureGate resolve ENABLE_SEMANTIC_SEARCH differently the moment the switchboard row is missing (registry -> env -> true, gate -> false).",
   "_healthNote": "GET /health does NOT expose the flag registry (verified live 2026-08-11: it returns status/version/git_sha/uptime/network/checks only). The Sprint-1 plan in config-drift/README.md item 2 — 'a read-only cron capture of GET /health + the flag registry' — cannot be built against today's /health without first adding a flag block to it.",
   "observedProd": {
     "projectRef": "vzwyaatejekddvltxyye",
@@ -32,12 +32,12 @@
     },
     "ENABLE_BATCH_ANCHORING": {
       "sources": ["db"],
-      "resolvers": ["flagRegistry.getFlag in jobs/batch-anchor.ts:622"],
+      "resolvers": ["flagRegistry.getFlagLive in jobs/batch-anchor.ts (60s TTL switchboard re-read)"],
       "prodDbRow": true,
       "prodResolved": true,
       "customerReachable": true,
       "soak": "must-be-on",
-      "why": "The nightly 3am batch drain — the primary anchoring path under load. NOTE: resolved through the BOOT-TIME flagRegistry snapshot, so flipping this switchboard row mid-soak has NO effect until the worker restarts."
+      "why": "The nightly 3am batch drain — the primary anchoring path under load. Resolved through flagRegistry.getFlagLive (DI-736), so flipping this switchboard row takes effect within 60s without a worker restart; a transient DB failure holds the last-known-good value rather than halting or resuming the drain."
     },
     "ENABLE_ATTESTATION_ANCHORING": {
       "sources": ["db", "frontend"],
@@ -339,12 +339,12 @@
     },
     "ENABLE_EXPIRY_ALERTS": {
       "sources": ["db"],
-      "resolvers": ["flagRegistry.getFlag in routes/cron.ts:1248"],
+      "resolvers": ["flagRegistry.getFlagLive in routes/cron.ts (60s TTL switchboard re-read)"],
       "prodDbRow": false,
       "prodResolved": false,
       "customerReachable": true,
       "soak": "either",
-      "why": "SOAK BLIND SPOT. Credential expiry alerting is off. One of only two flags actually gated on the boot-time flagRegistry snapshot."
+      "why": "SOAK BLIND SPOT. Credential expiry alerting is off. One of only two flags actually gated on flagRegistry (via getFlagLive since DI-736 — a flip now takes effect within 60s, no restart needed)."
     },
     "ENABLE_ADES_SIGNATURES": {
       "sources": ["db", "env"],

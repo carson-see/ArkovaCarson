@@ -1428,7 +1428,10 @@ cronRouter.post('/check-attestation-expiry', async (_req, res) => {
 cronRouter.post('/check-credential-expiry', async (_req, res) => {
   try {
     const { flagRegistry } = await import('../middleware/flagRegistry.js');
-    if (!flagRegistry.getFlag('ENABLE_EXPIRY_ALERTS')) {
+    // DI-736 / SCRUM-3475: getFlagLive re-reads switchboard_flags on a 60s TTL.
+    // getFlag is the boot snapshot — flipping this row would otherwise have no
+    // effect until the worker restarted.
+    if (!(await flagRegistry.getFlagLive('ENABLE_EXPIRY_ALERTS'))) {
       res.json({ skipped: true, reason: 'ENABLE_EXPIRY_ALERTS flag is disabled' });
       return;
     }
