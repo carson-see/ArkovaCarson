@@ -174,6 +174,12 @@ One deliberate shape alignment: `record_uri` for `oracle_batch_verify` members n
 REQUESTED public_id (via `shapeAnchorRow(data, id)`) rather than the RPC row's own `public_id`. These
 are the same value for a lookup keyed on that id, and it is what `verify_batch` has always done.
 
+An all-failed batch is deliberately **not** an MCP-level error: the envelope stays well-formed and each
+row carries its own reason, so an agent can retry exactly the ids that failed. `mcp-server.test.ts`
+pins `isError` falsy for that case on purpose — flipping it back to a batch-wide `isError` would
+re-create the DI-038 collapse by a different route. The suite also pins the fix at the tool's
+documented max (25 ids, one timeout → 24 rows survive), which is the bulk workflow the tool is sold on.
+
 ## Open work
 - SCRUM-1793 (PR #741 NEW) — `validate_api_key` RPC migration committed to repo; already applied to prod + staging via Supabase MCP.
 - HakiChain sandbox key (`api_key_id=c75d84b9-…`) has wildcard CIDR allowlist entry written 2026-05-08.

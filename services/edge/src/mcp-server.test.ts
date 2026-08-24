@@ -201,7 +201,7 @@ describe('buildOracleBatchEnvelope — DI-038 partial results survive a per-cred
     });
   });
 
-  it('still fails the batch loudly when every member fails', async () => {
+  it('reports every member as failed — in a well-formed envelope — when all members fail', async () => {
     mockFetch.mockImplementation(
       routeByPublicId({
         'ARK-2026-001': timesOut(),
@@ -215,11 +215,47 @@ describe('buildOracleBatchEnvelope — DI-038 partial results survive a per-cred
       envWith(),
     );
 
-    // Not an MCP-level error — the envelope is still well-formed — but every
-    // row reports its own failure, which is what an agent can act on.
+    // An all-failed batch is NOT an MCP-level error: the envelope is still
+    // well-formed and every row carries its own reason, which is what an agent
+    // can actually act on (retry these ids). Pinned explicitly so a future
+    // change cannot quietly flip the all-failed case back to a batch-wide
+    // isError — the very collapse DI-038 was about.
+    expect(result.isError).toBeFalsy();
+
     const payload = payloadOf(result);
+    expect(payload.results).toHaveLength(2);
     expect(payload.results.every((r) => r.verified === false)).toBe(true);
     expect(payload.results.every((r) => r.error === 'Verification lookup timed out')).toBe(true);
+  });
+
+  // The brief's actual scenario: "an ATS or agent batching 25 credentials gets
+  // a total failure whenever any single lookup times out." 25 is the documented
+  // schema max for this tool, so pin the fix at the boundary it is sold on —
+  // one flaky member out of a full batch must cost exactly one row.
+  it('loses only the failing member when a full 25-credential batch has one timeout', async () => {
+    const ids = Array.from({ length: 25 }, (_, i) => `ARK-2026-${String(i + 1).padStart(3, '0')}`);
+    const failing = ids[12];
+
+    mockFetch.mockImplementation(
+      routeByPublicId(
+        Object.fromEntries(
+          ids.map((id) => [id, id === failing ? timesOut() : ok({ public_id: id })]),
+        ),
+      ),
+    );
+
+    const result = await buildOracleBatchEnvelope(ids, CONFIG, envWith());
+
+    expect(result.isError).toBeFalsy();
+    const payload = payloadOf(result);
+    expect(payload.results).toHaveLength(25);
+    expect(payload.results.map((r) => r.public_id)).toEqual(ids);
+    expect(payload.results.filter((r) => r.verified === true)).toHaveLength(24);
+    expect(payload.results[12]).toEqual({
+      public_id: failing,
+      verified: false,
+      error: 'Verification lookup timed out',
+    });
   });
 });
 
