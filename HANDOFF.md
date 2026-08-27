@@ -240,6 +240,28 @@ full-functionality soak has its own register — `FD-1`…`FD-16` in
 
 ### Migrations (2026-08-27)
 
+- **★ `main` is RED on `Migration Drift Check` right now, and it is the direct consequence of
+  applying 0418/0419 ahead of their PRs.** Two blocking `ledger-orphan-prod-row` annotations, read
+  from the check-run annotations API on run
+  [33117360131](https://github.com/carson-see/ArkovaCarson/actions/runs/33117360131): *"prod ledger
+  has version=0418 (name=0418_sec_replay_dashboard_cache_refresher_revokes) with no matching
+  supabase/migrations/0418_*.sql in the repo — a migration reached prod WITHOUT its source landing
+  on main"*, and the same for `0419`. **No docs commit caused this** — the immediately preceding
+  drift run on `c9b210bd1`
+  ([33114500112](https://github.com/carson-see/ArkovaCarson/actions/runs/33114500112), 20:40:51Z)
+  passed with warnings only, so the flip happened when the two rows entered the prod ledger between
+  20:41Z and 21:00Z; `git diff --name-only c9b210bd1..main` over the docs commits that followed
+  shows zero `.sql` and zero exemption-file changes.
+  The gate names both remedies itself: **merge the owning PRs** (#2336, #2355 — lands the files and
+  reconciles it properly) **or** add `0418`/`0419` to
+  `scripts/ci/snapshots/ledger-numeric-exemptions.json` with a documented reason as a holding
+  measure. **A parallel session has already built the second option** on branch
+  `fix/ledger-exempt-0418-0419` (`d181947959`, pushed 2026-08-27, "exempt 0418/0419 pending merge,
+  drop stale 0410-0413 exemptions [T0]") — check that branch before writing a competing fix.
+  The same run also carries four NON-blocking `ledger-stale-exemption` warnings: `0410`–`0413` are
+  now reconciled (present in prod AND on main), so their exemptions suppress nothing real and only
+  mask a future genuine drift on those prefixes. That branch drops them in the same commit.
+
 - **Prod ledger head is `0419`.** `0418_sec_replay_dashboard_cache_refresher_revokes` and
   `0419_sec_replay_v_slow_queries_relation_revoke` were applied to prod (`vzwyaatejekddvltxyye`) on
   2026-08-27 via the Supabase MCP `apply_migration`, then reconciled to their NUMERIC ledger
