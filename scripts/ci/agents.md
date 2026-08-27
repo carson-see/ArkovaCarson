@@ -173,6 +173,46 @@ Two design points to preserve if you touch it:
   REPORT-ONLY (`--report-only`, `::warning::`, `continue-on-error`) until a real
   green soak calibrates it; `worker-build-parity` / `verifier-build` are
   deliberately NON-REQUIRED pending a Carson-gated required-flip.
+  **⚠️ Partly superseded 2026-08-23:** the `evidence-identity-report` sentence
+  above is stale — that job is now `evidence-identity` and is FAIL-CLOSED (see
+  the next bullet). The sentence is kept verbatim only because this file is
+  append-only. `worker-build-parity` / `verifier-build` remain NON-REQUIRED, and
+  the wiring checklist itself now has three places to look, not two:
+  `ci.yml`, **`.mergify.yml` merge_conditions**, and branch protection.
+- **`evidence-identity` and `anti-hollow-soak` are FAIL-CLOSED** as of 2026-08-23
+  (SCRUM-2897 / SCRUM-2965 / SCRUM-2977). Both shipped REPORT-ONLY
+  (`--report-only`, `::warning::`, `continue-on-error`, `|| true`) under the
+  W3-freeze CTO carve-out and gated nothing; all of those were removed together
+  and both check names were added to every `.mergify.yml` queue rule, because a
+  check absent from merge_conditions can be red while Mergify merges anyway.
+  Two safety preconditions came with the flip and must not be undone:
+  `evidence-identity` **skips Mergify's speculative `mergify/merge-queue/*` PRs**
+  (they carry Mergify's body, not the original evidence block — without the skip
+  every queued merge deadlocks), and it resolves PR body/head/draft **LIVE via
+  `gh api`** rather than the frozen event payload, because ci.yml's
+  `pull_request` trigger declares no `types:` and so never fires on a body
+  `edited` — a frozen binding would make a `gh pr edit` head-SHA fix
+  unobservable, i.e. a red check with no remedy (SCRUM-3026 replay class).
+  A declared `Tier: T0` short-circuits to skip BEFORE `hasEvidenceSection()`,
+  which deliberately matches a bare `Tier: T0` line; without that ordering a
+  fail-closed gate reds every T0 PR in the repo.
+  `scripts/ci/soak-integrity-gates-failclosed.test.ts` pins all of it.
+  Branch-protection required-check status is repo-admin state and is NOT set by
+  this repo's config — verify it separately before claiming these block a merge
+  outside the Mergify path.
+  Two review addenda (2026-08-23, second pass):
+  (a) `checkCleanPreflightIdentity`'s check-B2 reads an embedded preflight SHA
+  only from a KEYED form (`head=` / `head_sha:` / `commit=` / `sha=`) or a bare
+  full 40-hex run. The old "first `\b[0-9a-f]{7,40}\b` anywhere in the value"
+  also matched a 7-digit row count and `ref=abc1234`; report-only that was a
+  spurious warning, merge-blocking it reds a T2/T3 PR on a message its author
+  cannot act on. The cost is a bare, unkeyed, SHORT sha no longer being matched.
+  (b) Neither gate is "always reports": both jobs live in `ci.yml`, whose
+  `pull_request:` trigger carries `paths-ignore` (`LICENSE`, `.gitignore`,
+  `README.md`, `memory/**.md`). A PR touching ONLY those paths runs no ci.yml
+  job, so the checks never post and a Mergify queue entry waits. Pre-existing
+  class — `Orphaned Export Lint` and `Python SDK Tests` share it — but do not
+  cite these gates as unconditional coverage.
 - **`check-staging-evidence.ts` is the tier detector AND the evidence gate.**
   It fails CLOSED to the highest tier. The alternate-evidence modes
   (frontend-T2, architecturally-unsoakable) are narrow and mutually exclusive:
