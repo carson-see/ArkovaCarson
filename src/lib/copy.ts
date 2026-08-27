@@ -2764,10 +2764,51 @@ export const PAYMENT_LABELS = {
 
 export const EXTRACTION_RECOVERY_LABELS = {
   TITLE: 'Extraction Unsuccessful',
-  DESCRIPTION: 'We couldn\'t extract metadata from this document. This may be due to image quality or an unsupported format.',
+  /**
+   * GENERIC fallback only. Founder report 2026-08-27: this string used to be
+   * the ONLY thing the recovery step rendered, and it asserted a cause we did
+   * not know — "This may be due to image quality or an unsupported format."
+   * It was false for a timeout, a dropped session, or a supported-but-slow
+   * file (the reported case was a supported `.xml`). The specific causes now
+   * live in EXTRACTION_FAILURE_REASON_COPY, keyed by the orchestrator's
+   * `reasonCode`; this line is shown ONLY when no recognized code arrived, so
+   * it must not assert a cause.
+   */
+  DESCRIPTION: 'We couldn\'t extract metadata from this document. You can retry, enter the details yourself, or secure the document without metadata.',
   RETRY: 'Retry Extraction',
   ENTER_MANUALLY: 'Enter Manually',
   SKIP: 'Skip \u2014 Anchor Without Metadata',
+} as const;
+
+/**
+ * Why extraction failed, as user-facing copy keyed by the bounded
+ * `ExtractionFailureReason` code that `src/lib/aiExtraction.ts` reports through
+ * its progress callback.
+ *
+ * §1.6 CONTRACT — read before adding a key. Every value here is a FIXED string
+ * and this map is the ONLY thing the extraction-failed recovery step renders as
+ * a cause. The orchestrator's `progress.message` is deliberately NOT rendered:
+ * two of its branches carry text we do not control (a worker error-response
+ * body, and the `err instanceof Error ? err.message` catch-all, which can wrap
+ * an OCR-stage error whose `cause` references document-derived text). Routing
+ * through a code means an unrecognized or absent code degrades to the generic
+ * EXTRACTION_RECOVERY_LABELS.DESCRIPTION instead of printing arbitrary text
+ * into the DOM. Never add a value that interpolates anything read from the
+ * document, and never add a passthrough key.
+ */
+export const EXTRACTION_FAILURE_REASON_COPY = {
+  timeout:
+    'The analysis took longer than expected and was stopped. This is usually temporary \u2014 retrying often works. Your file never left your device.',
+  network:
+    'We couldn\'t reach the server. Check your connection and try again \u2014 your file never left your device.',
+  auth:
+    'Your session has expired. Sign in again to analyze this document \u2014 your file never left your device.',
+  no_text:
+    'No readable text was found in this document \u2014 it may be a scanned image. A clearer copy may work, or you can enter the details yourself. Your file never left your device.',
+  unsupported_format:
+    'This file format couldn\u2019t be read on your device. Supported formats: PDF, Word (.docx), OpenDocument (.odt/.odp), PowerPoint (.pptx), EPUB, RTF, SVG, images, and text files.',
+  server_error:
+    'The analysis service couldn\'t complete this request. This is usually temporary \u2014 retrying often works. Your file never left your device.',
 } as const;
 
 export const OCR_LABELS = {
