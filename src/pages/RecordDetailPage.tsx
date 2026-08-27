@@ -222,6 +222,12 @@ export function RecordDetailPage() {
           // AssetDetailView can render the (entitlement-gated) CPE section.
           // `cpe_metadata` is selected by useAnchor (select('*')).
           cpeMetadata: anchor.cpe_metadata as Record<string, unknown> | null ?? undefined,
+          // CLE-R1 (SCRUM-1869): the analogous CLE blob. AssetDetailView has
+          // declared and consumed `cleMetadata` since CLE-R1, but nothing fed
+          // it here, so the CLE detail section rendered nothing for every
+          // record. Same `select('*')` source and same entitlement gate as CPE
+          // — keep the two lines together so neither is dropped alone.
+          cleMetadata: anchor.cle_metadata as Record<string, unknown> | null ?? undefined,
           description: anchor.description ?? undefined,
           orgId: anchor.org_id ?? undefined,
           issuerName: (() => {
