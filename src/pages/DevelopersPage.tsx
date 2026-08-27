@@ -15,6 +15,7 @@ import { Layers, Brain, ArrowRight, Copy, Check, Bot, AlertCircle, Building2, Ke
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
 import { PUBLIC_API_URL } from '@/lib/workerClient';
+import { PLATFORM_METRICS, PLATFORM_METRICS_AS_OF } from '@/lib/copy';
 
 const API_DOCS_URL = `${PUBLIC_API_URL}/api/docs`;
 const OPENAPI_SPEC_URL = `${PUBLIC_API_URL}/api/docs/spec.json`;
@@ -198,25 +199,19 @@ export function DevelopersPage() {
                 API Documentation
               </a>
             </div>
-            {/* GEO-16: Social proof metrics */}
+            {/* GEO-16: Social proof metrics.
+                Figures are single-sourced from PLATFORM_METRICS (R-7: a public
+                number is a claim and must be sourced + dated). Never re-state
+                one inline here. */}
             <div className="flex flex-wrap justify-center gap-8 mt-12 text-center">
-              <div>
-                <p className="text-2xl font-bold text-[#00d4ff]">1.39M+</p>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Records Secured</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-[#00d4ff]">320K+</p>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Public Records</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-[#00d4ff]">21</p>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Document Types</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-[#00d4ff]">87.2%</p>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">AI Extraction F1</p>
-              </div>
+              {Object.entries(PLATFORM_METRICS).map(([key, metric]) => (
+                <div key={key}>
+                  <p className="text-2xl font-bold text-[#00d4ff]">{metric.value}</p>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">{metric.shortLabel}</p>
+                </div>
+              ))}
             </div>
+            <p className="mt-4 text-[10px] text-[#bbc9cf]">{PLATFORM_METRICS_AS_OF}</p>
           </div>
         </section>
 
