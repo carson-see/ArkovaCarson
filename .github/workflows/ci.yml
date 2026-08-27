@@ -702,6 +702,24 @@ jobs:
         working-directory: services/worker
         run: npm ci --ignore-scripts
 
+      # SCRUM-1811: the worker COMPILE gate, at PR time, on a REQUIRED check.
+      # Root tsconfigs `exclude` services/, so root `npm run typecheck` never
+      # sees worker source — a worker TS error passed every PR check and only
+      # failed post-merge in deploy-worker.yml, blacking out ALL prod worker
+      # deploys while main kept merging (memory/project_deploy_typecheck_blackout.md;
+      # SCRUM-1810 was exactly this).
+      #
+      # This is the SAME command deploy-worker.yml's `Typecheck` step runs, and
+      # deliberately NOT `-p tsconfig.build.json`: the plain tsconfig.json
+      # INCLUDES src/**/*.test.ts, and a type error in a worker TEST file is the
+      # documented blackout trigger. The `worker-build-parity` job compiles
+      # tsconfig.build.json (tests excluded), is in-job path-gated, and is
+      # NON-REQUIRED — so it cannot close this gap. A step in this already-required
+      # job can, without touching branch protection (a Carson/admin surface).
+      - name: Typecheck worker (deploy-gate parity)
+        working-directory: services/worker
+        run: node_modules/.bin/tsc --noEmit
+
       - name: Lint worker (deploy-gate parity)
         working-directory: services/worker
         run: npm run lint
@@ -711,6 +729,16 @@ jobs:
         # `npx eslint src/ --max-warnings 0` (or any other drift). The
         # 2026-04-25 outage was caused by exactly this drift.
         run: node_modules/.bin/tsx scripts/ci/check-deploy-lint-parity.ts
+
+      - name: Verify deploy-gate / CI worker TYPECHECK parity (SCRUM-1811)
+        # Third sibling of the lint (R0-4) and build (sub-decision B) parity
+        # guards. Asserts the worker typecheck step above still exists, still
+        # lives in THIS required job, still runs unconditionally, and still
+        # compiles the plain tsconfig.json — so nobody can quietly weaken it to
+        # tsconfig.build.json and reopen the test-file blackout. Pure
+        # file-reading hard invariant, same as its siblings: no label, env, or
+        # git dependency, so it runs cleanly in this shallow checkout.
+        run: node_modules/.bin/tsx scripts/ci/check-deploy-typecheck-parity.ts
 
       - name: Verify deploy-gate / CI worker BUILD parity
         # CONDITIONAL-GO sub-decision B — 3-way build-command parity guard.

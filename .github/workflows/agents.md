@@ -1,5 +1,49 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-08-23 — worker `tsc --noEmit` is now a STEP in `typecheck-lint` (SCRUM-1811)
+
+`typecheck-lint` gained `Typecheck worker (deploy-gate parity)` —
+`node_modules/.bin/tsc --noEmit` in `services/worker`, placed between the existing
+`Install worker dependencies` and `Lint worker (deploy-gate parity)` steps — plus a
+`Verify deploy-gate / CI worker TYPECHECK parity (SCRUM-1811)` guard running
+`scripts/ci/check-deploy-typecheck-parity.ts`.
+
+**Why this was a real hole even though a worker compile job already existed.** Three surfaces, none
+of which covered worker test files at PR time:
+
+- Root `npm run typecheck` — root tsconfigs `exclude` `services/`, so tsc never sees worker source.
+- `worker-build-parity` — runs `npm run build` == `tsc -p tsconfig.build.json`, and that config
+  `exclude`s `src/**/*.test.ts` / `*.spec.ts`. It is also in-job path-gated AND non-required.
+- `deploy-worker.yml`'s `Typecheck` — the ONLY surface compiling the plain `tsconfig.json` (tests
+  included), and it fires on push to `main`, i.e. **after** merge.
+
+So a TS error in a worker TEST file passed every PR check and then blacked out ALL prod worker
+deploys while `main` kept merging (`memory/project_deploy_typecheck_blackout.md`; SCRUM-1810 was
+literally this; SCRUM-3130 recorded main ~20 merged PRs ahead of prod).
+
+**Why a step here and not a required-flip of `Worker Build (deploy-parity)`.** The CONDITIONAL-GO
+sub-decision B note below reserves that flip to Carson/admin behind the CEO-gated quiet window, and
+branch protection is not a surface a PR can change for itself — the same reasoning recorded for the
+edge-worker test steps. `typecheck-lint` is ALREADY `check-success = TypeCheck & Lint` in all three
+`.mergify.yml` queues, so a step added here blocks a merge on day one with no branch-protection
+change. **`worker-build-parity` and `Verifier Build` remain NON-REQUIRED and untouched;
+`.mergify.yml` is untouched.**
+
+Two properties the parity guard pins, because getting either wrong silently reopens the gap:
+`tsc --noEmit` against the **plain** tsconfig (NOT `-p tsconfig.build.json`, which drops the test
+files that caused the outage), and **no `if:` guard** on the step (a path filter would miss a
+test-only edit). Baseline at wiring time: worker `tsc --noEmit` **clean on `main`** — verified
+locally before the gate was added, per this file's "a gate must not be merged red" rule.
+
+Naming is load-bearing: the step is `Typecheck worker (deploy-gate parity)`, deliberately carrying
+neither `lint` (which `check-deploy-lint-parity.ts` keys on) nor the exact `deploy-parity` marker
+(which `check-deploy-build-parity.ts` keys on), so the two existing scanners do not capture it.
+Verified: the lint-parity gate still reports exactly 2 worker-lint steps. **That naming rule is
+enforced, not just documented** — `check-deploy-typecheck-parity.ts` rejects a rename of this step
+into either sibling marker, because the trap ("Typecheck worker (deploy-parity)", mirroring the
+sibling JOB name `Worker Build (deploy-parity)`) would otherwise make a SIBLING gate capture
+`tsc --noEmit`, demand `npm run build`, and go red pointing at the wrong file.
+
 ## 2026-08-23 — the `commits` step hands off a FILE PATH, not the messages themselves (E2BIG)
 
 `policy-lints`' `Aggregate commit messages` step no longer inlines `git log`. It runs
