@@ -783,15 +783,29 @@ sibling-worktree files) + 1`. `origin/main` head file is `0409`. The reservation
 rows in this file claim `0410`–`0414`. `gh pr list --state open --json files`
 across all open PRs additionally claims `0415`
 (`0415_ferpa_directory_info_opt_out_public_projections.sql`), `0417`, `0418` and
-`0419`. A scan of every sibling worktree's `supabase/migrations/` shows the same
-set and nothing at `0420`. `0416` is an unclaimed GAP rather than a free slot —
-it is skipped deliberately, because taking a hole below other sessions' claims
-is how two files end up sharing a prefix. **Next author claims `0421` —
-re-derive, do not trust this line.**
+`0419`. `0416` is an unclaimed GAP rather than a free slot — it is
+skipped deliberately, because taking a hole below other sessions' claims is how
+two files end up sharing a prefix.
 
-| `0420` | `fix/public-verify-subtype-projection` (this PR) | SCRUM-3529 | `0420_scrum3529_public_anchor_sub_type_projection.sql` | FILE-ONLY, applied nowhere. T3. |
+**RENUMBERED `0420` -> `0421` (2026-08-27).** This file originally claimed `0420`
+and COLLIDED with `0420_scrum2538_check_unified_credits_fail_closed.sql` (PR
+#2442, `fix/credits-fail-closed`). Both claims were made the same evening; that
+PR's commit `c835c32a6` (2026-08-23 20:43:24 -0400) precedes this branch's
+`a4509d220` by 47 seconds and reached `origin` first, so under the RTE
+first-claim-wins protocol (the `0407`/`0408` precedent) `0420` stays with
+SCRUM-2538 and SCRUM-3529 moves here to `0421`. Neither migration is applied
+anywhere, so this was a rename on this branch, not a compensating migration.
+Note the earlier derivation line in this section is superseded: it read "nothing
+at `0420`", which was true of the pushed refs it scanned but missed that
+sibling's claim. **Next author claims `0422` — re-derive, do not trust this
+line.** Separately, `0415` is claimed TWICE across all refs
+(`0415_false_secured_offchain_anchor_quarantine.sql` and
+`0415_ferpa_directory_info_opt_out_public_projections.sql`); that collision is
+unresolved and is NOT addressed here.
 
-- **0420_scrum3529_public_anchor_sub_type_projection.sql** — adds ONE key,
+| `0421` | `fix/public-verify-subtype-projection` (this PR) | SCRUM-3529 | `0421_scrum3529_public_anchor_sub_type_projection.sql` | FILE-ONLY, applied nowhere. T3. |
+
+- **0421_scrum3529_public_anchor_sub_type_projection.sql** — adds ONE key,
   `'sub_type', private.public_free_text_or_null(a.sub_type)`, to
   `public.get_public_anchor`. `CredentialRenderer` falls back to the credential
   sub-type whenever `CREDENTIAL_TYPE_LABELS` resolves to the generic `Other`
@@ -824,7 +838,7 @@ re-derive, do not trust this line.**
 - **MERGE-ORDER DEPENDENCY with PR #2314 / `0415`.**
   `0415_ferpa_directory_info_opt_out_public_projections.sql` (PR #2314, draft)
   ALSO redefines `public.get_public_anchor`, adding the FERPA §99.37
-  directory-info suppression. Neither PR is merged, so `0420`'s body is built on
+  directory-info suppression. Neither PR is merged, so `0421`'s body is built on
   the current `main` head (`0385`) and does NOT contain `0415`'s changes —
   despite carrying the higher number. **Whichever lands SECOND must rebuild its
   body on the other's before merging**, or it reverts the first: the

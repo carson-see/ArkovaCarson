@@ -1,4 +1,4 @@
--- 0420 — SCRUM-3529: `get_public_anchor` must project the canonical
+-- 0421 — SCRUM-3529: `get_public_anchor` must project the canonical
 -- `anchors.sub_type`, or the public verify page renders "Other".
 --
 -- ─── THE DEFECT ────────────────────────────────────────────────────────────
@@ -186,7 +186,7 @@ BEGIN
         ELSE COALESCE(o.display_name, 'Unknown Issuer')
       END,
       'credential_type', COALESCE(a.credential_type::text, 'OTHER'),
-      -- 0420 (SCRUM-3529): the CANONICAL anchors.sub_type column, immediately
+      -- 0421 (SCRUM-3529): the CANONICAL anchors.sub_type column, immediately
       -- after the parent type it refines. VALUE-GATED, never raw: sub_type is
       -- bare `text` with no CHECK and no enum, so nothing in the schema stops
       -- an issuer or an extraction pipeline writing free text into it. This is
@@ -389,7 +389,7 @@ COMMENT ON FUNCTION public.get_public_anchor(text)
      'keyed HMAC (0356/0383). 0385 adds the VALUE-level PII gate: academic '
      'records (DEGREE/CERTIFICATE/TRANSCRIPT) emit no issuer- or '
      'extraction-authored free text, and every other type has its free text '
-     'dropped when it carries format- or keyword-anchored PII. 0420 adds the '
+     'dropped when it carries format- or keyword-anchored PII. 0421 adds the '
      'canonical anchors.sub_type as a value-gated top-level key so the public '
      'verify page can render a credential sub-type instead of the generic '
      '"Other" (SCRUM-3529); it is NOT academic-suppressed, matching the verify '
