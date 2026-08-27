@@ -14,6 +14,23 @@
 
 ## Now
 
+**State as of 2026-08-27T21:00Z, verified live this session.** This block is the only current-state
+claim in this file; everything under `## History` is the dated record and is not re-asserted here.
+Everything dated 2026-08-27 below was read directly this session — `gcloud run services describe
+arkova-worker`, a live `/health` fetch, `gh run view`, `gh variable get`, `gh pr view`,
+`gh pr checks`, the Supabase MCP `list_migrations` / `list_projects`, and `git log --all
+--diff-filter=A` over every ref. Sub-blocks carrying an earlier date still carry their own earlier
+reading and say so; where 2026-08-27 supersedes one, the older text is marked, not deleted.
+
+**Three headline changes since the 2026-08-23 snapshot:**
+1. **Prod was redeployed 2026-08-27** off a week-old SHA — see `### Prod`.
+2. **Migrations `0418` and `0419` reached prod**, moving the prod ledger head from `0414` to `0419`
+   while `main` still tops out at `0414` — see `### Migrations`.
+3. **No soak window is open.** Every soak the 2026-08-23 block described as RUNNING has closed and
+   been sealed; the rigs are still standing and are now a cost item — see `### Soaks`.
+
+_(2026-08-23 header paragraph and the two-soaks warning follow, SUPERSEDED, kept for the record.)_
+
 **State as of 2026-08-23T19:45Z, verified live.** This block is the only current-state claim in
 this file; everything under `## History` is the dated record and is not re-asserted here. The prod,
 soak-warning and documentation sub-blocks below were all re-verified 2026-08-23 against live
@@ -23,6 +40,13 @@ live in [docs/staging/SOAK-FINDINGS-2026-08.md](docs/staging/SOAK-FINDINGS-2026-
 full-functionality soak has its own register — `FD-1`…`FD-16` in
 [docs/staging/fullsoak-2026-08/manifest-DAY-0.md](docs/staging/fullsoak-2026-08/manifest-DAY-0.md) §11.
 
+> ⚠️ **SUPERSEDED 2026-08-27 — NEITHER of these soaks is running any more.** Both windows closed
+> on 2026-08-23 and their evidence is sealed. `gcloud run services list --project arkova1 --region
+> us-central1` on 2026-08-27T21:00Z still shows `arkova-worker-ferpa2314-staging` and
+> `arkova-worker-wave2-2026-08-staging` standing, and `list_projects` still shows
+> `wjuelohtpklodpjklvqy` / `tkciooifwxwnkoizgalp` ACTIVE_HEALTHY — **a standing service is not a
+> running soak.** See `### Soaks`. The original warning is kept verbatim below.
+>
 > ⚠️ **TWO soaks are RUNNING tonight (2026-08-23). Read this before touching any rig, driver or PR.**
 > - **ferpa2314** (PR #2314, FD-FERPA-1) — isolated Supabase `wjuelohtpklodpjklvqy`; T3 clock closed
 >   **2026-08-23T19:24:30Z**. Supervisor healthy through 19:05:06Z (ok=419-440, fail=0 per cycle).
@@ -59,7 +83,56 @@ full-functionality soak has its own register — `FD-1`…`FD-16` in
 
 ### Prod
 
-- Worker `git_sha 3db27b5402507213473bbb7de189dd6fcc696de5` (short `3db27b540`), revision
+- **Worker `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999`, revision `arkova-worker-01322-tol`
+  serving 100%. Verified live 2026-08-27T21:00Z** by direct `/health` read against
+  `https://arkova-worker-kvojbeutfa-uc.a.run.app`:
+  `{"status":"healthy","version":"0.1.0","git_sha":"0440ce7e5c09ab15da60157e9a96128f669dc999",
+  "network":"mainnet","checks":{"database":"ok","anchoring":"ok","kms":"ok"}}`, cross-checked
+  against `gcloud run services describe arkova-worker --region us-central1 --project arkova1`
+  (`status.traffic` → `arkova-worker-01322-tol`, `percent: 100`, `latestRevision: true`).
+  Landed by deploy-worker run
+  [**33114229919**](https://github.com/carson-see/ArkovaCarson/actions/runs/33114229919) —
+  `event: workflow_dispatch`, `headSha 0440ce7e5c09ab15da60157e9a96128f669dc999`,
+  `conclusion: success`, 2026-08-27T20:37:29Z → 20:49:15Z.
+  _(2026-08-27 sub-block; supersedes the 2026-08-23 `3db27b540` / `arkova-worker-01319-lit` claim
+  immediately below, which was its ancestor.)_
+
+- **The deploy pause is still ON — this deploy went around it, deliberately and by the documented
+  path.** `gh variable get DEPLOY_WORKER_PAUSED` reads **`true`** at 2026-08-27T21:00Z, unchanged.
+  The redeploy used `workflow_dispatch`, which `.github/workflows/agents.md` §"Deploy-worker pause
+  gate" records as ALWAYS bypassing the pause ("a human pressing the button is the override"). So
+  the standing rule is intact: a `push` to `main` still does **not** reach prod, and the
+  `pause_lift_obligation` in
+  [`docs/staging/rc-manifests/rc-deferred-2026-08-22.json`](docs/staging/rc-manifests/rc-deferred-2026-08-22.json)
+  is **still owed** — a workflow_dispatch deploy does not discharge it. Do not read this deploy as
+  the pause having been lifted.
+
+- **Prod had been stale for eight days before this.** `3db27b540` was deployed 2026-08-23 and, by
+  2026-08-27, sat 39 commits behind `main`. `0440ce7e5` is the merge commit of PR #2400.
+
+- **Prod is already three merges behind `main` again.** `origin/main` is `c9b210bd1` at
+  2026-08-27T21:00Z (`git rev-parse origin/main`); prod is `0440ce7e5`. The three commits prod does
+  not carry are `ccd74f8d9` (#2431, frontend/copy only — not worker code), `59cdbd075` (#2428,
+  `.claude/hooks` + `scripts/agent` only — not worker code) and `c9b210bd1` (#2264,
+  `@google-cloud/kms` 5.7.0 → 6.0.0 in `services/worker/package.json`, **which IS worker code and is
+  NOT in prod**). Only the last one is a real prod-vs-main delta in worker behaviour.
+
+- **What this deploy actually shipped.** `0440ce7e5` carries the seven PRs merged 2026-08-27T20:24Z
+  – 20:28Z. The load-bearing one is **#2400** (`services/worker/src/lib/safe-fetch.ts`): the
+  dependabot bump undici 7.29.0 → 8.10.0 would have broken **100% of worker egress** without the
+  accompanying code fix. `defaultSafeFetchDeps().dispatch` was pairing an Agent from the *npm*
+  `undici` package with `globalThis.fetch`, which is backed by Node's *internal* bundled undici;
+  undici 8 dropped the legacy-handler shim, so `Agent.dispatch` now rejects Node's internal handler
+  with `InvalidArgumentError: invalid onRequestStart method` (`UND_ERR_INVALID_ARG`). The fix imports
+  undici's own `fetch` so Agent and fetch share one realm. Blast radius had it shipped unfixed:
+  credential-source imports and the CE Registry / CTDL egress path. Also in this deploy: **#2269**
+  (rate-limit cluster — cross-instance Upstash state, once-per-request counting, env-namespaced
+  keyspaces), **#2427** (worker typecheck as a required PR-time check), **#2430** (the
+  `evidence-identity` + `anti-hollow-soak` gates flipped fail-closed), **#2428** (three force-push
+  bypasses closed in the merge-block hook), **#2431** (CLE detail metadata + copy single-sourcing).
+
+- _(superseded, 2026-08-23 — see the 2026-08-27 sub-block above)_ Worker
+  `git_sha 3db27b5402507213473bbb7de189dd6fcc696de5` (short `3db27b540`), revision
   `arkova-worker-01319-lit` serving 100%. **Verified live 2026-08-23T18:12Z** by direct `/health`
   read: `{"status":"healthy","git_sha":"3db27b5402507213473bbb7de189dd6fcc696de5",
   "network":"mainnet","checks":{"database":"ok","anchoring":"ok","kms":"ok"}}`, cross-checked
@@ -157,7 +230,90 @@ full-functionality soak has its own register — `FD-1`…`FD-16` in
   `pg_index` / direct query at apply time; see the exemption file's `_comment` history for the per-row
   rationale (kept there deliberately as the audit trail, not duplicated here).
 
+### Migrations (2026-08-27)
+
+- **Prod ledger head is `0419`.** `0418_sec_replay_dashboard_cache_refresher_revokes` and
+  `0419_sec_replay_v_slow_queries_relation_revoke` were applied to prod (`vzwyaatejekddvltxyye`) on
+  2026-08-27 via the Supabase MCP `apply_migration`, then reconciled to their NUMERIC ledger
+  versions per CLAUDE.md §0 rule 10. Confirmed after the fact by the MCP `list_migrations` tool
+  against `vzwyaatejekddvltxyye` at 2026-08-27T21:00Z, whose last two rows read
+  `{"version":"0418","name":"0418_sec_replay_dashboard_cache_refresher_revokes"}` and
+  `{"version":"0419","name":"0419_sec_replay_v_slow_queries_relation_revoke"}` — numeric, not
+  timestamp-style, so the migration-drift gate's numeric-ledger check can see them.
+
+- **Both were measured to be no-ops against prod BEFORE they were applied**, which is the whole
+  point of a replay migration: `refresh_cache_*` already had `anon=f`, `authenticated=f`,
+  `service_role=t`, and `v_slow_queries` already had anon `SELECT=f` / service_role `SELECT=t`.
+  These files replay decisions prod already made; they make prod match the repo, not the other way
+  round, so every environment REBUILT from `main` stops being weaker than prod. Nothing about prod's
+  effective ACL changed on 2026-08-27.
+
+- **`main` still tops out at `0414`.** `ls supabase/migrations/` on `c9b210bd1` ends at
+  `0414_sec_replay_missing_anon_revokes.sql`. `0415`–`0421` all live on unmerged branches. This is
+  the standard prod-ahead-of-main shape for this repo (see the `0347` precedent), not a new defect —
+  but it does mean **the prod ledger and `main` disagree by five numbers and the disagreement is
+  expected**; do not "fix" it by deleting rows.
+
+- **Prod's ledger has a real numeric gap at `0415`, `0416`, `0417`.** Prod goes `…0413, 0414, 0418,
+  0419`. Those three prefixes are claimed on branches (`0415_ferpa_directory_info_opt_out_public_projections`
+  and `0415_false_secured_offchain_anchor_quarantine`, `0416_secured_count_measured_not_derived`,
+  `0417_cleanup_expired_data_singleton_advisory_lock`) and have reached neither `main` nor prod.
+  Flagging it because the SCRUM-2500 full-ledger numeric-integrity audit reads gaps, and this one is
+  legitimate — 0418/0419 were applied ahead of their unmerged siblings, not instead of them.
+
+- **`0420` prefix collision — RESOLVED.** Two branches claimed `0420` 47 seconds apart on
+  2026-08-23: `c835c32a6` at 20:43:24 (#2442, `0420_scrum2538_check_unified_credits_fail_closed.sql`)
+  and `a4509d220` at 20:44:11 (#2440, `0420_scrum3529_public_anchor_sub_type_projection.sql`) —
+  timestamps read from `git log --all --diff-filter=A` over every ref, not from either PR body.
+  First claim wins (the RTE protocol in `supabase/migrations/agents.md`), so **#2442 keeps `0420`**
+  and **#2440 renumbered to `0421`** in commit `dbd9ca53c` ("renumber 0420 -> 0421 to resolve the
+  SCRUM-3529 / SCRUM-2538 prefix collision", 2026-08-27T20:55:33Z), which is now #2440's head.
+
+- **★ `0415` is claimed TWICE and is NOT resolved.** `git log --all --diff-filter=A` shows two
+  distinct files at that prefix: `0415_ferpa_directory_info_opt_out_public_projections.sql`
+  (`93747a6aa451991476ab0b00d58c3fb0754f2e2d`, 2026-08-21T12:40:06, PR #2314 — and note that SHA is
+  the FROZEN soak head recorded in the 2026-08-23 block above) and
+  `0415_false_secured_offchain_anchor_quarantine.sql` (`6860390a80f959c272c08a692e81ba635e233964`,
+  2026-08-21T18:42:10). Same class as the `0420` collision, same fix shape — the LATER claim
+  (`6860390a8`, by 6 h) renumbers. **Nobody has done it.** Whichever of the two merges second will
+  land a duplicate prefix. This is the one open migration-numbering hazard on the board.
+
 ### PR board
+
+#### Refreshed 2026-08-27 — the 2026-08-12/08-18 entries below are largely SUPERSEDED
+
+The freeze notice and the Day-6 campaign block immediately below describe a board that has moved.
+Read this first; the older blocks are kept because their defect analysis is still the best record of
+*why* each fix exists, not because their PR states are current.
+
+- **Seven PRs merged 2026-08-27** (`gh pr view --json state,mergedAt,mergeCommit`, read this
+  session): **#2427** `26718d948` 20:24:12Z (worker typecheck on a required PR-time check,
+  SCRUM-1811); **#2430** `4a1e96690` 20:24:21Z (activates the `evidence-identity` +
+  `anti-hollow-soak` gates fail-closed — they had been installed but switched off, gating nothing);
+  **#2269** `c22f586cb` 20:24:02Z (the consolidated rate-limit cluster, T2); **#2400** `0440ce7e5`
+  20:28:09Z (undici 7→8 **plus** the cross-realm `safe-fetch.ts` fix); **#2431** `ccd74f8d9`
+  20:39:57Z (CLE detail metadata + copy single-sourcing, T1); **#2428** `59cdbd075` 20:40:02Z
+  (three force-push bypasses closed in `block-pr-merge.sh`, SCRUM-3492); **#2264** `c9b210bd1`
+  20:40:48Z (`@google-cloud/kms` 6.0.0). Earlier: **#2219** merged `8fac11bc5` 2026-08-23T20:57:21Z
+  (partner-provisioning HTTP router, T3).
+- **The two "New PR opened 2026-08-12" rate-limiter entries further down are now MERGED**, as
+  #2269's consolidation. Their bodies stay because the F-1 (store never shared state) and F-2
+  (`apiIpShadowGuard` double-mount, so the documented §1.10 60/min was really 30/min) analyses are
+  the reason the fix looks the way it does. Their "opened in DRAFT, not queued toward Ready, no soak
+  was run" clauses are **no longer true**.
+- **Only two non-draft PRs are open**, both dependabot: **#2450** (`worker-deps` group,
+  `mergeStateStatus: UNSTABLE`) and **#2446** (`production-deps` group, `mergeStateStatus:
+  UNKNOWN`). `gh pr checks` on both reads `Mergify Merge Queue — skipping`, i.e. **nothing is
+  embarked in the merge queue** as of 2026-08-27T21:00Z.
+- **Four migration-owning PRs remain OPEN and DRAFT:** #2336 (`0418`), #2355 (`0419`), #2442
+  (`0420`), #2440 (`0421`). #2336 and #2355 now carry full sealed T3 evidence (see `### Soaks`) —
+  their migrations are already in prod, so the "PR numeric ledger drift" leg of the migration-drift
+  gate that used to red them should now be satisfied; **that has not been re-checked and is
+  unverified here.** #2314 (`0415`, FERPA) is also still open and draft at head `99ea75fbf`.
+- **`SOAK_GATE_DISABLED` reads `false`** (`gh variable get`, 2026-08-27T21:00Z) — unchanged, so a
+  green Staging Soak Evidence Gate still means the evidence block was actually read.
+
+_(The 2026-08-18 freeze notice and Day-6 campaign block follow, largely superseded.)_
 
 **FROZEN for the soak window (2026-08-12T15:51:30Z → 2026-08-19T15:51:30Z).** `DEPLOY_WORKER_PAUSED=true`,
 so worker deploys do not run and `deferred_consolidated_soak` is gated — merging worker code now would put
@@ -347,6 +503,65 @@ separately). Full verdicts, defects, and landing-order constraints:
 
 ### Soaks
 
+**★ NO SOAK WINDOW IS OPEN as of 2026-08-27T21:00Z.** Every window described in the dated entries
+below has closed. This bullet — not any `## History` entry, and not the presence of a Cloud Run
+service — is the authoritative answer to "is a soak running" (CLAUDE.md §0.1). Three soaks closed
+and were SEALED; their evidence is in the PR bodies, read this session with `gh pr view --json body`:
+
+| PR | Tier | Window | Cycles | Result |
+|---|---|---|---|---|
+| **#2400** (undici 8 + safe-fetch realm) | T2 | 2026-08-24T00:21:00Z → 12:27:51Z (**12.11 h**) | 32 | 13,049 ok / 14 fail; 8,597× 200, 4,128× 404, 326× 400, **zero 429s**, 0 termination events |
+| **#2336** (`0418` dashboard-cache revokes) | T3 | 2026-08-23T23:55:55Z → 2026-08-25T23:55:55Z (**full 48 h**) | 115 | Trigger A 8239/0, Trigger B 6859/0, flush 345/0, isolation 345/0 |
+| **#2355** (`0419` `v_slow_queries` revoke) | T3 | 2026-08-24T00:12:53Z → 2026-08-26T00:12:53Z (**full 48 h**) | 115 | Trigger A 6199/0, Trigger B 1714/0, flush 345/0, isolation **344 / 1** |
+
+- **That single #2355 isolation failure is NOT an isolation breach, and the distinction matters.**
+  Cycle `20260825T135335Z` recorded `per-org isolation: anon organizations http 000 body=[]`.
+  HTTP 000 is a **curl transport failure** — no server response at all — and the body it captured
+  was `[]`, i.e. anon reached **zero** org-scoped rows, which is the correct outcome. The same cycle
+  carried two health 401s from ID-token expiry, matching the Cloud Run token-verification warnings
+  at close. No cycle in either T3 recorded anon successfully reading an org-scoped row. It is
+  disclosed rather than filtered, which is the standard this repo holds itself to.
+- **All three ran on isolated, clean-mirror rigs**, each with its own Supabase project and its own
+  wired `*-staging` Cloud Run service, preflight `environment_type=clean_mirror` captured BEFORE the
+  clock started: #2400 on `fizyjojbebyalirtjjht` / `arkova-worker-staging-00349-sef` (re-run at
+  close also clean); #2336 on `cdevaqafshzdxipjbech` / `arkova-worker-sec-2336-staging-00003-k5d`;
+  #2355 on `zehwymytxihxxbdirqzu` / `arkova-worker-sec-2355-staging-00002-tb2`.
+- **#2400's clock is asserted from load restart, not revision creation, and says so.**
+  `clock_matches_creation: False` by design — revision `00349-sef` came up 2026-08-23T22:02:45Z but
+  its driver halted at 22:42:25Z on an upstream 504; rather than claim the unbacked window, the
+  clock runs from the 00:21:00Z load restart. That is the conservative boundary, not the generous
+  one, and the 12.11 h still clears the T2 12 h floor.
+- **#2336 and #2355 remain OPEN and DRAFT** even though their migrations are in prod and their soaks
+  are sealed. Marking them ready is a §1.12 / merge-council call, not a docs call.
+
+- **★ COST SWEEP OWED (CLAUDE.md §7).** With no soak running, **eight** non-prod Supabase projects
+  are still `ACTIVE_HEALTHY` and **eight** `*-staging` Cloud Run services are still standing —
+  read live 2026-08-27T21:00Z from the MCP `list_projects` and `gcloud run services list --project
+  arkova1 --region us-central1`:
+
+  | Supabase project | ref | Paired Cloud Run service |
+  |---|---|---|
+  | `arkova-fullsoak-2026-08` | `gnkuaywlpmsaezwvlvhk` | `arkova-worker-fullsoak-2026-08-staging` |
+  | `arkova-staging-2026-08` | `fizyjojbebyalirtjjht` | `arkova-worker-staging` (the standing rig) |
+  | `arkova-wave2-2026-08` | `tkciooifwxwnkoizgalp` | `arkova-worker-wave2-2026-08-staging` |
+  | `arkova-wave3-2026-08` | `jiotjhqmedkajdsojsbn` | `arkova-worker-wave3-2026-08-staging` |
+  | `arkova-ferpa-2314-2026-08` | `wjuelohtpklodpjklvqy` | `arkova-worker-ferpa2314-staging` |
+  | `arkova-node22-2026-08` | `yklabujmzhzbvnhovcjt` | `arkova-worker-node22-staging` |
+  | `arkova-soak-sec-2336` | `cdevaqafshzdxipjbech` | `arkova-worker-sec-2336-staging` |
+  | `arkova-soak-sec-2355` | `zehwymytxihxxbdirqzu` | `arkova-worker-sec-2355-staging` |
+
+  `arkova-staging-2026-08` / `arkova-worker-staging` is the standing shared rig and should stay
+  (`docs/reference/STAGING_RIG.md` is its operations doc). The other seven are per-soak rigs whose
+  windows have all closed; `scripts/staging/teardown-isolated-rig.sh` is the mechanism. **Do NOT
+  tear down `cdevaqafshzdxipjbech` or `zehwymytxihxxbdirqzu` while #2336 / #2355 are still open** —
+  their evidence blocks name those refs and a reviewer may want to re-read the rig. Per §7, a paid
+  Supabase project cannot be paused via the MCP (`pause_project` needs a free-tier downgrade first),
+  so the choice is delete-or-flag-for-Carson, not pause. **This sweep has not been executed — it is
+  recorded here as owed, not done.**
+
+_(The dated 2026-08-20/21/23 soak stand-up entries follow. Every window they describe has CLOSED;
+they are the record of how each rig was stood up, not a statement that anything is running.)_
+
 - **TRAIN-6 CLOCK RESTARTED 2026-08-21T20:33:58Z — the 18:54:36Z window is VOID.** PR #2249 (T3,
   anchor lifecycle) on `arkova-worker-wave2-2026-08-staging`.
   Stand-up: `docs/staging/train6-2026-08/soak-start-2026-08-21T2038Z.md`. The earlier
@@ -523,6 +738,18 @@ separately). Full verdicts, defects, and landing-order constraints:
 
 `gcloud` on the dev Mac needs `CLOUDSDK_PYTHON=/opt/homebrew/opt/python@3.14/bin/python3.14`; the
 bundled 3.9 crashes loading the `run`/`builds`/`scheduler` modules.
+
+**Worker health endpoint — BOTH `/health` and `/api/health` are live, and this has been mis-stated
+in both directions.** Checked live 2026-08-27T21:00Z against
+`https://arkova-worker-kvojbeutfa-uc.a.run.app`: `/health` → 200 with the full body, `/api/health` →
+200 with a byte-identical body, `/api/v1/health` → 404. In source, `services/worker/src/index.ts`
+mounts `app.get('/health', healthCheckHandler)` at :212 and `app.get('/api/health',
+healthCheckHandler)` at :214 — the second is an alias of the same handler, added by the pentest-prep
+work whose comment at :116-120 records that `/api/health` used to 404 despite CLAUDE.md §1.9 naming
+it. **So §1.9 is now correct and needs no amendment**; an earlier session's note that "§1.9 is wrong,
+the path is `/health` only" was true before that alias landed and is false now. Two live instances
+answer (prod runs `minScale=2`), so the `uptime` field differs between calls to the two paths — that
+is two containers, not two services.
 
 _Last refreshed: 2026-08-23 by Claude Opus 5 (CTO session) — claims verified against live output, not
 prior-session prose: prod `/health` read 2026-08-23T18:12Z (`git_sha 3db27b540`, `checks` all ok) cross-checked
@@ -1473,4 +1700,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-21 by Claude Opus 5 (TRAIN-6 clock-restart session) — claims verified against gcloud/MCP/CI output: `gcloud run services describe` + `gcloud run revisions describe` for every revision and creationTimestamp named above, `gcloud logging read` for the probe timings, the Supabase Management API query endpoint for every row count, and `staging-honesty-preflight.ts` run to completion from the PR-head checkout. Nothing here is asserted from prior-session prose._
+_Last refreshed: 2026-08-27 by Claude Opus 5 (docs-sync session) — claims verified against gcloud/MCP/CI output._

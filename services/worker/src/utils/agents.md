@@ -573,3 +573,28 @@ key (§1.4/§1.6). `pipeline()` can pass its real URL because `/pipeline` is sta
 
 Pinned by `upstashRateLimit.bodyRead.test.ts`, which fails by TIMING OUT rather than asserting if the
 bounding is removed — the failure mode under test is a hang, so the test has to be able to hang.
+
+## The consolidated rate-limit cluster is LIVE IN PROD (2026-08-27)
+
+`upstashRateLimit.ts` / `rateLimit.ts` / `environmentNamespace.ts` as described above shipped to
+prod in `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999` (revision `arkova-worker-01322-tol`,
+100% traffic — `gcloud run services describe` + live `/health`, 2026-08-27T21:00Z), via PR #2269
+merged as `c22f586cb`. That PR consolidates four earlier closed PRs (#2223 / #2224 / #2231 / #2238).
+
+Consequences that are now true of the running system, and were not before:
+
+- **Cross-instance state is real.** Prod runs `minScale=2, maxScale=10`, so before this the
+  configured limits were effectively up to 10x their stated value and cold starts reset counters.
+  Do not re-derive limits from a single-instance test.
+- **The documented §1.10 60 req/min per IP is now actually 60**, not 30. `apiIpShadowGuard` was
+  mounted twice (`app.use('/api', …)` and the unprefixed did:web mount) and Express runs every
+  matching mount, so one request was charged twice by the same limiter instance. The fix stamps the
+  request with the limiter's own `Symbol` and counts at most once **per limiter INSTANCE** —
+  deliberately per-instance, not global, because `index.ts` shares one per-IP bucket across
+  different limiters and each must still charge it. **This LOOSENED enforcement.** If you are
+  reading a §1.10 number off a header stride, a `48 → 46 → 44` pattern is the OLD double-count and
+  should no longer appear.
+- **Keyspaces are env-namespaced.** A staging rig and prod can no longer share a bucket by accident.
+- `rateLimiters.auth` (5/min) is still **not mounted on any route** — referenced only by tests and
+  comments. It protects nothing today at any multiplier. Mounting it is a behaviour change with its
+  own tier, not a cleanup.

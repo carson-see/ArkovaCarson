@@ -614,3 +614,24 @@ workflow that runs on every PR.
 - `docs/runbooks/ci/verifying-current-check-runs.md` — cross-checking `gh pr checks` against actual check-run timestamps; the frozen-event-payload rerun trap and its fix (SCRUM-3030)
 - S0-4.3 stacked-PR + tiered-merge playbook (drafted Mergify/branch-protection diff for Carson) → Google Doc "ARKOVA PI-1 S0-E4 — Mergify / Stacked-PR + Tiered-Merge Playbook" (Drive ARKOVA PI-1-S0): https://docs.google.com/document/d/1iontJPUkhLQkQyZG4PETGuPj3kf23Kgn-1kDxqukfr8/edit
 - `docs/confluence/16_migration_drift_prevention.md` — ADR for Option A (read-only diff)
+
+## The `workflow_dispatch` pause override was exercised in prod (2026-08-27)
+
+The "Deploy-worker pause gate" section above states that `workflow_dispatch` ALWAYS bypasses
+`vars.DEPLOY_WORKER_PAUSED`. That is not theoretical — it was used on 2026-08-27 to move prod off a
+week-old SHA: deploy-worker run
+[**33114229919**](https://github.com/carson-see/ArkovaCarson/actions/runs/33114229919)
+(`event: workflow_dispatch`, `headSha 0440ce7e5c09ab15da60157e9a96128f669dc999`,
+`conclusion: success`, 20:37:29Z → 20:49:15Z) shipped revision `arkova-worker-01322-tol` at 100%
+traffic.
+
+**The inference to NOT make:** a fresh prod SHA does not mean the pause was lifted.
+`gh variable get DEPLOY_WORKER_PAUSED` still read `true` immediately after that deploy. A dispatched
+deploy and an unpaused repo look identical from the outside — only the variable distinguishes them,
+so read it rather than inferring it from `/health.git_sha`. It also does **not** discharge the
+`pause_lift_obligation` in `docs/staging/rc-manifests/rc-deferred-2026-08-22.json`, which requires a
+consolidated soak of merged `main` at the accumulated head BEFORE the variable flips.
+
+Corollary for `revision-drift.yml` (cron `*/10`, fires Sentry on `/health.git_sha` drifting > 1h
+from `origin/main`): while the pause holds, drift is the EXPECTED steady state, not an incident. Do
+not treat one of its alerts as evidence that a deploy failed without first checking the variable.

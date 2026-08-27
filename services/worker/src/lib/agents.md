@@ -64,3 +64,27 @@ Migration `0362_scrum2913_public_anchor_registry_url_allowlist.sql` widened `get
 now bound via `truncateUtf16Safe` — a code-unit cut at the cap could split a surrogate pair and
 PGRST102 the whole anchor insert (2026-08-17 poison-record class). `cleanText` is now exported for
 its poison tests. Note `.trim()` does NOT strip a lone surrogate — it is not whitespace.
+
+## The safe-fetch realm fix is LIVE IN PROD (2026-08-27)
+
+The single-realm `defaultSafeFetchDeps()` described above is not pending — it shipped in prod
+worker `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999`, Cloud Run revision
+`arkova-worker-01322-tol` at 100% traffic (`gcloud run services describe arkova-worker --region
+us-central1 --project arkova1` + a live `/health` read, 2026-08-27T21:00Z; deploy-worker run
+[33114229919](https://github.com/carson-see/ArkovaCarson/actions/runs/33114229919)).
+
+Two things to carry forward if you touch this file:
+
+- **The npm-`undici` version and the `fetch` used here move together.** They are one decision, not
+  two. A future dependabot bump of `undici` that does not also re-read this function is exactly the
+  shape of the near-miss: #2400 bumped 7.29.0 → 8.10.0 and, without the accompanying realm fix,
+  would have failed **100%** of egress through this primitive — every credential-source import and
+  the whole CE Registry / CTDL path — with `InvalidArgumentError: invalid onRequestStart method`.
+  It was caught because `safe-fetch.test.ts` pins a REAL undici `Agent` (`defaultSafeFetchDeps().dispatch`)
+  rather than a stub. Do not "simplify" that test into a mock; it is the only thing standing between
+  a routine dependency bump and a total egress outage.
+- **The T2 soak that cleared it targeted this exact path, not generic load** — the driver rotated
+  authenticated probes against `GET /api/v1/credentials/ctdl/import`, the only route that reaches
+  this dispatch over a real socket, and the deployed image carried an A/B discriminator recording
+  OLD_SHAPE fail / NEW_SHAPE 200. If you change this function, generic worker-health load will NOT
+  cover you; reproduce that targeted probe.

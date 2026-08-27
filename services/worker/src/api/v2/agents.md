@@ -23,3 +23,16 @@ v2 agent-tool API surface. Designed for AI agents + future MCP parity. Per-scope
 - SCRUM-1731 (PR #735) — contract-lock test pinned the 5 limits to the published partner brief §6.
 - SCRUM-1733 (PR #737) — APPROVED, awaiting Carson merge.
 - SCRUM-1731 (PR #735) — CodeRabbit re-review blocked on credit pool.
+
+## v1/v2 store parity reached, and it is LIVE IN PROD (2026-08-27)
+
+The `UpstashV2RateLimitStore.increment` design documented above (single pipelined `INCR`+`PTTL`,
+`PEXPIRE` only to arm a new window, plus the TTL-less self-heal) is no longer v2-only. PR #2269
+brought the **v1** store in `services/worker/src/utils/upstashRateLimit.ts` to the same design and
+merged as `c22f586cb`; it is live in prod `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999`,
+revision `arkova-worker-01322-tol` at 100% traffic (`gcloud run services describe` + live `/health`,
+2026-08-27T21:00Z).
+
+So the older framing — "v2 already ships the correct design, v1 does not" — is now stale. **The two
+stores are at parity and must be changed together.** A fix applied to one and not the other
+re-opens the divergence this PR closed; `utils/agents.md` carries the v1-side note.
