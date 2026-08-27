@@ -116,6 +116,14 @@ full-functionality soak has its own register — `FD-1`…`FD-16` in
   `.claude/hooks` + `scripts/agent` only — not worker code) and `c9b210bd1` (#2264,
   `@google-cloud/kms` 5.7.0 → 6.0.0 in `services/worker/package.json`, **which IS worker code and is
   NOT in prod**). Only the last one is a real prod-vs-main delta in worker behaviour.
+  **The pause held on the push path, observed rather than assumed:** #2264's merge fired
+  deploy-worker run
+  [33114500322](https://github.com/carson-see/ArkovaCarson/actions/runs/33114500322)
+  (`event: push`, `headSha c9b210bd1`, 20:40:51Z → 20:54:53Z, `conclusion: success`), whose jobs read
+  `Pre-deploy Quality Gates: success` → `Deploy Gate (pause check): success` →
+  `Build & Deploy (canary → full): **skipped**`. A green "Deploy Worker" run on `main` therefore does
+  NOT mean prod moved — quality gates run either way and the run still reports success. Prod
+  `/health` re-read after that run still returns `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999`.
 
 - **What this deploy actually shipped.** `0440ce7e5` carries the seven PRs merged 2026-08-27T20:24Z
   – 20:28Z. The load-bearing one is **#2400** (`services/worker/src/lib/safe-fetch.ts`): the
