@@ -17,7 +17,7 @@ Every path in `services/worker/` that can return HTTP 429, with what it limits, 
 |---|---|---|---|---|
 | `anonRateLimiter` | `services/worker/src/api/v1/router.ts:156` | 100 req/min per IP | Router-wide dispatch `router.ts:167-173` (requests WITHOUT an API key) | **YES — the harness-suicide bucket.** A single-IP driver at 5k/hr (~83/min avg) bursts past 100/min/IP and 429s ITSELF before `aiRateLimiter` is ever consulted, regardless of JWT sharding. |
 | `keyedRateLimiter` | `router.ts:161` | 1,000 req/min per API key (`req.apiKey?.keyId ?? req.ip`) | Same dispatch, requests WITH an API key | Not on `/ai/*` (JWT-only per `requireAuth` `router.ts:182-186`, which rejects `Bearer ak_`), but live on every API-key surface the soak's tier-mix lane exercises. |
-| `aiRateLimiter` | `router.ts:263` | 30 req/min per user, key `ai:${authUserId ?? ip}` (`router.ts:266`) | All `/ai/*` mounts `router.ts:276-323`; also `/nessie/query` `router.ts:438`, key-inventory `router.ts:449`, regulatory alerts `router.ts:461`, compliance score/gap/cross-ref/trends `router.ts:452-468` | **YES** — the intended per-user AI limiter; requires ≥4 JWT shards at 5k/hr. |
+| `aiRateLimiter` | `router.ts:327` | 30 req/min per user, bucket key `ai:${authUserId ?? ip}` — the `ai:` prefix is now the limiter's `scope` (`router.ts:330`), not a hand-rolled keyGenerator prefix, so the resulting key is unchanged (SCRUM-3418) | All `/ai/*` mounts `router.ts:276-323`; also `/nessie/query` `router.ts:438`, key-inventory `router.ts:449`, regulatory alerts `router.ts:461`, compliance score/gap/cross-ref/trends `router.ts:452-468` | **YES** — the intended per-user AI limiter; requires ≥4 JWT shards at 5k/hr. |
 | `batchRateLimiter` | `router.ts:206` | 10 req/min | `/verify/batch` `router.ts:222`, `/webhooks` `router.ts:371`, `/audit/batch-verify` `router.ts:457` | No (not an `/ai/*` mount). |
 | `creditsRateLimiter` | `router.ts:255` | 10 req/min per user, key `credits:` | `/credits` `router.ts:260` | No. |
 
@@ -155,8 +155,8 @@ Machine-readable; parsed by `scripts/ci/check-429-limiter-map.test.ts`. Each row
 | 7 | services/worker/src/api/v1/router.ts | 222 | router.use('/verify/batch', requireScope('verify:batch'), batchRateLimiter, batchRouter); |
 | 8 | services/worker/src/api/v1/router.ts | 255 | const creditsRateLimiter = rateLimit({ |
 | 9 | services/worker/src/api/v1/router.ts | 260 | router.use('/credits', requireAuth, creditsRateLimiter, creditsRouter); |
-| 10 | services/worker/src/api/v1/router.ts | 263 | const aiRateLimiter = rateLimit({ |
-| 11 | services/worker/src/api/v1/router.ts | 266 | keyGenerator: (req) => `ai:${req.authUserId ?? req.ip ?? 'unknown'}`, |
+| 10 | services/worker/src/api/v1/router.ts | 327 | const aiRateLimiter = rateLimit({ |
+| 11 | services/worker/src/api/v1/router.ts | 330 | scope: 'ai', |
 | 12 | services/worker/src/api/v1/router.ts | 371 | router.use('/webhooks', batchRateLimiter, webhooksRouter); |
 | 13 | services/worker/src/api/v1/router.ts | 552 | nessieCapabilityGate(), |
 | 14 | services/worker/src/middleware/usageTracking.ts | 18 | const FREE_TIER_MONTHLY_QUOTA = 10_000; |
