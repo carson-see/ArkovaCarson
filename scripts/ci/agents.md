@@ -1,6 +1,24 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
+_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus the SCRUM-3802 anchor-feeder T3 path rule)._
+
+## 2026-08-29 — `check-staging-evidence.ts` anchor-feeder T3 path rule (SCRUM-3802)
+
+PR #2266 merged tier-under-declared (declared T2, its own `jobs/agents.md` entry says
+"T3 (cron-on-anchors)"): the anchor-lifecycle T3 rule is a filename whitelist, and
+`publicRecordAnchor.ts` — the cron that batch-inserts up to 10k anchors per Bitcoin tx —
+was not on it, so the diff fell through to the T2 `jobs/` catch-all and §1.13's
+fail-closed guarantee was void for the whole file class. A second T3 rule now pins the
+rest of the audited anchor pipeline (`reason: 'anchor-creating feeder / anchor pipeline
+(SCRUM-3802)'`): anchor-row creators (`publicRecordAnchor`, `connector-artifact-drain`,
+`rule-action-dispatcher`), lifecycle mutators (`mainnet-migration`,
+`public-record-quarantine`), Bitcoin sign/broadcast + recovery decision
+(`supplementary-proof-anchor` + `.adapter`, `txid-journal`), and the shared batch
+contract (`anchor-batching`). The audit criterion was writes: every `jobs/` file that
+inserts/updates `anchors`, signs or broadcasts, or sets batch fan-out. Read-only anchors
+consumers (`stuck-anchor-monitor`, `docusign-anchor-reconciliation`'s detector, digests)
+deliberately stay on the T2 catch-all — pinned by tests both ways, including the exact
+merged file set of #2266 now classifying T3.
 
 ## 2026-08-23 — `check-staging-evidence.ts` evidence-gate integrity (SCRUM-3481 / 3509 / 3533 / 3542 / 3549)
 
