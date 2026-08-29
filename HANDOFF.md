@@ -29,6 +29,29 @@ reading and say so; where 2026-08-27 supersedes one, the older text is marked, n
 3. **No soak window is open.** Every soak the 2026-08-23 block described as RUNNING has closed and
    been sealed; the rigs are still standing and are now a cost item — see `### Soaks`.
 
+**2026-08-29 scoped addendum — this sub-block asserts only what this session verified today; the
+2026-08-27 readings above are not re-asserted:**
+- **Webhook catalog `credential.*` liveness truth-fix is LIVE on the frontend.** PR #2462 merged
+  2026-08-29T21:49:54Z (merge `4ed6b280147140f689349cf80dfe324ee1615419`); the Vercel Production
+  deploy for that commit reported `success`, and the served chunk
+  `WebhookSettingsPage-DdFdKSIo.js` was read directly from `app.arkova.ai` at 21:52:11Z:
+  `"credential.issued":{live:!0,…}`, suffix-free labels for issued/status_changed, "(coming soon)"
+  only on Record Verified. The badges now match the worker: `credential.issued` +
+  `credential.status_changed` have live, unflagged producers **at the prod worker SHA**
+  (`0440ce7e5`, `/health` read 2026-08-29T14:35Z), while `credential.verified` is dark —
+  `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` absent from the live service env per
+  `gcloud run services describe arkova-worker` the same day.
+- **Evidence debt added to the pause-lift obligation:** #2462 (required-tier T2 solely via the
+  `docs/api/` path rule; zero worker/migration delta) merged on the `deferred_consolidated_soak`
+  path — manifest `docs/staging/rc-manifests/rc-deferred-webhook-catalog-2026-08-29.json`
+  (PR #2463, merged `a19b5c32f`), `approval_status: pending` until the consolidated soak of merged
+  main covers it.
+- Bug log: Confluence child page 132415516 under the master tracker — BUG-2026-08-29-001 (the false
+  badges) fixed + prod-verified; BUG-2026-08-29-002 **open**: `job.completed` and
+  `anchor.revocation_anchored` are dispatched but unregistered in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`
+  (validation bypassed; revocation_anchored carries `anchor_id` + `fingerprint`), not deliverable
+  today and now fenced in `services/worker/src/webhooks/agents.md`. Jira SCRUM-3794 Done.
+
 _(2026-08-23 header paragraph and the two-soaks warning follow, SUPERSEDED, kept for the record.)_
 
 **State as of 2026-08-23T19:45Z, verified live.** This block is the only current-state claim in
@@ -781,7 +804,14 @@ the path is `/health` only" was true before that alias landed and is false now. 
 answer (prod runs `minScale=2`), so the `uptime` field differs between calls to the two paths — that
 is two containers, not two services.
 
-_Last refreshed: 2026-08-23 by Claude Opus 5 (CTO session) — claims verified against live output, not
+_Last refreshed: 2026-08-29 by Claude Fable 5 (CTO session) — claims verified against gcloud/MCP/CI output:
+prod `/health` read 2026-08-29T14:35Z (`git_sha 0440ce7e5`, healthy); `gcloud run services describe
+arkova-worker` env scan (no ENABLE_CREDENTIAL_VERIFIED_WEBHOOK); PR #2462 merge `4ed6b280` + Vercel
+Production `success` + served-bundle grep at 21:52:11Z; `gh variable get DEPLOY_WORKER_PAUSED` → `true`,
+`SOAK_GATE_DISABLED` → `false`. Scope: the 2026-08-29 addendum only — earlier readings keep their own dates._
+
+_(Prior footer, 2026-08-23, kept as its own dated record:)_
+_2026-08-23 by Claude Opus 5 (CTO session) — claims verified against live output, not
 prior-session prose: prod `/health` read 2026-08-23T18:12Z (`git_sha 3db27b540`, `checks` all ok) cross-checked
 with `gcloud run services describe arkova-worker --region us-central1 --project arkova1`
 (`arkova-worker-01319-lit` 100%); `gh variable get DEPLOY_WORKER_PAUSED` → `true`; deploy-worker runs
