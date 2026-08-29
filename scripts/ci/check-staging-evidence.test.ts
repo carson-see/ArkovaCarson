@@ -2039,9 +2039,11 @@ describe('check-staging-evidence', () => {
         expect(r.errors.join(' ')).toMatch(/does not cover the current base SHA/i);
       });
 
-      it('accepts an entry base_sha that is an ancestor of the live base', () => {
+      it('accepts an entry base_sha inside the train_launch → live-base window', () => {
         // The entry recorded an old main tip that appears in no coverage list;
-        // only ancestry can rescue it.
+        // only ancestry can rescue it. SCRUM-3549: the ancestry answer now needs
+        // BOTH bounds — the recorded base must descend from train_launch_sha AND
+        // be an ancestor of the live base — so the stub answers both questions.
         const staleEntryBase = 'dddddddddddddddddddddddddddddddddddddddd';
         const rc = manifest({
           target_main_sha: liveBaseSha,
@@ -2052,10 +2054,34 @@ describe('check-staging-evidence', () => {
         const r = run({
           rc,
           ancestryProvider: (ancestor, descendant) =>
-            ancestor === staleEntryBase && descendant === liveBaseSha,
+            (ancestor === trainLaunchSha && descendant === staleEntryBase)
+            || (ancestor === staleEntryBase && descendant === liveBaseSha),
         });
         expect(r.ok).toBe(true);
         expect(r.errors).toEqual([]);
+      });
+
+      it('rejects an entry base_sha that is an ancestor of the live base but PREDATES the train launch', () => {
+        // SCRUM-3549: without the train_launch_sha lower bound this passed —
+        // every commit reachable from main is an ancestor of the live base, so
+        // the per-entry check degenerated to "is this a commit on main" and
+        // admitted a base the soak never ran against.
+        const preLaunchBase = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+        const rc = manifest({
+          target_main_sha: liveBaseSha,
+          allowed_base_shas: [trainLaunchSha, liveBaseSha],
+          covered_main_shas: [trainLaunchSha, liveBaseSha],
+        });
+        (rc.included_prs as Record<string, unknown>[])[0]!.base_sha = preLaunchBase;
+        const r = run({
+          rc,
+          ancestryProvider: (ancestor, descendant) =>
+            // preLaunchBase is an ancestor of everything; nothing is an
+            // ancestor of preLaunchBase.
+            ancestor === preLaunchBase && descendant !== preLaunchBase,
+        });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/entry base SHA/i);
       });
 
       it('still fails an entry base_sha that is neither listed nor an ancestor of the live base', () => {
@@ -2186,60 +2212,39 @@ describe('check-staging-evidence', () => {
         expect(r.errors.join(' ')).toMatch(/head_binding\.mode/i);
       });
 
-      it('accepts a drifted head under roster mode with a complete, unexpired exception', () => {
+      // SCRUM-3533: roster mode is REMOVED. It was reachable from the normal
+      // approved path (validateCoveredRcPr is shared with deferred mode, and
+      // the resolver never looked at soak_mode), so an approved manifest —
+      // one claiming completed soak evidence — could merge an arbitrary
+      // post-soak head. These tests replace the suite that used to pin roster
+      // mode's internals; every one of them asserts it now hard-fails.
+      it('rejects roster mode outright, however complete the exception is', () => {
         const r = run(manifest({
           head_binding: rosterBinding(),
           exceptions: [exception()],
         }));
-        expect(r.ok).toBe(true);
-        expect(r.notes.join(' ')).toMatch(/RECORDED HUMAN EXCEPTION/i);
-        expect(r.notes.join(' ')).toMatch(/founder-ruling-2026-08-01-no-interim-soaks/);
-        expect(r.notes.join(' ')).toMatch(/Carson/);
-      });
-
-      it('rejects roster mode when the exception has expired', () => {
-        const r = run(
-          manifest({ head_binding: rosterBinding(), exceptions: [exception()] }),
-          '2026-08-20T00:00:00Z',
-        );
         expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/expired/i);
+        expect(r.errors.join(' ')).toMatch(/head_binding\.mode "roster" was REMOVED/i);
+        expect(r.notes.join(' ')).not.toMatch(/RECORDED HUMAN EXCEPTION/i);
       });
 
-      it('rejects roster mode when head_binding.exception_id matches no exceptions[] entry', () => {
+      it('rejects roster mode even when the recorded head still matches the live head', () => {
+        // The mode is resolved unconditionally, so a manifest whose head has
+        // not drifted cannot smuggle the removed mode past the check.
+        const rc = manifest({ head_binding: rosterBinding(), exceptions: [exception()] });
+        (rc.included_prs as Record<string, unknown>[])[0]!.head_sha = liveHeadSha;
+        const r = run(rc);
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/head_binding\.mode "roster" was REMOVED/i);
+      });
+
+      it('points a roster manifest at exact binding or deferred-consolidated-soak mode', () => {
         const r = run(manifest({
-          head_binding: rosterBinding({ exception_id: 'no-such-exception' }),
+          head_binding: rosterBinding(),
           exceptions: [exception()],
         }));
-        expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/exception_id/i);
-      });
-
-      it('rejects roster mode when the exception omits a named approver', () => {
-        const r = run(manifest({
-          head_binding: rosterBinding(),
-          exceptions: [exception({ approver: '' })],
-        }));
-        expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/approver/i);
-      });
-
-      it('rejects roster mode when the exception omits an expiry', () => {
-        const r = run(manifest({
-          head_binding: rosterBinding(),
-          exceptions: [exception({ expires_at: '' })],
-        }));
-        expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/expires_at/i);
-      });
-
-      it('rejects roster mode when this PR is not in the exception applies_to list', () => {
-        const r = run(manifest({
-          head_binding: rosterBinding(),
-          exceptions: [exception({ applies_to: [1726] })],
-        }));
-        expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/applies_to/i);
+        expect(r.errors.join(' ')).toMatch(/exact/i);
+        expect(r.errors.join(' ')).toMatch(/deferred_consolidated_soak/i);
       });
 
       it('rejects roster mode when the PR is absent from included_prs entirely', () => {
