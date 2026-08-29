@@ -136,12 +136,17 @@ export const IN_PROCESS_CRON_AUDIT: readonly InProcessCronAuditEntry[] = [
       'Selects up to 50 REVOKED anchors with revocation_tx_id IS NULL and broadcasts a chain '
       + 'revocation per anchor. Its own comment states that UTXO selection is unsafe under '
       + 'concurrency and that safety comes from processing the list SEQUENTIALLY — which holds '
-      + 'only within one run. There is no claim on the rows, so every warm instance selects the '
-      + 'same 50 anchors and spends from the same treasury UTXO set at the same time.',
+      + 'only within one run. Nothing claims the rows before the broadcast, so every warm '
+      + 'instance selects the same 50 anchors and spends from the same treasury UTXO set at the '
+      + 'same time. The RACE-5 compare-and-set in processRevocation (.eq(status,REVOKED) '
+      + '.is(revocation_tx_id,null)) does NOT prevent this: it runs AFTER submitFingerprint '
+      + 'returns, so it de-duplicates the DB row while both chain transactions have already been '
+      + 'signed and broadcast. The row is protected; the treasury is not.',
     followUp:
       'Highest-severity entry in this audit. Needs withRunLease with a spec derived from the live '
-      + 'Cloud Scheduler cadence for /jobs/process-revocations, or a per-row claim on '
-      + 'revocation_tx_id. File against SCRUM-3384.',
+      + 'Cloud Scheduler cadence for /jobs/process-revocations, or a claim on revocation_tx_id '
+      + 'taken BEFORE the broadcast (the existing post-broadcast RACE-5 guard is not that, and '
+      + 'tightening it in place is not sufficient). File against SCRUM-3384.',
   },
   {
     jobName: 'process-webhook-retries',

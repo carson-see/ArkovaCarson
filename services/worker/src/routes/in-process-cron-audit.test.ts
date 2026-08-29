@@ -57,14 +57,26 @@ function registeredJobNames(source: string): string[] {
 }
 
 /**
- * The retracted claim, in every phrasing it was written in across the repo:
- * "dormant under Cloud Run CPU throttling", "dormant under CPU throttling",
- * "dormant under Cloud Run throttling", "CPU throttling leaves node-cron
- * dormant". Deliberately narrow — `docusign-envelope-completed.ts` and
+ * The retracted claim, in every phrasing it was written in across the repo.
+ *
+ * TWO families, and the second is the one that survived the first sweep:
+ *
+ *   a) the "dormant" family — "dormant under Cloud Run CPU throttling",
+ *      "dormant under CPU throttling", "dormant under Cloud Run throttling",
+ *      "CPU throttling leaves node-cron dormant";
+ *   b) the "does not fire" family — "node-cron does not fire on a throttled
+ *      Cloud Run instance", "node-cron does NOT fire on Cloud Run". Same false
+ *      claim, different verb. Three files under `services/worker/src` still
+ *      carried it after the first sweep, INSIDE a scan root, because the
+ *      pattern only knew family (a).
+ *
+ * Deliberately narrow on the noun: `docusign-envelope-completed.ts` and
  * `docusign-queue-reconciliation.ts` legitimately describe a flag-gated
- * "dormant path", which is a different word used correctly.
+ * "dormant path", which is a different word used correctly, and the (b) family
+ * is anchored on `node-cron` so it cannot catch a job that genuinely does not
+ * fire for its own reasons.
  */
-const DORMANCY_CLAIM = /dormant\s+(?:under|while|when)\s+(?:Cloud\s+Run\s+)?(?:CPU\s+)?throttl|throttling\s+leaves\s+node-cron\s+dormant|node-cron\s+(?:is\s+)?dormant\s+(?:under|on)\s+Cloud\s+Run/i;
+const DORMANCY_CLAIM = /dormant\s+(?:under|while|when)\s+(?:Cloud\s+Run\s+)?(?:CPU\s+)?throttl|throttling\s+leaves\s+node-cron\s+dormant|node-cron\s+(?:is\s+)?dormant\s+(?:under|on)\s+Cloud\s+Run|node-cron`?\s+(?:does\s+)?(?:not|never)\s+fires?|node-cron`?\s+doesn't\s+fire/i;
 
 /**
  * Collapse JSDoc/line-comment continuations before matching. Without this the
@@ -72,9 +84,14 @@ const DORMANCY_CLAIM = /dormant\s+(?:under|while|when)\s+(?:Cloud\s+Run\s+)?(?:C
  * sentence is long, so it wraps, and `* ` at the start of the next line breaks
  * any `\s+` in the pattern. `jobs/scheduler-manifest.ts` wrapped it that way
  * and slipped past the first version of this test.
+ *
+ * `#` is stripped alongside `*` and `//` because `.sh` and `.yml` are scanned
+ * roots (`scripts/gcp-setup/cloud-scheduler.sh`,
+ * `.github/workflows/deploy-worker.yml`) and a wrapped shell/YAML comment has
+ * exactly the same hole.
  */
 function flattenComments(source: string): string {
-  return source.replace(/\n\s*(?:\*|\/\/)?[ \t]*/g, ' ');
+  return source.replace(/\n\s*(?:\*|\/\/|#)?[ \t]*/g, ' ');
 }
 
 const REPO_ROOT = resolve(WORKER_SRC, '../../..');
@@ -96,6 +113,9 @@ const RETRACTION_SCAN_ROOTS = [
   'services/worker/agents-changelog.md',
   'scripts/ci',
   'scripts/gcp-setup',
+  // The workflow tree is where the `--min-instances 2` fact that falsifies the
+  // claim actually lives, and it asserted the claim in two places of its own.
+  '.github/workflows',
 ];
 
 /** Files that are allowed to quote the retracted claim in order to retract it. */
@@ -104,7 +124,7 @@ const RETRACTION_DOC_ALLOWLIST = new Set([
   'services/worker/src/routes/in-process-cron-audit.test.ts',
 ]);
 
-const SCANNED_EXTENSIONS = ['.ts', '.md', '.sh'];
+const SCANNED_EXTENSIONS = ['.ts', '.md', '.sh', '.yml'];
 
 function walkScannableFiles(target: string, acc: string[] = []): string[] {
   if (!existsSync(target)) return acc;
@@ -225,14 +245,30 @@ describe('in-process cron audit — the dormancy claim stays retracted', () => {
     expect(DORMANCY_CLAIM.test('node-cron is dormant under Cloud Run CPU throttling')).toBe(true);
     expect(DORMANCY_CLAIM.test('it is dormant under CPU throttling (PROOF-03 finding)')).toBe(true);
     expect(DORMANCY_CLAIM.test('CPU throttling leaves node-cron dormant')).toBe(true);
+    // The "does not fire" family — the phrasing that survived the first sweep
+    // in three files INSIDE services/worker/src.
+    expect(DORMANCY_CLAIM.test('node-cron does not fire on a throttled Cloud Run instance')).toBe(true);
+    expect(DORMANCY_CLAIM.test('In-process `node-cron` does NOT fire on Cloud Run.')).toBe(true);
+    expect(DORMANCY_CLAIM.test('node-cron never fires on a throttled instance')).toBe(true);
     // Must NOT catch the unrelated, correct use of "dormant".
     expect(DORMANCY_CLAIM.test('a dormant connector path is a graceful no-op')).toBe(false);
     expect(DORMANCY_CLAIM.test('the drain is intentionally dormant until the flag ships')).toBe(false);
+    // Must NOT catch a correct statement about a scale-to-zero revision, which
+    // is the one deployment where the timer really does stop.
+    expect(DORMANCY_CLAIM.test('a revision scaled to zero runs no timers at all')).toBe(false);
   });
 
   it('sanity: a line-wrapped assertion of the claim is still caught', () => {
     const wrapped = '/**\n * binding lives in Cloud Scheduler (node-cron is dormant\n'
       + ' * under Cloud Run CPU throttling — see routes/scheduled.ts).\n */';
+    expect(DORMANCY_CLAIM.test(wrapped)).toBe(false);
+    expect(DORMANCY_CLAIM.test(flattenComments(wrapped))).toBe(true);
+  });
+
+  it('sanity: a line-wrapped shell/YAML comment is caught too', () => {
+    const wrapped = '# Until it runs, renewal relies on the backup, which is\n'
+      + '# not reliable under Cloud Run CPU throttling (node-cron does not\n'
+      + '# fire on a throttled instance).';
     expect(DORMANCY_CLAIM.test(wrapped)).toBe(false);
     expect(DORMANCY_CLAIM.test(flattenComments(wrapped))).toBe(true);
   });

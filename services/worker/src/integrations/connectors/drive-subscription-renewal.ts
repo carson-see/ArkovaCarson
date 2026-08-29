@@ -26,9 +26,10 @@
  * deliberately never touches — see `jobs/drive-subscription-renewal-deps.ts`'s
  * `runDriveSubscriptionRenewal()`, the lease-guarded entry point BOTH the
  * Cloud Scheduler HTTP route and the in-process backup call). Invoked by the
- * Lane-2 Cloud Scheduler → HTTP `/jobs/*` path (node-cron does not fire on a
- * throttled Cloud Run instance — see the Cloud Run in-process-cron gotcha in
- * jobs/agents.md).
+ * Lane-2 Cloud Scheduler → HTTP `/jobs/*` path, which is the trigger with
+ * retries, an attempt deadline and run history; the in-process registration is
+ * a backup that ALSO fires on every warm prod instance (SCRUM-3384 — the lease
+ * above is what makes both triggers safe).
  *
  * Idempotent by construction: each pass only ever UPDATEs an existing
  * `org_integrations` row by `id`. Re-running converges to a single active
