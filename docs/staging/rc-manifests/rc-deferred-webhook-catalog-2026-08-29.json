@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-08-29-deferred-webhook-catalog-truth",
+  "created_at": "2026-08-29T15:45:00Z",
+  "created_by": "carson@arkova.io",
+  "release_owner": "Carson",
+  "soak_mode": "deferred_consolidated_soak",
+  "approval_status": "pending",
+  "train_launch_sha": "f576e2f64ccbca93bdd39fd0764f7690532c69ad",
+  "target_main_sha": "f576e2f64ccbca93bdd39fd0764f7690532c69ad",
+  "allowed_base_shas": [],
+  "covered_main_shas": [],
+  "included_prs": [
+    {
+      "number": 2462,
+      "head_sha": "8be53e290998e39eaec52550cfe4ec538739ed95",
+      "base_sha": "f576e2f64ccbca93bdd39fd0764f7690532c69ad",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "Webhook catalog liveness truth-fix (R-7): flips credential.issued + credential.status_changed to Active (live unflagged producers verified on origin/main f576e2f64 AND prod SHA 0440ce7e5 — SCRUM-1798 Phase 2a / SCRUM-1800), keeps credential.verified deferred (ENABLE_CREDENTIAL_VERIFIED_WEBHOOK default-false, verified unset in prod via gcloud 2026-08-29), and corrects the stale worker producer table + docs/api/webhooks.md prose that caused the false badges. T2 solely via the docs/api/ public-contract path rule; zero worker code, zero migration, zero schema/flag change — the served contract is untouched. Real evidence owed by the consolidated soak of merged main (which exercises webhook dispatch/delivery end-to-end, the exact behavior whose liveness this PR asserts).",
+      "rollback_note": "Single revert of the PR merge. No schema, no data backfill, no flag, no worker behavior. Revert restores the prior (false) 'Not yet active' badges and stale docs, re-opening the R-7 claims defect it fixes.",
+      "migration_files": []
+    }
+  ]
+}
