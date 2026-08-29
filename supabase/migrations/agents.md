@@ -763,3 +763,53 @@ another ref. `0411`–`0413` were the first three free slots. **Next author clai
   to `0421`. Neither migration is applied anywhere, so this is a rename on that
   branch, not a compensating migration. **Next author claims `0422` — assume
   SCRUM-3529 has taken `0421`, and re-derive rather than trusting this line.**
+## Recent migrations (prod-apply record 2026-08-27 — `0418` / `0419`, and the open `0415` collision)
+
+**This block is an RTE prod-apply + prefix-reservation record, not a per-PR migration note.** It is
+titled uniquely so it cannot collide at EOF with the `## Recent migrations (PR #NNNN)` blocks that
+#2336 / #2355 / #2440 / #2442 will each land on merge (CLAUDE.md §6).
+
+### Applied to prod 2026-08-27
+
+| Prefix | File | PR | In prod? | Notes |
+|---|---|---|---|---|
+| `0418` | `0418_sec_replay_dashboard_cache_refresher_revokes.sql` | #2336 (**still open, DRAFT**) | **yes — ledger row reconciled to numeric `0418`** | Applied to prod `vzwyaatejekddvltxyye` via the Supabase MCP `apply_migration`, then reconciled per CLAUDE.md §0 rule 10; confirmed by `list_migrations` at 2026-08-27T21:00Z. **Verified a no-op against prod BEFORE apply** — all four `refresh_cache_*` functions already had `anon=f`, `authenticated=f`, `service_role=t`. It replays a decision prod already made so that environments rebuilt from `main` stop being weaker than prod. Sealed T3 soak: 48 h, 115 cycles, Trigger A 8239/0, Trigger B 6859/0, flush 345/0, isolation 345/0, on isolated rig `cdevaqafshzdxipjbech`. |
+| `0419` | `0419_sec_replay_v_slow_queries_relation_revoke.sql` | #2355 (**still open, DRAFT**) | **yes — ledger row reconciled to numeric `0419`** | Same path and same day. **Verified a no-op against prod BEFORE apply** — `v_slow_queries` already had anon `SELECT=f` / service_role `SELECT=t`. Sealed T3 soak: 48 h, 115 cycles, Trigger A 6199/0, Trigger B 1714/0, flush 345/0, isolation 344/**1**; that single failure is a curl `HTTP 000` transport blip whose captured body was `[]` (anon correctly saw zero rows), NOT an isolation breach. Isolated rig `zehwymytxihxxbdirqzu`. |
+
+**Prod ledger head is `0419`. `main` still tops out at `0414`.** Prod-ahead-of-main is the normal
+shape here (the `0347` precedent) — do not "reconcile" it by deleting ledger rows.
+
+**Prod's ledger has a genuine gap at `0415`, `0416`, `0417`** (it reads `…0413, 0414, 0418, 0419`).
+Those three are claimed on unmerged branches and have reached neither `main` nor prod. The gap is
+legitimate: 0418/0419 were applied ahead of their unmerged siblings, not instead of them. Do not
+treat those prefixes as free — the next-free rule at the top of this file still applies.
+
+### `0420` collision — RESOLVED (first claim wins)
+
+Two branches claimed `0420` **47 seconds apart** on 2026-08-23, per `git log --all --diff-filter=A`
+over every ref (not per either PR body):
+
+- `c835c32a6` @ 20:43:24 — `0420_scrum2538_check_unified_credits_fail_closed.sql` (#2442) — **KEEPS `0420`**
+- `a4509d220` @ 20:44:11 — `0420_scrum3529_public_anchor_sub_type_projection.sql` (#2440) — **renumbered to `0421`**
+
+The renumber landed in `dbd9ca53c` ("renumber 0420 -> 0421 to resolve the SCRUM-3529 / SCRUM-2538
+prefix collision", 2026-08-27T20:55:33Z), which is #2440's current head.
+
+### ★ `0415` is claimed TWICE and is NOT resolved — next author, this is the live hazard
+
+`git log --all --diff-filter=A` shows two distinct files at `0415`:
+
+| Commit | Date | File | PR |
+|---|---|---|---|
+| `93747a6aa451991476ab0b00d58c3fb0754f2e2d` | 2026-08-21 12:40:06 | `0415_ferpa_directory_info_opt_out_public_projections.sql` | #2314 (this SHA is also that PR's FROZEN soak head) |
+| `6860390a80f959c272c08a692e81ba635e233964` | 2026-08-21 18:42:10 | `0415_false_secured_offchain_anchor_quarantine.sql` | — |
+
+Same class as the `0420` collision and the 2026-06-01 three-way `0327` collision, same fix shape:
+under first-claim-wins the LATER claim renumbers, so `6860390a8` (later by ~6 h) is the one that
+moves. **Nobody has done it.** Whichever of the two merges second lands a duplicate prefix and gets
+dequeued. Note the complication that makes this more than bookkeeping: `93747a6aa45` is #2314's
+frozen soak head, so renumbering *that* side would invalidate exact-head soak evidence — which is
+precisely why the later claim is the one to move.
+
+**Highest claimed prefix anywhere (main + prod + every open branch) is `0421`. Next free is `0422` —
+re-derive with the next-free rule above, do not trust this line.**
