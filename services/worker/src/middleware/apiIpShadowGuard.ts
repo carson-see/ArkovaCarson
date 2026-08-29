@@ -23,10 +23,14 @@
  *
  * **SCRUM-2603 — anonymous public verification.** §1.10 gives anonymous callers
  * 100 req/min/IP on the public verification API. Anonymous verify traffic never
- * got that: this 60/min guard ran first, and ran twice per request because of
- * the two mounts above, so the public verify surface was capped at roughly a
- * third of its published contract. `/api/v1/verify` therefore skips this guard
- * and is capped by `publicVerifyAnonLimiter` below at exactly the contract.
+ * got that: this 60/min guard ran first, and — before SCRUM-3418 — it wrote the
+ * SAME bare-per-IP bucket as `apiV1Router`'s 100/min `anonRateLimiter`, so one
+ * verify request charged that one entry twice and the 60-cap guard refused at
+ * request #31. Roughly a third of the published contract. (The guard's own two
+ * mounts are NOT part of that arithmetic: RC #2269 made `rateLimit()` charge a
+ * request at most once per limiter instance — see `utils/rateLimit.ts`,
+ * COUNTED_LIMITERS.) `/api/v1/verify` therefore skips this guard and is capped
+ * by `publicVerifyAnonLimiter` below at exactly the contract.
  *
  * That limiter is deliberately mounted in `index.ts` rather than left to
  * `apiV1Router`'s `anonRateLimiter` (which enforces the same 100/min): the v1
@@ -70,9 +74,8 @@ export function hasApiKeyCredential(req: Request): boolean {
  * `/API/v1/verify/ARK-X` reaches the verify handlers and is counted by
  * `publicVerifyAnonLimiter` (mounted at `/api/v1/verify`) just like the
  * lower-case form. A case-sensitive predicate here would fail to skip that URL
- * form, so the 60/min guard would count it — twice, from its two mounts —
- * putting it back on the ~30/min SCRUM-2603 ceiling while the lower-case form
- * got its contractual 100/min.
+ * form, so the 60/min guard would count it and put that URL form back on the
+ * SCRUM-2603 ceiling while the lower-case form got its contractual 100/min.
  */
 function normalizePath(originalUrl: string): string {
   const queryStart = originalUrl.indexOf('?');

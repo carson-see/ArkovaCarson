@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/ai/eval/
 
-_Last updated: 2026-07-15_
+_Last updated: 2026-08-23_
 
 ## 2026-07-15 S3.3 Wave-2 top-15 coverage gate
 
@@ -77,6 +77,17 @@ _Last updated: 2026-07-15_
   calibration, deterministic positive/negative bootstrap controls, exact
   24-type/founder three-way dispositions, and separate exact 11-row AU/KE
   directional/no-marketing reports.
+- `s33-wave3-deterministic-eval-gates.test.ts` carries an explicit
+  `{ timeout: 30_000 }` on its top-level `describe`. Every case re-runs the
+  evaluator over the full fixture, so the file is CPU-bound and its per-case
+  wall time tracks runner contention: ~10s for 50 cases on an idle machine,
+  ~80s on a loaded CI runner. The 5000ms vitest default was reddening unrelated
+  PRs (PR #2399 passed and failed on the identical head SHA, runs 32641618388
+  and 32665842753). Under deliberate CPU starvation 20 of the 50 cases exceed
+  5000ms, so the budget belongs on the block, not on individual cases. It is a
+  timeout budget only — no assertion or fail-closed path is relaxed. Keep the
+  strict default for other worker suites; do not lift this to a global
+  `testTimeout` in `services/worker/vitest.config.ts`.
 
 ## 2026-07-15 S3.3 Wave-3 detached release signing v2
 

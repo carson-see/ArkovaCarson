@@ -10,8 +10,9 @@ Two changes to this file's wiring (SCRUM-2603 / SCRUM-3418):
 - **`apiIpShadowGuard` moved out of `index.ts`** into `middleware/apiIpShadowGuard.ts`. It was
   declared inline here, which made its skip predicate untestable without booting the server. Same
   instance, same two mounts (`app.use('/api', apiIpShadowGuard, badgeRouter)` and the prefix-less
-  `app.use(apiIpShadowGuard, didWebRouter, proofKeysRouter)`) — do not add a third, it is one bucket
-  and each mount is an increment.
+  `app.use(apiIpShadowGuard, didWebRouter, proofKeysRouter)`). Both are load-bearing and a request is
+  charged once across them (`utils/rateLimit.ts`, COUNTED_LIMITERS) — do not delete a mount and do
+  not add a third.
 - **`app.use('/api/v1/verify', publicVerifyAnonLimiter)` is new, and its POSITION is load-bearing.**
   The guard now skips `/api/v1/verify` entirely, so this line is the only thing capping anonymous
   verify traffic before `apiV1Router`. It must stay ABOVE `app.use('/api/v1', apiV1Router)`, because

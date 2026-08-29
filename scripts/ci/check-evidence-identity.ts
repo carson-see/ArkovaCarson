@@ -20,10 +20,17 @@
  * exact-head identity is meaningful at mark-ready, not while a Draft's head is
  * still moving.
  *
- * CI wiring: per the W3-freeze CTO carve-out, this is wired into ci.yml in
- * REPORT-ONLY / warn mode first (`--report-only` → always exit 0, annotate
- * only). Fail-closed activation is deferred until >=1 real green soak calibrates
- * it, mirroring the #1617 T0-CI-infra precedent.
+ * CI wiring: FAIL-CLOSED as of SCRUM-2965. The `evidence-identity` job in
+ * ci.yml runs this CLI with no flags (non-zero exit reds the job, no
+ * `continue-on-error`), and `.mergify.yml` lists `Evidence-identity gate` in
+ * every queue rule's merge_conditions — a check absent from those conditions
+ * can be red while Mergify merges anyway.
+ *
+ * `--report-only` survives as an explicit opt-in for local dry-runs and for
+ * re-parking the gate during a calibration window. It makes `main()` always
+ * exit 0 and emit `::warning::` instead of `::error::`; it is NOT what CI runs,
+ * and `soak-integrity-gates-failclosed.test.ts` fails if it reappears in the
+ * workflow invocation.
  */
 
 export type Tier = 'T0' | 'T1' | 'T2' | 'T3';
@@ -148,6 +155,36 @@ function isCleanMirror(value: string): boolean {
   return /["']?environment_type["']?\s*[:=]\s*["']?clean_mirror["']?/i.test(value);
 }
 
+/** `head=<sha>` / `head_sha: <sha>` / `commit=<sha>` — an explicitly labelled commit. */
+const KEYED_SHA_RE = /\b(?:head[_-]?sha|head|commit|sha)\s*[:=]\s*([0-9a-f]{7,40})\b/i;
+/** A bare 40-hex run. Nothing else in a preflight line is 40 hex characters. */
+const FULL_SHA_RE = /\b[0-9a-f]{40}\b/i;
+
+/**
+ * The commit a free-text `Preflight result:` value claims it was captured
+ * against, or null.
+ *
+ * Deliberately NOT `SHORT_OR_FULL_SHA_RE` over the whole value. That matches
+ * the first 7+ hex run anywhere, which also catches a 7+ digit decimal (a row
+ * count, a unix timestamp) and any short hex-ish identifier that is not a
+ * commit (`ref=abc1234`) — turning an innocuous note into
+ * "Preflight result embeds head 3556355". Harmless while this gate was
+ * report-only; merge-blocking (SCRUM-2965) it reds a T2/T3 PR on a message its
+ * author cannot act on.
+ *
+ * So: an explicitly KEYED sha wins, and a bare run counts only at the
+ * unambiguous full 40 characters. What that gives up is a bare, unkeyed, SHORT
+ * sha — a real cross-head mismatch has to be either labelled or spelled out in
+ * full to be caught. The declared `PR head SHA:` field is unaffected: it is a
+ * keyed field already, read by extractShaFromField().
+ */
+function extractPreflightSha(value: string): string | null {
+  const keyed = KEYED_SHA_RE.exec(value);
+  if (keyed) return keyed[1].toLowerCase();
+  const full = FULL_SHA_RE.exec(value);
+  return full ? full[0].toLowerCase() : null;
+}
+
 export function checkCleanPreflightIdentity(
   body: string,
   declaredHead: string | null,
@@ -176,7 +213,7 @@ export function checkCleanPreflightIdentity(
   // (b2) any head SHA embedded in the preflight must match the declared head —
   // otherwise the preflight was captured against a different head (copied
   // evidence across heads).
-  const preflightSha = (SHORT_OR_FULL_SHA_RE.exec(preflight) ?? [])[0];
+  const preflightSha = extractPreflightSha(preflight);
   if (preflightSha && declaredHead && !shaMatches(preflightSha, declaredHead)) {
     findings.push({
       name,
@@ -210,6 +247,23 @@ export function runEvidenceIdentity(
 
   const tier = input.declaredTier ?? extractDeclaredTier(body);
   const soakTier = tier === 'T1' || tier === 'T2' || tier === 'T3';
+
+  // An explicitly declared T0 requires no evidence block at all (CLAUDE.md
+  // §1.12), and `hasEvidenceSection()` deliberately matches a bare `Tier: T0`
+  // line — so the tier check MUST come before it. Otherwise a T0 PR that
+  // simply states its tier (the required thing to do) falls through to
+  // checkHeadShaIdentity and fails on the absent `PR head SHA:`. That was
+  // invisible while the gate was report-only; fail-closed it would red every
+  // T0 PR in the repo.
+  if (tier === 'T0') {
+    return {
+      skipped: true,
+      skipReason:
+        'PR declares Tier: T0 — no staging soak evidence required (CLAUDE.md §1.12).',
+      findings: [],
+      ok: true,
+    };
+  }
 
   if (!soakTier && !hasEvidenceSection(body)) {
     return {

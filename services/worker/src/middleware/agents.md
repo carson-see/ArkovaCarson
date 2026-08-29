@@ -13,19 +13,21 @@ that implements any Constitution §1.10 tier — every tier has its own correctl
 down the chain. Treat it as defense-in-depth, and when it starts binding a documented tier, that is
 the bug.
 
-**It runs TWICE per `/api/*` request.** `index.ts` mounts the same instance at `/api` (ahead of
+**It is MOUNTED twice, and charged once.** `index.ts` mounts the same instance at `/api` (ahead of
 badgeRouter) and prefix-less (ahead of didWebRouter + proofKeysRouter, which serve `/.well-known/*`
-and `/orgs/*`). One instance, one bucket, two increments — so its effective ceiling for a doubly-
-mounted path is 30/min, not 60. Do not add a third mount.
+and `/orgs/*`). Both mounts are load-bearing; `rateLimit()` charges a request at most once per
+limiter INSTANCE (`utils/rateLimit.ts`, COUNTED_LIMITERS, RC #2269), which is what makes that safe.
+Do not delete a mount, and do not add a third.
 
 **Carve-out 1 — keyed `/api/v1/*` (F-2).** Requests presenting `Bearer ak_…` / `X-API-Key: ak_…` skip
 it; `apiV1Router`'s keyedRateLimiter (1,000/min/key) owns them.
 
 **Carve-out 2 — anonymous public verification (SCRUM-2603).** §1.10 gives anonymous callers 100
-req/min/IP on the public verification API. They were getting ~30: this guard bound first and bound
-twice. `/api/v1/verify` now skips it and is capped by `publicVerifyAnonLimiter` (`v1-verify-anon`,
-100/min, keyed callers skipped) instead. Measured on the real limiter in
-`apiIpShadowGuard.test.ts`: with the carve-out disabled the first 429 lands at verify request #31.
+req/min/IP on the public verification API. They were getting ~30: this guard bound first, and before
+SCRUM-3418 it wrote the same bare-per-IP bucket as `apiV1Router`'s 100/min `anonRateLimiter`, so one
+verify request charged that entry twice and the 60-cap guard refused at request #31.
+`/api/v1/verify` now skips it and is capped by `publicVerifyAnonLimiter` (`v1-verify-anon`, 100/min,
+keyed callers skipped) instead. Measured on the real limiter in `apiIpShadowGuard.test.ts`.
 
 **Why `publicVerifyAnonLimiter` is mounted in `index.ts` and not left to `apiV1Router`'s
 `anonRateLimiter`** — which enforces the same 100/min: the v1 router runs `verificationApiGate()`
@@ -222,6 +224,38 @@ operator-set `MEMPOOL_API_URL` may embed a credential. A test greps the logged o
 this gate. The defect was latent, and it arms itself the moment an anchor route is added to the
 gate. Fixed ahead of that, not after.
 
+## 2026-08-15 — BUG-018 / D-8 follow-up: the idempotency keyspace carries an environment namespace
+
+`upstashIdempotency.ts` keys are now `idem:<env>:<caller key>`, from
+`resolveEnvironmentNamespace()` in `../utils/environmentNamespace.ts` (introduced by #2231, which
+namespaced the three rate-limit keyspaces and deliberately left this one out).
+
+**Why this is the worst of the three collisions.** Prod, shared staging and the connector side-rig
+all bind ONE Upstash database through the same un-suffixed `UPSTASH_REDIS_REST_URL` /
+`UPSTASH_REDIS_REST_TOKEN` secrets. A rate-limit collision spends the wrong budget. An idempotency
+collision **cancels real work**: this store exists to SUPPRESS a duplicate write, so an
+`Idempotency-Key` first seen on a rig returned the rig's cached response to a production caller for
+the whole 2h TTL and the production write never happened — with a 2xx and a response body handed
+back, so nothing surfaced as an error anywhere. The routes carrying idempotency keys are the
+anchor-creating ones.
+
+**Rule: the env segment must PRECEDE the caller's bytes.** The `Idempotency-Key` header is fully
+caller-controlled. `idem:<env>:<key>` means a staging caller crafting `prod:<key>` lands on
+`idem:<staging>:prod:<key>` and cannot reach production's segment. Reversing the order
+(`idem:<key>:<env>`) or interpolating the caller's value anywhere before `<env>` re-opens that as a
+forgery path. There is a test for it.
+
+**Rule: never derive this namespace from anything instance-local** — `K_REVISION`, hostname, pid, a
+random id. Deduping ACROSS instances of one service is the entire reason IDEM-3 replaced the
+in-memory `Map`; an instance-local namespace re-opens that bug while looking like a fix and while
+every single-store test stays green. `upstashIdempotency.namespace.test.ts` asserts both halves at
+once: different environments must NOT see each other's entries, and two instances of the SAME
+service MUST.
+
+**The factory is the only construction path `index.ts` uses.** `createUpstashIdempotencyStore()` is
+covered by its own test — a namespace wired into the constructor alone would ship inert. `index.ts`
+logs the derived namespace at startup so the deployed keyspace is readable from Cloud Run logs
+without querying Redis.
 ## 2026-08-15 BUG-008/027 — `nessieCapabilityGate.ts`: a disabled capability must not answer 200
 
 Nessie is permanently disabled by standing founder directive, yet `/api/v1/nessie/query` was mounted

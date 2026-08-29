@@ -15,9 +15,10 @@
  *      Fixed by `routes/admin-paths.ts`: adminRouter's first middleware now
  *      `next('router')`s out for any path outside its own prefixes, so the
  *      checkout limiter never sees a `/api/v1/*` request.
- *   2. The 60/min-per-IP `apiIpShadowGuard` still bound verify, and bound it
- *      twice per request (it is mounted at `/api` AND prefix-less ahead of the
- *      did:web / proof-keys routers), leaving an effective ~30/min. Fixed by
+ *   2. The 60/min-per-IP `apiIpShadowGuard` still bound verify, and it shared
+ *      one bare-per-IP bucket with `apiV1Router`'s 100/min `anonRateLimiter`,
+ *      so each request charged that entry twice and the 60-cap guard refused at
+ *      request #31 — an effective ~30/min. Fixed by
  *      `middleware/apiIpShadowGuard.ts`: the public verify prefix skips the
  *      guard and binds instead to `apiV1Router`'s `anonRateLimiter`, the
  *      limiter that actually implements the 100/min anon tier.

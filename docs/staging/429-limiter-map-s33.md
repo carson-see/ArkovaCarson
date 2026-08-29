@@ -56,9 +56,11 @@ surface sharing its IP (the checkout limiter logged `count: 60` against `maxRequ
 request crossing N such limiters advanced the shared counter N times, so an effective budget was
 `min(caps) / N` rather than any documented tier.
 
-The measured case: anonymous `GET /api/v1/verify/{publicId}` crossed `apiIpShadowGuard` twice (it is
-mounted at `/api` AND prefix-less ahead of the did:web / proof-keys routers) plus `anonRateLimiter`,
-and first-429'd at request ~#31 — an effective ~30/min against §1.10's 100/min. `/api/v1/verify` now
+The measured case: anonymous `GET /api/v1/verify/{publicId}` crossed the 60/min `apiIpShadowGuard`
+and the 100/min `anonRateLimiter`, both of which wrote the same bare-per-IP entry, so each request
+advanced it by 2 and the 60-cap guard first-429'd at request ~#31 — an effective ~30/min against
+§1.10's 100/min. (The guard's own two mounts are charged once per request since RC #2269 —
+`COUNTED_LIMITERS` — so they are not part of that arithmetic.) `/api/v1/verify` now
 skips the IP guard and is capped by `publicVerifyAnonLimiter` (`v1-verify-anon`, 100/min) mounted in
 `index.ts` ahead of `verificationApiGate()`, so the contract holds whether or not the v1 surface is
 lit.
@@ -79,7 +81,7 @@ can share a bucket, which is what makes that sharing reviewable instead of accid
 
 Every generic `rateLimit()` 429 returns the **identical body** `{ error: 'Too many requests', retry_after }` (`services/worker/src/utils/rateLimit.ts:139-142`). The client-visible and server-visible discriminators are:
 
-- **`X-RateLimit-Limit` header value** (`rateLimit.ts:135`; also set on non-429 responses at `:153` per §1.10): `100` → anon-IP, `1000` → keyed, `30` → aiRateLimiter, `10` → batch/credits (disambiguate by path).
+- **`X-RateLimit-Limit` header value** (also set on non-429 responses per §1.10): `1000` → keyed, `30` → aiRateLimiter, `10` → batch/credits (disambiguate by path), `60` → the `/api/*` IP backstop. `100` is now AMBIGUOUS between `v1-anon` and `v1-verify-anon` (both are the §1.10 anonymous tier); use the log key to tell them apart.
 - **Server log key prefix** (`rateLimit.ts` logs `{ key, count, maxRequests }` at warn): the key is
   `<bucket-scope>:<keyGenerator output>`, so the scope IS the attribution — `v1-anon:` → anon-IP,
   `v1-keyed:` → keyed, `v1-verify-anon:` → public verify, `api-ip-shadow-guard:` → the broad

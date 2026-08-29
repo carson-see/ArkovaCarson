@@ -13,8 +13,9 @@
  *    it. `/api/v1/verify` is contractually 100 req/min per IP, and
  *    `apiV1Router`'s `anonRateLimiter` enforces exactly that — but requests
  *    never reached it with an unspent budget, because this 60/min guard runs
- *    first (twice, from its two mounts). The verify surface was therefore
- *    capped well under the contract. Skipping the guard for that one public
+ *    first and (pre-SCRUM-3418) shared one bare-per-IP bucket with that anon
+ *    limiter, so a single verify request charged it twice. The verify surface
+ *    was therefore capped well under the contract. Skipping the guard for that one public
  *    prefix hands the contract back to the limiter that implements it; verify
  *    is NOT unlimited, it is 100/min/IP downstream.
  *
@@ -56,8 +57,10 @@ function fakeReq(originalUrl: string, headers: Record<string, unknown> = {}): Re
 
 /**
  * Mirrors `index.ts`'s mount shape: the guard runs on `/api/*` (in front of
- * badgeRouter) AND prefix-less (in front of didWebRouter + proofKeysRouter),
- * so an `/api/**` request traverses the same instance twice.
+ * badgeRouter) AND prefix-less (in front of didWebRouter + proofKeysRouter), so
+ * an `/api/**` request traverses the same instance twice. `rateLimit()` charges
+ * it once (COUNTED_LIMITERS), and reproducing both mounts here is what keeps
+ * that true under the carve-outs.
  */
 function buildApp() {
   const app = express();
@@ -107,9 +110,8 @@ describe('isPublicVerifyPath', () => {
     '/api/v1/verify?pretty=1',
     // Express's `case sensitive routing` is OFF by default, so these reach the
     // verify handlers and `publicVerifyAnonLimiter` exactly like the lower-case
-    // form. If the predicate missed them the 60/min guard would count them
-    // (twice, from its two mounts) and put that URL form back on the ~30/min
-    // SCRUM-2603 ceiling.
+    // form. If the predicate missed them the 60/min guard would count them and
+    // put that URL form back under the SCRUM-2603 ceiling.
     '/API/V1/VERIFY/ARK-2026-ABC123',
     '/Api/V1/Verify',
   ])('matches the public verification surface: %s', (url) => {

@@ -13,9 +13,9 @@ are stale, and one was stale the day after it landed:
   outside its own prefixes, so `rateLimiters.checkout` never sees `/api/v1/*`. The spec was never
   updated, so it kept documenting a defect that main no longer had, and kept naming file:line
   locations that had moved.
-- The **residual** §1.10 gap was a different limiter — the 60/min `apiIpShadowGuard`, which is mounted
-  twice and so capped anonymous verify at ~30/min. That is now fixed too
-  (`middleware/apiIpShadowGuard.ts`).
+- The **residual** §1.10 gap was a different limiter — the 60/min `apiIpShadowGuard`, which shared one
+  bare-per-IP bucket with `apiV1Router`'s 100/min `anonRateLimiter` and so capped anonymous verify at
+  ~30/min. That is now fixed too (`middleware/apiIpShadowGuard.ts` + `utils/rateLimit.ts` scoping).
 
 The header is rewritten as a contract spec: what §1.10 requires, what used to break it and where each
 mechanism was fixed. The assertions are unchanged in substance — they were always written against
