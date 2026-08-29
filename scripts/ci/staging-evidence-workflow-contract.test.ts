@@ -404,6 +404,105 @@ describe("staging-evidence workflow live-state contract (SCRUM-3026)", () => {
 });
 
 /**
+ * SCRUM-3812: the merge-queue skip must require the Mergify bot AUTHOR, never
+ * the branch name alone. `github.head_ref` is fully author-controlled — any PR
+ * opened from a branch literally named `mergify/merge-queue/<anything>` used to
+ * skip every enforcement step, and a job whose steps all skip still posts
+ * SUCCESS, satisfying `check-success = Staging Soak Evidence Gate` in every
+ * .mergify.yml queue. The PR author (`github.event.pull_request.user.login`) is
+ * assigned by GitHub and cannot be forged by an author, so requiring
+ * `mergify[bot]` alongside the branch prefix leaves only genuine Mergify
+ * speculative queue PRs able to skip — which they must (their body carries
+ * Mergify's own text, not the original PR's evidence block, so re-checking
+ * them deadlocks every queued merge). Deliberately NOT `github.actor`: a human
+ * re-running a genuine queue PR's checks becomes the actor, which would
+ * un-skip the gate mid-queue and deadlock it; the PR author is immutable.
+ * Keep the constant in lockstep with the same constant in
+ * soak-integrity-gates-failclosed.test.ts (ci.yml evidence-identity, same
+ * class, same fix).
+ */
+const MERGE_QUEUE_SKIP_EXPRESSION =
+  "startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]'";
+
+function assertMergeQueueSkipActorContract(workflow: string): void {
+  const values = workflow
+    .split("\n")
+    .filter((line) => /^\s*if:/u.test(line))
+    .filter(
+      (line) =>
+        line.includes("github.head_ref") ||
+        line.includes("mergify/merge-queue/"),
+    )
+    .map((line) => {
+      const raw = line.replace(/^\s*if:\s*/u, "").trim();
+      const quoted = /^"(.*)"$/u.exec(raw) ?? /^'(.*)'$/u.exec(raw);
+      return quoted ? quoted[1] : raw;
+    });
+
+  // The skip must still exist — removing it outright deadlocks every queued
+  // merge, because Mergify's speculative PRs cannot carry the original PR's
+  // evidence block and this gate is fail-closed.
+  expect(
+    values,
+    "the merge-queue skip-notice condition must exist in its canonical actor-pinned shape",
+  ).toContain(MERGE_QUEUE_SKIP_EXPRESSION);
+  // And the enforcement steps must carry its exact negation.
+  expect(
+    values,
+    "enforcement steps must carry the exact negation of the compound skip",
+  ).toContain(`!(${MERGE_QUEUE_SKIP_EXPRESSION})`);
+  // No `if` in this workflow may consult the author-controlled head ref in any
+  // other shape — a branch-only predicate is exactly how the gate became
+  // skippable, and a `||` variant would skip on the branch name alone again.
+  for (const value of values) {
+    expect(
+      [MERGE_QUEUE_SKIP_EXPRESSION, `!(${MERGE_QUEUE_SKIP_EXPRESSION})`],
+      `every merge-queue \`if\` must be one of the two canonical actor-pinned shapes (got: \`${value}\`)`,
+    ).toContain(value);
+  }
+}
+
+describe("staging-evidence merge-queue skip actor contract (SCRUM-3812)", () => {
+  it("requires the Mergify bot author in addition to the merge-queue branch prefix", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    assertMergeQueueSkipActorContract(workflow);
+  });
+
+  it("rejects an enforcement step whose skip keys on the branch name alone", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = workflow.replace(
+      `        if: "!(${MERGE_QUEUE_SKIP_EXPRESSION})"`,
+      "        if: \"!startsWith(github.head_ref, 'mergify/merge-queue/')\"",
+    );
+    expect(mutated).not.toBe(workflow);
+
+    expect(() => assertMergeQueueSkipActorContract(mutated)).toThrow();
+  });
+
+  it("rejects a skip-notice condition that keys on the branch name alone", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = workflow.replace(
+      `        if: ${MERGE_QUEUE_SKIP_EXPRESSION}`,
+      "        if: startsWith(github.head_ref, 'mergify/merge-queue/')",
+    );
+    expect(mutated).not.toBe(workflow);
+
+    expect(() => assertMergeQueueSkipActorContract(mutated)).toThrow();
+  });
+
+  it("rejects weakening the compound skip's conjunction to a disjunction", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = workflow.replaceAll(
+      MERGE_QUEUE_SKIP_EXPRESSION,
+      MERGE_QUEUE_SKIP_EXPRESSION.replace(" && ", " || "),
+    );
+    expect(mutated).not.toBe(workflow);
+
+    expect(() => assertMergeQueueSkipActorContract(mutated)).toThrow();
+  });
+});
+
+/**
  * Founder directive 2026-08-01: the temporary `SOAK_GATE_DISABLED` bypass is
  * only defensible while its ON switch lives in repo-admin state. `vars.*` is
  * settable by a repo admin (`gh variable set`) and by nobody else; the frozen
