@@ -1,6 +1,145 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-29 (base-drift ledger carve-out matches `.sql`, not the migrations DIRECTORY)._
+_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
+
+## 2026-08-23 — `check-staging-evidence.ts` evidence-gate integrity (SCRUM-3481 / 3509 / 3533 / 3542 / 3549)
+
+Five ways the gate could be talked out of gating. All five were found by PR authors
+(#1731, #1785, #1799) and explicitly deferred there; all five are closed together because
+three of them are the same file and two of them are load-bearing for each other.
+
+**1. Bolded field labels switched every placeholder guard off (SCRUM-3481).** The label
+regex tolerated emphasis only BEFORE the label — `[\s\-*]*` ate the opening `**` of
+`**Approved by:** TBD`, the label matched, and `(.*)` then captured `** TBD`. Every guard
+in this file is anchored to the WHOLE trimmed value (`/^tbd\.?$/i`, the rest of
+`INCOMPLETE_VALUE_PATTERNS`, `NOT_APPLICABLE_VALUE_RE`), and `** TBD` matches none of them.
+So a body with bolded labels passed with `TBD` in every field, **including** the
+residual-risk `Approved by:` that stops an author self-waiving a §1.12 exception.
+`extractEvidenceFieldValue` now runs `stripMarkdownEmphasis()` on the capture. `*`, `_`
+and `` ` `` all come off both ends unconditionally. **It is index scanning, not regex, on
+purpose** — PR bodies are author-controlled and the obvious spelling is quadratic
+(`/[*_`]+$/` retries from every start position). While in there: `- [x] **Field:** value`
+used to read as ABSENT (the `[` stops the prefix class, leaving `**` between checkbox and
+label), so `FIELD_LABEL_CHECKBOX` now carries its own emphasis run.
+
+Review addendum (2026-08-29, second pass): the first cut stripped `_` only as a MATCHED
+pair, to keep a trailing snake_case underscore (`arkova_staging_`) intact. That reopened
+the exact class this fix closes, through the third marker: the closing `_` of an
+italicised LABEL lands unpaired at the value's edge — `- _Staging branch:_ TBD` captured
+`_ TBD`, whole-line italics `- _Staging branch: TBD_` captured `TBD_`, and
+`_Approved by:_ TBD` self-waived a residual-risk note — and none of those hit any
+whole-value-anchored guard. An unpaired edge underscore is locally indistinguishable from
+a snake_case one, so the stripper now takes the fail-closed reading: shave it. A
+legitimate value that loses an edge `_` can only become MORE likely to be caught by a
+placeholder guard (which fails closed and visibly — `arkova_staging_` still passes,
+because `arkova_staging` is not a placeholder); leaving it kept an author-controlled
+bypass open. Interior underscores are never touched. Pinned by the three
+underscore-italics cases in `check-staging-evidence-integrity.test.ts`. Known residual,
+deliberately out of scope: HTML tags (`<i>TBD</i>`) are not markdown emphasis and are not
+stripped — the placeholder guards remain a ratchet against common spellings, not a proof.
+
+**2. `Approved by:` could name the PR author (SCRUM-3481, second half).**
+`approverIndependenceErrors()` runs on every non-T0 path — ahead of the RC/frontend/
+unsoakable/standard fork, so it cannot be side-stepped by choosing an evidence mode. It
+rejects a self-reference value (`me`, `myself`, `self`, `the author`, `PR author`) and an
+approver that resolves to an exact GitHub-login token match against `opts.prAuthor`, which
+`staging-evidence.yml` resolves LIVE from `.user.login` (never the PR body) and validates
+against `^[A-Za-z0-9-]{1,39}$` before writing it to `$GITHUB_OUTPUT`. **Stated honestly: it
+does NOT map display names onto logins.** `Approved by: Carson (founder / release owner)`
+on a PR authored by `carson-see` still passes, because the gate has no identity directory
+and a wrong guess would block real approvals. This is a ratchet, not a proof.
+
+Review addendum (2026-08-29): the handle comparison trims a trailing `.`/`_`/`-` off each
+token by **index scan**, not `token.replace(/[._-]+$/, '')`. That anchored trailing
+quantifier is quadratic whenever it fails — a single approver line of `a` + 60 000 `.` + `b`
+(well inside GitHub's 65 536-char body cap) measured ~10 s of runner CPU. Same reasoning as
+`stripMarkdownEmphasis`: the value is one line of an author-controlled PR body, so no regex
+whose worst case is superlinear belongs on it. Failure was closed either way — a timed-out
+job is a red check — so this is burn, not bypass. Pinned by the trailing-punctuation case in
+`check-staging-evidence-integrity.test.ts`. Second pass, same date: the self-reference
+denylist was whole-value-anchored, so `me` failed while `me (the author)` passed — any
+trailing decoration switched it off. A LEADING self-reference word at a word boundary now
+fires too (`SELF_REFERENCE_PREFIX_RE`); bare `same` stays whole-value-only and `-` is not a
+firing boundary, so "Self-serve pod lead" and mid-sentence mentions are unaffected.
+
+It covers **all three** `Approved by:`-bearing waiver notes, via `approverNoteHeaders()`:
+`### Residual-risk note`, `### Unsoakable-surface note`, and `### Base-drift residual-risk
+note` (FD-GATE-3). The third was added in review — it waives a control of the same weight
+(it preserves COMPLETED soak evidence across main drift that touched the PR's soak surface)
+and was passing `Approved by: me` while the other two rejected it. `approverNoteHeaders()`
+is a function rather than a `const` array only because `BASE_DRIFT_RESIDUAL_HEADER_RE` is
+declared further down the file; a module-level array literal would read it inside its
+temporal dead zone and throw at import. **Still out of scope:** the T1 `Human approver:`
+field. Adding the author cross-check there would fire on every T1 PR (where Carson is
+routinely both author and approver), so it is a policy call, not a gate fix.
+
+**3. `packages/sdk` classified T0 (SCRUM-3509).** The SDK `PATH_RULE` named
+`packages/(arkova-py|embed|mcp-server|typescript|langchain)` — and `packages/sdk`, the
+published `@carsonarkova/sdk` whose client implements the frozen v1 verify contract, was
+not in it. An SDK-only PR matched no rule at all and merged with zero evidence. `sdk` added;
+the three phantom alternatives dropped (`mcp-server`/`typescript`/`langchain` are `sdks/`
+directories, already covered, and are NOT under `packages/`); the alternation now ends in
+`/` so `packages/embedded-thing` cannot match `embed`. **`packages/verifier` and
+`packages/verifier-cli` are deliberately still absent** — PROOF-08 / SCRUM-2341 made them
+T0 (zero prod runtime), and `isT0OnlyFile` consults PATH_RULES *before* its own allowlist,
+so adding them here would silently revert that ruling. Pinned by tests both ways.
+
+**4. `head_binding: "roster"` removed (SCRUM-3533).** `validateCoveredRcPr` is shared by the
+deferred-consolidated-soak branch AND the normal approved branch, and `resolveHeadBindingPolicy`
+never looked at `soak_mode` — so a manifest with `approval_status: "approved"`, i.e. one
+claiming REAL completed soak evidence, could set roster mode and merge an arbitrary
+post-soak head against that evidence. Two adversarial reviews on #1799 said drop rather than
+repair, and that is what happened: `resolveHeadBindingPolicy` → `validateHeadBindingMode`,
+which errors on `roster` with a message pointing at exact binding or
+`soak_mode: "deferred_consolidated_soak"`. Roster mode's whole safety argument was "the
+exception is not forgeable by the PR author acting alone", which item 5 shows was false.
+The legitimate need it served is served better by deferred mode, which is gated on the
+`DEPLOY_WORKER_PAUSED` repo variable no author can set. **No manifest on main ever set
+`head_binding` at all** (`grep` over `docs/staging/rc-manifests/`), so nothing in flight
+depended on it.
+
+**5. RC manifests were author-mintable (SCRUM-3542).** The manifest is loaded from the PR's
+OWN checked-out tree, `docs/staging/rc-manifests/**` classifies T0, and root `CODEOWNERS`
+did not list it — so a PR could ship the document that authorizes it. Two halves:
+`rcManifestCoverage` now REFUSES a PR that cites a manifest it also changes (the flow is
+already two-PR — the manifest lands on main in its own `docs(rc):` change, then covered PRs
+are graded against it — so this codifies the flow), and `CODEOWNERS` gained
+`docs/staging/rc-manifests/ @carson-see`. **The CODEOWNERS line gates nothing unless
+"Require review from Code Owners" is enabled on `main`'s branch protection — verify that
+separately; it was not verified as part of this change.** A manifest-ONLY PR stays T0 by
+design: it carries no prod-affecting change, so there is nothing to authorize and no
+evidence to produce, and making that path soak-tier would demand staging evidence for every
+`docs(rc):` restamp and livelock the release train (SCRUM-3337: ten restamp PRs for one
+manifest).
+
+**6. `rcPrBaseCovered` had no lower bound (SCRUM-3549).** On an allowlist miss it fell
+through to a bare `ancestry(prBase, current)`. Every commit reachable from `main` is an
+ancestor of the live base, so the per-entry check degenerated to "is this a commit on main"
+and admitted a base from BEFORE the train launched — a base the soak never ran against. Now
+`ancestry(train_launch_sha, prBase) && ancestry(prBase, current)`: the recorded base must
+sit inside the window the manifest actually covers. A missing/unnormalizable
+`train_launch_sha` or an unresolvable ancestry answer fails closed to the enumerated
+allowlist, matching `rcCurrentBaseCovered` — which needed no change, because its ancestry
+call is `ancestry(allowed, candidate)` and therefore already had the lower bound this one
+was missing.
+
+**7. `CODEOWNERS` classified T1 (found while fixing 5).** SCRUM-3542's fix IS a CODEOWNERS
+line, and that made this otherwise CI-only change required-tier T1 — a 2h soak of a file
+prod never reads. CODEOWNERS is review governance: GitHub reads it to decide who must
+approve, nothing imports or deploys it, and there is no surface a soak could exercise. It is
+exactly the class the two `.gitleaks*` entries in `STAGING_TOOLING_ALLOW` already document
+("a one-line fingerprint waiver classified T1 and demanded a 2 h soak of a file prod never
+reads"), so it joined them as `/^(?:\.github\/)?CODEOWNERS$/` — anchored to the two
+locations GitHub honours outside `docs/`, so `services/worker/src/CODEOWNERS` keeps T2 and
+`CODEOWNERS.bak` is not swept in (both pinned). Separately, `CODEOWNERS` now owns itself:
+`.github/` was owned but this repo's CODEOWNERS is at the ROOT, so the file deciding who
+reviews auth/migrations/chain was covered by no rule.
+
+Tests: 41 red-first in the new `check-staging-evidence-integrity.test.ts`, plus edits to two
+existing blocks in `check-staging-evidence.test.ts` (the six roster-internals tests replaced
+by three that pin its removal; the ancestry test's stub taught the second bound, and a new
+sibling pinning that a pre-launch base FAILS). 433/433 green across the five affected
+suites; baseline on `origin/main` was 373/373 for the two pre-existing ones.
 
 ## 2026-08-29 — base-drift carve-out (b) matched a DIRECTORY, so `migrations/agents.md` read as "main landed a migration"
 
@@ -138,8 +277,6 @@ Repo-wide ratchet for SonarCloud `githubactions:S6506`: no `curl` in `.github/wo
 ## 2026-08-17 — `mergify-orphaned-export-gate.test.ts` (new)
 
 Contract test pinning `check-success = Orphaned Export Lint` into EVERY `.mergify.yml` queue rule's `merge_conditions`, plus the exact `name: Orphaned Export Lint` job name in `ci.yml` so the pair cannot silently drift. Exists because the `orphaned-export-lint` job (CTO ruling R14, fail-closed `continue-on-error: false`) ran on every PR since 2026-07-28 but was never listed in `merge_conditions` — a CI job absent from that list reports without blocking (the "NEW job not in .mergify.yml gates NOTHING" class). Raw-content style follows `s33-wave2-workflow-contract.test.ts`. NOTE: branch protection's required-check set is a separate, Carson/admin-only surface — this test pins only the in-repo Mergify layer.
-_Last updated: 2026-08-18 (mergify-python-sdk-gate contract test)._
-
 ## 2026-08-18 — `mergify-python-sdk-gate.test.ts` (new)
 
 Contract test pinning `check-success = Python SDK Tests (packages/arkova-py)` into EVERY `.mergify.yml` queue rule's `merge_conditions`, plus the exact `name: Python SDK Tests (packages/arkova-py)` job name in `ci.yml` so the pair cannot silently drift. Exists because the `python-sdk-tests` job (BUG-2026-08-12-007) was added to ci.yml without being listed in `merge_conditions` — a CI job absent from that list reports without blocking (the "NEW job not in .mergify.yml gates NOTHING" class), which would have reproduced the original never-gated-on-a-PR blindness one layer up. Also pins that the job stays free of a job-level `if:`: an unreported check never satisfies `check-success`, so a path-filtered gated job would deadlock every non-SDK PR in the queue (path conditioning here is step-level `if:` inside always-reporting jobs, e.g. ai-eval-gate). Raw-content style follows `s33-wave2-workflow-contract.test.ts`; queue-gate shape follows `mergify-orphaned-export-gate.test.ts` (PR #2257). NOTE: branch protection's required-check set is a separate, Carson/admin-only surface — this test pins only the in-repo Mergify layer.
@@ -298,7 +435,7 @@ Two design points to preserve if you touch it:
   - **Architecturally-unsoakable evidence mode (S3 unsoakable-surface fix):** a PR can be required-tier T2 purely by touching an OFFLINE package/SDK/CLI surface (the `packages/…` / `sdks/` half of the SDK `PATH_RULES` rule) — but those packages ship no worker code, no migration, and are not the served Cloud Run HTTP contract; they are standalone libraries/CLIs run offline by consumers (pytest/vitest/parity). Such a PR can NEVER produce the worker artifacts (Worker revision, Image digest, Cloud Run URL, staging deploy-log id) or the `clean_mirror` preflight the standard T2 block demands — an impossible catch-22 that blocked #1411 (verifier-cli + arkova-py). This mode lets that narrow case satisfy T2 with test/parity evidence instead. **Activates ONLY when all three hold:** declared tier `T2` **AND** required tier `T2` **AND** `isOfflinePackageOnlyChange(files)` (every changed file is under `packages/` or `sdks/` and matches NONE of `services/`, `supabase/(migrations|functions)/`, the served-contract docs `docs/api/` + `docs/guides/API_GUIDE.md`, `.github/workflows/`, or `scripts/`). **Accepts** (`T2_UNSOAKABLE_FIELDS`): `Test evidence:` (filled, non-placeholder, **and** stating a passing result — pytest/vitest/parity green or an `N/M` count), `CI green:` (non-empty **and** passing), `Staging tag URL or N/A explanation:` (an N/A-with-justification or a URL), and a `### Unsoakable-surface note` attesting no worker runtime exists (sub-fields `No worker runtime:`, `Surfaces touched:`, and a real non-placeholder `Approved by:`). Exact-head SHA integrity still applies. **It cannot weaken any worker/migration/served-contract PR:** the moment such a file is in the diff, `isOfflinePackageOnlyChange` is false and the PR falls through to the unchanged standard T2/T3 worker-artifact requirements (verified: served-contract docs are excluded because a soak validates the worker contract they describe). It does NOT change tier classification — an offline-package T2-required PR that declares T1 is still blocked. Mutually exclusive with the frontend-T2 path (a mixed frontend+package diff satisfies neither predicate and falls through to standard T2). NOTE: `packages/verifier` + `packages/verifier-cli` are ALSO in the `isStagingToolingOnly` T0 allowlist, so a PR confined to just those is already T0; this mode is what unblocks the T2 offline SDKs (`arkova-py`, `embed`, `mcp-server`, `typescript`, `langchain`, `sdks/`).
   - **Release-candidate manifest coverage (2026-06-08 release queue rescue):** per-PR evidence remains the default. If a PR body includes `RC manifest path: docs/staging/rc-manifests/rc-*.json`, the same required check name accepts machine-readable RC coverage instead of duplicated long soak prose. The manifest must be local JSON only, approved, unexpired, exact-head covered, base/train covered, clean preflight, real deploy provenance, passing soak result, and migration rollback/reapply proof for T3 or migration-bearing PRs. Arbitrary paths and external URLs are rejected. The workflow name/job name stay unchanged; `.github/workflows/staging-evidence.yml` only passes `PR_NUMBER` as additional data.
   - **RC base coverage is ancestry-aware (SCRUM-3026 follow-up, 2026-08-01).** An RC manifest is a *committed* file, so exact SHA enumeration required it to list a base SHA that would not exist until after it was written — every merge into `main` (including the merge of the manifest refresh itself) mints a new base SHA for every other open PR in the train. That is a live-lock, not staleness: curing it for one PR re-creates it for the rest. `rcCurrentBaseCovered` / `rcPrBaseCovered` now accept the live base when it is listed **or** when `git merge-base --is-ancestor` shows it descends from `train_launch_sha` / `target_main_sha` / `allowed_base_shas` / `covered_main_shas` (per-entry: the recorded `base_sha` is an ancestor of the live base). The invariant the enumeration proxied for — "the RC's soaked baseline is contained in the history of the base this PR merges into" — is preserved exactly; a divergent or pre-launch base still fails. `opts.baseSha` is the PR's `base.sha` resolved from the GitHub API on a workflow restricted to `branches: [main, staging, develop]`, so it is a protected-branch commit, never author-controlled. Injected via `CheckOptions.ancestryProvider` (git-backed in `main()`; `fetch-depth: 0` in the workflow supplies the history). An **unresolvable** ancestry answer (`null` — shallow clone, missing object) fails CLOSED to exact enumeration.
-  - **`head_binding` — how an `included_prs[]` entry binds to the artifact (SCRUM-3026 follow-up, 2026-08-01).** Default (field absent, or `"mode": "exact"`) is unchanged and is the only mode that reads as "this evidence covers this code": the entry's `head_sha` must equal the live PR head. `"mode": "roster"` covers the case where the manifest is NOT asserting soak coverage of this head — merge authority is an explicit CLAUDE.md §1.12 residual-risk exception and the real soak runs *after* the merge. There, exact-head binding proves nothing (there is no artifact-bound evidence to protect) while costing a manifest re-commit per push — the same live-lock as the base problem. Roster mode matches the entry by PR **number** and requires `head_binding.exception_id` to name an `exceptions[]` entry carrying a filled `approver`, `text`, parseable `recorded_at`, an **enforced** `expires_at` in the future, and an `applies_to[]` listing this PR number — all in the manifest (its own PR, its own review), none forgeable from the PR body. The summary always prints a ⚠️ `RECORDED HUMAN EXCEPTION` note naming the exception id, approver and expiry. Everything else — `approval_status`, tier floor, `environment`, soak window, soak freshness, `migration_plan` — is enforced unchanged. An unrecognized `mode` fails closed (and is evaluated even when the recorded head still matches).
+  - **`head_binding` — how an `included_prs[]` entry binds to the artifact.** `exact` is the ONLY mode: the entry's `head_sha` must equal the live PR head. Omit the field for the same behavior. An unrecognized mode fails closed, and is evaluated even when the recorded head still matches. **`"mode": "roster"` was REMOVED 2026-08-23 (SCRUM-3533)** — see the 2026-08-23 evidence-gate-integrity section at the top of this file for why.
   - **No override label exists.** The `staging-soak-skip` label was destroyed 2026-05-07 (PR #733). Real CI/agent-config-only PRs must list every touched file in the allowlist or they fail the gate.
 - **`check-npm-install-policy.ts`** — blocks `npm ci` / `npm install` in GitHub Actions workflows and shell deploy helpers unless lifecycle scripts are suppressed with `--ignore-scripts` or a nearby `install-scripts-ok:` comment gives an explicit exception reason.
 - **`check-anchor-index-justification.ts`** — blocks new `public.anchors` indexes in Supabase migrations unless the migration has an adjacent `anchor-index-justification:` comment with a concrete reason.

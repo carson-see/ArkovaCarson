@@ -22,11 +22,22 @@ Naming the new head means committing an updated manifest to `main` — which the
 does not contain, so it must restack again, which changes the head again. **Infinite
 regress.**
 
-The gate's own source anticipates this. From `scripts/ci/check-staging-evidence.ts`, on why
-`roster` mode exists:
+The gate's own source anticipated this. It used to offer a second mode, `roster`, on the
+grounds that:
 
 > exact-head binding proves nothing about safety … while costing a manifest re-commit per
 > push — the same live-lock as the base problem.
+
+**`roster` mode was REMOVED on 2026-08-23 (SCRUM-3533) and is no longer an option.** It was
+reachable from the normal *approved* path, not only from deferred mode, so a manifest
+claiming completed soak evidence could use it to merge an arbitrary post-soak head against
+that evidence. Its safety argument — "the exception is not forgeable by the PR author acting
+alone" — was also false at the time, because `docs/staging/rc-manifests/**` classified T0
+with no CODEOWNERS (SCRUM-3542, fixed in the same change). A manifest that sets
+`head_binding.mode: "roster"` now hard-fails. The live-lock this document describes is
+resolved instead by `soak_mode: "deferred_consolidated_soak"`, which is gated on the
+`DEPLOY_WORKER_PAUSED` repository variable that no PR author can set, and which never lets a
+passing check read as "evidence present".
 
 ## What this means
 
@@ -45,7 +56,7 @@ Applying one to PRs that were already soaked (as a union) and have since drifted
 
 | Option | Verdict |
 |---|---|
-| `head_binding: roster` | Available, but the gate then states plainly that merge authority is a **recorded human exception, not soak coverage**. That understates real evidence but does not overstate it — acceptable *if* the exception is named, time-boxed and lists the PR in `applies_to[]`. |
+| ~~`head_binding: roster`~~ | **Gone (SCRUM-3533, 2026-08-23).** It was reachable from the approved path, so it could merge an arbitrary post-soak head against completed evidence, and the `exceptions[]` entry it relied on was mintable by the PR author. Use `soak_mode: "deferred_consolidated_soak"` instead — same "merge before the soak exists" outcome, but gated on a repository variable the author cannot set. |
 | Re-soak the restacked heads | Fully honest and expensive: a fresh 12h T2 window per train on a free rig. |
 | Per-PR evidence blocks | What most of these PRs need anyway, since most were never actually exercised (see below). |
 
