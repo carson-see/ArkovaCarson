@@ -1,6 +1,35 @@
 # agents.md — lib
 
-_Last updated: 2026-08-15_
+_Last updated: 2026-08-23_
+
+## 2026-08-23 R-7 — `PLATFORM_METRICS` in `copy.ts` is the only home for a public traction figure
+
+The four `/about` + `/developers` traction tiles were bare JSX literals duplicated
+across two pages, and the records-secured one had rotted to `1.39M+` while prod
+held **at least 3.3M** SECURED records. A public number is a CLAIM (§1.5 / R-7):
+it must say what it measures and when it was measured. `copy.ts` now owns
+`PLATFORM_METRICS` (`value` / `label` / `shortLabel` / `asOf`) plus
+`PLATFORM_METRICS_AS_OF`, and both pages map over it — neither re-states a figure
+inline. `src/pages/PlatformMetrics.claims.test.ts` is the ratchet; it reads page
+SOURCE (a figure behind a flag is still a published claim) and fails on any bare
+`>N.NM+<` JSX literal, so re-adding one is caught rather than reviewed for.
+
+Two rules when you touch this block:
+
+- **A floor, not a point estimate.** `RECORDS_SECURED` ends in `+` because that is
+  the only shape that stays true as prod grows. The value came from a bounded
+  count that stops early and therefore PROVES a lower bound —
+  `SELECT count(*) FROM (SELECT 1 FROM anchors WHERE status='SECURED' LIMIT 3300000) t;`
+  returned `3300000` on prod 2026-08-23. An exact `count(*)` **times out** at this
+  table size, and `pg_class.reltuples` (what `/api/treasury` totalSecured derives
+  from) reads high, so neither is usable as a published claim. Re-measure the same
+  way before raising the number, and move `asOf` with it.
+- **Never date a figure you did not measure.** `PUBLIC_RECORDS_INDEXED` /
+  `DOCUMENT_TYPES` / `EXTRACTION_F1` are carried forward from the original GEO-16
+  block with `asOf: null` because their provenance was never recorded. Giving one
+  a date to make the block look uniform re-creates the exact defect in a new place.
+  Re-measure first, then date it. These three remain **unverified** — a known
+  residual, not something this change fixed.
 
 ## 2026-08-15 BUG-2026-08-13-010 — `connectorFingerprint.ts` + `CONNECTOR_FINGERPRINT_LABELS`/`_TRIAD` in `copy.ts`
 
@@ -35,9 +64,9 @@ Net precision **improved**: `Zipper pouches` and `addressing` used to be redacte
 Two things found while doing this, recorded so nobody re-derives them:
 
 - **Value patterns must not cross a line break.** `NATIONAL_ID`'s value class used `\s`, which includes `\n`, so a 10-char ID ran greedily onto the next line and swallowed that line's label — in the `"<column>: <value>"` per-line text the CSV upload builds, `national_id: AB.123/456` ate the `course_name` header and destroyed the credential title the extractor reads. Now bounded to space and tab. Pre-existing (reproducible at HEAD through the spaced `National ID:` form), strictly narrowing. `ADDRESS_KEYWORD`'s value is *deliberately* multi-line (CRIT-4, up to 3 lines) and was left alone — which does mean an `address:` column in a CSV row still consumes the two columns after it. **Closed by PR #2313 — see the next section; do not cite this sentence as current behaviour.**
-- **`EMAIL_PATTERN` is quadratic and was NOT fixed here.** `[a-zA-Z0-9._%+-]+@…` backtracks one character at a time from every start position when the input has no `@`: measured 64,004 ms on a 100k-char input, versus 0 ms for SSN and phone and 0–1 ms for all four keyword rules on the same input. `stripPII` runs in the browser on raw OCR text, so a large scanned document freezes the tab. Out of scope for this PR; tracked separately.
+- **`EMAIL_PATTERN` is quadratic and was NOT fixed here.** `[a-zA-Z0-9._%+-]+@…` backtracks one character at a time from every start position when the input has no `@`: measured 64,004 ms on a 100k-char input, versus 0 ms for SSN and phone and 0–1 ms for all four keyword rules on the same input. `stripPII` runs in the browser on raw OCR text, so a large scanned document freezes the tab. Out of scope for that PR; tracked separately. **Closed 2026-08-22** (branch `fix/piistripper-email-noat-fastpath`): `stripPII` now skips `EMAIL_PATTERN` entirely when the input contains no `@` — a zero-semantic-change fast path, since the pattern requires a literal `@` to match. The adversarial suite pins a 2 s ratchet on a 100k-char contiguous `@`-less run (5.8 s red before the fix under vitest, single-digit ms after). **Residual also closed, 2026-08-23, same branch.** The fast path only covers `@`-less input; the `@`-present case still ran the regex. `EMAIL_PATTERN`'s LOCAL-PART quantifier is now bounded to RFC 5321 §4.5.3.1's 64 octets — `{1,64}` — which caps the work the unanchored scan redoes at each offset and makes it linear. Measured: long local-part run + invalid domain 3,583 ms → 15 ms; ambiguous never-completing dotted domain 3,747 ms → 14 ms; the `@`-less 100k case 4,872 ms → 15 ms even with the fast path disabled. Both are pinned by 2 s ratchets. **The domain quantifier is deliberately NOT bounded, and that is load-bearing.** Bounding it to RFC 5321's 255 octets was tried and reverted during review: it does not degrade gracefully. A domain-character run longer than the bound cannot reach the `\.` that must follow it, so the pattern matches nothing and the WHOLE address — `@` and registrable domain included — survives in the clear, which is strictly worse than the unbounded pattern. A 4,000-case differential fuzz over 200–359 character domains caught it — 2,702 of those inputs redacted LESS than the unbounded pattern — and a 6,000-case sweep over 150–449 characters confirmed the fix; three regression pins now cover 300/400/2000-character domains. Do not 'symmetrise' these bounds. The local-part bound degrades the opposite way and is therefore safe: on a run over 64 characters the match just starts later, so the `@` and the entire domain still redact and only leading adjacent text is left (verified at every length 60–400). Differential fuzz against the previous pattern: 750,000 cases over five alphabets plus 6,000 long-domain cases, zero redacted less, zero redacted differently. This also clears Sonar `typescript:S8786`.
 
-_Last updated: 2026-08-22_
+_Last updated: 2026-08-23_
 
 ## Address coverage the separator fix did not reach (PR #2313)
 
@@ -293,6 +322,15 @@ Coverage is enforced, not asserted: `src/pages/PrivacyPage.copy-centralization.t
 fails if /privacy renders prose `copy.ts` does not own, or if a jurisdiction
 copy field regresses to an inline literal.
 
+- 2026-08-15 FD-D1 / FD-D3 (claims-integrity): `CONNECTIONS_LABELS` Drive denial copy now mirrors the
+  post-ruling `DriveConnectDenyReason` set exactly. **Added** `DRIVE_ORG_SCOPE_REQUIRED` (caller has an
+  org but omitted `org_id` — actionable retry) and `DRIVE_INDIVIDUAL_SCOPE_UNSUPPORTED` (caller has no
+  org; personal Google Drive is not supported). **Removed** `DRIVE_NEEDS_PAID_PLAN` and
+  `DRIVE_INDIVIDUAL_NOT_VERIFIED`: the worker can no longer emit those codes, and both offered a paid
+  upgrade / identity check for a personal-Drive connection that `org_integrations.org_id` (NOT NULL)
+  made impossible to persist. Keeping copy for an unreachable state is exactly the claims drift the
+  ruling targets — when a `code` dies, its string dies with it. Consumed by
+  `DriveConnectorCard.tsx`'s `DRIVE_DENIAL_COPY` map; §1.3-clean (`lint:copy` green).
 ## 2026-08-21 — `csvRowText.ts` column-role classification (PR #2302)
 
 `buildStrippedRowText` is the ONLY exported way to build the text the CSV

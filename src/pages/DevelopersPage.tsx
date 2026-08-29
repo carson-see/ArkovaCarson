@@ -15,6 +15,7 @@ import { Layers, Brain, ArrowRight, Copy, Check, Bot, AlertCircle, Building2, Ke
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
 import { PUBLIC_API_URL } from '@/lib/workerClient';
+import { PLATFORM_METRICS, PLATFORM_METRICS_AS_OF } from '@/lib/copy';
 
 const API_DOCS_URL = `${PUBLIC_API_URL}/api/docs`;
 const OPENAPI_SPEC_URL = `${PUBLIC_API_URL}/api/docs/spec.json`;
@@ -55,6 +56,17 @@ result = client.verify("abc123-def456")
 print(result.status)  # "ACTIVE"`,
 };
 
+/**
+ * Public priced offer list. Every row here is a COMMERCIAL REPRESENTATION, not
+ * marketing copy — a price attached to an endpoint says "pay this and it runs".
+ *
+ * R-1 (CTO ruling 2026-08-12, final, no review date): `/nessie/query` at $0.010
+ * "AI assistant query" was REMOVED. Nessie is permanently disabled by standing
+ * founder directive, and it is now hard-gated to fail closed
+ * (services/worker/src/middleware/nessieCapabilityGate.ts). Pricing a
+ * permanently-disabled capability is a false offer; do not re-add the row
+ * unless the directive itself changes.
+ */
 const PRICING_TABLE = [
   { endpoint: '/verify/:publicId', method: 'GET', price: '$0.002', desc: 'Verify record' },
   { endpoint: '/verify/batch', method: 'POST', price: '$0.002/item', desc: 'Batch verification' },
@@ -63,7 +75,6 @@ const PRICING_TABLE = [
   { endpoint: '/regulatory/lookup', method: 'GET', price: '$0.002', desc: 'Regulatory lookup' },
   { endpoint: '/cle/*', method: 'GET/POST', price: '$0.005', desc: 'CLE verification' },
   { endpoint: '/ai/search', method: 'POST', price: '$0.010', desc: 'AI semantic search' },
-  { endpoint: '/nessie/query', method: 'GET', price: '$0.010', desc: 'AI assistant query' },
 ];
 
 const CTA_BUTTON_CLASS = "bg-[#00d4ff] text-[#003642] text-xs uppercase tracking-widest px-6 py-2.5 rounded-full font-bold shadow-[0_0_15px_rgba(0,212,255,0.3)] hover:shadow-[0_0_25px_rgba(0,212,255,0.5)] transition-all";
@@ -188,25 +199,19 @@ export function DevelopersPage() {
                 API Documentation
               </a>
             </div>
-            {/* GEO-16: Social proof metrics */}
+            {/* GEO-16: Social proof metrics.
+                Figures are single-sourced from PLATFORM_METRICS (R-7: a public
+                number is a claim and must be sourced + dated). Never re-state
+                one inline here. */}
             <div className="flex flex-wrap justify-center gap-8 mt-12 text-center">
-              <div>
-                <p className="text-2xl font-bold text-[#00d4ff]">1.39M+</p>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Records Secured</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-[#00d4ff]">320K+</p>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Public Records</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-[#00d4ff]">21</p>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Document Types</p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-[#00d4ff]">87.2%</p>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">AI Extraction F1</p>
-              </div>
+              {Object.entries(PLATFORM_METRICS).map(([key, metric]) => (
+                <div key={key}>
+                  <p className="text-2xl font-bold text-[#00d4ff]">{metric.value}</p>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">{metric.shortLabel}</p>
+                </div>
+              ))}
             </div>
+            <p className="mt-4 text-[10px] text-[#bbc9cf]">{PLATFORM_METRICS_AS_OF}</p>
           </div>
         </section>
 

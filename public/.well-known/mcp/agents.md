@@ -1,6 +1,17 @@
 # agents.md — public/.well-known/mcp
 
-_Last updated: 2026-08-18_
+_Last updated: 2026-08-23_
+
+## 2026-08-23 — `anchor_document` description re-synced to the BUG-028 canonical text
+
+`services/edge/src/mcp-tools.ts` rewrote the `anchor_document` description
+(BUG-028: the old text promised "an anchor receipt with a public identifier"
+that the handler never returned — `public_records` has no `public_id` column;
+the receipt is a submission receipt with `public_id: null` and the fingerprint
+as the handle). The card's copy of the description is updated to start with
+that canonical text, keeping the card-only "Conditionally available:
+MCP_ENABLE_ANCHOR_DOCUMENT" suffix that the prefix rule in
+`scripts/ci/check-mcp-claim-parity.ts` permits.
 
 ## What This Folder Contains
 

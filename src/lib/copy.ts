@@ -662,6 +662,7 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'credential.issued': 'A credential was issued by a verified organization.',
   'credential.verified': 'A document record was confirmed as secured through a verification request.',
   'credential.status_changed': 'A document record moved to a different status.',
+  'compliance.document_expiring': 'A secured document record is within seven days of its expiration date.',
 };
 
 // =============================================================================
@@ -1762,8 +1763,13 @@ export const CONNECTIONS_LABELS = {
   DRIVE_NOT_ADMIN: 'Only an organization administrator can connect Google Drive for your organization.',
   DRIVE_ORG_NOT_VERIFIED: 'Your organization must be verified before connecting Google Drive. Verified organizations can connect a document source. Contact support to start verification.',
   DRIVE_ORG_SUSPENDED: 'Your organization is currently suspended. Google Drive cannot be connected until the suspension is resolved.',
-  DRIVE_NEEDS_PAID_PLAN: 'Connecting Google Drive requires a paid plan. Upgrade your plan, or ask an organization administrator to connect it for your organization.',
-  DRIVE_INDIVIDUAL_NOT_VERIFIED: 'You must complete identity verification before connecting Google Drive to your personal account.',
+  // FD-D3: the caller HAS an organization but asked to connect without naming
+  // it. Actionable — retry from the organization's settings.
+  DRIVE_ORG_SCOPE_REQUIRED: 'Google Drive connects to an organization. Open your organization’s settings and connect from there.',
+  // FD-D1: the caller has no organization at all. Says plainly that this is not
+  // something they can unlock — the previous copy offered a paid upgrade and an
+  // identity check for a personal-Drive connection that could never be saved.
+  DRIVE_INDIVIDUAL_SCOPE_UNSUPPORTED: 'Google Drive can only be connected by an administrator of a verified organization. Personal Google Drive accounts are not supported, so there is nothing to upgrade or verify here.',
   DRIVE_GATE_CHECKING: 'Checking your authorization to connect Google Drive…',
   DRIVE_GATE_UNAVAILABLE: 'We could not verify your authorization right now. Please retry in a few seconds; if the issue persists, contact support.',
 } as const;
@@ -4302,3 +4308,73 @@ export const SECURE_QUEUE_PAGE_LABELS = {
   OWNER_LABEL: 'Added by',
   ADMIN_REMOVE_UNAVAILABLE: "Removing another member's queued document isn't available yet.",
 } as const;
+
+// ─── R-7 / GEO-16 — public traction figures (/about, /developers) ───────────
+//
+// Append-only block (per the §6 EOF-append guidance used above). These four
+// tiles were duplicated as bare JSX literals across `AboutPage.tsx` and
+// `DevelopersPage.tsx`; the records-secured figure sat at a stale `1.39M+`
+// while prod held at least 3.3M SECURED records. An undated literal in two
+// files has no owner and no expiry, so it rots in whichever direction the
+// business moves — understating today, potentially overstating tomorrow.
+//
+// A public number is a CLAIM (CLAUDE.md §1.5 / R-7): it must say what it
+// measures and when it was measured. Hence one source of truth, a floor
+// marker (`+`) rather than a point estimate, and an explicit `asOf`.
+// `PlatformMetrics.claims.test.ts` is the ratchet.
+//
+// §1.3-clean: no banned terminology in any label.
+
+/**
+ * Public traction metrics, single-sourced for `/about` and `/developers`.
+ *
+ * `asOf` is `YYYY-MM` for a figure whose measurement date is known, and `null`
+ * for one carried forward from the original GEO-16 block whose provenance was
+ * never recorded. Do NOT give an unverified figure a date to make it look
+ * fresh — re-measure it, then date it.
+ *
+ * `shortLabel` exists only because the `/developers` metric row is a compact
+ * uppercase strip; it is the same claim in fewer words, never a different one.
+ */
+export const PLATFORM_METRICS = {
+  /**
+   * Floor, not a point estimate. Verified 2026-08-23 against the prod project
+   * with a bounded count that stops early and therefore PROVES a lower bound:
+   * `SELECT count(*) FROM (SELECT 1 FROM anchors WHERE status='SECURED'
+   * LIMIT 3300000) t;` returned 3300000. An exact `count(*)` times out at this
+   * table size, and the `pg_class.reltuples` planner estimate reads high, so a
+   * proven floor is the only honest shape for this claim. Re-measure the same
+   * way before raising it, and move `asOf` with it.
+   */
+  RECORDS_SECURED: {
+    value: '3.3M+',
+    label: 'Records Secured',
+    shortLabel: 'Records Secured',
+    asOf: '2026-08',
+  },
+  PUBLIC_RECORDS_INDEXED: {
+    value: '320K+',
+    label: 'Public Records Indexed',
+    shortLabel: 'Public Records',
+    asOf: null,
+  },
+  DOCUMENT_TYPES: {
+    value: '21',
+    label: 'Document Types',
+    shortLabel: 'Document Types',
+    asOf: null,
+  },
+  EXTRACTION_F1: {
+    value: '87.2%',
+    label: 'AI Extraction F1',
+    shortLabel: 'AI Extraction F1',
+    asOf: null,
+  },
+} as const;
+
+/**
+ * Rendered beneath the metric tiles. Only the records-secured figure carries a
+ * measurement date, so this qualifier names that claim specifically rather than
+ * implying the whole block was re-measured.
+ */
+export const PLATFORM_METRICS_AS_OF = 'Records secured as of August 2026.';

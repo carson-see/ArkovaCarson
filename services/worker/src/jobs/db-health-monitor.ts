@@ -5,8 +5,9 @@
  *   1. cron.job_run_details for failures in the last 5 min
  *      → emit Sentry event severity=error per failed job, page on 3-fail streak.
  *   2. pg_stat_user_tables for n_dead_tup, n_live_tup, last_autovacuum
- *      → emit metric db.dead_tuple_ratio.<table> + page if > 0.5 for >1h
- *        on hot tables, OR if last_autovacuum > 24h with dead > 100k.
+ *      → emit metric db.dead_tuple_ratio.<table> + page if > 0.5 AND
+ *        n_dead_tup >= 500 (DEAD_RATIO_MIN_DEAD_TUPLES — see below) on hot
+ *        tables, OR if last_autovacuum > 24h with dead > 100k.
  *   3. audit_events 'smoke_test.completed' last 5 rows
  *      → page if 3+ failed in a row OR run-time > 60s.
  *
@@ -24,6 +25,28 @@ const HOT_TABLES = ['anchors', 'public_records', 'audit_events', 'job_queue'] as
 const DEAD_RATIO_THRESHOLD = 0.5;
 const VACUUM_AGE_THRESHOLD_HOURS = 24;
 const VACUUM_DEAD_TUPLE_THRESHOLD = 100_000;
+// Prod anomaly triage (2026-08-18), verdict 2 — ARKOVA-WORKER-2A. Unlike its
+// VACUUM_DEAD_TUPLE_THRESHOLD sibling above, the ratio check had NO absolute
+// floor, so it was directly comparing n_dead_tup/n_live_tup with no regard for
+// how few rows either side represents. HOT_TABLES mixes multi-million-row
+// tables (anchors, public_records, audit_events — where ratio > 0.5 is a real
+// bloat signal) with `job_queue`, whose rows churn to completed/dead and get
+// vacuumed away: prod sits around n_live_tup=24, n_dead_tup=20, so a handful
+// of rows moving between states swings the ratio by tens of percentage
+// points — three live snapshots taken minutes apart read 0.83, 1.46, and
+// 2.46 off the SAME table, while autovacuum was demonstrably healthy the
+// entire time (499 runs, last one minutes-fresh, n_dead_tup sitting well
+// under the table's own `50 + 0.2*n_live_tup ≈ 55` autovacuum trigger point).
+// A ratio alert firing on a table Postgres itself doesn't think needs
+// vacuuming is threshold noise, not bloat — the same defect class as
+// `DEFAULT_LINKER_STALL_MIN_BACKLOG` in `pipelineThroughputMonitor.ts`,
+// where an unfloored signal paged fatal on a single stuck row.
+// 500 is comfortably above job_queue's live-scale churn (and any table of
+// similar shape) while a genuinely bloated hot table — anchors,
+// public_records, audit_events at their normal multi-million-row scale —
+// crosses it on the very first missed vacuum cycle, so no sensitivity is
+// lost for the incident class this check exists to catch.
+const DEAD_RATIO_MIN_DEAD_TUPLES = 500;
 const SMOKE_FAIL_STREAK_THRESHOLD = 3;
 const SMOKE_RUNTIME_THRESHOLD_MS = 60_000;
 
@@ -100,7 +123,11 @@ function computeAlerts(snapshot: Omit<DbHealthSnapshot, 'alerts'>): string[] {
   }
 
   for (const t of snapshot.deadTuples) {
-    if (t.ratio > DEAD_RATIO_THRESHOLD) {
+    // Floor gates the ratio's ESCALATION only, not the underlying signal: a
+    // sub-floor table still shows up in the green-path `deadTuples` snapshot
+    // (see runDbHealthMonitor's `db-health-monitor green` log), it just
+    // doesn't page on ratio noise it can't distinguish from real bloat.
+    if (t.deadTuples >= DEAD_RATIO_MIN_DEAD_TUPLES && t.ratio > DEAD_RATIO_THRESHOLD) {
       alerts.push(`Dead-tuple ratio on ${t.table}: ${t.ratio.toFixed(2)} (> ${DEAD_RATIO_THRESHOLD})`);
     }
     if (

@@ -449,7 +449,7 @@ afterEach(() => {
   vi.doUnmock('../../services/worker/src/ai/eval/s33-batch-acceptance.js');
   vi.doUnmock('../../services/worker/src/ai/eval/s33-wave1-producer-verifier.js');
   vi.resetModules();
-  for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of tempDirectories.splice(0)) rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 describe('authenticated bundle recursive freeze primitive', () => {

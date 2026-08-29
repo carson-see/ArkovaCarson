@@ -29,6 +29,7 @@ import crypto from 'node:crypto';
 import { db } from '../../utils/db.js';
 import type { TablesUpdate } from '../../types/database.types.js';
 import { logger } from '../../utils/logger.js';
+import { truncateUtf16Safe } from '../../utils/utf16-truncate.js';
 import { requireOrgQuota } from '../../middleware/perOrgRateLimit.js';
 import {
   getDeadLetterEntries,
@@ -447,7 +448,7 @@ router.post('/test', async (req, res) => {
     res.json({
       success: response.ok,
       status_code: response.status,
-      response_body: responseBody.slice(0, 500),
+      response_body: truncateUtf16Safe(responseBody, 500),
       event_id: testPayload.event_id,
     });
   } catch (err) {

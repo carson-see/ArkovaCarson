@@ -55,17 +55,14 @@ updates:
           - "version-update:semver-minor"
           - "version-update:semver-patch"
 
-      # undici 8.x requires Node >=22.19.0, but the worker Dockerfile runs
-      # node:20-alpine in BOTH stages. Auto-bumping the major produced
-      # `webidl.util.markAsUncloneable is not a function`, 31 test failures
-      # across 5 suites, and an ~80-minute production deploy blackout on
-      # 2026-08-11 (PR #2091 -- merged over a Tests check that had been red
-      # since 14:57Z; reverted by #2186). Minor/patch bumps stay allowed.
-      # Remove this ignore ONLY together with the Node 22 base-image bump,
-      # tracked in issue #2188. Node 20 goes EOL 2026-04.
-      - dependency-name: "undici"
-        update-types:
-          - "version-update:semver-major"
+      # undici major-version ignore REMOVED (was here 2026-08-11 -> 2026-08-20,
+      # SCRUM-3166 / GH #2188): it existed only because the worker Dockerfile ran
+      # node:20-alpine and undici 8.x requires Node >=22.19.0. The worker now
+      # runs node:22-alpine (both stages) with `engines.node >=22.19.0` in this
+      # package's manifest, so the Node-version trap this ignore guarded against
+      # no longer applies. See #2188 for the original incident (PR #2091 ->
+      # #2186 revert) and the chore(runtime) PR that removed this entry for the
+      # follow-up verification a fresh undici 8 bump should get.
 
   # Edge service
   - package-ecosystem: "npm"
