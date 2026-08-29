@@ -66,7 +66,14 @@
  * ## Why the role mapping is coarse
  *
  * `compliance:read` for ANY caller with a `public.profiles` row — including one
- * whose `org_id` is null — and `compliance:write` for org and platform admins.
+ * whose `org_id` is null — and `compliance:write` for `profiles.role =
+ * 'ORG_ADMIN'` or `is_platform_admin`. Note what that second clause does NOT
+ * include: the `org_members.role in ('owner','admin')` signal that
+ * `isCallerOrgAdminResult` treats as its FIRST admin source. Inert today (no
+ * mount requires `compliance:write`), but if one ever does, an org admin
+ * carried only by an `org_members` row would be 403'd here while
+ * `requireOrgAdmin` downstream admits them — resolve that before mounting a
+ * write scope, do not discover it in prod.
  * Read that first clause literally: for a JWT caller the read grant is close to
  * a liveness check, and it is meant to be. This layer is a CAPABILITY gate, not
  * the tenant boundary and not the per-route privilege check — `requireOrgId`
@@ -181,8 +188,15 @@ function denyInsufficientScope(res: Response, scope: string, granted: string[]):
  * DOES carry must independently satisfy `scope` (see the header).
  *
  * Mount AFTER the route's `requireAuth` (so `req.authUserId` is populated) and
- * before the route's rate limiter, mirroring the `/keys` chain
- * (`requireAuth, requireScope('keys:manage')`).
+ * before the route's rate limiter.
+ *
+ * That ORDER matches the `/keys` chain, but do not copy `/keys` itself as a
+ * model: `router.use('/keys', requireAuth, requireScope('keys:manage'), ...)`
+ * is an instance of the very no-op this module exists to replace — its
+ * `requireScope` enforces nothing for the JWT callers `/keys` is built for, and
+ * the real authorization there is the in-handler AUTH-06 ORG_ADMIN check in
+ * `api/v1/keys.ts`. It is left alone here only because it is out of this
+ * change's scope, not because it is correct.
  */
 export function requireScopeAnyAuth(scope: string) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {

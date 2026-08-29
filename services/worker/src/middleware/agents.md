@@ -264,7 +264,9 @@ Four properties, none incidental:
   `requireOrgId` / `requireOrgAdmin`, which is why `_org-auth.ts` grew the `*Result` sibling
   `getCallerProfileResult` rather than reusing the error-collapsing `getCallerProfile`.
 - **The role mapping is deliberately coarse** — `compliance:read` for ANY caller with a `profiles` row
-  (including one whose `org_id` is null), `compliance:write` for org/platform admins. Read literally:
+  (including one whose `org_id` is null), `compliance:write` for `profiles.role = 'ORG_ADMIN'` or
+  `is_platform_admin` — NOT for the `org_members.role in ('owner','admin')` signal that
+  `isCallerOrgAdminResult` checks first (inert today: no mount requires `compliance:write`). Read literally:
   for a JWT caller the read grant is close to a liveness check, and that is intended. This is a
   capability gate, not the tenant boundary and not the per-route privilege check — `requireOrgId` and
   `requireOrgAdmin` still own those and are what actually authorize a caller against a specific org's

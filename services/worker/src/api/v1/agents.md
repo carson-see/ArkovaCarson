@@ -941,7 +941,10 @@ decide the capability for a JWT caller who would be denied on their own.
 
 **Order is the contract** and is pinned by `middleware/__tests__/phiScopeMount.test.ts`:
 `requireAuth` first (it populates `req.authUserId`, which the scope guard reads), then the scope guard,
-then the rate limiter. Mirrors the existing `/keys` chain (`requireAuth, requireScope('keys:manage')`).
+then the rate limiter. That order matches the existing `/keys` chain — but `/keys`
+(`requireAuth, requireScope('keys:manage')`, router.ts) is itself an instance of the no-op described
+above, not a model to copy: its scope guard enforces nothing for the JWT callers it is built for, and
+the real gate is the in-handler AUTH-06 ORG_ADMIN check in `keys.ts`. Untouched here as out of scope.
 
 **This layer is the capability gate only — it did not move the tenant boundary.** `requireOrgId` still
 validates real membership against `x-org-id` inside each router, and `requireOrgAdmin` still gates the
