@@ -27,6 +27,7 @@ import { v1DeprecationHeaders } from './api/v1/deprecation.js';
 import { docsRouter } from './api/v1/docs.js';
 import { badgeRouter } from './api/badge.js';
 import { didWebRouter } from './api/did-web.js';
+import { proofKeysRouter } from './api/proof-keys.js';
 
 // Extracted routers (ARCH-1)
 import { billingRouter } from './routes/billing.js';
@@ -443,7 +444,26 @@ app.get('/.well-known/openapi.json', (_req, res) => {
 // anchor-creates still returned 429 after that fix deployed. It must carry
 // the same skip predicate, or it silently re-shadows apiV1Router's
 // 1,000/min-per-key limiter (Constitution §1.10).
-app.use(apiIpShadowGuard, didWebRouter);
+// BUG-024: `proofKeysRouter` (GET /.well-known/arkova-keys.json) was written,
+// tested (api/proof-keys.test.ts), shipped in the Docker image, and referenced
+// by kms-signer.ts and every signed proof bundle's `signing_key_id` — but was
+// never mounted here, so it 404'd on every worker host while its sibling
+// didWebRouter returned 200. Verifiers could not resolve the public key a
+// bundle names. It rides the SAME `app.use` chain as didWebRouter deliberately —
+// see the double-mount note just below for why a separate `app.use` would be
+// wrong on a store without per-instance counting.
+//
+// 2026-08-12 — this is the SECOND mount of the same `apiIpShadowGuard`
+// instance (the first is at the `/api` mount above). That is intentional and
+// both are needed: did:web paths live outside `/api`, and this mount must
+// carry the same skip predicate. But Express runs every mount a request
+// matches, so an anonymous `/api/v1/*` request — which falls through the
+// `/api` mount unanswered — used to be counted by this guard TWICE, making
+// the documented 60/min per IP actually 30/min. `rateLimit()` now counts a
+// request at most once per limiter INSTANCE (see `utils/rateLimit.ts`,
+// COUNTED_LIMITERS), which is what makes mounting one limiter twice safe.
+// Do not "simplify" this by deleting a mount; see rateLimitDoubleMount.test.ts.
+app.use(apiIpShadowGuard, didWebRouter, proofKeysRouter);
 
 // 2026-04-26 — bug-bounty F4. Spec was already publicly inlined in
 // `/api/docs/swagger-ui-init.js`, but `/api/v1/openapi.json` returned 401
@@ -546,13 +566,14 @@ app.use('/api/anchor', rateLimiters.api, requireAuthMw, anchorRevokeRouter);
 
 // Partner-account provisioning (SCRUM-2990) — RESERVED surface prefix, gated
 // behind the ENABLE_PARTNER_PROVISIONING switchboard flag (fail-closed: flag
-// absent/false/read-error → 404, surface dark; mirrors §1.9). No routes are
-// mounted in this slice (the skeleton is a pure state machine; table + routes
-// are the post-window continuation) — ANY future partner-provisioning router
-// MUST mount under this prefix so it inherits the gate. While dark or
-// routeless, every request here 404s and no provisioning is reachable.
+// absent/false/read-error → 404, surface dark; mirrors §1.9). The gate stays
+// the FIRST middleware on this prefix so the router below can never be reached
+// while the flag is off — ANY future partner-provisioning route MUST mount here
+// for the same reason. Auth follows the gate: an unauthenticated caller sees the
+// same 404 as a dark surface, and never a 401 that would confirm it exists.
 import { partnerProvisioningGate } from './middleware/partnerProvisioningGate.js';
-app.use('/api/partner-provisioning', partnerProvisioningGate(), rateLimiters.api);
+import { createPartnerProvisioningRouter } from './api/partner-provisioning-router.js';
+app.use('/api/partner-provisioning', partnerProvisioningGate(), rateLimiters.api, requireAuthMw, createPartnerProvisioningRouter());
 
 // SCRUM-1270 (R2-7) — append-only audit_events writer. Browser callers must use
 // this instead of inserting directly; migration 0276 dropped the authenticated
@@ -594,7 +615,12 @@ const server = app.listen(config.port, async () => {
   const idempotencyRedisStore = createUpstashIdempotencyStore();
   if (idempotencyRedisStore) {
     setIdempotencyStore(idempotencyRedisStore);
-    logger.info('Upstash Redis idempotency store initialized');
+    // BUG-018 / D-8: log the derived namespace so the deployed keyspace is
+    // observable in Cloud Run logs without reading Redis.
+    logger.info(
+      { environmentNamespace: idempotencyRedisStore.environmentNamespace },
+      'Upstash Redis idempotency store initialized'
+    );
   } else if (!redisRateInit) {
     logger.info('Upstash Redis not configured — using in-memory stores (rate limit + idempotency)');
   }

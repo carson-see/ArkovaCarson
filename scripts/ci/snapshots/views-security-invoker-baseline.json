@@ -1,6 +1,15 @@
 {
+  "_comment": [
+    "Grandfathered views for scripts/ci/check-views-security-invoker.ts.",
+    "",
+    "BUG-011 (2026-08): `calibration_features` removed. The entry existed for a",
+    "bare definer view created by archived migration 0222, which the Path C",
+    "baseline cutover dropped — the view was not in the prod pg_dump and does not",
+    "exist in production. 0413 recreates it WITH (security_invoker = true), so",
+    "the grandfather entry has nothing left to cover and keeping it would let a",
+    "future bare redefinition slip through."
+  ],
   "grandfathered": [
-    "v_slow_queries",
-    "calibration_features"
+    "v_slow_queries"
   ]
 }

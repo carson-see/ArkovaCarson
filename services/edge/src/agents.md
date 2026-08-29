@@ -10,7 +10,32 @@ Cloudflare Worker (`arkova-edge`) — Zero-Trust edge layer for x402 facilitator
 - `mcp-anomaly-detection.ts` — heuristics for unusual MCP tool-call patterns.
 - `mcp-tools.ts`, `mcp-tool-schemas.ts` — tool catalog and schemas.
 - `mcp-audit-log.ts` — fire-and-forget audit log writer via `ctx.waitUntil(...)`. Caller IPs are **keyed** HMAC-SHA256 (`MCP_IP_HASH_PEPPER`), not bare sha256 — see below.
-- `mcp-kill-switch.ts` — checks switchboard flag `ENABLE_MCP_SERVER`.
+- **`audit-event-category.ts`** — canonical `audit_events.event_category` values. The edge is a standalone tsconfig, so it CANNOT import `services/worker/src/types/audit-event-category.ts`; this is the edge's own copy, pinned to the DB CHECK by a test (see below).
+- `mcp-kill-switch.ts` — checks switchboard flag `ENABLE_MCP_SERVER`. **Fails CLOSED on a fresh/empty switchboard — CTO ruling, see below. Do not pass `p_default: true`.**
+
+## Fresh-switchboard behaviour is fail-CLOSED (BUG-021 investigation + CTO ruling, 2026-08)
+
+`get_flag(p_flag_key text, p_default boolean DEFAULT false)` returns `p_default` when the row is
+absent — it does **not** return NULL for a missing row. This file calls it with only `p_flag_key`, so a
+fresh, never-seeded `switchboard_flags` resolves to `false` and the gate serves `mcp_disabled` (503).
+The in-file `data === null → true` branch is therefore unreachable from a real database (it only covers
+a malformed response), and the "missing flag row → fail-open" comment next to it overstates what
+happens. That mismatch was investigated as BUG-021, and a fix passing `p_default: true` was drafted —
+then **REVERSED by CTO ruling**: Arkova's established posture is fail-closed on an empty switchboard.
+A fresh environment's `/api/v1` is deliberately dark for exactly this reason (`get_flag` fails closed
+on an empty `switchboard_flags`), and a kill switch that self-enables its surface on missing config
+would invert that posture and §1.4. Serving MCP on a new environment is an explicit operator action:
+seed the `ENABLE_MCP_SERVER` row.
+
+The rule this generalises to still holds: **`get_flag` collapses "absent" into `p_default`, so the fail
+direction is the caller's declaration, not the function's** — and every Arkova gate (`featureGate.ts`,
+`partnerProvisioningGate.ts`, this file) declares `false`. "Fail-open" in this file's header refers
+only to **transient read failures** (RPC error/timeout → uncached `null` → serve this request, retry
+next), never to absent configuration. A caller that must tell "absent" from "explicitly false" cannot
+use this RPC at all and has to read `switchboard_flags` directly;
+`services/worker/src/routes/ingestionResponse.ts` is the worked example. Fail-closed-on-absent is
+pinned by `services/worker/src/mcp-kill-switch.test.ts`, which asserts the request body (no
+`p_default` override), not just the resolved boolean.
 
 ## Nessie worker proxy timeout (2026-06-07)
 
@@ -51,6 +76,22 @@ Net effect: `src/mcp-tools.test.ts` (36 assertions over the MCP tool surface, in
 - It lives in the `Tests` job on purpose. `Tests` is an enumerated `check-success` merge condition in `.mergify.yml` (5 occurrences) and a required status check; a NEW top-level job would gate nothing until branch protection and `.mergify.yml` were updated too — i.e. it would recreate this exact bug.
 - **Adding a test under `services/edge/`? It runs here, not in the root suite.** Modules using ambient CF globals (`Ai` in `mcp-tools.ts:1049`, `KVNamespace`, …) can only be tested here, since the root tsconfig deliberately omits `@cloudflare/workers-types` from global `types`. See `src/tests/edge/agents.md` for the split.
 
+## The MCP audit log never wrote a row (BUG-2026-08-13-016, P0)
+
+From 2026-05-26 to 2026-08-15 `mcp-audit-log.ts` sent `event_category: 'security'` — lowercase — against a CHECK constraint that accepts uppercase only. Every insert returned HTTP 400. Prod holds 409,885 audit rows and **zero** `MCP_TOOL_CALL`: a SOC 2 audit-trail control that never operated once.
+
+Three rules came out of it. Do not relax any of them:
+
+- **Never write a bare string to `event_category` here.** Use the `AuditEventCategory` type from `audit-event-category.ts` so a wrong-case literal is a compile error. The worker gets this for free via `database-overrides.ts`; the edge had no equivalent, which is why the edge is where it broke.
+- **The category list is pinned to the migration, not to a promise.** `src/tests/edge/mcp-audit-log.test.ts` parses the highest-numbered migration defining `audit_events_event_category_valid` (currently `0309`) and fails if the edge constant drifts. Change the constraint → that test tells you to change this file.
+- **A failed audit write must stay loud and classified.** `reportAuditWriteFailure()` emits a structured `MCP_AUDIT_WRITE_FAILED` record splitting `permanent` (4xx — a code defect that will never self-heal) from `credential` and `transient`, and increments a counter readable via `getAuditWriteFailureCount()`. The old code did `console.error` with unclassified prose, so a permanent contract break was indistinguishable from a blip. `AUDIT_WRITE_FAILED` is an alerting token — do not reword it.
+
+**It does not fail the request, deliberately.** `fireAndForgetAudit` runs from `withTelemetry` after the tool result exists and is handed to `ctx.waitUntil()`, so the write completes after the response has left; there is no request left to fail. Making it blocking would add a Supabase round-trip to every tool call and turn an audit-store outage into a full MCP outage. Detection was the missing control, not refusal.
+
+**Only the SQLSTATE may be logged from an error body.** PostgREST returns `details: "Failing row contains (...)"`, i.e. the audit row including `actor_id`. `postgrestErrorCode()` whitelists `/^[0-9A-Z]{1,10}$/` so nothing else can escape into Logpush.
+
+**Historical note (superseded 2026-08-15):** at the time this fix was written, `services/edge/**/*.test.ts` was NOT run by CI, so this PR's own P0 tests were deliberately parked in the root suite (`src/tests/edge/` or `tests/infra/`) to be sure CI would run them. **That gap is now closed** — see "The edge suite is CI-gated (2026-08-15)" above; do not treat this paragraph as current guidance for where a new edge test belongs.
+
 ## KV namespaces
 - `MCP_RATE_LIMIT_KV` (`a8a7843630e84c5aa22cf20ea8a8c5e8`)
 - `MCP_ORIGIN_ALLOWLIST_KV` (`5ace0a24154a4731b263285890ae3a10`)
@@ -66,8 +107,44 @@ Net effect: `src/mcp-tools.test.ts` (36 assertions over the MCP tool surface, in
 - `CLAIM_RULES` in the gate declares assertions a description may not make about a given tool, with a qualifier that makes the claim honest — `search_credentials` may not claim semantic/vector retrieval unless the same text also discloses `search_mode` or the lexical/substring fallback, and `nessie_query` may not be described in the present tense without a DISABLED marker. Adding a rule is the intended way to close the next instance; deleting one asserts the behaviour changed, and needs the code that changed it.
 - Known outstanding, in `scripts/ci/mcp-claim-parity-baseline.json`: this file's `nessie_query` description still makes a present-tense capability claim (owned by PR #2236), and `oracle_batch_verify` / `list_agents` carry one-word hand-copy drift against the manifest that is UNOWNED. The gate could not fix them — every published surface is above T0.
 - The gate scopes text by tool NAME. A module-header comment that names no tool is out of scope; `mcp-tools.ts`'s own header was one of BUG-026's six surfaces and would not be caught.
+## 2026-08-15 BUG-008/027 — `nessie_query` fails CLOSED; BUG-026 — `search_credentials` describes itself honestly
+
+**`nessie_query`.** Gated on `SupabaseConfig.nessieEnabled`, sourced from the `ENABLE_NESSIE_QUERY`
+edge var (`env.ENABLE_NESSIE_QUERY === 'true'`). **Absent means disabled** — Nessie is permanently
+disabled by standing founder directive (CTO ruling R-1). Two fail-open paths were closed:
+
+1. The tool ran unconditionally. It now returns `nessieDisabledResult()` before any network call.
+2. On **any** non-2xx from the worker it degraded to `nessieTextFallback` — a lexical scan of
+   `public_records` — and answered `{total, results}`. So even once the worker started refusing, the
+   MCP tool would have reported a disabled capability as a completed search. `nessieWorkerQuery` now
+   inspects a 503 for `code: 'nessie_disabled'` / `enabled: false` and returns a ToolResult (not
+   `null`), which stops the caller's fallback dead. **Any other non-2xx still returns `null` and still
+   falls back** — a transient worker fault is not a disabled capability, and the labelled lexical path
+   is the honest answer there. Do not collapse those two cases.
+
+The disabled result carries `isError: true`, `enabled: false`, `code: 'nessie_disabled'`, and **none**
+of `total`/`results`/`answer`/`confidence`/`citations`. The absence is the contract: an agent reading
+only `total` would otherwise conclude "0 results".
+
+**`search_credentials` (BUG-026).** The description used to LEAD with "Uses semantic (vector)
+similarity matching". In practice the vector path needs a configured worker AND an open
+`ENABLE_SEMANTIC_SEARCH` gate; with the gate closed the worker answers 503 and every call is served
+lexically. Reproduced on the rig: the non-word fragment `aten` matched
+`Patent_Application_AI_Method.pdf` while an English paraphrase of the same document returned nothing.
+The description now leads with the served behaviour and marks the semantic path conditional.
+**No behaviour changed — this was a false description, not a broken search.** `search_mode` labelling
+is unchanged and still correct.
+
+Tests pin the literals `search_mode` / `lexical_substring` / `semantic_vector` in the description
+(`mcp-tools.test.ts` (h)) — keep all three in any future rewrite. The server card
+(`public/.well-known/mcp/server-card.json`) carries a copy of this description and has **no**
+automated text-parity check with `TOOL_DEFINITIONS`; `tests/infra/mcp-manifest-parity.test.ts` checks
+names/schemas only. Update both by hand, together.
 
 ## Open work
 - SCRUM-1793 (PR #741 NEW) — `validate_api_key` RPC migration committed to repo; already applied to prod + staging via Supabase MCP.
 - HakiChain sandbox key (`api_key_id=c75d84b9-…`) has wildcard CIDR allowlist entry written 2026-05-08.
 - BUG-026 residue: `oracle_batch_verify` and `list_agents` descriptions here disagree with `server-card.json` by one word each (`an envelope` vs `a response envelope`; `caller organization` vs `caller's organization`). Baselined, unowned, needs a T2 PR.
+- No CI check enforces text parity across the five published MCP claim surfaces (`mcp-tools.ts`,
+  `server-card.json`, `public/AGENTS.md`, `public/llms*.txt`, `docs/api/mcp-tools.md`). They can drift
+  freely today; a parity script is the durable fix for the BUG-026 class.

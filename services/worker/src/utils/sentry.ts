@@ -11,6 +11,7 @@ import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import type { Event, ErrorEvent, Breadcrumb } from '@sentry/node';
 import { getBuildSha } from './buildInfo.js';
+import { PROD_SERVICE_NAME } from './environmentNamespace.js';
 import { scrubString, scrubUrl } from './pii-scrub.js';
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,8 @@ const SENSITIVE_EXTRA_KEYS = [
   'secret_key',
   'api_key',
 ];
+
+const SENSITIVE_EXTRA_KEY_SET = new Set(SENSITIVE_EXTRA_KEYS);
 
 // ---------------------------------------------------------------------------
 // SCRUM-2492 (§1.6A): type-based binary scrub
@@ -104,6 +107,88 @@ export function scrubBinaryValues<T>(value: T, depth = 0): T {
     }
   }
   return value;
+}
+
+// ---------------------------------------------------------------------------
+// Recursive `event.extra` scrubbing (§1.1 hardening)
+// ---------------------------------------------------------------------------
+//
+// The previous `event.extra` pass replaced EXACT top-level keys from
+// SENSITIVE_EXTRA_KEYS with [FILTERED] and did nothing else. Two holes:
+//
+//   1. Any other top-level key's string value was emitted verbatim — no
+//      `scrubString`, unlike the message / transaction / tags / request.url
+//      paths, which have always been scrubbed.
+//   2. Nested extras were never key-filtered at all: `{ ctx: { email: … } }`
+//      passed through, because `'email' in event.extra` is false.
+//
+// `captureCreditRpcFailureAlert` spreads caller-supplied `...args.extra`
+// straight into that bag, so any call site handing it a nested object was a
+// live route for an email / document fingerprint / API key into Sentry, which
+// §1.1 forbids outright.
+//
+// The walk below applies BOTH the key filter and `scrubString` at every level.
+// It runs AFTER `scrubBinaryValues`, so the SCRUM-2492 type-based binary drop
+// still happens first and the tokens it leaves behind are inert here.
+
+/** Replaces a subtree the walk could not certify (past MAX_SCRUB_DEPTH). */
+export const REDACTED_DEPTH_TOKEN = '[FILTERED_DEPTH]';
+
+/**
+ * GCP service-account principals survive the walk.
+ *
+ * SCRUM-2900's scheduler-pause dead-man exists to answer "which principal
+ * paused this job", and its production caller passes a service-account
+ * identity (`ops-sa@…iam.gserviceaccount.com`). That is operational
+ * attribution, not a user email, so §1.1 does not reach it and scrubbing it
+ * would delete the alert's entire diagnostic payload.
+ *
+ * The pattern is ANCHORED end to end on purpose: a value must be *exactly* a
+ * service-account principal to be exempt. A human email — including one merely
+ * concatenated next to a principal — matches nothing here and is scrubbed like
+ * any other string. There is no person-shaped exemption from §1.1.
+ */
+const SERVICE_ACCOUNT_PRINCIPAL_REGEX =
+  /^[a-z0-9][a-z0-9-]*@[a-z0-9][a-z0-9-]*\.iam\.gserviceaccount\.com$/i;
+
+function scrubExtraString(value: string): string {
+  if (SERVICE_ACCOUNT_PRINCIPAL_REGEX.test(value)) return value;
+  return scrubString(value);
+}
+
+/**
+ * Recursively scrub an `event.extra` value: sensitive KEYS become [FILTERED]
+ * at any depth, and every surviving string runs through the PII regexes.
+ * Mutates containers in place (Sentry expects the same object back) and also
+ * returns the value.
+ *
+ * Depth handling is deliberately fail-CLOSED. Past MAX_SCRUB_DEPTH the walk
+ * drops the remaining subtree instead of returning it verbatim: "we could not
+ * check this" must never render as "this is fine" (same reasoning as
+ * `orgFieldPolicy`'s truncated-payload rejection). That also terminates on a
+ * cyclic extra.
+ */
+export function scrubExtraValue(value: unknown, depth = 0): unknown {
+  // Strings are cheap and safe to scrub at any depth, so they are handled
+  // before the depth guard — a deep string is redacted, not dropped.
+  if (typeof value === 'string') return scrubExtraString(value);
+  if (value === null || typeof value !== 'object') return value;
+  if (depth >= MAX_SCRUB_DEPTH) return REDACTED_DEPTH_TOKEN;
+
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      value[i] = scrubExtraValue(value[i], depth + 1);
+    }
+    return value;
+  }
+
+  const obj = value as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    obj[key] = SENSITIVE_EXTRA_KEY_SET.has(key)
+      ? '[FILTERED]'
+      : scrubExtraValue(obj[key], depth + 1);
+  }
+  return obj;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,13 +264,10 @@ export function scrubPiiFromEvent(event: Event | null): Event | null {
     delete event.user.ip_address;
   }
 
-  // Scrub extra context
+  // Scrub extra context — recursively, key filter AND string scrub at every
+  // level. See scrubExtraValue: top-level-exact-key-only was the §1.1 hole.
   if (event.extra) {
-    for (const key of SENSITIVE_EXTRA_KEYS) {
-      if (key in event.extra) {
-        (event.extra as Record<string, unknown>)[key] = '[FILTERED]';
-      }
-    }
+    event.extra = scrubExtraValue(event.extra) as Record<string, unknown>;
   }
 
   // PII-09: Scrub event tags
@@ -261,8 +343,16 @@ export interface SentryRuntimeConfig {
 // service earns 'production'; every other Cloud Run service is tagged with
 // its own service name (per-rig attribution, filterable as non-prod).
 
-/** The one Cloud Run service whose events may be tagged 'production'. */
-export const PROD_SERVICE_NAME = 'arkova-worker';
+/**
+ * The one Cloud Run service whose events may be tagged 'production'.
+ *
+ * BUG-018: defined in `utils/environmentNamespace.ts` and re-exported here, so
+ * the Sentry environment tag and the Upstash rate-limit namespace can never
+ * disagree about which service is production. The derivation lives in that
+ * module (no `@sentry/node` import) because the rate-limiter hot path must not
+ * pull in the Sentry SDK.
+ */
+export { PROD_SERVICE_NAME };
 
 export interface SentryEnvironmentInputs {
   /** Explicit SENTRY_ENVIRONMENT override (wins when non-blank). */
@@ -728,10 +818,57 @@ export function captureCreditRpcFailureAlert(args: CreditRpcFailureArgs): void {
 // ---------------------------------------------------------------------------
 // Sentry Cron Monitoring (Phase 4, Item 18)
 // ---------------------------------------------------------------------------
+//
+// Cron check-in gate — prod service only (kills the zombie monitor-env class)
+// ---------------------------------------------------------------------------
+//
+// Every soak rig runs the same worker cron jobs (webhook-retries,
+// check-confirmations, process-revocations, grace-expiry-sweep) and each one
+// reports Sentry Crons check-ins tagged with the rig's own K_SERVICE. Sentry
+// auto-creates a monitor ENVIRONMENT per distinct K_SERVICE it sees. When the
+// rig is torn down that environment doesn't go away — it just stops checking
+// in, and Sentry pages "missed check-in" for an environment that no longer
+// exists, forever. 2026-08: 5 dead rig envs x 4 cron monitors = 16 zombie
+// env/monitor pairs, ~93k events.
+//
+// CTO fix: check-ins fire ONLY for the real prod service (K_SERVICE ===
+// PROD_SERVICE_NAME — same constant `resolveSentryEnvironment` above pins),
+// with an explicit escape hatch (ENABLE_SENTRY_CRON_CHECKINS=true) for a rig
+// where cron observability via Sentry Crons is deliberately wanted.
+//
+// This gate suppresses ONLY the Sentry check-in report — `withCronMonitoring`
+// always runs the wrapped job either way, so a suppressed check-in can never
+// suppress the job itself. Fail-safe direction: if this gate ever breaks and
+// suppresses PROD check-ins too, the prod monitor's own missed-check-in alert
+// fires loudly within one missed interval — the failure mode is never silent
+// for the surface that matters.
+
+export interface CronCheckInGateInputs {
+  /** Cloud Run service name (K_SERVICE); unset off Cloud Run / local dev. */
+  kService?: string;
+  /** Escape hatch: exactly 'true' forces check-ins on regardless of kService. */
+  enableCronCheckIns?: string;
+}
+
+export function shouldSendCronCheckIns(
+  inputs: CronCheckInGateInputs = {
+    kService: process.env.K_SERVICE,
+    enableCronCheckIns: process.env.ENABLE_SENTRY_CRON_CHECKINS,
+  },
+): boolean {
+  if (inputs.enableCronCheckIns === 'true') {
+    return true;
+  }
+  return inputs.kService === PROD_SERVICE_NAME;
+}
 
 /**
  * Wraps a cron job function with Sentry Crons monitoring.
  * Reports check-in start, success, or failure to Sentry for visibility.
+ *
+ * Check-in reporting is gated to the production service by
+ * `shouldSendCronCheckIns()` (see above) — the job itself is NEVER gated,
+ * only whether Sentry hears about it.
  *
  * @param monitorSlug - Unique slug for this cron monitor in Sentry
  * @param schedule - Cron schedule expression (for auto-creating monitors)
@@ -743,6 +880,10 @@ export function withCronMonitoring<T>(
   fn: () => Promise<T>,
 ): () => Promise<T> {
   return async () => {
+    if (!shouldSendCronCheckIns()) {
+      return fn();
+    }
+
     const checkInId = Sentry.captureCheckIn({
       monitorSlug,
       status: 'in_progress',

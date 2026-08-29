@@ -1,5 +1,50 @@
 # agents.md — pages
-_Last updated: 2026-08-15_
+_Last updated: 2026-08-23_
+
+## 2026-08-23 CLE-R1 — `RecordDetailPage.tsx` now feeds `cleMetadata` (SCRUM-1869 was Done with no user-visible outcome)
+
+`AssetDetailView` has declared `cleMetadata` since CLE-R1, calls
+`extractCleMetadataView(anchor.cleMetadata, …)` and renders the result — but
+`RecordDetailPage` passed only `cpeMetadata` and silently dropped
+`cle_metadata`, so the CLE detail section rendered nothing for **every** record.
+The prop was wired and waiting with nothing feeding it; the story was marked Done
+on the strength of the components existing. `src/components/credentials/agents.md`
+had listed this exact line as an open prereq since 2026-05-31.
+
+The fix is one line mirroring the `cpeMetadata` line directly above it (same
+`useAnchor` `select('*')` source, same entitlement gate). **Keep the two lines
+together** — they are a pair, and the failure mode here was one of them being
+added alone. `RecordDetailPage.cle-metadata.test.tsx` captures the props handed to
+`AssetDetailView` and asserts both columns arrive, so dropping either fails.
+
+Still true after this change: the section stays invisible until the
+`credential_source_import` entitlement is seeded (nothing writes that row yet —
+`useHasCredentialImportEntitlement` fails closed for everyone), so this un-blocks
+the path rather than lighting it up. The PUBLIC verification path was never
+affected — `PublicVerification.tsx` reads `cle_metadata` off the RPC directly.
+
+## 2026-08-23 R-7 — traction figures on `/about` + `/developers` are single-sourced and dated
+
+Both pages hardcoded `1.39M+` "Records Secured" as a bare JSX literal while prod
+held at least 3.3M SECURED records. Figures now come from `PLATFORM_METRICS` in
+`copy.ts` (see `src/lib/agents.md` for the measurement method and the
+"never date a figure you did not measure" rule), and each page renders
+`PLATFORM_METRICS_AS_OF` beneath the tiles.
+
+`PlatformMetrics.claims.test.ts` is the ratchet, and like the sibling
+`DevelopersPage.claims.test.ts` it reads **source, not render** — a figure behind
+a flag or in a collapsed section is still a published claim. It fails on any bare
+`>N.NM+<` JSX text node in either page, so the fix cannot be undone by someone
+re-typing a number inline. Do not "simplify" the pages by inlining the values.
+
+Review addendum 2026-08-23: that `>N.NM+<` pattern only recognises an `M`/`K`
+suffixed figure, so the `21` and `87.2%` tiles could still have been re-typed
+inline undetected. A second assertion now derives its needles from
+`PLATFORM_METRICS` itself — every current `value` must not ALSO appear as a JSX
+text node — so all four tiles are covered and changing a value in `copy.ts`
+moves the assertion with it instead of adding another magic number to maintain.
+UAT 2026-08-23 at 1280px and 375px on both routes: correct figures, as-of line
+present, no horizontal overflow, 0 console errors.
 
 ## 2026-08-15 — `RecordDetailPage.test.tsx` new (BUG-2026-08-13-017 not-found flash)
 
@@ -409,3 +454,22 @@ Reproduce this class locally by settling the mocked query one macrotask later
 load — the variable is event-loop ordering, not CPU. Under that injection the
 pre-fix suite failed 2/7 with the verbatim CI error; CPU contention alone
 (24 busy cores, 8 concurrent vitest processes) never reproduced it.
+
+## 2026-08-15 R-1 — `DevelopersPage.tsx` `PRICING_TABLE` is a commercial representation
+
+Every row is a priced offer: a price next to an endpoint says "pay this and it runs". The
+`/nessie/query` row (`$0.010`, "AI assistant query") was **removed** — Nessie is permanently disabled
+by standing founder directive and is now hard-gated to fail closed
+(`services/worker/src/middleware/nessieCapabilityGate.ts`). CTO ruling R-1, final, no review date.
+
+`DevelopersPage.claims.test.ts` is the ratchet. It reads the **source** rather than rendering the
+page, deliberately: a row that never renders (behind a flag, in a collapsed section) is still a
+published price the moment someone shows it. Deleting the row once was not the fix — nothing stopped
+it being re-added, and a human census does not scale.
+
+**`/ai/search` stays.** R-2 is a HEDGE, not a retraction: its price holds unless the Day-7 probes fail
+to demonstrate semantic retrieval, at which point it auto-converts to RETRACT. The ratchet pins its
+presence so this change cannot be misread as having quietly resolved R-2. Do not remove it here.
+`scripts/ci/config-drift/flag-inventory.json` also still carries the two `ENABLE_SEMANTIC_SEARCH`
+`claimedBy` entries pointing at this file (lines 65 and 240); `flagInventory.test.ts` asserts that
+finding still fires, so deleting them turns that test red.

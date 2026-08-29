@@ -667,6 +667,15 @@ function cloneFixture(): S33Wave3EvaluationInput {
   return structuredClone(makeFixture());
 }
 
+// Hoisted out of the per-test bodies: five tests asserted against the identical
+// happy-path report, recomputing a full evaluation each time and racing vitest's
+// 5000ms per-test budget (the stale-bindings test ran three evaluations and began
+// timing out at ~5096ms). Module scope is not governed by testTimeout, and every
+// consumer below only reads from the report, so one shared evaluation is
+// equivalent. The determinism test deliberately keeps its own two independent
+// evaluations.
+const BASELINE_REPORT = evaluateS33Wave3OfflineGates(makeFixture());
+
 function rebindInputPackets(input: S33Wave3EvaluationInput): void {
   input.inputPacketDigests = createS33Wave3InputPacketDigests({
     observations: input.observations,
@@ -689,7 +698,32 @@ function failCandidateObservation(observation: S33Wave3Observation): void {
   };
 }
 
-describe('S3.3 Wave-3 deterministic offline gates', () => {
+// Every case in this block re-runs the deterministic evaluator over the full
+// wave-3 fixture, so the file is CPU-bound: its wall time tracks runner
+// contention, not anything the assertions do. On 2026-08-23 the stale-bindings
+// case was measured at 5391ms against vitest's 5000ms default and reddened
+// PR #2399 (run 32665842753), while the identical head SHA passed in run
+// 32641618388 — contention, not a regression.
+//
+// The budget is set on the block rather than on the one case that happened to
+// fail, because the exposure is file-wide. Measured under deliberate CPU
+// starvation (20 busy loops on 10 cores, `taskpolicy -c utility`): on the
+// unpatched file three cases blew the 5000ms default (worst 15368ms), and with
+// this budget in place 20 of the 50 cases ran over 5000ms and 29 ran over
+// 3000ms — including cases that take only ~245ms on an idle machine. Per-case
+// timeouts on the visible outliers would therefore have left most of the file
+// still one bad scheduling moment from the same red.
+//
+// 30_000ms matches the repo's existing generous value (vitest.config.rls.ts
+// testTimeout, and the per-test timeouts in
+// jobs/recover-stuck-broadcasts-submitted.local.test.ts) and is ~2x the worst
+// case observed under that starvation, so a genuine hang still fails fast.
+// Scoping it here keeps the strict 5000ms default in force for the rest of the
+// worker suite.
+//
+// This raises a timeout budget only. No assertion, fail-closed path, or fixture
+// is relaxed.
+describe('S3.3 Wave-3 deterministic offline gates', { timeout: 30_000 }, () => {
   it('freezes the exact v6 subtype block and corpus substantive-depth contract', () => {
     expect(S33_WAVE3_FROZEN_SUBTYPE_TAXONOMY).toEqual(V6_SUBTYPE_TAXONOMY);
     const allPinnedFields = Object.fromEntries(S33_WAVE3_SUBSTANTIVE_FIELDS.map((field) => [
@@ -759,7 +793,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
   });
 
   it('never turns a test-injected acceptance chain into a release GO', () => {
-    const report = evaluateS33Wave3OfflineGates(makeFixture());
+    const report = BASELINE_REPORT;
     expect(report.gates).toHaveLength(16);
     expect(report.bindings.acceptanceAuthority.verificationMode).toBe('test-injected');
     expect(report.bindings.acceptanceAuthority.releaseAuthority).toBe(false);
@@ -820,7 +854,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
   });
 
   it('reports per-domain confusion, abstention, calibration, and a deterministic coverage curve', () => {
-    const report = evaluateS33Wave3OfflineGates(makeFixture());
+    const report = BASELINE_REPORT;
 
     expect(report.diagnostics.confusionByDomain.legal.total).toBeGreaterThan(0);
     expect(report.diagnostics.top20ConfusedPairs).toContainEqual({
@@ -854,7 +888,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
   });
 
   it('freezes the exact founder 3x15 mapping and emits the deterministic three-way scorer contract', () => {
-    const report = evaluateS33Wave3OfflineGates(makeFixture());
+    const report = BASELINE_REPORT;
 
     expect(report.founderCoverage.mappingCount).toBe(45);
     expect(report.founderCoverage.frozenCredentialTypes).toEqual(S33_WAVE3_FROZEN_CREDENTIAL_TYPES);
@@ -903,7 +937,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
   });
 
   it('scores exact AU>=10 and KE>=10 manifests separately with small-n/no-marketing wording', () => {
-    const report = evaluateS33Wave3OfflineGates(makeFixture());
+    const report = BASELINE_REPORT;
 
     expect(report.jurisdictions.AU.sampleSize).toBe(11);
     expect(report.jurisdictions.KE.sampleSize).toBe(11);
@@ -1131,7 +1165,7 @@ describe('S3.3 Wave-3 deterministic offline gates', () => {
     stale.observations[0].arms.v71.description = 'metric-equivalent but distinct raw description';
     expect(() => evaluateS33Wave3OfflineGates(stale)).toThrow(/observationsCanonicalSha256 mismatch/u);
 
-    const originalReport = evaluateS33Wave3OfflineGates(makeFixture());
+    const originalReport = BASELINE_REPORT;
     const changed = cloneFixture();
     changed.observations[0].arms.v71.description = 'metric-equivalent but distinctly bound description';
     rebindInputPackets(changed);

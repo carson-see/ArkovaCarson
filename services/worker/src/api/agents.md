@@ -1,5 +1,18 @@
 # agents.md — services/worker/src/api/
 
+## 2026-08-12 — `partner-provisioning-router.ts`: the HTTP surface is STRICTER than the state machine (SCRUM-2990)
+
+The state machine (`partner-provisioning.ts`, PR #1606) had no HTTP surface for three weeks: `/api/partner-provisioning` was a gated, **routeless** prefix. This adds the router. Two things about it are non-obvious and must not be "simplified" away:
+
+- **The router deliberately denies what the machine allows.** `assertApprovalAuthority` admits `owner` / `org_admin` of the sponsor org as reviewers. Over HTTP they are **not** admitted — approve, reject, cancel and provision are **platform-admin only** (`platform_admin_required`, 403). The sponsor org is an interested party in its own partner's onboarding, and provisioning is the step that confers a counterparty standing in the platform. The machine still runs afterwards as an independent second gate; both must pass. If you ever find yourself relaxing the router to "match the machine", you are removing a control, not fixing an inconsistency.
+- **`provisionPartnerAccount` has no self-review check and the router supplies one.** `approvePartnerRequest` / `rejectPartnerRequest` both call `assertNotSelfReview`; `provisionPartnerAccount` does **not**. So at the machine level the requester can provision their own approved request. The router bars it (`separation_of_duties`, 403). This is a genuine gap in the machine, closed at the HTTP layer rather than by editing the machine mid-window; a later PR should push it down.
+
+**Actor construction is the trust boundary.** `ProvisioningActor` is built ONLY from the authenticated `userId` plus `_org-auth.ts` / `platformAdmin.ts` lookups. Nothing role- or org-bearing is read from the request body — the Zod schemas are non-strict, so a body carrying `role: 'platform_admin'` is silently **stripped**, not honoured and not 400'd. Two tests pin this (a spoofed body still 403s; a static scan forbids `req.body.role` / `req.body.org_id` in the source). For a platform admin the actor's `orgId` is **not load-bearing** — both machine gates short-circuit on `platform_admin` before reading it — it is supplied only to satisfy the machine's UUID shape validator, falling back to the sponsor org when the admin's profile has no org.
+
+**Every transition persists under compare-and-swap**, never read-modify-write: the UPDATE carries `.eq('status', <status read before the transition>)`, so a racing reviewer matches zero rows and gets 409 `concurrent_transition` instead of silently overwriting the winner. Audit is emitted only **after** the swap wins, so a lost race writes no audit row. Verified against Postgres 17 on an isolated throwaway cluster (stale-status UPDATE → `UPDATE 0`).
+
+**No credential material.** This surface issues no API key, creates no org, grants no entitlement or credit. `partner_org_id` is supplied by the operator and merely bound to the record. A static guard test fails the build if the router grows an import of `apiKeyAuth` / secret-manager / `createHmac` / `randomBytes`, and a response test asserts no `api_key` / `token` / `secret` substring ever appears in a provision response.
+
 ## 2026-08-10 — `activation.ts`: recipient account activation was 100% broken in production (launch blocker)
 
 A recipient issued a credential could not claim it and could not log in. Two independent, unconditional defects, both confirmed against live prod:

@@ -10,6 +10,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
@@ -280,7 +281,60 @@ export function resolvePrLabels(env: NodeJS.ProcessEnv = process.env): string[] 
 export const prLabels = resolvePrLabels();
 export const prTitle = process.env.PR_TITLE ?? '';
 export const prBody = process.env.PR_BODY ?? '';
-export const prCommitsMsgs = process.env.PR_COMMITS_MSGS ?? '';
+/**
+ * The PR's aggregated commit messages — read from a FILE, not an env string.
+ *
+ * These used to arrive as the PR_COMMITS_MSGS environment variable, which
+ * Linux caps at MAX_ARG_STRLEN = 131,072 bytes for any single argv/envp
+ * string. Once the aggregate crossed that, `execve` of the consuming step's
+ * `/usr/bin/bash` failed with E2BIG — "Argument list too long" — before any
+ * script logic ran, so no override label could clear it and the failure
+ * carried no lint diagnosis at all. Measured on PR #2346 (run 32666797304,
+ * job 97261336883, 2026-08-23): 153 commits / 138,166 bytes killed the
+ * `HANDOFF.md verification lint` step. Pushing a commit refreshed the frozen
+ * base and incidentally cleared it, but any sufficiently old PR — or the next
+ * long-lived branch to merge — re-triggers it.
+ *
+ * `scripts/ci/aggregate-commit-messages.ts` now writes the full payload to
+ * $RUNNER_TEMP and ci.yml passes only the PATH, which has no such ceiling.
+ * PR_COMMITS_MSGS survives as a `head -c` capped fallback for local runs and
+ * any caller not yet re-plumbed; falling back to it is ANNOTATED, never
+ * silent, because a truncated haystack would let both gates report green on
+ * evidence they never saw.
+ */
+export function resolvePrCommitsMsgs(env: NodeJS.ProcessEnv = process.env): string {
+  const path = env.PR_COMMITS_MSGS_FILE?.trim();
+  if (path) {
+    try {
+      return readFileSync(path, 'utf8');
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(
+        `::error::Could not read PR_COMMITS_MSGS_FILE '${path}' (${reason}). ` +
+          'Falling back to the size-capped PR_COMMITS_MSGS env var — commit messages ' +
+          'beyond the cap are NOT visible to this gate.',
+      );
+    }
+  }
+  return env.PR_COMMITS_MSGS ?? '';
+}
+
+let _prCommitsMsgs: string | undefined;
+
+/**
+ * Memoized accessor for {@link resolvePrCommitsMsgs}.
+ *
+ * Deliberately a FUNCTION, not an eagerly-evaluated `const` like `prBody` /
+ * `prTitle`: `scripts/ci/aggregate-commit-messages.ts` imports this module to
+ * borrow {@link resolveDiffBase}, and it runs BEFORE the file exists. An eager
+ * read there fired the not-readable ::error:: annotation on every run — an
+ * error annotation from the very step whose job is to create the file.
+ */
+export function prCommitsMsgs(): string {
+  _prCommitsMsgs ??= resolvePrCommitsMsgs();
+  return _prCommitsMsgs;
+}
+
 export const headRef = process.env.GITHUB_HEAD_REF ?? process.env.GITHUB_REF_NAME ?? '';
 export const repository = process.env.GITHUB_REPOSITORY ?? '';
 export const scanAll = process.env.FEEDBACK_RULES_SCAN_ALL === '1';
@@ -311,8 +365,88 @@ export function hasLabel(label: string): boolean {
   return resolvePrLabels().includes(label);
 }
 
+/** The parent SHAs of HEAD (empty on any failure — treated as "not a merge"). */
+function headParentShas(): string[] {
+  try {
+    const out = execFileSync(GIT_BIN, ['rev-list', '--parents', '-n', '1', 'HEAD'], {
+      cwd: REPO,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    return out.split(/\s+/).filter(Boolean).slice(1);
+  } catch {
+    return [];
+  }
+}
+
+/** `git merge-base --is-ancestor` — false on non-ancestry AND on any error. */
+function isAncestorOf(ancestor: string, descendant: string): boolean {
+  try {
+    execFileSync(GIT_BIN, ['merge-base', '--is-ancestor', ancestor, descendant], {
+      cwd: REPO,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** `git merge-base a b`, or `null` when it cannot be resolved. */
+function tryMergeBase(a: string, b: string): string | null {
+  try {
+    const sha = execFileSync(GIT_BIN, ['merge-base', a, b], {
+      cwd: REPO,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    return /^[0-9a-f]{40}$/i.test(sha) ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+const PULL_MERGE_REF_RE = /^refs\/pull\/\d+\/merge$/;
+
 /**
- * Files changed vs the base ref (or all matching `pathspec` when scanAll=true).
+ * The diff anchor for {@link changedFiles} — FD-GATE-2.
+ *
+ * `base` can be GitHub's FROZEN `pull_request.base.sha` (ci.yml and
+ * merge-authority.yml still pass it), pinned at the base tip as of the PR's
+ * LAST HEAD PUSH, while HEAD is the live refs/pull/N/merge preview GitHub
+ * recomputes against current main. A raw two-dot `base..HEAD` from that pair
+ * charges every main commit landed since the last push to the PR itself
+ * (measured 2026-08-22: a 6-file PR presented as 162 files; 15 of 28 open PRs
+ * desynced). The anchor is chosen so base movement is NEVER attributed to the
+ * PR, per changeset-identity property the old two-dot comment protected:
+ *
+ *   1. HEAD is the merge preview (pull merge ref + exactly two parents, and
+ *      the env base is an ancestor of the FIRST parent — the first parent of
+ *      the preview IS the live base tip it was built on) → `HEAD^1`. The diff
+ *      is then exactly what this PR adds on top of the CURRENT base,
+ *      conflict resolutions included, and content the base already took
+ *      cancels out — the property the two-dot form existed for.
+ *      The ancestry probe is what keeps the raw-head fallback honest: a
+ *      branch tip that merely merges main INTO the branch also has two
+ *      parents, but its first parent is the previous BRANCH head, which the
+ *      env base never descends into (a push resyncs the frozen base), so it
+ *      routes to strategy 2 instead of mis-anchoring at the pre-merge head.
+ *   2. Raw head (local run, staging-evidence raw-head fallback, push builds)
+ *      → `merge-base(base, HEAD)`: three-dot semantics from the fork point,
+ *      so base commits landed after the fork never enter the changeset.
+ *   3. merge-base unresolvable (disjoint/shallow history) → the env base
+ *      itself: the legacy anchor. Never `[]` — a diff failure still throws.
+ */
+export function resolveDiffBase(base: string): string {
+  if (PULL_MERGE_REF_RE.test(process.env.GITHUB_REF ?? '')) {
+    const parents = headParentShas();
+    if (parents.length === 2 && isAncestorOf(base, parents[0])) return 'HEAD^1';
+  }
+  return tryMergeBase(base, 'HEAD') ?? base;
+}
+
+/**
+ * Files changed by THIS PR (or all matching `pathspec` when scanAll=true).
  * Uses execFileSync to avoid shell-quoting issues with glob patterns.
  *
  * Fails CLOSED: the base is resolved via `getBaseRef({ required: true })`, so an
@@ -321,6 +455,11 @@ export function hasLabel(label: string): boolean {
  * check see "no changed files" and PASS — exactly the wrong direction for a
  * gate. We now only swallow to `[]` in the genuinely-empty `scanAll` ls-files
  * case; a diff failure throws.
+ *
+ * The diff is anchored by {@link resolveDiffBase}, NOT two-dotted straight
+ * from the env base — the env base can be the frozen event-payload sha, and
+ * anchoring there attributes the base branch's later commits to the PR
+ * (FD-GATE-2). Pinned by ci-workflow-contract.test.ts.
  */
 export function changedFiles(pathspec?: string): string[] {
   if (scanAll) {
@@ -330,11 +469,8 @@ export function changedFiles(pathspec?: string): string[] {
   // Required base: getBaseRef exits(1) if it cannot resolve, so the gate never
   // degrades to "no changes" on a shallow/broken checkout.
   const base = getBaseRef({ required: true })!;
-  // Two-dot (`base..HEAD`) = the changeset of THIS PR vs the current base tip,
-  // NOT three-dot (`base...HEAD`, which re-surfaces everything reachable since
-  // the merge-base). On a rebased lane branch the three-dot form attributes a
-  // now-merged base commit's edits to the PR; two-dot does not.
-  const args = ['diff', '--name-only', '--diff-filter=AMR', `${base}..HEAD`];
+  const diffBase = resolveDiffBase(base);
+  const args = ['diff', '--name-only', '--diff-filter=AMR', `${diffBase}..HEAD`];
   if (pathspec) args.push('--', pathspec);
   return execFileSync(GIT_BIN, args, { cwd: REPO, encoding: 'utf8' }).split('\n').filter(Boolean);
 }

@@ -1,6 +1,84 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-22 (preflight-timestamp residual-risk symmetry)._
+_Last updated: 2026-08-23 (commit-message E2BIG: `aggregate-commit-messages.ts`, file transport)._
+
+## 2026-08-23 — `aggregate-commit-messages.ts` (new): commit messages ship by FILE, not by env var (E2BIG)
+
+`policy-lints` aggregated `git log --format=%B "$BASE_SHA"..HEAD` into the `commits` step's `msgs`
+output, and ci.yml injected it as the `PR_COMMITS_MSGS` **environment variable** into `HANDOFF.md
+verification lint` and `Confluence page coverage`. Linux caps a single argv/envp string at
+`MAX_ARG_STRLEN` = 131,072 bytes, so a large enough aggregate made `execve` of the consuming step's
+`/usr/bin/bash` fail with **E2BIG — "Argument list too long"**. That is raised at process spawn,
+BEFORE any script logic runs: no override label can clear it, and the red check carries no lint
+diagnosis at all. Confirmed on PR #2346 (run 32666797304, job 97261336883, 2026-08-23) at 153
+commits / 138,166 bytes, killing the `HANDOFF.md verification lint` step.
+
+Two causes compounded, and both are closed:
+
+1. **Transport.** `scripts/ci/aggregate-commit-messages.ts` writes the full payload to
+   `$RUNNER_TEMP/pr-commit-msgs.txt`; ci.yml publishes only the PATH as the `msgs_file` output and
+   binds it as `PR_COMMITS_MSGS_FILE`. `lib/ciContext.prCommitsMsgs()` reads that file. A file has
+   no per-string ceiling. `PR_COMMITS_MSGS` survives as a `head -c 100000` capped fallback (local
+   runs, callers not re-plumbed) — spawnable by construction, and falling back to it emits an
+   `::error::` annotation, never silence, because a truncated haystack would let both gates report
+   green on evidence they never saw. Measured: a `SCRUM-` ref at byte 144,000 is seen through the
+   file and invisible through the capped env var.
+2. **Range.** `github.event.pull_request.base.sha` is refreshed by `synchronize` but NOT by
+   close/reopen, so #2346 stayed pinned at its 2026-08-22 creation base and inherited a long-lived
+   branch's history when #2219 merged at 20:57Z — six real commits presenting as 153. The aggregator
+   anchors via `lib/ciContext.resolveDiffBase` (now exported), the same FD-GATE-2 anchoring
+   `changedFiles()` uses, instead of re-deriving a range in shell. **A plain `git merge-base` would
+   NOT have fixed this**: the frozen base is an ancestor of the recomputed merge preview, so
+   `merge-base(base, HEAD)` returns the frozen base unchanged. `HEAD^1` is what collapses the range.
+
+Pinned by `aggregate-commit-messages.test.ts` (range anchoring, fail-closed on a missing target,
+>MAX_ARG_STRLEN round-trip, `maxBuffer` above execFileSync's 1MB default) and by a new
+`ci-workflow-contract.test.ts` block (file transport under `$RUNNER_TEMP`, `head -c` cap strictly
+below 131,072, every `PR_COMMITS_MSGS` consumer also binding `PR_COMMITS_MSGS_FILE` from the
+`commits` step, no raw `$BASE_SHA..HEAD` in shell — with 6 mutation tests). The existing per-run
+random heredoc delimiter is retained: the capped fallback is still PR-author-controlled text framed
+in `$GITHUB_OUTPUT`.
+
+NOTE: `Policy Lints` is in neither `.mergify.yml`'s required-check set nor `main`'s
+branch-protection `required_status_checks` (verified 2026-08-23: `main` has no
+`required_status_checks` object at all), so this class fails loudly in the run log while gating
+nothing. Fixing the crash does not make the job a merge gate.
+
+## 2026-08-23 — `check-staging-evidence.ts` Sonar paydown: `RcPrClaim`, `rcEntryTierErrors()`
+
+Pure refactor, **no behavior change** — all 339 pre-existing tests pass untouched.
+It exists to retire three SonarCloud findings on this file that had been resolved
+as *Accepted* in the SonarCloud UI to unblock PR #2332 rather than fixed:
+
+| Rule | Was | Now |
+|---|---|---|
+| `typescript:S107` | `validateCoveredRcPr` took 8 params (max 7) | `declared` / `required` / `files` bundled as `RcPrClaim` → 6 params |
+| `typescript:S3776` | same function, cognitive complexity 16 (max 15) | tier block lifted into `rcEntryTierErrors()` → 10 |
+| `typescript:S6582` | `approvalStatusRaw === null \|\| approvalStatusRaw.trim()…` | `approvalStatusRaw?.trim()…` |
+
+Two things to know before touching it again:
+
+- **`RcPrClaim` is a grouping the callers already had.** Both `validateCoveredRcPr`
+  call sites and `deferredConsolidatedSoakCoverage` already thread that same trio.
+  Do not "simplify" it back into positional params — that re-breaks S107. Equally,
+  do not push `errors` / `notes` into a sink object to buy headroom: every other
+  validator in this file takes them positionally, and diverging here costs more
+  than it saves.
+- **The optional chain in the deferred `approval_status` check IS the null guard.**
+  `stringAt()` returns `null` for an absent or non-string field, `null?.trim()` is
+  `undefined`, and `undefined !== 'pending'` — so an omitted field still fails
+  closed. Four tests were added alongside this refactor to pin the branches that
+  had no coverage: malformed `risk_tier`, `risk_tier` below the **declared** tier
+  (previously only "below *required* tier" was asserted), and deferred manifests
+  that omit `approval_status` or give it a non-string value. Each was verified to
+  fail against a mutated implementation before being kept.
+
+Context worth carrying: SonarCloud **main-branch analysis has been dead since
+2026-05-06**, so every issue created after that date is absent from main's
+snapshot and gets attributed to whichever PR next touches the file — which is how
+three findings dated June/July/August landed on an 8-line PR. Paying findings down
+is therefore worth more than Accepting them: an Accepted issue stays Accepted, but
+the *next* untouched-line finding on this file will block the next PR the same way.
 
 ## 2026-08-22 — preflight-timestamp residual-risk symmetry (PR #2329)
 
@@ -34,6 +112,23 @@ Contract test pinning `check-success = Python SDK Tests (packages/arkova-py)` in
 CI gate scripts. Each one fails the build with a structured exit code + an
 actionable message when a guardrail trips. Run via
 `npx tsx scripts/ci/<name>.ts` from a CI workflow.
+
+## 2026-08-18 — `platform-health-digest-cron.ts` registered against two guards (`feat/platform-admin-daily-health-digest`, draft, T2)
+
+New job hit two independent CI gates on first push, both fixed in the same PR rather than worked around:
+
+- **`config-drift/flag-inventory.json`** gained an `ENABLE_PLATFORM_HEALTH_DIGEST` entry
+  (`soak: must-be-on`, `customerReachable: false` — recipients are `profiles.is_platform_admin`,
+  internal staff only). Without it, `check-config-drift.ts`'s flag-inventory reconciliation hard-fails
+  with `unregistered-flag` the moment `deploy-worker.yml` sets an `ENABLE_*` var the manifest has never
+  seen — see this file's 2026-08-11 entry above for why that reconciliation exists.
+- **`check-job-queue-parity.ts`'s `QUEUE_INTERNALS_ALLOWLIST`** gained
+  `services/worker/src/jobs/platform-health-digest-cron.ts`. `readJobQueueMetrics()` does one read-only
+  `.select('created_at').eq('status','pending')` against `job_queue` for a depth/oldest-age monitoring
+  metric — never `submitJob`/`claimJob`/`processNextJob`, never an insert. The guard flags ANY direct
+  `.from('job_queue')` outside the allow-list regardless of read vs. write (see the "`QUEUE_INTERNALS_ALLOWLIST` is by PATH, not by type name" bullet below), so a read-only monitoring query trips it exactly
+  like a raw enqueue would. Verified locally after the fix: `check-job-queue-parity.ts` exits 0 and its
+  13-test suite stays green.
 
 ## 2026-08-10 — `check-anchor-field-policy-coverage.ts` (new, wired into ci.yml)
 
@@ -78,6 +173,46 @@ Two design points to preserve if you touch it:
   REPORT-ONLY (`--report-only`, `::warning::`, `continue-on-error`) until a real
   green soak calibrates it; `worker-build-parity` / `verifier-build` are
   deliberately NON-REQUIRED pending a Carson-gated required-flip.
+  **⚠️ Partly superseded 2026-08-23:** the `evidence-identity-report` sentence
+  above is stale — that job is now `evidence-identity` and is FAIL-CLOSED (see
+  the next bullet). The sentence is kept verbatim only because this file is
+  append-only. `worker-build-parity` / `verifier-build` remain NON-REQUIRED, and
+  the wiring checklist itself now has three places to look, not two:
+  `ci.yml`, **`.mergify.yml` merge_conditions**, and branch protection.
+- **`evidence-identity` and `anti-hollow-soak` are FAIL-CLOSED** as of 2026-08-23
+  (SCRUM-2897 / SCRUM-2965 / SCRUM-2977). Both shipped REPORT-ONLY
+  (`--report-only`, `::warning::`, `continue-on-error`, `|| true`) under the
+  W3-freeze CTO carve-out and gated nothing; all of those were removed together
+  and both check names were added to every `.mergify.yml` queue rule, because a
+  check absent from merge_conditions can be red while Mergify merges anyway.
+  Two safety preconditions came with the flip and must not be undone:
+  `evidence-identity` **skips Mergify's speculative `mergify/merge-queue/*` PRs**
+  (they carry Mergify's body, not the original evidence block — without the skip
+  every queued merge deadlocks), and it resolves PR body/head/draft **LIVE via
+  `gh api`** rather than the frozen event payload, because ci.yml's
+  `pull_request` trigger declares no `types:` and so never fires on a body
+  `edited` — a frozen binding would make a `gh pr edit` head-SHA fix
+  unobservable, i.e. a red check with no remedy (SCRUM-3026 replay class).
+  A declared `Tier: T0` short-circuits to skip BEFORE `hasEvidenceSection()`,
+  which deliberately matches a bare `Tier: T0` line; without that ordering a
+  fail-closed gate reds every T0 PR in the repo.
+  `scripts/ci/soak-integrity-gates-failclosed.test.ts` pins all of it.
+  Branch-protection required-check status is repo-admin state and is NOT set by
+  this repo's config — verify it separately before claiming these block a merge
+  outside the Mergify path.
+  Two review addenda (2026-08-23, second pass):
+  (a) `checkCleanPreflightIdentity`'s check-B2 reads an embedded preflight SHA
+  only from a KEYED form (`head=` / `head_sha:` / `commit=` / `sha=`) or a bare
+  full 40-hex run. The old "first `\b[0-9a-f]{7,40}\b` anywhere in the value"
+  also matched a 7-digit row count and `ref=abc1234`; report-only that was a
+  spurious warning, merge-blocking it reds a T2/T3 PR on a message its author
+  cannot act on. The cost is a bare, unkeyed, SHORT sha no longer being matched.
+  (b) Neither gate is "always reports": both jobs live in `ci.yml`, whose
+  `pull_request:` trigger carries `paths-ignore` (`LICENSE`, `.gitignore`,
+  `README.md`, `memory/**.md`). A PR touching ONLY those paths runs no ci.yml
+  job, so the checks never post and a Mergify queue entry waits. Pre-existing
+  class — `Orphaned Export Lint` and `Python SDK Tests` share it — but do not
+  cite these gates as unconditional coverage.
 - **`check-staging-evidence.ts` is the tier detector AND the evidence gate.**
   It fails CLOSED to the highest tier. The alternate-evidence modes
   (frontend-T2, architecturally-unsoakable) are narrow and mutually exclusive:
@@ -138,6 +273,7 @@ Two design points to preserve if you touch it:
 - **`check-staging-gcloud-policy.ts`** — blocks raw `gcloud run deploy` / `gcloud run services update` commands against `arkova-worker-staging` outside `scripts/staging/deploy.sh`; historical docs need a nearby `staging-gcloud-ok:` reason.
 - `check-deploy-lint-parity.ts` (R0-4 / SCRUM-1250) — enforces that `deploy-worker.yml` and `ci.yml` lint steps run the SAME `npm run lint` script per CLAUDE.md §0 rule 9.
 - **`check-deploy-build-parity.ts`** (CONDITIONAL-GO sub-decision B / TWO-SURFACE) — sibling of the lint-parity gate, closing the COMPILE hole. Asserts **3-way** worker BUILD-command equality (fails closed): `services/worker/package.json` `scripts.build` === `tsc -p tsconfig.build.json`; `services/worker/Dockerfile` contains a `RUN npm run build` line; `ci.yml` has a `services/worker` step **named with the `deploy-parity` marker** whose `run:` is exactly `npm run build`. The `deploy-parity` name marker isolates the dedicated compile gate so the gate is NOT confused by the `npm run build:circuit` zk-artifact step (also a worker-dir "build" step). Exports `auditDeployBuildParity()` + the constants for the test. Wired into the `typecheck-lint` job. **Pure file-reading hard invariant** — imports only `readFileSync`/`resolve`, NO ciContext / git / `process.env` (mirrors `check-deploy-lint-parity.ts`), so it runs cleanly in the shallow-checkout `typecheck-lint` job and keeps SCRUM-1258 trivially satisfied. No in-script override; a build-command mismatch is never acceptable, the escape hatch is editing the invariant in-PR (with `ci-config-change` / `build-parity-ack` signoff). Tests in `check-deploy-build-parity.test.ts` (9 tests, incl. a live-repo-files parity assertion + a regression guard that the script imports no ciContext/git/env). Pairs with the two non-required ci.yml compile jobs (`Worker Build (deploy-parity)`, `Verifier Build`).
+- **`check-deploy-typecheck-parity.ts`** (SCRUM-1811) — THIRD sibling of the lint (R0-4) and build (sub-decision B) parity gates, closing the last hole in the trio: the worker TYPECHECK. Root tsconfigs `exclude` `services/`, so root `npm run typecheck` never sees worker source; `worker-build-parity` compiles `tsconfig.build.json`, which **excludes `src/**/*.test.ts`**, and is both in-job path-gated and NON-REQUIRED. `deploy-worker.yml` meanwhile typechecks the **plain** `tsconfig.json` (tests INCLUDED). Net effect: a TS error in a worker TEST file passed every PR check and only failed post-merge in the deploy gate, blacking out ALL prod worker deploys while `main` kept merging (`memory/project_deploy_typecheck_blackout.md`; SCRUM-1810 was exactly this; SCRUM-3130 recorded main ~20 merged PRs ahead of prod). Asserts, fail-closed: (1) `deploy-worker.yml` has a `services/worker` step named `*Typecheck*` running exactly `node_modules/.bin/tsc --noEmit`; (2) `ci.yml` has the same step **inside the `typecheck-lint` job** — already `check-success = TypeCheck & Lint` in `.mergify.yml`, so it actually blocks a merge; (3) that step carries **no `if:` guard**, so a test-only edit cannot slip past a path filter; (4) neither workflow's typecheck step is renamed into a SIBLING gate's marker — a name containing `lint` would be captured by `check-deploy-lint-parity.ts` (which then demands `npm run lint`), and a ci.yml name containing `deploy-parity` would be captured by `check-deploy-build-parity.ts` (which then demands `npm run build`). The trap is the natural-looking "Typecheck worker (deploy-parity)", mirroring the sibling JOB's own name; assertion (4) rejects it with a message naming the real constraint instead of leaving the rule as unenforced prose. Its step scanner walks BACK to the **nearest** preceding `name:` (not the first matching one in the window), which is what stops a neighbouring `Lint worker` name from being mis-attributed to a `tsc` command. **Pure file-reading hard invariant** — imports only `readFileSync`/`resolve`, no ciContext / git / `process.env`, so it runs in the shallow-checkout `typecheck-lint` job. No in-script override; signoff is `ci-config-change` at the workflow level. Tests in `check-deploy-typecheck-parity.test.ts` (12 tests, incl. a live-repo-files parity assertion, a `tsconfig.build.json` mutation, a wrong-host-job mutation, an `if:`-guard mutation, three sibling-marker rename mutations, and the no-ciContext/git/env regression guard). **Deliberately does NOT flip `Worker Build (deploy-parity)` into branch protection / `.mergify.yml`** — that required-flip is reserved to Carson/admin per `.github/workflows/agents.md`; adding a step to an already-required job closes the same gap without touching that surface.
 - `check-rls-auth-uid-wrap.ts` (SCRUM-1280) — RLS policy lint: `auth.uid()` must always be wrapped in `(SELECT auth.uid())` to allow Postgres planner constant-folding.
 - `check-null-identity-guard.ts` (F-5b/F-5c) — blocks NEW migrations whose authorization guard compares a parameter **directly** against an identity function (`IS DISTINCT FROM auth.uid()` / `(SELECT auth.uid())` / `get_user_org_id()`). `IS DISTINCT FROM` returns FALSE when BOTH sides are NULL, so a caller with no identity passing an explicit NULL argument skips the RAISE and gets a 200 + all-zero result instead of a 403 — a "silent success" where an unauthorized call is indistinguishable from an authorized empty one. Required shape: resolve the identity into a local, reject NULL, THEN compare against the local. **`FIRST_ENFORCED_PREFIX = 393` is load-bearing** — migration `0380` (PR #1778, already applied to prod ahead of merge) genuinely contains the flagged idiom and is superseded at runtime by `0391`; lowering the cutoff without landing a compensating migration for every file in between will red-light in-flight PRs. Skips SQL comment lines so `-- ROLLBACK:` blocks may quote the old body verbatim. Deliberately does NOT flag `col = auth.uid()` RLS quals or the `EXISTS (... WHERE id = auth.uid() ...)` idiom — both fail CLOSED on NULL. Override label: `null-identity-guard-intentional`. Failure-mode tested in `src/tests/f5c-monthly-count-null-identity-guard.test.ts`.
 - `check-handoff-claims.ts` (R0-6 / SCRUM-1252) — HANDOFF.md verification lint: edits asserting prod state require a verification artifact link. **Merge-ref hardening (2026-07-06, PR #1408):** `resolveDiffBase()` re-anchors the two-dot diff to `HEAD^1` when HEAD is provably GitHub's synthetic `refs/pull/N/merge` commit (pull_request event + 2-parent HEAD + pinned base ancestor of first parent + `GITHUB_SHA` match or canonical `Merge <sha> into <sha>` subject) — otherwise a post-PR-creation base-branch HANDOFF.md edit (f11a5290 class) is misattributed to every pre-drift PR and the gate goes red on a file the PR never touched. All other shapes fall back to the pinned-base two-dot (fail-closed). Fixture repro + gate-not-weakened pin in `check-handoff-claims.test.ts`.
@@ -206,6 +342,20 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - Wired as `npm run ci:job-queue-parity` in the `policy-lints` job of `ci.yml`. Per the "a gate is only real if it is wired" note above, check that step exists before citing this guard.
 - **The `live worker tree` tests scan once, in `beforeAll`, with an explicit 60s budget — do not drop that back to a per-test scan.** Walking and regex-scanning `services/worker/src` is ~1,200 files / ~16 MB of real work that grows with the repo, and each test in that block used to redo it. It passed in isolation and then timed out at vitest's 5s default in CI under full-suite parallelism (426 files) — a repo-size tripwire that reads exactly like a genuine parity break. The budget is the only thing that changed; the assertions did not, and the guard was re-confirmed to fail closed by planting an orphan producer and watching it go red.
 
+## `check-hot-table-ddl-lock-timeout.ts` — now reads INSIDE routine bodies (BUG-019, 2026-08)
+
+- **The gap it had.** The linter shipped right after the 2026-08-11 P0 and read a migration as a flat statement list, so a `SET LOCAL lock_timeout` anywhere earlier in the FILE counted as a guard for everything after it. That is correct for statements the migration runs and wrong for a `CREATE FUNCTION` body: the body is *stored* at apply time and *executed* later, in a cron's or an RPC caller's session, where the migration's `SET LOCAL` no longer exists.
+- **What it missed, concretely.** `cleanup_expired_data()` — SECURITY DEFINER, invoked daily by `POST /cron/cleanup-retention` — does `DROP TRIGGER` → `DELETE` → `CREATE TRIGGER` on `audit_events` with no bounded timeout anywhere. Same FIFO-barrier mechanism as the P0, re-armed every day, unwatched, and green under the ratchet built to catch exactly that. Fixed by migration `0411`.
+- **The classification.** Statements now carry a `context`. `top-level` (which includes `DO $$ ... $$`, because a DO block runs during the migration in its own transaction) keeps the old rule and the old `HOT_TABLES` set. `function-body` requires the guard to be inside that same body, or on the routine's own `SET lock_timeout TO '<non-zero>'` clause, and is checked against the wider `RUNTIME_DDL_TABLES`.
+- **Guards do not cross the boundary in either direction.** An in-body `SET LOCAL` cannot protect a later top-level statement (the body never ran at apply time), and a file-level `SET LOCAL` cannot protect a body. The whole deferred `CREATE FUNCTION` statement — SET clauses included — is removed from the top-level guard stream so it cannot fake one.
+- **`RUNTIME_DDL_TABLES` = `HOT_TABLES` + `audit_events`, and `audit_events` is deliberately NOT in `HOT_TABLES`.** Three merged migrations (`0295`, `0309`, `0404`) do one-shot top-level DDL on it under operator supervision; widening the top-level set would buy three new baseline entries and nothing else, and the baseline file forbids exactly that ("Do NOT add entries to shrink a red build"). DDL a cron re-runs forever against a table every write path appends to is the different risk.
+- **Regression-proved against the real defect, not a synthetic.** `src/tests/bug-019-cleanup-expired-data-lock-timeout.test.ts` slices the actual `cleanup_expired_data` body out of the baseline migration and asserts the linter flags both statements — and still flags them when a file-level `SET LOCAL` is prepended, which is the precise false negative. Baseline count moved 151 → 155 (the four newly-visible in-body statements, all inside the already-grandfathered baseline file); **0 new violations across the tree**.
+- Dollar-quote parsing handles tagged delimiters (`$fn$`) and never recurses into an open block, so a `$$` inside a `$fn$ ... $fn$` body is not mistaken for a delimiter. An unterminated block aborts the scan rather than guessing.
+
+## `views-security-invoker-baseline.json` — `calibration_features` removed (BUG-011, 2026-08)
+
+- The grandfather entry covered a bare definer view created by archived migration `0222`, which the Path C cutover dropped: the view was not in the prod `pg_dump` and **does not exist in production** (`information_schema.tables` count = 0), which is why `POST /jobs/calibration-refit` returned `PGRST205` on every run. Migration `0413` recreates it `WITH (security_invoker = true)`, so the entry had nothing left to cover and keeping it would have let a future bare redefinition through. Only `v_slow_queries` remains grandfathered.
+
 ## `check-mcp-claim-parity.ts` — MCP tool-claim parity across five surfaces (BUG-026, 2026-08-15)
 
 - **The defect it closes.** MCP tool descriptions are published in five places — `services/edge/src/mcp-tools.ts` (`TOOL_DEFINITIONS`, canonical), `public/.well-known/mcp/server-card.json`, `public/AGENTS.md`, `public/llms.txt` + `public/llms-full.txt`, and `docs/api/mcp-tools.md`. Nothing compared the description TEXT between them. `tests/infra/mcp-manifest-parity.test.ts` pins the NAME set, required arguments, property names, banned UI terms and registry over-claims — and says in its own header that descriptions are out of scope. That was the hole: BUG-026 (`search_credentials` advertising "semantic (vector) similarity matching" when the served path is an ILIKE substring scan) survived on six surfaces at once.
@@ -236,6 +386,15 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - **What it cost.** A one-line fingerprint waiver classified `T1 — default frontend / additive change` and demanded a 2 h staging soak of a file production never reads. There is nothing for a soak to exercise, so the evidence such a PR produces is worker-health noise that does not cover the change — the shape CLAUDE.md §1.12 already calls out as inadmissible.
 - **Direction of the change, stated plainly.** This LOWERS a tier, against the gate's usual fail-closed-to-the-highest-tier posture. It is admissible for the same reason every other entry in that list is: the file has no prod runtime surface, so a higher tier buys no assurance. The entry is exact-anchored (`^…$`) — `services/worker/.gitleaksignore`, `.gitleaksignore.ts`, and `src/lib/gitleaksignore` are all still rejected, with a test for each.
 - **Tests.** `check-staging-evidence.test.ts` gains `passes for the secret-scanner policy pair` (asserts `isStagingToolingOnly` on both halves AND `requiredTierFor(['.gitleaksignore'])` → T0, so the classifier is pinned end-to-end, not just the predicate) and `rejects gitleaks-config lookalike filenames`. Verified red-before-green: against the pre-fix classifier the pair test fails on `.gitleaksignore`.
+
+## `check-staging-evidence.ts` — base-drift residual-risk third state + own-changeset anchoring (FD-GATE-2 / FD-GATE-3, 2026-08-23)
+
+- **The defect (FD-GATE-3).** `baseDriftImpactErrors` had exactly two outcomes above "no intersection": a `Base drift impact:` attestation hatch when the WHOLE drift was T0, and an unconditional re-soak for anything above T0. But `SHARED_PROD_RUNTIME_RULES` matches `services/worker/src/` wholesale, a T3 soak is 48 h, and main took 23 PRs on 2026-08-22 — so any T3 soak window contains T2+ drift and the re-soak can never converge (the [[FD-RC-1]] shape: individually reasonable rules, collectively unsatisfiable). CLAUDE.md names a third state in BOTH places it addresses this — "a new soak **or an explicit residual-risk note**" (§1.11A), "an explicit Carson-approved residual-risk exception" (§1.12) — and the gate implemented neither. Live victims at fix time: #2291 (complete sealed 12 h T2 evidence, red ONLY on this), #2235, #2314.
+- **The fix is the third state, not a narrower intersection.** The surface-intersection OR (own files ∪ shared prod-runtime surface) is deliberate and stays test-pinned — a PR owning zero chain files IS still exposed to chain drift because the soak ran against the same deployed substrate. What changes: above-T0 shared-surface drift now accepts an auditable **`### Base-drift residual-risk note`** (`Drift files:` — which must ENUMERATE every intersecting drift file, `Risk assessment:`, `Evidence still valid because:`, `Approved by:` with the shared real-approver guard; a `TBD`/blank approver is a self-waiver and fails). Without a valid note the branch still re-soaks, and the error names the note as the remedy.
+- **Two hard walls remain — cases no attestation can honestly cover:** (a) main edited an exact file this PR itself changed (or one matching an optional self-declared `Drift dependencies:` prefix — a declaration can only make the gate stricter) and that overlap classifies T2+: the completed soak provably describes code that no longer exists; (b) the PR owns a `supabase/migrations/` file AND main landed a migration in the interval: ledger ordering is shared mutable state. Same-file drift *below* T2 (e.g. `src/lib/copy.ts`, the actual #2235 overlap) is attestable — the wall is reserved for evidence that is provably stale, not merely adjacent.
+- **The T0 hatch is unchanged and the note is NOT a substitute for it** — the T0 `Base drift impact:` field carries a no-runtime-impact statement the note does not, and letting the note serve there would be strictly looser for a strictly safer drift class. Test-pinned.
+- **FD-GATE-2, fixed at the consumer.** `ciContext.changedFiles()` no longer two-dots from the (possibly frozen) env base — see `scripts/ci/lib/agents.md` for the `resolveDiffBase` anchoring contract. This corrects the gate's `ownFiles`, the tier detector, `compute-merge-authority`, and the feedback-rules scans in one place, without touching the workflows that still pass the frozen sha. Also fixes the raw-head fallback misattribution (FD-GATE-3 defect 2). Known boundary: `--diff-filter=AMR` still drops deletions — that is FD-GATE-4, deliberately not addressed here.
+- **This is a §1.12/§1.13 merge-gate semantics change:** landed as a T0 tooling PR, opened as DRAFT for named human review — the gate that decides whether other PRs may merge must not be self-merged on its own green checks.
 
 ---
 

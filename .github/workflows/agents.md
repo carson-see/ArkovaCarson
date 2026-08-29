@@ -1,5 +1,73 @@
 # .github/workflows/ — CI/CD Workflows
 
+## 2026-08-23 — worker `tsc --noEmit` is now a STEP in `typecheck-lint` (SCRUM-1811)
+
+`typecheck-lint` gained `Typecheck worker (deploy-gate parity)` —
+`node_modules/.bin/tsc --noEmit` in `services/worker`, placed between the existing
+`Install worker dependencies` and `Lint worker (deploy-gate parity)` steps — plus a
+`Verify deploy-gate / CI worker TYPECHECK parity (SCRUM-1811)` guard running
+`scripts/ci/check-deploy-typecheck-parity.ts`.
+
+**Why this was a real hole even though a worker compile job already existed.** Three surfaces, none
+of which covered worker test files at PR time:
+
+- Root `npm run typecheck` — root tsconfigs `exclude` `services/`, so tsc never sees worker source.
+- `worker-build-parity` — runs `npm run build` == `tsc -p tsconfig.build.json`, and that config
+  `exclude`s `src/**/*.test.ts` / `*.spec.ts`. It is also in-job path-gated AND non-required.
+- `deploy-worker.yml`'s `Typecheck` — the ONLY surface compiling the plain `tsconfig.json` (tests
+  included), and it fires on push to `main`, i.e. **after** merge.
+
+So a TS error in a worker TEST file passed every PR check and then blacked out ALL prod worker
+deploys while `main` kept merging (`memory/project_deploy_typecheck_blackout.md`; SCRUM-1810 was
+literally this; SCRUM-3130 recorded main ~20 merged PRs ahead of prod).
+
+**Why a step here and not a required-flip of `Worker Build (deploy-parity)`.** The CONDITIONAL-GO
+sub-decision B note below reserves that flip to Carson/admin behind the CEO-gated quiet window, and
+branch protection is not a surface a PR can change for itself — the same reasoning recorded for the
+edge-worker test steps. `typecheck-lint` is ALREADY `check-success = TypeCheck & Lint` in all three
+`.mergify.yml` queues, so a step added here blocks a merge on day one with no branch-protection
+change. **`worker-build-parity` and `Verifier Build` remain NON-REQUIRED and untouched;
+`.mergify.yml` is untouched.**
+
+Two properties the parity guard pins, because getting either wrong silently reopens the gap:
+`tsc --noEmit` against the **plain** tsconfig (NOT `-p tsconfig.build.json`, which drops the test
+files that caused the outage), and **no `if:` guard** on the step (a path filter would miss a
+test-only edit). Baseline at wiring time: worker `tsc --noEmit` **clean on `main`** — verified
+locally before the gate was added, per this file's "a gate must not be merged red" rule.
+
+Naming is load-bearing: the step is `Typecheck worker (deploy-gate parity)`, deliberately carrying
+neither `lint` (which `check-deploy-lint-parity.ts` keys on) nor the exact `deploy-parity` marker
+(which `check-deploy-build-parity.ts` keys on), so the two existing scanners do not capture it.
+Verified: the lint-parity gate still reports exactly 2 worker-lint steps. **That naming rule is
+enforced, not just documented** — `check-deploy-typecheck-parity.ts` rejects a rename of this step
+into either sibling marker, because the trap ("Typecheck worker (deploy-parity)", mirroring the
+sibling JOB name `Worker Build (deploy-parity)`) would otherwise make a SIBLING gate capture
+`tsc --noEmit`, demand `npm run build`, and go red pointing at the wrong file.
+
+## 2026-08-23 — the `commits` step hands off a FILE PATH, not the messages themselves (E2BIG)
+
+`policy-lints`' `Aggregate commit messages` step no longer inlines `git log`. It runs
+`scripts/ci/aggregate-commit-messages.ts`, which writes the aggregate to
+`$RUNNER_TEMP/pr-commit-msgs.txt`; the step publishes the PATH as the `msgs_file` output, and both
+consuming steps bind `PR_COMMITS_MSGS_FILE: ${{ steps.commits.outputs.msgs_file }}` alongside the
+now-`head -c 100000`-capped `PR_COMMITS_MSGS`.
+
+Why: passing the aggregate as an environment variable hit Linux's `MAX_ARG_STRLEN` (131,072 bytes
+per single argv/envp string). PR #2346 (run 32666797304, job 97261336883) reached 138,166 bytes and
+`execve` of the next step's `/usr/bin/bash` failed with `Argument list too long` — at spawn, before
+any lint ran, so no override label applied and the failure carried no diagnosis. Pushing a commit
+refreshed the frozen `base.sha` and incidentally cleared it, which is a workaround, not a fix: any
+sufficiently old PR, or the next long-lived branch to merge, re-triggers it.
+
+The step env var was renamed `BASE_SHA` → `BASE_REF_SHA` because the range is now resolved by
+`lib/ciContext` (`resolveDiffBase`, the FD-GATE-2 anchoring) rather than by shell. Empty on push
+builds still means "tip commit only", exactly as the old `if [ -n "$BASE_SHA" ]` branch did.
+
+The per-run random `$GITHUB_OUTPUT` heredoc delimiter documented below is UNCHANGED and still
+required — the capped fallback written into `msgs` is still PR-author-controlled text. New ratchets
+in `scripts/ci/ci-workflow-contract.test.ts` pin the file transport, the sub-`MAX_ARG_STRLEN` cap,
+and the requirement that every `PR_COMMITS_MSGS` consumer also binds the file.
+
 ## 2026-08-20 — every third-party action is pinned to a commit SHA, ratcheted by a detector
 
 `actions/checkout@v4` in `gitleaks.yml` was the reported finding. A tag is a mutable pointer: whoever can move `v4` upstream changes what our runner executes, with `secrets` and `GITHUB_TOKEN` in scope — the `tj-actions/changed-files` shape, where one retagged action dumped runner memory into ~23,000 repositories' logs. In the workflow whose entire job is catching leaked secrets, that is the weakest link in the gate.
@@ -53,7 +121,7 @@ issue comment), so a change to one of those can take effect outside the PR cycle
 
 | File | Trigger | Purpose |
 |------|---------|---------|
-| `ci.yml` | `push` (main/staging/develop) + `pull_request` | The main gate. 24 jobs: secret-scan, dependency-scan (also hosts the agents.md append-only gate), sonatype-sca, policy-lints, orphaned-export-lint, tdd-enforcement, typecheck-lint, test, python-sdk-tests (queue-gated via .mergify.yml — see the 2026-08-18 note), ai-eval-gate, tla-verify, migration-check, e2e, lighthouse, sbom-generation, worker-build-parity, verifier-build, evidence-identity-report, anti-hollow-soak-report. |
+| `ci.yml` | `push` (main/staging/develop) + `pull_request` | The main gate. 26 jobs (verified by `yaml.safe_load` 2026-08-23; the previous "24" was stale): secret-scan, dependency-scan (also hosts the agents.md append-only gate), sonatype-sca, policy-lints, orphaned-export-lint, tdd-enforcement, typecheck-lint, test, python-sdk-tests (queue-gated via .mergify.yml — see the 2026-08-18 note), ai-eval-gate, tla-verify, migration-check, e2e, lighthouse, sbom-generation, worker-build-parity, verifier-build, evidence-identity, anti-hollow-soak. The last two were report-only until SCRUM-2965/2977 activated them fail-closed and added them to every .mergify.yml queue rule; `evidence-identity` skips Mergify's speculative merge-queue PRs and resolves PR body/head LIVE via `gh api`, because this workflow's `pull_request` trigger declares no `types:` and so never fires on a body `edited`. |
 | `staging-evidence.yml` | `pull_request` incl. **`edited`**/`labeled`/`unlabeled` | The `Staging Soak Evidence Gate` required check (CLAUDE.md §1.11/§1.12). `edited` matters: a body-only evidence update fires no `synchronize`. |
 | `migration-drift.yml` | `push` main + `pull_request` incl. **`edited`** | Read-only diff of local migrations vs the prod applied set. Prevents the scorecard-outage class of bug. Also runs the full-ledger numeric-integrity audit (SCRUM-2500). |
 | `merge-authority.yml` | `pull_request` (`opened`/`synchronize`/`reopened`/`ready_for_review`) | Single `compute` job — reuses `requiredTierFor` to emit the tier/merge-council marker. Fails closed. |
@@ -479,6 +547,33 @@ coverage" for why (the 2026 silent-skip bug where a single early failure skipped
 suite with no signal). Baseline at wiring time: **36/36 green**, verified locally on `main` before
 the gate was added — a gate must not be merged red.
 
+## Platform-health-digest flag activation (2026-08-18, `feat/platform-admin-daily-health-digest`, draft)
+
+`ENABLE_PLATFORM_HEALTH_DIGEST=true` appended to the canary deploy step's `--set-env-vars` string —
+plain env-var addition, no new step/job. Unlike most job-activation entries in this file, this flag
+was never dark: the route (`POST /jobs/platform-health-digest`) and the flag are BOTH new in this same
+PR (a real capability gap identified by a read-only audit, not a previously-shipped-but-inert switch).
+Default true both here and in `config.ts`'s code default — see the dated entry in
+`services/worker/src/agents.md`. Still requires a manual Cloud Scheduler binding this workflow does
+not perform (see `scripts/gcp-setup/agents.md`'s dated entry and `cloud-scheduler.sh`'s
+`NOT_SCHEDULED` reason for this route).
+## Queue-digest flag activation (2026-08-18, `feat/queue-digest-default-on`, draft)
+
+Same class of defect as the Drive connector activation above: `ENABLE_QUEUE_DIGEST` was absent from
+this file's `--set-env-vars` entirely (and from `docs/reference/ENV.md`), so the fully-built QUEUE-07
+daily digest job (`services/worker/src/jobs/queue-digest-cron.ts`) ran on `config.ts`'s
+`boolFlag(false)` code default in prod and `POST /jobs/queue-digest` was a standing no-op — found via
+a read-only capability audit, not a code review. `ENABLE_QUEUE_DIGEST=true` added to the canary
+deploy step's `--set-env-vars` string (single append, no new step/job — this is a plain env-var
+addition, not a gating change). Per-org enrollment was separately flipped to DEFAULT-ON in the same
+PR (worker-only change, no workflow impact) — see the dated entry in
+`services/worker/src/jobs/agents.md`. Still requires a Cloud Scheduler job → `POST
+/jobs/queue-digest` to actually fire daily; this workflow only gates the code path. The
+`cloud-scheduler.sh` `NOT_SCHEDULED` reason for this route was updated in the same PR (the old text
+cited "ENABLE_QUEUE_DIGEST off" as the reason, which is no longer true once this merges) — binding the
+actual Cloud Scheduler job is still a separate, not-yet-performed operator step (needs project-admin
+`gcloud` credentials this freeze-window session does not have).
+
 ## Label-gated overrides need a token, not just `pull-requests: read` (2026-08-22)
 
 Any job that seeds `PR_LABELS` must ALSO carry `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` in its
@@ -500,9 +595,43 @@ next one added must inherit the token instead of having to remember it.
 one, and `fetchLiveLabels()` now emits a non-fatal `::warning` when the live fetch fails (silent for
 a genuine non-PR context, so push builds do not cry wolf).
 
+## `merge-authority.yml` runs the resolved local `tsx` binary (2026-08-23, GH #2396)
+
+`merge-authority.yml` was the last workflow still invoking `npx tsx`. SonarCloud attributes a
+pre-existing finding to any PR that *touches the file at all* (not just the offending line), so the
+`actions/checkout` 7.0.0 -> 7.0.1 bump surfaced `githubactions:S6505` (`npx` can install packages
+on-demand and run their lifecycle scripts) and `githubactions:S8543` (pin an exact version) at
+`merge-authority.yml:48` and dropped the PR's `new_security_rating` to C, failing the required
+`SonarCloud Code Analysis` check. The job already runs `npm ci --ignore-scripts` two steps earlier
+and `tsx` is a root devDependency pinned to an exact version, so `node_modules/.bin/tsx` is
+deterministic and clears both rules with no suppression. Same fix already applied in `ci.yml`,
+`staging-evidence.yml` and `migration-drift.yml` — this closes the last `npx tsx` call site in a
+workflow that runs on every PR.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
 - `docs/runbooks/ci/verifying-current-check-runs.md` — cross-checking `gh pr checks` against actual check-run timestamps; the frozen-event-payload rerun trap and its fix (SCRUM-3030)
 - S0-4.3 stacked-PR + tiered-merge playbook (drafted Mergify/branch-protection diff for Carson) → Google Doc "ARKOVA PI-1 S0-E4 — Mergify / Stacked-PR + Tiered-Merge Playbook" (Drive ARKOVA PI-1-S0): https://docs.google.com/document/d/1iontJPUkhLQkQyZG4PETGuPj3kf23Kgn-1kDxqukfr8/edit
 - `docs/confluence/16_migration_drift_prevention.md` — ADR for Option A (read-only diff)
+
+## The `workflow_dispatch` pause override was exercised in prod (2026-08-27)
+
+The "Deploy-worker pause gate" section above states that `workflow_dispatch` ALWAYS bypasses
+`vars.DEPLOY_WORKER_PAUSED`. That is not theoretical — it was used on 2026-08-27 to move prod off a
+week-old SHA: deploy-worker run
+[**33114229919**](https://github.com/carson-see/ArkovaCarson/actions/runs/33114229919)
+(`event: workflow_dispatch`, `headSha 0440ce7e5c09ab15da60157e9a96128f669dc999`,
+`conclusion: success`, 20:37:29Z → 20:49:15Z) shipped revision `arkova-worker-01322-tol` at 100%
+traffic.
+
+**The inference to NOT make:** a fresh prod SHA does not mean the pause was lifted.
+`gh variable get DEPLOY_WORKER_PAUSED` still read `true` immediately after that deploy. A dispatched
+deploy and an unpaused repo look identical from the outside — only the variable distinguishes them,
+so read it rather than inferring it from `/health.git_sha`. It also does **not** discharge the
+`pause_lift_obligation` in `docs/staging/rc-manifests/rc-deferred-2026-08-22.json`, which requires a
+consolidated soak of merged `main` at the accumulated head BEFORE the variable flips.
+
+Corollary for `revision-drift.yml` (cron `*/10`, fires Sentry on `/health.git_sha` drifting > 1h
+from `origin/main`): while the pause holds, drift is the EXPECTED steady state, not an incident. Do
+not treat one of its alerts as evidence that a deploy failed without first checking the variable.
