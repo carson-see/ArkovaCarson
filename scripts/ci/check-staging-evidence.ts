@@ -1830,6 +1830,9 @@ function requiredValueErrors(body: string, tier: Tier): string[] {
 
     return [
       ...emptyFieldErrors,
+      // Seventh closure (review 2026-08-29): the ONE approval field T1 carries
+      // must actually name a human — see validateHumanApproverField.
+      validateHumanApproverField(body),
       validateStagingTagEvidence(body),
       validatePassingEvidenceField(
         body,
@@ -1944,7 +1947,16 @@ function validateResidualRiskNote(
   if (requiredFields.includes('Approved by:') && !missing.includes('Approved by:')) {
     const approver = extractEvidenceFieldValue(section, 'Approved by:');
     const trimmed = approver?.trim() ?? '';
-    if (trimmed.length === 0 || isIncompletePlaceholder(trimmed) || isNotApplicablePlaceholder(trimmed)) {
+    // NOT_A_PERSON_PREFIX_RE (seventh closure): the whole-value NA anchor let
+    // `Approved by: N/A — …` grant the exception once any prose trailed the
+    // marker — the same leading-token shape the 2026-08-29 addendum closed for
+    // self-references.
+    if (
+      trimmed.length === 0
+      || isIncompletePlaceholder(trimmed)
+      || isNotApplicablePlaceholder(trimmed)
+      || NOT_A_PERSON_PREFIX_RE.test(trimmed)
+    ) {
       missing.push('Approved by: (must name a real approver, not a blank or placeholder)');
     }
   }
@@ -1991,6 +2003,34 @@ const SELF_REFERENCE_APPROVER_RE =
  */
 const SELF_REFERENCE_PREFIX_RE =
   /^(?:me|myself|self|same[\s-]as[\s-](?:above|author)|(?:the|pr|this)[\s-]author|author(?:[\s-]of[\s-]this[\s-]pr)?)(?:$|[\s,;:.()!?—–])/i;
+
+/**
+ * LEADING "names no one" tokens for an approver-class field (seventh closure,
+ * review 2026-08-29). {@link NOT_APPLICABLE_VALUE_RE} and
+ * {@link INCOMPLETE_VALUE_PATTERNS} anchor to the WHOLE value, so
+ * `Human approver: NONE. No human has approved this head.` passed the T1 gate
+ * — the spelling PR #2264 merged with — and `Approved by: N/A — …` granted a
+ * residual-risk exception the same way. A value that BEGINS with one of these
+ * tokens names no one regardless of what follows. Bare `na`, `n.a.` and `nil`
+ * are deliberately absent (real names begin with those — "Na Yoon-kyung",
+ * "N.A. Smith", "Nil Ratan Dhar"); they stay rejected as whole values by
+ * {@link NOT_APPLICABLE_VALUE_RE}. Same firing boundary as
+ * {@link SELF_REFERENCE_PREFIX_RE}: `-` is not a boundary, so a hyphenated
+ * name cannot false-positive.
+ */
+const NOT_A_PERSON_PREFIX_RE =
+  /^(?:none|n\/a|not[\s-]?applicable|null|nobody|no[\s-]one)(?:$|[\s,;:.()!?—–])/i;
+
+/**
+ * The agent naming itself as the approver. CLAUDE.md §1.12 and the T1 tier
+ * spec require a HUMAN approver; "Claude" in any spelling (`Claude`,
+ * `Claude Code`, `@claude`, `claude-fable-5`) is the resolver of the task,
+ * not an approver of it. Leading-anchored so a human approval that merely
+ * MENTIONS the agent ("Carson — approved in the Claude session transcript")
+ * is unaffected. A ratchet against the observed spellings, not an identity
+ * proof — the same stance every guard in this file takes.
+ */
+const AGENT_APPROVER_RE = /^@?claude\b/i;
 
 /** Handle-ish tokens inside an approver value (`@login`, `login`, `First`, an email local-part). */
 const APPROVER_TOKEN_RE = /[A-Za-z0-9][A-Za-z0-9._-]*/g;
@@ -2071,6 +2111,46 @@ export function approverIndependenceErrors(body: string, prAuthor?: string): str
     }
   }
   return errors;
+}
+
+/**
+ * Seventh closure (review 2026-08-29): the T1 `Human approver:` field was
+ * VALUE-blind. `missingFields()` proves label presence and
+ * `validateNonEmptyEvidenceField` rejects only the empty string, so
+ * `Human approver: NONE` — and the `NONE. <explanation>` spelling PR #2264
+ * merged with — satisfied the only approval evidence T1 carries
+ * (`TIER_SPECS.T1.soakHours` is 0; this field is what a green T1 gate is
+ * supposed to prove).
+ *
+ * This is the VALUE half only. Cross-checking this field against the PR
+ * author is a policy call deliberately NOT taken (see the PR's "Known scope
+ * limits"): every T1 PR carries the field, and in a repo where Carson both
+ * authors and approves, an author cross-check here would block routine T1s.
+ */
+function validateHumanApproverField(body: string): string | null {
+  const field = 'Human approver:';
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null) return null; // label absent → missingFields() owns it
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null; // empty → validateNonEmptyEvidenceField owns it
+  if (
+    isIncompletePlaceholder(trimmed)
+    || isNotApplicablePlaceholder(trimmed)
+    || NOT_A_PERSON_PREFIX_RE.test(trimmed)
+  ) {
+    return `${field} must name the human who approved this PR — \`${trimmed}\` names no one. `
+      + 'NONE/N/A/TBD/pending do not satisfy the T1 human-approval requirement; if no human '
+      + 'has approved yet, this gate is SUPPOSED to stay red.';
+  }
+  if (
+    AGENT_APPROVER_RE.test(trimmed)
+    || SELF_REFERENCE_APPROVER_RE.test(trimmed)
+    || SELF_REFERENCE_PREFIX_RE.test(trimmed)
+  ) {
+    return `${field} must name a human — \`${trimmed}\` names the agent or the requester `
+      + 'themselves. CLAUDE.md §1.12 requires a human approver.';
+  }
+  return null;
 }
 
 export function hasResidualRiskException(body: string): { valid: boolean; missing: string[] } {

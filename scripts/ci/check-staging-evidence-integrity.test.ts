@@ -628,3 +628,106 @@ describe('base-drift residual-risk note is held to the same approver independenc
     expect(r.errors.join(' ')).toMatch(/self-approval/i);
   });
 });
+
+// ── Seventh closure (review 2026-08-29) — T1 `Human approver:` was value-blind ──
+// `missingFields()` proves label PRESENCE and `validateNonEmptyEvidenceField`
+// rejects only the EMPTY value, so `Human approver: NONE` — and the exact
+// spelling PR #2264 merged with, `NONE.` followed by an explanation — passed
+// the T1 gate. That field is the ONLY approval evidence T1 carries
+// (`TIER_SPECS.T1.soakHours` is 0), so a value that names no human, names the
+// agent, or names "me" left a green T1 gate proving neither soak nor approval.
+describe('T1 Human approver must name a human', () => {
+  const T1_FILES = ['src/components/Foo.tsx'];
+
+  const t1Body = (approver: string) => `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: ${HEAD}
+- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- Health/smoke result: health ok, targeted smoke green
+- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
+- Rollback plan: revert this PR and redeploy previous worker image
+- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
+- Human approver: ${approver}
+`;
+
+  const runT1 = (approver: string) =>
+    check({ body: t1Body(approver), files: T1_FILES, headSha: HEAD });
+
+  it('control: a named human approver passes', () => {
+    const r = runT1('Carson');
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('control: a named human with role decoration passes', () => {
+    expect(runT1('Jamie Nguyen (release owner), 2026-08-29').ok).toBe(true);
+  });
+
+  it('rejects NONE', () => {
+    const r = runT1('NONE');
+    expect(r.ok).toBe(false);
+    expect(r.errors.join(' ')).toMatch(/Human approver:/i);
+  });
+
+  it('rejects the exact spelling PR #2264 merged with — NONE plus explanatory prose', () => {
+    const r = runT1(
+      'NONE. No human has approved this head. This line is deliberately not filled with pending/TBD/N/A.',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.errors.join(' ')).toMatch(/Human approver:/i);
+  });
+
+  it('rejects N/A with trailing decoration', () => {
+    expect(runT1('N/A — solo repo, no second human').ok).toBe(false);
+  });
+
+  it('rejects a not-filled-in placeholder', () => {
+    expect(runT1('TBD').ok).toBe(false);
+    expect(runT1('PENDING').ok).toBe(false);
+  });
+
+  it('rejects a bolded NONE (emphasis is stripped first)', () => {
+    expect(runT1('**NONE**').ok).toBe(false);
+  });
+
+  it('rejects an approver that is nobody', () => {
+    expect(runT1('nobody yet').ok).toBe(false);
+  });
+
+  it('rejects the agent as the approver', () => {
+    expect(runT1('Claude').ok).toBe(false);
+    expect(runT1('Claude Code (this session)').ok).toBe(false);
+    expect(runT1('@claude').ok).toBe(false);
+  });
+
+  it('rejects a self-reference word', () => {
+    expect(runT1('me').ok).toBe(false);
+    expect(runT1('me (the author)').ok).toBe(false);
+  });
+
+  it('does not fire on a human approval that merely mentions the agent', () => {
+    expect(runT1('Carson — approved in the Claude session transcript').ok).toBe(true);
+  });
+});
+
+// ── Same class, note path — a leading N/A token with trailing prose ──
+// The residual-note approver check anchors its NA/placeholder patterns to the
+// WHOLE value, so `Approved by: N/A — …` granted the exception exactly the way
+// `Human approver: NONE. …` passed T1. Leading not-a-person tokens now fire.
+describe('residual-note approver rejects a leading not-a-person token', () => {
+  it('rejects Approved by: N/A with trailing prose', () => {
+    expect(runT2(residualRiskBody('Approved by: N/A — nobody free this week')).ok).toBe(false);
+  });
+
+  it('rejects Approved by: none with trailing prose', () => {
+    expect(runT2(residualRiskBody('Approved by: none (solo repo)')).ok).toBe(false);
+  });
+
+  it('control: a real approver with trailing prose still passes', () => {
+    const r = runT2(
+      residualRiskBody('Approved by: Carson — reviewed the contamination list 2026-08-29'),
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+});

@@ -29,6 +29,8 @@ No `## Staging Soak Evidence` block is required when every touched file is T0. T
 
 T1 is not a casual bypass or zero-soak lane. It is blocked for migrations, public API contracts, auth, billing, anchoring, worker behavior, queue/concurrency, chain/treasury, and security-sensitive changes.
 
+**`Human approver:` must name a human.** It is the only approval evidence T1 carries, so the gate rejects values that name no one — `NONE`, `N/A`, `TBD`, `pending`, `nobody` (with or without trailing explanation) — and values that name the agent (`Claude`, `Claude Code`, `@claude`) or the requester (`me`, `myself`, `the author`). If no human has approved yet, leave the gate red; do not fill the field with a marker saying so.
+
 ---
 
 ## T2 — Standard merge-grade soak (public API / worker behavior / webhook / SDK / AI; 12h minimum)

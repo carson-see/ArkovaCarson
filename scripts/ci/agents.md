@@ -1,6 +1,6 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
+_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
 
 ## 2026-08-23 — `check-staging-evidence.ts` evidence-gate integrity (SCRUM-3481 / 3509 / 3533 / 3542 / 3549)
 
@@ -140,6 +140,28 @@ existing blocks in `check-staging-evidence.test.ts` (the six roster-internals te
 by three that pin its removal; the ancestry test's stub taught the second bound, and a new
 sibling pinning that a pre-launch base FAILS). 433/433 green across the five affected
 suites; baseline on `origin/main` was 373/373 for the two pre-existing ones.
+
+## 2026-08-29 — seventh closure: the T1 `Human approver:` field was VALUE-blind (review of the six-closure PR)
+
+`missingFields()` proves label PRESENCE and `validateNonEmptyEvidenceField` rejects only
+the EMPTY string — so `Human approver: NONE` passed the T1 gate, and PR #2264 in fact
+merged with `Human approver: NONE. No human has approved this head. …` in its body. That
+field is the only approval evidence T1 carries (`TIER_SPECS.T1.soakHours` is 0), so a
+green T1 gate proved neither soak nor approval. `validateHumanApproverField()` now runs in
+`requiredValueErrors`' T1 arm and rejects: empty-after-emphasis, the incomplete
+placeholders (TBD/PENDING/…), the whole-value N/A class, a LEADING not-a-person token
+(`NONE.`, `N/A — …`, `nobody`, `no one` — the #2264 spelling survives any whole-value
+anchor), the agent as approver (leading `@?claude\b` — "Claude", "Claude Code", a model
+handle), and the self-reference words the residual-note check already rejects. The same
+leading not-a-person token now also fails a note's `Approved by:` (`N/A — nobody free`
+granted a §1.12 exception the same way). **Deliberately NOT added: cross-checking T1
+`Human approver:` against the PR author.** Every T1 PR carries the field and Carson both
+authors and approves here — that cross-check is a policy call recorded as such on the
+six-closure PR, not a gate repair. Leading-token trade-offs are documented on
+`NOT_A_PERSON_PREFIX_RE` (bare `na`/`n.a.`/`nil` stay whole-value-only so real names like
+"Na Yoon-kyung" cannot false-positive). Red-first: 10 failed | 55 passed on the prior
+head, green after; the full-file revert to `origin/main` fails 43 including all six
+original closure classes.
 
 ## 2026-08-29 — base-drift carve-out (b) matched a DIRECTORY, so `migrations/agents.md` read as "main landed a migration"
 
@@ -435,7 +457,7 @@ Two design points to preserve if you touch it:
   - **Architecturally-unsoakable evidence mode (S3 unsoakable-surface fix):** a PR can be required-tier T2 purely by touching an OFFLINE package/SDK/CLI surface (the `packages/…` / `sdks/` half of the SDK `PATH_RULES` rule) — but those packages ship no worker code, no migration, and are not the served Cloud Run HTTP contract; they are standalone libraries/CLIs run offline by consumers (pytest/vitest/parity). Such a PR can NEVER produce the worker artifacts (Worker revision, Image digest, Cloud Run URL, staging deploy-log id) or the `clean_mirror` preflight the standard T2 block demands — an impossible catch-22 that blocked #1411 (verifier-cli + arkova-py). This mode lets that narrow case satisfy T2 with test/parity evidence instead. **Activates ONLY when all three hold:** declared tier `T2` **AND** required tier `T2` **AND** `isOfflinePackageOnlyChange(files)` (every changed file is under `packages/` or `sdks/` and matches NONE of `services/`, `supabase/(migrations|functions)/`, the served-contract docs `docs/api/` + `docs/guides/API_GUIDE.md`, `.github/workflows/`, or `scripts/`). **Accepts** (`T2_UNSOAKABLE_FIELDS`): `Test evidence:` (filled, non-placeholder, **and** stating a passing result — pytest/vitest/parity green or an `N/M` count), `CI green:` (non-empty **and** passing), `Staging tag URL or N/A explanation:` (an N/A-with-justification or a URL), and a `### Unsoakable-surface note` attesting no worker runtime exists (sub-fields `No worker runtime:`, `Surfaces touched:`, and a real non-placeholder `Approved by:`). Exact-head SHA integrity still applies. **It cannot weaken any worker/migration/served-contract PR:** the moment such a file is in the diff, `isOfflinePackageOnlyChange` is false and the PR falls through to the unchanged standard T2/T3 worker-artifact requirements (verified: served-contract docs are excluded because a soak validates the worker contract they describe). It does NOT change tier classification — an offline-package T2-required PR that declares T1 is still blocked. Mutually exclusive with the frontend-T2 path (a mixed frontend+package diff satisfies neither predicate and falls through to standard T2). NOTE: `packages/verifier` + `packages/verifier-cli` are ALSO in the `isStagingToolingOnly` T0 allowlist, so a PR confined to just those is already T0; this mode is what unblocks the T2 offline SDKs (`arkova-py`, `embed`, `mcp-server`, `typescript`, `langchain`, `sdks/`).
   - **Release-candidate manifest coverage (2026-06-08 release queue rescue):** per-PR evidence remains the default. If a PR body includes `RC manifest path: docs/staging/rc-manifests/rc-*.json`, the same required check name accepts machine-readable RC coverage instead of duplicated long soak prose. The manifest must be local JSON only, approved, unexpired, exact-head covered, base/train covered, clean preflight, real deploy provenance, passing soak result, and migration rollback/reapply proof for T3 or migration-bearing PRs. Arbitrary paths and external URLs are rejected. The workflow name/job name stay unchanged; `.github/workflows/staging-evidence.yml` only passes `PR_NUMBER` as additional data.
   - **RC base coverage is ancestry-aware (SCRUM-3026 follow-up, 2026-08-01).** An RC manifest is a *committed* file, so exact SHA enumeration required it to list a base SHA that would not exist until after it was written — every merge into `main` (including the merge of the manifest refresh itself) mints a new base SHA for every other open PR in the train. That is a live-lock, not staleness: curing it for one PR re-creates it for the rest. `rcCurrentBaseCovered` / `rcPrBaseCovered` now accept the live base when it is listed **or** when `git merge-base --is-ancestor` shows it descends from `train_launch_sha` / `target_main_sha` / `allowed_base_shas` / `covered_main_shas` (per-entry: the recorded `base_sha` is an ancestor of the live base). The invariant the enumeration proxied for — "the RC's soaked baseline is contained in the history of the base this PR merges into" — is preserved exactly; a divergent or pre-launch base still fails. `opts.baseSha` is the PR's `base.sha` resolved from the GitHub API on a workflow restricted to `branches: [main, staging, develop]`, so it is a protected-branch commit, never author-controlled. Injected via `CheckOptions.ancestryProvider` (git-backed in `main()`; `fetch-depth: 0` in the workflow supplies the history). An **unresolvable** ancestry answer (`null` — shallow clone, missing object) fails CLOSED to exact enumeration.
-  - **`head_binding` — how an `included_prs[]` entry binds to the artifact.** `exact` is the ONLY mode: the entry's `head_sha` must equal the live PR head. Omit the field for the same behavior. An unrecognized mode fails closed, and is evaluated even when the recorded head still matches. **`"mode": "roster"` was REMOVED 2026-08-23 (SCRUM-3533)** — see the 2026-08-23 evidence-gate-integrity section at the top of this file for why.
+  - **`head_binding` — how an `included_prs[]` entry binds to the artifact (SCRUM-3026 follow-up, 2026-08-01).** `exact` is the ONLY mode: the entry's `head_sha` must equal the live PR head. Omit the field for the same behavior. An unrecognized mode fails closed, and is evaluated even when the recorded head still matches. **`"mode": "roster"` was REMOVED 2026-08-23 (SCRUM-3533)** — see the 2026-08-23 evidence-gate-integrity section at the top of this file for why.
   - **No override label exists.** The `staging-soak-skip` label was destroyed 2026-05-07 (PR #733). Real CI/agent-config-only PRs must list every touched file in the allowlist or they fail the gate.
 - **`check-npm-install-policy.ts`** — blocks `npm ci` / `npm install` in GitHub Actions workflows and shell deploy helpers unless lifecycle scripts are suppressed with `--ignore-scripts` or a nearby `install-scripts-ok:` comment gives an explicit exception reason.
 - **`check-anchor-index-justification.ts`** — blocks new `public.anchors` indexes in Supabase migrations unless the migration has an adjacent `anchor-index-justification:` comment with a concrete reason.
