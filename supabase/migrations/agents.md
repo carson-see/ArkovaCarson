@@ -729,3 +729,43 @@ precisely why the later claim is the one to move.
 
 **Highest claimed prefix anywhere (main + prod + every open branch) is `0421`. Next free is `0422` —
 re-derive with the next-free rule above, do not trust this line.**
+
+## Recent migrations (0415 collision resolution 2026-08-29)
+
+**This block resolves the `0415` double-claim flagged in the 2026-08-27 block above. Uniquely
+titled so it cannot collide at EOF (CLAUDE.md §6).**
+
+### `0415` — RESOLVED (first claim wins, by COMMIT time)
+
+`git log --all --diff-filter=A` over every ref, not per PR body:
+
+| Commit | Author date | File | Owner | Verdict |
+|---|---|---|---|---|
+| `93747a6aa451991476ab0b00d58c3fb0754f2e2d` | 2026-08-21 12:40:06 -0400 | `0415_ferpa_directory_info_opt_out_public_projections.sql` | PR #2314 | **KEEPS `0415`** — earlier by ~6 h |
+| `6860390a80f959c272c08a692e81ba635e233964` | 2026-08-21 18:42:10 -0400 | `0415_false_secured_offchain_anchor_quarantine.sql` | branch `fix/false-secured-signet-anchors`, **no open PR** | **MUST RENUMBER** to the next free prefix |
+
+Same shape as the `0420` collision resolved on 2026-08-27 and the 2026-06-01 three-way `0327`.
+
+**Correcting the earlier note in this file:** the 2026-08-27 block said `93747a6aa45` is "#2314's
+frozen soak head" and reasoned from that. It is neither. #2314's head has since moved to
+`f51e6904491dec2eea7301220bb3b2e3eee159f7`, and its PR body states in full that the soak was
+**NOT RUN / NOT DEPLOYED** — there is no exact-head evidence to void on either side. The verdict
+is unchanged, but it rests on commit time alone, which is the rule.
+
+`fix/false-secured-signet-anchors` is checked out in another worktree and has no open PR, so the
+renumber is left to its owner rather than done across a live checkout. Whoever picks it up:
+re-derive the target with the next-free rule at the top of this file — do not assume a number from
+this line.
+
+### Prod ledger, re-verified 2026-08-29
+
+Prod `vzwyaatejekddvltxyye` has 118 ledger rows, head `0419`, with a genuine gap at `0415`, `0416`,
+`0417`. `main` still tops out at `0414`. Both facts read live from
+`supabase_migrations.schema_migrations`, not from this file.
+
+### Rig ledgers standing up on this date
+
+| Rig | Ref | Head | For |
+|---|---|---|---|
+| `credits-2442` | `gsluatcqhwwynxpsidjy` | `0420` | PR #2442 — 48 h T3 clock RUNNING from 2026-08-29T15:10:53Z |
+| `cleanup-2335` | `bxgybbxkhuxwtgkgkwpe` | `0417` | PR #2335 — wired + `clean_mirror`, clock NOT started (driver blocker recorded in `docs/staging/cleanup-2335-2026-08-29/`) |
