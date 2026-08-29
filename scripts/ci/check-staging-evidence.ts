@@ -1978,6 +1978,20 @@ function validateResidualRiskNote(
 const SELF_REFERENCE_APPROVER_RE =
   /^(?:me|myself|self|same|same[\s-]as[\s-](?:above|author)|(?:the|pr|this)[\s-]author|author(?:[\s-]of[\s-]this[\s-]pr)?)\.?$/i;
 
+/**
+ * LEADING self-reference at a word boundary (review 2026-08-29): the
+ * whole-value anchor above meant `me` failed while `me (the author)` passed —
+ * any trailing decoration switched the check off. A value that BEGINS with a
+ * self-reference word is just as unambiguous, so it fires too. Bare `same` is
+ * deliberately absent here (a leading "Same as last week's …" is not
+ * self-evidently the author), and `-` is not a firing boundary so a name like
+ * "Self-serve pod lead" cannot false-positive; mid-sentence mentions never
+ * match a leading anchor at all. No nested quantifiers — linear on
+ * author-controlled input like every other guard in this file.
+ */
+const SELF_REFERENCE_PREFIX_RE =
+  /^(?:me|myself|self|same[\s-]as[\s-](?:above|author)|(?:the|pr|this)[\s-]author|author(?:[\s-]of[\s-]this[\s-]pr)?)(?:$|[\s,;:.()!?—–])/i;
+
 /** Handle-ish tokens inside an approver value (`@login`, `login`, `First`, an email local-part). */
 const APPROVER_TOKEN_RE = /[A-Za-z0-9][A-Za-z0-9._-]*/g;
 
@@ -2042,7 +2056,7 @@ export function approverIndependenceErrors(body: string, prAuthor?: string): str
     // reporting it twice would just add noise.
     if (approver === null || approver.length === 0) continue;
 
-    if (SELF_REFERENCE_APPROVER_RE.test(approver)) {
+    if (SELF_REFERENCE_APPROVER_RE.test(approver) || SELF_REFERENCE_PREFIX_RE.test(approver)) {
       errors.push(
         `Approved by: \`${approver}\` is a self-approval, not an approver. A CLAUDE.md §1.12 `
         + 'residual-risk exception must name the human who granted it, and that human cannot be '

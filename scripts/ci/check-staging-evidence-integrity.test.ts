@@ -297,6 +297,40 @@ describe('residual-risk approver must be a non-author identity', () => {
     expect(r.ok).toBe(false);
     expect(r.errors.join(' ')).toMatch(/self-approv/i);
   });
+
+  // ── Review addendum (2026-08-29) — decorated self-references ──
+  //
+  // The whole-value anchor meant `me` failed while `me (the author)` passed:
+  // any trailing decoration switched the self-reference check off. A LEADING
+  // self-reference word at a word boundary is just as unambiguous, so it now
+  // fires too. Mid-sentence mentions ("Jamie, who told me to note this") and
+  // names that merely start with the letters ("Melissa") stay unaffected.
+  it('rejects a self-reference word with trailing decoration', () => {
+    for (const approver of [
+      'me (the author)',
+      'myself — pending a retro sign-off',
+      'self, per the deferred-work audit',
+      'the author (Carson)',
+      'PR author, per policy',
+    ]) {
+      const r = runT2(noteBody(approver), { prAuthor: 'carson-see' });
+      expect(r.ok, approver).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/self-approv/i);
+    }
+  });
+
+  it('does not fire on names or sentences that merely contain a self-reference word', () => {
+    for (const approver of [
+      'Melissa Carter 2026-08-23',
+      'Selena (platform lead)',
+      'Jamie, who told me to note this here',
+      'Self-serve pod lead J. Smith', // `-` is not a firing boundary, by design
+    ]) {
+      const r = runT2(noteBody(approver), { prAuthor: 'carson-see' });
+      expect(r.ok, approver).toBe(true);
+      expect(r.errors).toEqual([]);
+    }
+  });
 });
 
 // ── DI-586 / SCRUM-3509 — packages/sdk is a public SDK contract surface ──

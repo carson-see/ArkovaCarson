@@ -56,7 +56,11 @@ quantifier is quadratic whenever it fails — a single approver line of `a` + 60
 `stripMarkdownEmphasis`: the value is one line of an author-controlled PR body, so no regex
 whose worst case is superlinear belongs on it. Failure was closed either way — a timed-out
 job is a red check — so this is burn, not bypass. Pinned by the trailing-punctuation case in
-`check-staging-evidence-integrity.test.ts`.
+`check-staging-evidence-integrity.test.ts`. Second pass, same date: the self-reference
+denylist was whole-value-anchored, so `me` failed while `me (the author)` passed — any
+trailing decoration switched it off. A LEADING self-reference word at a word boundary now
+fires too (`SELF_REFERENCE_PREFIX_RE`); bare `same` stays whole-value-only and `-` is not a
+firing boundary, so "Self-serve pod lead" and mid-sentence mentions are unaffected.
 
 It covers **all three** `Approved by:`-bearing waiver notes, via `approverNoteHeaders()`:
 `### Residual-risk note`, `### Unsoakable-surface note`, and `### Base-drift residual-risk
