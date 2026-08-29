@@ -1204,52 +1204,51 @@ const FIELD_LABEL_PREFIX = '[\\s\\-*_`]*';
 const FIELD_LABEL_CHECKBOX = '(?:\\[[ x]\\][\\s*_`]*)?';
 
 /** Emphasis / code-span markers that never carry meaning at a field value's edge. */
-const EMPHASIS_EDGE_CHARS = new Set(['*', '`']);
+const EMPHASIS_EDGE_CHARS = new Set(['*', '_', '`']);
 
 /**
  * Strip markdown decoration off a captured field value (SCRUM-3481).
  *
- * A bolded field label leaves the CLOSING marker inside the captured value:
- * {@link FIELD_LABEL_PREFIX} eats the opening `**` of `**Approved by:** TBD`,
- * the label matches, and `(.*)` then captures `** TBD`. Every placeholder guard
- * in this file is anchored to the WHOLE trimmed value (`/^tbd\.?$/i`, the rest
- * of {@link INCOMPLETE_VALUE_PATTERNS}, {@link NOT_APPLICABLE_VALUE_RE}), and
- * `** TBD` matches none of them — so bolding the labels used to switch every
- * guard off, including the residual-risk approver guard that stops a PR author
- * self-waiving a CLAUDE.md §1.12 exception.
+ * An emphasised field label leaves the CLOSING marker inside the captured
+ * value: {@link FIELD_LABEL_PREFIX} eats the opening `**` of
+ * `**Approved by:** TBD`, the label matches, and `(.*)` then captures `** TBD`.
+ * Every placeholder guard in this file is anchored to the WHOLE trimmed value
+ * (`/^tbd\.?$/i`, the rest of {@link INCOMPLETE_VALUE_PATTERNS},
+ * {@link NOT_APPLICABLE_VALUE_RE}), and `** TBD` matches none of them — so
+ * emphasising the labels used to switch every guard off, including the
+ * residual-risk approver guard that stops a PR author self-waiving a CLAUDE.md
+ * §1.12 exception.
  *
- * `*` and `` ` `` come off either end unconditionally: neither is a legitimate
- * edge character for any evidence value this file reads. `_` comes off only as
- * a MATCHED pair, so a value that legitimately ends in an underscore (a
- * snake_case branch or build id) survives intact.
+ * All three markers come off either end UNCONDITIONALLY. The first cut
+ * stripped `_` only as a matched pair (to keep a trailing snake_case
+ * underscore intact), but the closing `_` of an italicised label lands
+ * unpaired at the value's edge — `- _Label:_ TBD` captures `_ TBD`, and
+ * whole-line italics `- _Label: TBD_` captures `TBD_` — which left the exact
+ * bypass this function exists to close open through the third marker
+ * (review 2026-08-29). An unpaired edge underscore is locally
+ * indistinguishable from a snake_case one, so the guards must take the
+ * fail-closed reading: shaving an edge `_` off a legitimate value can only
+ * make it MORE likely to hit a placeholder guard, which fails closed and
+ * visibly, while leaving it on kept an author-controlled bypass open.
+ * Interior underscores (`arkova_staging`, `environment_type=clean_mirror`)
+ * are never touched, and no evidence value this file reads carries a
+ * load-bearing edge `*`, `_` or `` ` ``.
  *
  * Deliberately index scanning, not regex. PR bodies are author-controlled, and
- * the obvious spellings here are quadratic on a pathological value: `/[*`]+$/`
- * is retried from every start position, and `/^(_+)([\s\S]*?)\1$/` backtracks
- * the leading run against the backreference. Each pass below shortens the
- * string or returns, so the whole function is linear in the value's length.
+ * the obvious spelling here is quadratic on a pathological value: `/[*_`]+$/`
+ * is retried from every start position. Each pass below shortens the string or
+ * returns, so the whole function is linear in the value's length.
  */
 function stripMarkdownEmphasis(value: string): string {
   let out = value.trim();
   for (;;) {
-    const before = out;
-
     let start = 0;
     let end = out.length;
     while (start < end && EMPHASIS_EDGE_CHARS.has(out[start]!)) start += 1;
     while (end > start && EMPHASIS_EDGE_CHARS.has(out[end - 1]!)) end -= 1;
-    out = out.slice(start, end).trim();
-
-    let lead = 0;
-    while (lead < out.length && out[lead] === '_') lead += 1;
-    if (lead < out.length) {
-      let trail = 0;
-      while (trail < out.length - lead && out[out.length - 1 - trail] === '_') trail += 1;
-      const paired = Math.min(lead, trail);
-      if (paired > 0) out = out.slice(paired, out.length - paired).trim();
-    }
-
-    if (out === before) return out;
+    const next = out.slice(start, end).trim();
+    if (next === out) return out;
+    out = next;
   }
 }
 

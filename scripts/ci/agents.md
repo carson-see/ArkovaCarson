@@ -15,14 +15,28 @@ in this file is anchored to the WHOLE trimmed value (`/^tbd\.?$/i`, the rest of
 `INCOMPLETE_VALUE_PATTERNS`, `NOT_APPLICABLE_VALUE_RE`), and `** TBD` matches none of them.
 So a body with bolded labels passed with `TBD` in every field, **including** the
 residual-risk `Approved by:` that stops an author self-waiving a §1.12 exception.
-`extractEvidenceFieldValue` now runs `stripMarkdownEmphasis()` on the capture. `*` and
-`` ` `` come off both ends unconditionally; `_` only as a MATCHED pair, so
-`arkova_staging_` survives. **It is index scanning, not regex, on purpose** — PR bodies are
-author-controlled and the obvious spellings are quadratic (`/[*`]+$/` retries from every
-start position; `/^(_+)([\s\S]*?)\1$/` backtracks the run against the backreference). While
-in there: `- [x] **Field:** value` used to read as ABSENT (the `[` stops the prefix class,
-leaving `**` between checkbox and label), so `FIELD_LABEL_CHECKBOX` now carries its own
-emphasis run.
+`extractEvidenceFieldValue` now runs `stripMarkdownEmphasis()` on the capture. `*`, `_`
+and `` ` `` all come off both ends unconditionally. **It is index scanning, not regex, on
+purpose** — PR bodies are author-controlled and the obvious spelling is quadratic
+(`/[*_`]+$/` retries from every start position). While in there: `- [x] **Field:** value`
+used to read as ABSENT (the `[` stops the prefix class, leaving `**` between checkbox and
+label), so `FIELD_LABEL_CHECKBOX` now carries its own emphasis run.
+
+Review addendum (2026-08-29, second pass): the first cut stripped `_` only as a MATCHED
+pair, to keep a trailing snake_case underscore (`arkova_staging_`) intact. That reopened
+the exact class this fix closes, through the third marker: the closing `_` of an
+italicised LABEL lands unpaired at the value's edge — `- _Staging branch:_ TBD` captured
+`_ TBD`, whole-line italics `- _Staging branch: TBD_` captured `TBD_`, and
+`_Approved by:_ TBD` self-waived a residual-risk note — and none of those hit any
+whole-value-anchored guard. An unpaired edge underscore is locally indistinguishable from
+a snake_case one, so the stripper now takes the fail-closed reading: shave it. A
+legitimate value that loses an edge `_` can only become MORE likely to be caught by a
+placeholder guard (which fails closed and visibly — `arkova_staging_` still passes,
+because `arkova_staging` is not a placeholder); leaving it kept an author-controlled
+bypass open. Interior underscores are never touched. Pinned by the three
+underscore-italics cases in `check-staging-evidence-integrity.test.ts`. Known residual,
+deliberately out of scope: HTML tags (`<i>TBD</i>`) are not markdown emphasis and are not
+stripped — the placeholder guards remain a ratchet against common spellings, not a proof.
 
 **2. `Approved by:` could name the PR author (SCRUM-3481, second half).**
 `approverIndependenceErrors()` runs on every non-T0 path — ahead of the RC/frontend/

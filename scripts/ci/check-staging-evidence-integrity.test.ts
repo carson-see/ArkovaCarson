@@ -137,7 +137,11 @@ describe('markdown emphasis is stripped before the placeholder guards run', () =
     expect(r.errors.join(' ')).toMatch(/Staging branch:.*placeholder/i);
   });
 
-  it('leaves a legitimate trailing underscore in a value intact', () => {
+  it('still accepts a snake_case value with a trailing underscore', () => {
+    // The stripper shaves the EDGE underscore before the guards run (see the
+    // review-addendum tests below for why it must), but `arkova_staging` is not
+    // a placeholder, so the value is accepted either way. Interior underscores
+    // are never touched.
     const r = runT2(t2Body({ values: { 'Staging branch:': 'arkova_staging_' } }));
     expect(r.errors).toEqual([]);
     expect(r.ok).toBe(true);
@@ -161,10 +165,47 @@ describe('markdown emphasis is stripped before the placeholder guards run', () =
     expect(r.errors.join(' ')).toMatch(/Staging branch:.*empty value/i);
   });
 
-  it('still rejects an all-underscore value (a one-sided run is never paired away)', () => {
+  it('still rejects an all-underscore value (stripped to empty)', () => {
     const r = runT2(t2Body({ values: { 'Staging branch:': '___' } }));
     expect(r.ok).toBe(false);
+    expect(r.errors.join(' ')).toMatch(/Staging branch:.*empty value/i);
+  });
+
+  // ── Review addendum (2026-08-29) — underscore ITALICS are the same class ──
+  //
+  // The first cut stripped `_` only as a matched pair, to keep a trailing
+  // snake_case underscore intact. But the closing `_` of an italicised LABEL
+  // lands UNPAIRED at the value's edge — `- _Staging branch:_ TBD` captures
+  // `_ TBD`, and whole-line italics `- _Staging branch: TBD_` captures `TBD_`
+  // — so the exact bypass this file exists to close was still open through
+  // the third emphasis marker. `_` now strips unconditionally, like `*` and
+  // `` ` ``: a legitimate value that loses an edge underscore can only become
+  // MORE likely to hit a placeholder guard, which fails closed and visibly.
+  it('rejects an underscore-italicised label whose value is the TBD placeholder', () => {
+    const body = t2Body().replace(
+      '- Staging branch: arkova-staging',
+      '- _Staging branch:_ TBD',
+    );
+    const r = runT2(body);
+    expect(r.ok).toBe(false);
     expect(r.errors.join(' ')).toMatch(/Staging branch:.*placeholder/i);
+  });
+
+  it('rejects a whole-line underscore-italicised field whose value is a placeholder', () => {
+    const body = t2Body().replace(
+      '- Staging branch: arkova-staging',
+      '- _Staging branch: TBD_',
+    );
+    const r = runT2(body);
+    expect(r.ok).toBe(false);
+    expect(r.errors.join(' ')).toMatch(/Staging branch:.*placeholder/i);
+  });
+
+  it('rejects an underscore-italicised `Approved by:` placeholder in a residual-risk note', () => {
+    const r = runT2(residualRiskBody('_Approved by:_ TBD'));
+    expect(r.ok).toBe(false);
+    expect(r.errors.join(' ')).toMatch(/Approved by/i);
+    expect(r.errors.join(' ')).toMatch(/must name a real approver/i);
   });
 
   it('handles a bolded label behind a checked task checkbox', () => {
