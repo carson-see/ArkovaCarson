@@ -75,17 +75,46 @@ Not upstream flakiness, not DNS, not egress, and not a wedged instance — the s
 | `00a41e8c1db5` | 12 | 73 |
 | `00a41e8c1da5` | 26 | 59 |
 
-Identical code, identical upstream, identical process; the only variable is execution context.
-`run.googleapis.com/cpu-throttling` is **unset** on both `arkova-worker` and the rig, which is the
-throttled default: CPU is allocated during request processing and throttled outside it. A
-background `node-cron` timer therefore runs starved while `AbortSignal.timeout(10000)` counts
-wall-clock, and the deadline elapses. This is the same root cause family as
-`memory/project_cloudrun_inprocess_cron_gotcha.md`. Stated as the leading mechanism — it explains
-every observation, but it has not been proven by direct CPU measurement.
+Identical code, identical upstream, identical process. The only variable is **execution context**:
+the fetch fails from the background timer and succeeds from inside a request. That much is
+established.
 
-Note the failures are *not* explained by traffic volume: prod's worst day (2026-07-26, 143
-failures) carried 4,070 requests, more than 2026-07-24 (3,760 requests, 1 failure). Per-instance
-idleness, not service-level load, is what matters.
+**What the mechanism is, is not established.** An earlier draft asserted Cloud Run CPU throttling:
+`run.googleapis.com/cpu-throttling` is unset on both services (the throttled default), so a
+background timer would run starved while `AbortSignal.timeout(10000)` counts wall-clock. That
+rested on the "node-cron is dormant under Cloud Run CPU throttling" reading, which **PR #2429
+(SCRUM-3384) explicitly retracts** — node-cron fires normally on a warm instance, and prod
+`minScale=2` means every instance runs every tick.
+
+The retraction is consistent with what is measured here: the cron plainly fires, roughly 6×/hour
+per instance, and it is the *fetch* that fails, not the tick. So the dormancy framing was never
+what these logs showed. But dropping it also removes the support for the throttling explanation,
+and nothing has replaced it — no direct CPU measurement, and no upstream latency measurement from
+either context.
+
+Traffic volume does not explain it either: prod's worst day in the original window (2026-07-26,
+143 failures) carried 4,070 requests, more than 2026-07-24 (3,760 requests, 1 failure).
+
+Treat the mechanism as **open**, owned by SCRUM-3384. The remediation in this document does not
+depend on resolving it — provisioning the prod scheduler job moves reorg detection onto the
+execution context that is empirically reliable, whatever the underlying reason turns out to be.
+
+## Escalation (re-measured 2026-08-29)
+
+The rate has climbed by an order of magnitude, and nothing has been fixed: `main` (`f576e2f64`)
+still carries the unguarded tip fetch and the silent catch, and none of the 11 scheduler jobs are
+provisioned (`arkova-worker` served 0 requests to `/jobs/detect-reorgs` since 08-22).
+
+| Date | `Reorg detection cron failed` |
+|---|---|
+| 08-22 | 1 |
+| 08-27 | 9 |
+| 08-28 | **116** |
+| 08-29 (to 15:10Z) | **64** |
+
+On 08-28, **94 of 144 ten-minute ticks (65%)** logged at least one failure across both instances.
+Against a ~10/day baseline over 2026-07-22 → 08-21. Reorg detection on mainnet is close to fully
+dark, with migration 0347 reorg handling live behind it. See SCRUM-3191 for the full record.
 
 ## Two adjacent defects this uncovered
 
@@ -111,7 +140,9 @@ The rig's 288 × 200 proves the endpoint answered, not that reorg detection happ
    request-context path that already runs 288/288 on the rig.
 2. Once prod has the scheduled path, set `DISABLE_IN_PROCESS_ANCHOR_CRON=true` in prod (the
    allowlist at `scheduled.ts:38` already covers `detect-reorgs`) to remove the duplicate and its
-   noise, or set `run.googleapis.com/cpu-throttling=false` if the in-process cron is to be kept.
+   noise. Do **not** reach for `run.googleapis.com/cpu-throttling=false` as the fix — that was an
+   earlier draft's recommendation and it assumed the throttling mechanism this document no longer
+   claims. It would be a guess with a standing cost.
 3. Give `monitorFeeRates` a log line on its swallowed catch. A silent `catch {}` on a chain call is
    worse than the failure it hides.
 4. Emit reorg-detection outcome at `info` (`checked`, `reorgsDetected`), and return a distinguishable
