@@ -51,6 +51,7 @@ hook's own deny message.
 | `feedback_never_merge_without_ok.md` | Agent hook `.claude/hooks/block-pr-merge.sh` (exit 2 on `gh pr merge`) + Mergify queue policy in `.mergify.yml`. *Not* Atlassian R5 — that rule gates Jira Done on red checks. | ✅ live |
 | `feedback_git_merge_driver_override.md` | Agent hook `.claude/hooks/check-git-merge-driver-flag.sh` (exit 2 on a transient `-c merge.*.driver=` override) + bootstrap config scan `scripts/agent/check-git-merge-config.sh` + cause-agnostic CI backstop `scripts/ci/check-agents-md-append-only.ts`. No override label — a no-op driver is never intentional. | ✅ live |
 | `feedback_secdef_function_grants.md` | CI lint (`secdef-function-grants.ts`), auto-loaded by the `check-feedback-rules.ts` orchestrator's `Policy Lints` job; merge-time gate is `secdef-function-grants.test.ts` in `Tests`. Burn-down baseline in `scripts/ci/feedback-rules/secdef-grants-baseline.json`. | ✅ live (R0-7) |
+| `feedback_relation_anon_grants.md` | CI lint (`relation-anon-grants.ts`) — the RELATION axis (tables/views/matviews/sequences) of the same defect `secdef-function-grants.ts` guards for functions; that rule is function-shaped throughout and could never see a view, which is why `v_slow_queries` survived both `0414` and `0418`. Pins in `REPLAY_PARITY_REVOKES`; merge-time gate is `relation-anon-grants.test.ts` in `Tests`. No override label — removing a pin is the escape hatch. | ✅ live (R0-7) |
 | `feedback_merges_go_through_mergify.md` | `.mergify.yml` queue rules + `.github/workflows/merge-authority.yml` tier marker | 📖 docs only (policy) |
 | `feedback_confluence_is_the_doc.md` | Documentation only (CLAUDE.md §0 rule 4, §3 gate 3, §4 Doc Update Matrix) | 📖 docs only |
 | `feedback_vertex_endpoint_hygiene.md` | Documentation only (CLAUDE.md §0 rule 7 + §7 end-of-sprint infra sweep) | 📖 docs only |
@@ -72,8 +73,9 @@ and documented in the rule script. Examples:
 - `secdef-grants-skip` → overrides `feedback_secdef_function_grants`
 - `unbounded-body-read-reviewed` → overrides `feedback_bounded_body_reads`
 
-`feedback_pr_target_repo` and `feedback_no_worktree_isolation` have **no**
-override label. `feedback_dont_recommend_do` needs none — it cannot fail.
+`feedback_pr_target_repo`, `feedback_no_worktree_isolation` and
+`feedback_relation_anon_grants` have **no** override label (for the last, removing
+the `REPLAY_PARITY_REVOKES` pin is the deliberate, reviewable escape hatch). `feedback_dont_recommend_do` needs none — it cannot fail.
 
 If you find yourself reaching for an override more than once, file a Jira
 sub-story to update the policy and remove the override path.
