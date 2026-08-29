@@ -2447,8 +2447,37 @@ export function hasBaseDriftResidualRiskNote(
   return { valid: true, missing: [] };
 }
 
-/** The shared migration ledger — ordering is mutable state no note can cover. */
-const MIGRATION_LEDGER_RE = /^supabase\/migrations\//;
+/**
+ * A file that occupies a position in the shared migration ledger.
+ *
+ * ORDERING is the thing carve-out (b) protects, and only a `.sql` file under
+ * `supabase/migrations/` carries a ledger version — so this must match the
+ * migration files themselves, NOT the directory that contains them.
+ *
+ * 2026-08-29 regression this pins: the predicate was `/^supabase\/migrations\//`,
+ * a bare directory prefix. `supabase/migrations/agents.md` is a documentation
+ * note that EVERY migration PR appends to, so main merging any migration PR's
+ * doc line made `driftFiles.some(...)` true and the gate announced "main landed
+ * a migration in the interval" when zero `.sql` files had changed. That produced
+ * an unclearable hard failure (no note, no attestation can clear carve-out (b))
+ * on PRs #2336 and #2355 — both carrying complete, sealed 48 h T3 soaks — and
+ * would have fired on every remaining migration PR. The false premise was
+ * verifiable in one command: `git diff --name-only A..B -- supabase/migrations/`
+ * returned `agents.md` and nothing else.
+ *
+ * Narrowing this does not loosen the carve-out: a real `.sql` landing on main
+ * while the PR owns a migration still hard-fails (pinned by test
+ * "STILL hard-fails when a real .sql lands on main alongside the agents.md note").
+ * Non-`.sql` drift inside the directory is still counted as intersecting soak
+ * surface by {@link driftFilesIntersectingSurface} — it just routes to the
+ * attestable third state instead of the unattestable ledger wall.
+ */
+const MIGRATION_LEDGER_RE = /^supabase\/migrations\/.+\.sql$/i;
+
+/** Does this path occupy a position in the shared migration ledger? */
+function isMigrationLedgerFile(file: string): boolean {
+  return MIGRATION_LEDGER_RE.test(file);
+}
 
 /**
  * The set of file-path predicates whose intervening main-drift could invalidate
@@ -2514,6 +2543,60 @@ function driftFilesIntersectingSurface(
  *   • drift-file list unavailable (`changedFilesBetween` → null and no override)
  *     → fail closed (re-soak).
  */
+/** Cap on how many paths a single diagnostic line prints, so a 400-file main
+ *  drift cannot bury the Actions log. */
+const DIAGNOSTIC_PATH_CAP = 25;
+
+function formatPathList(files: string[]): string {
+  if (files.length === 0) return '(none)';
+  const shown = files.slice(0, DIAGNOSTIC_PATH_CAP);
+  const suffix = files.length > shown.length ? `, …+${files.length - shown.length} more` : '';
+  return shown.join(', ') + suffix;
+}
+
+/**
+ * The exact inputs base-drift classification ran on, as text.
+ *
+ * Exists because the 2026-08-29 #2336/#2355 false positive cost a full session
+ * to diagnose purely for want of these five lines: the failing message named a
+ * migration landing on main, the repository showed none, and nothing in the log
+ * said which file set the gate had actually looked at. Every base-drift verdict
+ * now states its own evidence.
+ */
+export function formatBaseDriftDiagnostics(
+  evidenceBaseSha: string,
+  currentBaseSha: string,
+  prFiles: string[],
+  driftFiles: string[],
+): string {
+  const prLedger = prFiles.filter(isMigrationLedgerFile);
+  const driftLedger = driftFiles.filter(isMigrationLedgerFile);
+  const driftMigrationDir = driftFiles.filter((f) => f.startsWith('supabase/migrations/'));
+  return [
+    `base-drift inputs: evidence base ${evidenceBaseSha} → current base ${currentBaseSha}`,
+    `  prFiles (${prFiles.length}): ${formatPathList(prFiles)}`,
+    `  prFiles in migration ledger (${prLedger.length}): ${formatPathList(prLedger)}`,
+    `  driftFiles (${driftFiles.length}): ${formatPathList(driftFiles)}`,
+    `  driftFiles under supabase/migrations/ (${driftMigrationDir.length}): ${formatPathList(driftMigrationDir)}`,
+    `  driftFiles in migration ledger, i.e. .sql (${driftLedger.length}): ${formatPathList(driftLedger)}`,
+  ].join('\n');
+}
+
+/**
+ * Emit the diagnostics above — CI only. Local/unit runs stay silent so the test
+ * output is not swamped; GitHub Actions gets them on every drift classification,
+ * pass or fail.
+ */
+function logBaseDriftDiagnostics(
+  evidenceBaseSha: string,
+  currentBaseSha: string,
+  prFiles: string[],
+  driftFiles: string[],
+): void {
+  if (process.env.GITHUB_ACTIONS !== 'true') return;
+  console.log(`ℹ️  ${formatBaseDriftDiagnostics(evidenceBaseSha, currentBaseSha, prFiles, driftFiles)}`);
+}
+
 export function baseDriftImpactErrors(
   body: string,
   evidenceBaseSha: string,
@@ -2522,6 +2605,9 @@ export function baseDriftImpactErrors(
   driftFilesOverride?: string[],
 ): string[] {
   const driftFiles = driftFilesOverride ?? changedFilesBetween(evidenceBaseSha, currentBaseSha);
+  if (driftFiles !== null) {
+    logBaseDriftDiagnostics(evidenceBaseSha, currentBaseSha, prFiles, driftFiles);
+  }
   if (driftFiles === null) {
     return [
       `Could not inspect changed files between evidence base \`${evidenceBaseSha}\` and current base \`${currentBaseSha}\`; `
@@ -2583,12 +2669,11 @@ export function baseDriftImpactErrors(
   // Carve-out (b): shared migration ledger. Ledger ordering is mutable state
   // every migration-owning PR shares; a note cannot make a soak that ran
   // against a different ledger head order-valid again.
-  if (
-    prFiles.some((f) => MIGRATION_LEDGER_RE.test(f))
-    && driftFiles.some((f) => MIGRATION_LEDGER_RE.test(f))
-  ) {
+  const landedMigrations = driftFiles.filter(isMigrationLedgerFile);
+  if (prFiles.some(isMigrationLedgerFile) && landedMigrations.length > 0) {
     return [
-      `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\`: main landed a migration in the interval and `
+      `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\`: main landed a migration in the interval `
+      + `(${landedMigrations.join(', ')}) and `
       + 'this PR owns a migration. Ledger ordering is shared mutable state and cannot be attested away — '
       + 're-soak on the current base (FD-GATE-3).',
     ];

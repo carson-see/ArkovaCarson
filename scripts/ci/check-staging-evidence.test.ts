@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   S33_LANE1_OFFLINE_EVIDENCE_FILES,
   baseDriftImpactErrors,
+  formatBaseDriftDiagnostics,
   check,
   extractDeclaredTier,
   findS33RuntimeImporters,
@@ -3223,6 +3224,80 @@ describe('check-staging-evidence', () => {
             ['supabase/migrations/0410_partner_accounts.sql'],
             ['supabase/migrations/0421_added_by_main.sql'],
             validNote(['supabase/migrations/0421_added_by_main.sql']),
+          );
+          expect(errors).toHaveLength(1);
+          expect(errors[0]).toMatch(/ledger ordering/i);
+          expect(errors[0]).not.toMatch(/add a[^.]*Base-drift residual-risk note/i);
+        });
+
+        // ── The 2026-08-29 false positive (#2336 / #2355) ──────────────────
+        // Carve-out (b) asked "did anything under `supabase/migrations/`
+        // change on main?" — a directory-prefix question. `agents.md` lives in
+        // that directory and every migration PR appends a note to it, so main
+        // touching that ONE documentation file made the gate report "main
+        // landed a migration" and hard-fail two sealed 48 h T3 soaks on a
+        // premise that was false: ZERO `.sql` files changed in the interval.
+        // The carve-out exists for LEDGER ORDERING, and only a `.sql` file
+        // carries a ledger version — a doc note carries none.
+        it('does NOT hard-fail when the only migration-dir drift is agents.md (no .sql landed)', () => {
+          const drift = ['supabase/migrations/agents.md', '.github/workflows/deploy-worker.yml'];
+          const errors = driftErrors(
+            [
+              'supabase/migrations/0418_sec_replay_dashboard_cache_refresher_revokes.sql',
+              'supabase/migrations/agents.md',
+            ],
+            drift,
+            validNote(drift),
+          );
+          expect(errors).toEqual([]);
+        });
+
+        it('does NOT claim the PR owns a migration when it only edited migrations/agents.md', () => {
+          // Mirror image: the PR carries no `.sql`, so it has no ledger
+          // position to invalidate, even though main did land a real one.
+          // (Same outcome as the existing "PR owns NO migration" case.)
+          const errors = driftErrors(
+            ['supabase/migrations/agents.md', 'services/worker/src/api/v1/docusign.ts'],
+            ['supabase/migrations/0421_added_by_main.sql'],
+            validNote(['supabase/migrations/0421_added_by_main.sql']),
+          );
+          expect(errors).toEqual([]);
+        });
+
+        it('states the actual .sql file(s) main landed, so the premise is checkable', () => {
+          const errors = driftErrors(
+            ['supabase/migrations/0418_x.sql'],
+            ['supabase/migrations/0421_added_by_main.sql'],
+          );
+          expect(errors[0]).toContain('supabase/migrations/0421_added_by_main.sql');
+        });
+
+        it('formatBaseDriftDiagnostics separates migration-DIR drift from LEDGER drift', () => {
+          // The one output that would have made the #2336 diagnosis a
+          // ten-second read: dir-scoped drift present, ledger drift empty.
+          const out = formatBaseDriftDiagnostics(
+            'a'.repeat(40),
+            'b'.repeat(40),
+            ['supabase/migrations/0418_x.sql', 'supabase/migrations/agents.md'],
+            ['supabase/migrations/agents.md', '.github/workflows/deploy-worker.yml'],
+          );
+          expect(out).toMatch(/driftFiles under supabase\/migrations\/ \(1\): supabase\/migrations\/agents\.md/);
+          expect(out).toMatch(/driftFiles in migration ledger, i\.e\. \.sql \(0\): \(none\)/);
+          expect(out).toMatch(/prFiles in migration ledger \(1\): supabase\/migrations\/0418_x\.sql/);
+        });
+
+        it('STILL hard-fails when a real .sql lands on main alongside the agents.md note', () => {
+          // The protection this carve-out exists for must survive the fix:
+          // main landing an actual migration while the PR owns one is still
+          // unattestable, and the doc file riding along changes nothing.
+          const drift = [
+            'supabase/migrations/agents.md',
+            'supabase/migrations/0421_added_by_main.sql',
+          ];
+          const errors = driftErrors(
+            ['supabase/migrations/0418_x.sql', 'supabase/migrations/agents.md'],
+            drift,
+            validNote(drift),
           );
           expect(errors).toHaveLength(1);
           expect(errors[0]).toMatch(/ledger ordering/i);
