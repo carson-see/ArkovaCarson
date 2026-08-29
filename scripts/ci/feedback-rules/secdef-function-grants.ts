@@ -45,6 +45,14 @@
  *   entry (one that no longer violates) is itself a failure, so the list cannot
  *   quietly re-authorise a regression.
  *
+ * THE SECOND MECHANISM: REPLAY-PARITY REVOKES
+ *   Some functions are defined in a file nobody may edit — the generated
+ *   squashed baseline, or an already-merged migration. Their revoke has to be a
+ *   later compensating migration, which the per-file rule cannot see at all (it
+ *   defines no function, so nothing checks it and deleting it keeps CI green).
+ *   `REPLAY_PARITY_REVOKES` pins those, and `findMissingReplayParityRevokes`
+ *   checks the TERMINAL state of an ordered replay. See the constant's docblock.
+ *
  * ENFORCEMENT
  *   This module runs in the `Policy Lints` job via the feedback-rules
  *   orchestrator. Because `Policy Lints` is not a Mergify merge condition, the
@@ -159,9 +167,25 @@ const CREATE_FN = /CREATE (?:OR REPLACE )?FUNCTION ([^\s(]+) ?\(/gi;
  * the REVOKE scan refer to the same string. Blanking bodies globally (rather
  * than per-declaration) also stops a `CREATE FUNCTION` mentioned inside a body
  * from shifting declaration boundaries.
+ *
+ * MEMOISED PER RAW SQL TEXT. `prepare()` is the expensive step (three passes
+ * over the whole file, one of them a dollar-quote strip) and it was being
+ * re-run once per FUNCTION rather than once per FILE: the squashed baseline
+ * alone declares 130+ SECURITY DEFINER functions, so `findViolations` prepared
+ * that ~1 MB dump 130+ times. That is what made the repo-wide ratchet tests
+ * take ~1.9 s each and time out against vitest's 5 s cap under load. The corpus
+ * is ~112 files in a short-lived CI process, so a plain Map keyed by the raw
+ * text is the right cache: the same input always yields the same output, and
+ * nothing here mutates SQL between calls.
  */
+const PREPARED = new Map<string, string>();
+
 function prepare(rawSql: string): string {
-  return stripDollarQuoted(normalize(rawSql));
+  const hit = PREPARED.get(rawSql);
+  if (hit !== undefined) return hit;
+  const out = stripDollarQuoted(normalize(rawSql));
+  PREPARED.set(rawSql, out);
+  return out;
 }
 
 /**
@@ -298,6 +322,51 @@ export interface Violation extends SecdefFunction {
 export const SQUASHED_BASELINE = '00000000000000_baseline_at_main_HEAD.sql';
 
 /**
+ * REPLAY-PARITY REVOKES — functions whose closing REVOKE necessarily lives in a
+ * LATER migration than their last definition, pinned here so it cannot be
+ * deleted without failing CI.
+ *
+ * WHY A SECOND MECHANISM
+ *   `hasReplayPathRevoke` above already CREDITS such a revoke when the function
+ *   is defined by the squashed baseline — but only passively, while scanning a
+ *   file that declares the function. The compensating migration itself declares
+ *   nothing, so `parseSecurityDefinerFunctions` never returns it and no rule
+ *   ever asserts it is still there. Delete that migration and the suite stays
+ *   green while every rebuilt environment reopens the hole. That is the FD-17
+ *   failure shape — the revoke off the replay path — pointed at CI instead of
+ *   at the database. Pinning turns the deletion into a hard failure.
+ *
+ * WHAT PINNING BUYS
+ *   The squashed-baseline key of a pinned function is burned down from the
+ *   grandfathered list (see the test of the same name) and the replay-path
+ *   revoke becomes the thing holding it closed. Removing that migration turns
+ *   the key back into a FRESH violation, which fails.
+ *
+ * WHAT IT DELIBERATELY DOES NOT DO
+ *   It does not credit the revoke to a NUMBERED migration that re-defines the
+ *   function. That key stays grandfathered on purpose: the next re-definition
+ *   would re-run ALTER DEFAULT PRIVILEGES and reopen what the later revoke
+ *   closed, so whoever writes it still owes an inline revoke.
+ *
+ * Adding an entry is a security decision: it needs the live prod ACL checked
+ * with `has_function_privilege('anon', oid, 'EXECUTE')` and a migration that
+ * actually carries the revoke.
+ */
+export const REPLAY_PARITY_REVOKES = new Map<string, string>([
+  // 0418 — the four dashboard-cache refreshers whose revokes existed only in
+  // the operator script `scripts/ops/ensure-pipeline-dashboard-cache-cron.ts`,
+  // which is not on the migration replay path. Prod ACL verified 2026-08-22
+  // ({postgres=X,service_role=X}, anon and authenticated both absent) against
+  // vzwyaatejekddvltxyye; a rig rebuilt from the repo had all four
+  // anon-executable. Last definition is 0335 (three of them) / the squashed
+  // baseline (`refresh_cache_pipeline_stats`), neither of which may be edited.
+  ['public.refresh_cache_anchor_type_counts', 'revoke lives in 0418 (defined by 0335)'],
+  ['public.refresh_cache_by_source', 'revoke lives in 0418 (defined by 0335)'],
+  ['public.refresh_cache_pipeline_stats', 'revoke lives in 0418 (defined by the baseline)'],
+  ['public.refresh_cache_record_types', 'revoke lives in 0418 (defined by 0335)'],
+]);
+
+/**
  * True when a fresh, ordered replay of `files` ENDS with this function closed
  * to `anon` and `authenticated` — even though the closing REVOKE lives in a
  * later file than the definition.
@@ -334,12 +403,20 @@ export const SQUASHED_BASELINE = '00000000000000_baseline_at_main_HEAD.sql';
  *   a genuinely unsafe sibling is not. Signature-level enforcement needs a live
  *   ACL sweep against a rebuilt environment, not static SQL parsing.
  */
-/** True when this prepared SQL (re)defines `schema.name`. */
+/**
+ * True when this prepared SQL (re)defines `schema.name`.
+ *
+ * Identifiers are unquoted before comparison because the squashed baseline and
+ * 0335 both emit `CREATE OR REPLACE FUNCTION "public"."fn"()`. A raw lowercased
+ * string compare misses those, which silently zeroes `lastDefineIdx` and makes
+ * the ordering check in `hasReplayPathRevoke` pass vacuously.
+ */
 function definesFunction(sql: string, schema: string, name: string): boolean {
-  const qualified = `${schema}.${name}`;
   for (const m of sql.matchAll(CREATE_FN)) {
-    const target = m[1].toLowerCase();
-    if (target === qualified || target === name) return true;
+    const parts = m[1].split('.');
+    const fnName = unquote(parts[parts.length - 1]);
+    const fnSchema = parts.length > 1 ? unquote(parts[parts.length - 2]) : 'public';
+    if (fnSchema === schema && fnName === name) return true;
   }
   return false;
 }
@@ -406,6 +483,40 @@ export function hasReplayPathRevoke(
   return lastRegrantIdx < lastRevokeIdx;
 }
 
+export interface ReplayParityViolation {
+  /** `<schema>.<name>` as pinned in REPLAY_PARITY_REVOKES. */
+  fn: string;
+  reason: string;
+}
+
+/**
+ * Every pinned replay-parity function that an ordered replay would leave OPEN
+ * to anon. Empty is the passing state.
+ *
+ * The anon AND authenticated axes are both required here (`authExempt` is
+ * false): a function only gets pinned when prod revokes both, so a pin that
+ * needed the authenticated carve-out would be the wrong pin.
+ */
+export function findMissingReplayParityRevokes(
+  files: FileSql[],
+  pinned: Map<string, string> = REPLAY_PARITY_REVOKES,
+): ReplayParityViolation[] {
+  const out: ReplayParityViolation[] = [];
+  for (const [fn, why] of pinned) {
+    const [schema, name] = fn.split('.');
+    if (hasReplayPathRevoke(files, schema, name)) continue;
+    out.push({
+      fn,
+      reason:
+        `${fn} is pinned in REPLAY_PARITY_REVOKES (${why}) but no migration leaves it ` +
+        `revoked from anon and authenticated at the end of an ordered replay. A rebuilt ` +
+        `environment would carry this SECURITY DEFINER function anon-callable while prod ` +
+        `does not.`,
+    });
+  }
+  return out;
+}
+
 export function findViolations(
   files: FileSql[],
   opts: { deliberatelyPublic?: Set<string>; deliberatelyAuthenticated?: Set<string> } = {},
@@ -466,6 +577,7 @@ export function run(): { ok: boolean; message: string } {
     deliberatelyAuthenticated: DELIBERATELY_AUTHENTICATED,
   });
   const fresh = all.filter((v) => !baseline.has(v.key));
+  const missingReplay = findMissingReplayParityRevokes(files);
 
   // The baseline may only SHRINK. An entry that no longer violates is a
   // failure in its own right: left in place it silently re-authorises a
@@ -475,13 +587,31 @@ export function run(): { ok: boolean; message: string } {
   const live = new Set(all.map((v) => v.key));
   const stale = [...baseline].filter((k) => !live.has(k)).sort((a, b) => a.localeCompare(b));
 
-  if (fresh.length === 0 && stale.length === 0) {
+  if (fresh.length === 0 && stale.length === 0 && missingReplay.length === 0) {
     return {
       ok: true,
       message:
         `✅ secdef_function_grants: no new SECURITY DEFINER function is missing its ` +
         `anon/authenticated REVOKE (${baseline.size} grandfathered, burn-down list in ` +
-        `scripts/ci/feedback-rules/secdef-grants-baseline.json).`,
+        `scripts/ci/feedback-rules/secdef-grants-baseline.json; ` +
+        `${REPLAY_PARITY_REVOKES.size} replay-parity revokes pinned).`,
+    };
+  }
+
+  if (missingReplay.length > 0) {
+    const missingLines = missingReplay.map((m) => `  - ${m.reason}`).join('\n');
+    return {
+      ok: false,
+      message:
+        `secdef_function_grants: ${missingReplay.length} pinned replay-parity REVOKE(s) ` +
+        `missing from supabase/migrations/:\n` +
+        `${missingLines}\n\n` +
+        `These functions are defined in a file that cannot be edited (the squashed\n` +
+        `baseline, or an already-merged migration), so their revoke lives in a later\n` +
+        `compensating migration. Restore it, or remove the entry from\n` +
+        `REPLAY_PARITY_REVOKES and put its squashed-baseline key back in the burn-down\n` +
+        `list — silently dropping it reopens an anon-callable RLS-bypassing RPC in every\n` +
+        `rebuilt environment.\n`,
     };
   }
 
