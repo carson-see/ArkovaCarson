@@ -16,6 +16,20 @@
 -- type would suppress the free text structurally and the gate would never fire,
 -- making the soak look green while testing nothing.
 --
+-- SIZE NOTE, and it is a finding rather than a detail: `anchors_description_max_length`
+-- caps description at 500 characters, so the CTDL projection's free-text surface
+-- is DB-bounded far below MAX_SCAN_CHARS (4000). The adversarial dotted run here
+-- is therefore ~490 chars, and the quadratic pattern costs well under a
+-- millisecond on it. The CTDL route is NOT where the latency exposure lived; the
+-- uncapped `Jsonish` path into the CPE/CLE extraction prompts is. What this
+-- fixture proves on the CTDL route is DETECTION CORRECTNESS (see LONGLP below),
+-- not throughput.
+--
+-- THE PAYLOADS LIVE IN `description`, NOT `metadata`. Verified against the live
+-- rig on 2026-08-29: the CTDL body carries ceterms:name and ceterms:description
+-- but does NOT project metadata.notes, so a payload parked in metadata never
+-- reaches containsHighConfidencePii and the soak is HOLLOW while looking green.
+--
 -- Expected outcomes are asserted by services/worker/scripts/pr2461-pii-redaction-driver.ts:
 --   * pii    -> 404 (gate fails closed) OR 200 with the address absent. Never a
 --               200 carrying the address.
@@ -45,7 +59,7 @@ INSERT INTO public.anchors (
   'SECURED', 'CLE',
   md5('arkova-pr2461-pii-txid-hi') || md5('arkova-pr2461-pii-txid-lo'),
   4096, 'application/pdf',
-  'PR2461 fixture — planted address in free text; gate must scrub or fail closed.',
+  'PR2461 fixture. Course contact jane.doe@example.com for ethics credit questions.',
   jsonb_build_object(
     '_fixture', true, '_synthetic', true, '_pr', 2461,
     'notes', 'course contact jane.doe@example.com for ethics credit questions'
@@ -62,7 +76,7 @@ INSERT INTO public.anchors (
   'SECURED', 'CLE',
   md5('arkova-pr2461-redos-txid-hi') || md5('arkova-pr2461-redos-txid-lo'),
   4096, 'application/pdf',
-  'PR2461 fixture — adversarial dotted run; latency probe for the quadratic pattern.',
+  'PR2461 fixture adversarial dotted run ' || repeat('a.', 229) || '!',
   jsonb_build_object(
     '_fixture', true, '_synthetic', true, '_pr', 2461,
     -- 3,998 chars of 'a.' sits just inside MAX_SCAN_CHARS (4000), so the whole
@@ -81,7 +95,7 @@ INSERT INTO public.anchors (
   'SECURED', 'CLE',
   md5('arkova-pr2461-longlp-txid-hi') || md5('arkova-pr2461-longlp-txid-lo'),
   4096, 'application/pdf',
-  'PR2461 fixture — >64-octet local part the OLD pattern failed to detect.',
+  'PR2461 fixture reach ' || repeat('x', 80) || '@mail.example.com today',
   jsonb_build_object(
     '_fixture', true, '_synthetic', true, '_pr', 2461,
     'notes', 'reach ' || repeat('x', 80) || '@mail.example.com today'

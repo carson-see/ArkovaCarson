@@ -177,17 +177,31 @@ export async function runLive(args: DriverArgs): Promise<DriverRow> {
 
   // 2. professional-education extraction drain -> stripProfessionalEducationPii.
   const peStart = performance.now();
-  const pe = await fetch(`${targetUrl}/cron/professional-education-extraction`, {
+  const pe = await fetch(`${targetUrl}/jobs/professional-education-extraction`, {
     method: 'POST', headers: cronHeaders,
   });
   const peMs = performance.now() - peStart;
   if (!pe.ok) failures.push(`prof-ed:${pe.status}`);
   if (peMs > 30_000) failures.push(`prof-ed-stall:${peMs.toFixed(0)}ms`);
 
-  // 3. CTDL projection -> containsHighConfidencePii. Scrubbed or fail-closed,
-  //    never a body carrying an address.
+  // 3. CTDL projection -> containsHighConfidencePii.
+  //
+  // Per-fixture expectations, and the LONGLP row is the one that matters: its
+  // address has a >64-octet local part, which the OLD pattern did not detect, so
+  // pre-fix its description PUBLISHES the address. Post-fix the gate suppresses
+  // it. That makes this a direct deployed-side discriminator for the correctness
+  // half of the change, not just a smoke check.
+  //
+  // REDOS carries no address and MUST still publish -- it pins that the gate
+  // discriminates rather than blanket-suppressing, which would look identical in
+  // a leak-only assertion.
+  const EXPECT_SUPPRESSED = new Set(['ARK-SOAK-2461-PII', 'ARK-SOAK-2461-LONGLP']);
+  const EXPECT_PUBLISHED = new Set(['ARK-SOAK-2461-REDOS']);
+
   let ctdlChecked = 0;
   let ctdlLeaks = 0;
+  let ctdlSuppressionOk = 0;
+  let ctdlPrecisionOk = 0;
   let worstCtdlMs = 0;
   for (const publicId of args.publicIds ?? []) {
     const t0 = performance.now();
@@ -196,10 +210,27 @@ export async function runLive(args: DriverArgs): Promise<DriverRow> {
     worstCtdlMs = Math.max(worstCtdlMs, ms);
     ctdlChecked += 1;
     if (ms > 5000) failures.push(`ctdl-stall:${publicId}:${ms.toFixed(0)}ms`);
+
     if (res.ok) {
       const text = await res.text();
       if (LEGACY_EMAIL_PATTERN().test(text)) { ctdlLeaks += 1; failures.push(`ctdl-leak:${publicId}`); }
-    } else if (res.status !== 404 && res.status !== 403) {
+
+      let description: unknown;
+      try { description = (JSON.parse(text) as Record<string, unknown>)['ceterms:description']; } catch { /* non-JSON body */ }
+
+      if (EXPECT_SUPPRESSED.has(publicId)) {
+        if (description === undefined || description === null) ctdlSuppressionOk += 1;
+        else failures.push(`ctdl-not-suppressed:${publicId}`);
+      }
+      if (EXPECT_PUBLISHED.has(publicId)) {
+        if (typeof description === 'string' && description.length > 0) ctdlPrecisionOk += 1;
+        else failures.push(`ctdl-over-suppressed:${publicId}`);
+      }
+    } else if (res.status === 404 || res.status === 403) {
+      // Fail-closed is an acceptable outcome for a PII-bearing row.
+      if (EXPECT_SUPPRESSED.has(publicId)) ctdlSuppressionOk += 1;
+      else failures.push(`ctdl:${publicId}:${res.status}`);
+    } else {
       failures.push(`ctdl:${publicId}:${res.status}`);
     }
   }
@@ -216,7 +247,8 @@ export async function runLive(args: DriverArgs): Promise<DriverRow> {
     counts: {
       healthOk: health.ok, healthMs: Number(healthMs.toFixed(1)),
       profEdOk: pe.ok, profEdMs: Number(peMs.toFixed(1)),
-      ctdlChecked, ctdlLeaks, worstCtdlMs: Number(worstCtdlMs.toFixed(1)),
+      ctdlChecked, ctdlLeaks, ctdlSuppressionOk, ctdlPrecisionOk,
+      worstCtdlMs: Number(worstCtdlMs.toFixed(1)),
       ...behaviour.counts,
     },
     ...(failures.length > 0 ? { blockers: failures } : {}),
