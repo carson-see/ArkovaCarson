@@ -176,25 +176,61 @@ export async function runLive(args: DriverArgs): Promise<DriverRow> {
   if (!health.ok) failures.push(`health:${health.status}`);
 
   // 2. professional-education extraction drain -> stripProfessionalEducationPii.
+  // This is the discriminator that matters. The supervisor queues extraction
+  // jobs whose `evidence` carries a 40k-character dotted run -- the shape that
+  // defeats the old pattern's leading `\b`. `evidence` is UNCAPPED jsonb
+  // (`payload.evidence ?? anchor.metadata`), so this is the genuine exposure,
+  // unlike the CTDL route whose free text is DB-capped at 500 characters.
+  //
+  // The ceiling is set from a MEASURED A/B on this rig, not an estimate: the
+  // pre-fix image was served on the `rollback` tag URL and driven against the
+  // same rows and the same 3-jobs-of-80k-dotted-evidence payload.
+  //
+  //   PRE-FIX  8.03 s, 8.08 s
+  //   POST-FIX 0.94 s, 2.02 s
+  //
+  // 5 s sits between them: ~1.6x under the broken runtime and ~2.5x above the
+  // slowest fixed run, so it is red on the bug without flaking on a cold start.
+  //
+  // `claimed`/`processed` are asserted because an empty queue would return 200
+  // in ~300 ms having done NOTHING -- indistinguishable from "fast" unless the
+  // counts are checked. That is the hollow-soak failure mode.
   const peStart = performance.now();
   const pe = await fetch(`${targetUrl}/jobs/professional-education-extraction`, {
     method: 'POST', headers: cronHeaders,
   });
   const peMs = performance.now() - peStart;
   if (!pe.ok) failures.push(`prof-ed:${pe.status}`);
-  if (peMs > 30_000) failures.push(`prof-ed-stall:${peMs.toFixed(0)}ms`);
+  if (peMs > 5_000) failures.push(`prof-ed-stall:${peMs.toFixed(0)}ms`);
+
+  let peClaimed = 0;
+  let peProcessed = 0;
+  try {
+    const body = await pe.json() as Record<string, unknown>;
+    peClaimed = Number(body.claimed ?? 0);
+    peProcessed = Number(body.processed ?? 0);
+  } catch { /* non-JSON body already recorded via pe.ok */ }
+  if (pe.ok && peClaimed === 0) failures.push('prof-ed-no-work-claimed');
 
   // 3. CTDL projection -> containsHighConfidencePii.
   //
-  // Per-fixture expectations, and the LONGLP row is the one that matters: its
-  // address has a >64-octet local part, which the OLD pattern did not detect, so
-  // pre-fix its description PUBLISHES the address. Post-fix the gate suppresses
-  // it. That makes this a direct deployed-side discriminator for the correctness
-  // half of the change, not just a smoke check.
+  // Per-fixture expectations. These are NO-REGRESSION checks, not a
+  // discriminator against the old pattern -- a correction worth stating,
+  // because an earlier revision of this file claimed otherwise.
+  //
+  // The OLD pattern was UNBOUNDED, so it detects a >64-octet local part
+  // perfectly well; verified on the rig by serving both images against these
+  // same rows, where PRE-FIX and POST-FIX both suppress LONGLP. The >64
+  // detection MISS belongs to the naive `keep \b + bound {1,64}` port, not to
+  // the pattern this PR replaced. What these assertions buy is that the CTDL
+  // gate's behaviour is UNCHANGED under the new pattern, continuously, and that
+  // a future naive re-port would turn them red.
   //
   // REDOS carries no address and MUST still publish -- it pins that the gate
   // discriminates rather than blanket-suppressing, which would look identical in
   // a leak-only assertion.
+  //
+  // The real deployed-side discriminator is the extraction-job latency below.
   const EXPECT_SUPPRESSED = new Set(['ARK-SOAK-2461-PII', 'ARK-SOAK-2461-LONGLP']);
   const EXPECT_PUBLISHED = new Set(['ARK-SOAK-2461-REDOS']);
 
@@ -247,6 +283,7 @@ export async function runLive(args: DriverArgs): Promise<DriverRow> {
     counts: {
       healthOk: health.ok, healthMs: Number(healthMs.toFixed(1)),
       profEdOk: pe.ok, profEdMs: Number(peMs.toFixed(1)),
+      peClaimed, peProcessed,
       ctdlChecked, ctdlLeaks, ctdlSuppressionOk, ctdlPrecisionOk,
       worstCtdlMs: Number(worstCtdlMs.toFixed(1)),
       ...behaviour.counts,

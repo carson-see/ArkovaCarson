@@ -35,8 +35,15 @@
 --               200 carrying the address.
 --   * redos  -> bounded latency. The dotted run is the shape that defeats the
 --               old pattern's leading `\b`.
---   * longlp -> the >64-octet local-part the OLD pattern silently failed to
---               detect. Fail-closed 404 here is the fix working.
+--   * longlp -> a >64-octet local part. NOTE: this is a NO-REGRESSION check,
+--               not a discriminator. The OLD pattern was unbounded and detects
+--               it fine (verified on the rig by serving both images against
+--               these rows: PRE-FIX and POST-FIX both suppress it). The >64
+--               MISS belongs to the naive `keep \b + bound` port. What this row
+--               buys is that a future naive re-port turns the soak red.
+--   * extract -> the anchor the queued extraction jobs target. This is where the
+--               REAL discriminator lives: job `evidence` is uncapped jsonb, so a
+--               40k dotted run costs ~3.2 s per job pre-fix and ~0.02 ms after.
 
 BEGIN;
 
@@ -101,12 +108,30 @@ INSERT INTO public.anchors (
     'notes', 'reach ' || repeat('x', 80) || '@mail.example.com today'
   ),
   true, NOW()
+),
+(
+  '5eed2461-0000-4000-8000-000000000004',
+  '5eed0000-0000-4000-8000-0000000000a1',
+  '5eed0000-0000-4000-8000-0000000000b1',
+  'ARK-SOAK-2461-EXTRACT',
+  'seed-pr2461-extract.pdf',
+  md5('arkova-pr2461-extract-hi') || md5('arkova-pr2461-extract-lo'),
+  'SECURED', 'CLE',
+  md5('arkova-pr2461-extract-txid-hi') || md5('arkova-pr2461-extract-txid-lo'),
+  4096, 'application/pdf',
+  'PR2461 fixture — target anchor for queued CPE/CLE extraction jobs.',
+  jsonb_build_object('_fixture', true, '_synthetic', true, '_pr', 2461),
+  true, NOW()
 )
 ON CONFLICT (id) DO UPDATE
-SET metadata    = EXCLUDED.metadata,
-    description = EXCLUDED.description,
-    status      = EXCLUDED.status,
-    legal_hold  = true,
-    updated_at  = NOW();
+SET metadata     = EXCLUDED.metadata,
+    description  = EXCLUDED.description,
+    status       = EXCLUDED.status,
+    legal_hold   = true,
+    -- MUST be reset: processProfessionalEducationExtractionJob returns early on
+    -- `alreadyExtracted` without ever calling stripProfessionalEducationPii, so
+    -- a populated cle_metadata turns every later cycle into a silent no-op.
+    cle_metadata = NULL,
+    updated_at   = NOW();
 
 COMMIT;
