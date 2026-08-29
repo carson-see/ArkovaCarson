@@ -1,0 +1,192 @@
+-- 0418_sec_replay_dashboard_cache_refresher_revokes.sql
+-- FD-17 (second instance) — replay the EXECUTE revokes for the four dashboard
+--   cache refreshers whose only in-repo revoke lives in an OPERATOR SCRIPT, not
+--   on the migration replay path. Restores rebuilt-environment parity with
+--   prod: `anon` AND `authenticated` are revoked on all four, exactly as prod
+--   has them. Grant-only — no function body, table, RLS policy, trigger or
+--   index is touched.
+--
+-- ROLLBACK:
+--   GRANT EXECUTE ON FUNCTION public.refresh_cache_anchor_type_counts() TO anon, authenticated;
+--   GRANT EXECUTE ON FUNCTION public.refresh_cache_by_source() TO anon, authenticated;
+--   GRANT EXECUTE ON FUNCTION public.refresh_cache_pipeline_stats() TO anon, authenticated;
+--   GRANT EXECUTE ON FUNCTION public.refresh_cache_record_types() TO anon, authenticated;
+--   (Rollback restores the PRE-0418 rebuilt-environment state — anon AND
+--    authenticated granted on all four via the baseline's ALTER DEFAULT
+--    PRIVILEGES — which is the INSECURE one. It exists to satisfy the
+--    rollback-rehearsal gate, not because reverting is ever desirable: prod
+--    already lacks both grants on all four. Running it against PROD would be a
+--    regression, not a revert.)
+--
+--    REHEARSED 2026-08-22 on an isolated throwaway Postgres 17 container (never
+--    prod, never a rig, never the shared local stack). Forward -> rollback ->
+--    forward again, all clean. One fidelity note: the rollback restores
+--    `anon` and `authenticated` but NOT the implicit PUBLIC grant, so the ACL
+--    lands on {postgres=X,service_role=X,anon=X,authenticated=X} rather than the
+--    pre-0418 {=X,postgres=X,anon=X,authenticated=X,service_role=X}. Both
+--    browser roles — the only ones that reach these functions over PostgREST —
+--    are fully restored; the residual difference is strictly MORE restrictive
+--    and affects no role Supabase actually uses here.
+--
+-- =============================================================================
+-- WHY THIS MIGRATION EXISTS
+-- -----------------------------------------------------------------------------
+-- Same divergence class as 0414 (FD-17 / BUG-2026-08-12-005), DIFFERENT root
+-- cause, and the difference matters for anyone auditing the burn-down.
+--
+-- 0414 replays sixteen revokes that exist only in `docs/migrations-archive/`.
+-- These four are NOT in the archive at all — `grep -rn 'REVOKE.*refresh_cache_'
+-- docs/migrations-archive/` returns nothing. Their only in-repo source is the
+-- OPERATOR SCRIPT `scripts/ops/ensure-pipeline-dashboard-cache-cron.ts`
+-- (`buildInstallFastPipelineStatsFunctionSql()`), which `CREATE OR REPLACE`s the
+-- SCRUM-1708 fast bodies and then emits, per function:
+--
+--   REVOKE ALL ON FUNCTION public.<fn>() FROM PUBLIC;
+--   REVOKE ALL ON FUNCTION public.<fn>() FROM anon;
+--   REVOKE ALL ON FUNCTION public.<fn>() FROM authenticated;
+--   GRANT EXECUTE ON FUNCTION public.<fn>() TO service_role;
+--
+-- An operator ran that script against prod. `supabase db push` does not run it,
+-- so no environment built from `supabase/migrations/` has ever received those
+-- revokes. The squashed baseline instead carries the opposite:
+--
+--   baseline:14248-14249  GRANT ALL ON FUNCTION public.refresh_cache_anchor_type_counts() TO anon / authenticated
+--   baseline:14254-14255  ... refresh_cache_by_source()
+--   baseline:14260-14261  ... refresh_cache_pipeline_stats()
+--   baseline:14266-14267  ... refresh_cache_record_types()
+--
+-- and `ALTER DEFAULT PRIVILEGES ... GRANT ALL ON FUNCTIONS TO anon,
+-- authenticated` (baseline:15104-15107) re-grants both roles DIRECTLY at every
+-- `CREATE OR REPLACE`, so `0335_scrum2236_dashboard_cache_budgets.sql` re-opens
+-- three of them on every replay even if something had closed them earlier.
+--
+-- All four are SECURITY DEFINER, so they bypass RLS, and each one runs an
+-- aggregate scan over `anchors` / `public_records` and then WRITES a row into
+-- `pipeline_dashboard_cache`. 0335 gave three of them a 1s `SET LOCAL
+-- statement_timeout` inside a 10s function budget, so a SINGLE call is bounded
+-- — but the budget caps the call, not the call RATE. Anon-executable, that is
+-- unauthenticated compute amplification plus an unauthenticated write on an
+-- account-free PostgREST endpoint the worker's §1.10 rate limiter never sees —
+-- the same exposure 0412's header describes for the fifth sibling.
+--
+-- MEASURED, 2026-08-22 (read-only Management API queries, both projects):
+--
+--                                     rig fizyjojbebyalirtjjht   prod vzwyaatejekddvltxyye
+--   public functions anon-EXECUTE                        266                          262
+--   SECURITY DEFINER AND anon-EXECUTE                     75                           71
+--
+-- The residual four are exactly these. Per-function ACLs at that sweep:
+--
+--   prod (all four):  {postgres=X/postgres,service_role=X/postgres}
+--                     has_function_privilege('anon',      oid, 'EXECUTE') = false
+--                     has_function_privilege('authenticated', oid, 'EXECUTE') = false
+--   rig  (all four):  {=X/postgres,postgres=X/postgres,anon=X/postgres,
+--                      authenticated=X/postgres,service_role=X/postgres}
+--                     anon = true, authenticated = true
+--
+-- PROD IS NOT AFFECTED. Every environment built from the repo since the squash
+-- IS — including every future soak rig, which would otherwise produce evidence
+-- against a WEAKER security posture than the prod it stands in for.
+--
+-- PARITY TARGET, NOT A NEW SECURITY DECISION
+-- -----------------------------------------------------------------------------
+-- The target ACL is copied from prod, measured before this file was written.
+-- Both roles are revoked because prod revokes both. There is no
+-- authenticated-axis carve-out here (unlike 0414's `get_pipeline_stats` and
+-- `get_user_monthly_anchor_count`, where prod grants `authenticated` on purpose
+-- for a named browser caller): prod grants `authenticated` on NONE of these
+-- four, and there is no browser caller to protect —
+-- `grep -rn "rpc(['\"\`]refresh_cache" --include='*.ts' --include='*.tsx'`
+-- across the repo returns zero hits. Note that `public.get_pipeline_stats()` is
+-- a different function from `public.refresh_cache_pipeline_stats()`; only the
+-- former has the deliberate `authenticated` grant, and it is 0414's, not this
+-- file's.
+--
+-- CALLER SAFETY. The only callers are service_role:
+--   * services/worker/src/routes/cron.ts:1852-1858 — `DASHBOARD_CACHE_REFRESHERS`,
+--     invoked by `POST /cron/refresh-stats` on the worker's service_role client.
+--   * scripts/ops/ensure-pipeline-dashboard-cache-cron.ts — operator, service_role.
+--   * public.refresh_pipeline_dashboard_cache() — the SECURITY DEFINER wrapper
+--     the pg_cron job calls; it invokes these as its own definer (postgres), not
+--     as the caller, so the caller-side EXECUTE grants are irrelevant to it.
+-- `service_role` is granted explicitly below for every one, so the cron path is
+-- unchanged. Prod has run without the anon/authenticated grants since the
+-- operator script was applied.
+--
+-- NOT DUPLICATED. The two siblings already covered elsewhere are deliberately
+-- absent: `refresh_cache_anchor_tx_stats` is revoked by 0378 and
+-- `refresh_cache_anchor_status_counts` by 0412 (PR #2235). Re-revoking either
+-- here would be a no-op that muddies the ownership trail.
+--
+-- ORDERING. This file must sort AFTER the last migration that defines any of
+-- these functions, because `CREATE OR REPLACE` re-triggers ALTER DEFAULT
+-- PRIVILEGES and would undo a revoke written above it. Last definitions:
+-- `0335_scrum2236_dashboard_cache_budgets.sql` for `refresh_cache_anchor_type_counts`
+-- (0335:171), `refresh_cache_by_source` (0335:221) and `refresh_cache_record_types`
+-- (0335:266); the squashed baseline (baseline:5376) for
+-- `refresh_cache_pipeline_stats`. 0418 > 0335, so the ordering holds. Neither
+-- defining file may be edited — the baseline is a regenerated `supabase db
+-- dump` and 0335 is merged (CLAUDE.md §1.2) — which is why the revoke has to be
+-- a later compensating migration rather than an inline one.
+--
+-- CI. Because this file defines no function, the per-file ratchet in
+-- `scripts/ci/feedback-rules/secdef-function-grants.ts` cannot see it: deleting
+-- 0418 would leave the suite green while every rebuilt environment reopened the
+-- hole. The same PR pins all four in `REPLAY_PARITY_REVOKES` and burns their
+-- squashed-baseline keys out of `secdef-grants-baseline.json`, so removing this
+-- migration turns them back into fresh violations and fails `Tests`.
+--
+-- SAFETY. Grant-only. `database.types.ts` is unaffected (ACLs are not surfaced
+-- by `gen types`), so no regeneration. No `NOTIFY pgrst, 'reload schema'` — no
+-- signature or column surface changes. Idempotent: REVOKE of an absent
+-- privilege and GRANT of a present one are both no-ops, so re-running is safe.
+-- On PROD this entire file is a no-op by construction — every statement asserts
+-- the state prod was measured to already be in.
+--
+-- REHEARSED 2026-08-22, isolated throwaway Postgres 17 container. The
+-- pre-migration fixture reproduces the baseline shape (ALTER DEFAULT PRIVILEGES
+-- + the explicit baseline GRANTs) and lands on
+-- `{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}`
+-- — byte-identical to the live rig ACL measured the same day. Applying this file
+-- lands on `{postgres=X/postgres,service_role=X/postgres}` — byte-identical to
+-- the live PROD ACL. Re-applying is a clean no-op. Caller safety proven rather
+-- than asserted, in the same container: `service_role` still executes a
+-- refresher directly AND through `refresh_pipeline_dashboard_cache()` (a
+-- SECURITY DEFINER wrapper, so the inner privilege checks run as its
+-- postgres definer, not as the caller), while `anon` gets
+-- `ERROR: permission denied for function refresh_cache_by_source`.
+--
+-- `PUBLIC` is named alongside the two roles in every REVOKE because a revoke
+-- naming only anon/authenticated is a no-op against a PUBLIC grant, and a
+-- revoke naming only PUBLIC does not remove the DIRECT grants ALTER DEFAULT
+-- PRIVILEGES gives those two roles at CREATE time (the 0364 no-op-revoke
+-- catch). Identifiers are unquoted so the CI ratchet can see them.
+-- PREFIX DERIVATION (2026-08-22). `git fetch origin --prune` + a full-ref scan
+-- (`git ls-tree` over every local and origin ref) + `gh pr list --json files` +
+-- an on-disk scan of every sibling `git worktree`, cross-checked against the
+-- live prod ledger (`supabase_migrations.schema_migrations` on
+-- vzwyaatejekddvltxyye, head `0409`). `origin/main` head is `0409`; `0410`-`0415`
+-- are claimed by open PRs #2219 / #2235 / #2248 / #2314; `0415` is a live
+-- two-way collision (`0415_false_secured_offchain_anchor_quarantine.sql` on
+-- `fix/false-secured-signet-anchors` AND
+-- `0415_ferpa_directory_info_opt_out_public_projections.sql` on PR #2314) that
+-- someone else needs to break; `0416` is claimed by
+-- `fix/secured-count-overstatement`. This file first claimed `0417` and
+-- RENUMBERED to `0418` on discovering
+-- `0417_cleanup_expired_data_singleton_advisory_lock.sql` written one minute
+-- earlier in a concurrent worktree (`keen-haslett-8f4379`, untracked at the
+-- time) — first claim wins, and yielding is cheap for a grant-only file.
+-- NEXT AUTHOR CLAIMS `0419` — re-derive, do not trust this line.
+-- =============================================================================
+
+REVOKE ALL ON FUNCTION public.refresh_cache_anchor_type_counts() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_cache_anchor_type_counts() TO service_role;
+
+REVOKE ALL ON FUNCTION public.refresh_cache_by_source() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_cache_by_source() TO service_role;
+
+REVOKE ALL ON FUNCTION public.refresh_cache_pipeline_stats() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_cache_pipeline_stats() TO service_role;
+
+REVOKE ALL ON FUNCTION public.refresh_cache_record_types() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_cache_record_types() TO service_role;
