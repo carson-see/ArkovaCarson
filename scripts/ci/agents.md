@@ -1,6 +1,41 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-23 (commit-message E2BIG: `aggregate-commit-messages.ts`, file transport)._
+_Last updated: 2026-08-29 (base-drift ledger carve-out matches `.sql`, not the migrations DIRECTORY)._
+
+## 2026-08-29 — base-drift carve-out (b) matched a DIRECTORY, so `migrations/agents.md` read as "main landed a migration"
+
+- **The defect.** `MIGRATION_LEDGER_RE` was `/^supabase\/migrations\//` — a bare directory prefix
+  — and carve-out (b) fires when it matches something on BOTH sides (`prFiles` and `driftFiles`).
+  `supabase/migrations/agents.md` is a documentation note that every migration PR appends a line to,
+  so main merging any migration PR's doc line satisfied the drift side with **zero `.sql` files
+  changed**. The gate then announced "main landed a migration in the interval" and hard-failed —
+  and carve-out (b) is deliberately unclearable: no `Base drift impact:` attestation and no
+  `### Base-drift residual-risk note` can reach it. Live victims: **#2336** and **#2355**, each
+  carrying a complete sealed 48 h T3 soak (115 cycles, Trigger A/B, daily flush, per-org isolation),
+  with #2314 / #2335 / #2440 / #2442 / #2457 queued behind the same trigger.
+- **Why it hid.** Reproducing it needs the WHOLE drift set. Called with a migrations-scoped drift
+  list (`git diff --name-only A..B -- supabase/migrations/` → just `agents.md`),
+  `requiredTierFor(driftFiles)` is T0, so the function returns via the T0 `Base drift impact:` hatch
+  and never reaches carve-out (b) — a test written that way passes against the *unfixed* code. With
+  the real 87-file main drift, that same interval classifies **T2** (`deploy-worker.yml`), the T0
+  hatch is skipped, and the carve-out fires. The bug is only visible at full drift width.
+- **The fix.** `MIGRATION_LEDGER_RE` is now `/^supabase\/migrations\/.+\.sql$/i` behind
+  `isMigrationLedgerFile()`, applied to both sides. Only a `.sql` file occupies a position in the
+  ledger; ORDERING is what the carve-out protects and a doc note has no ordering. The error message
+  now also NAMES the `.sql` file(s) it believes main landed, so the premise is checkable from the
+  log instead of inferred. **This does not loosen the wall**: a real `.sql` landing on main while
+  the PR owns a migration still hard-fails, pinned by
+  `STILL hard-fails when a real .sql lands on main alongside the agents.md note`.
+- **What the affected PRs get instead.** Not a free pass — the same drift still intersects the
+  shared prod-runtime surface (`services/worker/src/…`, `deploy-worker.yml`) above T0, so they route
+  to the FD-GATE-3 third state: re-soak, or an auditable `### Base-drift residual-risk note`
+  enumerating those files. A clearable, honest requirement replaces an unclearable false one.
+- **Instrumentation, because the diagnosis cost a session.** `formatBaseDriftDiagnostics()` prints
+  the resolved evidence/current base SHAs, `prFiles`, `driftFiles`, the migration-DIRECTORY subset
+  and the migration-LEDGER (`.sql`) subset — path lists capped at 25 entries. Emitted only when
+  `GITHUB_ACTIONS=true`, so unit runs stay quiet and every CI base-drift verdict, pass or fail,
+  states the file sets it was computed from.
+
 
 ## 2026-08-23 — `aggregate-commit-messages.ts` (new): commit messages ship by FILE, not by env var (E2BIG)
 
