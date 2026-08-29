@@ -251,7 +251,7 @@ describe('CredentialRenderer', () => {
   });
 
   // SCRUM-3529: the canonical value is the anchors.sub_type COLUMN, surfaced by
-  // get_public_anchor as a top-level key (0420). Before that, the only route in
+  // get_public_anchor as a top-level key (0421). Before that, the only route in
   // was a metadata duplicate a caller happened to write — and once 0355 turned
   // the public projection's metadata into an allow-list, that route was closed
   // and the public verify page silently regressed to the generic 'Other'.
@@ -305,7 +305,7 @@ describe('CredentialRenderer', () => {
       // joins them with a space, yielding ' '. That is truthy, so guarding only
       // the INPUT lets it win over a real credential-type label and render an
       // empty Type banner. `anchors.sub_type` is bare `text` with no CHECK, so
-      // separator-only values are reachable from the public projection (0420).
+      // separator-only values are reachable from the public projection (0421).
       render(<CredentialRenderer credentialType="LICENSE" subType="_" status="SECURED" />);
 
       expect(screen.getByText('License')).toBeInTheDocument();

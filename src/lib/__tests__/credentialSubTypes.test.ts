@@ -153,7 +153,7 @@ describe('formatCredentialSubType (SCRUM-952)', () => {
 
   // SCRUM-3529. The acronym table is a plain object literal, so `TABLE[seg]`
   // reaches Object.prototype for a handful of segment names. `anchors.sub_type`
-  // is bare `text` with no CHECK, and 0420 puts it on the ANONYMOUS verify page,
+  // is bare `text` with no CHECK, and 0421 puts it on the ANONYMOUS verify page,
   // so the value is writer-controlled: `sub_type = 'constructor'` rendered the
   // Object constructor's source as a credential Type label. Not an injection
   // (React escapes it) — a nonsense claim on a verification surface, which on

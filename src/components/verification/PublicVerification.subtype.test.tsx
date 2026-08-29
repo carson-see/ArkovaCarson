@@ -107,11 +107,11 @@ describe('PublicVerification — credential sub-type label (SCRUM-3529)', () => 
     expect(screen.queryByText('—')).not.toBeInTheDocument();
   });
 
-  it('renders a pre-0420 payload with NO sub_type key as the generic label', async () => {
-    // 0420 always emits the key (the top-level object is not
+  it('renders a pre-0421 payload with NO sub_type key as the generic label', async () => {
+    // 0421 always emits the key (the top-level object is not
     // jsonb_strip_nulls-ed), so an ABSENT sub_type is not a shape the current
     // projection produces. It is pinned anyway because it IS the shape every
-    // pre-0420 payload has — a cached response, a stale PostgREST schema cache,
+    // pre-0421 payload has — a cached response, a stale PostgREST schema cache,
     // or a rollback to the 0385 body — and the page must degrade to the parent
     // label rather than to `undefined`.
     rpcMock.mockResolvedValue({ data: { ...securedAnchor }, error: null });

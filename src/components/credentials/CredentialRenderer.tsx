@@ -218,7 +218,7 @@ export interface CredentialRendererProps {
   /**
    * SCRUM-3529: the canonical `anchors.sub_type` column (GRE-01 —
    * `official_undergraduate`, `nursing_rn`), surfaced by `get_public_anchor` as
-   * a top-level key (migration 0420) and by `GET /api/v1/verify/:publicId`.
+   * a top-level key (migration 0421) and by `GET /api/v1/verify/:publicId`.
    *
    * Takes precedence over any `sub_type` duplicate inside `metadata`, which is
    * only whatever a writer happened to mirror there. Callers that have no

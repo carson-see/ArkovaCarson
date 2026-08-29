@@ -399,7 +399,7 @@
     "dedicated 'keeps the recipient identifier a KEYED HMAC' test."
   ],
   "$sub_type_note": [
-    "`sub_type` (added 0420, SCRUM-3529) is the CANONICAL COLUMN anchors.sub_type",
+    "`sub_type` (added 0421, SCRUM-3529) is the CANONICAL COLUMN anchors.sub_type",
     "(GRE-01: 'official_undergraduate', 'nursing_rn'), NOT metadata->>'sub_type'.",
     "",
     "WHY IT IS PUBLISHED AT ALL. It is the public verify page's credential Type",
