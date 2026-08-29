@@ -698,7 +698,32 @@ function failCandidateObservation(observation: S33Wave3Observation): void {
   };
 }
 
-describe('S3.3 Wave-3 deterministic offline gates', () => {
+// Every case in this block re-runs the deterministic evaluator over the full
+// wave-3 fixture, so the file is CPU-bound: its wall time tracks runner
+// contention, not anything the assertions do. On 2026-08-23 the stale-bindings
+// case was measured at 5391ms against vitest's 5000ms default and reddened
+// PR #2399 (run 32665842753), while the identical head SHA passed in run
+// 32641618388 — contention, not a regression.
+//
+// The budget is set on the block rather than on the one case that happened to
+// fail, because the exposure is file-wide. Measured under deliberate CPU
+// starvation (20 busy loops on 10 cores, `taskpolicy -c utility`): on the
+// unpatched file three cases blew the 5000ms default (worst 15368ms), and with
+// this budget in place 20 of the 50 cases ran over 5000ms and 29 ran over
+// 3000ms — including cases that take only ~245ms on an idle machine. Per-case
+// timeouts on the visible outliers would therefore have left most of the file
+// still one bad scheduling moment from the same red.
+//
+// 30_000ms matches the repo's existing generous value (vitest.config.rls.ts
+// testTimeout, and the per-test timeouts in
+// jobs/recover-stuck-broadcasts-submitted.local.test.ts) and is ~2x the worst
+// case observed under that starvation, so a genuine hang still fails fast.
+// Scoping it here keeps the strict 5000ms default in force for the rest of the
+// worker suite.
+//
+// This raises a timeout budget only. No assertion, fail-closed path, or fixture
+// is relaxed.
+describe('S3.3 Wave-3 deterministic offline gates', { timeout: 30_000 }, () => {
   it('freezes the exact v6 subtype block and corpus substantive-depth contract', () => {
     expect(S33_WAVE3_FROZEN_SUBTYPE_TAXONOMY).toEqual(V6_SUBTYPE_TAXONOMY);
     const allPinnedFields = Object.fromEntries(S33_WAVE3_SUBSTANTIVE_FIELDS.map((field) => [

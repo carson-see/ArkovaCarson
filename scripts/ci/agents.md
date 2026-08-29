@@ -286,6 +286,46 @@ Two design points to preserve if you touch it:
   REPORT-ONLY (`--report-only`, `::warning::`, `continue-on-error`) until a real
   green soak calibrates it; `worker-build-parity` / `verifier-build` are
   deliberately NON-REQUIRED pending a Carson-gated required-flip.
+  **⚠️ Partly superseded 2026-08-23:** the `evidence-identity-report` sentence
+  above is stale — that job is now `evidence-identity` and is FAIL-CLOSED (see
+  the next bullet). The sentence is kept verbatim only because this file is
+  append-only. `worker-build-parity` / `verifier-build` remain NON-REQUIRED, and
+  the wiring checklist itself now has three places to look, not two:
+  `ci.yml`, **`.mergify.yml` merge_conditions**, and branch protection.
+- **`evidence-identity` and `anti-hollow-soak` are FAIL-CLOSED** as of 2026-08-23
+  (SCRUM-2897 / SCRUM-2965 / SCRUM-2977). Both shipped REPORT-ONLY
+  (`--report-only`, `::warning::`, `continue-on-error`, `|| true`) under the
+  W3-freeze CTO carve-out and gated nothing; all of those were removed together
+  and both check names were added to every `.mergify.yml` queue rule, because a
+  check absent from merge_conditions can be red while Mergify merges anyway.
+  Two safety preconditions came with the flip and must not be undone:
+  `evidence-identity` **skips Mergify's speculative `mergify/merge-queue/*` PRs**
+  (they carry Mergify's body, not the original evidence block — without the skip
+  every queued merge deadlocks), and it resolves PR body/head/draft **LIVE via
+  `gh api`** rather than the frozen event payload, because ci.yml's
+  `pull_request` trigger declares no `types:` and so never fires on a body
+  `edited` — a frozen binding would make a `gh pr edit` head-SHA fix
+  unobservable, i.e. a red check with no remedy (SCRUM-3026 replay class).
+  A declared `Tier: T0` short-circuits to skip BEFORE `hasEvidenceSection()`,
+  which deliberately matches a bare `Tier: T0` line; without that ordering a
+  fail-closed gate reds every T0 PR in the repo.
+  `scripts/ci/soak-integrity-gates-failclosed.test.ts` pins all of it.
+  Branch-protection required-check status is repo-admin state and is NOT set by
+  this repo's config — verify it separately before claiming these block a merge
+  outside the Mergify path.
+  Two review addenda (2026-08-23, second pass):
+  (a) `checkCleanPreflightIdentity`'s check-B2 reads an embedded preflight SHA
+  only from a KEYED form (`head=` / `head_sha:` / `commit=` / `sha=`) or a bare
+  full 40-hex run. The old "first `\b[0-9a-f]{7,40}\b` anywhere in the value"
+  also matched a 7-digit row count and `ref=abc1234`; report-only that was a
+  spurious warning, merge-blocking it reds a T2/T3 PR on a message its author
+  cannot act on. The cost is a bare, unkeyed, SHORT sha no longer being matched.
+  (b) Neither gate is "always reports": both jobs live in `ci.yml`, whose
+  `pull_request:` trigger carries `paths-ignore` (`LICENSE`, `.gitignore`,
+  `README.md`, `memory/**.md`). A PR touching ONLY those paths runs no ci.yml
+  job, so the checks never post and a Mergify queue entry waits. Pre-existing
+  class — `Orphaned Export Lint` and `Python SDK Tests` share it — but do not
+  cite these gates as unconditional coverage.
 - **`check-staging-evidence.ts` is the tier detector AND the evidence gate.**
   It fails CLOSED to the highest tier. The alternate-evidence modes
   (frontend-T2, architecturally-unsoakable) are narrow and mutually exclusive:
@@ -346,6 +386,7 @@ Two design points to preserve if you touch it:
 - **`check-staging-gcloud-policy.ts`** — blocks raw `gcloud run deploy` / `gcloud run services update` commands against `arkova-worker-staging` outside `scripts/staging/deploy.sh`; historical docs need a nearby `staging-gcloud-ok:` reason.
 - `check-deploy-lint-parity.ts` (R0-4 / SCRUM-1250) — enforces that `deploy-worker.yml` and `ci.yml` lint steps run the SAME `npm run lint` script per CLAUDE.md §0 rule 9.
 - **`check-deploy-build-parity.ts`** (CONDITIONAL-GO sub-decision B / TWO-SURFACE) — sibling of the lint-parity gate, closing the COMPILE hole. Asserts **3-way** worker BUILD-command equality (fails closed): `services/worker/package.json` `scripts.build` === `tsc -p tsconfig.build.json`; `services/worker/Dockerfile` contains a `RUN npm run build` line; `ci.yml` has a `services/worker` step **named with the `deploy-parity` marker** whose `run:` is exactly `npm run build`. The `deploy-parity` name marker isolates the dedicated compile gate so the gate is NOT confused by the `npm run build:circuit` zk-artifact step (also a worker-dir "build" step). Exports `auditDeployBuildParity()` + the constants for the test. Wired into the `typecheck-lint` job. **Pure file-reading hard invariant** — imports only `readFileSync`/`resolve`, NO ciContext / git / `process.env` (mirrors `check-deploy-lint-parity.ts`), so it runs cleanly in the shallow-checkout `typecheck-lint` job and keeps SCRUM-1258 trivially satisfied. No in-script override; a build-command mismatch is never acceptable, the escape hatch is editing the invariant in-PR (with `ci-config-change` / `build-parity-ack` signoff). Tests in `check-deploy-build-parity.test.ts` (9 tests, incl. a live-repo-files parity assertion + a regression guard that the script imports no ciContext/git/env). Pairs with the two non-required ci.yml compile jobs (`Worker Build (deploy-parity)`, `Verifier Build`).
+- **`check-deploy-typecheck-parity.ts`** (SCRUM-1811) — THIRD sibling of the lint (R0-4) and build (sub-decision B) parity gates, closing the last hole in the trio: the worker TYPECHECK. Root tsconfigs `exclude` `services/`, so root `npm run typecheck` never sees worker source; `worker-build-parity` compiles `tsconfig.build.json`, which **excludes `src/**/*.test.ts`**, and is both in-job path-gated and NON-REQUIRED. `deploy-worker.yml` meanwhile typechecks the **plain** `tsconfig.json` (tests INCLUDED). Net effect: a TS error in a worker TEST file passed every PR check and only failed post-merge in the deploy gate, blacking out ALL prod worker deploys while `main` kept merging (`memory/project_deploy_typecheck_blackout.md`; SCRUM-1810 was exactly this; SCRUM-3130 recorded main ~20 merged PRs ahead of prod). Asserts, fail-closed: (1) `deploy-worker.yml` has a `services/worker` step named `*Typecheck*` running exactly `node_modules/.bin/tsc --noEmit`; (2) `ci.yml` has the same step **inside the `typecheck-lint` job** — already `check-success = TypeCheck & Lint` in `.mergify.yml`, so it actually blocks a merge; (3) that step carries **no `if:` guard**, so a test-only edit cannot slip past a path filter; (4) neither workflow's typecheck step is renamed into a SIBLING gate's marker — a name containing `lint` would be captured by `check-deploy-lint-parity.ts` (which then demands `npm run lint`), and a ci.yml name containing `deploy-parity` would be captured by `check-deploy-build-parity.ts` (which then demands `npm run build`). The trap is the natural-looking "Typecheck worker (deploy-parity)", mirroring the sibling JOB's own name; assertion (4) rejects it with a message naming the real constraint instead of leaving the rule as unenforced prose. Its step scanner walks BACK to the **nearest** preceding `name:` (not the first matching one in the window), which is what stops a neighbouring `Lint worker` name from being mis-attributed to a `tsc` command. **Pure file-reading hard invariant** — imports only `readFileSync`/`resolve`, no ciContext / git / `process.env`, so it runs in the shallow-checkout `typecheck-lint` job. No in-script override; signoff is `ci-config-change` at the workflow level. Tests in `check-deploy-typecheck-parity.test.ts` (12 tests, incl. a live-repo-files parity assertion, a `tsconfig.build.json` mutation, a wrong-host-job mutation, an `if:`-guard mutation, three sibling-marker rename mutations, and the no-ciContext/git/env regression guard). **Deliberately does NOT flip `Worker Build (deploy-parity)` into branch protection / `.mergify.yml`** — that required-flip is reserved to Carson/admin per `.github/workflows/agents.md`; adding a step to an already-required job closes the same gap without touching that surface.
 - `check-rls-auth-uid-wrap.ts` (SCRUM-1280) — RLS policy lint: `auth.uid()` must always be wrapped in `(SELECT auth.uid())` to allow Postgres planner constant-folding.
 - `check-null-identity-guard.ts` (F-5b/F-5c) — blocks NEW migrations whose authorization guard compares a parameter **directly** against an identity function (`IS DISTINCT FROM auth.uid()` / `(SELECT auth.uid())` / `get_user_org_id()`). `IS DISTINCT FROM` returns FALSE when BOTH sides are NULL, so a caller with no identity passing an explicit NULL argument skips the RAISE and gets a 200 + all-zero result instead of a 403 — a "silent success" where an unauthorized call is indistinguishable from an authorized empty one. Required shape: resolve the identity into a local, reject NULL, THEN compare against the local. **`FIRST_ENFORCED_PREFIX = 393` is load-bearing** — migration `0380` (PR #1778, already applied to prod ahead of merge) genuinely contains the flagged idiom and is superseded at runtime by `0391`; lowering the cutoff without landing a compensating migration for every file in between will red-light in-flight PRs. Skips SQL comment lines so `-- ROLLBACK:` blocks may quote the old body verbatim. Deliberately does NOT flag `col = auth.uid()` RLS quals or the `EXISTS (... WHERE id = auth.uid() ...)` idiom — both fail CLOSED on NULL. Override label: `null-identity-guard-intentional`. Failure-mode tested in `src/tests/f5c-monthly-count-null-identity-guard.test.ts`.
 - `check-handoff-claims.ts` (R0-6 / SCRUM-1252) — HANDOFF.md verification lint: edits asserting prod state require a verification artifact link. **Merge-ref hardening (2026-07-06, PR #1408):** `resolveDiffBase()` re-anchors the two-dot diff to `HEAD^1` when HEAD is provably GitHub's synthetic `refs/pull/N/merge` commit (pull_request event + 2-parent HEAD + pinned base ancestor of first parent + `GITHUB_SHA` match or canonical `Merge <sha> into <sha>` subject) — otherwise a post-PR-creation base-branch HANDOFF.md edit (f11a5290 class) is misattributed to every pre-drift PR and the gate goes red on a file the PR never touched. All other shapes fall back to the pinned-base two-dot (fail-closed). Fixture repro + gate-not-weakened pin in `check-handoff-claims.test.ts`.

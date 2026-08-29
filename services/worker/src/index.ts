@@ -449,10 +449,20 @@ app.get('/.well-known/openapi.json', (_req, res) => {
 // by kms-signer.ts and every signed proof bundle's `signing_key_id` — but was
 // never mounted here, so it 404'd on every worker host while its sibling
 // didWebRouter returned 200. Verifiers could not resolve the public key a
-// bundle names. It rides the SAME `app.use` chain as didWebRouter deliberately:
-// a second `app.use(apiIpShadowGuard, ...)` would run the limiter twice per
-// request against one shared bucket, halving the anonymous cap to 30/min —
-// the exact re-shadowing failure the F-2 note above describes.
+// bundle names. It rides the SAME `app.use` chain as didWebRouter deliberately —
+// see the double-mount note just below for why a separate `app.use` would be
+// wrong on a store without per-instance counting.
+//
+// 2026-08-12 — this is the SECOND mount of the same `apiIpShadowGuard`
+// instance (the first is at the `/api` mount above). That is intentional and
+// both are needed: did:web paths live outside `/api`, and this mount must
+// carry the same skip predicate. But Express runs every mount a request
+// matches, so an anonymous `/api/v1/*` request — which falls through the
+// `/api` mount unanswered — used to be counted by this guard TWICE, making
+// the documented 60/min per IP actually 30/min. `rateLimit()` now counts a
+// request at most once per limiter INSTANCE (see `utils/rateLimit.ts`,
+// COUNTED_LIMITERS), which is what makes mounting one limiter twice safe.
+// Do not "simplify" this by deleting a mount; see rateLimitDoubleMount.test.ts.
 app.use(apiIpShadowGuard, didWebRouter, proofKeysRouter);
 
 // 2026-04-26 — bug-bounty F4. Spec was already publicly inlined in
@@ -605,7 +615,12 @@ const server = app.listen(config.port, async () => {
   const idempotencyRedisStore = createUpstashIdempotencyStore();
   if (idempotencyRedisStore) {
     setIdempotencyStore(idempotencyRedisStore);
-    logger.info('Upstash Redis idempotency store initialized');
+    // BUG-018 / D-8: log the derived namespace so the deployed keyspace is
+    // observable in Cloud Run logs without reading Redis.
+    logger.info(
+      { environmentNamespace: idempotencyRedisStore.environmentNamespace },
+      'Upstash Redis idempotency store initialized'
+    );
   } else if (!redisRateInit) {
     logger.info('Upstash Redis not configured — using in-memory stores (rate limit + idempotency)');
   }

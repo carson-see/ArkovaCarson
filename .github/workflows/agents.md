@@ -19,6 +19,49 @@ Two properties to keep if you touch it:
   a match). That validation is what stops an unexpected value from injecting extra
   `key=value` lines into the step's outputs, the same class the per-run random heredoc
   delimiter below guards for the body.
+## 2026-08-23 — worker `tsc --noEmit` is now a STEP in `typecheck-lint` (SCRUM-1811)
+
+`typecheck-lint` gained `Typecheck worker (deploy-gate parity)` —
+`node_modules/.bin/tsc --noEmit` in `services/worker`, placed between the existing
+`Install worker dependencies` and `Lint worker (deploy-gate parity)` steps — plus a
+`Verify deploy-gate / CI worker TYPECHECK parity (SCRUM-1811)` guard running
+`scripts/ci/check-deploy-typecheck-parity.ts`.
+
+**Why this was a real hole even though a worker compile job already existed.** Three surfaces, none
+of which covered worker test files at PR time:
+
+- Root `npm run typecheck` — root tsconfigs `exclude` `services/`, so tsc never sees worker source.
+- `worker-build-parity` — runs `npm run build` == `tsc -p tsconfig.build.json`, and that config
+  `exclude`s `src/**/*.test.ts` / `*.spec.ts`. It is also in-job path-gated AND non-required.
+- `deploy-worker.yml`'s `Typecheck` — the ONLY surface compiling the plain `tsconfig.json` (tests
+  included), and it fires on push to `main`, i.e. **after** merge.
+
+So a TS error in a worker TEST file passed every PR check and then blacked out ALL prod worker
+deploys while `main` kept merging (`memory/project_deploy_typecheck_blackout.md`; SCRUM-1810 was
+literally this; SCRUM-3130 recorded main ~20 merged PRs ahead of prod).
+
+**Why a step here and not a required-flip of `Worker Build (deploy-parity)`.** The CONDITIONAL-GO
+sub-decision B note below reserves that flip to Carson/admin behind the CEO-gated quiet window, and
+branch protection is not a surface a PR can change for itself — the same reasoning recorded for the
+edge-worker test steps. `typecheck-lint` is ALREADY `check-success = TypeCheck & Lint` in all three
+`.mergify.yml` queues, so a step added here blocks a merge on day one with no branch-protection
+change. **`worker-build-parity` and `Verifier Build` remain NON-REQUIRED and untouched;
+`.mergify.yml` is untouched.**
+
+Two properties the parity guard pins, because getting either wrong silently reopens the gap:
+`tsc --noEmit` against the **plain** tsconfig (NOT `-p tsconfig.build.json`, which drops the test
+files that caused the outage), and **no `if:` guard** on the step (a path filter would miss a
+test-only edit). Baseline at wiring time: worker `tsc --noEmit` **clean on `main`** — verified
+locally before the gate was added, per this file's "a gate must not be merged red" rule.
+
+Naming is load-bearing: the step is `Typecheck worker (deploy-gate parity)`, deliberately carrying
+neither `lint` (which `check-deploy-lint-parity.ts` keys on) nor the exact `deploy-parity` marker
+(which `check-deploy-build-parity.ts` keys on), so the two existing scanners do not capture it.
+Verified: the lint-parity gate still reports exactly 2 worker-lint steps. **That naming rule is
+enforced, not just documented** — `check-deploy-typecheck-parity.ts` rejects a rename of this step
+into either sibling marker, because the trap ("Typecheck worker (deploy-parity)", mirroring the
+sibling JOB name `Worker Build (deploy-parity)`) would otherwise make a SIBLING gate capture
+`tsc --noEmit`, demand `npm run build`, and go red pointing at the wrong file.
 
 ## 2026-08-23 — the `commits` step hands off a FILE PATH, not the messages themselves (E2BIG)
 
@@ -97,7 +140,7 @@ issue comment), so a change to one of those can take effect outside the PR cycle
 
 | File | Trigger | Purpose |
 |------|---------|---------|
-| `ci.yml` | `push` (main/staging/develop) + `pull_request` | The main gate. 24 jobs: secret-scan, dependency-scan (also hosts the agents.md append-only gate), sonatype-sca, policy-lints, orphaned-export-lint, tdd-enforcement, typecheck-lint, test, python-sdk-tests (queue-gated via .mergify.yml — see the 2026-08-18 note), ai-eval-gate, tla-verify, migration-check, e2e, lighthouse, sbom-generation, worker-build-parity, verifier-build, evidence-identity-report, anti-hollow-soak-report. |
+| `ci.yml` | `push` (main/staging/develop) + `pull_request` | The main gate. 26 jobs (verified by `yaml.safe_load` 2026-08-23; the previous "24" was stale): secret-scan, dependency-scan (also hosts the agents.md append-only gate), sonatype-sca, policy-lints, orphaned-export-lint, tdd-enforcement, typecheck-lint, test, python-sdk-tests (queue-gated via .mergify.yml — see the 2026-08-18 note), ai-eval-gate, tla-verify, migration-check, e2e, lighthouse, sbom-generation, worker-build-parity, verifier-build, evidence-identity, anti-hollow-soak. The last two were report-only until SCRUM-2965/2977 activated them fail-closed and added them to every .mergify.yml queue rule; `evidence-identity` skips Mergify's speculative merge-queue PRs and resolves PR body/head LIVE via `gh api`, because this workflow's `pull_request` trigger declares no `types:` and so never fires on a body `edited`. |
 | `staging-evidence.yml` | `pull_request` incl. **`edited`**/`labeled`/`unlabeled` | The `Staging Soak Evidence Gate` required check (CLAUDE.md §1.11/§1.12). `edited` matters: a body-only evidence update fires no `synchronize`. |
 | `migration-drift.yml` | `push` main + `pull_request` incl. **`edited`** | Read-only diff of local migrations vs the prod applied set. Prevents the scorecard-outage class of bug. Also runs the full-ledger numeric-integrity audit (SCRUM-2500). |
 | `merge-authority.yml` | `pull_request` (`opened`/`synchronize`/`reopened`/`ready_for_review`) | Single `compute` job — reuses `requiredTierFor` to emit the tier/merge-council marker. Fails closed. |
@@ -590,3 +633,24 @@ workflow that runs on every PR.
 - `docs/runbooks/ci/verifying-current-check-runs.md` — cross-checking `gh pr checks` against actual check-run timestamps; the frozen-event-payload rerun trap and its fix (SCRUM-3030)
 - S0-4.3 stacked-PR + tiered-merge playbook (drafted Mergify/branch-protection diff for Carson) → Google Doc "ARKOVA PI-1 S0-E4 — Mergify / Stacked-PR + Tiered-Merge Playbook" (Drive ARKOVA PI-1-S0): https://docs.google.com/document/d/1iontJPUkhLQkQyZG4PETGuPj3kf23Kgn-1kDxqukfr8/edit
 - `docs/confluence/16_migration_drift_prevention.md` — ADR for Option A (read-only diff)
+
+## The `workflow_dispatch` pause override was exercised in prod (2026-08-27)
+
+The "Deploy-worker pause gate" section above states that `workflow_dispatch` ALWAYS bypasses
+`vars.DEPLOY_WORKER_PAUSED`. That is not theoretical — it was used on 2026-08-27 to move prod off a
+week-old SHA: deploy-worker run
+[**33114229919**](https://github.com/carson-see/ArkovaCarson/actions/runs/33114229919)
+(`event: workflow_dispatch`, `headSha 0440ce7e5c09ab15da60157e9a96128f669dc999`,
+`conclusion: success`, 20:37:29Z → 20:49:15Z) shipped revision `arkova-worker-01322-tol` at 100%
+traffic.
+
+**The inference to NOT make:** a fresh prod SHA does not mean the pause was lifted.
+`gh variable get DEPLOY_WORKER_PAUSED` still read `true` immediately after that deploy. A dispatched
+deploy and an unpaused repo look identical from the outside — only the variable distinguishes them,
+so read it rather than inferring it from `/health.git_sha`. It also does **not** discharge the
+`pause_lift_obligation` in `docs/staging/rc-manifests/rc-deferred-2026-08-22.json`, which requires a
+consolidated soak of merged `main` at the accumulated head BEFORE the variable flips.
+
+Corollary for `revision-drift.yml` (cron `*/10`, fires Sentry on `/health.git_sha` drifting > 1h
+from `origin/main`): while the pause holds, drift is the EXPECTED steady state, not an incident. Do
+not treat one of its alerts as evidence that a deploy failed without first checking the variable.
