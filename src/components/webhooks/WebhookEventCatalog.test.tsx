@@ -4,8 +4,10 @@
  * The catalog must:
  *  - list exactly the worker allowlist event types (drift-guarded against
  *    AVAILABLE_EVENTS, which is itself pinned to VALID_WEBHOOK_EVENTS),
- *  - clearly DISTINGUISH live anchor events from deferred credential events
- *    (launch-claims discipline — credential.* have no emit points yet),
+ *  - clearly DISTINGUISH live events from deferred ones (launch-claims
+ *    discipline — `live` must track real worker emit points, not the event
+ *    family prefix: `credential.issued` / `credential.status_changed` emit
+ *    today, `credential.verified` is flag-gated dark in prod),
  *  - show each event's payload field names + the redaction rules note,
  *  - never render document contents / fingerprints (static catalog data).
  */
@@ -33,15 +35,23 @@ describe('WebhookEventCatalog', () => {
     }
   });
 
-  it('marks anchor events as active and credential events as not yet active', () => {
+  it('renders the Active badge for live events and the deferred badge + note for dark ones', () => {
     render(<WebhookEventCatalog />);
 
     const anchorRow = screen.getByTestId('catalog-event-anchor.secured');
     expect(within(anchorRow).getByText(WEBHOOK_LABELS.CATALOG_LIVE_BADGE)).toBeInTheDocument();
 
-    const credRow = screen.getByTestId('catalog-event-credential.issued');
-    expect(within(credRow).getByText(WEBHOOK_LABELS.CATALOG_DEFERRED_BADGE)).toBeInTheDocument();
-    expect(within(credRow).getByText(WEBHOOK_LABELS.CATALOG_DEFERRED_NOTE)).toBeInTheDocument();
+    // credential.issued emits from the worker today (credential-sources.ts,
+    // SCRUM-1798 Phase 2a) — it must NOT tell subscribers "not yet active".
+    const issuedRow = screen.getByTestId('catalog-event-credential.issued');
+    expect(within(issuedRow).getByText(WEBHOOK_LABELS.CATALOG_LIVE_BADGE)).toBeInTheDocument();
+    expect(within(issuedRow).queryByText(WEBHOOK_LABELS.CATALOG_DEFERRED_NOTE)).not.toBeInTheDocument();
+
+    // credential.verified is wired but flag-gated dark in prod
+    // (ENABLE_CREDENTIAL_VERIFIED_WEBHOOK default false, unset in prod).
+    const verifiedRow = screen.getByTestId('catalog-event-credential.verified');
+    expect(within(verifiedRow).getByText(WEBHOOK_LABELS.CATALOG_DEFERRED_BADGE)).toBeInTheDocument();
+    expect(within(verifiedRow).getByText(WEBHOOK_LABELS.CATALOG_DEFERRED_NOTE)).toBeInTheDocument();
   });
 
   /**
@@ -58,6 +68,14 @@ describe('WebhookEventCatalog', () => {
    * The set is explicit now, so the ratchet still bites in the direction that
    * matters: a newly added event is deferred unless someone deliberately lists
    * it here, and listing it means claiming a verified emit point.
+   *
+   * credential.issued + credential.status_changed were added 2026-08-29: both
+   * had live, unflagged producers on main (and in the prod-deployed SHA) while
+   * the catalog still badged them "Not yet active" — the honesty rule cuts in
+   * BOTH directions, and understating liveness misleads subscribers who are
+   * already receiving deliveries. credential.verified stays out deliberately:
+   * its two dispatch sites (verify.ts, oracle.ts) are both gated on
+   * ENABLE_CREDENTIAL_VERIFIED_WEBHOOK, default false and unset in prod.
    */
   const LIVE_EVENT_IDS = new Set([
     'anchor.submitted',
@@ -65,6 +83,8 @@ describe('WebhookEventCatalog', () => {
     'anchor.revoked',
     'anchor.expired',
     'anchor.batch_secured',
+    'credential.issued',
+    'credential.status_changed',
     'compliance.document_expiring',
   ]);
 
@@ -74,12 +94,13 @@ describe('WebhookEventCatalog', () => {
     }
   });
 
-  it('keeps every credential.* event deferred — no emit points yet (SCRUM-1743)', () => {
-    const credentialEntries = WEBHOOK_EVENT_CATALOG.filter((e) => e.id.startsWith('credential.'));
-    expect(credentialEntries.length).toBeGreaterThan(0);
-    for (const entry of credentialEntries) {
-      expect(entry.live, entry.id).toBe(false);
-    }
+  it('keeps credential.verified deferred while its emit flag is dark in prod (SCRUM-1799)', () => {
+    // Flip this only after verifying ENABLE_CREDENTIAL_VERIFIED_WEBHOOK is
+    // actually on in prod (prod-state-check skill) — the flag, not the code
+    // path, is what makes the badge truthful.
+    const verified = WEBHOOK_EVENT_CATALOG.find((e) => e.id === 'credential.verified');
+    expect(verified).toBeDefined();
+    expect(verified?.live).toBe(false);
   });
 
   it('shows payload fields for each event', () => {
