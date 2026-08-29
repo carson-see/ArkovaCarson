@@ -223,6 +223,18 @@ describe('residual-risk approver must be a non-author identity', () => {
     expect(r.errors.join(' ')).toMatch(/self-approv/i);
   });
 
+  it('rejects the author handle even with sentence punctuation trailing it', () => {
+    // `@carson-see.` / `carson-see,` — the token scanner absorbs a trailing
+    // `.`/`_`/`-` into the handle, so the tail is trimmed before the compare.
+    // Pinned because that trim is the one place a linear rewrite could silently
+    // change the matched set.
+    for (const approver of ['@carson-see.', 'Approved: carson-see-', 'carson-see_']) {
+      const r = runT2(noteBody(approver), { prAuthor: 'carson-see' });
+      expect(r.ok, approver).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/self-approv/i);
+    }
+  });
+
   it('rejects an approver that is a self-reference word', () => {
     for (const approver of ['me', 'myself', 'self', 'the author', 'PR author']) {
       const r = runT2(noteBody(approver), { prAuthor: 'carson-see' });
@@ -464,7 +476,10 @@ describe('RC manifest integrity', () => {
   it('rejects an entry whose base SHA predates the train launch', () => {
     const r = runRc(manifest({ included_prs: [includedPr({ base_sha: PRE_LAUNCH })] }));
     expect(r.ok).toBe(false);
-    expect(r.errors.join(' ')).toMatch(/base SHA/i);
+    // `entry base SHA`, not `base SHA`: the looser pattern also matches
+    // requireRcCoreIdentityFields' manifest-level "does not cover the current
+    // base SHA", so it would still pass with the per-entry lower bound reverted.
+    expect(r.errors.join(' ')).toMatch(/entry base SHA/i);
   });
 
   it('accepts an entry whose base sits between the train launch and the current base', () => {
@@ -479,7 +494,7 @@ describe('RC manifest integrity', () => {
       { ancestryProvider: () => null },
     );
     expect(r.ok).toBe(false);
-    expect(r.errors.join(' ')).toMatch(/base SHA/i);
+    expect(r.errors.join(' ')).toMatch(/entry base SHA/i);
   });
 });
 

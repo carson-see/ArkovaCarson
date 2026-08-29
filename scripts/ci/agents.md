@@ -35,6 +35,15 @@ does NOT map display names onto logins.** `Approved by: Carson (founder / releas
 on a PR authored by `carson-see` still passes, because the gate has no identity directory
 and a wrong guess would block real approvals. This is a ratchet, not a proof.
 
+Review addendum (2026-08-29): the handle comparison trims a trailing `.`/`_`/`-` off each
+token by **index scan**, not `token.replace(/[._-]+$/, '')`. That anchored trailing
+quantifier is quadratic whenever it fails — a single approver line of `a` + 60 000 `.` + `b`
+(well inside GitHub's 65 536-char body cap) measured ~10 s of runner CPU. Same reasoning as
+`stripMarkdownEmphasis`: the value is one line of an author-controlled PR body, so no regex
+whose worst case is superlinear belongs on it. Failure was closed either way — a timed-out
+job is a red check — so this is burn, not bypass. Pinned by the trailing-punctuation case in
+`check-staging-evidence-integrity.test.ts`.
+
 It covers **all three** `Approved by:`-bearing waiver notes, via `approverNoteHeaders()`:
 `### Residual-risk note`, `### Unsoakable-surface note`, and `### Base-drift residual-risk
 note` (FD-GATE-3). The third was added in review — it waives a control of the same weight

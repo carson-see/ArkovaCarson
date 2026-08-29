@@ -1982,11 +1982,29 @@ const SELF_REFERENCE_APPROVER_RE =
 /** Handle-ish tokens inside an approver value (`@login`, `login`, `First`, an email local-part). */
 const APPROVER_TOKEN_RE = /[A-Za-z0-9][A-Za-z0-9._-]*/g;
 
+/** Trailing `.`/`_`/`-` a sentence leaves on a handle (`@carson-see.`). */
+const TOKEN_TAIL_CHARS = new Set(['.', '_', '-']);
+
+/**
+ * Index scanning, not `token.replace(/[._-]+$/, '')`, for the same reason
+ * {@link stripMarkdownEmphasis} avoids regex: the approver value is one line of
+ * an author-controlled PR body, up to GitHub's 65 536-char cap, and that
+ * anchored trailing quantifier is QUADRATIC whenever it fails to match. A token
+ * of the shape `a` + 60 000 `.` + `b` is retried from every start position and
+ * measured ~10 s of CI CPU; the scan below is linear. (Failure is closed either
+ * way — a timed-out gate job is a red check — but the burn is free to avoid.)
+ */
+function trimTokenTail(token: string): string {
+  let end = token.length;
+  while (end > 0 && TOKEN_TAIL_CHARS.has(token[end - 1]!)) end -= 1;
+  return token.slice(0, end);
+}
+
 function approverNamesPrAuthor(approver: string, prAuthor: string | undefined): boolean {
   const author = (prAuthor ?? '').trim().toLowerCase().replace(/^@+/, '');
   if (author.length === 0) return false;
   for (const token of approver.toLowerCase().match(APPROVER_TOKEN_RE) ?? []) {
-    if (token.replace(/[._-]+$/, '') === author) return true;
+    if (trimTokenTail(token) === author) return true;
   }
   return false;
 }
