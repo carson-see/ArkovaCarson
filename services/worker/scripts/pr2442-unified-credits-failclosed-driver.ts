@@ -249,17 +249,28 @@ async function triggerA(db: SupabaseClient, fx: Fixture): Promise<ProbeResult[]>
     ),
   );
 
-  // The 0420 DO block refuses to commit if any org lacks a row. Re-assert it
-  // live: a fail-closed check over an incomplete backfill zeroes real customers.
-  const { data: orphanOrgs, error: orphanError } = await db.rpc('check_unified_credits', {
-    p_org_id: fx.otherOrgId,
-    p_user_id: undefined,
-  });
+  // The 0420 DO block refuses to commit if any org lacks a `unified_credits`
+  // row, because a fail-closed `check_unified_credits` over an incomplete
+  // backfill zeroes real customers. Re-assert that live and by COUNT: every
+  // organization on the rig must be covered except the ONE the driver
+  // deliberately leaves uncovered to drive the miss path above.
+  const { data: allOrgs, error: orgsError } = await db.from('organizations').select('id');
+  const { data: coveredRows, error: creditsError } = await db
+    .from('unified_credits')
+    .select('org_id')
+    .not('org_id', 'is', null);
+  const coveredOrgIds = new Set((coveredRows ?? []).map((r) => (r as { org_id: string }).org_id));
+  const orgsWithNoRow = (allOrgs ?? [])
+    .map((r) => (r as { id: string }).id)
+    .filter((id) => !coveredOrgIds.has(id));
   out.push(
     probe(
       `${TRIGGER_A}_backfill_invariant`,
-      orphanError === null && Array.isArray(orphanOrgs),
-      `backfilled org resolves a row (0420 DO-block invariant): ${JSON.stringify(orphanOrgs)}`,
+      orgsError === null &&
+        creditsError === null &&
+        orgsWithNoRow.length === 1 &&
+        orgsWithNoRow[0] === fx.uncoveredOrgId,
+      `orgs with no unified_credits row: ${orgsWithNoRow.length} (expected exactly 1, the deliberate fixture)`,
     ),
   );
 
@@ -466,16 +477,17 @@ function resolveCredentials(): { url: string; key: string } {
 }
 
 async function resolveFixture(db: SupabaseClient): Promise<Fixture> {
+  // `organizations` has legal_name / display_name — there is no `name` column.
   const { data, error } = await db
     .from('organizations')
-    .select('id, name')
-    .ilike('name', `${FIXTURE_PREFIX}%`)
-    .order('name', { ascending: true });
+    .select('id, display_name')
+    .ilike('display_name', `${FIXTURE_PREFIX}%`)
+    .order('display_name', { ascending: true });
   if (error) throw new Error('could not resolve the driver fixture organizations');
-  const rows = (data ?? []) as Array<{ id: string; name: string }>;
+  const rows = (data ?? []) as Array<{ id: string; display_name: string }>;
   if (rows.length < 3) {
     throw new Error(
-      `driver fixture incomplete: expected 3 organizations named ${FIXTURE_PREFIX}-*, found ${rows.length}`,
+      `driver fixture incomplete: expected 3 organizations with display_name ${FIXTURE_PREFIX}-*, found ${rows.length}`,
     );
   }
   return { coveredOrgId: rows[0].id, uncoveredOrgId: rows[1].id, otherOrgId: rows[2].id };
