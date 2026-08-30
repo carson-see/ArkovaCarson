@@ -24,6 +24,8 @@ import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { DataErrorBanner } from '@/components/DataErrorBanner';
+import { DATA_ERROR_LABELS, TOAST } from '@/lib/copy';
 
 interface VaultDashboardProps {
   onSignOut: () => void;
@@ -33,7 +35,7 @@ interface VaultDashboardProps {
 export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultDashboardProps>) {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading, updateProfile } = useProfile();
-  const { records, loading: recordsLoading, refreshAnchors } = useAnchors();
+  const { records, loading: recordsLoading, error: recordsError, refreshAnchors } = useAnchors();
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
   const [secureDialogOpen, setSecureDialogOpen] = useState(false);
 
@@ -211,7 +213,21 @@ export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultD
         </CardHeader>
         <Separator />
         <CardContent className="pt-0">
-          {!loading && records.length === 0 ? (
+          {/* SCRUM-3532 — a failed anchors fetch used to fall through to the
+              "No records yet" onboarding empty state. Surface it via the
+              canonical DataErrorBanner instead (generic copy only — never the
+              raw PostgREST/Supabase error text, §1.4). Stale records from a
+              previous successful fetch stay visible below the banner. */}
+          {recordsError && !recordsLoading && (
+            <DataErrorBanner
+              data-testid="records-fetch-error-banner"
+              title={DATA_ERROR_LABELS.RECORDS_FETCH_FAILED_TITLE}
+              message={TOAST.RECORDS_FETCH_FAILED}
+              onRetry={() => void refreshAnchors()}
+              spacing="mb-3"
+            />
+          )}
+          {!loading && records.length === 0 && !recordsError ? (
             <EmptyState
               title="No records yet"
               description="Secure your first document to create a permanent, tamper-proof record. Your documents never leave your device."
