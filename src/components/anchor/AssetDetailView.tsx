@@ -391,6 +391,36 @@ function buildDocusignMetadataHref(metaKey: string, value: unknown, env: Docusig
   return null;
 }
 
+interface DocusignLinkChipProps {
+  href: string;
+  testId: string;
+  children: ReactNode;
+}
+
+/**
+ * Shared link markup for a DocuSign deep-link value — used by both
+ * `MetadataRow` (account_id/envelope_id) and `DocusignSignerRows` (signer
+ * GUIDs), which were byte-identical apart from href/data-testid/children.
+ * Matches the `CtdlDataLink`/Network-Receipt precedent: `ExternalLink`
+ * icon, `target="_blank" rel="noopener noreferrer"`,
+ * `text-primary hover:underline font-mono`. Pure markup extraction — no
+ * rendering-output change.
+ */
+function DocusignLinkChip({ href, testId, children }: Readonly<DocusignLinkChipProps>) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-xs text-primary hover:underline font-mono break-all inline-flex items-center gap-1"
+      data-testid={testId}
+    >
+      {children}
+      <ExternalLink className="h-3 w-3 shrink-0" />
+    </a>
+  );
+}
+
 interface MetadataRowProps {
   metaKey: string;
   value: unknown;
@@ -416,16 +446,9 @@ function MetadataRow({ metaKey, value, isDocusign, docusignEnv }: Readonly<Metad
     <div className="flex gap-4">
       <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">{metaKey.replace(/_/g, ' ')}:</span>
       {href ? (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs text-primary hover:underline font-mono break-all inline-flex items-center gap-1"
-          data-testid={testId}
-        >
+        <DocusignLinkChip href={href} testId={testId}>
           {String(value)}
-          <ExternalLink className="h-3 w-3 shrink-0" />
-        </a>
+        </DocusignLinkChip>
       ) : (
         <span className="text-xs font-mono break-all">
           {typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—')}
@@ -503,16 +526,9 @@ function DocusignSignerRows({ signers, env }: Readonly<DocusignSignerRowsProps>)
                   {DOCUSIGN_RECORD_LINKS_LABELS.SIGNER_PREFIX} {index + 1} · {DOCUSIGN_RECORD_LINKS_LABELS.VERIFIED_VIA_DOCUSIGN}
                 </p>
                 {href ? (
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-primary hover:underline font-mono break-all inline-flex items-center gap-1"
-                    data-testid={`docusign-signer-link-${index}`}
-                  >
+                  <DocusignLinkChip href={href} testId={`docusign-signer-link-${index}`}>
                     {guid}
-                    <ExternalLink className="h-3 w-3 shrink-0" />
-                  </a>
+                  </DocusignLinkChip>
                 ) : (
                   <span
                     className="text-xs font-mono break-all text-muted-foreground"
