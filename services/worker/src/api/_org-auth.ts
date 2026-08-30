@@ -23,7 +23,7 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
-interface CallerProfile {
+export interface CallerProfile {
   org_id: string | null;
   role: string | null;
   is_platform_admin: boolean | null;
@@ -70,6 +70,21 @@ async function loadCallerProfile(
 export async function getCallerProfile(userId: string): Promise<CallerProfile | null> {
   const { profile } = await loadCallerProfile(userId);
   return profile;
+}
+
+/**
+ * `*Result` sibling of `getCallerProfile`: the same single profile fetch, but
+ * surfacing whether the lookup hit a DB/operational error so a caller can
+ * distinguish "this user genuinely has no profile row" (→ 403) from "we could
+ * not find out" (→ 500). `{ value: null, error: false }` is the true negative.
+ *
+ * Added for `middleware/requireScopeAnyAuth.ts`, which derives a JWT caller's
+ * scope grant from their role and must NOT treat a transient lookup failure as
+ * an empty (or full) grant.
+ */
+export async function getCallerProfileResult(userId: string): Promise<OrgAuthResult<CallerProfile | null>> {
+  const { profile, error } = await loadCallerProfile(userId);
+  return { value: profile, error };
 }
 
 /**

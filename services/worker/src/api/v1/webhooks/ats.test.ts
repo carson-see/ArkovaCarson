@@ -352,3 +352,124 @@ describe('POST /webhooks/ats/:provider/:integrationId', () => {
     expect(res.status).toBe(202);
   });
 });
+
+/**
+ * SCRUM-3479 / AUDIT-0424-10 — same compensating-delete rule as the Checkr and
+ * Middesk handlers: the replay nonce is committed BEFORE the attestation
+ * lookup runs, so an un-compensated failure in that lookup is unrecoverable
+ * rather than retryable. The provider re-delivers, the insert hits the
+ * `(provider, integration_id, signature)` UNIQUE violation, and the handler
+ * answers `200 {duplicate:true}` — so the verification response this webhook
+ * exists to produce is never delivered, and the provider is told it succeeded.
+ */
+describe('SCRUM-3479: ATS releases the replay nonce on post-nonce failure', () => {
+  /**
+   * `ats_webhook_nonces` is deduped on the composite UNIQUE key
+   * `(provider, integration_id, signature)`, so the release must filter on all
+   * THREE columns. A narrower filter would delete another integration's — or
+   * another delivery's — nonce and silently disarm its replay protection.
+   */
+  function nonceTableMock(insertError: { code?: string } | null = null) {
+    const filters: Array<[string, unknown]> = [];
+    const makeEq = (): ((col: string, val: unknown) => unknown) =>
+      vi.fn((col: string, val: unknown) => {
+        filters.push([col, val]);
+        const thenable = Promise.resolve({ error: null }) as Promise<{ error: unknown }> & {
+          eq: unknown;
+        };
+        thenable.eq = makeEq();
+        return thenable;
+      });
+    const deleteFn = vi.fn(() => ({ eq: makeEq() }));
+    return {
+      filters,
+      deleteFn,
+      table: { insert: vi.fn().mockResolvedValue({ error: insertError }), delete: deleteFn },
+    };
+  }
+
+  function throwingAttestationLookup() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const chain: any = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.or = vi.fn(() => {
+      throw new Error('connection terminated unexpectedly');
+    });
+    return chain;
+  }
+
+  const BODY = JSON.stringify({
+    action: 'candidate.hired',
+    payload: {
+      candidate: { first_name: 'A', last_name: 'B', email_addresses: [{ value: 'a@b' }] },
+      stage: { name: 'X' },
+    },
+  });
+
+  it('releases the nonce when post-nonce processing throws', async () => {
+    const sig = signPayload(BODY);
+    const nonce = nonceTableMock(null);
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: INTEGRATION_ID, org_id: 'org-1', webhook_secret: WEBHOOK_SECRET }),
+    );
+    dbFromMock.mockReturnValueOnce(nonce.table);
+    dbFromMock.mockReturnValueOnce(throwingAttestationLookup());
+    // The release re-enters `.from('ats_webhook_nonces')`.
+    dbFromMock.mockReturnValueOnce(nonce.table);
+
+    const res = await request(createApp())
+      .post(`/webhooks/ats/greenhouse/${INTEGRATION_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-Greenhouse-Signature', sig)
+      .send(BODY);
+
+    expect(res.status).toBe(500);
+    expect(nonce.filters).toEqual([
+      ['provider', 'greenhouse'],
+      ['integration_id', INTEGRATION_ID],
+      ['signature', sig],
+    ]);
+  });
+
+  it('does NOT release the nonce on success (replay protection intact)', async () => {
+    const sig = signPayload(BODY);
+    const nonce = nonceTableMock(null);
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: INTEGRATION_ID, org_id: 'org-1', webhook_secret: WEBHOOK_SECRET }),
+    );
+    dbFromMock.mockReturnValueOnce(nonce.table);
+    dbFromMock.mockReturnValueOnce(attestationLookup([]));
+
+    const res = await request(createApp())
+      .post(`/webhooks/ats/greenhouse/${INTEGRATION_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-Greenhouse-Signature', sig)
+      .send(BODY);
+
+    expect(res.status).toBe(202);
+    expect(nonce.deleteFn).not.toHaveBeenCalled();
+  });
+
+  it('does NOT delete a nonce this delivery never committed (pre-nonce failure)', async () => {
+    const sig = signPayload(BODY);
+    const nonce = nonceTableMock(null);
+    // The integration lookup itself throws, before any nonce write. A row
+    // matching this key could only be an EARLIER delivery's.
+    dbFromMock.mockReturnValueOnce({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockRejectedValue(new Error('lookup boom')),
+    });
+    dbFromMock.mockReturnValue(nonce.table);
+
+    const res = await request(createApp())
+      .post(`/webhooks/ats/greenhouse/${INTEGRATION_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-Greenhouse-Signature', sig)
+      .send(BODY);
+
+    expect(res.status).toBe(500);
+    expect(nonce.deleteFn).not.toHaveBeenCalled();
+  });
+});
