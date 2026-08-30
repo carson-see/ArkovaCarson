@@ -21,8 +21,7 @@ import {
   type ProofAvailability,
 } from '../../constants/proofAvailability.js';
 import {
-  connectorFingerprintRederivabilityFields,
-  resolveConnectorFetchSource,
+  connectorFingerprintRederivabilityFieldsFor,
   type FingerprintRederivability,
 } from '../../constants/connectorFingerprint.js';
 import { fromByteaHex } from '../../utils/anchorProofs.js';
@@ -607,13 +606,13 @@ export function buildProofResponse(
     verified: inclusion.valid,
     // PROOF-05 (SCRUM-2338): additive, nullable self-contained bundle.
     proof_bundle: buildProofBundle(anchor, proofSource, leafCount),
-    // BUG-2026-08-13-010 (§1.5/§1.6A): connector-sourced fingerprints attest
-    // fetch-time bytes, not source re-derivability. Response-level only —
-    // never inside the (signable) proof_bundle. Spread emits the indivisible
-    // pair for a measured connector marker and NOTHING otherwise.
-    ...(resolveConnectorFetchSource(anchor.metadata)
-      ? connectorFingerprintRederivabilityFields()
-      : {}),
+    // BUG-2026-08-13-010 (§1.5/§1.6A): a server-FETCHED connector fingerprint
+    // attests fetch-time bytes, not source re-derivability. Response-level only —
+    // never inside the (signable) proof_bundle. Gated on positive fetch evidence
+    // (connector_artifact_id, via connectorFingerprintRederivabilityFieldsFor):
+    // the declared-hash rules path shares connector_source='docusign' but never
+    // fetched, so it emits NOTHING here rather than a false "Measured…" claim.
+    ...connectorFingerprintRederivabilityFieldsFor(anchor.metadata),
   };
 }
 

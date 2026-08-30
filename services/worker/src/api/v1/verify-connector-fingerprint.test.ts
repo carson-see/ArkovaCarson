@@ -42,7 +42,9 @@ import {
   FINGERPRINT_REDERIVABILITY_NOTE,
   CONNECTOR_FETCH_SOURCE_MARKERS,
   resolveConnectorFetchSource,
+  isServerFetchedConnectorAnchor,
   connectorFingerprintRederivabilityFields,
+  connectorFingerprintRederivabilityFieldsFor,
 } from '../../constants/connectorFingerprint.js';
 import { buildMerkleTree } from '../../utils/merkle.js';
 import { buildProofResponse, type MerkleProofResponse } from './verify-proof.js';
@@ -142,16 +144,101 @@ describe('resolveConnectorFetchSource — closed marker set, never free text', (
   });
 });
 
-describe('mapAnchorRow — connector_source derivation', () => {
-  it('derives connector_source from server-written metadata', () => {
-    const anchor = mapAnchorRow(createRow({ metadata: { connector_source: 'docusign' } }));
+describe('isServerFetchedConnectorAnchor — fetch marker AND connector_artifact_id proof', () => {
+  it('true only when a recognised fetch marker AND a connector_artifact_id are both present', () => {
+    expect(
+      isServerFetchedConnectorAnchor({ connector_source: 'docusign', connector_artifact_id: 'cart_1' }),
+    ).toBe(true);
+    expect(
+      isServerFetchedConnectorAnchor({ connector_source: 'google_drive', connector_artifact_id: 'cart_2' }),
+    ).toBe(true);
+  });
+
+  it('false for a DECLARED-hash anchor — fetch marker but NO connector_artifact_id (the dispatcher path)', () => {
+    expect(isServerFetchedConnectorAnchor({ connector_source: 'docusign' })).toBe(false);
+    expect(isServerFetchedConnectorAnchor({ connector_source: 'connector' })).toBe(false);
+    // empty / non-string artifact id is not proof of a fetch
+    expect(isServerFetchedConnectorAnchor({ connector_source: 'docusign', connector_artifact_id: '' })).toBe(false);
+    expect(isServerFetchedConnectorAnchor({ connector_source: 'docusign', connector_artifact_id: 42 })).toBe(false);
+  });
+
+  it('false for upload-origin markers even with an artifact id (user-supplied bytes, reproducible)', () => {
+    expect(
+      isServerFetchedConnectorAnchor({ connector_source: 'manual_upload', connector_artifact_id: 'cart_3' }),
+    ).toBe(false);
+  });
+
+  it('false for non-connector / missing metadata', () => {
+    expect(isServerFetchedConnectorAnchor({ connector_artifact_id: 'cart_4' })).toBe(false);
+    expect(isServerFetchedConnectorAnchor(null)).toBe(false);
+    expect(isServerFetchedConnectorAnchor(undefined)).toBe(false);
+    expect(isServerFetchedConnectorAnchor({})).toBe(false);
+  });
+});
+
+describe('connectorFingerprintRederivabilityFieldsFor — the single gated emission helper', () => {
+  it('returns the indivisible pair for a fetched connector anchor', () => {
+    const fields = connectorFingerprintRederivabilityFieldsFor({
+      connector_source: 'docusign',
+      connector_artifact_id: 'cart_1',
+    }) as Record<string, string>;
+    expect(fields.fingerprint_rederivability).toBe(FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT);
+    expect(fields.fingerprint_rederivability_note).toBe(
+      FINGERPRINT_REDERIVABILITY_NOTE[FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT],
+    );
+  });
+
+  it('returns an EMPTY object (omit, never null) for a declared-hash anchor', () => {
+    expect(connectorFingerprintRederivabilityFieldsFor({ connector_source: 'docusign' })).toEqual({});
+  });
+
+  it('returns an EMPTY object for a non-connector anchor', () => {
+    expect(connectorFingerprintRederivabilityFieldsFor(null)).toEqual({});
+    expect(connectorFingerprintRederivabilityFieldsFor({})).toEqual({});
+  });
+});
+
+describe('verify path: declared-hash anchor omits the caveat end-to-end (mapAnchorRow → buildVerificationResult)', () => {
+  it('a declared-hash anchor (marker, no connector_artifact_id) yields NO re-derivability pair', () => {
+    const result = buildVerificationResult(
+      mapAnchorRow(createRow({ metadata: { connector_source: 'docusign' } })),
+    );
+    expect('fingerprint_rederivability' in result).toBe(false);
+    expect('fingerprint_rederivability_note' in result).toBe(false);
+  });
+
+  it('a server-fetched anchor (marker + connector_artifact_id) yields the pair', () => {
+    const result = buildVerificationResult(
+      mapAnchorRow(
+        createRow({ metadata: { connector_source: 'docusign', connector_artifact_id: 'cart_1' } }),
+      ),
+    );
+    expect(result.fingerprint_rederivability).toBe(FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT);
+  });
+});
+
+describe('mapAnchorRow — connector_source derivation (fetch-evidence gated)', () => {
+  it('derives connector_source for a server-FETCHED anchor (marker + connector_artifact_id)', () => {
+    const anchor = mapAnchorRow(
+      createRow({ metadata: { connector_source: 'docusign', connector_artifact_id: 'cart_1' } }),
+    );
     expect(anchor.connector_source).toBe('docusign');
+  });
+
+  it('yields null for a DECLARED-hash anchor (marker present, NO connector_artifact_id)', () => {
+    // rule-action-dispatcher.ts writes connector_source='docusign' but never
+    // fetches — so it must not key the FETCH_TIME_SNAPSHOT "Measured…" claim.
+    expect(
+      mapAnchorRow(createRow({ metadata: { connector_source: 'docusign' } })).connector_source,
+    ).toBeNull();
   });
 
   it('yields null for non-connector anchors and unrecognised markers', () => {
     expect(mapAnchorRow(createRow()).connector_source).toBeNull();
     expect(
-      mapAnchorRow(createRow({ metadata: { connector_source: 'manual_upload' } })).connector_source,
+      mapAnchorRow(
+        createRow({ metadata: { connector_source: 'manual_upload', connector_artifact_id: 'cart_2' } }),
+      ).connector_source,
     ).toBeNull();
   });
 });
@@ -264,9 +351,9 @@ describe('buildProofResponse — the /proof response carries the pair; the signe
     metadata: null as Record<string, unknown> | null,
   };
 
-  it('emits the pair top-level for a connector-sourced anchor', () => {
+  it('emits the pair top-level for a server-fetched connector anchor', () => {
     const resp = buildProofResponse(
-      { ...baseAnchor, metadata: { connector_source: 'docusign' } },
+      { ...baseAnchor, metadata: { connector_source: 'docusign', connector_artifact_id: 'cart_1' } },
       storedProof,
       3,
     ) as MerkleProofResponse;
@@ -279,7 +366,7 @@ describe('buildProofResponse — the /proof response carries the pair; the signe
 
   it('never places the pair inside the signed proof_bundle', () => {
     const resp = buildProofResponse(
-      { ...baseAnchor, metadata: { connector_source: 'docusign' } },
+      { ...baseAnchor, metadata: { connector_source: 'docusign', connector_artifact_id: 'cart_1' } },
       storedProof,
       3,
     ) as MerkleProofResponse;
@@ -303,5 +390,28 @@ describe('buildProofResponse — the /proof response carries the pair; the signe
       3,
     ) as MerkleProofResponse;
     expect('fingerprint_rederivability' in resp).toBe(false);
+  });
+
+  // Declared-hash rules path (rule-action-dispatcher.ts): connector_source is a
+  // fetch marker BUT there is no connector_artifact_id — the hash was DECLARED by
+  // DocuSign, never fetched/measured by Arkova. FETCH_TIME_SNAPSHOT ("Measured:
+  // Arkova computed…") would be a false measurement claim (§1.5 / R-7). Silence.
+  it('omits the pair for a declared-hash anchor (connector marker, NO connector_artifact_id)', () => {
+    const resp = buildProofResponse(
+      { ...baseAnchor, metadata: { connector_source: 'docusign' } },
+      storedProof,
+      3,
+    ) as MerkleProofResponse;
+    expect('fingerprint_rederivability' in resp).toBe(false);
+    expect('fingerprint_rederivability_note' in resp).toBe(false);
+  });
+
+  it('emits the pair for a server-FETCHED anchor (connector marker + connector_artifact_id)', () => {
+    const resp = buildProofResponse(
+      { ...baseAnchor, metadata: { connector_source: 'docusign', connector_artifact_id: 'cart_1' } },
+      storedProof,
+      3,
+    ) as MerkleProofResponse;
+    expect(resp.fingerprint_rederivability).toBe(FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT);
   });
 });

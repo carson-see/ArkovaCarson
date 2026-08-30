@@ -149,3 +149,53 @@ export function connectorFingerprintRederivabilityFields(): FingerprintRederivab
       FINGERPRINT_REDERIVABILITY_NOTE[FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT],
   };
 }
+
+/**
+ * Does this anchor's metadata prove an actual server-side connector FETCH
+ * (§1.6A) produced the fingerprint — the ONLY basis on which a
+ * `FETCH_TIME_SNAPSHOT` ("Measured: Arkova computed…") claim is honest?
+ *
+ * `connector_source` ALONE is NOT sufficient and keying the measurement claim
+ * on it was a §1.5 / R-7 over-claim: TWO paths write `connector_source='docusign'`
+ * — the server-fetch drain (`jobs/connector-artifact-drain.ts`, §1.6A: fetches
+ * + hashes the real bytes → MEASURED) and the declared-hash rules dispatcher
+ * (`jobs/rule-action-dispatcher.ts`, which anchors a hash DocuSign DECLARED in
+ * the trigger payload and never fetches anything → ASSERTED, see
+ * `jobs/docusign-anchor-reconciliation.ts`). Emitting FETCH_TIME_SNAPSHOT for
+ * the latter tells a verifier Arkova computed a fingerprint it never computed.
+ *
+ * The discriminator is `connector_artifact_id`: the drain stamps it on every
+ * anchor it materializes from a fetched `connector_artifact` row; the declared-
+ * hash dispatcher never does. It is a service_role-only, write-authority-guarded
+ * key (mig 0384 / R1 guard family), so a client cannot forge it. Requiring BOTH
+ * a recognised fetch marker AND this stamp means the measurement claim rides
+ * positive proof of the fetch, not an ambiguous source string.
+ *
+ * The declared-hash path's OWN honest re-derivability class (`DECLARED_UNVERIFIED`)
+ * is tracked separately (SCRUM-3825); until it ships, a declared anchor emits NO
+ * re-derivability statement — silence is not a claim (§1.5).
+ */
+export function isServerFetchedConnectorAnchor(
+  metadata: Record<string, unknown> | null | undefined,
+): boolean {
+  if (resolveConnectorFetchSource(metadata) === null) return false;
+  const artifactId = metadata?.connector_artifact_id;
+  return typeof artifactId === 'string' && artifactId.length > 0;
+}
+
+/**
+ * The re-derivability field pair for an anchor's metadata, gated on ACTUAL
+ * server-fetch evidence ({@link isServerFetchedConnectorAnchor}). Returns the
+ * indivisible class+note pair for a genuinely fetched connector anchor, and an
+ * EMPTY object (omit — never null, frozen schema §6/§1.8) for everything else,
+ * including the declared-hash rules path. This is the ONE gate every emission
+ * site must route through so the "Measured" claim can never outrun the fetch
+ * that justifies it.
+ */
+export function connectorFingerprintRederivabilityFieldsFor(
+  metadata: Record<string, unknown> | null | undefined,
+): FingerprintRederivabilityFields | Record<string, never> {
+  return isServerFetchedConnectorAnchor(metadata)
+    ? connectorFingerprintRederivabilityFields()
+    : {};
+}

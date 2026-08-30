@@ -1031,3 +1031,13 @@ alongside is now checked, and the guard cannot be mounted as a no-op.
 
 **Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
 guard and a scope guard). The structural ratchet above covers these four mounts only.
+
+## 2026-08-30 — `fingerprint_rederivability` (FETCH_TIME_SNAPSHOT) is gated on PROOF of a fetch
+
+`verify.ts` (`mapAnchorRow`) and `verify-proof.ts` no longer emit the fetch-time "Measured…" caveat on
+`connector_source` alone. The declared-hash rules dispatcher writes the same `connector_source='docusign'`
+without ever fetching, so both now gate on `isServerFetchedConnectorAnchor(metadata)` /
+`connectorFingerprintRederivabilityFieldsFor(metadata)` (requires `connector_artifact_id`, stamped only by
+`connector-artifact-drain.ts`). `mapAnchorRow` sets `connector_source` to null for a declared anchor, so the
+existing `isConnectorFetchSource(anchor.connector_source)` emission gate stays silent. See
+`constants/agents.md` (2026-08-30), SCRUM-3299 / SCRUM-3825.

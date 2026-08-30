@@ -205,6 +205,12 @@ beforeEach(() => {
       revocation_reason: null,
       parent_anchor_id: null,
       version_number: 1,
+      // Default = the realistic proof-packet case: the anchor is resolved via
+      // metadata->>external_file_id, a key the DECLARED-hash rules dispatcher
+      // sets. connector_source='docusign' but NO connector_artifact_id → a hash
+      // DocuSign declared, not one Arkova fetched. Per-test overrides below add
+      // connector_artifact_id to exercise the genuinely-fetched case.
+      metadata: { connector_source: 'docusign', external_file_id: 'env-123' },
     },
     error: null,
   });
@@ -254,12 +260,42 @@ describe('handleProofPacketExport (SCRUM-1149)', () => {
     expect(packet.actor.user_id).toBe(USER_ID);
   });
 
-  it('states the connector fetch-time fingerprint caveat on the anchor receipt (BUG-2026-08-13-010, §1.5/§1.6A)', async () => {
-    // Every packet is connector-execution-scoped by construction (the anchor is
-    // resolved via metadata->>external_file_id), so an anchored packet must
-    // carry the re-derivability statement: the fingerprint attests the exact
-    // bytes fetched from the connector at fetch time, NOT that re-fetching the
-    // source document reproduces it.
+  it('OMITS the connector fetch-time caveat for a DECLARED-hash packet anchor (BUG-2026-08-13-010, §1.5/§1.6A)', async () => {
+    // A packet anchor is resolved via metadata->>external_file_id — a key the
+    // DECLARED-hash rules dispatcher sets — so it is frequently a hash DocuSign
+    // declared, NOT one Arkova fetched. The default fixture is exactly that
+    // (connector_source='docusign', no connector_artifact_id). The fetch-time
+    // "Measured: Arkova computed…" caveat must NOT be asserted to an auditor here.
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    expect(ctx.status).toHaveBeenCalledWith(200);
+    const packet = ctx.body as { anchor_receipt: Record<string, unknown> };
+    expect('fingerprint_rederivability' in packet.anchor_receipt).toBe(false);
+    expect('fingerprint_rederivability_note' in packet.anchor_receipt).toBe(false);
+  });
+
+  it('states the connector fetch-time caveat ONLY for a genuinely server-FETCHED packet anchor (connector_artifact_id present)', async () => {
+    anchorMaybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'aid_main',
+        public_id: 'pid_acmemsa1',
+        status: 'SECURED',
+        fingerprint: 'sha256:abc',
+        bitcoin_tx_id: 'txid_abc',
+        block_height: 800001,
+        revoked_at: null,
+        revocation_reason: null,
+        parent_anchor_id: null,
+        version_number: 1,
+        // Drain-materialized (§1.6A fetch): connector_artifact_id is the proof.
+        metadata: {
+          connector_source: 'docusign',
+          external_file_id: 'env-123',
+          connector_artifact_id: 'cart_1',
+        },
+      },
+      error: null,
+    });
     const ctx = buildRes();
     await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
     expect(ctx.status).toHaveBeenCalledWith(200);

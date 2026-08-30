@@ -19,7 +19,7 @@ import type { Request, Response } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getCallerOrgId } from './_org-auth.js';
-import { connectorFingerprintRederivabilityFields } from '../constants/connectorFingerprint.js';
+import { connectorFingerprintRederivabilityFieldsFor } from '../constants/connectorFingerprint.js';
 
 export const PROOF_PACKET_SCHEMA_VERSION = 1;
 const VERIFICATION_BASE_URL = process.env.PROOF_PACKET_VERIFY_BASE_URL ?? 'https://app.arkova.io/verify';
@@ -72,6 +72,9 @@ interface AnchorRow {
   revocation_reason: string | null;
   parent_anchor_id: string | null;
   version_number: number;
+  // Needed to gate the fetch-time re-derivability caveat on POSITIVE server-fetch
+  // evidence (connector_artifact_id) rather than emitting it for every packet.
+  metadata: Record<string, unknown> | null;
 }
 
 interface LineagePreviousEntry {
@@ -146,7 +149,7 @@ async function loadAnchor(externalFileId: string | null, orgId: string): Promise
   const { data, error } = await (db as any)
     .from('anchors')
     .select(
-      'id, public_id, status, fingerprint, bitcoin_tx_id, block_height, revoked_at, revocation_reason, parent_anchor_id, version_number',
+      'id, public_id, status, fingerprint, bitcoin_tx_id, block_height, revoked_at, revocation_reason, parent_anchor_id, version_number, metadata',
     )
     .eq('org_id', orgId)
     .eq('metadata->>external_file_id', externalFileId)
@@ -351,15 +354,15 @@ export async function handleProofPacketExport(
           bitcoin_tx_id: anchor.bitcoin_tx_id,
           block_height: anchor.block_height,
           verification_uri: verificationUri,
-          // BUG-2026-08-13-010 (§1.5/§1.6A): every packet anchor is
-          // connector-materialized BY CONSTRUCTION (resolved via
-          // metadata->>external_file_id), so the fingerprint attests the exact
-          // bytes fetched from the connector at fetch time — NOT that
-          // re-fetching the source document reproduces it (source systems may
-          // re-render per request). The auditor challenge this packet answers
-          // is exactly the flow where someone re-downloads from the source and
-          // compares — state the caveat where the fingerprint travels.
-          ...connectorFingerprintRederivabilityFields(),
+          // BUG-2026-08-13-010 (§1.5/§1.6A) + declared-hash fix: a packet anchor
+          // is resolved via metadata->>external_file_id — a key the DECLARED-hash
+          // rules path (rule-action-dispatcher.ts) sets, so a packet anchor is
+          // frequently a DECLARED hash that Arkova never fetched. Emit the
+          // fetch-time caveat ONLY on positive server-fetch evidence
+          // (connector_artifact_id, stamped only by connector-artifact-drain.ts);
+          // for a declared anchor this omits the pair rather than asserting the
+          // false "Measured: Arkova computed…" claim to an auditor (§1.5 / R-7).
+          ...connectorFingerprintRederivabilityFieldsFor(anchor.metadata),
         }
       : {
           public_id: null,
