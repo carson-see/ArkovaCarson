@@ -32,7 +32,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { createServiceClient, createAnonClient, type TypedClient } from '../../src/tests/rls/helpers';
+import { createServiceClient, createAnonClient } from '../../src/tests/rls/helpers';
 
 interface Contract {
   academic_record_credential_types: string[];

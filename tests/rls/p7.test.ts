@@ -48,11 +48,11 @@ describe('P7-S3: Billing Event Idempotency', () => {
     const stripeEventId = `evt_test_${Date.now()}`;
 
     // First insert should succeed
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     // SCRUM-2971: billing_events.idempotency_key is NOT NULL for new rows
     // (migration 0368). Mirrors stripe/handlers.ts::recordBillingAudit,
     // which sets idempotency_key := eventId for stripe_event_id-keyed
     // writes — the stripe event id already IS the idempotency signal here.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: firstError } = await (serviceClient as any).from('billing_events').insert({
       stripe_event_id: stripeEventId,
       idempotency_key: stripeEventId,
@@ -191,7 +191,7 @@ describe('P7-S6: Anchor Status Protection', () => {
     if (testAnchorId) {
       await serviceClient.from('anchors').delete().eq('id', testAnchorId);
     }
-    await userClient.auth.signOut();
+    await userClient.auth.signOut({ scope: 'local' });
   });
 
   it('user cannot insert anchor with SECURED status', async () => {
@@ -345,7 +345,7 @@ describe('TLA-01: credential_type Immutability After PENDING', () => {
     if (securedAnchorId) {
       await serviceClient.from('anchors').delete().eq('id', securedAnchorId);
     }
-    await userClient.auth.signOut();
+    await userClient.auth.signOut({ scope: 'local' });
   });
 
   it('PENDING anchor allows credential_type change', async () => {
@@ -405,8 +405,8 @@ describe('P7-S14: Switchboard Flags', () => {
   });
 
   afterAll(async () => {
-    await userClient.auth.signOut();
-    await adminClient.auth.signOut();
+    await userClient.auth.signOut({ scope: 'local' });
+    await adminClient.auth.signOut({ scope: 'local' });
   });
 
   it('get_flag returns flag value', async () => {
@@ -769,8 +769,8 @@ describe('P7-S10: Webhook Endpoint Security', () => {
   });
 
   afterAll(async () => {
-    await adminClient.auth.signOut();
-    await userClient.auth.signOut();
+    await adminClient.auth.signOut({ scope: 'local' });
+    await userClient.auth.signOut({ scope: 'local' });
   });
 
   it('ORG_ADMIN can create webhook endpoints for their org', async () => {
