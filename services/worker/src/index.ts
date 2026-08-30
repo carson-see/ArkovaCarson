@@ -54,6 +54,7 @@ import { atsWebhookRouter } from './api/v1/webhooks/ats.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
 import { globalErrorHandler } from './routes/errorHandler.js';
 import { buildHealthResponse, isDetailedHealthAuthorized, type HealthCheckDeps } from './routes/health.js';
+import { createAnchoringRpcMonitor, probeAnchoringRpcOnce } from './routes/anchoring-rpc-probe.js';
 import { setupScheduledJobs } from './routes/scheduled.js';
 import { setupGracefulShutdown, trackOperation } from './routes/lifecycle.js';
 import { startHeapMonitor, logHeapStatus } from './utils/heapMonitor.js';
@@ -89,6 +90,26 @@ const feeEstimatorInstance = createFeeEstimator({
   mempoolApiUrl: config.mempoolApiUrl,
   network: config.bitcoinNetwork,
   fallbackRate: config.bitcoinFallbackFeeRate,
+});
+
+// SCRUM-3374 — anchoring RPC credential monitor singleton.
+//
+// Fixes a verified prod defect (2026-08-30): the GetBlock access token was
+// revoked and answered HTTP 401 "Unknown token", yet /health reported
+// `"anchoring":"ok"` because that value was a hardcoded literal — nothing in
+// the worker ever verified the credential.
+//
+// One monitor per process, mirroring `feeEstimatorInstance` above. It holds a
+// 60s TTL cache and refreshes in the BACKGROUND, so `read()` below is a
+// synchronous snapshot: /health never awaits GetBlock, and a provider outage
+// costs 0ms of health latency instead of risking probe timeouts. At
+// --min-instances 2 this is at most ~2 provider calls per minute.
+const anchoringRpcMonitor = createAnchoringRpcMonitor({
+  probe: () =>
+    probeAnchoringRpcOnce({
+      rpcUrl: config.bitcoinRpcUrl,
+      rpcAuth: config.bitcoinRpcAuth,
+    }),
 });
 
 const app = express();
@@ -199,6 +220,9 @@ const healthCheckHandler = async (req: Request, res: Response) => {
         return null;
       }
     },
+    // SCRUM-3374: cached, synchronous, non-blocking snapshot — see the
+    // monitor singleton above. Never performs I/O on the request path.
+    getAnchoringRpcStatus: () => anchoringRpcMonitor.read(),
   };
 
   const result = await buildHealthResponse(deps, detailed, { detailDenied });

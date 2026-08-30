@@ -16,6 +16,10 @@ import { timingSafeEqual } from 'node:crypto';
 
 import { getBuildSha } from '../utils/buildInfo.js';
 import { evaluateBatchDrainHealth, type BatchDrainReason } from './batch-drain-deadman.js';
+import {
+  evaluateAnchoringRpcHealth,
+  type AnchoringRpcProbeResult,
+} from './anchoring-rpc-probe.js';
 
 /**
  * SCRUM-2653 — authorization for the `?detailed=true` health view.
@@ -114,6 +118,18 @@ export interface HealthCheckDeps {
    */
   getOldestPendingAnchor?: () => Promise<{ data: Array<{ created_at: string }> | null; error: { message: string } | null }>;
   getCurrentFeeRate: () => Promise<number | null>;
+  /**
+   * SCRUM-3374 — current cached verdict of the anchoring RPC credential probe.
+   *
+   * SYNCHRONOUS and non-blocking by contract: the implementation
+   * (`createAnchoringRpcMonitor`) returns a TTL-cached snapshot and refreshes
+   * in the background, so /health never waits on the Bitcoin RPC provider and
+   * a provider outage cannot slow, fail, or restart-loop the health endpoint.
+   *
+   * Optional so every existing caller and test mock stays valid; when absent
+   * the check reports `unknown` — never a manufactured `ok`.
+   */
+  getAnchoringRpcStatus?: () => AnchoringRpcProbeResult;
 }
 
 interface HealthResponse {
@@ -195,6 +211,21 @@ export async function buildHealthResponse(
     // otherwise be indistinguishable from a healthy empty-queue flush.
     drainStalled?: boolean;
     drainReason?: BatchDrainReason;
+    /**
+     * SCRUM-3374 — live credential liveness of the Bitcoin RPC provider.
+     * Detailed mode only: `endpoint` reveals which provider host is in use,
+     * which is exactly the class of detail SCRUM-2653 gated off public
+     * /health. The compact view reflects this only through `status`.
+     */
+    rpc?: {
+      state: AnchoringRpcProbeResult['state'];
+      credentialVerified: boolean;
+      endpoint: string | null;
+      checkedAt: string | null;
+      httpStatus?: number;
+      blockHeight?: number | null;
+      message?: string;
+    };
   };
 
   let lastSecuredAt: string | null = null;
@@ -265,14 +296,61 @@ export async function buildHealthResponse(
       })
     : null;
 
+  // ─── Anchoring RPC credential liveness (SCRUM-3374) ───
+  // Closes the defect this endpoint shipped with: `anchoring.status` used to
+  // fall back to the LITERAL 'ok' whenever no drain verdict existed — which is
+  // every compact request, i.e. every monitor, uptime check and deploy gate.
+  // Verified in prod 2026-08-30: the GetBlock token was revoked (HTTP 401
+  // "Unknown token") and /health still served `"anchoring":"ok"`.
+  //
+  // Runs in BOTH modes on purpose — the compact response is the one that was
+  // lying. It is affordable there only because the accessor is a cached,
+  // synchronous, non-blocking snapshot read (see HealthCheckDeps above).
+  const UNPROBED: AnchoringRpcProbeResult = {
+    state: 'unknown',
+    endpoint: null,
+    checkedAtMs: null,
+    message: 'RPC probe not wired',
+  };
+
+  let rpcProbe: AnchoringRpcProbeResult;
+  try {
+    rpcProbe = deps.getAnchoringRpcStatus?.() ?? UNPROBED;
+  } catch {
+    // §1.9: /health must never be made to throw by an enrichment path.
+    rpcProbe = UNPROBED;
+  }
+  const rpcVerdict = evaluateAnchoringRpcHealth(rpcProbe);
+
+  // Independent faults, either of which must be loud; neither cancels the
+  // other out. Both are constrained to the pre-existing 'ok' | 'warning'
+  // vocabulary, because `scripts/staging/targeted/health-batch-drain-deadman.ts`
+  // hard-rejects any other value of `checks.anchoring.status`.
+  const anchoringStatus: 'ok' | 'warning' =
+    drainVerdict?.status === 'warning' || rpcVerdict.status === 'warning' ? 'warning' : 'ok';
+
   const anchoringCheck: AnchoringCheck = {
-    status: drainVerdict?.status ?? 'ok',
+    status: anchoringStatus,
     lastSecuredAt,
     lastBatchAt,
     pendingCount,
     feeRateSatVb,
     ...(drainVerdict
       ? { drainStalled: drainVerdict.stalled, drainReason: drainVerdict.reason }
+      : {}),
+    ...(detailed
+      ? {
+          rpc: {
+            state: rpcVerdict.state,
+            credentialVerified: rpcVerdict.credentialVerified,
+            endpoint: rpcProbe.endpoint,
+            checkedAt:
+              rpcProbe.checkedAtMs === null ? null : new Date(rpcProbe.checkedAtMs).toISOString(),
+            ...(rpcProbe.httpStatus !== undefined ? { httpStatus: rpcProbe.httpStatus } : {}),
+            ...(rpcProbe.blockHeight !== undefined ? { blockHeight: rpcProbe.blockHeight } : {}),
+            ...(rpcProbe.message !== undefined ? { message: rpcProbe.message } : {}),
+          },
+        }
       : {}),
   };
 
