@@ -220,12 +220,12 @@ Connect RAG retrieval to existing Gemini AI processing:
 
 ## WORKSTREAM 4: AGENT SDK & INTEGRATIONS
 
-### PH1-SDK-01: TypeScript SDK (@carsonarkova/sdk)
+### PH1-SDK-01: TypeScript SDK (arkova)
 **Priority:** P1 | **Effort:** 3 days | **Depends on:** PH1-PAY-01
 
 Minimal SDK wrapping the verification API:
 ```typescript
-import { Arkova } from '@carsonarkova/sdk';
+import { Arkova } from 'arkova';
 const arkova = new Arkova({ apiKey: 'ak_...' });
 
 // Anchor
@@ -248,7 +248,7 @@ const result = await arkova.verify(data, receipt);
 - [ ] API key authentication
 - [ ] TypeScript types exported
 - [ ] README with examples
-- [ ] Published to npm (scoped @carsonarkova/sdk)
+- [ ] Published to npm (unscoped `arkova`)
 
 ### PH1-SDK-02: Python SDK (arkova-python)
 **Priority:** P2 | **Effort:** 2 days | **Depends on:** PH1-PAY-01

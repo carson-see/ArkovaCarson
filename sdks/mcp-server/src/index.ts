@@ -57,7 +57,7 @@ async function arkovaFetch(path: string, options: RequestInit = {}): Promise<Res
 export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
     name: 'arkova_verify_credential',
-    description: 'Verify a credential\'s authenticity and Bitcoin anchor status on Arkova. Returns verification result including issuer, credential type, and anchor proof.',
+    description: 'Verify a credential\'s authenticity and network anchor status on Arkova. Returns verification result including issuer, credential type, and anchor proof.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -71,7 +71,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: 'arkova_credential_status',
-    description: 'Get the current status and proof details of a credential, including Bitcoin anchor information and timestamp.',
+    description: 'Get the current status and proof details of a credential, including network anchor information and timestamp.',
     inputSchema: {
       type: 'object',
       properties: {

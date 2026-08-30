@@ -611,15 +611,15 @@ curl -H "X-API-Key: $ARKOVA_API_KEY" \
 **Install:**
 
 ```bash
-npm install @carsonarkova/sdk
+npm install arkova
 # or
-yarn add @carsonarkova/sdk
+yarn add arkova
 ```
 
 **Usage:**
 
 ```typescript
-import { Arkova } from '@carsonarkova/sdk';
+import { Arkova } from 'arkova';
 
 const client = new Arkova({
   apiKey: 'ak_live_your_key_here'
