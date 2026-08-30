@@ -39,7 +39,7 @@ vi.mock('@/hooks/useOrgCpeMemberSummary', () => ({
 }));
 
 vi.mock('@/hooks/useComplianceScore', () => ({
-  useJurisdictionRules: () => ({ jurisdictions: ['US-CA'], industries: ['accounting'] }),
+  useJurisdictionRules: () => ({ rules: [], jurisdictions: ['US-CA'], industries: ['accounting'], loading: false, error: null, refetch: vi.fn() }),
   useComplianceScore: () => ({
     scoreData: {
       score: 90,

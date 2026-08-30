@@ -37,7 +37,8 @@ import {
 } from '@/components/ui/select';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
-import { DASHBOARD_STATS_LABELS, RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS, DISCLAIMER_LABELS, ISSUE_CREDENTIAL_LABELS } from '@/lib/copy';
+import { DASHBOARD_STATS_LABELS, RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS, DISCLAIMER_LABELS, ISSUE_CREDENTIAL_LABELS, DATA_ERROR_LABELS, TOAST } from '@/lib/copy';
+import { DataErrorBanner } from '@/components/DataErrorBanner';
 import { resolveDashboardStatsRequest, resolveDashboardStatsState } from '@/lib/dashboardStats';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
@@ -56,7 +57,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading, updateProfile } = useProfile();
-  const { records, loading: recordsLoading, refreshAnchors } = useAnchors();
+  const { records, loading: recordsLoading, error: recordsError, refreshAnchors } = useAnchors();
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
   const { organization } = useOrganization(profile?.org_id);
   const [secureDialogOpen, setSecureDialogOpen] = useState(false);
@@ -418,7 +419,22 @@ export function DashboardPage() {
 
               <Separator />
               <CardContent className="pt-0">
-                {!loading && !hasRecords ? (
+                {/* SCRUM-3532 — a failed anchors fetch used to fall through to
+                    the "no records yet" onboarding empty state. Surface it via
+                    the canonical DataErrorBanner instead (generic copy only —
+                    never the raw PostgREST/Supabase error text, §1.4). Stale
+                    records from a previous successful fetch stay visible
+                    below the banner. */}
+                {recordsError && !recordsLoading && (
+                  <DataErrorBanner
+                    data-testid="records-fetch-error-banner"
+                    title={DATA_ERROR_LABELS.RECORDS_FETCH_FAILED_TITLE}
+                    message={TOAST.RECORDS_FETCH_FAILED}
+                    onRetry={() => void refreshAnchors()}
+                    spacing="mb-3"
+                  />
+                )}
+                {!loading && !hasRecords && !recordsError ? (
                   // SCRUM-1755 — empty state always opens Secure Document. Pre-1755 the
                   // ORG_ADMIN branch opened IssueCredentialForm under a "Secure Document"
                   // label; that conflated the two flows. Issue Credential is now a distinct
@@ -433,7 +449,7 @@ export function DashboardPage() {
                     actionLabel={SECURE_DIALOG_LABELS.TITLE}
                     onAction={() => setSecureDialogOpen(true)}
                   />
-                ) : !loading && isFiltering && !hasFilteredResults ? (
+                ) : !loading && isFiltering && !hasFilteredResults && !recordsError ? (
                   <div className="py-12 text-center">
                     <Search className="mx-auto h-8 w-8 text-muted-foreground/50 mb-3" />
                     <p className="text-sm font-medium text-muted-foreground">

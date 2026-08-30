@@ -33,7 +33,7 @@ vi.mock('@/hooks/useProfile', () => ({
 
 vi.mock('@/hooks/useComplianceScore', () => ({
   useComplianceScore: () => ({ scoreData: null, gapData: null, loading: false, error: null, refetch: vi.fn() }),
-  useJurisdictionRules: () => ({ jurisdictions: [], industries: [], loading: false }),
+  useJurisdictionRules: () => ({ rules: [], jurisdictions: [], industries: [], loading: false, error: null, refetch: vi.fn() }),
 }));
 
 // Child components unrelated to the export-URL behavior under test.

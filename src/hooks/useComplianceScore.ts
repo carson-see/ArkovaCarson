@@ -125,27 +125,37 @@ export function useComplianceScore(jurisdiction: string, industry: string) {
 export function useJurisdictionRules() {
   const [rules, setRules] = useState<JurisdictionRule[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchRules = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Rules endpoint is public — no auth needed, use raw fetch
+      const res = await globalThis.fetch(`${WORKER_URL}/api/v1/compliance/rules`);
+      if (res.ok) {
+        const data = await res.json();
+        setRules(data.rules ?? []);
+      } else {
+        // SCRUM-3670: a non-ok response used to fall through silently, leaving
+        // the jurisdiction/industry pickers indistinguishable from an empty
+        // rule set. Surface it so consumers can render a retryable state.
+        setError(`Failed to fetch compliance rules (HTTP ${res.status})`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Network error');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    async function fetchRules() {
-      try {
-        // Rules endpoint is public — no auth needed, use raw fetch
-        const res = await globalThis.fetch(`${WORKER_URL}/api/v1/compliance/rules`);
-        if (res.ok) {
-          const data = await res.json();
-          setRules(data.rules ?? []);
-        }
-      } catch {
-        // Non-fatal
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchRules();
-  }, []);
+    async function run() { await fetchRules(); }
+    void run();
+  }, [fetchRules]);
 
   const jurisdictions = useMemo(() => [...new Set(rules.map(r => r.jurisdiction_code))].sort(), [rules]);
   const industries = useMemo(() => [...new Set(rules.map(r => r.industry_code))].sort(), [rules]);
 
-  return { rules, jurisdictions, industries, loading };
+  return { rules, jurisdictions, industries, loading, error, refetch: fetchRules };
 }

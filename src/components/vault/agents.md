@@ -1,10 +1,18 @@
 # agents.md — components/vault
-_Last updated: 2026-03-21_
+_Last updated: 2026-08-30_
 
 ## What This Folder Contains
 Vault-related components for the INDIVIDUAL user experience, including the VaultDashboard.
 
 ## Recent Changes
+- 2026-08-30 SCRUM-3532: `VaultDashboard.tsx` — destructured `error` from `useAnchors` and
+  rendered the canonical `DataErrorBanner` (`data-testid="records-fetch-error-banner"`,
+  Retry → `refreshAnchors`) in the records CardContent; the "No records yet" empty state is
+  gated on `!recordsError` so a fetch failure no longer masquerades as an empty account.
+  Generic copy only (`DATA_ERROR_LABELS.RECORDS_FETCH_FAILED_TITLE` +
+  `TOAST.RECORDS_FETCH_FAILED`) — the raw hook error string is never rendered (§1.4).
+  Mirrors the same-day `DashboardPage.tsx` fix (see `src/pages/agents.md`). Tests:
+  `VaultDashboard.fetch-error.test.tsx` (4 cases, red-first).
 - 2026-03-11 SonarQube sprint: `VaultDashboard.tsx` — S6582 (optional chaining), S7772 (node: prefix), S1854 (dead assignments), S2933 (readonly). No behavioral changes.
 - 2026-03-07 Code-review fix: `VaultDashboard.tsx` — surfaced `revokeError` from `useRevokeAnchor` with dismissible Alert for user feedback on revocation failures.
 - 2026-03-07 P3-TS-02: `VaultDashboard.tsx` — replaced local `useState` privacy toggle with DB-backed `profile.is_public_profile` via `updateProfile()`. Toggle now persists to Supabase.
