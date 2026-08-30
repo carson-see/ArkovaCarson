@@ -38,6 +38,17 @@ const ORG_ID = '11111111-1111-4111-8111-111111111111';
 const SUB_ORG_ID = '22222222-2222-4222-8222-222222222222';
 const VALID_DOC_SHA256 = 'b'.repeat(64);
 
+// R6 (PR #2474 review, HIGH): DocusignCapturedSigner now pins recipient_id_guid
+// / user_id to a GUID shape, not just the key name. Test fixtures for those two
+// fields must be real GUID-shaped strings. `n` MUST be an integer (never an
+// arbitrary word) — its decimal digits are also valid hex characters, so
+// distinct integers give distinct, deterministic, valid GUIDs; an arbitrary
+// string could contain non-hex letters and silently break the fixture.
+function testGuid(n: number): string {
+  const suffix = String(Math.trunc(n)).padStart(12, '0').slice(-12);
+  return `aaaaaaaa-aaaa-4aaa-8aaa-${suffix}`;
+}
+
 function createApp() {
   const app = express();
   app.use(
@@ -928,7 +939,7 @@ describe('POST /webhooks/docusign', () => {
       const body = bodyWithSigners([
         {
           recipientIdGuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-          userId: 'user-guid-1',
+          userId: testGuid(101),
           status: 'completed',
           signedDateTime: '2026-08-20T10:00:00Z',
           name: 'Jane Doe',
@@ -955,7 +966,7 @@ describe('POST /webhooks/docusign', () => {
       expect(jobPayload._signers).toEqual([
         {
           recipient_id_guid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-          user_id: 'user-guid-1',
+          user_id: testGuid(101),
           status: 'completed',
           signed_at: '2026-08-20T10:00:00Z',
         },
@@ -999,7 +1010,7 @@ describe('POST /webhooks/docusign', () => {
       submitJobMock.mockResolvedValueOnce('job-signers-cap');
 
       const signers = Array.from({ length: 25 }, (_, i) => ({
-        recipientIdGuid: `guid-${i}`,
+        recipientIdGuid: testGuid(i),
         status: 'completed',
       }));
       const body = bodyWithSigners(signers);
@@ -1014,8 +1025,8 @@ describe('POST /webhooks/docusign', () => {
       const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
       const captured = jobPayload._signers as Record<string, unknown>[];
       expect(captured).toHaveLength(20);
-      expect(captured[0]).toMatchObject({ recipient_id_guid: 'guid-0' });
-      expect(captured[19]).toMatchObject({ recipient_id_guid: 'guid-19' });
+      expect(captured[0]).toMatchObject({ recipient_id_guid: testGuid(0) });
+      expect(captured[19]).toMatchObject({ recipient_id_guid: testGuid(19) });
     });
 
     it('skips recipient entries missing the required recipientIdGuid or status', async () => {
@@ -1028,9 +1039,9 @@ describe('POST /webhooks/docusign', () => {
       submitJobMock.mockResolvedValueOnce('job-signers-partial');
 
       const body = bodyWithSigners([
-        { recipientIdGuid: 'guid-only-no-status' },
+        { recipientIdGuid: testGuid(201) },
         { status: 'completed' }, // no recipientIdGuid
-        { recipientIdGuid: 'guid-complete', status: 'completed' },
+        { recipientIdGuid: testGuid(202), status: 'completed' },
       ]);
 
       const res = await request(createApp())
@@ -1042,7 +1053,7 @@ describe('POST /webhooks/docusign', () => {
       expect(res.status).toBe(202);
       const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
       expect(jobPayload._signers).toEqual([
-        { recipient_id_guid: 'guid-complete', status: 'completed' },
+        { recipient_id_guid: testGuid(202), status: 'completed' },
       ]);
     });
 
@@ -1110,8 +1121,8 @@ describe('POST /webhooks/docusign', () => {
       }));
       // 20 signers at the _signers cap.
       const signers = Array.from({ length: 20 }, (_, i) => ({
-        recipientIdGuid: `aaaaaaaa-aaaa-4aaa-8aaa-${String(i).padStart(12, '0')}`,
-        userId: `user-${i}`,
+        recipientIdGuid: testGuid(i),
+        userId: testGuid(i + 500),
         status: 'completed',
         signedDateTime: '2026-08-20T10:00:00Z',
       }));
@@ -1452,8 +1463,8 @@ describe('extractSigners', () => {
       envelopeSummary: {
         recipients: {
           signers: [{
-            recipientIdGuid: 'guid-1',
-            userId: 'user-1',
+            recipientIdGuid: testGuid(1),
+            userId: testGuid(101),
             status: 'completed',
             signedDateTime: '2026-05-27T10:00:00Z',
             name: 'Should Not Appear',
@@ -1464,8 +1475,8 @@ describe('extractSigners', () => {
     });
     const result = extractSigners(body);
     expect(result).toEqual([{
-      recipient_id_guid: 'guid-1',
-      user_id: 'user-1',
+      recipient_id_guid: testGuid(1),
+      user_id: testGuid(101),
       status: 'completed',
       signed_at: '2026-05-27T10:00:00Z',
     }]);
@@ -1477,7 +1488,7 @@ describe('extractSigners', () => {
       envelopeSummary: {
         recipients: {
           signers: [{
-            recipientIdGuid: 'guid-pii',
+            recipientIdGuid: testGuid(2),
             status: 'completed',
             name: 'PII Name Marker',
             email: 'pii-marker@example.com',
@@ -1498,12 +1509,12 @@ describe('extractSigners', () => {
       event: 'envelope-completed',
       envelopeSummary: {
         recipients: {
-          signers: [{ recipientIdGuid: 'guid-email-link', status: 'sent' }],
+          signers: [{ recipientIdGuid: testGuid(3), status: 'sent' }],
         },
       },
     });
     const result = extractSigners(body);
-    expect(result).toEqual([{ recipient_id_guid: 'guid-email-link', status: 'sent' }]);
+    expect(result).toEqual([{ recipient_id_guid: testGuid(3), status: 'sent' }]);
     expect(result[0]).not.toHaveProperty('user_id');
     expect(result[0]).not.toHaveProperty('signed_at');
   });
@@ -1515,18 +1526,83 @@ describe('extractSigners', () => {
         recipients: {
           signers: [
             { status: 'completed' },
-            { recipientIdGuid: 'guid-no-status' },
-            { recipientIdGuid: 'guid-ok', status: 'completed' },
+            { recipientIdGuid: testGuid(4) },
+            { recipientIdGuid: testGuid(5), status: 'completed' },
           ],
         },
       },
     });
-    expect(extractSigners(body)).toEqual([{ recipient_id_guid: 'guid-ok', status: 'completed' }]);
+    expect(extractSigners(body)).toEqual([{ recipient_id_guid: testGuid(5), status: 'completed' }]);
+  });
+
+  // PR #2474 review, HIGH: the entire "no name/email ever persisted" guarantee
+  // rests on recipient_id_guid/user_id being structurally GUID-shaped, not
+  // merely present under the right key. A mis-slotted email/name-shaped value
+  // must be SKIPPED (fail-soft — identical treatment to a missing required
+  // field), never persisted, at the actual DB-write boundary (_signers on the
+  // job payload — see the "signer capture (R6)" describe block above for the
+  // full webhook->job assertion). This unit test covers extractSigners itself.
+  it('skips an entry whose recipientIdGuid is email/name-shaped instead of a GUID', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [
+            { recipientIdGuid: 'jane.doe@example.com', status: 'completed' },
+            { recipientIdGuid: 'Jane Doe', status: 'completed' },
+            { recipientIdGuid: testGuid(6), status: 'completed' },
+          ],
+        },
+      },
+    });
+    const result = extractSigners(body);
+    expect(result).toEqual([{ recipient_id_guid: testGuid(6), status: 'completed' }]);
+    expect(JSON.stringify(result)).not.toContain('jane.doe@example.com');
+    expect(JSON.stringify(result)).not.toContain('Jane Doe');
+  });
+
+  it('drops an entry whose user_id is email-shaped, even when recipientIdGuid is a valid GUID', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [{
+            recipientIdGuid: testGuid(7),
+            userId: 'mistakenly-an-email@example.com',
+            status: 'completed',
+          }],
+        },
+      },
+    });
+    // user_id fails the GUID regex, so the whole candidate fails safeParse —
+    // the entry is skipped entirely (fail-soft), never persisted with a
+    // dropped-user_id partial row.
+    expect(extractSigners(body)).toEqual([]);
+  });
+
+  it('dedupes repeated recipientIdGuid values within one delivery (resend/bounce)', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [
+            { recipientIdGuid: testGuid(9), status: 'sent' },
+            { recipientIdGuid: testGuid(9), status: 'completed' },
+            { recipientIdGuid: testGuid(10), status: 'completed' },
+          ],
+        },
+      },
+    });
+    const result = extractSigners(body);
+    expect(result).toHaveLength(2);
+    // First occurrence wins.
+    expect(result[0]).toEqual({ recipient_id_guid: testGuid(9), status: 'sent' });
+    expect(result[1]).toEqual({ recipient_id_guid: testGuid(10), status: 'completed' });
   });
 
   it('caps at 20 entries', () => {
     const signers = Array.from({ length: 30 }, (_, i) => ({
-      recipientIdGuid: `guid-${i}`,
+      recipientIdGuid: testGuid(i),
       status: 'completed',
     }));
     const body = JSON.stringify({
@@ -1536,7 +1612,7 @@ describe('extractSigners', () => {
     const result = extractSigners(body);
     expect(result).toHaveLength(20);
     expect(result.map((s) => s.recipient_id_guid)).toEqual(
-      Array.from({ length: 20 }, (_, i) => `guid-${i}`),
+      Array.from({ length: 20 }, (_, i) => testGuid(i)),
     );
   });
 
@@ -1576,11 +1652,11 @@ describe('extractSigners', () => {
       event: 'envelope-completed',
       envelopeSummary: {
         recipients: {
-          signers: [{ recipientIdGuid: 'guid-buffer', status: 'completed' }],
+          signers: [{ recipientIdGuid: testGuid(8), status: 'completed' }],
         },
       },
     }));
-    expect(extractSigners(body)).toEqual([{ recipient_id_guid: 'guid-buffer', status: 'completed' }]);
+    expect(extractSigners(body)).toEqual([{ recipient_id_guid: testGuid(8), status: 'completed' }]);
   });
 
   it('does not read recipients.carbonCopies (mirrors extractNotaryData, which does not either)', () => {

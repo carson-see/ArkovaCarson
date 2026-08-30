@@ -17,6 +17,7 @@ import {
   resolveEffectiveDocusignConnection,
   type DocusignConnectionRow,
 } from '../integrations/connectors/docusign-connection-resolver.js';
+import { DocusignCapturedSigner, type DocusignCapturedSignerT } from '../integrations/connectors/schemas.js';
 import type { TypeSafeDatabase } from '../types/database-overrides.js';
 
 export const DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE = 'docusign.envelope_completed';
@@ -132,6 +133,35 @@ function normalizeLimit(rawLimit: number | undefined): number {
   }
 
   return Math.min(MAX_DOCUSIGN_ENVELOPE_JOB_LIMIT, Math.max(1, Math.trunc(rawLimit)));
+}
+
+/**
+ * R6: the THIRD independent gate on captured signers, at the actual DB-write
+ * boundary (webhook extraction + job-payload re-parse are the other two —
+ * see `webhooks/docusign.ts` `extractSigners` and
+ * `integrations/connectors/docusign.ts` `DocusignEnvelopeCompletedJobPayload`).
+ * Re-runs the SAME canonical `DocusignCapturedSigner` schema per entry — the
+ * single source of truth for the shape, including (PR #2474 review, HIGH) the
+ * GUID-shape regex on `recipient_id_guid`/`user_id` — rather than a
+ * hand-rolled presence-only filter that could drift from the schema and let a
+ * mis-slotted email/name back in under the right key name. Guards against a
+ * future caller widening the TS type (or an `as any` cast upstream) and
+ * reintroducing name/email — or a non-GUID value — at the one place that
+ * would durably persist it. A signer that fails re-validation is dropped,
+ * never thrown — same fail-soft posture as the webhook-layer extraction.
+ */
+function reValidateSigners(
+  signers: DocusignCapturedSignerT[] | undefined,
+): DocusignCapturedSignerT[] | undefined {
+  if (!signers) return undefined;
+  const valid: DocusignCapturedSignerT[] = [];
+  for (const signer of signers) {
+    const parsed = DocusignCapturedSigner.safeParse(signer);
+    if (parsed.success) {
+      valid.push(parsed.data);
+    }
+  }
+  return valid;
 }
 
 function getRefreshTokenStore(deps: DocusignEnvelopeJobRuntimeDeps): DocusignRefreshTokenStore {
@@ -403,20 +433,8 @@ export function makeDocusignEnvelopeJobDeps(
       const fingerprint = createHash('sha256').update(input.documentBytes).digest('hex');
       const byteLength = input.documentBytes.byteLength;
 
-      // R6: a THIRD independent allow-list gate (webhook extraction + job-payload
-      // re-parse are the other two) at the actual DB-write boundary — copy only
-      // the four named fields into a fresh object, never spread `input.signers`
-      // verbatim. Guards against a future caller widening the TS type (or an
-      // `as any` cast upstream) and reintroducing name/email at the one place
-      // that would durably persist it.
-      const safeSigners = input.signers
-        ?.filter((signer) => signer.recipient_id_guid && signer.status)
-        .map((signer) => ({
-          recipient_id_guid: signer.recipient_id_guid,
-          ...(signer.user_id ? { user_id: signer.user_id } : {}),
-          status: signer.status,
-          ...(signer.signed_at ? { signed_at: signer.signed_at } : {}),
-        }));
+      // R6: see reValidateSigners() above for what this closes and why.
+      const safeSigners = reValidateSigners(input.signers);
 
       // Durable, idempotent connector artifact via the Lane-2 0343 RPC. Exactly
       // one row per (org, 'docusign', envelopeId): a redelivered envelope dedupes

@@ -381,7 +381,16 @@ function findNotaryRecipient(recipients: RecipientGroups): Record<string, unknow
  * the result even if a future DocuSign payload shape adds more fields.
  * `DocusignCapturedSigner.safeParse` is a second, independent gate — its
  * default (non-`.passthrough()`) object mode strips anything not explicitly
- * listed, and rejects entries missing a required `recipient_id_guid`/`status`.
+ * listed, rejects entries missing a required `recipient_id_guid`/`status`,
+ * AND (PR #2474 review, HIGH) rejects `recipient_id_guid`/`user_id` values
+ * that are not GUID-shaped — key-name stripping alone cannot stop a
+ * mis-slotted email/name riding in under the right field name; the value
+ * shape is pinned too, so that failure mode fails closed (entry skipped),
+ * not open.
+ *
+ * Also dedupes by `recipient_id_guid` — a resend/bounce can list the same
+ * signer twice within one delivery, and a duplicate should not burn a second
+ * slot of the cap.
  *
  * Capped at `MAX_CAPTURED_DOCUSIGN_SIGNERS` entries (metadata-size + display
  * safety per R6) — truncates rather than rejecting the whole envelope, so an
@@ -401,6 +410,10 @@ export function extractSigners(rawBody: Buffer | string): DocusignCapturedSigner
     if (!signers || signers.length === 0) return [];
 
     const captured: DocusignCapturedSignerT[] = [];
+    // Dedupe by recipient_id_guid — a resend/bounce can produce two recipient
+    // entries for the same signer within one delivery; without this, a
+    // duplicate burns a second slot of the 20-entry cap for no new signer.
+    const seenGuids = new Set<string>();
     for (const raw of signers) {
       if (captured.length >= MAX_CAPTURED_DOCUSIGN_SIGNERS) break;
 
@@ -420,11 +433,15 @@ export function extractSigners(rawBody: Buffer | string): DocusignCapturedSigner
         ...(signedAt ? { signed_at: signedAt } : {}),
       };
       const parsed = DocusignCapturedSigner.safeParse(candidate);
-      if (parsed.success) {
+      if (parsed.success && !seenGuids.has(parsed.data.recipient_id_guid)) {
+        seenGuids.add(parsed.data.recipient_id_guid);
         captured.push(parsed.data);
       }
-      // Entries missing a required recipient_id_guid/status are silently
-      // skipped, never persisted as a partial/identity-less row — matches
+      // Entries missing a required recipient_id_guid/status, or whose
+      // recipient_id_guid/user_id is not GUID-shaped (PR #2474 review, HIGH:
+      // stripping-by-key-name alone cannot stop a mis-slotted email/name from
+      // riding in under the right field name), are silently skipped — never
+      // persisted as a partial/identity-less/PII row — matches
       // extractNotaryData's fail-soft posture (best-effort metadata, never
       // blocks the standard eSign flow).
     }

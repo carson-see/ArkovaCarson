@@ -17,6 +17,14 @@ const PAYLOAD = {
   document_ids: ['combined'],
 };
 
+// R6 (PR #2474 review, HIGH): DocusignCapturedSigner pins recipient_id_guid /
+// user_id to a GUID shape. `n` must be an integer — its decimal digits are
+// also valid hex, so distinct integers give distinct, valid GUID fixtures.
+function testGuid(n: number): string {
+  const suffix = String(Math.trunc(n)).padStart(12, '0').slice(-12);
+  return `aaaaaaaa-aaaa-4aaa-8aaa-${suffix}`;
+}
+
 describe('parseDocusignEnvelopeCompletedJobPayload', () => {
   it('accepts the webhook-created retry payload', () => {
     expect(parseDocusignEnvelopeCompletedJobPayload(PAYLOAD)).toMatchObject(PAYLOAD);
@@ -33,8 +41,8 @@ describe('parseDocusignEnvelopeCompletedJobPayload', () => {
     const withSigners = {
       ...PAYLOAD,
       _signers: [
-        { recipient_id_guid: 'guid-1', user_id: 'user-1', status: 'completed', signed_at: '2026-08-20T10:00:00Z' },
-        { recipient_id_guid: 'guid-2', status: 'completed' },
+        { recipient_id_guid: testGuid(1), user_id: testGuid(101), status: 'completed', signed_at: '2026-08-20T10:00:00Z' },
+        { recipient_id_guid: testGuid(2), status: 'completed' },
       ],
     };
     expect(parseDocusignEnvelopeCompletedJobPayload(withSigners)).toMatchObject(withSigners);
@@ -47,7 +55,7 @@ describe('parseDocusignEnvelopeCompletedJobPayload', () => {
 
   it('rejects more than 20 _signers entries', () => {
     const tooMany = Array.from({ length: 21 }, (_, i) => ({
-      recipient_id_guid: `guid-${i}`,
+      recipient_id_guid: testGuid(i),
       status: 'completed',
     }));
     expect(() =>
@@ -60,11 +68,33 @@ describe('parseDocusignEnvelopeCompletedJobPayload', () => {
       ...PAYLOAD,
       _signers: [
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- deliberately malformed input under test
-        { recipient_id_guid: 'guid-1', status: 'completed', name: 'Should Strip', email: 'strip@example.com' } as any,
+        { recipient_id_guid: testGuid(3), status: 'completed', name: 'Should Strip', email: 'strip@example.com' } as any,
       ],
     });
     expect(result._signers?.[0]).not.toHaveProperty('name');
     expect(result._signers?.[0]).not.toHaveProperty('email');
+  });
+
+  // PR #2474 review, HIGH: a mis-slotted email/name in the GUID field must be
+  // rejected by the schema (whole-array .parse() throws — this is the
+  // job-payload re-validation gate, stricter than extractSigners' per-entry
+  // safeParse skip, since this schema validates the FULL array at once).
+  it('rejects a _signers entry whose recipient_id_guid is email-shaped', () => {
+    expect(() =>
+      parseDocusignEnvelopeCompletedJobPayload({
+        ...PAYLOAD,
+        _signers: [{ recipient_id_guid: 'jane.doe@example.com', status: 'completed' }],
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a _signers entry whose user_id is email-shaped', () => {
+    expect(() =>
+      parseDocusignEnvelopeCompletedJobPayload({
+        ...PAYLOAD,
+        _signers: [{ recipient_id_guid: testGuid(4), user_id: 'jane.doe@example.com', status: 'completed' }],
+      }),
+    ).toThrow();
   });
 });
 
@@ -134,7 +164,7 @@ describe('processDocusignEnvelopeCompletedJob', () => {
         headers: { 'content-type': 'application/pdf' },
       }),
     );
-    const signers = [{ recipient_id_guid: 'guid-1', status: 'completed' }];
+    const signers = [{ recipient_id_guid: testGuid(1), status: 'completed' }];
 
     await processDocusignEnvelopeCompletedJob(
       { ...PAYLOAD, _signers: signers },
