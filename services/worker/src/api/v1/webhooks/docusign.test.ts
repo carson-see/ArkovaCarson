@@ -1154,6 +1154,54 @@ describe('POST /webhooks/docusign — inbound classification (docusign-bilateral
     expect(res.body).toEqual({ ok: true, duplicate: true, inbound: true });
     expect(rpcMock).not.toHaveBeenCalled();
   });
+
+  // F1 (security review, docusign-bilateral-2026-08) — cross-tenant regression
+  // pin. HMAC verification proves this request is signed by the CALLER's own
+  // org's key (here, ORG_ID's — resolved via findIntegration('acct-1')); it
+  // proves nothing about the payload's claimed `senderAccountId`, which is
+  // attacker-authored body content. An attacker at ORG_ID could set
+  // `senderAccountId` to SUB_ORG_ID's REAL connected account, impersonating
+  // that org as the envelope's owner. This must NEVER cause the enqueued
+  // artifact to land in SUB_ORG_ID's namespace — `p_org_id` is always
+  // `integration.org_id` (the HMAC-verified caller's own org), never anything
+  // derived from the spoofable `senderAccountId` value. True by construction
+  // (enqueueInboundDeclaredHashArtifact hardcodes `p_org_id: args.integration.org_id`
+  // and never threads `sendingAccountId` into that field) — pinned here so a
+  // future refactor that accidentally wires org_id from classification output
+  // fails this test immediately.
+  it('a senderAccountId spoofing another real org\'s connected account still lands the artifact in the CALLER\'s own org_id, never the impersonated org', async () => {
+    mockConfig.enableDocusignInbound = true;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }]));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'artifact-cross-tenant-1', error: null });
+
+    // acct-SUB-ORG-REAL stands in for a real DocuSign account genuinely
+    // connected to SUB_ORG_ID — the attacker (posting as ORG_ID, HMAC-signed
+    // with ORG_ID's own key) claims IT as the envelope's sender.
+    const body = bodyWithSenderAccount({
+      senderAccountId: 'acct-SUB-ORG-REAL',
+      envelopeId: 'env-cross-tenant-spoof',
+    });
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(202);
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_connector_artifact', expect.objectContaining({
+      // The load-bearing assertion: org_id is the HMAC-verified caller's own
+      // org (ORG_ID), NEVER SUB_ORG_ID or the spoofed account's org.
+      p_org_id: ORG_ID,
+      p_metadata: expect.objectContaining({
+        _sending_account_id: 'acct-SUB-ORG-REAL', // the CLAIM is recorded...
+      }),
+    }));
+    // ...but never leaks into the write's tenant scope.
+    const call = rpcMock.mock.calls.find((c) => c[0] === 'enqueue_connector_artifact');
+    expect((call?.[1] as Record<string, unknown>)?.p_org_id).not.toBe(SUB_ORG_ID);
+  });
 });
 
 describe('POST /webhooks/docusign — no raw-payload PII leak (DS-02, §1.6A)', () => {
