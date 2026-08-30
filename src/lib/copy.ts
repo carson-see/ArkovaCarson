@@ -3803,6 +3803,25 @@ export const CTDL_DATA_LINK_LABELS = {
   LINK_TEXT: 'CTDL data (JSON-LD)',
 } as const;
 
+// ─── DocuSign Record Deep Links (bilateral rollout, frontend-targeted T2) ────
+// Authenticated record-detail metadata section ONLY — the public
+// verification page is explicitly out of scope for this rollout and is not
+// touched by the consuming components. Account/envelope id metadata values
+// and dedicated signer rows link into DocuSign's own console — built by
+// accountUrl/envelopeUrl/signerUrl (src/lib/docusignLinks.ts), which
+// validate a candidate value as a strict UUID BEFORE composing any URL and
+// return null otherwise (falls back to the pre-existing plain-text render,
+// so a non-UUID value or a non-DocuSign anchor is completely unaffected).
+// Signer rows read ONLY `recipient_id_guid` for display and for the link —
+// never `user_id`, even when present on an entry — per the data-minimization
+// ruling (R6) this PR was scoped against.
+export const DOCUSIGN_RECORD_LINKS_LABELS = {
+  SIGNERS_SECTION_LABEL: 'Signers',
+  SIGNER_PREFIX: 'Signer',
+  VERIFIED_VIA_DOCUSIGN: 'Verified via DocuSign',
+  MORE_SIGNED_SUFFIX: 'more signed via DocuSign',
+} as const;
+
 // ─── LinkedIn Share (CSI-03 / SCRUM-1599) ─────────────────────────────────────
 
 export const LINKEDIN_SHARE_LABELS = {
