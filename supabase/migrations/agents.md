@@ -771,3 +771,41 @@ Prod `vzwyaatejekddvltxyye` has 118 ledger rows, head `0419`, with a genuine gap
 |---|---|---|---|
 | `credits-2442` | `gsluatcqhwwynxpsidjy` | `0420` | PR #2442 — 48 h T3 clock RUNNING from 2026-08-29T15:10:53Z |
 | `cleanup-2335` | `bxgybbxkhuxwtgkgkwpe` | `0417` | PR #2335 — wired + `clean_mirror`, clock NOT started (driver blocker recorded in `docs/staging/cleanup-2335-2026-08-29/`) |
+
+## Recent migrations (PR #PENDING-docusign-key-authority)
+
+**Branch `fix/docusign-metadata-key-write-authority`. PR not yet opened. CTO Decision Record
+ruling R1 (`docs/staging/docusign-bilateral-2026-08/CTO-DECISION-RECORD.md`), PR-1 of the
+DocuSign bilateral coverage sequence — a write-authority guard trigger on the DocuSign key
+family in `anchors.metadata`.**
+
+### `0422` was already claimed by the time this session re-derived — used `0423` instead
+
+The Decision Record (also dated 2026-08-29) names `0422` as "the next free prefix, currently".
+Re-deriving fresh per this file's next-free rule (`git log --all --diff-filter=A` over **every**
+ref, not just this file's own stale lines) found that prefix already taken:
+
+| Commit | Author date | File | Owner |
+|---|---|---|---|
+| `04e4b0fa05183a6f02102b206232dc1f614f0323` | 2026-08-29 10:13:01 -0400 | `0422_false_secured_offchain_anchor_quarantine.sql` | branch `fix/false-secured-signet-anchors` (checked out in another worktree, no open PR) |
+
+That commit is `fix/false-secured-signet-anchors`'s own renumber of its `0415` claim (see the
+"`0415` collision resolution 2026-08-29" block above) — it landed hours before this session
+started. First-claim-wins by commit time (same rule as the `0420`/`0415` resolutions above):
+`0422` stays with the false-SECURED quarantine fix. This migration claims **`0423`** —
+`0423_sec_docusign_metadata_key_write_authority.sql`.
+
+**Prefix derivation, this session:** `origin/main` migration-file head `0414`; prod ledger head
+`0419` (gap at `0415`-`0417`, legitimate per the blocks above); `0415` kept by #2314, the other
+`0415` claim now at `0422` (above); `0416` `fix/secured-count-overstatement`; `0417` #2335;
+`0418` #2336; `0419` #2355; `0420` #2442; `0421` #2440 (renumbered from `0420`); `0422`
+`fix/false-secured-signet-anchors` (above). `gh pr list --state open` (17 open PRs, checked this
+session) and `git log --all --diff-filter=A` show nothing claiming `0423` or `0424`. `0423` is
+the first free prefix. **Next author claims `0424` — re-derive, do not trust this line; several
+other worktrees are actively claiming numbers in this range the same day (rig table above).**
+
+### `0423` — RESERVED, file-only, NOT applied anywhere
+
+| Prefix | File | PR | Applied to prod/rig? | Note |
+|---|---|---|---|---|
+| `0423` | `0423_sec_docusign_metadata_key_write_authority.sql` | branch `fix/docusign-metadata-key-write-authority` (PR #2472, DRAFT) | **no — file only, pre-soak** | T3 (migration + security). `BEFORE INSERT OR UPDATE OF metadata` trigger `trg_strip_unattested_docusign_metadata_keys` + `SECURITY DEFINER` function `enforce_docusign_metadata_key_authority()`, copying 0384's/0394's exact strip/revert pattern and reusing 0394's identical `get_caller_role() = 'service_role'` predicate (no new detection method invented). Strips (INSERT) or reverts-to-OLD (UPDATE) the DocuSign provenance key family in `anchors.metadata` for any non-service_role writer — `connector_source`, `connector_artifact_id`, `_signers`, `_docusign_env`, `_direction`, `_sending_account_id` unconditionally; `account_id`/`envelope_id` ONLY when the row claims DocuSign provenance (`v_claims_docusign`, true when `connector_source` is present in the caller's payload or the row's existing OLD state) — those two are generic names that also occur legitimately in non-DocuSign metadata (`SecureDocumentDialog.tsx` spreads AI-extracted top-level fields; `IssueCredentialForm.tsx` persists arbitrary org-template field keys), so unconditional guarding would have silently stripped unrelated data with no error. Does not reopen the forgery: `AssetDetailView.tsx` (PR #2473) renders `account_id`/`envelope_id` as DocuSign links only when `connector_source === 'docusign'` exactly, and `connector_source` itself stays unconditionally guarded. Closes the `bulk_create_anchors` / direct-PostgREST forgery gap `services/worker/src/constants/connectorFingerprint.ts` documents in its own header. Confirmed by full-tree grep that the only writers of these 8 keys into `anchors.metadata` (`jobs/connector-artifact-drain.ts`, `jobs/rule-action-dispatcher.ts`, `jobs/docusign-envelope-completed.ts` via the `connector_artifact` staging row) all authenticate `service_role` through `services/worker/src/utils/db.ts`'s `config.supabaseServiceKey` client; no legitimate non-service_role writer of any of the 8 keys exists in the DocuSign context. `SET LOCAL lock_timeout = '5s'` precedes the `CREATE TRIGGER` (hot-table DDL, CLAUDE.md §1.2); `scripts/ci/check-hot-table-ddl-lock-timeout.ts` passes with 0 new violations. Soak: pending, orchestrated by the CTO session per the Decision Record's delivery sequence (PR-1 of 4). |
