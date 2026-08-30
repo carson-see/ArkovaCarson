@@ -1,6 +1,12 @@
 # agents.md — lib
 
-_Last updated: 2026-08-23_
+_Last updated: 2026-08-29_
+
+## 2026-08-29 — `docusignLinks.ts` (DocuSign record deep links, bilateral rollout, frontend-targeted T2)
+
+New module `docusignLinks.ts`: turns DocuSign account/envelope/recipient identifiers already present on an anchor's metadata into deep links back into DocuSign's own console (`https://apps.docusign.com` prod / `https://apps-d.docusign.com` demo, selected by `resolveDocusignEnv(metadata._docusign_env)`, default `'prod'`). The security property is validate-before-build: `accountUrl`/`envelopeUrl`/`signerUrl` each call `isStrictUuid` (exact `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}` match, case-insensitive, no RFC 4122 version/variant constraint — see the module's own header for why) FIRST and return `null` on anything that does not match, so no metadata value ever reaches a template-literal href — immune to `javascript:`/open-redirect injection by construction, not by downstream sanitization. `signerUrl` is a thin alias of `envelopeUrl` (DocuSign has no per-recipient profile URL; the envelope-details page is the only signer-verification surface), called with the recipient GUID at the actual call site in `AssetDetailView.tsx`. 52 unit tests in `docusignLinks.test.ts` cover valid/invalid/empty/injection-shaped inputs plus both env bases — see that folder's own `agents.md` for the consumer side (`MetadataRow`/`DocusignSignerRows` in `src/components/anchor/AssetDetailView.tsx`).
+
+**Scope note:** this module renders metadata IF PRESENT; it does not write it. Today's worker (`services/worker/src/jobs/rule-action-dispatcher.ts` `buildAnchorInsertPayload`) writes `account_id_sha256` (hashed) and `source_envelope_id` onto `anchors.metadata`, not the raw `account_id`/`envelope_id`/`_signers`/`_docusign_env` keys this module and its consumer expect — a paired backend PR (out of scope here; this PR touches only `src/**`/`e2e/**`) is what starts writing the new shape. Deep links fundamentally require the raw UUID, which is why that shift is necessary for this feature to do anything. Until that lands, this code is inert against current prod data (no crash, no broken link — the generic metadata dump just keeps rendering plain text exactly as before) and lights up once the new metadata shape ships.
 
 ## 2026-08-23 R-7 — `PLATFORM_METRICS` in `copy.ts` is the only home for a public traction figure
 

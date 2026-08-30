@@ -28,10 +28,11 @@ import { extractCleMetadataView } from '@/components/credentials/cleMetadataView
 import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
-import { ANCHOR_STATUS_LABELS, LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, CONFIRMATION_PROGRESS_LABELS, CONNECTOR_FINGERPRINT_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
+import { ANCHOR_STATUS_LABELS, LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, CONFIRMATION_PROGRESS_LABELS, CONNECTOR_FINGERPRINT_LABELS, DOCUSIGN_RECORD_LINKS_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
 import { isConnectorSourcedAnchorMetadata } from '@/lib/connectorFingerprint';
 import { sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
 import { isFraudMetadataKey } from '@/lib/fraudDetection';
+import { accountUrl, envelopeUrl, signerUrl, resolveDocusignEnv, type DocusignEnv } from '@/lib/docusignLinks';
 import {
   Tooltip,
   TooltipContent,
@@ -374,6 +375,166 @@ function AnchorRecordGrid({ anchor, status, formatDate }: Readonly<AnchorRecordG
   );
 }
 
+/**
+ * DocuSign record deep links (bilateral rollout, frontend-targeted T2).
+ * Authenticated record-detail METADATA section only — the public
+ * verification page is explicitly out of scope for this rollout.
+ *
+ * Maps a generic-metadata-loop key to the DocuSign builder that owns it.
+ * `null`/absent keys fall through to the caller's existing plain-text
+ * render — this table can only ever ADD a link, never change what a
+ * non-DocuSign anchor or an unrecognised key already shows.
+ */
+function buildDocusignMetadataHref(metaKey: string, value: unknown, env: DocusignEnv): string | null {
+  if (metaKey === 'account_id') return accountUrl(value, env);
+  if (metaKey === 'envelope_id') return envelopeUrl(value, env);
+  return null;
+}
+
+interface MetadataRowProps {
+  metaKey: string;
+  value: unknown;
+  isDocusign: boolean;
+  docusignEnv: DocusignEnv;
+}
+
+/**
+ * One row of the generic "Metadata" pipeline-style dump. When the anchor is
+ * DocuSign-sourced (`metadata.connector_source === 'docusign'`), the
+ * `account_id`/`envelope_id` rows render as safe deep links into DocuSign's
+ * own console — built by `accountUrl`/`envelopeUrl`
+ * (`src/lib/docusignLinks.ts`), which validate the value as a strict UUID
+ * BEFORE composing any URL and return `null` otherwise. A `null` build
+ * (non-UUID value, non-DocuSign anchor, or any other metadata key) always
+ * falls back to the pre-existing plain-text render byte-for-byte — this can
+ * only ever ADD a link, never change what already renders.
+ */
+function MetadataRow({ metaKey, value, isDocusign, docusignEnv }: Readonly<MetadataRowProps>) {
+  const href = isDocusign ? buildDocusignMetadataHref(metaKey, value, docusignEnv) : null;
+  const testId = metaKey === 'account_id' ? 'docusign-account-link' : 'docusign-envelope-link';
+  return (
+    <div className="flex gap-4">
+      <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">{metaKey.replace(/_/g, ' ')}:</span>
+      {href ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-primary hover:underline font-mono break-all inline-flex items-center gap-1"
+          data-testid={testId}
+        >
+          {String(value)}
+          <ExternalLink className="h-3 w-3 shrink-0" />
+        </a>
+      ) : (
+        <span className="text-xs font-mono break-all">
+          {typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—')}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** UI-side display cap for signer rows — independent of any cap the producer applies. */
+const DOCUSIGN_SIGNER_DISPLAY_CAP = 20;
+
+interface DocusignSignerEntry {
+  recipient_id_guid: string;
+}
+
+/**
+ * True for an array entry shaped like a signer with a non-empty
+ * `recipient_id_guid` string. Anything else (missing/blank guid, wrong
+ * type, null) is dropped rather than rendered with a broken identity.
+ */
+function isDisplayableSigner(entry: unknown): entry is DocusignSignerEntry {
+  if (!entry || typeof entry !== 'object') return false;
+  const guid = (entry as { recipient_id_guid?: unknown }).recipient_id_guid;
+  return typeof guid === 'string' && guid.trim().length > 0;
+}
+
+interface DocusignSignerRowsProps {
+  signers: unknown;
+  env: DocusignEnv;
+}
+
+/**
+ * DocuSign record deep links (bilateral rollout, frontend-targeted T2) —
+ * dedicated signer rows from `metadata._signers`, deliberately NOT part of
+ * the generic metadata-dump loop above. Renders nothing when `_signers` is
+ * absent, empty, or contains no displayable entry (every anchor before this
+ * rollout, and any anchor from a source other than DocuSign).
+ *
+ * Data-minimization (ruling R6): only `recipient_id_guid` is ever read —
+ * `user_id`, even when present on an entry, is never displayed, logged, or
+ * linked. The GUID is shown secondary to the "Signer N · Verified via
+ * DocuSign" label and doubles as the link target via `signerUrl` (DocuSign
+ * has no per-signer profile URL; the envelope-details page is the only
+ * signer-verification surface) — falling back to plain text, exactly like
+ * the account/envelope rows, when it fails strict UUID validation.
+ *
+ * Capped at `DOCUSIGN_SIGNER_DISPLAY_CAP` rows with a "+N more" summary line
+ * for the remainder, so a mass-signature envelope can never blow up this
+ * page — independent of whatever cap (if any) the producer applies upstream.
+ */
+function DocusignSignerRows({ signers, env }: Readonly<DocusignSignerRowsProps>) {
+  if (!Array.isArray(signers) || signers.length === 0) return null;
+
+  const displayable = signers.filter(isDisplayableSigner);
+  if (displayable.length === 0) return null;
+
+  const visible = displayable.slice(0, DOCUSIGN_SIGNER_DISPLAY_CAP);
+  const remaining = displayable.length - visible.length;
+
+  return (
+    <>
+      <Separator />
+      <div className="space-y-3" data-testid="docusign-signers-section">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+          {DOCUSIGN_RECORD_LINKS_LABELS.SIGNERS_SECTION_LABEL}
+        </span>
+        <div className="space-y-2">
+          {visible.map((signer, index) => {
+            const guid = signer.recipient_id_guid;
+            const href = signerUrl(guid, env);
+            return (
+              <div key={guid} className="space-y-0.5" data-testid="docusign-signer-row">
+                <p className="text-xs">
+                  {DOCUSIGN_RECORD_LINKS_LABELS.SIGNER_PREFIX} {index + 1} · {DOCUSIGN_RECORD_LINKS_LABELS.VERIFIED_VIA_DOCUSIGN}
+                </p>
+                {href ? (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline font-mono break-all inline-flex items-center gap-1"
+                    data-testid={`docusign-signer-link-${index}`}
+                  >
+                    {guid}
+                    <ExternalLink className="h-3 w-3 shrink-0" />
+                  </a>
+                ) : (
+                  <span
+                    className="text-xs font-mono break-all text-muted-foreground"
+                    data-testid={`docusign-signer-guid-plain-${index}`}
+                  >
+                    {guid}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {remaining > 0 && (
+          <p className="text-xs text-muted-foreground" data-testid="docusign-signers-more">
+            +{remaining} {DOCUSIGN_RECORD_LINKS_LABELS.MORE_SIGNED_SUFFIX}
+          </p>
+        )}
+      </div>
+    </>
+  );
+}
+
 export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile, canRename = false, canRevoke = false, onRevoked, hasImportEntitlement = false }: Readonly<AssetDetailViewProps>) {
   const [copied, setCopied] = useState(false);
   const [verificationState, setVerificationState] = useState<VerificationState>('idle');
@@ -396,6 +557,11 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
   const isConnectorSourced = isConnectorSourcedAnchorMetadata(anchor.metadata);
   const credentialMetadata = anchor.metadata ?? undefined;
   const visibleMetadata = buildAnchorCredentialMetadata(anchor.metadata);
+  // DocuSign record deep links (bilateral rollout, frontend-targeted T2):
+  // gated strictly on connector_source === 'docusign' — a non-DocuSign
+  // anchor never sees a link, regardless of what its metadata contains.
+  const isDocusignAnchor = metadataString(anchor.metadata, 'connector_source') === 'docusign';
+  const docusignEnv = resolveDocusignEnv(anchor.metadata?._docusign_env);
   // CPE-R1 (SCRUM-1847): the CPE section is gated on the credential_source_import
   // entitlement, resolved by the parent page and passed via hasImportEntitlement.
   // The section self-hides when the gate is false or there is no CPE metadata.
@@ -739,7 +905,10 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
             </>
           )}
 
-          {/* METADATA — pipeline-style key-value pairs (PII-sensitive keys filtered) */}
+          {/* METADATA — pipeline-style key-value pairs (PII-sensitive keys filtered).
+              DocuSign bilateral rollout (frontend-targeted T2): account_id/envelope_id
+              render as deep links ONLY for connector_source === 'docusign' anchors —
+              see MetadataRow. */}
           {visibleMetadata && Object.keys(visibleMetadata).length > 0 && (
             <>
               <Separator />
@@ -748,15 +917,26 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 <div className="space-y-2">
                   {Object.entries(visibleMetadata)
                     .map(([key, value]) => (
-                      <div key={key} className="flex gap-4">
-                        <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">{key.replace(/_/g, ' ')}:</span>
-                        <span className="text-xs font-mono break-all">{typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—')}</span>
-                      </div>
+                      <MetadataRow
+                        key={key}
+                        metaKey={key}
+                        value={value}
+                        isDocusign={isDocusignAnchor}
+                        docusignEnv={docusignEnv}
+                      />
                     ))
                   }
                 </div>
               </div>
             </>
+          )}
+
+          {/* DocuSign Signers (bilateral rollout, frontend-targeted T2) — dedicated
+              rows from metadata._signers, distinct from the generic metadata dump
+              above. Self-hides on any anchor without a non-empty _signers array
+              (legacy DocuSign records, and every non-DocuSign anchor). */}
+          {isDocusignAnchor && (
+            <DocusignSignerRows signers={anchor.metadata?._signers} env={docusignEnv} />
           )}
         </CardContent>
       </Card>
