@@ -1,0 +1,144 @@
+{
+  "cycles": 16,
+  "first_at": "2026-08-30T22:29:23.225Z",
+  "last_at": "2026-08-30T23:36:29.657Z",
+  "health_200": 16,
+  "health_non200": 0,
+  "git_sha_set": [
+    "c6874e0108a516f3741718cf25a98ad4a10422f6"
+  ],
+  "reorg_runs": 16,
+  "reorg_200": 16,
+  "reorg_503": 0,
+  "reorg_500": 0,
+  "reorg_other": {},
+  "reorg_checked_total": 132,
+  "reorg_checked_min": 3,
+  "reorg_checked_max": 9,
+  "reorg_zero_checked_cycles": 0,
+  "reorg_detected": 8,
+  "reorg_reverted": 8,
+  "reorg_completed_true": 16,
+  "reorg_completed_false": 0,
+  "reorg_incomplete_reasons": {},
+  "batch_runs": 16,
+  "batch_flag_on_cycles": 4,
+  "batch_flag_off_cycles": 12,
+  "batch_skipped_bodies": 0,
+  "batch_processed_total": 0,
+  "expiry_skipped": 12,
+  "expiry_ran": 4,
+  "load_ok": 640,
+  "load_non2xx": 0,
+  "load_err": 0,
+  "load_codes": {
+    "200": 640
+  },
+  "flag_events": [
+    {
+      "cycle": 10,
+      "at": "2026-08-30T23:22:55.021Z",
+      "set_to": "ON",
+      "patch_ok": true,
+      "revision_before": "arkova-worker-cron-chain-batch-staging-00001-bxt",
+      "revision_after": "arkova-worker-cron-chain-batch-staging-00001-bxt",
+      "redeploy_occurred": false,
+      "worker_uptime_s": 4255,
+      "batch_response": {
+        "status": 200,
+        "body": {
+          "processed": 0,
+          "batchId": null,
+          "merkleRoot": null,
+          "txId": null
+        }
+      },
+      "expiry_response": {
+        "status": 200,
+        "body": {
+          "processed": 0,
+          "categories": {
+            "7_day": 0,
+            "30_day": 0,
+            "60_day": 0,
+            "90_day": 0
+          },
+          "orgsNotified": 0,
+          "webhooksSent": 0,
+          "webhooksFailed": 0
+        }
+      }
+    }
+  ],
+  "isolation_checks": [
+    {
+      "cycle": 6,
+      "at": "2026-08-30T23:01:38.311Z",
+      "scoped_org": "c0a10000-0000-4000-8000-0000000000b1",
+      "status": 200,
+      "response": {
+        "processed": 0,
+        "batchId": null,
+        "merkleRoot": null,
+        "txId": null
+      },
+      "before": {
+        "orgA_pending": 12,
+        "orgB_pending": 8,
+        "orgA_nonpending": 6,
+        "orgB_nonpending": 3
+      },
+      "after": {
+        "orgA_pending": 12,
+        "orgB_pending": 8,
+        "orgA_nonpending": 6,
+        "orgB_nonpending": 3
+      },
+      "orgB_pending_unchanged": true,
+      "orgA_pending_delta": 0
+    },
+    {
+      "cycle": 12,
+      "at": "2026-08-30T23:32:24.185Z",
+      "scoped_org": "c0a10000-0000-4000-8000-0000000000b1",
+      "status": 200,
+      "response": {
+        "processed": 0,
+        "batchId": null,
+        "merkleRoot": null,
+        "txId": null,
+        "skipped": true
+      },
+      "before": {
+        "orgA_pending": 12,
+        "orgB_pending": 8,
+        "orgA_nonpending": 18,
+        "orgB_nonpending": 3
+      },
+      "after": {
+        "orgA_pending": 12,
+        "orgB_pending": 8,
+        "orgA_nonpending": 18,
+        "orgB_nonpending": 3
+      },
+      "orgB_pending_unchanged": true,
+      "orgA_pending_delta": 0
+    }
+  ],
+  "daily_flush": [],
+  "cron_fire": {
+    "probe": "check-submitted-confirmations",
+    "cadence": "*/2 * * * *",
+    "window_minutes": 30,
+    "log_lines": 23,
+    "distinct_instances": 2,
+    "fire_minutes": 14,
+    "minutes_with_2plus_instances": 9,
+    "max_instances_in_one_minute": 2,
+    "double_fire_rate": 0.643
+  },
+  "reorg_aborts": {
+    "window_minutes": 30,
+    "in_process_reorg_cron_failures": 3
+  }
+}

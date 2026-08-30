@@ -1,0 +1,387 @@
+#!/usr/bin/env node
+/**
+ * cron-chain-batch T3 soak driver (PRs #2429, #2438, #2495).
+ * Exercises the batch's OWN changed behavior, not generic health.
+ */
+import { execFileSync } from 'node:child_process';
+import { appendFileSync, writeFileSync, mkdirSync } from 'node:fs';
+
+const WORKER = process.env.WORKER_URL;
+const SB = process.env.SUPABASE_URL;
+const SRK = process.env.SERVICE_ROLE_KEY;
+const CRON = process.env.CRON_SECRET;
+const OUT = process.env.EVIDENCE_DIR;
+const END = Date.parse(process.env.SOAK_END);
+const SIGNET = 'https://mempool.space/signet';
+const CYCLE_MS = 300_000;
+
+mkdirSync(OUT, { recursive: true });
+const JSONL = `${OUT}/soak-cycles.jsonl`;
+const SUMMARY = `${OUT}/soak-summary.json`;
+
+const ORG_A = 'c0a10000-0000-4000-8000-0000000000b1';
+const ORG_B = 'c0a10000-0000-4000-8000-0000000000b2';
+const GOOD = ['01','02','03','04','05','06','07','08'].map(n => `c0a10000-0000-4000-8000-0000000001${n}`);
+const POISON = 'c0a10000-0000-4000-8000-000000000109';
+
+let idToken = '', idTokenAt = 0;
+function token() {
+  if (Date.now() - idTokenAt > 1_800_000) {
+    idToken = execFileSync('gcloud', ['auth', 'print-identity-token'], { encoding: 'utf8' }).trim();
+    idTokenAt = Date.now();
+  }
+  return idToken;
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function jfetch(url, opts = {}, ms = 45_000) {
+  const t0 = Date.now();
+  try {
+    const r = await fetch(url, { ...opts, signal: AbortSignal.timeout(ms) });
+    const txt = await r.text();
+    let body; try { body = JSON.parse(txt); } catch { body = txt.slice(0, 400); }
+    return { ok: r.ok, status: r.status, body, ms: Date.now() - t0 };
+  } catch (e) {
+    return { ok: false, status: 0, body: String(e && e.message || e), ms: Date.now() - t0 };
+  }
+}
+const job = (path) => jfetch(`${WORKER}${path}`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${token()}`, 'X-Cron-Secret': CRON, 'Content-Type': 'application/json' },
+  body: '{}',
+});
+const health = () => jfetch(`${WORKER}/health`, { headers: { Authorization: `Bearer ${token()}` } }, 20_000);
+
+const sbHeaders = (extra = {}) => ({
+  apikey: SRK, Authorization: `Bearer ${SRK}`, 'Content-Type': 'application/json', ...extra,
+});
+const sbPatch = (qs, patch) => jfetch(`${SB}/rest/v1/${qs}`, {
+  method: 'PATCH', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify(patch),
+});
+const sbGet = (qs, extra = {}) => jfetch(`${SB}/rest/v1/${qs}`, { headers: sbHeaders(extra) });
+
+async function setFlag(key, enabled) {
+  return sbPatch(`switchboard_flags?flag_key=eq.${key}`, { enabled, updated_at: new Date().toISOString() });
+}
+
+/** Point the reorg fixture at the live signet tip so detectReorgs always has candidates. */
+async function refreshReorgFixture(cycle) {
+  const tipR = await jfetch(`${SIGNET}/api/blocks/tip/height`, {}, 20_000);
+  if (!tipR.ok) return { refreshed: false, reason: 'tip_fetch_failed', tip: null };
+  const tip = parseInt(String(tipR.body), 10);
+  // Walk back a few settled blocks (all well inside tip-10) and take the one with
+  // the most transactions, so `checked` (distinct chain_tx_id) stays high.
+  let h = null, blockHash = null, txids = null;
+  for (const back of [2, 3, 4, 5, 6]) {
+    const cand = tip - back;
+    const hashR = await jfetch(`${SIGNET}/api/block-height/${cand}`, {}, 20_000);
+    if (!hashR.ok) continue;
+    const bh = String(hashR.body).trim();
+    const txR = await jfetch(`${SIGNET}/api/block/${bh}/txids`, {}, 25_000);
+    if (!txR.ok || !Array.isArray(txR.body) || txR.body.length === 0) continue;
+    if (!txids || txR.body.length > txids.length) { h = cand; blockHash = bh; txids = txR.body; }
+    if (txids && txids.length >= GOOD.length + 2) break;
+  }
+  if (!txids) return { refreshed: false, reason: 'no_usable_block', tip };
+  let n = 0;
+  for (let i = 0; i < GOOD.length; i++) {
+    const r = await sbPatch(`anchors?id=eq.${GOOD[i]}`, {
+      status: 'SECURED',
+      chain_tx_id: txids[i % txids.length],
+      chain_block_height: h,
+      chain_block_hash: blockHash,
+      legal_hold: false, deleted_at: null,
+    });
+    if (r.ok) n++;
+  }
+  // Poison anchor: real, confirmed txid but a DIFFERENT stored block hash.
+  // Odd cycles arm it (expect reorgsDetected >= 1); even cycles disarm it.
+  const armed = cycle % 2 === 1;
+  const poisonTx = txids[(GOOD.length) % txids.length] === txids[0] && txids.length > GOOD.length
+    ? txids[txids.length - 1]
+    : txids[GOOD.length % txids.length];
+  const pr = await sbPatch(`anchors?id=eq.${POISON}`, {
+    status: 'SECURED',
+    chain_tx_id: poisonTx,
+    chain_block_height: h,
+    chain_block_hash: armed ? 'f'.repeat(64) : blockHash,
+    legal_hold: false, deleted_at: null,
+  });
+  return { refreshed: true, tip, height: h, blockHash, txids: txids.length, updated: n, poison_armed: armed, poison_tx: poisonTx, poison_ok: pr.ok };
+}
+
+/** In-process node-cron double-fire probe: monitor-fee-rates writes one audit row per run. */
+async function feeSampleWindow(minutes) {
+  const since = new Date(Date.now() - minutes * 60_000).toISOString();
+  const r = await sbGet(
+    `audit_events?event_type=eq.chain.fee_rate_sample&created_at=gte.${since}&select=created_at&order=created_at.asc`,
+    { Prefer: 'count=exact' },
+  );
+  const rows = Array.isArray(r.body) ? r.body : [];
+  const slots = {};
+  for (const x of rows) {
+    const d = new Date(x.created_at);
+    const k = `${d.toISOString().slice(0, 14)}${String(Math.floor(d.getUTCMinutes() / 10) * 10).padStart(2, '0')}`;
+    slots[k] = (slots[k] || 0) + 1;
+  }
+  const counts = Object.values(slots);
+  return {
+    window_minutes: minutes, samples: rows.length, slots: Object.keys(slots).length,
+    per_slot: slots,
+    max_per_slot: counts.length ? Math.max(...counts) : 0,
+    mean_per_slot: counts.length ? +(counts.reduce((a, b) => a + b, 0) / counts.length).toFixed(2) : 0,
+  };
+}
+
+async function anchorCounts() {
+  const out = {};
+  for (const [label, qs] of [
+    ['orgA_pending', `anchors?org_id=eq.${ORG_A}&status=eq.PENDING&select=id`],
+    ['orgB_pending', `anchors?org_id=eq.${ORG_B}&status=eq.PENDING&select=id`],
+    ['orgA_nonpending', `anchors?org_id=eq.${ORG_A}&status=neq.PENDING&select=id`],
+    ['orgB_nonpending', `anchors?org_id=eq.${ORG_B}&status=neq.PENDING&select=id`],
+  ]) {
+    const r = await sbGet(qs);
+    out[label] = Array.isArray(r.body) ? r.body.length : -1;
+  }
+  return out;
+}
+
+/** Steady in-band request load; also keeps both instances warm so node-cron can fire. */
+async function loadBurst(n) {
+  const res = { ok: 0, non2xx: 0, err: 0, codes: {} };
+  const t = token();
+  const tasks = [];
+  for (let i = 0; i < n; i++) {
+    const path = i % 2 === 0 ? '/health' : '/api/health';
+    tasks.push(jfetch(`${WORKER}${path}`, {
+      headers: { Authorization: `Bearer ${t}`, 'X-Forwarded-For': `10.${(i % 250) + 1}.${((i * 7) % 250) + 1}.${((i * 13) % 250) + 1}` },
+    }, 20_000).then(r => {
+      res.codes[r.status] = (res.codes[r.status] || 0) + 1;
+      if (r.status === 0) res.err++; else if (r.ok) res.ok++; else res.non2xx++;
+    }));
+  }
+  await Promise.all(tasks);
+  return res;
+}
+
+
+/**
+ * #2429 double-fire probe, measured from Cloud Run logs.
+ *
+ * `check-submitted-confirmations` is registered in-process on `*​/2 * * * *` and is
+ * NEVER driven over HTTP by this driver, so every occurrence of its start line is
+ * attributable to node-cron. Counting occurrences per minute-bucket per instanceId
+ * answers "how many times did this cron actually execute per window, and on how
+ * many live instances" — empirically, not by assertion.
+ */
+function cronFireWindow(minutes) {
+  const filter = 'resource.type="cloud_run_revision" AND resource.labels.service_name="'
+    + state.service + '" AND jsonPayload.msg="Starting confirmation check for SUBMITTED anchors"';
+  let raw = '';
+  try {
+    raw = execFileSync('gcloud', ['logging', 'read', filter, '--project', 'arkova1',
+      '--freshness', `${minutes}m`, '--limit', '2000',
+      '--format', 'json(timestamp,labels.instanceId)'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  } catch (e) {
+    return { probe: 'check-submitted-confirmations', window_minutes: minutes, error: String(e && e.message || e).slice(0, 200) };
+  }
+  let rows = [];
+  try { rows = JSON.parse(raw); } catch { rows = []; }
+  const buckets = {}, instances = new Set();
+  for (const r of rows) {
+    const inst = (r.labels && r.labels.instanceId) || 'unknown';
+    instances.add(inst);
+    const k = String(r.timestamp).slice(0, 16); // minute bucket
+    buckets[k] = buckets[k] || new Set();
+    buckets[k].add(inst);
+  }
+  const perBucket = Object.entries(buckets).map(([k, set]) => [k, set.size]);
+  const fires = Object.entries(buckets).length;
+  const dbl = perBucket.filter(([, n]) => n >= 2).length;
+  const counts = perBucket.map(([, n]) => n);
+  return {
+    probe: 'check-submitted-confirmations',
+    cadence: '*/2 * * * *',
+    window_minutes: minutes,
+    log_lines: rows.length,
+    distinct_instances: instances.size,
+    fire_minutes: fires,
+    minutes_with_2plus_instances: dbl,
+    max_instances_in_one_minute: counts.length ? Math.max(...counts) : 0,
+    double_fire_rate: fires ? +(dbl / fires).toFixed(3) : 0,
+  };
+}
+
+/** Count reorg-cron aborts (mempool tip fetch TimeoutError) over the window. */
+function reorgAbortWindow(minutes) {
+  const filter = 'resource.type="cloud_run_revision" AND resource.labels.service_name="'
+    + state.service + '" AND jsonPayload.msg="Reorg detection cron failed"';
+  try {
+    const raw = execFileSync('gcloud', ['logging', 'read', filter, '--project', 'arkova1',
+      '--freshness', `${minutes}m`, '--limit', '500', '--format', 'json(timestamp)'],
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    const rows = JSON.parse(raw || '[]');
+    return { window_minutes: minutes, in_process_reorg_cron_failures: rows.length };
+  } catch (e) {
+    return { window_minutes: minutes, error: String(e && e.message || e).slice(0, 200) };
+  }
+}
+
+const state = {
+  soak_id: 'SOAK-CRON-CHAIN-BATCH-2026-08-30',
+  rig_ref: 'sdkcfqprpmacxlazwjdy',
+  service: 'arkova-worker-cron-chain-batch-staging',
+  soak_head: 'c6874e0108a516f3741718cf25a98ad4a10422f6',
+  started_at: new Date().toISOString(),
+  soak_end: process.env.SOAK_END,
+  cycles: 0, cycles_ok: 0,
+  reorg: { runs: 0, http_200: 0, http_503: 0, nonzero_checked: 0, max_checked: 0, total_checked: 0, reorgs_detected: 0, reverted: 0, incomplete_reasons: {} },
+  batch: { runs: 0, skipped_by_flag: 0, ran_with_flag_on: 0, processed_total: 0, forced_flushes: 0 },
+  expiry: { runs: 0, skipped_by_flag: 0, ran_with_flag_on: 0 },
+  flag_events: [],
+  load: { ok: 0, non2xx: 0, err: 0 },
+  isolation_checks: [],
+  daily_flush: [],
+  last_fee_window: null,
+  health_fail: 0,
+};
+
+function persist() { writeFileSync(SUMMARY, JSON.stringify(state, null, 2)); }
+
+// Flag choreography (ms after start).
+const PLAN = [
+  { at: 45 * 60_000, act: 'ON' },
+  { at: 195 * 60_000, act: 'OFF' },
+  { at: 255 * 60_000, act: 'ON' },
+];
+let planIdx = 0;
+
+async function main() {
+  const t0 = Date.now();
+  persist();
+  while (Date.now() < END) {
+    const cycle = ++state.cycles;
+    const started = new Date().toISOString();
+    const rec = { cycle, at: started };
+
+    const h = await health();
+    rec.health = { status: h.status, ok: h.ok, git_sha: h.body?.git_sha, uptime: h.body?.uptime, checks: h.body?.checks };
+    if (!h.ok) state.health_fail++;
+
+    // Mid-soak flag flip — NO redeploy. Capture the serving revision either side.
+    if (planIdx < PLAN.length && Date.now() - t0 >= PLAN[planIdx].at) {
+      const want = PLAN[planIdx].act === 'ON';
+      let revBefore = '';
+      try {
+        revBefore = execFileSync('gcloud', ['run', 'services', 'describe', state.service,
+          '--project', 'arkova1', '--region', 'us-central1',
+          '--format', 'value(status.latestReadyRevisionName)'], { encoding: 'utf8' }).trim();
+      } catch { /* non-fatal */ }
+      const a = await setFlag('ENABLE_BATCH_ANCHORING', want);
+      const b = await setFlag('ENABLE_EXPIRY_ALERTS', want);
+      await sleep(70_000); // > FLAG_REFRESH_TTL_MS (60s)
+      const batchAfter = await job('/jobs/batch-anchors');
+      const expiryAfter = await job('/jobs/check-credential-expiry');
+      let revAfter = '';
+      try {
+        revAfter = execFileSync('gcloud', ['run', 'services', 'describe', state.service,
+          '--project', 'arkova1', '--region', 'us-central1',
+          '--format', 'value(status.latestReadyRevisionName)'], { encoding: 'utf8' }).trim();
+      } catch { /* non-fatal */ }
+      const ev = {
+        cycle, at: new Date().toISOString(), set_to: PLAN[planIdx].act,
+        patch_ok: a.ok && b.ok,
+        revision_before: revBefore, revision_after: revAfter,
+        redeploy_occurred: Boolean(revBefore && revAfter && revBefore !== revAfter),
+        worker_uptime_s: rec.health?.uptime ?? null,
+        batch_response: { status: batchAfter.status, body: batchAfter.body },
+        expiry_response: { status: expiryAfter.status, body: expiryAfter.body },
+      };
+      state.flag_events.push(ev);
+      rec.flag_event = ev;
+      planIdx++;
+    }
+
+    rec.fixture = await refreshReorgFixture(cycle);
+
+    // ---- #2495: detect-reorgs must inspect a NON-EMPTY anchor set ----
+    const dr = await job('/jobs/detect-reorgs');
+    rec.detect_reorgs = { status: dr.status, ms: dr.ms, body: dr.body };
+    state.reorg.runs++;
+    if (dr.status === 200) state.reorg.http_200++;
+    if (dr.status === 503) state.reorg.http_503++;
+    const b = dr.body && typeof dr.body === 'object' ? dr.body : {};
+    if (typeof b.checked === 'number') {
+      state.reorg.total_checked += b.checked;
+      if (b.checked > 0) state.reorg.nonzero_checked++;
+      if (b.checked > state.reorg.max_checked) state.reorg.max_checked = b.checked;
+    }
+    if (typeof b.reorgsDetected === 'number') state.reorg.reorgs_detected += b.reorgsDetected;
+    if (typeof b.reverted === 'number') state.reorg.reverted += b.reverted;
+    if (b.completed === false && b.reason) {
+      state.reorg.incomplete_reasons[b.reason] = (state.reorg.incomplete_reasons[b.reason] || 0) + 1;
+    }
+
+    // ---- #2438: batch drain honours the live flag ----
+    const hourUtc = new Date().getUTCHours();
+    const isDailyFlush = hourUtc === 7 && !state.daily_flush.some(d => d.date === started.slice(0, 10));
+    const ba = await job(isDailyFlush ? '/jobs/batch-anchors?force=true' : '/jobs/batch-anchors');
+    rec.batch_anchors = { status: ba.status, forced: isDailyFlush, body: ba.body };
+    state.batch.runs++;
+    const bb = ba.body && typeof ba.body === 'object' ? ba.body : {};
+    if (typeof bb.processed === 'number') state.batch.processed_total += bb.processed;
+    const flagRow = await sbGet('switchboard_flags?flag_key=eq.ENABLE_BATCH_ANCHORING&select=enabled');
+    const flagOn = Array.isArray(flagRow.body) && flagRow.body[0]?.enabled === true;
+    rec.batch_flag_enabled = flagOn;
+    if (flagOn) state.batch.ran_with_flag_on++; else state.batch.skipped_by_flag++;
+    if (isDailyFlush) {
+      state.batch.forced_flushes++;
+      state.daily_flush.push({ date: started.slice(0, 10), at: started, flag_enabled: flagOn, response: bb, status: ba.status });
+    }
+
+    const ex = await job('/jobs/check-credential-expiry');
+    rec.expiry = { status: ex.status, body: ex.body };
+    state.expiry.runs++;
+    if (ex.body && ex.body.skipped) state.expiry.skipped_by_flag++; else state.expiry.ran_with_flag_on++;
+
+    // ---- per-org isolation: force a drain scoped to ORG_A only ----
+    if (cycle % 6 === 0) {
+      const before = await anchorCounts();
+      const iso = await job(`/jobs/batch-anchors?force=true&org_id=${ORG_A}`);
+      await sleep(4000);
+      const after = await anchorCounts();
+      const chk = {
+        cycle, at: new Date().toISOString(), scoped_org: ORG_A,
+        status: iso.status, response: iso.body, before, after,
+        orgB_pending_unchanged: before.orgB_pending === after.orgB_pending,
+        orgA_pending_delta: after.orgA_pending - before.orgA_pending,
+      };
+      state.isolation_checks.push(chk);
+      rec.isolation = chk;
+    }
+
+    // ---- #2429: count in-process cron executions per 10-min slot ----
+    rec.fee_window = await feeSampleWindow(60);
+    state.last_fee_window = rec.fee_window;
+    rec.cron_fire_window = cronFireWindow(30);
+    state.last_cron_fire_window = rec.cron_fire_window;
+    rec.reorg_abort_window = reorgAbortWindow(30);
+    state.last_reorg_abort_window = rec.reorg_abort_window;
+
+    const lb = await loadBurst(40);
+    rec.load = lb;
+    state.load.ok += lb.ok; state.load.non2xx += lb.non2xx; state.load.err += lb.err;
+
+    state.cycles_ok += (h.ok && dr.status !== 0) ? 1 : 0;
+    appendFileSync(JSONL, JSON.stringify(rec) + '\n');
+    state.last_cycle_at = new Date().toISOString();
+    persist();
+
+    const spent = Date.now() - Date.parse(started);
+    await sleep(Math.max(15_000, CYCLE_MS - spent));
+  }
+  state.finished_at = new Date().toISOString();
+  persist();
+}
+main().catch(e => { state.fatal = String(e && e.stack || e); persist(); process.exit(1); });

@@ -1,0 +1,157 @@
+{
+  "soak_id": "SOAK-CRON-CHAIN-BATCH-2026-08-30",
+  "rig_ref": "sdkcfqprpmacxlazwjdy",
+  "service": "arkova-worker-cron-chain-batch-staging",
+  "soak_head": "c6874e0108a516f3741718cf25a98ad4a10422f6",
+  "started_at": "2026-08-30T22:36:29.618Z",
+  "soak_end": "2026-09-01T22:09:30Z",
+  "cycles": 13,
+  "cycles_ok": 13,
+  "reorg": {
+    "runs": 13,
+    "http_200": 13,
+    "http_503": 0,
+    "nonzero_checked": 13,
+    "max_checked": 9,
+    "total_checked": 117,
+    "reorgs_detected": 7,
+    "reverted": 7,
+    "incomplete_reasons": {}
+  },
+  "batch": {
+    "runs": 13,
+    "skipped_by_flag": 9,
+    "ran_with_flag_on": 4,
+    "processed_total": 0,
+    "forced_flushes": 0
+  },
+  "expiry": {
+    "runs": 13,
+    "skipped_by_flag": 9,
+    "ran_with_flag_on": 4
+  },
+  "flag_events": [
+    {
+      "cycle": 10,
+      "at": "2026-08-30T23:22:55.021Z",
+      "set_to": "ON",
+      "patch_ok": true,
+      "revision_before": "arkova-worker-cron-chain-batch-staging-00001-bxt",
+      "revision_after": "arkova-worker-cron-chain-batch-staging-00001-bxt",
+      "redeploy_occurred": false,
+      "worker_uptime_s": 4255,
+      "batch_response": {
+        "status": 200,
+        "body": {
+          "processed": 0,
+          "batchId": null,
+          "merkleRoot": null,
+          "txId": null
+        }
+      },
+      "expiry_response": {
+        "status": 200,
+        "body": {
+          "processed": 0,
+          "categories": {
+            "7_day": 0,
+            "30_day": 0,
+            "60_day": 0,
+            "90_day": 0
+          },
+          "orgsNotified": 0,
+          "webhooksSent": 0,
+          "webhooksFailed": 0
+        }
+      }
+    }
+  ],
+  "load": {
+    "ok": 520,
+    "non2xx": 0,
+    "err": 0
+  },
+  "isolation_checks": [
+    {
+      "cycle": 6,
+      "at": "2026-08-30T23:01:38.311Z",
+      "scoped_org": "c0a10000-0000-4000-8000-0000000000b1",
+      "status": 200,
+      "response": {
+        "processed": 0,
+        "batchId": null,
+        "merkleRoot": null,
+        "txId": null
+      },
+      "before": {
+        "orgA_pending": 12,
+        "orgB_pending": 8,
+        "orgA_nonpending": 6,
+        "orgB_nonpending": 3
+      },
+      "after": {
+        "orgA_pending": 12,
+        "orgB_pending": 8,
+        "orgA_nonpending": 6,
+        "orgB_nonpending": 3
+      },
+      "orgB_pending_unchanged": true,
+      "orgA_pending_delta": 0
+    },
+    {
+      "cycle": 12,
+      "at": "2026-08-30T23:32:24.185Z",
+      "scoped_org": "c0a10000-0000-4000-8000-0000000000b1",
+      "status": 200,
+      "response": {
+        "processed": 0,
+        "batchId": null,
+        "merkleRoot": null,
+        "txId": null,
+        "skipped": true
+      },
+      "before": {
+        "orgA_pending": 12,
+        "orgB_pending": 8,
+        "orgA_nonpending": 18,
+        "orgB_nonpending": 3
+      },
+      "after": {
+        "orgA_pending": 12,
+        "orgB_pending": 8,
+        "orgA_nonpending": 18,
+        "orgB_nonpending": 3
+      },
+      "orgB_pending_unchanged": true,
+      "orgA_pending_delta": 0
+    }
+  ],
+  "daily_flush": [],
+  "last_fee_window": {
+    "window_minutes": 60,
+    "samples": 1,
+    "slots": 1,
+    "per_slot": {
+      "2026-08-30T23:30": 1
+    },
+    "max_per_slot": 1,
+    "mean_per_slot": 1
+  },
+  "health_fail": 0,
+  "last_cron_fire_window": {
+    "probe": "check-submitted-confirmations",
+    "cadence": "*/2 * * * *",
+    "window_minutes": 30,
+    "log_lines": 23,
+    "distinct_instances": 2,
+    "fire_minutes": 14,
+    "minutes_with_2plus_instances": 9,
+    "max_instances_in_one_minute": 2,
+    "double_fire_rate": 0.643
+  },
+  "last_reorg_abort_window": {
+    "window_minutes": 30,
+    "in_process_reorg_cron_failures": 3
+  },
+  "last_cycle_at": "2026-08-30T23:37:23.126Z"
+}
