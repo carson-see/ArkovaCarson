@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { TOAST } from '@/lib/copy';
 import {
   Select,
   SelectContent,
@@ -31,7 +32,12 @@ type InviteRole = 'INDIVIDUAL' | 'ORG_ADMIN';
 interface InviteMemberModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onInvite: (email: string, role: InviteRole) => Promise<void>;
+  /**
+   * Resolves true on success, false on failure (SCRUM-3524). useInviteMember
+   * never rethrows (SCRUM-1979 toast-safety), so this boolean is the only
+   * failure signal — the modal stays open and shows its inline Alert on false.
+   */
+  onInvite: (email: string, role: InviteRole) => Promise<boolean>;
 }
 
 export function InviteMemberModal({
@@ -89,9 +95,16 @@ export function InviteMemberModal({
 
       setLoading(true);
       try {
-        await onInvite(trimmedEmail, role);
-        onOpenChange(false);
-        resetForm();
+        const invited = await onInvite(trimmedEmail, role);
+        if (invited) {
+          onOpenChange(false);
+          resetForm();
+        } else {
+          // The hook already toasted the specific, user-safe message; surface
+          // the generic failure copy inline so the modal doesn't silently
+          // close and drop the typed email (SCRUM-3524).
+          setError(TOAST.MEMBER_INVITE_FAILED);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to send invitation.';
         setError(message);

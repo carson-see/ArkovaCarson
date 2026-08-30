@@ -335,16 +335,22 @@ export function OrgProfilePage() {
     }
   }, [revokeTarget, revokeAnchor]);
 
-  const handleInvite = useCallback(async (email: string, role: 'INDIVIDUAL' | 'ORG_ADMIN') => {
-    if (!orgId) return;
-    await inviteMember({
+  const handleInvite = useCallback(async (email: string, role: 'INDIVIDUAL' | 'ORG_ADMIN'): Promise<boolean> => {
+    if (!orgId) return false;
+    // useInviteMember never rethrows (SCRUM-1979 toast-safety) — the boolean
+    // is the only failure signal. Propagate it so InviteMemberModal can stay
+    // open and show its inline Alert on failure (SCRUM-3524).
+    const invited = await inviteMember({
       email,
       role,
       orgId,
       orgName: organization?.display_name ?? 'Your Organization',
       inviterName: profile?.full_name ?? undefined,
     });
-    await refreshInvitations();
+    if (invited) {
+      await refreshInvitations();
+    }
+    return invited;
   }, [inviteMember, orgId, organization?.display_name, profile?.full_name, refreshInvitations]);
 
   // Resend = a fresh invite_member RPC call + a fresh /api/send-invitation-email
