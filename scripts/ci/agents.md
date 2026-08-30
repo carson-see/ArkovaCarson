@@ -10,6 +10,21 @@ _Last updated: 2026-08-29 (Policy Lints wired into `.mergify.yml` merge_conditio
 **`check-do-not-merge-body.ts`** (new Policy Lints step): fails any NON-DRAFT PR whose body contains "do not merge" (case-insensitive, whitespace-tolerant across line wraps) without the `do-not-merge` label — the #2240 pattern, where a body-level hold is inert to Mergify and the PR auto-merges over its author's written objection. The hyphenated `do-not-merge` (label mentions in prose) deliberately does NOT match. Draft + body are refreshed live via `gh` and labels resolve through `resolvePrLabels`' env ∪ live union (frozen-payload fallback on any fetch failure, same degradation story as `ciContext.fetchLiveLabels`), so applying the label and re-running the job passes. No override label — the pass condition IS a label. Freshness boundary, stated: ci.yml does not trigger on `edited` / `ready_for_review`, so a body edited (or a draft readied) without a new push keeps the old check result — shared with every body-gated check in this job, not introduced here.
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory, and the typecheck-parity `if:` scan covering the whole step block, not just name→run)._
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus the SCRUM-3802 anchor-feeder T3 path rule)._
+_Last updated: 2026-08-30 (SCRUM-3618 `src/tests/rls/` T0 tooling entry — plus the 2026-08-29 evidence-gate integrity + anchor-feeder T3 path rule)._
+
+## 2026-08-30 — `check-staging-evidence.ts` T0 entry for `src/tests/rls/` (SCRUM-3618)
+
+The RLS test-helper subtree (`src/tests/rls/` — the exact path CLAUDE.md §1.7 names for
+`withUser()` / `withAuth()`, plus `cleanupClient()` and the pinned seed constants) matched
+no T0 bucket: not `TEST_FILE_RE` (`helpers.ts` is not `*.test.ts`), no PATH_RULE, no
+allowlist entry — so the tests-only SCRUM-3618 parallel-safety fix classified T1
+("default frontend / additive change") purely for touching the shared sign-out helper.
+Same class as the CODEOWNERS / gitleaks entries: imported ONLY by `*.test.ts` files
+(verified no `src/` runtime importer), no surface a soak could exercise. Added
+`/^src\/tests\/rls\//` to `STAGING_TOOLING_ALLOW`, pinned red-first by a
+`requiredTierFor` test covering both the lone helper and the full SCRUM-3618 change-set
+shape. Deliberately NOT the whole of `src/tests/`: `queryTestUtils.tsx` was not
+importer-audited, so it stays on the fail-closed default until someone does that audit.
 
 ## 2026-08-29 — `check-staging-evidence.ts` anchor-feeder T3 path rule (SCRUM-3802)
 
