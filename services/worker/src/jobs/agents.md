@@ -1341,3 +1341,18 @@ Three changes, each with tests that fail without it:
 **Do not "fix" a future hang by shortening the TTL.** A TTL below the cadence lets the next tick
 steal the lease from a run that is still working — the SCRUM-3031 overlap this module exists to
 prevent. `maxRunMs` is the knob for a hung run; `ttlMs` is the knob for a dead one.
+
+## `rule-action-dispatcher.ts` — `fingerprint_source` is deliberately NULL (R19 §1.5)
+
+The anchor-creating actions (`AUTO_ANCHOR` / `FAST_TRACK_ANCHOR` / `INSTANT_SECURE`) set the top-level
+`anchors.fingerprint_source` column (migration `0376`) to **`NULL`**, enforced by a required
+`z.null()` in the module's local `AnchorInsertSchema` and pinned by the `fingerprint_source evidence
+class (R19 §1.5)` tests. **Do not "fix the gap" by copying the sibling `connector-artifact-drain.ts`
+value (`document_bytes`).** This path anchors a DocuSign-**declared** hash (asserted, never fetched or
+hashed by Arkova — see `docusign-anchor-reconciliation.ts` path A, and `rules-engine.ts`), so
+`document_bytes` (a measurement claim) and `issuer_record_attestation` ("no document exists") are BOTH
+false here. `NULL` = unclassified, renders as nothing. `fingerprint_source` is immutable post-insert
+(migration `0384`) and this path is `service_role` (no DB guard), so the schema + tests ARE the guard.
+Distinct from the free-text `metadata.fingerprint_source` debug label (which payload field the hash was
+read from) — never conflate them. Rationale + the separate, higher-severity `FETCH_TIME_SNAPSHOT`
+mis-classification finding (out of scope, coordinated with PR-4): `docs/staging/docusign-bilateral-2026-08/DECISION-rule-dispatcher-fingerprint-source.md`.

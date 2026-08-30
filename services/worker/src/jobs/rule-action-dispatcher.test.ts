@@ -43,6 +43,9 @@ interface AnchorInsert {
   filename: string;
   credential_type: string;
   metadata: Record<string, unknown>;
+  // R19 top-level evidence-class column (migration 0376). DISTINCT from the
+  // free-text metadata.fingerprint_source debug label — never conflate them.
+  fingerprint_source?: string | null;
 }
 
 interface AnchorLookupRow {
@@ -594,6 +597,80 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     expect(result.succeeded).toBe(1);
     expect(dbState.anchorInserts[0].metadata.account_id_sha256).toBe(accountIdSha256);
     expect(JSON.stringify(dbState.anchorInserts[0].metadata)).not.toContain('acct-1');
+  });
+
+  // ─── R19 §1.5 evidence-class honesty (top-level anchors.fingerprint_source) ─
+  //
+  // Every anchor-creating action here (AUTO_ANCHOR / FAST_TRACK_ANCHOR /
+  // INSTANT_SECURE) materializes from a fingerprint DECLARED by DocuSign in the
+  // trigger payload. rules-engine.ts passes `payload.document_sha256` through
+  // verbatim (hex-normalized only) — there is NO fetch and NO server-side hash on
+  // this path. docusign-anchor-reconciliation.ts states it plainly: the declared
+  // hash is "ASSERTED, not measured".
+  //
+  // So the top-level `anchors.fingerprint_source` column (migration 0376) MUST be
+  // NULL ("unclassified") here, NOT either enum value — BOTH would ship a false
+  // §1.5 claim on this path:
+  //   - 'document_bytes'            asserts Arkova/the client measured real file
+  //                                 bytes ("generated on your device"). We never
+  //                                 touched the bytes.
+  //   - 'issuer_record_attestation' asserts NO source document exists ("this
+  //                                 record was never in document form"). A signed
+  //                                 contract demonstrably exists.
+  // NULL renders as nothing (FingerprintSourceDisplay) and asserts nothing.
+  // Rationale: docs/staging/docusign-bilateral-2026-08/DECISION-rule-dispatcher-fingerprint-source.md
+  //
+  // HARD RATCHET: fingerprint_source is service_role-writable at INSERT and
+  // IMMUTABLE afterward (migration 0384), so a wrong value here is permanent. The
+  // obvious-but-wrong instinct is to copy the sibling connector-artifact-drain
+  // path's 'document_bytes' (that path FETCHES + hashes real bytes — §1.6A — and
+  // is a different evidence class). These tests exist to stop that.
+  describe('fingerprint_source evidence class (R19 §1.5)', () => {
+    const anchorActions = ['AUTO_ANCHOR', 'FAST_TRACK_ANCHOR', 'INSTANT_SECURE'] as const;
+
+    for (const action of anchorActions) {
+      it(`${action}: writes top-level fingerprint_source = NULL (declared hash is asserted, not measured)`, async () => {
+        setScenario({
+          rule: { ...defaultRule, action_type: action, action_config: { tag: 'signed-contract' } },
+        });
+
+        const result = await runRuleActionDispatcher();
+
+        expect(result.succeeded).toBe(1);
+        expect(dbState.anchorInserts).toHaveLength(1);
+        const inserted = dbState.anchorInserts[0];
+
+        // Top-level column: explicit null — never a value that misrepresents a
+        // vendor-DECLARED (unmeasured) hash.
+        expect(inserted.fingerprint_source).toBeNull();
+        expect(inserted.fingerprint_source).not.toBe('document_bytes');
+        expect(inserted.fingerprint_source).not.toBe('issuer_record_attestation');
+
+        // The unrelated metadata debug label (WHICH payload field the hash was
+        // read from) is a DIFFERENT key and stays untouched. Never conflate the
+        // two: this records provenance-of-read, not an evidence-class claim.
+        expect(inserted.metadata.fingerprint_source).toBe('payload.document_sha256');
+      });
+    }
+
+    it('FAST_TRACK_ANCHOR insufficient-credit fallback still writes fingerprint_source = NULL', async () => {
+      // The free-queue fallback re-parses the payload through
+      // `withCreditDenialReason` → AnchorInsertSchema; the null must survive it.
+      mockDbRpc.mockResolvedValue({
+        data: { success: false, error: 'insufficient_credits', balance: 0, required: 1 },
+        error: null,
+      });
+      setScenario({
+        rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+      });
+
+      const result = await runRuleActionDispatcher();
+
+      expect(result.succeeded).toBe(1);
+      expect(dbState.anchorInserts).toHaveLength(1);
+      expect(dbState.anchorInserts[0].fingerprint_source).toBeNull();
+      expect(dbState.anchorInserts[0].metadata.credit_denial_reason).toBe('insufficient_credits');
+    });
   });
 
   // ─── Billing integrity: the charged credit must buy real acceleration ────
