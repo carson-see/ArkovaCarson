@@ -1183,7 +1183,14 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
     .is('deleted_at', null)
     .limit(100);
 
-  if (error || !anchors || anchors.length === 0) {
+  // SCRUM-3836: mock-path twin of the reorg swallow. Only runs under USE_MOCKS,
+  // but a failed query here silently looks like "nothing to confirm" in soaks —
+  // which is exactly how a hollow-green soak is manufactured.
+  if (error) {
+    logger.error({ error }, 'Mock auto-confirm could not run — SUBMITTED anchor query failed');
+    return { checked: 0, confirmed: 0 };
+  }
+  if (!anchors || anchors.length === 0) {
     return { checked: 0, confirmed: 0 };
   }
 

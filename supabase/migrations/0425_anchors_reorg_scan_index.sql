@@ -46,6 +46,7 @@
 -- remains usable by sibling chain-maintenance scans that do not share it.
 -- =============================================================================
 
+-- anchor-index-justification: detectReorgs (jobs/chain-maintenance.ts) selects reorg candidates every 10 minutes with WHERE status='SECURED' AND legal_hold=false AND chain_block_height >= (tip-10) AND chain_tx_id IS NOT NULL AND deleted_at IS NULL LIMIT 100; no index covered chain_block_height, so on prod (3.8M rows / 23 GB) the plan was Parallel Seq Scan at cost 1,775,993 and PostgREST (authenticator, statement_timeout=60s) KILLED the query on every run — 1,108 calls, mean 11,426 ms, max 59,986 ms — while the code swallowed the error and returned HTTP 200, so reorg detection reported healthy having inspected ZERO anchors (SCRUM-3836). Measured after: Index Scan, 0.442 ms; live endpoint 60.2s -> 0.25s. Write-path cost is bounded by the partial predicate: the index covers only SECURED, undeleted, anchored rows and is 24 MB against a 23 GB table; legal_hold is deliberately left as a post-filter so the index is not narrowed to one caller.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_reorg_scan
   ON public.anchors (chain_block_height DESC)
   WHERE status = 'SECURED' AND deleted_at IS NULL AND chain_tx_id IS NOT NULL;
