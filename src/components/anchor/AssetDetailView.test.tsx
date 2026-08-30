@@ -474,6 +474,49 @@ describe('AssetDetailView', () => {
       expect(queryByTestId('docusign-signer-row')).not.toBeInTheDocument();
     });
 
+    // Malformed _signers shapes (post-review hardening): DocusignSignerRows'
+    // Array.isArray/isDisplayableSigner guards must degrade to "render
+    // nothing" rather than throw, since _signers is producer-written data
+    // this component does not control the shape of.
+    it('does not crash and renders no signer rows when _signers is not an array', () => {
+      const malformedAnchor = {
+        ...docusignAnchor,
+        metadata: { ...docusignAnchor.metadata, _signers: 'not-an-array' },
+      };
+
+      expect(() => render(<AssetDetailView anchor={malformedAnchor} />)).not.toThrow();
+      const { queryByTestId } = render(<AssetDetailView anchor={malformedAnchor} />);
+      expect(queryByTestId('docusign-signer-row')).not.toBeInTheDocument();
+    });
+
+    it('does not crash and renders no signer rows when an entry has no recipient_id_guid', () => {
+      const malformedAnchor = {
+        ...docusignAnchor,
+        metadata: { ...docusignAnchor.metadata, _signers: [{}] },
+      };
+
+      expect(() => render(<AssetDetailView anchor={malformedAnchor} />)).not.toThrow();
+      const { queryByTestId } = render(<AssetDetailView anchor={malformedAnchor} />);
+      expect(queryByTestId('docusign-signer-row')).not.toBeInTheDocument();
+    });
+
+    it('does not crash and renders no signer rows when an entry has only user_id (no recipient_id_guid)', () => {
+      const malformedAnchor = {
+        ...docusignAnchor,
+        metadata: {
+          ...docusignAnchor.metadata,
+          _signers: [{ user_id: 'user-only-should-never-render' }],
+        },
+      };
+
+      expect(() => render(<AssetDetailView anchor={malformedAnchor} />)).not.toThrow();
+      const { queryByTestId, queryByText } = render(<AssetDetailView anchor={malformedAnchor} />);
+      expect(queryByTestId('docusign-signer-row')).not.toBeInTheDocument();
+      // The data-minimization guard means this could never render anyway,
+      // but assert it explicitly for this specific malformed-entry shape.
+      expect(queryByText(/user-only-should-never-render/)).not.toBeInTheDocument();
+    });
+
     it('renders a value that fails strict UUID validation as plain text, not a link', () => {
       const badValueAnchor = {
         ...mockAnchor,

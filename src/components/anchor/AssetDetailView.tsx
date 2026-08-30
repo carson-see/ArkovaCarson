@@ -498,7 +498,7 @@ function DocusignSignerRows({ signers, env }: Readonly<DocusignSignerRowsProps>)
             const guid = signer.recipient_id_guid;
             const href = signerUrl(guid, env);
             return (
-              <div key={guid} className="space-y-0.5" data-testid="docusign-signer-row">
+              <div key={`${guid}-${index}`} className="space-y-0.5" data-testid="docusign-signer-row">
                 <p className="text-xs">
                   {DOCUSIGN_RECORD_LINKS_LABELS.SIGNER_PREFIX} {index + 1} · {DOCUSIGN_RECORD_LINKS_LABELS.VERIFIED_VIA_DOCUSIGN}
                 </p>

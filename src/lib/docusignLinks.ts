@@ -85,6 +85,8 @@ function baseUrl(env: DocusignEnv): string {
  */
 export function accountUrl(accountId: unknown, env: DocusignEnv = 'prod'): string | null {
   if (!isStrictUuid(accountId)) return null;
+  // encodeURIComponent here is defense-in-depth, not load-bearing: isStrictUuid
+  // already constrained accountId to [0-9a-f-], so this is a guaranteed no-op.
   return `${baseUrl(env)}/send/home?account=${encodeURIComponent(accountId)}`;
 }
 
@@ -94,6 +96,8 @@ export function accountUrl(accountId: unknown, env: DocusignEnv = 'prod'): strin
  */
 export function envelopeUrl(envelopeId: unknown, env: DocusignEnv = 'prod'): string | null {
   if (!isStrictUuid(envelopeId)) return null;
+  // encodeURIComponent here is defense-in-depth, not load-bearing: isStrictUuid
+  // already constrained envelopeId to [0-9a-f-], so this is a guaranteed no-op.
   return `${baseUrl(env)}/send/documents/details/${encodeURIComponent(envelopeId)}`;
 }
 
