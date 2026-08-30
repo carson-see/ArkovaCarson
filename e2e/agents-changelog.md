@@ -48,3 +48,17 @@ rules (including the jsdom-can't-hit-test rule) — lives in
 ## 2026-07-21 SCRUM-2938 S2 — terminology scrub remainder
 
 Spec matchers updated for SCRUM-2938 S2 copy: "Verify a Document", "Document Type", "Document Templates", "Verify Records", "Record Created". `catalog-event-credential.issued` testid + subject_type enum fixtures unchanged (internal identifiers). Internal identifiers (keys, enum values, `credential_type`, API params) are unchanged per §1.3 "internal code may use technical names". Contract test: `src/lib/copy-scrum-2938-terminology-s2.test.ts` (walks every copy.ts string value; SCRUM-1672 `ISSUE_CREDENTIAL_LABELS` carve-out locked byte-identical).
+
+## 2026-08-29 — settings.spec.ts catalog liveness assertions corrected (credential.* truth-fix)
+
+`settings.spec.ts` asserted `catalog-event-credential.issued` shows "Not yet
+active" — pinning a badge that had been false since SCRUM-1798 Phase 2a wired
+its emit point. Assertions now: anchor.secured Active, credential.issued
+Active, credential.verified "Not yet active" (the one genuinely dark event —
+`ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` off in prod). The Active-badge checks use
+`getByText('Active', { exact: true })`: Playwright's default substring match
+also matches "Not yet active", so a non-exact 'Active' assertion passes even
+when the badge regresses to deferred — the exactness IS the ratchet. Liveness
+source of truth: `src/components/webhooks/WebhookEventCatalog.tsx`
+`CATALOG_DATA` and the worker producer table in
+`services/worker/src/webhooks/agents.md`.

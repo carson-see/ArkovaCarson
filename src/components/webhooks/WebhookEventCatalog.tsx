@@ -5,12 +5,21 @@
  * per-event payload fields and the redaction rules.
  *
  * Honesty rules (§1.13 R-7 launch-claims discipline):
- *  - `live: true` is asserted ONLY for events with a real emit point in the
- *    worker (verified against services/worker/src/webhooks/agents.md
- *    producer table + payload-schemas.ts): all five anchor.* events.
- *  - credential.* events are contract-defined (SCRUM-1743) but have NO emit
- *    points yet — they are shown as "Not yet active" so a subscriber is
- *    never led to believe they will receive them today.
+ *  - `live: true` is asserted ONLY for events with a real, reachable emit
+ *    point in the worker (verified against services/worker/src/webhooks/
+ *    agents.md producer table + the dispatch sites themselves): the five
+ *    anchor.* events, compliance.document_expiring, and — since SCRUM-1798
+ *    Phase 2a / SCRUM-1800 — credential.issued (credential-sources.ts) and
+ *    credential.status_changed (anchor-revoke.ts, anchor-lineage.ts,
+ *    check-confirmations.ts, chain-maintenance.ts; gated only on the anchor
+ *    carrying a credential_type).
+ *  - credential.verified is wired (verify.ts + oracle.ts) but BOTH sites sit
+ *    behind ENABLE_CREDENTIAL_VERIFIED_WEBHOOK, default false and unset in
+ *    prod — it stays "Not yet active" until that flag is verified on in prod
+ *    (prod-state-check skill), because the badge describes deliveries, not
+ *    code. The honesty rule cuts both ways: never claim an event a
+ *    subscriber won't receive, and never tell a subscriber an event they ARE
+ *    receiving is inactive.
  *  - `fields` lists mirror the worker's strict Zod payload schemas
  *    (payload-schemas.ts). Update BOTH when a schema changes — the catalog
  *    test drift-guards against AVAILABLE_EVENTS, and payload-schemas.test.ts
@@ -60,16 +69,23 @@ const CATALOG_DATA: Record<string, Omit<WebhookCatalogEntry, 'id'>> = {
     live: true,
     fields: ['public_ids', 'anchor_count', 'chain_tx_id', 'chain_block_height', 'chain_timestamp', 'secured_at'],
   },
+  // Emits on connector credential import (SCRUM-1798 Phase 2a,
+  // services/worker/src/api/v1/credential-sources.ts) — unflagged.
   'credential.issued': {
-    live: false,
+    live: true,
     fields: ['public_id', 'status', 'issued_at', 'expires_at?', 'credential_type', 'recipient_public_id?', 'org_public_id?'],
   },
+  // Wired but flag-gated dark: ENABLE_CREDENTIAL_VERIFIED_WEBHOOK defaults
+  // false and is unset in prod. Flip only after verifying the prod flag.
   'credential.verified': {
     live: false,
     fields: ['public_id', 'status', 'verified_at', 'verifier_country?', 'credential_type', 'recipient_public_id?', 'org_public_id?'],
   },
+  // Four live producers (SCRUM-1800): revoke, supersede, bulk-confirm, and
+  // reorg-revert — any anchor with a credential_type emits on those
+  // transitions, no feature flag.
   'credential.status_changed': {
-    live: false,
+    live: true,
     fields: ['public_id', 'previous_status', 'new_status', 'changed_at', 'reason?', 'credential_type', 'recipient_public_id?', 'org_public_id?'],
   },
   // BUG-002: `live: true` is asserted because the emit point is real —

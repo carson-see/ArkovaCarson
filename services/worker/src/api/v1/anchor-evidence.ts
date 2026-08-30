@@ -20,6 +20,7 @@ import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { buildProofUrl, buildVerifyUrl } from '../../lib/urls.js';
 import { fetchProfilePublicIdsByActorIds } from '../../utils/profilePublicIds.js';
+import type { Database } from '../../types/database.types.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
@@ -98,8 +99,19 @@ export interface AnchorEvidenceRow {
   issued_at: string | null;
   expires_at: string | null;
   description: string | null;
+  /** Resolved from `anchors.metadata->>'jurisdiction'` — NOT a column. */
   jurisdiction: string | null;
+  /** Resolved from the `anchor_proofs` embed — NOT a column on `anchors`. */
   merkle_root: string | null;
+  /**
+   * DI-398: there is no recipient hash anywhere on `anchors`. The public
+   * `recipient_identifier` is a PEPPERED HMAC computed inside the
+   * `get_public_anchor` SECURITY DEFINER RPC (migrations 0356/0383/0385) using
+   * a server-side pepper the worker does not hold, so the DB lookup supplies
+   * `null` here — exactly as `verify.ts`'s `defaultLookup` does. Emitting the
+   * raw recipient from an anon-reachable route would be a §1.6 PII leak, so
+   * the only correct worker-side value is null until a keyed source exists.
+   */
   recipient_hash: string | null;
 }
 
@@ -268,40 +280,178 @@ export function buildEvidencePackage(
   };
 }
 
+/** Single embedded `anchor_proofs` row (merkle_root lives here, not on anchors). */
+interface AnchorProofEmbed {
+  merkle_root: string | null;
+}
+
+/**
+ * Scalar columns this route reads from `anchors`.
+ *
+ * `satisfies readonly AnchorColumn[]` is the actual guard, not decoration:
+ * DI-398 shipped `jurisdiction`, `merkle_root` and `recipient_hash` in a raw
+ * select STRING, where a phantom column is invisible to the compiler. Every
+ * request then died on PostgREST 42703 and the route answered 404 for every
+ * anchor. Keying the list to the generated `anchors` Row type makes that class
+ * of typo a `typecheck` failure instead of a silent production outage — the
+ * same reason `verify.ts` documents where each derived field really lives.
+ */
+type AnchorColumn = keyof Database['public']['Tables']['anchors']['Row'];
+
+const EVIDENCE_ANCHOR_COLUMNS = [
+  'id',
+  'public_id',
+  'fingerprint',
+  'status',
+  'chain_tx_id',
+  'chain_block_height',
+  'chain_timestamp',
+  'created_at',
+  'credential_type',
+  'issued_at',
+  'expires_at',
+  'description',
+  'org_id',
+  // Source of `jurisdiction` + the legacy `merkle_root` fallback.
+  'metadata',
+] as const satisfies readonly AnchorColumn[];
+
+/**
+ * PostgREST select for the evidence lookup: the checked scalar columns plus the
+ * two embeds that carry the fields `anchors` itself does not have.
+ */
+export const EVIDENCE_ANCHOR_SELECT = [
+  ...EVIDENCE_ANCHOR_COLUMNS,
+  'organization:org_id(display_name)',
+  'anchor_proofs(merkle_root)',
+].join(', ');
+
+/**
+ * Scalar half of the select row, DERIVED from the same generated `anchors` Row
+ * the column list is keyed to — so the requested columns and their types
+ * cannot drift apart. A hand-written copy of these 13 fields is a second place
+ * for a phantom column to hide, which is the defect this PR exists to close.
+ */
+type AnchorEvidenceScalars = Pick<
+  Database['public']['Tables']['anchors']['Row'],
+  (typeof EVIDENCE_ANCHOR_COLUMNS)[number]
+>;
+
+/**
+ * Shape returned by the select above (the embeds are resolved at query time, so
+ * they are not in the generated types and are declared here).
+ *
+ * Two deliberate overrides of the generated scalars:
+ *  - `public_id` is non-null — the query filters on it, so a matched row always
+ *    carries one, while the generated Row allows null.
+ *  - `metadata` is narrowed from `Json` to an object map, because the resolvers
+ *    below read named keys off it.
+ *
+ * NOTE on jurisdiction + merkle_root, mirroring `verify.ts`: neither is a
+ * top-level `anchors` column. `merkle_root` lives on
+ * `anchor_proofs.merkle_root` (1:1 via `anchor_proofs_anchor_unique`), with a
+ * legacy `metadata->>'merkle_root'` fallback; `jurisdiction` lives in
+ * `anchors.metadata->>'jurisdiction'`. The embed surfaces as a single object or
+ * a one-element array depending on how PostgREST resolves the to-one
+ * relationship, so `anchor_proofs` accepts both.
+ */
+export interface AnchorEvidenceSelectRow
+  extends Omit<AnchorEvidenceScalars, 'public_id' | 'metadata'> {
+  public_id: string;
+  /** anchors.metadata JSONB — source of jurisdiction + legacy merkle_root. */
+  metadata: Record<string, unknown> | null;
+  organization: { display_name: string } | null;
+  anchor_proofs: AnchorProofEmbed | AnchorProofEmbed[] | null;
+}
+
+/** Normalise the to-one `anchor_proofs` embed to an array (object OR array). */
+function proofEmbedRows(row: AnchorEvidenceSelectRow): AnchorProofEmbed[] {
+  const proofs = row.anchor_proofs;
+  return Array.isArray(proofs) ? proofs : proofs ? [proofs] : [];
+}
+
+/** Reads `merkle_root` from the joined anchor_proofs embed, falling back to the
+ *  legacy `metadata.merkle_root` string. Null when neither carries a value. */
+function resolveMerkleRoot(row: AnchorEvidenceSelectRow): string | null {
+  for (const proof of proofEmbedRows(row)) {
+    if (typeof proof?.merkle_root === 'string' && proof.merkle_root.length > 0) {
+      return proof.merkle_root;
+    }
+  }
+  const legacy = row.metadata?.merkle_root;
+  return typeof legacy === 'string' && legacy.length > 0 ? legacy : null;
+}
+
+/** Reads `jurisdiction` from anchors.metadata JSONB (informational tag,
+ *  Constitution §1.5). Null for missing or non-string values. */
+function resolveJurisdiction(row: AnchorEvidenceSelectRow): string | null {
+  const value = row.metadata?.jurisdiction;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/**
+ * Pure mapping from the select row to the evidence row. Explicit field
+ * allowlist: raw `metadata` never reaches the response, and `id` is returned
+ * separately as `internalAnchorId` so it stays out of the public projection
+ * (Constitution §1.4 / §6). Exported for tests.
+ */
+export function mapEvidenceAnchorRow(
+  row: AnchorEvidenceSelectRow,
+): { anchor: AnchorEvidenceRow; internalAnchorId: string } {
+  return {
+    internalAnchorId: row.id,
+    anchor: {
+      public_id: row.public_id,
+      fingerprint: row.fingerprint,
+      status: row.status,
+      chain_tx_id: row.chain_tx_id ?? null,
+      chain_block_height: row.chain_block_height ?? null,
+      chain_timestamp: row.chain_timestamp ?? null,
+      created_at: row.created_at,
+      credential_type: row.credential_type ?? null,
+      org_id: row.org_id ?? null,
+      org_name: row.organization?.display_name ?? null,
+      issued_at: row.issued_at ?? null,
+      expires_at: row.expires_at ?? null,
+      description: row.description ?? null,
+      jurisdiction: resolveJurisdiction(row),
+      merkle_root: resolveMerkleRoot(row),
+      // See AnchorEvidenceRow.recipient_hash: no worker-side keyed source.
+      recipient_hash: null,
+    },
+  };
+}
+
+/** PostgREST code for `.single()` matching zero rows — a genuine 404. */
+const NO_ROW_ERROR_CODE = 'PGRST116';
+
+function isNoRowError(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === NO_ROW_ERROR_CODE;
+}
+
 const defaultLookup: EvidenceLookup = {
   async byPublicId(publicId) {
-    const { data } = await dbAny
+    const { data, error } = await dbAny
       .from('anchors')
-      .select(
-        'id, public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, created_at, ' +
-          'credential_type, issued_at, expires_at, description, jurisdiction, merkle_root, recipient_hash, ' +
-          'org_id, organization:org_id(display_name)',
-      )
+      .select(EVIDENCE_ANCHOR_SELECT)
       .eq('public_id', publicId)
       .is('deleted_at', null)
       .single();
+
+    if (error) {
+      if (isNoRowError(error)) return null;
+      // DI-398: the pre-fix code destructured only `{ data }`, so a 42703
+      // (phantom column), a 42501 (RLS regression) and a total DB outage all
+      // degraded into `null` -> 404 "Anchor not found". That both hid the
+      // outage and made "not found" an unreliable existence signal for a
+      // route partners treat as authoritative. Operational failures must be
+      // loud: throw, let the route's catch log and answer 500.
+      const code = (error as { code?: string }).code ?? 'unknown';
+      const message = (error as { message?: string }).message ?? 'unknown error';
+      throw new Error(`anchors evidence lookup failed (${code}): ${message}`);
+    }
     if (!data) return null;
-    return {
-      internalAnchorId: data.id as string,
-      anchor: {
-        public_id: data.public_id,
-        fingerprint: data.fingerprint,
-        status: data.status,
-        chain_tx_id: data.chain_tx_id,
-        chain_block_height: data.chain_block_height,
-        chain_timestamp: data.chain_timestamp,
-        created_at: data.created_at,
-        credential_type: data.credential_type,
-        org_id: data.org_id ?? null,
-        org_name: data.organization?.display_name ?? null,
-        issued_at: data.issued_at,
-        expires_at: data.expires_at,
-        description: data.description ?? null,
-        jurisdiction: data.jurisdiction ?? null,
-        merkle_root: data.merkle_root ?? null,
-        recipient_hash: data.recipient_hash ?? null,
-      },
-    };
+    return mapEvidenceAnchorRow(data as AnchorEvidenceSelectRow);
   },
   async auditEventsForAnchor(internalAnchorId) {
     // eslint-disable-next-line arkova/missing-org-filter -- scoped by target_id, ownership verified upstream

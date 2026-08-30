@@ -1,0 +1,228 @@
+-- 0419_sec_replay_v_slow_queries_relation_revoke.sql
+-- FD-17 (third instance) — replay the RELATION revoke for `public.v_slow_queries`,
+--   the pg_stat_statements view whose only in-repo revoke lives in
+--   `docs/migrations-archive/`. Restores rebuilt-environment parity with prod:
+--   `anon` AND `authenticated` hold NO privilege on the view, exactly as prod
+--   has it. Grant-only — no view definition, function body, table, RLS policy,
+--   trigger or index is touched.
+--
+-- ROLLBACK:
+--   GRANT ALL ON TABLE public.v_slow_queries TO anon, authenticated;
+--   (Rollback restores the PRE-0419 rebuilt-environment state — anon AND
+--    authenticated holding ALL via the baseline's ALTER DEFAULT PRIVILEGES —
+--    which is the INSECURE one. It exists to satisfy the rollback-rehearsal
+--    gate, not because reverting is ever desirable: prod already grants neither
+--    role. Running it against PROD would be a regression, not a revert.)
+--
+--    REHEARSED 2026-08-22 on an isolated throwaway Postgres 17 container (never
+--    prod, never a rig, never the shared local Supabase stack). Forward ->
+--    rollback -> forward again, all clean, with the terminal ACL byte-identical
+--    to the live prod ACL measured the same day. Unlike 0418's function
+--    rollback there is no privilege-level fidelity gap here: the baseline grants
+--    the view to anon/authenticated through ALTER DEFAULT PRIVILEGES only — it
+--    emits no implicit PUBLIC grant on relations — so restoring the two roles
+--    restores the pre-0419 GRANT SET exactly. Measured after rollback, all four
+--    of postgres / anon / authenticated / service_role hold all eight relation
+--    privileges (DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER,
+--    TRUNCATE, UPDATE), identical to the pre-migration fixture. The only
+--    residual difference is the ORDER of entries in the `relacl` array
+--    (`postgres, service_role, anon, authenticated` after rollback, vs
+--    `postgres, anon, authenticated, service_role` before): aclitem array order
+--    records insertion order and carries no privilege meaning, so a raw string
+--    compare of `relacl` differs while every
+--    `has_table_privilege(role, view, priv)` answer matches.
+--
+-- =============================================================================
+-- WHY THIS MIGRATION EXISTS
+-- -----------------------------------------------------------------------------
+-- Same divergence class as 0414 and 0418 (FD-17 / BUG-2026-08-12-005), THIRD
+-- distinct root cause, and the difference is what makes it survive both of
+-- their fixes.
+--
+-- 0414 replays sixteen EXECUTE revokes that exist only in
+-- `docs/migrations-archive/`. 0418 replays four EXECUTE revokes whose only
+-- in-repo source is the operator script
+-- `scripts/ops/ensure-pipeline-dashboard-cache-cron.ts`. Both are FUNCTION
+-- (EXECUTE) revokes, and every ratchet that guards them —
+-- `scripts/ci/feedback-rules/secdef-function-grants.ts` and its
+-- `secdef-grants-baseline.json` burn-down list — parses `CREATE FUNCTION` and
+-- reasons about `has_function_privilege`. It has no concept of a relation.
+--
+-- `public.v_slow_queries` is a VIEW. Its revoke lives at
+-- `docs/migrations-archive/0192_enable_pg_stat_statements.sql:33`
+--
+--     REVOKE ALL ON v_slow_queries FROM anon, authenticated;
+--     GRANT SELECT ON v_slow_queries TO service_role;
+--
+-- and the archive is off the replay path. What the replay path carries instead
+-- is the opposite:
+--
+--   baseline:9502   CREATE OR REPLACE VIEW "public"."v_slow_queries" AS ...
+--   baseline:9517   ALTER VIEW "public"."v_slow_queries" OWNER TO "postgres";
+--   baseline:15050  GRANT ALL ON TABLE "public"."v_slow_queries" TO "service_role";
+--
+-- with NO revoke anywhere, while
+-- `ALTER DEFAULT PRIVILEGES ... GRANT ALL ON TABLES TO anon / authenticated`
+-- (baseline:15105-15106 — the TABLES block, sibling to the FUNCTIONS block at
+-- 15095-15096 that produced 0414 and 0418) grants both roles every relation
+-- privilege DIRECTLY at CREATE time. `grep -rniE 'REVOKE[^;]*v_slow_queries'
+-- supabase/migrations/` returns nothing.
+--
+-- Note that baseline:15050 is ADDITIVE, not authoritative. A reader can easily
+-- mistake a lone `GRANT ALL ... TO "service_role"` for "service_role only" —
+-- it is not. ALTER DEFAULT PRIVILEGES has already granted anon and
+-- authenticated by the time that line runs, and a GRANT never removes anything.
+-- This is the relation-axis twin of the 0364 no-op-revoke catch.
+--
+-- MEASURED, 2026-08-22 (read-only Management API on prod; isolated throwaway
+-- Postgres 17 container for the replay):
+--
+--   rebuilt from supabase/migrations/   postgres=arwdDxtm/postgres
+--                                       anon=arwdDxtm/postgres
+--                                       authenticated=arwdDxtm/postgres
+--                                       service_role=arwdDxtm/postgres
+--                                       anon SELECT = true, authenticated SELECT = true
+--
+--   prod vzwyaatejekddvltxyye           postgres=arwdDxtm/postgres
+--                                       service_role=arwdDxtm/postgres
+--                                       anon SELECT = false, authenticated SELECT = false
+--
+-- `arwdDxtm` is the full relation privilege set, so a rebuilt environment does
+-- not merely leak reads: anon holds INSERT/UPDATE/DELETE/TRUNCATE on the view
+-- as well. Those write bits are inert against this particular view — measured
+-- in the same container, `information_schema.views` reports
+-- `is_updatable = NO` and `is_insertable_into = NO`, because the definition
+-- carries an ORDER BY, a LIMIT and computed columns — but the grant is real and
+-- is what a privilege audit of a soak rig would report.
+--
+-- WHY THE READ ITSELF MATTERS. The view has `reloptions = <none>`, i.e. no
+-- `security_invoker = true`, so it runs with its OWNER's rights (postgres).
+-- `public` is the PostgREST-exposed schema, so on a rebuilt environment an
+-- unauthenticated caller can read `extensions.pg_stat_statements` through it —
+-- 200 characters of query text per entry, plus call counts and timings, for
+-- the 50 slowest statements. That is server-side query-shape disclosure on an
+-- account-free endpoint, and query previews can carry literals. This file does
+-- NOT change the invoker semantics: `v_slow_queries` is grandfathered in
+-- `scripts/ci/snapshots/views-security-invoker-baseline.json`, converting it is
+-- a behaviour change that needs its own soak, and closing the ACL removes the
+-- unauthenticated reach on its own. Recording the reason the gap is not
+-- cosmetic, not proposing a second fix here.
+--
+-- PROD IS NOT AFFECTED. Archive 0192 ran there historically, which is why prod
+-- measures closed. Every environment built from the repo since the squash IS
+-- affected — including every soak rig, which would otherwise produce evidence
+-- against a weaker security posture than the prod it stands in for.
+--
+-- PARITY TARGET, NOT A NEW SECURITY DECISION
+-- -----------------------------------------------------------------------------
+-- The target ACL is copied from prod, measured before this file was written.
+-- Both roles are revoked because prod grants neither. `service_role` is
+-- re-asserted with ALL rather than the archive's SELECT because ALL is what
+-- prod actually holds (`service_role=arwdDxtm/postgres`) and what baseline:15050
+-- already grants; narrowing it to SELECT here would be a new decision and would
+-- make the file non-idempotent against prod.
+--
+-- CALLER SAFETY. No caller is affected. `grep -rn 'v_slow_queries' src/
+-- services/ scripts/ e2e/ packages/` finds no application or worker reader —
+-- the only hits are the two generated `database.types.ts` files and the
+-- security-invoker snapshot. The view is an operator/DBA diagnostic reached
+-- with service_role credentials, and prod has run without the
+-- anon/authenticated grants since archive 0192 was applied.
+--
+-- SCOPE OF THE SWEEP THAT FOUND IT. This file closes the last item from a
+-- full relation-and-function ACL parity sweep of prod against the replay path
+-- (2026-08-22): all 366 `public` functions and all 124 `public`
+-- tables/views/matviews plus both sequences were compared. Findings:
+--   * 15 relations where prod does not grant anon the full ALL that a rebuild
+--     would. 12 are correctly revoked on the replay path; `v_slow_queries` is
+--     this file; `calibration_features` and `partner_accounts` are NOT in the
+--     replay path at all (a rebuild lacks the objects entirely rather than
+--     mis-granting them) and are claimed by PR #2235 (`0413`) and PR #2219
+--     (`0410`) respectively.
+--   * 5 functions — the dashboard-cache refreshers — already claimed by
+--     PR #2336 (`0418`, four of them) and PR #2235 (`0412`,
+--     `refresh_cache_anchor_status_counts`). Deliberately NOT duplicated here.
+--   * `sanitize_metadata_for_public` is closed by 0388, `audit_events` by
+--     0295, `webhook_event_sequence` by 0337 — all already on the replay path.
+-- The operator-script axis specifically (`scripts/ops/`, `scripts/staging/`,
+-- `scripts/security/`) yielded no NEW uncovered object: the one prod-applied
+-- SQL builder, `scripts/ops/ensure-pipeline-dashboard-cache-cron.ts`, revokes
+-- six functions, and all six are covered by 0378 / 0412 / 0414 / 0418.
+--
+-- ORDERING. This file must sort AFTER the last migration that defines the
+-- view, because a genuinely fresh CREATE re-triggers ALTER DEFAULT PRIVILEGES.
+-- The only definition on the replay path is the squashed baseline
+-- (baseline:9502), and no migration DROPs it (`grep -rniE 'DROP VIEW[^;]*
+-- v_slow_queries' supabase/migrations/` is empty), so 0419 > baseline holds.
+-- The baseline may not be edited — it is a regenerated `supabase db dump`
+-- (CLAUDE.md §1.2) — which is why the revoke has to be a later compensating
+-- migration rather than an inline one.
+--
+-- NOTE ON `CREATE OR REPLACE`. Measured in the same throwaway container:
+-- `CREATE OR REPLACE` of an ALREADY-EXISTING signature PRESERVES the object's
+-- ACL; only a genuinely fresh create (or DROP + CREATE) re-applies ALTER
+-- DEFAULT PRIVILEGES. So a later re-definition of this view would NOT silently
+-- reopen what this file closes, and the ordering requirement above is about
+-- the fresh baseline create, not about re-definitions. This is also why the
+-- 4-argument `supersede_anchor` / `resolve_anchor_queue_by_public_id`
+-- overloads, which 0367 revokes and 0398 re-defines without revoking, are
+-- correctly closed in a rebuilt environment and are NOT part of this sweep's
+-- findings despite a static reading suggesting otherwise.
+--
+-- CI. Because this file defines no function, the SECURITY DEFINER ratchet in
+-- `scripts/ci/feedback-rules/secdef-function-grants.ts` cannot see it — and
+-- because the object is a RELATION, that ratchet could never see it: it has no
+-- key for `v_slow_queries` in `secdef-grants-baseline.json` to burn down,
+-- because the burn-down list only ever held SECURITY DEFINER functions. That
+-- function-only blind spot is precisely why this instance outlived both 0414
+-- and 0418. The same PR therefore adds a RELATION-level ratchet,
+-- `scripts/ci/feedback-rules/relation-anon-grants.ts`, which pins
+-- `public.v_slow_queries` in `REPLAY_PARITY_REVOKES` and checks the TERMINAL
+-- state of an ordered replay — so deleting this migration turns it back into a
+-- fresh violation and fails `Tests`.
+--
+-- SAFETY. Grant-only. ACLs are not part of the surface `supabase gen types`
+-- emits — it introspects schema shape as the owner role, not per-grantee
+-- visibility — so no `database.types.ts` regeneration is needed; 0414 and 0418
+-- made the same determination for the sixteen and four functions they revoke.
+-- No `NOTIFY pgrst, 'reload schema'` — no signature or column surface changes.
+-- Idempotent: REVOKE of an absent privilege and GRANT of a present one are both
+-- no-ops, so re-running is safe (verified by applying twice in the container to
+-- an identical terminal ACL). On PROD this entire file is a no-op by
+-- construction — every statement asserts the state prod was measured to already
+-- be in. Not a hot table (`organizations` / `anchors` / `profiles`), so
+-- CLAUDE.md §1.2's `SET LOCAL lock_timeout` requirement does not apply; the
+-- statements take a brief lock on a diagnostic view with no application reader.
+--
+-- REHEARSED 2026-08-22, isolated throwaway Postgres 17 container. The
+-- pre-migration fixture reproduces the baseline shape (ALTER DEFAULT PRIVILEGES
+-- ON TABLES + the baseline view definition, owner and service_role grant) and
+-- lands on
+-- `postgres=arwdDxtm/postgres anon=arwdDxtm/postgres authenticated=arwdDxtm/postgres service_role=arwdDxtm/postgres`
+-- — the same over-granted shape a soak rig would carry. Applying this file
+-- lands on `postgres=arwdDxtm/postgres service_role=arwdDxtm/postgres` —
+-- byte-identical to the live PROD ACL measured the same day. Rollback restores
+-- the fixture GRANT SET exactly (see the ROLLBACK note above on aclitem
+-- ordering); re-applying is a clean no-op. Caller safety proven rather than
+-- asserted, in the same container: `service_role` still SELECTs the view, while
+-- `anon` gets `ERROR: permission denied for view v_slow_queries`.
+--
+-- `PUBLIC` is named alongside the two roles in the REVOKE for symmetry with
+-- 0414/0418 and to cover the implicit-grant case; on relations the baseline
+-- emits no PUBLIC grant, so that clause is a no-op here rather than the
+-- load-bearing part. The load-bearing part is naming `anon` and
+-- `authenticated`, which is what ALTER DEFAULT PRIVILEGES granted directly.
+-- Identifiers are unquoted so the CI ratchet can see them.
+--
+-- PREFIX DERIVATION (2026-08-22). `git fetch origin --prune` + a full-ref scan
+-- (`git ls-tree` over every local and origin ref, filtered to the
+-- `supabase/migrations/NNNN_` shape) + `gh pr list --state open --json files` +
+-- `git worktree list`. `origin/main` numeric head is `0414`. `0415` is claimed
+-- by PR #2314, `0416` by `fix/secured-count-overstatement`, `0417` by PR #2335,
+-- `0418` by PR #2336, and `0410`-`0413` by PRs #2219 / #2235. `0419` is the
+-- first free prefix, which is also the prefix 0418's own header hands forward.
+-- NEXT AUTHOR CLAIMS `0420` — re-derive, do not trust this line.
+-- =============================================================================
+
+REVOKE ALL ON TABLE public.v_slow_queries FROM PUBLIC, anon, authenticated;
+GRANT ALL ON TABLE public.v_slow_queries TO service_role;
