@@ -30,7 +30,7 @@ Shared domain libraries used across the worker. Pure logic modules with minimal 
 
 ## SSRF egress primitive (SCRUM-2483)
 
-- **safe-fetch.ts** — the single IP-pinned egress primitive. `safeFetch(url, init, deps, opts)` resolves the host ONCE, rejects if ANY resolved IP is private/link-local/loopback/CGNAT/metadata, then CONNECTs to the **pinned** resolved IP so resolve-time IP === connect-time IP (defeats DNS-rebind/TOCTOU). Re-validates EVERY redirect hop; scheme allow-list (http/https only); response-size cap + total deadline. `resolve`/`dispatch` are injected (`SafeFetchDeps`) so tests drive the rebind adversary with no real network; `defaultSafeFetchDeps()` pins via an undici `Agent` connect-lookup override + `globalThis.fetch` (so `vi.stubGlobal('fetch')` still intercepts in tests). `safeFetchSingleHop` + `createSafeFetchImpl` serve callers running their OWN manual-redirect loop (credential-source-import). **Do NOT** reintroduce a bare `fetch()` on a user/partner-supplied URL — route it through here (enforced WARN-first by `scripts/ci/ban-raw-fetch-worker.ts`).
+- **safe-fetch.ts** — the single IP-pinned egress primitive. `safeFetch(url, init, deps, opts)` resolves the host ONCE, rejects if ANY resolved IP is private/link-local/loopback/CGNAT/metadata, then CONNECTs to the **pinned** resolved IP so resolve-time IP === connect-time IP (defeats DNS-rebind/TOCTOU). Re-validates EVERY redirect hop; scheme allow-list (http/https only); response-size cap + total deadline. `resolve`/`dispatch` are injected (`SafeFetchDeps`) so tests drive the rebind adversary with no real network; `defaultSafeFetchDeps()` pins via an undici `Agent` connect-lookup override + **undici's own `fetch`** (NOT `globalThis.fetch`). The Agent and the `fetch` consuming it MUST stay in the same undici realm: Node's built-in fetch is backed by Node's *internal* bundled undici, and since **undici 8** a npm-undici `Agent.dispatch` asserts the new handler interface (`onRequestStart`/…) and rejects Node's internal legacy handler with `InvalidArgumentError: invalid onRequestStart method` (`UND_ERR_INVALID_ARG`) — which fails 100% of real egress. Same single-realm pattern as `utils/db.ts`. Consequence: `vi.stubGlobal('fetch')` does **NOT** intercept this dispatch — tests must inject `SafeFetchDeps.dispatch` or the caller's own fetch override (e.g. `__setCredentialSourceFetchForTests`). `safeFetchSingleHop` + `createSafeFetchImpl` serve callers running their OWN manual-redirect loop (credential-source-import). **Do NOT** reintroduce a bare `fetch()` on a user/partner-supplied URL — route it through here (enforced WARN-first by `scripts/ci/ban-raw-fetch-worker.ts`).
 - **ssrf-guard.ts** — shared private-IP/hostname classifier + `resolveHostToIps`, lifted **byte-identically** from `webhooks/delivery.ts` (INJ-02/ARK-SEC-002). `delivery.ts` now re-exports these — the webhook guard body is unchanged (no soak delta). One source of truth for the blocklist; edit here, not in two places.
 
 ## Recipient identity — keyed HMAC + possession-proof (SCRUM-2484)
@@ -56,3 +56,35 @@ Migration `0362_scrum2913_public_anchor_registry_url_allowlist.sql` widened `get
 - Absent-not-null (§1.8): when either check fails, `registry_url`/`ce_envelope_sha256` are OMITTED from `public_metadata` entirely (spread `...(ceRegistryProvenance ?? {})`) — never written as `null` into `anchors.metadata`. The top-level `preview.registry_url` / `preview.ce_envelope_sha256` fields are `string | null` (matching the existing preview-field convention) for the authenticated caller's own preview response.
 - Read side: `src/components/verification/PublicVerification.tsx` (`extractSourceProvenance`) + `src/components/verification/SourceProvenanceDisplay.tsx` render a "Registry reference" row — R-7 honest (`src/lib/copy.ts` `SOURCE_PROVENANCE_LABELS.REGISTRY_REFERENCE_*`): a provenance link, never a CE-listing/endorsement claim.
 - This module is allow-listed in `services/worker/src/ctdl/ctdl-claims-lint.test.ts` (`READ_ONLY_CE_TOOLING_ALLOWLIST`) against the CE-host INTEGRATION markers — it only ever issues a GET-only fetch, never writes to the Registry.
+
+## 2026-08-17 — `credential-source-import.ts`: surrogate-safe truncation
+
+`cleanText` (→ `credential_title` → `anchors.label`/`description` via `credential-sources.ts`
+`buildAnchorInsertPayload`) and `buildSourceImportFilename` (→ `anchors.filename`, 180-unit stem)
+now bound via `truncateUtf16Safe` — a code-unit cut at the cap could split a surrogate pair and
+PGRST102 the whole anchor insert (2026-08-17 poison-record class). `cleanText` is now exported for
+its poison tests. Note `.trim()` does NOT strip a lone surrogate — it is not whitespace.
+
+## The safe-fetch realm fix is LIVE IN PROD (2026-08-27)
+
+The single-realm `defaultSafeFetchDeps()` described above is not pending — it shipped in prod
+worker `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999`, Cloud Run revision
+`arkova-worker-01322-tol` at 100% traffic (`gcloud run services describe arkova-worker --region
+us-central1 --project arkova1` + a live `/health` read, 2026-08-27T21:00Z; deploy-worker run
+[33114229919](https://github.com/carson-see/ArkovaCarson/actions/runs/33114229919)).
+
+Two things to carry forward if you touch this file:
+
+- **The npm-`undici` version and the `fetch` used here move together.** They are one decision, not
+  two. A future dependabot bump of `undici` that does not also re-read this function is exactly the
+  shape of the near-miss: #2400 bumped 7.29.0 → 8.10.0 and, without the accompanying realm fix,
+  would have failed **100%** of egress through this primitive — every credential-source import and
+  the whole CE Registry / CTDL path — with `InvalidArgumentError: invalid onRequestStart method`.
+  It was caught because `safe-fetch.test.ts` pins a REAL undici `Agent` (`defaultSafeFetchDeps().dispatch`)
+  rather than a stub. Do not "simplify" that test into a mock; it is the only thing standing between
+  a routine dependency bump and a total egress outage.
+- **The T2 soak that cleared it targeted this exact path, not generic load** — the driver rotated
+  authenticated probes against `GET /api/v1/credentials/ctdl/import`, the only route that reaches
+  this dispatch over a real socket, and the deployed image carried an A/B discriminator recording
+  OLD_SHAPE fail / NEW_SHAPE 200. If you change this function, generic worker-health load will NOT
+  cover you; reproduce that targeted probe.

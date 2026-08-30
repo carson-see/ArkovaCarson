@@ -14,13 +14,49 @@ Owner of the **outbound** webhook system. Inbound receivers (DocuSign, Adobe Sig
 
 ## Supported event types
 
-| Event | Schema | Producer | Status |
+Every event in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`, with its real dispatch sites.
+The dashboard catalog (`src/components/webhooks/WebhookEventCatalog.tsx`) cites
+this table as its liveness source — a stale row here becomes a false badge
+there (that is exactly what happened to the `credential.*` rows before
+2026-08-29). When you add, gate, or remove a dispatch site, update this table
+in the same PR. Re-verify with:
+`git grep -n "dispatchWebhookEvent(" services/worker/src`.
+
+| Event | Schema | Producer(s) | Status |
 |---|---|---|---|
 | `anchor.submitted` | `AnchorSubmittedPayloadSchema` | `services/worker/src/jobs/anchor.ts` | Live |
 | `anchor.secured` | `AnchorSecuredPayloadSchema` | `services/worker/src/jobs/check-confirmations.ts` | Live |
 | `anchor.revoked` | `AnchorRevokedPayloadSchema` | `services/worker/src/api/anchor-revoke.ts` (RPC `revoke_anchor`) | Live |
 | `anchor.expired` | `AnchorExpiredPayloadSchema` (SCRUM-1735) | `services/worker/src/jobs/anchorExpirySweep.ts` (SCRUM-1736 daily cron at 03:00 UTC; also `POST /jobs/anchor-expiry-sweep` for Cloud Scheduler) | Live |
+| `anchor.superseded` | `AnchorSupersededPayloadSchema` | `services/worker/src/api/anchor-lineage.ts` | Live (subscribable via the API allowlist; absent from the dashboard picker — registration handled separately, PR #2433) |
 | `anchor.batch_secured` | `AnchorBatchSecuredPayloadSchema` | merkle-batch path (per-anchor `anchor.secured` events also fan out — SCRUM-1264) | Live |
+| `credential.issued` | `CredentialIssuedPayloadSchema` | `services/worker/src/api/v1/credential-sources.ts` (`queueCredentialIssuedAudit`, SCRUM-1798 Phase 2a) | Live, unflagged |
+| `credential.verified` | `CredentialVerifiedPayloadSchema` | `services/worker/src/api/v1/verify.ts` + `services/worker/src/api/v1/oracle.ts` (SCRUM-1799) | Wired but dark: BOTH sites gated on `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` (default false; verified unset in prod 2026-08-29) |
+| `credential.status_changed` | `CredentialStatusChangedPayloadSchema` | Four sites (SCRUM-1800): `services/worker/src/api/anchor-revoke.ts` (revoke), `services/worker/src/api/anchor-lineage.ts` (supersede), `services/worker/src/jobs/check-confirmations.ts` (bulk confirm), `services/worker/src/jobs/chain-maintenance.ts` (reorg revert) | Live for any anchor with non-null `credential_type`; no feature flag |
+| `compliance.document_expiring` | `ComplianceDocumentExpiringPayloadSchema` | `services/worker/src/routes/cron.ts` (`POST /cron/check-credential-expiry`, behind `ENABLE_EXPIRY_ALERTS`) | Live, flag-gated (BUG-002) |
+
+### Dispatched but UNREGISTERED (validation-bypassed) — BUG-002 shape
+
+These event types have real `dispatchWebhookEvent` call sites but are NOT keys
+of `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`, so `validateWebhookPayload` returns
+`bypassed: true` — no schema check runs. Because the CRUD allowlist
+(`VALID_WEBHOOK_EVENTS`) derives from the same map, no endpoint can subscribe,
+so every dispatch currently matches zero endpoints and is a silent no-op. That
+is the exact pre-fix `compliance.document_expiring` state: one registration
+away from delivering an unvalidated payload. The PR #2433 mirror-drift gate
+does NOT catch this class (it compares mirrors against the canonical map,
+never dispatch sites against it).
+
+| Event | Dispatch site(s) | Payload risk if ever registered as-is |
+|---|---|---|
+| `job.completed` | `services/worker/src/api/v1/batch.ts` (complete + failed paths) | `job_id` (internal `batch_verification_jobs` UUID, §6); raw `error` message string |
+| `anchor.revocation_anchored` | `services/worker/src/jobs/revocation.ts` | Ships `anchor_id` (internal UUID, §6) AND `fingerprint` (§1.6) in the data block |
+| `attestation.created` / `attestation.revoked` | `services/worker/src/api/v1/attestations.ts` | Unaudited here — audit before registering |
+| `attestation.active` | `services/worker/src/jobs/attestationAnchor.ts` | Unaudited here — audit before registering |
+
+Registering any of these requires the full "Adding a new event type" checklist
+below — the schema is what makes the banned fields impossible, not the
+subscription.
 
 `anchor.expired` schema and producer are both live. The `anchorExpirySweep` cron transitions SECURED anchors past `expires_at` (filtering `deleted_at IS NULL`) to EXPIRED in deterministic `expires_at asc, id asc` order, writes a corresponding `audit_events` row, and dispatches `anchor.expired` with deterministic `event_id = "expired-${anchor.public_id}"` (uses public_id, not internal id, per CLAUDE.md §6) so retries dedupe via `webhook_delivery_logs.idempotency_key`. Dispatch failures write a sentinel `anchor.expired_dispatch_failed` audit event for manual recovery via the SCRUM-1738 retry path.
 
@@ -34,7 +70,7 @@ Owner of the **outbound** webhook system. Inbound receivers (DocuSign, Adobe Sig
 
 ## Things that look risky but are intentional
 
-- `validateWebhookPayload` returns `{ ok: true, bypassed: true }` for unknown event types — non-anchor events (`payment.*`, `org.*`) ride a separate dispatch path until they get their own schemas. The `bypassed` flag is logged at debug level so a typo (`anchor.SUBMITTED` in caps) is detectable, not silent. Don't remove the bypass without first making the allowlist exhaustive.
+- `validateWebhookPayload` returns `{ ok: true, bypassed: true }` for unknown event types. The `bypassed` flag is logged at debug level so a typo (`anchor.SUBMITTED` in caps) is detectable, not silent. Don't remove the bypass without first making the allowlist exhaustive — but don't call it harmless either: the concrete types riding it today are listed in "Dispatched but UNREGISTERED" above, and one of them (`anchor.revocation_anchored`) ships §6/§1.6-banned fields that only the missing schema would reject.
 - `secret_hash` column on `webhook_endpoints` IS the raw HMAC key — naming is historical (migration 0046). Consumers receive this exact value at endpoint creation. Don't second-guess and try to hash it again.
 - Delivery idempotency key is `${endpoint.id}-${payload.event_id}` (no attempt number) — RACE-6 fix prevents duplicate deliveries across retry attempts after worker restart.
 - Replay deliveries (`replayDelivery`) intentionally always create a new `webhook_delivery_logs` row keyed by `replay-${deliveryId}-${ms}-${randomHex}` so the original is preserved for audit and the existing-row idempotency check can't short-circuit the resend.
@@ -52,3 +88,42 @@ System description for this module is documented in Confluence under SCRUM-1735.
 ## SSRF guard extract (SCRUM-2483)
 
 - The private-IP classifier (`isPrivateIp`, `PRIVATE_IP_PATTERNS`, `BLOCKED_HOSTNAMES`) + DNS-resolution helper were lifted **byte-identically** from `delivery.ts` into `../lib/ssrf-guard.ts` so this webhook guard and the new `safeFetch` egress primitive share ONE source of truth. `delivery.ts` re-exports them, so `isPrivateUrl`/`isPrivateUrlResolved` and every importer (`api/v1/webhooks.ts`, `credential-sources.ts`) are unchanged — no behaviour delta on the webhook delivery path. Edit the blocklist in `ssrf-guard.ts`, not here.
+
+## 2026-08-15 — `compliance.document_expiring` registered (BUG-002)
+
+`POST /cron/check-credential-expiry` has dispatched `compliance.document_expiring` since SCRUM-600, but the type was never in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`. Two consequences, and the second is the security one:
+
+1. `VALID_WEBHOOK_EVENTS` is **derived** from that map, so the CRUD allowlist rejected the type and **no endpoint could ever subscribe** — every dispatch matched zero endpoints and was silently a no-op.
+2. An unregistered type takes the `bypassed: true` branch of `validateWebhookPayload` — no schema, no check. The emit site was shipping `anchor_id` (the internal UUID, CLAUDE.md §6) plus a `title` key that was always `undefined`. It was one subscription away from being deliverable.
+
+Registering it is what makes (2) impossible, not just what turns the feature on: `ComplianceDocumentExpiringPayloadSchema` is `.strict()`, so `anchor_id` now fails validation before anything is signed.
+
+- **Distinct from `anchor.expired` on purpose.** This is the ADVANCE warning — `status` is `SECURED` and only `SECURED`, `days_remaining` is a positive int. `anchor.expired` fires after the fact, once `anchorExpirySweep` has already transitioned the record to `EXPIRED`; a subscriber acting on it is by definition too late to renew.
+- No chain fields. This event is about a calendar date, not an on-chain transition; the receipt already rides `anchor.secured`.
+- `credential_type` is nullable rather than defaulted. `anchors.credential_type` is nullable and the pre-fix emit site substituted `'OTHER'`, asserting a classification nobody measured (§1.5).
+- Catalog entry is `live: true` — the emit point is real, behind `ENABLE_EXPIRY_ALERTS`. Registration points kept in lockstep (all test-guarded): `WebhookSettings.tsx` `AVAILABLE_EVENTS`, its pinned drift-guard list, `WebhookEventCatalog.tsx` `CATALOG_DATA`, `src/lib/copy.ts` `WEBHOOK_EVENT_DESCRIPTIONS`, `packages/sdk/src/types.ts`, `integrations/zapier/src/constants.ts`, `docs/api/webhooks.md`.
+- **Known pre-existing drift, NOT introduced here:** `anchor.superseded` is in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` but absent from `AVAILABLE_EVENTS` and the pinned list. Left alone rather than folded into this fix.
+## 2026-08-29 — producer table corrected: `credential.*` emit points were missing
+
+The "Supported event types" table listed only the five `anchor.*` rows while
+`credential.issued` (SCRUM-1798 Phase 2a) and `credential.status_changed`
+(SCRUM-1800, four sites) had live, unflagged producers — and the dashboard
+catalog, which cites this table as its verification source, was still badging
+those events "Not yet active" for orgs already receiving them (§1.13 R-7 cuts
+both ways). The table now enumerates every registered type plus the
+dispatched-but-unregistered set. `credential.verified` is the one legitimately
+dark row: both dispatch sites check `config.enableCredentialVerifiedWebhook`
+(`ENABLE_CREDENTIAL_VERIFIED_WEBHOOK`, default false), the env var is absent
+from the prod Cloud Run service (verified via `gcloud run services describe
+arkova-worker` 2026-08-29), no workflow sets it, and no switchboard read exists
+on that path — flipping its badge requires re-verifying that flag in prod, not
+this file.
+
+## 2026-08-17 — `response_body`/`error_message` truncation is surrogate-safe
+
+`delivery.ts` bounded `webhook_delivery_logs.response_body` (1000) and `error_message` (500) with
+bare `.slice(0, N)`. The receiving endpoint controls the response bytes: a body whose cap boundary
+split a surrogate pair made the delivery-log `.update()` itself PGRST102 — status bookkeeping
+failing on attacker-controlled input (2026-08-17 poison-record class, PR #2266). All four sites now
+use `utils/utf16-truncate.ts` `truncateUtf16Safe`. Poison regression tests live in
+`src/tests/webhook-delivery-roundtrip.test.ts` (`response_body surrogate-safe truncation`).

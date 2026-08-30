@@ -233,7 +233,20 @@ export const PATH_RULES: PathRule[] = [
     reason: 'worker behavior',
   },
   {
-    pattern: /^(?:docs\/api\/|docs\/guides\/API_GUIDE\.md|sdks\/|packages\/(?:arkova-py|embed|mcp-server|typescript|langchain))/,
+    // `packages/sdk` is the PUBLISHED TypeScript SDK (@carsonarkova/sdk) whose
+    // client implements the frozen v1 verify contract — it was missing here, so
+    // an SDK-only PR fell through every rule to T0 and needed no evidence at all
+    // (SCRUM-3509). The previous alternation also named `mcp-server`,
+    // `typescript` and `langchain`, which are NOT directories under `packages/`
+    // (they live under `sdks/`, already covered by the `sdks\/` alternative) —
+    // dropped so the rule reads as exactly what it matches.
+    //
+    // Deliberately NOT listed: `packages/verifier` and `packages/verifier-cli`.
+    // Those are the standalone MIT verifier packages that PROOF-08 / SCRUM-2341
+    // reclassified to T0 (zero prod runtime, no worker/frontend importer), and
+    // `isT0OnlyFile` consults PATH_RULES before its own allowlist — adding them
+    // here would silently revert that ruling.
+    pattern: /^(?:docs\/api\/|docs\/guides\/API_GUIDE\.md|sdks\/|packages\/(?:arkova-py|embed|sdk)\/)/,
     minTier: 'T2',
     reason: 'public API contract / SDK surface',
   },
@@ -1171,20 +1184,91 @@ function requiredFieldsFor(set: FieldSet): readonly string[] {
   return TIER_SPECS[set].requiredFields;
 }
 
+/**
+ * Markdown decoration tolerated between the start of a line and a field label:
+ * indentation, a `-`/`*` list bullet, and any emphasis or code-span run
+ * (`**`, `*`, `_`, `` ` ``) opening the label.
+ *
+ * Kept as a plain quoted string rather than a `String.raw` template so the
+ * backtick can appear inside the character class without an identity escape.
+ */
+const FIELD_LABEL_PREFIX = '[\\s\\-*_`]*';
+
+/**
+ * An optional GitHub task checkbox, followed by its own optional emphasis run.
+ * The second run matters: in `- [x] **Staging branch:** …` the `[` stops
+ * {@link FIELD_LABEL_PREFIX}, so without it the `**` sits between the checkbox
+ * and the label and the field reads as ABSENT — a checkbox + bold body used to
+ * fail as "missing required fields" rather than being read.
+ */
+const FIELD_LABEL_CHECKBOX = '(?:\\[[ x]\\][\\s*_`]*)?';
+
+/** Emphasis / code-span markers that never carry meaning at a field value's edge. */
+const EMPHASIS_EDGE_CHARS = new Set(['*', '_', '`']);
+
+/**
+ * Strip markdown decoration off a captured field value (SCRUM-3481).
+ *
+ * An emphasised field label leaves the CLOSING marker inside the captured
+ * value: {@link FIELD_LABEL_PREFIX} eats the opening `**` of
+ * `**Approved by:** TBD`, the label matches, and `(.*)` then captures `** TBD`.
+ * Every placeholder guard in this file is anchored to the WHOLE trimmed value
+ * (`/^tbd\.?$/i`, the rest of {@link INCOMPLETE_VALUE_PATTERNS},
+ * {@link NOT_APPLICABLE_VALUE_RE}), and `** TBD` matches none of them — so
+ * emphasising the labels used to switch every guard off, including the
+ * residual-risk approver guard that stops a PR author self-waiving a CLAUDE.md
+ * §1.12 exception.
+ *
+ * All three markers come off either end UNCONDITIONALLY. The first cut
+ * stripped `_` only as a matched pair (to keep a trailing snake_case
+ * underscore intact), but the closing `_` of an italicised label lands
+ * unpaired at the value's edge — `- _Label:_ TBD` captures `_ TBD`, and
+ * whole-line italics `- _Label: TBD_` captures `TBD_` — which left the exact
+ * bypass this function exists to close open through the third marker
+ * (review 2026-08-29). An unpaired edge underscore is locally
+ * indistinguishable from a snake_case one, so the guards must take the
+ * fail-closed reading: shaving an edge `_` off a legitimate value can only
+ * make it MORE likely to hit a placeholder guard, which fails closed and
+ * visibly, while leaving it on kept an author-controlled bypass open.
+ * Interior underscores (`arkova_staging`, `environment_type=clean_mirror`)
+ * are never touched, and no evidence value this file reads carries a
+ * load-bearing edge `*`, `_` or `` ` ``.
+ *
+ * Deliberately index scanning, not regex. PR bodies are author-controlled, and
+ * the obvious spelling here is quadratic on a pathological value: `/[*_`]+$/`
+ * is retried from every start position. Each pass below shortens the string or
+ * returns, so the whole function is linear in the value's length.
+ */
+function stripMarkdownEmphasis(value: string): string {
+  let out = value.trim();
+  for (;;) {
+    let start = 0;
+    let end = out.length;
+    while (start < end && EMPHASIS_EDGE_CHARS.has(out[start]!)) start += 1;
+    while (end > start && EMPHASIS_EDGE_CHARS.has(out[end - 1]!)) end -= 1;
+    const next = out.slice(start, end).trim();
+    if (next === out) return out;
+    out = next;
+  }
+}
+
 export function missingFields(body: string, set: FieldSet): string[] {
   const missing: string[] = [];
   for (const field of requiredFieldsFor(set)) {
     // Field labels are line-anchored to avoid matching prose mentions.
-    const re = new RegExp(String.raw`^[\s\-*]*(?:\[[ x]\]\s*)?${escapeRegExp(field)}`, 'im');
+    const re = new RegExp(`^${FIELD_LABEL_PREFIX}${FIELD_LABEL_CHECKBOX}${escapeRegExp(field)}`, 'im');
     if (!re.test(body)) missing.push(field);
   }
   return missing;
 }
 
 function extractEvidenceFieldValue(body: string, field: string): string | null {
-  const re = new RegExp(String.raw`^[\s\-*]*(?:\[[ x]\]\s*)?${escapeRegExp(field)}[^\S\n]*(.*)$`, 'im');
+  const re = new RegExp(
+    `^${FIELD_LABEL_PREFIX}${FIELD_LABEL_CHECKBOX}${escapeRegExp(field)}[^\\S\\n]*(.*)$`,
+    'im',
+  );
   const m = re.exec(body);
-  return m ? m[1].trim() : null;
+  return m ? stripMarkdownEmphasis(m[1]) : null;
 }
 
 function parseEvidenceTimestamp(value: string): number | null {
@@ -1746,6 +1830,9 @@ function requiredValueErrors(body: string, tier: Tier): string[] {
 
     return [
       ...emptyFieldErrors,
+      // Seventh closure (review 2026-08-29): the ONE approval field T1 carries
+      // must actually name a human — see validateHumanApproverField.
+      validateHumanApproverField(body),
       validateStagingTagEvidence(body),
       validatePassingEvidenceField(
         body,
@@ -1826,21 +1913,31 @@ const RESIDUAL_RISK_REQUIRED_FIELDS = [
  * and the unsoakable-package note. Enforces the real-approver guard on
  * `Approved by:` for both.
  */
+/**
+ * The text of the `### <note>` section opened by `headerRe`, up to the next
+ * heading (or end of body), or `null` when the header is absent. Shared by
+ * {@link validateResidualRiskNote} and the base-drift file-enumeration check.
+ */
+function noteSection(body: string, headerRe: RegExp): string | null {
+  const headerMatch = headerRe.exec(body);
+  if (!headerMatch) return null;
+  const sectionStart = headerMatch.index + headerMatch[0].length;
+  const nextHeading = body.slice(sectionStart).search(/^#{1,3}\s/m);
+  return nextHeading === -1
+    ? body.slice(sectionStart)
+    : body.slice(sectionStart, sectionStart + nextHeading);
+}
+
 function validateResidualRiskNote(
   body: string,
   requiredFields: readonly string[],
   headerRe: RegExp = RESIDUAL_RISK_HEADER_RE,
 ): { valid: boolean; missing: string[] } {
-  const headerMatch = headerRe.exec(body);
-  if (!headerMatch) return { valid: false, missing: [] };
-  const sectionStart = headerMatch.index + headerMatch[0].length;
-  const nextHeading = body.slice(sectionStart).search(/^#{1,3}\s/m);
-  const section = nextHeading === -1
-    ? body.slice(sectionStart)
-    : body.slice(sectionStart, sectionStart + nextHeading);
+  const section = noteSection(body, headerRe);
+  if (section === null) return { valid: false, missing: [] };
   const missing: string[] = [];
   for (const field of requiredFields) {
-    const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}`, 'im');
+    const re = new RegExp(`^${FIELD_LABEL_PREFIX}${escapeRegExp(field)}`, 'im');
     if (!re.test(section)) missing.push(field);
   }
   // `Approved by:` must name a real approver. A present-but-empty or
@@ -1850,11 +1947,210 @@ function validateResidualRiskNote(
   if (requiredFields.includes('Approved by:') && !missing.includes('Approved by:')) {
     const approver = extractEvidenceFieldValue(section, 'Approved by:');
     const trimmed = approver?.trim() ?? '';
-    if (trimmed.length === 0 || isIncompletePlaceholder(trimmed) || isNotApplicablePlaceholder(trimmed)) {
+    // NOT_A_PERSON_PREFIX_RE (seventh closure): the whole-value NA anchor let
+    // `Approved by: N/A — …` grant the exception once any prose trailed the
+    // marker — the same leading-token shape the 2026-08-29 addendum closed for
+    // self-references.
+    if (
+      trimmed.length === 0
+      || isIncompletePlaceholder(trimmed)
+      || isNotApplicablePlaceholder(trimmed)
+      || NOT_A_PERSON_PREFIX_RE.test(trimmed)
+    ) {
       missing.push('Approved by: (must name a real approver, not a blank or placeholder)');
     }
   }
   return { valid: missing.length === 0, missing };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Approver independence (SCRUM-3481).
+//
+// `validateResidualRiskNote` above already rejects a blank / PENDING / TBD /
+// N/A approver. What it could not see is the OTHER shape of the same
+// self-waiver: an approver value that names the PR author, or that literally
+// says "me". CLAUDE.md §1.12 requires a *human approver* for a residual-risk
+// exception and §3 gate 7 requires reporter ≠ resolver; an author who writes
+// their own name in that field has granted themselves the exception.
+//
+// Scope, honestly stated: this rejects an approver that resolves UNAMBIGUOUSLY
+// to the author — an exact GitHub-login token match (`@login` or bare `login`),
+// or a self-reference word. It deliberately does NOT try to map a display name
+// ("Carson (founder / release owner)") onto a login, because the gate has no
+// identity directory to do that with and a wrong guess would block real
+// approvals. Reviewer independence for the *manifest* path is enforced
+// separately by CODEOWNERS on docs/staging/rc-manifests/ plus the
+// cite-vs-modify check in {@link rcManifestCoverage}.
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Whole-value markers that name the author instead of an approver. Anchored to
+ * the trimmed value so a sentence that merely contains "me" is unaffected.
+ */
+const SELF_REFERENCE_APPROVER_RE =
+  /^(?:me|myself|self|same|same[\s-]as[\s-](?:above|author)|(?:the|pr|this)[\s-]author|author(?:[\s-]of[\s-]this[\s-]pr)?)\.?$/i;
+
+/**
+ * LEADING self-reference at a word boundary (review 2026-08-29): the
+ * whole-value anchor above meant `me` failed while `me (the author)` passed —
+ * any trailing decoration switched the check off. A value that BEGINS with a
+ * self-reference word is just as unambiguous, so it fires too. Bare `same` is
+ * deliberately absent here (a leading "Same as last week's …" is not
+ * self-evidently the author), and `-` is not a firing boundary so a name like
+ * "Self-serve pod lead" cannot false-positive; mid-sentence mentions never
+ * match a leading anchor at all. No nested quantifiers — linear on
+ * author-controlled input like every other guard in this file.
+ */
+const SELF_REFERENCE_PREFIX_RE =
+  /^(?:me|myself|self|same[\s-]as[\s-](?:above|author)|(?:the|pr|this)[\s-]author|author(?:[\s-]of[\s-]this[\s-]pr)?)(?:$|[\s,;:.()!?—–])/i;
+
+/**
+ * LEADING "names no one" tokens for an approver-class field (seventh closure,
+ * review 2026-08-29). {@link NOT_APPLICABLE_VALUE_RE} and
+ * {@link INCOMPLETE_VALUE_PATTERNS} anchor to the WHOLE value, so
+ * `Human approver: NONE. No human has approved this head.` passed the T1 gate
+ * — the spelling PR #2264 merged with — and `Approved by: N/A — …` granted a
+ * residual-risk exception the same way. A value that BEGINS with one of these
+ * tokens names no one regardless of what follows. Bare `na`, `n.a.` and `nil`
+ * are deliberately absent (real names begin with those — "Na Yoon-kyung",
+ * "N.A. Smith", "Nil Ratan Dhar"); they stay rejected as whole values by
+ * {@link NOT_APPLICABLE_VALUE_RE}. Same firing boundary as
+ * {@link SELF_REFERENCE_PREFIX_RE}: `-` is not a boundary, so a hyphenated
+ * name cannot false-positive.
+ */
+const NOT_A_PERSON_PREFIX_RE =
+  /^(?:none|n\/a|not[\s-]?applicable|null|nobody|no[\s-]one)(?:$|[\s,;:.()!?—–])/i;
+
+/**
+ * The agent naming itself as the approver. CLAUDE.md §1.12 and the T1 tier
+ * spec require a HUMAN approver; "Claude" in any spelling (`Claude`,
+ * `Claude Code`, `@claude`, `claude-fable-5`) is the resolver of the task,
+ * not an approver of it. Leading-anchored so a human approval that merely
+ * MENTIONS the agent ("Carson — approved in the Claude session transcript")
+ * is unaffected. A ratchet against the observed spellings, not an identity
+ * proof — the same stance every guard in this file takes.
+ */
+const AGENT_APPROVER_RE = /^@?claude\b/i;
+
+/** Handle-ish tokens inside an approver value (`@login`, `login`, `First`, an email local-part). */
+const APPROVER_TOKEN_RE = /[A-Za-z0-9][A-Za-z0-9._-]*/g;
+
+/** Trailing `.`/`_`/`-` a sentence leaves on a handle (`@carson-see.`). */
+const TOKEN_TAIL_CHARS = new Set(['.', '_', '-']);
+
+/**
+ * Index scanning, not `token.replace(/[._-]+$/, '')`, for the same reason
+ * {@link stripMarkdownEmphasis} avoids regex: the approver value is one line of
+ * an author-controlled PR body, up to GitHub's 65 536-char cap, and that
+ * anchored trailing quantifier is QUADRATIC whenever it fails to match. A token
+ * of the shape `a` + 60 000 `.` + `b` is retried from every start position and
+ * measured ~10 s of CI CPU; the scan below is linear. (Failure is closed either
+ * way — a timed-out gate job is a red check — but the burn is free to avoid.)
+ */
+function trimTokenTail(token: string): string {
+  let end = token.length;
+  while (end > 0 && TOKEN_TAIL_CHARS.has(token[end - 1]!)) end -= 1;
+  return token.slice(0, end);
+}
+
+function approverNamesPrAuthor(approver: string, prAuthor: string | undefined): boolean {
+  const author = (prAuthor ?? '').trim().toLowerCase().replace(/^@+/, '');
+  if (author.length === 0) return false;
+  for (const token of approver.toLowerCase().match(APPROVER_TOKEN_RE) ?? []) {
+    if (trimTokenTail(token) === author) return true;
+  }
+  return false;
+}
+
+/**
+ * Every `Approved by:`-bearing waiver note in this file, so the independence
+ * check covers the whole class rather than whichever members existed when it
+ * was written. All three waive a §1.12-weight control:
+ *   - `### Residual-risk note` — waives the preflight cleanliness fields;
+ *   - `### Unsoakable-surface note` — waives soak evidence for an offline
+ *     package/SDK surface that has no worker runtime to soak;
+ *   - `### Base-drift residual-risk note` (FD-GATE-3) — preserves COMPLETED
+ *     soak evidence across main drift that touched the PR's soak surface,
+ *     i.e. exactly the "slip something past finished evidence" class.
+ *
+ * A function, not a `const` array: {@link BASE_DRIFT_RESIDUAL_HEADER_RE} is
+ * declared further down the file, and a module-level array literal would read
+ * it inside its temporal dead zone and throw at import time.
+ */
+function approverNoteHeaders(): readonly RegExp[] {
+  return [RESIDUAL_RISK_HEADER_RE, UNSOAKABLE_NOTE_HEADER_RE, BASE_DRIFT_RESIDUAL_HEADER_RE];
+}
+
+/**
+ * Rejects a residual-risk / unsoakable-surface / base-drift note whose
+ * `Approved by:` resolves to the PR author. Runs on every non-T0 path so it
+ * cannot be side-stepped by choosing a different evidence mode.
+ */
+export function approverIndependenceErrors(body: string, prAuthor?: string): string[] {
+  const errors: string[] = [];
+  for (const headerRe of approverNoteHeaders()) {
+    const section = noteSection(body, headerRe);
+    if (section === null) continue;
+    const approver = extractEvidenceFieldValue(section, 'Approved by:');
+    // A blank / placeholder approver is owned by validateResidualRiskNote —
+    // reporting it twice would just add noise.
+    if (approver === null || approver.length === 0) continue;
+
+    if (SELF_REFERENCE_APPROVER_RE.test(approver) || SELF_REFERENCE_PREFIX_RE.test(approver)) {
+      errors.push(
+        `Approved by: \`${approver}\` is a self-approval, not an approver. A CLAUDE.md §1.12 `
+        + 'residual-risk exception must name the human who granted it, and that human cannot be '
+        + 'the PR author.',
+      );
+    } else if (approverNamesPrAuthor(approver, prAuthor)) {
+      errors.push(
+        `Approved by: \`${approver}\` names the PR author (\`${prAuthor}\`) — self-approval. A `
+        + 'CLAUDE.md §1.12 residual-risk exception must be granted by someone other than the '
+        + 'author of the PR it exempts.',
+      );
+    }
+  }
+  return errors;
+}
+
+/**
+ * Seventh closure (review 2026-08-29): the T1 `Human approver:` field was
+ * VALUE-blind. `missingFields()` proves label presence and
+ * `validateNonEmptyEvidenceField` rejects only the empty string, so
+ * `Human approver: NONE` — and the `NONE. <explanation>` spelling PR #2264
+ * merged with — satisfied the only approval evidence T1 carries
+ * (`TIER_SPECS.T1.soakHours` is 0; this field is what a green T1 gate is
+ * supposed to prove).
+ *
+ * This is the VALUE half only. Cross-checking this field against the PR
+ * author is a policy call deliberately NOT taken (see the PR's "Known scope
+ * limits"): every T1 PR carries the field, and in a repo where Carson both
+ * authors and approves, an author cross-check here would block routine T1s.
+ */
+function validateHumanApproverField(body: string): string | null {
+  const field = 'Human approver:';
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null) return null; // label absent → missingFields() owns it
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null; // empty → validateNonEmptyEvidenceField owns it
+  if (
+    isIncompletePlaceholder(trimmed)
+    || isNotApplicablePlaceholder(trimmed)
+    || NOT_A_PERSON_PREFIX_RE.test(trimmed)
+  ) {
+    return `${field} must name the human who approved this PR — \`${trimmed}\` names no one. `
+      + 'NONE/N/A/TBD/pending do not satisfy the T1 human-approval requirement; if no human '
+      + 'has approved yet, this gate is SUPPOSED to stay red.';
+  }
+  if (
+    AGENT_APPROVER_RE.test(trimmed)
+    || SELF_REFERENCE_APPROVER_RE.test(trimmed)
+    || SELF_REFERENCE_PREFIX_RE.test(trimmed)
+  ) {
+    return `${field} must name a human — \`${trimmed}\` names the agent or the requester `
+      + 'themselves. CLAUDE.md §1.12 requires a human approver.';
+  }
+  return null;
 }
 
 export function hasResidualRiskException(body: string): { valid: boolean; missing: string[] } {
@@ -1869,39 +2165,182 @@ export function hasUnsoakableSurfaceNote(body: string): { valid: boolean; missin
   );
 }
 
-function preflightResultErrors(body: string): string[] {
-  const preflightResult = extractEvidenceFieldValue(body, 'Preflight result:');
-  if (preflightResult === null || hasCleanMirrorPreflight(preflightResult)) return [];
-
+/**
+ * The one escape hatch shared by every preflight field: the situation is
+ * expressible, but ONLY behind a `### Residual-risk note` whose required
+ * sub-fields are all present and whose `Approved by:` names a real approver.
+ * `validateResidualRiskNote` enforces the approver guard, so a blank /
+ * `pending` / `TBD` / `N/A` approver is still a self-waiver and still fails.
+ *
+ * Scoped deliberately to the preflight fields. It is NOT a blanket bypass: the
+ * soak-duration floor, head/base SHA identity, evidence scope, and the
+ * deploy-artifact value checks all run independently of it.
+ */
+function preflightExceptionErrors(
+  body: string,
+  situation: string,
+  fallbackMessage: string,
+): string[] {
   const riskException = hasResidualRiskException(body);
   if (riskException.valid) return [];
   if (riskException.missing.length > 0) {
     return [
-      `Preflight is not clean_mirror but the residual-risk note is missing required sub-fields: `
+      `${situation} but the residual-risk note is missing required sub-fields: `
       + riskException.missing.map((f) => `\`${f}\``).join(', ')
       + `. Add a \`### Residual-risk note\` section with all required fields.`,
     ];
   }
 
-  return ['Preflight result must capture `environment_type=clean_mirror`; dirty or diagnostic preflight output is not merge-grade evidence. Alternatively, add a `### Residual-risk note` section documenting the exception (see CLAUDE.md §1.11A).'];
+  return [fallbackMessage];
 }
 
-function preflightTimestampErrors(body: string): string[] {
-  const preflightTimestampValue = extractEvidenceFieldValue(body, 'Preflight timestamp:');
-  if (preflightTimestampValue === null) return [];
+function preflightResultErrors(body: string): string[] {
+  const preflightResult = extractEvidenceFieldValue(body, 'Preflight result:');
+  if (preflightResult === null || hasCleanMirrorPreflight(preflightResult)) return [];
 
-  const preflightMs = parseEvidenceTimestamp(preflightTimestampValue);
-  if (preflightMs === null) {
-    return [`Preflight timestamp could not parse as a timestamp: \`${preflightTimestampValue}\`.`];
-  }
+  return preflightExceptionErrors(
+    body,
+    'Preflight is not clean_mirror',
+    'Preflight result must capture `environment_type=clean_mirror`; dirty or diagnostic preflight output is not merge-grade evidence. Alternatively, add a `### Residual-risk note` section documenting the exception (see CLAUDE.md §1.11A).',
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Preflight-timestamp symmetry.
+//
+// `Preflight result:` has always had the residual-risk escape hatch above, so
+// "a DIRTY preflight ran at T" was expressible. `Preflight timestamp:` had
+// none, and it is a REQUIRED field at T2/T3 — so "no preflight ran at all" and
+// "a clean preflight ran after the clock started" were both inexpressible.
+// That is backwards: it rewarded running a worthless preflight over running
+// none, and pressured an author toward pasting some OTHER window's timestamp,
+// which is precisely the stale-evidence reuse CLAUDE.md §1.11A forbids
+// ("Evidence may not be copied across heads, services, or projects").
+//
+// The fix makes the timestamp rule symmetric with the result rule and NO
+// LOOSER: both non-clean states are sayable, both require the same approved
+// note, and any value that is neither a parseable timestamp nor one of the
+// sentinels below is still a hard error — free text does not get through.
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * The closed set of `Preflight timestamp:` values that explicitly declare no
+ * preflight reading exists for this window. A literal set rather than one big
+ * alternation regex: the membership test is exact, and the set is readable as
+ * the policy it is. Deliberately small — a value that merely *talks about* not
+ * running a preflight is not a member and stays a hard error.
+ */
+const PREFLIGHT_NOT_RUN_SENTINELS = new Set([
+  'not run', 'not-run', 'notrun',
+  'no preflight', 'no-preflight', 'nopreflight',
+  'none',
+  'n/a', 'na', 'n.a', 'n.a.',
+  'not applicable', 'not-applicable', 'notapplicable',
+]);
+
+/**
+ * Start of an optional trailing reason: `NOT RUN — rig provisioned 8 days
+ * before the clock`, `N/A: no pre-clock sample`. A colon or em/en dash
+ * separates on its own; a plain hyphen must be preceded by whitespace so
+ * `NOT-RUN` is not mistaken for `NOT` plus a reason.
+ *
+ * Both alternatives are fixed-length and quantifier-free, so matching is a
+ * single linear scan (SonarCloud `typescript:S8786` — an earlier
+ * `(?:\s+[-—–:]|[—–:])\s*\S[\s\S]*$` form was quadratic on a long run of
+ * whitespace because the unanchored `\s+` was retried from every position).
+ */
+const PREFLIGHT_REASON_SEPARATOR_RE = /[—–:]|\s-/;
+
+function isPreflightNotRunSentinel(value: string): boolean {
+  const trimmed = value.trim();
+  const separator = PREFLIGHT_REASON_SEPARATOR_RE.exec(trimmed);
+  const head = separator === null ? trimmed : trimmed.slice(0, separator.index);
+  return PREFLIGHT_NOT_RUN_SENTINELS.has(head.trim().toLowerCase());
+}
+
+type PreflightTimestampStatus = 'ok' | 'not-run' | 'late' | 'unparseable';
+
+/**
+ * Classify the `Preflight timestamp:` value. Sentinels are matched BEFORE
+ * `Date.parse` so a sentinel can never be silently accepted as a real reading.
+ */
+function classifyPreflightTimestamp(body: string, value: string): PreflightTimestampStatus {
+  if (isPreflightNotRunSentinel(value)) return 'not-run';
+
+  const preflightMs = parseEvidenceTimestamp(value);
+  if (preflightMs === null) return 'unparseable';
 
   const soakStartValue = extractEvidenceFieldValue(body, 'Soak start:');
   const soakStartMs = soakStartValue === null ? null : parseEvidenceTimestamp(soakStartValue);
-  if (soakStartMs !== null && preflightMs > soakStartMs) {
-    return ['Preflight timestamp must be at or before Soak start.'];
+  return soakStartMs !== null && preflightMs > soakStartMs ? 'late' : 'ok';
+}
+
+/** `null` when the label is absent — `missingFields()` owns that at T2/T3. */
+function preflightTimestampStatus(body: string): PreflightTimestampStatus | null {
+  const value = extractEvidenceFieldValue(body, 'Preflight timestamp:');
+  return value === null ? null : classifyPreflightTimestamp(body, value);
+}
+
+const PREFLIGHT_TIMESTAMP_UNPARSEABLE_HINT =
+  'Give the UTC reading taken at or before Soak start, or — if no preflight was run for this '
+  + 'window — the literal `NOT RUN` (also accepted: `NONE`, `N/A`, `NO PREFLIGHT`, `NOT APPLICABLE`, '
+  + 'each optionally followed by ` — <reason>`) together with an approved `### Residual-risk note`. '
+  + "Do not paste another window's timestamp (CLAUDE.md §1.11A).";
+
+function preflightTimestampErrors(body: string): string[] {
+  const value = extractEvidenceFieldValue(body, 'Preflight timestamp:');
+  // Label absent. Not waived here: at T2/T3 — the only tiers this runs for —
+  // `missingFields()` already rejects the body for the missing required field.
+  if (value === null) return [];
+
+  switch (classifyPreflightTimestamp(body, value)) {
+    case 'ok':
+      return [];
+    case 'not-run':
+      return preflightExceptionErrors(
+        body,
+        `Preflight timestamp declares no preflight was run (\`${value.trim()}\`)`,
+        'Preflight timestamp declares no preflight was run; a soak with no pre-clock preflight is not merge-grade evidence on its own. Add a `### Residual-risk note` section documenting the exception (see CLAUDE.md §1.11A).',
+      );
+    case 'late':
+      return preflightExceptionErrors(
+        body,
+        `Preflight timestamp \`${value.trim()}\` is after Soak start`,
+        'Preflight timestamp must be at or before Soak start; a preflight captured after the clock started does not describe the state the soak ran against. Add a `### Residual-risk note` section documenting the exception (see CLAUDE.md §1.11A).',
+      );
+    default:
+      return [
+        `Preflight timestamp could not parse as a timestamp: \`${value}\`. `
+        + PREFLIGHT_TIMESTAMP_UNPARSEABLE_HINT,
+      ];
+  }
+}
+
+/**
+ * Every accepted preflight exception announces itself. Without this a
+ * `clean_mirror`-but-late reading (or a `NOT RUN` sentinel) would be accepted
+ * SILENTLY — exactly the unannounced acceptance this gate exists to prevent.
+ * Callers must only invoke this once the body has produced zero errors, which
+ * already implies the residual-risk note validated.
+ */
+function preflightExceptionNotes(body: string): string[] {
+  const notes: string[] = [];
+
+  const preflightVal = extractEvidenceFieldValue(body, 'Preflight result:');
+  const preflightIsClean = preflightVal !== null && hasCleanMirrorPreflight(preflightVal);
+  if (!preflightIsClean && hasResidualRiskException(body).valid) {
+    notes.push('Preflight is not clean_mirror; residual-risk exception accepted.');
   }
 
-  return [];
+  const tsStatus = preflightTimestampStatus(body);
+  if (tsStatus === 'not-run') {
+    notes.push('Preflight timestamp declares no preflight was run; residual-risk exception accepted.');
+  }
+  if (tsStatus === 'late') {
+    notes.push('Preflight timestamp is after Soak start; residual-risk exception accepted.');
+  }
+
+  return notes;
 }
 
 const FUTURE_TIMESTAMP_FIELDS = [
@@ -2023,6 +2462,103 @@ function impactNoteAttestsNoRuntimeEffect(value: string): boolean {
     && hasNamedApprover(value);
 }
 
+// ── FD-GATE-3: the base-drift residual-risk third state ────────────────────
+// CLAUDE.md names three outcomes for a completed soak whose base has drifted:
+// re-soak, OR "an explicit residual-risk note" (§1.11A), OR "an explicit
+// Carson-approved residual-risk exception" (§1.12). Until FD-GATE-3 the gate
+// implemented only re-soak for above-T0 same-surface drift — unconvergeable at
+// current merge velocity (a 48 h T3 soak vs a main taking 20+ PRs/day, with
+// `services/worker/src/` in the shared surface wholesale). The note below is
+// that third state: auditable, named, and file-enumerating.
+
+const BASE_DRIFT_RESIDUAL_HEADER_RE = /^###\s+Base-drift\s+residual-risk\s+note\b/im;
+
+const BASE_DRIFT_RESIDUAL_REQUIRED_FIELDS = [
+  'Drift files:',
+  'Risk assessment:',
+  'Evidence still valid because:',
+  'Approved by:',
+];
+
+/**
+ * Optional `Drift dependencies:` evidence field: comma/whitespace-separated
+ * path prefixes the PR DECLARES its soaked behavior depends on beyond its own
+ * diff. A drifted file matching a declared prefix is treated like one of the
+ * PR's own files for the T2+ hard wall — a self-declaration can only make the
+ * gate stricter for this PR, never looser.
+ */
+const DRIFT_DEPENDENCIES_FIELD = 'Drift dependencies:';
+
+function declaredDriftDependencies(body: string): string[] {
+  const value = extractEvidenceFieldValue(body, DRIFT_DEPENDENCIES_FIELD);
+  if (value === null || !isFilledValue(value)) return [];
+  return value.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+}
+
+function matchesDeclaredDependency(file: string, dependencies: string[]): boolean {
+  return dependencies.some((dep) => file === dep || file.startsWith(dep));
+}
+
+/**
+ * Validate the `### Base-drift residual-risk note` for a given set of
+ * intersecting drift files. Beyond the required sub-fields (with the shared
+ * real-approver guard), the note must ENUMERATE every intersecting drift file
+ * somewhere in its section — an attestation that does not name what it is
+ * attesting over is not auditable.
+ */
+export function hasBaseDriftResidualRiskNote(
+  body: string,
+  intersectingFiles: string[],
+): { valid: boolean; missing: string[] } {
+  const fieldCheck = validateResidualRiskNote(
+    body,
+    BASE_DRIFT_RESIDUAL_REQUIRED_FIELDS,
+    BASE_DRIFT_RESIDUAL_HEADER_RE,
+  );
+  if (!fieldCheck.valid) return fieldCheck;
+  const section = noteSection(body, BASE_DRIFT_RESIDUAL_HEADER_RE) ?? '';
+  const unenumerated = intersectingFiles.filter((f) => !section.includes(f));
+  if (unenumerated.length > 0) {
+    return {
+      valid: false,
+      missing: unenumerated.map((f) => `Drift files: must enumerate \`${f}\``),
+    };
+  }
+  return { valid: true, missing: [] };
+}
+
+/**
+ * A file that occupies a position in the shared migration ledger.
+ *
+ * ORDERING is the thing carve-out (b) protects, and only a `.sql` file under
+ * `supabase/migrations/` carries a ledger version — so this must match the
+ * migration files themselves, NOT the directory that contains them.
+ *
+ * 2026-08-29 regression this pins: the predicate was `/^supabase\/migrations\//`,
+ * a bare directory prefix. `supabase/migrations/agents.md` is a documentation
+ * note that EVERY migration PR appends to, so main merging any migration PR's
+ * doc line made `driftFiles.some(...)` true and the gate announced "main landed
+ * a migration in the interval" when zero `.sql` files had changed. That produced
+ * an unclearable hard failure (no note, no attestation can clear carve-out (b))
+ * on PRs #2336 and #2355 — both carrying complete, sealed 48 h T3 soaks — and
+ * would have fired on every remaining migration PR. The false premise was
+ * verifiable in one command: `git diff --name-only A..B -- supabase/migrations/`
+ * returned `agents.md` and nothing else.
+ *
+ * Narrowing this does not loosen the carve-out: a real `.sql` landing on main
+ * while the PR owns a migration still hard-fails (pinned by test
+ * "STILL hard-fails when a real .sql lands on main alongside the agents.md note").
+ * Non-`.sql` drift inside the directory is still counted as intersecting soak
+ * surface by {@link driftFilesIntersectingSurface} — it just routes to the
+ * attestable third state instead of the unattestable ledger wall.
+ */
+const MIGRATION_LEDGER_RE = /^supabase\/migrations\/.+\.sql$/i;
+
+/** Does this path occupy a position in the shared migration ledger? */
+function isMigrationLedgerFile(file: string): boolean {
+  return MIGRATION_LEDGER_RE.test(file);
+}
+
 /**
  * The set of file-path predicates whose intervening main-drift could invalidate
  * THIS PR's completed soak. It is the UNION of:
@@ -2065,17 +2601,83 @@ function driftFilesIntersectingSurface(
  *
  *   • DISJOINT (no drift file touches the PR's own files or the shared
  *     prod-runtime surface) → evidence preserved, no attestation required.
- *   • INTERSECTS → the soak ran against a now-stale version of a surface the PR
- *     depends on → hard fail (re-soak), with a strictly-narrower fallback: the
- *     operator MAY preserve evidence for the T0-only case by supplying an
- *     approved `Base drift impact:` attestation AND the intervening drift being
- *     classified strictly T0. That fallback exists only so no
- *     currently-passing (T0-drift + attested) PR regresses; it is NOT a general
- *     override for T1+ same-surface drift.
+ *   • INTERSECTS, whole drift strictly T0 → the strictly-narrower legacy
+ *     hatch: an approved `Base drift impact:` attestation (changed files +
+ *     no-runtime-impact statement + named approver) preserves evidence.
+ *   • INTERSECTS above T0 — two hard-fail carve-outs where an attestation
+ *     cannot honestly cover the risk (FD-GATE-3):
+ *       (a) main edited an exact file this PR itself changed — or one matching
+ *           a declared `Drift dependencies:` prefix — and that overlap is T2+:
+ *           the completed soak provably describes code that no longer exists;
+ *       (b) the PR owns a `supabase/migrations/` file AND main landed a
+ *           migration in the interval: ledger ordering is shared mutable
+ *           state and cannot be attested away.
+ *   • INTERSECTS above T0, outside the carve-outs (shared-surface /
+ *     cross-cutting drift) → the §1.11A/§1.12 residual-risk third state: an
+ *     auditable `### Base-drift residual-risk note` that enumerates every
+ *     intersecting drift file, assesses the risk, states why the evidence
+ *     remains valid, and names a real approver preserves the evidence.
+ *     Without it: re-soak. (Before FD-GATE-3 this branch was an unconditional
+ *     re-soak, which cannot converge — any 48 h window contains T2+ main
+ *     movement, so a T3 PR could be re-soaked forever.)
  *   • drift-file list unavailable (`changedFilesBetween` → null and no override)
  *     → fail closed (re-soak).
  */
-function baseDriftImpactErrors(
+/** Cap on how many paths a single diagnostic line prints, so a 400-file main
+ *  drift cannot bury the Actions log. */
+const DIAGNOSTIC_PATH_CAP = 25;
+
+function formatPathList(files: string[]): string {
+  if (files.length === 0) return '(none)';
+  const shown = files.slice(0, DIAGNOSTIC_PATH_CAP);
+  const suffix = files.length > shown.length ? `, …+${files.length - shown.length} more` : '';
+  return shown.join(', ') + suffix;
+}
+
+/**
+ * The exact inputs base-drift classification ran on, as text.
+ *
+ * Exists because the 2026-08-29 #2336/#2355 false positive cost a full session
+ * to diagnose purely for want of these five lines: the failing message named a
+ * migration landing on main, the repository showed none, and nothing in the log
+ * said which file set the gate had actually looked at. Every base-drift verdict
+ * now states its own evidence.
+ */
+export function formatBaseDriftDiagnostics(
+  evidenceBaseSha: string,
+  currentBaseSha: string,
+  prFiles: string[],
+  driftFiles: string[],
+): string {
+  const prLedger = prFiles.filter(isMigrationLedgerFile);
+  const driftLedger = driftFiles.filter(isMigrationLedgerFile);
+  const driftMigrationDir = driftFiles.filter((f) => f.startsWith('supabase/migrations/'));
+  return [
+    `base-drift inputs: evidence base ${evidenceBaseSha} → current base ${currentBaseSha}`,
+    `  prFiles (${prFiles.length}): ${formatPathList(prFiles)}`,
+    `  prFiles in migration ledger (${prLedger.length}): ${formatPathList(prLedger)}`,
+    `  driftFiles (${driftFiles.length}): ${formatPathList(driftFiles)}`,
+    `  driftFiles under supabase/migrations/ (${driftMigrationDir.length}): ${formatPathList(driftMigrationDir)}`,
+    `  driftFiles in migration ledger, i.e. .sql (${driftLedger.length}): ${formatPathList(driftLedger)}`,
+  ].join('\n');
+}
+
+/**
+ * Emit the diagnostics above — CI only. Local/unit runs stay silent so the test
+ * output is not swamped; GitHub Actions gets them on every drift classification,
+ * pass or fail.
+ */
+function logBaseDriftDiagnostics(
+  evidenceBaseSha: string,
+  currentBaseSha: string,
+  prFiles: string[],
+  driftFiles: string[],
+): void {
+  if (process.env.GITHUB_ACTIONS !== 'true') return;
+  console.log(`ℹ️  ${formatBaseDriftDiagnostics(evidenceBaseSha, currentBaseSha, prFiles, driftFiles)}`);
+}
+
+export function baseDriftImpactErrors(
   body: string,
   evidenceBaseSha: string,
   currentBaseSha: string,
@@ -2083,6 +2685,9 @@ function baseDriftImpactErrors(
   driftFilesOverride?: string[],
 ): string[] {
   const driftFiles = driftFilesOverride ?? changedFilesBetween(evidenceBaseSha, currentBaseSha);
+  if (driftFiles !== null) {
+    logBaseDriftDiagnostics(evidenceBaseSha, currentBaseSha, prFiles, driftFiles);
+  }
   if (driftFiles === null) {
     return [
       `Could not inspect changed files between evidence base \`${evidenceBaseSha}\` and current base \`${currentBaseSha}\`; `
@@ -2099,7 +2704,10 @@ function baseDriftImpactErrors(
 
   // Same-surface drift. Preserve the strictly-narrower legacy escape hatch: an
   // approved `Base drift impact:` attestation for the case where the WHOLE
-  // intervening drift is T0-only. Anything above T0 is an unconditional re-soak.
+  // intervening drift is T0-only. (The residual-risk note is NOT a substitute
+  // here — the T0 hatch carries a no-runtime-impact statement the note does
+  // not, and the note path below would be strictly looser for a strictly
+  // safer drift class.)
   const driftTier = requiredTierFor(driftFiles);
   if (driftTier.tier === 'T0') {
     const impact = extractEvidenceFieldValue(body, BASE_DRIFT_IMPACT_FIELD);
@@ -2119,10 +2727,58 @@ function baseDriftImpactErrors(
     return [];
   }
 
+  // Carve-out (a): main edited an exact file this PR itself soaked (or one it
+  // declared as a dependency), and that overlap is itself T2+. The evidence
+  // provably describes code that no longer exists — no note can cover it.
+  const dependencies = declaredDriftDependencies(body);
+  const ownOverlap = driftFiles.filter(
+    (f) => surface.ownFiles.has(f) || matchesDeclaredDependency(f, dependencies),
+  );
+  if (ownOverlap.length > 0) {
+    const overlapTier = requiredTierFor(ownOverlap);
+    if (TIER_RANK[overlapTier.tier] >= TIER_RANK.T2) {
+      return [
+        `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\` touches this PR's soak surface: `
+        + `main edited file(s) this PR itself soaked or declared as dependencies (${ownOverlap.join(', ')}) `
+        + `at ${overlapTier.tier} (${overlapTier.reason}). The completed soak describes code that no longer exists; `
+        + 'a residual-risk note cannot cover same-file T2+ drift — re-soak on the current base (FD-GATE-3).',
+      ];
+    }
+  }
+
+  // Carve-out (b): shared migration ledger. Ledger ordering is mutable state
+  // every migration-owning PR shares; a note cannot make a soak that ran
+  // against a different ledger head order-valid again.
+  const landedMigrations = driftFiles.filter(isMigrationLedgerFile);
+  if (prFiles.some(isMigrationLedgerFile) && landedMigrations.length > 0) {
+    return [
+      `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\`: main landed a migration in the interval `
+      + `(${landedMigrations.join(', ')}) and `
+      + 'this PR owns a migration. Ledger ordering is shared mutable state and cannot be attested away — '
+      + 're-soak on the current base (FD-GATE-3).',
+    ];
+  }
+
+  // Third state (§1.11A "a new soak or an explicit residual-risk note";
+  // §1.12 "an explicit Carson-approved residual-risk exception"): above-T0
+  // drift on the SHARED surface — paths the PR does not itself touch — is
+  // attestable via a named, file-enumerating note.
+  const note = hasBaseDriftResidualRiskNote(body, intersecting);
+  if (note.valid) return [];
+  if (note.missing.length > 0) {
+    return [
+      '`### Base-drift residual-risk note` is present but incomplete: '
+      + note.missing.map((f) => `\`${f}\``).join(', ')
+      + '. The note must carry every required sub-field and enumerate every intersecting drift file (FD-GATE-3).',
+    ];
+  }
   return [
     `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\` touches this PR's soak surface `
-    + `(${intersecting.join(', ')}) at ${driftTier.tier} (${driftTier.reason}); `
-    + 'existing soak evidence cannot be preserved without release-owner re-scope/retest.',
+    + `(${intersecting.join(', ')}) at ${driftTier.tier} (${driftTier.reason}). `
+    + 'Either refresh/re-soak on the current base, or add a `### Base-drift residual-risk note` section '
+    + `enumerating every intersecting drift file under \`Drift files:\`, with \`Risk assessment:\`, `
+    + '`Evidence still valid because:`, and a named `Approved by:` '
+    + '(CLAUDE.md §1.11A/§1.12 residual-risk exception; FD-GATE-3).',
   ];
 }
 
@@ -2186,7 +2842,24 @@ interface StagingFilesOnlyResult {
  */
 const STAGING_TOOLING_ALLOW = [
   // Secret-scanner policy is CI-only; it never ships to application runtime.
+  // Both halves of the pair belong here: `.gitleaks.toml` holds the rules and
+  // allowlists, `.gitleaksignore` holds the per-finding fingerprint waivers.
+  // Each is read only by the `scan` job in .github/workflows/gitleaks.yml and
+  // is never imported, bundled, or deployed, so neither has a runtime surface
+  // a soak could exercise. Only the .toml was listed, so a one-line fingerprint
+  // waiver classified T1 and demanded a 2 h soak of a file prod never reads.
   /^\.gitleaks\.toml$/,
+  /^\.gitleaksignore$/,
+  // CODEOWNERS is REVIEW governance, not runtime: GitHub reads it to decide who
+  // must approve a PR, and nothing imports, bundles, or deploys it — there is no
+  // surface a soak could exercise. Exactly the class the two gitleaks entries
+  // above document, and it bit the same way: SCRUM-3542's fix is a one-line
+  // CODEOWNERS entry, which made an otherwise CI-only change required-tier T1
+  // and demanded a 2 h soak of a file prod never reads. Anchored to the two
+  // locations GitHub actually honours outside `docs/` (which DOCS_ONLY_RE
+  // already covers), so `services/worker/src/CODEOWNERS` keeps its T2 tier and
+  // `CODEOWNERS.bak` is not swept in.
+  /^(?:\.github\/)?CODEOWNERS$/,
   /^scripts\/staging\//,
   // CI-only local-Supabase bootstrap for the types/tests/e2e jobs (sourced by
   // ci.yml). Runs exclusively on the runner, never ships to prod runtime → T0.
@@ -2383,6 +3056,15 @@ interface CheckOptions {
   baseSha?: string;
   baseDriftFiles?: string[];
   prNumber?: number;
+  /**
+   * The PR author's GitHub login, threaded from the live `gh api` resolution in
+   * .github/workflows/staging-evidence.yml (`.user.login`) via
+   * `process.env.PR_AUTHOR`. Read ONLY by {@link approverIndependenceErrors},
+   * to reject a residual-risk note whose `Approved by:` names the author
+   * themselves (SCRUM-3481). Absent → that one cross-check cannot run; the
+   * self-reference denylist and every other guard are unaffected.
+   */
+  prAuthor?: string;
   nowMs?: number;
   rcManifestLoader?: RcManifestLoader;
   /**
@@ -2608,11 +3290,8 @@ function standardEvidenceErrors(
     ...futureTimestampErrors(body),
   );
 
-  const preflightVal = extractEvidenceFieldValue(body, 'Preflight result:');
-  const preflightIsClean = preflightVal !== null && hasCleanMirrorPreflight(preflightVal);
-  if (errors.length === 0 && !preflightIsClean && hasResidualRiskException(body).valid) {
-    notes.push('Preflight is not clean_mirror; residual-risk exception accepted.');
-  }
+  // Only reachable with zero errors, which already implies the note validated.
+  if (errors.length === 0) notes.push(...preflightExceptionNotes(body));
 
   return { errors, notes };
 }
@@ -2847,9 +3526,20 @@ function rcPrBaseCovered(
 
   // The entry recorded the main tip it was soaked against; `main` has since
   // moved on. Forward-only drift is covered; a divergent recorded base is not.
+  //
+  // SCRUM-3549: this needs BOTH bounds. `ancestry(prBase, current)` alone is an
+  // upper bound only, and every commit reachable from `main` is an ancestor of
+  // the live base — so the per-entry check degenerated to "is this a commit on
+  // main" and admitted a base from BEFORE the train launched, i.e. a base the
+  // soak never ran against. The entry's recorded base must sit inside the
+  // window the manifest actually covers: at or after `train_launch_sha`, at or
+  // before the live base. An unresolvable ancestry answer (or a manifest with
+  // no usable `train_launch_sha`) fails closed to the enumerated allowlist
+  // above, matching {@link rcCurrentBaseCovered}.
   const current = normalizeSha(currentBaseSha);
-  if (current === null || !ancestry) return false;
-  return ancestry(prBase, current) === true;
+  const trainLaunch = normalizeSha(stringAt(manifest, 'train_launch_sha') ?? undefined);
+  if (current === null || trainLaunch === null || !ancestry) return false;
+  return ancestry(trainLaunch, prBase) === true && ancestry(prBase, current) === true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -2863,142 +3553,68 @@ function rcPrBaseCovered(
 // was once possible to slip a new commit past completed evidence. Absent
 // `head_binding`, nothing about that changes.
 //
-// `roster` mode covers the case where the manifest is NOT asserting soak
-// coverage of this head — where the recorded merge authority is an explicit,
-// named, time-boxed human exception (CLAUDE.md §1.12 "Carson-approved
-// residual-risk exception") and the real soak is scheduled AFTER the merge.
-// In that situation exact-head binding proves nothing about safety (there is
-// no artifact-bound evidence to protect) while costing a manifest re-commit
-// per push — the same live-lock as the base problem. So roster mode swaps
-// artifact binding for something that IS meaningful and is not forgeable by
-// the PR author acting alone:
-//   - the exception lives in the MANIFEST (its own PR, its own review),
-//   - it names a human `approver`,
-//   - it carries an `expires_at` that is enforced, so the relaxation cannot
-//     silently become permanent,
-//   - it must list this PR number in `applies_to[]`, so it cannot be a
-//     blanket amnesty, and
-//   - the check summary always says plainly that merge authority here is a
-//     RECORDED HUMAN EXCEPTION, not soak coverage.
-// Everything else — approval_status, tier floor, environment, soak window,
-// soak freshness, migration_plan — is enforced unchanged.
+// `exact` is now the ONLY mode. A second mode, `roster`, used to accept an
+// entry matched by PR NUMBER while the recorded head had drifted, on the
+// strength of a named, time-boxed `exceptions[]` entry. It was removed
+// (SCRUM-3533) for two reasons that compound:
+//
+//   1. It was reachable from the WRONG path. `validateCoveredRcPr` is shared by
+//      the deferred-consolidated-soak branch AND the normal approved branch,
+//      and this resolver never looked at `soak_mode`. So a manifest asserting
+//      approval_status="approved" — i.e. claiming REAL, completed soak evidence
+//      — could set head_binding.mode="roster" and merge an arbitrary post-soak
+//      head against that completed evidence. That is exactly the "slip a new
+//      commit past finished evidence" failure
+//      `memory/feedback_pr_head_sha_in_evidence_block.md` exists to prevent.
+//   2. Its whole safety argument was "the exception is not forgeable by the PR
+//      author acting alone" — but `docs/staging/rc-manifests/**` classifies T0
+//      and had no CODEOWNERS entry, so an author COULD mint the exception that
+//      authorized their own head (SCRUM-3542, fixed in the same change by the
+//      CODEOWNERS entry and by the cite-vs-modify check in
+//      {@link rcManifestCoverage}).
+//
+// The legitimate need roster mode served — merging before the soak exists —
+// is already served, and better, by `soak_mode: "deferred_consolidated_soak"`,
+// which is independently gated on the `DEPLOY_WORKER_PAUSED` repo variable no
+// PR author can set, and which never lets a passing check read as "evidence
+// present". No manifest on main has ever set `head_binding` at all.
 const HEAD_BINDING_EXACT = 'exact';
 const HEAD_BINDING_ROSTER = 'roster';
 
-interface HeadBindingPolicy {
-  mode: typeof HEAD_BINDING_EXACT | typeof HEAD_BINDING_ROSTER;
-  exceptionId: string | null;
-}
-
-const EXACT_HEAD_BINDING: HeadBindingPolicy = { mode: HEAD_BINDING_EXACT, exceptionId: null };
-
-function resolveHeadBindingPolicy(
+/**
+ * Validates `head_binding` if present. There is no policy to return any more:
+ * head binding is always exact. An unrecognized mode — including the removed
+ * `roster` — is an error, and is evaluated unconditionally so a manifest whose
+ * recorded head happens to still match cannot smuggle one past.
+ */
+function validateHeadBindingMode(
   manifest: Record<string, unknown>,
   errors: string[],
-): HeadBindingPolicy {
+): void {
   const binding = objectAt(manifest, 'head_binding');
-  if (binding === null) return EXACT_HEAD_BINDING;
+  if (binding === null) return;
 
   const raw = stringAt(binding, 'mode');
   const mode = (raw ?? '').trim().toLowerCase();
-  if (mode === HEAD_BINDING_EXACT) return EXACT_HEAD_BINDING;
+  if (mode === HEAD_BINDING_EXACT) return;
+
   if (mode === HEAD_BINDING_ROSTER) {
-    return { mode: HEAD_BINDING_ROSTER, exceptionId: stringAt(binding, 'exception_id') };
+    errors.push(
+      `RC manifest head_binding.mode "${HEAD_BINDING_ROSTER}" was REMOVED (SCRUM-3533): it was `
+      + 'reachable from the normal approved path, not just deferred mode, so it could merge an '
+      + 'arbitrary post-soak head against completed evidence. Use exact head binding (omit '
+      + '`head_binding`, or set mode "exact") and re-pin the entry\'s head_sha; if the soak '
+      + 'genuinely has not happened yet, use soak_mode "deferred_consolidated_soak" instead, '
+      + 'which is gated on the DEPLOY_WORKER_PAUSED repository variable.',
+    );
+    return;
   }
+
   errors.push(
-    `RC manifest head_binding.mode \`${raw ?? ''}\` is not a recognized value. Supported: `
-    + `"${HEAD_BINDING_EXACT}" (default — the entry's head_sha must equal the live PR head) or `
-    + `"${HEAD_BINDING_ROSTER}" (entry matched by PR number; merge authority is a named, `
-    + 'time-boxed exceptions[] entry rather than soak coverage of this head). Omit '
-    + 'head_binding entirely for exact binding.',
+    `RC manifest head_binding.mode \`${raw ?? ''}\` is not a recognized value. The only `
+    + `supported value is "${HEAD_BINDING_EXACT}" (the entry's head_sha must equal the live PR `
+    + 'head); omit head_binding entirely for the same behavior.',
   );
-  return EXACT_HEAD_BINDING;
-}
-
-function numberArrayAt(value: Record<string, unknown>, key: string): number[] {
-  const raw = arrayAt(value, key);
-  if (raw === null) return [];
-  return raw
-    .map((entry) => (typeof entry === 'number' ? entry : Number.parseInt(String(entry), 10)))
-    .filter((entry) => Number.isFinite(entry));
-}
-
-function findManifestException(
-  manifest: Record<string, unknown>,
-  exceptionId: string,
-): Record<string, unknown> | null {
-  const wanted = exceptionId.trim();
-  for (const entry of arrayAt(manifest, 'exceptions') ?? []) {
-    if (!isRecord(entry)) continue;
-    if ((stringAt(entry, 'id') ?? '').trim() === wanted) return entry;
-  }
-  return null;
-}
-
-function rosterHeadBindingErrors(
-  manifest: Record<string, unknown>,
-  policy: HeadBindingPolicy,
-  entryHead: string | null,
-  currentHead: string,
-  opts: CheckOptions,
-  notes: string[],
-): string[] {
-  const errors: string[] = [];
-  const exceptionId = policy.exceptionId;
-  if (!isFilledValue(exceptionId)) {
-    return [
-      'RC manifest head_binding.mode="roster" requires head_binding.exception_id naming an '
-      + 'entry in exceptions[]. Roster mode is only valid as the mechanical expression of a '
-      + 'recorded, named, time-boxed merge-authority exception.',
-    ];
-  }
-
-  const exception = findManifestException(manifest, exceptionId!);
-  if (exception === null) {
-    return [
-      `RC manifest head_binding.exception_id \`${exceptionId}\` matches no exceptions[] entry `
-      + '(compared against exceptions[].id).',
-    ];
-  }
-
-  const label = `exceptions[${exceptionId}]`;
-  const approver = requireRcString(errors, exception, 'approver', `${label}.approver`);
-  requireRcString(errors, exception, 'text', `${label}.text`);
-  requireRcTimestamp(errors, exception, 'recorded_at', `${label}.recorded_at`);
-  const expiresAt = requireRcTimestamp(errors, exception, 'expires_at', `${label}.expires_at`);
-
-  const nowMs = opts.nowMs ?? Date.now();
-  if (expiresAt !== null && expiresAt <= nowMs) {
-    errors.push(
-      `RC manifest ${label}.expires_at has expired; a merge-authority exception cannot be `
-      + 'renewed by the passage of time. Re-record it with a new expiry, or produce real soak '
-      + 'evidence and return this manifest to exact head binding.',
-    );
-  }
-
-  const appliesTo = numberArrayAt(exception, 'applies_to');
-  if (appliesTo.length === 0) {
-    errors.push(
-      `RC manifest ${label}.applies_to must list the PR numbers the exception covers — a `
-      + 'blanket exception is not accepted.',
-    );
-  } else if (opts.prNumber === undefined || !appliesTo.includes(opts.prNumber)) {
-    errors.push(
-      `RC manifest ${label}.applies_to does not list PR #${opts.prNumber ?? 'unknown'}; roster `
-      + 'head binding only applies to the PRs the exception names.',
-    );
-  }
-
-  if (errors.length > 0) return errors;
-
-  notes.push(
-    `⚠️  RECORDED HUMAN EXCEPTION (${exceptionId}): the RC manifest entry records head `
-    + `\`${entryHead ?? 'missing'}\` but this PR's live head is \`${currentHead}\`. Merge `
-    + `authority for this head is NOT soak coverage — it is the exception recorded in the `
-    + `manifest, approved by ${approver}, expiring ${stringAt(exception, 'expires_at')}. Real `
-    + 'evidence for this head is still owed by the scheduled consolidated soak.',
-  );
-  return [];
 }
 
 function findCoveredRcPr(
@@ -3081,23 +3697,66 @@ function validateRcManifestMetadata(
   requireRcTimestamp(errors, manifest, 'approval_time', 'approval_time');
 }
 
+/**
+ * The PR-side facts an `included_prs[]` entry is checked against: the tier the
+ * PR body declares, the tier the path detector requires (with its reason), and
+ * the PR's changed files.
+ *
+ * These three always travel together — both `validateCoveredRcPr` call sites
+ * and `deferredConsolidatedSoakCoverage` already thread the same trio — so
+ * bundling them is a grouping the callers have, not one invented to shorten a
+ * signature. It also keeps `validateCoveredRcPr` inside the S107 parameter
+ * limit without pushing `errors`/`notes` into a sink object, which would make
+ * this one function diverge from every other validator in this file.
+ */
+interface RcPrClaim {
+  declared: Tier;
+  required: { tier: Tier; reason: string };
+  files: string[];
+}
+
+/**
+ * Tier checks for the manifest entry covering the current PR: the entry's
+ * `risk_tier` must parse, and must not sit below either the detector-required
+ * tier or the tier the PR body declares.
+ *
+ * Extracted from `validateCoveredRcPr` so that function stays under the S3776
+ * cognitive-complexity limit; the two rank comparisons are the only nested
+ * branches it had.
+ */
+function rcEntryTierErrors(
+  coveredPr: Record<string, unknown>,
+  claim: RcPrClaim,
+): string[] {
+  const manifestTier = rcTier(stringAt(coveredPr, 'risk_tier'));
+  if (manifestTier === null) {
+    return ['RC manifest current PR entry risk_tier must be T1, T2, or T3.'];
+  }
+
+  const errors: string[] = [];
+  if (TIER_RANK[manifestTier] < TIER_RANK[claim.required.tier]) {
+    errors.push(`RC manifest risk_tier ${manifestTier} is below required tier ${claim.required.tier} for this PR. Reason: ${claim.required.reason}.`);
+  }
+  if (TIER_RANK[manifestTier] < TIER_RANK[claim.declared]) {
+    errors.push(`RC manifest risk_tier ${manifestTier} is below declared tier ${claim.declared}.`);
+  }
+  return errors;
+}
+
 function validateCoveredRcPr(
   manifest: Record<string, unknown>,
   includedPrs: unknown[],
-  declared: Tier,
-  required: { tier: Tier; reason: string },
-  files: string[],
+  claim: RcPrClaim,
   opts: CheckOptions,
   errors: string[],
-  notes: string[],
 ): Record<string, unknown> | null {
   if (includedPrs.length === 0) {
     errors.push('RC manifest included_prs must list at least one PR.');
   }
 
-  // Resolved unconditionally so an unrecognized mode fails closed even on a
+  // Validated unconditionally so an unrecognized mode fails closed even on a
   // manifest whose recorded head happens to still match.
-  const headBinding = resolveHeadBindingPolicy(manifest, errors);
+  validateHeadBindingMode(manifest, errors);
 
   const coveredPr = findCoveredRcPr(includedPrs, opts);
   if (coveredPr === null) {
@@ -3108,33 +3767,17 @@ function validateCoveredRcPr(
   const entryHead = normalizeSha(stringAt(coveredPr, 'head_sha') ?? undefined);
   const currentHead = normalizeSha(opts.headSha);
   if (currentHead !== null && entryHead !== currentHead) {
-    if (headBinding.mode === HEAD_BINDING_ROSTER) {
-      errors.push(
-        ...rosterHeadBindingErrors(manifest, headBinding, entryHead, currentHead, opts, notes),
-      );
-    } else {
-      errors.push(`RC manifest current PR entry head SHA \`${entryHead ?? 'missing'}\` does not match current PR head \`${currentHead}\`.`);
-    }
+    errors.push(`RC manifest current PR entry head SHA \`${entryHead ?? 'missing'}\` does not match current PR head \`${currentHead}\`.`);
   }
   if (!rcPrBaseCovered(manifest, coveredPr, opts.baseSha, opts.ancestryProvider)) {
     errors.push('RC manifest current PR entry base SHA does not match the current base, train launch SHA, target main SHA, an allowed base SHA, or an ancestor of the current base.');
   }
 
-  const manifestTier = rcTier(stringAt(coveredPr, 'risk_tier'));
-  if (manifestTier === null) {
-    errors.push('RC manifest current PR entry risk_tier must be T1, T2, or T3.');
-  } else {
-    if (TIER_RANK[manifestTier] < TIER_RANK[required.tier]) {
-      errors.push(`RC manifest risk_tier ${manifestTier} is below required tier ${required.tier} for this PR. Reason: ${required.reason}.`);
-    }
-    if (TIER_RANK[manifestTier] < TIER_RANK[declared]) {
-      errors.push(`RC manifest risk_tier ${manifestTier} is below declared tier ${declared}.`);
-    }
-  }
+  errors.push(...rcEntryTierErrors(coveredPr, claim));
   requireRcString(errors, coveredPr, 'owner', 'included_prs[].owner');
   requireRcString(errors, coveredPr, 'ci_summary', 'included_prs[].ci_summary');
   requireRcString(errors, coveredPr, 'rollback_note', 'included_prs[].rollback_note');
-  if (files.some(touchesMigrationFile) && stringArrayAt(coveredPr, 'migration_files').length === 0) {
+  if (claim.files.some(touchesMigrationFile) && stringArrayAt(coveredPr, 'migration_files').length === 0) {
     errors.push('RC manifest included_prs[].migration_files must list migration files for a migration-bearing PR.');
   }
   return coveredPr;
@@ -3271,8 +3914,11 @@ function deferredConsolidatedSoakMetadataErrors(
   // INCOMPLETE_VALUE_PATTERNS, for the unrelated "someone forgot to fill this
   // in" case elsewhere in this file) and would reject it before the actual
   // comparison below ever ran.
+  // The optional chain is the null check: `stringAt` returns null when the
+  // field is absent or not a string, and `null?.trim()` short-circuits to
+  // `undefined`, which is never 'pending' — so a missing field still fails.
   const approvalStatusRaw = stringAt(manifest, 'approval_status');
-  if (approvalStatusRaw === null || approvalStatusRaw.trim().toLowerCase() !== 'pending') {
+  if (approvalStatusRaw?.trim().toLowerCase() !== 'pending') {
     errors.push(
       'RC manifest declares soak_mode="deferred_consolidated_soak" but approval_status is not '
       + 'the literal string "pending". Deferred mode is, by definition, evidence that has not yet '
@@ -3316,7 +3962,7 @@ function deferredConsolidatedSoakCoverage(
   deferredConsolidatedSoakMetadataErrors(parsed, opts, errors);
 
   const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
-  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors, notes);
+  const coveredPr = validateCoveredRcPr(parsed, includedPrs, { declared, required, files }, opts, errors);
   if (coveredPr === null) return { errors, notes };
 
   if (errors.length === 0) {
@@ -3359,6 +4005,25 @@ function rcManifestCoverage(
     return { errors, notes };
   }
 
+  // SCRUM-3542 — author independence. The manifest is loaded from the PR's OWN
+  // checked-out tree and `docs/staging/rc-manifests/**` classifies T0, so
+  // without this a PR could ship the very document that authorizes it: mint its
+  // own approval_status / approval_actor / soak window / included_prs entry in
+  // the same commit and merge on it. The established flow is already two-PR —
+  // the manifest lands on main in its own `docs(rc):` change, THEN the covered
+  // PR is graded against it — so this codifies the flow rather than restricting
+  // it. CODEOWNERS on docs/staging/rc-manifests/ is the reviewer-independence
+  // half of the same fix; this half holds even where branch protection does not.
+  if (files.includes(path)) {
+    errors.push(
+      `This PR cites RC manifest \`${path}\` and also changes it. A PR cannot both cite and `
+      + 'modify the manifest that authorizes it — land the manifest change on main first (its '
+      + 'own `docs(rc):` change, reviewed by the CODEOWNER for docs/staging/rc-manifests/), '
+      + 'then re-run this check against the merged manifest.',
+    );
+    return { errors, notes };
+  }
+
   const raw = (opts.rcManifestLoader ?? defaultRcManifestLoader)(path);
   if (!raw) {
     errors.push(`RC manifest \`${path}\` was not found in the checked-out PR tree.`);
@@ -3383,7 +4048,7 @@ function rcManifestCoverage(
 
   validateRcManifestMetadata(parsed, opts, errors);
   const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
-  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors, notes);
+  const coveredPr = validateCoveredRcPr(parsed, includedPrs, { declared, required, files }, opts, errors);
   const effectiveTier = rcEffectiveTier(coveredPr, declared);
   validateRcEnvironment(parsed, errors);
   validateRcSoak(parsed, effectiveTier, opts, errors);
@@ -3438,6 +4103,12 @@ export function check(opts: CheckOptions): CheckResult {
   }
 
   addErrors(result, tierDeclarationErrors(declared, required));
+
+  // SCRUM-3481 — checked here, ahead of the evidence-path fork, so a
+  // self-approved residual-risk note fails on EVERY path (RC manifest,
+  // frontend-T2, unsoakable-T2, standard) rather than only the one that
+  // happens to consult the note.
+  addErrors(result, approverIndependenceErrors(body, opts.prAuthor));
 
   const rcManifestPath = extractEvidenceFieldValue(body, RC_MANIFEST_FIELD);
   if (rcManifestPath !== null) {
@@ -3515,6 +4186,10 @@ function main(): void {
     headSha: currentHeadSha,
     baseSha: baseRef,
     prNumber,
+    // Live-resolved by .github/workflows/staging-evidence.yml from the PR's
+    // `.user.login` — see CheckOptions.prAuthor. Empty string → undefined so
+    // the author cross-check treats "unknown" as unknown, not as a match.
+    prAuthor: process.env.PR_AUTHOR?.trim() || undefined,
     diffProvider: gitFileDiffProvider(baseRef),
     ancestryProvider: gitAncestryProvider(),
     s33Lane1ImportScan: gitS33Lane1ImportScan(),

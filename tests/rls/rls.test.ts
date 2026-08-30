@@ -452,7 +452,7 @@ describe('Database Constraints', () => {
 
   it('enforces legal_hold prevents soft deletion', async () => {
     // Arkova org anchor has legal_hold=true in seed data
-    const legalHoldAnchorId = 'aaaaaaaa-0000-0000-0000-000000000010';
+    const legalHoldAnchorId = 'aaaaaaaa-0000-4000-8000-000000000010';
 
     const { error } = await serviceClient
       .from('anchors')

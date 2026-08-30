@@ -1,0 +1,20 @@
+fullsoak-daily-probes — behavioural probe run
+run_ts           : 2026-08-12T16:19:49Z
+mode             : full (only P9)
+rig service      : https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app
+rig supabase ref : gnkuaywlpmsaezwvlvhk
+prod supabase ref: vzwyaatejekddvltxyye
+host             : Arkovas-Mac-mini.local
+git HEAD         : 550320dc8f7a48852177336c80999374b7e758b2
+mgmt SQL (reads) : available
+----------------------------------------------------------------------
+PASS  P9a  Forged DocuSign signature rejected AND writes nothing
+         expected: 401/400/403 AND nonce delta 0
+         observed: http 401, nonces 1 -> 1
+PASS  P9b  Forged Drive channel token rejected on a KNOWN channel
+         expected: 400/401/403
+         observed: http 401
+----------------------------------------------------------------------
+PASS=2 FAIL=0 SKIP=0
+DAILY_PROBES: PASS
+artifact: /Volumes/Extreme/Arkova/_legacy/home-Arkova-2026-05-15/arkova-mvpcopy-main/docs/staging/evidence/fullsoak-2026-08/2026-08-12/probes-161949Z.txt

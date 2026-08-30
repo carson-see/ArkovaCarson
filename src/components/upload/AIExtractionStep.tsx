@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/lib/supabase';
 import { workerFetch } from '@/lib/workerClient';
 import type { CsvColumn, CsvRow, ColumnMapping } from '@/lib/csvParser';
+import { buildStrippedRowText } from '@/lib/csvRowText';
 
 export interface BatchExtractionResult {
   index: number;
@@ -51,16 +52,12 @@ export function AIExtractionStep({
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<BatchExtractionResult[] | null>(null);
 
+  // Constitution §1.6: PII must be stripped client-side before anything leaves the
+  // browser. This previously serialised every column verbatim and POSTed raw SSNs,
+  // emails and phone numbers to the extraction endpoint. `buildStrippedRowText` is
+  // the only supported way to build this text and always strips.
   const buildRowText = useCallback(
-    (row: CsvRow): string => {
-      return columns
-        .map((col) => {
-          const value = row.data[col.name] ?? '';
-          return `${col.name}: ${value}`;
-        })
-        .filter((line) => !line.endsWith(': '))
-        .join('\n');
-    },
+    (row: CsvRow): string => buildStrippedRowText(row, columns),
     [columns]
   );
 

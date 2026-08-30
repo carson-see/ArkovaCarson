@@ -46,7 +46,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -64,9 +64,30 @@ jobs:
       # ciContext.fetchLiveLabels() reads labels from the API so a label-gated
       # override still works on a plain re-run, where the frozen pull_request
       # payload would not carry it (PR #1336). Degrades to env-only without this.
+      #
+      # This permission is HALF the requirement — see the job-level GH_TOKEN below.
       pull-requests: read
+    env:
+      # `pull-requests: read` scopes the token; it does not SUPPLY one. `gh`
+      # authenticates only from GH_TOKEN / GITHUB_TOKEN — actions/checkout
+      # persists credentials into git config, which `gh` never reads. Without
+      # this, ciContext.fetchLiveLabels() throws, is swallowed to `[]`, and
+      # resolvePrLabels() silently degrades to the FROZEN pull_request payload:
+      # every override label in this job then only works if it was already on
+      # the PR when the webhook fired, so the documented "apply the label, then
+      # re-run the failed job" remediation is inert (confirmed on PR #2322,
+      # 2026-08-22 — `agents-md-deletion-approved` applied, `gh run rerun
+      # --failed`, same failure).
+      #
+      # Job-level ON PURPOSE: ~11 steps here are label-gated
+      # (agents-md-deletion-approved / dep-range-intentional /
+      # csp-runtime-deps-intentional / …) and the next one added must inherit
+      # this rather than have to remember it. `scripts/ci/
+      # check-pr-labels-token-parity.test.ts` fails if a job seeds PR_LABELS
+      # without a token.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # SCRUM-1246: full history so scripts/ci/lib/ciContext.ts can resolve
           # the PR base SHA. Without it the default shallow checkout cannot reach
@@ -78,7 +99,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -265,12 +286,12 @@ jobs:
       SONATYPE_LIFECYCLE_PASSWORD: ${{ secrets.SONATYPE_LIFECYCLE_PASSWORD }}
       SONATYPE_LIFECYCLE_APPLICATION_ID: ${{ secrets.SONATYPE_LIFECYCLE_APPLICATION_ID }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -316,7 +337,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - id: gcp-auth
         name: Authenticate to GCP via Workload Identity Federation
@@ -359,8 +380,16 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    env:
+      # Same pairing as dependency-scan above: `pull-requests: read` scopes the
+      # token but does not supply one, and `gh` reads only GH_TOKEN /
+      # GITHUB_TOKEN. Without this, every label-gated override in this job
+      # (feedback rules, coverage-drop-allowed, count-exact-allowed,
+      # handoff-narrative-only, confluence-drift-skip, …) silently falls back to
+      # the frozen pull_request payload and cannot be applied on a re-run.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -377,13 +406,46 @@ jobs:
       - name: Aggregate commit messages
         id: commits
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # ciContext reads BASE_REF_SHA (this was BASE_SHA while the range was
+          # derived inline). Empty on push builds -> tip-commit fallback, the
+          # same behavior the old `if [ -n "$BASE_SHA" ]` branch gave.
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_COMMITS_MSGS_FILE: ${{ runner.temp }}/pr-commit-msgs.txt
         run: |
-          if [ -n "$BASE_SHA" ]; then
-            MSGS=$(git log --format=%B "$BASE_SHA"..HEAD)
-          else
-            MSGS=$(git log --format=%B -1)
-          fi
+          # E2BIG — PR #2346, run 32666797304, job 97261336883 (2026-08-23).
+          # This step used to inline `git log --format=%B "$BASE_SHA"..HEAD`
+          # into the `msgs` output, which ci.yml then injected as the
+          # PR_COMMITS_MSGS *environment variable* into the two gates below.
+          # Linux caps a single argv/envp string at MAX_ARG_STRLEN = 131,072
+          # bytes, so at 138,166 bytes `execve` of the NEXT step's
+          # /usr/bin/bash failed with "Argument list too long" — at process
+          # spawn, before any lint logic ran, which is why no override label
+          # could clear it and the red check carried no diagnosis.
+          #
+          # Two causes compounded and both are fixed:
+          #   1. Transport — the full payload now goes to a FILE (no per-string
+          #      ceiling); only the PATH is published as an output.
+          #   2. Range — `pull_request.base.sha` is refreshed by `synchronize`
+          #      but NOT by close/reopen, so #2346 sat pinned at its 2026-08-22
+          #      creation base and 6 real commits presented as 153 once #2219
+          #      merged a long-lived branch into range. The aggregator anchors
+          #      via ciContext.resolveDiffBase — the same FD-GATE-2 anchoring
+          #      `changedFiles` uses — instead of re-deriving it here. (A plain
+          #      `git merge-base` would NOT have fixed it: the frozen base is an
+          #      ancestor of the recomputed merge preview, so it returns the
+          #      frozen base unchanged. HEAD^1 is what collapses the range.)
+          node_modules/.bin/tsx scripts/ci/aggregate-commit-messages.ts
+          echo "msgs_file=${PR_COMMITS_MSGS_FILE}" >> "$GITHUB_OUTPUT"
+
+          # Size-capped env fallback, kept for local runs and any consumer not
+          # re-plumbed to the file. 100,000 < MAX_ARG_STRLEN leaves headroom for
+          # the rest of the environment, so this is spawnable by construction.
+          # Truncating here is only acceptable because lib/ciContext prefers the
+          # UNCAPPED file whenever it is readable and emits an ::error::
+          # annotation when it is not — the gates never silently narrow their
+          # haystack. A missing file makes `head -c` exit non-zero and fails the
+          # step under `bash -e`, which is the intended loud failure.
+          #
           # The commit messages framed below are fully PR-author-controlled
           # (any commit message in the PR). A FIXED heredoc delimiter here
           # would let a PR author put that exact string on its own line inside
@@ -401,7 +463,10 @@ jobs:
           MSGS_DELIM="ghadelim_$(openssl rand -hex 16)"
           {
             echo "msgs<<${MSGS_DELIM}"
-            echo "$MSGS"
+            head -c 100000 "$PR_COMMITS_MSGS_FILE"
+            # `head -c` can cut mid-line; this guarantees the closing delimiter
+            # still lands on a line of its own.
+            echo ""
             echo "${MSGS_DELIM}"
           } >> "$GITHUB_OUTPUT"
 
@@ -454,6 +519,7 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_COMMITS_MSGS: ${{ steps.commits.outputs.msgs }}
+          PR_COMMITS_MSGS_FILE: ${{ steps.commits.outputs.msgs_file }}
         run: node_modules/.bin/tsx scripts/ci/check-handoff-claims.ts
 
       - name: Confluence page coverage
@@ -464,6 +530,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_COMMITS_MSGS: ${{ steps.commits.outputs.msgs }}
+          PR_COMMITS_MSGS_FILE: ${{ steps.commits.outputs.msgs_file }}
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           FAIL_ON_MISSING_CONFLUENCE: 'false'
@@ -482,7 +549,7 @@ jobs:
       contents: read
     continue-on-error: false
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -517,7 +584,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -553,7 +620,7 @@ jobs:
       contents: read
     continue-on-error: true
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -577,7 +644,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.event_name == 'pull_request'
         with:
           fetch-depth: 0
@@ -597,12 +664,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -635,6 +702,24 @@ jobs:
         working-directory: services/worker
         run: npm ci --ignore-scripts
 
+      # SCRUM-1811: the worker COMPILE gate, at PR time, on a REQUIRED check.
+      # Root tsconfigs `exclude` services/, so root `npm run typecheck` never
+      # sees worker source — a worker TS error passed every PR check and only
+      # failed post-merge in deploy-worker.yml, blacking out ALL prod worker
+      # deploys while main kept merging (memory/project_deploy_typecheck_blackout.md;
+      # SCRUM-1810 was exactly this).
+      #
+      # This is the SAME command deploy-worker.yml's `Typecheck` step runs, and
+      # deliberately NOT `-p tsconfig.build.json`: the plain tsconfig.json
+      # INCLUDES src/**/*.test.ts, and a type error in a worker TEST file is the
+      # documented blackout trigger. The `worker-build-parity` job compiles
+      # tsconfig.build.json (tests excluded), is in-job path-gated, and is
+      # NON-REQUIRED — so it cannot close this gap. A step in this already-required
+      # job can, without touching branch protection (a Carson/admin surface).
+      - name: Typecheck worker (deploy-gate parity)
+        working-directory: services/worker
+        run: node_modules/.bin/tsc --noEmit
+
       - name: Lint worker (deploy-gate parity)
         working-directory: services/worker
         run: npm run lint
@@ -644,6 +729,16 @@ jobs:
         # `npx eslint src/ --max-warnings 0` (or any other drift). The
         # 2026-04-25 outage was caused by exactly this drift.
         run: node_modules/.bin/tsx scripts/ci/check-deploy-lint-parity.ts
+
+      - name: Verify deploy-gate / CI worker TYPECHECK parity (SCRUM-1811)
+        # Third sibling of the lint (R0-4) and build (sub-decision B) parity
+        # guards. Asserts the worker typecheck step above still exists, still
+        # lives in THIS required job, still runs unconditionally, and still
+        # compiles the plain tsconfig.json — so nobody can quietly weaken it to
+        # tsconfig.build.json and reopen the test-file blackout. Pure
+        # file-reading hard invariant, same as its siblings: no label, env, or
+        # git dependency, so it runs cleanly in this shallow checkout.
+        run: node_modules/.bin/tsx scripts/ci/check-deploy-typecheck-parity.ts
 
       - name: Verify deploy-gate / CI worker BUILD parity
         # CONDITIONAL-GO sub-decision B — 3-way build-command parity guard.
@@ -689,7 +784,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -744,7 +839,7 @@ jobs:
       contents: read
     needs: [typecheck-lint, tdd-enforcement]
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # SCRUM-1249 (R0-3): scripts/ci/check-coverage-monotonic.test.ts
           # spawns the script which resolves BASE_REF_SHA (set globally at
@@ -755,7 +850,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -875,7 +970,7 @@ jobs:
       - name: Cache zk circuit artifacts
         id: cache-zk-artifacts
         if: always() && steps.worker-deps.outcome == 'success'
-        uses: actions/cache@v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: services/worker/circuits/artifacts
           key: zk-artifacts-${{ runner.os }}-circom2.1.9-${{ hashFiles('services/worker/circuits/extraction-proof.circom', 'services/worker/circuits/build.sh', 'services/worker/package-lock.json') }}
@@ -1009,7 +1104,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -1028,7 +1123,7 @@ jobs:
         if: steps.ai-changed.outputs.changed == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -1064,7 +1159,7 @@ jobs:
     env:
       GOLDEN_AUDIT_ENFORCE: ${{ vars.GOLDEN_AUDIT_ENFORCE || 'false' }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -1083,7 +1178,7 @@ jobs:
         if: steps.golden-changed.outputs.changed == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -1161,7 +1256,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -1205,7 +1300,7 @@ jobs:
 
       - name: Set up Java (for TLC model checker)
         if: steps.tla-changed.outputs.changed == 'true'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: '17'
@@ -1279,7 +1374,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -1350,7 +1445,7 @@ jobs:
       contents: read
     needs: [typecheck-lint, test]
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -1414,7 +1509,7 @@ jobs:
         if: steps.e2e-changed.outputs.changed == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -1543,7 +1638,7 @@ jobs:
       contents: read
     needs: [typecheck-lint]
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -1571,6 +1666,62 @@ jobs:
           uploadArtifacts: true
           temporaryPublicStorage: true
 
+  # Python SDK suite — pytest + ruff for packages/arkova-py on every PR.
+  #
+  # BUG-2026-08-12-007: this package's tests ran NOWHERE on a pull request. The
+  # only pytest/ruff invocation lived in publish-python-sdk.yml, which fires on
+  # an `arkova-py-v*` tag push — i.e. AFTER the release decision, never before
+  # it. Consequences, both real:
+  #   1. The published 2.2.0 wheel typed `compliance_controls` as a dict while
+  #      the API emitted a list. No gate ever compared the two, and `verify()`
+  #      was broken for every record carrying controls.
+  #   2. The source fix (a1592b975, 2026-08-01) then sat unreleased for two
+  #      weeks with nothing on any PR executing the tests that would have shown
+  #      source and published artifact disagreeing.
+  #
+  # Deliberately its OWN job rather than a step inside `Tests`: that job is a
+  # Node + Supabase harness and this needs setup-python and nothing else. The
+  # sibling sdks/ JavaScript suites ride the `Tests` job through vitest, which is
+  # the right home for those and the wrong one for this.
+  #
+  # python-version and both commands MIRROR publish-python-sdk.yml on purpose —
+  # same parity argument as the deploy-gate/CI-lint rule (CLAUDE.md §0.9). If the
+  # publish gate would reject it, a PR should reject it first.
+  python-sdk-tests:
+    name: Python SDK Tests (packages/arkova-py)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/arkova-py
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install Python SDK with dev extras
+        run: python -m pip install --upgrade "pip==26.2.1" && python -m pip install -e ".[dev]"
+
+      - name: Run Python SDK tests
+        run: pytest
+
+      # ruff is pinned to an EXACT version in pyproject.toml — see the comment on
+      # the pin there. This is the same command the publish gate runs.
+      #
+      # NOTE on the pip bootstrap above: this job pins `pip==26.2.1` while
+      # publish-python-sdk.yml still bootstraps an unpinned pip. That is a
+      # deliberate asymmetry, not drift — pinning the publish file's line would
+      # re-classify it as NEW code and hand SonarCloud a fresh S8544 on a line
+      # that has been there untouched for months, without changing what it
+      # installs. The parity that matters and is test-enforced is the
+      # python-version plus the pytest/ruff commands, not the bootstrap.
+      - name: Lint Python SDK (publish-gate parity)
+        run: ruff check src tests
+
   # Lockfile integrity check (CISO Action-9) — prevent supply-chain attacks via tampered lockfiles
   lockfile-integrity:
     name: Lockfile Integrity
@@ -1578,7 +1729,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -1607,11 +1758,11 @@ jobs:
       contents: read
     if: github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -1666,7 +1817,7 @@ jobs:
       run:
         working-directory: packages/verifier-cli
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -1735,7 +1886,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -1759,7 +1910,7 @@ jobs:
         if: steps.changed.outputs.changed == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: services/worker/package-lock.json
 
@@ -1792,7 +1943,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -1839,7 +1990,7 @@ jobs:
         if: steps.changed.outputs.changed != 'true'
         run: echo "No packages/verifier changes detected — verifier compile gate skipped; reporting green."
 
-  # SCRUM-2897 — evidence-identity gate, REPORT-ONLY.
+  # SCRUM-2897 / SCRUM-2965 — evidence-identity gate. FAIL-CLOSED.
   # Asserts that a Ready, soak-tier PR's Staging Soak Evidence block binds to the
   # exact commit + clean environment it claims:
   #   A. declared `PR head SHA:` == the actual PR head SHA (a commit pushed after
@@ -1849,21 +2000,89 @@ jobs:
   #      head (evidence may not be copied across heads — CLAUDE.md §1.11A).
   # Drafts and T0 / no-evidence PRs are skipped.
   #
-  # W3-freeze CTO carve-out: REPORT-ONLY / warn mode only — `--report-only`
-  # makes the CLI always exit 0 (notice/warning annotations, never ::error::),
-  # plus continue-on-error. Gates nothing. Fail-closed activation is deferred
-  # until >=1 real green soak calibrates it (#1617 T0-CI-infra precedent).
-  # Runs only on pull_request events (needs PR head/draft context). NON-REQUIRED.
-  evidence-identity-report:
-    name: Evidence-identity gate (report-only)
+  # Activated fail-closed (was report-only under the W3-freeze CTO carve-out).
+  # THREE independent mechanisms had to go, because any one of them left the
+  # gate hollow: the report-only CLI flag, the step's continue-on-error, and the
+  # check's absence from .mergify.yml merge_conditions (a check Mergify does not
+  # evaluate can be red while Mergify merges anyway).
+  # scripts/ci/soak-integrity-gates-failclosed.test.ts pins all three, plus the
+  # two preconditions that make the flip safe rather than a trap:
+  #
+  # SAFETY 1 — Mergify's speculative merge-queue PRs carry Mergify's own body,
+  # not the original PR's evidence block. They MUST be skipped or every queued
+  # merge deadlocks. Same skip staging-evidence.yml already carries.
+  # SAFETY 2 — this workflow's `pull_request:` trigger declares no `types:`, so
+  # it defaults to [opened, synchronize, reopened]: a PR-body edit never fires
+  # it, and the frozen `github.event.pull_request.*` payload replays untouched
+  # on a bare rerun (SCRUM-3026). An author who fixes a stale `PR head SHA:`
+  # with `gh pr edit` could therefore never turn a frozen-payload check green —
+  # a permanent block with no remedy. PR body/head/draft are resolved LIVE via
+  # `gh api` instead, exactly as staging-evidence.yml does.
+  #
+  # Runs only on pull_request events (needs PR head/draft context).
+  evidence-identity:
+    name: Evidence-identity gate
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Skip for Mergify merge queue
+        if: startsWith(github.head_ref, 'mergify/merge-queue/')
+        run: |
+          echo "Mergify merge queue speculative check — skipping evidence-identity gate."
+          echo "The original PR passed this gate before entering the queue."
+
+      # SCRUM-3026: resolve the PR's CURRENT head SHA, draft flag, and body via
+      # the GitHub API — never the frozen event payload. Runs on every execution
+      # including a bare rerun of an old run, so staleness cannot survive a
+      # re-check. Fails CLOSED: an unresolvable head SHA stops the job rather
+      # than silently evaluating against an unknown state.
+      - name: Resolve live PR state
+        id: live_pr
+        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          if [[ -z "${PR_NUMBER}" ]]; then
+            echo "::error::No pull_request.number in event context; cannot resolve live PR state."
+            exit 1
+          fi
+          DATA="$(gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}")"
+          HEAD_SHA="$(jq -r '.head.sha // empty' <<<"${DATA}")"
+          IS_DRAFT="$(jq -r '.draft // false' <<<"${DATA}")"
+          if [[ -z "${HEAD_SHA}" ]]; then
+            echo "::error::gh api returned an empty head SHA for PR #${PR_NUMBER} — cannot resolve live PR state."
+            exit 1
+          fi
+          {
+            echo "head_sha=${HEAD_SHA}"
+            echo "is_draft=${IS_DRAFT}"
+          } >> "${GITHUB_OUTPUT}"
+          # SECURITY: the PR body is fully author-controlled. A FIXED heredoc
+          # delimiter here would let an author terminate the multiline value
+          # early by putting the literal delimiter on its own line in their PR
+          # body, then inject arbitrary `key=value` lines into the rest of this
+          # step's $GITHUB_OUTPUT — including overwriting head_sha written above
+          # (Actions takes the LAST occurrence of a given output name). That
+          # would let a PR author forge the very identity this gate exists to
+          # make unforgeable. Use a per-run random delimiter, per GitHub's own
+          # guidance and the identical step in staging-evidence.yml.
+          BODY_DELIM="ghadelim_$(openssl rand -hex 16)"
+          {
+            echo "body<<${BODY_DELIM}"
+            jq -r '.body // ""' <<<"${DATA}"
+            echo "${BODY_DELIM}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
 
       - name: Setup Node.js
+        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20'
@@ -1871,36 +2090,42 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install root dependencies
+        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
         run: npm ci --ignore-scripts
 
-      - name: Run evidence-identity gate (report-only, non-gating)
-        continue-on-error: true
+      - name: Run evidence-identity gate
+        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_IS_DRAFT: ${{ github.event.pull_request.draft }}
-        run: node_modules/.bin/tsx scripts/ci/check-evidence-identity.ts --report-only
+          # Live-resolved (SCRUM-3026) — supersedes the frozen event payload for
+          # exactly the fields that go stale on a bare rerun.
+          PR_BODY: ${{ steps.live_pr.outputs.body }}
+          PR_HEAD_SHA: ${{ steps.live_pr.outputs.head_sha }}
+          PR_IS_DRAFT: ${{ steps.live_pr.outputs.is_draft }}
+        run: node_modules/.bin/tsx scripts/ci/check-evidence-identity.ts
 
-  # SCRUM-2977 — anti-hollow-soak pre-clock guards, REPORT-ONLY.
+  # SCRUM-2977 — anti-hollow-soak pre-clock guards. FAIL-CLOSED.
   # A "hollow soak" burns real wall-clock while the PR's changed behavior is
   # never exercised (flag off / no OIDC / unfunded rig / no provenance / base
-  # drift). scripts/ci/anti-hollow-soak/guards.ts runs the five pre-clock
-  # checks over a soak-preflight JSON and would block the clock on any hollow
-  # signature.
+  # drift). The five pre-clock checks in scripts/ci/anti-hollow-soak/ run over a
+  # soak-preflight JSON and block the clock on any hollow signature.
   #
-  # W3-freeze CTO carve-out: this job is wired in REPORT-ONLY / warn mode only —
-  # it prints findings and ALWAYS exits 0, gating nothing. Fail-closed
-  # activation (dropping `--report-only`) is deferred until >=1 real green soak
-  # calibrates the guards, mirroring the #1617 T0-CI-infra precedent. The step
-  # also carries continue-on-error as belt-and-suspenders so this can never
-  # block a merge during calibration. NON-REQUIRED.
-  anti-hollow-soak-report:
-    name: Anti-hollow-soak guards (report-only)
+  # Activated fail-closed (was report-only under the W3-freeze CTO carve-out):
+  # the report-only flag, the exit-code-swallowing shell fallback, and the
+  # step's continue-on-error were removed together, and the check was added to
+  # every .mergify.yml queue rule. Removing fewer than all of them leaves the
+  # gate decorative.
+  #
+  # Scope: every committed docs/staging/soak-preflight/*.json. None are
+  # committed today, and an absent convention directory is not a hollow soak —
+  # that case emits a notice and exits 0 WITHOUT invoking the CLI, because
+  # fail-closed main() returns the USAGE code 2 when handed no input path.
+  anti-hollow-soak:
+    name: Anti-hollow-soak guards
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -1912,18 +2137,22 @@ jobs:
       - name: Install root dependencies
         run: npm ci --ignore-scripts
 
-      - name: Run anti-hollow-soak guards (report-only, non-gating)
-        continue-on-error: true
+      - name: Run anti-hollow-soak guards
         run: |
           shopt -s nullglob
           preflights=(docs/staging/soak-preflight/*.json)
           if [ ${#preflights[@]} -eq 0 ]; then
-            echo "::notice::No soak-preflight JSON under docs/staging/soak-preflight/ — anti-hollow-soak guards have nothing to check (report-only, non-gating)."
-            node_modules/.bin/tsx scripts/ci/anti-hollow-soak/guards.ts --report-only || true
+            echo "::notice::No soak-preflight JSON under docs/staging/soak-preflight/ — no soak clock to gate."
             exit 0
           fi
+          failed=0
           for f in "${preflights[@]}"; do
-            echo "== anti-hollow-soak (report-only) :: $f =="
-            node_modules/.bin/tsx scripts/ci/anti-hollow-soak/guards.ts --report-only --input "$f" || true
+            echo "== anti-hollow-soak :: $f =="
+            if ! node_modules/.bin/tsx scripts/ci/anti-hollow-soak/guards.ts --input "$f"; then
+              failed=1
+            fi
           done
-          exit 0
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::One or more soak preflights carry a hollow-soak signature — the soak clock must not start."
+            exit 1
+          fi

@@ -25,3 +25,13 @@
 ## Methods added since PH1-SDK-01
 - `anchorBulk(inputs, options?)` (W3 / HAKI-REQ-02 wiring, 2026-07-28) — wires `POST /api/v1/anchor/bulk` (`services/worker/src/api/v1/anchor-bulk.ts`). Rows accept either a pre-computed `fingerprint` or raw `data` (fingerprinted client-side via the existing `fingerprint()` helper — never both, never neither). Caps at `BULK_ANCHOR_MAX_ROWS` (1000, mirrors the server's `.max(1000)`) and throws `ArkovaError({code:'batch_too_large'})` client-side rather than auto-chunking — chunking would split intra-batch duplicate detection and credit deduction across requests. `dryRun` / `duplicateStrategy` / `batchId` map to the server's `dry_run` / `duplicate_strategy` / `batch_id`. See `client.test.ts` `describe('anchorBulk', ...)` for the full contract (cap boundary, mixed input types, dry-run, per-row errors, 409 duplicate-fail, 402 insufficient-credits).
 - **`LICENSE`** (2026-07-28, engineering-counsel review): MIT text copied verbatim from `packages/verifier-cli/LICENSE`. Listed in `package.json` `files` so it actually ships in the published tarball — `"license": "MIT"` alone doesn't discharge the obligation. See `scripts/security/package-license-files.test.ts`.
+
+## Disabled surfaces
+- 2026-08-15, CTO ruling R-1: `arkova.query()` and `arkova.ask()` hit `/api/v1/nessie/query`, which now
+  fails closed with `503 {"code":"nessie_disabled","enabled":false}` — so both **throw `ArkovaError` on
+  every call**. Nessie is permanently disabled by standing founder directive. The README section and
+  both JSDoc blocks say so; a throw from these methods is NOT "no matching records", because no search
+  runs. Behaviour is unchanged (the client already threw on non-2xx) — what changed is that the docs no
+  longer advertise a capability we do not serve. Do not remove the methods or types: existing installs
+  need to recognise and handle the disabled response. **Republishing to npm is founder-reserved** — this
+  edit updates the in-repo docs only.

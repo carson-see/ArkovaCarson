@@ -1,0 +1,5 @@
+sample 1: uptime=553 status=healthy
+sample 2: uptime=555 status=healthy
+sample 3: uptime=558 status=healthy
+sample 4: uptime=560 status=healthy
+sample 5: uptime=562 status=healthy

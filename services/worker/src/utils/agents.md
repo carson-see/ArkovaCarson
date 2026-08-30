@@ -2,6 +2,73 @@
 
 Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
+## 2026-08-17 — new `utf16-truncate.ts`: surrogate-safe truncation (poison-record incident)
+
+`truncateUtf16Safe(input, maxUnits)` replaces bare `.slice(0, N)` wherever a truncated string is
+persisted or JSON-serialized. `.slice` cuts at UTF-16 code-unit boundaries; a cut inside a surrogate
+pair leaves a lone high surrogate, which cannot encode as UTF-8 and makes the enclosing PostgREST
+request body invalid JSON (`PGRST102`). One such string in `anchors.description` — an OpenAlex
+abstract with astral-plane math symbols, split exactly at unit 500 — poisoned the head of the
+public-record anchoring queue for 16 days
+(`docs/staging/fullsoak-2026-08/prod-repair-poison-record-2026-08-17.md`).
+
+Mechanism: slice → drop a trailing lone high surrogate (the whole fix for well-formed input, and it
+avoids `toWellFormed()`'s visible U+FFFD in user-facing strings) → feature-detected
+`String.prototype.toWellFormed()` (ES2024, Node ≥ 20 — our engines floor is 20.14) as a final
+invariant guard for already-malformed input. The feature-detect also keeps `"lib": ["ES2022"]`
+tsconfig untouched.
+
+Known remaining `.slice(0, N)`-before-persist sites NOT migrated in that PR (each needs its own
+look at whether the destination is a JSON write path): `jobQueue.ts` `sanitizeLastError` (1000),
+`api/v1/credentials-ctdl-registry-anchor.ts` (500 ×2), `api/v1/webhooks*.ts` `response_body` (500),
+`api/v1/nessie-query.ts` (500 ×2), `lib/credential-source-import.ts` (180). A lint rule banning
+truncate-then-persist via bare slice would beat this census — see the PR body follow-ups.
+## 2026-08-17 — `sentry.ts`: `event.extra` is now walked recursively (§1.1 hole)
+
+**The gap.** `scrubPiiFromEvent` ran `scrubString` over exception values, the message, the
+transaction name, tags and `request.url` — but for `event.extra` it did something else entirely: it
+replaced *exact top-level keys* from `SENSITIVE_EXTRA_KEYS` with `[FILTERED]` and stopped. So:
+
+1. Any **other** top-level key's string value was emitted verbatim. `{ notes: 'escalated to
+   x@y.com' }` shipped the address.
+2. **Nested** extras were never key-filtered at all — `{ ctx: { email: … } }` passed straight
+   through, because `'email' in event.extra` is false.
+
+`captureCreditRpcFailureAlert` spreads caller-supplied `...args.extra` into that bag, so every call
+site handing it a nested object was a live path for an email / document fingerprint / API key into
+Sentry. §1.1 forbids all three outright.
+
+**The fix.** `scrubExtraValue()` walks `event.extra` recursively, applying **both** the key filter
+and `scrubString` at every level. It runs *after* `scrubBinaryValues`, so the SCRUM-2492 type-based
+binary drop still happens first and the `[REDACTED_BYTES]` tokens it leaves are inert to the string
+pass.
+
+**Depth is a bound, not a bypass.** Past `MAX_SCRUB_DEPTH` the walk returns `REDACTED_DEPTH_TOKEN`
+rather than the subtree — "we could not check this" must never render as "this is fine", the same
+reasoning as `orgFieldPolicy`'s truncated-payload rejection. Two consequences worth knowing: it also
+terminates a cyclic `extra`, and it closes the matching depth hole in `scrubBinaryValues` (which
+returns deep values verbatim) for anything riding on `extra`. Strings are handled *before* the depth
+guard, so a deep string is redacted rather than dropped.
+
+**One existing contract was deliberately NARROWED — read this before you "fix" the test.**
+SCRUM-2900's scheduler-pause dead-man wants `actor_principal` in `extra` to survive, and the old test
+demonstrated that with a **human** email (`carson@arkova.ai`). It survived only because `extra` was
+never walked — i.e. by the same defect. The surviving exemption is now anchored to the GCP
+service-account shape (`/^[a-z0-9][a-z0-9-]*@[a-z0-9][a-z0-9-]*\.iam\.gserviceaccount\.com$/`), which
+is what the production caller actually passes. A human email in that field is scrubbed to `[EMAIL]`;
+§1.1 has no person-shaped exemption. The pattern is anchored end-to-end so nothing can ride alongside
+a principal. Attribution degrades rather than disappears — the Cloud Scheduler audit log still holds
+the identity.
+
+**Known trade-off, accepted.** `scrubString`'s regexes cannot distinguish a 64-hex Bitcoin txid from
+a 64-hex document fingerprint, or a 10-digit id string from a phone number, so operational strings of
+those shapes inside `extra` now redact too. That is the cost of §1.1 being absolute about
+fingerprints. Routing and triage key on Sentry **tags**, not extras, and the tag pass is unchanged.
+Prefer numbers over numeric strings in new `extra` payloads.
+
+Tests: `sentry-extra-scrub.test.ts` (15 cases, red-first) plus the narrowed + added
+`captureSchedulerPauseAlert` cases in `sentry.test.ts`. T2 (worker behavior).
+
 ## 2026-08-10 — new `orgFieldPolicy.ts`: org-scoped request-field rejection (DPA Schedule 1 / clause 4.6)
 
 The first per-org *request shape* control in the worker. `switchboard_flags` is global (no `org_id`)
@@ -73,6 +140,7 @@ earlier test already resolved must call it, or it reads the earlier answer.
 - **`db.ts`** — the service-role Supabase client + DB circuit breaker + `withDbTimeout`. **WH-1 (SCRUM-2899 / ARKOVA-WORKER-C):** the client is created with a custom `global.fetch` built from a dedicated bounded `undici.Agent` (short `keepAliveTimeout`) via `createResilientFetch()`, which retries ONCE on a connection-level failure (`isTransientConnectionError` — `fetch failed`/`ECONNRESET`/`UND_ERR_*`/nested `cause`). This ends the "TypeError: fetch failed" webhook drops caused by rotten keep-alive sockets on throttled Cloud Run — it fixes EVERY PostgREST/RPC caller, not just webhooks. Do NOT remove the custom fetch or widen the retry to HTTP-response errors (only transport failures are safe to retry). **WH-2:** `SUPABASE_POOLER_URL` is accepted as the REST base ONLY when its scheme is `http(s)`; a `postgres://`/`postgresql://` connection string is logged + ignored (falls back to `config.supabaseUrl`) so it can't silently become the REST base and 500 every call.
 - `sentry.ts` — Sentry init + mandatory PII scrubbing. SCRUM-2249: scrubbers collapse UUID identifiers → `[UUID]` (incl. `event.transaction` + `event.request.url`) and Supabase project-ref → `[SUPABASE_PROJECT]`. SCRUM-2492: the PII regexes + `scrubString`/`scrubUrl` now live in `pii-scrub.ts` (re-exported here); a type-based `scrubBinaryValues` pass drops document bytes from the whole event before the key-name PII passes. `release` = real `BUILD_SHA` (same value `/health` exposes), `serverName` = typed config Cloud Run `K_REVISION`/`K_SERVICE`. `IGNORED_ERROR_PATTERNS` drops GoTrue Navigator-lock + AbortError noise. `captureStuckAnchorAlert()` + `STUCK_ANCHOR_FINGERPRINT` are the stable seam PR #1055 (SCRUM-2234 stuck-anchor monitor) wires into so hourly re-fires collapse to one issue while preserving the caller's warning/error severity. `capturePipelineThroughputAlert()` + `PIPELINE_THROUGHPUT_FINGERPRINT` (SCRUM-2901) are the same pattern for the pipeline-throughput dead-man (`jobs/pipelineThroughputMonitor.ts`). **SCRUM-3050 changed it in two ways.** (1) It now emits real Sentry **TAGS** (`source`/`story`/`alert_type`/`sustained_bucket`), not just `extra` — Sentry issue-alert rules filter on `TaggedEventFilter`, so the previous extra-only version could never have been matched by any rule even once someone created one. (2) The fingerprint takes an optional duration-bucket suffix so a sustained condition opens a genuinely NEW issue at each escalation boundary instead of aging silently in one; level rises `error` → `fatal` past 72h. Passing no third argument preserves the pre-SCRUM-3050 fingerprint exactly. When adding a new fingerprinted alert helper here, emit tags, not extras.
 - `sentry.ts` — Sentry init + mandatory PII scrubbing. SCRUM-2249: scrubbers collapse UUID identifiers → `[UUID]` (incl. `event.transaction` + `event.request.url`) and Supabase project-ref → `[SUPABASE_PROJECT]`. SCRUM-2492: the PII regexes + `scrubString`/`scrubUrl` now live in `pii-scrub.ts` (re-exported here); a type-based `scrubBinaryValues` pass drops document bytes from the whole event before the key-name PII passes. `release` = real `BUILD_SHA` (same value `/health` exposes), `serverName` = typed config Cloud Run `K_REVISION`/`K_SERVICE`. `IGNORED_ERROR_PATTERNS` drops GoTrue Navigator-lock + AbortError noise. `captureStuckAnchorAlert()` + `STUCK_ANCHOR_FINGERPRINT` are the stable seam PR #1055 (SCRUM-2234 stuck-anchor monitor) wires into so hourly re-fires collapse to one issue while preserving the caller's warning/error severity. `capturePipelineThroughputAlert()` + `PIPELINE_THROUGHPUT_FINGERPRINT` (SCRUM-2901) are the same pattern for the pipeline-throughput dead-man (`jobs/pipelineThroughputMonitor.ts`) — always `error` level (no severity param; both fire conditions are page-worthy), aggregate-count context only.
+- **`sentry.ts` (fix/sentry-cron-checkins-prod-only, CTO directive 2026-08):** `withCronMonitoring()`'s Sentry Crons check-in reporting (`Sentry.captureCheckIn`) is now gated to the real prod service ONLY, via the single choke point `shouldSendCronCheckIns()` — every soak rig runs the same worker cron jobs (`webhook-retries`, `check-confirmations`, `process-revocations`, `grace-expiry-sweep`) and each one was reporting check-ins tagged with its own `K_SERVICE`, auto-creating a permanent Sentry monitor environment that starts paging "missed check-in" the moment the rig is torn down (5 dead rig envs × 4 cron monitors = 16 zombie env/monitor pairs, ~93k events as of 2026-08). Gate logic: fires when `K_SERVICE === PROD_SERVICE_NAME` (`'arkova-worker'`, the same constant `resolveSentryEnvironment` above pins) OR the escape hatch `ENABLE_SENTRY_CRON_CHECKINS=true` is set (for a rig where cron observability via Sentry Crons is deliberately wanted); suppressed otherwise, including local dev (no `K_SERVICE` at all). **The gate NEVER touches whether the wrapped cron job runs** — only whether Sentry hears about it; a suppressed check-in still executes `fn()` and still propagates its result/error normally. Fail-safe direction is deliberate: if the gate ever breaks and suppresses PROD check-ins too, the prod monitor's own missed-check-in alert fires loudly within one missed interval — never a silent failure for the surface that matters. Tests: `shouldSendCronCheckIns` describe block pins `PROD_SERVICE_NAME` + covers prod/rig/escape-hatch/no-K_SERVICE/non-'true'-value branches; the `withCronMonitoring` integration describe block covers the same four cases end-to-end (job still runs, check-in fires or doesn't).
 - **`verifyCache.ts` (PERF-12)** — Upstash Redis cache for `GET /api/v1/verify/:publicId`, 5-minute TTL. **`KEY_PREFIX` must be bumped on any change to what the cached body CONTAINS, not only on shape changes.** `verify:v2:` → `verify:v3:` (2026-08-02) for the outbound PII gate on `buildVerificationResult`: the gate runs before `setCachedVerification`, so new writes were safe either way, but entries written by the pre-fix build carried a raw `description` and would have kept serving it to anonymous callers for the rest of the TTL after deploy. A new prefix orphans them instantly; old keys age out on their own. Treat a redaction/suppression change as a cache-invalidating change.
 - **`postgrest-filter.ts` (2026-08-01)** — PostgREST request-line limits and the ONLY supported way to build an `.in()` filter over a caller-sized list. Owns `POSTGREST_ROW_LIMIT` / `POSTGREST_URL_FILTER_BUDGET_BYTES` / `POSTGREST_IN_FILTER_CHUNK`, `wireLength` / `inFilterValueWireLength`, `chunkForInFilter`, and `assertNotAllChunksFailed`. `chunkForInFilter` takes **no size parameter** (both production defects in this class were a call site picking the wrong constant), accepts **`string[]` only** (so the values chunked are provably the values sent), and bounds each chunk by **encoded wire bytes as well as count** — measured with `URLSearchParams`, which is what postgrest-js uses, and including the double quotes it adds around values containing `,`, `(` or `)`. Do NOT measure with `encodeURIComponent`: it is a different encoder, and 200 docket-shaped ids that measure 6,402 bytes under it are 9,206 on the wire. `assertNotAllChunksFailed` is the other half — a chunked loop that logs-and-continues returns `[]` when every chunk 400s, which downstream cannot tell from "no rows"; that silent success is what hid a 70-hour outage. Callers that must not throw (a revert inside another failure path) opt out explicitly. Full context: `jobs/agents.md`, 2026-08-01 entry.
 - **`chunkedRead.ts` (2026-08-02)** — `readInChunks(label, values, fetchChunk)`, the second half of the
@@ -100,7 +168,7 @@ earlier test already resolved must call it, or it reads the earlier answer.
   router's existing `try/catch` turns it into a 500. Actor ids are never logged (they are user ids,
   §1.4). Covered by `profilePublicIds.test.ts`; mutation-verified (unchunking fails 2, removing the
   guard fails 1).
-- **`pipeline.ts`** — shared helpers for the public-record fetchers (`computeContentHash`, `delay`, `isIngestionEnabled`, `batchUpsertRecords`, `getExistingSourceIds`). **2026-08-01:** `getExistingSourceIds` carried both halves of the PostgREST id-filter defect that killed public-record anchoring for 70 hours, but **only one half was live — do not repeat this as a second outage.** (a) The UNCHUNKED `.in('source_id', …)` was LATENT: `getExistingSourceIds` has exactly ONE caller today (`jobs/jurisdictionFetcher.ts` `ingestStatutes`) and it passes section ids from module-constant `StatuteDefinition[]` arrays — tens of ids, a few dozen bytes, never close to the limit. It is fixed as a trap for the next fetcher to adopt this module per its own "new fetchers import from here" contract. (b) The DISCARDED error (`const { data } = …`) WAS live: any PostgREST failure returned an empty dedup Set, so dedup could be dead while every caller reported success. It now builds its filter with `chunkForInFilter` (`postgrest-filter.ts` — bounded by real encoded wire bytes, which matters here because `source_id` is an arbitrary upstream identifier, not a UUID), logs each failed chunk, and calls the shared `assertNotAllChunksFailed` so an all-chunks-failed run throws rather than reporting an empty set as success (same guard as `jobs/publicRecordAnchor.ts`'s `fetchAnchorRows`; the two had been hand-copied and had already diverged on the `attempted > 0` check). A partial result is still returned deliberately: `batchUpsertRecords` upserts with `ignoreDuplicates`, so a missed duplicate costs a redundant write, never a wrong row. **Behaviour change to know about:** the throw propagates out of `ingestStatutes`, which `fetchJurisdictionCompliance` runs BEFORE `fetchCaseLaw`, so a total dedup failure now also skips case-law ingestion for that jurisdiction (previously it degraded to re-upserting everything). Intended: an all-chunks-failed result means PostgREST is unavailable for that table anyway, and a cron 500 gets a Scheduler retry. Covered by `pipeline.test.ts`.
+- **`pipeline.ts`** — shared helpers for the public-record fetchers (`computeContentHash`, `delay`, `isIngestionEnabled`, `isIngestionFailureStatus`, `batchUpsertRecords`, `getExistingSourceIds`). **2026-08-15 (BUG-020):** added `INGESTION_FAILURE_STATUSES` + `isIngestionFailureStatus()` — the set of result `status` literals that mean a run failed *even when its `errors` counter is 0*. `routes/ingestionResponse.ts` and `jobs/openStatesFetcher.ts`'s fan-out aggregate both read it; keep it here rather than in `routes/` so `jobs/` can import it without a routes→jobs cycle. **`isIngestionEnabled` is still a `get_flag` read and therefore still cannot distinguish "flag row absent" from "flag explicitly false"** — that is fine for a fetcher's own belt-and-braces gate, but the route-level gate that has to tell those apart reads `switchboard_flags` directly (see `routes/agents.md`). **2026-08-01:** `getExistingSourceIds` carried both halves of the PostgREST id-filter defect that killed public-record anchoring for 70 hours, but **only one half was live — do not repeat this as a second outage.** (a) The UNCHUNKED `.in('source_id', …)` was LATENT: `getExistingSourceIds` has exactly ONE caller today (`jobs/jurisdictionFetcher.ts` `ingestStatutes`) and it passes section ids from module-constant `StatuteDefinition[]` arrays — tens of ids, a few dozen bytes, never close to the limit. It is fixed as a trap for the next fetcher to adopt this module per its own "new fetchers import from here" contract. (b) The DISCARDED error (`const { data } = …`) WAS live: any PostgREST failure returned an empty dedup Set, so dedup could be dead while every caller reported success. It now builds its filter with `chunkForInFilter` (`postgrest-filter.ts` — bounded by real encoded wire bytes, which matters here because `source_id` is an arbitrary upstream identifier, not a UUID), logs each failed chunk, and calls the shared `assertNotAllChunksFailed` so an all-chunks-failed run throws rather than reporting an empty set as success (same guard as `jobs/publicRecordAnchor.ts`'s `fetchAnchorRows`; the two had been hand-copied and had already diverged on the `attempted > 0` check). A partial result is still returned deliberately: `batchUpsertRecords` upserts with `ignoreDuplicates`, so a missed duplicate costs a redundant write, never a wrong row. **Behaviour change to know about:** the throw propagates out of `ingestStatutes`, which `fetchJurisdictionCompliance` runs BEFORE `fetchCaseLaw`, so a total dedup failure now also skips case-law ingestion for that jurisdiction (previously it degraded to re-upserting everything). Intended: an all-chunks-failed result means PostgREST is unavailable for that table anyway, and a cron 500 gets a Scheduler retry. Covered by `pipeline.test.ts`.
 - Various: `telemetry.ts`, `correlationId.ts`, `cors.ts`, `rateLimit.ts` (legacy v1), `validation.ts`, `urls.ts`, etc.
 - **`captureCreditRpcFailureAlert()` (sentry.ts, silent-fail pre-mortem)** — the single choke point for the six credit-mutating RPCs (`deduct_ai_credits`, `deduct_unified_credits`, `allocate_monthly_credits`, `roll_over_monthly_allocation`, `batch_insert_anchors`, `submit_batch_anchors`) that previously failed with only `logger.error`, no Sentry alert. Caller passes `failMode: 'open' | 'closed' | 'retried'` — `'open'` (proceeds anyway: free AI extraction, falls through to Stripe billing) is always `fatal` level + a `credit_rpc_fail_mode:open` tag so it's impossible to miss/grep for a revenue leak; `'closed'`/`'retried'` are `error` level. Behavior (fail-open vs fail-closed) is intentionally UNCHANGED by this helper — it only adds observability. Call sites: `api/v1/ai-extract.ts`, `middleware/paymentTierRouter.ts`, `api/v1/credits.ts`, `jobs/credit-expiry.ts`, `jobs/monthly-allocation-rollover.ts`, `jobs/publicRecordAnchor.ts`, `jobs/batch-anchor.ts` (3 sites). PII: org_id/user_id UUIDs + aggregate metadata (amounts, counts, tx ids) only — never emails/fingerprints/API keys, enforced by the same `beforeSend` scrubber as every other Sentry path.
 
@@ -296,3 +364,266 @@ Two helpers, one bug.
 - **The quarantine log carries issue paths + messages only, never the row value** (§1.4 / §1.6A). DB
   rows routinely carry user-scoped data; Zod's messages describe the expectation, not the input, so
   they are safe to pass through.
+## 2026-08-12 — F-1: `rateLimit.ts` + `upstashRateLimit.ts` share one counter now
+
+The v1 limiter enforced a **per-instance** bucket while its docstring promised a shared one. Prod
+runs `minScale=2, maxScale=10` with Upstash installed (`Upstash Redis rate limiting initialized`
+in the worker log), so every configured limit was effectively up to 10x its stated value, and a
+cold start reset the counter outright.
+
+- **`IRateLimitStore.get()/set()` CANNOT express a shared limit — this is structural, not a bug in
+  one adapter.** `get()` is synchronous, so a network-backed store has nothing to return but a
+  local cache; and `rateLimit()` mutated `entry.count++` in place, writing back only on the
+  create-new-entry branch. Redis received `{"count":0}` once per window and was never read again.
+  Any future store that implements only get/set is single-instance by construction.
+- **The shared path is the optional `increment(key, windowMs, now)`** — one atomic server-side
+  `INCR` returning the count *including* this request. A store that omits it keeps the original
+  synchronous path, so the bare `Map` default still works unchanged. Enforcement compares
+  `count > maxRequests` (post-increment) which is the same allowance as the sync path's
+  `count >= maxRequests` (pre-increment); don't "fix" one to match the other.
+- **Counter keys are namespaced `arkova:rl:`, deliberately separate from the raw keys used by
+  `set()`/`delete()`.** An `INCR` against a key holding the legacy JSON blob errors, and a
+  `delete()` fired by local-cache expiry must never be able to clear a live shared window early.
+- **`syncFromRedis()` was deleted, not wired up.** It warm-loaded the local cache at startup and
+  was never called outside its own test. Under server-side counting it would be actively wrong —
+  seeding a local mirror can only double-count or race the server TTL.
+- **The local `Map` is now the fail-open bucket and nothing else.** It is never populated by a
+  successful `increment()`. When Redis is unreachable the store counts locally, bounded and swept,
+  and logs a warning on every degraded request — the pre-fix behaviour, kept deliberately as the
+  degradation, never as the default.
+- **Cost of correctness: one Upstash round trip per request on the hot path** (`rateLimiters.api`
+  sits in front of nearly every route). `INCR`+`PTTL` are pipelined into a single HTTP call, and a
+  second call fires only on the first hit of a window to arm the TTL. A test pins the
+  one-round-trip steady state; if you add a command, expect it to fail.
+- **A `PTTL` of -1 re-arms the window.** That is both the first hit and the shape left behind by a
+  process that died between `INCR` and `PEXPIRE` — without the re-arm, such a key would block its
+  bucket with no expiry until someone noticed.
+- **The pre-existing `upstashRateLimit.test.ts` stayed green through the entire life of this
+  defect** because every assertion in it was one store round-tripping its own cache. The
+  cross-instance invariant lives in `upstashRateLimit.distributed.test.ts` — two store instances,
+  one fake Redis. Single-store tests cannot catch a sharing bug.
+- `api/v2/rateLimit.ts` already had the correct design (`UpstashV2RateLimitStore.increment`); this
+  brings v1 to parity. Prefer changing both together.
+## 2026-08-12 — one request counts ONCE per limiter instance
+
+`rateLimit()` stamps the request with the limiter's own `Symbol` (`COUNTED_LIMITERS`) and skips
+counting if that instance already counted it. This exists because a limiter instance can be mounted
+more than once on purpose.
+
+- **`apiIpShadowGuard` is mounted twice by design** — `index.ts:418` under `/api`, and `index.ts:446`
+  unprefixed because `didWebRouter` serves `/.well-known/did.json` and `/orgs/:id/did.json`, which
+  are outside `/api` and must carry the same skip predicate (F-2, PR #1768 / `6f844d484`). Deleting
+  either mount breaks a route family. Do not "simplify" it.
+- **The bug was path-dependent, which is why it hid.** Express runs every mount a request matches, so
+  the double count only landed on requests that *fell through* the `/api` mount unanswered. A
+  `/api/badge/:id` request is answered by `badgeRouter` and never reaches mount 446 — counted once,
+  looks fine. An anonymous `/api/v1/*` request is answered by neither, reaches 446, and was counted
+  twice. Documented 60/min per IP was really 30/min for exactly that traffic. Side-rig 2026-08-12
+  saw `x-ratelimit-remaining` walk 48 → 46 → 44.
+- **The stamp is per INSTANCE, never global.** `index.ts` deliberately shares one per-IP bucket
+  across *different* limiters (the F5 fix keys buckets purely on `scope` + `keyGenerator`, and none
+  of the preconfigured limiters set a `scope`), so `rateLimiters.api` and `apiIpShadowGuard` both
+  legitimately charge the same bucket. A global "already counted" flag would silently stop the
+  second limiter enforcing anything. A test pins this.
+- **It also fixes `rateLimiters.api`**, which is mounted on overlapping prefixes (e.g.
+  `/api/v1/org` at index.ts:470 and `/api/v1/org/sub-orgs` at :471) and double-counted on the same
+  fall-through mechanism.
+- **This LOOSENS enforcement** (30/min → the intended 60/min for fall-through anon traffic). It is a
+  change in enforcement numbers, not a cleanup — treat it as such when reviewing.
+- The stamp lives on the request object, so it cannot leak between requests; a test pins that too.
+
+## 2026-08-15 — BUG-018 / D-8: every rate-limit key carries an environment namespace
+
+`environmentNamespace.ts` is new. It answers "which deployment surface am I?" and every key written
+to the shared Upstash database now starts with that answer.
+
+- **Prod, shared staging and the connector side-rig are bound to ONE Upstash database** via the same
+  un-suffixed `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` secrets. The v1 counter key was
+  `arkova:rl:` + the limiter key, which for the per-IP guard is the **bare client IP** — so the key
+  was identical in every environment. Inert only while the limiter never read Redis; live the moment
+  F-1 landed. Key shapes now: counters `arkova:rl:<env>:<key>`, legacy blobs
+  `arkova:rl:blob:<env>:<key>` (those were written **raw**, i.e. a Redis key that was literally a
+  client IP), v2 `arkova:v2:ratelimit:<env>:<key>`.
+- **`NODE_ENV` is NOT the discriminator, and must never become one.** Rigs and shared staging run
+  `NODE_ENV=production`. `K_SERVICE` — the Cloud Run service name — is the honest signal; only
+  `arkova-worker` earns the `prod` namespace, and off Cloud Run a bare `NODE_ENV=production`
+  resolves to `local-production`. Same derivation and same reasoning as
+  `resolveSentryEnvironment` (MT-1 / SCRUM-2901); `PROD_SERVICE_NAME` is defined in
+  `environmentNamespace.ts` and re-exported by `sentry.ts` so the two cannot drift.
+- **Derive NOTHING instance-local in that module** — `K_REVISION`, hostname, pid, a random id. Any
+  of those silently un-shares every shared counter, i.e. re-opens F-1 while all its tests stay
+  green. `upstashRateLimit.namespace.test.ts` asserts both halves at once: different environments
+  must NOT share a bucket, and two instances of the SAME service MUST.
+- **`prod` and `blob` are reserved namespace tokens.** A service literally named `prod` would
+  otherwise share production's counters, and one named `blob` could forge a counter key that
+  collides with the `arkova:rl:blob:` keyspace. Both get a `-nonprod` suffix.
+- **Still un-namespaced on the same database, deliberately out of scope here:**
+  `utils/verifyCache.ts` (`verify:v5:<publicId>`) and `middleware/upstashIdempotency.ts`
+  (`idem:<key>`). Those are worse than a rate-limit collision — a cached verification result
+  computed against a staging database can be served to a production caller — but they change
+  public-verify behaviour and need their own T2 change. Do not assume they were fixed here.
+  **Closed by the follow-up below (same branch stack) — that carve-out is no longer open.**
+
+## 2026-08-15 — BUG-018 / D-8 follow-up: the verify cache carries the same namespace
+
+Closes the carve-out the section above left open. `verifyCache.ts` keys are now
+`verify:v5:<env>:<publicId>`; `middleware/upstashIdempotency.ts` is covered in that folder's
+`agents.md`.
+
+- **This one is a correctness defect, not a budget defect.** A `publicId` is by construction the
+  SAME string in every environment — that is what a public identifier IS — so the old
+  `verify:v5:<publicId>` key collided across environments **by default**, not under contention.
+  `GET /api/v1/verify/:publicId` serves a cache hit **verbatim** and never re-runs
+  `buildVerificationResult`, so a result computed against a staging database was served to a
+  production caller for the full 300s TTL. Staging rows are fixtures; production rows are the
+  evidence product. §1.5 — the API must state what it actually measured.
+- **It cut both ways.** `invalidateVerificationCache` is called by `jobs/revocation.ts` and
+  `jobs/check-confirmations.ts`. Fired on a rig, it evicted **production's** cache entry for that
+  publicId. Cheap in isolation, but it means rig traffic could keep production permanently cold on
+  a hot anchor.
+- **The version segment stays AHEAD of the namespace** (`verify:v5:<env>:` and not
+  `verify:<env>:v5:`) so a `v5` → `v6` bump still rotates every environment at once, exactly as the
+  bump log above it describes. Keep that ordering when you bump.
+- **The namespace is memoised at module scope**, next to `_redisConfig` and for the same reason —
+  the public verify path is the hot path and must not re-run the sanitiser per request. That is why
+  `verifyCache.namespace.test.ts` models each environment as a fresh module instance
+  (`vi.resetModules()` + re-`import`) rather than a mutated env var: it makes the same-service test
+  genuinely two independent instances instead of one module asked twice.
+- **Both halves are asserted in one file, deliberately.** Different environments must NOT read each
+  other's cache, AND two instances of one service MUST share one — a namespace that also broke
+  sharing would be a PERF-12 regression dressed as a fix, and every cache-hit test would still pass.
+
+## 2026-08-18 — consolidated rate-limit cluster: fail-open path emits §1.10 headers
+
+`enforceShared`'s last-resort catch (store `increment` rejects — normally unreachable behind the
+Upstash store's internal fallback bucket) now sets best-effort `X-RateLimit-*` headers before
+`next()`. §1.10 says headers on every response; a header-less allow was the one gap. Values are
+best-effort by design: configured limit, one request charged against a fresh window — there is no
+shared state to read on this path. Pinned in `rateLimit.test.ts` ("distributed fail-open path").
+
+## 2026-08-18 — per-instance circuit breaker around the Upstash `increment()` hot path
+
+CTO decision, PR #2269 soak-plan gap: `increment()` is on the blocking hot path
+(`rateLimit()` -> `enforceShared()` awaits it before `next()`), and every attempt paid up to
+`REDIS_TIMEOUT_MS` (2s, `AbortSignal.timeout`) before its internal catch fell back to the local
+bucket — nothing ever stopped it from retrying Redis on every single call. A full Upstash outage
+therefore added ~2s to every rate-limited request, indefinitely. `UpstashCircuitBreaker` (private
+to `UpstashRateLimitStore`) fixes that: opens after 5 CONSECUTIVE failures, skips the Redis round
+trip entirely while open (straight to `fallbackIncrement`), half-opens after 30s to let exactly one
+probe through, closes on a successful probe, and a failed probe re-opens immediately — it does not
+re-accumulate 5 more failures first.
+
+- **LATENCY SHIELD, NOT A CORRECTNESS MECHANISM — say this every time.** Breaker state is a private
+  field on the store instance, so N Cloud Run instances trip and recover independently and never
+  coordinate. That is fine: the shared counter was already fail-open before this change
+  (`fallbackIncrement` keeps counting locally during an outage), so a broken or out-of-sync breaker
+  cannot turn the limiter into "unlimited" — it can only make one instance slower to give up on a
+  dead Redis than another. Do not reach for this as a building block for anything that needs
+  cross-instance agreement.
+- **Scoped to `increment()` only** — the blocking call every request pays for. `decrement()` (best
+  effort, fire-and-forget, result never awaited by the caller) and the legacy `set`/`delete` blob
+  write-throughs are unaffected; they were never the latency problem PR #2269's soak plan flagged.
+- **The self-heal PEXPIRE call is inside the same try block as the pipeline**, so a failure there
+  also counts toward the breaker — one code path, one failure signal, no separate accounting to
+  keep in sync.
+- Regression suite: `upstashRateLimit.circuitBreaker.test.ts` — trips at 5 consecutive failures
+  (and NOT at 4, boundary-pinned), returns a valid fail-open entry (so §1.10 headers keep working)
+  while open, and both half-open outcomes (probe succeeds -> closes; probe fails -> re-opens without
+  needing 5 more failures).
+## 2026-08-17 — surrogate-safe truncation sweep (follow-up to `utf16-truncate.ts`)
+
+> Placed at EOF deliberately: PR #2266 introduces `utf16-truncate.ts` and inserts its section near
+> the top of this file; this sweep lands as a sibling PR carrying byte-identical copies of that
+> util + its test (add/add-identical merges cleanly in either order), so this note must not overlap
+> that hunk.
+
+`sanitizeLastError` now bounds via `truncateUtf16Safe(text, 1000)` instead of a bare `.slice` —
+`job_queue.last_error` is failure bookkeeping, and a poisoned error message used to make `failJob`'s
+own PostgREST body invalid JSON (PGRST102): the job's failure handling itself failed. The same sweep
+migrated `webhooks/delivery.ts` (`response_body` ×3 + `error_message` — endpoint-controlled bytes),
+`credentials-ctdl-registry-anchor.ts` (filename/label/description), `compliance-audit.ts`
+(`error_message`), `credential-source-import.ts` (`cleanText` + filename), the two test-ping
+`response_body` echoes, and `nessie-query.ts` citation excerpts. CI ratchet:
+`scripts/ci/feedback-rules/surrogate-safe-truncate.ts` (baseline burn-down in
+`surrogate-truncate-baseline.json`; merge-time gate is its colocated `.test.ts` in `Tests`).
+
+## 2026-08-15 BUG-2026-08-13-010 — `verifyCache.ts` KEY_PREFIX v5 → v6
+
+Response-shape change per the bump rule in the file header: connector-sourced records now carry the `fingerprint_rederivability` class + §1.5 note (see `constants/connectorFingerprint.ts`). Without the bump, a connector anchor cached pre-deploy serves a response with NO re-derivability statement for the whole TTL — the exact honesty gap the change closes.
+
+## 2026-08-12 — F-D0-5 `body-read-timeout.ts`
+
+**`AbortSignal.timeout(...)` passed to `fetch()` does NOT bound `await response.json()`.** The
+request signal covers the request; the body read is its own await with no timer, so a provider that
+sends headers and then stalls parks the caller indefinitely (undici's default `bodyTimeout` only
+fires on total silence — a trickling or wedged socket outlives any request deadline).
+
+That is the suspected mechanism behind the 2026-08-12 fullsoak hang: one parked `.json()` in
+`jobs/check-confirmations.ts` suspended a run inside `withRunLease`, whose heartbeat then renewed
+the lease forever, disabling SUBMITTED→SECURED promotion for every tenant with zero logs. See
+`jobs/agents.md` (F-D0-5) and the Day-0 BL-2 secured-E2E write-up §2.6a (under
+`docs/staging/fullsoak-2026-08/`).
+
+- **`readJsonBounded` / `readTextBounded` ALWAYS settle by their deadline.** The `Promise.race` is
+  what guarantees it — deliberately independent of whether the runtime honors an abort mid-body-read,
+  because that is precisely the property the incident called into question. Stream `cancel()` is
+  attempted as best-effort socket hygiene only, and a stream locked by the pending read rejects it
+  per WHATWG, so that rejection is swallowed.
+- **The abandoned read is observed** (`.then(noop, noop)`) before the timeout rejects, so a body
+  that dies minutes later cannot surface as an unhandled rejection and take down the worker.
+- **Structural response type, not `Response`.** Test doubles across this repo mock responses as
+  plain `{ ok, json }` objects; requiring a real `Response` would force every one of them to change.
+- **Use it at EVERY `fetch(...)` → `.json()`/`.text()` against an external provider.** A bounded
+  request with an unbounded body read is the hazard, not a slow provider.
+- **§1.4 caller contract: the `url` argument is embedded verbatim in `BodyReadTimeoutError.message`
+  and flows to logs and Sentry.** Pass the full URL only when it is public (mempool.space /
+  blockstream — the path is the correlation value). A credential-bearing URL — e.g. token-in-path
+  `https://go.getblock.io/<ACCESS_TOKEN>` — must be reduced to a sanitized label first; the RPC
+  path uses `sanitizeRpcUrlForError` (origin-only) in `chain/utxo-provider.ts` (S3.3-F1).
+
+## 2026-08-22 — `upstashRateLimit.ts` transport reads are bounded (PR #2269, surfaced by merging `main`)
+
+Both Upstash transport methods now read their response body through
+`readJsonBounded(res, label, REDIS_TIMEOUT_MS)` instead of a bare `await res.json()`:
+`pipeline()` (the INCR + PTTL hot path) and `command()` (PEXPIRE self-heal, DECR, SET, DEL).
+
+Why it was found late rather than in review: `feedback_bounded_body_reads` (F-D0-5) landed on `main`
+*after* this branch was cut, so the detector and this code first met when `main` was merged in to
+clear a conflict. The rule was right — `increment()` is awaited on the blocking path of
+`rateLimit()`, and the circuit breaker only counts failures it is told about, so a body that stalls
+after headers would park every rate-limited request indefinitely and never reach the fail-open local
+bucket that exists for exactly this case. `AbortSignal.timeout()` does not help: it bounds the
+request, not the read.
+
+**The label argument is not cosmetic.** `BodyReadTimeoutError` embeds it verbatim in `.message`,
+which reaches warn logs and Sentry, and `command()`'s real request path is `/<command>/<key>` where
+an anonymous limiter key IS a caller IP. So the label is `${baseUrl}/${command}` — host and verb, no
+key (§1.4/§1.6). `pipeline()` can pass its real URL because `/pipeline` is static.
+
+Pinned by `upstashRateLimit.bodyRead.test.ts`, which fails by TIMING OUT rather than asserting if the
+bounding is removed — the failure mode under test is a hang, so the test has to be able to hang.
+
+## The consolidated rate-limit cluster is LIVE IN PROD (2026-08-27)
+
+`upstashRateLimit.ts` / `rateLimit.ts` / `environmentNamespace.ts` as described above shipped to
+prod in `git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999` (revision `arkova-worker-01322-tol`,
+100% traffic — `gcloud run services describe` + live `/health`, 2026-08-27T21:00Z), via PR #2269
+merged as `c22f586cb`. That PR consolidates four earlier closed PRs (#2223 / #2224 / #2231 / #2238).
+
+Consequences that are now true of the running system, and were not before:
+
+- **Cross-instance state is real.** Prod runs `minScale=2, maxScale=10`, so before this the
+  configured limits were effectively up to 10x their stated value and cold starts reset counters.
+  Do not re-derive limits from a single-instance test.
+- **The documented §1.10 60 req/min per IP is now actually 60**, not 30. `apiIpShadowGuard` was
+  mounted twice (`app.use('/api', …)` and the unprefixed did:web mount) and Express runs every
+  matching mount, so one request was charged twice by the same limiter instance. The fix stamps the
+  request with the limiter's own `Symbol` and counts at most once **per limiter INSTANCE** —
+  deliberately per-instance, not global, because `index.ts` shares one per-IP bucket across
+  different limiters and each must still charge it. **This LOOSENED enforcement.** If you are
+  reading a §1.10 number off a header stride, a `48 → 46 → 44` pattern is the OLD double-count and
+  should no longer appear.
+- **Keyspaces are env-namespaced.** A staging rig and prod can no longer share a bucket by accident.
+- `rateLimiters.auth` (5/min) is still **not mounted on any route** — referenced only by tests and
+  comments. It protects nothing today at any multiplier. Mounting it is a behaviour change with its
+  own tier, not a cleanup.

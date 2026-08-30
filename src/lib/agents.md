@@ -1,6 +1,122 @@
 # agents.md — lib
 
-_Last updated: 2026-08-10_
+_Last updated: 2026-08-23_
+
+## 2026-08-23 R-7 — `PLATFORM_METRICS` in `copy.ts` is the only home for a public traction figure
+
+The four `/about` + `/developers` traction tiles were bare JSX literals duplicated
+across two pages, and the records-secured one had rotted to `1.39M+` while prod
+held **at least 3.3M** SECURED records. A public number is a CLAIM (§1.5 / R-7):
+it must say what it measures and when it was measured. `copy.ts` now owns
+`PLATFORM_METRICS` (`value` / `label` / `shortLabel` / `asOf`) plus
+`PLATFORM_METRICS_AS_OF`, and both pages map over it — neither re-states a figure
+inline. `src/pages/PlatformMetrics.claims.test.ts` is the ratchet; it reads page
+SOURCE (a figure behind a flag is still a published claim) and fails on any bare
+`>N.NM+<` JSX literal, so re-adding one is caught rather than reviewed for.
+
+Two rules when you touch this block:
+
+- **A floor, not a point estimate.** `RECORDS_SECURED` ends in `+` because that is
+  the only shape that stays true as prod grows. The value came from a bounded
+  count that stops early and therefore PROVES a lower bound —
+  `SELECT count(*) FROM (SELECT 1 FROM anchors WHERE status='SECURED' LIMIT 3300000) t;`
+  returned `3300000` on prod 2026-08-23. An exact `count(*)` **times out** at this
+  table size, and `pg_class.reltuples` (what `/api/treasury` totalSecured derives
+  from) reads high, so neither is usable as a published claim. Re-measure the same
+  way before raising the number, and move `asOf` with it.
+- **Never date a figure you did not measure.** `PUBLIC_RECORDS_INDEXED` /
+  `DOCUMENT_TYPES` / `EXTRACTION_F1` are carried forward from the original GEO-16
+  block with `asOf: null` because their provenance was never recorded. Giving one
+  a date to make the block look uniform re-creates the exact defect in a new place.
+  Re-measure first, then date it. These three remain **unverified** — a known
+  residual, not something this change fixed.
+
+## 2026-08-15 BUG-2026-08-13-010 — `connectorFingerprint.ts` + `CONNECTOR_FINGERPRINT_LABELS`/`_TRIAD` in `copy.ts`
+
+Connector-sourced anchors (§1.6A: server-fetched from DocuSign/Drive) carry fingerprints of the bytes AS FETCHED at securing time; source systems may regenerate the file per download (soak-proven), so a fresh download is NOT expected to reproduce the fingerprint. `connectorFingerprint.ts` detects the server-written `metadata.connector_source` marker against a closed set (`docusign`/`google_drive`/`microsoft_365`/`connector`; EXCLUDES `manual_upload`/`batch_upload` — user-supplied bytes are reproducible) — a structural mirror of `services/worker/src/constants/connectorFingerprint.ts`, kept in sync manually per the `proofAvailability.ts` FE/worker convention. `copy.ts` owns the human-facing caveat strings (`CONNECTOR_FINGERPRINT_LABELS`) and the §1.5 measured/asserted/NOT-asserted triad (`CONNECTOR_FINGERPRINT_TRIAD`); both are vendor-neutral BY RULE — the marker is org-writable on legacy paths (`bulk_create_anchors` persists metadata verbatim), so naming a vendor would let spoofed metadata become a provenance claim (R-7). Consumer: `src/components/anchor/AssetDetailView.tsx` re-verify flow. The copy must never read as "this record is weaker" — the exact retrieved file IS permanently secured.
+_Last updated: 2026-08-17_
+
+## 2026-08-17 — RECORD_DETAIL_LABELS rename toasts
+
+`copy.ts` `RECORD_DETAIL_LABELS` gains `TOAST_RENAMED` / `ERR_RENAME` / `ERR_RENAME_FORBIDDEN` for RecordDetailPage's rename flow (previously inline literals in the page). Permission copy is deliberately distinct from the generic failure so an RLS-denied rename (zero-row UPDATE or 42501 from 0393's folder-only org-admin trigger) tells the user why. §1.3 clean — no banned terms.
+_Last updated: 2026-08-18_
+
+## 2026-08-18 — `PENDING_INVITATIONS_LABELS` + `queryKeys.orgInvitations`
+
+`copy.ts` gains `PENDING_INVITATIONS_LABELS` for the new `PendingInvitationsList` component (`src/components/organization/agents.md`) — status badges (Pending/Expired/Revoked) and the Resend action, org-admin-only visibility into invitations that have not resulted in a member yet. `queryClient.ts` gains `queryKeys.orgInvitations(orgId)`, same shape as `queryKeys.orgMembers`.
+_Last updated: 2026-08-21_
+
+## Keyword redaction is separator-insensitive (PR #2312)
+
+`piiStripper.ts` used to join every multi-word keyword with `\s+`. That made the **separator itself** an evasion channel: `Student ID: 88213` redacted, `student_id: 88213` did not. CSV headers are overwhelmingly snake_case, so the CSV bulk-upload path shipped those values to `/api/v1/ai/extract-batch` in the clear. A student or employee ID identifies an education record under FERPA, so §1.6 requires every separator form stripped.
+
+All four keyword rules carried the assumption — `STUDENT_ID_KEYWORD` (`student id`, `id number`, `student no.`), `DOB_KEYWORD_PATTERN` (`date of birth`, `birth date`), `ADDRESS_KEYWORD` (`postal code`), `NATIONAL_ID_KEYWORD` (`national id`, `tax id`, `ni number`, `passport no/number`, `pan no/number/card`, `sin no/number`). Tokens now join with `[\s_-]*`, so space / underscore / hyphen / nothing all match. `employee id` and `member id` were added — they were absent from the list in **every** form, not just snake_case.
+
+**If you add a keyword, use the `tok()` + `keywordPattern()` helpers, not a raw literal.** Widening the separator alone over-redacts: with a zero-width separator a keyword matches the *prefix* of an ordinary word and the value pattern then eats the rest of the line — `taxidermy` → `tax id`, `studentidentifier` → `student id`, `zipper` → `zip`. `keywordPattern()` supplies the two bounds that stop it:
+
+- `KEYWORD_START` = `(?:^|[^A-Za-z0-9])` — **consuming**, not a lookbehind, because Safari <16.4 has no lookbehind. Lossless: every caller already captures the keyword as `prefix` and re-emits it verbatim. Using a character class rather than `\b` is what lets `intl_student_id` match while `valid_number` does not.
+- `KEYWORD_END` = `(?![A-Za-z])` — digits may still follow, so unseparated forms like `ZIP90210` keep matching.
+
+Net precision **improved**: `Zipper pouches` and `addressing` used to be redacted and no longer are.
+
+**This module is SHARED.** It is reached from the document path (`stripPIIEnhanced` in `aiExtraction.ts`, which has no keyword rules of its own) as well as the CSV path, so any keyword change must be judged on precision as much as recall. Both directions are pinned: `piiStripper.test.ts` has a `precision: non-identifier columns are NOT redacted` block, and `piiStripper.adversarial.test.ts` has `keyword-label separator evasion` covering the near-miss words above.
+
+Two things found while doing this, recorded so nobody re-derives them:
+
+- **Value patterns must not cross a line break.** `NATIONAL_ID`'s value class used `\s`, which includes `\n`, so a 10-char ID ran greedily onto the next line and swallowed that line's label — in the `"<column>: <value>"` per-line text the CSV upload builds, `national_id: AB.123/456` ate the `course_name` header and destroyed the credential title the extractor reads. Now bounded to space and tab. Pre-existing (reproducible at HEAD through the spaced `National ID:` form), strictly narrowing. `ADDRESS_KEYWORD`'s value is *deliberately* multi-line (CRIT-4, up to 3 lines) and was left alone — which does mean an `address:` column in a CSV row still consumes the two columns after it. **Closed by PR #2313 — see the next section; do not cite this sentence as current behaviour.**
+- **`EMAIL_PATTERN` is quadratic and was NOT fixed here.** `[a-zA-Z0-9._%+-]+@…` backtracks one character at a time from every start position when the input has no `@`: measured 64,004 ms on a 100k-char input, versus 0 ms for SSN and phone and 0–1 ms for all four keyword rules on the same input. `stripPII` runs in the browser on raw OCR text, so a large scanned document freezes the tab. Out of scope for that PR; tracked separately. **Closed 2026-08-22** (branch `fix/piistripper-email-noat-fastpath`): `stripPII` now skips `EMAIL_PATTERN` entirely when the input contains no `@` — a zero-semantic-change fast path, since the pattern requires a literal `@` to match. The adversarial suite pins a 2 s ratchet on a 100k-char contiguous `@`-less run (5.8 s red before the fix under vitest, single-digit ms after). **Residual also closed, 2026-08-23, same branch.** The fast path only covers `@`-less input; the `@`-present case still ran the regex. `EMAIL_PATTERN`'s LOCAL-PART quantifier is now bounded to RFC 5321 §4.5.3.1's 64 octets — `{1,64}` — which caps the work the unanchored scan redoes at each offset and makes it linear. Measured: long local-part run + invalid domain 3,583 ms → 15 ms; ambiguous never-completing dotted domain 3,747 ms → 14 ms; the `@`-less 100k case 4,872 ms → 15 ms even with the fast path disabled. Both are pinned by 2 s ratchets. **The domain quantifier is deliberately NOT bounded, and that is load-bearing.** Bounding it to RFC 5321's 255 octets was tried and reverted during review: it does not degrade gracefully. A domain-character run longer than the bound cannot reach the `\.` that must follow it, so the pattern matches nothing and the WHOLE address — `@` and registrable domain included — survives in the clear, which is strictly worse than the unbounded pattern. A 4,000-case differential fuzz over 200–359 character domains caught it — 2,702 of those inputs redacted LESS than the unbounded pattern — and a 6,000-case sweep over 150–449 characters confirmed the fix; three regression pins now cover 300/400/2000-character domains. Do not 'symmetrise' these bounds. The local-part bound degrades the opposite way and is therefore safe: on a run over 64 characters the match just starts later, so the `@` and the entire domain still redact and only leading adjacent text is left (verified at every length 60–400). Differential fuzz against the previous pattern: 750,000 cases over five alphabets plus 6,000 long-domain cases, zero redacted less, zero redacted differently. This also clears Sonar `typescript:S8786`.
+
+_Last updated: 2026-08-23_
+
+## Address coverage the separator fix did not reach (PR #2313)
+
+PR #2312 (above) made every keyword separator-insensitive, which is why `postal_code`,
+`postcode`, `zip_code` and `ZIP90210` all redact on `main`. Three address-specific holes
+survived it. All three only show up on the CSV bulk-upload path, where `csvRowText.ts`
+serialises each row as one `"<column>: <value>"` line per column — the shape `ADDRESS_KEYWORD`
+was never written for.
+
+- **Qualified labels in camelCase / unseparated form leaked.** `home_address` and
+  `home address` already matched, because `_` and a space are `KEYWORD_START` boundaries and
+  the bare `address` alternative picks up from there. `homeAddress` did not: the character
+  before `Address` is a letter, the boundary fails, and the value shipped in the clear.
+  `ADDRESS_QUALIFIER` (`home|mailing|postal|street|business|work|permanent|current|residential`)
+  now composes with `address` / `street` as a **first** alternative. Order is load-bearing:
+  alternation is ordered, and with bare `street` ahead of it, `street_address:` matched only its
+  `street` half and the value pattern ate `_address: `, emitting `street[ADDRESS_REDACTED]` —
+  redacted, but with the column name destroyed.
+- **`post_code` / `post-code` leaked.** `postcode` was a raw literal, so the separator fix never
+  reached it. It is now `tokTight('post', 'code')`. **`tokTight()` is a new, deliberately
+  narrower sibling of `tok()`** — `[_-]?`, no space — because `post code` spaced is an ordinary
+  prose bigram and this module is SHARED with the OCR document path: `tok()` here would redact
+  the rest of the line in "please post code to the repo". Use `tok()` by default; reach for
+  `tokTight()` only when the spaced form is real English. Both directions are pinned.
+- **The multi-line address capture swallowed the following columns.** CRIT-4 lets an address
+  value run up to 3 lines, which is right for OCR (`Apt 4B`, `New York, NY 10001`) and wrong
+  per-column: `postal_code: SW1A 1AA` + `issue_date: 2026-03-14` collapsed to
+  `postal_code: [ADDRESS_REDACTED]` and the issue date never reached the extractor. A
+  continuation line now stops at `FIELD_LABEL_LINE` (`[ \t]*[A-Za-z][A-Za-z0-9 _-]{0,40}:`).
+  Genuine continuations carry no `<label>:` opener and are still captured — the unlabelled
+  three-line OCR address is pinned in the same block. This is the same line-crossing class
+  #2312 fixed for `NATIONAL_ID`, applied to the address rule.
+
+Scope note for anyone reading the PR: #2313 was branched before #2312 existed and originally
+carried its own parallel copy of the separator machinery (`SEP` / `SEP_OPT` / `KEYWORD_TAIL`,
+plus a lookbehind that Safari <16.4 does not support). That was dropped wholesale in the
+`origin/main` merge in favour of `main`'s `tok()` / `keywordPattern()`; what remains is only
+the address delta above.
+
+## 2026-08-18 — Kenya card neutralized (Tranche 0) + Section 3 corrected (counsel-ordered, `hotfix/kenya-transfer-basis-removal`)
+
+Second commit on this branch, executing item 1 of the Sarah/Carson privacy-policy addendum (Google Doc `1LVNus_xgbWu79DZGUDwh0MUJ8OQn6ISaJSPMQwxSDl8`, "Tranche 0"), quoted verbatim: *"Neutralise the Kenya card: remove the Standard Contractual Clauses under Section 48 transfer basis, the rights list citing Sections 25 to 38, and the 72-hour controller notification timeline. Replace with the counsel-pending placeholder pattern already used for the EU to US basis. Subtraction only. Do not substitute an alternative safeguard."*
+
+- `KENYA_RIGHTS` and `KENYA_BREACH_TIMELINE` are deleted (not reworded — same treatment as `KENYA_TRANSFER_BASIS` in the prior commit below). `KENYA_DESCRIPTION` is rewritten to carry the same "under review by legal counsel and will be published here once confirmed" placeholder sentence that `DPF_DESCRIPTION` already uses for the EU→US card (SCRUM-2283 / §1.13 R-7) — this is the "mirror the EU-US pattern" instruction, applied literally: same substring, same construction.
+- `PRIVACY_S3_BODY` replaced. The prior "Your files never leave your browser" claim was false on the connector path (DocuSign / Google Drive documents are fingerprinted server-side under the §1.6A carve-out, not in the browser). New wording is counsel's exact approved text, sent to Solomon Karanja Meru (MNA Legal) — reproduced verbatim per the addendum, not paraphrased.
+- Consumer-side changes (`rights`/`breachTimeline` now optional on `JurisdictionNotice`, conditional row render, Kenya entry drops both fields) are in `src/components/compliance/JurisdictionPrivacyNotices.tsx` / that folder's `agents.md`.
+
+## 2026-08-18 — `KENYA_TRANSFER_BASIS` removed (counsel-ordered, `hotfix/kenya-transfer-basis-removal`)
+
+Counsel (Sarah) ordered removal, not rewording, of the live-served claim `KENYA_TRANSFER_BASIS: 'Standard Contractual Clauses (Section 48)'` — SCCs are an EU GDPR transfer mechanism, and Kenya DPA 2019 §48 is Kenya's own transfer-adequacy provision that does not name SCCs. Second correction of this general shape in two days, after the DPF/SCRUM-2283 fix (2026-08-10 entry in this file's sibling, `src/components/compliance/agents.md`). The key is now a comment-only removal (not a reworded placeholder value — final wording is counsel's call per §1.5 / §1.13 R-7); `KENYA_BREACH_TIMELINE` and the rest of the Kenya block are untouched. Consumer-side fix (making `transferBasis` optional on `JurisdictionNotice` + conditional row render) is in `src/components/compliance/JurisdictionPrivacyNotices.tsx` / that folder's `agents.md` — read there for the full writeup and the flagged-not-fixed Nigeria/South Africa candidates for the same pattern.
 
 ## 2026-08-10 — `ACTIVATE_ACCOUNT_LABELS` + `ActivateAccountSchema` (recipient activation launch blocker)
 
@@ -152,6 +268,8 @@ _The following entries were lost off `main` by the 2026-07-28 union-merge-driver
 ## Copy-lint coverage (SCRUM-2149)
 `src/lib/**` is now scanned by `npm run lint:copy` (`scripts/check-copy-terms.ts`) for banned §1.3 terms in **user-visible strings** — JSX text and quoted display/error copy that reaches users (e.g. proof-package glossary text, Zod validation messages). The linter does NOT flag code positions (type unions, object keys, property access, URL segments, bare in-code enum/config values like `'mainnet'`), so internal chain/network identifiers in `explorer.ts`/`env.ts` are fine; only display strings must use approved vocabulary. **`copy.ts` is now scanned too** (UX-03 follow-up, 2026-07-06 — it is shipped copy, not just rule docs); its sanctioned SCRUM-1672 "Issue Credential" strings pass via `scripts/ci/snapshots/copy-terms-allowlist.json`. 2026-05-30: reworded `proofPackage.ts` proof_glossary ("SHA-256 hash" → "SHA-256 fingerprint", §1.3 Hash→Fingerprint).
 
+**Multi-line template literals in `src/lib/**` are scanned too (2026-08-20).** The scan was line-based, so a banned term on a WRAPPED line inside a multi-line template literal was invisible: the line carries no quote, no backtick and no `<`/`>` pair, and `findTermViolations()` short-circuits on exactly that. The live instance was `copy.ts` `DISCLAIMER_LABELS.body` — the platform legal disclaimer, of which only the first line was ever scanned. `scripts/check-copy-terms.ts` now runs its cross-line template-literal tracker on every scanned non-`.tsx` file (it was worker-email-only for half a day), so wrapped prose in `copy.ts`, any `src/lib` module, and the public `packages/embed` widget is force-scanned as raw copy. **What this means when editing `copy.ts`:** a banned term in a multi-line block now fails `lint:copy` at the wrapped line, not just the opening one. Lines carrying `<` (SVG/HTML builders like `badgeSvg.ts`) and backticks inside block comments are unaffected. See `scripts/agents.md` → "Copy-term linter" → `updateTemplateTextState()` for scope, the measured surface, and the one known residual.
+
 **Known gap (2026-07-06) — CLOSED (UX-03 follow-up):** the blanket `copy.ts` exclusion was a blind spot — most strings in `copy.ts` are shipped user-facing copy, so a banned term there reached users while `lint:copy` stayed green. This let "worker service" ship in `USAGE_UNAVAILABLE` (fixed, UX-03/SCRUM-1029). **Fix shipped:** `copy.ts` is removed from `EXCLUDE_PATTERNS` and now scanned; the 4 sanctioned SCRUM-1672 "Issue Credential" hits (`CREDENTIAL_ISSUE_FAILED`, `ISSUE_CREDENTIAL_LABELS.GATE_*`) pass via a dedicated `scripts/ci/snapshots/copy-terms-allowlist.json` (permanent §1.3 carve-out, `(file, term)`-keyed → drift-immune, fail-closed to the tiny `ALLOWLISTABLE_TERMS` set), and the 4 COMP-03 `INDEPENDENT_VERIFY_LABELS` gray-area hits were **reworded** at source ("SHA-256 hash" → "SHA-256 fingerprint"; "public block explorer" → "public network explorer"; `{hash}` token → `{fingerprint}`). A shared `isNonSuppressibleTerm` guard means neither the allowlist nor the baseline can ever silence a secret leak (`service_role`/`postgrest`), the infra leak `worker service`, or a launch-blocker. `shouldCheck('src/lib/copy.ts')` now returns `true`. See `scripts/agents.md` → "Copy-term sanctioned allowlist".
 - 2026-07-28 L3-A6: `copy.ts` gained `CE_REGISTRY_IMPORT_LABELS` (new section, "PUBLIC REGISTRY IMPORT") + `MY_CREDENTIALS_LABELS.ADD_FROM_REGISTRY` — append-only, no existing keys touched. §1.3-safe: "Fingerprint" not "Hash", no chain terminology, "Add Record" (not "Issue Credential" — SCRUM-1672 restricts that phrase to the verified-org issuance flow, which this is not). Backs `CtdlRegistryImportDialog.tsx` (`src/components/credentials/`), the CE Noncredit Data Taxonomy 3.0 anchoring POC UI entry point.
 - 2026-06-29 PROOF-04 second-pass (Carson P1 #1352): new `src/lib/sourceProofInput.ts` — `sourceProofInput(supabase, anchor)` assembles the embedded `ProofInput` AND **sources `leaf_count`**, the field that arms the CVE-2012-2459 guard. The old download path never set it (anchor_proofs has no `leaf_count` column), so every embedded packet shipped `leaf_count: null` and the cert couldn't run the full offline guard for any **batch** proof. Now derived the way the server does (PROOF-05): an RLS-scoped exact head-count over `anchor_proofs` filtered by the indexed `batch_id` — a number, no rows/PII (§1.6). That exact-head-count call site is registered against the R0-8 baseline (`check-count-exact-baseline.ts`) via the sanctioned `count-exact-allowed` PR label: the count is bounded per-batch over an indexed column, not a scan of the hot `anchors` table the guardrail targets, and it mirrors the server (#1354). Single-leaf / un-batched SECURED rows → `leaf_count = 1`. If a batch member's count can't be sourced, the result is `{ proof, complete:false }` — the page passes `proofComplete:false` to `buildAuditReport`, which swaps the offline-verify intro to `OFFLINE_VERIFY_INTRO_INCOMPLETE` (drops the "complete proof" claim, §1.5) and warns the user; the packet still embeds for inspection. Tests: `sourceProofInput.test.ts` (6) + 2 incomplete-cert cases in `generateAuditReport.test.ts`.
@@ -203,3 +321,48 @@ keep naming NO transfer mechanism (SCRUM-2283, §1.13 R-7).
 Coverage is enforced, not asserted: `src/pages/PrivacyPage.copy-centralization.test.tsx`
 fails if /privacy renders prose `copy.ts` does not own, or if a jurisdiction
 copy field regresses to an inline literal.
+
+- 2026-08-15 FD-D1 / FD-D3 (claims-integrity): `CONNECTIONS_LABELS` Drive denial copy now mirrors the
+  post-ruling `DriveConnectDenyReason` set exactly. **Added** `DRIVE_ORG_SCOPE_REQUIRED` (caller has an
+  org but omitted `org_id` — actionable retry) and `DRIVE_INDIVIDUAL_SCOPE_UNSUPPORTED` (caller has no
+  org; personal Google Drive is not supported). **Removed** `DRIVE_NEEDS_PAID_PLAN` and
+  `DRIVE_INDIVIDUAL_NOT_VERIFIED`: the worker can no longer emit those codes, and both offered a paid
+  upgrade / identity check for a personal-Drive connection that `org_integrations.org_id` (NOT NULL)
+  made impossible to persist. Keeping copy for an unreachable state is exactly the claims drift the
+  ruling targets — when a `code` dies, its string dies with it. Consumed by
+  `DriveConnectorCard.tsx`'s `DRIVE_DENIAL_COPY` map; §1.3-clean (`lint:copy` green).
+## 2026-08-21 — `csvRowText.ts` column-role classification (PR #2302)
+
+`buildStrippedRowText` is the ONLY exported way to build the text the CSV
+bulk-upload path POSTs to `/api/v1/ai/extract-batch`. Keep it that way: the choke
+point is what makes §1.6 enforceable for the CSV path.
+
+Its `isPersonNameColumn` classifier is load-bearing in **both** directions, because
+a column classified as a person name has its *value* handed to `stripPII` as a
+literal, and `stripPII` removes that literal from the **whole row text**, not just
+that cell:
+
+- too narrow -> a real name leaves the browser (§1.6 breach)
+- too broad  -> `course_name: Advanced Cardiac Life Support` scrubs the credential
+  title out of every line it appears in, and the extractor receives a row stripped
+  of the metadata it was called to read
+
+Bare token matching fails the second half for the COMMON case: `course_name`,
+`credential_name`, `certificate_name`, `issuer_name`, `organization_name`,
+`employee_id` and `participant_count` all contain a person-role token while naming
+a thing or an identifier. Classification is therefore token match MINUS
+(non-person qualifier immediately before the token) MINUS (identifier/scalar
+suffix `_id|_count|_number|_code|_type|_date|_url`).
+
+Ties break toward redaction: an unrecognised qualifier (`nominee_name`) or a person
+token outside the qualified pair (`student_course_name`) still redacts. If you add
+a token, add it to `PERSON_ROLE_TOKENS`; if you add a qualifier, add it to
+`NON_PERSON_QUALIFIERS` — and add both a true-positive and a false-positive case to
+`csvRowText.test.ts`, which pins 16 person headers and 18 non-person headers.
+
+**Known residual:** the `_id` exclusion means `student_id` / `employee_id` /
+`member_id` VALUES now reach the extraction endpoint. `stripPII`'s context-aware
+student-ID stripper does not cover them: `STUDENT_ID_KEYWORD` joins its words with
+`\s+`, so `Student ID: 88213` redacts but the snake_case CSV header form
+`student_id: 88213` does not. That gap is in `piiStripper.ts`, predates this PR,
+and is not fixed here.

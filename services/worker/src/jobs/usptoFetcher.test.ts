@@ -8,7 +8,24 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// usptoFetcher.ts imports the typed `config` export (usptoBulkTsvUrl,
+// SCRUM-1258), and config.ts validates required env at import time — without
+// this mock the whole suite dies in loadConfig() before a single test runs.
+// Same pattern as every other jobs/ test; `usptoBulkTsvUrl` is deliberately
+// left undefined to match the production default (BUG-023: no bulk source),
+// and every download-path test passes `sourceUrl` explicitly.
+vi.mock('../config.js', () => ({
+  config: { logLevel: 'info', nodeEnv: 'test' },
+}));
+
 const { fetchUsptoPAtents, fetchWithConnectTimeout } = await import('./usptoFetcher.js');
+
+/**
+ * BUG-023: the fetcher no longer carries a default bulk URL — the hardcoded
+ * PatentsView S3 bucket has been 403 AccessDenied since the 2026-03-20 USPTO
+ * ODP migration. Tests that exercise the download path must supply one.
+ */
+const TEST_SOURCE_URL = 'https://example.invalid/g_patent.tsv.zip';
 
 function makeSupabase(opts: { flagEnabled?: boolean } = {}) {
   const enabled = opts.flagEnabled ?? false;
@@ -50,7 +67,9 @@ describe('usptoFetcher', () => {
 
     globalThis.fetch = mockFetch;
 
-    const result = await fetchUsptoPAtents(makeSupabase({ flagEnabled: true }));
+    const result = await fetchUsptoPAtents(makeSupabase({ flagEnabled: true }), {
+      sourceUrl: TEST_SOURCE_URL,
+    });
     expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(result.status).toBe('download_failed');
   }, 10_000);
@@ -61,7 +80,9 @@ describe('usptoFetcher', () => {
 
     globalThis.fetch = mockFetch;
 
-    const result = await fetchUsptoPAtents(makeSupabase({ flagEnabled: true }));
+    const result = await fetchUsptoPAtents(makeSupabase({ flagEnabled: true }), {
+      sourceUrl: TEST_SOURCE_URL,
+    });
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(result.status).toBe('download_failed');
   });
@@ -73,6 +94,7 @@ describe('usptoFetcher', () => {
     const start = Date.now();
     const result = await fetchUsptoPAtents(makeSupabase({ flagEnabled: true }), {
       connectTimeoutMs: 50,
+      sourceUrl: TEST_SOURCE_URL,
     });
     const elapsed = Date.now() - start;
 
@@ -87,11 +109,14 @@ describe('usptoFetcher', () => {
     vi.useRealTimers();
     globalThis.fetch = makeHangingFetch() as unknown as typeof fetch;
 
-    await fetchUsptoPAtents(makeSupabase({ flagEnabled: true }), { connectTimeoutMs: 20 });
+    await fetchUsptoPAtents(makeSupabase({ flagEnabled: true }), {
+      connectTimeoutMs: 20,
+      sourceUrl: TEST_SOURCE_URL,
+    });
 
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ timedOut: true }),
-      'Failed to download PatentsView bulk data',
+      'Failed to download patent bulk data',
     );
   }, 10_000);
 });

@@ -662,6 +662,7 @@ export const WEBHOOK_EVENT_DESCRIPTIONS: Record<string, string> = {
   'credential.issued': 'A credential was issued by a verified organization.',
   'credential.verified': 'A document record was confirmed as secured through a verification request.',
   'credential.status_changed': 'A document record moved to a different status.',
+  'compliance.document_expiring': 'A secured document record is within seven days of its expiration date.',
 };
 
 // =============================================================================
@@ -1601,6 +1602,23 @@ export const ORG_PAGE_LABELS = {
 } as const;
 
 // =============================================================================
+// PENDING INVITATIONS (org page — visibility for invites that have not
+// resulted in a member yet)
+// =============================================================================
+
+export const PENDING_INVITATIONS_LABELS = {
+  SECTION_TITLE: 'Pending Invitations',
+  STATUS_PENDING: 'Pending',
+  STATUS_EXPIRED: 'Expired',
+  STATUS_REVOKED: 'Revoked',
+  SENT_ON: 'Sent',
+  RESEND: 'Resend',
+  RESENDING: 'Resending…',
+  RESEND_SUCCESS: 'Invitation resent.',
+  RESEND_FAILED: 'Could not resend this invitation. Please try again.',
+} as const;
+
+// =============================================================================
 // MEMBER DETAIL PAGE
 // =============================================================================
 
@@ -1745,8 +1763,13 @@ export const CONNECTIONS_LABELS = {
   DRIVE_NOT_ADMIN: 'Only an organization administrator can connect Google Drive for your organization.',
   DRIVE_ORG_NOT_VERIFIED: 'Your organization must be verified before connecting Google Drive. Verified organizations can connect a document source. Contact support to start verification.',
   DRIVE_ORG_SUSPENDED: 'Your organization is currently suspended. Google Drive cannot be connected until the suspension is resolved.',
-  DRIVE_NEEDS_PAID_PLAN: 'Connecting Google Drive requires a paid plan. Upgrade your plan, or ask an organization administrator to connect it for your organization.',
-  DRIVE_INDIVIDUAL_NOT_VERIFIED: 'You must complete identity verification before connecting Google Drive to your personal account.',
+  // FD-D3: the caller HAS an organization but asked to connect without naming
+  // it. Actionable — retry from the organization's settings.
+  DRIVE_ORG_SCOPE_REQUIRED: 'Google Drive connects to an organization. Open your organization’s settings and connect from there.',
+  // FD-D1: the caller has no organization at all. Says plainly that this is not
+  // something they can unlock — the previous copy offered a paid upgrade and an
+  // identity check for a personal-Drive connection that could never be saved.
+  DRIVE_INDIVIDUAL_SCOPE_UNSUPPORTED: 'Google Drive can only be connected by an administrator of a verified organization. Personal Google Drive accounts are not supported, so there is nothing to upgrade or verify here.',
   DRIVE_GATE_CHECKING: 'Checking your authorization to connect Google Drive…',
   DRIVE_GATE_UNAVAILABLE: 'We could not verify your authorization right now. Please retry in a few seconds; if the issue persists, contact support.',
 } as const;
@@ -2741,10 +2764,51 @@ export const PAYMENT_LABELS = {
 
 export const EXTRACTION_RECOVERY_LABELS = {
   TITLE: 'Extraction Unsuccessful',
-  DESCRIPTION: 'We couldn\'t extract metadata from this document. This may be due to image quality or an unsupported format.',
+  /**
+   * GENERIC fallback only. Founder report 2026-08-27: this string used to be
+   * the ONLY thing the recovery step rendered, and it asserted a cause we did
+   * not know — "This may be due to image quality or an unsupported format."
+   * It was false for a timeout, a dropped session, or a supported-but-slow
+   * file (the reported case was a supported `.xml`). The specific causes now
+   * live in EXTRACTION_FAILURE_REASON_COPY, keyed by the orchestrator's
+   * `reasonCode`; this line is shown ONLY when no recognized code arrived, so
+   * it must not assert a cause.
+   */
+  DESCRIPTION: 'We couldn\'t extract metadata from this document. You can retry, enter the details yourself, or secure the document without metadata.',
   RETRY: 'Retry Extraction',
   ENTER_MANUALLY: 'Enter Manually',
   SKIP: 'Skip \u2014 Anchor Without Metadata',
+} as const;
+
+/**
+ * Why extraction failed, as user-facing copy keyed by the bounded
+ * `ExtractionFailureReason` code that `src/lib/aiExtraction.ts` reports through
+ * its progress callback.
+ *
+ * §1.6 CONTRACT — read before adding a key. Every value here is a FIXED string
+ * and this map is the ONLY thing the extraction-failed recovery step renders as
+ * a cause. The orchestrator's `progress.message` is deliberately NOT rendered:
+ * two of its branches carry text we do not control (a worker error-response
+ * body, and the `err instanceof Error ? err.message` catch-all, which can wrap
+ * an OCR-stage error whose `cause` references document-derived text). Routing
+ * through a code means an unrecognized or absent code degrades to the generic
+ * EXTRACTION_RECOVERY_LABELS.DESCRIPTION instead of printing arbitrary text
+ * into the DOM. Never add a value that interpolates anything read from the
+ * document, and never add a passthrough key.
+ */
+export const EXTRACTION_FAILURE_REASON_COPY = {
+  timeout:
+    'The analysis took longer than expected and was stopped. This is usually temporary \u2014 retrying often works. Your file never left your device.',
+  network:
+    'We couldn\'t reach the server. Check your connection and try again \u2014 your file never left your device.',
+  auth:
+    'Your session has expired. Sign in again to analyze this document \u2014 your file never left your device.',
+  no_text:
+    'No readable text was found in this document \u2014 it may be a scanned image. A clearer copy may work, or you can enter the details yourself. Your file never left your device.',
+  unsupported_format:
+    'This file format couldn\u2019t be read on your device. Supported formats: PDF, Word (.docx), OpenDocument (.odt/.odp), PowerPoint (.pptx), EPUB, RTF, SVG, images, and text files.',
+  server_error:
+    'The analysis service couldn\'t complete this request. This is usually temporary \u2014 retrying often works. Your file never left your device.',
 } as const;
 
 export const OCR_LABELS = {
@@ -2791,6 +2855,13 @@ export const FINGERPRINT_TOOLTIP = {
 export const RECORD_DETAIL_LABELS = {
   FINGERPRINT_COPY_ARIA: 'Copy document fingerprint',
   FINGERPRINT_COPIED_ARIA: 'Document fingerprint copied',
+  // Rename toasts (founder-reported honesty fix, 2026-08-17): previously
+  // inline literals in RecordDetailPage; a zero-row RLS-denied UPDATE fired
+  // the success toast while the row was unchanged. Permission copy is
+  // distinct from the generic failure so a denied rename says why.
+  TOAST_RENAMED: 'Document renamed',
+  ERR_RENAME: 'Could not rename the document. Please try again.',
+  ERR_RENAME_FORBIDDEN: 'You don’t have permission to rename this record.',
 } as const;
 
 export const ONBOARDING_VALUE_PROP_LABELS = {
@@ -3055,8 +3126,16 @@ export const LEGAL_PAGE_LABELS = {
     'Your information is used to authenticate your account, manage your organization, process billing, and deliver the verification service. We do not sell or share your personal information with third parties for marketing purposes.',
 
   PRIVACY_S3_HEADING: '3. Document Privacy',
+  // Rewritten 2026-08-18 (counsel-ordered, Tranche 0 of the Sarah/Carson
+  // privacy-policy addendum, item 1 — "Fix Section 3. 'Your files never
+  // leave your browser' is not true on the connector path."). The prior
+  // wording was accurate for uploaded documents but false for
+  // connector-fetched ones (DocuSign / Google Drive): those are fetched and
+  // fingerprinted server-side under the narrow §1.6A carve-out, not in the
+  // browser. This is counsel's exact approved wording, sent to Solomon
+  // Karanja Meru (MNA Legal) — reproduce verbatim, do not paraphrase.
   PRIVACY_S3_BODY:
-    'Documents are processed entirely on your device. Only a cryptographic fingerprint (a one-way mathematical representation) is sent to our servers. It is mathematically impossible to reconstruct your document from its fingerprint. Your files never leave your browser.',
+    'Personal information is removed before any metadata is sent to our AI processor. For documents you upload directly, that removal happens in your browser, before anything is transmitted. Documents fetched from a source you connect, such as DocuSign or Google Drive, are not subject to AI metadata processing at all. They are fingerprinted in memory on our servers, the file is discarded immediately, and only the fingerprint and a fixed set of technical fields are retained. In neither case is raw document text or document bytes transmitted to the AI processor.',
 
   PRIVACY_S4_HEADING: '4. Data Security',
   PRIVACY_S4_BODY:
@@ -3560,11 +3639,37 @@ export const PRIVACY_NOTICE_LABELS = {
   HIPAA_BREACH_TIMELINE: '60 calendar days (BA to CE)',
 
   KENYA_TITLE: 'Kenya Data Protection Act 2019',
-  KENYA_DESCRIPTION: 'Applies to data subjects in Kenya. Your personal data is processed lawfully under Sections 25-38. You have rights of access, correction, and erasure. Contact the ODPC for complaints.',
+  // KENYA_DESCRIPTION rewritten, KENYA_RIGHTS and KENYA_BREACH_TIMELINE
+  // removed 2026-08-18 (counsel-ordered, Tranche 0 of the Sarah/Carson
+  // privacy-policy addendum, item 1 — quoted verbatim in the PR body):
+  // "Neutralise the Kenya card: remove the Standard Contractual Clauses
+  // under Section 48 transfer basis, the rights list citing Sections 25 to
+  // 38, and the 72-hour controller notification timeline. Replace with the
+  // counsel-pending placeholder pattern already used for the EU to US
+  // basis. Subtraction only. Do not substitute an alternative safeguard."
+  // The prior KENYA_DESCRIPTION cited Sections 25-38 as the basis for a
+  // specific rights list, and KENYA_BREACH_TIMELINE asserted "72 hours
+  // (controller to ODPC)" — neither was ever reviewed by counsel (Solomon
+  // Karanja Meru, MNA Legal): Sarah told him on 17 August this wording was
+  // left blank pending his recommendation, while the live bundle published
+  // it. KENYA_RIGHTS and KENYA_BREACH_TIMELINE are deleted, not reworded,
+  // and no alternative safeguard is substituted. KENYA_DESCRIPTION now
+  // carries the same "under review by legal counsel and will be published
+  // here once confirmed" placeholder pattern as DPF_DESCRIPTION below
+  // (SCRUM-2283 / §1.13 R-7). JurisdictionPrivacyNotices.tsx omits the
+  // Your Rights and Breach Notification Timeline rows for Kenya entirely,
+  // matching how it already omits the Cross-Border Transfer Basis row
+  // (removed in the prior commit on this branch).
+  KENYA_DESCRIPTION: 'Applies to data subjects in Kenya. Your specific rights and the applicable breach-notification timeline under the Kenya Data Protection Act 2019 are under review by legal counsel and will be published here once confirmed.',
   KENYA_REGULATOR: 'Office of the Data Protection Commissioner (ODPC)',
-  KENYA_RIGHTS: ['Access', 'Rectification', 'Erasure', 'Data portability', 'Object to processing'],
-  KENYA_TRANSFER_BASIS: 'Standard Contractual Clauses (Section 48)',
-  KENYA_BREACH_TIMELINE: '72 hours (controller to ODPC)',
+  // KENYA_TRANSFER_BASIS removed 2026-08-18 (counsel-ordered, hotfix/kenya-
+  // transfer-basis-removal): the prior value, "Standard Contractual Clauses
+  // (Section 48)", conflated two unrelated regimes — SCCs are an EU GDPR
+  // transfer mechanism; Kenya DPA 2019 §48 is Kenya's own transfer-adequacy
+  // provision and does not name SCCs. This is a removal, not a reword — final
+  // replacement wording is counsel's call (§1.5 / §1.13 R-7: state only what
+  // we hold). JurisdictionPrivacyNotices.tsx omits the transfer-basis row
+  // for Kenya entirely rather than render a placeholder.
 
   AUSTRALIA_TITLE: 'Australian Privacy Act 1988',
   AUSTRALIA_DESCRIPTION: 'Applies to data subjects in Australia. Your personal information is handled per the Australian Privacy Principles (APPs). You have rights of access and correction under APP 12-13.',
@@ -3806,6 +3911,42 @@ export const FINGERPRINT_SOURCE_TRIAD = {
     notAsserted: 'That a source document exists, was reviewed, or was fingerprinted. This record was never in document form.',
   },
 } as const satisfies Record<FingerprintSource, { measured: string; asserted: string; notAsserted: string }>;
+
+// =============================================================================
+// CONNECTOR-SOURCED FINGERPRINT (BUG-2026-08-13-010, §1.5 / §1.6A)
+// =============================================================================
+// A connector-sourced anchor's fingerprint commits the exact file bytes Arkova
+// retrieved from the connected source at the moment of retrieval. Source
+// services may regenerate the file on every download (proven against a live
+// source during the 2026-08 soak: four retrievals of the same unchanged
+// document produced four different fingerprints), so a fresh download is NOT
+// expected to reproduce the fingerprint. Two claims failure modes, both
+// avoided on purpose (§1.5 / R-7):
+//   - never read as "this record is weaker" — the exact retrieved file IS
+//     permanently secured;
+//   - never name a vendor — the marker that keys this copy is recorded
+//     classification, not independently provable vendor provenance.
+// Distinct from FINGERPRINT_SOURCE above (what was fingerprinted) — this axis
+// is whether the source system can be expected to reproduce those bytes.
+
+export const CONNECTOR_FINGERPRINT_LABELS = {
+  /** Shown in the re-verify section of a connector-sourced record's detail view. */
+  REVERIFY_NOTE:
+    'This record was secured from a connected source. Its fingerprint matches the exact file as retrieved at securing time. Downloading the document from the source again may produce a file with a different fingerprint, because some services regenerate the file on every download — verify against the originally retrieved copy.',
+  /** Appended to the re-verify mismatch alert for connector-sourced records. */
+  REVERIFY_MISMATCH_HINT:
+    'This document came from a connected source. Some services regenerate the file on every download, so a freshly downloaded copy can carry a different fingerprint even when nothing changed. A mismatch here is not, on its own, evidence the document was altered. To match this record, use the exact file as originally retrieved.',
+} as const;
+
+/** Measured / asserted / NOT-asserted triad per §1.5 for connector-sourced records. */
+export const CONNECTOR_FINGERPRINT_TRIAD = {
+  measured:
+    'The fingerprint of the document bytes retrieved from the connected source at the time this record was secured.',
+  asserted:
+    'That this exact retrieved file existed, unmodified, at the time it was secured.',
+  notAsserted:
+    'That downloading the document from the source again will produce the same fingerprint. Some services regenerate the file on each download, so a new copy may not match even when its content is unchanged.',
+} as const;
 
 /** Row-import (CSV bulk upload) issuer-attestation acknowledgement step. */
 export const RECORD_ATTESTATION_LABELS = {
@@ -4208,3 +4349,73 @@ export const SECURE_QUEUE_PAGE_LABELS = {
   OWNER_LABEL: 'Added by',
   ADMIN_REMOVE_UNAVAILABLE: "Removing another member's queued document isn't available yet.",
 } as const;
+
+// ─── R-7 / GEO-16 — public traction figures (/about, /developers) ───────────
+//
+// Append-only block (per the §6 EOF-append guidance used above). These four
+// tiles were duplicated as bare JSX literals across `AboutPage.tsx` and
+// `DevelopersPage.tsx`; the records-secured figure sat at a stale `1.39M+`
+// while prod held at least 3.3M SECURED records. An undated literal in two
+// files has no owner and no expiry, so it rots in whichever direction the
+// business moves — understating today, potentially overstating tomorrow.
+//
+// A public number is a CLAIM (CLAUDE.md §1.5 / R-7): it must say what it
+// measures and when it was measured. Hence one source of truth, a floor
+// marker (`+`) rather than a point estimate, and an explicit `asOf`.
+// `PlatformMetrics.claims.test.ts` is the ratchet.
+//
+// §1.3-clean: no banned terminology in any label.
+
+/**
+ * Public traction metrics, single-sourced for `/about` and `/developers`.
+ *
+ * `asOf` is `YYYY-MM` for a figure whose measurement date is known, and `null`
+ * for one carried forward from the original GEO-16 block whose provenance was
+ * never recorded. Do NOT give an unverified figure a date to make it look
+ * fresh — re-measure it, then date it.
+ *
+ * `shortLabel` exists only because the `/developers` metric row is a compact
+ * uppercase strip; it is the same claim in fewer words, never a different one.
+ */
+export const PLATFORM_METRICS = {
+  /**
+   * Floor, not a point estimate. Verified 2026-08-23 against the prod project
+   * with a bounded count that stops early and therefore PROVES a lower bound:
+   * `SELECT count(*) FROM (SELECT 1 FROM anchors WHERE status='SECURED'
+   * LIMIT 3300000) t;` returned 3300000. An exact `count(*)` times out at this
+   * table size, and the `pg_class.reltuples` planner estimate reads high, so a
+   * proven floor is the only honest shape for this claim. Re-measure the same
+   * way before raising it, and move `asOf` with it.
+   */
+  RECORDS_SECURED: {
+    value: '3.3M+',
+    label: 'Records Secured',
+    shortLabel: 'Records Secured',
+    asOf: '2026-08',
+  },
+  PUBLIC_RECORDS_INDEXED: {
+    value: '320K+',
+    label: 'Public Records Indexed',
+    shortLabel: 'Public Records',
+    asOf: null,
+  },
+  DOCUMENT_TYPES: {
+    value: '21',
+    label: 'Document Types',
+    shortLabel: 'Document Types',
+    asOf: null,
+  },
+  EXTRACTION_F1: {
+    value: '87.2%',
+    label: 'AI Extraction F1',
+    shortLabel: 'AI Extraction F1',
+    asOf: null,
+  },
+} as const;
+
+/**
+ * Rendered beneath the metric tiles. Only the records-secured figure carries a
+ * measurement date, so this qualifier names that claim specifically rather than
+ * implying the whole block was re-measured.
+ */
+export const PLATFORM_METRICS_AS_OF = 'Records secured as of August 2026.';

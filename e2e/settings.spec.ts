@@ -112,10 +112,15 @@ test.describe('Settings', () => {
       await expect(orgAdminPage.getByRole('heading', { name: /Failed Deliveries/i })).toBeVisible();
       await expect(orgAdminPage.getByRole('heading', { name: /Available Events/i })).toBeVisible();
 
-      // WH-01 catalog honesty: live anchor events are marked Active, deferred
-      // credential events are marked Not yet active.
-      await expect(orgAdminPage.getByTestId('catalog-event-anchor.secured').getByText('Active')).toBeVisible();
-      await expect(orgAdminPage.getByTestId('catalog-event-credential.issued').getByText('Not yet active')).toBeVisible();
+      // WH-01 catalog honesty, both directions: events with live emit points
+      // are marked Active — including credential.issued, emitting since
+      // SCRUM-1798 Phase 2a — and only genuinely dark events are marked
+      // Not yet active (credential.verified: flag-gated off in prod).
+      // exact: true matters — a substring 'Active' also matches 'Not yet
+      // active', which would let a regressed badge pass silently.
+      await expect(orgAdminPage.getByTestId('catalog-event-anchor.secured').getByText('Active', { exact: true })).toBeVisible();
+      await expect(orgAdminPage.getByTestId('catalog-event-credential.issued').getByText('Active', { exact: true })).toBeVisible();
+      await expect(orgAdminPage.getByTestId('catalog-event-credential.verified').getByText('Not yet active')).toBeVisible();
     });
   });
 
