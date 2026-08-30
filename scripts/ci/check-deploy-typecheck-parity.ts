@@ -109,6 +109,9 @@ function stepHasIfGuard(lines: string[], nameIdx: number): boolean {
   for (let k = start; k < lines.length; k++) {
     const line = lines[k];
     if (line.trim() === '') continue;
+    // YAML ignores comments at ANY indentation — a dedented comment between
+    // step keys does not end the step, so it must not end the scan either.
+    if (line.trimStart().startsWith('#')) continue;
     if (k === start) {
       if (/^\s*-\s+if:\s*\S/.test(line)) return true;
       continue;

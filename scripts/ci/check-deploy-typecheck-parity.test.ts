@@ -166,6 +166,20 @@ describe('check-deploy-typecheck-parity — worker compile gate ≡ deploy gate'
     expect(r.errors.some((e) => e.includes('unconditionally'))).toBe(true);
   });
 
+  it('fails when a DEDENTED comment sits between the `run:` line and the `if:` guard', () => {
+    // YAML ignores comments at ANY indentation, so a comment at the list
+    // indent between step keys does not end the step — the `if:` after it
+    // still guards the step. The scan must skip comment lines rather than
+    // treat one as the dedent that terminates the key block.
+    const ci = ciWorkflow({ guardAfterRun: "steps.changed.outputs.worker == 'true'" }).replace(
+      '        if: steps.changed',
+      '      # dedented comment — YAML-ignored, must not stop the scan\n        if: steps.changed',
+    );
+    const r = auditDeployTypecheckParity(sources({ ciWorkflow: ci }));
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes('unconditionally'))).toBe(true);
+  });
+
   it("does not attribute a NEIGHBOURING step's `if:` to the typecheck step", () => {
     // The whole-step scan must stop at the next step's `- ` line — a guard on
     // the following lint step is that step's business, not a parity failure.
