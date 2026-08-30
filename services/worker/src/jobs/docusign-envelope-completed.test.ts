@@ -159,6 +159,17 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     interface MakeDbOpts {
       artifactResult?: { data: string | null; error: unknown };
       auditResult?: { data: { id: string } | null; error: unknown };
+      // F1 (security review, docusign-bilateral-2026-08): override the
+      // connector_artifact read-back the outbound path now performs after
+      // every enqueue, to detect a forged-inbound-row race. Defaults to a
+      // clean, matching row (the SAME hash SINK_INPUT's bytes hash to, no
+      // `_direction` marker) so every pre-existing test in this describe
+      // block — none of which are about this detection path — sees "no
+      // conflict" without needing to know it exists.
+      provenanceResult?: {
+        data: { fingerprint_sha256: string; metadata: Record<string, unknown> | null } | null;
+        error: unknown;
+      };
     }
 
     function makeDb(opts: MakeDbOpts = {}) {
@@ -176,6 +187,25 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
           return Promise.resolve(opts.artifactResult ?? { data: 'artifact-1', error: null });
         }),
         from: vi.fn((table: string) => {
+          if (table === 'connector_artifact') {
+            const provenanceResult = opts.provenanceResult ?? {
+              data: { fingerprint_sha256: EXPECTED_SHA256, metadata: null },
+              error: null,
+            };
+            const provenanceQuery = {
+              select: vi.fn(() => provenanceQuery),
+              eq: vi.fn(() => provenanceQuery),
+              is: vi.fn(() => provenanceQuery),
+              maybeSingle: vi.fn().mockResolvedValue(provenanceResult),
+              // Never called on this branch — present only so this object's
+              // inferred shape is a superset of BOTH DbClient.from() overload
+              // return types (this one and the integration_events one below),
+              // which a single non-overloaded vi.fn() callback needs to
+              // satisfy structurally.
+              insert: vi.fn(),
+            };
+            return provenanceQuery;
+          }
           expect(table).toBe('integration_events');
           const query = {
             select: vi.fn(() => query),
@@ -253,6 +283,109 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       expect(state.insertedDetails).not.toHaveProperty('fingerprint_sha256');
       // Defensive: the raw signed bytes never appear anywhere in the audit row.
       expect(JSON.stringify(state.insertedDetails)).not.toContain('signed bytes');
+    });
+
+    // F1 (security review, docusign-bilateral-2026-08): the connector_artifact
+    // race. Both this OUTBOUND path and the INBOUND declared-hash webhook path
+    // (api/v1/webhooks/docusign.ts) write via enqueue_connector_artifact keyed
+    // on (org_id, source, external_ref, revision) with ON CONFLICT DO NOTHING.
+    // A forged inbound event for this SAME org's SAME envelope, with an
+    // attacker-chosen fingerprint, can win the race and get returned here as
+    // if it were this call's own successful write. These tests pin the
+    // detection: never silently accept a returned artifact id without
+    // verifying it is the row THIS call's real, measured fingerprint produced.
+    describe('F1 — connector_artifact provenance conflict detection', () => {
+      it('detects a pre-existing INBOUND-marked row for the same envelope and raises the distinct alert instead of silently succeeding', async () => {
+        // Simulates the race: an inbound-classified enqueue for this exact
+        // (org, envelope) already won the INSERT before this outbound call's
+        // real, server-fetched hash could land. The RPC (ON CONFLICT DO
+        // NOTHING) returns that existing row's id; the read-back proves it is
+        // NOT this call's own write.
+        const { db } = makeDb({
+          artifactResult: { data: 'forged-inbound-artifact', error: null },
+          provenanceResult: {
+            data: {
+              // Attacker-chosen hash — deliberately NOT EXPECTED_SHA256, the
+              // hash this call's own real fetched bytes produce.
+              fingerprint_sha256: 'f'.repeat(64),
+              metadata: { _direction: 'inbound', _sending_account_id: 'acct-FOREIGN' },
+            },
+            error: null,
+          },
+        });
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
+          'docusign_connector_artifact_provenance_conflict',
+        );
+
+        // DISTINCT signal — a dedicated marker key, not a reuse of any
+        // existing log line — and it never falls through to logger.info
+        // (the flag-disabled breadcrumb) or a silent success.
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({
+            docusign_connector_artifact_provenance_conflict: true,
+            envelopeId: 'envelope-1',
+            artifactId: 'forged-inbound-artifact',
+            persistedDirection: 'inbound',
+            fingerprintMismatch: true,
+          }),
+          expect.any(String),
+        );
+      });
+
+      it('detects a fingerprint mismatch even without an explicit _direction marker (belt-and-suspenders — the hash comparison alone catches it)', async () => {
+        const { db } = makeDb({
+          provenanceResult: {
+            data: { fingerprint_sha256: 'e'.repeat(64), metadata: null },
+            error: null,
+          },
+        });
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
+          'docusign_connector_artifact_provenance_conflict',
+        );
+      });
+
+      it('does NOT raise a conflict when the persisted row matches this call\'s own real, measured fingerprint (legitimate idempotent redelivery)', async () => {
+        // logger.error is a module-level mock shared (and not reset) across
+        // this whole test file — clear it locally so this test's negative
+        // assertion below reads only what THIS test's own call produced, not
+        // accumulated calls from the two provenance-conflict tests above.
+        vi.mocked(logger.error).mockClear();
+        // Same fingerprint, no _direction marker — this IS this call's own
+        // prior write (or an identical concurrent outbound retry), not a
+        // forged race. Must proceed to the normal success path.
+        const { db, state } = makeDb({
+          provenanceResult: {
+            data: { fingerprint_sha256: EXPECTED_SHA256, metadata: { queue_scope: 'org' } },
+            error: null,
+          },
+        });
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        const result = await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+        expect(result).toEqual({ queuedId: 'artifact-1' });
+        expect(state.insertCalled).toBe(true); // audit breadcrumb still written
+        expect(logger.error).not.toHaveBeenCalledWith(
+          expect.objectContaining({ docusign_connector_artifact_provenance_conflict: true }),
+          expect.any(String),
+        );
+      });
+
+      it('fails closed when the provenance read-back itself errors (never treats an unverifiable id as success)', async () => {
+        const { db, state } = makeDb({
+          provenanceResult: { data: null, error: { message: 'db unavailable' } },
+        });
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await expect(deps.enqueueSignedDocument({ ...SINK_INPUT })).rejects.toThrow(
+          'docusign_connector_artifact_readback_failed',
+        );
+        expect(state.insertCalled).toBe(false); // no audit breadcrumb for an unverified write
+      });
     });
 
     it('fails closed when the connector-artifact enqueue errors (throws, no audit write)', async () => {

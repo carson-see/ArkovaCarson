@@ -77,15 +77,17 @@ export const AnchorInsertPayload = z
     filename: z.string().min(1).max(255),
     credential_type: z.literal('CONTRACT_POSTSIGNING'),
     metadata: z.record(z.string(), z.unknown()),
-    // R2 (CTO Decision Record, docusign-bilateral-2026-08): every row this
-    // drain materializes was fetched from a connected third-party source and
-    // hashed server-side (§1.6A) — never a declared/asserted hash — so
-    // `fingerprint_source` is always the 'document_bytes' evidence class
-    // (migration 0376/0384; CHECK-constrained on `anchors.fingerprint_source`).
-    // A literal, not an enum: this drain has no code path that produces the
-    // other class ('issuer_record_attestation' is the declared-hash inbound
-    // path, a different anchor-creation mechanism entirely).
-    fingerprint_source: z.literal('document_bytes'),
+    // fingerprint_source (CTO Decision Record, docusign-bilateral-2026-08;
+    // migration 0376/0384, CHECK-constrained on `anchors.fingerprint_source`):
+    // 'document_bytes' — the server-fetched connector path; DocuSign outbound
+    // fetches + hashes the combined document upstream in
+    // docusign-envelope-completed.ts (§1.6A) — covers every drained row
+    // EXCEPT the inbound branch below. 'issuer_record_attestation' — the
+    // inbound declared-hash branch: the sha256 is asserted by DocuSign's own
+    // notification payload and is never measured by Arkova (§1.5 /
+    // DECLARED_UNVERIFIED). See the value assignment below for which branch
+    // sets which value.
+    fingerprint_source: z.enum(['document_bytes', 'issuer_record_attestation']).optional(),
   })
   .strict();
 
@@ -405,6 +407,15 @@ export async function defaultMaterializeAnchor(
     metadataString(row.metadata, 'external_filename') ??
     `${row.source}:${row.external_ref}`.slice(0, 255);
 
+  // docusign-bilateral-2026-08: the INBOUND declared-hash webhook path
+  // (services/worker/src/api/v1/webhooks/docusign.ts) writes `_direction:
+  // 'inbound'` onto the connector_artifact's own metadata before this row is
+  // ever drained — see that handler for the classification logic. Every
+  // OTHER connector path (today: DocuSign outbound, Google Drive) never sets
+  // `_direction`, so `isInboundDeclaredHash` is false for 100% of existing
+  // traffic — this branch is additive and does not change any prior behavior.
+  const isInboundDeclaredHash = metadataString(row.metadata, '_direction') === 'inbound';
+
   const insertPayload = {
     fingerprint: row.fingerprint_sha256,
     status: 'PENDING' as const,
@@ -422,11 +433,15 @@ export async function defaultMaterializeAnchor(
       connector_artifact_id: row.id,
       external_ref: row.external_ref,
     },
-    // R2: this row's fingerprint is always a server-computed hash of fetched
-    // document bytes (DS-03 enqueueSignedDocument, and its Drive/other
-    // connector twins) — never a declared/asserted value. See the schema
-    // comment on AnchorInsertPayload above.
-    fingerprint_source: 'document_bytes' as const,
+    // fingerprint_source (CTO Decision Record, docusign-bilateral-2026-08):
+    // the inbound declared-hash branch never had its bytes measured by
+    // Arkova — the sha256 is asserted by DocuSign's notification (§1.5 /
+    // DECLARED_UNVERIFIED) — so it gets 'issuer_record_attestation'. Every
+    // other drained row (the server-fetched outbound path; DS-03
+    // enqueueSignedDocument and its Drive/other connector twins) is a
+    // server-computed hash of fetched document bytes and gets
+    // 'document_bytes'. See the schema comment on AnchorInsertPayload above.
+    fingerprint_source: isInboundDeclaredHash ? ('issuer_record_attestation' as const) : ('document_bytes' as const),
   };
 
   // Validate the persisted row before insert (§1.2). Parse failures throw into

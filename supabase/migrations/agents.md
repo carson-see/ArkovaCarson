@@ -809,3 +809,32 @@ other worktrees are actively claiming numbers in this range the same day (rig ta
 | Prefix | File | PR | Applied to prod/rig? | Note |
 |---|---|---|---|---|
 | `0423` | `0423_sec_docusign_metadata_key_write_authority.sql` | branch `fix/docusign-metadata-key-write-authority` (PR #2472, DRAFT) | **no — file only, pre-soak** | T3 (migration + security). `BEFORE INSERT OR UPDATE OF metadata` trigger `trg_strip_unattested_docusign_metadata_keys` + `SECURITY DEFINER` function `enforce_docusign_metadata_key_authority()`, copying 0384's/0394's exact strip/revert pattern and reusing 0394's identical `get_caller_role() = 'service_role'` predicate (no new detection method invented). Strips (INSERT) or reverts-to-OLD (UPDATE) the DocuSign provenance key family in `anchors.metadata` for any non-service_role writer — `connector_source`, `connector_artifact_id`, `_signers`, `_docusign_env`, `_direction`, `_sending_account_id` unconditionally; `account_id`/`envelope_id` ONLY when the row claims DocuSign provenance (`v_claims_docusign`, true when `connector_source` is present in the caller's payload or the row's existing OLD state) — those two are generic names that also occur legitimately in non-DocuSign metadata (`SecureDocumentDialog.tsx` spreads AI-extracted top-level fields; `IssueCredentialForm.tsx` persists arbitrary org-template field keys), so unconditional guarding would have silently stripped unrelated data with no error. Does not reopen the forgery: `AssetDetailView.tsx` (PR #2473) renders `account_id`/`envelope_id` as DocuSign links only when `connector_source === 'docusign'` exactly, and `connector_source` itself stays unconditionally guarded. Closes the `bulk_create_anchors` / direct-PostgREST forgery gap `services/worker/src/constants/connectorFingerprint.ts` documents in its own header. Confirmed by full-tree grep that the only writers of these 8 keys into `anchors.metadata` (`jobs/connector-artifact-drain.ts`, `jobs/rule-action-dispatcher.ts`, `jobs/docusign-envelope-completed.ts` via the `connector_artifact` staging row) all authenticate `service_role` through `services/worker/src/utils/db.ts`'s `config.supabaseServiceKey` client; no legitimate non-service_role writer of any of the 8 keys exists in the DocuSign context. `SET LOCAL lock_timeout = '5s'` precedes the `CREATE TRIGGER` (hot-table DDL, CLAUDE.md §1.2); `scripts/ci/check-hot-table-ddl-lock-timeout.ts` passes with 0 new violations. Soak: pending, orchestrated by the CTO session per the Decision Record's delivery sequence (PR-1 of 4). |
+## Recent migrations (branch feat/docusign-inbound-recipient-connect)
+
+Titled by branch, not PR number: written before this branch's PR existed. Unique
+per `scripts/ci/check-agents-md-migration-collision.ts` (no other block in this
+file uses this branch name).
+
+### `0424` claimed — `0424_docusign_webhook_nonces_tenant_scope.sql`
+
+Re-derived 2026-08-29 per the next-free rule: `git log --all --diff-filter=A -- 'supabase/migrations/0*.sql'`
+over every fetched ref tops out at `0423` (`fix/docusign-metadata-key-write-authority`,
+PR #2472 — the DocuSign metadata key write-authority guard trigger this same
+epic's PR-1 relies on). The `0421`/`0422` reservations two sections above and
+the `credits-2442` (`0420`) / `cleanup-2335` (`0417`) rig rows immediately
+above are all `<= 0423`, so none of them are the head. `0424` is therefore the
+next genuinely-free prefix as of this derivation — **next author, re-derive,
+do not trust this line**, per this file's own standing rule (same caveat every
+other reservation in this section carries).
+
+Adds `account_id` to `docusign_webhook_nonces`' uniqueness key (tenant-scopes
+DocuSign Connect webhook replay protection — see the file header for the full
+rationale). Additive nullable column, no backfill (§1.5), plain `ADD
+CONSTRAINT` (table is small, swept every 14 days — not a hot-table two-phase
+lock situation). Part of the docusign-bilateral-2026-08 feasibility spike
+(SCRUM-3817/SCRUM-3818): the whole feature ships behind `ENABLE_DOCUSIGN_INBOUND`
+(default false) and is NOT going live this cycle, but this migration itself is
+a real, always-applicable tenant-isolation hardening independent of the flag —
+it does not touch existing rows' behavior and is safe to soak/apply on its own
+schedule. Tier T3 (migration). **Next author claims `0425` — re-derive, do not
+trust this line.**

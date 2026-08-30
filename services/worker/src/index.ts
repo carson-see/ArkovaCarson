@@ -279,7 +279,12 @@ import { ruleEventBackpressure } from './middleware/ruleEventBackpressure.js';
 app.use(
   '/webhooks/docusign',
   killSwitch('ENABLE_DOCUSIGN_WEBHOOK'),
-  rateLimiters.stripeWebhook,
+  // docusign-bilateral-2026-08 (SCRUM-3418): own bucket, was sharing
+  // `stripeWebhook`'s global 100/min key with the Stripe webhook route — see
+  // rateLimiters.docusignWebhook's doc comment. PR #2441 (open,
+  // fix/ratelimit-per-limiter-bucket-scope) reworks limiter buckets
+  // generally but does not touch this route.
+  rateLimiters.docusignWebhook,
   ruleEventBackpressure, // SCRUM-1024: 503 + Retry-After if rule_events queue overloaded
   express.raw({ type: 'application/json', limit: '1mb' }),
   (req, _res, next) => {

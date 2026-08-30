@@ -357,6 +357,24 @@ export const rateLimiters = {
     keyGenerator: () => 'stripe', // Global limit
   }),
 
+  // docusign-bilateral-2026-08 (SCRUM-3817/SCRUM-3818): DocuSign Connect
+  // webhook — previously shared the `stripeWebhook` bucket above (same
+  // 100 req/min global key), which meant a burst of legitimate Stripe
+  // deliveries could exhaust the budget DocuSign retries depend on, and vice
+  // versa. Every limiter needs its OWN scope (SCRUM-3418 / PR #2441, which
+  // does NOT touch this route — verified via that PR's diff before adding
+  // this), so this gets a private global bucket at the same 100/min budget
+  // rather than continuing to share Stripe's. Global (not per-IP): DocuSign
+  // Connect deliveries all originate from DocuSign's own infrastructure, not
+  // caller-controlled IPs, so a per-IP key would not meaningfully bound
+  // anything a global one doesn't already.
+  docusignWebhook: rateLimit({
+    windowMs: 60000,
+    maxRequests: 100,
+    scope: 'docusign-webhook',
+    keyGenerator: () => 'docusign', // Global limit, own bucket (SCRUM-3418)
+  }),
+
   // Checkout: 10 req/min per IP
   checkout: rateLimit({
     windowMs: 60000,

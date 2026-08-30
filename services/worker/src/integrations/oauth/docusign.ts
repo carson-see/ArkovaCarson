@@ -52,6 +52,17 @@ const EnvelopeDocument = z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/i).optional(),
 });
 
+// docusign-bilateral-2026-08: `accountId` here is the envelope's DECLARED
+// owning/sending account (DocuSign's `sender.accountId`), distinct from the
+// top-level `accountId` (the account whose Connect config delivered this
+// webhook). Optional — absent on every payload shape that predates the
+// inbound feasibility spike. See DocusignEnvelopeCompleted in
+// integrations/connectors/schemas.ts for the full rationale.
+const SenderShape = z.object({
+  email: z.string().email().optional(),
+  accountId: z.string().trim().min(1).optional(),
+}).passthrough().optional();
+
 const RawConnectPayload = z.object({
   event: z.string().trim().min(1),
   eventId: z.string().trim().min(1).optional(),
@@ -69,7 +80,7 @@ const RawConnectPayload = z.object({
       envelopeId: z.string().trim().min(1).optional(),
       accountId: z.string().trim().min(1).optional(),
       status: z.string().trim().min(1).optional(),
-      sender: z.object({ email: z.string().email().optional() }).passthrough().optional(),
+      sender: SenderShape,
       envelopeDocuments: z.array(EnvelopeDocument).max(100).optional(),
     }).passthrough().optional(),
   }).passthrough().optional(),
@@ -77,10 +88,10 @@ const RawConnectPayload = z.object({
     envelopeId: z.string().trim().min(1).optional(),
     accountId: z.string().trim().min(1).optional(),
     status: z.string().trim().min(1).optional(),
-    sender: z.object({ email: z.string().email().optional() }).passthrough().optional(),
+    sender: SenderShape,
     envelopeDocuments: z.array(EnvelopeDocument).max(100).optional(),
   }).passthrough().optional(),
-  sender: z.object({ email: z.string().email().optional() }).passthrough().optional(),
+  sender: SenderShape,
   envelopeDocuments: z.array(EnvelopeDocument).max(100).optional(),
 }).passthrough();
 
@@ -576,6 +587,13 @@ export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignC
   const nested = parsed.data?.envelopeSummary;
   const envelopeId = parsed.envelopeId ?? parsed.data?.envelopeId ?? parsed.envelopeSummary?.envelopeId ?? nested?.envelopeId;
   const accountId = parsed.accountId ?? parsed.data?.accountId ?? parsed.envelopeSummary?.accountId ?? nested?.accountId;
+  // docusign-bilateral-2026-08: the envelope's DECLARED owning/sending account,
+  // read from the same nesting fallback chain as `sender` itself below. Absent
+  // on every payload shape that predates this field — the classifier falls
+  // back to `accountId` in that case (see DocusignEnvelopeCompleted's doc
+  // comment for why that reproduces today's outbound-only behavior exactly).
+  const senderAccountId =
+    parsed.sender?.accountId ?? parsed.envelopeSummary?.sender?.accountId ?? nested?.sender?.accountId;
   // Minimal SIM deliveries (dashboard-created listeners without eventData
   // includes) carry NO status field at any nesting level — the event name is
   // the completion assertion (prod evidence 2026-07-27, envelope 624c1d84…,
@@ -597,6 +615,7 @@ export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignC
     accountId,
     status: 'completed',
     sender: parsed.sender ?? parsed.envelopeSummary?.sender ?? nested?.sender,
+    ...(senderAccountId ? { senderAccountId } : {}),
     envelopeDocuments: parsed.envelopeDocuments ?? parsed.envelopeSummary?.envelopeDocuments ?? nested?.envelopeDocuments ?? [],
     generatedDateTime: parsed.generatedDateTime,
   });

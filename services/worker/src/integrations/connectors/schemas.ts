@@ -45,6 +45,10 @@ export const DocusignEnvelopeCompleted = z.object({
   event: z.literal('envelope-completed'),
   eventId: NonEmptyString.optional(),
   envelopeId: NonEmptyString,
+  // The account whose Connect configuration produced THIS delivery (used to
+  // resolve the org_integrations/member_integrations row + its HMAC key —
+  // unchanged by docusign-bilateral-2026-08). NOT necessarily the envelope's
+  // owning/sending account — see `senderAccountId` below.
   accountId: NonEmptyString,
   status: z.literal('completed'),
   generatedDateTime: z.string().datetime().optional(),
@@ -52,6 +56,19 @@ export const DocusignEnvelopeCompleted = z.object({
     .object({ email: MaybeEmail })
     .partial()
     .optional(),
+  // docusign-bilateral-2026-08 (feasibility spike, SCRUM-3817/SCRUM-3818):
+  // the envelope's declared owning/sending DocuSign account, when DocuSign's
+  // notification states one distinct from `accountId` — carries the payload's
+  // `sender.accountId`. Optional and ABSENT on every payload shape that
+  // predates this field (including 100% of traffic today): the webhook
+  // classifier (services/worker/src/api/v1/webhooks/docusign.ts) treats a
+  // missing `senderAccountId` as "same as accountId" (falls back to it),
+  // which reproduces the pre-existing outbound-only classification exactly.
+  // Never trust this field alone for a trust decision — the classifier
+  // additionally cross-checks it against the resolving org's own
+  // SERVER-STORED connected-account set before ever calling an envelope
+  // "outbound" (see that file's `classifyDirection`).
+  senderAccountId: NonEmptyString.optional(),
   envelopeDocuments: z
     .array(
       z.object({
