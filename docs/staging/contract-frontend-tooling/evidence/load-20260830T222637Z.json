@@ -1,0 +1,72 @@
+{
+  "driver": "cft-contract-surface-driver",
+  "batch": "contract-frontend-tooling",
+  "cycle_id": "20260830T222637Z",
+  "captured_at": "2026-08-30T22:26:54.493Z",
+  "api_base": "https://arkova-worker-soak-contract-frontend-tooling-stag-kvojbeutfa-uc.a.run.app",
+  "supabase_ref": "https://udpzylbccncnwvhbfjsu.supabase.co",
+  "ok": 10,
+  "fail": 2,
+  "detail": {
+    "health": {
+      "ok": 1,
+      "fail": 0,
+      "last": "http 200 git_sha=dfbbf7f5f747411a0f87a0f5347d013599778a9b"
+    },
+    "sdk.fingerprint": {
+      "ok": 1,
+      "fail": 0,
+      "last": "44117b915f5cdb8d"
+    },
+    "sdk.verify": {
+      "ok": 1,
+      "fail": 0,
+      "last": "{\"description\":\"Arkova articles of incorporation\",\"complianceControls\":null,\"complianceControlsNote\":null,\"chainConfirma"
+    },
+    "sdk.getAnchor": {
+      "ok": 1,
+      "fail": 0,
+      "last": "{\"description\":null,\"complianceControls\":null,\"complianceControlsNote\":null,\"chainConfirmations\":null,\"parentPublicId\":n"
+    },
+    "sdk.verifyFingerprint": {
+      "ok": 1,
+      "fail": 0,
+      "last": "{\"description\":null,\"complianceControls\":null,\"complianceControlsNote\":null,\"chainConfirmations\":null,\"parentPublicId\":n"
+    },
+    "sdk.webhooks.create[anchor.superseded]": {
+      "ok": 1,
+      "fail": 0,
+      "last": "id=9adfce8c-044e-43e7-9c13-e04c98e44460"
+    },
+    "sdk.webhooks.list[anchor.superseded]": {
+      "ok": 1,
+      "fail": 0,
+      "last": "n=1 total=1"
+    },
+    "auth.orgAdminSignIn": {
+      "ok": 1,
+      "fail": 0,
+      "last": "token len=802"
+    },
+    "supersede.target": {
+      "ok": 1,
+      "fail": 0,
+      "last": "minted ARK-DOC-MTSD8A"
+    },
+    "supersede.dispatch": {
+      "ok": 1,
+      "fail": 0,
+      "last": "http 200 {\"new_anchor_id\":\"33450bf5-75a8-4350-820e-663ab3c6b92c\"}"
+    },
+    "webhook.delivery[anchor.superseded]": {
+      "ok": 0,
+      "fail": 1,
+      "last": "rows=0 statuses="
+    },
+    "sink.received[anchor.superseded]": {
+      "ok": 0,
+      "fail": 1,
+      "last": "sink rows=1 superseded=0 newest=none"
+    }
+  }
+}
