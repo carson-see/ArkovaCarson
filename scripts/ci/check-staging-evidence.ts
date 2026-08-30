@@ -170,6 +170,26 @@ export const PATH_RULES: PathRule[] = [
     reason: 'anchor lifecycle / batch processor',
   },
   {
+    // SCRUM-3802: the whitelist above is how PR #2266 merged tier-under-declared
+    // — publicRecordAnchor.ts (the cron that batch-inserts up to 10k anchors per
+    // Bitcoin tx) was not on it, so the diff fell through to the T2 jobs/
+    // catch-all and §1.13's fail-closed guarantee was void for this file class.
+    // This rule pins the rest of the audited anchor-pipeline jobs: files that
+    // CREATE anchor rows (publicRecordAnchor, connector-artifact-drain,
+    // rule-action-dispatcher's AUTO_ANCHOR/FAST_TRACK_ANCHOR materializer),
+    // mutate anchor lifecycle state (mainnet-migration resets status + chain
+    // columns; public-record-quarantine permanently excludes rows from
+    // anchoring), sign/broadcast Bitcoin transactions or decide broadcast
+    // recovery (supplementary-proof-anchor + its treasury/chain adapter,
+    // txid-journal's ADOPT/REVERT/HOLD core), or set the shared batch contract
+    // every anchoring job obeys (anchor-batching). Read-only anchors consumers
+    // (monitors, digests, docusign-anchor-reconciliation's detector) stay on
+    // the T2 jobs/ catch-all on purpose — auditing is not mutation.
+    pattern: /^services\/worker\/src\/jobs\/(publicRecordAnchor|public-record-quarantine|connector-artifact-drain|rule-action-dispatcher|mainnet-migration|supplementary-proof-anchor(?:\.adapter)?|txid-journal|anchor-batching)\.ts$/,
+    minTier: 'T3',
+    reason: 'anchor-creating feeder / anchor pipeline (SCRUM-3802)',
+  },
+  {
     pattern: /^services\/worker\/src\/routes\/scheduled\.ts$/,
     minTier: 'T3',
     reason: 'cron schedule',
