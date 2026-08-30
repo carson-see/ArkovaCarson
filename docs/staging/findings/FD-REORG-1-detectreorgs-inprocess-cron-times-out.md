@@ -99,6 +99,44 @@ Treat the mechanism as **open**, owned by SCRUM-3384. The remediation in this do
 depend on resolving it — provisioning the prod scheduler job moves reorg detection onto the
 execution context that is empirically reliable, whatever the underlying reason turns out to be.
 
+## Resolved: the ~60s was a swallowed `statement_timeout` (FD-DB-1 / SCRUM-3836)
+
+The pinned ~60s was never latency. `detectReorgs`' candidate query filters `anchors` on
+`chain_block_height`; no index covered it, so on prod (3.8M rows / 23 GB) the plan was a
+`Parallel Seq Scan` at cost 1,775,993. PostgREST connects as `authenticator`, which carries
+`statement_timeout=60s`, so the query was **killed on every run**. The code folded that error into
+the empty case and the route returned **HTTP 200**.
+
+`pg_stat_statements` on the exact PostgREST statement: 1,108 calls, mean 11,426 ms, max 59,986 ms.
+
+**Reorg detection had never inspected an anchor in production.** Migration 0347 shipped
+same-height reorg handling; the detector behind it returned `checked: 0` every time.
+
+Fixed by migration 0425 (partial index, `CREATE INDEX CONCURRENTLY`) plus the code changes in
+PR #2495. Measured on prod: `Index Scan`, Execution Time **0.442 ms**; live endpoint
+**60.2s → 0.25–0.43s**, cutover 2026-08-30T14:50Z; the scan now returns 100 candidates per run.
+
+### What this corrects in this document
+
+- The **escalation** below (116 failures on 08-28) was a threshold being crossed, not a new fault:
+  mean 11.4s against a 60s ceiling says the query used to complete, slowly, until the table grew
+  past it.
+- The rig's **288/288 green** proved nothing about prod. That database is small, so the same scan
+  ran in 0.22–0.40s. A green soak on a small fixture cannot exercise a scale-dependent timeout.
+- The **execution-context** framing was too strong. The scheduler path was not "working" — it was
+  failing differently and reporting 200. Two defects share this symptom: the DB timeout (fixed,
+  SCRUM-3836) and the in-process tip fetch, which still fails with an undici `TimeoutError` before
+  it ever reaches the DB (open, SCRUM-3191, mechanism with SCRUM-3384).
+- The mechanism section's earlier appeal to Cloud Run CPU throttling remains unsupported and is not
+  reinstated here.
+
+### The rule this is a case of
+
+A 200 that means "I could not do the work" is worse than a 500. This endpoint answered on 1,108
+consecutive calls and the answer was always identical, which read as healthy. Any handler with an
+`if (error || empty) return zeros` shape can do the same — the error branch and the empty branch
+must be separable by the caller, and the failure must be logged.
+
 ## Escalation (re-measured 2026-08-29)
 
 The rate has climbed by an order of magnitude, and nothing has been fixed: `main` (`f576e2f64`)
