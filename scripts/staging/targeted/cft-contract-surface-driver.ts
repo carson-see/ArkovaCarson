@@ -32,10 +32,11 @@
  *
  * TRANSPORT NOTE (honest disclosure): the rig's Cloud Run service is deployed
  * `--no-allow-unauthenticated`, so every request additionally carries a Google
- * identity token in `Authorization`. The SDK authenticates with `X-API-Key`,
- * so the two do not collide; `globalThis.fetch` is wrapped to add the identity
- * token for the rig origin only. Nothing about the SDK's own request shaping is
- * altered — the wrapper adds one header and forwards.
+ * identity token. It is sent in `X-Serverless-Authorization` — Cloud Run's own
+ * header for exactly this case — so the app-level `Authorization` (org-admin
+ * JWT) and `X-API-Key` both reach the worker untouched. `globalThis.fetch` is
+ * wrapped to add that one header for the rig origin only; nothing about the
+ * SDK's own request shaping is altered.
  *
  * Usage:
  *   STAGING_API_BASE=https://<rig-service>.run.app \
@@ -64,10 +65,15 @@ const SERVICE_ROLE_KEY = requireEnv('RIG_SERVICE_ROLE_KEY');
 const API_KEY = requireEnv('ARKOVA_API_KEY');
 const SINK_URL = requireEnv('WEBHOOK_SINK_URL');
 const SDK_MODULE = requireEnv('SDK_MODULE');
+const SINK_READBACK = process.env.SINK_READBACK ?? '';
 const EVIDENCE_OUT = process.env.EVIDENCE_OUT ?? 'docs/staging/contract-frontend-tooling/evidence';
 const SEED_PUBLIC_ID = process.env.SEED_PUBLIC_ID ?? '';
 const SEED_FINGERPRINT = process.env.SEED_FINGERPRINT ?? '';
-const CALLER_JWT = process.env.CALLER_JWT ?? '';
+const RIG_ANON_KEY = process.env.RIG_ANON_KEY ?? '';
+const CALLER_EMAIL = process.env.CALLER_EMAIL ?? '';
+const CALLER_USER_ID = process.env.CALLER_USER_ID ?? '';
+const CALLER_ORG_ID = process.env.CALLER_ORG_ID ?? '';
+const CALLER_PASSWORD = process.env.CALLER_PASSWORD ?? '';
 
 const cyclesArgIndex = process.argv.indexOf('--cycles');
 const CYCLES = cyclesArgIndex >= 0 ? Number(process.argv[cyclesArgIndex + 1]) : 1;
@@ -96,7 +102,10 @@ function installFetchShim(idToken: string): void {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url.startsWith(API_BASE)) {
       const headers = new Headers(init?.headers ?? {});
-      if (!headers.has('authorization')) headers.set('authorization', `Bearer ${idToken}`);
+      // Cloud Run validates X-Serverless-Authorization for IAM and passes
+      // Authorization through to the container untouched — so the SDK's
+      // X-API-Key and the org-admin JWT both reach the worker unmodified.
+      headers.set('x-serverless-authorization', `Bearer ${idToken}`);
       return original(input, { ...init, headers });
     }
     return original(input, init);
@@ -113,6 +122,24 @@ async function sbRest(path: string, init?: RequestInit): Promise<Response> {
       ...(init?.headers as Record<string, string> | undefined),
     },
   });
+}
+
+/**
+ * Sign in as the rig's seeded ORG_ADMIN through GoTrue every cycle. A soak
+ * outlives a single access token (~1h), so a token captured at stand-up would
+ * silently 401 the supersede path for most of the window and the driver would
+ * look green on the SDK half while the delivery half quietly stopped running.
+ */
+async function callerJwt(): Promise<string | null> {
+  if (!RIG_ANON_KEY || !CALLER_EMAIL || !CALLER_PASSWORD) return null;
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: { apikey: RIG_ANON_KEY, 'content-type': 'application/json' },
+    body: JSON.stringify({ email: CALLER_EMAIL, password: CALLER_PASSWORD }),
+  });
+  if (!r.ok) return null;
+  const body = (await r.json()) as { access_token?: string };
+  return body.access_token ?? null;
 }
 
 function record(c: CycleCounts, name: string, ok: boolean, note?: string): void {
@@ -191,30 +218,52 @@ async function runCycle(cycleId: string): Promise<CycleCounts> {
   }
 
   try {
-    const list = await arkova.webhooks.list({ limit: 20 });
-    const items = (list?.data ?? list?.items ?? list ?? []) as Array<{ events?: string[] }>;
-    const hit = Array.isArray(items) && items.some((w) => (w.events ?? []).includes('anchor.superseded'));
-    record(counts, 'sdk.webhooks.list[anchor.superseded]', hit, `n=${Array.isArray(items) ? items.length : '?'}`);
+    const list = await arkova.webhooks.list({ limit: 50 });
+    const items = (list?.webhooks ?? []) as Array<{ events?: string[] }>;
+    const hit = items.some((w) => (w.events ?? []).includes('anchor.superseded'));
+    record(counts, 'sdk.webhooks.list[anchor.superseded]', hit, `n=${items.length} total=${list?.total ?? '?'}`);
   } catch (e) {
     record(counts, 'sdk.webhooks.list[anchor.superseded]', false, String(e));
   }
 
   // ── #2433 (b): real anchor.superseded delivery ─────────────────────────
-  if (CALLER_JWT) {
+  const jwt = await callerJwt();
+  record(counts, 'auth.orgAdminSignIn', Boolean(jwt), jwt ? `token len=${jwt.length}` : 'sign-in failed');
+  if (jwt) {
     try {
-      const pick = await sbRest(
-        `anchors?status=eq.SECURED&chain_tx_id=not.is.null&select=id,public_id&limit=1&order=created_at.desc`,
-      );
-      const rows = (await pick.json()) as Array<{ id: string; public_id: string }>;
-      if (!rows.length) {
-        record(counts, 'supersede.dispatch', false, 'no SECURED anchor with chain fields available');
+      // Mint a fresh SECURED target per cycle: the seeded org anchor carries
+      // legal_hold=true (409 'Cannot supersede anchor under legal hold'), and
+      // reusing one target would make the second cycle a no-op anyway — a
+      // superseded anchor cannot be superseded again.
+      const hex = () => Array.from({ length: 64 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
+      const mk = await sbRest('anchors', {
+        method: 'POST',
+        headers: { prefer: 'return=representation' },
+        body: JSON.stringify({
+          user_id: CALLER_USER_ID,
+          org_id: CALLER_ORG_ID,
+          filename: `cft_soak_supersede_${cycleId}.pdf`,
+          fingerprint: hex(),
+          status: 'SECURED',
+          file_size: 2048,
+          file_mime: 'application/pdf',
+          legal_hold: false,
+          chain_tx_id: hex(),
+          chain_block_height: 210_000,
+          chain_timestamp: new Date().toISOString(),
+        }),
+      });
+      const rows = (await mk.json()) as Array<{ id: string; public_id: string }>;
+      if (!Array.isArray(rows) || !rows.length) {
+        record(counts, 'supersede.target', false, `mint failed http ${mk.status} ${JSON.stringify(rows).slice(0, 160)}`);
       } else {
+        record(counts, 'supersede.target', true, `minted ${rows[0].public_id}`);
         const target = rows[0];
         const newFp = Array.from({ length: 64 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
         const r = await fetch(`${API_BASE}/api/anchor/${target.id}/supersede`, {
           method: 'POST',
           headers: {
-            authorization: `Bearer ${CALLER_JWT}`,
+            authorization: `Bearer ${jwt}`,
             'content-type': 'application/json',
             'x-cloud-run-id-token': idToken,
           },
@@ -239,6 +288,25 @@ async function runCycle(cycleId: string): Promise<CycleCounts> {
               ? `status=${delivered.response_status} at=${delivered.created_at}`
               : `rows=${logs.length} statuses=${logs.map((l) => l.response_status).join(',')}`,
           );
+
+          // Independent confirmation from the receiving end: the worker's own
+          // delivery log is its claim about the POST; the sink's read-back is
+          // the endpoint saying it actually arrived.
+          if (SINK_READBACK) {
+            try {
+              const sk = await fetch(SINK_READBACK);
+              const got = (await sk.json()) as Array<{ at: string; body: string }>;
+              const superseded = got.filter((g) => (g.body ?? '').includes('anchor.superseded'));
+              record(
+                counts,
+                'sink.received[anchor.superseded]',
+                superseded.length > 0,
+                `sink rows=${got.length} superseded=${superseded.length} newest=${superseded.at(-1)?.at ?? 'none'}`,
+              );
+            } catch (e) {
+              record(counts, 'sink.received[anchor.superseded]', false, String(e));
+            }
+          }
         }
       }
     } catch (e) {
