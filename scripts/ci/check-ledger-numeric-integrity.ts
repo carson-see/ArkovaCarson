@@ -295,6 +295,55 @@ export function auditStaleExemptions(
   return violations;
 }
 
+/**
+ * Split ledger violations by whether the PR under test can actually act on them.
+ *
+ * WHY (2026-08-30, the third occurrence in four days): `ledger-orphan-prod-row`
+ * is evaluated against the WHOLE prod ledger on every PR, so one out-of-band
+ * apply reds every open PR at once. On 2026-08-30 migration 0425 was applied to
+ * prod ahead of its owning PR (#2495) and instantly failed this required check
+ * on all 36 open PRs — including #2249, which touches zero migrations. The same
+ * shape cost a day on 2026-08-11 (0401/0402) and again on 2026-08-27
+ * (0418/0419). Because this check is a Mergify queue gate, that is a full
+ * board stall, not a nuisance.
+ *
+ * The asymmetry that makes it wrong: an orphan's remedy is "merge the owning PR"
+ * or "add an exemption", and the author of an unrelated PR can do NEITHER. The
+ * gate blocks the people who cannot fix it while the person who can is unaffected.
+ * `auditStaleExemptions` already reasoned its way to exactly this conclusion for
+ * its own class ("making it fatal would red the entire board at once ... that is
+ * precisely the pathology that cost a day on 2026-08-11") — this applies the same
+ * trade to the orphan class, which is the one that actually keeps recurring.
+ *
+ * So: an orphan BLOCKS a PR that touches the migration surface (migrations or the
+ * exemptions snapshot — that PR can and should reconcile it, and it is where the
+ * drift risk concentrates), and WARNS on a PR that touches neither. Detection is
+ * unchanged and the annotation is still emitted on every run, so an orphan can
+ * never go quiet; only its blast radius shrinks to the PRs holding the remedy.
+ *
+ * NARROW BY DESIGN: only `ledger-orphan-prod-row` is downgradable. A non-numeric
+ * version or a duplicate name/version is ledger CORRUPTION, not a sequencing
+ * error — it means the ledger itself is untrustworthy for everyone, no PR is more
+ * responsible than another, and it stays blocking everywhere.
+ *
+ * `prCanReconcile` is fail-closed at the call site: anything other than an
+ * explicit "this PR touches no migration surface" signal keeps the old behavior.
+ */
+export function partitionOrphanViolations(
+  violations: Violation[],
+  prCanReconcile: boolean,
+): { blocking: Violation[]; warnOnly: Violation[] } {
+  if (prCanReconcile) return { blocking: [...violations], warnOnly: [] };
+
+  const blocking: Violation[] = [];
+  const warnOnly: Violation[] = [];
+  for (const v of violations) {
+    if (v.code === 'ledger-orphan-prod-row') warnOnly.push(v);
+    else blocking.push(v);
+  }
+  return { blocking, warnOnly };
+}
+
 /** Read a string[] under `key` from a snapshot JSON into a Set (missing/bad → empty). */
 function loadStringSet(path: string, key: string): Set<string> {
   if (!existsSync(path)) return new Set();
@@ -384,8 +433,15 @@ function main(): void {
 
   // Local-file violations ALWAYS block (deterministic). Ledger violations block
   // unless --report-only (observability mode until prod is reconciled — S0-4.2d).
-  const blocking = [...localViolations, ...(reportOnly ? [] : ledgerViolations)];
-  const warnOnly = reportOnly ? ledgerViolations : [];
+  // Orphan blast-radius scoping (2026-08-30) — see partitionOrphanViolations.
+  // FAIL-CLOSED: only an explicit '0' from a PR context that touched no migration
+  // surface downgrades an orphan. Unset (push-to-main, workflow_dispatch, an older
+  // workflow revision, any unknown context) keeps the original blocking behavior.
+  const prCanReconcile = process.env.LEDGER_PR_MIGRATION_SURFACE !== '0';
+  const scoped = partitionOrphanViolations(ledgerViolations, prCanReconcile);
+
+  const blocking = [...localViolations, ...(reportOnly ? [] : scoped.blocking)];
+  const warnOnly = reportOnly ? ledgerViolations : scoped.warnOnly;
 
   for (const v of warnOnly) console.warn(`::warning::${v.code}: ${v.message}`);
   for (const v of staleExemptions) console.warn(`::warning::${v.code}: ${v.message}`);
@@ -399,11 +455,20 @@ function main(): void {
     );
   }
 
-  if (warnOnly.length > 0) {
+  if (warnOnly.length > 0 && reportOnly) {
     console.warn(
       `::warning title=Ledger drift (report-only)::${warnOnly.length} prod-ledger row(s) need ` +
         'reconciliation (CLAUDE.md §0 rule 10). Not blocking yet — see S0-4.2d in ' +
         'docs/runbooks/migration-drift-playbook.md.',
+    );
+  } else if (warnOnly.length > 0) {
+    console.warn(
+      `::warning title=Prod ledger orphan — not blocking THIS PR (${warnOnly.length})::` +
+        `${warnOnly.length} migration(s) reached prod without their source on main. This PR ` +
+        'touches no migration surface, so it cannot reconcile them and is not blocked. The same ' +
+        'orphan DOES block any PR that touches supabase/migrations/ or the exemptions snapshot. ' +
+        'Remedy (owner, not this PR): merge the owning PR, or exempt the prefix in ' +
+        'scripts/ci/snapshots/ledger-numeric-exemptions.json with a documented reason.',
     );
   }
   if (blocking.length > 0) {
