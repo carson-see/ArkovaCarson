@@ -1,6 +1,16 @@
 # agents.md — lib
 
-_Last updated: 2026-08-23_
+_Last updated: 2026-08-30_
+
+## 2026-08-30 SCRUM-3559 — `THIRD_PARTY_NOTICES_LABELS` gains `LICENSE_TEXT_TOGGLE`
+
+`copy.ts` `THIRD_PARTY_NOTICES_LABELS` adds `LICENSE_TEXT_TOGGLE` ('View
+license text') for the collapsible verbatim-license-text blocks on
+`/legal/third-party-notices`, and the two section intros now say the page
+*includes* (not just links) license text + copyright notices — keeping the
+copy honest about what the page actually renders (R-7 direction: the old
+`PAGE_DESCRIPTION` already promised "license text" the page did not carry
+inline). §1.3 clean.
 
 ## 2026-08-23 R-7 — `PLATFORM_METRICS` in `copy.ts` is the only home for a public traction figure
 
