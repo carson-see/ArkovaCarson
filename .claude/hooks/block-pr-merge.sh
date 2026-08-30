@@ -266,11 +266,15 @@ fi
 # Matches on "$cmd", not "$norm": the normalizer strips global options from
 # "$norm", so the definition is only visible in the raw command. `[^;&|]*`
 # holds the match inside ONE shell command, as in rules 2c/2d. Both the
-# separated and the `=`-attached spellings block, quoted or not. A command
-# that merely QUOTES this construction blocks too -- the same accepted
-# over-block class as quoting any other guarded literal (see
-# scripts/agent/agents.md, 2026-08-23), pinned in block-pr-merge.test.sh.
-if printf '%s' "$cmd" | /usr/bin/grep -qE "git[[:space:]][^;&|]*--config-env([[:space:]]+|=)[\"']?alias\."; then
+# separated and the `=`-attached spellings block, quoted or not, and the
+# section name matches CASE-INSENSITIVELY -- git config keys are
+# case-insensitive, so `--config-env=Alias.p=EV` defines the same alias
+# (probed against git 2.50, 2026-08-30; mirrors ALIAS_DEF_RE's IGNORECASE in
+# normalize-git-command.py). A command that merely QUOTES this construction
+# blocks too -- the same accepted over-block class as quoting any other
+# guarded literal (see scripts/agent/agents.md, 2026-08-23), pinned in
+# block-pr-merge.test.sh.
+if printf '%s' "$cmd" | /usr/bin/grep -qE "git[[:space:]][^;&|]*--config-env([[:space:]]+|=)[\"']?[Aa][Ll][Ii][Aa][Ss]\."; then
   printf 'BLOCKED: `--config-env=alias.*` defines a git alias whose expansion is hidden in an environment variable, which this guard cannot resolve. Spell the git subcommand directly.\n' >&2
   exit 2
 fi

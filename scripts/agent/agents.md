@@ -3,7 +3,7 @@
 Local agent bootstrap helpers. These scripts are guardrails for agent behavior only; they must not mutate production, staging, Jira, Confluence, GitHub PR bodies, or audit evidence unless a script name and help text explicitly says so.
 
 - `ack-claude-bootstrap.sh` records the current `CLAUDE.md` SHA-256 in git-local state after an agent has read the file. It then runs `check-git-merge-config.sh` and exits non-zero if that guard trips.
-- `block-pr-merge.test.sh` is the pure-bash test for the `gh pr merge` / force-push / `--no-verify` PreToolUse hook (176 cases: the rule families firing, legitimate work still allowed, 17 git global-option bypasses, 13 `+`-refspec force-push bypasses, 18 whole-repo (`--force --all` / `--mirror`) bypasses, 9 wildcard-destination bypasses, 6 backslash-newline continuation bypasses, 16 transient-user-alias bypasses, 13 `gh pr merge --help` carve-out cases, the over-match cases that keep every fix honest, the normalizer's presence, wall-clocked pathological inputs, and 3 assertions that the sibling `check-staging-evidence-pre-merge.sh` hook's `gh` calls are time-bounded).
+- `block-pr-merge.test.sh` is the pure-bash test for the `gh pr merge` / force-push / `--no-verify` PreToolUse hook (179 cases: the rule families firing, legitimate work still allowed, 17 git global-option bypasses, 13 `+`-refspec force-push bypasses, 18 whole-repo (`--force --all` / `--mirror`) bypasses, 9 wildcard-destination bypasses, 6 backslash-newline continuation bypasses, 19 transient-user-alias bypasses (case-mangled `Alias.`/`ALIAS.` spellings included), 13 `gh pr merge --help` carve-out cases, the over-match cases that keep every fix honest, the normalizer's presence, wall-clocked pathological inputs, and 3 assertions that the sibling `check-staging-evidence-pre-merge.sh` hook's `gh` calls are time-bounded).
 - `check-claude-bootstrap.test.sh` is the pure-bash test for the Claude PreToolUse bootstrap hook (29 cases).
 - `check-constitution-on-edit.test.sh` is the pure-bash test for the Edit/Write constitution hook (20 cases).
 - `check-git-merge-config.sh` refuses a `merge.<builtin>.driver` config entry (`union`/`text`/`binary`) or a no-op driver command at any config scope. Read-only against git config. A no-op is matched on the command WORD, not the whole string, because drivers are conventionally written with `gitattributes(5)` placeholders — `true %O %A %B` is the same silent no-op as bare `true`. `cat %A` counts too: it prints ours and leaves `%A` untouched. It also has a `--command '<shell command>'` mode that scans one command string for a TRANSIENT driver override instead of reading config; that mode is what `.claude/hooks/check-git-merge-driver-flag.sh` calls, and it is a pure function of its argument (no repo, no config, no side effects).
@@ -333,7 +333,11 @@ Still open, all pre-existing and none of them this class:
 
 Three point fixes, each red-first in `block-pr-merge.test.sh` (26 cases failed
 against the pre-fix hooks, verified in one run before any hook was touched;
-suite is now 176 cases).
+suite is now 179 cases — review added 3: git resolves config section names
+case-insensitively, probed live on git 2.50 (`--config-env=Alias.s=EV` and
+`-c ALIAS.P=push` both work), so rule 4 matches `alias.` case-insensitively
+and the normalizer's existing `IGNORECASE` handling of `-c ALIAS.…` is
+pinned).
 
 **The user-alias bypass is closed for every spelling the hook can read.**
 `git -c alias.p=push p --force origin main` was ALLOWED: the normalizer

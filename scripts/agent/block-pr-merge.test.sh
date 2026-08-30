@@ -506,6 +506,15 @@ run_case "alias: chain into shadowed push"      $BLOCKED 'git -c alias.push=stat
 run_case "alias: --config-env= def"             $BLOCKED 'git --config-env=alias.p=EV p --force origin main'
 run_case "alias: --config-env separated"        $BLOCKED 'git --config-env alias.p=EV p --force origin main'
 run_case "alias: --config-env quoted"           $BLOCKED "git --config-env='alias.p=EV' p -f origin main"
+# git config section names are case-insensitive: git 2.50 resolves
+# `--config-env=Alias.s=EV`, `ALIAS.S=EV` and `-c ALIAS.P=push` identically
+# to the lowercase spellings (probed 2026-08-30), so the guards must match
+# the section name case-insensitively too. The -c spelling was already
+# handled by the normalizer's IGNORECASE and is pinned here; the two
+# --config-env spellings were exit 0 until rule 4 matched case-insensitively.
+run_case "alias: --config-env=Alias. cased"     $BLOCKED 'git --config-env=Alias.p=EV p --force origin main'
+run_case "alias: --config-env=ALIAS. cased"     $BLOCKED 'git --config-env=ALIAS.P=EV p -f origin main'
+run_case "alias: -c ALIAS.P=push cased"         $BLOCKED 'git -c ALIAS.P=push p --force origin main'
 
 echo ""
 echo "--- alias resolution must not over-match or launder --------------"
