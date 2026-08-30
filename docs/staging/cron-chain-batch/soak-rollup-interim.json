@@ -1,38 +1,38 @@
 {
-  "cycles": 16,
+  "cycles": 17,
   "first_at": "2026-08-30T22:29:23.225Z",
-  "last_at": "2026-08-30T23:36:29.657Z",
-  "health_200": 16,
+  "last_at": "2026-08-30T23:40:21.463Z",
+  "health_200": 17,
   "health_non200": 0,
   "git_sha_set": [
     "c6874e0108a516f3741718cf25a98ad4a10422f6"
   ],
-  "reorg_runs": 16,
-  "reorg_200": 16,
+  "reorg_runs": 17,
+  "reorg_200": 17,
   "reorg_503": 0,
   "reorg_500": 0,
   "reorg_other": {},
-  "reorg_checked_total": 132,
+  "reorg_checked_total": 141,
   "reorg_checked_min": 3,
   "reorg_checked_max": 9,
   "reorg_zero_checked_cycles": 0,
-  "reorg_detected": 8,
-  "reorg_reverted": 8,
-  "reorg_completed_true": 16,
+  "reorg_detected": 9,
+  "reorg_reverted": 9,
+  "reorg_completed_true": 17,
   "reorg_completed_false": 0,
   "reorg_incomplete_reasons": {},
-  "batch_runs": 16,
-  "batch_flag_on_cycles": 4,
+  "batch_runs": 17,
+  "batch_flag_on_cycles": 5,
   "batch_flag_off_cycles": 12,
   "batch_skipped_bodies": 0,
   "batch_processed_total": 0,
   "expiry_skipped": 12,
-  "expiry_ran": 4,
-  "load_ok": 640,
+  "expiry_ran": 5,
+  "load_ok": 680,
   "load_non2xx": 0,
   "load_err": 0,
   "load_codes": {
-    "200": 640
+    "200": 680
   },
   "flag_events": [
     {
@@ -130,15 +130,15 @@
     "probe": "check-submitted-confirmations",
     "cadence": "*/2 * * * *",
     "window_minutes": 30,
-    "log_lines": 23,
+    "log_lines": 22,
     "distinct_instances": 2,
-    "fire_minutes": 14,
+    "fire_minutes": 13,
     "minutes_with_2plus_instances": 9,
     "max_instances_in_one_minute": 2,
-    "double_fire_rate": 0.643
+    "double_fire_rate": 0.692
   },
   "reorg_aborts": {
     "window_minutes": 30,
-    "in_process_reorg_cron_failures": 3
+    "in_process_reorg_cron_failures": 2
   }
 }

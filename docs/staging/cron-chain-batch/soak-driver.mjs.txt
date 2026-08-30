@@ -45,11 +45,16 @@ async function jfetch(url, opts = {}, ms = 45_000) {
     return { ok: false, status: 0, body: String(e && e.message || e), ms: Date.now() - t0 };
   }
 }
-const job = (path) => jfetch(`${WORKER}${path}`, {
+const job = (path, ms = 45_000) => jfetch(`${WORKER}${path}`, {
   method: 'POST',
   headers: { Authorization: `Bearer ${token()}`, 'X-Cron-Secret': CRON, 'Content-Type': 'application/json' },
   body: '{}',
-});
+}, ms);
+// With ENABLE_BATCH_ANCHORING ON the drain does real work (claim -> merkle -> sign
+// -> journal -> broadcast attempt) and routinely exceeds 45 s, so the batch calls
+// get the Cloud Run request ceiling rather than a client-side abort that would be
+// recorded as a failure the worker did not have.
+const BATCH_MS = 280_000;
 const health = () => jfetch(`${WORKER}/health`, { headers: { Authorization: `Bearer ${token()}` } }, 20_000);
 
 const sbHeaders = (extra = {}) => ({
@@ -281,7 +286,7 @@ async function main() {
       const a = await setFlag('ENABLE_BATCH_ANCHORING', want);
       const b = await setFlag('ENABLE_EXPIRY_ALERTS', want);
       await sleep(70_000); // > FLAG_REFRESH_TTL_MS (60s)
-      const batchAfter = await job('/jobs/batch-anchors');
+      const batchAfter = await job('/jobs/batch-anchors', BATCH_MS);
       const expiryAfter = await job('/jobs/check-credential-expiry');
       let revAfter = '';
       try {
@@ -326,7 +331,7 @@ async function main() {
     // ---- #2438: batch drain honours the live flag ----
     const hourUtc = new Date().getUTCHours();
     const isDailyFlush = hourUtc === 7 && !state.daily_flush.some(d => d.date === started.slice(0, 10));
-    const ba = await job(isDailyFlush ? '/jobs/batch-anchors?force=true' : '/jobs/batch-anchors');
+    const ba = await job(isDailyFlush ? '/jobs/batch-anchors?force=true' : '/jobs/batch-anchors', BATCH_MS);
     rec.batch_anchors = { status: ba.status, forced: isDailyFlush, body: ba.body };
     state.batch.runs++;
     const bb = ba.body && typeof ba.body === 'object' ? ba.body : {};
@@ -348,7 +353,7 @@ async function main() {
     // ---- per-org isolation: force a drain scoped to ORG_A only ----
     if (cycle % 6 === 0) {
       const before = await anchorCounts();
-      const iso = await job(`/jobs/batch-anchors?force=true&org_id=${ORG_A}`);
+      const iso = await job(`/jobs/batch-anchors?force=true&org_id=${ORG_A}`, BATCH_MS);
       await sleep(4000);
       const after = await anchorCounts();
       const chk = {

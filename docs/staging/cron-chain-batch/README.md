@@ -203,3 +203,15 @@ aborted due to timeout`).
 This does **not** reintroduce the prod defect: over HTTP the route's `catch` turns
 it into a 500, never a healthy 200. But the reason code the PR designed is bypassed
 on what is, in practice, the most likely tip failure. Follow-up, not a merge blocker.
+
+## Driver lifecycle, stated so nobody has to guess
+
+The load supervisor and a PENDING top-up loop run **detached** (`nohup`, reparented
+to `launchd`, PPID 1) and keep accruing evidence until `2026-09-01T22:09:30Z`
+without a session attached. The soak clock is **worker uptime on the serving
+revision**, not driver uptime (FD-CLOCK-1) — the driver was restarted three times
+in the first 90 minutes to sharpen its probes (log-derived cron counting, fullest
+recent signet block, and a request timeout long enough for a real drain), and the
+serving revision was never redeployed, so no restart moved the window.
+
+The committed `soak-driver.mjs.txt` is the version now running.
