@@ -366,6 +366,95 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       expect(result).toEqual({ queuedId: 'artifact-1' });
     });
 
+    // CTO Decision Record (docusign-bilateral-2026-08, rulings R6/R7).
+    describe('_signers + _docusign_env in artifact metadata (R6/R7)', () => {
+      const SIGNERS = [
+        { recipient_id_guid: 'guid-1', user_id: 'user-1', status: 'completed', signed_at: '2026-08-20T10:00:00Z' },
+        { recipient_id_guid: 'guid-2', status: 'completed' },
+      ];
+
+      it('stamps _signers and _docusign_env into artifact metadata when present', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT, signers: SIGNERS, docusignEnv: 'demo' });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata._signers).toEqual(SIGNERS);
+        expect(metadata._docusign_env).toBe('demo');
+      });
+
+      it('stamps _docusign_env=prod for a production connection', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT, docusignEnv: 'prod' });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata._docusign_env).toBe('prod');
+      });
+
+      it('omits _signers entirely when the envelope had no signers (backward compat)', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT, signers: undefined, docusignEnv: 'demo' });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata).not.toHaveProperty('_signers');
+      });
+
+      it('omits _signers for an explicitly empty signers array (never persists [])', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT, signers: [], docusignEnv: 'demo' });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata).not.toHaveProperty('_signers');
+      });
+
+      it('omits _docusign_env when the caller does not supply one', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata).not.toHaveProperty('_docusign_env');
+      });
+
+      // R6: assert absence explicitly — no name/email anywhere in the metadata
+      // this RPC call sends, even when a caller (defensively) hands one through.
+      it('never lets a name/email survive into artifact metadata via _signers', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({
+          ...SINK_INPUT,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- deliberately malformed input under test
+          signers: [{ recipient_id_guid: 'guid-1', status: 'completed', name: 'Should Not Persist', email: 'nope@example.com' } as any],
+          docusignEnv: 'demo',
+        });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        const serialized = JSON.stringify(metadata);
+        expect(serialized).not.toContain('Should Not Persist');
+        expect(serialized).not.toContain('nope@example.com');
+      });
+
+      it('does not put _signers into the ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=off skip breadcrumb', async () => {
+        process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE = 'false';
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        const result = await deps.enqueueSignedDocument({ ...SINK_INPUT, signers: SIGNERS, docusignEnv: 'demo' });
+
+        expect(rpcCalls).toHaveLength(0);
+        expect(result.queuedId).toContain('disabled');
+      });
+    });
+
     // DS-04: member routing must be self-consistent — a 'member' scope with no
     // owning user is a programming error and must fail closed, never silently
     // materialize an unowned personal-queue artifact.

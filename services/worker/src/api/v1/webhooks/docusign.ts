@@ -26,6 +26,11 @@ import {
   extractDocusignSignatures,
 } from '../../../integrations/oauth/docusign-hmac.js';
 import { resolveHmacKeys, type HmacKeyEntry } from './docusign-hmac-helpers.js';
+import {
+  DocusignCapturedSigner,
+  MAX_CAPTURED_DOCUSIGN_SIGNERS,
+  type DocusignCapturedSignerT,
+} from '../../../integrations/connectors/schemas.js';
 
 export const docusignWebhookRouter = Router();
 
@@ -222,6 +227,7 @@ async function enqueueFetchJob(args: {
   integration: DocusignIntegrationRow;
   event: DocusignCompletedEnvelope;
   ruleEventId: string;
+  signers: DocusignCapturedSignerT[];
 }): Promise<string> {
   const jobId = await submitJob({
     type: DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE,
@@ -238,6 +244,12 @@ async function enqueueFetchJob(args: {
       // connector_artifact.source_timestamp. Optional — undefined when DocuSign
       // omits it; the job payload schema and the RPC both accept null.
       envelope_completed_at: args.event.generatedDateTime,
+      // CTO Decision Record R6: pseudonymous signer GUIDs only (never name/
+      // email — see extractSigners). Omitted entirely when empty, matching
+      // the document_hashes/document_sha256 spread convention below in
+      // enqueueRuleEvent — never persist an empty array where "absent" reads
+      // more honestly (CLAUDE.md §6: omit rather than null/empty).
+      ...(args.signers.length > 0 ? { _signers: args.signers } : {}),
     },
   });
   if (!jobId) {
@@ -347,6 +359,79 @@ function findNotaryRecipient(recipients: RecipientGroups): Record<string, unknow
   }
 
   return signers.find(isNotaryRecipient) ?? null;
+}
+
+// ── CTO Decision Record (docusign-bilateral-2026-08, ruling R6): signer capture ──
+
+/**
+ * Extract pseudonymous signer identifiers from a DocuSign Connect raw payload.
+ *
+ * Mirrors `extractNotaryData`'s raw-body access pattern: `recipients.signers[]`
+ * lives outside the strict `DocusignEnvelopeCompleted` schema (like the notary
+ * data, DocuSign's own recipient shape varies more than that schema validates),
+ * so this reads the same `envelopeSummary ?? data ?? root` recipients block
+ * directly rather than widening the typed schema. Deliberately does NOT read
+ * `recipients.carbonCopies[]` — `findNotaryRecipient` above only ever consults
+ * `notaries` and `signers`, and this mirrors that same access pattern.
+ *
+ * PII discipline (R6): only `recipient_id_guid` / `user_id` / `status` /
+ * `signed_at` are ever copied — each field is read individually via
+ * `trimmedString`/`firstString` into a fresh literal, never spread from the
+ * raw recipient object, so a DocuSign-supplied `name`/`email` can never reach
+ * the result even if a future DocuSign payload shape adds more fields.
+ * `DocusignCapturedSigner.safeParse` is a second, independent gate — its
+ * default (non-`.passthrough()`) object mode strips anything not explicitly
+ * listed, and rejects entries missing a required `recipient_id_guid`/`status`.
+ *
+ * Capped at `MAX_CAPTURED_DOCUSIGN_SIGNERS` entries (metadata-size + display
+ * safety per R6) — truncates rather than rejecting the whole envelope, so an
+ * oversized recipient list never blocks the fetch/anchor pipeline for the
+ * signed document itself.
+ */
+export function extractSigners(rawBody: Buffer | string): DocusignCapturedSignerT[] {
+  try {
+    const text = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
+    const json = JSON.parse(text) as Record<string, unknown>;
+
+    const summary = (json.envelopeSummary ?? json.data ?? json) as Record<string, unknown>;
+    const recipients = summary.recipients as RecipientGroups | undefined;
+    if (!recipients) return [];
+
+    const signers = recipients.signers;
+    if (!signers || signers.length === 0) return [];
+
+    const captured: DocusignCapturedSignerT[] = [];
+    for (const raw of signers) {
+      if (captured.length >= MAX_CAPTURED_DOCUSIGN_SIGNERS) break;
+
+      const recipientIdGuid = trimmedString(raw, 'recipientIdGuid');
+      const userId = trimmedString(raw, 'userId');
+      const status = trimmedString(raw, 'status');
+      const signedAt = firstString(raw, ['signedDateTime']);
+      // Optional fields are only spread in when present — an explicit `undefined`
+      // value would still leave the key on the object (Zod .optional() accepts
+      // that), which would defeat the "absent, not merely falsy" contract the
+      // pure-email-link-signer case (no userId) and unsigned-recipient case (no
+      // signed_at) both rely on.
+      const candidate = {
+        ...(recipientIdGuid ? { recipient_id_guid: recipientIdGuid } : {}),
+        ...(userId ? { user_id: userId } : {}),
+        ...(status ? { status } : {}),
+        ...(signedAt ? { signed_at: signedAt } : {}),
+      };
+      const parsed = DocusignCapturedSigner.safeParse(candidate);
+      if (parsed.success) {
+        captured.push(parsed.data);
+      }
+      // Entries missing a required recipient_id_guid/status are silently
+      // skipped, never persisted as a partial/identity-less row — matches
+      // extractNotaryData's fail-soft posture (best-effort metadata, never
+      // blocks the standard eSign flow).
+    }
+    return captured;
+  } catch {
+    return [];
+  }
 }
 
 function isNotaryRecipient(recipient: Record<string, unknown>): boolean {
@@ -555,7 +640,14 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
 
     try {
       const ruleEventId = await enqueueRuleEvent({ integration, event, payloadHash });
-      await enqueueFetchJob({ integration, event, ruleEventId });
+      // CTO Decision Record R6/Finding 7: signer GUIDs are deliberately kept OFF
+      // the rule-event payload (organization_rule_events.payload has a DB CHECK
+      // pg_column_size(payload) <= 16384; document_ids/document_hashes alone can
+      // approach that ceiling at the 100-envelopeDocuments cap) and carried only
+      // on the job → connector_artifact.metadata → anchors.metadata path, which
+      // is uncapped.
+      const signers = extractSigners(rawBody);
+      await enqueueFetchJob({ integration, event, ruleEventId, signers });
 
       // SCRUM-1872: Check for notary data and enqueue notarization job (non-fatal)
       const notaryData = extractNotaryData(rawBody);

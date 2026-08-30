@@ -57,6 +57,37 @@ export const DocusignEnvelopeCompleted = z.object({
     .default([]),
 });
 
+/**
+ * CTO Decision Record (docs/staging/docusign-bilateral-2026-08,
+ * ruling R6) — a captured DocuSign signer identifier. PSEUDONYMOUS ONLY:
+ * `recipient_id_guid` (DocuSign's envelope-scoped GUID) and `user_id`
+ * (DocuSign's platform user id, absent for pure email-link signers) — never
+ * a name or email.
+ *
+ * Zod's default "strip unknown keys" object mode is load-bearing here: the
+ * raw DocuSign recipient object also carries `name` / `email` / `phoneAuthentication`
+ * / etc. Because this schema does not list them, they are stripped BY
+ * CONSTRUCTION on `.parse()` — not merely "not read" by whatever code
+ * happens to touch the object afterward. No caller may widen this schema
+ * with `.passthrough()`; doing so would defeat the guarantee.
+ */
+export const DocusignCapturedSigner = z.object({
+  recipient_id_guid: NonEmptyString,
+  // Absent for pure email-link (non-platform) signers — DocuSign only
+  // assigns userId to a recipient with a DocuSign platform account.
+  user_id: NonEmptyString.optional(),
+  status: NonEmptyString,
+  // Deliberately NOT `.datetime()` — mirrors the existing notary extraction
+  // (`extractNotaryData`/`completedDateTime`), which accepts DocuSign's raw
+  // timestamp string as-is rather than enforcing strict RFC3339.
+  signed_at: z.string().trim().min(1).max(100).optional(),
+});
+
+export type DocusignCapturedSignerT = z.infer<typeof DocusignCapturedSigner>;
+
+/** R6: display cap + persistence cap for captured signers (metadata-size safety). */
+export const MAX_CAPTURED_DOCUSIGN_SIGNERS = 20;
+
 /** Adobe Sign agreement-signed payload — simplified shape. */
 export const AdobeAgreementSigned = z.object({
   event: z.literal('AGREEMENT_WORKFLOW_COMPLETED'),

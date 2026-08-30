@@ -27,6 +27,45 @@ describe('parseDocusignEnvelopeCompletedJobPayload', () => {
       parseDocusignEnvelopeCompletedJobPayload({ ...PAYLOAD, org_id: undefined }),
     ).toThrow();
   });
+
+  // CTO Decision Record (docusign-bilateral-2026-08, ruling R6).
+  it('accepts an optional _signers array of pseudonymous GUIDs', () => {
+    const withSigners = {
+      ...PAYLOAD,
+      _signers: [
+        { recipient_id_guid: 'guid-1', user_id: 'user-1', status: 'completed', signed_at: '2026-08-20T10:00:00Z' },
+        { recipient_id_guid: 'guid-2', status: 'completed' },
+      ],
+    };
+    expect(parseDocusignEnvelopeCompletedJobPayload(withSigners)).toMatchObject(withSigners);
+  });
+
+  it('omits _signers when absent (backward compat — pre-R6 payloads)', () => {
+    const result = parseDocusignEnvelopeCompletedJobPayload(PAYLOAD);
+    expect(result._signers).toBeUndefined();
+  });
+
+  it('rejects more than 20 _signers entries', () => {
+    const tooMany = Array.from({ length: 21 }, (_, i) => ({
+      recipient_id_guid: `guid-${i}`,
+      status: 'completed',
+    }));
+    expect(() =>
+      parseDocusignEnvelopeCompletedJobPayload({ ...PAYLOAD, _signers: tooMany }),
+    ).toThrow();
+  });
+
+  it('strips a name/email that somehow rides along on a _signers entry', () => {
+    const result = parseDocusignEnvelopeCompletedJobPayload({
+      ...PAYLOAD,
+      _signers: [
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- deliberately malformed input under test
+        { recipient_id_guid: 'guid-1', status: 'completed', name: 'Should Strip', email: 'strip@example.com' } as any,
+      ],
+    });
+    expect(result._signers?.[0]).not.toHaveProperty('name');
+    expect(result._signers?.[0]).not.toHaveProperty('email');
+  });
 });
 
 describe('processDocusignEnvelopeCompletedJob', () => {
@@ -62,7 +101,72 @@ describe('processDocusignEnvelopeCompletedJob', () => {
       envelopeId: 'env-1',
       documentBytes: Buffer.from('%PDF'),
       contentType: 'application/pdf',
+      docusignEnv: 'demo',
     }));
+  });
+
+  // CTO Decision Record R6/R7.
+  it('derives docusignEnv=prod from a production regional base_uri', async () => {
+    const enqueueSignedDocument = vi.fn().mockResolvedValue({ queuedId: 'queue-prod' });
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([37, 80, 68, 70]), {
+        status: 200,
+        headers: { 'content-type': 'application/pdf' },
+      }),
+    );
+
+    await processDocusignEnvelopeCompletedJob(PAYLOAD, {
+      resolveConnection: vi.fn().mockResolvedValue({ accessToken: 'at', baseUri: 'https://na2.docusign.net' }),
+      enqueueSignedDocument,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(enqueueSignedDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ docusignEnv: 'prod' }),
+    );
+  });
+
+  it('threads the job payload _signers through to enqueueSignedDocument as signers', async () => {
+    const enqueueSignedDocument = vi.fn().mockResolvedValue({ queuedId: 'queue-signers' });
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([37, 80, 68, 70]), {
+        status: 200,
+        headers: { 'content-type': 'application/pdf' },
+      }),
+    );
+    const signers = [{ recipient_id_guid: 'guid-1', status: 'completed' }];
+
+    await processDocusignEnvelopeCompletedJob(
+      { ...PAYLOAD, _signers: signers },
+      {
+        resolveConnection: vi.fn().mockResolvedValue({ accessToken: 'at', baseUri: 'https://demo.docusign.net' }),
+        enqueueSignedDocument,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      },
+    );
+
+    expect(enqueueSignedDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ signers }),
+    );
+  });
+
+  it('passes signers as undefined (not []) when the job payload has no _signers (backward compat)', async () => {
+    const enqueueSignedDocument = vi.fn().mockResolvedValue({ queuedId: 'queue-no-signers' });
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([37, 80, 68, 70]), {
+        status: 200,
+        headers: { 'content-type': 'application/pdf' },
+      }),
+    );
+
+    await processDocusignEnvelopeCompletedJob(PAYLOAD, {
+      resolveConnection: vi.fn().mockResolvedValue({ accessToken: 'at', baseUri: 'https://demo.docusign.net' }),
+      enqueueSignedDocument,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const call = enqueueSignedDocument.mock.calls[0][0] as Record<string, unknown>;
+    expect(call.signers).toBeUndefined();
   });
 
   it('lets fetch failures reject so job_queue applies backoff and DLQ policy', async () => {

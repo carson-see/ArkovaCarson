@@ -135,6 +135,32 @@ function getAuthBase(env: NodeJS.ProcessEnv): string {
   return demo ? DOCUSIGN_DEMO_AUTH_BASE : DOCUSIGN_PROD_AUTH_BASE;
 }
 
+/** CTO Decision Record (docusign-bilateral-2026-08, ruling R6/R7): the environment tag
+ * persisted alongside a captured envelope so the frontend can compose the correct
+ * DocuSign deep-link base (`apps.docusign.com` prod / `apps-d.docusign.com` demo). */
+export type DocusignEnvironmentTag = 'prod' | 'demo';
+
+/**
+ * Resolve prod vs demo from a connection's API `base_uri` — DocuSign's demo/sandbox
+ * datacenter is always `demo.docusign.net`; every production datacenter (`na1`,
+ * `na2`, `na3`, `eu`, ...) is `<region>.docusign.net`. Falls back to the same
+ * `DOCUSIGN_DEMO` convention `getAuthBase` uses (default demo=true unless the env
+ * var is exactly `'false'`) only when `base_uri` itself doesn't identify an
+ * environment — e.g. missing, or a non-docusign.net host in a test/mock config.
+ */
+export function resolveDocusignEnvironment(
+  baseUri: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): DocusignEnvironmentTag {
+  if (baseUri) {
+    const lower = baseUri.toLowerCase();
+    if (lower.includes('demo.docusign.net')) return 'demo';
+    if (lower.includes('docusign.net')) return 'prod';
+  }
+  const demo = (env.DOCUSIGN_DEMO ?? 'true').toLowerCase() !== 'false';
+  return demo ? 'demo' : 'prod';
+}
+
 function requireClient(env: NodeJS.ProcessEnv): { integrationKey: string; clientSecret: string } {
   const integrationKey = env.DOCUSIGN_INTEGRATION_KEY;
   const clientSecret = env.DOCUSIGN_CLIENT_SECRET;

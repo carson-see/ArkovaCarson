@@ -1,6 +1,14 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
-_Last updated: 2026-08-03 (PR #1944 review round 3: legacy-token hard-cutoff backstop + account_label parser convergence)_
+_Last updated: 2026-08-29 (docusign-bilateral PR-2: outbound signer capture)_
+
+## 2026-08-29 — CTO Decision Record (docusign-bilateral-2026-08, PR-2): outbound signer capture (R6/R7)
+
+`docusign.ts` gained `extractSigners(rawBody)` — mirrors `extractNotaryData`'s raw-body access pattern (`envelopeSummary ?? data ?? root`, then `recipients.signers[]`; deliberately does NOT read `recipients.carbonCopies[]`, matching `findNotaryRecipient`). Produces `_signers`: an array (capped at `MAX_CAPTURED_DOCUSIGN_SIGNERS` = 20, truncates rather than rejecting the envelope) of `{recipient_id_guid, user_id?, status, signed_at?}` — **pseudonymous GUIDs only, never name/email**. Two independent strip gates: the extraction function only ever copies four named fields into a fresh literal (never spreads the raw recipient), and `DocusignCapturedSigner` (`integrations/connectors/schemas.ts`) is a non-`.passthrough()` Zod object that strips any other key by construction. A third gate lives in `jobs/docusign-envelope-completed.ts` at the actual DB-write boundary (see that folder's agents.md).
+
+`_signers` is threaded into the `docusign.envelope_completed` job payload (`enqueueFetchJob`) but is deliberately **kept OFF** `enqueue_rule_event`'s `p_payload` — `organization_rule_events.payload` has a DB CHECK `pg_column_size(payload) <= 16384`, and at the schema's max cardinality (100 `envelopeDocuments`) `document_ids`/`document_hashes` alone already sit close to that ceiling (measured: ~7.5KB at 100 realistic-length document ids). `_signers` only rides the job → `connector_artifact.metadata` → `anchors.metadata` path, which has no size cap. See `jobs/agents.md` for the metadata-side half and the `_docusign_env` companion field.
+
+This is the outbound (own-account envelope-completed) path only. Inbound (Recipient Connect / received envelopes) is a separate, later, flag-OFF PR (F1 in the CTO Decision Record) — not touched here.
 
 ## 2026-08-03 — GH #1836 (SECURITY, pen-test scope): legacy org-id Drive channel token — accept-with-warning by default, code-flagged hard cutoff available
 
@@ -21,7 +29,7 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 | File | Purpose |
 |------|---------|
 | `adobe-sign.ts` | Adobe Sign `AGREEMENT_WORKFLOW_COMPLETED` handler — HMAC-SHA256 base64, `adaptAdobeSign` normalization |
-| `docusign.ts` | DocuSign Connect `envelope-completed` handler — lookup-first HMAC verify (SCRUM-2043), HMAC verified for unknown accounts too (env-var key), dual-table lookup: org_integrations then member_integrations (SCRUM-2044), sanitized event + document-fetch job + SCRUM-1872 notarization detection. SCRUM-1649: carries single-document SHA-256 into rule-event payloads via `document_hashes` / `document_sha256` for downstream post-signing anchor materialization. SCRUM-2362 (DS-02): invalid sig → 401 fail-closed; duplicate signed event → 200 with no duplicate queue materialization (nonce table); orphan → 200 bounded + DLQ-audited; raw-payload PII (sender/notary email, doc fingerprint) never reaches logger/Sentry/Error — pinned by the `no raw-payload PII leak` test suite |
+| `docusign.ts` | DocuSign Connect `envelope-completed` handler — lookup-first HMAC verify (SCRUM-2043), HMAC verified for unknown accounts too (env-var key), dual-table lookup: org_integrations then member_integrations (SCRUM-2044), sanitized event + document-fetch job + SCRUM-1872 notarization detection. SCRUM-1649: carries single-document SHA-256 into rule-event payloads via `document_hashes` / `document_sha256` for downstream post-signing anchor materialization. SCRUM-2362 (DS-02): invalid sig → 401 fail-closed; duplicate signed event → 200 with no duplicate queue materialization (nonce table); orphan → 200 bounded + DLQ-audited; raw-payload PII (sender/notary email, doc fingerprint) never reaches logger/Sentry/Error — pinned by the `no raw-payload PII leak` test suite. **2026-08-29 (R6):** `extractSigners()` captures pseudonymous `_signers` GUIDs (capped 20, never name/email) into the `docusign.envelope_completed` job payload only — kept off the size-capped rule-event payload, see the dated entry above |
 | `docusign-hmac-helpers.ts` | SCRUM-2043: resolves HMAC keys from per-org `hmac_keys` JSONB or env-var fallback |
 | `docusign-hmac-rotation.test.ts` | Tests for multi-key HMAC verification flow and key resolution |
 | `drive.ts` | Google Drive push notification handler — headers-only signal, channel-token verification |

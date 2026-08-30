@@ -30,7 +30,7 @@ vi.mock('../../../utils/logger.js', () => ({
   },
 }));
 
-import { docusignWebhookRouter, extractNotaryData } from './docusign.js';
+import { docusignWebhookRouter, extractNotaryData, extractSigners } from './docusign.js';
 import { logger } from '../../../utils/logger.js';
 
 const TEST_HMAC_KEY = 'fixture-key-not-a-secret-aaaa';
@@ -264,6 +264,14 @@ describe('POST /webhooks/docusign', () => {
         rule_event_id: '22222222-2222-4222-8222-222222222222',
       }),
     }));
+    // Backward compat (R6): validBody() carries no `recipients` at all — the
+    // envelope must still process cleanly, and `_signers` must be omitted
+    // entirely (never an empty array) from both the rule-event payload and
+    // the job payload.
+    const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+    expect(jobPayload).not.toHaveProperty('_signers');
+    const ruleEventPayload = rpcMock.mock.calls[0][1].p_payload as Record<string, unknown>;
+    expect(ruleEventPayload).not.toHaveProperty('_signers');
   });
 
   it('attributes a parent-owned DocuSign account to the single inherited sub-org marker', async () => {
@@ -890,6 +898,264 @@ describe('POST /webhooks/docusign', () => {
     expect(res.status).toBe(202);
     expect(res.body.ok).toBe(true);
   });
+
+  // CTO Decision Record (docusign-bilateral-2026-08, ruling R6) — signer
+  // capture on the outbound (own-account) envelope-completed path.
+  describe('signer capture (R6)', () => {
+    function bodyWithSigners(signers: unknown[]): string {
+      return JSON.stringify({
+        event: 'envelope-completed',
+        envelopeId: 'env-signers-1',
+        accountId: 'acct-1',
+        status: 'completed',
+        sender: { email: 'legal@example.com' },
+        envelopeDocuments: [{ documentId: 'combined', name: 'msa.pdf' }],
+        envelopeSummary: {
+          recipients: { signers },
+        },
+      });
+    }
+
+    it('captures pseudonymous signer GUIDs into the job payload as _signers', async () => {
+      dbFromMock.mockReturnValueOnce(
+        integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      );
+      dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+      dbFromMock.mockReturnValueOnce(nonceInsert());
+      rpcMock.mockResolvedValueOnce({ data: 'evt-signers-1', error: null });
+      submitJobMock.mockResolvedValueOnce('job-signers-1');
+
+      const body = bodyWithSigners([
+        {
+          recipientIdGuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          userId: 'user-guid-1',
+          status: 'completed',
+          signedDateTime: '2026-08-20T10:00:00Z',
+          name: 'Jane Doe',
+          email: 'jane@example.com',
+        },
+        {
+          // Pure email-link signer — no DocuSign platform userId.
+          recipientIdGuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          status: 'completed',
+          signedDateTime: '2026-08-20T10:05:00Z',
+          name: 'John Roe',
+          email: 'john@example.com',
+        },
+      ]);
+
+      const res = await request(createApp())
+        .post('/webhooks/docusign')
+        .set('Content-Type', 'application/json')
+        .set('X-DocuSign-Signature-1', sign(body))
+        .send(body);
+
+      expect(res.status).toBe(202);
+      const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+      expect(jobPayload._signers).toEqual([
+        {
+          recipient_id_guid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          user_id: 'user-guid-1',
+          status: 'completed',
+          signed_at: '2026-08-20T10:00:00Z',
+        },
+        {
+          recipient_id_guid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          status: 'completed',
+          signed_at: '2026-08-20T10:05:00Z',
+        },
+      ]);
+
+      // R6: assert absence explicitly — no name/email anywhere in the captured
+      // signers, and neither PII marker appears even serialized.
+      const serializedSigners = JSON.stringify(jobPayload._signers);
+      expect(serializedSigners).not.toContain('Jane Doe');
+      expect(serializedSigners).not.toContain('jane@example.com');
+      expect(serializedSigners).not.toContain('John Roe');
+      expect(serializedSigners).not.toContain('john@example.com');
+      for (const signer of jobPayload._signers as Record<string, unknown>[]) {
+        expect(Object.keys(signer).sort()).toEqual(
+          [...new Set(['recipient_id_guid', 'user_id', 'status', 'signed_at'])]
+            .filter((key) => key in signer)
+            .sort(),
+        );
+        expect(signer).not.toHaveProperty('name');
+        expect(signer).not.toHaveProperty('email');
+      }
+
+      // Finding 7 / R6: _signers must never ride on the size-capped rule-event
+      // payload — only on the job → connector_artifact.metadata path.
+      const ruleEventPayload = rpcMock.mock.calls[0][1].p_payload as Record<string, unknown>;
+      expect(ruleEventPayload).not.toHaveProperty('_signers');
+    });
+
+    it('caps captured signers at 20 entries (truncates rather than rejecting the envelope)', async () => {
+      dbFromMock.mockReturnValueOnce(
+        integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      );
+      dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+      dbFromMock.mockReturnValueOnce(nonceInsert());
+      rpcMock.mockResolvedValueOnce({ data: 'evt-signers-cap', error: null });
+      submitJobMock.mockResolvedValueOnce('job-signers-cap');
+
+      const signers = Array.from({ length: 25 }, (_, i) => ({
+        recipientIdGuid: `guid-${i}`,
+        status: 'completed',
+      }));
+      const body = bodyWithSigners(signers);
+
+      const res = await request(createApp())
+        .post('/webhooks/docusign')
+        .set('Content-Type', 'application/json')
+        .set('X-DocuSign-Signature-1', sign(body))
+        .send(body);
+
+      expect(res.status).toBe(202);
+      const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+      const captured = jobPayload._signers as Record<string, unknown>[];
+      expect(captured).toHaveLength(20);
+      expect(captured[0]).toMatchObject({ recipient_id_guid: 'guid-0' });
+      expect(captured[19]).toMatchObject({ recipient_id_guid: 'guid-19' });
+    });
+
+    it('skips recipient entries missing the required recipientIdGuid or status', async () => {
+      dbFromMock.mockReturnValueOnce(
+        integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      );
+      dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+      dbFromMock.mockReturnValueOnce(nonceInsert());
+      rpcMock.mockResolvedValueOnce({ data: 'evt-signers-partial', error: null });
+      submitJobMock.mockResolvedValueOnce('job-signers-partial');
+
+      const body = bodyWithSigners([
+        { recipientIdGuid: 'guid-only-no-status' },
+        { status: 'completed' }, // no recipientIdGuid
+        { recipientIdGuid: 'guid-complete', status: 'completed' },
+      ]);
+
+      const res = await request(createApp())
+        .post('/webhooks/docusign')
+        .set('Content-Type', 'application/json')
+        .set('X-DocuSign-Signature-1', sign(body))
+        .send(body);
+
+      expect(res.status).toBe(202);
+      const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+      expect(jobPayload._signers).toEqual([
+        { recipient_id_guid: 'guid-complete', status: 'completed' },
+      ]);
+    });
+
+    it('omits _signers entirely for an envelope with an empty signers array', async () => {
+      dbFromMock.mockReturnValueOnce(
+        integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      );
+      dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+      dbFromMock.mockReturnValueOnce(nonceInsert());
+      rpcMock.mockResolvedValueOnce({ data: 'evt-signers-empty', error: null });
+      submitJobMock.mockResolvedValueOnce('job-signers-empty');
+
+      const body = bodyWithSigners([]);
+      const res = await request(createApp())
+        .post('/webhooks/docusign')
+        .set('Content-Type', 'application/json')
+        .set('X-DocuSign-Signature-1', sign(body))
+        .send(body);
+
+      expect(res.status).toBe(202);
+      const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+      expect(jobPayload).not.toHaveProperty('_signers');
+    });
+
+    it('processes cleanly (still 202) for an envelope with no recipients block at all', async () => {
+      dbFromMock.mockReturnValueOnce(
+        integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      );
+      dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+      dbFromMock.mockReturnValueOnce(nonceInsert());
+      rpcMock.mockResolvedValueOnce({ data: 'evt-no-recipients', error: null });
+      submitJobMock.mockResolvedValueOnce('job-no-recipients');
+
+      const body = validBody(); // no envelopeSummary/recipients at all
+      const res = await postSignedBody(body);
+
+      expect(res.status).toBe(202);
+      expect(res.body).toEqual({ ok: true });
+      const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+      expect(jobPayload).not.toHaveProperty('_signers');
+    });
+
+    // Finding 7 / R6: organization_rule_events.payload has a DB CHECK
+    // pg_column_size(payload) <= 16384. At the schema's max cardinality (100
+    // envelopeDocuments, the .max(100) cap in DocusignEnvelopeCompleted) the
+    // document_ids/document_hashes arrays alone approach that ceiling, so
+    // _signers (up to 20 entries) must never ride on this payload — only on
+    // the job -> connector_artifact.metadata path, which has no size cap.
+    it('MAX CARDINALITY (100 envelopeDocuments + 20 _signers): rule-event payload stays <= 16KB and never carries _signers', async () => {
+      dbFromMock.mockReturnValueOnce(
+        integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      );
+      dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+      dbFromMock.mockReturnValueOnce(nonceInsert());
+      rpcMock.mockResolvedValueOnce({ data: 'evt-max-cardinality', error: null });
+      submitJobMock.mockResolvedValueOnce('job-max-cardinality');
+
+      // 100 documents at the envelopeDocuments schema cap, each with a unique
+      // valid vendor-supplied sha256 (worst case for document_hashes dedup —
+      // no collisions to shrink the array).
+      const envelopeDocuments = Array.from({ length: 100 }, (_, i) => ({
+        documentId: String(i + 1),
+        name: `Document ${i + 1}.pdf`,
+        sha256: crypto.createHash('sha256').update(`document-${i}`).digest('hex'),
+      }));
+      // 20 signers at the _signers cap.
+      const signers = Array.from({ length: 20 }, (_, i) => ({
+        recipientIdGuid: `aaaaaaaa-aaaa-4aaa-8aaa-${String(i).padStart(12, '0')}`,
+        userId: `user-${i}`,
+        status: 'completed',
+        signedDateTime: '2026-08-20T10:00:00Z',
+      }));
+
+      const body = JSON.stringify({
+        event: 'envelope-completed',
+        envelopeId: 'env-max-cardinality',
+        accountId: 'acct-1',
+        status: 'completed',
+        generatedDateTime: '2026-08-20T10:00:00.000Z',
+        sender: { email: 'legal@example.com' },
+        envelopeDocuments,
+        envelopeSummary: {
+          recipients: { signers },
+        },
+      });
+
+      const res = await request(createApp())
+        .post('/webhooks/docusign')
+        .set('Content-Type', 'application/json')
+        .set('X-DocuSign-Signature-1', sign(body))
+        .send(body);
+
+      expect(res.status).toBe(202);
+
+      // The rule-event payload (organization_rule_events.payload, DB CHECK
+      // pg_column_size <= 16384) must stay under that ceiling AND never carry
+      // _signers.
+      const ruleEventPayload = rpcMock.mock.calls[0][1].p_payload as Record<string, unknown>;
+      expect(ruleEventPayload).not.toHaveProperty('_signers');
+      const ruleEventBytes = Buffer.byteLength(JSON.stringify(ruleEventPayload), 'utf8');
+      expect(ruleEventBytes).toBeLessThanOrEqual(16384);
+      // document_ids/document_hashes are the size-dominant fields at this
+      // cardinality — confirm they're actually present at full cardinality
+      // (proves this is a real max-cardinality measurement, not a vacuous one).
+      expect((ruleEventPayload.document_ids as unknown[]).length).toBe(100);
+      expect((ruleEventPayload.document_hashes as unknown[]).length).toBe(100);
+
+      // _signers rides ONLY the job -> connector_artifact.metadata path (no
+      // size cap there), at full cardinality.
+      const jobPayload = submitJobMock.mock.calls[0][0].payload as Record<string, unknown>;
+      expect((jobPayload._signers as unknown[]).length).toBe(20);
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1174,5 +1440,158 @@ describe('extractNotaryData', () => {
     expect(result!.notary_name).toBeNull();
     expect(result!.notary_commission_state).toBeNull();
     expect(result!.notary_commission_number).toBeNull();
+  });
+});
+
+// ── extractSigners unit tests (CTO Decision Record R6) ──────────────
+
+describe('extractSigners', () => {
+  it('extracts recipient_id_guid/user_id/status/signed_at from recipients.signers', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [{
+            recipientIdGuid: 'guid-1',
+            userId: 'user-1',
+            status: 'completed',
+            signedDateTime: '2026-05-27T10:00:00Z',
+            name: 'Should Not Appear',
+            email: 'should-not-appear@example.com',
+          }],
+        },
+      },
+    });
+    const result = extractSigners(body);
+    expect(result).toEqual([{
+      recipient_id_guid: 'guid-1',
+      user_id: 'user-1',
+      status: 'completed',
+      signed_at: '2026-05-27T10:00:00Z',
+    }]);
+  });
+
+  it('never includes name or email even when present on the raw recipient', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [{
+            recipientIdGuid: 'guid-pii',
+            status: 'completed',
+            name: 'PII Name Marker',
+            email: 'pii-marker@example.com',
+          }],
+        },
+      },
+    });
+    const result = extractSigners(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]).not.toHaveProperty('name');
+    expect(result[0]).not.toHaveProperty('email');
+    expect(JSON.stringify(result)).not.toContain('PII Name Marker');
+    expect(JSON.stringify(result)).not.toContain('pii-marker@example.com');
+  });
+
+  it('omits user_id for a pure email-link signer (no DocuSign platform account)', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [{ recipientIdGuid: 'guid-email-link', status: 'sent' }],
+        },
+      },
+    });
+    const result = extractSigners(body);
+    expect(result).toEqual([{ recipient_id_guid: 'guid-email-link', status: 'sent' }]);
+    expect(result[0]).not.toHaveProperty('user_id');
+    expect(result[0]).not.toHaveProperty('signed_at');
+  });
+
+  it('skips entries missing recipientIdGuid or status', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [
+            { status: 'completed' },
+            { recipientIdGuid: 'guid-no-status' },
+            { recipientIdGuid: 'guid-ok', status: 'completed' },
+          ],
+        },
+      },
+    });
+    expect(extractSigners(body)).toEqual([{ recipient_id_guid: 'guid-ok', status: 'completed' }]);
+  });
+
+  it('caps at 20 entries', () => {
+    const signers = Array.from({ length: 30 }, (_, i) => ({
+      recipientIdGuid: `guid-${i}`,
+      status: 'completed',
+    }));
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: { recipients: { signers } },
+    });
+    const result = extractSigners(body);
+    expect(result).toHaveLength(20);
+    expect(result.map((s) => s.recipient_id_guid)).toEqual(
+      Array.from({ length: 20 }, (_, i) => `guid-${i}`),
+    );
+  });
+
+  it('returns [] for non-signed envelopes (no recipients block)', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-1',
+      accountId: 'acct-1',
+      status: 'completed',
+      envelopeDocuments: [{ documentId: 'combined' }],
+    });
+    expect(extractSigners(body)).toEqual([]);
+  });
+
+  it('returns [] for an empty signers array', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: { recipients: { signers: [] } },
+    });
+    expect(extractSigners(body)).toEqual([]);
+  });
+
+  it('returns [] for empty recipients', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: { recipients: {} },
+    });
+    expect(extractSigners(body)).toEqual([]);
+  });
+
+  it('returns [] for invalid JSON', () => {
+    expect(extractSigners('not json')).toEqual([]);
+  });
+
+  it('handles Buffer input', () => {
+    const body = Buffer.from(JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [{ recipientIdGuid: 'guid-buffer', status: 'completed' }],
+        },
+      },
+    }));
+    expect(extractSigners(body)).toEqual([{ recipient_id_guid: 'guid-buffer', status: 'completed' }]);
+  });
+
+  it('does not read recipients.carbonCopies (mirrors extractNotaryData, which does not either)', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          carbonCopies: [{ recipientIdGuid: 'guid-cc', status: 'sent' }],
+        },
+      },
+    });
+    expect(extractSigners(body)).toEqual([]);
   });
 });

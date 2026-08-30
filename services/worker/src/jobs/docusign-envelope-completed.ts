@@ -403,6 +403,21 @@ export function makeDocusignEnvelopeJobDeps(
       const fingerprint = createHash('sha256').update(input.documentBytes).digest('hex');
       const byteLength = input.documentBytes.byteLength;
 
+      // R6: a THIRD independent allow-list gate (webhook extraction + job-payload
+      // re-parse are the other two) at the actual DB-write boundary — copy only
+      // the four named fields into a fresh object, never spread `input.signers`
+      // verbatim. Guards against a future caller widening the TS type (or an
+      // `as any` cast upstream) and reintroducing name/email at the one place
+      // that would durably persist it.
+      const safeSigners = input.signers
+        ?.filter((signer) => signer.recipient_id_guid && signer.status)
+        .map((signer) => ({
+          recipient_id_guid: signer.recipient_id_guid,
+          ...(signer.user_id ? { user_id: signer.user_id } : {}),
+          status: signer.status,
+          ...(signer.signed_at ? { signed_at: signer.signed_at } : {}),
+        }));
+
       // Durable, idempotent connector artifact via the Lane-2 0343 RPC. Exactly
       // one row per (org, 'docusign', envelopeId): a redelivered envelope dedupes
       // (ON CONFLICT DO NOTHING) and the RPC returns the existing id. No credit
@@ -429,6 +444,22 @@ export function makeDocusignEnvelopeJobDeps(
           // No PII beyond the user's uuid — never the fingerprint or bytes (§1.6A).
           queue_scope: queueScope,
           ...(queueScope === 'member' && ownerUserId ? { owner_user_id: ownerUserId } : {}),
+          // CTO Decision Record (docusign-bilateral-2026-08, rulings R6/R7):
+          // underscore-prefixed keys are stripped by the public metadata
+          // sanitizer and (PR-1's guard migration) writable only by service_role
+          // — this drain path already runs as service_role, so it is unaffected.
+          // _signers carries ONLY {recipient_id_guid, user_id?, status,
+          // signed_at?} — never name/email (§1.6A-style PII discipline; see
+          // extractSigners in webhooks/docusign.ts). Kept OFF the size-capped
+          // organization_rule_events.payload (Finding 7) and threaded only on
+          // this connector_artifact.metadata -> anchors.metadata path, which has
+          // no size cap.
+          ...(safeSigners && safeSigners.length > 0 ? { _signers: safeSigners } : {}),
+          // _docusign_env: 'prod' | 'demo', derived from the resolved
+          // connection's base_uri by resolveDocusignEnvironment (see
+          // processDocusignEnvelopeCompletedJob) — lets the frontend compose
+          // the correct DocuSign deep-link base.
+          ...(input.docusignEnv ? { _docusign_env: input.docusignEnv } : {}),
         },
       });
 
