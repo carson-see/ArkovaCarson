@@ -1,0 +1,30 @@
+### Rollback rehearsal — contract-frontend-tooling batch
+captured_at: 2026-08-30T22:43:25Z
+
+The batch touches ZERO migrations (verified: `git diff --name-only <base>..<head>` contains no
+supabase/migrations/ entry), so the rollback is a worker-image revert, not a schema revert.
+
+Rehearsed by standing the PRE-CHANGE image up against the SAME rig database on a sibling Cloud Run
+service, rather than by shifting traffic on the soaking service — a traffic shift would have moved
+the serving revision and reset the soak clock (FD-CLOCK-1). A `--tag rollback --no-traffic` revision
+was the first choice and is not available here: Cloud Run caps tag + service name at 46 characters
+and `arkova-worker-soak-contract-frontend-tooling-staging` alone is 51.
+
+  service:   cft-rollback-rehearsal   revision cft-rollback-rehearsal-00001-985
+  image:     us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker
+             @sha256:968ee630dc98f82846ecc9ee6afddad23dc7388bb44b20189a0c1bc269c36aab
+             (git_sha 0440ce7e5c09ab15da60157e9a96128f669dc999 — the image prod is serving today,
+              i.e. the exact artifact a rollback of this batch would restore)
+  env/secrets: identical overlay to the soak service, including the SAME rig Supabase secrets, so
+             the pre-change worker ran against the post-soak rig database state.
+
+  RESULT  /health -> {"status":"healthy","git_sha":"0440ce7e5c09ab15da60157e9a96128f669dc999",
+                      "checks":{"database":"ok","anchoring":"ok","kms":"warning"}}
+          GET /api/v1/verify/ARK-ORG-001 (X-API-Key) -> HTTP 200
+
+  Interpretation: the pre-change worker boots clean and still serves the v1 verification contract
+  against the database this batch's soak has been writing to. Nothing in the batch leaves state the
+  previous image cannot read, so a revert is safe. The soaking service was never touched: main-URL
+  traffic stayed 100% on arkova-worker-soak-contract-frontend-tooling-staging-00002-78p throughout.
+
+  The rehearsal service is torn down immediately after this capture (CLAUDE.md §7 cost sweep).
