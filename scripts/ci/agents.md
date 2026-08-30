@@ -586,6 +586,28 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - **FD-GATE-2, fixed at the consumer.** `ciContext.changedFiles()` no longer two-dots from the (possibly frozen) env base — see `scripts/ci/lib/agents.md` for the `resolveDiffBase` anchoring contract. This corrects the gate's `ownFiles`, the tier detector, `compute-merge-authority`, and the feedback-rules scans in one place, without touching the workflows that still pass the frozen sha. Also fixes the raw-head fallback misattribution (FD-GATE-3 defect 2). Known boundary: `--diff-filter=AMR` still drops deletions — that is FD-GATE-4, deliberately not addressed here.
 - **This is a §1.12/§1.13 merge-gate semantics change:** landed as a T0 tooling PR, opened as DRAFT for named human review — the gate that decides whether other PRs may merge must not be self-merged on its own green checks.
 
+## Merge-queue skip predicates require the mergify[bot] author (SCRUM-3812, 2026-08-29)
+
+- **The defect.** The fail-closed `evidence-identity` (ci.yml) and `staging-evidence` gates both
+  skipped their enforcement steps on `startsWith(github.head_ref, 'mergify/merge-queue/')` ALONE.
+  `github.head_ref` is author-controlled, and a job whose steps all skip still posts SUCCESS — so a
+  PR opened from a branch named `mergify/merge-queue/<anything>` greened BOTH
+  `check-success` conditions in every `.mergify.yml` queue with zero checker executions. This
+  contradicted the gates' own threat model (the same activation PR randomized the `$GITHUB_OUTPUT`
+  heredoc delimiter precisely so an author cannot forge evidence identity).
+- **The fix.** Every merge-queue `if:` in both workflows now also requires
+  `github.event.pull_request.user.login == 'mergify[bot]'` — GitHub-assigned, immutable, and true of
+  every real Mergify speculative PR (verified against live queue PRs #2464–#2468). NOT
+  `github.actor`, which becomes the re-running human and would deadlock a genuine queue PR. The
+  per-step skip shape is unchanged (a job-level `if:` would leave the check unreported, and an
+  unreported check never satisfies `check-success`).
+- **Contract tests.** `soak-integrity-gates-failclosed.test.ts` (ci.yml) and
+  `staging-evidence-workflow-contract.test.ts` (staging-evidence.yml, with mutation cases) pin that
+  every `if:` consulting `github.head_ref` / the queue-branch prefix is exactly the compound skip or
+  its exact negation — branch-only and `||`-weakened variants fail. The two files carry the same
+  `MERGE_QUEUE_SKIP_EXPRESSION` text; change them in lockstep. Written red-first against the
+  pre-fix workflows (5 failures), green after.
+
 ---
 
 Historical change log: [./agents-changelog.md](./agents-changelog.md)
