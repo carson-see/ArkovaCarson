@@ -1243,7 +1243,12 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
     }));
   });
 
-  it('OMITS fingerprint_source (undefined, not "document_bytes") for a normal outbound/fetched connector row', async () => {
+  // CTO Decision Record (docusign-bilateral-2026-08) superseded this test's
+  // original premise (omission). The merged schema/value resolution always
+  // classifies: every drained row EXCEPT the inbound declared-hash branch
+  // gets 'document_bytes' — never left undefined. Updated to match; the
+  // inbound-branch test above (issuer_record_attestation) is untouched.
+  it('sets fingerprint_source=document_bytes (not omitted) for a normal outbound/fetched connector row', async () => {
     const insertSpy = vi.fn();
     const db = makeDb({
       insertResult: { data: { id: 'anchor-outbound-1', public_id: 'ARK-OUTBOUND-1' }, error: null },
@@ -1257,10 +1262,14 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
 
     expect(insertSpy).toHaveBeenCalledTimes(1);
     const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
-    expect('fingerprint_source' in payload).toBe(false);
+    expect(payload.fingerprint_source).toBe('document_bytes');
   });
 
-  it('OMITS fingerprint_source for a non-inbound _direction value (never guesses toward the class)', async () => {
+  // Same supersession as above: only an EXACT metadata._direction === 'inbound'
+  // triggers issuer_record_attestation (see isInboundDeclaredHash). Any other
+  // value, including an explicit 'outbound', resolves to document_bytes —
+  // the code never guesses toward the declared-hash class.
+  it('sets fingerprint_source=document_bytes for a non-inbound _direction value (never guesses toward the declared-hash class)', async () => {
     const insertSpy = vi.fn();
     const db = makeDb({
       insertResult: { data: { id: 'anchor-outbound-2', public_id: 'ARK-OUTBOUND-2' }, error: null },
@@ -1273,6 +1282,6 @@ describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)
     );
 
     const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
-    expect('fingerprint_source' in payload).toBe(false);
+    expect(payload.fingerprint_source).toBe('document_bytes');
   });
 });

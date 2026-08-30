@@ -308,7 +308,19 @@ describe('R2: connector-artifact-drain sets fingerprint_source=document_bytes', 
     expect(inserts[0].values.fingerprint_source).toBe('document_bytes');
   });
 
-  it('AnchorInsertPayload Zod schema REJECTS issuer_record_attestation (that class is inbound-only, not this path)', () => {
+  // CTO Decision Record (docusign-bilateral-2026-08) superseded this test's
+  // original premise. AnchorInsertPayload is now the SHARED schema for both
+  // defaultMaterializeAnchor branches (this outbound/fetched path AND the
+  // inbound declared-hash path), so at the schema level it must ACCEPT
+  // issuer_record_attestation too — see connector-artifact-drain.test.ts's
+  // "sets fingerprint_source=issuer_record_attestation when metadata._direction
+  // is inbound" test, which round-trips this exact value through this exact
+  // schema. Path-exclusivity (this file's drain only ever WRITES
+  // 'document_bytes' for non-inbound rows) is enforced by
+  // defaultMaterializeAnchor's isInboundDeclaredHash branch logic, not by the
+  // schema — that behavior is what the "R2" describe block above and below
+  // asserts, unchanged.
+  it('AnchorInsertPayload Zod schema ACCEPTS issuer_record_attestation (shared schema; exclusivity is enforced by defaultMaterializeAnchor branch logic, not this schema)', () => {
     const parsed = AnchorInsertPayload.safeParse({
       fingerprint: FP,
       status: 'PENDING',
@@ -319,10 +331,19 @@ describe('R2: connector-artifact-drain sets fingerprint_source=document_bytes', 
       metadata: {},
       fingerprint_source: 'issuer_record_attestation',
     });
-    expect(parsed.success).toBe(false);
+    expect(parsed.success).toBe(true);
   });
 
-  it('AnchorInsertPayload Zod schema REJECTS a missing fingerprint_source', () => {
+  // CTO Decision Record (docusign-bilateral-2026-08) superseded this test's
+  // original premise. `fingerprint_source` is `.optional()` at the schema
+  // level (migration 0376/0384 enum, CHECK-constrained, nullable in Postgres)
+  // — so a payload omitting it now VALIDATES. In practice no row from THIS
+  // drain ever omits it: defaultMaterializeAnchor's ternary always supplies
+  // either 'document_bytes' or 'issuer_record_attestation' before calling
+  // .parse() (see the two describe blocks in this file, and
+  // connector-artifact-drain.test.ts), so the optionality is unused by this
+  // code path today, not a live gap.
+  it('AnchorInsertPayload Zod schema ACCEPTS a missing fingerprint_source (optional at the schema level; defaultMaterializeAnchor always supplies one in practice)', () => {
     const parsed = AnchorInsertPayload.safeParse({
       fingerprint: FP,
       status: 'PENDING',
@@ -332,6 +353,6 @@ describe('R2: connector-artifact-drain sets fingerprint_source=document_bytes', 
       credential_type: 'CONTRACT_POSTSIGNING',
       metadata: {},
     });
-    expect(parsed.success).toBe(false);
+    expect(parsed.success).toBe(true);
   });
 });
