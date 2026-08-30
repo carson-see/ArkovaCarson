@@ -2,6 +2,11 @@
   "_comment": "Append-only audit trail lives in _history (newest first), one object per entry, so a diff shows only the lines a PR actually added. It used to be a single ~22k-character string, which rendered every edit as one whole-line delete plus one whole-line add and made it impossible to see at review time whether prior entries had been preserved. Only exemptPrefixes is read by CI (scripts/ci/check-ledger-numeric-integrity.ts); _history is documentation. INVARIANT: a prefix belongs here if and only if it is present in the prod ledger AND its source .sql is absent from main. Present in both = stale, and auditStaleExemptions() now warns about it on every PR.",
   "_history": [
     {
+      "date": "2026-08-30",
+      "author": "CTO session \u2014 repo-wide unblock",
+      "note": "ADDED 0425. `0425_anchors_reorg_scan_index` (SCRUM-3836) is present in the PROD ledger on vzwyaatejekddvltxyye but its source .sql is absent from origin/main -- it lives only on the unmerged branch claude/affectionate-bohr-002dd5, owning PR #2495 (T3, still draft). It was applied to prod out of band before its source landed, the same sequencing error that produced the 0418/0419 orphan deadlock on 2026-08-29: APPLY ONE, MERGE IT, THEN APPLY THE NEXT. This satisfies the file's own invariant -- a prefix belongs here iff it is present in the prod ledger AND its source .sql is absent from main. Both hold. It is REPO-WIDE and blocking: `Check supabase/migrations vs prod` is a Mergify queue gate, so every open PR fails it on re-run regardless of whether that PR touches migrations at all; PRs currently showing green are doing so only on stale runs. Surfaced on #2249, which touches zero migrations. REMOVE 0425 when PR #2495 merges and lands the file. REMOVED 0418 and 0419 in the same motion: both source files are now present on origin/main (0418_sec_replay_dashboard_cache_refresher_revokes.sql, 0419_sec_replay_v_slow_queries_relation_revoke.sql), verified with git ls-tree, so their exemptions had outlived their purpose. They were not inert -- auditLedgerVsRepo returns early on an exempt prefix BEFORE reaching the localPrefixes check, so each stale entry actively suppressed the orphan audit for its prefix. The file says it itself: a stale exemption is worse than no exemption."
+    },
+    {
       "date": "2026-08-27",
       "author": "CTO session \u2014 post-apply reconciliation for PR #2336 / #2355",
       "note": "ADDED 0418, 0419. Both were applied to prod 2026-08-27 via Supabase MCP apply_migration and reconciled to numeric ledger versions per CLAUDE.md \u00a70 rule 10, while their owning PRs (#2336 -> 0418, #2355 -> 0419) were still open. Each was verified BEFORE apply to be a NO-OP against prod: the four refresh_cache_* functions already reported anon=f/authenticated=f/service_role=t, and public.v_slow_queries already reported anon SELECT=f / INSERT=f, authenticated SELECT=f, service_role SELECT=t. Both carry completed 48h T3 soaks on dedicated isolated rigs (115 cycles each). APPLYING BOTH BEFORE EITHER MERGED WAS THE MISTAKE: it created a mutual orphan deadlock \u2014 #2336's tree lacks 0419 and #2355's lacks 0418, so each PR orphaned the other, the exact two-orphan deadlock check-ledger-numeric-integrity.ts documents from 2026-08-11. Apply one, merge it, then apply the next. REMOVE 0418 when #2336 merges and 0419 when #2355 merges \u2014 a stale exemption is a live hole. REMOVED 0410, 0411, 0412, 0413 in the same motion: all four source files are present on origin/main (0410_partner_accounts, 0411_bug019_cleanup_expired_data_lock_timeout, 0412_bug009_anchor_status_counts_stale_estimate_sentinel, 0413_bug011_calibration_features_view), so their exemptions had outlived their purpose and were suppressing the orphan audit for those prefixes."
@@ -128,7 +133,6 @@
     }
   ],
   "exemptPrefixes": [
-    "0418",
-    "0419"
+    "0425"
   ]
 }
