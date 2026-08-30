@@ -379,6 +379,20 @@ Two design points to preserve if you touch it:
   open PR for most of a day, because each owning PR carried one of the two and
   was held red by the other. `main()` keeps these violations out of `blocking`;
   a unit test pins that contract.
+- **`prod-migration-apply-hook.test.ts` lives here, not next to the hook it tests
+  (2026-08-30).** It covers `.claude/hooks/check-prod-migration-apply.sh`, which
+  blocks a PROD `apply_migration` whose `NNNN` prefix is neither on `origin/main`
+  nor in `snapshots/ledger-numeric-exemptions.json` — the same-motion rule that
+  `0401`/`0402`, `0418`/`0419` and `0425` each violated. The test is under
+  `scripts/` because vitest's include globs are `tests/**`, `src/**` and
+  `scripts/**` — **`.claude/**` is in none of them**, so a test placed beside the
+  hook would never run, which is the bullet below in a different costume. Two of
+  its cases assert WIRING rather than behavior: that `.claude/settings.json`
+  registers the hook on a matcher which actually matches a real MCP tool name,
+  and that the hook's prod project ref equals `migration-drift.yml`'s. Before
+  this hook existed, `settings.json` matched only `Bash` and
+  `Edit|Write|NotebookEdit`, so no hook had ever been offered an MCP tool call at
+  all — which is the whole reason CLAUDE.md called that path unenforceable.
 - **A gate is only real if it is wired.** Several scripts here were written but
   never made required — check `ci.yml` (and branch protection) before assuming
   a script gates anything. `evidence-identity-report` is deliberately
