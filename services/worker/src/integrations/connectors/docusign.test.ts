@@ -17,6 +17,14 @@ const PAYLOAD = {
   document_ids: ['combined'],
 };
 
+// R6 (PR #2474 review, HIGH): DocusignCapturedSigner pins recipient_id_guid /
+// user_id to a GUID shape. `n` must be an integer — its decimal digits are
+// also valid hex, so distinct integers give distinct, valid GUID fixtures.
+function testGuid(n: number): string {
+  const suffix = String(Math.trunc(n)).padStart(12, '0').slice(-12);
+  return `aaaaaaaa-aaaa-4aaa-8aaa-${suffix}`;
+}
+
 describe('parseDocusignEnvelopeCompletedJobPayload', () => {
   it('accepts the webhook-created retry payload', () => {
     expect(parseDocusignEnvelopeCompletedJobPayload(PAYLOAD)).toMatchObject(PAYLOAD);
@@ -25,6 +33,67 @@ describe('parseDocusignEnvelopeCompletedJobPayload', () => {
   it('rejects missing org_id', () => {
     expect(() =>
       parseDocusignEnvelopeCompletedJobPayload({ ...PAYLOAD, org_id: undefined }),
+    ).toThrow();
+  });
+
+  // CTO Decision Record (docusign-bilateral-2026-08, ruling R6).
+  it('accepts an optional _signers array of pseudonymous GUIDs', () => {
+    const withSigners = {
+      ...PAYLOAD,
+      _signers: [
+        { recipient_id_guid: testGuid(1), user_id: testGuid(101), status: 'completed', signed_at: '2026-08-20T10:00:00Z' },
+        { recipient_id_guid: testGuid(2), status: 'completed' },
+      ],
+    };
+    expect(parseDocusignEnvelopeCompletedJobPayload(withSigners)).toMatchObject(withSigners);
+  });
+
+  it('omits _signers when absent (backward compat — pre-R6 payloads)', () => {
+    const result = parseDocusignEnvelopeCompletedJobPayload(PAYLOAD);
+    expect(result._signers).toBeUndefined();
+  });
+
+  it('rejects more than 20 _signers entries', () => {
+    const tooMany = Array.from({ length: 21 }, (_, i) => ({
+      recipient_id_guid: testGuid(i),
+      status: 'completed',
+    }));
+    expect(() =>
+      parseDocusignEnvelopeCompletedJobPayload({ ...PAYLOAD, _signers: tooMany }),
+    ).toThrow();
+  });
+
+  it('strips a name/email that somehow rides along on a _signers entry', () => {
+    const result = parseDocusignEnvelopeCompletedJobPayload({
+      ...PAYLOAD,
+      _signers: [
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- deliberately malformed input under test
+        { recipient_id_guid: testGuid(3), status: 'completed', name: 'Should Strip', email: 'strip@example.com' } as any,
+      ],
+    });
+    expect(result._signers?.[0]).not.toHaveProperty('name');
+    expect(result._signers?.[0]).not.toHaveProperty('email');
+  });
+
+  // PR #2474 review, HIGH: a mis-slotted email/name in the GUID field must be
+  // rejected by the schema (whole-array .parse() throws — this is the
+  // job-payload re-validation gate, stricter than extractSigners' per-entry
+  // safeParse skip, since this schema validates the FULL array at once).
+  it('rejects a _signers entry whose recipient_id_guid is email-shaped', () => {
+    expect(() =>
+      parseDocusignEnvelopeCompletedJobPayload({
+        ...PAYLOAD,
+        _signers: [{ recipient_id_guid: 'jane.doe@example.com', status: 'completed' }],
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a _signers entry whose user_id is email-shaped', () => {
+    expect(() =>
+      parseDocusignEnvelopeCompletedJobPayload({
+        ...PAYLOAD,
+        _signers: [{ recipient_id_guid: testGuid(4), user_id: 'jane.doe@example.com', status: 'completed' }],
+      }),
     ).toThrow();
   });
 });
@@ -62,7 +131,72 @@ describe('processDocusignEnvelopeCompletedJob', () => {
       envelopeId: 'env-1',
       documentBytes: Buffer.from('%PDF'),
       contentType: 'application/pdf',
+      docusignEnv: 'demo',
     }));
+  });
+
+  // CTO Decision Record R6/R7.
+  it('derives docusignEnv=prod from a production regional base_uri', async () => {
+    const enqueueSignedDocument = vi.fn().mockResolvedValue({ queuedId: 'queue-prod' });
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([37, 80, 68, 70]), {
+        status: 200,
+        headers: { 'content-type': 'application/pdf' },
+      }),
+    );
+
+    await processDocusignEnvelopeCompletedJob(PAYLOAD, {
+      resolveConnection: vi.fn().mockResolvedValue({ accessToken: 'at', baseUri: 'https://na2.docusign.net' }),
+      enqueueSignedDocument,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(enqueueSignedDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ docusignEnv: 'prod' }),
+    );
+  });
+
+  it('threads the job payload _signers through to enqueueSignedDocument as signers', async () => {
+    const enqueueSignedDocument = vi.fn().mockResolvedValue({ queuedId: 'queue-signers' });
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([37, 80, 68, 70]), {
+        status: 200,
+        headers: { 'content-type': 'application/pdf' },
+      }),
+    );
+    const signers = [{ recipient_id_guid: testGuid(1), status: 'completed' }];
+
+    await processDocusignEnvelopeCompletedJob(
+      { ...PAYLOAD, _signers: signers },
+      {
+        resolveConnection: vi.fn().mockResolvedValue({ accessToken: 'at', baseUri: 'https://demo.docusign.net' }),
+        enqueueSignedDocument,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      },
+    );
+
+    expect(enqueueSignedDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ signers }),
+    );
+  });
+
+  it('passes signers as undefined (not []) when the job payload has no _signers (backward compat)', async () => {
+    const enqueueSignedDocument = vi.fn().mockResolvedValue({ queuedId: 'queue-no-signers' });
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([37, 80, 68, 70]), {
+        status: 200,
+        headers: { 'content-type': 'application/pdf' },
+      }),
+    );
+
+    await processDocusignEnvelopeCompletedJob(PAYLOAD, {
+      resolveConnection: vi.fn().mockResolvedValue({ accessToken: 'at', baseUri: 'https://demo.docusign.net' }),
+      enqueueSignedDocument,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const call = enqueueSignedDocument.mock.calls[0][0] as Record<string, unknown>;
+    expect(call.signers).toBeUndefined();
   });
 
   it('lets fetch failures reject so job_queue applies backoff and DLQ policy', async () => {

@@ -13,9 +13,16 @@ import {
   exchangeDocusignCode,
   fetchDocusignCombinedDocument,
   getDocusignUserInfo,
+  resolveDocusignEnvironment,
   type DocusignClientDeps,
   type DocusignTokenResponseT,
+  type DocusignEnvironmentTag,
 } from '../oauth/docusign.js';
+import {
+  DocusignCapturedSigner,
+  MAX_CAPTURED_DOCUSIGN_SIGNERS,
+  type DocusignCapturedSignerT,
+} from './schemas.js';
 
 export const DocusignEnvelopeCompletedJobPayload = z.object({
   org_id: z.string().uuid(),
@@ -27,6 +34,13 @@ export const DocusignEnvelopeCompletedJobPayload = z.object({
   // DS-03: the DocuSign Connect completion time, threaded through so the durable
   // connector_artifact records source_timestamp (PII-safe metadata only).
   envelope_completed_at: z.string().datetime().optional(),
+  // CTO Decision Record (docusign-bilateral-2026-08, ruling R6): pseudonymous
+  // signer GUIDs captured by the webhook from the raw Connect payload's
+  // recipients.signers[] (outside this schema's own validated shape — see
+  // webhooks/docusign.ts extractSigners). Re-validated here because this value
+  // round-trips through job_queue as JSON, independent of the webhook process
+  // that wrote it. Absent (never []) when the envelope had no signers.
+  _signers: z.array(DocusignCapturedSigner).max(MAX_CAPTURED_DOCUSIGN_SIGNERS).optional(),
 });
 
 export type DocusignEnvelopeCompletedJobPayloadT = z.infer<typeof DocusignEnvelopeCompletedJobPayload>;
@@ -95,6 +109,13 @@ export interface DocusignEnvelopeJobDeps extends DocusignClientDeps {
     // that predate DS-04 — the materializer defaults to 'org' when unset.
     scope?: 'org' | 'member';
     ownerUserId?: string | null;
+    // CTO Decision Record R6: pseudonymous signer GUIDs from the job payload's
+    // `_signers` (webhook-captured). Optional/absent when the envelope had no
+    // signers.
+    signers?: DocusignCapturedSignerT[];
+    // R7: 'prod' | 'demo', derived from the resolved connection's base_uri —
+    // see resolveDocusignEnvironment. Always set by processDocusignEnvelopeCompletedJob.
+    docusignEnv?: DocusignEnvironmentTag;
   }) => Promise<DocusignDocumentSinkResult>;
 }
 
@@ -159,6 +180,11 @@ export async function processDocusignEnvelopeCompletedJob(
     deps,
   });
 
+  // R7: derived from THIS resolved connection's base_uri — not from anything
+  // the webhook/job payload asserts — so it always reflects the DocuSign
+  // datacenter the document was actually fetched from.
+  const docusignEnv = resolveDocusignEnvironment(connection.baseUri, deps.env ?? process.env);
+
   return deps.enqueueSignedDocument({
     orgId: parsed.org_id,
     integrationId: parsed.integration_id,
@@ -172,5 +198,8 @@ export async function processDocusignEnvelopeCompletedJob(
     // envelope materializes into the owning user's personal queue.
     scope: connection.scope,
     ownerUserId: connection.ownerUserId,
+    // R6/R7: pseudonymous signer GUIDs (webhook-captured) + the resolved env tag.
+    signers: parsed._signers,
+    docusignEnv,
   });
 }

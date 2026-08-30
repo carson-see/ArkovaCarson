@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/integrations/oauth/
 
-_Last updated: 2026-06-16 (SCRUM-2492 byte-safe error types + bounded `detail` on non-document paths)._
+_Last updated: 2026-08-29 (docusign-bilateral PR-2: `resolveDocusignEnvironment` env-tag resolver)._
 
 ## What This Folder Contains
 
@@ -11,7 +11,7 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 | `crypto.ts` | GCP KMS-based OAuth token encryption/decryption — cleartext never lands in Postgres |
 | `hmac.ts` | Shared HMAC-SHA256 webhook verifier (timing-safe, supports base64 and hex encoding) |
 | `drive.ts` | Google Drive OAuth client — token exchange, refresh, changes.watch, files.get, channels.stop. **DRIVE-02 (S2)**: `createChangesWatch` now returns the `startPageToken` (additive) and accepts an optional `driveId` to scope startPageToken + changes.watch to a shared-drive corpus. |
-| `docusign.ts` | DocuSign OAuth client — consent URLs, token refresh, UserInfo discovery, envelope document fetch, Connect HMAC |
+| `docusign.ts` | DocuSign OAuth client — consent URLs, token refresh, UserInfo discovery, envelope document fetch, Connect HMAC. **2026-08-29 (R7):** `resolveDocusignEnvironment(baseUri, env?)` — `'prod'\|'demo'` from the connection's `base_uri` (`demo.docusign.net` vs any other `*.docusign.net`), falling back to the existing `DOCUSIGN_DEMO` convention only when `base_uri` doesn't identify an environment |
 | `docusign-rate-limit.ts` | DocuSign outbound API guard — per-account 3,000/hour local slot budget plus Retry-After-aware 429 retry wrapper |
 | `adobe-sign.ts` | Adobe Sign webhook HMAC verification helpers |
 | `docusign-hmac.ts` | SCRUM-2043: multi-key HMAC verifier + signature header extractor for dual-key rotation |

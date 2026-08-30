@@ -27,6 +27,15 @@ import { z } from 'zod';
 const NonEmptyString = z.string().trim().min(1).max(500);
 const MaybeEmail = z.string().trim().toLowerCase().email().optional();
 
+// Standard 8-4-4-4-12 hex GUID shape — deliberately NOT Zod's built-in
+// `.uuid()`, which additionally enforces the RFC 4122 variant nibble
+// (8/9/a/b) that a vendor-issued GUID is not guaranteed to satisfy. Used to
+// structurally pin PII-adjacent identifier fields (see `DocusignCapturedSigner`
+// below) so a value cannot pass validation merely by having the right KEY
+// NAME while holding an email/name in the wrong shape.
+const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const GuidString = NonEmptyString.regex(GUID_PATTERN, 'must be a GUID');
+
 // =============================================================================
 // INT-12 — E-Sign (SCRUM-1016)
 // =============================================================================
@@ -56,6 +65,46 @@ export const DocusignEnvelopeCompleted = z.object({
     .max(100)
     .default([]),
 });
+
+/**
+ * CTO Decision Record (docs/staging/docusign-bilateral-2026-08,
+ * ruling R6) — a captured DocuSign signer identifier. PSEUDONYMOUS ONLY:
+ * `recipient_id_guid` (DocuSign's envelope-scoped GUID) and `user_id`
+ * (DocuSign's platform user id, absent for pure email-link signers) — never
+ * a name or email.
+ *
+ * Zod's default "strip unknown keys" object mode is load-bearing here: the
+ * raw DocuSign recipient object also carries `name` / `email` / `phoneAuthentication`
+ * / etc. Because this schema does not list them, they are stripped BY
+ * CONSTRUCTION on `.parse()` — not merely "not read" by whatever code
+ * happens to touch the object afterward. No caller may widen this schema
+ * with `.passthrough()`; doing so would defeat the guarantee.
+ *
+ * HIGH finding (PR #2474 review): stripping-by-key-name alone is not enough —
+ * if a future/buggy DocuSign payload ever mis-slots a value so that
+ * `recipientIdGuid` (or `userId`) HOLDS an email/name string, every gate that
+ * only checks the key name would wave it through and persist PII under a
+ * GUID-shaped field name. `GuidString` pins the VALUE shape, not just the
+ * key: a non-GUID `recipient_id_guid`/`user_id` fails `.safeParse()`, so
+ * `extractSigners` (webhooks/docusign.ts) silently skips that entry — same
+ * fail-soft posture as a missing required field, never a thrown error.
+ */
+export const DocusignCapturedSigner = z.object({
+  recipient_id_guid: GuidString,
+  // Absent for pure email-link (non-platform) signers — DocuSign only
+  // assigns userId to a recipient with a DocuSign platform account.
+  user_id: GuidString.optional(),
+  status: NonEmptyString,
+  // Deliberately NOT `.datetime()` — mirrors the existing notary extraction
+  // (`extractNotaryData`/`completedDateTime`), which accepts DocuSign's raw
+  // timestamp string as-is rather than enforcing strict RFC3339.
+  signed_at: z.string().trim().min(1).max(100).optional(),
+});
+
+export type DocusignCapturedSignerT = z.infer<typeof DocusignCapturedSigner>;
+
+/** R6: display cap + persistence cap for captured signers (metadata-size safety). */
+export const MAX_CAPTURED_DOCUSIGN_SIGNERS = 20;
 
 /** Adobe Sign agreement-signed payload — simplified shape. */
 export const AdobeAgreementSigned = z.object({

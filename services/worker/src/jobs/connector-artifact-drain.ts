@@ -77,6 +77,15 @@ export const AnchorInsertPayload = z
     filename: z.string().min(1).max(255),
     credential_type: z.literal('CONTRACT_POSTSIGNING'),
     metadata: z.record(z.string(), z.unknown()),
+    // R2 (CTO Decision Record, docusign-bilateral-2026-08): every row this
+    // drain materializes was fetched from a connected third-party source and
+    // hashed server-side (§1.6A) — never a declared/asserted hash — so
+    // `fingerprint_source` is always the 'document_bytes' evidence class
+    // (migration 0376/0384; CHECK-constrained on `anchors.fingerprint_source`).
+    // A literal, not an enum: this drain has no code path that produces the
+    // other class ('issuer_record_attestation' is the declared-hash inbound
+    // path, a different anchor-creation mechanism entirely).
+    fingerprint_source: z.literal('document_bytes'),
   })
   .strict();
 
@@ -413,6 +422,11 @@ export async function defaultMaterializeAnchor(
       connector_artifact_id: row.id,
       external_ref: row.external_ref,
     },
+    // R2: this row's fingerprint is always a server-computed hash of fetched
+    // document bytes (DS-03 enqueueSignedDocument, and its Drive/other
+    // connector twins) — never a declared/asserted value. See the schema
+    // comment on AnchorInsertPayload above.
+    fingerprint_source: 'document_bytes' as const,
   };
 
   // Validate the persisted row before insert (§1.2). Parse failures throw into

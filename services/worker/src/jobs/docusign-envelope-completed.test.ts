@@ -43,6 +43,7 @@ import {
   resetDocusignAccountRateLimitStoreForTests,
 } from '../integrations/oauth/docusign-rate-limit.js';
 import { fetchDocusignCombinedDocument } from '../integrations/oauth/docusign.js';
+import type { DocusignCapturedSignerT } from '../integrations/connectors/schemas.js';
 
 describe('runDocusignEnvelopeCompletedJobs', () => {
   beforeEach(() => {
@@ -364,6 +365,173 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
         envelope_id: 'envelope-1',
       });
       expect(result).toEqual({ queuedId: 'artifact-1' });
+    });
+
+    // CTO Decision Record (docusign-bilateral-2026-08, rulings R6/R7).
+    describe('_signers + _docusign_env in artifact metadata (R6/R7)', () => {
+      // R6 (PR #2474 review, HIGH): DocusignCapturedSigner pins recipient_id_guid
+      // / user_id to a GUID shape now — fixtures for those two fields must be
+      // real GUID-shaped strings.
+      const SIGNERS = [
+        {
+          recipient_id_guid: '11111111-1111-4111-8111-111111111111',
+          user_id: '22222222-2222-4222-8222-222222222222',
+          status: 'completed',
+          signed_at: '2026-08-20T10:00:00Z',
+        },
+        { recipient_id_guid: '33333333-3333-4333-8333-333333333333', status: 'completed' },
+      ];
+
+      it('stamps _signers and _docusign_env into artifact metadata when present', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT, signers: SIGNERS, docusignEnv: 'demo' });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata._signers).toEqual(SIGNERS);
+        expect(metadata._docusign_env).toBe('demo');
+      });
+
+      it('stamps _docusign_env=prod for a production connection', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT, docusignEnv: 'prod' });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata._docusign_env).toBe('prod');
+      });
+
+      it('omits _signers entirely when the envelope had no signers (backward compat)', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT, signers: undefined, docusignEnv: 'demo' });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata).not.toHaveProperty('_signers');
+      });
+
+      it('omits _signers for an explicitly empty signers array (never persists [])', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT, signers: [], docusignEnv: 'demo' });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata).not.toHaveProperty('_signers');
+      });
+
+      it('omits _docusign_env when the caller does not supply one', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({ ...SINK_INPUT });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata).not.toHaveProperty('_docusign_env');
+      });
+
+      // R6: assert absence explicitly — no name/email anywhere in the metadata
+      // this RPC call sends, even when a caller (defensively) hands one through.
+      // recipient_id_guid stays valid here so the assertion is specifically
+      // about the EXTRA name/email keys being stripped (Zod's default
+      // strip-unknown-keys mode), not about the whole entry being dropped for
+      // an unrelated reason (see the next test for the GUID-shape case).
+      it('never lets a name/email survive into artifact metadata via _signers', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({
+          ...SINK_INPUT,
+          // Extra name/email keys are not part of DocusignCapturedSignerT — the
+          // cast (not `any`) simulates a caller that bypassed the type, e.g. via
+          // `as unknown as DocusignCapturedSignerT[]` upstream, which is exactly
+          // the failure mode reValidateSigners() guards against.
+          signers: [{
+            recipient_id_guid: '44444444-4444-4444-8444-444444444444',
+            status: 'completed',
+            name: 'Should Not Persist',
+            email: 'nope@example.com',
+          } as DocusignCapturedSignerT],
+          docusignEnv: 'demo',
+        });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        // The entry survives (valid GUID) but stripped down to the allowed keys.
+        expect(metadata._signers).toEqual([
+          { recipient_id_guid: '44444444-4444-4444-8444-444444444444', status: 'completed' },
+        ]);
+        const serialized = JSON.stringify(metadata);
+        expect(serialized).not.toContain('Should Not Persist');
+        expect(serialized).not.toContain('nope@example.com');
+      });
+
+      // PR #2474 review, HIGH — the actual DB-write boundary test the finding
+      // asked for: a mis-slotted email/name-shaped value in recipient_id_guid
+      // (or user_id) must be SKIPPED (fail-soft — same treatment as a missing
+      // required field), never appear in the metadata this RPC call persists.
+      it('skips a signer entry whose recipient_id_guid is email/name-shaped (HIGH, PR #2474 review)', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({
+          ...SINK_INPUT,
+          // No cast needed — recipient_id_guid's static type is plain `string`;
+          // the GUID shape is a Zod runtime refinement TypeScript cannot see.
+          signers: [
+            { recipient_id_guid: 'jane.doe@example.com', status: 'completed' },
+            { recipient_id_guid: 'Jane Doe', status: 'completed' },
+            { recipient_id_guid: '55555555-5555-4555-8555-555555555555', status: 'completed' },
+          ],
+          docusignEnv: 'demo',
+        });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        expect(metadata._signers).toEqual([
+          { recipient_id_guid: '55555555-5555-4555-8555-555555555555', status: 'completed' },
+        ]);
+        const serialized = JSON.stringify(metadata);
+        expect(serialized).not.toContain('jane.doe@example.com');
+        expect(serialized).not.toContain('Jane Doe');
+      });
+
+      it('drops a signer entry whose user_id is email-shaped, even with a valid recipient_id_guid', async () => {
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        await deps.enqueueSignedDocument({
+          ...SINK_INPUT,
+          // No cast needed — user_id's static type is plain `string | undefined`;
+          // the GUID shape is a Zod runtime refinement TypeScript cannot see.
+          signers: [
+            {
+              recipient_id_guid: '66666666-6666-4666-8666-666666666666',
+              user_id: 'mistakenly-an-email@example.com',
+              status: 'completed',
+            },
+          ],
+          docusignEnv: 'demo',
+        });
+
+        const metadata = rpcCalls[0].args.p_metadata as Record<string, unknown>;
+        // user_id fails the GUID regex, so the whole entry fails safeParse and
+        // is dropped — never persisted with a silently-omitted user_id either.
+        expect(metadata).not.toHaveProperty('_signers');
+        expect(JSON.stringify(metadata)).not.toContain('mistakenly-an-email@example.com');
+      });
+
+      it('does not put _signers into the ENABLE_CONNECTOR_ARTIFACT_ENQUEUE=off skip breadcrumb', async () => {
+        process.env.ENABLE_CONNECTOR_ARTIFACT_ENQUEUE = 'false';
+        const { db, rpcCalls } = makeDb();
+        const deps = makeDocusignEnvelopeJobDeps({ db });
+
+        const result = await deps.enqueueSignedDocument({ ...SINK_INPUT, signers: SIGNERS, docusignEnv: 'demo' });
+
+        expect(rpcCalls).toHaveLength(0);
+        expect(result.queuedId).toContain('disabled');
+      });
     });
 
     // DS-04: member routing must be self-consistent — a 'member' scope with no

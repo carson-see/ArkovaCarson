@@ -12,6 +12,7 @@ import {
   verifyDocusignConnectHmac,
   parseDocusignConnectPayload,
   provisionConnectListener,
+  resolveDocusignEnvironment,
   DocusignApiError,
   DocusignConfigError,
 } from './docusign.js';
@@ -308,6 +309,43 @@ describe('parseDocusignConnectPayload', () => {
         }),
       ),
     ).toThrow(/Invalid ISO datetime/i);
+  });
+});
+
+// CTO Decision Record (docusign-bilateral-2026-08, ruling R6/R7) — env tag derived
+// from the resolved connection's base_uri, for frontend deep-link composition.
+describe('resolveDocusignEnvironment', () => {
+  it('resolves demo for the demo.docusign.net datacenter', () => {
+    expect(resolveDocusignEnvironment('https://demo.docusign.net')).toBe('demo');
+  });
+
+  it('resolves prod for a production regional datacenter', () => {
+    expect(resolveDocusignEnvironment('https://na1.docusign.net')).toBe('prod');
+    expect(resolveDocusignEnvironment('https://na2.docusign.net')).toBe('prod');
+    expect(resolveDocusignEnvironment('https://na3.docusign.net')).toBe('prod');
+    expect(resolveDocusignEnvironment('https://eu.docusign.net')).toBe('prod');
+  });
+
+  it('is case-insensitive on the host', () => {
+    expect(resolveDocusignEnvironment('https://DEMO.DOCUSIGN.NET')).toBe('demo');
+    expect(resolveDocusignEnvironment('https://NA1.DOCUSIGN.NET')).toBe('prod');
+  });
+
+  it('falls back to DOCUSIGN_DEMO when base_uri is null (default demo=true)', () => {
+    expect(resolveDocusignEnvironment(null, {})).toBe('demo');
+    expect(resolveDocusignEnvironment(undefined, {})).toBe('demo');
+  });
+
+  it('falls back to DOCUSIGN_DEMO=false when base_uri does not identify an environment', () => {
+    expect(resolveDocusignEnvironment('https://mock.example.test', { DOCUSIGN_DEMO: 'false' })).toBe('prod');
+    expect(resolveDocusignEnvironment('', { DOCUSIGN_DEMO: 'false' })).toBe('prod');
+  });
+
+  it('prefers base_uri over DOCUSIGN_DEMO when both are present and disagree', () => {
+    // A prod base_uri wins even if DOCUSIGN_DEMO is left at its demo-default —
+    // the resolved connection is the authoritative signal, not the env var.
+    expect(resolveDocusignEnvironment('https://na1.docusign.net', { DOCUSIGN_DEMO: 'true' })).toBe('prod');
+    expect(resolveDocusignEnvironment('https://demo.docusign.net', { DOCUSIGN_DEMO: 'false' })).toBe('demo');
   });
 });
 
