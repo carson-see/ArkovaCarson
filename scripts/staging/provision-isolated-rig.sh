@@ -1846,6 +1846,19 @@ DEPLOY_NETWORK_ARGS=()
 if [[ -n "$VPC_CONNECTOR" ]]; then
   DEPLOY_NETWORK_ARGS=("--vpc-connector=$VPC_CONNECTOR" "--vpc-egress=${VPC_EGRESS:-private-ranges-only}")
   echo "#   private-range egress: ${DEPLOY_NETWORK_ARGS[*]}"
+elif [[ "$PROFILE" == "chain" ]]; then
+  # Apply mode refuses this outright (before any paid mutation). Dry-run exists
+  # to be read before applying, so say it here rather than printing a plan that
+  # would deploy a worker unable to reach its own node.
+  for private_rpc_secret in "${PRIVATE_NODE_RPC_SECRETS[@]}"; do
+    if [[ "$GETBLOCK_RPC_URL_SECRET" == "$private_rpc_secret" \
+      || "$GETBLOCK_RPC_AUTH_SECRET" == "$private_rpc_secret" ]]; then
+      echo "#   WARNING: '$private_rpc_secret' addresses a PRIVATE Bitcoin node (10.x) that Cloud Run"
+      echo "#            cannot reach without --vpc-connector ${PRIVATE_NODE_VPC_CONNECTOR} --vpc-egress private-ranges-only."
+      echo "#            --apply will REFUSE this configuration."
+      break
+    fi
+  done
 fi
 run_cmd gcloud run deploy "$CLOUD_RUN_SERVICE" \
   --project="$GCP_PROJECT" \

@@ -435,6 +435,8 @@ interface ApplyRunResult extends SyncRunResult {
   artifactDir: string;
   admissionArtifactPath: string;
   schedulerStates: Record<string, string>;
+  /** Exact bytes the run piped into each Secret Manager secret, by secret name. */
+  secretPayloads: Record<string, string>;
 }
 
 interface ApplyRunOptions {
@@ -595,9 +597,17 @@ printf '%s\\n' "$*" >> "${logFile}"
 printf 'gcloud %s\\n' "$*" >> "${orderLogFile}"
 # Real gcloud always consumes stdin for --data-file=-; a stub that exits
 # without reading leaves the provisioner's printf writer racing a closed
-# pipe (SIGPIPE rc=141 under pipefail on loaded runners).
+# pipe (SIGPIPE rc=141 under pipefail on loaded runners). The payload is
+# captured (still fully drained) so tests can assert on the exact bytes
+# written to Secret Manager without those bytes ever being printed.
 if [[ "$*" == *"--data-file=-"* ]]; then
-  cat >/dev/null
+  mkdir -p '${join(stubDir, 'secret-payloads')}'
+  if [[ "$1" == "secrets" && ( "$2" == "create" || "$2" == "versions" ) ]]; then
+    if [[ "$2" == "create" ]]; then payload_secret="$3"; else payload_secret="$4"; fi
+    cat > '${join(stubDir, 'secret-payloads')}/'"$payload_secret"
+  else
+    cat >/dev/null
+  fi
 fi
 if [[ "$1" == "run" && "$2" == "services" && "$3" == "describe" ]]; then
   if [[ "$*" == *"status.latestReadyRevisionName"* ]]; then
@@ -823,6 +833,13 @@ exit 64
         readFileSync(join(schedulerStateDir, jobName), 'utf8'),
       ]))
     : {};
+  const secretPayloadDir = join(stubDir, 'secret-payloads');
+  const secretPayloads = existsSync(secretPayloadDir)
+    ? Object.fromEntries(readdirSync(secretPayloadDir).map((secretName) => [
+        secretName,
+        readFileSync(join(secretPayloadDir, secretName), 'utf8'),
+      ]))
+    : {};
   return {
     out,
     code,
@@ -835,6 +852,7 @@ exit 64
     artifactDir,
     admissionArtifactPath,
     schedulerStates,
+    secretPayloads,
   };
 }
 
@@ -1996,20 +2014,36 @@ describe('provision-isolated-rig.sh — IP_HASH_PEPPER is wired on every profile
     ).toBe(true);
   });
 
-  it('never prints a generated pepper value and hardcodes none in the script', () => {
+  it('generates 256 bits of entropy and never lets those bytes reach output or argv', () => {
     const result = applyRunStubbed('pepper-quiet', 'mock', {
       missingSecrets: ['ip-hash-pepper-pepper-quiet-staging'],
     });
     expect(result.code, result.out).toBe(0);
-    // A generated pepper is 64 hex chars; none may reach stdout/stderr or the
-    // logged argv (it is piped through --data-file=-, never an argument).
-    expect(result.out).not.toMatch(/\b[0-9a-f]{64}\b/);
+
+    // Assert on the EXACT bytes the run piped into Secret Manager, not on a
+    // 64-hex regex over the output — the plan legitimately prints the image
+    // digest and driver hash, which are also 64 hex characters.
+    const pepper = result.secretPayloads['ip-hash-pepper-pepper-quiet-staging'];
+    expect(pepper, 'the pepper must be written to Secret Manager').toMatch(/^[0-9a-f]{64}$/);
+    expect(result.out).not.toContain(pepper);
     for (const call of result.gcloudCalls) {
-      if (call.startsWith('secrets create ip-hash-pepper-')) {
-        expect(call).not.toMatch(/\b[0-9a-f]{64}\b/);
-      }
+      expect(call, 'the pepper travels through --data-file=-, never argv').not.toContain(pepper);
     }
     expect(script).not.toMatch(/IP_HASH_PEPPER=[0-9a-f]{16,}/);
+  });
+
+  it('generates a distinct pepper per rig rather than a fixed value', () => {
+    const first = applyRunStubbed('pepper-entropy-a', 'mock', {
+      missingSecrets: ['ip-hash-pepper-pepper-entropy-a-staging'],
+    });
+    const second = applyRunStubbed('pepper-entropy-b', 'mock', {
+      missingSecrets: ['ip-hash-pepper-pepper-entropy-b-staging'],
+    });
+    expect(first.code, first.out).toBe(0);
+    expect(second.code, second.out).toBe(0);
+    expect(first.secretPayloads['ip-hash-pepper-pepper-entropy-a-staging']).not.toBe(
+      second.secretPayloads['ip-hash-pepper-pepper-entropy-b-staging'],
+    );
   });
 
   it('records the pepper secret name in provision state so teardown can reclaim it', () => {
@@ -2082,6 +2116,16 @@ describe('provision-isolated-rig.sh — private-node RPC needs a VPC connector (
     expect(result.out).toContain(PRIVATE_RPC_URL_SECRET);
     expect(result.npxCalls.some((call) => call.startsWith('supabase projects create '))).toBe(false);
     expect(result.gcloudCalls.some((call) => call.startsWith('run deploy '))).toBe(false);
+  });
+
+  it('warns in the dry-run plan that --apply will refuse a connector-less private-node rig', () => {
+    const { out, code } = dryRun(['--name', 'vpc-dry', '--profile', 'chain'], signetRpcEnv);
+    // Dry-run still exits 0 and mutates nothing; the plan just tells the truth
+    // about what --apply would do with this configuration.
+    expect(code).toBe(0);
+    expect(out).toMatch(/WARNING/);
+    expect(out).toMatch(/vpc-connector/);
+    expect(out).toMatch(/REFUSE/);
   });
 
   it('rejects an unsupported egress mode rather than deploying an unreachable rig', () => {
