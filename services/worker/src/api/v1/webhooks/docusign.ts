@@ -180,13 +180,52 @@ function documentHashes(event: DocusignCompletedEnvelope): string[] {
   )];
 }
 
+/**
+ * Build the sanitized rule-event payload for the `enqueue_rule_event` RPC.
+ *
+ * `organization_rule_events.payload` carries a hard DB CHECK
+ * (`organization_rule_events_payload_size`): `pg_column_size(payload) <= 16384`.
+ * The payload is derived from EVERY envelope document, so it must stay bounded
+ * regardless of envelope cardinality or documentId length.
+ *
+ * We record `document_count` — a fixed-size integer — rather than the full
+ * `document_ids` array. At the schema-permitted maximum (envelopeDocuments
+ * `.max(100)`) with long documentId values, that array alone overflowed the
+ * 16KB budget; the RPC would then throw a check_violation, the handler would
+ * roll the nonce back and 500, and DocuSign would retry the identical failing
+ * payload forever — trapping the envelope's ESIGN_COMPLETED event and every
+ * downstream step (document fetch, notarization, anchor). Nothing reads
+ * `document_ids` back off THIS payload: the rules engine's
+ * `sanitizeExecutionProviderPayload` allowlist and the action dispatcher consume
+ * only `document_hashes` / `document_sha256`, and the per-document ids the fetch
+ * job needs ride the UNCAPPED `job_queue` payload instead (see `enqueueFetchJob`).
+ * `document_hashes` stays: <=100 unique 64-char digests keep it well under budget.
+ */
+export function buildDocusignRuleEventPayload(args: {
+  integrationId: string;
+  event: DocusignCompletedEnvelope;
+  payloadHash: string;
+}): Record<string, unknown> {
+  const hashes = documentHashes(args.event);
+  return {
+    source: 'docusign_connect',
+    integration_id: args.integrationId,
+    account_id: args.event.accountId,
+    envelope_id: args.event.envelopeId,
+    document_count: args.event.envelopeDocuments.length,
+    ...(hashes.length > 0 ? { document_hashes: hashes } : {}),
+    ...(hashes.length === 1 ? { document_sha256: hashes[0] } : {}),
+    generated_at: args.event.generatedDateTime ?? null,
+    payload_hash: args.payloadHash,
+  };
+}
+
 async function enqueueRuleEvent(args: {
   integration: DocusignIntegrationRow;
   event: DocusignCompletedEnvelope;
   payloadHash: string;
 }): Promise<string> {
   const canonical = adaptDocusign(args.event, { org_id: args.integration.org_id });
-  const hashes = documentHashes(args.event);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (db.rpc as any)('enqueue_rule_event', {
     p_org_id: canonical.org_id,
@@ -197,17 +236,11 @@ async function enqueueRuleEvent(args: {
     p_folder_path: canonical.folder_path ?? null,
     p_sender_email: canonical.sender_email ?? null,
     p_subject: canonical.subject ?? null,
-    p_payload: {
-      source: 'docusign_connect',
-      integration_id: args.integration.id,
-      account_id: args.event.accountId,
-      envelope_id: args.event.envelopeId,
-      document_ids: args.event.envelopeDocuments.map((doc) => doc.documentId),
-      ...(hashes.length > 0 ? { document_hashes: hashes } : {}),
-      ...(hashes.length === 1 ? { document_sha256: hashes[0] } : {}),
-      generated_at: args.event.generatedDateTime ?? null,
-      payload_hash: args.payloadHash,
-    },
+    p_payload: buildDocusignRuleEventPayload({
+      integrationId: args.integration.id,
+      event: args.event,
+      payloadHash: args.payloadHash,
+    }),
   });
 
   if (error || !data) {
