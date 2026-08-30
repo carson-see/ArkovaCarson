@@ -29,6 +29,7 @@ in the same PR. Re-verify with:
 | `anchor.revoked` | `AnchorRevokedPayloadSchema` | `services/worker/src/api/anchor-revoke.ts` (RPC `revoke_anchor`) | Live |
 | `anchor.expired` | `AnchorExpiredPayloadSchema` (SCRUM-1735) | `services/worker/src/jobs/anchorExpirySweep.ts` (SCRUM-1736 daily cron at 03:00 UTC; also `POST /jobs/anchor-expiry-sweep` for Cloud Scheduler) | Live |
 | `anchor.superseded` | `AnchorSupersededPayloadSchema` | `services/worker/src/api/anchor-lineage.ts` | Live (subscribable via the API allowlist; absent from the dashboard picker — registration handled separately, PR #2433) |
+| `anchor.superseded` | `AnchorSupersededPayloadSchema` (SCRUM-2937) | `services/worker/src/api/anchor-lineage.ts` (`POST /api/anchor/:id/supersede`, RPC `supersede_anchor`) | Live |
 | `anchor.batch_secured` | `AnchorBatchSecuredPayloadSchema` | merkle-batch path (per-anchor `anchor.secured` events also fan out — SCRUM-1264) | Live |
 | `credential.issued` | `CredentialIssuedPayloadSchema` | `services/worker/src/api/v1/credential-sources.ts` (`queueCredentialIssuedAudit`, SCRUM-1798 Phase 2a) | Live, unflagged |
 | `credential.verified` | `CredentialVerifiedPayloadSchema` | `services/worker/src/api/v1/verify.ts` + `services/worker/src/api/v1/oracle.ts` (SCRUM-1799) | Wired but dark: BOTH sites gated on `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` (default false; verified unset in prod 2026-08-29) |
@@ -119,6 +120,7 @@ arkova-worker` 2026-08-29), no workflow sets it, and no switchboard read exists
 on that path — flipping its badge requires re-verifying that flag in prod, not
 this file.
 
+- _Superseded 2026-08-23 by DI-775 / SCRUM-3538 — that drift is closed; see the 2026-08-23 section below. The bullet above is left verbatim because this file is append-only (`scripts/ci/check-agents-md-append-only.ts`): rewriting a merge-base line to record its outcome reads as a deletion and reddens the required `Dependency Scanning` check._
 ## 2026-08-17 — `response_body`/`error_message` truncation is surrogate-safe
 
 `delivery.ts` bounded `webhook_delivery_logs.response_body` (1000) and `error_message` (500) with
@@ -127,3 +129,53 @@ split a surrogate pair made the delivery-log `.update()` itself PGRST102 — sta
 failing on attacker-controlled input (2026-08-17 poison-record class, PR #2266). All four sites now
 use `utils/utf16-truncate.ts` `truncateUtf16Safe`. Poison regression tests live in
 `src/tests/webhook-delivery-roundtrip.test.ts` (`response_body surrogate-safe truncation`).
+
+## 2026-08-23 — `anchor.superseded` registration surfaces closed (DI-775 / SCRUM-3538)
+
+The drift recorded above is fixed. `anchor.superseded` was the same bug class as
+SCRUM-1794 (`anchor.submitted` / `anchor.batch_secured`) and BUG-002
+(`compliance.document_expiring`), but with the halves reversed: the worker side
+was already complete — schema registered in `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`
+(so `VALID_WEBHOOK_EVENTS` accepted a subscription), and
+`services/worker/src/api/anchor-lineage.ts` really dispatches it — while every
+*registration* surface omitted it. An org whose record was superseded was sent
+an event that no picker, catalog, typed SDK union, or Zap dropdown let it
+subscribe to.
+
+**No worker code changed.** The wire contract, the CRUD allowlist and the
+dispatch site are untouched; this was purely the registration surfaces catching
+up, so it adds no new data egress — `AnchorSupersededPayloadSchema` is still
+`.strict()` and `payload-schemas.test.ts` still rejects
+`anchor_id` / `fingerprint` / `user_id` / `org_id` on it.
+
+Surfaces now in lockstep (all test-guarded): `WebhookSettings.tsx`
+`AVAILABLE_EVENTS`, its pinned drift-guard list, `WebhookEventCatalog.tsx`
+`CATALOG_DATA` (`live: true` — real emit point), `src/lib/copy.ts`
+`WEBHOOK_EVENT_DESCRIPTIONS`, `packages/sdk/src/types.ts`,
+`integrations/zapier/src/constants.ts`, `docs/api/webhooks.md`.
+
+Two of those had no drift guard at all before this change and now do:
+`integrations/zapier/test/zapier.test.ts` pins the full ordered `VALID_EVENTS`
+set, and `packages/sdk/src/client.test.ts` pins `WebhookEventType` via an
+exhaustive `Record<WebhookEventType, true>` (a missing union member fails
+`tsc --noEmit`; deleting the pin row to silence that fails `vitest run`).
+
+**Know what those pins do and do not catch.** Every one of them is a hardcoded
+list in a workspace that cannot import the worker constant, so each fires only
+when someone edits THAT surface and forgets its own pin. None of them keys off
+`PAYLOAD_SCHEMAS_BY_EVENT_TYPE`, so none fires when the worker map GROWS and the
+mirrors stand still — which is the direction all three incidents (SCRUM-1794,
+BUG-002, DI-775) actually travelled. Measured, not assumed: adding a tenth-plus
+key to the map leaves `WebhookSettings.test.tsx` + `WebhookEventCatalog.test.tsx`
+(40 tests), the Zapier suite (23) and the SDK suite (62, plus `tsc --noEmit`
+exit 0) all green. Two of the four are not even reachable from a PR:
+`.github/workflows/publish-sdk.yml` runs the SDK tests only on an `sdk-v*` tag,
+and no workflow runs the Zapier tests at all.
+
+The ratchet that does key off the source of truth is
+`scripts/ci/check-webhook-event-registration-drift.ts`. It parses the map's keys
+and compares them against all six mirrors (picker, catalog, `copy.ts`, SDK
+union, Zapier constant, `docs/api/webhooks.md` tables), fails closed if any
+declaration stops resolving, and runs inside the already-required `Tests` job
+via the root vitest `scripts/**` glob — no workflow wiring needed. Register a
+schema in this file and that check goes red until every mirror follows.

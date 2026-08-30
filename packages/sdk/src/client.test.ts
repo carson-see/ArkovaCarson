@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Arkova, ArkovaError } from './client';
+import type { WebhookEventType } from './types';
 
 const mockFetch = vi.fn();
 
@@ -902,6 +903,67 @@ describe('verifyBatch', () => {
       statusCode: 429,
       code: 'rate_limit_exceeded',
     });
+  });
+});
+
+/**
+ * Drift guard (DI-775 / SCRUM-3538).
+ *
+ * `WebhookEventType` mirrors the worker's `VALID_WEBHOOK_EVENTS`, which is
+ * DERIVED from the keys of `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` in
+ * services/worker/src/webhooks/payload-schemas.ts. The SDK is a separate
+ * workspace and cannot import that constant, so the guard is a typed pin.
+ *
+ * It bites in BOTH directions:
+ *  - `Record<WebhookEventType, true>` is exhaustive, so removing a member from
+ *    the union (or listing an id the union lacks) fails `tsc --noEmit`.
+ *  - the runtime assertion pins the key set, so quietly deleting a row here to
+ *    silence that compile error fails `vitest run`.
+ *
+ * Both of those are LOCAL to this package, in two senses. This pin is a
+ * hardcoded list, so it stays green when the worker registers a new event and
+ * this union stands still — the direction the drift actually travelled. And
+ * neither command runs on a pull request: `.github/workflows/publish-sdk.yml`
+ * is the only workflow that typechecks or tests `packages/sdk`, and it triggers
+ * on an `sdk-v*` tag. The PR-time gate for the same class is
+ * `scripts/ci/check-webhook-event-registration-drift.ts`, which parses
+ * `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` and compares this union against it from
+ * inside the required root `Tests` job.
+ *
+ * `anchor.superseded` is the reason this exists: the worker dispatched it
+ * (services/worker/src/api/anchor-lineage.ts, SCRUM-2937) and the CRUD
+ * allowlist accepted it, while this union omitted it — so a typed SDK consumer
+ * could not subscribe to an event Arkova was already sending them.
+ */
+const WEBHOOK_EVENT_TYPE_PIN: Record<WebhookEventType, true> = {
+  'anchor.submitted': true,
+  'anchor.secured': true,
+  'anchor.revoked': true,
+  'anchor.expired': true,
+  'anchor.superseded': true,
+  'anchor.batch_secured': true,
+  'credential.issued': true,
+  'credential.verified': true,
+  'credential.status_changed': true,
+  'compliance.document_expiring': true,
+};
+
+describe('WebhookEventType', () => {
+  it('covers the worker allowlist exactly (drift guard)', () => {
+    expect(Object.keys(WEBHOOK_EVENT_TYPE_PIN).sort()).toEqual(
+      [
+        'anchor.batch_secured',
+        'anchor.expired',
+        'anchor.revoked',
+        'anchor.secured',
+        'anchor.submitted',
+        'anchor.superseded',
+        'compliance.document_expiring',
+        'credential.issued',
+        'credential.status_changed',
+        'credential.verified',
+      ].sort(),
+    );
   });
 });
 
