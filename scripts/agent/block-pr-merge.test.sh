@@ -447,6 +447,165 @@ run_case_bounded "200 refspecs then a wildcard dst"      $BLOCKED \
   "git push --force origin ${big_refspecs}refs/heads/*" 10
 
 echo ""
+echo "--- rule 1: the read-only help form must not block --------------"
+# SCRUM-3656. `gh pr merge --help` prints usage and merges nothing, and the
+# guard blocking it broke ordinary doc work (it fired on any command merely
+# CONTAINING the merge string). The carve-out is token-exact in the
+# next-token position ONLY; every blocked case below pins why it is narrow.
+run_case "merge --help allowed"             $ALLOWED 'gh pr merge --help'
+run_case "merge -h allowed"                 $ALLOWED 'gh pr merge -h'
+run_case "merge --help piped"               $ALLOWED 'gh pr merge --help | cat'
+run_case "merge -h then &&"                 $ALLOWED 'gh pr merge -h && echo done'
+run_case "subshell merge --help allowed"    $ALLOWED '(gh pr merge --help)'
+# A selector before --help still shows help in gh, but this guard cannot
+# cheaply tell that from a flag VALUE, so anything but the immediate
+# next-token form stays blocked -- over-block, the safe direction.
+run_case "merge 123 --help still blocked"   $BLOCKED 'gh pr merge 123 --squash --help'
+# --help in a VALUE position is a REAL merge (its body is "--help").
+run_case "merge --body --help blocked"      $BLOCKED 'gh pr merge 123 --body --help'
+# --help=false DISABLES help and the merge runs: exact-token match, never a
+# prefix match.
+run_case "merge --help=false blocked"       $BLOCKED 'gh pr merge --help=false'
+# A quoted token is not the exact token; over-block, safe direction.
+run_case "merge quoted --help blocked"      $BLOCKED 'gh pr merge "--help"'
+# A newline is a command SEPARATOR: line one is a real merge of the current
+# branch's PR. The gap before the help token is space/tab only.
+run_case "merge then newline --help"        $BLOCKED $'gh pr merge\n--help'
+# EVERY merge occurrence on the line must be the help form.
+run_case "help then a real merge"           $BLOCKED 'gh pr merge --help && gh pr merge 123 --merge'
+run_case "bare merge still blocked"         $BLOCKED 'gh pr merge'
+# The anchor class gained `(`: a subshell wrapper is the same command, and
+# `(gh pr merge 123 --squash)` returned exit 0 against the pre-fix hook
+# (probed 2026-08-30) because `(` was not in the separator class.
+run_case "subshell merge blocked"           $BLOCKED '(gh pr merge 123 --squash)'
+
+echo ""
+echo "--- BYPASS: a transient user alias resolves inside git ----------"
+# SCRUM-3702. `git -c alias.p=push p --force origin main`: the definition is
+# a global option the normalizer used to STRIP, and `p` only becomes `push`
+# inside git -- so every rule saw `git p ...` and the whole force-push family
+# was fail-open behind one flag. Each case below returned exit 0 against the
+# pre-fix hook.
+run_case "alias: -c alias.p=push"               $BLOCKED 'git -c alias.p=push p --force origin main'
+run_case "alias: attached -calias.p=push"       $BLOCKED 'git -calias.p=push p -f origin main'
+run_case "alias: whole def quoted"              $BLOCKED "git -c 'alias.fp=push --force' fp origin main"
+run_case "alias: value quoted"                  $BLOCKED "git -c alias.fp='push --force' fp origin main"
+run_case "alias: chain a->b->push"              $BLOCKED 'git -c alias.a=b -c alias.b=push a --force origin main'
+run_case "alias: chain tail keeps flags"        $BLOCKED 'git -c alias.a="b --force" -c alias.b=push a origin main'
+run_case "alias: commit --no-verify"            $BLOCKED 'git -c alias.ci=commit ci --no-verify -m x'
+run_case "alias: shell (!) expansion"           $BLOCKED "git -c 'alias.x=!git push --force origin main' x"
+run_case "alias: quoted invocation"             $BLOCKED 'git -c alias.p=push "p" --force origin main'
+run_case "alias: after &&"                      $BLOCKED 'npm test && git -c alias.p=push p --force origin main'
+run_case "alias: +refspec via alias"            $BLOCKED 'git -c alias.p=push p origin +main'
+run_case "alias: stacked with other globals"    $BLOCKED 'git --no-pager -c alias.p=push p --force origin main'
+# Chasing a chain INTO a shadowing alias must stop at the builtin: git
+# ignores alias.push, so `a` expands to the REAL push here.
+run_case "alias: chain into shadowed push"      $BLOCKED 'git -c alias.push=status -c alias.a=push a --force origin main'
+# An env-indirect definition cannot be resolved by a text hook; fail CLOSED
+# on the construction itself.
+run_case "alias: --config-env= def"             $BLOCKED 'git --config-env=alias.p=EV p --force origin main'
+run_case "alias: --config-env separated"        $BLOCKED 'git --config-env alias.p=EV p --force origin main'
+run_case "alias: --config-env quoted"           $BLOCKED "git --config-env='alias.p=EV' p -f origin main"
+
+echo ""
+echo "--- alias resolution must not over-match or launder --------------"
+# git IGNORES an alias that shadows a builtin: `git -c alias.push=status
+# push --force origin main` runs the REAL push. Resolution must therefore
+# never substitute away the verbs the rules anchor on. Both were blocked
+# before the alias fix and must stay blocked after it -- they are what stops
+# the resolver from becoming a laundering primitive.
+run_case "shadowed push stays blocked"      $BLOCKED 'git -c alias.push=status push --force origin main'
+run_case "shadowed commit stays blocked"    $BLOCKED 'git -c alias.commit=status commit --no-verify -m x'
+# Benign aliases and benign expansions stay allowed.
+run_case "alias to a benign subcommand"     $ALLOWED 'git -c alias.s=status s'
+run_case "alias to pull, naming main"       $ALLOWED 'git -c alias.p=pull p origin main'
+run_case "alias defined but not invoked"    $ALLOWED 'git -c alias.p=push status'
+run_case "alias defined, other subcommand"  $ALLOWED 'git -c alias.p=push fetch origin main'
+run_case "alias push to a feature branch"   $ALLOWED 'git -c alias.p=push p origin feature-branch'
+run_case "alias named force, benign use"    $ALLOWED 'git -c alias.force=push force origin feature-branch'
+run_case "prose defining an alias"          $ALLOWED 'git commit -m "docs: git -c alias.p=push explains the bypass"'
+run_case "config-env that is not an alias"  $ALLOWED 'git --config-env=user.name=EV commit -m x'
+# Quoting the FULL bypass in prose now trips the guard against it -- the same
+# accepted over-block class as quoting `git push --force origin main`
+# directly (see scripts/agent/agents.md, 2026-08-23); recorded here so the
+# class cannot flip silently in either direction.
+run_case "prose quoting the full bypass"    $BLOCKED 'echo "git -c alias.p=push p --force origin main"'
+# An alias cycle cannot run anything (git refuses alias loops); resolution
+# must terminate and leave the name in place rather than hang or guess.
+run_case_bounded "alias cycle stays bounded"    $ALLOWED \
+  'git -c alias.a=b -c alias.b=a a --force origin main' 10
+big_aliases=""
+for _ in $(seq 1 200); do big_aliases+="-c alias.p=push "; done
+run_case_bounded "200 alias defs then invocation"   $BLOCKED \
+  "git ${big_aliases}p --force origin main" 10
+run_case_bounded "200 alias defs then benign work"  $ALLOWED \
+  "git ${big_aliases}status --porcelain" 10
+
+echo ""
+echo "--- sibling hook: staging-evidence gh calls are time-bounded ----"
+# SCRUM-3656. check-staging-evidence-pre-merge.sh makes a network call
+# (`gh pr view`) from inside a PreToolUse hook. Un-timeouted, a hung call
+# wedges the session's Bash tool at the exact moment the agent runs a
+# `gh pr ready`. Static half: the calls must go through the bounded runner.
+STAGING_HOOK="${REPO_ROOT}/.claude/hooks/check-staging-evidence-pre-merge.sh"
+if /usr/bin/grep -q 'bounded_gh pr view' "$STAGING_HOOK"; then
+  echo "  PASS  staging hook routes pr view through bounded_gh"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL  staging hook does not route pr view through a bounded runner"
+  FAIL=$((FAIL + 1))
+fi
+if /usr/bin/grep -qE '\$\(gh pr view' "$STAGING_HOOK"; then
+  echo "  FAIL  staging hook still calls gh pr view unbounded"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS  no unbounded gh pr view call remains"
+  PASS=$((PASS + 1))
+fi
+# Functional half: with gh shimmed to hang for 60s and a 1s budget, the hook
+# must come back quickly AND fail closed (deny). Clocked like
+# run_case_bounded, because an unbounded hook presents as a hang, not as a
+# failed assert.
+shim_dir=$(mktemp -d)
+printf '#!/bin/bash\nexec sleep 60\n' >"${shim_dir}/gh"
+chmod +x "${shim_dir}/gh"
+out_f=$(mktemp)
+{ payload 'gh pr ready 123' \
+    | ARKOVA_HOOK_GH_TIMEOUT=1 PATH="${shim_dir}:${PATH}" bash "$STAGING_HOOK" \
+        >"$out_f" 2>/dev/null
+  echo $? >"${out_f}.rc"; } &
+pid=$!
+waited=0
+hung=false
+while kill -0 "$pid" 2>/dev/null; do
+  if (( waited >= 150 )); then   # 15s ceiling; the bounded path takes ~1-2s
+    kill -9 "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    hung=true
+    break
+  fi
+  sleep 0.1
+  waited=$((waited + 1))
+done
+if [[ "$hung" == "true" ]]; then
+  echo "  FAIL  staging hook hung >15s on a stalled gh (no effective timeout)"
+  FAIL=$((FAIL + 1))
+else
+  wait "$pid" 2>/dev/null
+  staging_rc=$(cat "${out_f}.rc" 2>/dev/null || echo 99)
+  if [[ "$staging_rc" == "0" ]] \
+     && /usr/bin/grep -q '"permissionDecision": "deny"' "$out_f"; then
+    echo "  PASS  stalled gh: hook returned within budget and failed closed"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL  stalled gh: expected exit 0 + deny JSON, got rc=${staging_rc}"
+    sed 's/^/        /' "$out_f"
+    FAIL=$((FAIL + 1))
+  fi
+fi
+rm -rf "$shim_dir" "$out_f" "${out_f}.rc"
+
+echo ""
 echo "--- summary ----------------------------------------------------"
 echo "PASS=${PASS} FAIL=${FAIL}"
 
