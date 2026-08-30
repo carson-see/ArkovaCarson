@@ -4,8 +4,8 @@
  *
  * Every prod-affecting PR declares a risk tier (T1 / T2 / T3) in its
  * body. T0 docs/tests/CI/tooling-only PRs run CI only. The tier dictates
- * required evidence fields and, for T2/T3, required soak length. CI fails
- * the PR if:
+ * required evidence fields and required soak length (2h / 12h / 48h per
+ * CLAUDE.md §1.12). CI fails the PR if:
  *
  *   1. The declared tier is missing.
  *   2. The declared tier is below what the touched files require
@@ -59,12 +59,19 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
   },
   T1: {
     tier: 'T1',
-    soakHours: 0,
+    // CLAUDE.md §1.12: the T1 row is "2 h soak" with "soak start/end" in its
+    // required evidence. This spec carried 0h with no window fields, so a green
+    // T1 gate proved no soak at all (merged #2241/#2264 finding; the approver
+    // half of that gap was closed by validateHumanApproverField). The gate
+    // matches the constitution — not the other way around.
+    soakHours: 2,
     requiredFields: [
       'Tier:',
       'PR head SHA:',
       'Staging tag URL or N/A explanation:',
       'Health/smoke result:',
+      'Soak start:',
+      'Soak end:',
       'CI/E2E green:',
       'Rollback plan:',
       'Risk rationale:',
@@ -2119,8 +2126,9 @@ export function approverIndependenceErrors(body: string, prAuthor?: string): str
  * `validateNonEmptyEvidenceField` rejects only the empty string, so
  * `Human approver: NONE` — and the `NONE. <explanation>` spelling PR #2264
  * merged with — satisfied the only approval evidence T1 carries
- * (`TIER_SPECS.T1.soakHours` is 0; this field is what a green T1 gate is
- * supposed to prove).
+ * (`TIER_SPECS.T1.soakHours` was 0 at the time; the soak half of that gap is
+ * now closed too — T1 requires a 2h `Soak start:`/`Soak end:` window per
+ * CLAUDE.md §1.12).
  *
  * This is the VALUE half only. Cross-checking this field against the PR
  * author is a policy call deliberately NOT taken (see the PR's "Known scope

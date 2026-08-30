@@ -1,6 +1,6 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
+_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus `TIER_SPECS.T1` aligned to §1.12: 2h soak with required `Soak start:`/`Soak end:`)._
 
 ## 2026-08-23 — `check-staging-evidence.ts` evidence-gate integrity (SCRUM-3481 / 3509 / 3533 / 3542 / 3549)
 
@@ -197,6 +197,28 @@ original closure classes.
   `GITHUB_ACTIONS=true`, so unit runs stay quiet and every CI base-drift verdict, pass or fail,
   states the file sets it was computed from.
 
+## 2026-08-29 — eighth closure: `TIER_SPECS.T1.soakHours` was 0 while CLAUDE.md §1.12 says "2 h soak"
+
+The seventh closure fixed the approver half of the T1 gap and recorded the other half in
+passing: with `soakHours: 0` and no window fields, a green T1 gate proved no soak either.
+That was a constitution/gate disagreement, not a policy choice — §1.12's T1 row has said
+"2 h soak" with "soak start/end" in its required evidence all along, and every other
+surface already agreed (docs/staging/PR_TEMPLATE.md's T1 block carries `Soak start:` /
+`Soak end:` with "at least 2h after Soak start"; the `soak-evidence` skill says "T1 (2 h
+soak): … soak start + end"; the Files section below has said "T1 is a 2h soak path, not a
+zero-soak bypass" since PR #801). CTO decision (merged #2241/#2264 history): the GATE
+matches the constitution. `TIER_SPECS.T1` is now `soakHours: 2` with `Soak start:` /
+`Soak end:` required. No new validators were needed — `soakDurationErrors()` was already
+tier-generic (field-presence-driven, comparing elapsed hours against
+`TIER_SPECS[tier].soakHours`), `requiredValueErrors`' T1 arm picks the new fields up for
+non-empty enforcement, `futureTimestampErrors()` already covered future-dated windows at
+every tier, and the T2-only RM targeted-duration waiver cannot leak into T1
+(`targetedDurationWaiverErrors` returns invalid for anything but T2). The RC-manifest path
+inherits the 2h floor through the same `TIER_SPECS[tier].soakHours` read. Red-first: 5
+failed on the prior head (the 0h pin, the missing-window pin, a no-window T1 body passing,
+and two sub-2h windows passing), green after. **This raises the bar for in-flight T1
+PRs**: any open T1 PR whose evidence block has no `Soak start:`/`Soak end:` (or a window
+under 2h) goes red on its next evaluation and needs a real 2h window added.
 
 ## 2026-08-23 — `aggregate-commit-messages.ts` (new): commit messages ship by FILE, not by env var (E2BIG)
 
