@@ -30,29 +30,65 @@
 --   The server-stamped DocuSign provenance key family in `anchors.metadata`
 --   is READ-ONLY for every caller other than `service_role`:
 --     connector_source       — gates isConnectorFetchSource() (§1.6A evidence
---                               class) and the record UI's DocuSign badge
+--                               class) and the record UI's DocuSign badge.
+--                               Unconditionally guarded.
 --     connector_artifact_id  — FK-shaped pointer into connector_artifact,
---                               written at drain time (jobs/connector-artifact-drain.ts)
+--                               written at drain time (jobs/connector-artifact-drain.ts).
+--                               Unconditionally guarded.
 --     account_id             — DocuSign account GUID; composes the account
---                               deep link (R7, docusignLinks.ts)
+--                               deep link (R7, docusignLinks.ts). Guarded
+--                               ONLY when the row claims DocuSign provenance
+--                               — see CONDITIONAL GUARDING below.
 --     envelope_id            — DocuSign envelope GUID; composes the envelope
 --                               deep link (R7) and drives the (org, envelope)
---                               dedup guard (docusign-anchor-reconciliation.ts)
+--                               dedup guard (docusign-anchor-reconciliation.ts).
+--                               Same conditional guarding as account_id.
 --     _signers                — pseudonymous signer rows (R6): recipient GUID
---                               + status only, never name/email
+--                               + status only, never name/email. Unconditionally
+--                               guarded.
 --     _docusign_env           — selects the apps.docusign.com vs apps-d.
---                               deep-link base (R7)
+--                               deep-link base (R7). Unconditionally guarded.
 --     _direction               — inbound/outbound classification (R4) — held
 --                               here as foundation; not yet written by any
---                               shipped path (F1/PR-4 is flag-OFF)
+--                               shipped path (F1/PR-4 is flag-OFF).
+--                               Unconditionally guarded.
 --     _sending_account_id      — server-resolved owning-account comparator
---                               for R4's inbound/outbound classification
+--                               for R4's inbound/outbound classification.
+--                               Unconditionally guarded.
 --
 --   On INSERT by a non-service_role caller, present keys are STRIPPED. On
 --   UPDATE, each key is REVERTED to its OLD value (introduction is stripped,
 --   tamper and deletion are undone) — so a legitimately service-stamped value
 --   survives an owner's unrelated PENDING-window metadata edit instead of
 --   being destroyed. Identical strip/revert shape to 0394.
+--
+--   CONDITIONAL GUARDING OF account_id / envelope_id: unlike the other 6
+--   keys, `account_id` and `envelope_id` are generic names that also occur
+--   legitimately in NON-DocuSign metadata — `SecureDocumentDialog.tsx`
+--   spreads AI-extracted document fields top-level into `metadata`
+--   (`{ ...acceptedFields }`, keyed by the extraction template's own field
+--   names — a financial-document template can plausibly extract an
+--   "Account ID" field), and `IssueCredentialForm.tsx` persists arbitrary
+--   org-template field keys the same way. Guarding these two unconditionally
+--   would silently strip that legitimate, unrelated data with no error on a
+--   document that has nothing to do with DocuSign — correct-looking but
+--   wrong. So they are guarded only when the row also claims DocuSign
+--   provenance: `v_claims_docusign` is true when either the caller's own
+--   payload or the row's existing (OLD) state carries `connector_source` at
+--   all (checking OLD too closes the gap where a caller omits
+--   `connector_source` from an UPDATE payload specifically to launder a real
+--   row's `account_id`/`envelope_id` past the guard). This does not reopen
+--   the forgery this migration exists to close: the record UI
+--   (`AssetDetailView.tsx`, PR-3 of this sequence) renders
+--   `account_id`/`envelope_id` as DocuSign links ONLY when
+--   `metadata.connector_source === 'docusign'` exactly, and `connector_source`
+--   itself stays unconditionally guarded — so a forger who sets
+--   `connector_source:'docusign'` to make any trust signal render also makes
+--   `v_claims_docusign` true, which strips `connector_source` itself (no
+--   signal renders at all) and strips/reverts `account_id`/`envelope_id`
+--   right alongside it. A row that never claims DocuSign provenance never
+--   triggers the guard on these two keys, so legitimate extracted values pass
+--   through untouched.
 --
 --   The ONLY legitimate writers, confirmed this session by grepping every
 --   `anchors` write site plus every literal occurrence of these 8 key names
@@ -77,10 +113,15 @@
 --   them now is the "foundation for Finding 1" this ruling calls for. No
 --   frontend call site (`SecureDocumentDialog.tsx`, `IssueCredentialForm.tsx`
 --   — both direct `supabase.from('anchors').insert()` under the end user's own
---   session) sets any of these 8 keys as a product feature: their metadata is
---   built from AI-extracted/org-template field keys, fraud-detection keys
---   (`fraud_*`), and a small fixed app-key set, none of which collide with
---   this list. There is no legitimate non-service_role producer to break.
+--   session) sets `connector_source`, `connector_artifact_id`, `_signers`,
+--   `_docusign_env`, `_direction`, or `_sending_account_id` as a product
+--   feature — their metadata is built from AI-extracted/org-template field
+--   keys, fraud-detection keys (`fraud_*`), and a small fixed app-key set,
+--   none of which collide with those 6. There is no legitimate
+--   non-service_role producer of those 6 to break. `account_id`/`envelope_id`
+--   ARE plausible AI-extracted/org-template field names outside a DocuSign
+--   context, which is exactly why they are guarded conditionally rather than
+--   unconditionally, per CONDITIONAL GUARDING above.
 --
 -- STRIP/REVERT, NEVER RAISE — same asymmetry as 0384/0394: these keys live in
 --   the free-form metadata blob whose writers' contract is "persist what is
@@ -144,6 +185,7 @@ DECLARE
   ]::text[];
   v_key text;
   v_meta jsonb;
+  v_claims_docusign boolean;
 BEGIN
   -- The worker connector pipeline (connector-artifact-drain.ts,
   -- rule-action-dispatcher.ts, docusign-envelope-completed.ts) is the only
@@ -156,7 +198,23 @@ BEGIN
 
   v_meta := COALESCE(NEW.metadata, '{}'::jsonb);
 
+  -- account_id/envelope_id are generic key names that also appear
+  -- legitimately in NON-DocuSign metadata (AI-extracted document fields,
+  -- org-template fields — see CONDITIONAL GUARDING in the file header). They
+  -- are only forgeable as a DocuSign trust signal when the row also claims
+  -- connector_source='docusign', so they are guarded ONLY in that context.
+  -- Checked against both NEW (what the caller is trying to write) and OLD
+  -- (what the row already is) so a caller cannot launder a real DocuSign
+  -- row's account_id/envelope_id out from under the guard by simply omitting
+  -- connector_source from their UPDATE payload.
+  v_claims_docusign := (v_meta ? 'connector_source')
+    OR (TG_OP = 'UPDATE' AND COALESCE(OLD.metadata ? 'connector_source', false));
+
   FOREACH v_key IN ARRAY v_guarded LOOP
+    IF v_key IN ('account_id', 'envelope_id') AND NOT v_claims_docusign THEN
+      CONTINUE;
+    END IF;
+
     IF TG_OP = 'UPDATE' AND OLD.metadata ? v_key THEN
       -- Revert tamper/deletion to the service-stamped value, type-preserving.
       IF v_meta -> v_key IS DISTINCT FROM OLD.metadata -> v_key THEN
@@ -179,7 +237,7 @@ $$;
 ALTER FUNCTION public.enforce_docusign_metadata_key_authority() OWNER TO postgres;
 
 COMMENT ON FUNCTION public.enforce_docusign_metadata_key_authority() IS
-  'DocuSign metadata key write authority (0423). Non-service_role callers may not introduce, change, or delete the service-stamped DocuSign provenance keys in anchors.metadata (connector_source, connector_artifact_id, account_id, envelope_id, _signers, _docusign_env, _direction, _sending_account_id): stripped on INSERT, reverted to OLD on UPDATE, anchor still written. Closes the direct-PostgREST / bulk_create_anchors forgery of DocuSign trust links and signer rows (CTO Decision Record R1, security Finding 2).';
+  'DocuSign metadata key write authority (0423). Non-service_role callers may not introduce, change, or delete the service-stamped DocuSign provenance keys in anchors.metadata: connector_source, connector_artifact_id, _signers, _docusign_env, _direction, _sending_account_id are guarded unconditionally; account_id, envelope_id are guarded only when the row claims DocuSign provenance via connector_source, so the same generic names in non-DocuSign AI-extracted/org-template metadata pass through untouched. Guarded keys are stripped on INSERT, reverted to OLD on UPDATE, anchor still written. Closes the direct-PostgREST / bulk_create_anchors forgery of DocuSign trust links and signer rows (CTO Decision Record R1, security Finding 2).';
 
 DROP TRIGGER IF EXISTS trg_strip_unattested_docusign_metadata_keys ON public.anchors;
 CREATE TRIGGER trg_strip_unattested_docusign_metadata_keys

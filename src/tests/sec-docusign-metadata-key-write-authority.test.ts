@@ -16,7 +16,7 @@
  * drain, the record UI would render forged "Verified via DocuSign" links and
  * signer rows sourced entirely from attacker-supplied strings.
  *
- * The ONLY legitimate writers of this key family are service_role worker
+ * The ONLY legitimate service_role writers of this key family are worker
  * jobs — `jobs/connector-artifact-drain.ts` (`connector_source`,
  * `connector_artifact_id`), `jobs/rule-action-dispatcher.ts`
  * (`connector_source`), `jobs/docusign-envelope-completed.ts` (`account_id`,
@@ -26,7 +26,24 @@
  * `_sending_account_id` have no writer yet (PR-2/PR-4 of this sequence);
  * guarding them now, before any writer exists, avoids a window where the
  * first version of a future writer is forgeable. There is no legitimate
- * non-service_role producer of any of the 8 keys to break.
+ * non-service_role producer of those 6 keys to break.
+ *
+ * `account_id`/`envelope_id` are the two exceptions: they are generic names
+ * that ALSO occur legitimately in non-DocuSign metadata —
+ * `SecureDocumentDialog.tsx` spreads AI-extracted document fields top-level
+ * into `metadata`, and `IssueCredentialForm.tsx` persists arbitrary
+ * org-template field keys the same way, either of which could plausibly
+ * produce a top-level `account_id`/`envelope_id` key on a document that has
+ * nothing to do with DocuSign. Unconditional guarding would silently strip
+ * that legitimate data with no error. So the trigger guards these two ONLY
+ * when the row claims DocuSign provenance (`v_claims_docusign`, true when
+ * `connector_source` is present in the caller's payload OR the row's
+ * existing OLD state). This does not reopen the forgery: `AssetDetailView.tsx`
+ * (PR #2473) renders `account_id`/`envelope_id` as DocuSign links ONLY when
+ * `connector_source === 'docusign'` exactly, and `connector_source` itself
+ * stays unconditionally guarded — so a forger who sets it to make any trust
+ * signal render also triggers `v_claims_docusign`, which strips
+ * `connector_source` itself alongside `account_id`/`envelope_id`.
  *
  * Content-guard only (no DB), matching the convention in
  * `sec-ce-provenance-key-authority.test.ts` (0394) and
@@ -185,6 +202,48 @@ describe('DocuSign metadata key authority: what the trigger enforces', () => {
       .map((m) => m[1])
       .sort();
     expect(guarded).toEqual(GUARDED_KEYS);
+  });
+
+  it('guards account_id/envelope_id only when the row claims DocuSign provenance', () => {
+    // Generic key names: SecureDocumentDialog.tsx spreads AI-extracted
+    // top-level fields into metadata, and IssueCredentialForm.tsx persists
+    // arbitrary org-template field keys, either of which could legitimately
+    // produce a top-level account_id/envelope_id on a document that has
+    // nothing to do with DocuSign. Unconditional guarding would silently
+    // strip that unrelated data with no error. AssetDetailView.tsx (PR #2473)
+    // only renders these as DocuSign links when connector_source ===
+    // 'docusign' exactly, and connector_source itself stays unconditionally
+    // guarded, so gating the other two on v_claims_docusign cannot reopen
+    // the forgery this migration closes.
+    const { sql } = latestRedefiner();
+    const exec = executableSql(sql);
+    // Computed once, before the loop, from both NEW (v_meta) and OLD, so a
+    // caller cannot omit connector_source from an UPDATE payload to launder
+    // a real row's account_id/envelope_id past the guard.
+    expect(exec).toContain("v_claims_docusign := (v_meta ? 'connector_source')");
+    expect(exec).toMatch(
+      /OR \(TG_OP = 'UPDATE' AND COALESCE\(OLD\.metadata \? 'connector_source', false\)\)/,
+    );
+    // The skip is scoped to exactly the two generic keys — the other 6 stay
+    // unconditionally guarded (this is checked separately below).
+    expect(exec).toContain("IF v_key IN ('account_id', 'envelope_id') AND NOT v_claims_docusign THEN");
+    expect(exec).toMatch(/IF v_key IN \('account_id', 'envelope_id'\) AND NOT v_claims_docusign THEN\s*\n\s*CONTINUE;/);
+  });
+
+  it('does not gate the other 6 keys on v_claims_docusign — only account_id/envelope_id', () => {
+    const { sql } = latestRedefiner();
+    const exec = executableSql(sql);
+    for (const key of [
+      'connector_source',
+      'connector_artifact_id',
+      '_signers',
+      '_docusign_env',
+      '_direction',
+      '_sending_account_id',
+    ]) {
+      expect(exec).not.toContain(`v_key IN ('${key}'`);
+      expect(exec).not.toContain(`'${key}') AND NOT v_claims_docusign`);
+    }
   });
 
   it('strips on INSERT and reverts to OLD on UPDATE rather than rejecting the row', () => {
