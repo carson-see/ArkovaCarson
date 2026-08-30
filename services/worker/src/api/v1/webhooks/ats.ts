@@ -115,6 +115,56 @@ router.post('/:provider/:integrationId', async (req: Request, res: Response) => 
     return;
   }
 
+  /**
+   * AUDIT-0424-10 / SCRUM-3479 — release the replay nonce before returning any
+   * post-nonce 5xx.
+   *
+   * The nonce row is committed before the attestation lookup runs, so without
+   * this compensation a transient failure there is unrecoverable rather than
+   * retryable: the provider re-delivers, the insert hits the
+   * `(provider, integration_id, signature)` UNIQUE violation, and the handler
+   * answers `200 {duplicate:true}` — so the verification response this webhook
+   * exists to produce is never delivered AND the provider is told it
+   * succeeded. Mirrors `middesk.ts::releaseNonce` and `checkr.ts`.
+   *
+   * Non-null only once the insert has actually committed, so a failure that
+   * happens BEFORE the write can never delete an earlier delivery's row and
+   * re-open it to replay.
+   */
+  let committedNonce: { integrationId: string; signature: string } | null = null;
+  async function releaseNonce(reason: string): Promise<void> {
+    if (!committedNonce) return;
+    const claim = committedNonce;
+    try {
+      // Filter on all THREE columns of the UNIQUE key — a narrower filter
+      // would drop another integration's or another delivery's nonce.
+      const { error: releaseErr } = await dbAny
+        .from('ats_webhook_nonces')
+        .delete()
+        .eq('provider', atsProvider)
+        .eq('integration_id', claim.integrationId)
+        .eq('signature', claim.signature);
+      if (releaseErr) {
+        logger.error(
+          { error: releaseErr, reason, provider: atsProvider, integrationId: claim.integrationId },
+          'Failed to release ATS webhook nonce — delivery will not be reprocessed on retry',
+        );
+        return;
+      }
+      committedNonce = null;
+      logger.warn(
+        { reason, provider: atsProvider, integrationId: claim.integrationId },
+        'Released ATS webhook nonce so retry can reprocess',
+      );
+    } catch (releaseThrew) {
+      // Best-effort: never let the compensation mask the original failure.
+      logger.error(
+        { error: releaseThrew, reason, provider: atsProvider },
+        'ATS webhook nonce release threw — delivery will not be reprocessed on retry',
+      );
+    }
+  }
+
   try {
     // Look up exactly ONE integration by (integrationId, provider). No iteration.
     const { data: integration, error: intError } = await dbAny
@@ -167,6 +217,7 @@ router.post('/:provider/:integrationId', async (req: Request, res: Response) => 
       res.status(500).json({ error: 'nonce_insert_failed' });
       return;
     }
+    committedNonce = { integrationId: integration.id, signature: sigHeader };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const matchedIntegration = integration as any;
@@ -253,6 +304,7 @@ router.post('/:provider/:integrationId', async (req: Request, res: Response) => 
     });
   } catch (error) {
     logger.error({ error, provider: atsProvider }, 'ATS webhook processing failed');
+    await releaseNonce('processing_failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

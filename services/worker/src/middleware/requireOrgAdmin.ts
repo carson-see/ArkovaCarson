@@ -22,11 +22,8 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import { isCallerOrgAdminResult } from '../api/_org-auth.js';
+import { getAuthenticatedUserId } from './authContext.js';
 import { logger } from '../utils/logger.js';
-
-function getAuthenticatedUserId(req: Request): string | null {
-  return req.authUserId ?? req.userId ?? null;
-}
 
 export async function requireOrgAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   const userId = getAuthenticatedUserId(req);

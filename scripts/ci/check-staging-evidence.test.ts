@@ -407,6 +407,74 @@ describe('check-staging-evidence', () => {
       ).toBe('T3');
     });
 
+    // SCRUM-3802 — PR #2266 merged tier-under-declared: the anchor-lifecycle
+    // rule is a filename whitelist, and the public-record anchoring cron
+    // (which batch-inserts up to 10k anchors per Bitcoin tx) was not on it,
+    // so its diff fell through to the T2 jobs/ catch-all. The exact merged
+    // file set of #2266 must classify T3.
+    it('returns T3 for the PR #2266-shaped diff (publicRecordAnchor + quarantine)', () => {
+      const result = requiredTierFor([
+        'services/worker/src/jobs/__tests__/publicRecordAnchor-poison-record.test.ts',
+        'services/worker/src/jobs/__tests__/publicRecordAnchor.test.ts',
+        'services/worker/src/jobs/agents.md',
+        'services/worker/src/jobs/pipelineThroughputMonitor.test.ts',
+        'services/worker/src/jobs/pipelineThroughputMonitor.ts',
+        'services/worker/src/jobs/public-record-quarantine.test.ts',
+        'services/worker/src/jobs/public-record-quarantine.ts',
+        'services/worker/src/jobs/publicRecordAnchor.ts',
+        'services/worker/src/utils/agents.md',
+        'services/worker/src/utils/utf16-truncate.test.ts',
+        'services/worker/src/utils/utf16-truncate.ts',
+      ]);
+      expect(result.tier).toBe('T3');
+      expect(result.reason).toContain('anchor');
+    });
+
+    it('returns T3 for every jobs/ file in the SCRUM-3802 anchor-feeder audit set', () => {
+      // The audit criterion: creates anchor rows (publicRecordAnchor,
+      // connector-artifact-drain, rule-action-dispatcher), mutates anchor
+      // lifecycle state (mainnet-migration resets status/chain columns;
+      // public-record-quarantine permanently excludes rows from anchoring),
+      // signs/broadcasts Bitcoin transactions or decides broadcast recovery
+      // (supplementary-proof-anchor + adapter, txid-journal), or sets the
+      // shared batch contract every anchoring job obeys (anchor-batching).
+      for (const file of [
+        'services/worker/src/jobs/publicRecordAnchor.ts',
+        'services/worker/src/jobs/public-record-quarantine.ts',
+        'services/worker/src/jobs/connector-artifact-drain.ts',
+        'services/worker/src/jobs/rule-action-dispatcher.ts',
+        'services/worker/src/jobs/mainnet-migration.ts',
+        'services/worker/src/jobs/supplementary-proof-anchor.ts',
+        'services/worker/src/jobs/supplementary-proof-anchor.adapter.ts',
+        'services/worker/src/jobs/txid-journal.ts',
+        'services/worker/src/jobs/anchor-batching.ts',
+      ]) {
+        expect(requiredTierFor([file]).tier, file).toBe('T3');
+      }
+    });
+
+    it('keeps read-only anchors consumers in jobs/ at T2 (audit set does not over-widen)', () => {
+      // Monitors, digests, and the dual-path reconciliation DETECTOR (it
+      // reports, never writes — the anchor-creating side of that pair is
+      // rule-action-dispatcher) stay on the T2 jobs/ catch-all, as does the
+      // webhook nonce sweep (not chain-related despite the name).
+      expect(requiredTierFor(['services/worker/src/jobs/db-health-monitor.ts']).tier).toBe('T2');
+      expect(requiredTierFor(['services/worker/src/jobs/stuck-anchor-monitor.ts']).tier).toBe('T2');
+      expect(
+        requiredTierFor(['services/worker/src/jobs/docusign-anchor-reconciliation.ts']).tier,
+      ).toBe('T2');
+      expect(requiredTierFor(['services/worker/src/jobs/nonce-sweep.ts']).tier).toBe('T2');
+    });
+
+    it('does not leak the anchor-feeder pin onto test files or name lookalikes', () => {
+      expect(
+        requiredTierFor(['services/worker/src/jobs/public-record-quarantine.test.ts']).tier,
+      ).toBe('T0');
+      expect(
+        requiredTierFor(['services/worker/src/jobs/publicRecordEmbedder.ts']).tier,
+      ).toBe('T2');
+    });
+
     it('returns T3 when scheduled.ts is touched', () => {
       expect(
         requiredTierFor(['services/worker/src/routes/scheduled.ts']).tier,

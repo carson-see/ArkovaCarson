@@ -1,6 +1,25 @@
 # scripts/ci/agents.md
 
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory, and the typecheck-parity `if:` scan covering the whole step block, not just name→run)._
+_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus the SCRUM-3802 anchor-feeder T3 path rule)._
+
+## 2026-08-29 — `check-staging-evidence.ts` anchor-feeder T3 path rule (SCRUM-3802)
+
+PR #2266 merged tier-under-declared (declared T2, its own `jobs/agents.md` entry says
+"T3 (cron-on-anchors)"): the anchor-lifecycle T3 rule is a filename whitelist, and
+`publicRecordAnchor.ts` — the cron that batch-inserts up to 10k anchors per Bitcoin tx —
+was not on it, so the diff fell through to the T2 `jobs/` catch-all and §1.13's
+fail-closed guarantee was void for the whole file class. A second T3 rule now pins the
+rest of the audited anchor pipeline (`reason: 'anchor-creating feeder / anchor pipeline
+(SCRUM-3802)'`): anchor-row creators (`publicRecordAnchor`, `connector-artifact-drain`,
+`rule-action-dispatcher`), lifecycle mutators (`mainnet-migration`,
+`public-record-quarantine`), Bitcoin sign/broadcast + recovery decision
+(`supplementary-proof-anchor` + `.adapter`, `txid-journal`), and the shared batch
+contract (`anchor-batching`). The audit criterion was writes: every `jobs/` file that
+inserts/updates `anchors`, signs or broadcasts, or sets batch fan-out. Read-only anchors
+consumers (`stuck-anchor-monitor`, `docusign-anchor-reconciliation`'s detector, digests)
+deliberately stay on the T2 catch-all — pinned by tests both ways, including the exact
+merged file set of #2266 now classifying T3.
 
 ## 2026-08-23 — `check-staging-evidence.ts` evidence-gate integrity (SCRUM-3481 / 3509 / 3533 / 3542 / 3549)
 
@@ -585,6 +604,28 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - **The T0 hatch is unchanged and the note is NOT a substitute for it** — the T0 `Base drift impact:` field carries a no-runtime-impact statement the note does not, and letting the note serve there would be strictly looser for a strictly safer drift class. Test-pinned.
 - **FD-GATE-2, fixed at the consumer.** `ciContext.changedFiles()` no longer two-dots from the (possibly frozen) env base — see `scripts/ci/lib/agents.md` for the `resolveDiffBase` anchoring contract. This corrects the gate's `ownFiles`, the tier detector, `compute-merge-authority`, and the feedback-rules scans in one place, without touching the workflows that still pass the frozen sha. Also fixes the raw-head fallback misattribution (FD-GATE-3 defect 2). Known boundary: `--diff-filter=AMR` still drops deletions — that is FD-GATE-4, deliberately not addressed here.
 - **This is a §1.12/§1.13 merge-gate semantics change:** landed as a T0 tooling PR, opened as DRAFT for named human review — the gate that decides whether other PRs may merge must not be self-merged on its own green checks.
+
+## Merge-queue skip predicates require the mergify[bot] author (SCRUM-3812, 2026-08-29)
+
+- **The defect.** The fail-closed `evidence-identity` (ci.yml) and `staging-evidence` gates both
+  skipped their enforcement steps on `startsWith(github.head_ref, 'mergify/merge-queue/')` ALONE.
+  `github.head_ref` is author-controlled, and a job whose steps all skip still posts SUCCESS — so a
+  PR opened from a branch named `mergify/merge-queue/<anything>` greened BOTH
+  `check-success` conditions in every `.mergify.yml` queue with zero checker executions. This
+  contradicted the gates' own threat model (the same activation PR randomized the `$GITHUB_OUTPUT`
+  heredoc delimiter precisely so an author cannot forge evidence identity).
+- **The fix.** Every merge-queue `if:` in both workflows now also requires
+  `github.event.pull_request.user.login == 'mergify[bot]'` — GitHub-assigned, immutable, and true of
+  every real Mergify speculative PR (verified against live queue PRs #2464–#2468). NOT
+  `github.actor`, which becomes the re-running human and would deadlock a genuine queue PR. The
+  per-step skip shape is unchanged (a job-level `if:` would leave the check unreported, and an
+  unreported check never satisfies `check-success`).
+- **Contract tests.** `soak-integrity-gates-failclosed.test.ts` (ci.yml) and
+  `staging-evidence-workflow-contract.test.ts` (staging-evidence.yml, with mutation cases) pin that
+  every `if:` consulting `github.head_ref` / the queue-branch prefix is exactly the compound skip or
+  its exact negation — branch-only and `||`-weakened variants fail. The two files carry the same
+  `MERGE_QUEUE_SKIP_EXPRESSION` text; change them in lockstep. Written red-first against the
+  pre-fix workflows (5 failures), green after.
 
 ---
 

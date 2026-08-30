@@ -111,35 +111,46 @@ Consequences:
   distinctly from the original `pull_request` trigger) or diff the run's
   recorded head SHA against the PR's current `headRefOid`.
 
-### The fix: tree-identical empty commit + body head-SHA bump
+### The fix: close/reopen first — an empty commit voids soak evidence
 
-Don't rely on "Re-run". Force a genuine new `pull_request` `synchronize`
-event so the workflow captures a fresh payload:
+Don't rely on "Re-run" — and don't reach for an empty commit by default,
+because a new commit (even a tree-identical one) mints a new head SHA, and
+that has consequences for any soak evidence bound to the old one.
+
+**First choice: close and reopen the PR.** `reopened` is one of the default
+`pull_request` `types` (see case 1 above), so a close/reopen delivers a
+genuine new webhook event whose payload is built from the PR's **current**
+state — base/head SHAs, diff, and body are all re-captured — **without
+creating a new commit**. The head SHA is unchanged, so soak evidence that
+names that exact head stays valid:
 
 ```bash
-git commit --allow-empty -m "chore: re-fire CI checks (frozen-payload rerun trap)"
-git push origin <branch>
+gh pr close <pr> --comment "re-firing stale checks" && gh pr reopen <pr>
 ```
 
-An empty commit is tree-identical (no file changes, no re-review surface)
-but it is a real new commit SHA, so GitHub fires `synchronize` with a
-current payload — base/head SHAs, diff, and (if the workflow reads it) the
-current PR body are all re-captured correctly.
+(Check the PR is not embarked in the Mergify queue first — closing
+dequeues it.)
 
-Then bump the PR body's head-SHA reference to match, per
-`memory/feedback_pr_head_sha_in_evidence_block.md` — any evidence block
-that names an exact head SHA is invalidated by a new commit, empty or not,
-so the body must be updated in the same breath as the push, not left
-pointing at the pre-rerun SHA.
+**The empty-commit alternative is tier-forked.** A tree-identical empty
+commit (`git commit --allow-empty` + push) also fires a fresh `synchronize`
+event, but it is a real new head SHA that was never deployed or soaked:
+
+- **T0 (no evidence block required):** fine. Empty commit, push, done.
+- **T1–T3 (evidence block names an exact head SHA):** per
+  `feedback_pr_head_sha_in_evidence_block`, a new commit — empty or not —
+  **invalidates** that evidence: the soak covered the old head only.
+  Editing the body's `PR head SHA:` field to point at the new commit is
+  *relabeling* evidence, not refreshing it, and is never authorized. The
+  honest follow-ups are: **re-run the soak against the new head**, or
+  attach an explicit Carson/RTE-approved residual-risk note. Prefer
+  close/reopen above, which avoids the problem entirely.
+- **Mid-soak:** touch nothing — no empty commit, no close/reopen, no body
+  edit (`feedback_dont_touch_soaking_prs`: a soaking PR is frozen
+  evidence). Re-fire checks after the soak closes.
 
 If the workflow's staleness came from case 1 above (missing `edited` in
 `types:`) rather than a rerun, a body-only edit is sufficient once the
-workflow is fixed — no empty commit needed. The empty-commit fix is
-specifically for forcing a fresh `synchronize` event when you cannot (or
-should not, e.g. mid-soak per
-`memory/feedback_dont_touch_soaking_prs.md`) rely on `edited` firing, or
-when the payload is frozen for a reason `edited` won't fix (a genuine
-rerun-button use).
+workflow is fixed — no new event maneuver needed at all.
 
 ## Summary
 
@@ -148,7 +159,7 @@ rerun-button use).
 | Is this check current? | `gh api .../commits/<head-sha>/check-runs`, compare `started_at` to last-push time |
 | Did `edited` fire the workflow? | The workflow's `on.pull_request.types:` — must include `edited` if body edits matter |
 | Did a rerun reuse an old payload? | The run's `html_url` → "Triggered via" + recorded head SHA vs current `headRefOid` |
-| How do I force a clean re-evaluation? | Tree-identical empty commit + push + bump the PR body's head-SHA reference |
+| How do I force a clean re-evaluation? | Close/reopen the PR (fresh payload, same head SHA — soak evidence survives). Empty commit only per the tier fork above: on T1–T3 it voids the soak, so re-soak or get an approved residual-risk note — never just relabel the declared SHA |
 
 _Runbook added 2026-07-28 (SCRUM-3030), alongside the SCRUM-3029
 `migration-drift.yml` `edited`-trigger fix that motivated it._
