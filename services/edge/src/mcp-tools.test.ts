@@ -156,6 +156,79 @@ describe('shapeAnchorRow (BUG-2 key realignment)', () => {
   });
 });
 
+// ── SCRUM-3818 (docusign-bilateral-2026-08): fingerprint evidence class ────
+//
+// PRIOR to this fix shapeAnchorRow dropped `fingerprint_source` entirely, so
+// every MCP tool response (verify_credential, get_anchor, get_record,
+// get_document, get_fingerprint, verify, verify_batch, oracle_batch_verify —
+// all of them funnel through this one mapper) read as uniformly strong
+// evidence. An anchor with `fingerprint_source: 'issuer_record_attestation'`
+// (set for CSV bulk-import issuer attestation AND for the DocuSign inbound
+// declared-hash path, migration 0376) was indistinguishable from a real
+// document-bytes anchor to a calling agent.
+describe('shapeAnchorRow — fingerprint evidence class (SCRUM-3818)', () => {
+  it('passes fingerprint_source through for a document_bytes anchor with NO caveat note (regression: unchanged rendering)', () => {
+    const row = realPublicAnchorRow({ fingerprint_source: 'document_bytes' });
+    const shaped = shapeAnchorRow(row);
+    expect(shaped.fingerprint_source).toBe('document_bytes');
+    expect(shaped).not.toHaveProperty('fingerprint_evidence_note');
+  });
+
+  it('omits fingerprint_source entirely for an unclassified (null) anchor — never emits null (frozen schema)', () => {
+    const row = realPublicAnchorRow({ fingerprint_source: null });
+    const shaped = shapeAnchorRow(row);
+    expect(shaped).not.toHaveProperty('fingerprint_source');
+    expect(shaped).not.toHaveProperty('fingerprint_evidence_note');
+  });
+
+  it('adds an honest evidence note for an issuer_record_attestation anchor — no independent Arkova measurement claim', () => {
+    const row = realPublicAnchorRow({ fingerprint_source: 'issuer_record_attestation' });
+    const shaped = shapeAnchorRow(row);
+    expect(shaped.fingerprint_source).toBe('issuer_record_attestation');
+    expect(typeof shaped.fingerprint_evidence_note).toBe('string');
+    const note = (shaped.fingerprint_evidence_note as string).toLowerCase();
+    // Must never claim Arkova independently measured/fetched a document.
+    expect(note).not.toContain('arkova computed');
+    expect(note).not.toContain('arkova independently');
+    expect(note).toContain('not');
+  });
+
+  it('tool descriptions no longer imply uniform verification confidence', () => {
+    const evidenceAwareTools = [
+      'verify_credential',
+      'verify_document',
+      'verify_batch',
+      'verify',
+      'get_anchor',
+      'get_record',
+      'get_fingerprint',
+      'get_document',
+      'oracle_batch_verify',
+    ];
+    for (const name of evidenceAwareTools) {
+      const def = TOOL_DEFINITIONS.find((t) => t.name === name);
+      expect(def, `expected a TOOL_DEFINITIONS entry named ${name}`).toBeDefined();
+      expect(def!.description).toContain('fingerprint_source');
+    }
+  });
+
+  it('the batch path (handleVerifyBatch) carries the same evidence note per-row', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => realPublicAnchorRow({
+        public_id: 'ARK-2026-BATCH-1',
+        fingerprint_source: 'issuer_record_attestation',
+      }),
+    });
+    const result = await handleVerifyBatch({ public_ids: ['ARK-2026-BATCH-1'] }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text as string) as {
+      results: Array<{ fingerprint_source?: string; fingerprint_evidence_note?: string }>;
+    };
+    expect(parsed.results[0].fingerprint_source).toBe('issuer_record_attestation');
+    expect(typeof parsed.results[0].fingerprint_evidence_note).toBe('string');
+  });
+});
+
 // ── handleVerifyCredential via the real fixture ──────────────────────
 
 describe('handleVerifyCredential (real RPC fixture)', () => {
