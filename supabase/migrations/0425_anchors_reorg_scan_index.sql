@@ -1,0 +1,51 @@
+-- =============================================================================
+-- 0425 — anchors reorg-scan partial index (SCRUM-3836)
+--
+-- ROLLBACK: DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_reorg_scan;
+--   Run standalone, outside a transaction. No data migration is involved.
+--   Dropping it restores the previous plan (Parallel Seq Scan) exactly — which
+--   is also the defect, so a rollback re-opens SCRUM-3836. Safe at any time in
+--   the mechanical sense; not safe for chain-safety coverage.
+--
+-- CONCURRENTLY, NO TXN. MUST STAY IN ITS OWN FILE WITH NO BEGIN/COMMIT — the
+-- convention set by 0313 and followed by 0330, 0335, 0342, 0366, 0381 and 0389.
+-- `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block (SQLSTATE
+-- 25001). Exempt from check-hot-table-ddl-lock-timeout.ts by design: the gate
+-- deliberately does not match CONCURRENTLY, which is the approved non-barrier
+-- form for DDL on a hot table (§1.2).
+--
+-- WHY.
+-- ----
+-- `detectReorgs` (services/worker/src/jobs/chain-maintenance.ts) selects reorg
+-- candidates on every run:
+--
+--   SELECT id, public_id, org_id, chain_tx_id, chain_block_height,
+--          chain_block_hash, fingerprint
+--   FROM anchors
+--   WHERE status = 'SECURED' AND legal_hold = false
+--     AND chain_block_height >= (tip - REORG_CHECK_DEPTH_BLOCKS)
+--     AND chain_tx_id IS NOT NULL AND deleted_at IS NULL
+--   LIMIT 100;
+--
+-- No index covered `chain_block_height`. On prod (3.8M rows / 23 GB) the plan
+-- was `Parallel Seq Scan on anchors`, cost 1,775,993. PostgREST connects as
+-- `authenticator`, which carries `statement_timeout=60s` (`service_role` has no
+-- override), so the query was KILLED on every run. `detectReorgs` discards that
+-- error without logging and returns `{ checked: 0 }`, which the route returned
+-- as HTTP 200 — reorg detection reported healthy while inspecting zero anchors.
+-- pg_stat_statements at the time: 1,108 calls, mean 11,426 ms, max 59,986 ms.
+--
+-- Measured on prod immediately after this index was built:
+--   before  Parallel Seq Scan, cost 1,775,993, killed at 60,000 ms
+--   after   Index Scan using idx_anchors_reorg_scan, Execution Time 0.442 ms
+--   live    /jobs/detect-reorgs latency 60.2 s -> 0.25-0.43 s
+--
+-- Index is 24 MB against a 23 GB table — the partial predicate keeps it to the
+-- SECURED-and-anchored subset the reorg scan actually walks. `legal_hold` is
+-- deliberately NOT in the predicate: it stays a cheap post-filter so the index
+-- remains usable by sibling chain-maintenance scans that do not share it.
+-- =============================================================================
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_reorg_scan
+  ON public.anchors (chain_block_height DESC)
+  WHERE status = 'SECURED' AND deleted_at IS NULL AND chain_tx_id IS NOT NULL;

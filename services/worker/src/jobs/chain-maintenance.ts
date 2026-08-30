@@ -151,10 +151,24 @@ async function releaseLock(_lockId: number): Promise<void> {
 
 // ─── CRIT-2: Reorg Detection ────────────────────────────────────────────
 
+/**
+ * SCRUM-3836: `completed` distinguishes "the scan ran and found nothing" from
+ * "the scan could not run". Before this, both returned `{ checked: 0 }` and the
+ * route answered 200 either way — so a candidate query killed by
+ * `statement_timeout` was indistinguishable from a clean chain, and prod
+ * reported healthy for 1,108 consecutive runs while inspecting zero anchors.
+ * Any new early return MUST set `completed: false` and a `reason`.
+ */
+type ReorgIncompleteReason = 'tip_unavailable' | 'candidate_query_failed';
+
 interface ReorgCheckResult {
   checked: number;
   reorgsDetected: number;
   reverted: number;
+  /** false when the check could not run to completion — never treat as "no reorgs". */
+  completed: boolean;
+  /** Why the check did not complete. Absent when `completed` is true. */
+  reason?: ReorgIncompleteReason;
 }
 
 /** Recently-SECURED anchor row shape selected by detectReorgs. */
@@ -350,12 +364,12 @@ async function revertReorgedAnchors(
  */
 export async function detectReorgs(): Promise<ReorgCheckResult> {
   if (config.useMocks || config.nodeEnv === 'test') {
-    return { checked: 0, reorgsDetected: 0, reverted: 0 };
+    return { checked: 0, reorgsDetected: 0, reverted: 0, completed: true };
   }
 
   if (!(await acquireLock(LOCK_REORG_DETECTION))) {
     logger.debug('Reorg detection skipped — another worker holds the lock');
-    return { checked: 0, reorgsDetected: 0, reverted: 0 };
+    return { checked: 0, reorgsDetected: 0, reverted: 0, completed: true };
   }
 
   try {
@@ -366,8 +380,14 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
       signal: AbortSignal.timeout(10000),
     });
     if (!tipResp.ok) {
-      logger.warn('Failed to fetch chain tip — skipping reorg detection');
-      return { checked: 0, reorgsDetected: 0, reverted: 0 };
+      logger.error(
+        { status: tipResp.status },
+        'Reorg detection could not run — chain tip fetch failed',
+      );
+      return {
+        checked: 0, reorgsDetected: 0, reverted: 0,
+        completed: false, reason: 'tip_unavailable',
+      };
     }
     const tipHeight = parseInt(await tipResp.text(), 10);
     const minBlockHeight = tipHeight - REORG_CHECK_DEPTH_BLOCKS;
@@ -392,8 +412,23 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
       .is('deleted_at', null)
       .limit(100);
 
-    if (error || !recentAnchors || recentAnchors.length === 0) {
-      return { checked: 0, reorgsDetected: 0, reverted: 0 };
+    // SCRUM-3836: a failed candidate query is NOT "no reorgs". It was silently
+    // folded into the empty case here, so a `statement_timeout` kill on the
+    // 3.8M-row scan returned 200 with `checked: 0` on every run.
+    if (error) {
+      logger.error(
+        { error, minBlockHeight },
+        'Reorg detection could not run — candidate anchor query failed',
+      );
+      return {
+        checked: 0, reorgsDetected: 0, reverted: 0,
+        completed: false, reason: 'candidate_query_failed',
+      };
+    }
+
+    if (!recentAnchors || recentAnchors.length === 0) {
+      logger.info({ minBlockHeight }, 'Reorg detection complete — no candidate anchors in window');
+      return { checked: 0, reorgsDetected: 0, reverted: 0, completed: true };
     }
 
     // Group by chain_tx_id to avoid duplicate API calls
@@ -492,10 +527,10 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
         'Reorg detection complete — reorgs found!',
       );
     } else {
-      logger.debug({ checked }, 'Reorg detection complete — no reorgs');
+      logger.info({ checked }, 'Reorg detection complete — no reorgs');
     }
 
-    return { checked, reorgsDetected, reverted };
+    return { checked, reorgsDetected, reverted, completed: true };
   } finally {
     await releaseLock(LOCK_REORG_DETECTION);
   }
@@ -954,7 +989,11 @@ export async function monitorFeeRates(): Promise<FeeMonitorResult> {
         const data = await resp.json() as Record<string, number>;
         currentRate = data.halfHourFee ?? 0;
       }
-    } catch {
+    } catch (err) {
+      // SCRUM-3836: this catch was bare. It runs the same schedule against the
+      // same host as detectReorgs on a tighter 5s budget, so it was failing
+      // under the same conditions and reporting nothing at all.
+      logger.error({ error: err }, 'Fee monitoring could not run — fee rate fetch failed');
       return { currentRate: 0, avgRate24h: null, spikeDetected: false, recorded: false };
     }
 

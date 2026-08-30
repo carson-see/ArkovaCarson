@@ -140,7 +140,8 @@ describe('Chain Maintenance Jobs', () => {
     it('skips in mock/test mode', async () => {
       mockConfig.useMocks = true;
       const result = await detectReorgs();
-      expect(result).toEqual({ checked: 0, reorgsDetected: 0, reverted: 0 });
+      // completed: true — mock mode has nothing to do, which is not a failure.
+      expect(result).toEqual({ checked: 0, reorgsDetected: 0, reverted: 0, completed: true });
     });
 
     it('skips when advisory lock not acquired', async () => {
@@ -149,13 +150,60 @@ describe('Chain Maintenance Jobs', () => {
       // Mock fetch to simulate chain tip failure.
       global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 } as Response);
       const result = await detectReorgs();
-      expect(result).toEqual({ checked: 0, reorgsDetected: 0, reverted: 0 });
+      // SCRUM-3836: a failed tip fetch is an incomplete run, not a clean one.
+      expect(result).toEqual({
+        checked: 0, reorgsDetected: 0, reverted: 0,
+        completed: false, reason: 'tip_unavailable',
+      });
     });
 
     it('returns zero when chain tip fetch fails', async () => {
       global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 } as Response);
       const result = await detectReorgs();
       expect(result.checked).toBe(0);
+    });
+
+    // SCRUM-3836 — the regression that let reorg detection report healthy in
+    // prod for 1,108 consecutive runs while inspecting zero anchors. The
+    // candidate query was killed by statement_timeout, the error was folded
+    // into the "no anchors" case, and the route returned 200. These tests pin
+    // the three outcomes apart so that can never collapse again.
+    it('reports NOT completed when the candidate query fails (never "no reorgs")', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true, text: async () => '100',
+      } as Response);
+
+      const chain = mockDbChain(null, { code: '57014', message: 'canceling statement due to statement timeout' });
+      mockDb.from.mockReturnValue(chain);
+
+      const result = await detectReorgs();
+      expect(result.completed).toBe(false);
+      expect(result.reason).toBe('candidate_query_failed');
+      expect(result.checked).toBe(0);
+      // A failed scan must be loud. Silence here is the whole defect.
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    it('reports completed when the window is genuinely empty', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true, text: async () => '100',
+      } as Response);
+
+      const chain = mockDbChain([], null);
+      mockDb.from.mockReturnValue(chain);
+
+      const result = await detectReorgs();
+      expect(result.completed).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
+
+    it('reports NOT completed when the chain tip is unavailable', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503 } as Response);
+
+      const result = await detectReorgs();
+      expect(result.completed).toBe(false);
+      expect(result.reason).toBe('tip_unavailable');
+      expect(mockLogger.error).toHaveBeenCalled();
     });
 
     it('returns zero when no recently SECURED anchors', async () => {
