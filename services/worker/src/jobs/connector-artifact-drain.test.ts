@@ -30,6 +30,7 @@ const {
   reapStaleInFlightArtifacts,
   defaultListDrainableOrgIds,
   scrubReason,
+  defaultMaterializeAnchor,
 } = await import('./connector-artifact-drain.js');
 type ConnectorArtifactDrainDeps =
   import('./connector-artifact-drain.js').ConnectorArtifactDrainDeps;
@@ -1157,5 +1158,121 @@ describe('scrubReason (SCRUM-2625 / QUEUE-10 F-4 reason-scrub)', () => {
     for (const reason of alertedReasons) {
       expect(reason).not.toContain(fakeFingerprint);
     }
+  });
+});
+
+// docusign-bilateral-2026-08 (feasibility spike, flag-off, not going live this
+// cycle): defaultMaterializeAnchor's inbound declared-hash branch. A dedicated
+// generic chainable+thenable stub (distinct from the connector_artifact-table
+// harness above) because this function's own dependencies are org_members
+// (actor resolution) and anchors (envelope-guard lookups + the insert itself)
+// — a different table shape than the rest of this file exercises.
+describe('defaultMaterializeAnchor — fingerprint_source (R19 / migration 0376)', () => {
+  /** A chainable object whose every method returns itself, and which resolves `result` when awaited at any point in the chain. */
+  function chainable(result: { data: unknown; error: unknown }) {
+    const obj: Record<string, unknown> = {};
+    const methods = ['select', 'eq', 'is', 'neq', 'in', 'order', 'limit', 'insert'];
+    for (const m of methods) {
+      obj[m] = vi.fn(() => obj);
+    }
+    obj.maybeSingle = vi.fn(async () => result);
+    obj.single = vi.fn(async () => result);
+    obj.then = (resolve: (v: unknown) => void, reject: (e: unknown) => void) =>
+      Promise.resolve(result).then(resolve, reject);
+    return obj;
+  }
+
+  function makeDb(args: {
+    insertResult: { data: unknown; error: unknown };
+    insertSpy: (payload: unknown) => void;
+  }) {
+    const from = vi.fn((table: string) => {
+      if (table === 'org_members') {
+        return chainable({ data: { user_id: MATERIALIZE_USER_ID, role: 'owner' }, error: null });
+      }
+      if (table === 'anchors') {
+        // First 3 calls per invocation are the envelope-guard lookups
+        // (ENVELOPE_ID_METADATA_KEYS = source_envelope_id/envelope_id/external_ref),
+        // each finding no existing anchor. The insert call is distinguished
+        // by actually invoking `.insert(...)`, captured by insertSpy so the
+        // test can assert on the exact payload.
+        const c = chainable({ data: [], error: null });
+        c.insert = vi.fn((payload: unknown) => {
+          args.insertSpy(payload);
+          return chainable(args.insertResult);
+        });
+        return c;
+      }
+      throw new Error(`unexpected table ${table}`);
+    });
+    return { from };
+  }
+
+  const MATERIALIZE_USER_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const BASE_ROW = {
+    id: ART_1,
+    org_id: ORG_A,
+    status: 'pending',
+    fingerprint_sha256: 'a'.repeat(64),
+    byte_length: null,
+    source: 'docusign',
+    external_ref: 'env-inbound-1',
+    anchor_id: null,
+    credit_deduction_id: null,
+  };
+
+  it('sets fingerprint_source=issuer_record_attestation when metadata._direction is inbound', async () => {
+    const insertSpy = vi.fn();
+    const db = makeDb({
+      insertResult: { data: { id: 'anchor-inbound-1', public_id: 'ARK-INBOUND-1' }, error: null },
+      insertSpy,
+    });
+
+    const result = await defaultMaterializeAnchor(
+      {
+        ...BASE_ROW,
+        metadata: { _direction: 'inbound', _sending_account_id: 'acct-FOREIGN', envelope_id: 'env-inbound-1' },
+      },
+      { db },
+    );
+
+    expect(result).toEqual({ anchorId: 'anchor-inbound-1', anchorPublicId: 'ARK-INBOUND-1' });
+    expect(insertSpy).toHaveBeenCalledWith(expect.objectContaining({
+      fingerprint_source: 'issuer_record_attestation',
+      metadata: expect.objectContaining({ _direction: 'inbound', _sending_account_id: 'acct-FOREIGN' }),
+    }));
+  });
+
+  it('OMITS fingerprint_source (undefined, not "document_bytes") for a normal outbound/fetched connector row', async () => {
+    const insertSpy = vi.fn();
+    const db = makeDb({
+      insertResult: { data: { id: 'anchor-outbound-1', public_id: 'ARK-OUTBOUND-1' }, error: null },
+      insertSpy,
+    });
+
+    await defaultMaterializeAnchor(
+      { ...BASE_ROW, external_ref: 'env-outbound-1', metadata: { envelope_id: 'env-outbound-1' } },
+      { db },
+    );
+
+    expect(insertSpy).toHaveBeenCalledTimes(1);
+    const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect('fingerprint_source' in payload).toBe(false);
+  });
+
+  it('OMITS fingerprint_source for a non-inbound _direction value (never guesses toward the class)', async () => {
+    const insertSpy = vi.fn();
+    const db = makeDb({
+      insertResult: { data: { id: 'anchor-outbound-2', public_id: 'ARK-OUTBOUND-2' }, error: null },
+      insertSpy,
+    });
+
+    await defaultMaterializeAnchor(
+      { ...BASE_ROW, external_ref: 'env-outbound-2', metadata: { _direction: 'outbound' } },
+      { db },
+    );
+
+    const payload = insertSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect('fingerprint_source' in payload).toBe(false);
   });
 });

@@ -72,10 +72,21 @@ interface EnqueueConnectorArtifactArgs {
   p_metadata: Record<string, unknown>;
 }
 
+// F1 (security review, docusign-bilateral-2026-08): the row shape read back
+// after enqueue_connector_artifact to detect a provenance conflict (a forged
+// INBOUND declared-hash write racing ahead of this real, measured write and
+// winning the ON CONFLICT DO NOTHING). Narrow on purpose — only the two
+// fields the comparison needs, never document bytes.
+interface ConnectorArtifactProvenanceRow {
+  fingerprint_sha256: string;
+  metadata: Record<string, unknown> | null;
+}
+
 interface DbClient {
   from(table: 'org_integrations' | 'member_integrations'): DbSelectQuery<DocusignIntegrationRow>;
   from(table: 'organizations'): DbSelectQuery<{ parent_org_id: string | null }>;
   from(table: 'integration_events'): DbInsertQuery<{ id?: string }>;
+  from(table: 'connector_artifact'): DbSelectQuery<ConnectorArtifactProvenanceRow>;
 }
 
 // The 0343 enqueue RPC lives on the same supabase client but is reached through a
@@ -440,6 +451,78 @@ export function makeDocusignEnvelopeJobDeps(
           'DocuSign connector-artifact enqueue failed',
         );
         throw new Error('docusign_connector_artifact_enqueue_failed');
+      }
+
+      // F1 (security review, docusign-bilateral-2026-08): the RPC above is
+      // ON CONFLICT DO NOTHING keyed on (org_id, source, external_ref,
+      // COALESCE(external_revision,'')) — the SAME key the INBOUND
+      // declared-hash webhook path (api/v1/webhooks/docusign.ts) writes to
+      // for the SAME envelope, with an UNVERIFIED, attacker-declared
+      // fingerprint (HMAC only proves "signed by this org's key", never "this
+      // envelope is really foreign-owned"). A forged inbound event racing
+      // ahead of THIS real, server-fetched-and-measured write can win the
+      // INSERT; this RPC call then silently returns THAT row's id, and
+      // trusting "non-null id = my write succeeded" would anchor the
+      // attacker's fingerprint under this real outbound envelope's
+      // rule-event/audit trail. Read back the row that ACTUALLY persisted
+      // and compare against what THIS call just measured before treating
+      // anything as success.
+      //
+      // Detection only — ON CONFLICT DO NOTHING means this RPC cannot
+      // UPDATE-supersede a pre-existing row from here. Automatic
+      // outbound-supersedes-inbound reconciliation is separate, go-live-gated
+      // follow-up work; the floor this ships is: never silently anchor a
+      // fingerprint this call did not itself just measure.
+      const { data: persistedArtifact, error: readBackError } = await db
+        .from('connector_artifact')
+        .select('fingerprint_sha256, metadata')
+        .eq('id', artifactId)
+        .maybeSingle();
+
+      if (readBackError || !persistedArtifact) {
+        // Fail-closed, same posture as the enqueue check above: an artifact
+        // id this job cannot read back and verify is not a durable success.
+        logger.error(
+          { error: readBackError, integrationId: input.integrationId, artifactId },
+          'DocuSign connector-artifact read-back failed after enqueue — cannot verify provenance',
+        );
+        throw new Error('docusign_connector_artifact_readback_failed');
+      }
+
+      const persistedMetadata =
+        persistedArtifact.metadata && typeof persistedArtifact.metadata === 'object'
+          ? (persistedArtifact.metadata as Record<string, unknown>)
+          : null;
+      // Two independent tells, either one is disqualifying:
+      //  - the persisted hash isn't the one THIS call just measured (the
+      //    direct race signature), or
+      //  - the persisted row is marked `_direction: 'inbound'` at all — this
+      //    IS this org's own outbound envelope (we are the outbound job
+      //    fetching it), so an existing INBOUND-marked row for the same
+      //    (org, envelope) is inherently anomalous even in the vanishingly
+      //    unlikely case the hashes happened to coincide.
+      const fingerprintMismatch = persistedArtifact.fingerprint_sha256 !== fingerprint;
+      const wonByInboundRow = persistedMetadata?._direction === 'inbound';
+
+      if (fingerprintMismatch || wonByInboundRow) {
+        // DISTINCT, LOUD signal — never the silent-success return below, and
+        // never the existing (deliberately silent) orphan/duplicate paths
+        // elsewhere in this pipeline. A different write already owns this
+        // (org, envelope) artifact slot; this call's real, server-measured
+        // fingerprint from the actual fetched bytes was discarded by
+        // ON CONFLICT DO NOTHING.
+        logger.error(
+          {
+            docusign_connector_artifact_provenance_conflict: true,
+            integrationId: input.integrationId,
+            envelopeId: input.envelopeId,
+            artifactId,
+            persistedDirection: persistedMetadata?._direction ?? null,
+            fingerprintMismatch,
+          },
+          "DocuSign connector-artifact provenance conflict — a different fingerprint already owns this (org, envelope) slot; this call's real, server-measured fingerprint was discarded by ON CONFLICT DO NOTHING",
+        );
+        throw new Error('docusign_connector_artifact_provenance_conflict');
       }
 
       // Audit breadcrumb. Carries the artifact id + byte_length but NEVER the
