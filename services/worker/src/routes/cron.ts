@@ -1303,6 +1303,11 @@ cronRouter.post('/detect-reorgs', async (_req, res) => {
 cronRouter.post('/monitor-stuck-txs', async (_req, res) => {
   try {
     const result = await monitorStuckTransactions();
+    // SCRUM-3836: a run that could not query its candidates must not answer 200.
+    if (!result.completed) {
+      res.status(503).json({ error: 'Stuck TX monitor could not run', ...result });
+      return;
+    }
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Stuck TX monitor failed');
@@ -1313,6 +1318,11 @@ cronRouter.post('/monitor-stuck-txs', async (_req, res) => {
 cronRouter.post('/rebroadcast-txs', async (_req, res) => {
   try {
     const result = await rebroadcastDroppedTransactions();
+    // SCRUM-3836: a run that could not query its candidates must not answer 200.
+    if (!result.completed) {
+      res.status(503).json({ error: 'TX rebroadcast could not run', ...result });
+      return;
+    }
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'TX rebroadcast failed');

@@ -122,7 +122,10 @@ async function getSubmittedTxChainState(txId: string, baseUrl: string): Promise<
     }
 
     return resp.status === 404 ? 'not_found' : 'unknown';
-  } catch {
+  } catch (err) {
+    // SCRUM-3836: 'unknown' is a distinguishable value and callers handle it,
+    // but a silent network failure here left no trace at all.
+    logger.warn({ error: err }, 'TX status check failed — treating as unknown');
     return 'unknown';
   }
 }
@@ -542,6 +545,9 @@ interface StuckTxResult {
   checked: number;
   stuck: number;
   recovered: number;
+  /** SCRUM-3836: false when the check could not run — never treat as "nothing stuck". */
+  completed: boolean;
+  reason?: 'candidate_query_failed';
 }
 
 /**
@@ -557,11 +563,11 @@ interface StuckTxResult {
  */
 export async function monitorStuckTransactions(): Promise<StuckTxResult> {
   if (config.useMocks || config.nodeEnv === 'test') {
-    return { checked: 0, stuck: 0, recovered: 0 };
+    return { checked: 0, stuck: 0, recovered: 0, completed: true };
   }
 
   if (!(await acquireLock(LOCK_STUCK_TX_MONITOR))) {
-    return { checked: 0, stuck: 0, recovered: 0 };
+    return { checked: 0, stuck: 0, recovered: 0, completed: true };
   }
 
   try {
@@ -584,8 +590,18 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
       .order('updated_at', { ascending: true })
       .limit(50);
 
-    if (error || !stuckAnchors || stuckAnchors.length === 0) {
-      return { checked: 0, stuck: 0, recovered: 0 };
+    // SCRUM-3836: a failed candidate query is NOT "nothing is stuck". Same
+    // collapse that hid the reorg detector's statement_timeout for 1,108 runs.
+    if (error) {
+      logger.error({ error }, 'Stuck TX monitor could not run — candidate anchor query failed');
+      return {
+        checked: 0, stuck: 0, recovered: 0,
+        completed: false, reason: 'candidate_query_failed',
+      };
+    }
+
+    if (!stuckAnchors || stuckAnchors.length === 0) {
+      return { checked: 0, stuck: 0, recovered: 0, completed: true };
     }
 
     let stuck = 0;
@@ -706,7 +722,7 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
       );
     }
 
-    return { checked: stuckAnchors.length, stuck, recovered };
+    return { checked: stuckAnchors.length, stuck, recovered, completed: true };
   } finally {
     await releaseLock(LOCK_STUCK_TX_MONITOR);
   }
@@ -718,6 +734,9 @@ interface RebroadcastResult {
   checked: number;
   rebroadcast: number;
   failed: number;
+  /** SCRUM-3836: false when the sweep could not run — never treat as "nothing to rebroadcast". */
+  completed: boolean;
+  reason?: 'candidate_query_failed';
 }
 
 /**
@@ -731,11 +750,11 @@ interface RebroadcastResult {
  */
 export async function rebroadcastDroppedTransactions(): Promise<RebroadcastResult> {
   if (config.useMocks || config.nodeEnv === 'test') {
-    return { checked: 0, rebroadcast: 0, failed: 0 };
+    return { checked: 0, rebroadcast: 0, failed: 0, completed: true };
   }
 
   if (!(await acquireLock(LOCK_REBROADCAST))) {
-    return { checked: 0, rebroadcast: 0, failed: 0 };
+    return { checked: 0, rebroadcast: 0, failed: 0, completed: true };
   }
 
   try {
@@ -755,8 +774,17 @@ export async function rebroadcastDroppedTransactions(): Promise<RebroadcastResul
       .is('deleted_at', null)
       .limit(20);
 
-    if (error || !oldAnchors || oldAnchors.length === 0) {
-      return { checked: 0, rebroadcast: 0, failed: 0 };
+    // SCRUM-3836: same collapse — a failed query is not "nothing to rebroadcast".
+    if (error) {
+      logger.error({ error }, 'TX rebroadcast could not run — candidate anchor query failed');
+      return {
+        checked: 0, rebroadcast: 0, failed: 0,
+        completed: false, reason: 'candidate_query_failed',
+      };
+    }
+
+    if (!oldAnchors || oldAnchors.length === 0) {
+      return { checked: 0, rebroadcast: 0, failed: 0, completed: true };
     }
 
     const baseUrl = getMempoolBaseUrl();
@@ -860,7 +888,7 @@ export async function rebroadcastDroppedTransactions(): Promise<RebroadcastResul
       'TX rebroadcast job complete',
     );
 
-    return { checked: txIds.length, rebroadcast, failed };
+    return { checked: txIds.length, rebroadcast, failed, completed: true };
   } finally {
     await releaseLock(LOCK_REBROADCAST);
   }
@@ -907,8 +935,10 @@ export async function consolidateUtxos(): Promise<ConsolidationResult> {
         const feeData = await feeResp.json() as Record<string, number>;
         currentFeeRate = feeData.hourFee ?? 1;
       }
-    } catch {
-      // Can't check fee — skip consolidation to be safe
+    } catch (err) {
+      // Can't check fee — skip consolidation to be safe. `skipped`/`reason` were
+      // already honest; the missing piece was any log that it happened.
+      logger.warn({ error: err }, 'UTXO consolidation skipped — fee check failed');
       return { utxosSwept: 0, totalValueSats: 0, txId: null, skipped: true, reason: 'fee check failed' };
     }
 

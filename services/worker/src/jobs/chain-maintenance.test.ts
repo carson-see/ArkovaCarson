@@ -450,11 +450,47 @@ describe('Chain Maintenance Jobs', () => {
 
   // ─── NET-1: Stuck TX Monitor ──────────────────────────────────────
 
+  // SCRUM-3836: the sibling jobs carried the identical `if (error || empty)`
+  // collapse that hid the reorg detector's statement_timeout. Pinned here so a
+  // failed candidate query can never again read as "nothing to do".
+  describe('SCRUM-3836 — sibling jobs must not swallow a failed candidate query', () => {
+    const dbError = { code: '57014', message: 'canceling statement due to statement timeout' };
+
+    it('monitorStuckTransactions reports NOT completed on query failure', async () => {
+      mockDb.from.mockReturnValue(mockDbChain(null, dbError));
+      const result = await monitorStuckTransactions();
+      expect(result.completed).toBe(false);
+      expect(result.reason).toBe('candidate_query_failed');
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    it('monitorStuckTransactions reports completed on a genuinely empty queue', async () => {
+      mockDb.from.mockReturnValue(mockDbChain([], null));
+      const result = await monitorStuckTransactions();
+      expect(result.completed).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
+
+    it('rebroadcastDroppedTransactions reports NOT completed on query failure', async () => {
+      mockDb.from.mockReturnValue(mockDbChain(null, dbError));
+      const result = await rebroadcastDroppedTransactions();
+      expect(result.completed).toBe(false);
+      expect(result.reason).toBe('candidate_query_failed');
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    it('rebroadcastDroppedTransactions reports completed when nothing is dropped', async () => {
+      mockDb.from.mockReturnValue(mockDbChain([], null));
+      const result = await rebroadcastDroppedTransactions();
+      expect(result.completed).toBe(true);
+    });
+  });
+
   describe('monitorStuckTransactions (NET-1)', () => {
     it('skips in mock/test mode', async () => {
       mockConfig.useMocks = true;
       const result = await monitorStuckTransactions();
-      expect(result).toEqual({ checked: 0, stuck: 0, recovered: 0 });
+      expect(result).toEqual({ checked: 0, stuck: 0, recovered: 0, completed: true });
     });
 
     it('returns zero when no stuck anchors', async () => {
@@ -605,7 +641,7 @@ describe('Chain Maintenance Jobs', () => {
 
       const result = await monitorStuckTransactions();
 
-      expect(result).toEqual({ checked: 1, stuck: 1, recovered: 0 });
+      expect(result).toEqual({ checked: 1, stuck: 1, recovered: 0, completed: true });
       expect(mockGetChainClientAsync).not.toHaveBeenCalled();
       expect(fetchSpy).not.toHaveBeenCalled();
     });
@@ -804,7 +840,7 @@ describe('Chain Maintenance Jobs', () => {
     it('skips in mock/test mode', async () => {
       mockConfig.useMocks = true;
       const result = await rebroadcastDroppedTransactions();
-      expect(result).toEqual({ checked: 0, rebroadcast: 0, failed: 0 });
+      expect(result).toEqual({ checked: 0, rebroadcast: 0, failed: 0, completed: true });
     });
 
     it('returns zero when no old anchors', async () => {

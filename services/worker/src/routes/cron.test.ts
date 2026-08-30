@@ -280,8 +280,8 @@ vi.mock('../jobs/ipedsFetcher.js', () => ({
 // SCRUM-3836: `completed` is part of the ReorgCheckResult contract — the route
 // returns 503 without it, so an incomplete mock would misrepresent the route.
 const mockDetectReorgs = vi.fn().mockResolvedValue({ reorgsDetected: 0, completed: true });
-const mockMonitorStuckTransactions = vi.fn().mockResolvedValue({ stuck: 0 });
-const mockRebroadcastDroppedTransactions = vi.fn().mockResolvedValue({ rebroadcast: 0 });
+const mockMonitorStuckTransactions = vi.fn().mockResolvedValue({ stuck: 0, completed: true });
+const mockRebroadcastDroppedTransactions = vi.fn().mockResolvedValue({ rebroadcast: 0, completed: true });
 const mockConsolidateUtxos = vi.fn().mockResolvedValue({ consolidated: 0 });
 const mockMonitorFeeRates = vi.fn().mockResolvedValue({ currentRate: 5 });
 vi.mock('../jobs/chain-maintenance.js', () => ({
@@ -1885,7 +1885,17 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/monitor-stuck-txs');
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ stuck: 0 });
+      expect(res.body).toEqual({ stuck: 0, completed: true });
+    });
+
+    // SCRUM-3836: a failed candidate query must not read as "nothing stuck".
+    it('returns 503 when the run could not complete', async () => {
+      mockMonitorStuckTransactions.mockResolvedValueOnce({
+        checked: 0, stuck: 0, recovered: 0, completed: false, reason: 'candidate_query_failed',
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/monitor-stuck-txs');
+      expect(res.status).toBe(503);
     });
 
     it('returns 500 on failure', async () => {
