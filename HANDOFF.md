@@ -14,6 +14,16 @@
 
 ## Now
 
+### Soaks — DocuSign bilateral T3 (RUNNING, started 2026-08-30)
+
+- **Rig:** isolated Supabase `aqikotdkmhxmznonwmwk` (`arkova-soak-docusign-bilateral`, us-east-2), ledger head **0424**. Cloud Run `arkova-worker-docusign-bilateral-staging` rev **00003-kt9**, image `sha256:642487e3…`, source head `2a676981cfcc337f87f42169b2d2085fdb886c87` (branch `rc/docusign-bilateral-2026-08-30`).
+- **Covers:** PRs #2472 (guard mig 0423), #2474 (signer capture), #2473 (frontend links), #2476 (inbound + mig 0424), harness #2479.
+- **Clock = Cloud Run uptime**, revision ready **2026-08-30T16:23:20Z**, T3 closes **2026-09-01T16:23:20Z**. Driver `~/arkova-soak/docusign-bilateral/supervisor.sh` (detached, PPID 1), 15-min cycles.
+- **Staging-only:** `ENABLE_DOCUSIGN_INBOUND=true` on the rig. **Prod keeps inbound OFF** pending the SCRUM-3818 go-live gate.
+- **Evidence:** `docs/staging/docusign-bilateral-2026-08/evidence/` — E1/E2 guard behavior, E3 live adversarial matrix, E4 inbound envelopes anchored end-to-end (ARK-DOC-JFQ9QR, ARK-DOC-DGHFW2, `fingerprint_source=issuer_record_attestation`), zero PII leakage.
+- **Do not touch** this rig or the concurrent `credits-2442` / `cleanup-2335` soaks.
+
+
 **State as of 2026-08-27T21:00Z, verified live this session.** This block is the only current-state
 claim in this file; everything under `## History` is the dated record and is not re-asserted here.
 Everything dated 2026-08-27 below was read directly this session — `gcloud run services describe
