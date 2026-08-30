@@ -14,6 +14,7 @@ import {
   shapeAnchorRow,
   handleVerifyCredential,
   handleVerifyBatch,
+  verifyCredentialRecord,
   handleVerifyDocument,
   handleAgentVerify,
   handleNessieQuery,
@@ -214,6 +215,104 @@ describe('handleVerifyBatch (real RPC fixture)', () => {
     expect(parsed.results[0].issuer_name).toBe('University of Michigan');
     expect(parsed.results[0].network_receipt_id).toBe('tx-batch-1');
     expect(parsed.results[0].recipient_identifier).toBe('d'.repeat(64));
+  });
+
+  // DI-038: handleVerifyBatch now shares `verifyCredentialRecord` with
+  // oracle_batch_verify. Its per-member degradation had no coverage before,
+  // so pin it here — a regression in the shared seam must fail BOTH paths.
+  it('degrades a timed-out member without failing the batch', async () => {
+    mockFetch.mockImplementation(async (_url: string, init?: { body?: string }) => {
+      const { p_public_id } = JSON.parse(String(init?.body ?? '{}'));
+      if (p_public_id === 'ARK-2026-002') {
+        const err = new Error('The operation was aborted.');
+        err.name = 'AbortError';
+        throw err;
+      }
+      return { ok: true, json: async () => realPublicAnchorRow({ public_id: p_public_id }) };
+    });
+
+    const result = await handleVerifyBatch(
+      { public_ids: ['ARK-2026-001', 'ARK-2026-002'] },
+      CONFIG,
+    );
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.total).toBe(2);
+    expect(parsed.results[0].verified).toBe(true);
+    expect(parsed.results[1]).toEqual({
+      public_id: 'ARK-2026-002',
+      verified: false,
+      error: 'Verification lookup timed out',
+    });
+  });
+});
+
+// ── DI-038 (SCRUM-3398): the shared structured batch seam ────────────
+//
+// `verifyCredentialRecord` is the ONLY per-ID lookup both batch paths use.
+// It must never throw and never return a `ToolResult` — a throw here is what
+// used to take out an entire oracle_batch_verify call.
+
+describe('verifyCredentialRecord (DI-038 shared batch seam)', () => {
+  it('returns the shaped row with a public_id echo on success', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => realPublicAnchorRow({ issuer_name: 'Acme University' }),
+    });
+
+    const row = await verifyCredentialRecord('ARK-2026-001', CONFIG);
+    expect(row).toMatchObject({
+      public_id: 'ARK-2026-001',
+      verified: true,
+      issuer_name: 'Acme University',
+    });
+  });
+
+  it('returns a not-found row instead of throwing on a non-2xx RPC response', async () => {
+    mockFetch.mockResolvedValue({ ok: false });
+
+    await expect(verifyCredentialRecord('ARK-NOPE-999', CONFIG)).resolves.toEqual({
+      public_id: 'ARK-NOPE-999',
+      verified: false,
+      error: 'Credential "ARK-NOPE-999" not found.',
+    });
+  });
+
+  it('returns a timed-out row instead of throwing on AbortError', async () => {
+    mockFetch.mockImplementation(async () => {
+      const err = new Error('The operation was aborted.');
+      err.name = 'AbortError';
+      throw err;
+    });
+
+    await expect(verifyCredentialRecord('ARK-2026-001', CONFIG)).resolves.toEqual({
+      public_id: 'ARK-2026-001',
+      verified: false,
+      error: 'Verification lookup timed out',
+    });
+  });
+
+  it('scrubs transport internals out of the failure row', async () => {
+    mockFetch.mockImplementation(async () => {
+      throw new TypeError('fetch failed: connect ECONNREFUSED 10.11.12.13:5432');
+    });
+
+    const row = await verifyCredentialRecord('ARK-2026-001', CONFIG);
+    expect(row).toEqual({
+      public_id: 'ARK-2026-001',
+      verified: false,
+      error: 'Verification lookup failed',
+    });
+    expect(JSON.stringify(row)).not.toContain('ECONNREFUSED');
+  });
+
+  it('rejects a blank public_id without issuing an RPC call', async () => {
+    const row = await verifyCredentialRecord('   ', CONFIG);
+    expect(row).toEqual({
+      public_id: '',
+      verified: false,
+      error: 'Error: public_id is required',
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
 
