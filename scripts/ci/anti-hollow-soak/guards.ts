@@ -27,11 +27,19 @@
  * `{ pass, message }`; `runAntiHollowSoakGuards` orchestrates them and the CLI
  * entrypoint exits non-zero on any failure.
  *
- * CI wiring: SCRUM-2977 wires this into ci.yml in REPORT-ONLY / warn mode only
- * (`--report-only`), per the W3-freeze CTO carve-out — it prints findings and
- * exits 0, gating nothing. Fail-closed activation (dropping `--report-only`) is
- * DEFERRED until >=1 real green soak calibrates the guards, mirroring the
- * #1617 T0-CI-infra precedent.
+ * CI wiring: FAIL-CLOSED. The `anti-hollow-soak` job in ci.yml runs this CLI
+ * with no flags over every `docs/staging/soak-preflight/*.json`; a failing
+ * guard exits non-zero and reds the job (no `|| true`, no
+ * `continue-on-error`), and `.mergify.yml` lists `Anti-hollow-soak guards` in
+ * every queue rule's merge_conditions so the red actually blocks the merge.
+ *
+ * NOTE for the CI author: with no `--input`, fail-closed `main()` returns the
+ * USAGE code 2. The "no preflight committed yet" case therefore must not call
+ * this CLI at all — ci.yml emits a `::notice::` and exits 0 instead. See
+ * `soak-integrity-gates-failclosed.test.ts`, which pins that shape.
+ *
+ * `--report-only` remains an explicit opt-in for local dry-runs (always exit 0,
+ * `::warning::` instead of `::error::`); it is not what CI runs.
  */
 
 import { readFileSync } from 'node:fs';

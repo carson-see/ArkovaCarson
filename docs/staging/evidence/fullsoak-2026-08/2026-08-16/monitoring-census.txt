@@ -1,0 +1,9 @@
+ALERT_POLICY|PAGE — SOAK bitcoind VM down (RPC node for fullsoak rig)|enabled=True
+ALERT_POLICY|PAGE — SOAK rig /health not healthy (body assertion)|enabled=True
+ALERT_POLICY|PAGE — SOAK rig 5xx burst|enabled=True
+ALERT_POLICY|PAGE — SOAK rig REVISION DRIFT (not the pinned 00013-mrw)|enabled=True
+ALERT_POLICY|PAGE — SOAK rig cold start (clock = uptime; ANY restart is an R2 event)|enabled=True
+UPTIME_CHECK|SOAK — app.arkova.ai frontend|enabled=True|period=60s
+UPTIME_CHECK|SOAK — edge.arkova.ai /health|enabled=True|period=60s
+UPTIME_CHECK|SOAK — fullsoak rig /health (body: status healthy)|enabled=True|period=60s
+UPTIME_CHECK|SOAK — search.arkova.ai frontend|enabled=True|period=60s

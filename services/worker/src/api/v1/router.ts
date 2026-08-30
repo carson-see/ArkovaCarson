@@ -16,6 +16,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { verificationApiGate } from '../../middleware/featureGate.js';
 import { apiKeyAuth, requireScope } from '../../middleware/apiKeyAuth.js';
+import { requireScopeAnyAuth } from '../../middleware/requireScopeAnyAuth.js';
 import { usageTracking } from '../../middleware/usageTracking.js';
 import { verifyRouter } from './verify.js';
 import { verifyProofRouter } from './verify-proof.js';
@@ -48,6 +49,7 @@ import { logger } from '../../utils/logger.js';
 import { rateLimit } from '../../utils/rateLimit.js';
 import { x402PaymentGate } from '../../middleware/x402PaymentGate.js';
 import { x402PayerRateLimit } from '../../middleware/x402PayerRateLimit.js';
+import { nessieCapabilityGate } from '../../middleware/nessieCapabilityGate.js';
 import { idempotencyMiddleware } from '../../middleware/idempotency.js';
 import { nessieQueryRouter } from './nessie-query.js';
 import { regulatoryAlertsRouter } from './regulatory-alerts.js';
@@ -539,7 +541,21 @@ router.use('/cle', x402PaymentGate('/api/v1/cle'), cleVerifyRouter);
 // Keep this before the broad AdES compliance mounts below. Those routers are
 // mounted at `/` because their internals expose signature paths, and their JWT
 // guards would otherwise shadow this API-key/x402 endpoint.
-router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), x402PayerRateLimit, aiRateLimiter, nessieQueryRouter);
+//
+// BUG-008/027 (CTO ruling R-1 STRENGTHENED): `nessieCapabilityGate()` runs
+// FIRST — before the payment gate. Nessie is permanently disabled by standing
+// founder directive; until this gate existed the route was mounted with no flag
+// check at all and answered 200 `{"results":[],"count":0}`, which reads as "ran,
+// found nothing". Gating ahead of `x402PaymentGate` also means a disabled
+// capability never takes a caller's money on the way to saying it is disabled.
+router.use(
+  '/nessie/query',
+  nessieCapabilityGate(),
+  x402PaymentGate('/api/v1/nessie/query'),
+  x402PayerRateLimit,
+  aiRateLimiter,
+  nessieQueryRouter,
+);
 
 // ─── AdES Signatures — Phase III (PH3-ESIG-01) ───
 // Feature-gated + JWT auth required (except the public verify-signature check)
@@ -636,12 +652,31 @@ router.use('/compliance/report', requireAuth, batchRateLimiter, complianceReport
 // "Audit My Organization" — org-level compliance audit (NCA-03)
 router.use('/compliance/audit', requireAuth, batchRateLimiter, complianceAuditRouter);
 
-// ─── FERPA Compliance (REG-01, REG-02) — rate limited per Constitution 1.10 ───
-router.use('/ferpa', requireAuth, aiRateLimiter, ferpaDisclosuresRouter);
-router.use('/directory-opt-out', requireAuth, batchRateLimiter, directoryOptOutRouter);
-
-// ─── HIPAA Compliance (REG-07, REG-10) — rate limited per Constitution 1.10 ───
-router.use('/hipaa/audit', requireAuth, aiRateLimiter, hipaaAuditRouter);
-router.use('/emergency-access', requireAuth, batchRateLimiter, emergencyAccessRouter);
+// ─── FERPA / HIPAA compliance surfaces (REG-01, REG-02, REG-07, REG-10) ───
+//
+// SCRUM-1272 / SCRUM-3514: these four carry student PII and PHI and are the
+// routes SCRUM-1272's "Why now" named — yet they shipped with NO scope layer,
+// because they authenticate with a Supabase JWT and `requireScope` is
+// API-key-only (it calls `next()` the moment `req.apiKey` is unset, so mounting
+// it here would have enforced nothing). `requireScopeAnyAuth` is the JWT-claims
+// path: it derives the grant from the caller's org role, narrowed by any
+// `scopes` claim on the presented token, and 401s when there is no scope source
+// at all — it cannot be mounted as a no-op. See
+// `../../middleware/requireScopeAnyAuth.ts`.
+//
+// Order is the contract and is pinned by `middleware/__tests__/phiScopeMount.test.ts`:
+// `requireAuth` first (it populates `req.authUserId`, which the scope guard
+// reads), then the scope guard, then the rate limiter. Per-route privilege
+// (ORG_ADMIN) and the tenant boundary stay where they are — `requireOrgId` /
+// `requireOrgAdmin` inside each router — this layer is the capability gate only.
+//
+// Scope-before-limiter matches the existing `/verify/batch` chain. The guard's
+// one DB read is a single indexed `profiles` PK lookup, and the router-level
+// anon/keyed limiter (100 req/min) has already run above, so putting it ahead of
+// the tighter per-route limiter is not a meaningful amplification vector.
+router.use('/ferpa', requireAuth, requireScopeAnyAuth('compliance:read'), aiRateLimiter, ferpaDisclosuresRouter);
+router.use('/directory-opt-out', requireAuth, requireScopeAnyAuth('compliance:read'), batchRateLimiter, directoryOptOutRouter);
+router.use('/hipaa/audit', requireAuth, requireScopeAnyAuth('compliance:read'), aiRateLimiter, hipaaAuditRouter);
+router.use('/emergency-access', requireAuth, requireScopeAnyAuth('compliance:read'), batchRateLimiter, emergencyAccessRouter);
 
 export { router as apiV1Router };

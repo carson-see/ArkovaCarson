@@ -1,5 +1,18 @@
 # agents.md — services/worker/src/api/
 
+## 2026-08-12 — `partner-provisioning-router.ts`: the HTTP surface is STRICTER than the state machine (SCRUM-2990)
+
+The state machine (`partner-provisioning.ts`, PR #1606) had no HTTP surface for three weeks: `/api/partner-provisioning` was a gated, **routeless** prefix. This adds the router. Two things about it are non-obvious and must not be "simplified" away:
+
+- **The router deliberately denies what the machine allows.** `assertApprovalAuthority` admits `owner` / `org_admin` of the sponsor org as reviewers. Over HTTP they are **not** admitted — approve, reject, cancel and provision are **platform-admin only** (`platform_admin_required`, 403). The sponsor org is an interested party in its own partner's onboarding, and provisioning is the step that confers a counterparty standing in the platform. The machine still runs afterwards as an independent second gate; both must pass. If you ever find yourself relaxing the router to "match the machine", you are removing a control, not fixing an inconsistency.
+- **`provisionPartnerAccount` has no self-review check and the router supplies one.** `approvePartnerRequest` / `rejectPartnerRequest` both call `assertNotSelfReview`; `provisionPartnerAccount` does **not**. So at the machine level the requester can provision their own approved request. The router bars it (`separation_of_duties`, 403). This is a genuine gap in the machine, closed at the HTTP layer rather than by editing the machine mid-window; a later PR should push it down.
+
+**Actor construction is the trust boundary.** `ProvisioningActor` is built ONLY from the authenticated `userId` plus `_org-auth.ts` / `platformAdmin.ts` lookups. Nothing role- or org-bearing is read from the request body — the Zod schemas are non-strict, so a body carrying `role: 'platform_admin'` is silently **stripped**, not honoured and not 400'd. Two tests pin this (a spoofed body still 403s; a static scan forbids `req.body.role` / `req.body.org_id` in the source). For a platform admin the actor's `orgId` is **not load-bearing** — both machine gates short-circuit on `platform_admin` before reading it — it is supplied only to satisfy the machine's UUID shape validator, falling back to the sponsor org when the admin's profile has no org.
+
+**Every transition persists under compare-and-swap**, never read-modify-write: the UPDATE carries `.eq('status', <status read before the transition>)`, so a racing reviewer matches zero rows and gets 409 `concurrent_transition` instead of silently overwriting the winner. Audit is emitted only **after** the swap wins, so a lost race writes no audit row. Verified against Postgres 17 on an isolated throwaway cluster (stale-status UPDATE → `UPDATE 0`).
+
+**No credential material.** This surface issues no API key, creates no org, grants no entitlement or credit. `partner_org_id` is supplied by the operator and merely bound to the record. A static guard test fails the build if the router grows an import of `apiKeyAuth` / secret-manager / `createHmac` / `randomBytes`, and a response test asserts no `api_key` / `token` / `secret` substring ever appears in a provision response.
+
 ## 2026-08-10 — `activation.ts`: recipient account activation was 100% broken in production (launch blocker)
 
 A recipient issued a credential could not claim it and could not log in. Two independent, unconditional defects, both confirmed against live prod:
@@ -228,7 +241,7 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 
 | File | Purpose |
 |------|---------|
-| `_org-auth.ts` | Shared org-auth helpers for service_role handlers (single source of truth for org_id scoping). `getCallerProfile`/`getCallerOrgId`, `isCallerOrgAdmin` (org_members owner/admin OR profile ORG_ADMIN/platform-admin), and `isUserMemberOfOrg(target, org)` (SCRUM-1863 — the cross-org gate for admin-acts-on-member flows; true if an `org_members` row OR `profiles.org_id` matches; fails closed). Each lookup also has a `*Result` variant (`getCallerOrgIdResult` / `isCallerOrgAdminResult` / `isUserMemberOfOrgResult`) returning `{ value, error }`: the boolean/string forms FAIL CLOSED (DB error → falsy), while `*Result` surfaces an operational `error` so a handler can return **500** instead of masking a fault as **403** (PR #1045 review, mirrors #1029). `isCallerOrgAdmin` now explicitly captures + logs the `org_members` lookup error it previously swallowed. Tested in `_org-auth.test.ts`. |
+| `_org-auth.ts` | Shared org-auth helpers for service_role handlers (single source of truth for org_id scoping). `getCallerProfile`/`getCallerOrgId`, `isCallerOrgAdmin` (org_members owner/admin OR profile ORG_ADMIN/platform-admin), and `isUserMemberOfOrg(target, org)` (SCRUM-1863 — the cross-org gate for admin-acts-on-member flows; true if an `org_members` row OR `profiles.org_id` matches; fails closed). Each lookup also has a `*Result` variant (`getCallerProfileResult` / `getCallerOrgIdResult` / `isCallerOrgAdminResult` / `isUserMemberOfOrgResult`) returning `{ value, error }`: the boolean/string forms FAIL CLOSED (DB error → falsy), while `*Result` surfaces an operational `error` so a handler can return **500** instead of masking a fault as **403** (PR #1045 review, mirrors #1029). `isCallerOrgAdmin` now explicitly captures + logs the `org_members` lookup error it previously swallowed. `getCallerProfileResult` (2026-08-23, SCRUM-3514) is the `*Result` sibling `getCallerProfile` never had — added for `middleware/requireScopeAnyAuth.ts`, which derives a JWT caller's scope grant from their role and must not read a transient lookup failure as an empty grant. Tested in `_org-auth.test.ts`. |
 | `badge.ts` | Public `/api/badge/:publicId` SVG endpoint; resolves status from `get_public_anchor` and fails closed for unknown states |
 | `anchor-lineage.ts` | Anchor parent/child lineage traversal endpoint |
 | `anchor-revoke.ts` | Anchor revocation endpoint |
@@ -294,3 +307,7 @@ thing that was true at the time.
 Rule for this folder: **any `create*` factory that builds a mempool.space URL must be handed
 `config.bitcoinNetwork` explicitly.** The two defects here — the wallet leg's balance bug and the
 fee leg's rate bug — were both "call site omitted the network, factory defaulted to something".
+
+## 2026-08-15 BUG-2026-08-13-010 — proof-packet anchor receipt states the fetch-time caveat
+
+`proof-packet.ts` `anchor_receipt` now carries `fingerprint_rederivability: 'fetch_time_snapshot'` + the §1.5 note (from `constants/connectorFingerprint.ts`) whenever an anchor is present — every packet anchor is connector-materialized BY CONSTRUCTION (resolved via `metadata->>external_file_id`), and the auditor challenge this packet answers is exactly the flow where someone re-downloads from the source and compares fingerprints. The `not_anchored` sentinel carries neither field (no fingerprint to describe). Additive keys on an org-scoped export; no internal UUIDs added.

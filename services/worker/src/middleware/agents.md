@@ -2,6 +2,25 @@
 
 Express middleware for the worker API. Handles auth, rate limiting, feature gating, payment verification, idempotency, and error sanitization.
 
+## 2026-08-12 — `apiKeyAuth` refuses `revoked_at`-stamped keys (FD-P7 companion)
+
+The middleware now selects `revoked_at` and returns 401 `api_key_revoked` when it is non-null even
+if `is_active` is still true — mirroring migration 0382's `revoked_at IS NULL` predicate in
+`validate_api_key` so the worker and edge paths agree. Rationale in 0382's header: a write path that
+stamps `revoked_at` without flipping `is_active` must not leave a revoked key live. The PATCH
+`/api/v1/keys/:keyId` revoke path stamps both together, but defense-in-depth means not relying on it.
+## 2026-08-16 FD-RL-1 / FD-RL-2 — a 429 must not lie, and a denial must not consume quota
+
+Two customer-facing defects on `POST /api/v1/anchor`, both found on the fullsoak-2026-08 rig. Evidence: `docs/staging/fullsoak-2026-08/FD-RL-quota-headers-and-counter.md`.
+
+**FD-RL-2 — do not reintroduce: a rejected request must never consume the quota it was rejected by.** `perOrgRateLimit.ts` daily mode incremented `org_daily_usage` FIRST and evaluated the returned total, so every 429 also bumped the counter. On the rig, 98 real anchors plus 3,030 rejected retries recorded `count = 3132` — 32x overstated. The customer-visible failure is worse than the bad metric: a client with a naive retry-after-429 loop drives its own counter further past the cap with each retry and can never get back under it before the UTC reset, having created far fewer than its limit. Same signature seen twice before on other rigs (`HANDOFF.md` F-7 `current=102205` vs 32 anchors; `docs/staging/SOAK-FINDINGS-2026-08.md` `104,668`) and misread both times as a stale counter rather than a live increment-on-denial.
+
+Daily mode now reads the recorded `org_daily_usage` row, evaluates `recorded + delta` against the tier cap, and **only reserves via `increment_org_usage` when the projection fits**. A compensating decrement is not an option: `increment_org_usage` applies `GREATEST(p_delta, 0)`, so a negative delta is clamped to zero and refunding would need DDL. Residual, deliberately accepted and bounded: a request that passes the pre-check but loses the atomic-increment race is denied with its unit already recorded — bounded by in-flight concurrency at the cap boundary, never by retry volume.
+
+**Capacity mode never had this defect** and must stay that way: it derives from an authoritative `count(*)` over `CAPACITY_TABLES` and persists nothing, so a denial cannot drift from reality. A test pins that a capacity denial performs no `org_daily_usage` write.
+
+**FD-RL-1 — whichever limiter issues the 429 owns the rate-limit headers on that response.** `utils/rateLimit.ts` (per-minute, per-API-key) runs first, ALLOWS, and sets `X-RateLimit-*` for its own bucket; the org quota then denied and left them alone, shipping `x-ratelimit-remaining: 987` on a refused request. An SDK that reads the headroom retries immediately against a quota that will not reset for hours. `denyOverQuota()` now overwrites `X-RateLimit-Limit` / `-Remaining` / `-Reset` with the denying quota's own numbers, consistent with `Retry-After`. An ALLOWED request still leaves the per-minute headers untouched — they are accurate there. The JSON body is unchanged (CLAUDE.md §1.8): same `ORG_QUOTA_EXCEEDED` code, same fields; a test pins the exact key set.
+
 ## 2026-08-01 SILENT-WRITE CLASS — `void <supabase builder>` never executes (PR #1808)
 
 **Do not reintroduce:** supabase-js query builders are **lazy PromiseLikes**. `PostgrestBuilder.then()` is where the HTTP request is issued — nothing happens until something calls `then` (via `await`, `.then(...)`, or `Promise.all`). So
@@ -103,8 +122,10 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - **webhookHmac.ts** — Inbound connector webhook HMAC verification with 5-minute replay window.
 - **paymentTierRouter.ts** — Routes requests based on payment tier. Not yet mounted in `index.ts` (tested in isolation only). SCRUM-2971: the Tier-2 `tryStripeMetered` path now derives a request-scoped id (`Idempotency-Key` header → correlation id (`utils/correlationId.ts`) → random UUID fallback) and inserts the `billing_events` row with `idempotency_key = sha256(api_metered_usage:org_id:user_id:requestId)` (exported as `stripeMeteredIdempotencyKey`). A duplicate insert (23505, e.g. a client retry that resent the same `Idempotency-Key`) is swallowed as an idempotent no-op — the request still authorizes. See migration `0368`.
 - **requirePaymentCurrent.ts** — Rejects requests from orgs with lapsed payments.
+- **authContext.ts** — `getAuthenticatedUserId(req)`: the single source of truth for `req.authUserId ?? req.userId ?? null`. Two `requireAuth` implementations populate the caller identity under two different field names, so every guard must read both; `requireOrgId` / `requireOrgAdmin` / `requireScopeAnyAuth` all import it rather than keeping private copies that could drift.
 - **requireOrgId.ts** — Resolves + VALIDATES `org_id` on authenticated requests (membership-checked against `x-org-id`, never trusted verbatim — see 2026-07-28 SECURITY note above).
 - **requireOrgAdmin.ts** — Chains after `requireOrgId`; requires the caller be ORG_ADMIN of `req.orgId` (see 2026-07-28 SECURITY note above).
+- **requireScopeAnyAuth.ts** — Dual-mode scope gate for routes that authenticate with a Supabase JWT rather than an API key. Unlike `apiKeyAuth.requireScope` it has **no pass-through branch** (see the 2026-08-23 note below).
 - **usageTracking.ts** — Tracks API usage for billing/analytics.
 - **adesFeatureGate.ts** — AdES (Advanced Electronic Signatures) feature gate.
 - **aiFeatureGate.ts** — AI feature gate for Gemini/embedding endpoints. Per-flag fail-direction on DB read failure (SCRUM-2247): kill-switchable flags fail closed; `ENABLE_AI_EXTRACTION` keeps its launch default; last-known-good DB value preferred over both on a transient blip.
@@ -121,6 +142,7 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - Feature gates fail closed by default — if the DB read fails, kill-switchable gates return 503. Exception: `ENABLE_AI_EXTRACTION` is launch-required (§1.6) and keeps its launch default; last-known-good DB value wins over the fail default on a transient blip (SCRUM-2247).
 - `errorSanitizer` must be registered BEFORE the global error handler.
 - No raw API keys in logs or DB — HMAC-SHA256 only.
+- **Never mount `apiKeyAuth.requireScope` on a JWT-authenticated route** — it calls `next()` the moment `req.apiKey` is unset, so it enforces nothing and reads as if it does. Use `requireScopeAnyAuth` there (2026-08-23 note below).
 - `paymentTierRouter.ts` `tryCredits()`: a `deduct_unified_credits` RPC failure falls through to Stripe metered billing (fail OPEN — the org gets charged instead of a credit it already paid for being consumed) and now calls `captureCreditRpcFailureAlert({ failMode: 'open', ... })` from `utils/sentry.ts` — previously only a `logger.warn`, no alert. Fail-open behavior itself is unchanged (product decision); this only adds observability.
 
 ## 2026-08-11 BUG-2026-08-11 — x402 anchor pricing billed MAINNET fees on non-mainnet (fixed)
@@ -165,3 +187,130 @@ operator-set `MEMPOOL_API_URL` may embed a credential. A test greps the logged o
 `/api/v1/anchor`, and that route mounts `anchorAnonAllow` / `requireScope('anchor:write')` — not
 this gate. The defect was latent, and it arms itself the moment an anchor route is added to the
 gate. Fixed ahead of that, not after.
+
+## 2026-08-15 — BUG-018 / D-8 follow-up: the idempotency keyspace carries an environment namespace
+
+`upstashIdempotency.ts` keys are now `idem:<env>:<caller key>`, from
+`resolveEnvironmentNamespace()` in `../utils/environmentNamespace.ts` (introduced by #2231, which
+namespaced the three rate-limit keyspaces and deliberately left this one out).
+
+**Why this is the worst of the three collisions.** Prod, shared staging and the connector side-rig
+all bind ONE Upstash database through the same un-suffixed `UPSTASH_REDIS_REST_URL` /
+`UPSTASH_REDIS_REST_TOKEN` secrets. A rate-limit collision spends the wrong budget. An idempotency
+collision **cancels real work**: this store exists to SUPPRESS a duplicate write, so an
+`Idempotency-Key` first seen on a rig returned the rig's cached response to a production caller for
+the whole 2h TTL and the production write never happened — with a 2xx and a response body handed
+back, so nothing surfaced as an error anywhere. The routes carrying idempotency keys are the
+anchor-creating ones.
+
+**Rule: the env segment must PRECEDE the caller's bytes.** The `Idempotency-Key` header is fully
+caller-controlled. `idem:<env>:<key>` means a staging caller crafting `prod:<key>` lands on
+`idem:<staging>:prod:<key>` and cannot reach production's segment. Reversing the order
+(`idem:<key>:<env>`) or interpolating the caller's value anywhere before `<env>` re-opens that as a
+forgery path. There is a test for it.
+
+**Rule: never derive this namespace from anything instance-local** — `K_REVISION`, hostname, pid, a
+random id. Deduping ACROSS instances of one service is the entire reason IDEM-3 replaced the
+in-memory `Map`; an instance-local namespace re-opens that bug while looking like a fix and while
+every single-store test stays green. `upstashIdempotency.namespace.test.ts` asserts both halves at
+once: different environments must NOT see each other's entries, and two instances of the SAME
+service MUST.
+
+**The factory is the only construction path `index.ts` uses.** `createUpstashIdempotencyStore()` is
+covered by its own test — a namespace wired into the constructor alone would ship inert. `index.ts`
+logs the derived namespace at startup so the deployed keyspace is readable from Cloud Run logs
+without querying Redis.
+## 2026-08-15 BUG-008/027 — `nessieCapabilityGate.ts`: a disabled capability must not answer 200
+
+Nessie is permanently disabled by standing founder directive, yet `/api/v1/nessie/query` was mounted
+**unconditionally** and returned **HTTP 200** with a success shape — `{"results":[],"count":0}`, and in
+context mode a fluent `{"answer":"No relevant verified documents were found…","confidence":0}`. A
+caller could not tell "off" from "found nothing". CTO ruling R-1 STRENGTHENED, 2026-08-12.
+
+Three properties this gate holds, none of them incidental:
+
+- **The flag is ENV, not `switchboard_flags`.** `ENABLE_NESSIE_QUERY` defaults false in `config.ts`.
+  A capability disabled by founder directive must not be re-enablable by a DB write; turning it on
+  requires a deploy, which is reviewable. Do not "improve" this by moving it to the switchboard.
+- **The route's pre-existing `ENABLE_PUBLIC_RECORD_EMBEDDINGS` check is NOT this gate.** That flag
+  governs the public-record embedding index, is legitimately ON, and passing it is exactly how a
+  permanently-disabled capability came to answer 200. Two flags, two questions.
+- **The disabled body carries NO success-shape key** — no `results`, `count`, `answer`, `confidence`,
+  or `citations`, plus an explicit `enabled: false` and `code: 'nessie_disabled'`. The absence is half
+  the contract and is pinned by test; an agent that only reads `total` would otherwise still conclude
+  "0 results". `nessieDisabledBody()` returns a fresh object per call so no caller can mutate the
+  shared envelope into a success shape.
+
+Mounted **ahead of `x402PaymentGate`** in `api/v1/router.ts` (order pinned by
+`api/v1/quota-wiring.test.ts`, `scripts/ci/check-429-limiter-map.test.ts`, and
+`middleware/__tests__/x402LaunchScope.test.ts`): a disabled capability must not take a caller's money
+on the way to telling them it is disabled. The check is repeated inside `api/v1/nessie-query.ts` so
+the router cannot be mounted dark by a later refactor.
+
+503, not 404 (the `partnerProvisioningGate` shape): `/nessie/query` is a **published** surface — it
+was listed and priced on `/developers` — so callers who already integrated get told, not hidden from.
+
+## 2026-08-23 SECURITY — `requireScope` is API-key-only; `requireScopeAnyAuth` is the JWT path (SCRUM-1272 / SCRUM-3514)
+
+**VULNERABILITY CLASS — do not reintroduce: a guard that silently does nothing.** `apiKeyAuth.ts`'s
+`requireScope` opens with
+
+```ts
+if (!req.apiKey) { next(); return; }
+```
+
+so on a route authenticated by a Supabase JWT it enforces **nothing**, with no log, no error, and a
+mount line that reads exactly like enforcement. That is why SCRUM-1272 shipped the scope vocabulary
+(`api/apiScopes.ts`) and then closed Done with its central acceptance criterion unmet: the routes it
+named — `/ferpa`, `/directory-opt-out`, `/hipaa/audit`, `/emergency-access`, all carrying student PII
+or PHI — had no scope layer, and adding the obvious one would not have given them one. The comment at
+the top of `api/apiScopes.ts` had said so in prose since the vocabulary landed.
+
+**`requireScopeAnyAuth.ts` (NEW)** resolves a grant for whichever auth mode is in play and has no
+pass-through branch — every path ends in `next()`, 401, 403 or 500:
+
+- **API key** → the key's `scopes`, through the same `scopeSatisfies` vocabulary and the same
+  `insufficient_scope` / `required` / `granted` 403 body as `requireScope` (only the human `message`
+  string differs — the machine-readable contract is unchanged, §1.8).
+- **JWT** (`req.authUserId ?? req.userId`, set by a real `requireAuth` upstream) → the caller's org
+  role from `api/_org-auth.ts`'s new `getCallerProfileResult`, **intersected** with any `scopes` /
+  `scope` claim on the presented token.
+- **Neither** → 401. This is the branch that makes the guard impossible to mount as a no-op.
+
+Four properties, none incidental:
+
+- **These are not exclusive branches — EVERY credential presented must satisfy the scope.** `apiKeyAuth`
+  is mounted router-wide and also reads `X-API-Key`, and the PHI mounts run `requireAuth` first, so
+  "API key AND verified JWT on the same request" is trivially constructible there. Checking the key
+  first and returning would let a credential the route never authenticated with decide the capability
+  outright — a JWT caller who would be denied alone (the no-profile-row case below) was admitted by
+  attaching any org's key holding the scope, without the profile ever being read. Evaluating both is
+  strictly fail-closed: it never grants where checking one alone would have denied.
+
+- **Claims can only NARROW, never widen.** The claims are read by *decoding* the bearer token, not by
+  re-verifying it — safe, because this middleware only runs after a `requireAuth` that verified that
+  same token, and the decoded `sub` is cross-checked against the verified caller id. Intersection means
+  even a mis-wiring of that ordering cannot turn an unverified claim into a privilege grant. Do not
+  change the intersection to a union.
+- **A profile-lookup DB error is 500, never a masked 403** — same fail-closed-but-observable rule as
+  `requireOrgId` / `requireOrgAdmin`, which is why `_org-auth.ts` grew the `*Result` sibling
+  `getCallerProfileResult` rather than reusing the error-collapsing `getCallerProfile`.
+- **The role mapping is deliberately coarse** — `compliance:read` for ANY caller with a `profiles` row
+  (including one whose `org_id` is null), `compliance:write` for `profiles.role = 'ORG_ADMIN'` or
+  `is_platform_admin` — NOT for the `org_members.role in ('owner','admin')` signal that
+  `isCallerOrgAdminResult` checks first (inert today: no mount requires `compliance:write`). Read literally:
+  for a JWT caller the read grant is close to a liveness check, and that is intended. This is a
+  capability gate, not the tenant boundary and not the per-route privilege check — `requireOrgId` and
+  `requireOrgAdmin` still own those and are what actually authorize a caller against a specific org's
+  PHI. It is not narrowed to `org_id != null` on purpose: `org_members.user_id` FKs to `auth.users`, so
+  a real member whose `profiles.org_id` is null is schema-permissible and narrowing would 403 them.
+
+Residual, deliberately accepted: a verified `auth.users` identity with **no `profiles` row** now gets an
+empty grant and a 403 on these four routes. `org_members.user_id` FKs to `auth.users`, not `profiles`,
+so such a caller is schema-permissible and `requireOrgId` would have admitted them. Granting on the
+*absence* of the record we authorize from is the fail-open pattern this directory has been bitten by
+before (see the 2026-06-05 AI flag fail-direction note); the denial is logged at `warn` so a real
+occurrence is diagnosable instead of an unexplained 403.
+
+Mount order is the contract and is pinned by `__tests__/phiScopeMount.test.ts`: `requireAuth` →
+`requireScopeAnyAuth` → rate limiter → router.

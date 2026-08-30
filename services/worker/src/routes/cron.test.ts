@@ -37,8 +37,28 @@ vi.mock('../utils/logger.js', () => ({
   },
 }));
 
+/**
+ * BUG-021: every ingestion route now resolves the
+ * `ENABLE_PUBLIC_RECORDS_INGESTION` switchboard row BEFORE running its fetcher,
+ * so the `db` double has to answer a `switchboard_flags` read. It defaults to
+ * an enabled row; the contract tests below drive the other three states
+ * (absent / explicitly false / unreadable) through `mockSwitchboardRead`.
+ *
+ * Every other table keeps the previous `undefined` behaviour so no unrelated
+ * route test changes shape.
+ */
+const { mockDbFrom, mockSwitchboardRead, mockSwitchboardEq } = vi.hoisted(() => {
+  const mockSwitchboardRead = vi.fn();
+  const mockSwitchboardEq = vi.fn(() => ({ maybeSingle: mockSwitchboardRead }));
+  const mockDbFrom = vi.fn((table?: string) => {
+    if (table !== 'switchboard_flags') return undefined;
+    return { select: () => ({ eq: mockSwitchboardEq }) };
+  });
+  return { mockDbFrom, mockSwitchboardRead, mockSwitchboardEq };
+});
+
 vi.mock('../utils/db.js', () => ({
-  db: { from: vi.fn(), rpc: vi.fn() },
+  db: { from: mockDbFrom, rpc: vi.fn() },
 }));
 
 vi.mock('../utils/rateLimit.js', () => ({
@@ -80,8 +100,20 @@ vi.mock('../jobs/revocation.js', () => ({
 }));
 
 const mockProcessWebhookRetries = vi.fn().mockResolvedValue(2);
+// BUG-002: /check-credential-expiry dynamically imports dispatchWebhookEvent
+// from this module. Without it on the mock the route throws on first dispatch.
+const mockDispatchWebhookEvent = vi.fn().mockResolvedValue(undefined);
 vi.mock('../webhooks/delivery.js', () => ({
   processWebhookRetries: (...args: unknown[]) => mockProcessWebhookRetries(...args),
+  dispatchWebhookEvent: (...args: unknown[]) => mockDispatchWebhookEvent(...args),
+}));
+
+// `flagRegistry` is reached from exactly one cron route
+// (/check-credential-expiry, gated on ENABLE_EXPIRY_ALERTS), so a module-level
+// mock here cannot perturb any other route's behaviour.
+const mockGetFlag = vi.fn().mockReturnValue(true);
+vi.mock('../middleware/flagRegistry.js', () => ({
+  flagRegistry: { getFlag: (...args: unknown[]) => mockGetFlag(...args) },
 }));
 
 const mockProcessMonthlyCredits = vi.fn().mockResolvedValue(10);
@@ -116,7 +148,15 @@ vi.mock('../jobs/usptoFetcher.js', () => ({
   fetchUsptoPAtents: (...args: unknown[]) => mockFetchUsptoPAtents(...args),
 }));
 
-const mockFetchFederalRegisterDocuments = vi.fn().mockResolvedValue(undefined);
+// BUG-020: this fetcher used to return void and the route answered a hardcoded
+// `{status:'complete'}` regardless of what happened. It now returns counters.
+const mockFetchFederalRegisterDocuments = vi.fn().mockResolvedValue({
+  status: 'complete',
+  inserted: 12,
+  skipped: 0,
+  errors: 0,
+  pagesProcessed: 1,
+});
 vi.mock('../jobs/federalRegisterFetcher.js', () => ({
   fetchFederalRegisterDocuments: (...args: unknown[]) => mockFetchFederalRegisterDocuments(...args),
 }));
@@ -232,6 +272,13 @@ vi.mock('../jobs/fccUlsFetcher.js', () => ({
   fetchFccLicenses: (...args: unknown[]) => mockFetchFccLicenses(...args),
 }));
 
+const mockFetchIpedsInstitutions = vi.fn().mockResolvedValue({ inserted: 5, skipped: 0, errors: 0 });
+vi.mock('../jobs/ipedsFetcher.js', () => ({
+  fetchIpedsInstitutions: (...args: unknown[]) => mockFetchIpedsInstitutions(...args),
+}));
+
+// SCRUM-3836: `completed` is part of the ReorgCheckResult contract — the route
+// returns 503 without it, so an incomplete mock would misrepresent the route.
 const mockDetectReorgs = vi.fn().mockResolvedValue({ reorgsDetected: 0, completed: true });
 const mockMonitorStuckTransactions = vi.fn().mockResolvedValue({ stuck: 0 });
 const mockRebroadcastDroppedTransactions = vi.fn().mockResolvedValue({ rebroadcast: 0 });
@@ -544,6 +591,8 @@ function createApp() {
 describe('cron routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Ingestion routes gate on this read; default to a configured, enabled flag.
+    mockSwitchboardRead.mockResolvedValue({ data: { enabled: true }, error: null });
     // Reset all mutated config fields back to defaults so each test starts clean.
     // If a test fails mid-run, the next test still gets a known-good config.
     const mutableConfig = config as {
@@ -1369,12 +1418,156 @@ describe('cron routes', () => {
     });
   });
 
+  // ═══════════════════════════════════════
+  // Ingestion response contract — BUG-020 / BUG-021
+  //
+  // Found by force-running 42 previously-untested ingestion routes on the
+  // 2026-08 connector side-rig (docs/staging/fullsoak-2026-08/
+  // side-rig-cron-coverage.md). Every one of them reported total upstream
+  // failure as HTTP 200 with the count buried in the body, so a Cloud
+  // Scheduler job bound to any of them was green forever.
+  // ═══════════════════════════════════════
+
+  describe('ingestion response contract', () => {
+    it('/fetch-ipeds does NOT return 200 when every item failed', async () => {
+      // Observed on the side-rig: 200 {"inserted":0,"errors":30}.
+      mockFetchIpedsInstitutions.mockResolvedValueOnce({ inserted: 0, skipped: 0, errors: 30 });
+      const app = createApp();
+      const res = await request(app).post('/cron/fetch-ipeds');
+
+      expect(res.status).toBe(502);
+      expect(res.body).toMatchObject({ ingestion_status: 'total_failure', ingestion_errors: 30 });
+    });
+
+    it('/fetch-fcc does NOT return 200 when every item failed', async () => {
+      mockFetchFccLicenses.mockResolvedValueOnce({ inserted: 0, skipped: 0, errors: 26 });
+      const app = createApp();
+      const res = await request(app).post('/cron/fetch-fcc');
+
+      expect(res.status).toBe(502);
+      expect(res.body).toMatchObject({ ingestion_status: 'total_failure' });
+    });
+
+    it('/fetch-sec-iapd does NOT return 200 when every item failed', async () => {
+      mockFetchSecIapdFirms.mockResolvedValueOnce({ inserted: 0, skipped: 0, errors: 26 });
+      const app = createApp();
+      const res = await request(app).post('/cron/fetch-sec-iapd');
+
+      expect(res.status).toBe(502);
+      expect(res.body).toMatchObject({ ingestion_status: 'total_failure' });
+    });
+
+    it('/fetch-uspto does NOT return 200 for a hard failure reported as errors: 0', async () => {
+      // The worst case on the side-rig: a 403 surfaced with errors: 0.
+      mockFetchUsptoPAtents.mockResolvedValueOnce({
+        status: 'download_failed',
+        inserted: 0,
+        skipped: 0,
+        errors: 0,
+        resumeDate: '',
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/fetch-uspto');
+
+      expect(res.status).toBe(502);
+      expect(res.body).toMatchObject({ ingestion_status: 'total_failure' });
+    });
+
+    it('/fetch-all-state-bills surfaces a fan-out where every state failed', async () => {
+      mockFetchMultipleStateBills.mockResolvedValueOnce({
+        totalInserted: 0,
+        totalSkipped: 0,
+        totalErrors: 3,
+        stateResults: [],
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/fetch-all-state-bills');
+
+      expect(res.status).toBe(502);
+    });
+
+    it('returns 207 — not 200 — for a partial run', async () => {
+      mockFetchIpedsInstitutions.mockResolvedValueOnce({ inserted: 40, skipped: 0, errors: 5 });
+      const app = createApp();
+      const res = await request(app).post('/cron/fetch-ipeds');
+
+      expect(res.status).toBe(207);
+      expect(res.body).toMatchObject({ ingestion_status: 'partial_failure' });
+    });
+
+    it('passes a clean run through verbatim at 200', async () => {
+      mockFetchIpedsInstitutions.mockResolvedValueOnce({ inserted: 40, skipped: 2, errors: 0 });
+      const app = createApp();
+      const res = await request(app).post('/cron/fetch-ipeds');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ inserted: 40, skipped: 2, errors: 0 });
+    });
+
+    it('refuses to run at all when the switchboard row is missing (FD-S1)', async () => {
+      // The false-coverage trap: an unseeded switchboard_flags made every
+      // fetcher no-op at HTTP 200, indistinguishable from a healthy run.
+      mockSwitchboardRead.mockResolvedValue({ data: null, error: null });
+      const app = createApp();
+      const res = await request(app).post('/cron/fetch-ipeds');
+
+      expect(mockFetchIpedsInstitutions).not.toHaveBeenCalled();
+      expect(res.status).toBe(503);
+      expect(res.body).toMatchObject({
+        ingestion_status: 'flag_not_configured',
+        flag_key: 'ENABLE_PUBLIC_RECORDS_INGESTION',
+      });
+      expect(res.headers['retry-after']).toBeDefined();
+    });
+
+    it('reports a deliberately disabled flag explicitly at 200', async () => {
+      mockSwitchboardRead.mockResolvedValue({ data: { enabled: false }, error: null });
+      const app = createApp();
+      const res = await request(app).post('/cron/fetch-ipeds');
+
+      expect(mockFetchIpedsInstitutions).not.toHaveBeenCalled();
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ ingestion_status: 'disabled' });
+    });
+
+    it('returns 503 when the switchboard itself cannot be read', async () => {
+      mockSwitchboardRead.mockResolvedValue({ data: null, error: { message: 'PGRST116' } });
+      const app = createApp();
+      const res = await request(app).post('/cron/fetch-ipeds');
+
+      expect(res.status).toBe(503);
+      expect(res.body).toMatchObject({ ingestion_status: 'flag_unreadable' });
+    });
+
+    it('gates /fetch-ipeds on ENABLE_PUBLIC_RECORDS_INGESTION', async () => {
+      const app = createApp();
+      await request(app).post('/cron/fetch-ipeds');
+
+      expect(mockDbFrom).toHaveBeenCalledWith('switchboard_flags');
+      expect(mockSwitchboardEq).toHaveBeenCalledWith(
+        'flag_key',
+        'ENABLE_PUBLIC_RECORDS_INGESTION',
+      );
+    });
+
+    it('gates /embed-public-records on its OWN flag key', async () => {
+      const app = createApp();
+      await request(app).post('/cron/embed-public-records');
+
+      expect(mockSwitchboardEq).toHaveBeenCalledWith(
+        'flag_key',
+        'ENABLE_PUBLIC_RECORD_EMBEDDINGS',
+      );
+    });
+  });
+
   describe('POST /fetch-federal-register', () => {
     it('returns success', async () => {
       const app = createApp();
       const res = await request(app).post('/cron/fetch-federal-register');
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ status: 'complete' });
+      // The fetcher's real tally now reaches the client instead of a constant.
+      expect(res.body).toMatchObject({ status: 'complete', inserted: 12, errors: 0 });
     });
 
     it('returns 500 on failure', async () => {
@@ -2267,6 +2460,163 @@ describe('cron routes', () => {
       (callRpc as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('fail'));
       const app = createApp();
       const res = await request(app).post('/cron/cleanup-retention');
+      expect(res.status).toBe(500);
+    });
+  });
+
+  /**
+   * BUG-002 (P1, 2026-08 soak). This route returned 500 on every run since
+   * SCRUM-600: it selected `anchors.not_after` and `anchors.document_title`,
+   * and neither column has ever existed — in the rig or in prod. The rig log
+   * read `42703 column anchors.document_title does not exist`. The schema's
+   * expiry column is `expires_at`; there is no title column, the human label
+   * is `label`.
+   *
+   * The compounding defect: `compliance.document_expiring` was not a
+   * registrable event type, so the dispatch could never reach a subscriber AND
+   * skipped payload validation entirely — the payload carried `anchor_id`, the
+   * internal UUID (CLAUDE.md §6). Both are fixed; the schema side is locked in
+   * webhooks/payload-schemas.test.ts.
+   */
+  describe('POST /check-credential-expiry (BUG-002)', () => {
+    /**
+     * Records the PostgREST filter chain so the test can assert on the columns
+     * actually requested, which is the whole bug — a `.select()` naming a
+     * column that does not exist is invisible until PostgREST answers 42703.
+     */
+    function mockAnchorsQuery(rows: Array<Record<string, unknown>>, error: { message: string } | null = null) {
+      const calls: Array<[string, ...unknown[]]> = [];
+      const chain: Record<string, unknown> = {};
+      for (const method of ['select', 'eq', 'is', 'not', 'gt', 'lte'] as const) {
+        chain[method] = vi.fn((...args: unknown[]) => {
+          calls.push([method, ...args]);
+          return chain;
+        });
+      }
+      // The chain is awaited directly (no terminal .limit()), so it must be a
+      // thenable resolving to the PostgREST envelope.
+      chain.then = (resolve: (v: unknown) => unknown) => Promise.resolve({ data: rows, error }).then(resolve);
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue(chain);
+      return calls;
+    }
+
+    const expiringRow = (overrides: Record<string, unknown> = {}) => ({
+      public_id: 'ARK-SEC-VMQ3R8',
+      org_id: 'org-1',
+      credential_type: 'LICENSE',
+      label: 'CPA License',
+      expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      mockGetFlag.mockReturnValue(true);
+      mockDispatchWebhookEvent.mockResolvedValue(undefined);
+    });
+
+    it('selects only columns that exist on anchors', async () => {
+      const calls = mockAnchorsQuery([]);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.status).toBe(200);
+      const select = calls.find(([m]) => m === 'select')?.[1] as string;
+      expect(select).toBe('public_id, org_id, credential_type, label, expires_at');
+      // The two columns that produced 42703 must not reappear anywhere.
+      expect(JSON.stringify(calls)).not.toContain('not_after');
+      expect(JSON.stringify(calls)).not.toContain('document_title');
+    });
+
+    it('filters on expires_at, SECURED status, and excludes soft-deleted rows', async () => {
+      const calls = mockAnchorsQuery([]);
+      await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(calls).toContainEqual(['eq', 'status', 'SECURED']);
+      expect(calls).toContainEqual(['is', 'deleted_at', null]);
+      expect(calls).toContainEqual(['not', 'expires_at', 'is', null]);
+      expect(calls.some(([m, col]) => m === 'gt' && col === 'expires_at')).toBe(true);
+      expect(calls.some(([m, col]) => m === 'lte' && col === 'expires_at')).toBe(true);
+    });
+
+    it('dispatches a payload with public_id and no internal UUID', async () => {
+      mockAnchorsQuery([expiringRow()]);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.status).toBe(200);
+      expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(1);
+      const [orgId, eventType, , payload] = mockDispatchWebhookEvent.mock.calls[0] as [
+        string, string, string, Record<string, unknown>,
+      ];
+      expect(orgId).toBe('org-1');
+      expect(eventType).toBe('compliance.document_expiring');
+      expect(payload.public_id).toBe('ARK-SEC-VMQ3R8');
+      expect(payload.status).toBe('SECURED');
+      expect(payload.warning_level).toBe('7_day');
+      expect(payload.days_remaining).toBeGreaterThan(0);
+      expect(payload).not.toHaveProperty('anchor_id');
+      expect(payload).not.toHaveProperty('expiry_date');
+      expect(payload).not.toHaveProperty('title');
+    });
+
+    it('reports orgsNotified rather than a fabricated emailsSent count', async () => {
+      // The old response claimed `emailsSent` while sending no email
+      // (CLAUDE.md §1.13 R-7 — never claim external action we do not take).
+      mockAnchorsQuery([expiringRow()]);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.body).not.toHaveProperty('emailsSent');
+      expect(res.body).toMatchObject({ processed: 1, orgsNotified: 1, webhooksSent: 1, webhooksFailed: 0 });
+    });
+
+    it('counts a rejected dispatch as failed, not sent, and still returns 200', async () => {
+      mockAnchorsQuery([expiringRow()]);
+      mockDispatchWebhookEvent.mockRejectedValueOnce(new Error('payload failed validation'));
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ webhooksSent: 0, webhooksFailed: 1 });
+    });
+
+    it('drops a row with a null public_id instead of dispatching on null', async () => {
+      mockAnchorsQuery([expiringRow({ public_id: null })]);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.body.processed).toBe(0);
+      expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
+    });
+
+    it('passes a null credential_type through rather than inventing OTHER', async () => {
+      mockAnchorsQuery([expiringRow({ credential_type: null })]);
+      await request(createApp()).post('/cron/check-credential-expiry');
+
+      const payload = mockDispatchWebhookEvent.mock.calls[0][3] as Record<string, unknown>;
+      expect(payload.credential_type).toBeNull();
+    });
+
+    it('only alerts on the 7-day window but reports every bucket', async () => {
+      mockAnchorsQuery([
+        expiringRow({ public_id: 'ARK-7', expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString() }),
+        expiringRow({ public_id: 'ARK-30', expires_at: new Date(Date.now() + 20 * 86_400_000).toISOString() }),
+        expiringRow({ public_id: 'ARK-90', expires_at: new Date(Date.now() + 80 * 86_400_000).toISOString() }),
+      ]);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.body.processed).toBe(3);
+      expect(res.body.categories).toMatchObject({ '7_day': 1, '30_day': 1, '90_day': 1 });
+      expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips cleanly when ENABLE_EXPIRY_ALERTS is off', async () => {
+      mockGetFlag.mockReturnValue(false);
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ skipped: true });
+      expect(db.from).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 when the query itself errors', async () => {
+      mockAnchorsQuery([], { message: 'boom' });
+      const res = await request(createApp()).post('/cron/check-credential-expiry');
       expect(res.status).toBe(500);
     });
   });

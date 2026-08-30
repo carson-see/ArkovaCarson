@@ -133,10 +133,14 @@ const ConfigSchema = z.object({
   enableConfirmationProofBackfill: boolFlag(false),
   /**
    * QUEUE-07 (SCRUM-2353) — gate the daily queue-review digest email job.
-   * Default false: this is a new production email-sending job and must be
-   * explicitly opted in per-environment. When unset OR false,
-   * `runDailyQueueDigest` no-ops (never enumerates admins, never sends mail).
-   * Flip to true only after the soak + a deliberate prod rollout.
+   * Code default false: an environment that never sets this var stays dark
+   * (local/test/preview). Prod's deploy-worker.yml explicitly sets this true
+   * (CTO decision, post-2026-08 default-on flip) — the code default itself
+   * stays false as the safe fallback for any surface the deploy workflow
+   * does not cover. When unset OR false, `runDailyQueueDigest` no-ops (never
+   * enumerates admins, never sends mail). Per-org enrollment is DEFAULT-ON
+   * once this flag is true: an org is enrolled unless it holds an explicit
+   * `organization_rules` opt-out row (see queue-digest-cron.ts).
    */
   enableQueueDigest: boolFlag(false),
   /**
@@ -417,6 +421,15 @@ const ConfigSchema = z.object({
   enableQueueReminders: boolFlag(true),
   /** ENABLE_TREASURY_ALERTS — fan-out treasury low-balance to Slack/email. Default true. */
   enableTreasuryAlerts: boolFlag(true),
+  /**
+   * ENABLE_PLATFORM_HEALTH_DIGEST — daily platform-admin health digest
+   * (`jobs/platform-health-digest-cron.ts`): anchors by status, job_queue
+   * depth, last night's batch flush, connector health rollup, quota
+   * anomalies. Default true (code level AND deploy-worker.yml) — a routine
+   * ops-visibility email, not a customer-facing send; keep the existing
+   * hardcoded-recipient stuck-anchor alert in `pipeline-health.ts` separate.
+   */
+  enablePlatformHealthDigest: boolFlag(true),
   /** ENABLE_WEBHOOK_HMAC — verify HMAC on inbound vendor webhooks. CLAUDE.md SEC-01. Default true. */
   enableWebhookHmac: boolFlag(true),
   /** ENABLE_RULE_ACTION_DISPATCHER — claim-loop driver for rule actions. Default true. */
@@ -437,6 +450,15 @@ const ConfigSchema = z.object({
   enableSyntheticData: boolFlag(false),
   /** ENABLE_NESSIE_RAG_RECOMMENDATIONS — Nessie post-extraction recommendation surfaces. */
   enableNessieRagRecommendations: boolFlag(false),
+  /**
+   * ENABLE_NESSIE_QUERY — gate for `/api/v1/nessie/query` (BUG-008/BUG-027,
+   * CTO ruling R-1 STRENGTHENED). Nessie is permanently disabled by standing
+   * founder directive, so this defaults FALSE and the route fails closed with
+   * an explicit disabled response. Deliberately an ENV flag rather than a
+   * `switchboard_flags` row: a capability disabled by founder directive must
+   * not be re-enablable by a DB write. See middleware/nessieCapabilityGate.ts.
+   */
+  enableNessieQuery: boolFlag(false),
   /** ENABLE_MULTIMODAL_EMBEDDINGS — opt-in path for image-aware embeddings. Default false. */
   enableMultimodalEmbeddings: boolFlag(false),
   /** ENABLE_CLOUD_LOGGING_SINK — mirror logs into Cloud Logging. Default false outside prod. */
@@ -552,6 +574,19 @@ const ConfigSchema = z.object({
    * Optional — unset means dry-run-only (safe default).
    */
   supplementaryAnchorConfirm: z.string().optional(),
+
+  // USPTO bulk-patent fetcher (BUG-023 / SCRUM public-record ingestion)
+  /**
+   * USPTO_BULK_TSV_URL — bulk patent TSV/ZIP source for `jobs/usptoFetcher.ts`.
+   * Deliberately NO default: the previous hardcoded PatentsView S3 bucket had
+   * its access revoked (HTTP 403 AccessDenied, confirmed 2026-08-15) and the
+   * USPTO Open Data Portal replacement requires a credential Arkova does not
+   * hold. Unset means the job refuses to run and returns
+   * `status: 'source_unavailable'` rather than defaulting to the dead bucket.
+   * Supplying a value is an explicit operator act — see the DECLARED-UNTESTED
+   * banner at the top of usptoFetcher.ts before setting this.
+   */
+  usptoBulkTsvUrl: z.string().url().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -922,6 +957,7 @@ function loadConfig(): Config {
     enableRulesEngine: process.env.ENABLE_RULES_ENGINE,
     enableQueueReminders: process.env.ENABLE_QUEUE_REMINDERS,
     enableTreasuryAlerts: process.env.ENABLE_TREASURY_ALERTS,
+    enablePlatformHealthDigest: process.env.ENABLE_PLATFORM_HEALTH_DIGEST,
     enableWebhookHmac: process.env.ENABLE_WEBHOOK_HMAC,
     enableRuleActionDispatcher: process.env.ENABLE_RULE_ACTION_DISPATCHER,
     enableAllocationRollover: process.env.ENABLE_ALLOCATION_ROLLOVER,
@@ -932,6 +968,7 @@ function loadConfig(): Config {
     enableDemoInjector: process.env.ENABLE_DEMO_INJECTOR,
     enableSyntheticData: process.env.ENABLE_SYNTHETIC_DATA,
     enableNessieRagRecommendations: process.env.ENABLE_NESSIE_RAG_RECOMMENDATIONS,
+    enableNessieQuery: process.env.ENABLE_NESSIE_QUERY,
     enableMultimodalEmbeddings: process.env.ENABLE_MULTIMODAL_EMBEDDINGS,
     enableCloudLoggingSink: process.env.ENABLE_CLOUD_LOGGING_SINK,
     enableWorkspaceRenewal: process.env.ENABLE_WORKSPACE_RENEWAL,
@@ -968,6 +1005,7 @@ function loadConfig(): Config {
     proofClassifierConfirm: process.env.PROOF_CLASSIFIER_CONFIRM || undefined,
     proofMaterializerConfirm: process.env.PROOF_MATERIALIZER_CONFIRM || undefined,
     supplementaryAnchorConfirm: process.env.SUPPLEMENTARY_ANCHOR_CONFIRM || undefined,
+    usptoBulkTsvUrl: process.env.USPTO_BULK_TSV_URL || undefined,
   });
 
   if (!result.success) {

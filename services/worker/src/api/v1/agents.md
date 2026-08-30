@@ -2,6 +2,101 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-23 — DI-398: `GET /anchor/:publicId/evidence` 404'd for EVERY anchor (three phantom columns)
+
+`anchor-evidence.ts`'s `defaultLookup.byPublicId` selected `jurisdiction, merkle_root,
+recipient_hash` from `anchors`. **None of the three is a column on that table** — not in the baseline
+`CREATE TABLE`, not added by any migration, and absent from the generated `anchors` Row in both
+`database.types.ts` copies. PostgREST answered `42703`, the handler destructured only `{ data }`, and
+`if (!data) return null` sent the route to its 404 branch. The endpoint was anon-reachable
+(`router.use('/anchor', anchorAnonAllow, anchorEvidenceRouter)`) and had **never** returned a row.
+
+Predicted-but-understated by PR #1316, which fixed the identical class in `verify.ts` and noted the
+sibling "has the same latent gap". It was not latent: `verify.ts` hardcoded `null` and lost data,
+`anchor-evidence.ts` could not return a row at all.
+
+**Why nothing caught it.** Every existing test injected `_testEvidenceLookup`, so the production
+select string was never executed by anything; there is no `/evidence` E2E. A mocked lookup cannot
+fail on a column that does not exist.
+
+**Fix, mirroring `verify.ts`:** `merkle_root` from the `anchor_proofs(merkle_root)` embed (to-one, so
+object OR one-element array — both handled) with the legacy `metadata->>'merkle_root'` fallback;
+`jurisdiction` from `anchors.metadata`; `recipient_hash` hard-`null`.
+
+**`recipient_identifier` is null on purpose and is not a TODO.** The public value is a *peppered
+HMAC* computed inside the `get_public_anchor` SECURITY DEFINER RPC (0356/0383/0385) with a
+server-side pepper the worker does not hold. Emitting the raw recipient from an anon route would be a
+§1.6 PII leak, so null is the only correct worker-side answer — same posture as `verify.ts`.
+
+**A PostgREST error is now a 500, never a 404.** The old code collapsed 42703, a 42501 RLS
+regression, and a full DB outage into "Anchor not found", which hid outages and made the 404 an
+unreliable existence signal on a route partners treat as authoritative. Only `PGRST116` (zero rows —
+unambiguous here, `anchors_public_id_key` is UNIQUE) still 404s; anything else throws to the route's
+catch. Same split as `anchor-revoke.ts` and `webhooks/delivery.ts`.
+
+**Don't go back to a bare select string.** The column list is
+`EVIDENCE_ANCHOR_COLUMNS ... as const satisfies readonly (keyof Database['public']['Tables']['anchors']['Row'])[]`,
+and `AnchorEvidenceSelectRow` derives its scalar half from that same list
+(`Pick<anchors['Row'], (typeof EVIDENCE_ANCHOR_COLUMNS)[number]>`) instead of restating the fields by
+hand — a hand-written row shape is a second place for a phantom column to hide. A phantom column is a
+`typecheck` failure, not a silent production outage.
+
+Double-ratcheted: `anchor-evidence.test.ts` also drives the route through the **real** `defaultLookup`
+against a schema-faithful `db` double built from the generated `database.types.ts`. The double covers
+BOTH halves of the class — base scalars (`42703`) and, because `merkle_root` now arrives through an
+embed, the embedded relations as well: embed columns are checked against the referenced relation's
+generated `Row` (`anchor_proofs(recipient_hash)` → 42703), and an embed with no resolvable
+relationship answers `PGRST200`. A phantom column *inside an embed* is exactly as invisible to `tsc`
+as `jurisdiction` was. The guard is itself pinned by a self-test, because a double that quietly stops
+rejecting anything makes every other test in that block pass vacuously.
+
+Verified both arms bite, on the 27-test file: re-adding `'jurisdiction'` to the column list produces
+`TS2322` **and** `TS2344`, plus 9 red tests; reverting `anchor-evidence.ts` to its pre-fix content
+reds 10. The sets differ by design — a phantom column 500s the "PGRST116 still 404s" case, while the
+full revert 404s both 500-path cases. Only the double's own self-test is source-independent.
+Assertions in that block name the evidence package explicitly (`public_id`, `not 404`) — checking
+only for the ABSENCE of a field passes against the 404 body `{ error: 'Anchor not found' }`, which is
+how one of these tests originally passed against the broken code.
+
+**Known duplication, deliberately not fixed here.** `AnchorProofEmbed` / `proofEmbedRows` /
+`resolveMerkleRoot` / `resolveJurisdiction` are byte-identical to the private copies in `verify.ts`,
+whose own comment argues for one helper per reader because "a divergent copy fails SILENTLY to `[]`" —
+the same failure mode that produced `utils/profilePublicIds.ts`. The extraction is not in this PR
+because `verify.test.ts` cannot be executed in a worktree without the worker's own `node_modules`
+(`@sentry/profiling-node` unresolvable), and refactoring the hottest public endpoint with no local
+test run is not a trade worth making inside a P0 route fix. Extract to a shared util when the two
+files are next touched together.
+
+## 2026-08-12 — FD-P7: key revocation/deletion were unreachable from every client (CC6.8)
+
+`toPublicKey` (keys.ts) stripped `id` from create AND list responses (SCRUM-1271-D) while the frozen
+v1 revoke/delete routes are addressed by `:keyId` — so no client could ever revoke or delete a key,
+defeating the CC6.8 control asserted to the SOC 2 auditor. Found live on the 2026-08 fullsoak rig.
+
+**Decision: `id` is back in key responses** (create/list/PATCH), matching the uuid-leak runbook's
+Phase 3 posture (v1 carries the UUID until v2 ships). By-prefix addressing was rejected because
+`key_prefix` has NO unique constraint (only a length ≥ 8 CHECK and 4 visible hex chars of entropy) —
+an ambiguous prefix would make the same control unreachable again, data-dependently. `org_id` and
+`key_hash` remain stripped; `BANNED_RESPONSE_KEYS` never banned `id`.
+
+Also fixed in the same change: PATCH `is_active:false` now stamps `revoked_at = now()` and an
+optional `revocation_reason` (first revocation wins; repeat revokes cannot rewrite the record), so a
+CC6.8 designation export no longer reads `revoked = false` after a product-path revoke. Reactivating
+a revoked key is refused 409 — migration 0382's `validate_api_key` never authenticates a key with
+`revoked_at` set, so `is_active:true` would create a row that lies about being live. The full
+lifecycle (create → list → revoke → refused 401 → delete) is pinned by `keys-revocation.test.ts`
+against the real router + real `apiKeyAuth` middleware.
+
+Review hardening (same PR, ported from the parallel #2218 fix plus its review): the revocation
+stamp is issued as its own UPDATE guarded by `revoked_at IS NULL`, so two concurrent first revokes
+cannot both stamp — the database arbitrates and the losing write no-ops (pinned by a deterministic
+microtask-lockstep race test). The reactivation refusal now returns a machine-readable 409 body
+(`error: 'api_key_already_revoked'`, matching `apiKeyAuth`'s `api_key_revoked`/`api_key_expired`
+style). The `api_key.revoked` audit payload carries the PERSISTED `revoked_at`/`revocation_reason`
+from the post-update row — a repeat revoke can no longer log a reason the table never stored. The
+three copies of the response select-list collapsed into one `KEY_RESPONSE_COLUMNS` constant (the
+drift-by-duplication pattern that produced FD-P7 in the first place).
+
 ## 2026-08-11 — `POST /cle/submit` created anchors attributed to no organisation
 
 Same defect family as the `registry-anchor` entry below ("creating an anchor row is not the same
@@ -168,6 +263,10 @@ is pinned by a test, because the fall-through is the only reason it holds.
 any org that has no policy row. For a configured org, requests that previously succeeded now 400 —
 which is the point of the control and is what that org contracted for. New error codes on an existing
 status class are additive; this needs no `v2` prefix.
+## 2026-08-12 — self-serve verification routes are ORG_ADMIN-gated
+
+`orgVerification.ts`'s three writers (`verify-ein`, `verify-domain`, `confirm-domain`) now require ORG_ADMIN via `requireAdminCaller` → `_org-auth.ts` (`getCallerOrgIdResult` + `isCallerOrgAdminResult`; org resolved from the caller's own `profiles` row, never client input; operational lookup failures are 500, never a masked 403). Rationale mirrors `org-kyb.ts`: writing a legal identifier and driving the VERIFIED grant is an org-level action. `GET /verification-status` stays member-level; `dev-verify` stays isDev-gated. `ein_tax_id` gained a 32-char upper bound (`MAX_EIN_LENGTH`) — format stays loose for international tax IDs (no `^\d{9}$`; that US-only shape belongs to the Middesk submission in `org-kyb.ts`). **No frontend change was needed**: the `OrgVerification` card renders inside OrgProfilePage's `{isAdmin && (` settings block (lines 614–903), and every caller who can see the card (org_members owner/admin, platform admin) passes the backend gate, so no reachable UI path 403s. Prod risk ~zero at gating time: no org had ever called these routes in prod (2026-08-11 census below).
+
 ## 2026-08-11 — two-grade org verification (CTO decision; sibling of AUDIT-0424-10 / PR #2134)
 
 `organizations.verification_status = 'VERIFIED'` has two **sanctioned** grant paths, by decision (not drift):
@@ -188,7 +287,7 @@ status class are additive; this needs no `v2` prefix.
 
 **Open follow-ups (separate PRs):**
 
-* ORG_ADMIN-gate `verify-ein`/`verify-domain`/`confirm-domain` (today any org **member** can write legal identifiers; `org-kyb.ts` requires ORG_ADMIN for the analogous action).
+* ORG_ADMIN-gate `verify-ein`/`verify-domain`/`confirm-domain` (today any org **member** can write legal identifiers; `org-kyb.ts` requires ORG_ADMIN for the analogous action). — **Done 2026-08-12** (see the 2026-08-12 entry above), including the EIN length cap; EIN **normalization** remains open under the bullet below.
 * Provider-status stickiness: `verify-ein` must not clobber a provider-granted status (any member POSTing it flips `VERIFIED → PENDING` with **no self-serve recovery** once the domain is verified — confirm-domain 400s "already verified"), and `confirm-domain` must not promote out of a provider-terminal status.
 * Domain-first dead-end: `confirm-domain` is the **only** promoter and checks `ein_tax_id` at confirm time — an API caller who confirms the domain before submitting an EIN is stuck `PENDING` with no self-serve path forward (the UI happens to order EIN first, so this is browser-latent, API-live).
 * EIN normalization, not just a length cap: the duplicate check is exact-string `eq()`, so `12-3456789` vs `123456789` evades the 409. Format stays loose for international tax IDs, but note `org-kyb.ts` pins `^\d{9}$` (US-only) — international self-serve orgs cannot upgrade to the provider grade as-is.
@@ -838,3 +937,97 @@ The 2026-06-24 entry above states, of the batch-extraction refund path: *"A lost
 - The drain (re-apply the refund, retry with backoff, Sentry on the final attempt) is documented in `services/worker/src/jobs/agents.md`; its trigger is `POST /jobs/ai-credit-reconcile` + a Cloud Scheduler binding.
 - **Nothing about the request path changed** — the per-row debit/refund accounting, the fingerprint cache, the latency budget, and the frozen response shape are all untouched. This entry fixes the claim, not the route.
 - `scripts/ci/check-job-queue-parity.ts` now fails CI on any `submitJob` type with no consumer, so this specific false-surfacing shape cannot ship again.
+
+## 2026-08-15 BUG-008/027 — `/nessie/query` is capability-gated and fails CLOSED
+
+The mount is now `nessieCapabilityGate()` → `x402PaymentGate` → `x402PayerRateLimit` → `aiRateLimiter`
+→ `nessieQueryRouter`. **Order is the contract, and three separate tests pin it** (`quota-wiring.test.ts`,
+`scripts/ci/check-429-limiter-map.test.ts`, `middleware/__tests__/x402LaunchScope.test.ts`) — the gate
+leads so a permanently-disabled capability never bills a caller on the way to refusing.
+
+`nessie-query.ts` repeats the check as its first statement, ahead of the `ENABLE_PUBLIC_RECORD_EMBEDDINGS`
+read. Those are **different flags**: the switchboard one governs the embedding index and is legitimately
+on, which is why it never stopped a disabled Nessie from answering `200 {"results":[],"count":0}`.
+Rationale, the env-vs-switchboard choice, and the no-success-shape-key rule live in
+`middleware/agents.md`.
+
+## 2026-08-15 FD-D1 — Drive connect no longer admits individual scope
+
+`integrations/drive-oauth.ts`: `DENY_HTTP` drops `needs_paid_plan` / `individual_not_verified` and adds
+`individual_scope_unsupported` (403). The old pair promised that upgrading a plan or completing
+identity verification would unlock a personal-Drive connection; it never could, because
+`org_integrations.org_id` is NOT NULL — so the gate admitted the caller at `oauth/start`, the user
+granted Google access to their whole Drive, and the callback bounced them with
+`personal_connect_unavailable`. The denial now happens **at start, before any consent screen**.
+
+The `!payload.orgId` branch in the callback is retained as a NOT-NULL insert guard and logs at
+`error` level — it is unreachable through the gate, so reaching it means the gate regressed. It is the
+last line of defence, not the policy: the policy has to run before Google consent is requested, which
+that check could never do from where it sits.
+## 2026-08-17 — surrogate-safe truncation sweep (poison-record class)
+
+Migrated to `utils/utf16-truncate.ts` `truncateUtf16Safe` (bare `.slice(0, N)` on text that reaches
+a PostgREST body can split a surrogate pair → lone high surrogate → whole request body rejected as
+invalid JSON, PGRST102): `credentials-ctdl-registry-anchor.ts` (anchors insert
+filename/label/description — CE Registry controls the record name), `compliance-audit.ts`
+(FAILED-audit `error_message`), `webhooks.ts` + `webhooks-self-service.ts` test-ping
+`response_body` echoes (response-surface hardening: grep confirms `response_body` is NOT persisted
+on these two paths — the persisted delivery-log sites are in `webhooks/delivery.ts`, migrated in the
+same sweep), and `nessie-query.ts` `buildCitationExcerpt` (exported for tests). CI ratchet:
+`scripts/ci/feedback-rules/surrogate-safe-truncate.ts`.
+
+## 2026-08-15 BUG-2026-08-13-010 — connector fingerprints are fetch-time snapshots (§1.5/§1.6A)
+
+Soak-proven: re-fetching the same unchanged DocuSign envelope yields a DIFFERENT SHA-256 per request (the source re-renders the file), so a connector-sourced anchor's fingerprint is NOT re-derivable from the source system — it attests the exact bytes fetched at that moment, which is what the anchor receipt commits. Nothing told a verifier this.
+
+- `verify.ts` + `verify-proof.ts` now emit an additive pair for connector-sourced records only: `fingerprint_rederivability: 'fetch_time_snapshot'` + `fingerprint_rederivability_note` (§1.8 additive; OMITTED — never null — without a measured marker). Keyed on `metadata->>'connector_source'` through the closed set in `constants/connectorFingerprint.ts`; free text never routes here and the fixed note never echoes a vendor.
+- On `/proof` the pair is RESPONSE-level only — never inside `proof_bundle`, whose shape is the signable/independently-verifiable artifact.
+- `AnchorByPublicId.connector_source` is tri-state like `has_stored_proof_branch`: marker = emit, `null` = measured-not-connector, absent = not measured (batch/oracle via `EMPTY_API_RICH_FIELDS` stay silent).
+- `verifyCache.ts` KEY_PREFIX bumped v5 → v6 (response-shape change; a pre-deploy cached connector record would otherwise serve no statement for the whole TTL).
+- Tests: `verify-connector-fingerprint.test.ts` (marker closed-set, pair inseparability, no-vendor-echo, bundle-untouched).
+
+## 2026-08-23 SECURITY — SCRUM-1272 / SCRUM-3514: the PHI/PII routes had no scope layer at all
+
+`requireScope` (from `../../middleware/apiKeyAuth.js`) is **API-key-only**. Its first two lines are
+`if (!req.apiKey) { next(); return; }`. That fall-through is correct where it is used — `/verify` and
+`/anchor` allow deliberate anonymous GETs (§1.10) — but it means the guard is a **silent no-op on any
+JWT-authenticated route**. SCRUM-1272 shipped the scope *vocabulary* and closed Done with its central
+acceptance criterion unmet for exactly this reason: the four routes its own "Why now" named
+(`/ferpa`, `/directory-opt-out`, `/hipaa/audit`, `/emergency-access`) authenticate with a Supabase JWT,
+so mounting `requireScope` on them would have enforced nothing and *looked* like it did.
+
+All four now mount `requireScopeAnyAuth('compliance:read')` (`../../middleware/requireScopeAnyAuth.ts`)
+between `requireAuth` and the rate limiter. That guard resolves a grant for **whichever** auth mode is
+in play and has **no pass-through branch** — API key → the key's `scopes`; JWT → the caller's org role,
+intersected with any `scopes` claim on the presented token; neither → 401. When a request carries
+BOTH (an `X-API-Key` alongside the JWT, which `apiKeyAuth`'s router-wide mount makes possible here),
+**each** credential must independently satisfy the scope — otherwise a key from an unrelated org could
+decide the capability for a JWT caller who would be denied on their own.
+
+**Order is the contract** and is pinned by `middleware/__tests__/phiScopeMount.test.ts`:
+`requireAuth` first (it populates `req.authUserId`, which the scope guard reads), then the scope guard,
+then the rate limiter. That order matches the existing `/keys` chain — but `/keys`
+(`requireAuth, requireScope('keys:manage')`, router.ts) is itself an instance of the no-op described
+above, not a model to copy: its scope guard enforces nothing for the JWT callers it is built for, and
+the real gate is the in-handler AUTH-06 ORG_ADMIN check in `keys.ts`. Untouched here as out of scope.
+
+**This layer is the capability gate only — it did not move the tenant boundary.** `requireOrgId` still
+validates real membership against `x-org-id` inside each router, and `requireOrgAdmin` still gates the
+admin-only routes (HIPAA audit read/export, FERPA disclosure list/export, emergency-access approve).
+Do not "simplify" by folding those into the scope check; they answer different questions and the scope
+mapping is deliberately coarse so it cannot drift from them.
+
+**Behaviour change to know about:** a verified caller with no `public.profiles` row is now 403 on these
+four routes (previously they reached `requireOrgId`, which admits on an `org_members` row alone —
+`org_members.user_id` FKs to `auth.users`, not `profiles`). Denied deliberately on a PHI/PII surface and
+logged at `warn`; see the "Residual" note in `requireScopeAnyAuth.ts`.
+
+**What this did NOT do:** the JWT role mapping grants `compliance:read` to any caller with a `profiles`
+row, so for dashboard callers the new layer is closer to a liveness + downscoped-token check than to an
+authorization decision. Real authorization against a specific org's PHI is still `requireOrgId` +
+`requireOrgAdmin` inside each router, exactly as before. What changed is that the routes can no longer
+be reached with no scope source at all, a downscoped token is now enforceable, an API key presented
+alongside is now checked, and the guard cannot be mounted as a no-op.
+
+**Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
+guard and a scope guard). The structural ratchet above covers these four mounts only.

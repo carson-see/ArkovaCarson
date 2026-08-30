@@ -33,11 +33,35 @@ export interface ExtractionField {
   status: 'suggested' | 'accepted' | 'rejected' | 'edited';
 }
 
+/**
+ * Bounded, non-free-form reason an extraction failed.
+ *
+ * §1.6: this code — NOT `ExtractionProgress.message` — is what the UI renders
+ * a cause from (via EXTRACTION_FAILURE_REASON_COPY in `src/lib/copy.ts`).
+ * `message` is retained for logs/toasts and for callers that already consume
+ * it, but two of its branches carry text this module does not control (a
+ * worker error-response body, and the `err.message` catch-all whose `cause`
+ * may reference document-derived text), so it must never reach the DOM.
+ * A failure with no code degrades to generic copy rather than printing text.
+ */
+export type ExtractionFailureReason =
+  | 'timeout'
+  | 'network'
+  | 'auth'
+  | 'no_text'
+  | 'unsupported_format'
+  | 'server_error';
+
 export interface ExtractionProgress {
   stage: 'ocr' | 'stripping' | 'extracting' | 'complete' | 'error';
   progress: number; // 0-100
   ocrProgress?: OCRProgress;
   message?: string;
+  /**
+   * Set on `stage: 'error'` when the cause is known and safe to surface.
+   * Absent for the generic catch-all — see {@link ExtractionFailureReason}.
+   */
+  reasonCode?: ExtractionFailureReason;
   /**
    * §1.6 FAIL-CLOSED (WEBEXT-03): true only when the on-device privacy
    * guarantee could NOT be honored (NER PII model or OCR engine failed to
@@ -131,7 +155,7 @@ export async function runExtraction(
 
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
-      onProgress?.({ stage: 'error', progress: 0, message: 'Authentication required' });
+      onProgress?.({ stage: 'error', progress: 0, reasonCode: 'auth', message: 'Authentication required' });
       return null;
     }
 
@@ -167,7 +191,11 @@ export async function runExtraction(
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({}));
       const message = (errorBody as Record<string, string>).message ?? `Extraction failed (${response.status})`;
-      onProgress?.({ stage: 'error', progress: 0, message });
+      // §1.6: `message` here is the WORKER's response body — text this module
+      // does not control, on a request whose payload was the stripped document
+      // text. It stays available for logs/toasts, but the UI renders the fixed
+      // copy for `server_error` instead of echoing it back.
+      onProgress?.({ stage: 'error', progress: 0, reasonCode: 'server_error', message });
       return null;
     }
 
@@ -242,6 +270,7 @@ export async function runExtraction(
       onProgress?.({
         stage: 'error',
         progress: 0,
+        reasonCode: 'unsupported_format',
         message: err instanceof Error ? err.message : 'This document format could not be read on your device.',
       });
       return null;
@@ -259,20 +288,29 @@ export async function runExtraction(
       onProgress?.({
         stage: 'error',
         progress: 0,
+        reasonCode: 'no_text',
         message: AI_EXTRACTION_LABELS.NO_TEXT_FOUND,
       });
       return null;
     }
 
+    // The accurate cause, as a bounded code. §1.6: the final `else` branch
+    // deliberately gets NO code — `err.message` there is an arbitrary Error
+    // message (an OCR-stage failure can wrap document-derived text in its
+    // `cause`), so it is logged/toasted but never rendered as a cause. The UI
+    // shows the generic recovery copy for an uncoded failure.
     let message = 'Extraction failed';
+    let reasonCode: ExtractionFailureReason | undefined;
     if (isAbortError(err)) {
+      reasonCode = 'timeout';
       message = 'AI analysis timed out. The document can still be secured without metadata.';
     } else if (err instanceof TypeError && err.message.includes('fetch')) {
+      reasonCode = 'network';
       message = 'Unable to connect to the server. Please check your connection and try again.';
     } else if (err instanceof Error) {
       message = err.message;
     }
-    onProgress?.({ stage: 'error', progress: 0, message });
+    onProgress?.({ stage: 'error', progress: 0, reasonCode, message });
     return null;
   }
 }

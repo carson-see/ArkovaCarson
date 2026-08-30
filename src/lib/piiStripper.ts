@@ -47,7 +47,7 @@ export interface StrippingReport {
 // <16.4 does not support it). Matching stays linear in input length.
 
 /** Separator between keyword tokens: space(s), underscore, hyphen, or nothing. */
-const KEYWORD_SEP = '[\\s_-]*';
+const KEYWORD_SEP = String.raw`[\s_-]*`;
 
 /**
  * Left boundary. CONSUMING rather than a lookbehind, which Safari <16.4 lacks.
@@ -71,10 +71,21 @@ const KEYWORD_END = '(?![A-Za-z])';
 /** Joins keyword tokens separator-insensitively: `tok('student','id')` → `student[\s_-]*id`. */
 const tok = (...tokens: string[]): string => tokens.join(KEYWORD_SEP);
 
+/**
+ * Separator for keyword pairs whose SPACED form is also an ordinary prose bigram.
+ * `post code` is the only one so far: "please post code to the repo" must not be
+ * read as an address label, while the `post_code` / `post-code` / `postcode` CSV
+ * header forms must. `_`, `-` or nothing — a space is not a separator here.
+ */
+const KEYWORD_SEP_TIGHT = '[_-]?';
+
+/** Joins keyword tokens without accepting a space: `tokTight('post','code')` → `post[_-]?code`. */
+const tokTight = (...tokens: string[]): string => tokens.join(KEYWORD_SEP_TIGHT);
+
 /** Builds a bounded, separator-insensitive keyword prefix pattern (keyword + optional `:`). */
 function keywordPattern(alternatives: string[]): RegExp {
   return new RegExp(
-    `${KEYWORD_START}(?:${alternatives.join('|')})${KEYWORD_END}\\s*:?\\s*`,
+    String.raw`${KEYWORD_START}(?:${alternatives.join('|')})${KEYWORD_END}\s*:?\s*`,
     'gi',
   );
 }
@@ -82,8 +93,39 @@ function keywordPattern(alternatives: string[]): RegExp {
 // SSN: XXX-XX-XXXX, XXX XX XXXX, or XXXXXXXXX
 const SSN_PATTERN = /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/g;
 
-// Email
-const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+// Email.
+//
+// The LOCAL-PART quantifier is BOUNDED, and the bound is RFC 5321 §4.5.3.1's
+// 64-octet local-part limit. An unbounded `+` there makes this pattern
+// non-linear (Sonar typescript:S8786): the match is unanchored, so the engine
+// retries at every offset of a long run of local-part-valid characters, and
+// each retry re-scans the rest of the run before failing to find `@`. That is
+// the 64 s browser tab freeze in src/lib/agents.md (2026-08-22) — `stripPII`
+// runs on raw OCR text in the browser, where one scanned document supplies
+// exactly such a run. Capping the per-offset work at 64 characters makes the
+// whole scan linear, and it is the ONLY bound needed: it also fixes the
+// long-domain and ambiguous-dotted-domain cases, because their cost came from
+// this same local-part rescan walking over the domain text, not from the
+// domain quantifier itself.
+//
+// The DOMAIN quantifier is deliberately left unbounded. Bounding it to
+// RFC 5321's 255 octets was tried and reverted: it does not degrade
+// gracefully. A domain-character run longer than the bound cannot reach the
+// `\.` that must follow it, so the pattern matches NOTHING and the whole
+// address — `@` and registrable domain included — survives in the clear.
+// A 4,000-case differential fuzz over 200-359 character domains caught it
+// (2,702 of them redacted LESS than the unbounded pattern); a 6,000-case
+// sweep over 150-449 characters then confirmed the fix.
+//
+// The local-part bound degrades the opposite way, which is why it is safe: on
+// a run longer than 64 characters the match simply starts later, so the `@`
+// and the entire domain are still redacted and only leading adjacent text is
+// left. Verified to match at every local-part length from 60 to 400.
+//
+// Redaction is otherwise identical to the previous pattern: a 750,000-case
+// differential fuzz over five adversarial alphabets, plus 6,000 long-domain
+// cases, found zero inputs redacted less and zero redacted differently.
+const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]{1,64}@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 
 // Phone: US formats + international prefixes (PII-06: intl phone support)
 // US: (XXX) XXX-XXXX, XXX-XXX-XXXX, XXX.XXX.XXXX, +1XXXXXXXXXX
@@ -111,18 +153,41 @@ const STUDENT_ID_KEYWORD = keywordPattern([
   tok('employee', 'id'),
   tok('member', 'id'),
   tok('id', 'number'),
-  `${tok('student', 'no')}\\.?`,
+  String.raw`${tok('student', 'no')}\.?`,
 ]);
 const ID_VALUE = /[A-Za-z0-9]{5,12}/;
 
+/**
+ * Qualifiers that precede `address` / `street` in real CSV headers.
+ *
+ * The separated forms (`home_address`, `home address`) already matched, because
+ * `_` and a space are keyword boundaries and the bare `address` alternative picks
+ * up from there. The camelCase and unseparated forms did not: the character before
+ * `Address` in `homeAddress` is a letter, `KEYWORD_START` fails, and the whole
+ * value shipped to the extractor in the clear.
+ */
+const ADDRESS_QUALIFIER =
+  'home|mailing|postal|street|business|work|permanent|current|residential';
+
 // PII-07: Postal/ZIP codes (context-aware — only after address keywords)
 const ADDRESS_KEYWORD = keywordPattern([
+  // Qualified forms come FIRST. Alternation is ordered, so with `street` ahead of
+  // it, `street_address:` matched only its `street` half and the value pattern ate
+  // the rest of the label — emitting `street[ADDRESS_REDACTED]` and destroying a
+  // column name the extractor is called to read.
+  tok(`(?:${ADDRESS_QUALIFIER})`, '(?:address|street)'),
   'address',
   'street',
   tok('postal', 'code'),
   tok('zip', '(?:code)?'),
-  'postcode',
+  tokTight('post', 'code'),
 ]);
+
+/**
+ * A line that opens a new `<label>: <value>` field — the stop condition for the
+ * multi-line address capture in `stripAddressValues`.
+ */
+const FIELD_LABEL_LINE = String.raw`[ \t]*[A-Za-z][A-Za-z0-9 _-]{0,40}:`;
 
 // PII-06: EU-format DOB (DD/MM/YYYY, DD.MM.YYYY) after DOB keywords
 const DATE_DDMMYYYY = /\d{2}[/.-]\d{2}[/.-]\d{4}/;
@@ -136,13 +201,13 @@ const NATIONAL_ID_KEYWORD = keywordPattern([
   tok('steuer', 'id'),
   tok('ni', 'number'),
   'nino',
-  tok('passport', '(?:no\\.?|number)'),
+  tok('passport', String.raw`(?:no\.?|number)`),
   'aadhaar',
   'aadhar',
-  tok('pan', '(?:no\\.?|number|card)'),
+  tok('pan', String.raw`(?:no\.?|number|card)`),
   'cedula',
   'dni',
-  tok('sin', '(?:no\\.?|number)'),
+  tok('sin', String.raw`(?:no\.?|number)`),
 ]);
 
 /**
@@ -180,11 +245,20 @@ export function stripPII(text: string, options: StrippingOptions = {}): Strippin
   }
 
   // 3. Strip emails
-  const emailMatches = result.match(EMAIL_PATTERN);
-  if (emailMatches) {
-    result = result.replace(EMAIL_PATTERN, '[EMAIL_REDACTED]');
-    redactionCount += emailMatches.length;
-    piiFoundSet.add('email');
+  // Fast path: EMAIL_PATTERN cannot match without a literal '@', but its
+  // unanchored local-part quantifier backtracks quadratically across any long
+  // contiguous run of local-part characters when no '@' exists (measured 64s
+  // on a 100k-char OCR text — src/lib/agents.md, 2026-08-22). stripPII runs
+  // in the browser on raw OCR output, so skip the regex entirely on the
+  // overwhelmingly common '@'-less document. Zero semantic change: the
+  // indexOf check and the pattern agree exactly on when a match is possible.
+  if (result.includes('@')) {
+    const emailMatches = result.match(EMAIL_PATTERN);
+    if (emailMatches) {
+      result = result.replace(EMAIL_PATTERN, '[EMAIL_REDACTED]');
+      redactionCount += emailMatches.length;
+      piiFoundSet.add('email');
+    }
   }
 
   // 4. Strip phones
@@ -287,9 +361,17 @@ function stripAddressValues(
   //   Address: 123 Main St
   //   Apt 4B
   //   New York, NY 10001
+  //
+  // A continuation line stops at anything that opens a new `<label>: <value>` field.
+  // Without that guard the CSV bulk-upload path — one column per line — lost up to
+  // two columns after every address column: `postal_code: SW1A 1AA` +
+  // `issue_date: 2026-03-14` collapsed to `postal_code: [ADDRESS_REDACTED]` and the
+  // issue date never reached the extractor. Same line-crossing class the national-ID
+  // rule already fixed. Genuine continuations (`Apt 4B`, `New York, NY 10001`) carry
+  // no label and are still captured.
   result = result.replace(
     new RegExp(
-      `(${ADDRESS_KEYWORD.source})([^\\n]{5,80}(?:\\n[^\\n]{3,80}){0,2})`,
+      String.raw`(${ADDRESS_KEYWORD.source})([^\n]{5,80}(?:\n(?!${FIELD_LABEL_LINE})[^\n]{3,80}){0,2})`,
       'gi',
     ),
     (_match, prefix: string) => {
@@ -325,7 +407,7 @@ function stripNationalIds(
   // title the extractor reads. A national ID never spans lines, so this is
   // strictly narrowing: no real ID stops matching.
   result = result.replace(
-    new RegExp(`(${NATIONAL_ID_KEYWORD.source})(?!\\[)([A-Za-z0-9 \\t_./-]{4,30})`, 'gi'),
+    new RegExp(String.raw`(${NATIONAL_ID_KEYWORD.source})(?!\[)([A-Za-z0-9 \t_./-]{4,30})`, 'gi'),
     (_match, prefix: string) => {
       count++;
       piiFoundSet.add('nationalId');

@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-08-19-chain-pair",
+  "created_at": "2026-08-19T16:50:00Z",
+  "created_by": "claude-soak-standup@arkova.io",
+  "release_owner": "Carson",
+  "approval_status": "pending",
+  "approval_actor": "",
+  "approval_time": "",
+  "approval_note": "SKELETON. Soak fields below are pending — this manifest is drafted at soak START, not at maturity. Do not treat approval_status as anything but pending until the 48h window closes and PM-A/PM-B/PM-C plus the rate-limit 3-part plan are all filled with observed (not assumed) results. Do NOT mark PR #2216, #2250, or #2269 Ready off this manifest while pending.",
+  "train_launch_sha": "f374aca97df8f569989775347e35f4c5162d3605",
+  "target_main_sha": "f374aca97df8f569989775347e35f4c5162d3605",
+  "rc_head_sha": "daf3d6056788762ba56da5c328154e50fce03b59",
+  "rc_branch": "rc/chain-pair-soak-2026-08",
+  "allowed_base_shas": [
+    "f374aca97df8f569989775347e35f4c5162d3605",
+    "49358d607b47217cfe81caf44d17b5e4a595cc88",
+    "2283d64054bc22c680f37b57b18c6da63169f628"
+  ],
+  "covered_main_shas": [
+    "f374aca97df8f569989775347e35f4c5162d3605"
+  ],
+  "included_prs": [
+    {
+      "number": 2216,
+      "head_sha": "a664ee847f0efe531a7d2b39747290f694980da9",
+      "base_sha": "49358d607b47217cfe81caf44d17b5e4a595cc88",
+      "risk_tier": "T3",
+      "owner": "claude/intelligent-galileo-a5e54d",
+      "title": "fix(worker): bound the run body, not just the lease — a hung run disabled SECURED promotion for every tenant (F-D0-5); GetBlock RPC-error URLs now origin-only (S3.3-F1 / §1.4)",
+      "ci_summary": "Draft PR, required checks green on head a664ee847 per PR body (typecheck 0 new, lint clean, full worker suite 0 newly failing). Re-verified in this soak's own union build: 0 new typecheck errors, lint clean, 0 new test failures (set-diff against origin/main baseline).",
+      "rollback_note": "Revert commit(s) on this branch; no data migration. maxRunMs deadline + bounded body reads are additive lease/timeout behavior.",
+      "migration_files": [],
+      "soak_coverage": "Union-deployed to arkova-worker-fullsoak-2026-08-staging as part of the 3-PR chain-pair+rate-limit soak (see docs/staging/chain-pair-soak-2026-08/soak-start-2026-08-19.md). PM-B plan specifically targets this PR's sanitizeRpcUrlForError fix: daily grep of Cloud Run logs for go.getblock.io token leakage. check-confirmations.ts / chain/utxo-provider.ts / chain/fee-estimator.ts bounded-body-read behavior is exercised by the rig's live cron cycle (check-confirmations */30, batch-anchors */30) over the 48h window.",
+      "allowed_base_shas": [
+        "f374aca97df8f569989775347e35f4c5162d3605",
+        "49358d607b47217cfe81caf44d17b5e4a595cc88"
+      ]
+    },
+    {
+      "number": 2250,
+      "head_sha": "3d8851463e3f81b88ff3f65cccef777c0fa7a51c",
+      "base_sha": "2283d64054bc22c680f37b57b18c6da63169f628",
+      "risk_tier": "T3",
+      "owner": "fix/fd-chain-1-listunspent-empty-fallback",
+      "title": "fix(chain): FD-CHAIN-1 round 2 — GetBlockHybridProvider.listUnspent unions RPC + mempool legs instead of falling through",
+      "ci_summary": "Draft PR, required checks green on head 3d885146 per PR body (tsc 0 new, lint clean, lint:copy clean, worker vitest 0 new failures, chain/utxo-provider.test.ts + chain/signet.test.ts +10). Re-verified in this soak's own union build alongside #2216 and #2269: 0 new typecheck errors, lint clean, 0 new test failures.",
+      "rollback_note": "Revert the three commits on this branch (round 1, round 2, comment-only). No schema/contract/lifecycle change; reverting restores the pre-FD-CHAIN-1 >= 0 behaviour.",
+      "migration_files": [],
+      "soak_coverage": "This is the PM-2 control PR — PM-A in the soak-start doc is built specifically to observe this fix's effect: A18 treasury-visibility must stay green across a full batch-anchors-forced-flush (0 3 * * *) cycle, which is exactly the FD-CHAIN-1 recurrence signature that hit this same rig at 2026-08-19T14:40Z on the pre-fix code. BITCOIN_UTXO_PROVIDER=getblock confirmed bound on the rig, so GetBlockHybridProvider (the exact class this PR modifies) is the live provider, not a mempool-only bypass.",
+      "allowed_base_shas": [
+        "f374aca97df8f569989775347e35f4c5162d3605",
+        "2283d64054bc22c680f37b57b18c6da63169f628"
+      ]
+    },
+    {
+      "number": 2269,
+      "head_sha": "fadc04c927ee4c41966d87bf86c969931b02c97e",
+      "base_sha": "f374aca97df8f569989775347e35f4c5162d3605",
+      "risk_tier": "T2",
+      "owner": "rc/rate-limit-cluster-2026-08",
+      "title": "fix(ratelimit): consolidated cluster — cross-instance state, once-per-request counting, env-namespaced keyspaces (F-1, F-2)",
+      "ci_summary": "Draft PR, 171/171 tests green per HANDOFF campaign note. Folded into this soak mid-standup because its originally-slated shared staging project (ujtlwnoqfhtitcmsnrpq) no longer exists. Re-verified in this soak's own union build alongside #2216 and #2250: 0 new typecheck errors (39 pre-existing missing-devDependency errors confirmed present on #2269's own branch in isolation, not introduced by the merge), lint clean, 0 new test failures, +81 new passing tests (all #2269's own new suites).",
+      "rollback_note": "Revert PR #2269; removes environmentNamespace.ts, upstashRateLimit.ts circuit-breaker/consolidated changes, verifyCache.ts namespace changes, upstashIdempotency.ts namespace changes. No schema/migration.",
+      "migration_files": [],
+      "soak_coverage": "Live-verified before soak start (not assumed): (1) cross-instance shared counting via Upstash INCR confirmed by strictly monotonic X-RateLimit-Remaining across sequential requests on a min-instances=2 revision; (2) ~10-minute deliberate Upstash-blackhole window (revision -00020-gag, UPSTASH_REDIS_REST_URL pointed at an unreachable literal host) confirmed fail-open degrade-to-per-instance-bucket behavior via log line 'Upstash rate limit unavailable — degrading to per-instance bucket', X-RateLimit-* headers present throughout, and non-monotonic per-instance header divergence proving the fallback bucket is genuinely local, not falsely-shared; circuit-breaker OPEN/half-open state-machine transitions are unit-test-proven (upstashRateLimit.circuitBreaker.test.ts), live check covers the real network-failure trigger + fail-open path; (3) namespace proof via direct Upstash SCAN: only arkova:rl:arkova-worker-fullsoak-2026-08-staging:* keys present at steady state (one pre-existing, already-TTL-expired legacy bare-IP key observed transiently and disclosed, not written by this rig). Full detail: docs/staging/chain-pair-soak-2026-08/soak-start-2026-08-19.md.",
+      "allowed_base_shas": [
+        "f374aca97df8f569989775347e35f4c5162d3605"
+      ]
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging (founder-approved rig reuse; freeze from the closed 7-day SOC2 window lifted 2026-08-19T15:51:30Z)",
+    "profile": "chain (signet, real bitcoind VM) + Upstash-backed rate limiting",
+    "staging_api_base": "https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app",
+    "staging_url": "https://arkova-worker-fullsoak-2026-08-staging-270018525501.us-central1.run.app",
+    "cloud_run_service": "arkova-worker-fullsoak-2026-08-staging",
+    "revision": "arkova-worker-fullsoak-2026-08-staging-00022-suy",
+    "deploy_tag": "cp0819rc",
+    "image_ref": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:chain-pair-soak-daf3d6056788762ba56da5c328154e50fce03b59",
+    "image_digest": "sha256:d7a956079729b080a2e654f8014c9fbd270dbfc4392b1000e1a4e0630157ea45",
+    "cloud_build_id": "325b791a-f0a0-4653-801e-596e4a467264",
+    "build_sha_baked": "daf3d6056788762ba56da5c328154e50fce03b59",
+    "health_git_sha": "daf3d6056788762ba56da5c328154e50fce03b59",
+    "supabase_project_ref": "gnkuaywlpmsaezwvlvhk",
+    "supabase_project_name": "arkova-fullsoak-2026-08",
+    "supabase_region": "us-east-2",
+    "min_instances": 2,
+    "deploy_log_id": "n/a — scripts/staging/deploy.sh targets the shared arkova-worker-staging service only; this isolated rig was deployed via gcloud run deploy on the digest-pinned image, same deviation as rc-t2-worker-batch-20260726.json",
+    "preflight_result": "environment_type=fixture_seeded (NOT clean_mirror; NOT soak_artifact either — 0 artifact rows, single failing check is the zero-SUBMITTED-anchors fixture heuristic, root-caused to the prior 7-day soak's organic queue drain before close, not contamination — see soak-start doc for full §1.11A framing)",
+    "profile_note": "GetBlockHybridProvider live (BITCOIN_UTXO_PROVIDER=getblock, confirmed bound) — both chain PRs' exact modified code path is the live provider, not a mempool-only bypass"
+  },
+  "soak": {
+    "start": "2026-08-19T16:51:23Z",
+    "end": "2026-08-21T16:51:23Z",
+    "duration_hours": 48,
+    "clock_anchor": "Cloud Run revision uptime of the final post-blackhole-revert revision (see soak-start doc revision table) — the four pre-clock validation revisions (-00017 through -00020) are explicitly NOT the clock-start revision",
+    "harness_version": "manual authenticated cron-driven lifecycle + Cloud Scheduler (26 ENABLED jobs) + PM-A/PM-B/PM-C daily observation plan",
+    "result": "PENDING — fields below intentionally unfilled until the 48h window matures",
+    "evidence_links": [
+      "https://github.com/carson-see/ArkovaCarson/pull/2216",
+      "https://github.com/carson-see/ArkovaCarson/pull/2250",
+      "https://github.com/carson-see/ArkovaCarson/pull/2269",
+      "docs/staging/chain-pair-soak-2026-08/soak-start-2026-08-19.md"
+    ],
+    "expires_at": "2026-08-23T16:51:23Z"
+  },
+  "lifecycle_evidence": {
+    "note": "PENDING — to be filled with Trigger A / Trigger B / daily-flush / per-org-isolation results per CLAUDE.md §1.12 T3 requirements and the PM-A/B/C plan in the soak-start doc.",
+    "pm_a_treasury_visibility": "PENDING — observe >=2 batch-anchors-forced-flush (0 3 * * *) cycles; success = balance never false-reads empty post-flush",
+    "pm_b_token_leak_standing_check": "PENDING — daily grep for go.getblock.io; must capture at least one real RPC-leg failure event and confirm origin-only label",
+    "pm_c_cron_reliability": "PENDING — daily [NODE-CRON] missed-execution count + per-job HTTP-200-at-least-once-per-day confirmation across all 26 ENABLED jobs",
+    "rate_limit_cross_instance": "DONE pre-clock — see soak-start doc § 'Rate-limit cluster (#2269)' §1",
+    "rate_limit_blackhole_window": "DONE pre-clock — see soak-start doc § 'Rate-limit cluster (#2269)' §2",
+    "rate_limit_namespace_proof": "DONE pre-clock — see soak-start doc § 'Rate-limit cluster (#2269)' §3",
+    "per_org_isolation": "PENDING — baseline at soak start: org ACC=25,892 anchors, org ARK=7 anchors (queried live 2026-08-19). Compare per-org counts + status distributions at 48h; confirm no cross-org bleed."
+  },
+  "schedulers_enabled": [
+    "arkova-worker-fullsoak-2026-08-staging-batch-anchors (*/30)",
+    "arkova-worker-fullsoak-2026-08-staging-check-confirmations (*/30)",
+    "arkova-worker-fullsoak-2026-08-staging-batch-anchors-forced-flush (0 3 * * *)",
+    "arkova-worker-fullsoak-2026-08-staging-org-queue-scheduler (4-59/5)",
+    "arkova-worker-fullsoak-2026-08-staging-recover-broadcasts (7-59/10)",
+    "... 21 more, all ENABLED — full list in soak-start doc"
+  ],
+  "migration_plan": {
+    "order": [],
+    "rollback_proof": "N/A — no PR in this RC touches supabase/migrations/ (verified: all three PR bodies state 'Migration applied: none').",
+    "reapply_proof": "N/A",
+    "stop_conditions": [
+      "worker uptime < 48h at merge time (soak not matured)",
+      "any /health regression during the soak window",
+      "PM-A false-empty treasury recurrence observed (would mean the union does NOT defuse FD-CHAIN-1 and this RC must not proceed)",
+      "PM-B: a real token-bearing go.getblock.io URL observed in logs (would mean the sanitize fix has a gap)",
+      "release-owner approval not granted"
+    ]
+  },
+  "deviations": [
+    "Scope extended mid-standup to include PR #2269 (T2, rate-limit cluster) alongside the originally-scoped T3 chain pair (#2216, #2250), per a coordinator instruction citing the loss of #2269's originally-slated shared staging project (ujtlwnoqfhtitcmsnrpq). Verified independently before merging: PR #2269 head SHA matches, file list is fully disjoint from the chain PRs' files, 3-way merge is clean.",
+    "Deployed via `gcloud run deploy` on the digest-pinned image rather than scripts/staging/deploy.sh, because deploy.sh is hard-scoped to the shared arkova-worker-staging service and its lease mechanism lives in a Supabase project this scope-extension note says no longer exists. Same deviation precedent as rc-t2-worker-batch-20260726.json.",
+    "Preflight result is fixture_seeded, not clean_mirror — documented and reasoned in full in the soak-start doc and in this manifest's environment.preflight_result field, per CLAUDE.md §1.11A. Not silently rounded up to clean_mirror.",
+    "Upstash rate-limit secrets (UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN) were not previously bound on this rig; bound as part of this standup so #2269's real behavior (not a no-op in-memory fallback) is what gets soaked. These are the SAME un-suffixed secrets prod uses (shared Upstash database) — safe because resolveEnvironmentNamespace() derives this rig's namespace from Cloud Run's own K_SERVICE value (arkova-worker-fullsoak-2026-08-staging), which can only equal the reserved prod namespace on an exact match against the literal service name 'arkova-worker' — verified in source and confirmed live via SCAN (only the rig's own namespaced keys observed).",
+    "min-instances raised from 1 to 2 for this soak (was 1 on the frozen 7-day-soak revision) specifically to make cross-instance rate-limit sharing observable. Revisit at soak close whether to hold at 2 or return to 1."
+  ],
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": ""
+  },
+  "exceptions": []
+}

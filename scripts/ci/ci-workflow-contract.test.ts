@@ -334,3 +334,311 @@ describe("ci.yml edge-worker suite is actually invoked", () => {
     ).toBe(true);
   });
 });
+
+/**
+ * The same blind spot, one language over — BUG-2026-08-12-007.
+ *
+ * `packages/arkova-py` is the ONLY Arkova SDK actually published (all three npm
+ * packages 404), and until 2026-08-15 nothing ran its pytest/ruff suite on a
+ * pull request. Its only invocation lived in publish-python-sdk.yml, which fires
+ * on an `arkova-py-v*` tag — after the release decision, never before it. So the
+ * published 2.2.0 wheel shipped a `compliance_controls` type that contradicted
+ * the API (breaking `verify()` for every record carrying controls), and the
+ * source fix then sat unreleased for two weeks with no PR ever executing the
+ * tests that would have shown source and artifact disagreeing.
+ *
+ * These assertions are the ratchet. A suite that gates nothing fails silently,
+ * which is precisely how this went unnoticed twice.
+ */
+describe("ci.yml Python SDK suite is actually invoked", () => {
+  const pythonJob = (): string => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const job = /\n {2}python-sdk-tests:\n([\s\S]*?)(?=\n {2}[a-z][\w-]*:\n)/u.exec(workflow)?.[0];
+    expect(
+      job,
+      "ci.yml must keep a 'python-sdk-tests' job — packages/arkova-py gates nothing without it",
+    ).toBeDefined();
+    return job as string;
+  };
+
+  it("runs pytest against packages/arkova-py", () => {
+    const job = pythonJob();
+    expect(job, "the Python suite must run from packages/arkova-py").toMatch(
+      /working-directory:\s*packages\/arkova-py/u,
+    );
+    expect(job, "the job must execute the suite, not merely install it").toMatch(
+      /run:\s*pytest\b/u,
+    );
+  });
+
+  it("keeps the ruff gate at PR time, not only at publish time", () => {
+    // publish-python-sdk.yml gates the PyPI upload on `ruff check src tests`.
+    // A finding that only surfaces there blocks a release instead of a review —
+    // exactly the ordering that let 2.2.0 ship unchecked.
+    expect(pythonJob()).toMatch(/run:\s*ruff check src tests/u);
+  });
+
+  it("installs the dev extras, which is where pytest and the pinned ruff live", () => {
+    expect(pythonJob()).toMatch(/pip install -e "\.\[dev\]"/u);
+  });
+
+  it("matches the publish workflow's interpreter", () => {
+    // Parity argument of CLAUDE.md §0.9: if the publish gate would reject it, a
+    // PR must reject it first. Different interpreters make that untrue.
+    const publish = readFileSync(
+      resolve(REPO, ".github/workflows/publish-python-sdk.yml"),
+      "utf8",
+    );
+    const publishVersion = /python-version:\s*["']?([\d.]+)["']?/u.exec(publish)?.[1];
+    const ciVersion = /python-version:\s*["']?([\d.]+)["']?/u.exec(pythonJob())?.[1];
+    expect(publishVersion, "publish-python-sdk.yml must pin a python-version").toBeDefined();
+    expect(ciVersion, "the CI job must pin a python-version").toBe(publishVersion);
+  });
+});
+
+/**
+ * FD-GATE-2 — the frozen event base must never be a diff anchor.
+ *
+ * ci.yml (9 sites) and merge-authority.yml (:47) pass
+ * `BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}` — a sha GitHub
+ * FREEZES at the base tip as of the PR's last head push — while their
+ * checkouts pin no `ref:`, so HEAD is the live refs/pull/N/merge preview that
+ * GitHub recomputes against current main. Diffing `frozenBase..HEAD` therefore
+ * charges every main commit landed since the last push to the PR itself:
+ * measured 2026-08-22, #2219 (6 real files) presented as 162 to the tier
+ * detector and the feedback-rules scans, and 15 of 28 open PRs were desynced.
+ *
+ * The fix is deliberately in scripts/ci/lib/ciContext.ts, not the workflows:
+ * `changedFiles` anchors its diff at the PR's own changeset (HEAD^1 for the
+ * merge preview, merge-base(base, HEAD) for raw heads) so the frozen env value
+ * is harmless everywhere at once. These pins keep that anchoring from
+ * regressing to a raw `base..HEAD`; the behavioral matrix lives in
+ * scripts/ci/lib/ciContext.test.ts.
+ */
+describe("changedFiles diff anchoring neutralizes the frozen event base (FD-GATE-2)", () => {
+  const CI_CONTEXT_PATH = resolve(REPO, "scripts/ci/lib/ciContext.ts");
+
+  it("changedFiles routes its diff range through resolveDiffBase, never the raw env base", () => {
+    const source = readFileSync(CI_CONTEXT_PATH, "utf8");
+    expect(
+      source,
+      "ciContext.changedFiles must compute its anchor via resolveDiffBase(base) — see FD-GATE-2",
+    ).toMatch(/const diffBase = resolveDiffBase\(base\)/u);
+    expect(
+      source,
+      "the diff range must start at the resolved anchor, not the (possibly frozen) env base",
+    ).toMatch(/`\$\{diffBase\}\.\.HEAD`/u);
+    expect(
+      source,
+      "a raw `${base}..HEAD` two-dot range is the FD-GATE-2 bug shape and must not return",
+    ).not.toMatch(/`\$\{base\}\.\.HEAD`/u);
+  });
+
+  it("resolveDiffBase keeps both anchoring strategies: HEAD^1 for the merge preview, merge-base for raw heads", () => {
+    const source = readFileSync(CI_CONTEXT_PATH, "utf8");
+    expect(source).toMatch(/refs\\\/pull\\\/\\d\+\\\/merge/u);
+    expect(source).toMatch(/HEAD\^1/u);
+    expect(source).toMatch(/tryMergeBase\(base, 'HEAD'\)/u);
+  });
+
+  it("compute-merge-authority (merge-authority.yml's consumer) reads its file set through ciContext.changedFiles", () => {
+    // merge-authority.yml also passes the frozen base; its tier/label math is
+    // only correct because it consumes the anchored changedFiles.
+    const source = readFileSync(resolve(REPO, "scripts/ci/compute-merge-authority.ts"), "utf8");
+    expect(source).toMatch(/import \{[^}]*\bchangedFiles\b[^}]*\} from '\.\/lib\/ciContext\.js'/u);
+  });
+});
+
+/**
+ * The commit-message payload must not travel as one oversized env string.
+ *
+ * PR #2346 (run 32666797304, job 97261336883, 2026-08-23): the `Aggregate
+ * commit messages` step wrote 153 commits / 138,166 bytes into the `msgs`
+ * output, ci.yml injected it as the PR_COMMITS_MSGS **environment variable**,
+ * and the next step died at spawn:
+ *
+ *   ##[error]An error occurred trying to start process '/usr/bin/bash' …
+ *   Argument list too long
+ *
+ * That is E2BIG against Linux's MAX_ARG_STRLEN (131,072 bytes per single
+ * argv/envp string) — raised by execve BEFORE any script logic runs, so no
+ * override label can clear it and the "failure" carries no lint diagnosis at
+ * all. Two things put it over the line and both are pinned here:
+ *
+ *   1. Transport. The payload now goes to a file under $RUNNER_TEMP, which has
+ *      no per-string ceiling; PR_COMMITS_MSGS remains only as a `head -c`
+ *      capped fallback that is spawnable by construction.
+ *   2. Range. `github.event.pull_request.base.sha` is refreshed by
+ *      `synchronize` but NOT by close/reopen, so #2346 sat pinned at its
+ *      2026-08-22 creation base and inherited a long-lived branch's history
+ *      when #2219 merged. Aggregation now delegates to the shared
+ *      ciContext anchoring (FD-GATE-2) instead of a raw `$BASE_SHA..HEAD`.
+ */
+const MAX_ARG_STRLEN = 131_072;
+
+/**
+ * A step's body with comment-only lines removed. The ratchets below are about
+ * what the runner EXECUTES; the step's own comments quote the bug shape they
+ * exist to prevent, and matching those would make the ratchet self-tripping.
+ */
+function executableLines(step: string): string {
+  return step
+    .split("\n")
+    .filter((line) => !/^\s*#/u.test(line))
+    .join("\n");
+}
+
+function commitsStepOf(workflow: string): string {
+  const steps = workflowSteps(workflow).filter((step) =>
+    /^\s+id:\s*["']?commits["']?\s*$/mu.test(step),
+  );
+  expect(steps, "ci.yml must have exactly one step with id 'commits'").toHaveLength(1);
+  return steps[0];
+}
+
+function assertCommitPayloadContract(workflow: string): void {
+  const commitsStep = commitsStepOf(workflow);
+
+  // ── 1. The full payload is written to a file, not an output value ──
+  expect(
+    commitsStep,
+    'the commits step must declare PR_COMMITS_MSGS_FILE under $RUNNER_TEMP — the file is the only transport without a MAX_ARG_STRLEN ceiling',
+  ).toMatch(/PR_COMMITS_MSGS_FILE:\s*\$\{\{\s*runner\.temp\s*\}\}\//u);
+
+  expect(
+    commitsStep,
+    'the commits step must publish the file path as the `msgs_file` output so the gates can bind it',
+  ).toMatch(/msgs_file=/u);
+
+  // ── 2. Aggregation delegates to the shared, anchored implementation ──
+  expect(
+    executableLines(commitsStep),
+    'aggregation must run scripts/ci/aggregate-commit-messages.ts, which anchors the range via ciContext.resolveDiffBase (FD-GATE-2) instead of re-deriving it in shell',
+  ).toMatch(/scripts\/ci\/aggregate-commit-messages\.ts/u);
+
+  expect(
+    executableLines(commitsStep),
+    'a raw `$BASE_SHA..HEAD` range in shell is the FD-GATE-2 bug shape that inflated #2346 from 6 commits to 153 — it must not return',
+  ).not.toMatch(/\$\{?BASE_SHA\}?"?\.\.HEAD/u);
+
+  // ── 3. The surviving env fallback is capped below MAX_ARG_STRLEN ──
+  const cap = /head -c (\d+) "\$PR_COMMITS_MSGS_FILE"/u.exec(commitsStep)?.[1];
+  expect(
+    cap,
+    'the PR_COMMITS_MSGS env fallback must be size-capped with `head -c` — an uncapped read reintroduces the exact E2BIG that killed #2346',
+  ).toBeDefined();
+  expect(
+    Number(cap),
+    `the cap must sit below Linux MAX_ARG_STRLEN (${MAX_ARG_STRLEN}) with headroom for the rest of the environment`,
+  ).toBeLessThan(MAX_ARG_STRLEN);
+
+  // ── 4. Every gate that reads the messages binds the FILE ──
+  // A step left on the env var alone is a step that can still hit E2BIG.
+  const consumerSteps = workflowSteps(workflow).filter((step) =>
+    /^\s+PR_COMMITS_MSGS:/mu.test(step),
+  );
+  expect(
+    consumerSteps.length,
+    'PR_COMMITS_MSGS must still be wired into the governance gates',
+  ).toBeGreaterThan(0);
+
+  for (const step of consumerSteps) {
+    const binding = /^\s+PR_COMMITS_MSGS_FILE:\s*(.+)$/mu.exec(step)?.[1]?.trim();
+    expect(
+      binding,
+      'every step reading PR_COMMITS_MSGS must ALSO bind PR_COMMITS_MSGS_FILE, or it is still spawning with the uncapped payload as its only source',
+    ).toBeDefined();
+    expect(
+      binding,
+      'PR_COMMITS_MSGS_FILE must source from the commits step output, never from a raw author-controlled context',
+    ).toMatch(/^\$\{\{\s*steps\.commits\.outputs\.msgs_file\s*\}\}$/u);
+  }
+}
+
+describe('ci.yml commit-message payload transport (E2BIG, PR #2346)', () => {
+  it('ships the aggregate by file and caps the env fallback below MAX_ARG_STRLEN', () => {
+    assertCommitPayloadContract(readFileSync(WORKFLOW_PATH, "utf8"));
+  });
+
+  it('rejects removing the `head -c` cap from the env fallback', () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = workflow.replace(
+      /head -c \d+ "\$PR_COMMITS_MSGS_FILE"/u,
+      'cat "$PR_COMMITS_MSGS_FILE"',
+    );
+    expect(mutated).not.toBe(workflow);
+    expect(() => assertCommitPayloadContract(mutated)).toThrow();
+  });
+
+  it('rejects a cap raised to or above MAX_ARG_STRLEN', () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = workflow.replace(
+      /head -c \d+ "\$PR_COMMITS_MSGS_FILE"/u,
+      `head -c ${MAX_ARG_STRLEN} "$PR_COMMITS_MSGS_FILE"`,
+    );
+    expect(mutated).not.toBe(workflow);
+    expect(() => assertCommitPayloadContract(mutated)).toThrow();
+  });
+
+  it('rejects a gate that reads PR_COMMITS_MSGS without also binding the file', () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = `${workflow}\n${[
+      "      - name: Env-only HANDOFF lint",
+      "        env:",
+      "          PR_COMMITS_MSGS: ${{ steps.commits.outputs.msgs }}",
+      "        run: node_modules/.bin/tsx scripts/ci/check-handoff-claims.ts",
+    ].join("\n")}\n`;
+    expect(() => assertCommitPayloadContract(mutated)).toThrow();
+  });
+
+  it('rejects re-plumbing the file binding to a raw author-controlled context', () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = `${workflow}\n${[
+      "      - name: Shadowed Confluence coverage",
+      "        env:",
+      "          PR_COMMITS_MSGS: ${{ steps.commits.outputs.msgs }}",
+      "          PR_COMMITS_MSGS_FILE: ${{ github.event.pull_request.body }}",
+      "        run: node_modules/.bin/tsx scripts/ci/check-confluence-coverage.ts",
+    ].join("\n")}\n`;
+    expect(() => assertCommitPayloadContract(mutated)).toThrow();
+  });
+
+  it('rejects reverting aggregation to a raw $BASE_SHA..HEAD range in shell', () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const commitsStep = commitsStepOf(workflow);
+    // The aggregator call is deliberately KEPT so this isolates the RANGE
+    // ratchet: a step that shells out to the anchored script and then quietly
+    // re-derives the range itself is exactly the regression worth catching.
+    const mutated = workflow.replace(
+      commitsStep,
+      commitsStep.replace(
+        /(node_modules\/\.bin\/tsx scripts\/ci\/aggregate-commit-messages\.ts)/u,
+        '$1\n          MSGS=$(git log --format=%B "$BASE_SHA"..HEAD)',
+      ),
+    );
+    expect(mutated).not.toBe(workflow);
+    expect(() => assertCommitPayloadContract(mutated)).toThrow(/FD-GATE-2/u);
+  });
+
+  it('rejects satisfying the aggregator requirement with a mere comment mention', () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const mutated = workflow.replace(
+      /( +)node_modules\/\.bin\/tsx scripts\/ci\/aggregate-commit-messages\.ts/u,
+      '$1# node_modules/.bin/tsx scripts/ci/aggregate-commit-messages.ts',
+    );
+    expect(mutated).not.toBe(workflow);
+    expect(() => assertCommitPayloadContract(mutated)).toThrow();
+  });
+
+  it('keeps the aggregator and the file-reader on the same env-var name', () => {
+    // A rename on one side alone degrades every gate to the capped fallback,
+    // silently, with green checks.
+    const aggregator = readFileSync(
+      resolve(REPO, "scripts/ci/aggregate-commit-messages.ts"),
+      "utf8",
+    );
+    const context = readFileSync(resolve(REPO, "scripts/ci/lib/ciContext.ts"), "utf8");
+    expect(aggregator).toMatch(/PR_COMMITS_MSGS_FILE/u);
+    expect(context).toMatch(/PR_COMMITS_MSGS_FILE/u);
+  });
+});

@@ -143,3 +143,114 @@ describe('provision-isolated-rig.sh — fixture wiring', () => {
     expect(preflightIdx).toBeGreaterThan(seedIdx);
   });
 });
+
+/**
+ * FD-SEED-1 (docs/staging/findings/FD-SEED-1-baseline-fixture-self-reverts-in-7-minutes.md).
+ *
+ * A SUBMITTED anchor with `chain_tx_id IS NULL` is precisely the row
+ * `public.recover_stuck_broadcasts()` (migration
+ * `0379_f3_recover_submitted_null_txid.sql`) resets to PENDING once it is 5
+ * minutes stale, and `routes/scheduled.ts` runs that reclaimer on a two-minute
+ * in-process cron in EVERY environment. So the fixture this file seeds used to
+ * evaporate ~7 minutes after provisioning, taking preflight Check 5 —
+ * `submitted_anchors` — down with it and silently reclassifying the rig
+ * `fixture_seeded`. Two exclusions are required, and they are not
+ * interchangeable:
+ *
+ *   chain_tx_id NOT NULL  excludes recover_stuck_broadcasts (0379 deliberately
+ *                         does NOT check legal_hold — see its header)
+ *   legal_hold = true     excludes autoConfirmMockAnchors / monitorStuckTransactions
+ *                         / rebroadcastDroppedTransactions, all of which filter
+ *                         `.eq('legal_hold', false)`
+ *
+ * These tests pin both, plus the repair path for rigs seeded with the old file.
+ */
+describe('seed-baseline-fixture.sql — FD-SEED-1 durability', () => {
+  /**
+   * The `INSERT INTO public.anchors … ;` statement, isolated.
+   *
+   * Not a lazy `…;` match: semicolons appear both in the surrounding prose and
+   * inside the anchor's own `description` literal, either of which truncates the
+   * statement long before its ON CONFLICT tail. Anchor on the ON CONFLICT clause
+   * explicitly and take the first `;` after it.
+   */
+  const anchorStatement = (() => {
+    const start = sqlNoComments.search(/insert\s+into\s+public\.anchors/i);
+    if (start < 0) return '';
+    const conflict = sqlNoComments.slice(start).search(/on\s+conflict\s*\(\s*id\s*\)\s*do\s+update/i);
+    if (conflict < 0) return '';
+    const end = sqlNoComments.indexOf(';', start + conflict);
+    if (end < 0) return '';
+    return sqlNoComments.slice(start, end + 1);
+  })();
+
+  it('isolates the anchors INSERT for the assertions below', () => {
+    expect(anchorStatement).not.toBe('');
+  });
+
+  it('writes chain_tx_id on the SUBMITTED fixture anchor', () => {
+    // Column must be in the INSERT list — a NULL chain_tx_id is 0379's predicate.
+    const columnList = anchorStatement.match(/insert\s+into\s+public\.anchors\s*\(([\s\S]*?)\)/i)?.[1] ?? '';
+    expect(columnList).toMatch(/\bchain_tx_id\b/);
+  });
+
+  it('derives the txid as 64 hex characters from md5 halves, not a pasted literal', () => {
+    // Two md5() calls concatenated = 64 hex chars, deterministic (so re-runs are
+    // idempotent) and self-evidently synthetic in source. A pasted 64-hex literal
+    // would read like a real on-chain txid.
+    expect(anchorStatement).toMatch(/md5\(\s*'[^']+'\s*\)\s*\|\|\s*md5\(\s*'[^']+'\s*\)/i);
+  });
+
+  it('never inserts the SUBMITTED anchor with an explicit NULL chain_tx_id', () => {
+    expect(anchorStatement).not.toMatch(/chain_tx_id\s*(=|,)?\s*NULL/i);
+  });
+
+  it('backfills chain_tx_id on re-run so an already-seeded rig is repaired', () => {
+    // ON CONFLICT must not stop at legal_hold: a rig seeded with the pre-fix file
+    // carries a NULL txid, and re-running the seed is the repair path.
+    const doUpdate = anchorStatement.match(/on\s+conflict\s*\(\s*id\s*\)\s*do\s+update[\s\S]*$/i)?.[0] ?? '';
+    expect(doUpdate).toMatch(/\blegal_hold\s*=\s*true/i);
+    expect(doUpdate).toMatch(/\bchain_tx_id\s*=\s*COALESCE\(\s*anchors\.chain_tx_id\s*,\s*EXCLUDED\.chain_tx_id\s*\)/i);
+  });
+
+  it('restores a reclaimed PENDING fixture to SUBMITTED, and only when it carries our synthetic txid', () => {
+    // Repairing the txid alone leaves an already-reclaimed row at PENDING, so
+    // Check 5 would still read zero. But a row carrying a REAL txid must keep its
+    // own status — we only reinstate rows that never actually broadcast anything.
+    const doUpdate = anchorStatement.match(/on\s+conflict\s*\(\s*id\s*\)\s*do\s+update[\s\S]*$/i)?.[0] ?? '';
+    expect(doUpdate).toMatch(/\bstatus\s*=\s*CASE\b/i);
+    expect(doUpdate).toMatch(/anchors\.status\s*=\s*'PENDING'/i);
+    expect(doUpdate).toMatch(/EXCLUDED\.chain_tx_id/);
+    expect(doUpdate).toMatch(/'SUBMITTED'::public\.anchor_status/i);
+    expect(doUpdate).toMatch(/ELSE\s+anchors\.status/i);
+  });
+
+  it('asserts its own post-conditions in-transaction and fails closed', () => {
+    // The preflight reads Check 5 as a point-in-time count and cannot tell "no
+    // fixture" from "fixture that evaporates in five minutes". The seed proves the
+    // structural predicate instead — instantly, and without a timed re-check.
+    // provision-isolated-rig.sh runs this under `set -euo pipefail` via run_cmd,
+    // so a RAISE here aborts provisioning rather than admitting a doomed rig.
+    const doBlock = sql.match(/DO\s+\$\$[\s\S]*?\$\$\s*;/i)?.[0] ?? '';
+    expect(doBlock, 'a DO $$ … $$ post-condition block must be present').not.toBe('');
+    expect(doBlock).toMatch(/RAISE\s+EXCEPTION/i);
+    // Each of the three ways the fixture can be non-durable is named separately.
+    expect(doBlock).toMatch(/chain_tx_id\s+IS\s+NULL/i);
+    expect(doBlock).toMatch(/legal_hold/i);
+    expect(doBlock).toMatch(/'SUBMITTED'/);
+    // …and it must run before COMMIT, inside the seeding transaction.
+    expect(sql.indexOf(doBlock)).toBeLessThan(sql.lastIndexOf('COMMIT'));
+  });
+
+  it('documents the reclaimer by name so the constraint is traceable from the file', () => {
+    expect(sql).toMatch(/recover_stuck_broadcasts/);
+    expect(sql).toMatch(/0379/);
+    expect(sql).toMatch(/FD-SEED-1/);
+  });
+
+  it('points at a provisioning script that exists', () => {
+    // The pre-fix header cited scripts/staging/soak-rig.sh, which is not in the repo.
+    expect(sql).not.toMatch(/soak-rig\.sh/);
+    expect(sql).toMatch(/scripts\/staging\/provision-isolated-rig\.sh/);
+  });
+});
