@@ -518,7 +518,7 @@ async function defaultReadAnchorStatus(
     .maybeSingle();
   // SCRUM-3836: `null` meant both "query failed" and "anchor not found".
   if (error) {
-    logger.error({ error, anchorId: args.anchorId }, 'Anchor status read failed — treating as not found');
+    defaultLogger.error({ error, anchorId: args.anchorId }, 'Anchor status read failed — treating as not found');
     return null;
   }
   if (!data) return null;
