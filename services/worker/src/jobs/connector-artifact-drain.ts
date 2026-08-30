@@ -411,10 +411,7 @@ export async function defaultMaterializeAnchor(
   // OTHER connector path (today: DocuSign outbound, Google Drive) never sets
   // `_direction`, so `isInboundDeclaredHash` is false for 100% of existing
   // traffic — this branch is additive and does not change any prior behavior.
-  const isInboundDeclaredHash =
-    row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
-      ? (row.metadata as Record<string, unknown>)._direction === 'inbound'
-      : false;
+  const isInboundDeclaredHash = metadataString(row.metadata, '_direction') === 'inbound';
 
   const insertPayload = {
     fingerprint: row.fingerprint_sha256,
