@@ -65,6 +65,47 @@ async function findIntegration(
   return (data as AdobeIntegrationRow | null) ?? null;
 }
 
+/**
+ * Build the sanitized rule-event payload for the `enqueue_rule_event` RPC.
+ *
+ * `organization_rule_events.payload` carries a hard DB CHECK
+ * (`organization_rule_events_payload_size`): `pg_column_size(payload) <= 16384`.
+ * The payload is derived from EVERY agreement document, so it must stay bounded
+ * regardless of document cardinality or document-id length.
+ *
+ * We record `document_count` — a fixed-size integer — rather than the full
+ * `document_ids` array. Adobe's `documents` array is `.max(100)` and each
+ * document `id` is `z.string().trim().min(1)` with NO `.max()` length cap, so
+ * the former array was even less bounded than the DocuSign case (which had a
+ * 100-char documentId gate): at max cardinality with long ids it overflowed the
+ * 16KB budget (measured ~50KB at 100 × 500-char ids). The RPC would then raise a
+ * check_violation, `enqueueRuleEvent` would throw, the handler would DLQ + 500,
+ * and Adobe would retry the identical failing payload forever — trapping the
+ * agreement's ESIGN_COMPLETED event and every downstream step (anchoring).
+ *
+ * Dropping `document_ids` here is safe because it is write-only on THIS payload:
+ * the rules engine's `sanitizeExecutionProviderPayload` allowlist
+ * (`jobs/rules-engine.ts`) and the action dispatcher (`jobs/rule-action-dispatcher.ts`)
+ * read only `document_hashes` / `document_sha256` (which this handler does not
+ * even set), and there is no Adobe fetch/materialization job that references it.
+ * Mirrors `buildDocusignRuleEventPayload` (DocuSign bilateral 2026-08, Finding 7;
+ * PR #2485). If a per-document-id consumer is ever added, carry the ids on the
+ * UNCAPPED `job_queue` payload of that job, never back onto this capped payload.
+ */
+export function buildAdobeSignRuleEventPayload(args: {
+  integrationId: string;
+  event: AdobeAgreementCompletedEvent;
+  payloadHash: string;
+}): Record<string, unknown> {
+  return {
+    source: 'adobe_sign_webhook',
+    integration_id: args.integrationId,
+    agreement_id: args.event.agreementId,
+    document_count: args.event.documents.length,
+    payload_hash: args.payloadHash,
+  };
+}
+
 async function enqueueRuleEvent(args: {
   integration: AdobeIntegrationRow;
   event: AdobeAgreementCompletedEvent;
@@ -91,13 +132,11 @@ async function enqueueRuleEvent(args: {
     p_folder_path: canonical.folder_path ?? null,
     p_sender_email: canonical.sender_email ?? null,
     p_subject: canonical.subject ?? null,
-    p_payload: {
-      source: 'adobe_sign_webhook',
-      integration_id: args.integration.id,
-      agreement_id: args.event.agreementId,
-      document_ids: args.event.documents.map((d) => d.id),
-      payload_hash: args.payloadHash,
-    },
+    p_payload: buildAdobeSignRuleEventPayload({
+      integrationId: args.integration.id,
+      event: args.event,
+      payloadHash: args.payloadHash,
+    }),
   });
   if (error || !data) {
     logger.error({ error, integrationId: args.integration.id }, 'Adobe Sign rule-event enqueue failed');
