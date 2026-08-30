@@ -30,6 +30,15 @@ vi.mock('../../../utils/logger.js', () => ({
   },
 }));
 
+// docusign-bilateral-2026-08: docusign.ts now reads config.enableDocusignInbound.
+// Mock directly (same pattern as drive.test.ts's mockConfig) so these tests
+// don't need real SUPABASE_URL/etc env vars, and so the inbound tests below
+// can flip the flag per-test.
+const { mockConfig } = vi.hoisted(() => ({
+  mockConfig: { enableDocusignInbound: false },
+}));
+vi.mock('../../../config.js', () => ({ config: mockConfig }));
+
 import { docusignWebhookRouter, extractNotaryData } from './docusign.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -112,7 +121,32 @@ beforeEach(() => {
   rpcMock.mockReset();
   submitJobMock.mockReset();
   process.env.DOCUSIGN_CONNECT_HMAC_SECRET = TEST_HMAC_KEY;
+  mockConfig.enableDocusignInbound = false;
 });
+
+/** docusign-bilateral-2026-08: a valid body declaring a distinct owning/sending account. */
+function bodyWithSenderAccount(args: { senderAccountId?: string; envelopeId?: string; sha256s?: string[] }): string {
+  return JSON.stringify({
+    event: 'envelope-completed',
+    envelopeId: args.envelopeId ?? 'env-1',
+    accountId: 'acct-1',
+    status: 'completed',
+    sender: {
+      email: 'legal@example.com',
+      ...(args.senderAccountId ? { accountId: args.senderAccountId } : {}),
+    },
+    envelopeDocuments: (args.sha256s ?? [VALID_DOC_SHA256]).map((sha256, i) => ({
+      documentId: `doc-${i}`,
+      name: `doc-${i}.pdf`,
+      sha256,
+    })),
+  });
+}
+
+/** True when `mock` was ever called with `table` as its first argument. */
+function calledWithTable(mock: ReturnType<typeof vi.fn>, table: string): boolean {
+  return mock.mock.calls.some((call) => call[0] === table);
+}
 
 describe('POST /webhooks/docusign', () => {
   it('returns 503 when HMAC secret is not configured and integration has no keys', async () => {
@@ -526,12 +560,17 @@ describe('POST /webhooks/docusign', () => {
 
     expect(first.status).toBe(202);
     expect(retry.status).toBe(200);
+    // docusign-bilateral-2026-08 / migration 0424: nonce writes are now
+    // tenant-scoped by account_id — see the dedicated "tenant-scopes the
+    // nonce write" test above for the focused assertion on that field alone.
     expect(firstNonce.insert).toHaveBeenCalledWith({
+      account_id: 'acct-1',
       envelope_id: 'env-1',
       event_id: 'envelope-completed',
       generated_at: expectedPayloadHash,
     });
     expect(secondNonce.insert).toHaveBeenCalledWith({
+      account_id: 'acct-1',
       envelope_id: 'env-1',
       event_id: 'envelope-completed',
       generated_at: expectedPayloadHash,
@@ -902,6 +941,221 @@ describe('POST /webhooks/docusign', () => {
 // DO log (invalid signature, processing-failure DLQ, ambiguity) and assert the
 // PII markers never appear in any captured log argument or thrown error.
 // ─────────────────────────────────────────────────────────────────────
+// CTO Decision Record (docusign-bilateral-2026-08) — R4 classification, R3
+// flag-gated inbound declared-hash anchoring, R5 orphan observability, and
+// the migration-0424 nonce tenant-scoping. This whole feature ships behind
+// ENABLE_DOCUSIGN_INBOUND (default false, mockConfig reset to false in
+// beforeEach above) and is not going live this cycle.
+describe('POST /webhooks/docusign — inbound classification (docusign-bilateral-2026-08)', () => {
+  it('classifies an envelope owned by the org\'s own connected account as outbound, even when the customrecipient marker claims inbound — and reaches the DB exactly as many times as before this feature (backward-compat)', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-outbound-marker', error: null });
+    submitJobMock.mockResolvedValueOnce('job-outbound-marker');
+
+    // No senderAccountId declared — the common case, and also the fast path:
+    // sendingAccountId falls back to accountId, which IS this integration's
+    // own account by construction (findIntegration matched on it), so
+    // classification never queries org_integrations/member_integrations
+    // again. The `?customrecipient` marker is present but must NOT change
+    // the outcome (marker cannot upgrade trust).
+    const body = validBody();
+    const res = await request(createApp())
+      .post('/webhooks/docusign?customrecipient=1')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ ok: true }); // no `inbound` key — identical shape to the pre-existing outbound response
+    // Exactly the pre-existing outbound call count: integration lookup,
+    // inherited-marker lookup, nonce insert. Zero extra classification
+    // queries for the fast path.
+    expect(dbFromMock).toHaveBeenCalledTimes(3);
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.anything());
+    expect(submitJobMock).toHaveBeenCalled();
+    // The marker/classification disagreement is logged, never acted on.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ envelopeId: 'env-1' }),
+      expect.stringContaining('classifying outbound'),
+    );
+  });
+
+  it('classifies an envelope owned by a DIFFERENT DocuSign account as inbound, and — flag OFF — acknowledges 200 with NO nonce consumed and NO durable write', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    // classifyDirection's own-account cross-check: neither table lists the
+    // foreign sending account among this org's connected accounts.
+    dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }])); // org_integrations
+    dbFromMock.mockReturnValueOnce(integrationLookup(null)); // member_integrations
+
+    const body = bodyWithSenderAccount({ senderAccountId: 'acct-FOREIGN' });
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, inbound: true, skipped: 'flag_disabled' });
+    // Exactly 4 DB calls — integration lookup, inherited-marker lookup, and
+    // the two own-account cross-check queries. Critically, NO 5th call: the
+    // nonce table is never touched.
+    expect(dbFromMock).toHaveBeenCalledTimes(4);
+    expect(calledWithTable(dbFromMock, 'docusign_webhook_nonces')).toBe(false);
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(submitJobMock).not.toHaveBeenCalled();
+  });
+
+  it('anchors via the declared-hash path when flag is ON: sets fingerprint_source=issuer_record_attestation via _direction metadata, and never engages the document-fetch job pathway', async () => {
+    mockConfig.enableDocusignInbound = true;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }])); // org_integrations (own)
+    dbFromMock.mockReturnValueOnce(integrationLookup(null)); // member_integrations (own)
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'artifact-inbound-1', error: null });
+
+    const body = bodyWithSenderAccount({ senderAccountId: 'acct-FOREIGN', envelopeId: 'env-inbound-1' });
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual({ ok: true, inbound: true });
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_connector_artifact', expect.objectContaining({
+      p_org_id: ORG_ID,
+      p_source: 'docusign',
+      p_external_ref: 'env-inbound-1',
+      p_external_revision: null,
+      p_fingerprint_sha256: VALID_DOC_SHA256, // the DECLARED hash — never a server-fetched one
+      p_metadata: expect.objectContaining({
+        _direction: 'inbound',
+        _sending_account_id: 'acct-FOREIGN',
+      }),
+    }));
+    // R3: the ONLY caller of the DocuSign document-fetch API is the
+    // `docusign.envelope_completed` job (docusign-envelope-completed.ts ->
+    // integrations/connectors/docusign.ts -> fetchDocusignCombinedDocument).
+    // This webhook module has no other path to that function, so proving the
+    // job was never submitted IS the proof the fetch API was never engaged.
+    expect(submitJobMock).not.toHaveBeenCalled();
+    // fingerprint_source is NOT set by this handler directly — it's set by
+    // connector-artifact-drain.ts's defaultMaterializeAnchor, keyed off the
+    // SAME `_direction: 'inbound'` marker asserted above (see that file's
+    // own dedicated test coverage for the anchor-insert assertion).
+  });
+
+  it('ambiguous/unresolvable (own-account lookup DB error) classifies inbound (fail-safe) — and orphan-drops with a DISTINCT signal, not a crash, when it also cannot resolve a usable declared hash', async () => {
+    mockConfig.enableDocusignInbound = true;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    // Own-account cross-check itself fails (DB error) — classification must
+    // fail SAFE to inbound rather than throw or silently trust outbound.
+    dbFromMock.mockReturnValueOnce(integrationLookup(null, { message: 'db unavailable' }));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+
+    // Two distinct declared hashes -> extractSingleDeclaredHash finds no
+    // SINGLE usable value -> compound-ambiguous case: orphan-drop, not a crash.
+    const body = bodyWithSenderAccount({
+      senderAccountId: 'acct-FOREIGN',
+      envelopeId: 'env-ambiguous-1',
+      sha256s: [VALID_DOC_SHA256, 'c'.repeat(64)],
+    });
+
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, inbound: true, skipped: 'no_usable_declared_hash' });
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(submitJobMock).not.toHaveBeenCalled();
+    expect(calledWithTable(dbFromMock, 'docusign_webhook_nonces')).toBe(false);
+    // R5: the distinct inbound-orphan-drop signal fired, carrying the
+    // classification's own failure reason through — not the generic
+    // "no_usable_declared_hash" default, proving the ambiguous-lookup reason
+    // actually propagates.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        docusign_inbound_orphan_drop: true,
+        envelopeId: 'env-ambiguous-1',
+        reason: 'own_account_lookup_failed',
+      }),
+      expect.any(String),
+    );
+  });
+
+  it('orphan-drops a foreign-account envelope with zero declared hashes (flag ON) without consuming a nonce', async () => {
+    mockConfig.enableDocusignInbound = true;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }]));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-no-hash',
+      accountId: 'acct-1',
+      status: 'completed',
+      sender: { email: 'legal@example.com', accountId: 'acct-FOREIGN' },
+      envelopeDocuments: [{ documentId: 'doc-1', name: 'doc.pdf' }], // no sha256
+    });
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, inbound: true, skipped: 'no_usable_declared_hash' });
+    expect(calledWithTable(dbFromMock, 'docusign_webhook_nonces')).toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ docusign_inbound_orphan_drop: true, reason: 'no_usable_declared_hash' }),
+      expect.any(String),
+    );
+  });
+
+  it('tenant-scopes the nonce write (migration 0424): the inserted row carries account_id alongside envelope_id/event_id/generated_at', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    const nonceInsertFn = vi.fn().mockResolvedValue({ data: null, error: null });
+    dbFromMock.mockReturnValueOnce({ insert: nonceInsertFn });
+    rpcMock.mockResolvedValueOnce({ data: 'evt-nonce-scope', error: null });
+    submitJobMock.mockResolvedValueOnce('job-nonce-scope');
+
+    const body = validBody();
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(202);
+    expect(nonceInsertFn).toHaveBeenCalledWith({
+      account_id: 'acct-1',
+      envelope_id: 'env-1',
+      event_id: 'envelope-completed',
+      generated_at: expect.stringMatching(/^[a-f0-9]{64}$/), // payloadHash fallback — no generatedDateTime in validBody()
+    });
+  });
+
+  it('duplicate inbound delivery (nonce 23505) returns 200 without re-anchoring', async () => {
+    mockConfig.enableDocusignInbound = true;
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(integrationLookup([{ account_id: 'acct-1' }]));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    dbFromMock.mockReturnValueOnce(nonceInsert({ code: '23505' }));
+
+    const body = bodyWithSenderAccount({ senderAccountId: 'acct-FOREIGN', envelopeId: 'env-dup-inbound' });
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, duplicate: true, inbound: true });
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('POST /webhooks/docusign — no raw-payload PII leak (DS-02, §1.6A)', () => {
   // Distinctive markers planted in the payload. If any surfaces in a log line
   // or an Error, the redaction contract is broken.

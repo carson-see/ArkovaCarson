@@ -165,6 +165,35 @@ describe('buildVerificationResult — fingerprint_rederivability pair (§1.5 / �
     );
   });
 
+  // docusign-bilateral-2026-08 (INBOUND declared-hash path, flag-off, not
+  // going live this cycle): an anchor materialized by the connector-artifact
+  // drain's inbound branch carries BOTH connector_source='docusign' (same as
+  // any DocuSign connector anchor) AND fingerprint_source=
+  // 'issuer_record_attestation' (set ONLY by that branch — see
+  // jobs/connector-artifact-drain.ts). That combination must downgrade the
+  // class to DECLARED_UNVERIFIED — Arkova never fetched or measured this
+  // document, so FETCH_TIME_SNAPSHOT would overclaim.
+  it('emits DECLARED_UNVERIFIED (not FETCH_TIME_SNAPSHOT) for an inbound declared-hash anchor', () => {
+    const result = buildVerificationResult(createAnchor({
+      connector_source: 'docusign',
+      fingerprint_source: 'issuer_record_attestation',
+    }));
+    expect(result.fingerprint_rederivability).toBe(FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED);
+    expect(result.fingerprint_rederivability_note).toBe(
+      FINGERPRINT_REDERIVABILITY_NOTE[FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED],
+    );
+    // Must never claim Arkova measured/fetched anything for this class.
+    expect(result.fingerprint_rederivability_note).not.toContain('Arkova computed its');
+  });
+
+  it('a connector-sourced anchor with fingerprint_source=document_bytes still gets FETCH_TIME_SNAPSHOT (only issuer_record_attestation downgrades)', () => {
+    const result = buildVerificationResult(createAnchor({
+      connector_source: 'docusign',
+      fingerprint_source: 'document_bytes',
+    }));
+    expect(result.fingerprint_rederivability).toBe(FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT);
+  });
+
   it('OMITS both fields (never null) for a client-uploaded / non-connector anchor — frozen schema §6', () => {
     const result = buildVerificationResult(createAnchor());
     expect('fingerprint_rederivability' in result).toBe(false);

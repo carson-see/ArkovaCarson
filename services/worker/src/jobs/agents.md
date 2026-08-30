@@ -2,6 +2,10 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-08-30 — docusign-bilateral-2026-08 (flag-off, not going live this cycle): `defaultMaterializeAnchor` sets `fingerprint_source` for inbound declared-hash rows
+
+`connector-artifact-drain.ts`'s `defaultMaterializeAnchor` (documented at length below) reads `row.metadata._direction` — written ONLY by the webhook classifier's new inbound branch (`api/v1/webhooks/docusign.ts`, see that folder's agents.md) — and, when it equals `'inbound'`, sets `anchors.fingerprint_source = 'issuer_record_attestation'` (migration 0376 CHECK enum) on the `AnchorInsertPayload`. Every other row (100% of traffic today: DocuSign outbound, Google Drive) omits the field entirely (`undefined`, never `'document_bytes'` — this file never fetches bytes itself either; that measurement, when it happens, is upstream in `docusign-envelope-completed.ts`, which this materializer has no visibility into). `AnchorInsertPayload` gained the field as `.optional()`; the `.strict()` schema still rejects anything else. See `constants/connectorFingerprint.ts` for the downstream `FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED` class this enables on the public verify response.
+
 ## 2026-08-15 — the `*Fetcher.ts` family cannot report failure as success any more (BUG-020/022/023)
 
 The 2026-08 connector side-rig force-ran 42 previously-untested ingestion routes

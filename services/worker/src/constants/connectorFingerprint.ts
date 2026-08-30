@@ -80,14 +80,27 @@ export function resolveConnectorFetchSource(
  *   from a connected third-party source at fetch time. Re-fetching the source
  *   document is NOT expected to reproduce it (source systems may regenerate
  *   the file per request).
+ * - `declared_unverified` (docusign-bilateral-2026-08, INBOUND / Recipient
+ *   Connect path — flag ENABLE_DOCUSIGN_INBOUND, default false, not going
+ *   live this cycle): the fingerprint was NEVER fetched or hashed by Arkova
+ *   at all. It is the per-document `sha256` DECLARED on a DocuSign Connect
+ *   notification for an envelope Arkova did not send (a different, foreign
+ *   DocuSign account owns it) — Arkova cannot call the document-fetch API for
+ *   a foreign-owned envelope (DocuSign 26.3 is locking down cross-account
+ *   fetch regardless), so there is no bytes-in-hand measurement to make. This
+ *   is strictly WEAKER evidence than `fetch_time_snapshot` (which is at least
+ *   a real Arkova-side hash of real bytes) and MUST NEVER be confused with it
+ *   — conflating the two would let a forged/self-signed "inbound" delivery
+ *   read as if Arkova had independently verified the document (the exact R-7
+ *   claims-gate failure mode this class exists to prevent).
  *
- * One value today, an enum by design (mirrors PROOF_AVAILABILITY): a future
- * class (e.g. for retained-bytes uploads) is additive per §1.8. The class is
- * only ever EMITTED when it is measured; absence means "no re-derivability
+ * An enum by design (mirrors PROOF_AVAILABILITY): additive per §1.8. A class
+ * is only ever EMITTED when it is measured; absence means "no re-derivability
  * statement", never "re-derivable".
  */
 export const FINGERPRINT_REDERIVABILITY = {
   FETCH_TIME_SNAPSHOT: 'fetch_time_snapshot',
+  DECLARED_UNVERIFIED: 'declared_unverified',
 } as const;
 
 export type FingerprintRederivability =
@@ -125,6 +138,20 @@ export const FINGERPRINT_REDERIVABILITY_NOTE: Record<FingerprintRederivability, 
     + 'altered; reproducing this fingerprint requires the exact bytes as '
     + 'originally retrieved. This differs from a client-uploaded document, where '
     + 'recomputing the fingerprint of the same retained file always reproduces it.',
+  [FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED]:
+    'Measured: nothing — Arkova did NOT retrieve or hash this document. This '
+    + 'record originates from a DocuSign notification describing an envelope '
+    + 'owned by a different, third-party DocuSign account, not one connected by '
+    + 'the securing organization. '
+    + 'Asserted: the fingerprint shown is the per-document checksum DocuSign '
+    + "declared in that notification — DocuSign's assertion, relayed by Arkova, "
+    + 'not a value Arkova independently computed. '
+    + 'Not asserted: that this fingerprint was measured from real document bytes '
+    + 'by Arkova, that Arkova has ever had access to the underlying document, or '
+    + 'that retrieving the document from any source would reproduce this value. '
+    + 'This is a materially weaker evidence class than a connector-fetched '
+    + 'record (Arkova performs no independent measurement here at all) and must '
+    + 'not be read as equivalent to one.',
 };
 
 /** The public field pair. Always produced together — see below. */
@@ -141,11 +168,56 @@ export interface FingerprintRederivabilityFields {
  * Callers must gate on `resolveConnectorFetchSource(...)` first; records that
  * did not measure a connector marker must OMIT both fields entirely (never
  * null — frozen schema, CLAUDE.md §6).
+ *
+ * `rederivabilityClass` defaults to FETCH_TIME_SNAPSHOT — every call site that
+ * existed before docusign-bilateral-2026-08 (the introduction of
+ * DECLARED_UNVERIFIED) keeps its exact prior behavior unchanged. Pass
+ * DECLARED_UNVERIFIED explicitly only for a record resolved via
+ * `resolveFingerprintRederivabilityClass` below as the INBOUND declared-hash
+ * path (never guess it from anything else — see that function).
  */
-export function connectorFingerprintRederivabilityFields(): FingerprintRederivabilityFields {
+export function connectorFingerprintRederivabilityFields(
+  rederivabilityClass: FingerprintRederivability = FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT,
+): FingerprintRederivabilityFields {
   return {
-    fingerprint_rederivability: FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT,
-    fingerprint_rederivability_note:
-      FINGERPRINT_REDERIVABILITY_NOTE[FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT],
+    fingerprint_rederivability: rederivabilityClass,
+    fingerprint_rederivability_note: FINGERPRINT_REDERIVABILITY_NOTE[rederivabilityClass],
   };
+}
+
+/**
+ * docusign-bilateral-2026-08: resolve WHICH re-derivability class applies,
+ * given the same connector-source marker AND the record's own
+ * `fingerprint_source` (migration 0376 R19 CHECK enum — already a real,
+ * independently-loaded `anchors` column, not something threaded through
+ * metadata for this purpose). Only `fingerprint_source ===
+ * 'issuer_record_attestation'` on an already-recognised connector-fetch
+ * source downgrades the class to DECLARED_UNVERIFIED — that value is set
+ * (only) by the connector-artifact drain's inbound declared-hash branch
+ * (jobs/connector-artifact-drain.ts `defaultMaterializeAnchor`), itself keyed
+ * off the webhook classifier's `_direction: 'inbound'` metadata marker
+ * (services/worker/src/api/v1/webhooks/docusign.ts). Every other case
+ * (including `document_bytes` or unclassified/null) keeps the existing
+ * FETCH_TIME_SNAPSHOT behavior — fail toward the class that claims LESS
+ * about what Arkova did only when the inbound marker is unambiguously
+ * present, never the reverse.
+ *
+ * Deliberately NOT keyed off raw `_direction` metadata directly: that would
+ * require every call site to load and pass full anchor metadata just for
+ * this one check, and — same "re-validate at emission" discipline as
+ * `isConnectorFetchSource` itself — `fingerprint_source` is the narrower,
+ * already-typed, already-CHECK-constrained value, so re-deriving from it here
+ * cannot be widened by an unrelated free-text metadata key.
+ *
+ * Returns null when `connectorSource` is not a recognised marker (mirrors
+ * `resolveConnectorFetchSource` — callers must still gate emission on that).
+ */
+export function resolveFingerprintRederivabilityClass(
+  connectorSource: unknown,
+  fingerprintSource: unknown,
+): FingerprintRederivability | null {
+  if (!isConnectorFetchSource(connectorSource)) return null;
+  return fingerprintSource === 'issuer_record_attestation'
+    ? FINGERPRINT_REDERIVABILITY.DECLARED_UNVERIFIED
+    : FINGERPRINT_REDERIVABILITY.FETCH_TIME_SNAPSHOT;
 }

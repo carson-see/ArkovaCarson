@@ -510,6 +510,74 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
     );
   });
 
+  // docusign-bilateral-2026-08 (SCRUM-3817/SCRUM-3818, feasibility spike):
+  // the INBOUND webhook path reuses the connector_artifact enqueue+drain
+  // pipeline directly (declared-hash anchoring, no rules engine involved),
+  // so it needs the webhook mount itself AND both connector_artifact stages
+  // — missing any one of the three must fail loud at boot. Mirrors the
+  // DS-05 guard immediately above.
+  it('rejects when ENABLE_DOCUSIGN_INBOUND=true but ENABLE_DOCUSIGN_WEBHOOK is off', async () => {
+    await expectConfigToReject({
+      ENABLE_DOCUSIGN_INBOUND: 'true',
+      ENABLE_DOCUSIGN_WEBHOOK: undefined,
+      ENABLE_CONNECTOR_ARTIFACT_ENQUEUE: 'true',
+      ENABLE_CONNECTOR_ARTIFACT_DRAIN: 'true',
+    });
+  });
+
+  it('rejects when ENABLE_DOCUSIGN_INBOUND=true but ENABLE_CONNECTOR_ARTIFACT_ENQUEUE is off', async () => {
+    await expectConfigToReject({
+      ENABLE_DOCUSIGN_INBOUND: 'true',
+      ENABLE_DOCUSIGN_WEBHOOK: 'true',
+      DOCUSIGN_CONNECT_HMAC_SECRET: 'test-docusign-hmac',
+      ENABLE_CONNECTOR_ARTIFACT_ENQUEUE: undefined,
+      ENABLE_CONNECTOR_ARTIFACT_DRAIN: 'true',
+    });
+  });
+
+  it('rejects when ENABLE_DOCUSIGN_INBOUND=true but ENABLE_CONNECTOR_ARTIFACT_DRAIN is off', async () => {
+    await expectConfigToReject({
+      ENABLE_DOCUSIGN_INBOUND: 'true',
+      ENABLE_DOCUSIGN_WEBHOOK: 'true',
+      DOCUSIGN_CONNECT_HMAC_SECRET: 'test-docusign-hmac',
+      ENABLE_CONNECTOR_ARTIFACT_ENQUEUE: 'true',
+      ENABLE_CONNECTOR_ARTIFACT_DRAIN: undefined,
+    });
+  });
+
+  it('rejects when ENABLE_DOCUSIGN_INBOUND=true and ALL prerequisites are off (multi-issue boot failure, still fails loud)', async () => {
+    await expectConfigToReject({
+      ENABLE_DOCUSIGN_INBOUND: 'true',
+      ENABLE_DOCUSIGN_WEBHOOK: undefined,
+      ENABLE_CONNECTOR_ARTIFACT_ENQUEUE: undefined,
+      ENABLE_CONNECTOR_ARTIFACT_DRAIN: undefined,
+    });
+  });
+
+  it('accepts ENABLE_DOCUSIGN_INBOUND=true when all three prerequisites are on', async () => {
+    await withConfig(
+      {
+        ENABLE_DOCUSIGN_INBOUND: 'true',
+        ENABLE_DOCUSIGN_WEBHOOK: 'true',
+        DOCUSIGN_CONNECT_HMAC_SECRET: 'test-docusign-hmac',
+        ENABLE_CONNECTOR_ARTIFACT_ENQUEUE: 'true',
+        ENABLE_CONNECTOR_ARTIFACT_DRAIN: 'true',
+      },
+      (mod) => {
+        expect(mod.config.enableDocusignInbound).toBe(true);
+        expect(mod.config.enableDocusignWebhook).toBe(true);
+        expect(mod.config.enableConnectorArtifactEnqueue).toBe(true);
+        expect(mod.config.enableConnectorArtifactDrain).toBe(true);
+      },
+    );
+  });
+
+  it('defaults ENABLE_DOCUSIGN_INBOUND to false (flag-off, not going live this cycle)', async () => {
+    await withConfig({}, (mod) => {
+      expect(mod.config.enableDocusignInbound).toBe(false);
+    });
+  });
+
   it('accepts production when Drive OAuth is fully configured', async () => {
     await withConfig(
       {

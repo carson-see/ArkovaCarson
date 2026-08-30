@@ -771,3 +771,33 @@ Prod `vzwyaatejekddvltxyye` has 118 ledger rows, head `0419`, with a genuine gap
 |---|---|---|---|
 | `credits-2442` | `gsluatcqhwwynxpsidjy` | `0420` | PR #2442 — 48 h T3 clock RUNNING from 2026-08-29T15:10:53Z |
 | `cleanup-2335` | `bxgybbxkhuxwtgkgkwpe` | `0417` | PR #2335 — wired + `clean_mirror`, clock NOT started (driver blocker recorded in `docs/staging/cleanup-2335-2026-08-29/`) |
+
+## Recent migrations (branch feat/docusign-inbound-recipient-connect)
+
+Titled by branch, not PR number: written before this branch's PR existed. Unique
+per `scripts/ci/check-agents-md-migration-collision.ts` (no other block in this
+file uses this branch name).
+
+### `0424` claimed — `0424_docusign_webhook_nonces_tenant_scope.sql`
+
+Re-derived 2026-08-29 per the next-free rule: `git log --all --diff-filter=A -- 'supabase/migrations/0*.sql'`
+over every fetched ref tops out at `0423` (`fix/docusign-metadata-key-write-authority`,
+PR #2472 — the DocuSign metadata key write-authority guard trigger this same
+epic's PR-1 relies on). The `0421`/`0422` reservations two sections above and
+the `credits-2442` (`0420`) / `cleanup-2335` (`0417`) rig rows immediately
+above are all `<= 0423`, so none of them are the head. `0424` is therefore the
+next genuinely-free prefix as of this derivation — **next author, re-derive,
+do not trust this line**, per this file's own standing rule (same caveat every
+other reservation in this section carries).
+
+Adds `account_id` to `docusign_webhook_nonces`' uniqueness key (tenant-scopes
+DocuSign Connect webhook replay protection — see the file header for the full
+rationale). Additive nullable column, no backfill (§1.5), plain `ADD
+CONSTRAINT` (table is small, swept every 14 days — not a hot-table two-phase
+lock situation). Part of the docusign-bilateral-2026-08 feasibility spike
+(SCRUM-3817/SCRUM-3818): the whole feature ships behind `ENABLE_DOCUSIGN_INBOUND`
+(default false) and is NOT going live this cycle, but this migration itself is
+a real, always-applicable tenant-isolation hardening independent of the flag —
+it does not touch existing rows' behavior and is safe to soak/apply on its own
+schedule. Tier T3 (migration). **Next author claims `0425` — re-derive, do not
+trust this line.**
