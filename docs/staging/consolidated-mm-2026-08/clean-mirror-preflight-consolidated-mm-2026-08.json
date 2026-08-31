@@ -1,0 +1,44 @@
+{
+  "environment_type": "clean_mirror",
+  "staging_project_ref": "krhegsltjkazuomynbww",
+  "timestamp": "2026-08-30T15:51:21.385Z",
+  "checks": [
+    {
+      "name": "staging_only_rows",
+      "passed": true
+    },
+    {
+      "name": "duplicate_names",
+      "passed": true
+    },
+    {
+      "name": "duplicate_versions",
+      "passed": true
+    },
+    {
+      "name": "known_artifacts",
+      "passed": true
+    },
+    {
+      "name": "submitted_anchors",
+      "passed": true
+    },
+    {
+      "name": "prod_divergence",
+      "passed": true
+    },
+    {
+      "name": "org_topology",
+      "passed": true
+    },
+    {
+      "name": "prod_facts",
+      "passed": true
+    }
+  ],
+  "artifact_rows": [],
+  "missing_from_staging": [
+    "0425"
+  ],
+  "extra_vs_prod": []
+}

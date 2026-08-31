@@ -55,6 +55,8 @@ When the carve-out applies, the workflow is just `git commit` + `git push origin
 ### 10. MCP `apply_migration` ledger reconciliation
 The Supabase MCP `apply_migration` records a timestamp-style `version` in `supabase_migrations.schema_migrations`, but the migration-drift gate's "PR numeric ledger drift" check requires the migration's **NUMERIC prefix** (`NNNN`) present in prod. After applying a PR-owned numeric migration via MCP, reconcile in-session: `UPDATE supabase_migrations.schema_migrations SET version='NNNN' WHERE name='<file>' AND version !~ '^[0-9]{4}$';` (operator-approved per §1.11A — this is the **one expected ledger write**, not a `migration repair`). Then confirm `list_migrations` shows the numeric head **before** declaring the migration done.
 
+**Ordering is hook-enforced (2026-08-30).** A prod `apply_migration` is blocked by `.claude/hooks/check-prod-migration-apply.sh` unless the migration's `NNNN` prefix is EITHER already on `origin/main` OR already listed in `exemptPrefixes` in `scripts/ci/snapshots/ledger-numeric-exemptions.json`. Migrate-before-merge is still legal — the drift gate requires it — but **the apply and its exemption land in the same motion**. Applying without either creates an orphan ledger row, and because `Check supabase/migrations vs prod` is a Mergify queue gate, that reds every migration-touching PR at once: `0401`/`0402` (08-11), `0418`/`0419` (08-27), `0425` (08-30). Deliberate exception: `ARKOVA_ALLOW_UNRECONCILED_PROD_APPLY=1`, with the reason recorded. Scope, stated honestly: `apply_migration` against the prod ref only — DDL smuggled through `execute_sql` is NOT covered and remains on the operator.
+
 ---
 
 ## 0.1. READ FIRST — EVERY SESSION
@@ -80,7 +82,7 @@ Do NOT read pre-2026-04-21 CLAUDE.md iterations — historical only.
 
 **Memory feedback rules CI-enforced (R0-7 / SCRUM-1253):** `memory/feedback_*.md` rules are no longer advisory — each one with a parsable detector ships as a CI script under `scripts/ci/feedback-rules/`. The `feedback-rules` CI job runs the orchestrator on every PR. See `memory/README.md` for the index and override labels.
 
-The repo `memory/` corpus is the **durable, versioned** copy of these rules and the only one CI runners, cloud agents, fresh clones, and teammates can read. A session's local assistant memory is an operational cache, not the source of truth — if a rule exists only there, it does not exist. `memory/README.md` is the index; `scripts/ci/check-doc-pointers.ts` fails CI if this file, `AGENTS.md`, a skill, or a hook cites a path that does not resolve.
+The repo `memory/` corpus is the **durable, versioned** copy of these rules and the only one CI runners, cloud agents, fresh clones, and teammates can read. A session's local assistant memory is an operational cache, not the source of truth — if a rule exists only there, it does not exist. `memory/README.md` is the index; `scripts/ci/check-doc-pointers.ts` fails CI if a path cited by the required-reading set does not resolve — this file, `AGENTS.md`, every skill, every hook, every `memory/**` file, **every nested `agents.md`** (§0.1 step 5 makes them required reading), and the **comment lines** of `.github/workflows/*.yml`. Dated narrative is deliberately out of scope (`HANDOFF.md`, `docs/**` runbooks and soak evidence): a path cited there may be legitimately dead today. A path that is absent on purpose goes in `scripts/ci/snapshots/doc-pointer-exemptions.json` with a reason.
 
 ---
 

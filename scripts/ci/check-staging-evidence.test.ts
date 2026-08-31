@@ -158,9 +158,16 @@ describe('check-staging-evidence', () => {
   describe('TIER_SPECS', () => {
     it('pins the current minimum soak windows', () => {
       expect(TIER_SPECS.T0.soakHours).toBe(0);
-      expect(TIER_SPECS.T1.soakHours).toBe(0);
+      // CLAUDE.md §1.12: the T1 row is "2 h soak" — the gate must match the
+      // constitution, not the other way around (merged #2241/#2264 finding).
+      expect(TIER_SPECS.T1.soakHours).toBe(2);
       expect(TIER_SPECS.T2.soakHours).toBe(12);
       expect(TIER_SPECS.T3.soakHours).toBe(48);
+    });
+
+    it('requires the soak window fields for T1 (§1.12: "soak start/end" is T1 evidence)', () => {
+      expect(TIER_SPECS.T1.requiredFields).toContain('Soak start:');
+      expect(TIER_SPECS.T1.requiredFields).toContain('Soak end:');
     });
   });
 
@@ -1434,22 +1441,13 @@ describe('check-staging-evidence', () => {
         t2Files,
       ],
       [
-        'T1 exact-head evidence with optional soak timestamps',
+        'complete T1 at exactly 2 hours',
         completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
         t1Files,
       ],
       [
-        'T1 exact-head evidence with no soak window',
-        `## Staging Soak Evidence
-- Tier: T1
-- PR head SHA: 1234567890abcdef1234567890abcdef12345678
-- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
-- Health/smoke result: health ok, targeted smoke green
-- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
-- Rollback plan: revert this PR and redeploy previous worker image
-- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
-- Human approver: Carson
-`,
+        'T1 one minute above 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:01 UTC'),
         t1Files,
       ],
     ])('passes %s', (_label, body, files) => {
@@ -1490,6 +1488,50 @@ describe('check-staging-evidence', () => {
         completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 13:59 UTC'),
         t2Files,
         /Soak end must be after Soak start/,
+      ],
+      // CLAUDE.md §1.12 T1 row is "2 h soak" with "soak start/end" evidence.
+      // TIER_SPECS.T1.soakHours was 0 with no window fields — the gate and the
+      // constitution disagreed, and every T1 merge repeated the gap (merged
+      // #2241/#2264 finding). A T1 body with no soak window must now fail…
+      [
+        'T1 with no soak window (missing Soak start/end fields)',
+        `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- Health/smoke result: health ok, targeted smoke green
+- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
+- Rollback plan: revert this PR and redeploy previous worker image
+- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
+- Human approver: Carson
+`,
+        t1Files,
+        /missing required fields for T1: .*`Soak start:`, `Soak end:`/,
+      ],
+      // …and a declared window shorter than 2h must fail the duration floor.
+      [
+        'T1 shorter than 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:00 UTC'),
+        t1Files,
+        /below the 2h minimum/,
+      ],
+      [
+        'T1 one minute below 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:59 UTC'),
+        t1Files,
+        /below the 2h minimum/,
+      ],
+      [
+        'T1 end equal to start',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 14:00 UTC'),
+        t1Files,
+        /Soak end must be after Soak start/,
+      ],
+      [
+        'T1 non-parseable soak timestamps',
+        completeT1Body('N/A', 'N/A'),
+        t1Files,
+        /could not parse/i,
       ],
     ])('fails %s', (_label, body, files, pattern) => {
       expectEvidenceFails(body, files, pattern);
