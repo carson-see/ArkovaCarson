@@ -15,6 +15,13 @@
  *
  * Privacy: attestation_statement is private (per migration 0314 COMMENT)
  *   and is NEVER included in the verification response.
+ *
+ * Disclosure: migration 0314 grants NO anon SELECT on the table and ships no
+ *   `legally_binding_attestations_select_public_anchored` policy — both
+ *   absences are pinned by src/tests/legal-attestations-migration.test.ts. Its
+ *   table COMMENT requires public verification to be "API-mediated and
+ *   redacted". This module is that mediation, and
+ *   PUBLICLY_DISCLOSABLE_ATTESTATION_STATUSES is that redaction.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -27,6 +34,38 @@ const router = Router();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
+
+// ── Public-disclosure gate ─────────────────────────────────────────
+
+/**
+ * The only `legally_binding_attestations.status` values this PUBLIC, ANONYMOUS
+ * endpoint may disclose.
+ *
+ * The 0314 state machine is draft → pending_notarization → notarized →
+ * anchored, with `requires_review` reachable as a flag from any non-anchored
+ * state. Every row carries `subject_name` (a natural person) plus notary name,
+ * commission state and commission number.
+ *
+ *   - `draft`                 the org has not submitted it
+ *   - `pending_notarization`  in flight at the notary, nothing is settled
+ *   - `requires_review`       flagged; disclosing a flagged legal attestation
+ *                             is worse than disclosing none
+ *
+ * None of those three are published by the attesting org, so none are
+ * disclosable. `notarized` (notarization complete, not yet on chain) and
+ * `anchored` (terminal and immutable) are. `verified` stays true only for
+ * `anchored`, so a `notarized` row is reported honestly rather than
+ * over-claimed (§1.5 / R-7).
+ */
+export const PUBLICLY_DISCLOSABLE_ATTESTATION_STATUSES: readonly string[] = Object.freeze([
+  'notarized',
+  'anchored',
+]);
+
+/** Fails closed: anything not explicitly listed above is withheld. */
+export function isPubliclyDisclosable(status: string | null | undefined): boolean {
+  return status != null && PUBLICLY_DISCLOSABLE_ATTESTATION_STATUSES.includes(status);
+}
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -177,10 +216,15 @@ export function buildAttestationVerificationResult(
 
 // ── Default DB-backed lookup ───────────────────────────────────────
 
-const defaultLookup: AttestationLookup = {
+export const defaultLookup: AttestationLookup = {
   async lookupByPublicId(attestationId: string): Promise<LegallyBindingAttestationRow | null> {
     // Join legally_binding_attestations with organizations (for verified status)
     // and anchors (for chain proof) in one query.
+    //
+    // The status filter is applied in the query, not after the fetch, so an
+    // unpublished row's subject_name and notary commission details are never
+    // loaded into worker memory on an anonymous request. The route re-checks
+    // with isPubliclyDisclosable() as defence in depth.
     const { data, error } = await dbAny
       .from('legally_binding_attestations')
       .select(
@@ -192,12 +236,20 @@ const defaultLookup: AttestationLookup = {
         'attesting_org_id, anchor_id',
       )
       .eq('attestation_id', attestationId)
+      .in('status', PUBLICLY_DISCLOSABLE_ATTESTATION_STATUSES)
       .maybeSingle();
 
-    if (error || !data) {
-      if (error) {
-        logger.error({ error, attestationId }, 'Legally binding attestation lookup failed');
-      }
+    // A failed query is NOT a missing attestation. Collapsing the two would
+    // report a statement timeout, an RLS denial or a PostgREST schema-cache
+    // miss to the caller as a confident 404 and leave no operator signal —
+    // the failure class in memory/project_hollow_200_statement_timeout_swallow.md.
+    // Throw so the route returns 500.
+    if (error) {
+      logger.error({ error, attestationId }, 'Legally binding attestation lookup failed');
+      throw new Error('Legally binding attestation lookup failed');
+    }
+
+    if (!data) {
       return null;
     }
 
@@ -278,6 +330,16 @@ function logAttestationVerificationAudit(
 router.get('/:attestationId', async (req: Request<{ attestationId: string }>, res: Response) => {
   const { attestationId } = req.params;
 
+  // Do NOT widen this pattern to admit ids that 404 here anyway.
+  //
+  // `legally_binding_attestations.attestation_id` is CHECK-constrained to
+  // 'ARK-ATT-%' by migration 0314. The separate `attestations` table mints
+  // `ARK-{org_prefix}-{type_code}-{unique}` ids (api/v1/attestations.ts), e.g.
+  // ARK-ARK-VER-196485 — those are valid ids for a DIFFERENT resource, served
+  // by GET /api/v1/attestations/:publicId. Rejecting them with a 400 that names
+  // the expected prefix points the caller at the right endpoint; relaxing the
+  // pattern would only convert that into an unresolvable 404 while widening the
+  // set of strings that reach the database.
   if (!attestationId || !/^ARK-ATT-[A-Za-z0-9_-]{1,64}$/.test(attestationId)) {
     res.status(400).json({
       verified: false,
@@ -292,7 +354,11 @@ router.get('/:attestationId', async (req: Request<{ attestationId: string }>, re
 
     const lba = await lookup.lookupByPublicId(attestationId);
 
-    if (!lba) {
+    // Withheld and missing are the same answer on the wire. An unpublished
+    // attestation must not be distinguishable from a nonexistent one, or this
+    // endpoint becomes an existence oracle for drafts. defaultLookup already
+    // filters in SQL; this re-check covers any other AttestationLookup.
+    if (!lba || !isPubliclyDisclosable(lba.status)) {
       res.status(404).json({
         verified: false,
         error: 'Attestation not found',
@@ -302,7 +368,9 @@ router.get('/:attestationId', async (req: Request<{ attestationId: string }>, re
 
     const result = buildAttestationVerificationResult(lba);
 
-    // Fire-and-forget audit
+    // Fire-and-forget audit. Deliberately only on a disclosed hit: auditing
+    // 404s would let an anonymous caller append unbounded audit_events rows by
+    // walking id space, and would log verification "hits" that never happened.
     logAttestationVerificationAudit(req, attestationId, result);
 
     res.json(result);

@@ -692,6 +692,9 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 - Public, anonymous-allowed. Uses `ARK-ATT-*` public IDs only. Separate from `GET /api/v1/attestations/:publicId` which handles general `attestations` table.
 - Mounted BEFORE the generic `/verify` catch-all in router.ts to avoid route shadowing.
 - Response never includes `attestation_statement` (private per migration 0314 COMMENT).
+- **Status disclosure gate (2026-08-30):** only `notarized` and `anchored` rows are disclosed. `draft` / `pending_notarization` / `requires_review` carry `subject_name` and notary commission details for unpublished work and return the same 404 body as a missing row. Filtered in SQL by `defaultLookup` and re-checked in the route via `isPubliclyDisclosable()`. Migration 0314 grants no anon `SELECT` and its COMMENT requires public verification to be "API-mediated and **redacted**" — this gate is the redaction half.
+- **Do not repoint at `attestations`.** The table is a real but incomplete feature: 0 prod rows, an UPDATE-only writer in `jobs/docusign-notarization-completed.ts`, and no INSERT path anywhere. `ARK-ARK-VER-*` ids belong to `attestations`; a 400 that names the `ARK-ATT-` prefix is correct behaviour, not a bug.
+- A failed lookup 500s (never 404s) — `defaultLookup` throws on query error. No audit row is written on 400/404.
 
 ## 2026-05-31 CPE compliance-log export (SCRUM-1848 / SCRUM-1859 + SCRUM-1860)
 

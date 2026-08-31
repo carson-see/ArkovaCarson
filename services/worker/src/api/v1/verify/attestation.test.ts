@@ -7,11 +7,22 @@
  * Tests follow TDD red-green-refactor per CLAUDE.md rule 1.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 
-// Mock db and logger to avoid config validation at import time
+// Mock db and logger to avoid config validation at import time.
+// `from()` must return a usable chain: the route's fire-and-forget audit insert
+// calls `db.from('audit_events').insert(...).then(...).catch(...)` synchronously,
+// so a bare `vi.fn()` would throw inside the handler and turn every 200 into a 500.
+const mockAuditInsert = vi.hoisted(() =>
+  vi.fn((_row: Record<string, unknown>) => Promise.resolve({ error: null })),
+);
+const mockFrom = vi.hoisted(() => vi.fn(() => ({ insert: mockAuditInsert })));
+
 vi.mock('../../../utils/db.js', () => ({
-  db: { from: vi.fn() },
+  db: { from: mockFrom },
 }));
 
 vi.mock('../../../utils/logger.js', () => ({
@@ -26,7 +37,13 @@ vi.mock('../../../config.js', () => ({
 }));
 
 import {
+  attestationVerifyRouter,
   buildAttestationVerificationResult,
+  defaultLookup,
+  isPubliclyDisclosable,
+  PUBLICLY_DISCLOSABLE_ATTESTATION_STATUSES,
+  type AttestationLookup,
+  type AttestationVerificationResult,
   type LegallyBindingAttestationRow,
 } from './attestation.js';
 
@@ -250,6 +267,313 @@ describe('buildAttestationVerificationResult', () => {
     const result = buildAttestationVerificationResult(lba);
 
     expect(result.verify_url).toBe('https://app.arkova.ai/verify/attestation/ARK-ATT-ABC123');
+  });
+});
+
+// ── Public-disclosure gate (SCRUM-1873 / migration 0314 redaction contract) ──
+
+describe('isPubliclyDisclosable', () => {
+  it('discloses exactly the two published states', () => {
+    expect(PUBLICLY_DISCLOSABLE_ATTESTATION_STATUSES).toEqual(['notarized', 'anchored']);
+    expect(isPubliclyDisclosable('notarized')).toBe(true);
+    expect(isPubliclyDisclosable('anchored')).toBe(true);
+  });
+
+  it('withholds in-flight and flagged states', () => {
+    // draft = never submitted, pending_notarization = in flight at the notary,
+    // requires_review = flagged. None of these are published by the org, and all
+    // three carry subject_name + notary commission detail.
+    expect(isPubliclyDisclosable('draft')).toBe(false);
+    expect(isPubliclyDisclosable('pending_notarization')).toBe(false);
+    expect(isPubliclyDisclosable('requires_review')).toBe(false);
+  });
+
+  it('fails closed on unknown, empty, null and undefined status', () => {
+    expect(isPubliclyDisclosable('some_future_status')).toBe(false);
+    expect(isPubliclyDisclosable('')).toBe(false);
+    expect(isPubliclyDisclosable(null)).toBe(false);
+    expect(isPubliclyDisclosable(undefined)).toBe(false);
+    // case-sensitive, matching the 0314 CHECK constraint
+    expect(isPubliclyDisclosable('ANCHORED')).toBe(false);
+  });
+});
+
+// ── Route behaviour ─────────────────────────────────────────
+
+interface RouteResponse {
+  status: number;
+  body: Record<string, never> | Record<string, unknown>;
+}
+
+/**
+ * Mount the real router behind an ephemeral HTTP server and issue a real
+ * request, so status codes and JSON bodies are exercised end-to-end.
+ *
+ * `supertest` is a worker-only devDependency and does not resolve from a git
+ * worktree (no per-worktree node_modules), so this uses `express` + node's
+ * built-in `fetch` instead of adding a dependency.
+ */
+async function callRoute(lookup: AttestationLookup, path: string): Promise<RouteResponse> {
+  const app = express();
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    (req as unknown as { _testLookup?: AttestationLookup })._testLookup = lookup;
+    next();
+  });
+  app.use('/api/v1/verify/attestation', attestationVerifyRouter);
+
+  const server = createServer(app);
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', resolve);
+  });
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const res = await fetch(`http://127.0.0.1:${port}${path}`);
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    return { status: res.status, body };
+  } finally {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  }
+}
+
+function lookupReturning(row: LegallyBindingAttestationRow | null): AttestationLookup {
+  return { lookupByPublicId: () => Promise.resolve(row) };
+}
+
+describe('GET /api/v1/verify/attestation/:attestationId', () => {
+  beforeEach(() => {
+    mockAuditInsert.mockClear();
+    mockFrom.mockClear();
+  });
+
+  it('200s and discloses an anchored attestation', async () => {
+    const res = await callRoute(
+      lookupReturning(createLba({ status: 'anchored' })),
+      '/api/v1/verify/attestation/ARK-ATT-ABC123',
+    );
+
+    expect(res.status).toBe(200);
+    const result = res.body as unknown as AttestationVerificationResult;
+    expect(result.verified).toBe(true);
+    expect(result.attestation.public_id).toBe('ARK-ATT-ABC123');
+    expect(result.attestation.subject.name).toBe('Jane Doe');
+  });
+
+  it('200s and discloses a notarized (not yet anchored) attestation', async () => {
+    const res = await callRoute(
+      lookupReturning(createLba({ status: 'notarized' })),
+      '/api/v1/verify/attestation/ARK-ATT-ABC123',
+    );
+
+    expect(res.status).toBe(200);
+    const result = res.body as unknown as AttestationVerificationResult;
+    // Honest: the notarization is complete but nothing is on chain yet.
+    expect(result.verified).toBe(false);
+    expect(result.attestation.status).toBe('notarized');
+  });
+
+  // ── The leak this endpoint shipped with ────────────────────
+  // Migration 0314 grants NO anon SELECT and ships no `select_public_anchored`
+  // policy (both absences pinned by src/tests/legal-attestations-migration.test.ts),
+  // and its table COMMENT requires public verification to be "API-mediated and
+  // redacted". These cases are the redaction half of that contract.
+
+  it.each(['draft', 'pending_notarization', 'requires_review'])(
+    '404s an unpublished %s attestation and leaks none of its detail',
+    async (status) => {
+      const res = await callRoute(
+        lookupReturning(createLba({ status })),
+        '/api/v1/verify/attestation/ARK-ATT-ABC123',
+      );
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ verified: false, error: 'Attestation not found' });
+
+      // No subject PII, no notary commission detail, no status oracle.
+      const body = JSON.stringify(res.body);
+      expect(body).not.toContain('Jane Doe');
+      expect(body).not.toContain('John Notary');
+      expect(body).not.toContain('N-12345');
+      expect(body).not.toContain('Acme Legal Inc.');
+      expect(body).not.toContain(status);
+    },
+  );
+
+  it('404s a row whose status is outside the CHECK constraint (fails closed)', async () => {
+    const res = await callRoute(
+      lookupReturning(createLba({ status: 'some_future_status' })),
+      '/api/v1/verify/attestation/ARK-ATT-ABC123',
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('404s when no row exists', async () => {
+    const res = await callRoute(
+      lookupReturning(null),
+      '/api/v1/verify/attestation/ARK-ATT-ABC123',
+    );
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ verified: false, error: 'Attestation not found' });
+  });
+
+  // ── Hollow-404 regression guard ────────────────────────────
+  // A failed query must not be reported as "not found". See
+  // memory/project_hollow_200_statement_timeout_swallow.md for the class.
+
+  it('500s (not 404s) when the lookup itself fails', async () => {
+    const res = await callRoute(
+      { lookupByPublicId: () => Promise.reject(new Error('statement timeout')) },
+      '/api/v1/verify/attestation/ARK-ATT-ABC123',
+    );
+
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ verified: false, error: 'Internal server error' });
+    // and the underlying cause is never echoed to an anonymous caller
+    expect(JSON.stringify(res.body)).not.toContain('statement timeout');
+  });
+
+  // ── ID namespace guard (K2) ────────────────────────────────
+  // `attestations` public_ids are `ARK-{org_prefix}-{type_code}-{unique}`
+  // (services/worker/src/api/v1/attestations.ts:404). They are valid IDs for a
+  // DIFFERENT resource, served by GET /api/v1/attestations/:publicId. This
+  // endpoint must keep rejecting them at the door rather than widening its
+  // pattern and turning a precise 400 into an unresolvable 404.
+
+  it.each([
+    'ARK-ARK-VER-196485',
+    'ARK-ARKOVA-VER-A1B2C3',
+    'ARK-IND-END-9F2C1A',
+  ])('400s %s — an attestations-table id, not an ARK-ATT id', async (foreignId) => {
+    const res = await callRoute(
+      lookupReturning(createLba()),
+      `/api/v1/verify/attestation/${foreignId}`,
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('ARK-ATT-');
+  });
+
+  it('400s ids with characters outside the accepted alphabet', async () => {
+    const spaced = await callRoute(
+      lookupReturning(createLba()),
+      '/api/v1/verify/attestation/ARK-ATT-abc%20def',
+    );
+    expect(spaced.status).toBe(400);
+
+    const dotted = await callRoute(
+      lookupReturning(createLba()),
+      '/api/v1/verify/attestation/ARK-ATT-a.b',
+    );
+    expect(dotted.status).toBe(400);
+  });
+
+  // ── Audit behaviour (K4) ───────────────────────────────────
+
+  it('writes exactly one audit row for a disclosed attestation', async () => {
+    const res = await callRoute(
+      lookupReturning(createLba({ status: 'anchored' })),
+      '/api/v1/verify/attestation/ARK-ATT-ABC123',
+    );
+    expect(res.status).toBe(200);
+
+    expect(mockFrom).toHaveBeenCalledWith('audit_events');
+    expect(mockAuditInsert).toHaveBeenCalledTimes(1);
+    const row = mockAuditInsert.mock.calls[0][0] as Record<string, unknown>;
+    expect(row.event_type).toBe('ATTESTATION_VERIFICATION_QUERIED');
+    expect(row.target_id).toBe('ARK-ATT-ABC123');
+    // details is a `text` column (audit_events.details: string | null) — stringified
+    expect(typeof row.details).toBe('string');
+    // the withheld/private fields never reach the audit trail either
+    expect(row.details as string).not.toContain('Jane Doe');
+    expect(row.details as string).not.toContain('attestation_statement');
+  });
+
+  it.each([
+    ['a withheld draft', 'ARK-ATT-ABC123', 'draft', 404],
+    ['an invalid id', 'ARK-ARK-VER-196485', 'anchored', 400],
+  ])('writes no audit row for %s', async (_label, id, status, expected) => {
+    const res = await callRoute(
+      lookupReturning(createLba({ status: status as string })),
+      `/api/v1/verify/attestation/${id as string}`,
+    );
+    expect(res.status).toBe(expected as number);
+    expect(mockAuditInsert).not.toHaveBeenCalled();
+  });
+
+  it('writes no audit row when the row does not exist', async () => {
+    const res = await callRoute(
+      lookupReturning(null),
+      '/api/v1/verify/attestation/ARK-ATT-ABC123',
+    );
+    expect(res.status).toBe(404);
+    // An anonymous caller must not be able to append an unbounded number of
+    // audit_events rows by hammering ids that do not resolve.
+    expect(mockAuditInsert).not.toHaveBeenCalled();
+  });
+});
+
+// ── Default DB-backed lookup ────────────────────────────────
+
+describe('defaultLookup', () => {
+  /** Minimal PostgREST-shaped chain recorder. */
+  function chainFor(result: { data: unknown; error: unknown }) {
+    const calls: { eq: unknown[][]; in: unknown[][] } = { eq: [], in: [] };
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn((...args: unknown[]) => {
+      calls.eq.push(args);
+      return chain;
+    });
+    chain.in = vi.fn((...args: unknown[]) => {
+      calls.in.push(args);
+      return chain;
+    });
+    chain.maybeSingle = vi.fn(() => Promise.resolve(result));
+    return { chain, calls };
+  }
+
+  beforeEach(() => {
+    mockFrom.mockReset();
+  });
+
+  it('constrains the query to publicly disclosable statuses (defence in depth)', async () => {
+    const { chain, calls } = chainFor({ data: null, error: null });
+    mockFrom.mockReturnValue(chain as never);
+
+    await defaultLookup.lookupByPublicId('ARK-ATT-ABC123');
+
+    expect(mockFrom).toHaveBeenCalledWith('legally_binding_attestations');
+    expect(calls.eq[0]).toEqual(['attestation_id', 'ARK-ATT-ABC123']);
+    // The withheld rows must never be loaded into worker memory at all.
+    expect(calls.in[0]).toEqual(['status', ['notarized', 'anchored']]);
+  });
+
+  it('never selects attestation_statement (migration 0314 marks it private)', async () => {
+    const { chain } = chainFor({ data: null, error: null });
+    mockFrom.mockReturnValue(chain as never);
+
+    await defaultLookup.lookupByPublicId('ARK-ATT-ABC123');
+
+    const selected = (chain.select as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(selected).not.toContain('attestation_statement');
+  });
+
+  it('throws on a query error instead of masquerading as not-found', async () => {
+    const { chain } = chainFor({
+      data: null,
+      error: { message: 'canceling statement due to statement timeout' },
+    });
+    mockFrom.mockReturnValue(chain as never);
+
+    await expect(defaultLookup.lookupByPublicId('ARK-ATT-ABC123')).rejects.toThrow();
+  });
+
+  it('returns null (a real 404) when the query succeeds with no row', async () => {
+    const { chain } = chainFor({ data: null, error: null });
+    mockFrom.mockReturnValue(chain as never);
+
+    await expect(defaultLookup.lookupByPublicId('ARK-ATT-ABC123')).resolves.toBeNull();
   });
 });
 
