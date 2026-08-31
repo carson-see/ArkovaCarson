@@ -1,6 +1,24 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
-_Last updated: 2026-08-23 (SCRUM-3479: Checkr + ATS nonce release on post-nonce 5xx)_
+_Last updated: 2026-08-30 (`adobe-sign.ts`: DLQ the orphaned-webhook_id path)_
+
+## 2026-08-30 — `adobe-sign.ts` orphaned-webhook_id path now DLQs (companion to migration `0426`)
+
+Migration `0426` (PR #2519) adds `org_integrations.webhook_id`, fixing the `42703` SQL error
+`findIntegration()` has always hit. **That alone does not restore Adobe Sign functionality**: no
+`adobe-sign-oauth.ts` connect flow exists anywhere in this repo (unlike `docusign-oauth.ts` /
+`drive-oauth.ts` in `api/v1/integrations/`), so nothing writes `org_integrations.webhook_id` for a
+real integration. Every real delivery therefore still hits the `if (!integration)` branch — same
+as before the migration, just without the SQL error. Before `0426`, that branch's SQL error was
+caught and DLQ'd (a record existed); after `0426`, the same branch resolves cleanly to `null` and
+was responding `200 {orphaned:true}` with **no DLQ insert at all** — a silent regression from "loud
+failure, recorded" to "quiet failure, unrecorded." Per the "webhook_dlq row is not a mitigation"
+note two sections below: this is explicitly not a fix for the underlying gap (Adobe Sign is still
+non-functional until a connect flow lands), it only restores the pre-existing record-of-loss this
+folder already treats as the baseline expectation for every handler. Test:
+`describe('POST /webhooks/adobe-sign')` → `'orphaned webhook_id is recorded to the DLQ, not
+silently dropped'` in `adobe-sign.test.ts`. **A real fix still needs its own ticket**: an Adobe
+Sign OAuth/connect flow that populates `webhook_id` at integration-connect time.
 
 ## 2026-08-23 — SCRUM-3479 (AUDIT-0424-10): `checkr.ts` and `ats.ts` now release the replay nonce on post-nonce 5xx
 

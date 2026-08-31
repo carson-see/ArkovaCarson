@@ -334,6 +334,7 @@ Migration `0426` adds `org_integrations.webhook_id`, which the Adobe Sign webhoo
 `findIntegration()` has always queried but which never existed (found live during the
 `worker-webhook-runtime` T3 soak). Fixture rows seeded with `provider: 'adobe_sign'` previously
 left `webhook_id` unset, so no seeded environment could exercise the (now-fixed) lookup path.
-`seedOrgIntegrations()` now sets a deterministic `staging-adobe-webhook-<id>` value for
-`adobe_sign` rows only; every other provider still gets `null`, matching DocuSign's
-account_id-based resolution (`0306`).
+`seedOrgIntegrations()` now sets a `staging-adobe-webhook-<random-hex>` value for `adobe_sign`
+rows only (independent `randomBytes(8)`, matching every other synthetic-identifier field in this
+function rather than reusing the row's own `id`); every other provider still gets `null`,
+matching DocuSign's account_id-based resolution (`0306`).

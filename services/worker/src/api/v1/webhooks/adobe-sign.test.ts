@@ -135,6 +135,38 @@ describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {
     expect(res.body).toMatchObject({ ok: true, orphaned: true });
   });
 
+  it('orphaned webhook_id is recorded to the DLQ, not silently dropped', async () => {
+    // No org_integrations write path exists for adobe_sign yet (no connect
+    // flow analogous to docusign-oauth.ts), so every real delivery hits this
+    // branch today. Losing the DLQ record here means the failure leaves no
+    // trace anywhere — this pins that the record survives.
+    const dlq = dlqInsertMock();
+    dbFromMock.mockImplementation((table: string) => {
+      if (table === 'org_integrations') return integrationLookup(null);
+      if (table === 'webhook_dlq') return dlq;
+      throw new Error(`unexpected: ${table}`);
+    });
+    const body = validBody();
+    const res = await request(createApp())
+      .post('/webhooks/adobe-sign')
+      .set('Content-Type', 'application/json')
+      .set('X-AdobeSign-ClientId-Authentication-Sha256', sign(body))
+      .send(body);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, orphaned: true });
+    expect(dlq.insert).toHaveBeenCalledTimes(1);
+    const dlqRow = (dlq.insert as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      provider: string;
+      external_id: string;
+      webhook_id: string;
+      reason: string;
+    };
+    expect(dlqRow.provider).toBe('adobe_sign');
+    expect(dlqRow.external_id).toBe(AGREEMENT_ID);
+    expect(dlqRow.webhook_id).toBe(WEBHOOK_ID);
+    expect(dlqRow.reason).toBe('unregistered_webhook_id');
+  });
+
   it('202 + rule_event_id when payload is valid, integration is connected, and enqueue succeeds', async () => {
     dbFromMock.mockImplementation((table: string) => {
       if (table === 'org_integrations') {

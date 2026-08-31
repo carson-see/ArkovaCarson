@@ -172,6 +172,17 @@ adobeSignWebhookRouter.post('/', async (req: Request, res: Response) => {
     const integration = await findIntegration(event.webhookId);
     if (!integration) {
       logger.warn({ webhookId: event.webhookId }, 'Adobe Sign webhook: unknown connected webhook');
+      // No org_integrations write path exists for adobe_sign yet (no connect
+      // flow populates webhook_id), so this branch is the live path for
+      // every delivery today. Ack Adobe with 200 (retrying won't help — the
+      // webhook_id will never resolve), but still record it: silently
+      // dropping this left no trace of a total, permanent processing gap.
+      await dlqInsert({
+        webhookId: event.webhookId,
+        agreementId: event.agreementId,
+        reason: 'unregistered_webhook_id',
+        payloadHash,
+      });
       res.status(200).json({ ok: true, orphaned: true });
       return;
     }
