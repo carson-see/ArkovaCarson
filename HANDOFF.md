@@ -14,6 +14,18 @@
 
 ## Now
 
+### CI — dead `memory/` pointers were invisible to the gate built to catch them (2026-08-31)
+
+`memory/project_deploy_typecheck_blackout.md` was cited by six sites — `scripts/ci/check-deploy-build-parity.ts`, `scripts/ci/check-deploy-typecheck-parity.ts`, `scripts/ci/agents.md`, `.github/workflows/agents.md` (x2) and a `ci.yml` comment — and had **never existed in the repo**. It resolved only inside one session's private assistant memory, so any human or CI runner following it found nothing.
+
+`scripts/ci/check-doc-pointers.ts` exists to fail CI on exactly this, but its scan set stopped at `CLAUDE.md` / `AGENTS.md` / skills / hooks / `memory/**`. Nested `agents.md` files and `.github/workflows/*.yml` were not scanned, so all six sites were invisible to it.
+
+Fixed: the memory file now exists in the repo corpus (the failure class is real and has three live parity gates holding it shut), and the scan set covers every tracked nested `agents.md` plus the **comment lines** of workflow YAML. Resolution is now multi-base (doc dir -> package root -> repo root), which is what folder-local notes actually mean; repo-root-only resolution called 59 correctly-written references dead. Widening surfaced **five more** dead `memory/` pointers, each naming a rule that lived only in a session's local memory; those citations now state the fact inline instead. Deliberately-absent paths (negative examples, generated artifacts, named planned work) live in `scripts/ci/snapshots/doc-pointer-exemptions.json` with reasons, and a test fails on a stale one. Coverage went 1,310 -> 1,323 asserted references with the gate green.
+
+**The gate is not merge-blocking.** `Doc Pointer Resolution` is not in `.mergify.yml merge_conditions`, and `main` carries **no** `required_status_checks` at all (`gh api repos/carson-see/ArkovaCarson/branches/main/protection` returns no such block). It reports red without stopping a merge. Wiring it into the queue conditions is the same class of change as the `Orphaned Export Lint` / `Python SDK Tests` entries recorded in `.github/workflows/agents.md`, and was deliberately left out of this PR.
+
+Found incidentally while adding the third-party-notices freshness gate (PR #2530); deliberately kept out of that PR. T0 — no prod surface, no staging evidence required.
+
 ### Bug — Adobe Sign webhooks 500 on every delivery, never worked in prod (found 2026-08-30)
 
 `services/worker/src/api/v1/webhooks/adobe-sign.ts` `findIntegration()` queries
