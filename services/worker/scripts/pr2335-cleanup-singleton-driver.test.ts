@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AUDIT_PROBE_EVENT_TYPE,
+  AUDIT_SPEC,
   AUDIT_SENTINEL_EVENT_TYPE,
   CHANGED_BEHAVIOR,
   DEFAULT_ARGS,
@@ -30,7 +31,9 @@ import {
   parseCleanupResult,
   projectRefFromUrl,
   runSelfTest,
+  VERIFICATION_SPEC,
   seedTimestamps,
+  seededFilters,
   summarizeVolley,
   validateLiveArgs,
   workPerformingResult,
@@ -827,5 +830,52 @@ describe('self-test mode', () => {
     expect(serialized).not.toMatch(/SERVICE_ROLE/i);
     expect(serialized).not.toMatch(/eyJ[A-Za-z0-9_-]{10,}/);
     expect(serialized).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+  });
+});
+
+
+describe('Per-cycle scoping of seeded-row counts', () => {
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const t0 = Date.parse('2026-08-31T00:00:00.000Z');
+  const margin = 30;
+
+  it('scopes audit_events counts to the cycle tag, because its rows outlive the cycle', () => {
+    const filters = seededFilters(AUDIT_SPEC, 'keep', t0, margin, null, 'c07');
+    const cycleFilter = filters.find((f) => f.column === 'target_id');
+    expect(cycleFilter).toEqual({ op: 'eq', column: 'target_id', value: 'soak-pr2335:c07' });
+  });
+
+  it('does not scope tables the driver deletes at the end of their own cycle', () => {
+    expect(VERIFICATION_SPEC.cycleColumn).toBeNull();
+    const filters = seededFilters(VERIFICATION_SPEC, 'keep', t0, margin, null, 'c07');
+    expect(filters.some((f) => f.column === 'target_id')).toBe(false);
+  });
+
+  it('omits the cycle filter when no cycle tag is supplied', () => {
+    const filters = seededFilters(AUDIT_SPEC, 'past', t0, margin, null);
+    expect(filters.some((f) => f.column === 'target_id')).toBe(false);
+  });
+
+  it("REGRESSION: an earlier cycle's retained audit row falls below a later cycle's keep boundary", () => {
+    // Cycle 1 seeds its retained row at t0 - 700d. Two hours later the keep
+    // boundary has walked forward, so a created_at-only filter reads that row
+    // as cycle 2's past-boundary population -- but it is inside the real 730d
+    // window, so cleanup_expired_data() correctly leaves it, and
+    // seededPastRemaining never returns to 0. The cycle filter is what stops
+    // the miscount.
+    const cycle1KeepIso = seedTimestamps(t0, AUDIT_SPEC.boundaryDays, margin).keepIso;
+    const t1 = t0 + 2 * 60 * 60 * 1000;
+    const cycle2PastFilters = seededFilters(AUDIT_SPEC, 'past', t1, margin, null, 'c02');
+    const boundary = cycle2PastFilters.find((f) => f.column === 'created_at');
+    expect(boundary?.op).toBe('lt');
+    expect(Date.parse(cycle1KeepIso)).toBeLessThan(Date.parse(String(boundary?.value)));
+    // Still inside real retention, so the DB function is right not to delete it.
+    expect(t1 - Date.parse(cycle1KeepIso)).toBeLessThan(AUDIT_SPEC.boundaryDays * MS_PER_DAY);
+    // The cycle filter excludes it from cycle 2's count.
+    expect(cycle2PastFilters).toContainEqual({
+      op: 'eq',
+      column: 'target_id',
+      value: 'soak-pr2335:c02',
+    });
   });
 });

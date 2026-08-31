@@ -1181,7 +1181,7 @@ async function countRows(db: Db, table: string, filters: readonly CountFilter[])
   return count ?? 0;
 }
 
-interface SeedSpec {
+export interface SeedSpec {
   table: string;
   boundaryDays: number;
   /** Column + value that identifies a driver-seeded row. */
@@ -1191,6 +1191,22 @@ interface SeedSpec {
   orgColumn: string | null;
   /** Whether the driver may DELETE its own rows here during cleanup. */
   deletable: boolean;
+  /** Column carrying this cycle's tag, for tables whose rows OUTLIVE the cycle
+   *  that seeded them.
+   *
+   *  `audit_events` is the only one: `reject_audit_delete` means the driver
+   *  cannot clean up after itself there, so a cycle's retained rows are still
+   *  present on the next cycle — and they sit BELOW the next cycle's retained
+   *  boundary (each cycle's boundary walks forward with wall-clock time), so a
+   *  created_at-only filter reads them as that cycle's aged rows. They are
+   *  inside the real 730d retention window, `cleanup_expired_data()` correctly
+   *  leaves them alone, and `seededPastRemaining` therefore never returns to 0
+   *  from cycle 2 onward. Counting per cycle is what makes a multi-cycle window
+   *  measure the cycle it is actually running. null = every row is deleted at
+   *  the end of its own cycle, so no scoping is needed. */
+  cycleColumn: string | null;
+  /** Value `cycleColumn` carries for a given cycle tag. */
+  cycleValue?: (cycleTag: string) => string;
   buildRow(context: SeedRowContext): Record<string, unknown>;
 }
 
@@ -1202,13 +1218,14 @@ interface SeedRowContext {
   webhookEndpointId: string | null;
 }
 
-const VERIFICATION_SPEC: SeedSpec = {
+export const VERIFICATION_SPEC: SeedSpec = {
   table: 'verification_events',
   boundaryDays: RETENTION_BOUNDARY_DAYS.verification_events,
   markerColumn: 'user_agent',
   markerValue: SEED_MARKER,
   orgColumn: 'org_id',
   deletable: true,
+  cycleColumn: null,
   buildRow: ({ createdAtIso, orgId, index, cycleTag }) => ({
     public_id: `SOAK-2335-${cycleTag}-${index}`.slice(0, 50),
     method: 'api',
@@ -1227,6 +1244,7 @@ const AI_USAGE_SPEC: SeedSpec = {
   markerValue: SEED_MARKER,
   orgColumn: 'org_id',
   deletable: true,
+  cycleColumn: null,
   buildRow: ({ createdAtIso, orgId }) => ({
     org_id: orgId,
     event_type: 'extraction',
@@ -1238,7 +1256,7 @@ const AI_USAGE_SPEC: SeedSpec = {
   }),
 };
 
-const AUDIT_SPEC: SeedSpec = {
+export const AUDIT_SPEC: SeedSpec = {
   table: 'audit_events',
   boundaryDays: RETENTION_BOUNDARY_DAYS.audit_events,
   markerColumn: 'event_type',
@@ -1248,6 +1266,8 @@ const AUDIT_SPEC: SeedSpec = {
   // be able to delete these rows, and does not try. The retained side is dated
   // to self-expire one margin window after the soak instead.
   deletable: false,
+  cycleColumn: 'target_id',
+  cycleValue: (cycleTag: string) => `${SEED_MARKER}:${cycleTag}`,
   buildRow: ({ createdAtIso, orgId, cycleTag }) => ({
     event_type: AUDIT_PROBE_EVENT_TYPE,
     event_category: 'SYSTEM',
@@ -1273,6 +1293,7 @@ const WEBHOOK_SPEC: SeedSpec = {
   // isolation assertion, and the row says so rather than implying coverage.
   orgColumn: null,
   deletable: true,
+  cycleColumn: null,
   buildRow: ({ createdAtIso, webhookEndpointId }) => ({
     endpoint_id: webhookEndpointId,
     event_type: `${SEED_MARKER}.probe`,
@@ -1370,10 +1391,20 @@ function seedRowsFor(
   return rows;
 }
 
-function seededFilters(spec: SeedSpec, side: 'past' | 'keep', nowMs: number, marginDays: number, orgId: string | null): CountFilter[] {
+export function seededFilters(
+  spec: SeedSpec,
+  side: 'past' | 'keep',
+  nowMs: number,
+  marginDays: number,
+  orgId: string | null,
+  cycleTag?: string,
+): CountFilter[] {
   const stamps = seedTimestamps(nowMs, spec.boundaryDays, marginDays);
   const filters: CountFilter[] = [{ op: 'eq', column: spec.markerColumn, value: spec.markerValue }];
   if (orgId && spec.orgColumn) filters.push({ op: 'eq', column: spec.orgColumn, value: orgId });
+  if (cycleTag && spec.cycleColumn && spec.cycleValue) {
+    filters.push({ op: 'eq', column: spec.cycleColumn, value: spec.cycleValue(cycleTag) });
+  }
   if (side === 'past') {
     // Anything at or before the past stamp for this cycle.
     filters.push({ op: 'lt', column: 'created_at', value: stamps.keepIso });
@@ -1568,9 +1599,9 @@ async function runCycle(context: LiveContext, cycle: number, totals: CycleTotals
       reportedDeleted: reportedByTable[spec.table] ?? 0,
       observedRemoved: before - after + inserted,
       seededPast: args.seedRows * (spec.orgColumn ? 2 : 1),
-      seededPastRemaining: await countRows(db, spec.table, seededFilters(spec, 'past', nowMs, marginDays, null)),
+      seededPastRemaining: await countRows(db, spec.table, seededFilters(spec, 'past', nowMs, marginDays, null, cycleTag)),
       seededKeep: args.seedRows * (spec.orgColumn ? 2 : 1),
-      seededKeepRemaining: await countRows(db, spec.table, seededFilters(spec, 'keep', nowMs, marginDays, null)),
+      seededKeepRemaining: await countRows(db, spec.table, seededFilters(spec, 'keep', nowMs, marginDays, null, cycleTag)),
     });
   }
 
@@ -1584,9 +1615,9 @@ async function runCycle(context: LiveContext, cycle: number, totals: CycleTotals
       bucket.push({
         table: spec.table,
         pastSeeded: args.seedRows,
-        pastRemaining: await countRows(db, spec.table, seededFilters(spec, 'past', nowMs, marginDays, orgId)),
+        pastRemaining: await countRows(db, spec.table, seededFilters(spec, 'past', nowMs, marginDays, orgId, cycleTag)),
         keepSeeded: args.seedRows,
-        keepRemaining: await countRows(db, spec.table, seededFilters(spec, 'keep', nowMs, marginDays, orgId)),
+        keepRemaining: await countRows(db, spec.table, seededFilters(spec, 'keep', nowMs, marginDays, orgId, cycleTag)),
       });
     }
   }
