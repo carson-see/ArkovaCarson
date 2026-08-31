@@ -665,7 +665,7 @@ workflow that runs on every PR.
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
 - `docs/runbooks/ci/verifying-current-check-runs.md` — cross-checking `gh pr checks` against actual check-run timestamps; the frozen-event-payload rerun trap and its fix (SCRUM-3030)
 - S0-4.3 stacked-PR + tiered-merge playbook (drafted Mergify/branch-protection diff for Carson) → Google Doc "ARKOVA PI-1 S0-E4 — Mergify / Stacked-PR + Tiered-Merge Playbook" (Drive ARKOVA PI-1-S0): https://docs.google.com/document/d/1iontJPUkhLQkQyZG4PETGuPj3kf23Kgn-1kDxqukfr8/edit
-- `docs/confluence/16_migration_drift_prevention.md` — ADR for Option A (read-only diff)
+- ADR for Option A (read-only diff) — "Migration drift prevention" in Confluence space A; the repo copy under docs/confluence/ was deleted when Confluence became canonical (CLAUDE.md §0 rule 4)
 
 ## The `workflow_dispatch` pause override was exercised in prod (2026-08-27)
 
@@ -687,3 +687,11 @@ consolidated soak of merged `main` at the accumulated head BEFORE the variable f
 Corollary for `revision-drift.yml` (cron `*/10`, fires Sentry on `/health.git_sha` drifting > 1h
 from `origin/main`): while the pause holds, drift is the EXPECTED steady state, not an incident. Do
 not treat one of its alerts as evidence that a deploy failed without first checking the variable.
+
+## Workflow comments are now lint-checked for dead governance pointers (2026-08-31)
+
+`scripts/ci/check-doc-pointers.ts` (ci.yml job `Doc Pointer Resolution`) now scans the **comment lines** of every `.github/workflows/*.yml`, plus this file and every other nested `agents.md`. Only governance prefixes are asserted there — `memory/`, `docs/`, `.claude/`, `.github/` — because a comment sitting next to a step inherits that step's `working-directory:` — the comment above the worker test step names `services/worker/src/ai/zk-proof.test.ts` in worker-relative shorthand, which is correct in context and must not be flagged. `run:`/`with:` values are not scanned at all: they name generated artifacts (`circuits/artifacts/*.zkey`) and working-directory-relative paths.
+
+This closed a hole that had been live for months: `ci.yml`'s SCRUM-1811 comment block, this file (twice), and `scripts/ci/agents.md` all cited `memory/project_deploy_typecheck_blackout.md`, which had never existed in the repo. Nothing could see it, because the old scan set stopped at `CLAUDE.md` / `AGENTS.md` / skills / hooks / `memory/**`. The file now exists; the check now covers the surfaces that cite it.
+
+Note the gate is **not** in `.mergify.yml merge_conditions` and `main` carries no `required_status_checks`, so it reports without blocking. Adding it to the queue conditions is the same class of change as the `Orphaned Export Lint` and `Python SDK Tests` wirings recorded above, and has not been done here.

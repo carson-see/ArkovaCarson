@@ -1,0 +1,57 @@
+{
+  "driver": "cft-contract-surface-driver",
+  "batch": "contract-frontend-tooling",
+  "cycle_id": "20260830T222511Z",
+  "captured_at": "2026-08-30T22:25:17.342Z",
+  "api_base": "https://arkova-worker-soak-contract-frontend-tooling-stag-kvojbeutfa-uc.a.run.app",
+  "supabase_ref": "https://udpzylbccncnwvhbfjsu.supabase.co",
+  "ok": 7,
+  "fail": 2,
+  "detail": {
+    "health": {
+      "ok": 1,
+      "fail": 0,
+      "last": "http 200 git_sha=dfbbf7f5f747411a0f87a0f5347d013599778a9b"
+    },
+    "sdk.fingerprint": {
+      "ok": 1,
+      "fail": 0,
+      "last": "afdcd8972017287d"
+    },
+    "sdk.verify": {
+      "ok": 1,
+      "fail": 0,
+      "last": "{\"description\":\"Arkova articles of incorporation\",\"complianceControls\":null,\"complianceControlsNote\":null,\"chainConfirma"
+    },
+    "sdk.getAnchor": {
+      "ok": 1,
+      "fail": 0,
+      "last": "{\"description\":null,\"complianceControls\":null,\"complianceControlsNote\":null,\"chainConfirmations\":null,\"parentPublicId\":n"
+    },
+    "sdk.verifyFingerprint": {
+      "ok": 1,
+      "fail": 0,
+      "last": "{\"description\":null,\"complianceControls\":null,\"complianceControlsNote\":null,\"chainConfirmations\":null,\"parentPublicId\":n"
+    },
+    "sdk.webhooks.create[anchor.superseded]": {
+      "ok": 1,
+      "fail": 0,
+      "last": "id=caa2ae26-5665-474f-9754-bd56a2b56ab7"
+    },
+    "sdk.webhooks.list[anchor.superseded]": {
+      "ok": 0,
+      "fail": 1,
+      "last": "n=?"
+    },
+    "auth.orgAdminSignIn": {
+      "ok": 1,
+      "fail": 0,
+      "last": "token len=802"
+    },
+    "supersede.dispatch": {
+      "ok": 0,
+      "fail": 1,
+      "last": "http 401 \n<html><head>\n<meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\n<title>401 Unauthorized</title>\n</head>\n<body text=#000000 bgcolor=#ffffff>\n<h1>Error: Unauthorized</h1>\n<h2>Your clien"
+    }
+  }
+}

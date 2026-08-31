@@ -1839,11 +1839,11 @@ jobs:
           cache: npm
           cache-dependency-path: packages/verifier-cli/package-lock.json
 
-      # The CLI consumes @arkova/verifier (PROOF-07 / #1349) as a file: dep, so
+      # The CLI consumes arkova-verifier (PROOF-07 / #1349) as a file: dep, so
       # its dist (the SHARED confirmInclusion + Esplora decode) must be built
       # before the CLI installs/links it. This is a pure local build — no network
       # to Arkova — so the clean-room assertion below is unaffected.
-      - name: Build @arkova/verifier dependency
+      - name: Build arkova-verifier dependency
         working-directory: packages/verifier
         run: |
           npm ci --ignore-scripts
@@ -1945,7 +1945,7 @@ jobs:
         run: echo "No services/worker source/build changes detected — worker compile gate skipped; reporting green."
 
   # CONDITIONAL-GO sub-decision B (TWO-SURFACE) — PR-time VERIFIER compile gate.
-  # packages/verifier (the standalone @arkova/verifier) only ever built on
+  # packages/verifier (the standalone arkova-verifier) only ever built on
   # sdk-v* tags, so a PR could land a TS error in the reference verifier and CI
   # would never compile it. This job runs the verifier's own typecheck (tsc) +
   # build (tsup) at PR time. Same always-run in-job path-filter contract.
