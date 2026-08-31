@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   S33_LANE1_OFFLINE_EVIDENCE_FILES,
   baseDriftImpactErrors,
+  formatBaseDriftDiagnostics,
   check,
   extractDeclaredTier,
   findS33RuntimeImporters,
@@ -157,9 +158,16 @@ describe('check-staging-evidence', () => {
   describe('TIER_SPECS', () => {
     it('pins the current minimum soak windows', () => {
       expect(TIER_SPECS.T0.soakHours).toBe(0);
-      expect(TIER_SPECS.T1.soakHours).toBe(0);
+      // CLAUDE.md §1.12: the T1 row is "2 h soak" — the gate must match the
+      // constitution, not the other way around (merged #2241/#2264 finding).
+      expect(TIER_SPECS.T1.soakHours).toBe(2);
       expect(TIER_SPECS.T2.soakHours).toBe(12);
       expect(TIER_SPECS.T3.soakHours).toBe(48);
+    });
+
+    it('requires the soak window fields for T1 (§1.12: "soak start/end" is T1 evidence)', () => {
+      expect(TIER_SPECS.T1.requiredFields).toContain('Soak start:');
+      expect(TIER_SPECS.T1.requiredFields).toContain('Soak end:');
     });
   });
 
@@ -404,6 +412,74 @@ describe('check-staging-evidence', () => {
       expect(
         requiredTierFor(['services/worker/src/jobs/revocation.ts']).tier,
       ).toBe('T3');
+    });
+
+    // SCRUM-3802 — PR #2266 merged tier-under-declared: the anchor-lifecycle
+    // rule is a filename whitelist, and the public-record anchoring cron
+    // (which batch-inserts up to 10k anchors per Bitcoin tx) was not on it,
+    // so its diff fell through to the T2 jobs/ catch-all. The exact merged
+    // file set of #2266 must classify T3.
+    it('returns T3 for the PR #2266-shaped diff (publicRecordAnchor + quarantine)', () => {
+      const result = requiredTierFor([
+        'services/worker/src/jobs/__tests__/publicRecordAnchor-poison-record.test.ts',
+        'services/worker/src/jobs/__tests__/publicRecordAnchor.test.ts',
+        'services/worker/src/jobs/agents.md',
+        'services/worker/src/jobs/pipelineThroughputMonitor.test.ts',
+        'services/worker/src/jobs/pipelineThroughputMonitor.ts',
+        'services/worker/src/jobs/public-record-quarantine.test.ts',
+        'services/worker/src/jobs/public-record-quarantine.ts',
+        'services/worker/src/jobs/publicRecordAnchor.ts',
+        'services/worker/src/utils/agents.md',
+        'services/worker/src/utils/utf16-truncate.test.ts',
+        'services/worker/src/utils/utf16-truncate.ts',
+      ]);
+      expect(result.tier).toBe('T3');
+      expect(result.reason).toContain('anchor');
+    });
+
+    it('returns T3 for every jobs/ file in the SCRUM-3802 anchor-feeder audit set', () => {
+      // The audit criterion: creates anchor rows (publicRecordAnchor,
+      // connector-artifact-drain, rule-action-dispatcher), mutates anchor
+      // lifecycle state (mainnet-migration resets status/chain columns;
+      // public-record-quarantine permanently excludes rows from anchoring),
+      // signs/broadcasts Bitcoin transactions or decides broadcast recovery
+      // (supplementary-proof-anchor + adapter, txid-journal), or sets the
+      // shared batch contract every anchoring job obeys (anchor-batching).
+      for (const file of [
+        'services/worker/src/jobs/publicRecordAnchor.ts',
+        'services/worker/src/jobs/public-record-quarantine.ts',
+        'services/worker/src/jobs/connector-artifact-drain.ts',
+        'services/worker/src/jobs/rule-action-dispatcher.ts',
+        'services/worker/src/jobs/mainnet-migration.ts',
+        'services/worker/src/jobs/supplementary-proof-anchor.ts',
+        'services/worker/src/jobs/supplementary-proof-anchor.adapter.ts',
+        'services/worker/src/jobs/txid-journal.ts',
+        'services/worker/src/jobs/anchor-batching.ts',
+      ]) {
+        expect(requiredTierFor([file]).tier, file).toBe('T3');
+      }
+    });
+
+    it('keeps read-only anchors consumers in jobs/ at T2 (audit set does not over-widen)', () => {
+      // Monitors, digests, and the dual-path reconciliation DETECTOR (it
+      // reports, never writes — the anchor-creating side of that pair is
+      // rule-action-dispatcher) stay on the T2 jobs/ catch-all, as does the
+      // webhook nonce sweep (not chain-related despite the name).
+      expect(requiredTierFor(['services/worker/src/jobs/db-health-monitor.ts']).tier).toBe('T2');
+      expect(requiredTierFor(['services/worker/src/jobs/stuck-anchor-monitor.ts']).tier).toBe('T2');
+      expect(
+        requiredTierFor(['services/worker/src/jobs/docusign-anchor-reconciliation.ts']).tier,
+      ).toBe('T2');
+      expect(requiredTierFor(['services/worker/src/jobs/nonce-sweep.ts']).tier).toBe('T2');
+    });
+
+    it('does not leak the anchor-feeder pin onto test files or name lookalikes', () => {
+      expect(
+        requiredTierFor(['services/worker/src/jobs/public-record-quarantine.test.ts']).tier,
+      ).toBe('T0');
+      expect(
+        requiredTierFor(['services/worker/src/jobs/publicRecordEmbedder.ts']).tier,
+      ).toBe('T2');
     });
 
     it('returns T3 when scheduled.ts is touched', () => {
@@ -1344,22 +1420,13 @@ describe('check-staging-evidence', () => {
         t2Files,
       ],
       [
-        'T1 exact-head evidence with optional soak timestamps',
+        'complete T1 at exactly 2 hours',
         completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
         t1Files,
       ],
       [
-        'T1 exact-head evidence with no soak window',
-        `## Staging Soak Evidence
-- Tier: T1
-- PR head SHA: 1234567890abcdef1234567890abcdef12345678
-- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
-- Health/smoke result: health ok, targeted smoke green
-- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
-- Rollback plan: revert this PR and redeploy previous worker image
-- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
-- Human approver: Carson
-`,
+        'T1 one minute above 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:01 UTC'),
         t1Files,
       ],
     ])('passes %s', (_label, body, files) => {
@@ -1400,6 +1467,50 @@ describe('check-staging-evidence', () => {
         completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 13:59 UTC'),
         t2Files,
         /Soak end must be after Soak start/,
+      ],
+      // CLAUDE.md §1.12 T1 row is "2 h soak" with "soak start/end" evidence.
+      // TIER_SPECS.T1.soakHours was 0 with no window fields — the gate and the
+      // constitution disagreed, and every T1 merge repeated the gap (merged
+      // #2241/#2264 finding). A T1 body with no soak window must now fail…
+      [
+        'T1 with no soak window (missing Soak start/end fields)',
+        `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- Health/smoke result: health ok, targeted smoke green
+- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
+- Rollback plan: revert this PR and redeploy previous worker image
+- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
+- Human approver: Carson
+`,
+        t1Files,
+        /missing required fields for T1: .*`Soak start:`, `Soak end:`/,
+      ],
+      // …and a declared window shorter than 2h must fail the duration floor.
+      [
+        'T1 shorter than 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:00 UTC'),
+        t1Files,
+        /below the 2h minimum/,
+      ],
+      [
+        'T1 one minute below 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:59 UTC'),
+        t1Files,
+        /below the 2h minimum/,
+      ],
+      [
+        'T1 end equal to start',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 14:00 UTC'),
+        t1Files,
+        /Soak end must be after Soak start/,
+      ],
+      [
+        'T1 non-parseable soak timestamps',
+        completeT1Body('N/A', 'N/A'),
+        t1Files,
+        /could not parse/i,
       ],
     ])('fails %s', (_label, body, files, pattern) => {
       expectEvidenceFails(body, files, pattern);
@@ -2038,9 +2149,11 @@ describe('check-staging-evidence', () => {
         expect(r.errors.join(' ')).toMatch(/does not cover the current base SHA/i);
       });
 
-      it('accepts an entry base_sha that is an ancestor of the live base', () => {
+      it('accepts an entry base_sha inside the train_launch → live-base window', () => {
         // The entry recorded an old main tip that appears in no coverage list;
-        // only ancestry can rescue it.
+        // only ancestry can rescue it. SCRUM-3549: the ancestry answer now needs
+        // BOTH bounds — the recorded base must descend from train_launch_sha AND
+        // be an ancestor of the live base — so the stub answers both questions.
         const staleEntryBase = 'dddddddddddddddddddddddddddddddddddddddd';
         const rc = manifest({
           target_main_sha: liveBaseSha,
@@ -2051,10 +2164,34 @@ describe('check-staging-evidence', () => {
         const r = run({
           rc,
           ancestryProvider: (ancestor, descendant) =>
-            ancestor === staleEntryBase && descendant === liveBaseSha,
+            (ancestor === trainLaunchSha && descendant === staleEntryBase)
+            || (ancestor === staleEntryBase && descendant === liveBaseSha),
         });
         expect(r.ok).toBe(true);
         expect(r.errors).toEqual([]);
+      });
+
+      it('rejects an entry base_sha that is an ancestor of the live base but PREDATES the train launch', () => {
+        // SCRUM-3549: without the train_launch_sha lower bound this passed —
+        // every commit reachable from main is an ancestor of the live base, so
+        // the per-entry check degenerated to "is this a commit on main" and
+        // admitted a base the soak never ran against.
+        const preLaunchBase = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+        const rc = manifest({
+          target_main_sha: liveBaseSha,
+          allowed_base_shas: [trainLaunchSha, liveBaseSha],
+          covered_main_shas: [trainLaunchSha, liveBaseSha],
+        });
+        (rc.included_prs as Record<string, unknown>[])[0]!.base_sha = preLaunchBase;
+        const r = run({
+          rc,
+          ancestryProvider: (ancestor, descendant) =>
+            // preLaunchBase is an ancestor of everything; nothing is an
+            // ancestor of preLaunchBase.
+            ancestor === preLaunchBase && descendant !== preLaunchBase,
+        });
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/entry base SHA/i);
       });
 
       it('still fails an entry base_sha that is neither listed nor an ancestor of the live base', () => {
@@ -2185,60 +2322,39 @@ describe('check-staging-evidence', () => {
         expect(r.errors.join(' ')).toMatch(/head_binding\.mode/i);
       });
 
-      it('accepts a drifted head under roster mode with a complete, unexpired exception', () => {
+      // SCRUM-3533: roster mode is REMOVED. It was reachable from the normal
+      // approved path (validateCoveredRcPr is shared with deferred mode, and
+      // the resolver never looked at soak_mode), so an approved manifest —
+      // one claiming completed soak evidence — could merge an arbitrary
+      // post-soak head. These tests replace the suite that used to pin roster
+      // mode's internals; every one of them asserts it now hard-fails.
+      it('rejects roster mode outright, however complete the exception is', () => {
         const r = run(manifest({
           head_binding: rosterBinding(),
           exceptions: [exception()],
         }));
-        expect(r.ok).toBe(true);
-        expect(r.notes.join(' ')).toMatch(/RECORDED HUMAN EXCEPTION/i);
-        expect(r.notes.join(' ')).toMatch(/founder-ruling-2026-08-01-no-interim-soaks/);
-        expect(r.notes.join(' ')).toMatch(/Carson/);
-      });
-
-      it('rejects roster mode when the exception has expired', () => {
-        const r = run(
-          manifest({ head_binding: rosterBinding(), exceptions: [exception()] }),
-          '2026-08-20T00:00:00Z',
-        );
         expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/expired/i);
+        expect(r.errors.join(' ')).toMatch(/head_binding\.mode "roster" was REMOVED/i);
+        expect(r.notes.join(' ')).not.toMatch(/RECORDED HUMAN EXCEPTION/i);
       });
 
-      it('rejects roster mode when head_binding.exception_id matches no exceptions[] entry', () => {
+      it('rejects roster mode even when the recorded head still matches the live head', () => {
+        // The mode is resolved unconditionally, so a manifest whose head has
+        // not drifted cannot smuggle the removed mode past the check.
+        const rc = manifest({ head_binding: rosterBinding(), exceptions: [exception()] });
+        (rc.included_prs as Record<string, unknown>[])[0]!.head_sha = liveHeadSha;
+        const r = run(rc);
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/head_binding\.mode "roster" was REMOVED/i);
+      });
+
+      it('points a roster manifest at exact binding or deferred-consolidated-soak mode', () => {
         const r = run(manifest({
-          head_binding: rosterBinding({ exception_id: 'no-such-exception' }),
+          head_binding: rosterBinding(),
           exceptions: [exception()],
         }));
-        expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/exception_id/i);
-      });
-
-      it('rejects roster mode when the exception omits a named approver', () => {
-        const r = run(manifest({
-          head_binding: rosterBinding(),
-          exceptions: [exception({ approver: '' })],
-        }));
-        expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/approver/i);
-      });
-
-      it('rejects roster mode when the exception omits an expiry', () => {
-        const r = run(manifest({
-          head_binding: rosterBinding(),
-          exceptions: [exception({ expires_at: '' })],
-        }));
-        expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/expires_at/i);
-      });
-
-      it('rejects roster mode when this PR is not in the exception applies_to list', () => {
-        const r = run(manifest({
-          head_binding: rosterBinding(),
-          exceptions: [exception({ applies_to: [1726] })],
-        }));
-        expect(r.ok).toBe(false);
-        expect(r.errors.join(' ')).toMatch(/applies_to/i);
+        expect(r.errors.join(' ')).toMatch(/exact/i);
+        expect(r.errors.join(' ')).toMatch(/deferred_consolidated_soak/i);
       });
 
       it('rejects roster mode when the PR is absent from included_prs entirely', () => {
@@ -3218,6 +3334,80 @@ describe('check-staging-evidence', () => {
             ['supabase/migrations/0410_partner_accounts.sql'],
             ['supabase/migrations/0421_added_by_main.sql'],
             validNote(['supabase/migrations/0421_added_by_main.sql']),
+          );
+          expect(errors).toHaveLength(1);
+          expect(errors[0]).toMatch(/ledger ordering/i);
+          expect(errors[0]).not.toMatch(/add a[^.]*Base-drift residual-risk note/i);
+        });
+
+        // ── The 2026-08-29 false positive (#2336 / #2355) ──────────────────
+        // Carve-out (b) asked "did anything under `supabase/migrations/`
+        // change on main?" — a directory-prefix question. `agents.md` lives in
+        // that directory and every migration PR appends a note to it, so main
+        // touching that ONE documentation file made the gate report "main
+        // landed a migration" and hard-fail two sealed 48 h T3 soaks on a
+        // premise that was false: ZERO `.sql` files changed in the interval.
+        // The carve-out exists for LEDGER ORDERING, and only a `.sql` file
+        // carries a ledger version — a doc note carries none.
+        it('does NOT hard-fail when the only migration-dir drift is agents.md (no .sql landed)', () => {
+          const drift = ['supabase/migrations/agents.md', '.github/workflows/deploy-worker.yml'];
+          const errors = driftErrors(
+            [
+              'supabase/migrations/0418_sec_replay_dashboard_cache_refresher_revokes.sql',
+              'supabase/migrations/agents.md',
+            ],
+            drift,
+            validNote(drift),
+          );
+          expect(errors).toEqual([]);
+        });
+
+        it('does NOT claim the PR owns a migration when it only edited migrations/agents.md', () => {
+          // Mirror image: the PR carries no `.sql`, so it has no ledger
+          // position to invalidate, even though main did land a real one.
+          // (Same outcome as the existing "PR owns NO migration" case.)
+          const errors = driftErrors(
+            ['supabase/migrations/agents.md', 'services/worker/src/api/v1/docusign.ts'],
+            ['supabase/migrations/0421_added_by_main.sql'],
+            validNote(['supabase/migrations/0421_added_by_main.sql']),
+          );
+          expect(errors).toEqual([]);
+        });
+
+        it('states the actual .sql file(s) main landed, so the premise is checkable', () => {
+          const errors = driftErrors(
+            ['supabase/migrations/0418_x.sql'],
+            ['supabase/migrations/0421_added_by_main.sql'],
+          );
+          expect(errors[0]).toContain('supabase/migrations/0421_added_by_main.sql');
+        });
+
+        it('formatBaseDriftDiagnostics separates migration-DIR drift from LEDGER drift', () => {
+          // The one output that would have made the #2336 diagnosis a
+          // ten-second read: dir-scoped drift present, ledger drift empty.
+          const out = formatBaseDriftDiagnostics(
+            'a'.repeat(40),
+            'b'.repeat(40),
+            ['supabase/migrations/0418_x.sql', 'supabase/migrations/agents.md'],
+            ['supabase/migrations/agents.md', '.github/workflows/deploy-worker.yml'],
+          );
+          expect(out).toMatch(/driftFiles under supabase\/migrations\/ \(1\): supabase\/migrations\/agents\.md/);
+          expect(out).toMatch(/driftFiles in migration ledger, i\.e\. \.sql \(0\): \(none\)/);
+          expect(out).toMatch(/prFiles in migration ledger \(1\): supabase\/migrations\/0418_x\.sql/);
+        });
+
+        it('STILL hard-fails when a real .sql lands on main alongside the agents.md note', () => {
+          // The protection this carve-out exists for must survive the fix:
+          // main landing an actual migration while the PR owns one is still
+          // unattestable, and the doc file riding along changes nothing.
+          const drift = [
+            'supabase/migrations/agents.md',
+            'supabase/migrations/0421_added_by_main.sql',
+          ];
+          const errors = driftErrors(
+            ['supabase/migrations/0418_x.sql', 'supabase/migrations/agents.md'],
+            drift,
+            validNote(drift),
           );
           expect(errors).toHaveLength(1);
           expect(errors[0]).toMatch(/ledger ordering/i);

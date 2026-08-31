@@ -55,6 +55,8 @@ When the carve-out applies, the workflow is just `git commit` + `git push origin
 ### 10. MCP `apply_migration` ledger reconciliation
 The Supabase MCP `apply_migration` records a timestamp-style `version` in `supabase_migrations.schema_migrations`, but the migration-drift gate's "PR numeric ledger drift" check requires the migration's **NUMERIC prefix** (`NNNN`) present in prod. After applying a PR-owned numeric migration via MCP, reconcile in-session: `UPDATE supabase_migrations.schema_migrations SET version='NNNN' WHERE name='<file>' AND version !~ '^[0-9]{4}$';` (operator-approved per §1.11A — this is the **one expected ledger write**, not a `migration repair`). Then confirm `list_migrations` shows the numeric head **before** declaring the migration done.
 
+**Ordering is hook-enforced (2026-08-30).** A prod `apply_migration` is blocked by `.claude/hooks/check-prod-migration-apply.sh` unless the migration's `NNNN` prefix is EITHER already on `origin/main` OR already listed in `exemptPrefixes` in `scripts/ci/snapshots/ledger-numeric-exemptions.json`. Migrate-before-merge is still legal — the drift gate requires it — but **the apply and its exemption land in the same motion**. Applying without either creates an orphan ledger row, and because `Check supabase/migrations vs prod` is a Mergify queue gate, that reds every migration-touching PR at once: `0401`/`0402` (08-11), `0418`/`0419` (08-27), `0425` (08-30). Deliberate exception: `ARKOVA_ALLOW_UNRECONCILED_PROD_APPLY=1`, with the reason recorded. Scope, stated honestly: `apply_migration` against the prod ref only — DDL smuggled through `execute_sql` is NOT covered and remains on the operator.
+
 ---
 
 ## 0.1. READ FIRST — EVERY SESSION

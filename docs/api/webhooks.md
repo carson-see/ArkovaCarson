@@ -75,9 +75,9 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 
 | Event | Fired When | Status |
 |---|---|---|
-| `credential.issued` | An organization issues a credential to a recipient (fires before chain confirmation; pair with `anchor.secured` for the on-chain finality signal) | Contract defined; emit-point implementation in active development |
-| `credential.verified` | An `/api/v1/verify/*` call resolves a credential to a terminal status — `SECURED` / `REVOKED` / `EXPIRED`. (Non-terminal `PENDING`/`SUBMITTED` lookups don't fire this event; verification implies a final answer.) | Contract defined; emit-point implementation in active development |
-| `credential.status_changed` | Any credential status transition (revocation, expiry, re-issuance) — emits the `previous_status` and `new_status` for reconciliation | Contract defined; emit-point implementation in active development |
+| `credential.issued` | An organization issues a credential to a recipient (fires before chain confirmation; pair with `anchor.secured` for the on-chain finality signal). Currently emitted on connector credential import. | Stable |
+| `credential.verified` | An `/api/v1/verify/*` call resolves a credential to a terminal status — `SECURED` / `REVOKED` / `EXPIRED`. (Non-terminal `PENDING`/`SUBMITTED` lookups don't fire this event; verification implies a final answer.) | Contract defined; emission is feature-gated and **not yet enabled in production** — subscriptions are accepted, deliveries have not started |
+| `credential.status_changed` | A credential status transition — revocation, supersession, bulk confirmation (`SUBMITTED` → `SECURED`), or a network reorganization reverting `SECURED` → `SUBMITTED` — emits `previous_status` and `new_status` for reconciliation. Fires for records that carry a `credential_type`. | Stable |
 
 ### Compliance
 
@@ -87,7 +87,7 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 
 `compliance.document_expiring` payload `data`: `public_id`, `status` (always `SECURED`), `expires_at`, `days_remaining` (positive integer), `warning_level` (`7_day`), plus optional `credential_type`, `label`, `org_public_id`.
 
-**Contract-defined, emit-point pending:** the payload schemas, dispatch validation, HMAC signing, and webhook CRUD acceptance for `credential.*` events are live in this release. You can register webhook subscriptions for them today via `POST /webhooks` (or update an existing subscription); deliveries begin once the per-event emit points land in follow-up Phase-2 stories. The schemas obey the same allowlist rules as anchor events: `public_id`-only (including `recipient_public_id`), no internal UUIDs, no fingerprint, RFC 3339 timestamps with explicit timezone (`Z` or `±HH:MM`). See `services/worker/src/webhooks/payload-schemas.ts` for the canonical contract.
+**Credential-event delivery status:** `credential.issued` and `credential.status_changed` are live — subscribed endpoints receive them today. `credential.verified` is the one exception: its payload schema, dispatch validation, HMAC signing, and CRUD acceptance are all live, and you can register a subscription for it now via `POST /webhooks` (or update an existing subscription), but emission is behind a production feature gate that has not been enabled — deliveries begin when that gate opens, with no re-registration needed. All three schemas obey the same allowlist rules as anchor events: `public_id`-only (including `recipient_public_id`), no internal UUIDs, no fingerprint, RFC 3339 timestamps with explicit timezone (`Z` or `±HH:MM`). See `services/worker/src/webhooks/payload-schemas.ts` for the canonical contract.
 
 You can subscribe to any subset of these events per endpoint. The default at registration time is `['anchor.secured', 'anchor.revoked']`.
 
