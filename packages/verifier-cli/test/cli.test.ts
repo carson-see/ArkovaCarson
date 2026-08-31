@@ -5,10 +5,11 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { main } from '../src/cli.js';
+import { pathToFileURL } from 'node:url';
+import { main, isDirectInvocation } from '../src/cli.js';
 import { loadSyntheticFixtures, FIXTURES_DIR } from './helpers.js';
 
 let dir: string;
@@ -115,4 +116,74 @@ describe('terminology ban on user-facing output (CLAUDE.md §1.3)', () => {
     // part of "Blockstream" (a node vendor name) — assert the standalone bans.
     expect(cap.output()).not.toMatch(BANNED);
   });
+});
+
+/**
+ * The bin entry guard. Every test above drives `main()` in-process, which is
+ * exactly why this class of defect can ship unnoticed: the guard that decides
+ * whether `main()` runs at all is never exercised.
+ *
+ * `npm` installs a `bin` as a SYMLINK (node_modules/.bin/arkova-verify ->
+ * ../arkova-verifier-cli/dist/cli.js), so for every global install and every
+ * `npx` run, `process.argv[1]` is the symlink while `import.meta.url` is the
+ * realpath-resolved target. A guard that compares them unresolved is false,
+ * `main()` never runs, and the CLI exits 0 having printed nothing.
+ */
+describe('bin entry guard (npm installs `bin` as a symlink)', () => {
+  it('treats a SYMLINKED entry path as a direct invocation', () => {
+    const real = join(realpathSync(dir), 'real-cli.js');
+    const link = join(realpathSync(dir), 'arkova-verify-link');
+    writeFileSync(real, '// stand-in for dist/cli.js\n');
+    symlinkSync(real, link);
+    // argv[1] is the symlink; import.meta.url is normally the resolved target.
+    expect(isDirectInvocation(link, pathToFileURL(real).href)).toBe(true);
+  });
+
+  // Under `node --preserve-symlinks-main`, import.meta.url is the SYMLINK url
+  // rather than the realpath — the inverse of the case above. A guard that
+  // compared only resolved paths would be a silent no-op in this mode, which is
+  // the very failure it was written to prevent.
+  it('also matches when import.meta.url is the SYMLINK (--preserve-symlinks-main)', () => {
+    const real = join(realpathSync(dir), 'psm-cli.js');
+    const link = join(realpathSync(dir), 'psm-link');
+    writeFileSync(real, '');
+    symlinkSync(real, link);
+    expect(isDirectInvocation(link, pathToFileURL(link).href)).toBe(true);
+  });
+
+  it('treats a plain direct invocation as direct', () => {
+    const real = join(realpathSync(dir), 'plain-cli.js');
+    writeFileSync(real, '');
+    expect(isDirectInvocation(real, pathToFileURL(real).href)).toBe(true);
+  });
+
+  it('is FALSE when the module is merely imported (tests must not auto-run main)', () => {
+    const real = join(realpathSync(dir), 'imported-cli.js');
+    writeFileSync(real, '');
+    expect(isDirectInvocation(real, pathToFileURL(join(realpathSync(dir), 'other.js')).href)).toBe(
+      false,
+    );
+  });
+
+  it('is FALSE when there is no entry path at all', () => {
+    expect(isDirectInvocation(undefined, 'file:///anything.js')).toBe(false);
+  });
+
+  it('is FALSE for an entry path that does not exist (never throws)', () => {
+    expect(isDirectInvocation(join(realpathSync(dir), 'nope.js'), 'file:///anything.js')).toBe(
+      false,
+    );
+  });
+
+  // `new URL('file://' + p)` mis-parses these; pathToFileURL encodes them the
+  // same way import.meta.url does.
+  for (const odd of ['a#b', 'c?d', 'e%20f', 'f g']) {
+    it(`handles a path containing ${JSON.stringify(odd)}`, () => {
+      const sub = join(realpathSync(dir), odd);
+      mkdirSync(sub, { recursive: true });
+      const real = join(sub, 'cli.js');
+      writeFileSync(real, '');
+      expect(isDirectInvocation(real, pathToFileURL(real).href)).toBe(true);
+    });
+  }
 });

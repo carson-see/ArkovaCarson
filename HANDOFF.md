@@ -14,7 +14,59 @@
 
 ## Now
 
-### Soaks — DocuSign bilateral T3 (RUNNING, started 2026-08-30)
+### CI — dead `memory/` pointers were invisible to the gate built to catch them (2026-08-31)
+
+`memory/project_deploy_typecheck_blackout.md` was cited by six sites — `scripts/ci/check-deploy-build-parity.ts`, `scripts/ci/check-deploy-typecheck-parity.ts`, `scripts/ci/agents.md`, `.github/workflows/agents.md` (x2) and a `ci.yml` comment — and had **never existed in the repo**. It resolved only inside one session's private assistant memory, so any human or CI runner following it found nothing.
+
+`scripts/ci/check-doc-pointers.ts` exists to fail CI on exactly this, but its scan set stopped at `CLAUDE.md` / `AGENTS.md` / skills / hooks / `memory/**`. Nested `agents.md` files and `.github/workflows/*.yml` were not scanned, so all six sites were invisible to it.
+
+Fixed: the memory file now exists in the repo corpus (the failure class is real and has three live parity gates holding it shut), and the scan set covers every tracked nested `agents.md` plus the **comment lines** of workflow YAML. Resolution is now multi-base (doc dir -> package root -> repo root), which is what folder-local notes actually mean; repo-root-only resolution called 59 correctly-written references dead. Widening surfaced **five more** dead `memory/` pointers, each naming a rule that lived only in a session's local memory; those citations now state the fact inline instead. Deliberately-absent paths (negative examples, generated artifacts, named planned work) live in `scripts/ci/snapshots/doc-pointer-exemptions.json` with reasons, and a test fails on a stale one. Coverage went 1,310 -> 1,323 asserted references with the gate green.
+
+**The gate is not merge-blocking.** `Doc Pointer Resolution` is not in `.mergify.yml merge_conditions`, and `main` carries **no** `required_status_checks` at all (`gh api repos/carson-see/ArkovaCarson/branches/main/protection` returns no such block). It reports red without stopping a merge. Wiring it into the queue conditions is the same class of change as the `Orphaned Export Lint` / `Python SDK Tests` entries recorded in `.github/workflows/agents.md`, and was deliberately left out of this PR.
+
+Found incidentally while adding the third-party-notices freshness gate (PR #2530); deliberately kept out of that PR. T0 — no prod surface, no staging evidence required.
+
+### Bug — Adobe Sign webhooks 500 on every delivery, never worked in prod (found 2026-08-30)
+
+`services/worker/src/api/v1/webhooks/adobe-sign.ts` `findIntegration()` queries
+`org_integrations.webhook_id`, a column that has **never existed** — absent from the baseline and
+every numbered migration. Every correctly HMAC-signed `AGREEMENT_WORKFLOW_COMPLETED` delivery
+500s on `42703: column org_integrations.webhook_id does not exist` and lands in `webhook_dlq`,
+which nothing drains — total, permanent loss for the Adobe Sign path.
+
+**Found live** during the `worker-webhook-runtime` T3 soak on isolated rig
+`sawvgrwhgsmxjlwhpsyx` (2026-08-30), reproduced with a real HMAC-signed delivery.
+
+**Confirmed via a read-only `information_schema.columns` query against prod `vzwyaatejekddvltxyye`**
+the same day (Supabase Management API, `SELECT column_name FROM information_schema.columns WHERE
+table_name = 'org_integrations'`): 23 columns returned, none named `webhook_id`. **Adobe Sign has
+never worked in any environment built from this schema, prod included** — this is not a
+stale-baseline-only gap.
+
+Fix: [PR #2519](https://github.com/carson-see/ArkovaCarson/pull/2519), migration
+`0426_org_integrations_adobe_sign_webhook_id.sql` — **DRAFT, NOT applied to prod or any rig,
+NOT soaked.** Verified forward/idempotent/rollback only on an isolated throwaway Postgres 17
+container. Migrations are always T3 (CLAUDE.md §1.12); this needs its own 48 h isolated-rig soak
+exercising a real Adobe Sign webhook delivery before it can go Ready.
+
+**Blocks [PR #2496](https://github.com/carson-see/ArkovaCarson/pull/2496)** (Adobe Sign 16KB
+rule-event payload fix) from ever being soaked — its payload builder sits downstream of this
+lookup.
+
+**Not yet logged in the Confluence Bug Tracker or Jira** (CLAUDE.md §0 rule 5 / §3 gate 2) — the
+Atlassian MCP connector is unauthenticated in this session. Needs `claude mcp` / `/mcp` OAuth
+before any session can write to Jira/Confluence; whoever picks this up should file it before
+closing out.
+
+### Soaks — DocuSign bilateral **RC-2** T3 (RUNNING)
+
+- **Rig:** Supabase `aqikotdkmhxmznonwmwk`; worker `arkova-worker-docusign-bilateral-staging` rev **00004-xpn**, image `sha256:edca3f40…`, source head **`2302e815e61fca5af449ba53a7ccca2fac49606e`** (`rc/docusign-bilateral-2026-08-30`).
+- **Clock = Cloud Run revision ready 2026-08-31T00:46:58Z → T3 closes 2026-09-02T00:46:58Z.** Driver detached (PPID 1), 15-min cycles.
+- **Covers 9 PRs:** #2472 guard mig 0423 · #2473 frontend links · #2474 signer capture · #2476 inbound + mig 0424 · #2479 harness · #2485 16KB rule-event bound · #2489 DECLARED_UNVERIFIED disclosure (6 surfaces) · #2516 seed fixture · #2518 0424 rollback executable · #2520 F1 auto-heal · #2521 signer backfill.
+- **Live state:** 37/37 connector artifacts materialized, 37 anchors at `fingerprint_source=issuer_record_attestation`, 152/152 nonces account-scoped, 0 PII leaks, 0 unresolved provenance conflicts.
+- **RC-1 (`2a676981`) 35 sealed cycles** preserved in `~/arkova-soak/docusign-bilateral/round1-sealed/`; clock deliberately restarted so ONE window covers the complete feature.
+- **Documented deviations (residual risk, not defects):** outbound document-fetch cannot be exercised on a synthetic rig (no real DocuSign OAuth grant) so `document_bytes` anchors = 0 and signer capture is proven at the job layer only; the F1 auto-heal is carried by its verified TLA invariant + unit tests, not this window's load; the signer backfill has no eligible candidates for the same reason. See `docs/staging/docusign-bilateral-2026-08/evidence/E5-rc2-complete-window.md`.
+- **Prod keeps `ENABLE_DOCUSIGN_INBOUND` OFF** pending the SCRUM-3818 go-live gate. Do not touch this rig or the concurrent soaks.
 
 - **Rig:** isolated Supabase `aqikotdkmhxmznonwmwk` (`arkova-soak-docusign-bilateral`, us-east-2), ledger head **0424**. Cloud Run `arkova-worker-docusign-bilateral-staging` rev **00003-kt9**, image `sha256:642487e3…`, source head `2a676981cfcc337f87f42169b2d2085fdb886c87` (branch `rc/docusign-bilateral-2026-08-30`).
 - **Covers:** PRs #2472 (guard mig 0423), #2474 (signer capture), #2473 (frontend links), #2476 (inbound + mig 0424), harness #2479.
@@ -566,29 +618,32 @@ separately). Full verdicts, defects, and landing-order constraints:
 
 ### Soaks
 
-> ### ⚠️ A SOAK WINDOW IS OPEN — PR #2461, until 2026-08-31T09:52:56Z
+> ### ✅ PR #2461 soak CLOSED and SEALED — rig torn down 2026-08-31
 >
-> **Do not tear down `arkova-soak-pii2461b` / `evkcynsqcmctugoscgeh`.** T2 soak for
-> [#2461](https://github.com/carson-see/ArkovaCarson/pull/2461) (server-side `EMAIL_PATTERN` ReDoS
-> fix), window **2026-08-30T21:52:56Z → 2026-08-31T09:52:56Z**, driven every 5 min.
+> T2 window **2026-08-31T00:15:22Z → 12:15:22Z**, full 12 h served, on isolated rig
+> `evkcynsqcmctugoscgeh` / `arkova-worker-pii2461b-staging-00003-gb4`, head
+> `5083fbba4e27121e6bd845361ccd7dda323e3183`.
 >
-> | | |
-> |---|---|
-> | Supabase project | `evkcynsqcmctugoscgeh` (`arkova-soak-pii2461b`) |
-> | Cloud Run | `arkova-worker-pii2461b-staging`, revision `…-00001-b7d` |
-> | Preflight | `environment_type=clean_mirror`, 7/7, captured before the clock started |
-> | Head under soak | `f584dfe99b145502ce9a8b0527b95487247d8d0e` (`/health` `git_sha` matches) |
-> | Image digest | `sha256:c2ed527b8a5bf30f6cba9a6aa40ca14e2eb76d32868a8e9de8aca31d27749b37` |
+> **142 cycles, 142 pass, 0 fail.** 426 extraction jobs claimed and processed, 34,080,426 characters
+> of adversarial dotted evidence driven through `stripSensitiveString`, 426 CTDL projections probed,
+> 0 leaks, 0 under-redactions. Soak clock = Cloud Run worker uptime 43,647 s (12.12 h). Preflight
+> `clean_mirror` 7/7 at **both** ends (00:06:17Z and 12:21:56Z). Evidence is in the PR body; the
+> `Staging Soak Evidence Gate` passes in CI with `SOAK_GATE_DISABLED=false`.
 >
-> **This entry exists because the FIRST rig for this PR was swept mid-setup.** Rig `pii2461`
-> (`wqamcbwogupiuruhkllt`) was torn down by `teardown-isolated-rig.sh` before its clock started —
-> the damage matched that script exactly (project removed, both `*-pii2461-staging` secrets deleted,
-> service deleted, `supabase-db-password-<ref>` left alone). Its provision had aborted at
-> `blocked_after_project_create`, so no admission artifact was ever persisted and the project
-> carried no lease marker. Combined with the "no soak open" bullet below, it read as abandoned.
-> If you are running a cost sweep, this block is the lease.
+> **Rig reclaimed (§7):** Supabase project deleted, Cloud Run service deleted, per-rig secrets
+> deleted, plus the two orphaned `supabase-db-password-<ref>` secrets for this rig and its swept
+> predecessor — the teardown script does not remove those, which is why one had survived a prior
+> sweep as a dead credential.
+>
+> Two failures worth carrying forward, both already fixed in tooling:
+> 1. The first rig was swept mid-setup because its provision aborted before persisting an admission
+>    artifact, so it had no lease marker. A `### Soaks` entry is that lease — use one.
+> 2. `rollback-rehearsal.sh` selected `status.traffic[0]` as "the serving revision"; with a
+>    `rollback` tag present that is the **0%** entry, so it restored traffic to the prod image and
+>    reported success while the rig served the wrong code. Select on `percent == 100` and verify by
+>    reading `/health` `git_sha` back. STAGING_RIG.md pitfall 7, recurring inside our own tooling.
 
-**★ ONE SOAK WINDOW IS OPEN (PR #2461, above). The 2026-08-27 statement below is superseded.**
+**★ NO SOAK WINDOW IS OPEN as of 2026-08-31T12:30Z.**
 Every window described in the dated entries Every window described in the dated entries
 below has closed. This block — not any `## History` entry, and not the presence of a Cloud Run
 service — is the authoritative answer to "is a soak running" (CLAUDE.md §0.1). Three soaks closed
@@ -836,6 +891,16 @@ it. **So §1.9 is now correct and needs no amendment**; an earlier session's not
 the path is `/health` only" was true before that alias landed and is false now. Two live instances
 answer (prod runs `minScale=2`), so the `uptime` field differs between calls to the two paths — that
 is two containers, not two services.
+
+_Last refreshed: 2026-08-30 by Claude Sonnet 5 — claims verified against gcloud/MCP/CI output.
+Scope: the "Bug — Adobe Sign webhooks" addendum only — earlier readings keep their own dates.
+`org_integrations.webhook_id` absence on prod confirmed via the Supabase Management API,
+`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name
+= 'org_integrations'` against `vzwyaatejekddvltxyye` — 23 rows returned, no `webhook_id`. The
+Adobe Sign 500 was reproduced live on isolated rig `sawvgrwhgsmxjlwhpsyx` during the same
+session's `worker-webhook-runtime` T3 soak. PR #2519's migration is verified only against an
+isolated throwaway Postgres 17 container — NOT applied to prod or any rig, NOT soaked; do not
+read this entry as prod-fix-live._
 
 _Last refreshed: 2026-08-29 by Claude Fable 5 (CTO session) — claims verified against gcloud/MCP/CI output:
 prod `/health` read 2026-08-29T14:35Z (`git_sha 0440ce7e5`, healthy); `gcloud run services describe
@@ -1793,4 +1858,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-30 by Claude Opus 5 — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-08-31 by Claude Opus 5 — claims verified against gcloud/MCP/CI output._
