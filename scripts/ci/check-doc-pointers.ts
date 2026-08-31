@@ -33,9 +33,18 @@
  * this script was written to end.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+
+// Sonar typescript:S4036 — resolve `git` to a FIXED absolute path rather than a
+// bare name the OS looks up on `$PATH`, where a writable entry could shadow the
+// real binary. `/usr/bin/git` is the GitHub-hosted Ubuntu runner path; the env
+// override covers self-hosted runners and local dev (Homebrew's
+// `/opt/homebrew/bin/git`). Mirrors the GIT_BIN convention in
+// scripts/ci/lib/ciContext.ts, defined locally so this gate keeps its
+// no-dependency posture and can run in a shallow-checkout job.
+const GIT_BIN = process.env.GIT_BIN ?? '/usr/bin/git';
 
 export interface ScannedDoc {
   doc: string;
@@ -70,20 +79,31 @@ export interface AuditResult {
 export const EXEMPTIONS_PATH = 'scripts/ci/snapshots/doc-pointer-exemptions.json';
 
 function gitLsFiles(repoRoot: string, ...patterns: string[]): string[] {
-  return execFileSync('git', ['ls-files', ...patterns], { encoding: 'utf8', cwd: repoRoot })
+  return execFileSync(GIT_BIN, ['ls-files', ...patterns], { encoding: 'utf8', cwd: repoRoot })
     .trim()
     .split('\n')
     .filter(Boolean);
 }
 
-function findFiles(repoRoot: string, dir: string, name: string): string[] {
-  const abs = join(repoRoot, dir);
-  if (!existsSync(abs)) return [];
-  return execFileSync('find', [abs, '-name', name], { encoding: 'utf8' })
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map((p) => p.slice(repoRoot.length + 1));
+/**
+ * Recursive walk in-process — deliberately not `find(1)`. These trees include
+ * UNTRACKED files by design (a hook or skill added locally still gets scanned),
+ * so `git ls-files` would be wrong here, and shelling out only re-opens the
+ * `$PATH` question GIT_BIN exists to close.
+ */
+function findFiles(repoRoot: string, dir: string, matches: (name: string) => boolean): string[] {
+  const root = join(repoRoot, dir);
+  if (!existsSync(root)) return [];
+  const out: string[] = [];
+  const walk = (abs: string): void => {
+    for (const entry of readdirSync(abs, { withFileTypes: true })) {
+      const child = join(abs, entry.name);
+      if (entry.isDirectory()) walk(child);
+      else if (entry.isFile() && matches(entry.name)) out.push(relative(repoRoot, child));
+    }
+  };
+  walk(root);
+  return out.sort();
 }
 
 /**
@@ -106,9 +126,9 @@ export function collectScannedDocs(repoRoot: string): string[] {
   return [
     'CLAUDE.md',
     'AGENTS.md',
-    ...findFiles(repoRoot, '.claude/skills', 'SKILL.md'),
-    ...findFiles(repoRoot, '.claude/hooks', '*.sh'),
-    ...findFiles(repoRoot, 'memory', '*.md'),
+    ...findFiles(repoRoot, '.claude/skills', (n) => n === 'SKILL.md'),
+    ...findFiles(repoRoot, '.claude/hooks', (n) => n.endsWith('.sh')),
+    ...findFiles(repoRoot, 'memory', (n) => n.endsWith('.md')),
     // Tracked-file listings, not `find`: `agents.md` exists under node_modules.
     ...gitLsFiles(repoRoot, '*agents.md', 'agents.md').filter((p) => p !== 'AGENTS.md'),
     ...gitLsFiles(repoRoot, '.github/workflows/*.yml', '.github/workflows/*.yaml'),
@@ -257,7 +277,7 @@ export function auditDocPointers(docs: ScannedDoc[], opts: AuditOptions): AuditR
 }
 
 function main(): void {
-  const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+  const repoRoot = execFileSync(GIT_BIN, ['rev-parse', '--show-toplevel'], {
     encoding: 'utf8',
   }).trim();
 
