@@ -566,27 +566,29 @@ separately). Full verdicts, defects, and landing-order constraints:
 
 ### Soaks
 
-> ### ⚠️ A SOAK WINDOW IS OPEN — PR #2461, until 2026-08-31T09:52:56Z
+> ### ⚠️ A SOAK WINDOW IS OPEN — PR #2461, until 2026-08-31T12:15:22Z
 >
 > **Do not tear down `arkova-soak-pii2461b` / `evkcynsqcmctugoscgeh`.** T2 soak for
 > [#2461](https://github.com/carson-see/ArkovaCarson/pull/2461) (server-side `EMAIL_PATTERN` ReDoS
-> fix), window **2026-08-30T21:52:56Z → 2026-08-31T09:52:56Z**, driven every 5 min.
+> fix), window **2026-08-31T00:15:22Z → 2026-08-31T12:15:22Z**, driven every 5 min.
 >
 > | | |
 > |---|---|
-> | Supabase project | `evkcynsqcmctugoscgeh` (`arkova-soak-pii2461b`) |
-> | Cloud Run | `arkova-worker-pii2461b-staging`, revision `…-00001-b7d` |
-> | Preflight | `environment_type=clean_mirror`, 7/7, captured before the clock started |
-> | Head under soak | `f584dfe99b145502ce9a8b0527b95487247d8d0e` (`/health` `git_sha` matches) |
-> | Image digest | `sha256:c2ed527b8a5bf30f6cba9a6aa40ca14e2eb76d32868a8e9de8aca31d27749b37` |
+> | Supabase project | `evkcynsqcmctugoscgeh` (`arkova-soak-pii2461b`), ledger head `0419` |
+> | Cloud Run | `arkova-worker-pii2461b-staging`, revision `…-00003-gb4` at 100 % |
+> | Preflight | `environment_type=clean_mirror`, 7/7, 2026-08-31T00:06:17Z (before the clock) |
+> | Head under soak | `5083fbba4e27121e6bd845361ccd7dda323e3183` (`/health` `git_sha` matches) |
+> | Image digest | `sha256:b3e4eb8901cbd1c8eaaa48cdd5cc4abd4ea07569679f4117d8657e4e11f8314a` |
 >
-> **This entry exists because the FIRST rig for this PR was swept mid-setup.** Rig `pii2461`
-> (`wqamcbwogupiuruhkllt`) was torn down by `teardown-isolated-rig.sh` before its clock started —
-> the damage matched that script exactly (project removed, both `*-pii2461-staging` secrets deleted,
-> service deleted, `supabase-db-password-<ref>` left alone). Its provision had aborted at
-> `blocked_after_project_create`, so no admission artifact was ever persisted and the project
-> carried no lease marker. Combined with the "no soak open" bullet below, it read as abandoned.
-> If you are running a cost sweep, this block is the lease.
+> **This is the SECOND window for this PR; the first two attempts died and both causes are worth
+> knowing.** (1) Rig `pii2461` (`wqamcbwogupiuruhkllt`) was torn down by
+> `teardown-isolated-rig.sh` mid-setup — its provision had aborted at
+> `blocked_after_project_create`, so no admission artifact was persisted and it carried no lease
+> marker. This block is the lease that prevents a repeat. (2) The 2026-08-30T21:52:56Z window on
+> the replacement rig was invalidated at 25 clean cycles by BASE DRIFT: main edited
+> `services/worker/src/compliance/professional-education.ts`, a soaked file, and FD-GATE-3 forbids
+> covering same-file T2+ drift with a residual-risk note. Rebased, migrations `0418`/`0419` applied
+> to the rig, preflight re-confirmed, clock restarted.
 
 **★ ONE SOAK WINDOW IS OPEN (PR #2461, above). The 2026-08-27 statement below is superseded.**
 Every window described in the dated entries Every window described in the dated entries
@@ -1793,4 +1795,4 @@ _Verified via: prod `/health` (git_sha c104cc36, db/anchoring/kms ok) + `gh run 
 
 Entries dated 2026-07-06 and earlier were moved verbatim to [docs/handoff-archive/HANDOFF-2026-H1.md](docs/handoff-archive/HANDOFF-2026-H1.md) on 2026-08-01 — nothing was deleted.
 
-_Last refreshed: 2026-08-30 by Claude Opus 5 — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-08-31 by Claude Opus 5 — claims verified against gcloud/MCP/CI output._
