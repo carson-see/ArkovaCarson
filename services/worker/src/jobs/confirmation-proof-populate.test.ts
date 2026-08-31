@@ -378,7 +378,9 @@ function mockScanClient(scanRows: unknown[], updateCount = 1) {
   }));
   const selectResult = { data: scanRows, error: null };
   const builder: Record<string, unknown> = {};
-  for (const m of ['select', 'not', 'is', 'eq', 'limit']) {
+  // `or` is the K3 watermark filter — a mock missing it returns undefined mid-
+  // chain and the scan dies, so the mock has to model the real query exactly.
+  for (const m of ['select', 'not', 'is', 'eq', 'limit', 'or']) {
     builder[m] = vi.fn(() => builder);
   }
   // make the builder awaitable (resolves to the scan result)
@@ -419,7 +421,7 @@ describe('populateConfirmationProofsForSecuredAnchors (scan + wiring)', () => {
 
   it('returns zeroed result (no throw) when the scan query errors', async () => {
     const builder: Record<string, unknown> = {};
-    for (const m of ['select', 'not', 'is', 'eq', 'limit']) builder[m] = vi.fn(() => builder);
+    for (const m of ['select', 'not', 'is', 'eq', 'limit', 'or']) builder[m] = vi.fn(() => builder);
     (builder as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
       resolve({ data: null, error: new Error('db down') });
     const client = { from: vi.fn(() => builder) } as unknown as SupabaseClient;
@@ -441,5 +443,331 @@ describe('populateConfirmationProofsForSecuredAnchors (scan + wiring)', () => {
     expect(result.scanned).toBe(1);
     expect(result.txAttempted).toBe(0); // no valid candidates
     expect(provider.getRawTransaction).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// R1 — persist the bitcoin-tree inclusion branch + tx block index
+// =============================================================================
+
+/**
+ * Build a REAL serialized `CMerkleBlock` (the `gettxoutproof` wire format) over
+ * `leavesLE`, proving inclusion of the leaf at `targetIndex`.
+ *
+ * This is Bitcoin Core's `CPartialMerkleTree::TraverseAndBuild` — the exact
+ * inverse of the `TraverseAndExtract` walk `parseTxOutProof` runs — so the blob
+ * under test is the genuine format a node emits, not a hand-shaped
+ * approximation that only happens to satisfy our own parser.
+ */
+function buildMultiTxProof(
+  leavesLE: Buffer[],
+  targetIndex: number,
+): { proofHex: string; headerHex: string; blockHash: string; merkleRootDisplay: string } {
+  const totalTx = leavesLE.length;
+  const widthAt = (h: number): number => Math.floor((totalTx + (1 << h) - 1) / (1 << h));
+  let treeHeight = 0;
+  while (widthAt(treeHeight) > 1) treeHeight++;
+
+  const calcHash = (height: number, pos: number): Buffer => {
+    if (height === 0) return leavesLE[pos];
+    const left = calcHash(height - 1, pos * 2);
+    const right = pos * 2 + 1 < widthAt(height - 1) ? calcHash(height - 1, pos * 2 + 1) : left;
+    return dsha(Buffer.concat([left, right]));
+  };
+
+  const bits: number[] = [];
+  const hashes: Buffer[] = [];
+  const build = (height: number, pos: number): void => {
+    const parentOfMatch = (targetIndex >> height) === pos;
+    bits.push(parentOfMatch ? 1 : 0);
+    if (height === 0 || !parentOfMatch) {
+      hashes.push(calcHash(height, pos));
+      return;
+    }
+    build(height - 1, pos * 2);
+    if (pos * 2 + 1 < widthAt(height - 1)) build(height - 1, pos * 2 + 1);
+  };
+  build(treeHeight, 0);
+
+  // Flag bits pack LSB-first; the parser rejects any non-zero padding bit.
+  const flagBytes = Buffer.alloc(Math.ceil(bits.length / 8));
+  bits.forEach((bit, i) => {
+    if (bit) flagBytes[i >> 3] |= 1 << (i & 7);
+  });
+
+  const rootLE = calcHash(treeHeight, 0);
+  const header = buildHeader(rootLE);
+  const totalTxLE = Buffer.alloc(4);
+  totalTxLE.writeUInt32LE(totalTx, 0);
+
+  const proofHex = Buffer.concat([
+    header,
+    totalTxLE,
+    Buffer.from([hashes.length]), // varint, < 0xfd for these fixtures
+    ...hashes,
+    Buffer.from([flagBytes.length]), // varint, < 0xfd
+    flagBytes,
+  ]).toString('hex');
+
+  return {
+    proofHex,
+    headerHex: header.toString('hex'),
+    blockHash: Buffer.from(dsha(header)).reverse().toString('hex'),
+    merkleRootDisplay: Buffer.from(rootLE).reverse().toString('hex'),
+  };
+}
+
+/**
+ * Fold a persisted bitcoin-tree branch back up to a root using the Bitcoin
+ * positional double-SHA256 rule over byte-reversed (display) hex — the EXACT
+ * rule the column comment and the ProofBundle docstring promise a verifier.
+ * If this disagrees with the header's merkleroot, the persisted branch is
+ * unusable and the whole point of the column is lost.
+ */
+function recomputeBitcoinRoot(
+  txIdDisplay: string,
+  branch: Array<{ hash: string; position: string }>,
+): string {
+  // Explicit `Buffer` annotation: `Buffer.from(...)` narrows to Buffer<ArrayBuffer>
+  // while bitcoinjs' sha256 yields Buffer<ArrayBufferLike>, so the fold's
+  // reassignment needs the wider type.
+  let node: Buffer = Buffer.from(txIdDisplay, 'hex').reverse(); // display → internal LE
+  for (const step of branch) {
+    const sibling = Buffer.from(step.hash, 'hex').reverse();
+    node =
+      step.position === 'right'
+        ? dsha(Buffer.concat([node, sibling]))
+        : dsha(Buffer.concat([sibling, node]));
+  }
+  return Buffer.from(node).reverse().toString('hex'); // internal LE → display
+}
+
+/** Update mock that records WHICH anchor got WHICH values. */
+function mockRecordingClient(updateCount = 1) {
+  const writes: Array<{ anchorId: string; values: Record<string, unknown> }> = [];
+  const update = vi.fn((values: Record<string, unknown>) => ({
+    eq: vi.fn((_col: string, val: string) => ({
+      select: vi.fn((_cols: string) => {
+        writes.push({ anchorId: val, values });
+        return Promise.resolve({
+          error: null,
+          data: Array.from({ length: updateCount }, () => ({ anchor_id: val })),
+        });
+      }),
+    })),
+  }));
+  const from = vi.fn(() => ({ update }));
+  return { client: { from } as unknown as SupabaseClient, update, writes };
+}
+
+/** Scan mock that records every PostgREST filter the scan applied. */
+function mockWatermarkScanClient(scanRows: unknown[], updateCount = 1) {
+  const filters: Array<{ method: string; args: unknown[] }> = [];
+  const writes: Array<{ anchorId: string; values: Record<string, unknown> }> = [];
+  const update = vi.fn((values: Record<string, unknown>) => ({
+    eq: vi.fn((_col: string, val: string) => ({
+      select: vi.fn((_cols: string) => {
+        writes.push({ anchorId: val, values });
+        return Promise.resolve({
+          error: null,
+          data: Array.from({ length: updateCount }, () => ({ anchor_id: val })),
+        });
+      }),
+    })),
+  }));
+  const builder: Record<string, unknown> = {};
+  for (const m of ['select', 'not', 'is', 'eq', 'limit', 'or']) {
+    builder[m] = vi.fn((...args: unknown[]) => {
+      filters.push({ method: m, args });
+      return builder;
+    });
+  }
+  (builder as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
+    resolve({ data: scanRows, error: null });
+  const from = vi.fn((table: string) => (table === 'anchor_proofs' ? { ...builder, update } : { update }));
+  return { client: { from } as unknown as SupabaseClient, filters, writes };
+}
+
+describe('R1 — bitcoin-tree inclusion branch + tx block index', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // A 4-leaf block, target at index 2 ⇒ a 2-sibling branch with BOTH a
+  // 'left' and a 'right' step, so the positional rule is genuinely exercised.
+  const LEAVES = [0, 1, 2, 3].map((i) => makeTxidLE(0xa000 + i));
+  const TARGET_INDEX = 2;
+  const TARGET_TXID = displayHex(LEAVES[TARGET_INDEX]);
+
+  function confirmedProvider() {
+    const p = buildMultiTxProof(LEAVES, TARGET_INDEX);
+    const provider: ConfirmationProofProvider = {
+      getRawTransaction: vi
+        .fn()
+        .mockResolvedValue({ txid: TARGET_TXID, confirmations: 12, blockhash: p.blockHash, vout: [] }),
+      getBlockHeaderHex: vi.fn().mockResolvedValue(p.headerHex),
+      getTxOutProof: vi.fn().mockResolvedValue(p.proofHex),
+    };
+    return { p, provider };
+  }
+
+  // ---- K2: byte orientation + hashing rule --------------------------------
+
+  it('K2: persists the branch + index, and the persisted branch recomputes to the persisted header merkleroot', async () => {
+    const { p, provider } = confirmedProvider();
+    const { client, writes } = mockRecordingClient();
+
+    const result = await populateConfirmationProofs(
+      client,
+      provider,
+      [{ anchorId: 'anc-1', chainTxId: TARGET_TXID }],
+      { minConfirmations: 6 },
+    );
+
+    expect(result.txConfirmed).toBe(1);
+    expect(result.anchorsUpdated).toBe(1);
+    expect(writes).toHaveLength(1);
+
+    const values = writes[0].values;
+    const branch = values.tx_inclusion_branch as Array<{ hash: string; position: string }>;
+    expect(values.tx_block_index).toBe(TARGET_INDEX);
+    expect(Array.isArray(branch)).toBe(true);
+    expect(branch).toHaveLength(2); // 4-leaf tree ⇒ exactly 2 siblings
+    expect(branch.map((s) => s.position)).toEqual(['right', 'left']);
+
+    // THE contract: fold the branch with the Bitcoin positional double-SHA256
+    // rule over display hex and land on the merkleroot the persisted 80-byte
+    // header commits. A byte-orientation slip breaks this and nothing else.
+    const persistedHeader = (values.block_header as string).replace(/^\\x/, '');
+    const headerMerkleRoot = Buffer.from(persistedHeader, 'hex')
+      .subarray(36, 68)
+      .reverse()
+      .toString('hex');
+    expect(headerMerkleRoot).toBe(p.merkleRootDisplay);
+    expect(recomputeBitcoinRoot(TARGET_TXID, branch)).toBe(p.merkleRootDisplay);
+  });
+
+  // ---- K1: reorg race ------------------------------------------------------
+
+  it('K1: a tx now in a DIFFERENT block than recorded is stale — no branch, no index, no write at all', async () => {
+    const { provider } = confirmedProvider();
+    const { client, writes } = mockRecordingClient();
+
+    const result = await populateConfirmationProofs(
+      client,
+      provider,
+      [{ anchorId: 'anc-reorg', chainTxId: TARGET_TXID, expectedBlockHash: 'ff'.repeat(32) }],
+      { minConfirmations: 6 },
+    );
+
+    expect(result.txStale).toBe(1);
+    expect(result.txConfirmed).toBe(0);
+    expect(result.anchorsUpdated).toBe(0);
+    expect(writes).toHaveLength(0);
+  });
+
+  it('K1: write-path guard — within ONE tx group, an anchor recorded under a different block is skipped while the matching one is written', async () => {
+    // The group-level reorg guard reads ONE expectedBlockHash for the whole
+    // group. If two anchors of the same tx disagree about the recorded block,
+    // the guard can only arm for one of them — so the write path itself must
+    // re-check per anchor before persisting a branch.
+    const { p, provider } = confirmedProvider();
+    const { client, writes } = mockRecordingClient();
+
+    const result = await populateConfirmationProofs(
+      client,
+      provider,
+      [
+        { anchorId: 'anc-match', chainTxId: TARGET_TXID, expectedBlockHash: p.blockHash },
+        { anchorId: 'anc-other-block', chainTxId: TARGET_TXID, expectedBlockHash: 'ab'.repeat(32) },
+      ],
+      { minConfirmations: 6 },
+    );
+
+    expect(result.txConfirmed).toBe(1);
+    expect(result.anchorsUpdated).toBe(1);
+    expect(result.anchorsBlockMismatch).toBe(1);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].anchorId).toBe('anc-match');
+  });
+
+  it('K1: a recorded block hash that MATCHES (case-insensitively) still writes', async () => {
+    const { p, provider } = confirmedProvider();
+    const { client, writes } = mockRecordingClient();
+    const result = await populateConfirmationProofs(
+      client,
+      provider,
+      [{ anchorId: 'anc-upper', chainTxId: TARGET_TXID, expectedBlockHash: p.blockHash.toUpperCase() }],
+      { minConfirmations: 6 },
+    );
+    expect(result.anchorsUpdated).toBe(1);
+    expect(result.anchorsBlockMismatch).toBe(0);
+    expect(writes).toHaveLength(1);
+  });
+
+  // ---- K3: watermark -------------------------------------------------------
+
+  it('K3: the scan picks up rows that ALREADY have a header but no inclusion branch', async () => {
+    const { p, provider } = confirmedProvider();
+    const scanRows = [
+      {
+        anchor_id: 'anc-backfill',
+        receipt_id: TARGET_TXID,
+        block_height: 800500,
+        block_hash: p.blockHash, // header pass already ran…
+        block_header: `\\x${p.headerHex}`,
+        tx_inclusion_branch: null, // …but the branch is still missing
+        anchors: { chain_tx_id: TARGET_TXID, chain_block_height: 800500, status: 'SECURED' },
+      },
+    ];
+    const { client, filters, writes } = mockWatermarkScanClient(scanRows);
+
+    const result = await populateConfirmationProofsForSecuredAnchors(client, provider, {
+      minConfirmations: 6,
+    });
+
+    // The OLD watermark was `.is('block_header', null)`. That filter ALONE can
+    // never return a header-present row, so every row populated before this
+    // change was unreachable forever. It must be gone.
+    expect(filters.some((f) => f.method === 'is' && f.args[0] === 'block_header')).toBe(false);
+    const orFilter = filters.find((f) => f.method === 'or');
+    expect(orFilter).toBeDefined();
+    expect(String(orFilter?.args[0])).toContain('block_header.is.null');
+    expect(String(orFilter?.args[0])).toContain('tx_inclusion_branch.is.null');
+
+    // …and the scan must SELECT the columns the reorg guard + watermark need.
+    const selectFilter = filters.find((f) => f.method === 'select');
+    expect(String(selectFilter?.args[0])).toContain('block_hash');
+    expect(String(selectFilter?.args[0])).toContain('tx_inclusion_branch');
+
+    expect(result.scanned).toBe(1);
+    expect(result.anchorsUpdated).toBe(1);
+    expect(writes[0].values.tx_block_index).toBe(TARGET_INDEX);
+  });
+
+  it('K1+K3: the scan threads the row\'s recorded block_hash as the reorg guard, so a backfill can never overwrite across a reorg', async () => {
+    // Without this the backfill pass would fetch the tx's CURRENT block,
+    // succeed, and cheerfully overwrite a header/branch pair recorded under
+    // the block the tx has since left.
+    const { provider } = confirmedProvider();
+    const scanRows = [
+      {
+        anchor_id: 'anc-reorged',
+        receipt_id: TARGET_TXID,
+        block_height: 800500,
+        block_hash: 'ff'.repeat(32), // recorded under a block the tx has LEFT
+        block_header: `\\x${'aa'.repeat(80)}`,
+        tx_inclusion_branch: null,
+        anchors: { chain_tx_id: TARGET_TXID, chain_block_height: 800500, status: 'SECURED' },
+      },
+    ];
+    const { client, writes } = mockWatermarkScanClient(scanRows);
+
+    const result = await populateConfirmationProofsForSecuredAnchors(client, provider, {
+      minConfirmations: 6,
+    });
+
+    expect(result.txStale).toBe(1);
+    expect(result.txConfirmed).toBe(0);
+    expect(result.anchorsUpdated).toBe(0);
+    expect(writes).toHaveLength(0);
   });
 });

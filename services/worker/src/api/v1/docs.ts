@@ -181,7 +181,7 @@ export const openApiSpec: Record<string, any> = {
                     block_timestamp: { type: 'string', format: 'date-time', nullable: true },
                     batch_id: { type: 'string', nullable: true },
                     verified: { type: 'boolean', description: 'Recomputed locally from the proof path — never trusted from stored anchor status.' },
-                    proof_bundle: { type: 'object', nullable: true, additionalProperties: true, description: 'PROOF-05: self-contained bundle (block header, OP_RETURN payload, schema version) when the confirmation layer has been populated; null otherwise.' },
+                    proof_bundle: { type: 'object', nullable: true, additionalProperties: true, description: 'PROOF-05: self-contained bundle (block header, OP_RETURN payload, schema version, and — R1 — the tx_inclusion_branch + tx_block_index that let a verifier confirm transaction inclusion in the block locally) when the confirmation layer has been populated; null otherwise. The two R1 fields are additive and nullable (no schema-version bump) and are null on records populated before migration 0427.' },
                   },
                 },
               },

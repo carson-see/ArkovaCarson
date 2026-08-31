@@ -34,3 +34,15 @@ Auto-generated TypeScript type definitions for the Supabase database schema.
 - DO: Regenerate with `npx supabase gen types typescript` after every migration
 - DON'T: Hand-edit this file — it will be overwritten on next generation
 - DON'T: Add non-generated types here — put custom types in the relevant module or a dedicated `.d.ts`
+
+## 2026-08-30 — R1 / migration 0427 (HAND-EDITED, needs a real regen)
+
+`anchor_proofs.tx_inclusion_branch` (jsonb) + `anchor_proofs.tx_block_index`
+(integer) were added **by hand**, against the "DON'T hand-edit" rule above,
+because migration `0427` is file-only and applied to no database — there was
+nothing to generate from, and the alternative was shipping code that does not
+typecheck. Flagging it rather than hiding it: **regenerate with `gen:types` once
+`0427` is applied** and let the real output replace these two entries.
+
+The worker keeps its own copy at `services/worker/src/types/database.types.ts`;
+both were updated. The worker's is the one `TypeSafeDatabase` compiles against.

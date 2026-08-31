@@ -344,8 +344,9 @@ cronRouter.post('/check-confirmations', async (_req, res) => {
 // Scheduler → HTTP, so the backfill needs this endpoint to run at all. The
 // in-process schedule stays as the dev/test backup. `runConfirmationProofBackfill`
 // already no-ops (skipped:true) in mock mode / when prod anchoring is off, and
-// needs no mutex (idempotent — the populated block_header is the watermark and
-// the last writer writes identical bytes). Same cronAuth + JSON-result /
+// needs no mutex (idempotent — a row whose bitcoin-tree columns are ALL
+// populated stops matching the scan, and the last writer writes identical
+// bytes). Same cronAuth + JSON-result /
 // 500-on-error shape as /check-confirmations.
 cronRouter.post('/populate-confirmation-proofs', async (_req, res) => {
   try {

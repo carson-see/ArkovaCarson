@@ -1367,3 +1367,57 @@ Three changes, each with tests that fail without it:
 **Do not "fix" a future hang by shortening the TTL.** A TTL below the cadence lets the next tick
 steal the lease from a run that is still working — the SCRUM-3031 overlap this module exists to
 prevent. `maxRunMs` is the knob for a hung run; `ttlMs` is the knob for a dead one.
+
+## 2026-08-30 — R1: the confirmation-proof watermark is a SET of columns
+
+`confirmation-proof-populate.ts` now persists the bitcoin-tree inclusion branch
+and the tx's block index (migration `0427`: `tx_inclusion_branch`,
+`tx_block_index`) alongside `block_header` / `block_hash`.
+`fetchConfirmationProof` had been computing and validating both on every pass
+and the job dropped them on the floor — a prod census of
+`anchor_proofs.raw_response` found 0 rows carrying either.
+
+Three things to know before touching this job:
+
+- **The scan watermark is `.or('block_header.is.null,tx_inclusion_branch.is.null')`,
+  not `.is('block_header', null)`.** The single-column form was correct only
+  while `block_header` was the only bitcoin-tree column. The moment a second one
+  existed it became a trap: every row a previous pass had already given a header
+  was permanently invisible, so the new columns could only ever be filled for
+  anchors confirmed *after* the deploy and the entire back catalogue would never
+  backfill. **If you add a third bitcoin-tree column, add it to the OR** —
+  otherwise you have re-created the same bug one column over. `tx_block_index`
+  is deliberately absent from the OR: it is written in the same UPDATE as the
+  branch, so it is never independently null.
+- **The scan selects and threads `block_hash` as `expectedBlockHash`.** It used
+  to pass `null` with a comment explaining that nothing was recorded yet — true
+  when the scan could only ever see virgin rows. Now that already-populated rows
+  are back in scope, `block_hash` is the ONLY thing that distinguishes a
+  legitimate branch backfill from overwriting evidence recorded under a block
+  the tx has since left. Do not "simplify" it back to null.
+- **There are TWO reorg gates, on purpose.** `fetchConfirmationProof` refuses to
+  return `confirmed` when the tx moved blocks, but it is handed ONE
+  `expectedBlockHash` for a whole tx group. If anchors in a group disagree about
+  the recorded block, the group gate can only arm for one of them — so the
+  write-set build re-checks per anchor and counts the skips in
+  `anchorsBlockMismatch`. A non-zero value there is a reorg or a corrupted row,
+  and it is a counted result field precisely so it is not inferred from a gap
+  between `txConfirmed` and `anchorsUpdated`.
+
+**Operational note on the widened watermark.** Fixing K3 deliberately re-opens a
+backfill: every `anchor_proofs` row that already has a header now matches the
+scan again until its branch is written. Two things follow.
+
+- There is **no index on `block_header` and none on `tx_inclusion_branch`** —
+  `git grep 'INDEX.*anchor_proofs'` shows only `anchor_id`, `batch_id`,
+  `receipt_id`, `materialize_run_id` and the supplementary partial. So this is
+  not an index regression (the old single-column form was equally unindexed),
+  but the usual backfill tail applies: while most rows still match, `LIMIT 2000`
+  is satisfied almost immediately; once nearly all are populated, the scan has
+  to look further for each remaining row. If that tail ever bites, the fix is a
+  partial index on the incomplete set — which needs `CREATE INDEX CONCURRENTLY`
+  in its OWN migration file outside the transaction wrapper (see
+  `supabase/migrations/agents.md`), not a change to this predicate.
+- RPC load stays bounded regardless: the job fans in by unique `chain_tx_id`
+  before fetching, so a 2000-row page of a merkle batch is a handful of
+  `gettxoutproof` calls, not 2000.

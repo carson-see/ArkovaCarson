@@ -69,6 +69,14 @@ export interface PopulateConfirmationProofsResult {
   anchorsUpdated: number;
   /** Anchor rows that had no `anchor_proofs` row to update (skipped, not created). */
   anchorsMissing: number;
+  /**
+   * K1: anchors dropped from the write set because the block hash ALREADY
+   * recorded on their proof row is not the block the tx was just found in.
+   * Counted rather than silently skipped — a non-zero value here is a reorg (or
+   * a corrupted row) and must be visible in the cron result, not inferred from
+   * a gap between `txConfirmed` and `anchorsUpdated`.
+   */
+  anchorsBlockMismatch: number;
 }
 
 /**
@@ -96,6 +104,7 @@ export async function populateConfirmationProofs(
     txStale: 0,
     anchorsUpdated: 0,
     anchorsMissing: 0,
+    anchorsBlockMismatch: 0,
   };
   if (candidates.length === 0) return result;
 
@@ -139,11 +148,40 @@ export async function populateConfirmationProofs(
       result.txConfirmed += 1;
       const group = byTx.get(txId)!;
       for (const anchor of group) {
+        // ── K1: SECOND reorg gate, at the write set ──
+        // `fetchConfirmationProof` already refuses to return `confirmed` when
+        // the tx has moved blocks — but it is handed ONE expectedBlockHash for
+        // the whole group (anchors of a merkle batch share a tx, so normally
+        // they agree). If they DISAGREE — a partially-reorged group, a
+        // half-finished earlier pass, a corrupted row — the group-level guard
+        // can only arm for one of them, and the rest would silently receive a
+        // branch derived under a block their own row does not name. Re-check
+        // per anchor so a branch is only ever written onto a row whose recorded
+        // block still matches the block the branch came from.
+        if (
+          anchor.expectedBlockHash &&
+          anchor.expectedBlockHash.toLowerCase() !== proof.blockHash.toLowerCase()
+        ) {
+          result.anchorsBlockMismatch += 1;
+          logger.warn(
+            { txId, anchorId: anchor.anchorId },
+            'confirmation-proof: anchor row records a different block than the tx is in — NOT writing a branch from another block',
+          );
+          continue;
+        }
         updates.push({
           anchorId: anchor.anchorId,
           blockHeader: proof.blockHeader,
           blockHash: proof.blockHash,
           blockHeight: anchor.blockHeight ?? null,
+          // R1: the bitcoin-tree inclusion evidence this job used to compute
+          // and discard. Written in the SAME row UPDATE as the header it was
+          // derived under, so header and branch can never disagree about which
+          // block they describe. `fetchConfirmationProof` only ever returns
+          // these on `confirmed` and never fabricates them, so an undefined
+          // here omits the column rather than nulling a populated one.
+          txInclusionBranch: proof.merkleBranch,
+          txBlockIndex: proof.txIndex,
         });
       }
     } else if (proof.status === 'pending') {
@@ -185,6 +223,7 @@ export async function populateConfirmationProofs(
       txStale: result.txStale,
       anchorsUpdated: result.anchorsUpdated,
       anchorsMissing: result.anchorsMissing,
+      anchorsBlockMismatch: result.anchorsBlockMismatch,
     },
     'confirmation-proof population complete',
   );
@@ -209,6 +248,13 @@ interface ProofScanRow {
   anchor_id: string;
   receipt_id: string | null;
   block_height: number | null;
+  /**
+   * K1: the block hash a PREVIOUS pass recorded for this proof. Null on a
+   * first population. Threaded into the fetch as `expectedBlockHash` so a
+   * backfill can never overwrite evidence recorded under a block the tx has
+   * since left.
+   */
+  block_hash: string | null;
   anchors: {
     chain_tx_id: string | null;
     chain_block_height: number | null;
@@ -218,8 +264,20 @@ interface ProofScanRow {
 
 /**
  * Find SECURED anchors whose app-tree proof is complete (`merkle_root`
- * present) but whose bitcoin-tree confirmation evidence is missing
- * (`block_header IS NULL`), and populate it.
+ * present) but whose bitcoin-tree confirmation evidence is INCOMPLETE, and
+ * populate it.
+ *
+ * K3 — THE WATERMARK IS A SET OF COLUMNS, NOT ONE COLUMN. This scan used
+ * `block_header IS NULL` alone. That was correct while the header was the only
+ * bitcoin-tree column: a populated header meant a finished row. The moment
+ * `tx_inclusion_branch` / `tx_block_index` (migration 0427) joined it, that
+ * predicate became a trap — every row a previous pass had already given a
+ * header was permanently invisible to the scan, so the new columns could only
+ * ever be filled for anchors confirmed AFTER the deploy and the entire existing
+ * population would never be backfilled. The watermark is now an OR across the
+ * bitcoin-tree columns: a row is a candidate while ANY of them is null, and
+ * drops out only once they are all populated. Rows that are already complete
+ * still match nothing, so this does not re-fetch finished work.
  *
  * This is the cron entrypoint. It is deliberately SEPARATE from the hot
  * `check-confirmations.ts` bulk-drain path: that path is latency-critical
@@ -227,8 +285,8 @@ interface ProofScanRow {
  * a header fetch inline would re-open it. Instead this runs as its own bounded
  * pass — a SECURED anchor gets its app-tree branch at broadcast (FIX-1), then
  * this fills the header/branch shortly after on the next pass. The `anchor_proofs`
- * data itself is the watermark (a populated `block_header` stops matching the
- * scan), so it is naturally resumable + idempotent.
+ * data itself is the watermark (a row whose bitcoin-tree columns are ALL
+ * populated stops matching the scan), so it is naturally resumable + idempotent.
  *
  * Gated by the chain client: in mock/non-prod mode the injected provider is the
  * mock, so this is a no-op-ish pass (mock getRawTransaction returns no block).
@@ -247,9 +305,13 @@ export async function populateConfirmationProofsForSecuredAnchors(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested select shape pending types regen
   const { data, error } = await (client as any)
     .from('anchor_proofs')
-    .select('anchor_id, receipt_id, block_height, anchors!inner(chain_tx_id, chain_block_height, status)')
+    .select('anchor_id, receipt_id, block_height, block_hash, tx_inclusion_branch, anchors!inner(chain_tx_id, chain_block_height, status)')
     .not('merkle_root', 'is', null)
-    .is('block_header', null)
+    // K3: incomplete = ANY bitcoin-tree column still null. `tx_block_index` is
+    // deliberately NOT in this OR: it is written in the same UPDATE as the
+    // branch, so it is never independently null, and including it would only
+    // add a redundant index-less predicate to a hot scan.
+    .or('block_header.is.null,tx_inclusion_branch.is.null')
     .eq('anchors.status', 'SECURED')
     .not('anchors.chain_tx_id', 'is', null)
     .limit(maxRows);
@@ -267,6 +329,7 @@ export async function populateConfirmationProofsForSecuredAnchors(
       txStale: 0,
       anchorsUpdated: 0,
       anchorsMissing: 0,
+      anchorsBlockMismatch: 0,
     };
   }
 
@@ -279,11 +342,14 @@ export async function populateConfirmationProofsForSecuredAnchors(
         anchorId: row.anchor_id,
         chainTxId: txId,
         blockHeight: row.block_height ?? row.anchors?.chain_block_height ?? null,
-        // No expectedBlockHash recorded on anchor_proofs yet (this run is what
-        // populates it). Reorg detection on a FIRST population is handled by
-        // gettxoutproof being pinned to the tx's CURRENT block: if the proof
-        // doesn't contain the tx, fetchConfirmationProof returns stale.
-        expectedBlockHash: null,
+        // K1: on a FIRST population there is no recorded block yet, and reorg
+        // safety comes from gettxoutproof being pinned to the tx's CURRENT
+        // block (a proof that doesn't contain the tx ⇒ stale). But once K3 lets
+        // already-populated rows back into the scan, `block_hash` IS recorded —
+        // and it is the only thing that can tell a legitimate branch backfill
+        // apart from overwriting a header recorded under a block the tx has
+        // since left. Thread it through so the reorg guard actually arms.
+        expectedBlockHash: row.block_hash ?? null,
       };
     })
     .filter((c): c is ConfirmationProofCandidate => c !== null);

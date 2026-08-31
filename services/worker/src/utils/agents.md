@@ -627,3 +627,22 @@ Consequences that are now true of the running system, and were not before:
 - `rateLimiters.auth` (5/min) is still **not mounted on any route** — referenced only by tests and
   comments. It protects nothing today at any multiplier. Mounting it is a behaviour change with its
   own tier, not a cleanup.
+
+## 2026-08-30 — R1: `updateAnchorConfirmationProofs` carries the bitcoin-tree branch
+
+`AnchorConfirmationUpdateRow` gained `txInclusionBranch` + `txBlockIndex`
+(migration `0427`). All four bitcoin-tree values — header, hash, branch, index —
+go out in ONE row UPDATE, so a branch can never be persisted apart from the
+header it was derived under. That makes the reorg invariant structural here
+rather than something each caller has to remember.
+
+Two traps this code is shaped around:
+
+- **The omit-when-undefined contract now covers four columns, not two.** A
+  caller that does not know about the bitcoin-tree columns must not null out a
+  branch a previous pass backfilled, so the mapping is `!== undefined`, never a
+  truthiness test.
+- **`0` and `[]` are REAL values.** `tx_block_index: 0` is the coinbase
+  position, and an empty `tx_inclusion_branch` is the complete, correct answer
+  for a block whose only transaction is this one. A falsy guard would silently
+  drop both and turn a finished row back into a scan candidate forever.

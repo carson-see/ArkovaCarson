@@ -35,6 +35,9 @@ function emptyScanQuery() {
   q.select = vi.fn(() => q);
   q.not = vi.fn(() => q);
   q.is = vi.fn(() => q);
+  // K3: the scan's bitcoin-tree watermark is an `.or(...)` across block_header
+  // and tx_inclusion_branch — mirror it or the chain breaks mid-query.
+  q.or = vi.fn(() => q);
   q.eq = vi.fn(() => q);
   q.limit = vi.fn(() => ({ data: [], error: null }));
   return q;

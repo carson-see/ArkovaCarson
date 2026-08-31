@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { MerkleProofEntry } from './merkle.js';
 
 /**
  * Encode a hex string for a Postgres `bytea` column via PostgREST. A bare hex
@@ -108,10 +109,15 @@ export async function upsertAnchorProofs(
 }
 
 /**
- * PROOF-03 (SCRUM-2336): persist ONLY the bitcoin-tree confirmation columns
- * (`block_header` + `block_hash`) onto EXISTING `anchor_proofs` rows, keyed by
- * `anchor_id`, WITHOUT touching the app-tree columns (`merkle_root`,
- * `proof_path`, `merkle_index`) that FIX-1 already wrote at broadcast time.
+ * PROOF-03 (SCRUM-2336) + R1: persist ONLY the bitcoin-tree confirmation
+ * columns (`block_header`, `block_hash`, and — R1 — `tx_inclusion_branch` +
+ * `tx_block_index`) onto EXISTING `anchor_proofs` rows, keyed by `anchor_id`,
+ * WITHOUT touching the app-tree columns (`merkle_root`, `proof_path`,
+ * `merkle_index`) that FIX-1 already wrote at broadcast time.
+ *
+ * All four bitcoin-tree values are written in ONE row UPDATE, so a branch can
+ * never be persisted apart from the header it was derived under (the K1 reorg
+ * invariant is structural here, not a convention the caller has to remember).
  *
  * Uses a per-anchor UPDATE rather than the destructive `upsert` above so a
  * confirmation pass can never clobber the app-tree branch. The `anchor_proofs`
@@ -125,6 +131,25 @@ export interface AnchorConfirmationUpdateRow {
   blockHash: string;
   /** Block height observed at confirmation (kept in sync if it was unset). */
   blockHeight?: number | null;
+  /**
+   * R1: the BITCOIN-tree inclusion branch proving this tx is committed by the
+   * merkleroot inside `blockHeader` (migration 0427 `tx_inclusion_branch`).
+   *
+   * Siblings are BYTE-REVERSED (display) hex and fold with Bitcoin's
+   * double-SHA256 positional rule — a DIFFERENT convention from the layer-1
+   * app-tree `proofPath`, which is why it carries a different name. An empty
+   * array is a complete branch (single-tx block), not a missing one.
+   *
+   * `undefined` omits the key entirely so a header-only write can never clobber
+   * an already-populated branch; `null` writes an explicit null.
+   */
+  txInclusionBranch?: MerkleProofEntry[] | null;
+  /**
+   * R1: 0-based index of the tx within its block (migration 0427
+   * `tx_block_index`). 0 is a real position (coinbase), never a blank — the
+   * mapping below is `undefined`-guarded, NOT falsy-guarded, for that reason.
+   */
+  txBlockIndex?: number | null;
 }
 
 export interface ConfirmationUpdateResult {
@@ -164,6 +189,14 @@ export async function updateAnchorConfirmationProofs(
       block_hash: row.blockHash,
     };
     if (row.blockHeight != null) values.block_height = row.blockHeight;
+    // R1: omit-when-undefined (same contract as block_header on the upsert
+    // path) so a caller that does not know about the bitcoin-tree columns
+    // cannot null out a branch a previous pass already backfilled. `0` and `[]`
+    // are REAL values and must survive — hence `!== undefined`, not a truthiness
+    // test: tx 0 of a block and a single-tx block's empty branch are both
+    // complete answers.
+    if (row.txInclusionBranch !== undefined) values.tx_inclusion_branch = row.txInclusionBranch;
+    if (row.txBlockIndex !== undefined) values.tx_block_index = row.txBlockIndex;
 
     const { error, data } = await dbAny
       .from('anchor_proofs')

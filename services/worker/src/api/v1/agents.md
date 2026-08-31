@@ -1031,3 +1031,32 @@ alongside is now checked, and the guard cannot be mounted as a no-op.
 
 **Not shipped here:** SCRUM-1272 AC5 (a repo-wide CI lint failing any v1 handler that lacks both an auth
 guard and a scope guard). The structural ratchet above covers these four mounts only.
+
+## 2026-08-30 — R1: `proof_bundle` carries tx-inclusion evidence
+
+`ProofBundle` gained `tx_inclusion_branch` + `tx_block_index` (migration `0427`)
+so a verifier can confirm the anchor transaction's inclusion in its block
+locally instead of fetching an inclusion proof from a node. Additive and
+nullable per §1.8; **`proof_schema_version` is NOT bumped** — a nullable
+addition to an existing shape does not need one, and a consumer that ignores the
+fields behaves exactly as before.
+
+- **They are NOT part of the bundle completeness gate, deliberately.** Gating on
+  them would retroactively withdraw `proof_bundle` from every record confirmed
+  before `0427` — a breaking change wearing an addition's clothes. Absent ⇒
+  emitted as `null`, never fabricated (§1.5).
+- **`tx_inclusion_branch` is not `merkle_proof`.** `merkle_proof` is the layer-1
+  APP tree over document fingerprints; this is the layer-2 BITCOIN tree over
+  transactions, byte-reversed (display) hex under Bitcoin's double-SHA256
+  positional rule. Two trees, two orientations — one name for both is how a
+  verifier ends up folding one tree with the other's rule and checking nothing.
+  The full fold rule is on the interface docstring and in the column comment.
+- `tx_inclusion_branch` is a jsonb column, so Postgres does not constrain its
+  shape: `readTxInclusionBranch` validates on read and degrades a malformed
+  value to `null`. It reuses `isValidProofArray` — the same predicate the
+  app-tree branch is held to — so the two layers cannot drift into two different
+  ideas of a well-formed branch. An empty array is preserved, not collapsed to
+  null.
+- The redaction guard test pins the bundle's exact key set. It now lists 15
+  keys. That pin is the allowlist ratchet — extend it deliberately when you add
+  a field, never delete it to make a diff green.

@@ -48,3 +48,19 @@ After a clean local `supabase db reset --local`, the canonical generator added t
 - `Request.x402PayerContext` is a discriminated union: an explicit API-key or
   payments-disabled bypass, or a verified opaque `payerKey`. Never add a raw
   wallet address to this request type.
+
+## 2026-08-30 — R1 / migration 0427 (HAND-EDITED, needs a real regen)
+
+`anchor_proofs` gained `tx_inclusion_branch` (jsonb) + `tx_block_index`
+(integer). Both were added to `database.types.ts` **by hand**, not by
+`gen:types` — the migration is file-only and has been applied to no database, so
+there was nothing to generate from. Treat these two entries as a stand-in:
+**regenerate properly once `0427` is applied**, and expect the regen to also
+pick up whatever else this copy has drifted on.
+
+Note this file is a SEPARATE copy from `src/types/database.types.ts` and the two
+have already drifted (the frontend copy carries `materialize_run_id`, this one
+does not). This is the copy `TypeSafeDatabase` — and therefore every worker
+Supabase call — actually compiles against, so a column added to only the
+frontend copy will still fail the worker typecheck with a
+`SelectQueryError<"column ... does not exist">`. Update both.

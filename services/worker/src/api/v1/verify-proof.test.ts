@@ -470,7 +470,9 @@ describe('PROOF-05 (SCRUM-2338) — additive nullable proof_bundle', () => {
             'op_return_payload',
             'proof_schema_version',
             'signature',
+            'tx_block_index',
             'tx_id',
+            'tx_inclusion_branch',
           ].sort(),
         );
         const serialized = JSON.stringify(result.proof_bundle);
@@ -724,5 +726,125 @@ describe('SCRUM-2576 — full vs root-only proof contract', () => {
     // Classifying a record we do not have would be asserting something about it.
     expect(res.body.proof_availability).toBeUndefined();
     expect(res.body.proof_availability_note).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// R1 — bitcoin-tree inclusion branch + tx block index on the public bundle
+// =============================================================================
+//
+// Additive + nullable per Constitution §1.8: two NEW keys on `proof_bundle`,
+// no `proof_schema_version` bump, and NEVER fabricated. They let a verifier
+// confirm the anchor tx's inclusion in its block LOCALLY instead of asking a
+// node for an inclusion proof.
+//
+// K2 (naming/orientation): `tx_inclusion_branch` is the BITCOIN tree and is
+// byte-reversed (display) hex under the Bitcoin double-SHA256 positional rule.
+// It is deliberately NOT `merkle_proof` — that is the layer-1 APP tree, a
+// different tree with a different convention. One name for two orientations is
+// how a verifier silently checks the wrong thing.
+
+describe('R1 — proof_bundle tx-inclusion branch + tx block index', () => {
+  const HEADER_HEX = 'aa'.repeat(80);
+  const OP_RETURN_HEX = '41524b56' + TREE.root;
+  const BLOCK_HASH = 'bb'.repeat(32);
+  const LEAF_COUNT = LEAVES.length;
+
+  const TX_BRANCH = [
+    { hash: 'cc'.repeat(32), position: 'right' as const },
+    { hash: 'dd'.repeat(32), position: 'left' as const },
+  ];
+
+  const STORED: ProofRecordData = {
+    merkle_root: TREE.root,
+    proof_path: DOC_BRANCH,
+    batch_id: 'batch-1',
+    merkle_index: DOC_INDEX,
+    block_header: `\\x${HEADER_HEX}`,
+    block_hash: BLOCK_HASH,
+    op_return_payload: `\\x${OP_RETURN_HEX}`,
+    proof_schema_version: 1,
+    tx_inclusion_branch: TX_BRANCH,
+    tx_block_index: 7,
+  };
+
+  function bundleFor(stored: ProofRecordData) {
+    const result = buildProofResponse(ANCHOR, stored, LEAF_COUNT);
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('error');
+    if (!result || 'error' in result) throw new Error('unreachable');
+    return result;
+  }
+
+  it('surfaces the stored branch + index verbatim on the bundle', () => {
+    const b = bundleFor(STORED).proof_bundle;
+    expect(b).not.toBeNull();
+    expect(b?.tx_inclusion_branch).toEqual(TX_BRANCH);
+    expect(b?.tx_block_index).toBe(7);
+    // Additive — the version stays 1 (§1.8: nullable additions do not bump it).
+    expect(b?.proof_schema_version).toBe(1);
+    // And the APP tree is untouched and still distinct.
+    expect(b?.merkle_proof).toEqual(DOC_BRANCH);
+    expect(b?.merkle_index).toBe(DOC_INDEX);
+  });
+
+  it('emits null for BOTH when the row predates the columns — never fabricated, and the bundle still builds', () => {
+    const b = bundleFor({
+      ...STORED,
+      tx_inclusion_branch: null,
+      tx_block_index: null,
+    }).proof_bundle;
+    // The back catalogue has header+OP_RETURN but no branch. That is a complete
+    // PROOF-05 bundle already; the new fields are additive, so their absence
+    // must NOT start returning `proof_bundle: null` for records that used to
+    // get one (that would be a breaking change dressed as an addition).
+    expect(b).not.toBeNull();
+    expect(b?.tx_inclusion_branch).toBeNull();
+    expect(b?.tx_block_index).toBeNull();
+  });
+
+  it('emits null when the columns are absent from the row entirely (undefined, not null)', () => {
+    const { tx_inclusion_branch: _b, tx_block_index: _i, ...withoutColumns } = STORED;
+    const b = bundleFor(withoutColumns).proof_bundle;
+    expect(b).not.toBeNull();
+    expect(b?.tx_inclusion_branch).toBeNull();
+    expect(b?.tx_block_index).toBeNull();
+  });
+
+  it('rejects a MALFORMED stored branch as null rather than shipping it (§1.5 measured, not asserted)', () => {
+    for (const bad of [
+      'not-an-array',
+      [{ hash: 'cc'.repeat(32) }], // no position
+      [{ hash: 'cc'.repeat(32), position: 'middle' }], // invalid position
+      [{ position: 'left' }], // no hash
+      {},
+    ]) {
+      const b = bundleFor({ ...STORED, tx_inclusion_branch: bad as unknown }).proof_bundle;
+      expect(b).not.toBeNull();
+      expect(b?.tx_inclusion_branch).toBeNull();
+    }
+  });
+
+  it('rejects a non-integer / negative tx_block_index as null', () => {
+    for (const bad of ['7', 7.5, -1, null, undefined, {}]) {
+      const b = bundleFor({ ...STORED, tx_block_index: bad as unknown as number }).proof_bundle;
+      expect(b?.tx_block_index).toBeNull();
+    }
+  });
+
+  it('persists index 0 — the first tx in a block is a real position, not a falsy blank', () => {
+    const b = bundleFor({ ...STORED, tx_block_index: 0 }).proof_bundle;
+    expect(b?.tx_block_index).toBe(0);
+  });
+
+  it('the legacy metadata-only fallback carries neither field (no layer-2 evidence at all)', () => {
+    // ANCHOR.metadata has an app-tree branch but no bitcoin-tree columns; the
+    // bundle is null there anyway, but the resolved source must not invent
+    // values that a future completeness change could start trusting.
+    const result = buildProofResponse(ANCHOR);
+    expect(result).not.toBeNull();
+    if (result && !('error' in result)) {
+      expect(result.proof_bundle).toBeNull();
+    }
   });
 });

@@ -271,3 +271,71 @@ describe('S3-P0 — upsertAnchorProofs op_return_payload (bytea) support', () =>
     expect(rows[0].raw_response).toEqual(intent);
   });
 });
+
+// =============================================================================
+// R1 — bitcoin-tree INCLUSION branch (tx → block merkleroot) + tx block index
+// =============================================================================
+//
+// `fetchConfirmationProof` already computes and validates both, and then the
+// populate job threw them away: only `block_header` / `block_hash` were ever
+// persisted. Without the branch a verifier has to ask a node for an inclusion
+// proof, which is exactly the dependency the bundle exists to remove.
+//
+// Naming (K2): these are the BITCOIN-tree fields and follow the Bitcoin
+// double-SHA256 positional rule over BYTE-REVERSED (display) hex. They are
+// deliberately NOT named `merkle_proof` / `merkle_index` — those belong to the
+// layer-1 APP tree, which uses a different convention. Two branches with two
+// orientations must never share one name.
+
+describe('updateAnchorConfirmationProofs — tx-inclusion branch + tx block index (R1)', () => {
+  const HEADER = 'aa'.repeat(80);
+  const HASH = 'bb'.repeat(32);
+  const BRANCH = [
+    { hash: 'cc'.repeat(32), position: 'right' as const },
+    { hash: 'dd'.repeat(32), position: 'left' as const },
+  ];
+
+  it('persists tx_inclusion_branch + tx_block_index alongside the header', async () => {
+    const { client, update } = mockUpdateClient([true]);
+    const result = await updateAnchorConfirmationProofs(client, [
+      {
+        anchorId: 'anc-1',
+        blockHeader: HEADER,
+        blockHash: HASH,
+        txInclusionBranch: BRANCH,
+        txBlockIndex: 7,
+      },
+    ]);
+    expect(result).toEqual({ updated: 1, missing: 0 });
+    const values = update.mock.calls[0][0] as Record<string, unknown>;
+    // jsonb column — the branch goes over the wire as a real array, NOT a
+    // \x-encoded bytea and NOT a JSON string.
+    expect(values.tx_inclusion_branch).toEqual(BRANCH);
+    expect(values.tx_block_index).toBe(7);
+    // Still never touches the app tree.
+    expect('proof_path' in values).toBe(false);
+    expect('merkle_index' in values).toBe(false);
+  });
+
+  it('OMITS both keys when not supplied — an app-tree/header-only write cannot clobber an already-backfilled branch', async () => {
+    const { client, update } = mockUpdateClient([true]);
+    await updateAnchorConfirmationProofs(client, [
+      { anchorId: 'anc-2', blockHeader: HEADER, blockHash: HASH },
+    ]);
+    const values = update.mock.calls[0][0] as Record<string, unknown>;
+    expect('tx_inclusion_branch' in values).toBe(false);
+    expect('tx_block_index' in values).toBe(false);
+  });
+
+  it('persists tx_block_index 0 — the first tx in a block must not be dropped as falsy', async () => {
+    const { client, update } = mockUpdateClient([true]);
+    await updateAnchorConfirmationProofs(client, [
+      { anchorId: 'anc-3', blockHeader: HEADER, blockHash: HASH, txInclusionBranch: [], txBlockIndex: 0 },
+    ]);
+    const values = update.mock.calls[0][0] as Record<string, unknown>;
+    expect(values.tx_block_index).toBe(0);
+    // A single-tx block has NO siblings: an empty branch is the correct,
+    // complete answer and must persist as `[]`, never collapse to null.
+    expect(values.tx_inclusion_branch).toEqual([]);
+  });
+});

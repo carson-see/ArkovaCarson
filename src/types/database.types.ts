@@ -384,6 +384,8 @@ export type Database = {
           proof_schema_version: number
           raw_response: Json | null
           receipt_id: string
+          tx_block_index: number | null
+          tx_inclusion_branch: Json | null
         }
         Insert: {
           anchor_id: string
@@ -405,6 +407,8 @@ export type Database = {
           proof_schema_version?: number
           raw_response?: Json | null
           receipt_id: string
+          tx_block_index?: number | null
+          tx_inclusion_branch?: Json | null
         }
         Update: {
           anchor_id?: string
@@ -426,6 +430,8 @@ export type Database = {
           proof_schema_version?: number
           raw_response?: Json | null
           receipt_id?: string
+          tx_block_index?: number | null
+          tx_inclusion_branch?: Json | null
         }
         Relationships: [
           {
