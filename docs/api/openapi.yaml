@@ -1185,6 +1185,22 @@ components:
             no self-contained per-document offline proof is available from Arkova,
             and that this absence is not evidence the record is invalid
             (Constitution 1.5).
+        verdict:
+          type: string
+          enum: [unverifiable]
+          description: >-
+            R3: present ONLY on the fail-closed 500 raised when a batch-linked
+            proof's exact leaf_count could not be determined, where it is always
+            `unverifiable` — a verification was attempted and could not be
+            completed. Absent on 400/404/503 and on the "Merkle proof data is
+            malformed" 500 (that fails during extraction, before any
+            verification is attempted, so there is no verdict to report).
+            Consumers MUST fall back to `error` / the HTTP status when absent.
+        verdict_note:
+          type: string
+          description: >-
+            The Constitution 1.5 statement for `verdict`. Present exactly when
+            `verdict` is.
 
     MerkleProofResponse:
       type: object
@@ -1221,6 +1237,30 @@ components:
           nullable: true
         verified:
           type: boolean
+        verdict:
+          # R3: additive (Constitution 1.8). `verified` is unchanged and NOT deprecated.
+          type: string
+          enum: [valid, invalid, unverifiable]
+          description: >-
+            The SAME computation as `verified`, reported as three states instead
+            of two. `invalid` = a check RAN and FAILED — an alarm, and exactly
+            equivalent to `verified: false`. `unverifiable` = a check could not
+            be completed (e.g. the record carries no merkle_index/leaf_count, so
+            the CVE-2012-2459 duplicate-node guard could not be armed) — NOT an
+            alarm, and the record may be correctly anchored. `valid` = every
+            check this endpoint claims to run, ran and passed. `valid` and
+            `unverifiable` partition the old `verified: true` bucket, so the two
+            fields can never contradict. Scoped to the layer-1 app-tree
+            inclusion check only, exactly like `verified` — whether the
+            committed root appears in a confirmed receipt is reported by
+            `proof_bundle`.
+        verdict_note:
+          type: string
+          description: >-
+            The measured / asserted / NOT-asserted statement for `verdict`
+            (Constitution 1.5). Always accompanies `verdict`. The `unverifiable`
+            text states explicitly that this is the absence of a completed
+            check, not a failed one.
         proof_bundle:
           # PROOF-05 (SCRUM-2338): additive, nullable self-contained proof bundle.
           # `null` when the two-layer proof is incomplete (Constitution 1.8 / 1.5).

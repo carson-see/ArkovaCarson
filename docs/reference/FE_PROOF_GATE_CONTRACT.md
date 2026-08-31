@@ -73,9 +73,39 @@ Read this carefully; it is the one place reality differs from the story's shorth
   "block_timestamp": "string | null",
   "batch_id": "string | null",
   "verified": "boolean",            // cryptographic recompute of the root — NEVER derived from anchors.status (verify-proof.ts:187-191, 494-499)
+  "verdict": "\"valid\" | \"invalid\" | \"unverifiable\"",  // R3, additive (§1.8) — same computation as `verified`, three states
+  "verdict_note": "string",         // R3 — the §1.5 measured/asserted/NOT-asserted statement for `verdict`
   "proof_bundle": "ProofBundle | null"  // additive nullable (§1.8); null whenever the two-layer proof is incomplete
 }
 ```
+
+**`verdict` (R3) — additive, and `verified` is unchanged and NOT deprecated.**
+A boolean has two buckets for three outcomes, so `verified` conflates "the
+cryptography failed" (an alarm) with "the check could not be completed" (not an
+alarm — retry or fetch more evidence). `verdict` separates them:
+
+| `verdict` | Meaning | Relationship to `verified` |
+|---|---|---|
+| `valid` | Every check this endpoint claims to run, ran and passed. | `verified: true` |
+| `invalid` | A check RAN and FAILED. **Alarm.** | `verified: false` (exactly this set) |
+| `unverifiable` | A check could not be completed — most commonly the record carries no `merkle_index`/`leaf_count`, so the CVE-2012-2459 duplicate-node structural guard could not be armed. **Not an alarm.** | `verified: true` |
+
+`valid` and `unverifiable` partition the old `verified: true` bucket and
+`invalid` is exactly `verified: false`, so **the two fields can never
+contradict** — both are derived from one `verifyMerkleInclusion` call. A
+consumer still reading only `verified` sees no change whatsoever.
+
+Scope: `verdict` describes the **layer-1 app-tree inclusion check only**,
+exactly like `verified`. It says nothing about whether the committed root
+appears in a confirmed network receipt — that is what `proof_bundle` is for. A
+record can legitimately be `verdict: "valid"` with `proof_bundle: null`
+(state 1b below).
+
+FE guidance: gate the download on `verdict === "valid"` where you previously
+used `verified === true`, and treat `unverifiable` the same as the honest
+empty-state — **not** as an error toast. `unverifiable` must never be rendered
+as a failed or suspect document; render `verdict_note` verbatim if you surface
+a reason at all.
 
 `proof_bundle` (`ProofBundle`, `verify-proof.ts:132-174`) — the CANONICAL self-contained packet
 (frozen; PROOF-04 PDF and PROOF-07 CLI conform to it):

@@ -25,6 +25,12 @@ import {
   resolveConnectorFetchSource,
   type FingerprintRederivability,
 } from '../../constants/connectorFingerprint.js';
+import {
+  PROOF_VERDICT,
+  classifyInclusionVerdict,
+  proofVerdictFields,
+  type ProofVerdict,
+} from '../../constants/proofVerdict.js';
 import { fromByteaHex } from '../../utils/anchorProofs.js';
 import { createSignedBundle, staticEd25519Signer, type SignerFn } from '../../proof/signed-bundle.js';
 import { buildBoundProofPayload } from '../../proof/did-binding.js';
@@ -200,6 +206,28 @@ export interface MerkleProofResponse {
    */
   verified: boolean;
   /**
+   * R3: the SAME computation as `verified`, reported as three states instead of
+   * two. Additive per §1.8 — `verified` is unchanged and is NOT deprecated.
+   *
+   *   valid        — every check this endpoint claims to run, ran and passed.
+   *   invalid      — a check RAN and FAILED. An alarm. `verified` is false.
+   *   unverifiable — a check could not be completed (e.g. this record carries no
+   *                  `merkle_index`/`leaf_count`, so the CVE-2012-2459
+   *                  duplicate-node guard could not be armed). NOT an alarm.
+   *
+   * `valid` and `unverifiable` partition the old `verified: true` bucket;
+   * `invalid` is exactly `verified: false`. The two can therefore never
+   * contradict — see `constants/proofVerdict.ts` for the mapping and the
+   * reasoning behind the unarmed-guard case.
+   *
+   * Scoped to the layer-1 app-tree inclusion check ONLY, exactly like
+   * `verified`. Whether the committed root appears in a confirmed receipt is
+   * reported by `proof_bundle`, not here.
+   */
+  verdict: ProofVerdict;
+  /** The §1.5 measured / asserted / NOT-asserted statement for `verdict`. */
+  verdict_note: string;
+  /**
    * PROOF-05 (SCRUM-2338): additive nullable self-contained proof bundle.
    * `null` when the two-layer proof is incomplete (Constitution §1.8 / §1.5).
    */
@@ -272,6 +300,24 @@ export interface ProofErrorResponse {
    * instead of leaving it to be inferred from a 404.
    */
   proof_availability_note?: string;
+  /**
+   * R3: additive (§1.8) tri-state verdict, present on an error body ONLY where
+   * that body reports the outcome of an ATTEMPTED verification — today the
+   * single `leafCountIndeterminate` fail-closed 500, where it is always
+   * `unverifiable`.
+   *
+   * Deliberately ABSENT everywhere else, following the `proof_error_code`
+   * precedent above (400 / 503 / both 404s omit it, and consumers MUST fall
+   * back to the `error` string / HTTP status). In particular the "Merkle proof
+   * data is malformed" 500 gets NO verdict: that failure happens during
+   * EXTRACTION, before any verification is attempted, so there is no verdict to
+   * report. Emitting `invalid` from a parse failure would raise a cryptographic
+   * alarm about a document out of what is really a corrupt-row / server fault —
+   * exactly the cry-wolf reading this field exists to prevent.
+   */
+  verdict?: ProofVerdict;
+  /** The §1.5 statement for `verdict`. Present exactly when it is. */
+  verdict_note?: string;
 }
 
 /**
@@ -563,7 +609,15 @@ export function buildProofResponse(
   // silent null. Surface it as indeterminate; the route maps this to a 500 so a
   // transient DB fault never downgrades the cryptographic guarantee.
   if (leafCountIndeterminate) {
-    return { error: 'Proof leaf count could not be determined; verification is indeterminate.' };
+    return {
+      error: 'Proof leaf count could not be determined; verification is indeterminate.',
+      // R3: this is the one error body that reports a VERIFICATION outcome
+      // rather than a parse/lookup failure — the check was attempted and could
+      // not be completed. `unverifiable` is the machine-readable form of the
+      // prose already here; `invalid` would be wrong (nothing failed, evidence
+      // was missing) and is what the tri-state exists to stop.
+      ...proofVerdictFields(PROOF_VERDICT.UNVERIFIABLE),
+    };
   }
 
   // SCRUM-2490 (PROOF-VERIFY) — the pre-mortem K1 kill-shot was that
@@ -595,6 +649,29 @@ export function buildProofResponse(
     inclusionOpts,
   );
 
+  // R3 — was the CVE-2012-2459 structural guard actually LIVE for that call?
+  //
+  // Read off the SAME `inclusionOpts` object that was just handed to the
+  // verifier, using the verifier's OWN arming condition verbatim
+  // (utils/merkle-verify.ts: `Number.isInteger(leafIndex) &&
+  // Number.isInteger(leafCount) && leafCount >= 1`). Deriving it from
+  // `proofSource.merkleIndex != null && leafCount != null` instead would be a
+  // second, subtly different predicate — `leafCount === 0` passes that and
+  // fails the verifier's — and a disagreement in that direction would report
+  // `valid` with the guard inactive, the exact dishonesty K4 forbids.
+  //
+  // The duplication is deliberate and unavoidable: `merkle-verify.ts` is pinned
+  // byte-for-byte against `packages/verifier-cli/src/vendor/merkle-verify.ts`
+  // (`test/sync-recompute.test.ts`), so it cannot grow a "guard armed" flag on
+  // its result without editing the vendored verifier's trusted computing base.
+  // `verify-proof.verdict.test.ts` pins the two in agreement BEHAVIOURALLY —
+  // the forged self-pair fixture must be rejected exactly when this flag is
+  // true — so drift fails a test rather than silently upgrading a verdict.
+  const structuralGuardArmed =
+    Number.isInteger(inclusionOpts.leafIndex) &&
+    Number.isInteger(inclusionOpts.leafCount) &&
+    (inclusionOpts.leafCount as number) >= 1;
+
   return {
     public_id: anchor.public_id,
     fingerprint: anchor.fingerprint,
@@ -605,6 +682,10 @@ export function buildProofResponse(
     block_timestamp: anchor.chain_timestamp,
     batch_id: proofSource.batchId,
     verified: inclusion.valid,
+    // R3: the SAME `inclusion` object the boolean above is read from — one
+    // computation, two encodings, so K1 (they must never contradict) holds by
+    // construction rather than by review. `invalid` <=> `verified === false`.
+    ...proofVerdictFields(classifyInclusionVerdict(inclusion, structuralGuardArmed)),
     // PROOF-05 (SCRUM-2338): additive, nullable self-contained bundle.
     proof_bundle: buildProofBundle(anchor, proofSource, leafCount),
     // BUG-2026-08-13-010 (§1.5/§1.6A): connector-sourced fingerprints attest

@@ -181,6 +181,8 @@ export const openApiSpec: Record<string, any> = {
                     block_timestamp: { type: 'string', format: 'date-time', nullable: true },
                     batch_id: { type: 'string', nullable: true },
                     verified: { type: 'boolean', description: 'Recomputed locally from the proof path — never trusted from stored anchor status.' },
+                    verdict: { type: 'string', enum: ['valid', 'invalid', 'unverifiable'], description: 'R3: the same computation as `verified`, as three states. `invalid` means a check RAN and FAILED (an alarm; equivalent to verified=false). `unverifiable` means a check could not be completed — e.g. the record carries no merkle_index/leaf_count so the duplicate-node structural guard could not be armed — and is NOT an alarm. `valid` and `unverifiable` partition the old verified=true bucket; `verified` is unchanged and not deprecated.' },
+                    verdict_note: { type: 'string', description: 'The measured / asserted / NOT-asserted statement for `verdict` (Constitution §1.5). Always accompanies `verdict`.' },
                     proof_bundle: { type: 'object', nullable: true, additionalProperties: true, description: 'PROOF-05: self-contained bundle (block header, OP_RETURN payload, schema version) when the confirmation layer has been populated; null otherwise.' },
                   },
                 },
