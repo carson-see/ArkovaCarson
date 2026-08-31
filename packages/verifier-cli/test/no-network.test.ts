@@ -231,7 +231,20 @@ describe('code audit — the verifier packages contain NO Arkova client or fallb
   // off the `@arkova/` scope to the unscoped `arkova-verifier` for publishing,
   // so this guard tracks the UNSCOPED namespace — keyed on `@arkova/` it would
   // match nothing and silently guard nothing.
-  const FORBIDDEN_IMPORT = /from\s+['"](node:(https?|net|tls|dgram|http2|dns|dns\/promises)|https?|dns|net|tls|child_process|node:child_process|axios|undici|node-fetch|got|ky|@supabase\/[^'"]*|@arkova\/[^'"]*|arkova(?!-verifier['"])[^'"]*)['"]/;
+  // The forbidden module namespace, as a bare pattern with no surrounding
+  // syntax, so it can be checked in EVERY form that pulls a module in.
+  const FORBIDDEN_SPECIFIER = String.raw`(?:node:(?:https?|net|tls|dgram|http2|dns|dns\/promises)|https?|dns|net|tls|child_process|node:child_process|axios|undici|node-fetch|got|ky|@supabase\/[^'"]*|@arkova\/[^'"]*|arkova(?!-verifier['"])[^'"]*)`;
+
+  // Matching only `from '…'` would police static named imports and nothing
+  // else: a bare side-effect `import 'node:net'`, a dynamic
+  // `await import('node:net')` and a CJS `require('node:net')` would all sail
+  // through. That is not a theoretical hole — one line of
+  // `const { request } = await import('node:https')` in verify.ts would break
+  // the README's public "zero Arkova network calls" claim, which is this
+  // package's entire value proposition, while keeping this suite green.
+  const FORBIDDEN_IMPORT = new RegExp(
+    String.raw`\b(?:from|import|require)\s*\(?\s*['"]${FORBIDDEN_SPECIFIER}['"]`,
+  );
 
   it('imports no HTTP client library anywhere', () => {
     for (const file of files) {
@@ -239,14 +252,26 @@ describe('code audit — the verifier packages contain NO Arkova client or fallb
     }
   });
 
-  // Ratchet: pins what FORBIDDEN_IMPORT actually blocks. Without this, a package
-  // rename can leave the pattern keyed on a namespace nothing uses any more and
-  // the audit above passes vacuously.
+  // Ratchet: pins BOTH halves of the guard — which namespace it blocks, and
+  // which syntactic forms it inspects. Without this, a package rename can leave
+  // the pattern keyed on a namespace nothing uses any more, or a narrow pattern
+  // can police one import form only; either way the audit above passes
+  // vacuously while asserting nothing.
   it('the forbidden-import guard blocks the namespace it claims to', () => {
-    for (const allowed of ["from 'arkova-verifier'", "from 'node:crypto'", "from 'node:fs'"]) {
+    for (const allowed of [
+      "from 'arkova-verifier'",
+      "import * as v from 'arkova-verifier'",
+      "import 'arkova-verifier';",
+      "from 'node:crypto'",
+      "from 'node:fs'",
+      "from 'node:url'",
+      "await import('node:crypto')",
+      "require('node:path')",
+    ]) {
       expect(FORBIDDEN_IMPORT.test(allowed), `${allowed} must be allowed`).toBe(false);
     }
     for (const blocked of [
+      // namespace coverage
       "from 'arkova'",
       "from 'arkova-mcp-server'",
       "from 'arkova-verifier-cli'",
@@ -254,6 +279,16 @@ describe('code audit — the verifier packages contain NO Arkova client or fallb
       "from '@supabase/supabase-js'",
       "from 'axios'",
       "from 'node:net'",
+      // syntactic-form coverage — every one of these was ALLOWED by the
+      // `from '…'`-only pattern this replaced.
+      "import 'node:net';",
+      "import('node:net')",
+      "await import('node:net')",
+      "const { request } = await import('node:https')",
+      "require('node:net')",
+      "require('child_process')",
+      "import * as n from 'node:net'",
+      "export { x } from 'node:net'",
     ]) {
       expect(FORBIDDEN_IMPORT.test(blocked), `${blocked} must be blocked`).toBe(true);
     }

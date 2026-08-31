@@ -135,8 +135,20 @@ describe('bin entry guard (npm installs `bin` as a symlink)', () => {
     const link = join(realpathSync(dir), 'arkova-verify-link');
     writeFileSync(real, '// stand-in for dist/cli.js\n');
     symlinkSync(real, link);
-    // argv[1] is the symlink; import.meta.url is always the resolved target.
+    // argv[1] is the symlink; import.meta.url is normally the resolved target.
     expect(isDirectInvocation(link, pathToFileURL(real).href)).toBe(true);
+  });
+
+  // Under `node --preserve-symlinks-main`, import.meta.url is the SYMLINK url
+  // rather than the realpath — the inverse of the case above. A guard that
+  // compared only resolved paths would be a silent no-op in this mode, which is
+  // the very failure it was written to prevent.
+  it('also matches when import.meta.url is the SYMLINK (--preserve-symlinks-main)', () => {
+    const real = join(realpathSync(dir), 'psm-cli.js');
+    const link = join(realpathSync(dir), 'psm-link');
+    writeFileSync(real, '');
+    symlinkSync(real, link);
+    expect(isDirectInvocation(link, pathToFileURL(link).href)).toBe(true);
   });
 
   it('treats a plain direct invocation as direct', () => {

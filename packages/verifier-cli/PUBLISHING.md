@@ -12,6 +12,14 @@ also cannot be replaced with `^0.1.0` ahead of time, because until
 to resolve it. So the edit happens **between** publish 1 and publish 2, and is
 **reverted** afterwards.
 
+You are not relied on to remember this. `prepublishOnly` runs
+`scripts/check-publishable.mjs`, which **hard-fails `npm publish`** while any
+`file:` dependency is present. Without that guard the mistake is silent: npm
+publishes the `file:` path happily, the resulting tarball installs with
+`added 2 packages` and exit `0`, and the binary dies only when a user runs it
+(`ERR_MODULE_NOT_FOUND: Cannot find package 'arkova-verifier'`) — permanently,
+since publishes cannot be recalled.
+
 | | Package | Directory | Command it installs |
 |---|---|---|---|
 | 1st | `arkova-verifier` | `packages/verifier` | *(library)* |
@@ -115,10 +123,16 @@ npm install
 Confirm it actually came from the registry and not from disk:
 
 ```bash
-npm ls arkova-verifier           # -> arkova-verifier@0.1.0 (no "-> ./../verifier")
+npm ls arkova-verifier
 ```
 
-If that still shows a local path link, the edit did not take.
+The output must read `arkova-verifier@0.1.0` with **no `->` arrow**. While the
+`file:` path is in place it prints `arkova-verifier@0.1.0 -> ./../verifier`; that
+arrow is the tell that the swap did not take. Scriptable form:
+
+```bash
+npm ls arkova-verifier | grep -q -- '->' && echo "STILL LOCAL — swap did not take" || echo "resolved from registry"
+```
 
 ---
 
@@ -134,9 +148,14 @@ npm run build
 Confirm the binary the `bin` field points at exists and is executable:
 
 ```bash
-head -1 dist/cli.js              # -> #!/usr/bin/env node
-node dist/cli.js --help          # -> usage text, exit 2
+head -1 dist/cli.js                     # -> #!/usr/bin/env node
+node dist/cli.js --help; echo "exit=$?" # -> usage text, then exit=0
+node dist/cli.js;        echo "exit=$?" # -> usage error, then exit=2
 ```
+
+Both codes matter: `--help` is a successful run (`0`), a missing argument is a
+usage error (`2`). If `--help` prints NOTHING and exits `0`, the entry guard is
+broken and the installed binary will be inert — do not publish.
 
 Inspect the tarball:
 
@@ -187,17 +206,35 @@ Put the line back:
 ```bash
 cd /path/to/ArkovaCarson/packages/verifier-cli
 rm -rf node_modules
-npm install                      # regenerates package-lock.json against file:
-npm test                         # must be green again
-git diff --stat                  # expect ONLY package.json + package-lock.json
+npm install     # regenerates package-lock.json against the file: path
+npm test        # must be green again
+git status --porcelain -- package.json package-lock.json
 ```
 
-Commit the revert deliberately, on a branch, so the tree ends where it started:
+**A correct revert prints NOTHING from that last command.** You edited both
+files back to what is already committed, so there is no diff and there is
+nothing to commit. Empty output is SUCCESS — it is the proof the tree is exactly
+where it started.
+
+Read it the other way round, because this is the step people get wrong at 2am:
+
+| `git status --porcelain` output | Meaning |
+|---|---|
+| *(nothing)* | Revert complete. You are done — do not try to commit. |
+| ` M package.json` | Revert did NOT take; `^0.1.0` is still in the manifest. |
+| ` M package-lock.json` only | Manifest is right, lockfile drifted (usually a different npm major). Commit just the lockfile — see below. |
+
+Do **not** try to force something to commit. If the two commands above leave a
+clean tree, the work is finished; running `git commit` with nothing staged exits
+`1` with "nothing to commit", and that failure means success here, not a problem
+to fix by re-applying `^0.1.0`.
+
+Only in the third row is there anything to record:
 
 ```bash
-git checkout -b chore/verifier-post-publish-revert
-git add package.json package-lock.json
-git commit -m "chore(verifier-cli): restore file: dep after first npm publish"
+git checkout -b chore/verifier-post-publish-lockfile
+git add package-lock.json
+git commit -m "chore(verifier-cli): lockfile refresh after first npm publish"
 ```
 
 > The alternative — deliberately keeping `^0.1.0` — is a real choice, but it is
@@ -225,5 +262,6 @@ git commit -m "chore(verifier-cli): restore file: dep after first npm publish"
 | `E402 payment required` | npm wants `--access public` for a scoped package | Only affects scoped names. Confirm the name is unscoped. |
 | `npm ERR! 403 Forbidden` | Wrong account, or name taken since preflight | `npm whoami`; re-run the `npm view` availability check. |
 | CLI install fails to resolve `arkova-verifier` | Publish order was reversed | `arkova-verifier` must be on the registry before the CLI is published. |
+| `REFUSING TO PUBLISH — local file: dependency present` | Working as designed: step 2 was skipped | Do step 2 (publish `arkova-verifier`, swap to `^0.1.0`, `npm install`), then publish. Never bypass with `--ignore-scripts`. |
 | Tarball has no `dist/` | Built into a stale/absent `dist` | Both packages run `prepack` on publish; if you packed with `--ignore-scripts`, run `npm run build` first. |
 | `arkova-verify: command not found` after global install | Shell PATH lacks the npm global bin dir | `npm bin -g` and add it to PATH, or use `npx --package arkova-verifier-cli arkova-verify`. |

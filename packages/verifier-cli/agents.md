@@ -149,9 +149,19 @@ rules, not steps:
   all start testing the published copy instead of the working tree.
 - `prepack` runs the build, so `npm publish` cannot ship a stale or absent
   `dist/` behind the `bin` entry.
+- **`prepublishOnly` (`scripts/check-publishable.mjs`) hard-fails the publish
+  while any `file:` dependency is present.** Do not remove it and do not work
+  around it with `--ignore-scripts`: npm will publish a `file:` path without
+  complaint, the tarball then installs with exit `0` and a dangling link, and
+  the binary fails only at runtime with `ERR_MODULE_NOT_FOUND` — permanently,
+  because publishes are irreversible. The guard is the only thing standing
+  between a skipped step 2 and a broken `0.1.0`.
+- The published tarball deliberately EXCLUDES `dist/**/*.map` (the maps are
+  dangling — `src/` does not ship and `sourcesContent` is absent) and the two
+  fixture authoring tools (`author-adversarial.py`, `generate-fixtures.mjs` —
+  a Python script has no place in a JS consumer install). The fixture CORPUS
+  still ships so auditors can re-run it. 33 files / 193.4 kB.
 - `scripts/publish-packages.sh` covers `sdk` + `embed` only and must NOT be used
   here — it has no concept of the ordered two-step `file:` dependency swap.
 - `fixtures/` ships (auditors can re-run the corpus) but nothing in `src/` reads
-  it at runtime; it is ~136 kB of the ~279 kB unpacked, of which
-  `author-adversarial.py` + `generate-fixtures.mjs` (~45 kB) are authoring tools
-  with no consumer value. Trim via a `files` negation if size ever matters.
+  it at runtime, so it is corpus value only, not a runtime dependency.

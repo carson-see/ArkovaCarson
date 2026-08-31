@@ -10,7 +10,10 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
+    "!dist/**/*.map",
     "fixtures",
+    "!fixtures/author-adversarial.py",
+    "!fixtures/generate-fixtures.mjs",
     "README.md",
     "LICENSE"
   ],
@@ -22,7 +25,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint src test scripts",
     "parity": "npm run build && node scripts/parity-compare.mjs",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "prepublishOnly": "node scripts/check-publishable.mjs"
   },
   "keywords": [
     "arkova",

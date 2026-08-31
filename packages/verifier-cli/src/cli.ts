@@ -215,11 +215,31 @@ export async function main(argv: string[]): Promise<number> {
  * any path containing `#`, `?` or `%` — it treats them as URL syntax — and so
  * would fail to match `import.meta.url` for a perfectly ordinary checkout path.
  *
+ * BOTH forms are accepted, resolved and unresolved, because which one matches
+ * depends on flags outside this package's control: normally `import.meta.url`
+ * is the realpath and only the resolved comparison hits, but under
+ * `node --preserve-symlinks-main` `import.meta.url` is the SYMLINK url and only
+ * the unresolved comparison hits. Checking one form would be a silent no-op in
+ * the other mode — the same class of bug this function exists to fix.
+ *
+ * Fails CLOSED (returns false) when neither comparison can be made. That is
+ * deliberate, not an oversight: failing open would auto-run `main()` on mere
+ * import, which would fire during `test/cli.test.ts` and for any library
+ * consumer of `src/index.ts`. A no-op in an unreachable case is recoverable; a
+ * CLI that runs itself on import is not. The dual comparison above already
+ * removes the realistic failure mode.
+ *
  * Exported so the guard itself is testable; every other CLI test drives
  * `main()` directly and would never exercise this.
  */
 export function isDirectInvocation(entryPath: string | undefined, moduleUrl: string): boolean {
   if (entryPath == null) return false;
+  // Unresolved first: works under --preserve-symlinks-main, and needs no fs access.
+  try {
+    if (pathToFileURL(entryPath).href === moduleUrl) return true;
+  } catch {
+    // Unrepresentable as a URL — fall through to the resolved comparison.
+  }
   try {
     return pathToFileURL(realpathSync(entryPath)).href === moduleUrl;
   } catch {
