@@ -11,7 +11,8 @@
 #
 # Jira: SCRUM-908 (PROD-DRIFT-01)
 # Runbook: docs/runbooks/migration-drift-playbook.md
-# ADR: docs/confluence/16_migration_drift_prevention.md
+# ADR: "Migration drift prevention" in Confluence space A (the repo copy under
+# docs/confluence/ was deleted when Confluence became canonical).
 
 name: Migration Drift Check
 
