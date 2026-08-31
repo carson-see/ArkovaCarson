@@ -80,6 +80,15 @@ interface AnchorRecord {
   credentialType?: string;
   orgId?: string;
   metadata?: Record<string, unknown> | null;
+  /**
+   * SCRUM-3818 (docusign-bilateral-2026-08): R19 fingerprint evidence class
+   * from `anchors.fingerprint_source` (migration 0376) — 'document_bytes' |
+   * 'issuer_record_attestation' | null/undefined (unclassified). Gates
+   * whether the connector re-verify caveat below shows the fetch-time note
+   * (CONNECTOR_FINGERPRINT_LABELS.REVERIFY_NOTE) or the DECLARED_UNVERIFIED
+   * note — never guessed, absent means "not measured".
+   */
+  fingerprintSource?: string | null;
   /** CPE-R1 (SCRUM-1847): structured CPE metadata, when present on the anchor.
    * Populated from the `cpe_metadata` column by the parent page. */
   cpeMetadata?: Record<string, unknown> | null;
@@ -571,6 +580,17 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
   // exact bytes as retrieved at securing time — a fresh download from the
   // source may legitimately differ. Gates the re-verify caveat + mismatch hint.
   const isConnectorSourced = isConnectorSourcedAnchorMetadata(anchor.metadata);
+  // SCRUM-3818 (docusign-bilateral-2026-08): a connector-sourced anchor whose
+  // fingerprintSource is 'issuer_record_attestation' (set only by the inbound
+  // declared-hash path) was NEVER fetched or hashed by Arkova at all — the
+  // fetch-time REVERIFY_NOTE above ("Its fingerprint matches the exact file as
+  // retrieved") would be a false claim. Gate on fingerprintSource so the
+  // caveat states the honest, weaker DECLARED_UNVERIFIED class instead.
+  // Everything that isn't this exact combination (including connector-sourced
+  // anchors where fingerprintSource is undefined/document_bytes — today's
+  // real-world shape for every existing connector anchor) keeps the original
+  // fetch-time note, unchanged.
+  const isDeclaredUnverified = isConnectorSourced && anchor.fingerprintSource === 'issuer_record_attestation';
   const credentialMetadata = anchor.metadata ?? undefined;
   const visibleMetadata = buildAnchorCredentialMetadata(anchor.metadata);
   // DocuSign record deep links (bilateral rollout, frontend-targeted T2):
@@ -1151,7 +1171,9 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               data-testid="connector-fingerprint-reverify-note"
               className="mb-4 rounded-md border border-border bg-muted/50 p-3 text-xs text-muted-foreground"
             >
-              {CONNECTOR_FINGERPRINT_LABELS.REVERIFY_NOTE}
+              {isDeclaredUnverified
+                ? CONNECTOR_FINGERPRINT_LABELS.DECLARED_UNVERIFIED_REVERIFY_NOTE
+                : CONNECTOR_FINGERPRINT_LABELS.REVERIFY_NOTE}
             </p>
           )}
           {verificationState === 'idle' && !showVerifyDropzone && (
@@ -1205,7 +1227,9 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 The document fingerprint does not match. This may be a modified or different document.
                 {isConnectorSourced && (
                   <span data-testid="connector-fingerprint-mismatch-hint" className="mt-2 block">
-                    {CONNECTOR_FINGERPRINT_LABELS.REVERIFY_MISMATCH_HINT}
+                    {isDeclaredUnverified
+                      ? CONNECTOR_FINGERPRINT_LABELS.DECLARED_UNVERIFIED_REVERIFY_MISMATCH_HINT
+                      : CONNECTOR_FINGERPRINT_LABELS.REVERIFY_MISMATCH_HINT}
                   </span>
                 )}
               </AlertDescription>
