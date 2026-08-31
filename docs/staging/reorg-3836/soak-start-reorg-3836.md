@@ -73,3 +73,37 @@ a separate open defect) cannot contaminate the scheduler-path evidence.
 
 48 h uptime, multiple trigger cycles, the 503 path under an induced query failure,
 rollback rehearsal, per-org isolation. This file records the START only.
+
+---
+
+## Update 2026-08-30T23:55Z — both detector branches proven, zero false positives
+
+The initial 250-anchor window used synthetic `chain_tx_id`s only, so it exercised
+just the revert path and would have drained in ~4 runs, leaving ~47 h of
+empty-window no-ops. Topped up with a discriminating fixture:
+
+- **40 anchors carrying REAL mainnet txids** (pulled live from block `tip-3`),
+  at the real height — the detector must find these confirmed and leave them alone.
+- **6,000 synthetic anchors** at `tip..tip+40`. Because the filter is
+  `chain_block_height >= tip-10`, these stay in-window as the tip advances, so the
+  scan keeps doing real work for the whole 48 h (20 txids/run × 6 runs/h × 48 h
+  ≈ 5,760 consumed).
+
+After three further runs:
+
+| Fixture | Status | Reading |
+|---|---|---|
+| `soak-real-%` (real mainnet txids) | **40 SECURED, 0 reverted** | No false positives — confirmed txs are correctly left alone |
+| `soak-pool-%` (synthetic txids) | 60 SUBMITTED, 5,940 SECURED | Revert path works and **persists**; draining ~20/run as designed |
+
+This is the discriminating result: the detector separates genuinely-confirmed
+anchors from missing ones, and **does not revert a real confirmed anchor**. A
+fixture of synthetic txids alone could not have shown that — it would revert
+everything and look identical to a broken detector that reverts unconditionally.
+
+Steady state: 8+ consecutive scheduler fires, all HTTP 200, ~5 s each, on the
+`*/10` schedule; revision `…-00002-mt7` Ready.
+
+**Earlier reverts:** the original 250-anchor window ended 167 SUBMITTED / 83
+SECURED before top-up. Those were synthetic and are expected reverts, not chain
+events.
