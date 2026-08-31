@@ -320,7 +320,13 @@ export async function buildHealthResponse(
     // §1.9: /health must never be made to throw by an enrichment path.
     rpcProbe = UNPROBED;
   }
-  const rpcVerdict = evaluateAnchoringRpcHealth(rpcProbe);
+  const rpcVerdict = evaluateAnchoringRpcHealth(rpcProbe, {
+    // A missing RPC URL while prod anchoring is ON is a definitive
+    // misconfiguration, not an off-prod default — degrade it like a 401.
+    // Read from `deps.config` directly: the `cfg` alias is declared below this
+    // point and is still in its temporal dead zone here.
+    prodAnchoringEnabled: deps.config.enableProdNetworkAnchoring,
+  });
 
   // Independent faults, either of which must be loud; neither cancels the
   // other out. Both are constrained to the pre-existing 'ok' | 'warning'

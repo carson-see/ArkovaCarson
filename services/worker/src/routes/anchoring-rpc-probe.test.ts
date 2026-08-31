@@ -438,3 +438,80 @@ describe('evaluateAnchoringRpcHealth', () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Review findings (PR #2507 code review, 2026-08-31)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('createAnchoringRpcMonitor — startup warm-up (HIGH)', () => {
+  it('probes at construction so the first read is not a cold `unknown`', async () => {
+    // The single-shot health curls in deploy-staging.yml / verify-worker-runtime.yml
+    // always hit a freshly started revision. If the monitor only probes on first
+    // read(), those gates evaluate a cold `unknown` -> compact `ok`, i.e. exactly
+    // the manufactured-ok this PR exists to remove.
+    const probe = vi.fn().mockResolvedValue({
+      state: 'unauthenticated' as const, endpoint: 'https://p', checkedAtMs: 1, httpStatus: 401,
+    });
+    const monitor = createAnchoringRpcMonitor({ probe, ttlMs: 60_000, now: () => 1 });
+    await monitor.settled();
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(monitor.read().state).toBe('unauthenticated');
+  });
+});
+
+describe('probeAnchoringRpcOnce — auth failures delivered as HTTP 200 (MEDIUM)', () => {
+  it('classifies an auth-shaped JSON-RPC error envelope as unauthenticated', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, { error: { code: -32001, message: 'Unknown token' } }),
+    );
+    const res = await probeAnchoringRpcOnce({ rpcUrl: RPC_URL }, { fetchImpl, now: () => 5 });
+    expect(res.state).toBe('unauthenticated');
+  });
+
+  it('leaves a non-auth JSON-RPC error as unreachable', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, { error: { code: -32601, message: 'Method not found' } }),
+    );
+    const res = await probeAnchoringRpcOnce({ rpcUrl: RPC_URL }, { fetchImpl, now: () => 5 });
+    expect(res.state).toBe('unreachable');
+  });
+});
+
+describe('probeAnchoringRpcOnce — `ok` must mean a verified call (LOW)', () => {
+  it('does not report ok when the 200 body carries no numeric height', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { result: null }));
+    const res = await probeAnchoringRpcOnce({ rpcUrl: RPC_URL }, { fetchImpl, now: () => 5 });
+    expect(res.state).not.toBe('ok');
+  });
+});
+
+describe('evaluateAnchoringRpcHealth — not_configured while prod anchoring is on (MEDIUM)', () => {
+  it('degrades when the RPC URL is absent but prod anchoring is enabled', () => {
+    const v = evaluateAnchoringRpcHealth(
+      { state: 'not_configured', endpoint: null, checkedAtMs: 0 },
+      { prodAnchoringEnabled: true },
+    );
+    expect(v.status).toBe('warning');
+    expect(v.credentialVerified).toBe(false);
+  });
+
+  it('stays ok off-prod, where an unset RPC URL is expected', () => {
+    expect(
+      evaluateAnchoringRpcHealth(
+        { state: 'not_configured', endpoint: null, checkedAtMs: 0 },
+        { prodAnchoringEnabled: false },
+      ).status,
+    ).toBe('ok');
+  });
+
+  it('never degrades on transient states even with prod anchoring on', () => {
+    for (const state of ['unreachable', 'unknown'] as const) {
+      expect(
+        evaluateAnchoringRpcHealth(
+          { state, endpoint: null, checkedAtMs: 0 },
+          { prodAnchoringEnabled: true },
+        ).status,
+      ).toBe('ok');
+    }
+  });
+});

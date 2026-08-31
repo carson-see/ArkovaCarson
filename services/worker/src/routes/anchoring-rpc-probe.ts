@@ -178,6 +178,9 @@ export async function probeAnchoringRpcOnce(
     // DEFINITIVE verdict on the credential, not a transient blip, which is
     // why it is the only state allowed to degrade the reported health.
     if (response.status === 401 || response.status === 403) {
+      // Nothing reads this body; release the socket back to the pool instead of
+      // waiting for GC. While a credential is dead this path repeats every TTL.
+      void response.body?.cancel?.();
       return {
         state: 'unauthenticated',
         endpoint,
@@ -188,6 +191,7 @@ export async function probeAnchoringRpcOnce(
     }
 
     if (!response.ok) {
+      void response.body?.cancel?.();
       return {
         state: 'unreachable',
         endpoint,
@@ -207,24 +211,46 @@ export async function probeAnchoringRpcOnce(
 
     // Some providers answer 200 with a JSON-RPC error envelope. Never treat
     // that as a verified-healthy credential.
+    //
+    // Bitcoin Core-compatible nodes and several hosted providers signal a dead
+    // or unauthorized credential this way instead of with a 401 — so an
+    // auth-shaped envelope must degrade exactly like a 401 does, or this module
+    // re-opens the very defect it exists to close for that provider style.
+    // Non-auth envelopes (a bad method, a node-side error) stay `unreachable`:
+    // they are not credential evidence and must not flap the deploy gates.
     if (parsed && typeof parsed === 'object' && parsed.error != null) {
+      const authShaped = isAuthShapedRpcError(parsed.error);
+      return {
+        state: authShaped ? 'unauthenticated' : 'unreachable',
+        endpoint,
+        checkedAtMs: now(),
+        httpStatus: response.status,
+        message: authShaped
+          ? 'RPC credential rejected by provider (JSON-RPC error envelope)'
+          : 'RPC provider returned a JSON-RPC error',
+      };
+    }
+
+    // `ok` is the one state that asserts a call was VERIFIED, so it requires the
+    // height the call asked for. An empty object, `{"result":null}` or a proxy
+    // interstitial is not proof of a live credential — report it as unreachable
+    // (which does not degrade) rather than manufacturing a verified `ok`.
+    if (typeof parsed?.result !== 'number') {
       return {
         state: 'unreachable',
         endpoint,
         checkedAtMs: now(),
         httpStatus: response.status,
-        message: 'RPC provider returned a JSON-RPC error',
+        message: 'RPC provider returned no block height',
       };
     }
-
-    const height = parsed && typeof parsed.result === 'number' ? parsed.result : null;
 
     return {
       state: 'ok',
       endpoint,
       checkedAtMs: now(),
       httpStatus: response.status,
-      blockHeight: height,
+      blockHeight: parsed.result,
     };
   } catch (err) {
     // §1.4: `err` may embed the full request URL (and therefore the token) in
@@ -244,6 +270,23 @@ export async function probeAnchoringRpcOnce(
       message: 'RPC probe failed to reach provider',
     };
   }
+}
+
+/**
+ * Is a JSON-RPC error envelope an AUTH failure rather than a node-side error?
+ *
+ * Deliberately conservative: only unambiguous credential signals qualify, because
+ * a false positive degrades `anchoring` and blocks deploys. JSON-RPC reserves
+ * -32000..-32099 for implementation-defined server errors, which is where hosted
+ * providers put "unauthorized"/"unknown token"; Bitcoin Core uses -32601 for an
+ * unknown method, which is NOT an auth signal and must stay `unreachable`.
+ */
+export function isAuthShapedRpcError(err: { message?: unknown; code?: unknown } | null): boolean {
+  if (!err) return false;
+  const message = typeof err.message === 'string' ? err.message.toLowerCase() : '';
+  return /unauthor|unauthenticated|forbidden|access denied|invalid (?:api[- ]?key|token|credential)|unknown token|bad credential/.test(
+    message,
+  );
 }
 
 export interface AnchoringRpcVerdict {
@@ -273,9 +316,28 @@ export interface AnchoringRpcVerdict {
  *    and actionable — exactly the signal that was missing — so it, and only it,
  *    is allowed to go loud.
  */
-export function evaluateAnchoringRpcHealth(probe: AnchoringRpcProbeResult): AnchoringRpcVerdict {
+export interface AnchoringRpcVerdictOptions {
+  /**
+   * `cfg.enableProdNetworkAnchoring`. When anchoring is ON, a MISSING RPC URL is
+   * a definitive, non-transient misconfiguration — the worker intends to anchor
+   * and cannot. Reporting `ok` there is the same manufactured-ok this module
+   * exists to remove: `config.ts` maps an unset OR literally `"placeholder"`
+   * BITCOIN_RPC_URL to undefined, so a dropped secret would otherwise be
+   * indistinguishable from a verified-live credential. Off-prod an unset URL is
+   * expected and stays `ok`.
+   */
+  prodAnchoringEnabled?: boolean;
+}
+
+export function evaluateAnchoringRpcHealth(
+  probe: AnchoringRpcProbeResult,
+  opts: AnchoringRpcVerdictOptions = {},
+): AnchoringRpcVerdict {
+  const degraded =
+    probe.state === 'unauthenticated' ||
+    (probe.state === 'not_configured' && opts.prodAnchoringEnabled === true);
   return {
-    status: probe.state === 'unauthenticated' ? 'warning' : 'ok',
+    status: degraded ? 'warning' : 'ok',
     credentialVerified: probe.state === 'ok',
     state: probe.state,
   };
@@ -348,6 +410,18 @@ export function createAnchoringRpcMonitor(opts: AnchoringRpcMonitorOptions): Anc
         inFlight = null;
       });
   }
+
+  // HIGH (review 2026-08-31): probe at CONSTRUCTION, not on first read.
+  //
+  // `deploy-staging.yml` and `verify-worker-runtime.yml` each issue exactly one
+  // health curl against a freshly deployed revision — always inside the cold
+  // window. If the first probe only fires on first read(), those gates evaluate
+  // the COLD snapshot (`unknown` -> compact `ok`) and a revoked credential reads
+  // healthy at precisely the moment the gate checks it. Starting the probe when
+  // the process starts moves it off the request path entirely and gives it the
+  // whole container start-up to resolve. Fire-and-forget: refresh() already
+  // swallows rejection and collapses concurrent calls.
+  refresh();
 
   return {
     read(): AnchoringRpcProbeResult {
