@@ -23,6 +23,7 @@ vi.mock('../../../utils/logger.js', () => ({
 import { adobeSignWebhookRouter } from './adobe-sign.js';
 
 const TEST_SECRET = 'adobe-fixture-secret-aaaa';
+const TEST_CLIENT_ID = 'adobe-fixture-client-id-bbbb';
 const ORG_ID = '11111111-1111-1111-1111-111111111111';
 const INTEGRATION_ID = '22222222-2222-2222-2222-222222222222';
 const WEBHOOK_ID = 'webhook-abc-123';
@@ -84,6 +85,48 @@ function dlqInsertMock() {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.ADOBE_SIGN_CLIENT_SECRET = TEST_SECRET;
+  process.env.ADOBE_SIGN_CLIENT_ID = TEST_CLIENT_ID;
+});
+
+// Adobe will not create a webhook at all until the endpoint answers its
+// registration challenge: an HTTPS GET carrying X-AdobeSign-ClientId, which
+// must come back 2XX with the SAME client id echoed in a response header.
+// Without this, `POST /api/rest/v6/webhooks` fails Adobe-side and no
+// webhook_id is ever minted — which is why org_integrations.webhook_id has
+// never been populated in any environment.
+// https://helpx.adobe.com/sign/developer/webhook/create.html
+describe('GET /webhooks/adobe-sign — Adobe registration challenge', () => {
+  it('echoes the client id and returns 200 when the client id is recognized', async () => {
+    const res = await request(createApp())
+      .get('/webhooks/adobe-sign')
+      .set('X-AdobeSign-ClientId', TEST_CLIENT_ID);
+    expect(res.status).toBe(200);
+    expect(res.headers['x-adobesign-clientid']).toBe(TEST_CLIENT_ID);
+    expect(dbFromMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses to echo an UNRECOGNIZED client id (Adobe: must not respond success)', async () => {
+    const res = await request(createApp())
+      .get('/webhooks/adobe-sign')
+      .set('X-AdobeSign-ClientId', 'somebody-elses-client-id');
+    expect(res.status).toBe(403);
+    expect(res.headers['x-adobesign-clientid']).toBeUndefined();
+  });
+
+  it('refuses when the client id header is absent entirely', async () => {
+    const res = await request(createApp()).get('/webhooks/adobe-sign');
+    expect(res.status).toBe(403);
+    expect(res.headers['x-adobesign-clientid']).toBeUndefined();
+  });
+
+  it('503s (never echoes) when ADOBE_SIGN_CLIENT_ID is not configured', async () => {
+    delete process.env.ADOBE_SIGN_CLIENT_ID;
+    const res = await request(createApp())
+      .get('/webhooks/adobe-sign')
+      .set('X-AdobeSign-ClientId', TEST_CLIENT_ID);
+    expect(res.status).toBe(503);
+    expect(res.headers['x-adobesign-clientid']).toBeUndefined();
+  });
 });
 
 describe('POST /webhooks/adobe-sign (SCRUM-1148)', () => {

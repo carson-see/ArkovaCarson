@@ -1,6 +1,37 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
-_Last updated: 2026-08-30 (`adobe-sign.ts`: DLQ the orphaned-webhook_id path)_
+_Last updated: 2026-08-30 (`adobe-sign.ts`: registration challenge + DLQ the orphaned-webhook_id path)_
+
+## 2026-08-30 — `adobe-sign.ts` now answers Adobe's webhook REGISTRATION challenge (`GET /`)
+
+**This is why `org_integrations.webhook_id` was never populated anywhere — the column being
+missing (migration `0426`) was the second problem, not the first.** Adobe will not create a
+webhook until the target URL answers a registration challenge: an HTTPS GET carrying
+`X-AdobeSign-ClientId`, which must return 2XX **and** echo the same client id back in a response
+header of that name ([Adobe docs](https://helpx.adobe.com/sign/developer/webhook/create.html)).
+This router had **only** `.post('/')` — verified by test: all four new challenge cases returned
+`404` before the fix. So `POST /api/rest/v6/webhooks` would have failed Adobe-side, and manual
+registration through Adobe's admin console would have failed too. No webhook id could be minted
+by any route, which is the upstream cause of the always-null `webhook_id`.
+
+**Security shape — do not "simplify" this into a blind echo.** Adobe's guidance is explicit that
+an endpoint which does not recognize the presented client id "MUST NOT respond with the success
+response." Blindly echoing whatever arrives would let any third party register *our* endpoint
+against *their* Adobe application and start delivering us their agreements. So: `503` when
+`ADOBE_SIGN_CLIENT_ID` is unset (never echo an unconfigured value), `403` on absent/mismatched id,
+`200` + echo only on a constant-time match. The presented value is never logged — it identifies a
+third party's Adobe app. Tests: `describe('GET /webhooks/adobe-sign — Adobe registration
+challenge')` pins all four cases.
+
+**Still not sufficient for a working connector.** This makes a webhook id *obtainable*; nothing
+yet *obtains* one. See the entry below — there is still no `adobe-sign-oauth.ts` connect flow, and
+prod has no Adobe credential at all.
+
+**Related pre-existing oddity, deliberately left alone:** `signatureHeader()` falls back to
+`X-AdobeSign-ClientId` as a *signature* when the SHA256 header is absent. On a notification that
+header carries the client id, not an HMAC, so the fallback always fails the HMAC compare and 401s
+— fail-closed, not exploitable. Do not "fix" it by comparing the client id instead: that would
+turn a public identifier into the auth check and is a straight auth bypass.
 
 ## 2026-08-30 — `adobe-sign.ts` orphaned-webhook_id path now DLQs (companion to migration `0426`)
 

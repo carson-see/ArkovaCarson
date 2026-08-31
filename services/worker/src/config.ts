@@ -368,6 +368,14 @@ const ConfigSchema = z.object({
   enableAtsWebhook: boolFlag(false),
   /** Adobe Sign OAuth client secret. Routes 503 when unset. */
   adobeSignClientSecret: z.string().optional(),
+  /**
+   * Adobe Sign OAuth client id. Required to answer Adobe's webhook
+   * REGISTRATION challenge (GET /webhooks/adobe-sign must echo this value)
+   * — without it Adobe refuses to create the webhook at all, so no
+   * `org_integrations.webhook_id` can ever be minted. Challenge 503s when
+   * unset; it is never echoed blindly.
+   */
+  adobeSignClientId: z.string().optional(),
   /** Checkr Connect webhook HMAC. Routes 503 when unset. */
   checkrWebhookSecret: z.string().optional(),
   /** Veremark webhook HMAC. Required when ENABLE_VEREMARK_WEBHOOK=true. */
@@ -939,6 +947,7 @@ function loadConfig(): Config {
     docusignConnectHmacSecret: process.env.DOCUSIGN_CONNECT_HMAC_SECRET,
     enableAtsWebhook: process.env.ENABLE_ATS_WEBHOOK,
     adobeSignClientSecret: process.env.ADOBE_SIGN_CLIENT_SECRET,
+    adobeSignClientId: process.env.ADOBE_SIGN_CLIENT_ID,
     checkrWebhookSecret: process.env.CHECKR_WEBHOOK_SECRET,
     veremarkWebhookSecret: process.env.VEREMARK_WEBHOOK_SECRET,
     enableVeremarkWebhook: process.env.ENABLE_VEREMARK_WEBHOOK,

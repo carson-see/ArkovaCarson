@@ -564,7 +564,12 @@ posture (HANDOFF.md), these are fail-closed when missing — the route returns
 
 ```bash
 # SCRUM-1141..1153 — ATS / Adobe Sign / Veremark / Checkr connectors
-ADOBE_SIGN_CLIENT_SECRET=           # Adobe Sign OAuth secret; route 503s without it
+ADOBE_SIGN_CLIENT_SECRET=           # Adobe Sign notification HMAC key; POST /webhooks/adobe-sign 503s without it
+ADOBE_SIGN_CLIENT_ID=               # Adobe Sign OAuth client id; GET /webhooks/adobe-sign (Adobe's registration
+                                    # challenge) 503s without it. Adobe refuses to CREATE a webhook unless that GET
+                                    # returns 2XX echoing this exact value in an X-AdobeSign-ClientId response header,
+                                    # so without it no org_integrations.webhook_id can ever be minted. Never echoed
+                                    # blindly — an unrecognized id is refused 403 per Adobe's own guidance.
 CHECKR_WEBHOOK_SECRET=              # Checkr Connect webhook HMAC; route 503s without it
 VEREMARK_WEBHOOK_SECRET=            # Veremark webhook HMAC; gated by ENABLE_VEREMARK_WEBHOOK
 ENABLE_VEREMARK_WEBHOOK=false       # default off; flip per-customer when wired

@@ -36,6 +36,65 @@ function getRawBody(req: Request): Buffer | null {
   return Buffer.isBuffer(rawBody) ? rawBody : null;
 }
 
+function clientIdHeader(req: Request): string | undefined {
+  const raw = req.headers['x-adobesign-clientid'];
+  return Array.isArray(raw) ? raw[0] : raw;
+}
+
+/**
+ * Constant-time string compare. The Adobe client id is not a signing secret
+ * (Adobe sends it to us), but this endpoint's whole job is to answer "do you
+ * recognize this id" — comparing in constant time keeps that answer from
+ * being probeable by timing, matching `drive.ts`'s channel-token compare.
+ */
+function safeEqual(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a, 'utf8');
+  const bBuf = Buffer.from(b, 'utf8');
+  if (aBuf.length !== bBuf.length) return false;
+  return crypto.timingSafeEqual(aBuf, bBuf);
+}
+
+/**
+ * Adobe's webhook REGISTRATION challenge.
+ *
+ * Adobe will not create a webhook until the target URL answers an HTTPS GET
+ * carrying `X-AdobeSign-ClientId` with a 2XX AND the same client id echoed
+ * back in a response header of that name. Adobe's own guidance is explicit
+ * that an endpoint which does not recognize the id "MUST NOT respond with
+ * the success response" — so an unknown/absent id is refused here rather
+ * than blanket-echoed, which would let any caller register OUR endpoint
+ * against THEIR Adobe application.
+ *
+ * This is why `org_integrations.webhook_id` has never been populated in any
+ * environment: with no GET route, `POST /api/rest/v6/webhooks` fails
+ * Adobe-side and no webhook id is ever minted to store. Migration `0426`
+ * added the column; this makes the id obtainable in the first place.
+ *
+ * https://helpx.adobe.com/sign/developer/webhook/create.html
+ */
+adobeSignWebhookRouter.get('/', (req: Request, res: Response) => {
+  const expectedClientId = process.env.ADOBE_SIGN_CLIENT_ID;
+  if (!expectedClientId) {
+    logger.error('ADOBE_SIGN_CLIENT_ID not set — registration challenge cannot be answered');
+    res.status(503).json({ error: { code: 'webhook_unconfigured' } });
+    return;
+  }
+
+  const presented = clientIdHeader(req);
+  if (!presented || !safeEqual(presented, expectedClientId)) {
+    // Never log the presented value — it identifies a third party's Adobe app.
+    logger.warn(
+      { presented: presented ? 'mismatch' : 'absent' },
+      'Adobe Sign registration challenge refused — unrecognized client id',
+    );
+    res.status(403).json({ error: { code: 'unrecognized_client_id' } });
+    return;
+  }
+
+  res.set('X-AdobeSign-ClientId', expectedClientId);
+  res.status(200).json({ ok: true });
+});
+
 function signatureHeader(req: Request): string | undefined {
   // Adobe documents both the SHA256 header and the older base ClientId proof.
   const sha = req.headers['x-adobesign-clientid-authentication-sha256'];
