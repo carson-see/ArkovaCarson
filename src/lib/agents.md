@@ -16,16 +16,27 @@ packet**. It printed onto every audit certificate ever generated, via
 **Two rules when you touch a published verification pointer:**
 
 - **Execute it before you write it.** The dead URL survived because it read
-  plausibly. `src/lib/publishedVerificationPointers.test.ts` is the ratchet: it
-  fails on any `arkova.ai/verify` host in `CERTIFICATE_COPY` /
-  `INDEPENDENT_VERIFY_LABELS` that lacks the `app.` prefix, on the word "paste"
-  in the tool line, on any mention of `verify.sh` (a file that has never existed
-  in this repo yet was the page's step-3 command), and on any `npm install
-  @arkova/…` — neither verifier package is published (R-7).
-- **The certificate QR and the on-screen QR must encode one value.** Both are
-  `verifyUrl(publicId)`. `buildAuditReport` now returns `verificationUrl` and
-  `qr` precisely so a test can assert the drawn matrix IS the matrix for that
-  URL, rather than trusting that two call sites agree.
+  plausibly. `src/lib/publishedVerificationPointers.test.ts` is the ratchet. It
+  walks **every export of `copy.ts`** — not a hand-listed pair of blocks, which
+  could never catch the next dead pointer in a constant nobody thought to add —
+  and fails on: any `arkova.ai/verify` host lacking the `app.` prefix; any
+  non-`app.` arkova origin inside a string that mentions verifying (the pathless
+  variant); the word "paste" in the tool line; any mention of `verify.sh`; and
+  any `npm install @arkova/…`, since neither verifier package is published (R-7).
+  Two guard-the-guard tests keep it honest — one asserts the walk actually
+  reaches the constants it claims to cover, the other that each regex still
+  matches the exact string that shipped.
+- **An archived artifact never carries a build-time host.** The certificate uses
+  `canonicalVerifyUrl(publicId)` (`routes.ts`), pinned to `app.arkova.ai`. The
+  on-screen QR uses `verifyUrl()`, which follows `VITE_APP_URL` — correct for a
+  share sheet, catastrophic in a PDF: `.env.example` ships
+  `VITE_APP_URL=http://localhost:5173`, so a dev or preview build would emit
+  certificates whose QR **and** printed link resolve to localhost forever, in a
+  document that cannot be reissued once an auditor has it. The two helpers agree
+  in production and diverge exactly where they should. `buildAuditReport` returns
+  `verificationUrl` and `qr` so a test can assert the drawn matrix IS the matrix
+  for that URL rather than trusting two call sites to agree, and a stubbed-env
+  test pins the divergence.
 
 `certificateQr.ts` (new) is the only importer of `qrcode-generator` (MIT, zero
 deps). It exists because **`qrcode.react` cannot be reached from jsPDF**: it
@@ -55,6 +66,25 @@ rasterising the matrix and decoding it with jsQR 1.4.0, which read back exactly
 `https://app.arkova.ai/verify/ARK-2026-001` — payload, packing and orientation
 proven end to end. No decoder ships in this repo, so if you flip that digest you
 must re-run that decode; do not just paste a new hash.
+
+**The digest is not the orientation guard, though — a hash tells you nothing
+about what broke and invites re-pinning.** Every structural test in that file
+(finder patterns at the three corners) is symmetric under transposition, and so
+is the spec's permanently-dark module here: for this code both `(21,8)` and
+`(8,21)` are dark, because `(8,21)` lands in the second format-information
+strip. Measured, not assumed. The named test `is oriented row-major` asserts
+eight module coordinates sampled from the 138 (of 406) pairs where this matrix
+disagrees with its own transpose, so mirroring the encoder fails a readable
+assertion instead of only a hash.
+
+**Assert what is PAINTED, not what is returned.** `buildAuditReport`'s return
+value is convenient to test and proves nothing about the draw call. Three real
+breakages — transposing `doc.rect`, `QR_QUIET_MODULES = 0`, and `QR_SIDE_MM = 5`
+(0.17 mm modules, unscannable) — all left the suite green until
+`generateAuditReport.test.ts` grew a content-stream parser. It reads the `re`
+ops back out of `doc.output()`, converts points to mm (jsPDF's COMPAT mode
+negates the height and flips the origin), and checks the full geometry against
+the matrix. All four mutations, plus reverting to `verifyUrl()`, now fail it.
 
 Measured cost: the QR is ~230 filled rectangles. `buildAuditReport` now
 constructs jsPDF with `floatPrecision: 'smart'` (5 decimals at ≥1 instead of the

@@ -18,8 +18,8 @@
  *  - the generator stays pure / client-side (returns a jsPDF instance for
  *    inspection, no DOM, no network).
  */
-import { describe, expect, it } from 'vitest';
-import { buildQrMatrix } from './certificateQr';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildQrMatrix, type QrMatrix } from './certificateQr';
 import { CERTIFICATE_COPY } from './copy';
 import {
   buildAuditReport,
@@ -28,7 +28,55 @@ import {
   type MerkleProofEntry,
   type ProofPacket,
 } from './generateAuditReport';
-import { verifyUrl } from './routes';
+import { canonicalVerifyUrl } from './routes';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+/** jsPDF's mm -> pt scale factor (72 dpi over 25.4 mm/inch). */
+const PT_PER_MM = 72 / 25.4;
+
+/**
+ * Every `x y w h re` rectangle in the PDF content stream, converted back to mm
+ * with a top-left origin.
+ *
+ * This reads what is actually PAINTED, not what `buildAuditReport` returned.
+ * The distinction matters: asserting on the returned `qr` object leaves the
+ * draw call itself untested, so transposing it, deleting the quiet zone or
+ * shrinking the code to an unscannable size all stay green.
+ *
+ * jsPDF emits `re` in points against a bottom-left origin and, in its default
+ * COMPAT mode, negates the height — hence the flip below. The certificate draws
+ * its dividers with `line()` (`m`/`l` ops), so every `re` in the stream belongs
+ * to the QR; the count assertion pins that.
+ */
+function paintedRects(doc: { output: () => string; internal: { pageSize: { getHeight: () => number } } }) {
+  const pageHeightMm = doc.internal.pageSize.getHeight();
+  return [...doc.output().matchAll(/(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) re/g)].map(m => {
+    const [xPt, yPt, wPt, hPt] = m.slice(1, 5).map(Number);
+    return {
+      x: xPt / PT_PER_MM,
+      y: pageHeightMm - yPt / PT_PER_MM,
+      w: wPt / PT_PER_MM,
+      h: Math.abs(hPt) / PT_PER_MM,
+    };
+  });
+}
+
+/** The `Td` y of a given rendered text run, in mm from the page top. */
+function textBaselineMm(
+  doc: { output: () => string; internal: { pageSize: { getHeight: () => number } } },
+  text: string,
+): number {
+  const out = doc.output();
+  const at = out.indexOf(`(${text}) Tj`);
+  expect(at, `text not found in content stream: ${text}`).toBeGreaterThan(-1);
+  const before = out.slice(0, at);
+  const td = [...before.matchAll(/(-?[\d.]+) (-?[\d.]+) Td/g)].pop();
+  expect(td, `no Td before ${text}`).toBeTruthy();
+  return doc.internal.pageSize.getHeight() - Number(td![2]) / PT_PER_MM;
+}
 
 const BRANCH: MerkleProofEntry[] = [
   { hash: 'c'.repeat(64), position: 'left' },
@@ -221,19 +269,41 @@ describe('PROOF-04 buildAuditReport — embedded machine-readable JSON', () => {
 //
 // The certificate is the artifact handed to an auditor, and until now it
 // carried no scannable pointer at all — only the bare `publicId` as text. The
-// QR must encode EXACTLY `verifyUrl(publicId)`, the same value the in-app QR
-// encodes (`ShareSheet.tsx` / `AssetDetailView.tsx`), so a printed certificate
-// and the screen can never send a reader to two different places.
+// QR must encode EXACTLY `canonicalVerifyUrl(publicId)`.
+//
+// NOT `verifyUrl()`, which the in-app QR uses (`ShareSheet.tsx` /
+// `AssetDetailView.tsx`): that helper honours `VITE_APP_URL` so a share link
+// follows the host the user is on, which is right for live UI and wrong for a
+// permanent document. The two agree in production and diverge exactly where
+// they should — on a preview or dev build, whose certificates must still point
+// somewhere that resolves years later.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('audit certificate — verification QR', () => {
-  it('encodes exactly verifyUrl(publicId) — the same URL the in-app QR uses', () => {
+  it('encodes exactly canonicalVerifyUrl(publicId)', () => {
     const r = buildAuditReport(securedData({ publicId: 'ARK-2026-001' }));
-    expect(r.verificationUrl).toBe(verifyUrl('ARK-2026-001'));
+    expect(r.verificationUrl).toBe(canonicalVerifyUrl('ARK-2026-001'));
     expect(r.verificationUrl).toBe('https://app.arkova.ai/verify/ARK-2026-001');
     // The drawn matrix IS the matrix for that URL — not a re-derived or
     // near-miss value.
     expect(r.qr).not.toBeNull();
-    expect(r.qr).toEqual(buildQrMatrix(verifyUrl('ARK-2026-001')));
+    expect(r.qr).toEqual(buildQrMatrix(canonicalVerifyUrl('ARK-2026-001')));
+  });
+
+  it('pins the production origin even when VITE_APP_URL points elsewhere', () => {
+    // A certificate is permanent and cannot be reissued once it is in an
+    // auditor's hands. `.env.example` ships VITE_APP_URL=http://localhost:5173
+    // and preview deploys set an ephemeral host, so a build-time value baked
+    // into the QR and the printed link would resolve to localhost, or to a dead
+    // preview host, forever. The in-app share QR follows VITE_APP_URL on
+    // purpose; the archived artifact must not.
+    for (const host of ['http://localhost:5173', 'https://arkova-git-abc123.vercel.app']) {
+      vi.stubEnv('VITE_APP_URL', host);
+      const r = buildAuditReport(securedData({ publicId: 'ARK-2026-001' }));
+      expect(r.verificationUrl).toBe('https://app.arkova.ai/verify/ARK-2026-001');
+      expect(r.doc.output()).toContain('https://app.arkova.ai/verify/ARK-2026-001');
+      expect(r.doc.output()).not.toContain(host);
+      expect(r.qr).toEqual(buildQrMatrix('https://app.arkova.ai/verify/ARK-2026-001'));
+    }
   });
 
   it('renders the verification URL as text so a printed certificate stays usable', () => {
@@ -257,7 +327,7 @@ describe('audit certificate — verification QR', () => {
     const huge = 'z'.repeat(4000);
     const r = buildAuditReport(securedData({ publicId: huge }));
     expect(r.qr).toBeNull();
-    expect(r.verificationUrl).toBe(verifyUrl(huge));
+    expect(r.verificationUrl).toBe(canonicalVerifyUrl(huge));
     expect(r.doc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
   });
 
@@ -265,7 +335,7 @@ describe('audit certificate — verification QR', () => {
     const r = buildAuditReport(securedData({ status: 'PENDING', proof: undefined }));
     expect(r.embeddedProofJson).toBeNull();
     expect(r.qr).not.toBeNull();
-    expect(r.verificationUrl).toBe(verifyUrl('rec_abc123'));
+    expect(r.verificationUrl).toBe(canonicalVerifyUrl('rec_abc123'));
   });
 
   it('keeps the proof packet and the QR in separate, intact sections', () => {
@@ -274,5 +344,108 @@ describe('audit certificate — verification QR', () => {
     expect(output).toContain(CERTIFICATE_COPY.SECTION_MACHINE_PROOF);
     expect(output).toContain(CERTIFICATE_COPY.SECTION_VERIFY_ONLINE);
     expect(output).toContain('b'.repeat(64)); // merkle root still embedded
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// What is actually painted into the PDF.
+//
+// Everything above asserts on the object `buildAuditReport` RETURNS, which
+// leaves the draw call itself unverified. Three real breakages survive that:
+// transposing the rect call (`run.row`/`run.col` swapped), setting
+// QR_QUIET_MODULES to 0, and shrinking QR_SIDE_MM to an unscannable 5 mm. Each
+// is caught below by measuring the content stream.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('audit certificate — QR as painted in the content stream', () => {
+  /** Mirrors the module-scope constants in generateAuditReport.ts. */
+  const MARGIN_MM = 20;
+  const QR_SIDE_MM = 26;
+  const QR_QUIET_MODULES = 4;
+  /** `addSection` advances the cursor by 7 mm below the heading baseline. */
+  const SECTION_HEADING_ADVANCE_MM = 7;
+  const EPS = 0.01;
+
+  const build = () => buildAuditReport(securedData({ publicId: 'ARK-2026-001' }));
+
+  it('paints one rectangle per run and nothing else', () => {
+    const r = build();
+    expect(paintedRects(r.doc)).toHaveLength((r.qr as QrMatrix).runs.length);
+  });
+
+  it('paints every module at the position the matrix specifies (catches transposition)', () => {
+    const r = build();
+    const qr = r.qr as QrMatrix;
+    const rects = paintedRects(r.doc);
+    const moduleMm = QR_SIDE_MM / qr.moduleCount;
+
+    const originX = Math.min(...rects.map(v => v.x));
+    const originY = Math.min(...rects.map(v => v.y));
+
+    // Compare as sorted geometry so a mirrored draw cannot coincidentally pass:
+    // every run must appear at (col, row), never at (row, col).
+    const key = (v: { x: number; y: number; w: number; h: number }) =>
+      [v.x, v.y, v.w, v.h].map(n => n.toFixed(3)).join(',');
+    const painted = rects.map(key).sort();
+    const expected = qr.runs
+      .map(run =>
+        key({
+          x: originX + run.col * moduleMm,
+          y: originY + run.row * moduleMm,
+          w: run.width * moduleMm,
+          h: moduleMm,
+        }),
+      )
+      .sort();
+    expect(painted).toEqual(expected);
+  });
+
+  it('paints modules at the declared size — a scannable 0.897 mm, not a speck', () => {
+    const r = build();
+    const qr = r.qr as QrMatrix;
+    const rects = paintedRects(r.doc);
+    const moduleMm = QR_SIDE_MM / qr.moduleCount;
+
+    expect(moduleMm).toBeCloseTo(0.897, 3);
+    for (const v of rects) expect(v.h).toBeCloseTo(moduleMm, 3);
+
+    // The painted code occupies exactly QR_SIDE_MM square.
+    const left = Math.min(...rects.map(v => v.x));
+    const top = Math.min(...rects.map(v => v.y));
+    const right = Math.max(...rects.map(v => v.x + v.w));
+    const bottom = Math.max(...rects.map(v => v.y + v.h));
+    expect(right - left).toBeCloseTo(QR_SIDE_MM, 2);
+    expect(bottom - top).toBeCloseTo(QR_SIDE_MM, 2);
+  });
+
+  it('leaves the spec-required 4-module quiet zone on all four sides', () => {
+    const r = build();
+    const qr = r.qr as QrMatrix;
+    const rects = paintedRects(r.doc);
+    const moduleMm = QR_SIDE_MM / qr.moduleCount;
+    const quietMm = moduleMm * QR_QUIET_MODULES;
+
+    expect(quietMm).toBeCloseTo(3.586, 3);
+
+    const left = Math.min(...rects.map(v => v.x));
+    const top = Math.min(...rects.map(v => v.y));
+    const right = Math.max(...rects.map(v => v.x + v.w));
+    const bottom = Math.max(...rects.map(v => v.y + v.h));
+
+    // Horizontal: measured from the section's content inset (margin + 4).
+    expect(left - (MARGIN_MM + 4)).toBeCloseTo(quietMm, 2);
+    // Vertical: measured from the "Verify Online" heading baseline.
+    const headingY = textBaselineMm(r.doc, CERTIFICATE_COPY.SECTION_VERIFY_ONLINE);
+    expect(top - (headingY + SECTION_HEADING_ADVANCE_MM)).toBeCloseTo(quietMm, 2);
+
+    // Right and bottom: the reserved box extends a quiet zone past the modules,
+    // and the text column starts beyond it, so nothing encroaches.
+    const boxRight = MARGIN_MM + 4 + QR_SIDE_MM + quietMm * 2;
+    expect(boxRight - right).toBeCloseTo(quietMm, 2);
+    const urlBaseline = textBaselineMm(r.doc, 'https://app.arkova.ai/verify/ARK-2026-001');
+    expect(urlBaseline).toBeLessThan(bottom + quietMm + EPS);
+  });
+
+  it('paints no QR at all when there is no publicId', () => {
+    expect(paintedRects(buildAuditReport(securedData({ publicId: '' })).doc)).toEqual([]);
   });
 });

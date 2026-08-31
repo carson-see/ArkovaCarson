@@ -209,7 +209,7 @@ Semantics (frozen):
 | `isProofDownloadable(status)` | `src/lib/statusDisplay.ts` | SECURED-only, fails closed |
 | `getStatusDisplay(status)` | `src/lib/statusDisplay.ts` | `{ label, tone }`; §1.3-safe; never raw enum |
 | Reference verifier URL | `CERTIFICATE_COPY.OFFLINE_VERIFY_TOOL` in `src/lib/copy.ts` | `https://app.arkova.ai/verify/independent` |
-| Certificate QR payload | `verifyUrl(publicId)` via `src/lib/certificateQr.ts` | `https://app.arkova.ai/verify/{publicId}` — same value as the in-app QR |
+| Certificate QR payload | `canonicalVerifyUrl(publicId)` via `src/lib/certificateQr.ts` | `https://app.arkova.ai/verify/{publicId}` — production origin, pinned. NOT `verifyUrl()`, which honours `VITE_APP_URL` and would bake a localhost/preview host into a permanent artifact |
 
 ## 6. Open items / non-goals
 

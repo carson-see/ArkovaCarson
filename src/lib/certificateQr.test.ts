@@ -90,6 +90,42 @@ describe('buildQrMatrix', () => {
     expect(buildQrMatrix(URL)).toEqual(buildQrMatrix(URL));
   });
 
+  it('is oriented row-major — a transposed matrix fails these named modules', () => {
+    // The finder patterns asserted above sit at (0,0), (0,n-7) and (n-7,0), a
+    // set that maps onto itself under transposition — so every structural test
+    // in this file passes if `isDark(row, col)` is swapped to `isDark(col, row)`
+    // and the whole code is mirrored about its diagonal. The spec's
+    // permanently-dark module at (4·version+9, 8) does not help either: for this
+    // code (21,8) AND (8,21) are both dark, because (8,21) lands in the second
+    // format-information strip. Measured, not assumed.
+    //
+    // These eight coordinates were sampled from the 138 (of 406) module pairs
+    // where this matrix disagrees with its own transpose, so each one fails
+    // under mirroring — and the expected values come from the same matrix jsQR
+    // decoded as the correct URL (see the golden test below). A transposition
+    // now fails a named, readable assertion instead of only a hash.
+    const g = toGrid(buildQrMatrix(URL)!);
+    const EXPECTED: Array<[number, number, boolean]> = [
+      [0, 11, true],
+      [3, 11, true],
+      [7, 15, false],
+      [9, 14, false],
+      [11, 12, false],
+      [13, 23, false],
+      [17, 19, true],
+      [19, 28, false],
+    ];
+    for (const [row, col, dark] of EXPECTED) {
+      expect(
+        { row, col, dark: g[row][col] },
+        `module (${row}, ${col}) — transposing the draw would flip this`,
+      ).toEqual({ row, col, dark });
+      // Each chosen pair genuinely disagrees with its mirror, which is what
+      // makes the assertion above a transposition detector rather than decor.
+      expect(g[col][row]).toBe(!dark);
+    }
+  });
+
   it('matches the golden matrix that an independent decoder read back as this URL', () => {
     // A structural test cannot prove the payload decodes correctly, and no QR
     // DECODER ships in this repo. So the matrix below was verified once, out of

@@ -968,6 +968,12 @@
       "repository": "https://github.com/protobufjs/protobuf.js"
     },
     {
+      "name": "qrcode-generator",
+      "version": "2.0.4",
+      "license": "MIT",
+      "repository": "https://github.com/kazuhikoarase/qrcode-generator"
+    },
+    {
       "name": "qrcode.react",
       "version": "4.2.0",
       "license": "ISC",

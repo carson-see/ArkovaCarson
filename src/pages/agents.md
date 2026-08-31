@@ -12,13 +12,37 @@ command was unrunnable. (Its origin is visible in
 `docs/stories/24_compliance_audit_readiness.md`, where "Write `public/verify.sh`"
 is still an unticked box — the copy was written against the plan, not the build.)
 
-It now points at the verifier we actually ship: `packages/verifier-cli`, bin
-`arkova-verify`, invoked exactly as its README documents. The download button is
-replaced by build-from-source instructions, because **neither `@arkova/verifier`
-nor `@arkova/verifier-cli` is published to any registry** — an `npm install`
-line here would be a claim of external status we do not hold (§1.13 R-7). If you
-are tempted to add one, verify the package resolves from the public registry
-first; the scoped names 404 today.
+It now points at the verifier we actually ship: `packages/verifier-cli`. The
+download button is replaced by build-from-source instructions, because **neither
+`@arkova/verifier` nor `@arkova/verifier-cli` is published to any registry** — an
+`npm install` line here would be a claim of external status we do not hold
+(§1.13 R-7). If you are tempted to add one, verify the package resolves from the
+public registry first; the scoped names 404 today.
+
+**Two things about those instructions that a first pass got wrong, both caught
+by running them:**
+
+- **The library has to be built before the CLI.** `packages/verifier-cli` depends
+  on `@arkova/verifier` as `file:../verifier`, whose `main`/`types` point into
+  `dist/` — and `dist/` is gitignored (`.gitignore:12`). On a fresh clone,
+  building only the CLI fails with `TS2307: Cannot find module '@arkova/verifier'`
+  seven times over. `VERIFIER_BUILD_CMD` therefore builds **both**, in order,
+  from the repository root.
+- **`arkova-verify` is not a command after that build.** It is the package's
+  `bin` mapping, and `npm run build` is just `tsc`; the name only reaches PATH
+  via `npm link` or a global install. A reader who completed the build and pasted
+  a bare `arkova-verify` got `command not found` — confirmed in a clean worktree.
+  `STEP_3_CMD` invokes `node packages/verifier-cli/dist/cli.js` instead, which
+  needs neither.
+
+Both were verified end to end after deleting `dist/` and `node_modules/` from
+both packages: the printed build command succeeds, and the printed step-3 command
+then returns `VERDICT: VERIFIED` against `fixtures/signed-bundle.json`. The
+ratchet in `src/lib/publishedVerificationPointers.test.ts` pins the build order
+and forbids a bare `arkova-verify` invocation from returning.
+
+**Writing an instruction you have not executed is the defect this page had.**
+Do not fix copy here by reading source; run it.
 
 `Requires: bash, curl, shasum, jq` was also a bare JSX literal (§1.3 — copy
 belongs in `copy.ts`) *and* wrong, since it described the shell script rather

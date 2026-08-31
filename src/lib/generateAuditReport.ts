@@ -12,10 +12,11 @@
  * extract it.
  *
  * It also carries a "Verify Online" block: a QR plus the same link in text,
- * both encoding `verifyUrl(publicId)` — the SAME value the in-app QR uses, so a
- * printed certificate and the screen can never point somewhere different. Both
- * are omitted entirely when the record has no `publicId`; the QR alone is
- * omitted (link kept) when it cannot be produced. See `certificateQr.ts`.
+ * both encoding `canonicalVerifyUrl(publicId)` — NOT `verifyUrl()`, which
+ * honours `VITE_APP_URL` and would bake a localhost or ephemeral-preview host
+ * into a permanent archived document. Both are omitted entirely when the record
+ * has no `publicId`; the QR alone is omitted (link kept) when it cannot be
+ * produced. See `certificateQr.ts` and `routes.ts`.
  *
  * §1.6 BOUNDARY: this generator is CLIENT-SIDE only and stays that way. It
  * embeds ONLY the proof packet — fingerprint, merkle root/proof/index,
@@ -34,7 +35,7 @@
 import { jsPDF } from 'jspdf';
 import { buildQrMatrix, type QrMatrix } from './certificateQr';
 import { CERTIFICATE_COPY } from './copy';
-import { verifyUrl } from './routes';
+import { canonicalVerifyUrl } from './routes';
 import { getStatusDisplay, isProofDownloadable } from './statusDisplay';
 
 /** Drawn width/height of the QR module grid, in mm (quiet zone added around it). */
@@ -419,9 +420,14 @@ export function buildAuditReport(data: AuditReportData): AuditReportResult {
 
   // ── Verify online (scannable pointer to the live verification page) ─────
   //
-  // The certificate is what gets handed to an auditor, so it carries the SAME
-  // pointer the app shows on screen: `verifyUrl(publicId)`. No publicId means
-  // no QR and no link — a certificate never fabricates or defaults a URL.
+  // The certificate is what gets handed to an auditor, so it carries a
+  // CANONICAL pointer: `canonicalVerifyUrl(publicId)`, pinned to the production
+  // origin. The on-screen QR uses `verifyUrl()`, which follows `VITE_APP_URL` —
+  // correct for a share sheet, catastrophic here: `.env.example` ships
+  // `VITE_APP_URL=http://localhost:5173`, so a dev or preview build would emit
+  // certificates whose QR and printed link point at localhost forever, in a
+  // document that cannot be reissued. No publicId means no QR and no link — a
+  // certificate never fabricates or defaults a URL.
   //
   // The URL is always printed as text, whether or not the QR renders: that is
   // the graceful-degradation path (an unscannable certificate is a cosmetic
@@ -431,7 +437,7 @@ export function buildAuditReport(data: AuditReportData): AuditReportResult {
   // This block is placed after Lifecycle and BEFORE the offline-verify /
   // machine-proof sections, which are appended sequentially with `ensureSpace`
   // — so the QR can neither overlap the proof packet nor push it off the page.
-  const verificationUrl = data.publicId ? verifyUrl(data.publicId) : null;
+  const verificationUrl = data.publicId ? canonicalVerifyUrl(data.publicId) : null;
   const qr = verificationUrl ? buildQrMatrix(verificationUrl) : null;
 
   if (verificationUrl) {
@@ -442,14 +448,26 @@ export function buildAuditReport(data: AuditReportData): AuditReportResult {
     const textLeft = margin + 4 + qrBox + (qr ? 4 : 0);
     const textWidth = pageWidth - margin - textLeft;
 
-    doc.setFontSize(9);
+    // Measure each block in the font it is RENDERED in. `splitTextToSize` wraps
+    // against the currently-selected font, and courier-8 is far wider per
+    // character than helvetica-9 — measuring the URL in helvetica under-counts
+    // its width by ~19 %, which silently overflows the column once an id is
+    // long enough (and the column is at its widest in the no-QR branch).
     doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
     const introLines = doc.splitTextToSize(CERTIFICATE_COPY.VERIFY_ONLINE_INTRO, textWidth);
+
+    doc.setFont('courier', 'normal');
+    doc.setFontSize(8);
+    const urlLines = doc.splitTextToSize(verificationUrl, textWidth);
+
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7);
     const noteLines = doc.splitTextToSize(
       CERTIFICATE_COPY.VERIFY_ONLINE_INDEPENDENCE_NOTE,
       textWidth,
     );
-    const urlLines = doc.splitTextToSize(verificationUrl, textWidth);
+
     const textHeight = introLines.length * 5 + 3 + urlLines.length * 5 + 3 + noteLines.length * 4;
 
     ensureSpace(7 + Math.max(qrBox, textHeight) + 6);

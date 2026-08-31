@@ -3362,11 +3362,18 @@ export const INDEPENDENT_VERIFY_LABELS = {
   STEP_3_DESC: 'Using the Merkle proof from your proof package, verify that your fingerprint is included in the Merkle root. The reference verifier does this and confirms the root on an independent node you choose.',
   // Was `./verify.sh --fingerprint {fingerprint} --proof proof-package.json`.
   // No file named verify.sh has ever existed in this repository, so nobody
-  // could run it. This is the real invocation of the verifier we DO ship:
-  // packages/verifier-cli declares bin `arkova-verify`, documented in its
-  // README as `arkova-verify <proof.json> [--rpc <url>] [--key …] [--offline]`.
-  // The default node is stated explicitly so the reader can see it is not ours.
-  STEP_3_CMD: 'arkova-verify proof-package.json --rpc https://blockstream.info/api',
+  // could run it.
+  //
+  // This invokes the verifier we DO ship, in the form that actually runs after
+  // the build below. It is deliberately NOT the bare `arkova-verify`: that name
+  // is the package's `bin` mapping, which only reaches PATH via `npm link` or a
+  // global install, so a reader who followed the build and pasted a bare
+  // `arkova-verify` gets `command not found` — verified in a clean worktree.
+  // `node …/dist/cli.js` needs neither, and runs from the repository root.
+  // Flag order and names are from packages/verifier-cli/README.md; the default
+  // node is stated explicitly so the reader can see it is not ours.
+  STEP_3_CMD:
+    'node packages/verifier-cli/dist/cli.js proof-package.json --rpc https://blockstream.info/api',
   STEP_4_TITLE: 'Verify the Timestamp (Optional)',
   STEP_4_DESC: 'If the record has an RFC 3161 timestamp, verify it independently using OpenSSL.',
   STEP_4_CMD: 'openssl ts -verify -data signed-attrs.der -in timestamp.tst -CAfile tsa-ca.pem',
@@ -3387,8 +3394,15 @@ export const INDEPENDENT_VERIFY_LABELS = {
   // published, not before.
   VERIFIER_TITLE: 'Get the Reference Verifier',
   VERIFIER_BODY:
-    'The reference verifier is open source and ships in the packages/verifier-cli directory of the Arkova source repository. It is not published to a package registry yet, so build it from source — that produces the arkova-verify command used in step 3.',
-  VERIFIER_BUILD_CMD: 'cd packages/verifier-cli && npm install && npm run build',
+    'The reference verifier is open source and ships in the Arkova source repository. It is not published to a package registry yet, so build it from source. Run this from the repository root — the command-line tool depends on a sibling library that is not checked in built, so that library has to be compiled first.',
+  // BOTH halves are required. packages/verifier-cli depends on
+  // `@arkova/verifier` as `file:../verifier`, whose main/types point into
+  // `dist/` — and `dist/` is gitignored, so on a fresh clone it does not exist.
+  // Building only the CLI fails with `TS2307: Cannot find module
+  // '@arkova/verifier'` (reproduced in a clean worktree). Verified end to end:
+  // this sequence builds, and STEP_3_CMD then runs against a real fixture.
+  VERIFIER_BUILD_CMD:
+    'npm --prefix packages/verifier install && npm --prefix packages/verifier run build && npm --prefix packages/verifier-cli install && npm --prefix packages/verifier-cli run build',
   VERIFIER_REQUIREMENTS: 'Requires: Node.js 18 or newer, and npm.',
 } as const;
 
