@@ -46,7 +46,15 @@ Atlassian MCP connector is unauthenticated in this session. Needs `claude mcp` /
 before any session can write to Jira/Confluence; whoever picks this up should file it before
 closing out.
 
-### Soaks — DocuSign bilateral T3 (RUNNING, started 2026-08-30)
+### Soaks — DocuSign bilateral **RC-2** T3 (RUNNING)
+
+- **Rig:** Supabase `aqikotdkmhxmznonwmwk`; worker `arkova-worker-docusign-bilateral-staging` rev **00004-xpn**, image `sha256:edca3f40…`, source head **`2302e815e61fca5af449ba53a7ccca2fac49606e`** (`rc/docusign-bilateral-2026-08-30`).
+- **Clock = Cloud Run revision ready 2026-08-31T00:46:58Z → T3 closes 2026-09-02T00:46:58Z.** Driver detached (PPID 1), 15-min cycles.
+- **Covers 9 PRs:** #2472 guard mig 0423 · #2473 frontend links · #2474 signer capture · #2476 inbound + mig 0424 · #2479 harness · #2485 16KB rule-event bound · #2489 DECLARED_UNVERIFIED disclosure (6 surfaces) · #2516 seed fixture · #2518 0424 rollback executable · #2520 F1 auto-heal · #2521 signer backfill.
+- **Live state:** 37/37 connector artifacts materialized, 37 anchors at `fingerprint_source=issuer_record_attestation`, 152/152 nonces account-scoped, 0 PII leaks, 0 unresolved provenance conflicts.
+- **RC-1 (`2a676981`) 35 sealed cycles** preserved in `~/arkova-soak/docusign-bilateral/round1-sealed/`; clock deliberately restarted so ONE window covers the complete feature.
+- **Documented deviations (residual risk, not defects):** outbound document-fetch cannot be exercised on a synthetic rig (no real DocuSign OAuth grant) so `document_bytes` anchors = 0 and signer capture is proven at the job layer only; the F1 auto-heal is carried by its verified TLA invariant + unit tests, not this window's load; the signer backfill has no eligible candidates for the same reason. See `docs/staging/docusign-bilateral-2026-08/evidence/E5-rc2-complete-window.md`.
+- **Prod keeps `ENABLE_DOCUSIGN_INBOUND` OFF** pending the SCRUM-3818 go-live gate. Do not touch this rig or the concurrent soaks.
 
 - **Rig:** isolated Supabase `aqikotdkmhxmznonwmwk` (`arkova-soak-docusign-bilateral`, us-east-2), ledger head **0424**. Cloud Run `arkova-worker-docusign-bilateral-staging` rev **00003-kt9**, image `sha256:642487e3…`, source head `2a676981cfcc337f87f42169b2d2085fdb886c87` (branch `rc/docusign-bilateral-2026-08-30`).
 - **Covers:** PRs #2472 (guard mig 0423), #2474 (signer capture), #2473 (frontend links), #2476 (inbound + mig 0424), harness #2479.
