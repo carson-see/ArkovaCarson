@@ -2011,6 +2011,13 @@ jobs:
   # SAFETY 1 — Mergify's speculative merge-queue PRs carry Mergify's own body,
   # not the original PR's evidence block. They MUST be skipped or every queued
   # merge deadlocks. Same skip staging-evidence.yml already carries.
+  # SCRUM-3812: the skip requires BOTH the branch prefix AND the mergify[bot]
+  # PR author. `github.head_ref` alone is author-controlled — a PR opened from
+  # a branch literally named `mergify/merge-queue/<anything>` skipped every
+  # step below and still posted SUCCESS, greening this gate without the checker
+  # ever running. The PR author is assigned by GitHub and immutable (unlike
+  # `github.actor`, which becomes the human on a re-run and would deadlock a
+  # genuine queue PR), so only real Mergify speculative PRs skip.
   # SAFETY 2 — this workflow's `pull_request:` trigger declares no `types:`, so
   # it defaults to [opened, synchronize, reopened]: a PR-body edit never fires
   # it, and the frozen `github.event.pull_request.*` payload replays untouched
@@ -2029,7 +2036,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Skip for Mergify merge queue
-        if: startsWith(github.head_ref, 'mergify/merge-queue/')
+        if: startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]'
         run: |
           echo "Mergify merge queue speculative check — skipping evidence-identity gate."
           echo "The original PR passed this gate before entering the queue."
@@ -2041,7 +2048,7 @@ jobs:
       # than silently evaluating against an unknown state.
       - name: Resolve live PR state
         id: live_pr
-        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -2079,10 +2086,10 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
 
       - name: Setup Node.js
-        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20'
@@ -2090,11 +2097,11 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install root dependencies
-        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         run: npm ci --ignore-scripts
 
       - name: Run evidence-identity gate
-        if: "!startsWith(github.head_ref, 'mergify/merge-queue/')"
+        if: "!(startsWith(github.head_ref, 'mergify/merge-queue/') && github.event.pull_request.user.login == 'mergify[bot]')"
         env:
           # Live-resolved (SCRUM-3026) — supersedes the frozen event payload for
           # exactly the fields that go stale on a bare rerun.

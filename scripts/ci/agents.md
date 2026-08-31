@@ -1,6 +1,25 @@
 # scripts/ci/agents.md
 
-_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory)._
+_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus `TIER_SPECS.T1` aligned to §1.12: 2h soak with required `Soak start:`/`Soak end:`)._
+_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus the SCRUM-3802 anchor-feeder T3 path rule)._
+
+## 2026-08-29 — `check-staging-evidence.ts` anchor-feeder T3 path rule (SCRUM-3802)
+
+PR #2266 merged tier-under-declared (declared T2, its own `jobs/agents.md` entry says
+"T3 (cron-on-anchors)"): the anchor-lifecycle T3 rule is a filename whitelist, and
+`publicRecordAnchor.ts` — the cron that batch-inserts up to 10k anchors per Bitcoin tx —
+was not on it, so the diff fell through to the T2 `jobs/` catch-all and §1.13's
+fail-closed guarantee was void for the whole file class. A second T3 rule now pins the
+rest of the audited anchor pipeline (`reason: 'anchor-creating feeder / anchor pipeline
+(SCRUM-3802)'`): anchor-row creators (`publicRecordAnchor`, `connector-artifact-drain`,
+`rule-action-dispatcher`), lifecycle mutators (`mainnet-migration`,
+`public-record-quarantine`), Bitcoin sign/broadcast + recovery decision
+(`supplementary-proof-anchor` + `.adapter`, `txid-journal`), and the shared batch
+contract (`anchor-batching`). The audit criterion was writes: every `jobs/` file that
+inserts/updates `anchors`, signs or broadcasts, or sets batch fan-out. Read-only anchors
+consumers (`stuck-anchor-monitor`, `docusign-anchor-reconciliation`'s detector, digests)
+deliberately stay on the T2 catch-all — pinned by tests both ways, including the exact
+merged file set of #2266 now classifying T3.
 
 ## 2026-08-23 — `check-staging-evidence.ts` evidence-gate integrity (SCRUM-3481 / 3509 / 3533 / 3542 / 3549)
 
@@ -197,6 +216,28 @@ original closure classes.
   `GITHUB_ACTIONS=true`, so unit runs stay quiet and every CI base-drift verdict, pass or fail,
   states the file sets it was computed from.
 
+## 2026-08-29 — eighth closure: `TIER_SPECS.T1.soakHours` was 0 while CLAUDE.md §1.12 says "2 h soak"
+
+The seventh closure fixed the approver half of the T1 gap and recorded the other half in
+passing: with `soakHours: 0` and no window fields, a green T1 gate proved no soak either.
+That was a constitution/gate disagreement, not a policy choice — §1.12's T1 row has said
+"2 h soak" with "soak start/end" in its required evidence all along, and every other
+surface already agreed (docs/staging/PR_TEMPLATE.md's T1 block carries `Soak start:` /
+`Soak end:` with "at least 2h after Soak start"; the `soak-evidence` skill says "T1 (2 h
+soak): … soak start + end"; the Files section below has said "T1 is a 2h soak path, not a
+zero-soak bypass" since PR #801). CTO decision (merged #2241/#2264 history): the GATE
+matches the constitution. `TIER_SPECS.T1` is now `soakHours: 2` with `Soak start:` /
+`Soak end:` required. No new validators were needed — `soakDurationErrors()` was already
+tier-generic (field-presence-driven, comparing elapsed hours against
+`TIER_SPECS[tier].soakHours`), `requiredValueErrors`' T1 arm picks the new fields up for
+non-empty enforcement, `futureTimestampErrors()` already covered future-dated windows at
+every tier, and the T2-only RM targeted-duration waiver cannot leak into T1
+(`targetedDurationWaiverErrors` returns invalid for anything but T2). The RC-manifest path
+inherits the 2h floor through the same `TIER_SPECS[tier].soakHours` read. Red-first: 5
+failed on the prior head (the 0h pin, the missing-window pin, a no-window T1 body passing,
+and two sub-2h windows passing), green after. **This raises the bar for in-flight T1
+PRs**: any open T1 PR whose evidence block has no `Soak start:`/`Soak end:` (or a window
+under 2h) goes red on its next evaluation and needs a real 2h window added.
 
 ## 2026-08-23 — `aggregate-commit-messages.ts` (new): commit messages ship by FILE, not by env var (E2BIG)
 
@@ -361,6 +402,20 @@ Two design points to preserve if you touch it:
   open PR for most of a day, because each owning PR carried one of the two and
   was held red by the other. `main()` keeps these violations out of `blocking`;
   a unit test pins that contract.
+- **`prod-migration-apply-hook.test.ts` lives here, not next to the hook it tests
+  (2026-08-30).** It covers `.claude/hooks/check-prod-migration-apply.sh`, which
+  blocks a PROD `apply_migration` whose `NNNN` prefix is neither on `origin/main`
+  nor in `snapshots/ledger-numeric-exemptions.json` — the same-motion rule that
+  `0401`/`0402`, `0418`/`0419` and `0425` each violated. The test is under
+  `scripts/` because vitest's include globs are `tests/**`, `src/**` and
+  `scripts/**` — **`.claude/**` is in none of them**, so a test placed beside the
+  hook would never run, which is the bullet below in a different costume. Two of
+  its cases assert WIRING rather than behavior: that `.claude/settings.json`
+  registers the hook on a matcher which actually matches a real MCP tool name,
+  and that the hook's prod project ref equals `migration-drift.yml`'s. Before
+  this hook existed, `settings.json` matched only `Bash` and
+  `Edit|Write|NotebookEdit`, so no hook had ever been offered an MCP tool call at
+  all — which is the whole reason CLAUDE.md called that path unenforceable.
 - **A gate is only real if it is wired.** Several scripts here were written but
   never made required — check `ci.yml` (and branch protection) before assuming
   a script gates anything. `evidence-identity-report` is deliberately
@@ -585,6 +640,28 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - **The T0 hatch is unchanged and the note is NOT a substitute for it** — the T0 `Base drift impact:` field carries a no-runtime-impact statement the note does not, and letting the note serve there would be strictly looser for a strictly safer drift class. Test-pinned.
 - **FD-GATE-2, fixed at the consumer.** `ciContext.changedFiles()` no longer two-dots from the (possibly frozen) env base — see `scripts/ci/lib/agents.md` for the `resolveDiffBase` anchoring contract. This corrects the gate's `ownFiles`, the tier detector, `compute-merge-authority`, and the feedback-rules scans in one place, without touching the workflows that still pass the frozen sha. Also fixes the raw-head fallback misattribution (FD-GATE-3 defect 2). Known boundary: `--diff-filter=AMR` still drops deletions — that is FD-GATE-4, deliberately not addressed here.
 - **This is a §1.12/§1.13 merge-gate semantics change:** landed as a T0 tooling PR, opened as DRAFT for named human review — the gate that decides whether other PRs may merge must not be self-merged on its own green checks.
+
+## Merge-queue skip predicates require the mergify[bot] author (SCRUM-3812, 2026-08-29)
+
+- **The defect.** The fail-closed `evidence-identity` (ci.yml) and `staging-evidence` gates both
+  skipped their enforcement steps on `startsWith(github.head_ref, 'mergify/merge-queue/')` ALONE.
+  `github.head_ref` is author-controlled, and a job whose steps all skip still posts SUCCESS — so a
+  PR opened from a branch named `mergify/merge-queue/<anything>` greened BOTH
+  `check-success` conditions in every `.mergify.yml` queue with zero checker executions. This
+  contradicted the gates' own threat model (the same activation PR randomized the `$GITHUB_OUTPUT`
+  heredoc delimiter precisely so an author cannot forge evidence identity).
+- **The fix.** Every merge-queue `if:` in both workflows now also requires
+  `github.event.pull_request.user.login == 'mergify[bot]'` — GitHub-assigned, immutable, and true of
+  every real Mergify speculative PR (verified against live queue PRs #2464–#2468). NOT
+  `github.actor`, which becomes the re-running human and would deadlock a genuine queue PR. The
+  per-step skip shape is unchanged (a job-level `if:` would leave the check unreported, and an
+  unreported check never satisfies `check-success`).
+- **Contract tests.** `soak-integrity-gates-failclosed.test.ts` (ci.yml) and
+  `staging-evidence-workflow-contract.test.ts` (staging-evidence.yml, with mutation cases) pin that
+  every `if:` consulting `github.head_ref` / the queue-branch prefix is exactly the compound skip or
+  its exact negation — branch-only and `||`-weakened variants fail. The two files carry the same
+  `MERGE_QUEUE_SKIP_EXPRESSION` text; change them in lockstep. Written red-first against the
+  pre-fix workflows (5 failures), green after.
 
 ---
 

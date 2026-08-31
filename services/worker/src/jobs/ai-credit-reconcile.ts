@@ -38,6 +38,7 @@
  * (CLAUDE.md §1.1: no Sentry events containing document fingerprints).
  */
 import { z } from 'zod';
+import { dbUuid } from '../utils/db-row-validation.js';
 
 import { deductAICredits } from '../ai/cost-tracker.js';
 import { logger } from '../utils/logger.js';
@@ -64,8 +65,8 @@ export const MAX_RECONCILABLE_AMOUNT = 1000;
 
 const ReconcileRefundPayloadSchema = z
   .object({
-    orgId: z.string().uuid().nullish(),
-    userId: z.string().uuid().nullish(),
+    orgId: dbUuid('orgId').nullish(),
+    userId: dbUuid('userId').nullish(),
     amount: z.number().int().positive().max(MAX_RECONCILABLE_AMOUNT),
     reason: z.string().max(200).nullish(),
     source: z.string().max(100).nullish(),

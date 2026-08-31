@@ -158,9 +158,16 @@ describe('check-staging-evidence', () => {
   describe('TIER_SPECS', () => {
     it('pins the current minimum soak windows', () => {
       expect(TIER_SPECS.T0.soakHours).toBe(0);
-      expect(TIER_SPECS.T1.soakHours).toBe(0);
+      // CLAUDE.md §1.12: the T1 row is "2 h soak" — the gate must match the
+      // constitution, not the other way around (merged #2241/#2264 finding).
+      expect(TIER_SPECS.T1.soakHours).toBe(2);
       expect(TIER_SPECS.T2.soakHours).toBe(12);
       expect(TIER_SPECS.T3.soakHours).toBe(48);
+    });
+
+    it('requires the soak window fields for T1 (§1.12: "soak start/end" is T1 evidence)', () => {
+      expect(TIER_SPECS.T1.requiredFields).toContain('Soak start:');
+      expect(TIER_SPECS.T1.requiredFields).toContain('Soak end:');
     });
   });
 
@@ -405,6 +412,74 @@ describe('check-staging-evidence', () => {
       expect(
         requiredTierFor(['services/worker/src/jobs/revocation.ts']).tier,
       ).toBe('T3');
+    });
+
+    // SCRUM-3802 — PR #2266 merged tier-under-declared: the anchor-lifecycle
+    // rule is a filename whitelist, and the public-record anchoring cron
+    // (which batch-inserts up to 10k anchors per Bitcoin tx) was not on it,
+    // so its diff fell through to the T2 jobs/ catch-all. The exact merged
+    // file set of #2266 must classify T3.
+    it('returns T3 for the PR #2266-shaped diff (publicRecordAnchor + quarantine)', () => {
+      const result = requiredTierFor([
+        'services/worker/src/jobs/__tests__/publicRecordAnchor-poison-record.test.ts',
+        'services/worker/src/jobs/__tests__/publicRecordAnchor.test.ts',
+        'services/worker/src/jobs/agents.md',
+        'services/worker/src/jobs/pipelineThroughputMonitor.test.ts',
+        'services/worker/src/jobs/pipelineThroughputMonitor.ts',
+        'services/worker/src/jobs/public-record-quarantine.test.ts',
+        'services/worker/src/jobs/public-record-quarantine.ts',
+        'services/worker/src/jobs/publicRecordAnchor.ts',
+        'services/worker/src/utils/agents.md',
+        'services/worker/src/utils/utf16-truncate.test.ts',
+        'services/worker/src/utils/utf16-truncate.ts',
+      ]);
+      expect(result.tier).toBe('T3');
+      expect(result.reason).toContain('anchor');
+    });
+
+    it('returns T3 for every jobs/ file in the SCRUM-3802 anchor-feeder audit set', () => {
+      // The audit criterion: creates anchor rows (publicRecordAnchor,
+      // connector-artifact-drain, rule-action-dispatcher), mutates anchor
+      // lifecycle state (mainnet-migration resets status/chain columns;
+      // public-record-quarantine permanently excludes rows from anchoring),
+      // signs/broadcasts Bitcoin transactions or decides broadcast recovery
+      // (supplementary-proof-anchor + adapter, txid-journal), or sets the
+      // shared batch contract every anchoring job obeys (anchor-batching).
+      for (const file of [
+        'services/worker/src/jobs/publicRecordAnchor.ts',
+        'services/worker/src/jobs/public-record-quarantine.ts',
+        'services/worker/src/jobs/connector-artifact-drain.ts',
+        'services/worker/src/jobs/rule-action-dispatcher.ts',
+        'services/worker/src/jobs/mainnet-migration.ts',
+        'services/worker/src/jobs/supplementary-proof-anchor.ts',
+        'services/worker/src/jobs/supplementary-proof-anchor.adapter.ts',
+        'services/worker/src/jobs/txid-journal.ts',
+        'services/worker/src/jobs/anchor-batching.ts',
+      ]) {
+        expect(requiredTierFor([file]).tier, file).toBe('T3');
+      }
+    });
+
+    it('keeps read-only anchors consumers in jobs/ at T2 (audit set does not over-widen)', () => {
+      // Monitors, digests, and the dual-path reconciliation DETECTOR (it
+      // reports, never writes — the anchor-creating side of that pair is
+      // rule-action-dispatcher) stay on the T2 jobs/ catch-all, as does the
+      // webhook nonce sweep (not chain-related despite the name).
+      expect(requiredTierFor(['services/worker/src/jobs/db-health-monitor.ts']).tier).toBe('T2');
+      expect(requiredTierFor(['services/worker/src/jobs/stuck-anchor-monitor.ts']).tier).toBe('T2');
+      expect(
+        requiredTierFor(['services/worker/src/jobs/docusign-anchor-reconciliation.ts']).tier,
+      ).toBe('T2');
+      expect(requiredTierFor(['services/worker/src/jobs/nonce-sweep.ts']).tier).toBe('T2');
+    });
+
+    it('does not leak the anchor-feeder pin onto test files or name lookalikes', () => {
+      expect(
+        requiredTierFor(['services/worker/src/jobs/public-record-quarantine.test.ts']).tier,
+      ).toBe('T0');
+      expect(
+        requiredTierFor(['services/worker/src/jobs/publicRecordEmbedder.ts']).tier,
+      ).toBe('T2');
     });
 
     it('returns T3 when scheduled.ts is touched', () => {
@@ -1345,22 +1420,13 @@ describe('check-staging-evidence', () => {
         t2Files,
       ],
       [
-        'T1 exact-head evidence with optional soak timestamps',
+        'complete T1 at exactly 2 hours',
         completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
         t1Files,
       ],
       [
-        'T1 exact-head evidence with no soak window',
-        `## Staging Soak Evidence
-- Tier: T1
-- PR head SHA: 1234567890abcdef1234567890abcdef12345678
-- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
-- Health/smoke result: health ok, targeted smoke green
-- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
-- Rollback plan: revert this PR and redeploy previous worker image
-- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
-- Human approver: Carson
-`,
+        'T1 one minute above 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:01 UTC'),
         t1Files,
       ],
     ])('passes %s', (_label, body, files) => {
@@ -1401,6 +1467,50 @@ describe('check-staging-evidence', () => {
         completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 13:59 UTC'),
         t2Files,
         /Soak end must be after Soak start/,
+      ],
+      // CLAUDE.md §1.12 T1 row is "2 h soak" with "soak start/end" evidence.
+      // TIER_SPECS.T1.soakHours was 0 with no window fields — the gate and the
+      // constitution disagreed, and every T1 merge repeated the gap (merged
+      // #2241/#2264 finding). A T1 body with no soak window must now fail…
+      [
+        'T1 with no soak window (missing Soak start/end fields)',
+        `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- Health/smoke result: health ok, targeted smoke green
+- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
+- Rollback plan: revert this PR and redeploy previous worker image
+- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
+- Human approver: Carson
+`,
+        t1Files,
+        /missing required fields for T1: .*`Soak start:`, `Soak end:`/,
+      ],
+      // …and a declared window shorter than 2h must fail the duration floor.
+      [
+        'T1 shorter than 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:00 UTC'),
+        t1Files,
+        /below the 2h minimum/,
+      ],
+      [
+        'T1 one minute below 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:59 UTC'),
+        t1Files,
+        /below the 2h minimum/,
+      ],
+      [
+        'T1 end equal to start',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 14:00 UTC'),
+        t1Files,
+        /Soak end must be after Soak start/,
+      ],
+      [
+        'T1 non-parseable soak timestamps',
+        completeT1Body('N/A', 'N/A'),
+        t1Files,
+        /could not parse/i,
       ],
     ])('fails %s', (_label, body, files, pattern) => {
       expectEvidenceFails(body, files, pattern);

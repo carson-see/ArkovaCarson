@@ -32,6 +32,7 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import { isUserMemberOfOrgResult } from '../api/_org-auth.js';
+import { getAuthenticatedUserId } from './authContext.js';
 import { logger } from '../utils/logger.js';
 
 declare global {
@@ -41,11 +42,6 @@ declare global {
       orgId?: string;
     }
   }
-}
-
-/** Resolve the authenticated caller id from whichever `requireAuth` ran upstream. */
-function getAuthenticatedUserId(req: Request): string | null {
-  return req.authUserId ?? req.userId ?? null;
 }
 
 export async function requireOrgId(req: Request, res: Response, next: NextFunction): Promise<void> {

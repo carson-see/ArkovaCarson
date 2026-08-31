@@ -19,6 +19,25 @@ _Last updated: 2026-08-30 (docusign-bilateral-2026-08 feasibility spike: inbound
 **Own bucket:** `/webhooks/docusign` no longer shares `rateLimiters.stripeWebhook`'s global 100/min key — see `utils/agents.md` (or `rateLimit.ts`'s own doc comment) for `rateLimiters.docusignWebhook`.
 
 TLA: `machines/docusignInboundDedup.machine.ts` models the dedup invariant (at most one anchored connector_artifact per envelope under concurrent outbound+inbound delivery) that `findExistingEnvelopeAnchor` (`jobs/docusign-anchor-reconciliation.ts`) and the migration-0343 unique index jointly implement.
+_Last updated: 2026-08-23 (SCRUM-3479: Checkr + ATS nonce release on post-nonce 5xx)_
+
+## 2026-08-23 — SCRUM-3479 (AUDIT-0424-10): `checkr.ts` and `ats.ts` now release the replay nonce on post-nonce 5xx
+
+Both handlers committed their replay nonce BEFORE the downstream write and never compensated it, so the "DO release the nonce before returning any post-nonce 5xx" rule below was documented but unenforced in two of the four nonce-using handlers. `middesk.ts` was the only correct implementation.
+
+**`checkr.ts`** was the live defect: the `checkr_webhook_nonces` insert ran before `enqueue_rule_event`, and the enqueue-failure branch returned `500` without deleting it. One transient Postgres blip therefore dropped a `report.completed` **permanently** — Checkr's retry hit the `(report_id, payload_hash)` UNIQUE violation and got `200 {duplicate:true}`, so the background check was lost *and* the vendor was told it succeeded. Both post-nonce 5xx paths (enqueue failure + the catch-all) now call `releaseNonce`.
+
+**`ats.ts`** carried the same defect on its catch-all path: the nonce is committed before the attestation lookup, so a throw there permanently lost the verification response the webhook exists to produce.
+
+**The `webhook_dlq` row is not a mitigation.** Nothing under `services/worker/src/jobs/` reads that table — `webhook_dlq` is written by three handlers (`checkr.ts`, `docusign.ts`, `adobe-sign.ts` — verified with `grep -rn "from('webhook_dlq')" services/worker/src`) and drained by nobody. Treat a DLQ insert as a record of the loss, never as a recovery path, and do not let its presence justify skipping the nonce release.
+
+**Residual risk you are accepting when you copy this (review addition).** The release is an at-least-once trade, not a free win. If the downstream call *throws* after Postgres committed it, "did it happen" is unknowable, and releasing the nonce lets the retry enqueue a second time. Nothing de-dupes that: `enqueue_rule_event` is a bare INSERT with no `ON CONFLICT`, and the executions idempotency index is `UNIQUE(rule_id, trigger_event_id)` where `trigger_event_id` is the per-enqueue rule-event id — two enqueues are two distinct keys, not one. A rare duplicate execution is the right trade against guaranteed silent loss, but state it rather than implying the delete is consequence-free. Closing the window properly needs an idempotency key threaded into `enqueue_rule_event`; that is a separate change.
+
+**Guard that matters when copying this pattern:** release ONLY a nonce the current delivery actually committed (`checkr.ts` uses a `nonceCommitted` flag, `ats.ts` a `committedNonce` claim object). Both handlers wrap work that runs *before* the insert in the same `try`, and `checkr.ts` additionally fails open on a non-23505 insert error — in those cases a row matching the key belongs to an EARLIER delivery, and deleting it would silently re-open that delivery to replay. Filter on every column of the UNIQUE key for the same reason (`checkr`: `report_id` + `payload_hash`; `ats`: `provider` + `integration_id` + `signature`). The release is best-effort and swallows its own throw so it can never mask the original failure. Tests: `describe('SCRUM-3479: ...')` in `checkr.test.ts` and `ats.test.ts` pin the release, the no-release-on-success case, and the never-delete-an-uncommitted-nonce case.
+
+**Third instance, NOT fixed here — `adobe-sign.ts` (verified by review).** It has the same defect: the `adobe_sign_webhook_nonces` insert runs before `enqueueRuleEvent`, and the catch-all returns `500` with no release, so a transient failure permanently drops the agreement event behind a `200 {duplicate:true}`. Its UNIQUE key is `(agreement_id, payload_hash)`, so a release must filter on both. Deliberately left out of this change rather than silently widening a T2 package to a third handler — it needs its own ticket and its own soak coverage.
+
+**Known gap, NOT fixed here (needs a migration, so it is out of this change's tier):** `checkr_webhook_nonces` and `kyb_webhook_nonces` are absent from both `jobs/nonce-sweep.ts`'s `NONCE_TABLES` and the `sweep_webhook_nonces` RPC allowlist in migration `0316`. Both table comments promise a 14-day sweep that never runs, so their rows accumulate forever. Adding the table name to `NONCE_TABLES` alone would fail at runtime — the RPC raises `table "%" not in allowlist` — so this needs a compensating migration alongside the code change.
 
 ## 2026-08-03 — GH #1836 (SECURITY, pen-test scope): legacy org-id Drive channel token — accept-with-warning by default, code-flagged hard cutoff available
 
@@ -43,8 +62,8 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 | `docusign-hmac-helpers.ts` | SCRUM-2043: resolves HMAC keys from per-org `hmac_keys` JSONB or env-var fallback |
 | `docusign-hmac-rotation.test.ts` | Tests for multi-key HMAC verification flow and key resolution |
 | `drive.ts` | Google Drive push notification handler — headers-only signal, channel-token verification |
-| `ats.ts` | ATS webhook handler (Greenhouse, Lever) — HMAC verify, attestation verification response |
-| `checkr.ts` | Checkr `report.completed` handler — HMAC-SHA256 hex, nonce replay protection, DLQ on failure |
+| `ats.ts` | ATS webhook handler (Greenhouse, Lever) — HMAC verify, attestation verification response. SCRUM-3479: releases the nonce on the catch-all 5xx path |
+| `checkr.ts` | Checkr `report.completed` handler — HMAC-SHA256 hex, nonce replay protection, DLQ on failure. SCRUM-3479: releases the nonce on both post-nonce 5xx paths so a transient enqueue failure stays retryable |
 | `middesk.ts` | Middesk KYB handler — `business.updated/verified/rejected` events, org verification status transitions |
 | `microsoft-graph.ts` | Microsoft Graph change-notifications — `clientState` verification, validation handshake echo |
 | `veremark.ts` | Veremark stub — gated behind `ENABLE_VEREMARK_WEBHOOK`, returns 503 until vendor docs confirmed |

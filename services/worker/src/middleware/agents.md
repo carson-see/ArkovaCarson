@@ -122,8 +122,10 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - **webhookHmac.ts** — Inbound connector webhook HMAC verification with 5-minute replay window.
 - **paymentTierRouter.ts** — Routes requests based on payment tier. Not yet mounted in `index.ts` (tested in isolation only). SCRUM-2971: the Tier-2 `tryStripeMetered` path now derives a request-scoped id (`Idempotency-Key` header → correlation id (`utils/correlationId.ts`) → random UUID fallback) and inserts the `billing_events` row with `idempotency_key = sha256(api_metered_usage:org_id:user_id:requestId)` (exported as `stripeMeteredIdempotencyKey`). A duplicate insert (23505, e.g. a client retry that resent the same `Idempotency-Key`) is swallowed as an idempotent no-op — the request still authorizes. See migration `0368`.
 - **requirePaymentCurrent.ts** — Rejects requests from orgs with lapsed payments.
+- **authContext.ts** — `getAuthenticatedUserId(req)`: the single source of truth for `req.authUserId ?? req.userId ?? null`. Two `requireAuth` implementations populate the caller identity under two different field names, so every guard must read both; `requireOrgId` / `requireOrgAdmin` / `requireScopeAnyAuth` all import it rather than keeping private copies that could drift.
 - **requireOrgId.ts** — Resolves + VALIDATES `org_id` on authenticated requests (membership-checked against `x-org-id`, never trusted verbatim — see 2026-07-28 SECURITY note above).
 - **requireOrgAdmin.ts** — Chains after `requireOrgId`; requires the caller be ORG_ADMIN of `req.orgId` (see 2026-07-28 SECURITY note above).
+- **requireScopeAnyAuth.ts** — Dual-mode scope gate for routes that authenticate with a Supabase JWT rather than an API key. Unlike `apiKeyAuth.requireScope` it has **no pass-through branch** (see the 2026-08-23 note below).
 - **usageTracking.ts** — Tracks API usage for billing/analytics.
 - **adesFeatureGate.ts** — AdES (Advanced Electronic Signatures) feature gate.
 - **aiFeatureGate.ts** — AI feature gate for Gemini/embedding endpoints. Per-flag fail-direction on DB read failure (SCRUM-2247): kill-switchable flags fail closed; `ENABLE_AI_EXTRACTION` keeps its launch default; last-known-good DB value preferred over both on a transient blip.
@@ -140,6 +142,7 @@ be re-synced so the intended state is the DB row, not a divergent env fallback.
 - Feature gates fail closed by default — if the DB read fails, kill-switchable gates return 503. Exception: `ENABLE_AI_EXTRACTION` is launch-required (§1.6) and keeps its launch default; last-known-good DB value wins over the fail default on a transient blip (SCRUM-2247).
 - `errorSanitizer` must be registered BEFORE the global error handler.
 - No raw API keys in logs or DB — HMAC-SHA256 only.
+- **Never mount `apiKeyAuth.requireScope` on a JWT-authenticated route** — it calls `next()` the moment `req.apiKey` is unset, so it enforces nothing and reads as if it does. Use `requireScopeAnyAuth` there (2026-08-23 note below).
 - `paymentTierRouter.ts` `tryCredits()`: a `deduct_unified_credits` RPC failure falls through to Stripe metered billing (fail OPEN — the org gets charged instead of a credit it already paid for being consumed) and now calls `captureCreditRpcFailureAlert({ failMode: 'open', ... })` from `utils/sentry.ts` — previously only a `logger.warn`, no alert. Fail-open behavior itself is unchanged (product decision); this only adds observability.
 
 ## 2026-08-11 BUG-2026-08-11 — x402 anchor pricing billed MAINNET fees on non-mainnet (fixed)
@@ -246,3 +249,68 @@ the router cannot be mounted dark by a later refactor.
 
 503, not 404 (the `partnerProvisioningGate` shape): `/nessie/query` is a **published** surface — it
 was listed and priced on `/developers` — so callers who already integrated get told, not hidden from.
+
+## 2026-08-23 SECURITY — `requireScope` is API-key-only; `requireScopeAnyAuth` is the JWT path (SCRUM-1272 / SCRUM-3514)
+
+**VULNERABILITY CLASS — do not reintroduce: a guard that silently does nothing.** `apiKeyAuth.ts`'s
+`requireScope` opens with
+
+```ts
+if (!req.apiKey) { next(); return; }
+```
+
+so on a route authenticated by a Supabase JWT it enforces **nothing**, with no log, no error, and a
+mount line that reads exactly like enforcement. That is why SCRUM-1272 shipped the scope vocabulary
+(`api/apiScopes.ts`) and then closed Done with its central acceptance criterion unmet: the routes it
+named — `/ferpa`, `/directory-opt-out`, `/hipaa/audit`, `/emergency-access`, all carrying student PII
+or PHI — had no scope layer, and adding the obvious one would not have given them one. The comment at
+the top of `api/apiScopes.ts` had said so in prose since the vocabulary landed.
+
+**`requireScopeAnyAuth.ts` (NEW)** resolves a grant for whichever auth mode is in play and has no
+pass-through branch — every path ends in `next()`, 401, 403 or 500:
+
+- **API key** → the key's `scopes`, through the same `scopeSatisfies` vocabulary and the same
+  `insufficient_scope` / `required` / `granted` 403 body as `requireScope` (only the human `message`
+  string differs — the machine-readable contract is unchanged, §1.8).
+- **JWT** (`req.authUserId ?? req.userId`, set by a real `requireAuth` upstream) → the caller's org
+  role from `api/_org-auth.ts`'s new `getCallerProfileResult`, **intersected** with any `scopes` /
+  `scope` claim on the presented token.
+- **Neither** → 401. This is the branch that makes the guard impossible to mount as a no-op.
+
+Four properties, none incidental:
+
+- **These are not exclusive branches — EVERY credential presented must satisfy the scope.** `apiKeyAuth`
+  is mounted router-wide and also reads `X-API-Key`, and the PHI mounts run `requireAuth` first, so
+  "API key AND verified JWT on the same request" is trivially constructible there. Checking the key
+  first and returning would let a credential the route never authenticated with decide the capability
+  outright — a JWT caller who would be denied alone (the no-profile-row case below) was admitted by
+  attaching any org's key holding the scope, without the profile ever being read. Evaluating both is
+  strictly fail-closed: it never grants where checking one alone would have denied.
+
+- **Claims can only NARROW, never widen.** The claims are read by *decoding* the bearer token, not by
+  re-verifying it — safe, because this middleware only runs after a `requireAuth` that verified that
+  same token, and the decoded `sub` is cross-checked against the verified caller id. Intersection means
+  even a mis-wiring of that ordering cannot turn an unverified claim into a privilege grant. Do not
+  change the intersection to a union.
+- **A profile-lookup DB error is 500, never a masked 403** — same fail-closed-but-observable rule as
+  `requireOrgId` / `requireOrgAdmin`, which is why `_org-auth.ts` grew the `*Result` sibling
+  `getCallerProfileResult` rather than reusing the error-collapsing `getCallerProfile`.
+- **The role mapping is deliberately coarse** — `compliance:read` for ANY caller with a `profiles` row
+  (including one whose `org_id` is null), `compliance:write` for `profiles.role = 'ORG_ADMIN'` or
+  `is_platform_admin` — NOT for the `org_members.role in ('owner','admin')` signal that
+  `isCallerOrgAdminResult` checks first (inert today: no mount requires `compliance:write`). Read literally:
+  for a JWT caller the read grant is close to a liveness check, and that is intended. This is a
+  capability gate, not the tenant boundary and not the per-route privilege check — `requireOrgId` and
+  `requireOrgAdmin` still own those and are what actually authorize a caller against a specific org's
+  PHI. It is not narrowed to `org_id != null` on purpose: `org_members.user_id` FKs to `auth.users`, so
+  a real member whose `profiles.org_id` is null is schema-permissible and narrowing would 403 them.
+
+Residual, deliberately accepted: a verified `auth.users` identity with **no `profiles` row** now gets an
+empty grant and a 403 on these four routes. `org_members.user_id` FKs to `auth.users`, not `profiles`,
+so such a caller is schema-permissible and `requireOrgId` would have admitted them. Granting on the
+*absence* of the record we authorize from is the fail-open pattern this directory has been bitten by
+before (see the 2026-06-05 AI flag fail-direction note); the denial is logged at `warn` so a real
+occurrence is diagnosable instead of an unexplained 403.
+
+Mount order is the contract and is pinned by `__tests__/phiScopeMount.test.ts`: `requireAuth` →
+`requireScopeAnyAuth` → rate limiter → router.
