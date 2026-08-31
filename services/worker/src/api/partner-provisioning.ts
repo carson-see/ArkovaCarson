@@ -26,6 +26,20 @@ import type { AuditEventBody } from './audit-event.js';
 /** auditEventBodySchema caps details at 10_000 chars; mirror it at the boundary. */
 const MAX_DETAILS_LEN = 10_000;
 
+/**
+ * Format-only UUID matcher (BUG-2026-08-12-003 / FD-15).
+ *
+ * Inlined rather than imported from the shared row-validation helper on
+ * purpose: `partner-provisioning.guard.test.ts` pins this module as a PURE
+ * state machine with an exact import allowlist and an explicit ban on
+ * referencing the service_role database utilities — the helper lives alongside
+ * them, so importing it would break that guarantee. A local literal keeps the
+ * module pure, and it is already the house convention:
+ * `billing/entitlements.ts`, `api/audit-event.ts`, `api/admin-org-members.ts`
+ * and `api/invitations.ts` each carry the same one.
+ */
+const DB_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Roles recognised for provisioning authorization (org-scoped). */
 export type ProvisioningRole = 'platform_admin' | 'owner' | 'org_admin' | 'member';
 
@@ -51,7 +65,17 @@ export interface ProvisioningActor {
 
 const provisioningActorSchema = z.object({
   userId: z.string().trim().min(1),
-  orgId: z.string().trim().uuid(),
+  // BUG-2026-08-12-003 / FD-15: `orgId` is server-derived from an authoritative
+  // org-membership lookup (see the SECURITY CONTRACT above) — it is a value read
+  // back out of Postgres, never client input, and this schema is explicitly a
+  // shape backstop rather than the trust boundary. Strict RFC-9562 `.uuid()`
+  // here therefore adds no security but does false-reject any org whose id has
+  // zero version/variant nibbles, which our seeded orgs do. Shape-only, matching
+  // `billing/entitlements.ts` and `api/audit-event.ts`.
+  //
+  // `sponsorOrgId` (requestInputSchema) and `partnerOrgId` (provisionPartnerAccount)
+  // stay strict — see their own notes.
+  orgId: z.string().trim().regex(DB_UUID_RE, 'orgId must be a UUID'),
   role: z.enum(['platform_admin', 'owner', 'org_admin', 'member']),
 });
 

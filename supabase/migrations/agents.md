@@ -838,3 +838,21 @@ a real, always-applicable tenant-isolation hardening independent of the flag —
 it does not touch existing rows' behavior and is safe to soak/apply on its own
 schedule. Tier T3 (migration). **Next author claims `0425` — re-derive, do not
 trust this line.**
+
+**2026-08-30 — `-- ROLLBACK:` block corrected (PR #2513-adjacent fix, branch
+`fix/docusign-0424-rollback-executable`, stacked on this branch).** Found by
+the `mig-docusign-trust` T3 soak rehearsal
+(`docs/staging/mig-docusign-trust/STANDUP.md`, rig `yfqgxycaiwgvvvbzhkma`), not
+by inspection: running the block as originally written failed with a
+unique-violation once two different DocuSign accounts had legitimately shared
+an `(envelope_id, event_id, generated_at)` tuple — the exact case this
+migration exists to permit re-adding a global `UNIQUE` over those three
+columns cannot succeed while a tenant-distinct duplicate exists under it. The
+corrected block adds the missing dedup step (delete every row but the
+earliest `received_at` per tuple, ties broken by `id`) before re-adding the
+constraint, and states plainly that the rollback is LOSSY once the tenant key
+has actually been exercised. This is a comment-only change — the executed
+`BEGIN...COMMIT` DDL is byte-for-byte identical, so it does not invalidate any
+soak evidence already collected against this migration (rigs
+`aqikotdkmhxmznonwmwk` and `yfqgxycaiwgvvvbzhkma`). Pinned by
+`src/tests/migrations/docusign-webhook-nonces-tenant-scope-rollback.test.ts`.

@@ -36,6 +36,15 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "mcp__.*__apply_migration",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/check-prod-migration-apply.sh"
+          }
+        ]
       }
     ],
     "SessionStart": [
