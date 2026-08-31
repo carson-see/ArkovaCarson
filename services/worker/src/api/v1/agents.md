@@ -688,6 +688,7 @@ _Restored 2026-07-28 — lost off `main` by the union-merge-driver incident (see
 
 ## 2026-05-27 Attestation Verification Endpoint (SCRUM-1873)
 
+- **PARKED 2026-08-31 — the endpoint answers 501 `not_implemented` for every request.** `legally_binding_attestations` has no INSERT path anywhere in the tree, so before the gate this route could only ever answer 404 "Attestation not found" — a lie of implicature, since 404 asserts a populated corpus. Verified against prod `vzwyaatejekddvltxyye` on 2026-08-31: **0 table rows**, and **0 `docusign.notarization_completed` jobs ever enqueued** against 21 completed + 4 dead `docusign.envelope_completed` jobs — the upstream DocuSign Notary trigger has never fired in production. The 501 also fully subsumes the status-disclosure hazard below: nothing is disclosed at all, for any status. The status gate is retained because it is what the endpoint must do on unpark; the unpark checklist is in the `attestation.ts` module header.
 - `GET /api/v1/verify/attestation/:attestationId` verifies legally binding attestations from `legally_binding_attestations` table (SCRUM-1871/1872/1873 chain).
 - Public, anonymous-allowed. Uses `ARK-ATT-*` public IDs only. Separate from `GET /api/v1/attestations/:publicId` which handles general `attestations` table.
 - Mounted BEFORE the generic `/verify` catch-all in router.ts to avoid route shadowing.

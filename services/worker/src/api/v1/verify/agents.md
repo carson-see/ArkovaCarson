@@ -8,8 +8,8 @@ Public verification sub-endpoints mounted under `/api/v1/verify/`. These are pub
 
 | File | Purpose |
 |------|---------|
-| `attestation.ts` | SCRUM-1873: `GET /api/v1/verify/attestation/:attestationId` — public verification of legally binding attestations (table `legally_binding_attestations`). Returns verification status, attestation metadata, anchor proof, and notarization status. |
-| `attestation.test.ts` | 38 tests: the `buildAttestationVerificationResult` shape contract, the `isPubliclyDisclosable` status gate, route-level status/ID/audit behaviour driven over a real ephemeral HTTP server, and the `defaultLookup` query shape. |
+| `attestation.ts` | SCRUM-1873, **PARKED 2026-08-31 — returns 501 `not_implemented` for every request; everything behind the gate, including the status-disclosure gate, is unreachable until unpark.**: `GET /api/v1/verify/attestation/:attestationId` — public verification of legally binding attestations (table `legally_binding_attestations`). Returns verification status, attestation metadata, anchor proof, and notarization status. |
+| `attestation.test.ts` | 42 tests. 38 cover the `buildAttestationVerificationResult` shape contract, the `isPubliclyDisclosable` status gate, route behaviour driven over a real ephemeral HTTP server, and the `defaultLookup` query shape — these mount `handleAttestationVerify` DIRECTLY so the disclosure proof keeps running while the feature is parked. 4 cover the parked gate over the REAL router: honest 501 status, no "not found" wording, and **no table touched, not even the audit log**. |
 
 ## Do / Don't Rules
 
@@ -21,6 +21,12 @@ Public verification sub-endpoints mounted under `/api/v1/verify/`. These are pub
 - **DO NOT** widen the `^ARK-ATT-` id pattern. `attestations` public_ids (`ARK-{org_prefix}-{type_code}-{unique}`, e.g. `ARK-ARK-VER-196485`) are valid ids for a *different* resource; a 400 naming the expected prefix routes the caller to `GET /api/v1/attestations/:publicId`. Widening only turns that into an unresolvable 404.
 - **DO NOT** report a failed lookup as a 404. `defaultLookup` throws on a query error so the route 500s; collapsing error into not-found hides timeouts and RLS denials (see `memory/project_hollow_200_statement_timeout_swallow.md`).
 - **DO NOT** write an audit row on a 400/404. The endpoint is anonymous, so auditing misses would let a caller append unbounded `audit_events` rows by walking id space.
+
+## Parked-feature status
+
+**PARKED 2026-08-31 — the endpoint answers 501 `not_implemented` for every request.** `legally_binding_attestations` has no INSERT path anywhere in the tree, so before the gate this route could only ever answer 404 "Attestation not found" — a lie of implicature, since 404 asserts a populated corpus. Verified against prod `vzwyaatejekddvltxyye` on 2026-08-31: **0 table rows**, and **0 `docusign.notarization_completed` jobs ever enqueued** against 21 completed + 4 dead `docusign.envelope_completed` jobs — the upstream DocuSign Notary trigger has never fired in production. The 501 also fully subsumes the status-disclosure hazard below: nothing is disclosed at all, for any status. The status gate is retained because it is what the endpoint must do on unpark; the unpark checklist is in the `attestation.ts` module header.
+
+The handler is exported as `handleAttestationVerify` so the disclosure-gate suite can exercise it directly rather than being deleted for the duration of the park.
 
 ## Architecture Decisions
 

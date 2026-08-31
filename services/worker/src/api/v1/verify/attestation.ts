@@ -22,6 +22,33 @@
  *   table COMMENT requires public verification to be "API-mediated and
  *   redacted". This module is that mediation, and
  *   PUBLICLY_DISCLOSABLE_ATTESTATION_STATUSES is that redaction.
+ *
+ * ── PARKED 2026-08-31 — responds 501; everything below the gate is unreachable ──
+ *
+ * The redaction above is correct and is retained deliberately: it is what this
+ * endpoint must do the moment rows exist. But rows cannot exist today.
+ * `legally_binding_attestations` has no INSERT path anywhere in the tree, so
+ * before this gate the endpoint could only ever answer 404 "Attestation not
+ * found" — a lie of implicature, since 404 asserts a populated corpus that
+ * this one row is missing from.
+ *
+ * Verified against prod `vzwyaatejekddvltxyye` on 2026-08-31 (read-only):
+ *   - 0 rows in `legally_binding_attestations`.
+ *   - 0 `docusign.notarization_completed` jobs ever enqueued, against 21
+ *     completed + 4 dead `docusign.envelope_completed` jobs — so the upstream
+ *     DocuSign Notary trigger has never fired in production. The enqueue path
+ *     is real (`api/v1/webhooks/docusign.ts`); it has simply never matched,
+ *     because no live integration uses the DocuSign Notary product.
+ *
+ * 501 also fully subsumes the disclosure hazard the status gate addresses:
+ * nothing is disclosed at all, for any status, rather than redacted per row.
+ *
+ * TO UNPARK: delete the parked-feature gate below, and land, in this order —
+ * (1) a creation API writing `draft` rows, (2) the DocuSign send step
+ * recording `docusign_envelope_id` on `draft -> pending_notarization`, and
+ * (3) the anchoring step writing `anchor_id` / `anchor_timestamp` on
+ * `notarized -> anchored`. Step 3 changes anchor lifecycle, so re-run the TLA+
+ * check (CLAUDE.md §4). The status gate below then becomes load-bearing.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -327,7 +354,34 @@ function logAttestationVerificationAudit(
 
 // ── Route handler ──────────────────────────────────────────────────
 
-router.get('/:attestationId', async (req: Request<{ attestationId: string }>, res: Response) => {
+// ── Parked-feature gate ────────────────────────────────────────────
+//
+// Mounted before every route on this sub-router, so no request reaches the
+// handler and no request touches the database. 501 is the honest status: the
+// server does not support the functionality required to fulfil the request.
+// See the "PARKED" note in the module header for the unpark checklist.
+const PARKED_RESPONSE = Object.freeze({
+  verified: false,
+  error: 'not_implemented',
+  message:
+    'Legally binding attestation verification is not implemented. ' +
+    'No attestation records exist, so no verification can be offered.',
+});
+
+router.use((_req: Request, res: Response) => {
+  res.status(501).json(PARKED_RESPONSE);
+});
+
+/**
+ * The real verification handler, exported so the disclosure-gate suite can
+ * exercise it directly. It is UNREACHABLE over the mounted router while the
+ * parked gate above is in place — the export is what keeps the status-gate
+ * proof running rather than deleting it for the duration of the park.
+ */
+export async function handleAttestationVerify(
+  req: Request<{ attestationId: string }>,
+  res: Response,
+): Promise<void> {
   const { attestationId } = req.params;
 
   // Do NOT widen this pattern to admit ids that 404 here anyway.
@@ -381,6 +435,8 @@ router.get('/:attestationId', async (req: Request<{ attestationId: string }>, re
       error: 'Internal server error',
     });
   }
-});
+}
+
+router.get('/:attestationId', handleAttestationVerify);
 
 export { router as attestationVerifyRouter };

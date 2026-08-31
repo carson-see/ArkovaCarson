@@ -6,6 +6,23 @@
  * from the legally_binding_attestations table.
  *
  * Renders nothing when no notarization or e-signature data is present.
+ *
+ * ── PARKED 2026-08-31 — no non-test caller ──
+ *
+ * This was previously rendered by `AttestationsPage.tsx`, fed from the
+ * `attestations` table. That table has none of these four columns —
+ * `notarized_at`, `notary_name`, `notary_commission_state`,
+ * `docusign_envelope_id` live on `legally_binding_attestations` (migration
+ * 0314). The page reads through `supabase as any`, so the mismatch compiled
+ * cleanly and every prop arrived `undefined`: the badge rendered nothing, on
+ * every row, since it shipped. (It could not have rendered the e-signature
+ * half regardless — the caller never passed `docusignCompletedAt`, which
+ * `hasDocusign` requires.)
+ *
+ * The miswiring is removed. If the notarization feature is ever built, wire
+ * this to `legally_binding_attestations` — never to `attestations`. The
+ * invariant is enforced by
+ * `src/tests/attestations-page-column-fidelity.test.ts`.
  */
 
 import { Card, CardContent } from '@/components/ui/card';
