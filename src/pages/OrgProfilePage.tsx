@@ -42,6 +42,7 @@ import { OrgVerifiedBadge, AffiliatedBadge } from '@/components/shared/VerifiedB
 import { DriveConnectorCard } from '@/components/integrations/DriveConnectorCard';
 import { DocusignConnectorCard } from '@/components/integrations/DocusignConnectorCard';
 import { MemberDocusignConnectorCard } from '@/components/integrations/MemberDocusignConnectorCard';
+import { AdobeSignConnectorCard } from '@/components/integrations/AdobeSignConnectorCard';
 import { WORKER_URL, workerFetch } from '@/lib/workerClient';
 import type { Database } from '@/types/database.types';
 
@@ -840,6 +841,10 @@ export function OrgProfilePage() {
 
               <div className="mt-8">
                 <DocusignConnectorCard orgId={orgId} />
+              </div>
+
+              <div className="mt-8">
+                <AdobeSignConnectorCard orgId={orgId} />
               </div>
 
               <div className="mt-8">

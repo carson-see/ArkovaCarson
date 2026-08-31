@@ -1755,6 +1755,22 @@ export const CONNECTIONS_LABELS = {
   // message and the backend gate stay in lockstep.
   DOCUSIGN_NOT_VERIFIED: 'Your organization must be verified before connecting DocuSign. Verified organizations can connect a document source. Contact support to start verification.',
   DOCUSIGN_GATE_CHECKING: 'Checking your organization’s authorization…',
+  // SCRUM-1148 follow-up — Adobe Sign connector. Same verified-org entitlement
+  // shape as DocuSign, plus one denial DocuSign has no equivalent of:
+  // ADOBE_SIGN_UNCONFIGURED, for a deployment with no registered Adobe
+  // application. That is the live production state, so it needs real copy
+  // rather than a generic "something went wrong".
+  ADOBE_SIGN_NAME: 'Adobe Sign',
+  ADOBE_SIGN_DESC: 'Trigger rules when an agreement is signed and completed',
+  ADOBE_SIGN_NOT_VERIFIED: 'Your organization must be verified before connecting Adobe Sign. Verified organizations can connect a document source. Contact support to start verification.',
+  ADOBE_SIGN_SUSPENDED: 'Your organization is currently suspended. Adobe Sign cannot be connected until the suspension is resolved.',
+  ADOBE_SIGN_GATE_CHECKING: 'Checking your organization\u2019s authorization\u2026',
+  ADOBE_SIGN_UNCONFIGURED: 'Adobe Sign is not available on this environment yet. Contact support to request access.',
+  ADOBE_SIGN_WEBHOOK_FAILED: 'Adobe accepted the sign-in but would not register Arkova to receive completed agreements. This usually means the Adobe account plan does not include webhook access. Nothing was saved \u2014 contact support before retrying.',
+  ADOBE_SIGN_ALREADY_CLAIMED: 'That Adobe account is already connected to another organization. Disconnect it there first.',
+  ADOBE_SIGN_TOAST_CONNECTED: 'Adobe Sign connected. Completed agreements will now trigger rules.',
+  ADOBE_SIGN_TOAST_DISCONNECTED: 'Adobe Sign disconnected.',
+  ADOBE_SIGN_WEBHOOK_STRANDED: 'Disconnected here, but Adobe would not remove the registration. Remove the Arkova webhook in your Adobe Acrobat Sign admin console.',
   GOOGLE_DRIVE_NAME: 'Google Drive',
   GOOGLE_DRIVE_DESC: 'Trigger rules when a watched folder’s files change',
   // DRIVE-01 (SCRUM-2366): entitlement denial copy. Each string mirrors a

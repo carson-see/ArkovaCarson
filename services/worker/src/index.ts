@@ -41,6 +41,7 @@ import { orgKybRouter } from './api/v1/org-kyb.js';
 import { driveOAuthRouter } from './api/v1/integrations/drive-oauth.js';
 import { docusignOAuthRouter } from './api/v1/integrations/docusign-oauth.js';
 import { docusignMemberOAuthRouter } from './api/v1/integrations/docusign-member-oauth.js';
+import { adobeSignOAuthRouter } from './api/v1/integrations/adobe-sign-oauth.js';
 // SCRUM-2082 CSI-04D — Issuer Partners admin API.
 import { createIssuerPartnershipsRouter } from './api/v1/integrations/issuer-partnerships.js';
 import { middeskWebhookRouter } from './api/v1/webhooks/middesk.js';
@@ -519,6 +520,20 @@ app.use(
   pathScopedMiddleware('/docusign', rateLimiters.api),
   pathScopedMiddleware('/docusign', integrationsAuthGate),
   pathScopedMiddleware('/docusign', docusignMemberOAuthRouter),
+);
+// SCRUM-1148 follow-up: Adobe Sign OAuth connect flow. Same shape as DocuSign
+// (kill switch -> rate limit -> auth gate that lets the provider redirect
+// through). `ENABLE_ADOBE_SIGN_OAUTH` defaults OFF: as of 2026-08-30 no Adobe
+// Acrobat Sign application is registered and prod carries no Adobe credential,
+// so the flow cannot complete anywhere. Flip it on only once a real client
+// id/secret is provisioned AND the account tier is confirmed to grant the
+// webhook_read / webhook_write / webhook_retention scopes.
+app.use(
+  '/api/v1/integrations',
+  pathScopedKillSwitch('/adobe-sign', 'ENABLE_ADOBE_SIGN_OAUTH'),
+  pathScopedMiddleware('/adobe-sign', rateLimiters.api),
+  pathScopedMiddleware('/adobe-sign', integrationsAuthGate),
+  pathScopedMiddleware('/adobe-sign', adobeSignOAuthRouter),
 );
 // SCRUM-2082 CSI-04D — Issuer Partners admin API. Auth-gated; all handlers
 // additionally verify org_admin / owner role before reads / mutations.

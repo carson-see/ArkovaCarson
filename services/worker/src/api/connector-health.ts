@@ -48,18 +48,23 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     description: 'Receive completed envelopes via DocuSign Connect.',
   },
   {
-    // NOT 'live' (corrected 2026-08-30). Adobe Sign has no connect flow —
-    // there is no adobe-sign-oauth.ts, nothing writes
-    // org_integrations.webhook_id, and prod has no ADOBE_SIGN_CLIENT_SECRET,
-    // so 100% of prod traffic to /webhooks/adobe-sign returns 503. Listing it
-    // beside DocuSign/Drive as 'live' asserted a capability we do not hold
-    // (CLAUDE.md §1.13 R-7). 'gated' is the honest tier: it renders the
-    // request-access CTA instead of implying a working connection.
+    // Catalog DEFAULT is 'gated', and it is overridden to 'live' per request by
+    // `resolveConnectorKind()` below — never statically.
+    //
+    // History: PR #2519 corrected this from a hardcoded 'live' because Adobe
+    // Sign had no connect flow at all and 100% of prod traffic to
+    // /webhooks/adobe-sign returned 503; claiming 'live' asserted a capability
+    // we did not hold (CLAUDE.md §1.13 R-7). The connect flow now exists
+    // (`api/v1/integrations/adobe-sign-oauth.ts`), but existing is not the same
+    // as working: prod still carries no Adobe credential and the flow is behind
+    // a default-off flag. A static flip back to 'live' would re-assert exactly
+    // the claim #2519 removed — so the kind is DERIVED from whether this
+    // deployment can actually complete a connection.
     id: 'adobe_sign',
     label: 'Adobe Sign',
     kind: 'gated',
     vendor_event_sources: ['adobe_sign'],
-    description: 'Receive completed agreements via Adobe Sign webhooks — connector not yet available.',
+    description: 'Receive completed agreements via Adobe Sign webhooks.',
   },
   {
     id: 'google_drive',
@@ -97,6 +102,35 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     description: 'Background-check connector — vendor agreement required.',
   },
 ];
+
+/**
+ * Per-request connector kind.
+ *
+ * `adobe_sign` is the only entry whose kind is environment-dependent: it is
+ * 'live' exactly when this deployment can actually complete a connection —
+ * the connect flow is enabled AND an Adobe application's credentials are
+ * present. Anything less is 'gated', which renders the request-access CTA
+ * rather than implying a working connection (CLAUDE.md §1.13 R-7 / §1.5:
+ * state what is measured, not what is hoped for).
+ *
+ * Deriving this instead of hardcoding it means the dashboard cannot drift from
+ * reality in either direction: it stops claiming 'live' the moment credentials
+ * are removed, and starts claiming it the moment they are provisioned, with no
+ * code change and no chance of a stale assertion sitting in the catalog.
+ *
+ * Note this measures CONFIGURATION, not a live handshake with Adobe. A wrong
+ * secret or an account tier missing `webhook_write` still reads 'live' here;
+ * that failure surfaces at connect time as `webhook_registration_failed`.
+ */
+export function resolveConnectorKind(
+  entry: ConnectorCatalogEntry,
+  env: NodeJS.ProcessEnv = process.env,
+): ConnectorKind {
+  if (entry.id !== 'adobe_sign') return entry.kind;
+  const connectEnabled = env.ENABLE_ADOBE_SIGN_OAUTH === 'true';
+  const hasCredentials = Boolean(env.ADOBE_SIGN_CLIENT_ID?.trim()) && Boolean(env.ADOBE_SIGN_CLIENT_SECRET?.trim());
+  return connectEnabled && hasCredentials ? 'live' : 'gated';
+}
 
 interface IntegrationRow {
   provider: string;
@@ -385,7 +419,7 @@ export async function handleConnectorHealth(
     return {
       id: entry.id,
       label: entry.label,
-      kind: entry.kind,
+      kind: resolveConnectorKind(entry),
       state,
       health_reason: reason,
       account_label: sanitizeAccountLabel(integration?.account_label ?? null),

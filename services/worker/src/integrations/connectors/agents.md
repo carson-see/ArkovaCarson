@@ -1,6 +1,25 @@
 # agents.md — services/worker/src/integrations/connectors/
 
-_Last updated: 2026-08-03 (PR #1944 review rounds 2-3: create-then-stop CRITICAL fix, PII scrub, concurrency bound, account_label parser convergence)._
+_Last updated: 2026-08-30 (`adobe-sign-token-store.ts` added for the Adobe Sign connect flow)._
+
+## 2026-08-30 — `adobe-sign-token-store.ts` reuses the DocuSign Secret Manager client on purpose
+
+Adobe Sign uses the same token split as DocuSign: short-lived ACCESS token KMS-encrypted into
+`org_integrations.encrypted_tokens`, long-lived REFRESH token in GCP Secret Manager with only the
+resource name in `token_secret_name`.
+
+The Secret Manager CLIENT is provider-agnostic — it takes a resource name and does
+GET/addVersion/DELETE — so `adobe-sign-token-store.ts` **imports it from `docusign-token-store.ts`**
+rather than forking ~150 lines of plumbing. Only the NAME derivation is provider-specific. A
+DocuSign-flavoured filename on the shared half is worth more than two implementations drifting
+apart, and a fork would also fail the Sonar new-code duplication gate. If that shared client ever
+needs to move to a neutral module, move it — do not copy it.
+
+**Why the provider segment in the name matters:** both builders hash the account id, so without
+`arkova-adobe-sign-` vs `arkova-docusign-` an org that connected the same-numbered account on both
+providers would collide onto ONE secret and each connect would clobber the other's refresh token.
+`adobe-sign-token-store.test.ts` asserts the two names differ for identical `(org, account)` inputs
+rather than merely asserting the Adobe name matches a regex.
 
 ## 2026-08-03 — PR #1944 review rounds 2-3 on top of the Lane 3 bug blitz
 

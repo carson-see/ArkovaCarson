@@ -67,7 +67,7 @@ vi.mock('../utils/db.js', () => {
   };
 });
 
-const { handleConnectorHealth, CONNECTOR_CATALOG } = await import('./connector-health.js');
+const { handleConnectorHealth, CONNECTOR_CATALOG, resolveConnectorKind } = await import('./connector-health.js');
 
 const ORG_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const USER_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -475,5 +475,72 @@ describe('connector-health (SCRUM-1146)', () => {
       const docusign = body.connectors.find((c) => c.id === 'docusign');
       expect(docusign?.last_event_at).toBe('2026-04-24T22:00:00Z');
     });
+  });
+});
+
+/**
+ * SCRUM-1148 follow-up — the Adobe Sign connector kind is DERIVED, not asserted.
+ *
+ * PR #2519 downgraded `adobe_sign` from a hardcoded 'live' to 'gated' because
+ * the connector had no connect flow and 503'd on 100% of prod traffic. Adding
+ * the connect flow does not by itself earn 'live' back: prod still has no Adobe
+ * credential. These tests pin that the claim tracks the deployment's actual
+ * ability to complete a connection, in BOTH directions.
+ */
+describe('resolveConnectorKind — adobe_sign', () => {
+  const adobeEntry = CONNECTOR_CATALOG.find((c) => c.id === 'adobe_sign');
+
+  it('is gated in an environment with no Adobe credential — the live prod state', () => {
+    expect(adobeEntry).toBeDefined();
+    expect(resolveConnectorKind(adobeEntry!, {})).toBe('gated');
+  });
+
+  it('stays gated when credentials exist but the connect flow is off', () => {
+    expect(
+      resolveConnectorKind(adobeEntry!, {
+        ADOBE_SIGN_CLIENT_ID: 'id',
+        ADOBE_SIGN_CLIENT_SECRET: 'secret',
+      }),
+    ).toBe('gated');
+  });
+
+  it('stays gated when the flow is on but a credential is missing', () => {
+    expect(
+      resolveConnectorKind(adobeEntry!, {
+        ENABLE_ADOBE_SIGN_OAUTH: 'true',
+        ADOBE_SIGN_CLIENT_ID: 'id',
+      }),
+    ).toBe('gated');
+  });
+
+  it('treats a whitespace-only credential as absent', () => {
+    expect(
+      resolveConnectorKind(adobeEntry!, {
+        ENABLE_ADOBE_SIGN_OAUTH: 'true',
+        ADOBE_SIGN_CLIENT_ID: '  ',
+        ADOBE_SIGN_CLIENT_SECRET: 'secret',
+      }),
+    ).toBe('gated');
+  });
+
+  it('is live only when the flow is enabled AND both credentials are present', () => {
+    expect(
+      resolveConnectorKind(adobeEntry!, {
+        ENABLE_ADOBE_SIGN_OAUTH: 'true',
+        ADOBE_SIGN_CLIENT_ID: 'id',
+        ADOBE_SIGN_CLIENT_SECRET: 'secret',
+      }),
+    ).toBe('live');
+  });
+
+  it('leaves every other connector\'s catalog kind untouched', () => {
+    const fullyConfigured = {
+      ENABLE_ADOBE_SIGN_OAUTH: 'true',
+      ADOBE_SIGN_CLIENT_ID: 'id',
+      ADOBE_SIGN_CLIENT_SECRET: 'secret',
+    };
+    for (const entry of CONNECTOR_CATALOG.filter((c) => c.id !== 'adobe_sign')) {
+      expect(resolveConnectorKind(entry, fullyConfigured)).toBe(entry.kind);
+    }
   });
 });

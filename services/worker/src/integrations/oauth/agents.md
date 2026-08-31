@@ -1,6 +1,46 @@
 # agents.md — services/worker/src/integrations/oauth/
 
-_Last updated: 2026-06-16 (SCRUM-2492 byte-safe error types + bounded `detail` on non-document paths)._
+_Last updated: 2026-08-30 (`adobe-sign.ts` gained the OAuth + webhook-provisioning client)._
+
+## 2026-08-30 — `adobe-sign.ts` is now provider client + webhook helpers, like `docusign.ts`
+
+The file used to hold only HMAC verification and payload parsing for inbound notifications. It now
+also carries the OAuth v2 + REST v6 webhook client the connect flow needs
+(`buildAdobeSignAuthorizationUrl`, `exchangeAdobeSignCode`, `refreshAdobeSignAccessToken`,
+`revokeAdobeSignToken`, `fetchAdobeSignUserInfo`, `createAdobeSignWebhook`,
+`deleteAdobeSignWebhook`), matching how `docusign.ts` holds OAuth + Connect provisioning together.
+
+Contract points that are easy to get wrong and are pinned by `adobe-sign.test.ts`:
+
+* **The webhook create id can arrive two ways.** Adobe documents both a body carrying the
+  identifier and a `Location` header pointing at the created resource. Reading only the body is how
+  a create that actually succeeded still yields a NULL `webhook_id` — the precise failure this
+  connector was stuck in — so `extractWebhookId()` checks body then header and **throws** rather
+  than returning an empty id. A loud failure beats a silently-null id whose only symptom is every
+  future delivery orphaning with no explanation.
+* **Credentials are FORM FIELDS, not Basic auth.** This is where Adobe differs from DocuSign; a
+  copy-pasted `Authorization: Basic` header fails the token exchange.
+* **`api_access_point` from the token response is the shard.** Every REST helper takes it as a
+  required argument rather than reading a host from env — a hardcoded shard works for exactly one
+  account and 404s/401s for every other.
+* **`revokeAdobeSignToken` swallows 400/401/404 by design.** Disconnect calls it, and a token Adobe
+  already considers dead must not strand an org in a connected state. 5xx still throws.
+* **`deleteAdobeSignWebhook` treats 404 as success** — "Adobe is no longer delivering to us" is the
+  desired end state and an already-deleted webhook satisfies it. Any other status throws so
+  disconnect can report a webhook it failed to remove.
+* **`AdobeSignApiError` follows the SCRUM-2492 shape**: no `body` field at all, and `detail` is
+  bounded/PII-scrubbed by construction via `boundedErrorDetail`. Every path here is a non-document
+  path (OAuth + webhook metadata), which is what makes attaching a detail safe — and it is what
+  makes "the account tier lacks `webhook_write`" legible instead of a mystery 403.
+* **`includeSignedDocuments` / `includeDocumentsInfo` are FALSE** on the webhook config, pinned by
+  test. §1.6A permits a server-side fingerprint on a deliberate fetch path; it does not permit
+  document bytes riding in on a notification body.
+
+**Pre-existing oddity, still deliberately left alone:** `signatureHeader()` in
+`api/v1/webhooks/adobe-sign.ts` falls back to `X-AdobeSign-ClientId` as a *signature*. On a
+notification that header carries the client id, not an HMAC, so the fallback always fails the
+compare and 401s — fail-closed, not exploitable. Do not "fix" it by comparing the client id
+instead: that turns a public identifier into the auth check and is a straight auth bypass.
 
 ## What This Folder Contains
 

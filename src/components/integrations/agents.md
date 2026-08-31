@@ -1,5 +1,35 @@
 # agents.md — components/integrations
-_Last updated: 2026-08-03 (GH #1836 review follow-up, PR #1944: DriveConnectorCard no longer selects/renders account_label — see below)_
+_Last updated: 2026-08-30 (`AdobeSignConnectorCard.tsx` added alongside the new Adobe Sign connect flow)_
+
+## 2026-08-30 — `AdobeSignConnectorCard.tsx`
+
+Mirrors `DocusignConnectorCard.tsx` (same verified-org entitlement via `useCanIssueCredential`,
+same connect/disconnect shape, tokens never touch the browser). Three things differ, each because
+the Adobe backend genuinely behaves differently — not for styling:
+
+1. **`adobe_sign_unconfigured` is a first-class denial, not an edge case.** As of 2026-08-30 no
+   Adobe Acrobat Sign application is registered and prod carries no Adobe credential, so
+   "not available here yet" is the LIVE path for this card. A 503 from the `ENABLE_ADOBE_SIGN_OAUTH`
+   kill switch is mapped to the same copy — to an admin, "disabled" and "unconfigured" are one
+   state.
+2. **`webhook_registration_failed` must not say "try again".** It means the Adobe account plan does
+   not grant `webhook_write`; retrying cannot fix a plan. `adobeSignErrorCopy()` maps it to
+   contact-support copy, and a test asserts the string does not match `/try again/i`.
+3. **It reads the OAuth return-trip query string.** The callback redirects back to this page with
+   `?adobe_sign=connected` or `?adobe_sign_error=<code>`; without that effect the admin would see a
+   silently unchanged card after a failed connect. The params are stripped via `replaceState` so a
+   refresh cannot replay the toast/error.
+
+**Carrying forward the GH #1836 lesson below:** the browser-side `org_integrations` select is
+column-pinned to `id, account_label, account_id, connected_at, scope` and a test asserts
+`encrypted_tokens` / `token_kms_key_id` / `token_secret_name` / `webhook_id` never appear in it.
+That is the exact failure class `DriveConnectorCard.tsx` shipped — a browser select that bypassed
+the worker's own redaction — so it is pinned here by a test rather than by care.
+
+**Disconnect can partially succeed and the card says so.** When the worker returns
+`adobe_webhook_removed: false`, the local teardown completed but Adobe kept the registration and it
+needs manual removal in Adobe's admin console. The card surfaces that instead of reporting a clean
+disconnect over a webhook that is still live.
 
 ## 2026-08-03 — GH #1836 (SECURITY) review follow-up: `DriveConnectorCard.tsx` stopped selecting `account_label`
 
