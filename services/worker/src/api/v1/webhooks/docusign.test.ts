@@ -41,7 +41,10 @@ vi.mock('../../../config.js', () => ({ config: mockConfig }));
 
 // Union of both merged PRs' needs: extractSigners (R6 signer-capture tests,
 // below) plus the config mock above (inbound-classification tests, below).
-import { docusignWebhookRouter, extractNotaryData, extractSigners } from './docusign.js';
+// Union of the merged PRs' needs: extractSigners (R6 signer capture),
+// buildDocusignRuleEventPayload (16KB rule-event payload bound), plus the config mock above.
+import { docusignWebhookRouter, extractNotaryData, extractSigners, buildDocusignRuleEventPayload } from './docusign.js';
+import type { DocusignCompletedEnvelope } from '../../../integrations/oauth/docusign.js';
 import { logger } from '../../../utils/logger.js';
 
 const TEST_HMAC_KEY = 'fixture-key-not-a-secret-aaaa';
@@ -295,7 +298,9 @@ describe('POST /webhooks/docusign', () => {
         source: 'docusign_connect',
         integration_id: 'int-1',
         envelope_id: 'env-1',
-        document_ids: ['combined'],
+        // document_count replaces the former unbounded document_ids array so the
+        // payload stays under the 16KB CHECK (see the size-guard describe block).
+        document_count: 1,
         document_hashes: [VALID_DOC_SHA256],
         document_sha256: VALID_DOC_SHA256,
         payload_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -2016,5 +2021,153 @@ describe('extractSigners', () => {
       },
     });
     expect(extractSigners(body)).toEqual([]);
+// ───────────────────────────────────────────────────────────────────────────
+// Rule-event payload 16KB CHECK guard (DocuSign bilateral 2026-08, Finding 7)
+//
+// `organization_rule_events.payload` carries a DB CHECK from the baseline
+// migration (`organization_rule_events_payload_size`):
+//     pg_column_size(payload) <= 16384
+//
+// The DocuSign webhook builds that payload from EVERY envelope document. At the
+// schema-permitted maximum cardinality (envelopeDocuments `.max(100)`) with long
+// documentId values (`.max(100)` at the Connect raw-parse gate, `.max(500)` in
+// DocusignEnvelopeCompleted), the unbounded `document_ids` array overflowed the
+// 16KB budget. In production that would make `enqueue_rule_event` throw a
+// check_violation, the handler roll back the nonce and return 500, and DocuSign
+// retry forever — the envelope's ESIGN_COMPLETED event and everything downstream
+// (document fetch, notarization, anchor) would never succeed.
+//
+// These tests pin the built payload under budget at adversarial cardinality.
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Conservative upper-bound model of Postgres `pg_column_size(value::jsonb)`
+ * (the uncompressed jsonb binary size the CHECK evaluates on insert). Every
+ * branch charges AT LEAST what Postgres charges, so
+ * `jsonbColumnSize(v) <= 16384` implies the real DB CHECK passes:
+ *   - every value carries a 4-byte JEntry
+ *   - every container (object/array) adds a 4-byte header
+ *   - object keys are stored as strings, each with its own 4-byte JEntry
+ *   - strings cost their exact UTF-8 byte length
+ *   - numbers are charged a generous flat 16 bytes (real jsonb numeric is smaller)
+ * plus the 4-byte top-level varlena header.
+ */
+function jsonbColumnSize(value: unknown): number {
+  const sizeOf = (v: unknown): number => {
+    if (v === null || v === undefined) return 4;
+    if (typeof v === 'boolean') return 4;
+    if (typeof v === 'number') return 4 + 16;
+    if (typeof v === 'string') return 4 + Buffer.byteLength(v, 'utf8');
+    if (Array.isArray(v)) {
+      return 4 + 4 + v.reduce((sum: number, el) => sum + sizeOf(el), 0);
+    }
+    return (
+      4 +
+      4 +
+      Object.entries(v as Record<string, unknown>).reduce(
+        (sum, [k, val]) => sum + 4 + Buffer.byteLength(k, 'utf8') + sizeOf(val),
+        0,
+      )
+    );
+  };
+  return 4 + sizeOf(value);
+}
+
+/** Distinct 64-char lowercase SHA-256 hex per document index. */
+function uniqueDocHash(index: number): string {
+  return crypto.createHash('sha256').update(`doc-${index}`).digest('hex');
+}
+
+/**
+ * A signed envelope-completed body carrying `count` documents, each with a
+ * documentId of exactly `idLength` chars and a unique SHA-256. `idLength` must
+ * be <= 100 to survive the Connect raw-parse gate (EnvelopeDocument.documentId).
+ */
+function bodyWithDocuments(count: number, idLength: number): string {
+  const envelopeDocuments = Array.from({ length: count }, (_, i) => ({
+    documentId: `${i}-`.padEnd(idLength, 'x').slice(0, idLength),
+    name: 'contract.pdf',
+    sha256: uniqueDocHash(i),
+  }));
+  return JSON.stringify({
+    event: 'envelope-completed',
+    envelopeId: 'env-maxcard',
+    accountId: 'acct-1',
+    status: 'completed',
+    sender: { email: 'legal@example.com' },
+    envelopeDocuments,
+  });
+}
+
+describe('rule-event payload 16KB guard (DocuSign Finding 7)', () => {
+  const PAYLOAD_SIZE_LIMIT = 16384;
+
+  function primeEnqueueMocks(): void {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: '22222222-2222-4222-8222-222222222222', error: null });
+    submitJobMock.mockResolvedValueOnce('job-maxcard');
+  }
+
+  function enqueuedRulePayload(): Record<string, unknown> {
+    const call = rpcMock.mock.calls.find((c) => c[0] === 'enqueue_rule_event');
+    if (!call) throw new Error('enqueue_rule_event was not called');
+    return (call[1] as { p_payload: Record<string, unknown> }).p_payload;
+  }
+
+  it('stays within the 16KB CHECK at 100 documents with max-length documentIds', async () => {
+    primeEnqueueMocks();
+
+    // 100 documents (the envelopeDocuments `.max(100)` cap), each with a 100-char
+    // documentId — the longest value the raw-parse gate accepts — and a unique
+    // SHA-256. This is the adversarial worst case reachable through ingress.
+    const res = await postSignedBody(bodyWithDocuments(100, 100));
+
+    expect(res.status).toBe(202);
+    expect(jsonbColumnSize(enqueuedRulePayload())).toBeLessThanOrEqual(PAYLOAD_SIZE_LIMIT);
+  });
+
+  it('replaces the unbounded document_ids array with a bounded document_count', async () => {
+    primeEnqueueMocks();
+
+    const res = await postSignedBody(bodyWithDocuments(3, 40));
+    const payload = enqueuedRulePayload();
+
+    expect(res.status).toBe(202);
+    expect(payload.document_count).toBe(3);
+    // The unbounded array must be gone from the size-capped payload entirely —
+    // documentId length can no longer push it toward the 16KB CHECK.
+    expect(payload).not.toHaveProperty('document_ids');
+  });
+
+  it('stays under budget even at the DocusignEnvelopeCompleted schema-max documentId length (500)', () => {
+    // The Connect raw-parse gate caps documentId at 100 chars, but the
+    // DocusignEnvelopeCompleted schema permits 500. Build the payload directly at
+    // that outer bound to prove documentId length is now irrelevant to the size —
+    // this is the adversarial case the webhook ingress cannot even reach today,
+    // and it must hold if that gate is ever relaxed.
+    const event = {
+      event: 'envelope-completed',
+      envelopeId: 'env-schema-max',
+      accountId: 'acct-1',
+      status: 'completed',
+      envelopeDocuments: Array.from({ length: 100 }, (_, i) => ({
+        documentId: `${i}-`.padEnd(500, 'x').slice(0, 500),
+        name: 'contract.pdf',
+        sha256: uniqueDocHash(i),
+      })),
+    } as DocusignCompletedEnvelope;
+
+    const payload = buildDocusignRuleEventPayload({
+      integrationId: 'int-1',
+      event,
+      payloadHash: 'a'.repeat(64),
+    });
+
+    expect(payload.document_count).toBe(100);
+    expect(jsonbColumnSize(payload)).toBeLessThanOrEqual(PAYLOAD_SIZE_LIMIT);
   });
 });
