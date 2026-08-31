@@ -329,7 +329,25 @@ export const CLASSIFIER_READ_ONLY_COLUMNS = [
   'anchor_id',
   'id',
   'created_at',
+  // Migration 0427 (M4): bitcoin-tree inclusion evidence. Reconstructing it is
+  // the confirmation-populate job's mandate (it needs a chain fetch); the
+  // census performs zero chain calls and must never touch it.
+  'tx_inclusion_branch',
+  'tx_block_index',
+  // Migration 0408: supplementary-anchor linkage — another evidentiary claim
+  // the census has no basis to make.
+  'is_supplementary',
+  'supplements_chain_tx_id',
 ] as const;
+
+/**
+ * M4: the columns the classifier is ALLOWED to write. Everything else on
+ * `anchor_proofs` must appear in {@link CLASSIFIER_READ_ONLY_COLUMNS}, and the
+ * test enforces that partition against the real column list parsed out of
+ * `types/database.types.ts` — so a new proof column cannot silently fall
+ * outside the guard the way `tx_inclusion_branch` / `tx_block_index` did.
+ */
+export const CLASSIFIER_WRITABLE_COLUMNS = ['proof_completeness_class', 'materialize_run_id'] as const;
 
 export interface ClassWriteSet {
   /** Column→value map to write, or null when nothing may be written. */

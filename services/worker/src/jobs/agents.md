@@ -1421,3 +1421,51 @@ scan again until its branch is written. Two things follow.
 - RPC load stays bounded regardless: the job fans in by unique `chain_tx_id`
   before fetching, so a 2000-row page of a merkle batch is a handful of
   `gettxoutproof` calls, not 2000.
+
+## 2026-08-31 — review fixes on `confirmation-proof-populate.ts` (B1 / H1 / H2 / H4 / M6)
+
+- **B1 — one stale row could starve its entire tx group, forever.** The group-level
+  reorg guard took `group.find((g) => g.expectedBlockHash)` — the FIRST non-null
+  recorded hash, decided by heap order. If that row was stale,
+  `fetchConfirmationProof` returned `stale`, the `confirmed` branch never ran, and
+  NOTHING was written for any anchor sharing that tx (up to 10,000 in a merkle
+  batch) — on every tick, with `anchorsBlockMismatch` stuck at 0 because the
+  per-anchor gate below was never reached. The guard now arms only on UNANIMOUS
+  agreement (`unanimousBlockHash`): any disagreement, or any anchor with nothing
+  recorded, disarms it and hands the decision to the per-anchor K1 gate, which is
+  strictly stronger. The old test passed only because it happened to list the good
+  anchor first; it now runs BOTH orderings and demands the same result.
+- **H1 — an unordered `LIMIT` let unpopulatable rows wedge the backfill.** No
+  `ORDER BY` over ~667k candidates means stable heap order, so rows that can never
+  complete came back first every run; once `maxRows` accumulated, the backfill
+  stopped advancing AND newly-SECURED anchors stopped receiving even
+  `block_header`. Now `.gt('anchor_id', cursor).order('anchor_id', {ascending:true})`
+  — `anchor_id` is UNIQUE and btree-indexed, so it is a cheap total order (unlike
+  `created_at`, which is neither here). The module-scope cursor advances past every
+  page SCANNED, succeeded or not, and wraps on a short page. Honest limit: it is
+  in-process, so a restart or a second Cloud Run instance sweeps from its own
+  start — still bounded forward progress, NOT a durable checkpoint. Callers
+  needing determinism pass `startAfterAnchorId`.
+- **H2 — a header-present / hash-NULL row disarmed BOTH reorg gates.** That state
+  is schema-permitted and genuinely producible (`upsertAnchorProofs` and
+  `backfillProofCompleteness` write the two columns independently). Both gates
+  tested `expectedBlockHash` for truthiness, so such a row let the job fetch the
+  tx's CURRENT block and overwrite the stored 80-byte header with a DIFFERENT
+  block's — publishing a header for a block that never contained the commitment,
+  counted as success. A header identifies its own block, so the scan now selects
+  `block_header` and the guard falls back to `blockHashFromHeaderHex(...)`. An
+  unreadable stored header is a mismatch, not permission.
+- **H4 — the write precondition did not name the values the write exists to
+  persist.** `proof.status === 'confirmed' && blockHeader && blockHash` said
+  nothing about `merkleBranch` / `txIndex`, both independently optional on
+  `ConfirmationProof`. A conforming producer could write a header-only row the
+  scan then re-selects forever. Now checked; a `confirmed` proof without inclusion
+  evidence counts as pending (so it retries) and logs a warn. The scan watermark
+  also gained `tx_block_index.is.null`, so a legacy half-pair row is repairable
+  instead of invisible.
+- **M6 — `tx_inclusion_branch` was selected and never read.** Dropped from the
+  select (filtering on a column does not require selecting it). The one thing the
+  stored branch could save is an RPC on a branch-without-index row, and the only
+  zero-RPC repair is to DERIVE the index from the branch's own positions — which
+  manufactures a pair the reader's index/side cross-check can never reject.
+  Re-deriving both halves from the chain is strictly better evidence.

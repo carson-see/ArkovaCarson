@@ -982,6 +982,55 @@ function mapMerkleProofEntries(value: unknown): MerkleProofEntry[] | null {
   return out;
 }
 
+/** A 32-byte hash in display hex — the only shape a bitcoin-tree sibling takes. */
+const SIBLING_HASH_HEX_RE = /^[0-9a-fA-F]{64}$/;
+
+/**
+ * B3 (migration 0427): map the layer-2 BITCOIN-tree inclusion evidence as ONE
+ * fact.
+ *
+ * `tx_inclusion_branch` + `tx_block_index` are what let a holder close the
+ * transaction→block half of the proof LOCALLY instead of asking a Bitcoin node
+ * — the exact third-party dependency the self-contained bundle exists to
+ * remove. `mapProofBundle` builds from a hard key allow-list, so until they
+ * were named here the API emitted them and every SDK consumer silently
+ * received a bundle with that half removed.
+ *
+ * The rules mirror the API reader exactly (two surfaces disagreeing about
+ * whether a branch is usable is how a client ends up contradicting the server
+ * about one record):
+ *   - both halves present, or neither;
+ *   - every sibling exactly 64 hex characters;
+ *   - `0 <= index < 2^branch.length`;
+ *   - each level's sibling side matches that level's bit of the index.
+ *
+ * Anything else ⇒ BOTH null. Unlike the bundle's required members this does
+ * NOT fail the whole bundle closed: the fields are additive and nullable
+ * (§1.8), so a record confirmed before 0427 must keep getting a bundle. An
+ * EMPTY branch with index 0 is COMPLETE evidence (a single-transaction block
+ * has no siblings), never missing.
+ *
+ * ORIENTATION: byte-reversed (display) hex under Bitcoin's double-SHA256
+ * positional rule — a DIFFERENT convention from `merkleProof`, the layer-1 app
+ * tree. Not interchangeable, hence the distinct name.
+ */
+function mapTxInclusionEvidence(
+  branchValue: unknown,
+  indexValue: unknown,
+): { branch: MerkleProofEntry[]; index: number } | null {
+  const branch = mapMerkleProofEntries(branchValue);
+  if (branch === null) return null;
+  if (typeof indexValue !== 'number' || !Number.isInteger(indexValue) || indexValue < 0) return null;
+  if (branch.length > 31) return null;
+  if (indexValue >= 1 << branch.length) return null;
+  for (let level = 0; level < branch.length; level++) {
+    if (!SIBLING_HASH_HEX_RE.test(branch[level].hash)) return null;
+    const expected = ((indexValue >> level) & 1) === 0 ? 'right' : 'left';
+    if (branch[level].position !== expected) return null;
+  }
+  return { branch, index: indexValue };
+}
+
 /**
  * PROOF-05 (SCRUM-2338): map the nullable, snake_case proof_bundle — FAIL CLOSED.
  *
@@ -1032,6 +1081,10 @@ function mapProofBundle(value: unknown): ProofBundle | null {
     signature = { alg: s.alg as string, signingKeyId: s.signing_key_id as string };
   }
 
+  // B3 (0427): additive + nullable, so an unusable pair degrades to null on
+  // both halves WITHOUT failing the whole bundle closed.
+  const txInclusion = mapTxInclusionEvidence(b.tx_inclusion_branch, b.tx_block_index);
+
   return {
     fingerprint: b.fingerprint,
     merkleRoot: b.merkle_root,
@@ -1047,6 +1100,8 @@ function mapProofBundle(value: unknown): ProofBundle | null {
     opReturnPayload: b.op_return_payload,
     blockTimestamp: b.block_timestamp,
     proofSchemaVersion: b.proof_schema_version,
+    txInclusionBranch: txInclusion?.branch ?? null,
+    txBlockIndex: txInclusion?.index ?? null,
     signature,
   };
 }

@@ -472,6 +472,35 @@ export function parseTxOutProof(
   const orderedBranch = extractBranchForIndex(hashes, flagBytes, flagBytesLen, totalTx, treeHeight, matchedIndex);
   if (orderedBranch == null) return null;
 
+  // ── 5. B0: the EMITTED branch must fold to the root we VERIFIED ──
+  //
+  // Everything above — `verifyRecoveredRoot`, `flagStreamFullyConsumed`, the
+  // CVE-2012-2459 guard — validates the output of walk #1 (`walkMerkleTree`).
+  // `extractBranchForIndex` is a SECOND, INDEPENDENT pass, and its output is
+  // what we persist to `anchor_proofs.tx_inclusion_branch` and publish in the
+  // public `proof_bundle`. Nothing checked that pass #2's array actually folds
+  // to the root pass #1 proved.
+  //
+  // That gap is reachable, not theoretical. `gettxoutproof` takes a txid LIST,
+  // so a `CPartialMerkleTree` may mark MORE THAN ONE leaf. Pass #1 overwrites
+  // `matchedIndex` at every matched leaf, so a tree marking leaves {0, 3} with
+  // the target last leaves `matchedIndex = 3` and `verifyRecoveredRoot`
+  // passing — while pass #2 pushes a `collected` entry at EVERY node with
+  // `isParentOfMatch === 1`, which now includes the OTHER match's subtree. The
+  // emitted branch comes out longer than the tree is tall and folds to a root
+  // that is NOT the header's merkleroot. Persisting that next to
+  // `verified: true` would publish a bundle that refutes itself.
+  //
+  // Two checks, cheapest first:
+  //   (a) an honest branch has EXACTLY one sibling per level (`treeHeight`);
+  //   (b) folding it from the matched leaf with the rule the column comment
+  //       and the ProofBundle docstring promise a verifier must land on `root`.
+  // (b) is authoritative; (a) makes the multi-match class fail structurally
+  // rather than only cryptographically.
+  if (orderedBranch.length !== treeHeight) return null;
+  const foldedRoot = foldTxInclusionBranch(matchedLeafHashLE, orderedBranch);
+  if (foldedRoot == null || !Buffer.from(foldedRoot).equals(root)) return null;
+
   return {
     blockHeader,
     blockHash,
@@ -500,6 +529,63 @@ function verifyRecoveredRoot(
   if (!Buffer.from(root).equals(headerMerkleRootLE)) return false;
   const targetLE = Buffer.from(targetTxId.toLowerCase(), 'hex').reverse();
   return Buffer.from(matchedLeafHashLE).equals(targetLE);
+}
+
+/**
+ * H2: derive a block hash from a raw 80-byte block header (160-hex).
+ *
+ * A block header is SELF-IDENTIFYING — its own double-SHA256, displayed
+ * byte-reversed, IS the block hash. So a stored `anchor_proofs.block_header`
+ * always names its block even when the sibling `block_hash` column is NULL (a
+ * schema-permitted state that `upsertAnchorProofs` and `backfillProofCompleteness`
+ * can both produce, because each writes the two columns independently).
+ *
+ * That matters because the reorg guards key off `block_hash`: a header-present
+ * / hash-null row disarmed BOTH of them, and the populate job would then
+ * overwrite the stored header with whatever block the tx is in NOW. There is no
+ * need for that blind spot — the answer is already in the bytes.
+ *
+ * Returns lowercase display hex, or `null` if the input is not exactly 160 hex
+ * characters (a value we cannot interpret must never authorise an overwrite).
+ */
+export function blockHashFromHeaderHex(headerHex: string | null | undefined): string | null {
+  if (typeof headerHex !== 'string' || !BLOCK_HEADER_HEX_RE.test(headerHex)) return null;
+  return Buffer.from(doubleSha256(Buffer.from(headerHex, 'hex'))).reverse().toString('hex');
+}
+
+/**
+ * Fold a BITCOIN-tree inclusion branch back to a root, using EXACTLY the rule
+ * `anchor_proofs.tx_inclusion_branch`'s column comment and the `ProofBundle`
+ * docstring promise an independent verifier:
+ *
+ *   node = leaf (internal LE)
+ *   for each entry: sibling = reverse(display-hex)          // → internal LE
+ *                   node = SHA256d(position === 'right'
+ *                            ? node‖sibling : sibling‖node)
+ *
+ * Returns the recomputed root in INTERNAL LE (the same orientation as
+ * `walkMerkleTree`'s root and the raw header bytes [36,68)), or `null` if any
+ * entry is not a 64-hex sibling with a left/right position.
+ *
+ * This is the read-side rule executed on the WRITE side, so a branch that a
+ * holder could not fold is never persisted or published in the first place
+ * (§1.5 — we publish what we measured, and this is the measurement).
+ */
+export function foldTxInclusionBranch(
+  leafHashLE: Uint8Array,
+  branch: MerkleProofEntry[],
+): Buffer | null {
+  let node: Buffer = Buffer.from(leafHashLE);
+  for (const step of branch) {
+    if (step == null || typeof step.hash !== 'string' || !TXID_HEX_RE.test(step.hash)) return null;
+    if (step.position !== 'left' && step.position !== 'right') return null;
+    const sibling = Buffer.from(step.hash, 'hex').reverse();
+    node =
+      step.position === 'right'
+        ? doubleSha256(Buffer.concat([node, sibling]))
+        : doubleSha256(Buffer.concat([sibling, node]));
+  }
+  return node;
 }
 
 /**

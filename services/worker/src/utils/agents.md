@@ -646,3 +646,29 @@ Two traps this code is shaped around:
   position, and an empty `tx_inclusion_branch` is the complete, correct answer
   for a block whose only transaction is this one. A falsy guard would silently
   drop both and turn a finished row back into a scan candidate forever.
+
+## 2026-08-31 — `updateAnchorConfirmationProofs`: atomic pair + batched writes (H3 / H4 / M3)
+
+- **H3/H4 — the writer now validates.** Migration 0427's header offers "the writer
+  and the reader both validate shape and reject anything malformed as NULL" as the
+  reason it ships no CHECK constraint. The reader did; the writer validated
+  NOTHING and forwarded whatever it was handed into an unconstrained `jsonb`
+  column, so `[{"hash":"","position":"left"}]` would be persisted and then
+  published as inclusion evidence. `isCoherentInclusionPair` now applies the SAME
+  rules the API applies on read: both halves present or neither, every sibling
+  exactly 64 hex characters, `0 <= index < 2^branch.length`, and each level's
+  sibling side matching that level's bit of the index. A violation writes NEITHER
+  key — the header/hash still land, so the row is not left unwritten and the scan
+  comes back for the evidence. An explicit `null`/`null` pair is a deliberate
+  clear and still writes both.
+- **M3 — one statement per distinct payload, not one per row.** This was a
+  per-row `.update().eq()` loop: ~667k rows at 2,000 per `*/15` run is ~334 runs
+  ≈ 83.5 hours of pure request latency. The workload's own shape removes it —
+  anchors in a merkle batch share ONE tx, so ONE proof, so byte-identical
+  header/hash/branch/index. Rows are grouped by payload and sent as a single
+  `.in('anchor_id', [...])` UPDATE, chunked at `PROOF_UPSERT_CHUNK` (500) so no
+  request carries an unbounded id list. Still an UPDATE, never an upsert: a
+  missing `anchor_proofs` row must STAY missing (a header-only proof row is not a
+  proof), which an INSERT-on-conflict would silently create. `missing` is still
+  exact — the returned rows name which ids existed, so the shortfall inside a
+  statement is a real count.

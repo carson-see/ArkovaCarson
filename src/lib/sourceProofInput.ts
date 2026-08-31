@@ -74,7 +74,7 @@ export interface ProofSourceResult {
 /** Columns selected from `anchor_proofs` for the embedded packet (+ `batch_id`
  *  so we can derive `leaf_count`). Strict allow-list: no document bytes / PII. */
 const PROOF_COLUMNS =
-  'merkle_root, proof_path, merkle_index, batch_id, block_hash, block_header, block_height, op_return_payload, proof_schema_version, block_timestamp, receipt_id';
+  'merkle_root, proof_path, merkle_index, batch_id, block_hash, block_header, block_height, op_return_payload, proof_schema_version, block_timestamp, receipt_id, tx_inclusion_branch, tx_block_index';
 
 interface AnchorProofRow {
   merkle_root: string | null;
@@ -88,6 +88,9 @@ interface AnchorProofRow {
   proof_schema_version: number | null;
   block_timestamp: string | null;
   receipt_id: string | null;
+  /** Migration 0427 — layer-2 BITCOIN-tree inclusion evidence (jsonb). */
+  tx_inclusion_branch: unknown;
+  tx_block_index: number | null;
 }
 
 /** Type guard: a value is a well-formed `{ hash, position }` Merkle entry. */
@@ -95,6 +98,52 @@ function isMerkleEntry(v: unknown): v is MerkleProofEntry {
   if (typeof v !== 'object' || v === null) return false;
   const e = v as Record<string, unknown>;
   return typeof e.hash === 'string' && (e.position === 'left' || e.position === 'right');
+}
+
+/** A 32-byte hash in display hex — the only shape a bitcoin-tree sibling takes. */
+const SIBLING_HASH_HEX_RE = /^[0-9a-fA-F]{64}$/;
+
+/**
+ * Read the layer-2 BITCOIN-tree inclusion evidence as ONE fact.
+ *
+ * Migration 0427 persists `tx_inclusion_branch` + `tx_block_index` so a holder
+ * can close the transaction→block half of the proof LOCALLY instead of asking a
+ * Bitcoin node — the exact third-party dependency the self-contained packet
+ * exists to remove. That is only true if the evidence reaches the holder, and
+ * this exported audit packet is the shipped path they actually receive.
+ *
+ * The rules mirror the API reader (`services/worker/src/api/v1/verify-proof.ts`)
+ * exactly, because two surfaces answering "is this branch usable?" differently
+ * is how a packet ends up contradicting the API about one record:
+ *   - both halves present, or neither (half a pair is not evidence),
+ *   - every sibling exactly 64 hex characters (a non-32-byte value cannot take
+ *     part in a double-SHA256 fold),
+ *   - `0 <= index < 2^branch.length`,
+ *   - each level's sibling side matches that level's bit of the index.
+ *
+ * Anything else ⇒ BOTH null. An EMPTY branch with index 0 is COMPLETE evidence
+ * (a block whose only transaction is this one has no siblings), never missing.
+ *
+ * NOTE ON ORIENTATION: these hashes are BYTE-REVERSED (display) hex under
+ * Bitcoin's double-SHA256 positional rule — a DIFFERENT convention from
+ * `merkle_proof`, which is the layer-1 APP tree. The two are not
+ * interchangeable and deliberately do not share a name.
+ */
+function readTxInclusionEvidence(
+  branchValue: unknown,
+  indexValue: unknown,
+): { branch: MerkleProofEntry[]; index: number } | null {
+  if (!Array.isArray(branchValue)) return null;
+  if (!branchValue.every(isMerkleEntry)) return null;
+  if (typeof indexValue !== 'number' || !Number.isInteger(indexValue) || indexValue < 0) return null;
+  if (branchValue.length > 31) return null;
+  if (indexValue >= 1 << branchValue.length) return null;
+  for (let level = 0; level < branchValue.length; level++) {
+    if (!SIBLING_HASH_HEX_RE.test(branchValue[level].hash)) return null;
+    const expected = ((indexValue >> level) & 1) === 0 ? 'right' : 'left';
+    if (branchValue[level].position !== expected) return null;
+  }
+  return { branch: branchValue, index: indexValue };
 }
 
 /**
@@ -173,6 +222,11 @@ export async function sourceProofInput(
     complete = false;
   }
 
+  const txInclusion = readTxInclusionEvidence(
+    proofRow.tx_inclusion_branch,
+    proofRow.tx_block_index,
+  );
+
   const proof: ProofInput = {
     fingerprint: anchor.fingerprint,
     merkle_root: proofRow.merkle_root,
@@ -188,6 +242,11 @@ export async function sourceProofInput(
     // Machine field is `block_timestamp` (the human-readable PDF label still
     // reads "Network Observed Time").
     block_timestamp: proofRow.block_timestamp ?? anchor.chain_timestamp ?? null,
+    // Migration 0427: layer-2 bitcoin-tree inclusion evidence, validated as one
+    // fact. Additive + nullable — a back-catalogue row that predates the
+    // columns still yields a complete packet (§1.8).
+    tx_inclusion_branch: txInclusion?.branch ?? null,
+    tx_block_index: txInclusion?.index ?? null,
   };
 
   return { proof, complete };

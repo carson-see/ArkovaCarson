@@ -1193,6 +1193,111 @@ describe('PROOF-05 (SCRUM-2338) getMerkleProof', () => {
     expect(result.proofBundle?.signature).toBeNull();
   });
 
+  // =========================================================================
+  // B3 — the bitcoin-tree half must survive the mapper
+  // =========================================================================
+  //
+  // `mapProofBundle` builds from a HARD key allow-list, so a field the API
+  // emits but the mapper does not name is silently dropped. Migration 0427's
+  // whole purpose is letting a holder close the transaction→block half of the
+  // proof LOCALLY instead of asking a Bitcoin node — and every SDK consumer
+  // was getting a bundle with that half quietly removed.
+  describe('B3 — tx_inclusion_branch / tx_block_index (migration 0427)', () => {
+    // [right, left] ⇒ index bit0 = 0, bit1 = 1 ⇒ the only coherent index is 2.
+    const TX_BRANCH = [
+      { hash: '11'.repeat(32), position: 'right' },
+      { hash: '22'.repeat(32), position: 'left' },
+    ];
+
+    function bundleResponse(extra: Record<string, unknown>) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          public_id: 'abc123',
+          fingerprint: 'ff'.repeat(32),
+          merkle_root: 'aa'.repeat(32),
+          merkle_proof: [{ hash: 'bb'.repeat(32), position: 'left' }],
+          tx_id: 'tx-999',
+          block_height: 800000,
+          block_timestamp: '2026-04-18T10:00:00Z',
+          batch_id: 'batch-1',
+          verified: true,
+          proof_bundle: {
+            fingerprint: 'ff'.repeat(32),
+            merkle_root: 'aa'.repeat(32),
+            merkle_proof: [{ hash: 'bb'.repeat(32), position: 'left' }],
+            merkle_index: 0,
+            leaf_count: 4,
+            tx_id: 'tx-999',
+            block_height: 800000,
+            block_hash: 'cc'.repeat(32),
+            block_header: 'dd'.repeat(80),
+            op_return_payload: '41524b56' + 'ee'.repeat(32),
+            block_timestamp: '2026-04-18T10:00:00Z',
+            proof_schema_version: 1,
+            signature: null,
+            ...extra,
+          },
+        }),
+      };
+    }
+
+    it('maps the branch + index instead of dropping them', async () => {
+      const client = new Arkova({ apiKey: 'ak_test' });
+      mockFetch.mockResolvedValueOnce(
+        bundleResponse({ tx_inclusion_branch: TX_BRANCH, tx_block_index: 2 }),
+      );
+      const result = await client.getMerkleProof('abc123');
+      expect(result.proofBundle?.txInclusionBranch).toEqual(TX_BRANCH);
+      expect(result.proofBundle?.txBlockIndex).toBe(2);
+    });
+
+    it('maps both to null for a back-catalogue bundle that omits them — WITHOUT failing the bundle closed', async () => {
+      const client = new Arkova({ apiKey: 'ak_test' });
+      mockFetch.mockResolvedValueOnce(bundleResponse({}));
+      const result = await client.getMerkleProof('abc123');
+      // §1.8: additive + nullable. A record confirmed before 0427 must keep
+      // getting a bundle — gating on the new fields would be a breaking change
+      // wearing an addition's clothes.
+      expect(result.proofBundle).not.toBeNull();
+      expect(result.proofBundle?.txInclusionBranch).toBeNull();
+      expect(result.proofBundle?.txBlockIndex).toBeNull();
+    });
+
+    it.each([
+      ['non-array branch', { tx_inclusion_branch: 'nope', tx_block_index: 2 }],
+      ['malformed entry', { tx_inclusion_branch: [{ hash: 'x' }], tx_block_index: 0 }],
+      ['non-hex sibling', { tx_inclusion_branch: [{ hash: 'z'.repeat(64), position: 'right' }], tx_block_index: 0 }],
+      ['index out of range', { tx_inclusion_branch: TX_BRANCH, tx_block_index: 9 }],
+      ['index contradicts sides', { tx_inclusion_branch: TX_BRANCH, tx_block_index: 1 }],
+      ['branch without index', { tx_inclusion_branch: TX_BRANCH, tx_block_index: null }],
+      ['index without branch', { tx_inclusion_branch: null, tx_block_index: 2 }],
+    ])(
+      'degrades an unusable pair to null on BOTH halves (%s) without discarding the rest of the bundle',
+      async (_label, extra) => {
+        const client = new Arkova({ apiKey: 'ak_test' });
+        mockFetch.mockResolvedValueOnce(bundleResponse(extra));
+        const result = await client.getMerkleProof('abc123');
+        expect(result.proofBundle).not.toBeNull();
+        expect(result.proofBundle?.txInclusionBranch).toBeNull();
+        expect(result.proofBundle?.txBlockIndex).toBeNull();
+        // The app-tree half is unaffected — this is additive evidence.
+        expect(result.proofBundle?.merkleIndex).toBe(0);
+      },
+    );
+
+    it('an EMPTY branch with index 0 is complete evidence for a single-transaction block', async () => {
+      const client = new Arkova({ apiKey: 'ak_test' });
+      mockFetch.mockResolvedValueOnce(
+        bundleResponse({ tx_inclusion_branch: [], tx_block_index: 0 }),
+      );
+      const result = await client.getMerkleProof('abc123');
+      expect(result.proofBundle?.txInclusionBranch).toEqual([]);
+      expect(result.proofBundle?.txBlockIndex).toBe(0);
+    });
+  });
+
   it('maps proofBundle = null when the proof is incomplete', async () => {
     const client = new Arkova({ apiKey: 'ak_test' });
     mockFetch.mockResolvedValueOnce({

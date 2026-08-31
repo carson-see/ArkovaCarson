@@ -38,3 +38,23 @@ Developer-facing API documentation. Engineering mirrors and guides for the Arkov
   `public/.well-known/mcp/server-card.json` mirrors them again. **Nothing checks the three for text
   parity** (`tests/infra/mcp-manifest-parity.test.ts` covers names and schemas only), so edit them
   together, by hand, in the same change.
+
+## 2026-08-31 — M2: `ProofBundle` in `openapi.yaml` had drifted from the implementation
+
+When migration 0427 added `tx_inclusion_branch` / `tx_block_index` to the emitted
+`proof_bundle`, only the in-worker prose blob in
+`services/worker/src/api/v1/docs.ts` changed. This file's `ProofBundle` schema —
+which carries an explicit `properties` map AND a `required` list — was untouched,
+so the published contract and the implementation disagreed and nothing in CI
+compared them.
+
+- Both fields are now in `properties` AND in `required`, with `nullable: true`.
+  The route always EMITS the keys; nullability is expressed by `nullable`, not by
+  omitting them, so publishing them as optional would misdescribe the response.
+- The descriptions state the byte orientation, the fold rule, and — explicitly —
+  that `tx_block_index` does NOT arm the CVE-2012-2459 guard on the bitcoin tree
+  (that needs the block's total transaction count, which the bundle does not
+  carry). Contrast `leaf_count`, which does arm the equivalent app-tree guard.
+- `src/lib/proofBundleContractDrift.test.ts` now compares this schema's key set
+  against what `buildProofPacket` emits, in both directions, so the next drift
+  fails CI instead of shipping.

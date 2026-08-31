@@ -36,8 +36,14 @@
 -- would take ACCESS EXCLUSIVE and scan every existing row to prove a property
 -- that is vacuously true (all existing values are NULL). That is the same
 -- barrier-forming shape §1.2 exists to prevent, bought for nothing. The writer
--- (`utils/anchorProofs.ts`) and the reader (`api/v1/verify-proof.ts`) both
--- validate shape and reject anything malformed as NULL.
+-- (`utils/anchorProofs.ts` — `isCoherentInclusionPair`) and the reader
+-- (`api/v1/verify-proof.ts` — `readTxInclusionEvidence`) both validate the pair
+-- and reject anything malformed as NULL, applying the IDENTICAL rules: both
+-- halves present or neither, every sibling exactly 64 hex characters,
+-- 0 <= index < 2^branch_length, and each level's sibling side matching that
+-- level's bit of the index. That sentence was aspirational when this file was
+-- first written — the writer validated nothing at all — and is now true on both
+-- sides; if either check is removed, this paragraph has to go with it.
 --
 -- ROLLBACK:
 --   ALTER TABLE public.anchor_proofs
@@ -71,7 +77,7 @@ COMMENT ON COLUMN public.anchor_proofs.tx_inclusion_branch IS
   'Layer-2 BITCOIN-tree inclusion branch: the sibling path proving this anchor''s transaction is committed by the merkleroot inside block_header. Shape matches proof_path — [{"hash": <64-hex>, "position": "left"|"right"}, ...] ordered leaf->root — but the CONVENTION DIFFERS and the two are not interchangeable. Hashes are BYTE-REVERSED (display/big-endian) hex, the same orientation as a txid or a block hash on an explorer. To verify: reverse the txid and each sibling to internal little-endian bytes, then fold leaf->root with node = SHA256(SHA256(position="right" ? node||sibling : sibling||node)); reverse the final 32 bytes back to display hex and compare to the merkleroot at block_header bytes [36,68) (also byte-reversed). An empty array is a COMPLETE branch, not a missing one: a block whose only transaction is this one has no siblings. NULL = not yet populated; never fabricated (Constitution §1.5). Contrast proof_path, which is the layer-1 APP tree over document fingerprints in their stored orientation.';
 
 COMMENT ON COLUMN public.anchor_proofs.tx_block_index IS
-  'Layer-2 BITCOIN-tree: 0-based index of this anchor''s transaction within its block, as recovered from the partial merkle tree (gettxoutproof / Electrum position). Pairs with tx_inclusion_branch: the index supplies the left/right bit at each level, so a verifier can re-derive the fold order independently of the stored positions and reject a branch that disagrees — and it arms the CVE-2012-2459 duplicate-node guard, which needs to know whether a self-pairing sibling sits at a legitimate rightmost-odd position. 0 is a real value (the coinbase position), not a blank. NULL = not yet populated. Contrast merkle_index, which is the leaf index in the layer-1 APP tree.';
+  'Layer-2 BITCOIN-tree: 0-based index of this anchor''s transaction within its block, as recovered from the partial merkle tree (gettxoutproof / Electrum position). Pairs INDIVISIBLY with tx_inclusion_branch — the writer refuses to persist either half alone, and the reader publishes both or neither. The index supplies the left/right bit at each level, so a verifier can re-derive the fold order independently of the stored positions and reject a branch that disagrees; the API runs exactly that cross-check before publishing the pair. It does NOT arm the CVE-2012-2459 duplicate-node guard: deciding whether a self-pairing sibling sits at a legitimate rightmost-odd position needs the block''s TOTAL TRANSACTION COUNT (row width = ceil(totalTx / 2^height)), which is parsed at fetch time but neither returned from parseTxOutProof nor stored here — so no read-side consumer can run that guard from this column. It is enforced on the WRITE side instead, where the count is in hand. 0 is a real value (the coinbase position), not a blank. NULL = not yet populated. Contrast merkle_index, which is the leaf index in the layer-1 APP tree.';
 
 -- Reload PostgREST schema cache so the new columns are visible to the API.
 NOTIFY pgrst, 'reload schema';

@@ -772,3 +772,30 @@ Prod `vzwyaatejekddvltxyye` has 118 ledger rows, head `0419`, with a genuine gap
 |---|---|---|---|
 | `credits-2442` | `gsluatcqhwwynxpsidjy` | `0420` | PR #2442 — 48 h T3 clock RUNNING from 2026-08-29T15:10:53Z |
 | `cleanup-2335` | `bxgybbxkhuxwtgkgkwpe` | `0417` | PR #2335 — wired + `clean_mirror`, clock NOT started (driver blocker recorded in `docs/staging/cleanup-2335-2026-08-29/`) |
+
+## 2026-08-31 — `0427` comment corrections (review; comments only, no DDL change)
+
+`0427_proof_tx_inclusion_branch.sql` is still FILE ONLY — applied to no
+database, no rig, no prod — so this is an edit to an unapplied draft in an open
+PR, not a modification of an applied migration. **No DDL changed:** the two
+`ALTER TABLE ... ADD COLUMN` statements, the `SET LOCAL lock_timeout`, the
+`NOTIFY pgrst`, and the ROLLBACK header are byte-identical. Only two
+`COMMENT ON COLUMN` bodies and one header paragraph changed, because both were
+asserting things that were not true:
+
+- **The CVE-2012-2459 claim on `tx_block_index` is withdrawn (§1.5).** It said
+  the index "arms the CVE-2012-2459 duplicate-node guard". It cannot: deciding
+  whether a self-pairing sibling sits at a legitimate rightmost-odd position
+  needs the block's TOTAL TRANSACTION COUNT (row width =
+  `ceil(totalTx / 2^height)`), which `parseMerkleBlockFields` parses at fetch
+  time but which is neither returned from `parseTxOutProof` nor persisted — so
+  no read-side consumer can run that guard from this column. The comment now
+  says where the guard IS enforced (write side, at parse time) and what the
+  column actually buys (the index/side cross-check, which the API now runs).
+- **The header's "the writer and the reader both validate" sentence is now
+  true.** It was offered as the reason no CHECK constraint is needed, but the
+  writer validated nothing at all. `utils/anchorProofs.ts::isCoherentInclusionPair`
+  and `api/v1/verify-proof.ts::readTxInclusionEvidence` now apply the identical
+  rules, and the header names both functions so the claim is checkable.
+
+Prefix unchanged. **Next author claims `0428` — re-derive, do not trust this line.**

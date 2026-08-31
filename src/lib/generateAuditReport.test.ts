@@ -86,10 +86,55 @@ describe('PROOF-04 buildProofPacket — canonical proof_bundle shape', () => {
         'proof_schema_version',
         'signature',
         'tx_id',
+        // B3 / migration 0427: the layer-2 bitcoin-tree half. Without these the
+        // packet can prove the app-tree half offline but still has to ask a
+        // Bitcoin node to close the transaction→block half — the exact
+        // third-party dependency this packet exists to remove.
+        'tx_inclusion_branch',
+        'tx_block_index',
       ].sort(),
     );
     // No legacy observed_time field on the machine packet.
     expect(keys).not.toContain('observed_time');
+  });
+
+  it('B3: carries the bitcoin-tree branch + index through to the packet', () => {
+    // [right, left] ⇒ index bit0=0, bit1=1 ⇒ index 2.
+    const txBranch = [
+      { hash: '1'.repeat(64), position: 'right' as const },
+      { hash: '2'.repeat(64), position: 'left' as const },
+    ];
+    const data = securedData();
+    const packet = buildProofPacket({
+      ...data,
+      proof: { ...data.proof!, tx_inclusion_branch: txBranch, tx_block_index: 2 },
+    });
+    expect(packet!.tx_inclusion_branch).toEqual(txBranch);
+    expect(packet!.tx_block_index).toBe(2);
+    // Structured entries, never flattened — the fold needs the side.
+    for (const entry of packet!.tx_inclusion_branch!) {
+      expect(typeof entry.hash).toBe('string');
+      expect(['left', 'right']).toContain(entry.position);
+    }
+  });
+
+  it('B3: emits null for both when the record predates migration 0427', () => {
+    const packet = buildProofPacket(securedData());
+    expect(packet!.tx_inclusion_branch).toBeNull();
+    expect(packet!.tx_block_index).toBeNull();
+  });
+
+  it('B3: never ships a malformed bitcoin-tree branch as if it were evidence', () => {
+    const data = securedData();
+    const packet = buildProofPacket({
+      ...data,
+      proof: {
+        ...data.proof!,
+        tx_inclusion_branch: [{ hash: 'x', position: 'sideways' }] as never,
+        tx_block_index: 2,
+      },
+    });
+    expect(packet!.tx_inclusion_branch).toBeNull();
   });
 
   it('preserves the structured { hash, position } Merkle branch (never flattens to strings)', () => {

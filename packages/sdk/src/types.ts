@@ -327,6 +327,32 @@ export interface ProofBundle {
   blockTimestamp: string;
   proofSchemaVersion: number;
   /**
+   * Layer-2 BITCOIN-tree inclusion branch (migration 0427): the sibling path
+   * proving `txId` is committed by the merkleroot inside `blockHeader`. This is
+   * what lets a holder close the transaction→block half of the proof LOCALLY
+   * instead of asking a Bitcoin node.
+   *
+   * NOT interchangeable with `merkleProof`. Same `{hash, position}` shape, but
+   * these hashes are BYTE-REVERSED (display) hex folded with Bitcoin's
+   * double-SHA256 positional rule, whereas `merkleProof` is the layer-1 APP
+   * tree in its stored orientation. Folding one with the other's rule
+   * typechecks and proves nothing — hence the distinct name.
+   *
+   * Additive + nullable (Constitution §1.8): `null` for a record confirmed
+   * before 0427, and `null` when the stored pair is unusable — never fabricated
+   * and never a reason to withhold the rest of the bundle. An EMPTY array is a
+   * COMPLETE branch (a single-transaction block has no siblings).
+   */
+  txInclusionBranch: MerkleProofEntry[] | null;
+  /**
+   * 0-based index of `txId` within its block (migration 0427). Pairs
+   * indivisibly with `txInclusionBranch`: its bit at each level fixes that
+   * level's sibling side, so a verifier can re-derive the fold order and reject
+   * a branch that disagrees. `0` is a real position (the coinbase), not a blank;
+   * `null` when the branch is absent or unusable.
+   */
+  txBlockIndex: number | null;
+  /**
    * RESERVED — always `null` today. The signed envelope is the outer
    * `?format=signed` response wrapper, not an inline bundle field. This is the
    * one legitimately-nullable member of the bundle.

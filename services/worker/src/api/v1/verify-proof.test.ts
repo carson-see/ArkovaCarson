@@ -750,10 +750,16 @@ describe('R1 — proof_bundle tx-inclusion branch + tx block index', () => {
   const BLOCK_HASH = 'bb'.repeat(32);
   const LEAF_COUNT = LEAVES.length;
 
+  // H4: the branch and the index are ONE fact, and they must agree. A 2-entry
+  // branch describes a tree of height 2, so the index lives in [0,4); and the
+  // index's bit at each level dictates that level's sibling side (even ⇒ the
+  // sibling is on the right). Here: level 0 'right' ⇒ bit0 = 0, level 1 'left'
+  // ⇒ bit1 = 1 ⇒ the ONLY index this branch can belong to is 2.
   const TX_BRANCH = [
     { hash: 'cc'.repeat(32), position: 'right' as const },
     { hash: 'dd'.repeat(32), position: 'left' as const },
   ];
+  const TX_INDEX = 2;
 
   const STORED: ProofRecordData = {
     merkle_root: TREE.root,
@@ -765,7 +771,7 @@ describe('R1 — proof_bundle tx-inclusion branch + tx block index', () => {
     op_return_payload: `\\x${OP_RETURN_HEX}`,
     proof_schema_version: 1,
     tx_inclusion_branch: TX_BRANCH,
-    tx_block_index: 7,
+    tx_block_index: TX_INDEX,
   };
 
   function bundleFor(stored: ProofRecordData) {
@@ -780,7 +786,7 @@ describe('R1 — proof_bundle tx-inclusion branch + tx block index', () => {
     const b = bundleFor(STORED).proof_bundle;
     expect(b).not.toBeNull();
     expect(b?.tx_inclusion_branch).toEqual(TX_BRANCH);
-    expect(b?.tx_block_index).toBe(7);
+    expect(b?.tx_block_index).toBe(TX_INDEX);
     // Additive — the version stays 1 (§1.8: nullable additions do not bump it).
     expect(b?.proof_schema_version).toBe(1);
     // And the APP tree is untouched and still distinct.
@@ -825,16 +831,116 @@ describe('R1 — proof_bundle tx-inclusion branch + tx block index', () => {
     }
   });
 
-  it('rejects a non-integer / negative tx_block_index as null', () => {
-    for (const bad of ['7', 7.5, -1, null, undefined, {}]) {
-      const b = bundleFor({ ...STORED, tx_block_index: bad as unknown as number }).proof_bundle;
+  // H3: `jsonb` constrains nothing, and the shared structural predicate only
+  // asks `typeof hash === 'string'`. An empty string, a short string, or a
+  // non-hex string would have been published as GENUINE inclusion evidence
+  // sitting next to `verified: true`. A sibling that is not 32 bytes cannot
+  // participate in a double-SHA256 fold at all — it is not weak evidence, it is
+  // not evidence.
+  it('H3: rejects a branch whose sibling hashes are not 64-hex', () => {
+    for (const badHash of [
+      '', // the empty-string case the old predicate accepted verbatim
+      'cc', // too short
+      'c'.repeat(63), // odd length
+      'c'.repeat(65), // too long
+      'z'.repeat(64), // right length, not hex
+      'cc'.repeat(32) + ' ', // trailing whitespace
+    ]) {
+      const b = bundleFor({
+        ...STORED,
+        tx_inclusion_branch: [{ hash: badHash, position: 'right' }, TX_BRANCH[1]],
+      }).proof_bundle;
+      expect(b, `hash=${JSON.stringify(badHash)}`).not.toBeNull();
+      expect(b?.tx_inclusion_branch, `hash=${JSON.stringify(badHash)}`).toBeNull();
+      // …and the index goes with it: the two are one indivisible fact.
       expect(b?.tx_block_index).toBeNull();
     }
   });
 
-  it('persists index 0 — the first tx in a block is a real position, not a falsy blank', () => {
-    const b = bundleFor({ ...STORED, tx_block_index: 0 }).proof_bundle;
+  it('accepts UPPERCASE 64-hex siblings (display hex is case-insensitive)', () => {
+    const upper = [
+      { hash: 'CC'.repeat(32), position: 'right' as const },
+      { hash: 'DD'.repeat(32), position: 'left' as const },
+    ];
+    const b = bundleFor({ ...STORED, tx_inclusion_branch: upper }).proof_bundle;
+    expect(b?.tx_inclusion_branch).toEqual(upper);
+    expect(b?.tx_block_index).toBe(TX_INDEX);
+  });
+
+  it('rejects a non-integer / negative tx_block_index as null', () => {
+    for (const bad of ['7', 7.5, -1, null, undefined, {}]) {
+      const b = bundleFor({ ...STORED, tx_block_index: bad as unknown as number }).proof_bundle;
+      expect(b?.tx_block_index).toBeNull();
+      // H4: never a half pair — a branch without its index is not publishable.
+      expect(b?.tx_inclusion_branch).toBeNull();
+    }
+  });
+
+  // H4: the app tree three lines up already suppresses the bundle when index
+  // and tree size are mutually impossible. The bitcoin tree got no such
+  // discipline: the two columns were read INDEPENDENTLY, so an incoherent pair
+  // shipped as a coherent one.
+  it('H4: rejects an index that cannot exist in a tree of the branch\'s height', () => {
+    // A 2-entry branch ⇒ height 2 ⇒ at most 4 leaves ⇒ index ∈ [0,4).
+    for (const outOfRange of [4, 17, 1_000_000]) {
+      const b = bundleFor({ ...STORED, tx_block_index: outOfRange }).proof_bundle;
+      expect(b, `index=${outOfRange}`).not.toBeNull();
+      expect(b?.tx_block_index, `index=${outOfRange}`).toBeNull();
+      expect(b?.tx_inclusion_branch, `index=${outOfRange}`).toBeNull();
+    }
+  });
+
+  it('H4: rejects an index whose bits contradict the stored sibling sides', () => {
+    // TX_BRANCH is [right, left] ⇒ bit0=0, bit1=1 ⇒ index MUST be 2. Every
+    // other in-range index disagrees with the sides the row itself stores, and
+    // the column comment promises a verifier can re-derive the fold order from
+    // the index and "reject a branch that disagrees". Make that true here.
+    for (const wrong of [0, 1, 3]) {
+      const b = bundleFor({ ...STORED, tx_block_index: wrong }).proof_bundle;
+      expect(b?.tx_block_index, `index=${wrong}`).toBeNull();
+      expect(b?.tx_inclusion_branch, `index=${wrong}`).toBeNull();
+    }
+  });
+
+  it('H4: rejects a branch with no index, and an index with no branch', () => {
+    const branchOnly = bundleFor({ ...STORED, tx_block_index: null }).proof_bundle;
+    expect(branchOnly?.tx_inclusion_branch).toBeNull();
+    expect(branchOnly?.tx_block_index).toBeNull();
+
+    const indexOnly = bundleFor({ ...STORED, tx_inclusion_branch: null }).proof_bundle;
+    expect(indexOnly?.tx_inclusion_branch).toBeNull();
+    expect(indexOnly?.tx_block_index).toBeNull();
+  });
+
+  it('index 0 is a real position — the first tx in a block, not a falsy blank', () => {
+    // Index 0 means every bit is 0, so EVERY sibling must sit on the right.
+    const zeroBranch = [
+      { hash: 'cc'.repeat(32), position: 'right' as const },
+      { hash: 'dd'.repeat(32), position: 'right' as const },
+    ];
+    const b = bundleFor({
+      ...STORED,
+      tx_inclusion_branch: zeroBranch,
+      tx_block_index: 0,
+    }).proof_bundle;
     expect(b?.tx_block_index).toBe(0);
+    expect(b?.tx_inclusion_branch).toEqual(zeroBranch);
+  });
+
+  it('an EMPTY branch is complete evidence for a single-tx block (index 0)', () => {
+    const b = bundleFor({
+      ...STORED,
+      tx_inclusion_branch: [],
+      tx_block_index: 0,
+    }).proof_bundle;
+    expect(b?.tx_inclusion_branch).toEqual([]);
+    expect(b?.tx_block_index).toBe(0);
+
+    // …but an empty branch with a NON-zero index is impossible: a block with no
+    // siblings has exactly one transaction, at position 0.
+    const bad = bundleFor({ ...STORED, tx_inclusion_branch: [], tx_block_index: 1 }).proof_bundle;
+    expect(bad?.tx_inclusion_branch).toBeNull();
+    expect(bad?.tx_block_index).toBeNull();
   });
 
   it('the legacy metadata-only fallback carries neither field (no layer-2 evidence at all)', () => {

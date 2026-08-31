@@ -366,3 +366,33 @@ student-ID stripper does not cover them: `STUDENT_ID_KEYWORD` joins its words wi
 `\s+`, so `Student ID: 88213` redacts but the snake_case CSV header form
 `student_id: 88213` does not. That gap is in `piiStripper.ts`, predates this PR,
 and is not fixed here.
+
+## 2026-08-31 — B3: the exported audit packet carries the bitcoin-tree evidence
+
+Migration 0427 persists `anchor_proofs.tx_inclusion_branch` / `tx_block_index` so
+a holder can close the transaction→block half of the proof LOCALLY instead of
+asking a Bitcoin node. `git grep tx_inclusion_branch` returned ZERO hits under
+`packages/` and the columns were not in this module's `PROOF_COLUMNS` allow-list —
+so the data existed in the database and was unreachable through every shipped
+client, and the migration header's claim to the contrary was false.
+
+- `sourceProofInput.ts`: `PROOF_COLUMNS` selects both columns, and
+  `readTxInclusionEvidence` validates them as ONE fact with the SAME rules the API
+  applies on read (both-or-neither, 64-hex siblings, `0 <= index < 2^length`,
+  sibling side matching the index bit). Two surfaces answering "is this branch
+  usable?" differently is how a downloaded packet ends up contradicting `/proof`
+  about one record.
+- `generateAuditReport.ts`: `ProofPacket` + `ProofInput` gain
+  `tx_inclusion_branch` / `tx_block_index`; `buildProofPacket` preserves the
+  structured `{hash, position}` entries verbatim (never flattened — that drops the
+  side the fold needs) and degrades a malformed branch to null.
+- The exact-key-set pin in `generateAuditReport.test.ts` moves 13 -> 15 keys. That
+  pin is the ratchet: extend it deliberately, never delete it to green a diff.
+- **These are NOT `merkle_proof`.** Same shape, opposite convention: byte-reversed
+  (display) hex under Bitcoin's double-SHA256 positional rule, versus the layer-1
+  app tree in its stored orientation. Folding one with the other's rule typechecks
+  and proves nothing.
+- `proofBundleContractDrift.test.ts` (new) compares `docs/api/openapi.yaml`'s
+  published `ProofBundle` schema against the field set `buildProofPacket` actually
+  emits. The published contract had silently drifted when 0427 landed and nothing
+  in CI compared them.

@@ -41,6 +41,7 @@ import {
   __testing,
   type MaterializerSummary,
 } from './proof-materializer.js';
+import { readAnchorProofsColumns } from './__tests__/anchorProofsColumns.js';
 import {
   computeClassifierLockId,
   type ClassifierLogger,
@@ -534,7 +535,29 @@ describe('buildSkeletonRow: structural forge guard (§1.4 / §1.5)', () => {
     }
   });
 
-  it('the forbidden set covers every Merkle/chain column a forge would need', () => {
+  // M4: a DETECTOR, not a census.
+  //
+  // This assertion used to compare the forbidden set against a hardcoded
+  // literal list written by the same hand that wrote the set — so the two
+  // agreed with each other and with nothing else. When migration 0427 added
+  // `tx_inclusion_branch` / `tx_block_index`, neither the guard nor this test
+  // noticed, and CI reported a healthy forgery guard that had stopped covering
+  // the schema. Derive the real column set from the generated types instead:
+  // every `anchor_proofs` column must be classified as either INSERTABLE or
+  // FORBIDDEN, so adding a column without deciding which it is fails here.
+  it('every anchor_proofs column is classified as either insertable or forbidden', () => {
+    const columns = readAnchorProofsColumns();
+    expect(columns.length).toBeGreaterThan(10); // the parser actually found the table
+
+    const classified = new Set<string>([...SKELETON_INSERT_COLUMNS, ...SKELETON_FORBIDDEN_COLUMNS]);
+    const unclassified = columns.filter((c) => !classified.has(c));
+    expect(
+      unclassified,
+      `unclassified anchor_proofs column(s) — add each to SKELETON_INSERT_COLUMNS or SKELETON_FORBIDDEN_COLUMNS: ${unclassified.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('the forbidden set still names every Merkle/chain column a forge would need', () => {
     for (const col of [
       'merkle_root',
       'proof_path',
@@ -546,6 +569,8 @@ describe('buildSkeletonRow: structural forge guard (§1.4 / §1.5)', () => {
       'block_timestamp',
       'batch_id',
       'raw_response',
+      'tx_inclusion_branch',
+      'tx_block_index',
     ]) {
       expect(SKELETON_FORBIDDEN_COLUMNS).toContain(col);
     }

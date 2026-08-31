@@ -120,3 +120,33 @@ that at the transport layer, not just by convention). CI job: `verifier-cli` in
 `npm run parity` additionally requires `python3` ≥ 3.9 (runs the independent
 Python verifier over the same manifest) — suggested as its own CI job; it is
 deliberately NOT part of `npm test`.
+
+## 2026-08-31 — B3: the packet carries the bitcoin-tree evidence; the CLI does NOT fold it
+
+`ProofPacket` gains `block_header`, `tx_inclusion_branch` and `tx_block_index`
+(migration 0427), and `VerifyReport` gains `packetTxInclusion` so the evidence is
+actually REACHABLE by a CLI consumer instead of merely declared in a type. (A
+type-only addition would have been unchecked by anything: this package's
+`typecheck` script excludes `test/`.)
+
+**Scope, stated honestly (§1.5).** `packetTxInclusion` reports that the packet
+contains a structurally coherent branch + index pair — every sibling 64 hex,
+`0 <= index < 2^length`, each level's sibling side matching that level's index
+bit. It asserts nothing more. In particular it does **NOT** assert that the branch
+folds to any real block's merkleroot: **this verifier does not fold it.**
+
+Why not, so the next author does not "finish" it by accident:
+1. Folding locally would only establish that the packet agrees with a header the
+   PACKET ITSELF supplies. The transaction-inclusion VERDICT comes from
+   `confirmInclusion` against an INDEPENDENT node, which is strictly stronger.
+2. Making it a graded step means a new frozen reason code, which bumps
+   `reason_enum_version` across `fixtures/manifest.json`, `manifest.test.ts`, and
+   the independently-derived Python verifier in `packages/arkova-py`.
+
+If it is ever folded, the rule is fixed: reverse the txid and each sibling to
+internal little-endian, fold leaf->root with
+`node = SHA256d(position === 'right' ? node||sib : sib||node)`, and compare
+against the merkleroot at `block_header` bytes [36,68) (also byte-reversed).
+`test/tx-inclusion-packet.test.ts` is where that decision must be made explicitly.
+
+`proof_schema_version` is unchanged at 1 — these are nullable additions (§1.8).
