@@ -41,12 +41,23 @@ describe('IndependentVerifyPage', () => {
     expect(screen.getByText(INDEPENDENT_VERIFY_LABELS.STEP_4_CMD)).toBeInTheDocument();
   });
 
-  it('renders download script button', () => {
+  // The page used to offer a "Download Verification Script" button linking to
+  // `/verify.sh`. No such file has ever existed in this repository, so the
+  // button 404'd and step 3's `./verify.sh …` command could not be run by
+  // anyone. It is replaced by instructions for the verifier we DO ship
+  // (packages/verifier-cli, bin `arkova-verify`).
+  it('tells the reader how to obtain the reference verifier that actually exists', () => {
     renderPage();
-    expect(screen.getByText(INDEPENDENT_VERIFY_LABELS.DOWNLOAD_SCRIPT)).toBeInTheDocument();
-    const link = screen.getByText(INDEPENDENT_VERIFY_LABELS.DOWNLOAD_SCRIPT).closest('a');
-    expect(link).toHaveAttribute('href', '/verify.sh');
-    expect(link).toHaveAttribute('download');
+    expect(screen.getByText(INDEPENDENT_VERIFY_LABELS.VERIFIER_TITLE)).toBeInTheDocument();
+    expect(screen.getByText(INDEPENDENT_VERIFY_LABELS.VERIFIER_BODY)).toBeInTheDocument();
+    expect(screen.getByText(INDEPENDENT_VERIFY_LABELS.VERIFIER_BUILD_CMD)).toBeInTheDocument();
+  });
+
+  it('offers no download link to the non-existent verify.sh', () => {
+    const { container } = renderPage();
+    const hrefs = Array.from(container.querySelectorAll('a')).map(a => a.getAttribute('href'));
+    expect(hrefs).not.toContain('/verify.sh');
+    expect(container.querySelector('a[download]')).toBeNull();
   });
 
   it('renders all 3 FAQ questions and answers', () => {
@@ -82,8 +93,10 @@ describe('IndependentVerifyPage', () => {
     expect(screen.getByText('4')).toBeInTheDocument();
   });
 
-  it('renders system requirements note', () => {
+  it('renders system requirements note from copy.ts (§1.3 — no bare JSX literal)', () => {
     renderPage();
-    expect(screen.getByText('Requires: bash, curl, shasum, jq')).toBeInTheDocument();
+    expect(
+      screen.getByText(INDEPENDENT_VERIFY_LABELS.VERIFIER_REQUIREMENTS),
+    ).toBeInTheDocument();
   });
 });

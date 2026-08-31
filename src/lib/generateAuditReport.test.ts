@@ -19,6 +19,8 @@
  *    inspection, no DOM, no network).
  */
 import { describe, expect, it } from 'vitest';
+import { buildQrMatrix } from './certificateQr';
+import { CERTIFICATE_COPY } from './copy';
 import {
   buildAuditReport,
   buildProofPacket,
@@ -26,6 +28,7 @@ import {
   type MerkleProofEntry,
   type ProofPacket,
 } from './generateAuditReport';
+import { verifyUrl } from './routes';
 
 const BRANCH: MerkleProofEntry[] = [
   { hash: 'c'.repeat(64), position: 'left' },
@@ -210,5 +213,66 @@ describe('PROOF-04 buildAuditReport — embedded machine-readable JSON', () => {
     expect(r.embeddedProofJson).toBeTruthy(); // packet still embedded for inspection
     expect(output).toContain('could not be sourced');
     expect(output).not.toContain('complete, machine-readable proof packet');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Verification QR (fix/published-verification-pointers)
+//
+// The certificate is the artifact handed to an auditor, and until now it
+// carried no scannable pointer at all — only the bare `publicId` as text. The
+// QR must encode EXACTLY `verifyUrl(publicId)`, the same value the in-app QR
+// encodes (`ShareSheet.tsx` / `AssetDetailView.tsx`), so a printed certificate
+// and the screen can never send a reader to two different places.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('audit certificate — verification QR', () => {
+  it('encodes exactly verifyUrl(publicId) — the same URL the in-app QR uses', () => {
+    const r = buildAuditReport(securedData({ publicId: 'ARK-2026-001' }));
+    expect(r.verificationUrl).toBe(verifyUrl('ARK-2026-001'));
+    expect(r.verificationUrl).toBe('https://app.arkova.ai/verify/ARK-2026-001');
+    // The drawn matrix IS the matrix for that URL — not a re-derived or
+    // near-miss value.
+    expect(r.qr).not.toBeNull();
+    expect(r.qr).toEqual(buildQrMatrix(verifyUrl('ARK-2026-001')));
+  });
+
+  it('renders the verification URL as text so a printed certificate stays usable', () => {
+    const output = buildAuditReport(securedData({ publicId: 'ARK-2026-001' })).doc.output();
+    expect(output).toContain('https://app.arkova.ai/verify/ARK-2026-001');
+    expect(output).toContain(CERTIFICATE_COPY.SECTION_VERIFY_ONLINE);
+  });
+
+  it('never fabricates a URL for a record with no publicId', () => {
+    const r = buildAuditReport(securedData({ publicId: '' }));
+    expect(r.verificationUrl).toBeNull();
+    expect(r.qr).toBeNull();
+    // …and the certificate still builds.
+    expect(r.doc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
+  });
+
+  it('degrades to URL-as-text when the QR cannot be produced (never throws)', () => {
+    // A publicId long enough to exceed QR capacity: buildQrMatrix returns null
+    // and the section must still render the link rather than blowing up the
+    // whole certificate.
+    const huge = 'z'.repeat(4000);
+    const r = buildAuditReport(securedData({ publicId: huge }));
+    expect(r.qr).toBeNull();
+    expect(r.verificationUrl).toBe(verifyUrl(huge));
+    expect(r.doc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
+  });
+
+  it('renders the QR for a non-SECURED record too (the live page works either way)', () => {
+    const r = buildAuditReport(securedData({ status: 'PENDING', proof: undefined }));
+    expect(r.embeddedProofJson).toBeNull();
+    expect(r.qr).not.toBeNull();
+    expect(r.verificationUrl).toBe(verifyUrl('rec_abc123'));
+  });
+
+  it('keeps the proof packet and the QR in separate, intact sections', () => {
+    const output = buildAuditReport(securedData()).doc.output();
+    // Both blocks present; the machine-proof JSON is not clobbered by the QR.
+    expect(output).toContain(CERTIFICATE_COPY.SECTION_MACHINE_PROOF);
+    expect(output).toContain(CERTIFICATE_COPY.SECTION_VERIFY_ONLINE);
+    expect(output).toContain('b'.repeat(64)); // merkle root still embedded
   });
 });

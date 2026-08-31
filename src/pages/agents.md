@@ -1,5 +1,33 @@
 # agents.md — pages
-_Last updated: 2026-08-23_
+_Last updated: 2026-08-31_
+
+## 2026-08-31 — `IndependentVerifyPage` told readers to run a file that does not exist
+
+The public "Verify Without Arkova" page — the page whose entire job is proving
+we are not a required intermediary — shipped two instructions nobody could
+follow. Step 3's command was `./verify.sh --fingerprint … --proof …`, and a
+"Download Verification Script" button linked to `/verify.sh`. **No file named
+`verify.sh` has ever existed in this repository**, so the button 404'd and the
+command was unrunnable. (Its origin is visible in
+`docs/stories/24_compliance_audit_readiness.md`, where "Write `public/verify.sh`"
+is still an unticked box — the copy was written against the plan, not the build.)
+
+It now points at the verifier we actually ship: `packages/verifier-cli`, bin
+`arkova-verify`, invoked exactly as its README documents. The download button is
+replaced by build-from-source instructions, because **neither `@arkova/verifier`
+nor `@arkova/verifier-cli` is published to any registry** — an `npm install`
+line here would be a claim of external status we do not hold (§1.13 R-7). If you
+are tempted to add one, verify the package resolves from the public registry
+first; the scoped names 404 today.
+
+`Requires: bash, curl, shasum, jq` was also a bare JSX literal (§1.3 — copy
+belongs in `copy.ts`) *and* wrong, since it described the shell script rather
+than the Node CLI. It is now `INDEPENDENT_VERIFY_LABELS.VERIFIER_REQUIREMENTS`.
+
+The page test carries the ratchet: it asserts no anchor on the page links to
+`/verify.sh` and no `[download]` anchor exists at all, so the dead button cannot
+come back quietly. `src/lib/publishedVerificationPointers.test.ts` holds the
+copy-level half of the same guard.
 
 ## 2026-08-23 CLE-R1 — `RecordDetailPage.tsx` now feeds `cleMetadata` (SCRUM-1869 was Done with no user-visible outcome)
 

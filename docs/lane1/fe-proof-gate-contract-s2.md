@@ -143,7 +143,7 @@ same object the API and CLI handle.
   },
   "packet": { /* ...exact ProofPacket from §2... */ },
   "verifier": {
-    "reference_url": "https://arkova.ai/verify",   // offline reference verifier
+    "reference_url": "https://app.arkova.ai/verify/independent", // independent-verification guide
     "schema_version": 1                            // mirrors packet.proof_schema_version
   }
 }
@@ -205,16 +205,23 @@ Semantics (frozen):
 |---|---|---|
 | `ProofPacket` (type) | `src/lib/generateAuditReport.ts` | Field set + nullability frozen for S2 |
 | `buildProofPacket(data)` | `src/lib/generateAuditReport.ts` | Returns packet or `null` (gated SECURED + has proof) |
-| `buildAuditReport(data)` | `src/lib/generateAuditReport.ts` | `{ doc, filename, embeddedProofJson }`; pure/client-side |
+| `buildAuditReport(data)` | `src/lib/generateAuditReport.ts` | `{ doc, filename, embeddedProofJson, verificationUrl, qr }`; pure/client-side |
 | `isProofDownloadable(status)` | `src/lib/statusDisplay.ts` | SECURED-only, fails closed |
 | `getStatusDisplay(status)` | `src/lib/statusDisplay.ts` | `{ label, tone }`; §1.3-safe; never raw enum |
-| Reference verifier URL | `CERTIFICATE_COPY.OFFLINE_VERIFY_TOOL` in `src/lib/copy.ts` | `https://arkova.ai/verify` |
+| Reference verifier URL | `CERTIFICATE_COPY.OFFLINE_VERIFY_TOOL` in `src/lib/copy.ts` | `https://app.arkova.ai/verify/independent` |
+| Certificate QR payload | `verifyUrl(publicId)` via `src/lib/certificateQr.ts` | `https://app.arkova.ai/verify/{publicId}` — same value as the in-app QR |
 
 ## 6. Open items / non-goals
 
-- The reference verifier at `https://arkova.ai/verify` accepting a pasted
-  `proof_bundle`/packet is a **separate** deliverable (verifier UI). This
-  contract only fixes the shape it must accept.
+- A browser tool that accepts a pasted `proof_bundle`/packet is a **separate,
+  unbuilt** deliverable. It does NOT exist, and no page in this app accepts a
+  pasted packet — corrected 2026-08-31: this row previously named
+  `https://arkova.ai/verify` as though that were the verifier, and
+  `CERTIFICATE_COPY.OFFLINE_VERIFY_TOOL` printed the same dead pointer onto
+  every certificate. That host 302s to the marketing homepage. What exists today
+  is the instruction page at `/verify/independent` plus the in-repo CLI at
+  `packages/verifier-cli` (bin `arkova-verify`), which is NOT published to any
+  package registry. This contract only fixes the shape a future UI must accept.
 - `signature` is `{ alg, signing_key_id } | null` — present only on the signed
   path; it is explicit `null` (not omitted) on the default unsigned path.
   Consumers must treat it as possibly-`null`.
