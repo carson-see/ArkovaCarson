@@ -6,10 +6,10 @@
  * the PROOF-01 structural fields `merkle_index` / `leaf_count` /
  * `op_return_payload`) but the verifier NEVER trusts the API's `verified`
  * field — it recomputes the on-chain root itself (see verify.ts) and confirms
- * inclusion via `@arkova/verifier` against an INDEPENDENT node.
+ * inclusion via `arkova-verifier` against an INDEPENDENT node.
  */
 
-import type { IndependentNodeFetch } from '@arkova/verifier';
+import type { IndependentNodeFetch } from 'arkova-verifier';
 
 /** One sibling along the Merkle inclusion branch. */
 export interface MerkleProofEntry {
@@ -45,7 +45,7 @@ export interface ProofPacket {
    * OPTIONAL canonical OP_RETURN payload as published in the bundle:
    * `ARKV(4)‖root(32)` (no version byte), display hex. The verifier does NOT
    * trust this for the verdict — the authoritative payload is the one decoded
-   * from the on-chain receipt by `@arkova/verifier`. Surfaced for parity only.
+   * from the on-chain receipt by `arkova-verifier`. Surfaced for parity only.
    */
   op_return_payload?: string | null;
   /**
@@ -96,7 +96,7 @@ export interface SignedProofBundle {
 
 /**
  * The independent on-chain source the verifier confirms against. `fetch` is an
- * `@arkova/verifier` `IndependentNodeFetch` (Esplora REST, path → response),
+ * `arkova-verifier` `IndependentNodeFetch` (Esplora REST, path → response),
  * built by the CLI from a vetted `--rpc` endpoint via `createEsploraFetch`. It
  * MUST reach a node that is NOT operated by Arkova (the holder's own node,
  * Blockstream, mempool.space Esplora, etc.); the CLI enforces this with
@@ -112,7 +112,7 @@ export interface IndependentNode {
 
 /**
  * The set of canned independent-node responses a fixture serves, keyed by the
- * exact Esplora REST path `@arkova/verifier` requests:
+ * exact Esplora REST path `arkova-verifier` requests:
  *   - `/tx/<txid>`                 → JSON EsploraTx
  *   - `/block-height/<height>`     → text block hash
  *   - `/block/<hash>/header`       → text 80-byte (160-hex) header

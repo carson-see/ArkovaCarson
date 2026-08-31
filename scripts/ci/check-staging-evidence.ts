@@ -2946,6 +2946,14 @@ const STAGING_TOOLING_ALLOW = [
   // over src/), runs only in CI; never ships to prod runtime → T0 tooling,
   // same class as the other scripts/ci/check-*.ts gates above.
   /^scripts\/ci\/check-orphaned-exports(\.test)?\.ts$/,
+  // Governance doc-pointer resolution gate. Reads markdown + workflow YAML and
+  // asserts every cited repo path exists; nothing under src/ or
+  // services/worker/src/ imports it (verified by grep across src/, services/,
+  // packages/, integrations/, e2e/), and it runs only in the ci.yml
+  // `doc-pointers` job → no prod runtime to soak, same class as the other
+  // scripts/ci/check-*.ts gates above. Its exemptions file already rides the
+  // scripts/ci/snapshots/ entry.
+  /^scripts\/ci\/check-doc-pointers(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   // SCRUM-1253 (R0-7): memory feedback-rules CI gates. Per-rule scripts under
   // scripts/ci/feedback-rules/ + the check-feedback-rules.ts orchestrator run
@@ -3028,7 +3036,7 @@ const STAGING_TOOLING_ALLOW = [
   // PI-0 S2 (SCRUM-2341 / verifier track): @arkova/verifier + @arkova/verifier-cli
   // are new MIT-licensed STANDALONE library/CLI packages. They are NOT imported by
   // the deployed Cloud Run worker (services/worker) or the frontend (src/) — verified
-  // no `@arkova/verifier` import exists under services/** or src/**. No migration, no
+  // no `arkova-verifier` import exists under services/** or src/**. No migration, no
   // API/contract surface, no prod runtime: they run only in their own clean-room CI
   // job and as a developer/auditor CLI. Zero prod-runtime impact → T0 tooling. (The
   // packages/*/package.json + package-lock.json + eslint.config.js + agents.md within

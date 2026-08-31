@@ -2,6 +2,31 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-08-23 — every limiter in `router.ts` now names its bucket scope (SCRUM-3418)
+
+`rateLimit()` used to default `scope` to `''` and key the bucket on the bare keyGenerator output, so
+every limiter that kept the default `req.ip` keyGenerator shared ONE Map entry per IP with every
+other unscoped limiter in the worker — including `index.ts`'s 60/min `apiIpShadowGuard` and the
+10/min `checkout`. `anonRateLimiter` could therefore never enforce its own §1.10 100/min contract.
+See `utils/agents.md` for the mechanism and `docs/staging/429-limiter-map-s33.md` §2a for what it
+does to log attribution.
+
+Two things to keep true in this file:
+
+- **Every limiter declared here passes an explicit `scope`.** The default is now a private
+  per-instance id (`rl-<n>`) rather than the shared bucket, so omitting it is no longer a
+  correctness bug — but the auto-id is derived from module construction order, which makes it a
+  useless (and unstable) thing to see in a `Rate limit exceeded` log line. The scope IS the
+  attribution.
+- **Where a limiter's keyGenerator used to carry its own string prefix** (`credits:`, `ai:`,
+  `ctdl-import:`, …), that prefix moved into `scope` and the keyGenerator now returns the bare
+  caller identifier. Doing both would produce `ai:ai:<user>` — `cpe-log-export.ts` has carried a
+  comment warning about exactly that since it was written.
+
+`batch` is the one scope deliberately shared by two limiter instances: `batchRateLimiter` here and
+`attestationBatchRateLimiter` in `attestations.ts`, so the §1.10 batch tier is one 10/min budget
+across both surfaces. Post-SCRUM-3418 a shared explicit scope is the ONLY way two limiters can share
+a bucket — which is what makes that sharing reviewable instead of accidental. Don't "tidy" it apart.
 ## 2026-08-23 — DI-398: `GET /anchor/:publicId/evidence` 404'd for EVERY anchor (three phantom columns)
 
 `anchor-evidence.ts`'s `defaultLookup.byPublicId` selected `jurisdiction, merkle_root,

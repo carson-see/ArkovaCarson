@@ -14,6 +14,18 @@
 
 ## Now
 
+### CI — dead `memory/` pointers were invisible to the gate built to catch them (2026-08-31)
+
+`memory/project_deploy_typecheck_blackout.md` was cited by six sites — `scripts/ci/check-deploy-build-parity.ts`, `scripts/ci/check-deploy-typecheck-parity.ts`, `scripts/ci/agents.md`, `.github/workflows/agents.md` (x2) and a `ci.yml` comment — and had **never existed in the repo**. It resolved only inside one session's private assistant memory, so any human or CI runner following it found nothing.
+
+`scripts/ci/check-doc-pointers.ts` exists to fail CI on exactly this, but its scan set stopped at `CLAUDE.md` / `AGENTS.md` / skills / hooks / `memory/**`. Nested `agents.md` files and `.github/workflows/*.yml` were not scanned, so all six sites were invisible to it.
+
+Fixed: the memory file now exists in the repo corpus (the failure class is real and has three live parity gates holding it shut), and the scan set covers every tracked nested `agents.md` plus the **comment lines** of workflow YAML. Resolution is now multi-base (doc dir -> package root -> repo root), which is what folder-local notes actually mean; repo-root-only resolution called 59 correctly-written references dead. Widening surfaced **five more** dead `memory/` pointers, each naming a rule that lived only in a session's local memory; those citations now state the fact inline instead. Deliberately-absent paths (negative examples, generated artifacts, named planned work) live in `scripts/ci/snapshots/doc-pointer-exemptions.json` with reasons, and a test fails on a stale one. Coverage went 1,310 -> 1,323 asserted references with the gate green.
+
+**The gate is not merge-blocking.** `Doc Pointer Resolution` is not in `.mergify.yml merge_conditions`, and `main` carries **no** `required_status_checks` at all (`gh api repos/carson-see/ArkovaCarson/branches/main/protection` returns no such block). It reports red without stopping a merge. Wiring it into the queue conditions is the same class of change as the `Orphaned Export Lint` / `Python SDK Tests` entries recorded in `.github/workflows/agents.md`, and was deliberately left out of this PR.
+
+Found incidentally while adding the third-party-notices freshness gate (PR #2530); deliberately kept out of that PR. T0 — no prod surface, no staging evidence required.
+
 ### Bug — Adobe Sign webhooks 500 on every delivery, never worked in prod (found 2026-08-30)
 
 `services/worker/src/api/v1/webhooks/adobe-sign.ts` `findIntegration()` queries
@@ -606,31 +618,32 @@ separately). Full verdicts, defects, and landing-order constraints:
 
 ### Soaks
 
-> ### ⚠️ A SOAK WINDOW IS OPEN — PR #2461, until 2026-08-31T12:15:22Z
+> ### ✅ PR #2461 soak CLOSED and SEALED — rig torn down 2026-08-31
 >
-> **Do not tear down `arkova-soak-pii2461b` / `evkcynsqcmctugoscgeh`.** T2 soak for
-> [#2461](https://github.com/carson-see/ArkovaCarson/pull/2461) (server-side `EMAIL_PATTERN` ReDoS
-> fix), window **2026-08-31T00:15:22Z → 2026-08-31T12:15:22Z**, driven every 5 min.
+> T2 window **2026-08-31T00:15:22Z → 12:15:22Z**, full 12 h served, on isolated rig
+> `evkcynsqcmctugoscgeh` / `arkova-worker-pii2461b-staging-00003-gb4`, head
+> `5083fbba4e27121e6bd845361ccd7dda323e3183`.
 >
-> | | |
-> |---|---|
-> | Supabase project | `evkcynsqcmctugoscgeh` (`arkova-soak-pii2461b`), ledger head `0419` |
-> | Cloud Run | `arkova-worker-pii2461b-staging`, revision `…-00003-gb4` at 100 % |
-> | Preflight | `environment_type=clean_mirror`, 7/7, 2026-08-31T00:06:17Z (before the clock) |
-> | Head under soak | `5083fbba4e27121e6bd845361ccd7dda323e3183` (`/health` `git_sha` matches) |
-> | Image digest | `sha256:b3e4eb8901cbd1c8eaaa48cdd5cc4abd4ea07569679f4117d8657e4e11f8314a` |
+> **142 cycles, 142 pass, 0 fail.** 426 extraction jobs claimed and processed, 34,080,426 characters
+> of adversarial dotted evidence driven through `stripSensitiveString`, 426 CTDL projections probed,
+> 0 leaks, 0 under-redactions. Soak clock = Cloud Run worker uptime 43,647 s (12.12 h). Preflight
+> `clean_mirror` 7/7 at **both** ends (00:06:17Z and 12:21:56Z). Evidence is in the PR body; the
+> `Staging Soak Evidence Gate` passes in CI with `SOAK_GATE_DISABLED=false`.
 >
-> **This is the SECOND window for this PR; the first two attempts died and both causes are worth
-> knowing.** (1) Rig `pii2461` (`wqamcbwogupiuruhkllt`) was torn down by
-> `teardown-isolated-rig.sh` mid-setup — its provision had aborted at
-> `blocked_after_project_create`, so no admission artifact was persisted and it carried no lease
-> marker. This block is the lease that prevents a repeat. (2) The 2026-08-30T21:52:56Z window on
-> the replacement rig was invalidated at 25 clean cycles by BASE DRIFT: main edited
-> `services/worker/src/compliance/professional-education.ts`, a soaked file, and FD-GATE-3 forbids
-> covering same-file T2+ drift with a residual-risk note. Rebased, migrations `0418`/`0419` applied
-> to the rig, preflight re-confirmed, clock restarted.
+> **Rig reclaimed (§7):** Supabase project deleted, Cloud Run service deleted, per-rig secrets
+> deleted, plus the two orphaned `supabase-db-password-<ref>` secrets for this rig and its swept
+> predecessor — the teardown script does not remove those, which is why one had survived a prior
+> sweep as a dead credential.
+>
+> Two failures worth carrying forward, both already fixed in tooling:
+> 1. The first rig was swept mid-setup because its provision aborted before persisting an admission
+>    artifact, so it had no lease marker. A `### Soaks` entry is that lease — use one.
+> 2. `rollback-rehearsal.sh` selected `status.traffic[0]` as "the serving revision"; with a
+>    `rollback` tag present that is the **0%** entry, so it restored traffic to the prod image and
+>    reported success while the rig served the wrong code. Select on `percent == 100` and verify by
+>    reading `/health` `git_sha` back. STAGING_RIG.md pitfall 7, recurring inside our own tooling.
 
-**★ ONE SOAK WINDOW IS OPEN (PR #2461, above). The 2026-08-27 statement below is superseded.**
+**★ NO SOAK WINDOW IS OPEN as of 2026-08-31T12:30Z.**
 Every window described in the dated entries Every window described in the dated entries
 below has closed. This block — not any `## History` entry, and not the presence of a Cloud Run
 service — is the authoritative answer to "is a soak running" (CLAUDE.md §0.1). Three soaks closed
