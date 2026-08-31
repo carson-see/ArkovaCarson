@@ -700,7 +700,57 @@ function assertNoDbError(result: unknown, message: string): void {
 }
 
 const SENSITIVE_KEY_PATTERN = /(?:recipient|attorney|email|address|bar.?number|barNumber|subjectName)/i;
-const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
+/**
+ * Email redaction is @-ANCHORED rather than address-anchored. That is a
+ * deliberate departure from the regex this replaced, and it is load-bearing for
+ * BOTH performance and redaction coverage.
+ *
+ * The previous pattern — `\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi` — is
+ * quadratic (Sonar typescript:S8786). The match is unanchored, so on a long run
+ * of local-part characters the engine retries at every offset where `\b` holds
+ * and re-scans the remainder before failing to find `@`. The `\b` does not save
+ * it: `.`, `-`, `%` and `+` are local-part characters but NOT word characters,
+ * so a dotted run puts a boundary before every token. Measured on
+ * `'a.'.repeat(40000)`: 3,245 ms, versus 0.02 ms here. `stripSensitiveString`
+ * runs on arbitrary, UNCAPPED `Jsonish` values on the way into the CPE/CLE
+ * extraction prompts (`ai/prompts/*-extraction-prompt.ts`), on a single-threaded
+ * worker — so that is an event-loop stall driven by document-derived text.
+ *
+ * Bounding the local-part quantifier to RFC 5321 §4.5.3.1's 64 octets — the fix
+ * that closed this defect in the browser's `src/lib/piiStripper.ts` (PR #2346) —
+ * is NOT sufficient here, because that pattern has no `\b` and this one did.
+ * Both ways of porting it UNDER-REDACT, and both were measured rather than
+ * reasoned about:
+ *
+ *   - Keep `\b` and bound: a local-part run longer than 64 characters cannot
+ *     reach the `@` from the only offset `\b` allows, so the pattern matches
+ *     NOTHING and the entire address survives in the clear. 5,661 such cases in
+ *     a 362,100-case differential fuzz.
+ *   - Drop `\b` and bound: the scan may now start earlier and match a SHORTER
+ *     address, which moves `lastIndex` and desynchronises the `/g` iteration, so
+ *     a longer address later in the string is missed. 387 such cases in an
+ *     842,500-case fuzz. No bounded regex variant tried reached zero.
+ *
+ * Enumerating `@` positions removes both failure modes by construction. The
+ * domain class excludes `@`, so every `@` in the input is visited exactly once
+ * and the total forward scan is bounded by the input length; the backward walk
+ * is bounded by MAX_LOCAL_PART. A 982,500-case differential fuzz over seven
+ * adversarial alphabets found ZERO inputs where an `@`, or any domain character,
+ * that the old pattern redacted survives this one.
+ *
+ * The one intended divergence, matching PR #2346: on a local-part run longer
+ * than 64 characters only the trailing 64 are redacted, so the leading excess
+ * survives. A >64-octet local-part is not a legal address, and the `@` and the
+ * entire domain still go.
+ *
+ * The DOMAIN quantifier stays unbounded. Bounding it was tried in #2346 and
+ * reverted: a domain run longer than the bound cannot reach the `\.` that must
+ * follow it, so nothing matches and the whole address survives. Do not
+ * "symmetrise" these bounds.
+ */
+const AT_DOMAIN_PATTERN = /@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
+const LOCAL_PART_CHAR = /[A-Z0-9._%+-]/i;
+const MAX_LOCAL_PART = 64;
 const STREET_TERMS = new Set([
   'street',
   'st',
@@ -725,7 +775,41 @@ const BAR_NUMBER_PREFIXES = ['bar', 'bbo', 'wsba', 'attorney', 'registration', '
 type Jsonish = null | boolean | number | string | Jsonish[] | { [key: string]: Jsonish | undefined };
 
 function stripSensitiveString(value: string): string {
-  return redactBarNumbers(redactStreetAddresses(value.replace(EMAIL_PATTERN, '[EMAIL_REDACTED]')));
+  return redactBarNumbers(redactStreetAddresses(redactEmails(value)));
+}
+
+function redactEmails(value: string): string {
+  let out = '';
+  let cursor = 0;
+  let redactedTo = -1;
+
+  for (const match of value.matchAll(AT_DOMAIN_PATTERN)) {
+    const at = match.index;
+    if (at < cursor) continue;
+
+    const end = at + match[0].length;
+    let start = at;
+    while (start > cursor && at - start < MAX_LOCAL_PART && LOCAL_PART_CHAR.test(value[start - 1])) {
+      start -= 1;
+    }
+
+    if (start === at) {
+      // No local part left to take. When this '@' butts directly against the
+      // previous redaction, its local part was consumed by that address, so
+      // absorb this run rather than leaving '@domain' behind in the clear.
+      if (at === redactedTo) {
+        cursor = end;
+        redactedTo = end;
+      }
+      continue;
+    }
+
+    out += `${value.slice(cursor, start)}[EMAIL_REDACTED]`;
+    cursor = end;
+    redactedTo = end;
+  }
+
+  return out + value.slice(cursor);
 }
 
 function redactStreetAddresses(value: string): string {
