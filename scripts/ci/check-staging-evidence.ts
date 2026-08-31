@@ -3036,7 +3036,7 @@ const STAGING_TOOLING_ALLOW = [
   // PI-0 S2 (SCRUM-2341 / verifier track): @arkova/verifier + @arkova/verifier-cli
   // are new MIT-licensed STANDALONE library/CLI packages. They are NOT imported by
   // the deployed Cloud Run worker (services/worker) or the frontend (src/) — verified
-  // no `@arkova/verifier` import exists under services/** or src/**. No migration, no
+  // no `arkova-verifier` import exists under services/** or src/**. No migration, no
   // API/contract surface, no prod runtime: they run only in their own clean-room CI
   // job and as a developer/auditor CLI. Zero prod-runtime impact → T0 tooling. (The
   // packages/*/package.json + package-lock.json + eslint.config.js + agents.md within
