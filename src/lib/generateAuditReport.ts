@@ -28,6 +28,7 @@
 import { jsPDF } from 'jspdf';
 import { CERTIFICATE_COPY } from './copy';
 import { getStatusDisplay, isProofDownloadable } from './statusDisplay';
+import { readTxInclusionEvidence } from './txInclusionEvidence';
 
 /**
  * One sibling along the Merkle inclusion branch. Matches the stored
@@ -208,6 +209,10 @@ export function buildProofPacket(data: AuditReportData): ProofPacket | null {
       ? p.merkle_proof
       : null;
 
+  // Layer-2 bitcoin-tree pair — validated by the shared reader, not here, so
+  // this surface cannot drift from the DB read in `sourceProofInput.ts`.
+  const txInclusion = readTxInclusionEvidence(p.tx_inclusion_branch, p.tx_block_index);
+
   return {
     fingerprint: p.fingerprint ?? data.fingerprint,
     merkle_root: p.merkle_root ?? null,
@@ -228,15 +233,19 @@ export function buildProofPacket(data: AuditReportData): ProofPacket | null {
     proof_schema_version:
       typeof p.proof_schema_version === 'number' ? p.proof_schema_version : 1,
     block_timestamp: p.block_timestamp ?? data.securedAt ?? null,
-    // Migration 0427: the bitcoin-tree half. Structured entries are preserved
-    // verbatim (never flattened to strings — that would drop the side the
-    // offline fold needs); a malformed branch degrades to null rather than
-    // shipping as if it were real evidence (§1.5).
-    tx_inclusion_branch:
-      Array.isArray(p.tx_inclusion_branch) && p.tx_inclusion_branch.every(isMerkleProofEntry)
-        ? p.tx_inclusion_branch
-        : null,
-    tx_block_index: typeof p.tx_block_index === 'number' ? p.tx_block_index : null,
+    // Migration 0427: the bitcoin-tree half, read as ONE fact through the
+    // SHARED validator (`txInclusionEvidence.ts`).
+    //
+    // This used to map the two fields INDEPENDENTLY, with an entry guard that
+    // asked only `typeof hash === 'string'` — so it skipped both-or-neither,
+    // 64-hex, range and index/side agreement, all four of which the API reader,
+    // `sourceProofInput`, the SDK and the verifier CLI enforce. An empty sibling
+    // hash shipped inside the holder's PDF packet as genuine inclusion evidence:
+    // the same defect, on the one surface with no server between it and the
+    // auditor. Structured entries are still preserved verbatim — never flattened
+    // to strings, which would drop the side the offline fold needs.
+    tx_inclusion_branch: txInclusion?.branch ?? null,
+    tx_block_index: txInclusion?.index ?? null,
     signature: p.signature ?? null,
   };
 }

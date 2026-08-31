@@ -1439,13 +1439,37 @@ scan again until its branch is written. Two things follow.
   `ORDER BY` over ~667k candidates means stable heap order, so rows that can never
   complete came back first every run; once `maxRows` accumulated, the backfill
   stopped advancing AND newly-SECURED anchors stopped receiving even
-  `block_header`. Now `.gt('anchor_id', cursor).order('anchor_id', {ascending:true})`
-  — `anchor_id` is UNIQUE and btree-indexed, so it is a cheap total order (unlike
-  `created_at`, which is neither here). The module-scope cursor advances past every
-  page SCANNED, succeeded or not, and wraps on a short page. Honest limit: it is
+  `block_header`. Now `.order('anchor_id', {ascending:true})` with a keyset
+  cursor — `anchor_id` is UNIQUE and btree-indexed, so it is a cheap total order
+  (unlike `created_at`, which is neither here). Honest limit: the cursor is
   in-process, so a restart or a second Cloud Run instance sweeps from its own
   start — still bounded forward progress, NOT a durable checkpoint. Callers
   needing determinism pass `startAfterAnchorId`.
+
+  **Two ways this was got WRONG first; both are load-bearing, do not undo them.**
+
+  1. **The cursor filter is CONDITIONAL.** `anchor_id` is a Postgres `uuid`, so
+     there is no "start of keyspace" sentinel value: `.gt('anchor_id', '')` makes
+     PostgREST emit `anchor_id=gt.` and Postgres answers **400 `22P02 invalid
+     input syntax for type uuid: ""`**. The scan's error branch returns all-zero
+     counters and returns BEFORE assigning the cursor, so an empty-string seed is
+     not a bad first run — it is a permanent one, for the life of the process, in
+     every environment, with counters that read exactly like "no candidates".
+     A 48-hour T3 soak on that build would have produced a hollow pass. Omit the
+     filter when there is no cursor, exactly as `proofJobScan.ts:109` and
+     `proof-branch-backfill.ts:109` already do.
+  2. **The wrap condition is "the page came back EMPTY", never "shorter than
+     `maxRows`".** PostgREST truncates at the server's `db-max-rows` (the repo's
+     own `POSTGREST_ROW_LIMIT` is 1000) while `maxRows` defaults to 2000, so
+     `rows.length === maxRows` can be false on EVERY run — the cursor resets each
+     time and the rotation becomes a silent no-op, restoring the exact starvation
+     H1 exists to fix. This job does not control the row cap and must not assume
+     it does. (`api/v1/agents.md` records this class as a defect already paid for
+     once.)
+
+  The tests type-check `anchor_id` the way the column does, so a non-uuid
+  comparison fails the suite instead of passing it — a mock that only records
+  arguments cannot catch either bug.
 - **H2 — a header-present / hash-NULL row disarmed BOTH reorg gates.** That state
   is schema-permitted and genuinely producible (`upsertAnchorProofs` and
   `backfillProofCompleteness` write the two columns independently). Both gates
@@ -1453,8 +1477,20 @@ scan again until its branch is written. Two things follow.
   tx's CURRENT block and overwrite the stored 80-byte header with a DIFFERENT
   block's — publishing a header for a block that never contained the commitment,
   counted as success. A header identifies its own block, so the scan now selects
-  `block_header` and the guard falls back to `blockHashFromHeaderHex(...)`. An
-  unreadable stored header is a mismatch, not permission.
+  `block_header` and the guard falls back to `blockHashFromHeaderHex(...)`.
+
+  **An UNREADABLE header is a THIRD case and must NOT be treated as a mismatch.**
+  A first pass skipped those rows and counted them as `anchorsBlockMismatch`,
+  which converted a self-healing row into a permanent wedge: the row still
+  matches the scan predicate, so it is re-fetched from the RPC node every sweep,
+  never completes, and inflates a REORG metric each time. `block_header` has no
+  CHECK bounding its length and a pre-BUG-4 row holds the header as 160 ASCII
+  bytes rather than the raw 80, so the class is real. A value that cannot be
+  parsed as a header names no block and therefore cannot contradict the block the
+  tx is in — it is not weak evidence, it is no evidence. Such a row falls through
+  and is OVERWRITTEN (baseline behaviour, which repaired it), logged distinctly,
+  and the reorg counter stays a reorg counter. A READABLE header for a different
+  block is still refused.
 - **H4 — the write precondition did not name the values the write exists to
   persist.** `proof.status === 'confirmed' && blockHeader && blockHash` said
   nothing about `merkleBranch` / `txIndex`, both independently optional on

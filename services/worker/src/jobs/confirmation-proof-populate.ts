@@ -216,24 +216,39 @@ export async function populateConfirmationProofs(
         // DIFFERENT block's, publishing a header for a block that never
         // contained the commitment — and counting it as a success. A header
         // identifies its own block, so that blind spot was never necessary.
-        // A stored header we cannot interpret (not 160-hex) yields null here
-        // and is handled by the guard below: unreadable is not permission.
-        const recordedBlock =
-          anchor.expectedBlockHash ?? blockHashFromHeaderHex(anchor.expectedBlockHeader);
-        const headerUnreadable =
-          !anchor.expectedBlockHash &&
-          anchor.expectedBlockHeader != null &&
-          recordedBlock === null;
-        if (
-          headerUnreadable ||
-          (recordedBlock && recordedBlock.toLowerCase() !== proof.blockHash.toLowerCase())
-        ) {
+        //
+        // An UNREADABLE stored header is a THIRD case, and it is neither of the
+        // above. A first pass at this treated "cannot parse" as "mismatch" and
+        // skipped the row. That converted a self-healing row into a permanent
+        // wedge: the row still matches the scan predicate, so it is re-fetched
+        // from the RPC node on every sweep, never completes, and inflates
+        // `anchorsBlockMismatch` — a REORG metric — every time. `block_header`
+        // has no CHECK bounding its length and a pre-BUG-4 row holds the header
+        // as 160 ASCII bytes rather than the raw 80, so the class is real.
+        //
+        // A value that cannot be parsed as a header names NO block, so it
+        // cannot contradict the block the tx is in: it is not weak evidence, it
+        // is no evidence. Fall through and overwrite it, which is what the
+        // pre-H2 code did and is what repairs the row. Nothing is lost, and the
+        // genuine reorg signal — a recorded `block_hash` — is still
+        // authoritative whenever it is present.
+        const storedHeaderBlock = blockHashFromHeaderHex(anchor.expectedBlockHeader);
+        const recordedBlock = anchor.expectedBlockHash ?? storedHeaderBlock;
+        if (recordedBlock && recordedBlock.toLowerCase() !== proof.blockHash.toLowerCase()) {
           result.anchorsBlockMismatch += 1;
           logger.warn(
-            { txId, anchorId: anchor.anchorId, headerUnreadable },
+            { txId, anchorId: anchor.anchorId, from: anchor.expectedBlockHash ? 'block_hash' : 'block_header' },
             'confirmation-proof: anchor row records a different block than the tx is in — NOT writing a branch from another block',
           );
           continue;
+        }
+        if (!anchor.expectedBlockHash && anchor.expectedBlockHeader != null && storedHeaderBlock === null) {
+          // Repairable, not a reorg — logged so the class stays observable
+          // without polluting the reorg counter.
+          logger.warn(
+            { txId, anchorId: anchor.anchorId },
+            'confirmation-proof: stored block_header is unreadable (not an 80-byte header) — repairing it from the confirmed proof',
+          );
         }
         updates.push({
           anchorId: anchor.anchorId,
@@ -384,12 +399,23 @@ interface ProofScanRow {
  * Run instance) restarts its own sweep from the beginning of the keyspace. That
  * is still forward progress and still bounded — it is not a durable checkpoint,
  * and callers that need one pass `startAfterAnchorId` explicitly.
+ *
+ * `null` means "start of the keyspace", and it MUST be represented by OMITTING
+ * the filter, never by comparing against a placeholder. `anchor_id` is a
+ * Postgres `uuid` column: PostgREST renders `.gt('anchor_id', '')` as
+ * `anchor_id=gt.` and Postgres rejects the whole request with
+ * `22P02 invalid input syntax for type uuid: ""`. Because the scan's error
+ * branch returns zeroed counters and never advances the cursor, an empty-string
+ * seed is not a bad first run — it is a permanent one, for the life of the
+ * process, in every environment, with counters that read exactly like "no
+ * candidates found". `proofJobScan.ts` and `proof-branch-backfill.ts` both
+ * apply the filter conditionally for this reason; so does this.
  */
-let scanCursorAnchorId = '';
+let scanCursorAnchorId: string | null = null;
 
 /** Reset the rotating sweep cursor (tests only — see {@link scanCursorAnchorId}). */
 export function __resetConfirmationScanCursorForTests(): void {
-  scanCursorAnchorId = '';
+  scanCursorAnchorId = null;
 }
 
 /**
@@ -442,7 +468,7 @@ export async function populateConfirmationProofsForSecuredAnchors(
   // Scan anchor_proofs for app-tree-complete-but-confirmation-missing rows,
   // joined to anchors to confirm SECURED + recover the recorded block hash.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- nested select shape pending types regen
-  const { data, error } = await (client as any)
+  let query = (client as any)
     .from('anchor_proofs')
     // M6: `tx_inclusion_branch` is deliberately NOT selected. It was, and
     // nothing read it — `ProofScanRow` did not even declare it, yet a test
@@ -473,10 +499,20 @@ export async function populateConfirmationProofsForSecuredAnchors(
     // is re-fetched.
     .or('block_header.is.null,tx_inclusion_branch.is.null,tx_block_index.is.null')
     .eq('anchors.status', 'SECURED')
-    .not('anchors.chain_tx_id', 'is', null)
-    // H1: a total order + a cursor, so a page of rows that can never complete
-    // is scanned once and then stepped over — not returned first, forever.
-    .gt('anchor_id', cursor)
+    .not('anchors.chain_tx_id', 'is', null);
+
+  // H1: a total order + a cursor, so a page of rows that can never complete is
+  // scanned once and then stepped over — not returned first, forever.
+  //
+  // The filter is applied ONLY when there is a cursor. `anchor_id` is a
+  // Postgres `uuid`, so a placeholder like `''` is not "start of keyspace" —
+  // PostgREST sends `anchor_id=gt.` and Postgres rejects the request with
+  // `22P02 invalid input syntax for type uuid: ""`, which the error branch
+  // below turns into all-zero counters that look exactly like "no candidates".
+  // Same shape as `proofJobScan.ts` and `proof-branch-backfill.ts`.
+  if (cursor) query = query.gt('anchor_id', cursor);
+
+  const { data, error } = await query
     .order('anchor_id', { ascending: true })
     .limit(maxRows);
 
@@ -501,9 +537,18 @@ export async function populateConfirmationProofsForSecuredAnchors(
 
   // H1: advance the sweep past everything this page covered — SUCCEEDED OR NOT.
   // Advancing only on success is what would let a wedged page pin the window.
-  // A short page means we reached the end of the candidate set, so wrap.
+  //
+  // The wrap condition is "the page came back EMPTY", never "the page was
+  // shorter than `maxRows`". PostgREST truncates a response at the server's
+  // `db-max-rows` (the repo's own `POSTGREST_ROW_LIMIT` is 1000) while
+  // `maxRows` defaults to 2000, so `rows.length === maxRows` can be false on
+  // EVERY run — the cursor would reset every time and the rotation would be a
+  // silent no-op, leaving exactly the starvation H1 exists to fix. This job
+  // does not control the row cap and must not assume it does. A short-but-
+  // non-empty page simply advances; the following sweep gets an empty page and
+  // wraps, which costs one extra round trip and is always correct.
   if (options.startAfterAnchorId === undefined) {
-    scanCursorAnchorId = rows.length === maxRows && rows.length > 0 ? rows[rows.length - 1].anchor_id : '';
+    scanCursorAnchorId = rows.length > 0 ? rows[rows.length - 1].anchor_id : null;
   }
 
   const candidates: ConfirmationProofCandidate[] = rows

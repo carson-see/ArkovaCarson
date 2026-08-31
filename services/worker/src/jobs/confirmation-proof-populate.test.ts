@@ -92,7 +92,12 @@ function mockClient(rowsExist: (id: string) => boolean = () => true) {
 }
 
 describe('populateConfirmationProofs', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // The sweep cursor is MODULE state; leaking it between tests makes one
+    // test's last row silently seed the next test's query.
+    __resetConfirmationScanCursorForTests();
+  });
 
   it('is a no-op for no candidates', async () => {
     const { client, from } = mockClient();
@@ -398,7 +403,12 @@ function mockScanClient(scanRows: unknown[], rowsExist: (id: string) => boolean 
 }
 
 describe('populateConfirmationProofsForSecuredAnchors (scan + wiring)', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // The sweep cursor is MODULE state; leaking it between tests makes one
+    // test's last row silently seed the next test's query.
+    __resetConfirmationScanCursorForTests();
+  });
 
   it('builds candidates from the scan and populates them', async () => {
     const leaf = makeTxidLE(42);
@@ -407,7 +417,7 @@ describe('populateConfirmationProofsForSecuredAnchors (scan + wiring)', () => {
 
     const scanRows = [
       {
-        anchor_id: 'anc-1',
+        anchor_id: uuidAt(805),
         receipt_id: txId,
         block_height: 800500,
         anchors: { chain_tx_id: txId, chain_block_height: 800500, status: 'SECURED' },
@@ -445,7 +455,7 @@ describe('populateConfirmationProofsForSecuredAnchors (scan + wiring)', () => {
 
   it('skips scan rows whose joined anchor has no chain_tx_id', async () => {
     const scanRows = [
-      { anchor_id: 'anc-x', receipt_id: null, block_height: null, anchors: { chain_tx_id: null, chain_block_height: null, status: 'SECURED' } },
+      { anchor_id: uuidAt(804), receipt_id: null, block_height: null, anchors: { chain_tx_id: null, chain_block_height: null, status: 'SECURED' } },
     ];
     const { client } = mockScanClient(scanRows);
     const provider: ConfirmationProofProvider = { getRawTransaction: vi.fn() };
@@ -593,20 +603,52 @@ function mockWatermarkScanClient(scanRows: unknown[], rowsExist: (id: string) =>
     })),
   }));
   const builder: Record<string, unknown> = {};
+  // The scan filters on `anchor_proofs.anchor_id`, which is a POSTGRES UUID
+  // COLUMN. A mock that only records its arguments can never reject a value
+  // Postgres would refuse, so it will happily "pass" a filter that 400s in
+  // production — which is exactly what `.gt('anchor_id', '')` did: PostgREST
+  // emits `anchor_id=gt.` and Postgres answers
+  // `22P02 invalid input syntax for type uuid: ""`. This mock therefore
+  // TYPE-CHECKS the value the way the column does, so a non-uuid comparison
+  // fails the test instead of passing it.
+  let typeError: { code: string; message: string } | null = null;
   for (const m of ['select', 'not', 'is', 'eq', 'limit', 'or', 'order', 'gt']) {
     builder[m] = vi.fn((...args: unknown[]) => {
       filters.push({ method: m, args });
+      if ((m === 'gt' || m === 'eq') && args[0] === 'anchor_id' && !isUuid(args[1])) {
+        typeError = {
+          code: '22P02',
+          message: `invalid input syntax for type uuid: "${String(args[1])}"`,
+        };
+      }
       return builder;
     });
   }
   (builder as { then: unknown }).then = (resolve: (v: unknown) => unknown) =>
-    resolve({ data: scanRows, error: null });
+    resolve(typeError ? { data: null, error: typeError } : { data: scanRows, error: null });
   const from = vi.fn((table: string) => (table === 'anchor_proofs' ? { ...builder, update } : { update }));
   return { client: { from } as unknown as SupabaseClient, filters, writes };
 }
 
+/** Postgres `uuid` input syntax — what the `anchor_id` column actually accepts. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(v: unknown): boolean {
+  return typeof v === 'string' && UUID_RE.test(v);
+}
+
+/** Deterministic, REAL uuids for scan fixtures — `anchor_id` is a uuid column. */
+function uuidAt(n: number): string {
+  const hex = n.toString(16).padStart(12, '0');
+  return `00000000-0000-4000-8000-${hex}`;
+}
+
 describe('R1 — bitcoin-tree inclusion branch + tx block index', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // The sweep cursor is MODULE state; leaking it between tests makes one
+    // test's last row silently seed the next test's query.
+    __resetConfirmationScanCursorForTests();
+  });
 
   // A 4-leaf block, target at index 2 ⇒ a 2-sibling branch with BOTH a
   // 'left' and a 'right' step, so the positional rule is genuinely exercised.
@@ -791,7 +833,7 @@ describe('R1 — bitcoin-tree inclusion branch + tx block index', () => {
     const { p, provider } = confirmedProvider();
     const scanRows = [
       {
-        anchor_id: 'anc-backfill',
+        anchor_id: uuidAt(801),
         receipt_id: TARGET_TXID,
         block_height: 800500,
         block_hash: p.blockHash, // header pass already ran…
@@ -836,7 +878,7 @@ describe('R1 — bitcoin-tree inclusion branch + tx block index', () => {
     const { provider } = confirmedProvider();
     const scanRows = [
       {
-        anchor_id: 'anc-reorged',
+        anchor_id: uuidAt(802),
         receipt_id: TARGET_TXID,
         block_height: 800500,
         block_hash: 'ff'.repeat(32), // recorded under a block the tx has LEFT
@@ -877,7 +919,7 @@ describe('R1 — bitcoin-tree inclusion branch + tx block index', () => {
 
     it('orders by a UNIQUE indexed column instead of taking whatever the heap returns', async () => {
       const { provider } = confirmedProvider();
-      const { client, filters } = mockWatermarkScanClient([scanRow('a-1')]);
+      const { client, filters } = mockWatermarkScanClient([scanRow(uuidAt(1))]);
 
       await populateConfirmationProofsForSecuredAnchors(client, provider, { minConfirmations: 6 });
 
@@ -887,57 +929,152 @@ describe('R1 — bitcoin-tree inclusion branch + tx block index', () => {
       expect(order?.args[1]).toMatchObject({ ascending: true });
     });
 
-    it('advances the cursor past a FULL page, so a wedged page cannot occupy the window forever', async () => {
+    // `anchor_id` is a POSTGRES UUID COLUMN. The first sweep has no cursor, and
+    // a comparison against a non-uuid placeholder is not "start of keyspace" —
+    // PostgREST emits `anchor_id=gt.` and Postgres answers
+    // `22P02 invalid input syntax for type uuid: ""`. Because the scan's error
+    // branch returns zeroed counters WITHOUT advancing the cursor, that state
+    // is permanent: zero rows populated for the life of the process, in every
+    // environment, while the counters read exactly like "no candidates". A
+    // 48-hour soak would have looked like a clean pass. The filter must simply
+    // be OMITTED when there is no cursor — the pattern `proofJobScan.ts` and
+    // `proof-branch-backfill.ts` already use.
+    it('applies NO anchor_id filter on the first sweep — an empty cursor is not a valid uuid', async () => {
       const { provider } = confirmedProvider();
-      // A full page (maxRows = 2) of rows that can never complete — the tx is
-      // in a block their own row does not name, so every one is skipped.
+      const { client, filters } = mockWatermarkScanClient([scanRow(uuidAt(1))]);
+
+      const result = await populateConfirmationProofsForSecuredAnchors(client, provider, {
+        minConfirmations: 6,
+      });
+
+      expect(filters.find((f) => f.method === 'gt')).toBeUndefined();
+      // …and the sweep actually did work, rather than silently zeroing out.
+      expect(result.scanned).toBe(1);
+      expect(result.anchorsUpdated).toBe(1);
+    });
+
+    it('every anchor_id comparison it DOES make is a real uuid', async () => {
+      const { provider } = confirmedProvider();
+      const { client, filters } = mockWatermarkScanClient([scanRow(uuidAt(1))]);
+      await populateConfirmationProofsForSecuredAnchors(client, provider, {
+        minConfirmations: 6,
+        startAfterAnchorId: uuidAt(0),
+      });
+      // Only VALUE comparisons are type-checked by Postgres; `.order()` takes
+      // an options object, not a uuid.
+      const COMPARISONS = new Set(['gt', 'gte', 'lt', 'lte', 'eq', 'neq']);
+      const compared = filters.filter((f) => COMPARISONS.has(f.method) && f.args[0] === 'anchor_id');
+      expect(compared.length, 'no anchor_id comparison was made at all').toBeGreaterThan(0);
+      for (const f of compared) {
+        expect(isUuid(f.args[1]), `${f.method}('anchor_id', ${String(f.args[1])})`).toBe(true);
+      }
+    });
+
+    it('advances the cursor past a page, so a wedged page cannot occupy the window forever', async () => {
+      const { provider } = confirmedProvider();
+      // A page of rows that can never complete — the tx is in a block their own
+      // row does not name, so every one is skipped.
       const wedged = [
-        { ...scanRow('a-1'), block_hash: 'ff'.repeat(32) },
-        { ...scanRow('a-2'), block_hash: 'ff'.repeat(32) },
+        { ...scanRow(uuidAt(1)), block_hash: 'ff'.repeat(32) },
+        { ...scanRow(uuidAt(2)), block_hash: 'ff'.repeat(32) },
       ];
       const first = mockWatermarkScanClient(wedged);
       await populateConfirmationProofsForSecuredAnchors(first.client, provider, {
         minConfirmations: 6,
         maxRows: 2,
       });
-      // Run 1 starts at the beginning of the keyspace.
-      expect(first.filters.find((f) => f.method === 'gt')?.args).toEqual(['anchor_id', '']);
 
       // Run 2 must ask for rows AFTER the wedged page — otherwise the newly
       // SECURED anchors that sort behind them are never reached again.
-      const second = mockWatermarkScanClient([scanRow('a-3')]);
+      const second = mockWatermarkScanClient([scanRow(uuidAt(3))]);
       await populateConfirmationProofsForSecuredAnchors(second.client, provider, {
         minConfirmations: 6,
         maxRows: 2,
       });
-      expect(second.filters.find((f) => f.method === 'gt')?.args).toEqual(['anchor_id', 'a-2']);
+      expect(second.filters.find((f) => f.method === 'gt')?.args).toEqual(['anchor_id', uuidAt(2)]);
     });
 
-    it('wraps back to the start of the keyspace once a short page shows the sweep is done', async () => {
+    // The advance condition must NOT be `rows.length === maxRows`. PostgREST
+    // caps a response at the server's `db-max-rows` (the repo's own
+    // POSTGREST_ROW_LIMIT is 1000) while `maxRows` defaults to 2000 — so that
+    // equality can be false on every run, the cursor resets every time, and the
+    // rotation silently becomes a no-op: the exact starvation H1 exists to fix.
+    // `api/v1/agents.md` records this as a defect already paid for once.
+    it('advances on a SHORT page too — it must not assume it controls the row cap', async () => {
       const { provider } = confirmedProvider();
-      // A SHORT page (1 row against a budget of 2) means the end was reached.
-      const first = mockWatermarkScanClient([scanRow('z-9')]);
+      // 2 rows returned against a budget of 2000: a server-side cap, NOT the
+      // end of the candidate set.
+      const capped = [
+        { ...scanRow(uuidAt(10)), block_hash: 'ff'.repeat(32) },
+        { ...scanRow(uuidAt(11)), block_hash: 'ff'.repeat(32) },
+      ];
+      const first = mockWatermarkScanClient(capped);
+      await populateConfirmationProofsForSecuredAnchors(first.client, provider, {
+        minConfirmations: 6,
+        maxRows: 2000,
+      });
+
+      const second = mockWatermarkScanClient([scanRow(uuidAt(12))]);
+      await populateConfirmationProofsForSecuredAnchors(second.client, provider, {
+        minConfirmations: 6,
+        maxRows: 2000,
+      });
+      expect(
+        second.filters.find((f) => f.method === 'gt')?.args,
+        'the cursor reset on a short page — the sweep can never move past a capped first page',
+      ).toEqual(['anchor_id', uuidAt(11)]);
+    });
+
+    it('wraps to the start of the keyspace only when a page comes back EMPTY', async () => {
+      const { provider } = confirmedProvider();
+      const first = mockWatermarkScanClient([scanRow(uuidAt(90))]);
       await populateConfirmationProofsForSecuredAnchors(first.client, provider, {
         minConfirmations: 6,
         maxRows: 2,
       });
-
-      const second = mockWatermarkScanClient([scanRow('a-1')]);
+      // Second sweep: no rows left after the cursor ⇒ end of the candidate set.
+      const second = mockWatermarkScanClient([]);
       await populateConfirmationProofsForSecuredAnchors(second.client, provider, {
         minConfirmations: 6,
         maxRows: 2,
       });
-      expect(second.filters.find((f) => f.method === 'gt')?.args).toEqual(['anchor_id', '']);
+      expect(second.filters.find((f) => f.method === 'gt')?.args).toEqual(['anchor_id', uuidAt(90)]);
+
+      // Third sweep starts over — with NO filter, not an empty-string one.
+      const third = mockWatermarkScanClient([scanRow(uuidAt(1))]);
+      await populateConfirmationProofsForSecuredAnchors(third.client, provider, {
+        minConfirmations: 6,
+        maxRows: 2,
+      });
+      expect(third.filters.find((f) => f.method === 'gt')).toBeUndefined();
+    });
+
+    it('a scan ERROR does not leave the sweep stuck on a poisoned cursor', async () => {
+      const { provider } = confirmedProvider();
+      // Drive a real type error through the scan, then confirm the next sweep
+      // still issues a valid query rather than repeating the bad one.
+      const failing = mockWatermarkScanClient([scanRow(uuidAt(1))]);
+      const bad = await populateConfirmationProofsForSecuredAnchors(failing.client, provider, {
+        minConfirmations: 6,
+        startAfterAnchorId: 'not-a-uuid',
+      });
+      expect(bad.scanned).toBe(0);
+
+      const next = mockWatermarkScanClient([scanRow(uuidAt(1))]);
+      const ok = await populateConfirmationProofsForSecuredAnchors(next.client, provider, {
+        minConfirmations: 6,
+      });
+      expect(ok.scanned).toBe(1);
     });
 
     it('accepts an explicit cursor, so a sweep can be resumed or steered without in-process state', async () => {
       const { provider } = confirmedProvider();
-      const { client, filters } = mockWatermarkScanClient([scanRow('m-5')]);
+      const { client, filters } = mockWatermarkScanClient([scanRow(uuidAt(5))]);
       await populateConfirmationProofsForSecuredAnchors(client, provider, {
         minConfirmations: 6,
-        startAfterAnchorId: 'm-0',
+        startAfterAnchorId: uuidAt(4),
       });
-      expect(filters.find((f) => f.method === 'gt')?.args).toEqual(['anchor_id', 'm-0']);
+      expect(filters.find((f) => f.method === 'gt')?.args).toEqual(['anchor_id', uuidAt(4)]);
     });
   });
 
@@ -958,7 +1095,7 @@ describe('R1 — bitcoin-tree inclusion branch + tx block index', () => {
      */
     function headerOnlyRow(headerHex: string) {
       return {
-        anchor_id: 'anc-header-only',
+        anchor_id: uuidAt(803),
         receipt_id: TARGET_TXID,
         block_height: 800500,
         block_hash: null, // ← the gap
@@ -998,9 +1135,51 @@ describe('R1 — bitcoin-tree inclusion branch + tx block index', () => {
       expect(writes[0].values.tx_block_index).toBe(TARGET_INDEX);
     });
 
-    it('a stored header that is not 80 bytes cannot be used to authorise an overwrite', async () => {
+    // An UNREADABLE header is not evidence of a different block — it is no
+    // evidence at all, and it must not be treated as a reorg.
+    //
+    // A first pass at H2 skipped these rows and counted them as
+    // `anchorsBlockMismatch`. That turned a self-healing row into a permanent
+    // wedge: the row still matches the scan predicate, so it is re-fetched from
+    // the RPC node on every sweep, never completes, and inflates a REORG metric
+    // each time. Baseline behaviour (before H2) overwrote such a row and
+    // thereby healed it. `block_header` has no CHECK bounding its length, and a
+    // pre-BUG-4 row stores the header as 160 ASCII bytes rather than the raw 80
+    // — so this class is real, not hypothetical.
+    //
+    // Nothing is lost by overwriting: a value that cannot be parsed as a header
+    // names no block, so it cannot contradict the block the tx is actually in.
+    // The genuine reorg signal is `block_hash`, which is still authoritative
+    // whenever it is present.
+    it.each([
+      ['1 byte', 'ab'],
+      ['pre-BUG-4 ASCII-encoded 160-byte header', Buffer.from('00'.repeat(80), 'utf8').toString('hex')],
+      ['empty', ''],
+      ['not hex', 'zz'.repeat(80)],
+    ])(
+      'HEALS a row whose stored header is unreadable (%s) instead of wedging it forever',
+      async (_label, badHeader) => {
+        const { p, provider } = confirmedProvider();
+        const { client, writes } = mockWatermarkScanClient([headerOnlyRow(badHeader)]);
+
+        const result = await populateConfirmationProofsForSecuredAnchors(client, provider, {
+          minConfirmations: 6,
+        });
+
+        // The row is repaired with a real header + hash…
+        expect(result.anchorsUpdated).toBe(1);
+        expect(writes).toHaveLength(1);
+        expect(writes[0].values.block_header).toBe(`\\x${p.headerHex}`);
+        expect(writes[0].values.block_hash).toBe(p.blockHash);
+        // …and the REORG counter stays a reorg counter.
+        expect(result.anchorsBlockMismatch).toBe(0);
+      },
+    );
+
+    it('a READABLE header for a different block is still refused — healing is not a licence to overwrite evidence', async () => {
       const { provider } = confirmedProvider();
-      const { client, writes } = mockWatermarkScanClient([headerOnlyRow('ab')]);
+      const otherHeader = buildHeader(computeMerkleRootLE([makeTxidLE(0xbeef)])).toString('hex');
+      const { client, writes } = mockWatermarkScanClient([headerOnlyRow(otherHeader)]);
 
       const result = await populateConfirmationProofsForSecuredAnchors(client, provider, {
         minConfirmations: 6,

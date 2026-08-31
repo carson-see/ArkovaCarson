@@ -55,6 +55,9 @@ compared them.
   that `tx_block_index` does NOT arm the CVE-2012-2459 guard on the bitcoin tree
   (that needs the block's total transaction count, which the bundle does not
   carry). Contrast `leaf_count`, which does arm the equivalent app-tree guard.
-- `src/lib/proofBundleContractDrift.test.ts` now compares this schema's key set
-  against what `buildProofPacket` emits, in both directions, so the next drift
-  fails CI instead of shipping.
+- `services/worker/src/api/v1/openapi-proof-bundle-contract.test.ts` now compares
+  this schema's key set against what the API's own `buildProofBundle` emits, in
+  both directions, so the next drift fails CI instead of shipping. It lives in
+  the WORKER suite on purpose: a first version sat in the root suite and compared
+  against the frontend `buildProofPacket`, which carries the same keys today but
+  would not have caught a field added to the API bundle alone.

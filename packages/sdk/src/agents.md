@@ -40,3 +40,23 @@ the transaction->block half of the proof LOCALLY instead of asking a Bitcoin nod
   the rest of the bundle intact.
 - No `proofSchemaVersion` bump: `packages/verifier-cli/src/verify.ts` fails closed
   on anything but 1.
+
+### Open question (NOT resolved here): `[]` means different things to the two branches
+
+`mapProofBundle` fails the WHOLE bundle closed when `merkleProof.length === 0`
+(an empty app-tree branch is treated as unverifiable), while `txInclusionBranch`
+treats `[]` as COMPLETE evidence — a single-transaction block genuinely has no
+siblings, which is also how the API reader, the writer, `sourceProofInput` and
+the verifier CLI read it.
+
+Both readings are defensible and they are inconsistent with each other. The
+app-tree behaviour is PRE-EXISTING (it predates migration 0427 and is asserted
+by `client.test.ts`), so it was deliberately left alone rather than changed in
+passing: flipping it would alter what `proofBundle !== null` guarantees for
+single-leaf records, which is an SDK contract decision and wants an explicit
+ruling plus its own soak — not a drive-by edit inside a review-fix commit.
+
+If you are here to settle it, the question is: for a SINGLE-LEAF app tree, is
+`merkleProof: []` an honest complete branch (root == leaf) or an unverifiable
+one? The bitcoin-tree side has already answered the analogous question with
+"complete". Whichever way it goes, the two should end up agreeing.

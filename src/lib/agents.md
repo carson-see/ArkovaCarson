@@ -382,17 +382,32 @@ client, and the migration header's claim to the contrary was false.
   sibling side matching the index bit). Two surfaces answering "is this branch
   usable?" differently is how a downloaded packet ends up contradicting `/proof`
   about one record.
+- `txInclusionEvidence.ts` (new) is the ONE frontend reader for the pair, shared
+  by both modules below. It was not shared at first, and that mattered: the
+  packet builder mapped the two fields INDEPENDENTLY with an entry guard that
+  asked only `typeof hash === 'string'`, so it skipped both-or-neither, 64-hex,
+  range AND index/side agreement — all four of which the API reader, the SDK and
+  the verifier CLI enforce. `buildProofPacket({tx_inclusion_branch: [{hash: '',
+  position: 'left'}], tx_block_index: 1})` shipped an EMPTY hash inside the
+  holder's PDF as genuine inclusion evidence. That is the downloadable packet:
+  the one surface with no server between it and the auditor, and the one where
+  migration 0427's header asserts the rules are identical on both sides. Do not
+  re-inline this rule in either caller.
 - `generateAuditReport.ts`: `ProofPacket` + `ProofInput` gain
   `tx_inclusion_branch` / `tx_block_index`; `buildProofPacket` preserves the
   structured `{hash, position}` entries verbatim (never flattened — that drops the
-  side the fold needs) and degrades a malformed branch to null.
+  side the fold needs) and reads the pair through the shared validator.
 - The exact-key-set pin in `generateAuditReport.test.ts` moves 13 -> 15 keys. That
   pin is the ratchet: extend it deliberately, never delete it to green a diff.
 - **These are NOT `merkle_proof`.** Same shape, opposite convention: byte-reversed
   (display) hex under Bitcoin's double-SHA256 positional rule, versus the layer-1
   app tree in its stored orientation. Folding one with the other's rule typechecks
   and proves nothing.
-- `proofBundleContractDrift.test.ts` (new) compares `docs/api/openapi.yaml`'s
-  published `ProofBundle` schema against the field set `buildProofPacket` actually
-  emits. The published contract had silently drifted when 0427 landed and nothing
-  in CI compared them.
+- The openapi contract-drift detector deliberately does NOT live here. It
+  compares `docs/api/openapi.yaml` against the API's own `buildProofBundle`, so
+  it sits in the worker suite
+  (`services/worker/src/api/v1/openapi-proof-bundle-contract.test.ts`). A first
+  version compared the spec to THIS package's `buildProofPacket`: same 15 keys
+  today, so it was green, but a field added to the API bundle without touching
+  the frontend packet would have passed — the exact failure mode the detector is
+  named for.
