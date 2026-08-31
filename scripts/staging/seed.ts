@@ -519,6 +519,8 @@ async function seedOrgIntegrations(client: LooseClient, orgs: SeededOrg[]): Prom
         provider,
         account_label: `Staging ${provider} ${i}`,
         encrypted_tokens: `staging-encrypted-${randomBytes(8).toString('hex')}`,
+        // adobe_sign resolves inbound webhooks by webhook_id (0426), not account_id.
+        webhook_id: provider === 'adobe_sign' ? `staging-adobe-webhook-${id}` : null,
       });
       integrations.push({ id, org_id: org.id, provider });
     }

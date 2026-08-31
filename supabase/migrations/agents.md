@@ -771,3 +771,38 @@ Prod `vzwyaatejekddvltxyye` has 118 ledger rows, head `0419`, with a genuine gap
 |---|---|---|---|
 | `credits-2442` | `gsluatcqhwwynxpsidjy` | `0420` | PR #2442 — 48 h T3 clock RUNNING from 2026-08-29T15:10:53Z |
 | `cleanup-2335` | `bxgybbxkhuxwtgkgkwpe` | `0417` | PR #2335 — wired + `clean_mirror`, clock NOT started (driver blocker recorded in `docs/staging/cleanup-2335-2026-08-29/`) |
+
+## Recent migrations (0426 org_integrations.webhook_id)
+
+`0426` — `0426_org_integrations_adobe_sign_webhook_id.sql`, branch
+`claude/intelligent-sinoussi-807743` (no PR opened yet at write time). **FILE-ONLY, applied
+nowhere.** T3 (touches `supabase/migrations/`).
+
+**Bug fix, not a feature add.** `services/worker/src/api/v1/webhooks/adobe-sign.ts`
+`findIntegration()` has always queried `org_integrations.webhook_id`, a column that has never
+existed — absent from the baseline and every numbered migration. Every correctly-signed Adobe
+Sign webhook 500s on `42703` and DLQs; nothing drains `webhook_dlq`. Found live during the
+`worker-webhook-runtime` T3 soak on isolated rig `sawvgrwhgsmxjlwhpsyx` (2026-08-30), reproduced
+with a real HMAC-signed `AGREEMENT_WORKFLOW_COMPLETED` delivery. **Confirmed absent on prod too**
+— read-only `information_schema.columns` query against `vzwyaatejekddvltxyye` via the Supabase
+Management API the same day returned no `webhook_id` row for `org_integrations` (23 columns,
+last one `inherited_from_org_id` from `0328`). Adobe Sign has never worked in any environment
+built from this schema, prod included — this is not a stale-baseline-only gap.
+
+Adds `webhook_id text` (nullable — only `adobe_sign` rows populate it; DocuSign resolves by
+`account_id` per `0306` and never needed this) plus a partial unique index
+`(provider, webhook_id) WHERE revoked_at IS NULL AND webhook_id IS NOT NULL`, both enforcing the
+one-active-integration-per-webhook invariant the lookup already assumes and backing the exact
+query shape in `findIntegration()`. Not a hot table (CLAUDE.md §1.2), no `SET LOCAL lock_timeout`.
+
+**Prefix derivation:** `gh pr list --state open --json files` across every open PR shows the
+highest claimed `04xx` migration prefix is `0425` (`0425_anchors_reorg_scan_index.sql`, PR
+#2495); `origin/main` file head is `0419`; this worktree's local `agents.md` ledger table stops
+at `0419` with everything above `0420` recorded only in narrative blocks. `0420`-`0425` are all
+claimed (PRs #2442, #2440, #2472, #2476/#2518, #2495). **Next author claims `0427` — re-derive,
+do not trust this line.**
+
+**Blocks PR #2496** (`fix/adobe-sign-rule-event-payload-16kb`, the Adobe Sign 16KB payload-cap
+fix) from ever being soaked — its `buildAdobeSignRuleEventPayload()` sits downstream of
+`findIntegration()`, so no webhook delivery reaches it until `0426` is applied to whatever rig
+soaks that PR.

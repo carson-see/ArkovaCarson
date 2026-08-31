@@ -1,5 +1,18 @@
 # agents.md — types
-_Last updated: 2026-08-10_
+_Last updated: 2026-08-30_
+
+## 2026-08-30 — org_integrations.webhook_id (manual patch, not a live regen)
+
+Migration `0426` (file-only, unapplied) adds `public.org_integrations.webhook_id text` — the
+column the Adobe Sign webhook handler's `findIntegration()` has always queried but that never
+existed anywhere, prod included (found live during the `worker-webhook-runtime` T3 soak on rig
+`sawvgrwhgsmxjlwhpsyx`, 2026-08-30). Hand-patched into `org_integrations`'s Row/Insert/Update
+shapes here and in `services/worker/src/types/`, alphabetically after `watch_renewal_failure_count`
+(`updated_at`, `watch_renewal_failure_count`, `webhook_id`), `string | null` in all three since the
+column is nullable and only `adobe_sign` rows populate it. Same manual-patch reason as the `0405`
+note below: the shared local Supabase stack (`arkova` containers) was confirmed up and in active
+use by another worktree session at write time, so no schema-changing apply was made against it.
+**Regenerate for real** (`npm run gen:types`) once `0426` lands on a reachable project.
 
 ## 2026-08-10 — organization_field_policies (manual patch, not a live regen)
 
