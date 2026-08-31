@@ -188,6 +188,19 @@ export function stripPlatformSuffix(name: string): string {
 }
 
 /**
+ * Deterministic, locale-INDEPENDENT string order.
+ *
+ * Sonar S2871 wants an explicit comparator on `.sort()` and suggests
+ * `localeCompare`. Deliberately NOT localeCompare: its result depends on the
+ * host's ICU data, and `versionsOf()` / `licensesOf()` feed their sorted output
+ * straight into a string comparison between what a laptop generated and what an
+ * ubuntu runner generated. A locale-sensitive order is precisely the kind of
+ * host-dependent difference this gate exists to be immune to. Code-unit order is
+ * fixed by the language spec and identical on every host.
+ */
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
  * Group entries by package name. A name can legitimately appear MORE THAN ONCE:
  * `onnxruntime-common`, `pako` and `sprintf-js` are each present at two hoisted
  * versions in this tree. Keying a plain Map by name would silently keep only the
@@ -213,11 +226,11 @@ function byName(entries: readonly NoticeLike[], skip: ReadonlySet<string>) {
 
 /** Sorted, de-duplicated projection so comparison never depends on input order. */
 function versionsOf(entries: readonly NoticeLike[]): string {
-  return [...new Set(entries.map((e) => e.version))].sort().join(', ');
+  return [...new Set(entries.map((e) => e.version))].sort(byCodeUnit).join(', ');
 }
 
 function licensesOf(entries: readonly NoticeLike[]): string {
-  return [...new Set(entries.map((e) => e.license))].sort().join(', ');
+  return [...new Set(entries.map((e) => e.license))].sort(byCodeUnit).join(', ');
 }
 
 export function diffNotices(args: {
@@ -228,8 +241,8 @@ export function diffNotices(args: {
   const a = byName(args.committed, args.platformVariantNames);
   const b = byName(args.fresh, args.platformVariantNames);
 
-  const addedNames = [...b.map.keys()].filter((n) => !a.map.has(n)).sort();
-  const removedNames = [...a.map.keys()].filter((n) => !b.map.has(n)).sort();
+  const addedNames = [...b.map.keys()].filter((n) => !a.map.has(n)).sort(byCodeUnit);
+  const removedNames = [...a.map.keys()].filter((n) => !b.map.has(n)).sort(byCodeUnit);
 
   const changedVersions: NoticesDiff['changedVersions'] = [];
   const changedLicenses: NoticesDiff['changedLicenses'] = [];
@@ -251,9 +264,9 @@ export function diffNotices(args: {
   return {
     addedNames,
     removedNames,
-    changedVersions: changedVersions.sort((x, y) => x.name.localeCompare(y.name)),
-    changedLicenses: changedLicenses.sort((x, y) => x.name.localeCompare(y.name)),
-    skippedPlatformVariants: [...new Set([...a.skipped, ...b.skipped])].sort(),
+    changedVersions: changedVersions.sort((x, y) => byCodeUnit(x.name, y.name)),
+    changedLicenses: changedLicenses.sort((x, y) => byCodeUnit(x.name, y.name)),
+    skippedPlatformVariants: [...new Set([...a.skipped, ...b.skipped])].sort(byCodeUnit),
   };
 }
 
@@ -290,7 +303,7 @@ export function evaluate(args: {
   }
 
   // --- drift beyond the baseline: the regression this gate exists to block ---
-  const unexcused = [...drifting].filter((n) => expired || !baselined.has(n)).sort();
+  const unexcused = [...drifting].filter((n) => expired || !baselined.has(n)).sort(byCodeUnit);
   if (unexcused.length > 0) {
     const detail = unexcused.map((n) => {
       if (args.diff.addedNames.includes(n)) return `  + ${n} (installed, NOT disclosed)`;
@@ -306,7 +319,7 @@ export function evaluate(args: {
     );
   }
 
-  const excused = [...drifting].filter((n) => !expired && baselined.has(n)).sort();
+  const excused = [...drifting].filter((n) => !expired && baselined.has(n)).sort(byCodeUnit);
   if (excused.length > 0) {
     warnings.push(
       `${excused.length} inherited drift entr${excused.length === 1 ? 'y' : 'ies'} tolerated by ` +
@@ -346,10 +359,10 @@ export function evaluate(args: {
   // Hard-fail only once ALL drift is gone (the baseline has done its job and must
   // be emptied). While drift remains, this is mid-cleanup and failing here would
   // red unrelated PRs, so it is a warning.
-  const staleDrift = args.baseline.driftingNames.filter((n) => !drifting.has(n)).sort();
+  const staleDrift = args.baseline.driftingNames.filter((n) => !drifting.has(n)).sort(byCodeUnit);
   const staleBlocked = args.baseline.blockedPinnedNotices
     .filter((r) => !missingRoots.some((m) => m.root === r))
-    .sort();
+    .sort(byCodeUnit);
   const stale = [...staleDrift, ...staleBlocked];
   if (stale.length > 0) {
     const isClean = drifting.size === 0 && args.missingNotice.length === 0;
@@ -411,10 +424,10 @@ async function main() {
       JSON.stringify(
         {
           expires: baseline.expires,
-          driftingNames: [...driftingNamesOf(diff)].sort(),
+          driftingNames: [...driftingNamesOf(diff)].sort(byCodeUnit),
           blockedPinnedNotices: [
             ...new Set(missingNotice.map((e) => stripPlatformSuffix(e.name))),
-          ].sort(),
+          ].sort(byCodeUnit),
         },
         null,
         2,
