@@ -569,14 +569,20 @@ describe('scripts/staging/agents.md Team1 + Team2 union contract', () => {
     expect(STAGING_AGENTS_RAW).not.toContain('## Admission rollback and identity pins\n');
   });
 
+  // NOTE: scripts/staging/agents.md is pinned by content hash in TWO places.
+  // Any edit to that file must recompute BOTH:
+  //   1. the whole-file pin CANONICAL_CROSS_LANE_AGENTS_SHA256 in
+  //      scripts/staging/provision-isolated-rig.test.ts
+  //   2. the prefix + batch-drain section pins in this test
+  // Updating only one leaves the root suite red (see the 2026-08-30 breakage).
   it('preserves exact Team1 f61 rules plus the one admission provenance rule', () => {
     const prefix = STAGING_AGENTS_RAW.slice(0, STAGING_AGENTS_RAW.indexOf(STEP4_HEADING));
     const batchDrain = markdownSection(STAGING_AGENTS_RAW, BATCH_DRAIN_HEADING);
     const provenanceOccurrences = occurrenceCount(batchDrain, TEAM1_ADMISSION_PROVENANCE_RULE);
     const f61BatchDrain = batchDrain.replace(TEAM1_ADMISSION_PROVENANCE_RULE, '');
 
-    expect(sha256(prefix)).toBe('43343b72951ad7c5ecd756d9b0d1ce80818223479afadc57930eeb296f598202');
-    expect(sha256(f61BatchDrain)).toBe('d50f4fb1878cf76d5eae3e34853d7c106e6317cef45e19072eefe21b0959a80d');
+    expect(sha256(prefix)).toBe('e21c85f5fad258ab6d3a1b915ad61daec31998363a3ef03490ba001261d935f9');
+    expect(sha256(f61BatchDrain)).toBe('60efd4982ed6446bf757f6b9099e9b2ac88486f8dac428f2c338b78ebbd7e014');
     expect(provenanceOccurrences).toBe(1);
     expect(batchDrain).toContain('S3.3 R3 acceptance extensions are split deliberately');
     expect(batchDrain).toContain('Team 1 review hardening keeps every chronology field');
