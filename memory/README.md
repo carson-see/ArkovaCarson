@@ -43,6 +43,7 @@ hook's own deny message.
 | `feedback_bounded_body_reads.md` | CI lint (`bounded-body-reads.ts`) — raw `.json()`/`.text()` on a fetch response under `services/worker/src/**`, scoped to lines the PR **adds** (145 pre-existing sites; see the rule's header for why whole-file would be wrong here). Override `unbounded-body-read-reviewed`. The companion `maxRunMs >= ttlMs` half is test-enforced in `jobs/__tests__/run-lease.deadline.test.ts`. | ✅ live (R0-7 / F-D0-5) |
 | `feedback_pr_target_repo.md` | CI lint (`pr-target-repo.ts`) | ✅ live (R0-7) |
 | `feedback_no_worktree_isolation.md` | CI lint (`no-worktree-isolation.ts`) | ✅ live (R0-7) |
+| `project_hollow_200_statement_timeout_swallow.md` | Documentation only (a detector for the `if (error || !data)` shape is plausible but not yet written) | 📖 docs only |
 | `feedback_surrogate_safe_truncation.md` | CI lint (`surrogate-safe-truncate.ts`) — ratchet vs `surrogate-truncate-baseline.json`; merge-time gate is its colocated `.test.ts` in `Tests` | ✅ live (R0-7) |
 | `feedback_local_matches_prod.md` | CI lint (`feedback_local_matches_prod.ts`) — snapshot diff vs `scripts/ci/snapshots/prod-tables.json`; fails closed. Live-MCP comparison still deferred. | ✅ live (SCRUM-1306 / R0-7-FU1) |
 | `feedback_dont_recommend_do.md` | CI lint **advisory** (`feedback_dont_recommend_do.ts`) — always exits 0, never blocks | ✅ live (SCRUM-1306) |
