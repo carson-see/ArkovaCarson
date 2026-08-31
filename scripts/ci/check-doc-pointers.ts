@@ -103,7 +103,7 @@ function findFiles(repoRoot: string, dir: string, matches: (name: string) => boo
     }
   };
   walk(root);
-  return out.sort();
+  return out.sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -214,6 +214,9 @@ const WORKFLOW_CANDIDATE = candidateRe(WORKFLOW_PREFIXES);
 const isWorkflow = (doc: string): boolean =>
   doc.startsWith('.github/workflows/') && /\.ya?ml$/.test(doc);
 
+/** Punctuation markdown prose glues onto the end of an inline path. */
+const TRAILING_PUNCTUATION = new Set(['.', ',', ';', ':', ')', ']', '`', "'", '"']);
+
 /** In workflow YAML only comment lines are prose; everything else is config. */
 const isYamlComment = (line: string): boolean => line.trimStart().startsWith('#');
 
@@ -240,7 +243,11 @@ export function auditDocPointers(docs: ScannedDoc[], opts: AuditOptions): AuditR
         let p = `${m[1]}${m[2] ?? ''}`;
 
         // Trim trailing punctuation that markdown prose glues onto a path.
-        p = p.replace(/[.,;:)\]`'"]+$/, '');
+        // Character-set loop, not `/[...]+$/`: the anchored-quantifier form
+        // backtracks super-linearly on a long non-matching tail (Sonar S8786).
+        while (p.length > 0 && TRAILING_PUNCTUATION.has(p[p.length - 1]!)) {
+          p = p.slice(0, -1);
+        }
         if (!p || p.endsWith('/')) continue;
 
         // Globs and placeholders are intentional, not assertions about one file.

@@ -170,6 +170,23 @@ describe('auditDocPointers', () => {
     expect(ok).toBe(false);
   });
 
+  // Pins the trailing-punctuation trim, which is a character-set loop rather
+  // than an anchored `/[...]+$/` (that form backtracks super-linearly).
+  it('trims punctuation markdown prose glues onto a path', () => {
+    const { ok, checked } = auditDocPointers(
+      [
+        doc(
+          'scripts/ci/agents.md',
+          'see (`memory/README.md`).',
+          'and [memory/README.md], plus `memory/README.md`;',
+        ),
+      ],
+      { repoRoot: REPO, exists: fakeExists(['memory/README.md']) },
+    );
+    expect(checked).toBe(3);
+    expect(ok).toBe(true);
+  });
+
   it('skips globs, placeholders and URLs', () => {
     const { checked } = auditDocPointers(
       [
