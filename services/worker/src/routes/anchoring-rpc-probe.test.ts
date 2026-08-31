@@ -177,6 +177,56 @@ describe('probeAnchoringRpcOnce', () => {
     expect(headers.Authorization).toBe(`Basic ${Buffer.from('rpcuser:hunter2').toString('base64')}`);
   });
 
+  // ─── F-D0-5 (feedback_bounded_body_reads, R0-7 / SCRUM-1253) ───
+  // AbortSignal.timeout() bounds the REQUEST, not the body read. A provider
+  // that sends headers and then stalls parks `await response.json()` forever;
+  // undici's bodyTimeout only fires on TOTAL silence, so a trickling socket
+  // holds it open indefinitely. That exact park (check-confirmations, fullsoak
+  // 2026-08-12) suspended a run inside withRunLease whose heartbeat kept
+  // renewing the lease, disabling SUBMITTED->SECURED for every tenant for 35+
+  // minutes with zero warn/error logs.
+  //
+  // This probe refreshes on a 60s TTL against a public health endpoint, so a
+  // wedged provider is re-contacted ~every minute. Bounding the read is not
+  // enough on its own: the abandoned stream must also be cancelled, or each
+  // refresh leaks another half-open socket for as long as the provider stays
+  // wedged. Both properties are asserted here.
+  it('bounds a stalled body read AND cancels the abandoned stream', async () => {
+    vi.useFakeTimers();
+    try {
+      const cancel = vi.fn(async (_reason?: unknown) => undefined);
+      const stalled = {
+        ok: true,
+        status: 200,
+        // Headers arrived; the body never does.
+        json: () => new Promise<never>(() => {}),
+        text: () => new Promise<never>(() => {}),
+        body: { cancel },
+      } as unknown as Response;
+
+      const pending = probeAnchoringRpcOnce(
+        { rpcUrl: RPC_URL },
+        { fetchImpl: async () => stalled, now: () => 0 },
+      );
+
+      await vi.advanceTimersByTimeAsync(ANCHORING_RPC_TIMEOUT_MS + 1);
+      const result = await pending;
+
+      // Bounded: settles as an honest `unknown`, never a fabricated `ok`.
+      expect(result.state).toBe('unknown');
+      // Socket hygiene: the wedged stream is released, not leaked per refresh.
+      expect(cancel).toHaveBeenCalledTimes(1);
+
+      // §1.4: the timeout error embeds whatever label the caller passed. It
+      // must be the sanitized ORIGIN, never the token-in-path URL.
+      const cancelReason = cancel.mock.calls[0]?.[0] as Error | undefined;
+      expect(String(cancelReason?.message ?? '')).not.toContain('super-secret-access-token');
+      expect(JSON.stringify(result)).not.toContain('super-secret-access-token');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('applies a hard timeout well under the Cloud Run probe budget', () => {
     expect(ANCHORING_RPC_TIMEOUT_MS).toBeLessThanOrEqual(3_000);
     expect(ANCHORING_RPC_TIMEOUT_MS).toBeGreaterThan(0);

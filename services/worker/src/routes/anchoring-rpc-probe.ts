@@ -33,6 +33,11 @@
  *   2. Hard 2.5s timeout on the request AND a separate bound on the body read
  *      (an `AbortSignal` does NOT cover a provider that sends headers then
  *      stalls — the same F-D0-5 lesson already learned in utxo-provider.ts).
+ *      The bound comes from the sanctioned `utils/body-read-timeout.ts`
+ *      primitive, not a local re-implementation: it is a zero-dependency leaf
+ *      module, so importing it pulls nothing into the /health path, and it
+ *      additionally cancels the abandoned stream (a local race leaks a
+ *      half-open socket on every 60s refresh while a provider stays wedged).
  *   3. The read path NEVER awaits the network. `read()` is synchronous: it
  *      returns the cached snapshot and schedules a refresh when stale. A
  *      wedged provider therefore adds exactly 0ms to /health latency, so this
@@ -53,6 +58,8 @@
  *     asserted (config presence). `unknown` is reported as unknown, never ok.
  *   - 1.9: /health always available — this can only enrich, never fail, it.
  */
+
+import { BodyReadTimeoutError, readJsonBounded } from '../utils/body-read-timeout.js';
 
 /** Hard timeout for a single probe. Well under any monitor's own timeout. */
 export const ANCHORING_RPC_TIMEOUT_MS = 2_500;
@@ -124,28 +131,6 @@ export function sanitizeRpcEndpoint(rpcUrl: string): string {
   }
 }
 
-/** Bound a body read that an AbortSignal does not cover (F-D0-5). */
-async function readJsonBounded(response: Response, timeoutMs: number): Promise<unknown> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      response.json(),
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new BodyReadTimeoutError()), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-class BodyReadTimeoutError extends Error {
-  constructor() {
-    super('RPC probe body read timed out');
-    this.name = 'BodyReadTimeoutError';
-  }
-}
-
 function isTimeoutLike(err: unknown): boolean {
   if (err instanceof BodyReadTimeoutError) return true;
   if (!(err instanceof Error)) return false;
@@ -212,7 +197,10 @@ export async function probeAnchoringRpcOnce(
       };
     }
 
-    const parsed = (await readJsonBounded(response, ANCHORING_RPC_TIMEOUT_MS)) as {
+    // §1.4 caller contract of readJsonBounded: `url` is embedded verbatim in
+    // BodyReadTimeoutError.message. `rpcUrl` carries the GetBlock access token
+    // in its PATH, so the SANITIZED origin is passed — never the raw URL.
+    const parsed = (await readJsonBounded(response, endpoint, ANCHORING_RPC_TIMEOUT_MS)) as {
       result?: unknown;
       error?: { message?: unknown; code?: unknown } | null;
     } | null;
