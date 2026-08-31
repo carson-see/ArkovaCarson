@@ -275,7 +275,14 @@ async function main(): Promise<void> {
   const sbUrl = requireEnv('STAGING_SUPABASE_URL', 'public-projection-driver').replace(/\/$/, '');
   const svcKey = requireEnv('STAGING_SUPABASE_SERVICE_ROLE_KEY', 'public-projection-driver');
   const anonKey = requireEnv('STAGING_SUPABASE_ANON_KEY', 'public-projection-driver');
-  const log = (m: string) => console.log(`[mpp] ${new Date().toISOString()} ${m}`);
+  // S5145 (log injection). `args` comes from process.argv and rig-supplied
+  // env, so every value interpolated into a log line below is user-controlled.
+  // This driver's stdout IS the soak transcript that the evidence block is
+  // read from, so a forged `\n[mpp] ...` record is an evidence-integrity
+  // problem, not just a cosmetic one. Strip control characters at the sink so
+  // every call site is covered, including the `log` passed to verifyFixtures.
+  const log = (m: string) =>
+    console.log(`[mpp] ${new Date().toISOString()} ${m.replace(/[\p{Cc}\p{Cf}]/gu, ' ')}`);
 
   if (/vzwyaatejekddvltxyye/.test(sbUrl) || /arkova-worker-[0-9]+\.us-central1|arkova-worker-kvojbeutfa/.test(apiBase)) {
     throw new Error('refusing to run against production');
