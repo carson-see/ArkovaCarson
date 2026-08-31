@@ -15,6 +15,62 @@ PR #2476's `enqueueSignedDocument` detected a `connector_artifact` provenance co
 **Audit — every outcome, both fingerprints, org, envelope, which won, why.** Written to `audit_events` (event_category `ANCHOR`, `target_type: 'connector_artifact'`) via a direct `await ... insert(...)` — NOT the `recordAuditEvent` helper (`utils/auditEvent.ts`), because this file already awaits its writes directly (the helper exists for the DIFFERENT, unrelated `void db.from('audit_events').insert(...)` fire-and-forget bug class it documents). Awaited-but-non-fatal on failure, matching the established convention elsewhere (`jobs/revocation.ts`, `jobs/chain-maintenance.ts`): a lost audit row must never turn a successful heal (or a correctly refused rewrite) into a job failure/retry loop over an unrelated audit-table hiccup, but IS always logged at `error` so the gap is visible. `DbClient` gained an `audit_events` overload on the existing `integration_events` insert shape, plus a separately-cast `ConnectorArtifactUpdateClient`/`DbUpdateQuery` (same convention as the pre-existing `ConnectorArtifactRpcClient` cast) so the existing select-only `connector_artifact` mocks stay valid.
 
 See `machines/docusignInboundDedup.machine.ts`'s F1-heal extension (`machines/agents.md`) for the formal model, and `docusign-envelope-completed.test.ts`'s `describe('F1-heal — auto-heal supersedes a declared/forged fingerprint with the verified one')` for the heal / refusal / audit-failure-is-non-fatal tests (the pre-existing F1 detection tests were updated in place to reflect that a conflict now heals rather than always throwing).
+## 2026-08-30 — `docusign-signer-backfill.ts` + `-deps.ts`: enrich pre-existing DocuSign anchors with `_signers` (follow-on to docusign-bilateral-2026-08 / PR #2474)
+
+Existing DocuSign-sourced anchors created BEFORE the signer-capture PR (#2474,
+`jobs/docusign-envelope-completed.ts` / `api/v1/webhooks/docusign.ts`) shipped
+carry no `metadata._signers`, so the record-detail UI's signer rows render
+empty for them. `runDocusignSignerBackfill()` + `makeDocusignSignerBackfillDeps()`
+enrich those anchors in place: for each candidate, GET the envelope's current
+recipients from the DocuSign eSignature REST API
+(`fetchDocusignEnvelopeRecipients`, new in `integrations/oauth/docusign.ts`,
+alongside a new `extractCapturedSigners` that reuses the SAME
+`DocusignCapturedSigner` Zod gate + `MAX_CAPTURED_DOCUSIGN_SIGNERS` cap PR
+#2474 established — GUID-shape-validated, deduped, fail-soft skip on
+invalid/partial entries) and stamp `_signers` (+ `_docusign_env` if absent)
+onto the anchor's EXISTING metadata, merged via a plain spread — never
+clobbering any other key. Candidates are found via one indexed point-lookup
+per `ENVELOPE_ID_METADATA_KEYS` key (`docusign-anchor-reconciliation.ts`,
+migration 0381's indexes), same query-shape reasoning as
+`findExistingEnvelopeAnchor`.
+
+**Critical scope boundary — outbound only, enforced in code AND tested.**
+This job MUST NEVER fetch or enrich an anchor whose `metadata._direction ===
+'inbound'` (docusign-bilateral-2026-08 F1, `ENABLE_DOCUSIGN_INBOUND`
+default-off): an inbound envelope belongs to a FOREIGN DocuSign account the
+org's OAuth grant does not cover, and DocuSign 26.3 (Demo 2026-09-12 / Prod
+2026-09-21) is locking down cross-account access regardless.
+`isOutboundBackfillCandidate()` (exported, directly unit-tested) checks TWO
+independent signals before any DocuSign API call: `metadata._direction`
+(absent or exactly `'outbound'` passes) AND `anchors.fingerprint_source` (a
+real CHECK-constrained column, not metadata — anything other than
+`'issuer_record_attestation'`, the marker ONLY the inbound declared-hash
+materialization path in `connector-artifact-drain.ts` stamps, passes). Either
+signal alone failing skips the row without ever calling
+`deps.fetchEnvelopeSigners`; the "CRITICAL SAFETY" test block in
+`docusign-signer-backfill.test.ts` asserts that function is never invoked for
+such a row.
+
+**Idempotent/resumable by construction, no run-state.** The candidate query's
+`metadata->>_signers IS NULL` filter is both the selector and the watermark —
+once written, an anchor drops out of every future candidate set, so no
+envelope is ever polled twice. `updateAnchorSigners` additionally re-checks
+`_signers IS NULL` at WRITE time (optimistic guard): a concurrent
+enrichment reports `updated:false`, a no-op not an error.
+
+**Rate limiting.** Sequential (never concurrent) per-envelope requests with a
+configurable delay (`DEFAULT_BACKFILL_REQUEST_DELAY_MS` = 300ms) between
+calls, on top of the existing per-account 3,000/hour token-bucket
+(`createDocusignRateLimitedFetch`) shared with the live envelope-completed
+job. Bounded page size per org (`DEFAULT_BACKFILL_PAGE_SIZE` = 50, hard max
+200) and an overall per-run cap (`DEFAULT_BACKFILL_RUN_LIMIT` = 500, hard max
+2000). 404/403/410 on the recipients fetch (purged/no-access/retention) skip
++ log without failing the run — expected for old envelopes.
+
+Cron route: `POST /jobs/docusign-signer-backfill` (`routes/cron.ts`), gated
+`ENABLE_DOCUSIGN_SIGNER_BACKFILL` (default false; `config.ts` cross-validates
+it requires `ENABLE_DOCUSIGN_OAUTH`). `page_size`/`run_limit` query params
+tune one invocation without redeploying.
 
 ## 2026-08-30 — F1 (security review of PR #2476): `docusign-envelope-completed.ts` verifies its own enqueue result before trusting it
 

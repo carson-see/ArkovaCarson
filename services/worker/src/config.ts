@@ -367,6 +367,17 @@ const ConfigSchema = z.object({
    * cross-field guard below for the prerequisite flags it requires when on.
    */
   enableDocusignInbound: boolFlag(false),
+  /**
+   * Signer backfill (record-detail signer rows, follow-on to
+   * docusign-bilateral-2026-08 / PR #2474) — gates
+   * `POST /jobs/docusign-signer-backfill`, which enriches PRE-existing
+   * DocuSign anchors (created before signer capture shipped) with
+   * `metadata._signers` by fetching each envelope's current recipients from
+   * the DocuSign eSignature REST API. OUTBOUND (own-account envelopes) only —
+   * see `jobs/docusign-signer-backfill.ts` for the inbound exclusion. Default
+   * false: this is a one-time historical scan, not launch-required.
+   */
+  enableDocusignSignerBackfill: boolFlag(false),
   /** DocuSign integration key. Required when DOCUSIGN_CONNECT_HMAC_SECRET is set. */
   docusignIntegrationKey: z.string().optional(),
   /** DocuSign client secret. Required when DOCUSIGN_INTEGRATION_KEY is set. */
@@ -851,6 +862,21 @@ const ConfigSchema = z.object({
     });
   }
 
+  // Signer backfill calls the DocuSign eSignature REST API using a refreshed
+  // access token resolved via the same OAuth connection flow ENABLE_DOCUSIGN_OAUTH
+  // gates — without it there is no live/refreshable connection to authenticate
+  // the recipients fetch with (the job's own guard only excludes INBOUND
+  // envelopes, not disabled OAuth). Mirrors the enableDocusignInbound guards above.
+  if (cfg.enableDocusignSignerBackfill && !cfg.enableDocusignOauth) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DOCUSIGN_SIGNER_BACKFILL=true requires ENABLE_DOCUSIGN_OAUTH=true — '
+        + 'the backfill authenticates via the same refreshable DocuSign OAuth connection that flag gates.',
+      path: ['enableDocusignSignerBackfill'],
+    });
+  }
+
   // SCRUM-1258 (R1-4) batch 2 cross-field rules.
 
   // Arize tracing requires creds when enabled.
@@ -986,6 +1012,8 @@ function loadConfig(): Config {
     enableDocusignQueueReconciliation: process.env.ENABLE_DOCUSIGN_QUEUE_RECONCILIATION,
     // docusign-bilateral-2026-08 (SCRUM-3817/SCRUM-3818): inbound webhook path.
     enableDocusignInbound: process.env.ENABLE_DOCUSIGN_INBOUND,
+    // Signer backfill for pre-existing (outbound-only) DocuSign anchors.
+    enableDocusignSignerBackfill: process.env.ENABLE_DOCUSIGN_SIGNER_BACKFILL,
     docusignIntegrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,
     docusignClientSecret: process.env.DOCUSIGN_CLIENT_SECRET,
     docusignConnectHmacSecret: process.env.DOCUSIGN_CONNECT_HMAC_SECRET,
