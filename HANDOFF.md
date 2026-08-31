@@ -14,6 +14,38 @@
 
 ## Now
 
+### Bug — Adobe Sign webhooks 500 on every delivery, never worked in prod (found 2026-08-30)
+
+`services/worker/src/api/v1/webhooks/adobe-sign.ts` `findIntegration()` queries
+`org_integrations.webhook_id`, a column that has **never existed** — absent from the baseline and
+every numbered migration. Every correctly HMAC-signed `AGREEMENT_WORKFLOW_COMPLETED` delivery
+500s on `42703: column org_integrations.webhook_id does not exist` and lands in `webhook_dlq`,
+which nothing drains — total, permanent loss for the Adobe Sign path.
+
+**Found live** during the `worker-webhook-runtime` T3 soak on isolated rig
+`sawvgrwhgsmxjlwhpsyx` (2026-08-30), reproduced with a real HMAC-signed delivery.
+
+**Confirmed via a read-only `information_schema.columns` query against prod `vzwyaatejekddvltxyye`**
+the same day (Supabase Management API, `SELECT column_name FROM information_schema.columns WHERE
+table_name = 'org_integrations'`): 23 columns returned, none named `webhook_id`. **Adobe Sign has
+never worked in any environment built from this schema, prod included** — this is not a
+stale-baseline-only gap.
+
+Fix: [PR #2519](https://github.com/carson-see/ArkovaCarson/pull/2519), migration
+`0426_org_integrations_adobe_sign_webhook_id.sql` — **DRAFT, NOT applied to prod or any rig,
+NOT soaked.** Verified forward/idempotent/rollback only on an isolated throwaway Postgres 17
+container. Migrations are always T3 (CLAUDE.md §1.12); this needs its own 48 h isolated-rig soak
+exercising a real Adobe Sign webhook delivery before it can go Ready.
+
+**Blocks [PR #2496](https://github.com/carson-see/ArkovaCarson/pull/2496)** (Adobe Sign 16KB
+rule-event payload fix) from ever being soaked — its payload builder sits downstream of this
+lookup.
+
+**Not yet logged in the Confluence Bug Tracker or Jira** (CLAUDE.md §0 rule 5 / §3 gate 2) — the
+Atlassian MCP connector is unauthenticated in this session. Needs `claude mcp` / `/mcp` OAuth
+before any session can write to Jira/Confluence; whoever picks this up should file it before
+closing out.
+
 ### Soaks — DocuSign bilateral T3 (RUNNING, started 2026-08-30)
 
 - **Rig:** isolated Supabase `aqikotdkmhxmznonwmwk` (`arkova-soak-docusign-bilateral`, us-east-2), ledger head **0424**. Cloud Run `arkova-worker-docusign-bilateral-staging` rev **00003-kt9**, image `sha256:642487e3…`, source head `2a676981cfcc337f87f42169b2d2085fdb886c87` (branch `rc/docusign-bilateral-2026-08-30`).
@@ -838,6 +870,16 @@ it. **So §1.9 is now correct and needs no amendment**; an earlier session's not
 the path is `/health` only" was true before that alias landed and is false now. Two live instances
 answer (prod runs `minScale=2`), so the `uptime` field differs between calls to the two paths — that
 is two containers, not two services.
+
+_Last refreshed: 2026-08-30 by Claude Sonnet 5 — claims verified against gcloud/MCP/CI output.
+Scope: the "Bug — Adobe Sign webhooks" addendum only — earlier readings keep their own dates.
+`org_integrations.webhook_id` absence on prod confirmed via the Supabase Management API,
+`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name
+= 'org_integrations'` against `vzwyaatejekddvltxyye` — 23 rows returned, no `webhook_id`. The
+Adobe Sign 500 was reproduced live on isolated rig `sawvgrwhgsmxjlwhpsyx` during the same
+session's `worker-webhook-runtime` T3 soak. PR #2519's migration is verified only against an
+isolated throwaway Postgres 17 container — NOT applied to prod or any rig, NOT soaked; do not
+read this entry as prod-fix-live._
 
 _Last refreshed: 2026-08-29 by Claude Fable 5 (CTO session) — claims verified against gcloud/MCP/CI output:
 prod `/health` read 2026-08-29T14:35Z (`git_sha 0440ce7e5`, healthy); `gcloud run services describe
