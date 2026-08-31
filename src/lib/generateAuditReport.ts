@@ -153,9 +153,13 @@ export interface AuditReportResult {
   embeddedProofJson: string | null;
   /**
    * The verification URL printed on the certificate and encoded in its QR —
-   * always `verifyUrl(publicId)`, the same value the in-app QR uses. `null`
-   * when the record carries no `publicId`: a certificate NEVER fabricates or
-   * defaults a verification URL.
+   * always `canonicalVerifyUrl(publicId)`, which is pinned to the production
+   * origin and reads NO environment. This deliberately differs from the in-app
+   * QR, which uses `verifyUrl()` and honours `VITE_APP_URL`: a certificate is
+   * an archived artifact that outlives the build that produced it, so a
+   * preview or dev host baked into it would resolve nowhere forever. Do not
+   * "simplify" the two back together. `null` when the record carries no
+   * `publicId`: a certificate NEVER fabricates or defaults a verification URL.
    */
   verificationUrl: string | null;
   /**
