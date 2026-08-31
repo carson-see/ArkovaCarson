@@ -99,6 +99,19 @@ export const SEED_MARKER = 'soak-pr2335';
 /** `audit_events.event_type` used for driver probe rows. */
 export const AUDIT_PROBE_EVENT_TYPE = 'SOAK_PR2335_PROBE';
 
+/** `event_type` of the ONE audit row the driver DELETES on purpose each cycle
+ *  to prove `reject_audit_delete` is installed.
+ *
+ *  Deliberately NOT `AUDIT_PROBE_EVENT_TYPE`. Every seeded-row count selects on
+ *  `event_type = AUDIT_PROBE_EVENT_TYPE` inside a created_at window, and this
+ *  sentinel is written into the RETAINED side of that window for org A. While
+ *  it shared the marker, org A's retained audit count came back `seedRows + 1`,
+ *  so `keepSeeded - keepRemaining` evaluated to -1, `perOrgCrossOrgKeepRowsRemoved`
+ *  was -1 and `perOrgIsolationHeld` was false on every cycle — for a reason that
+ *  has nothing to do with 0417. A distinct event_type keeps the guard probe out
+ *  of a population it was never part of. */
+export const AUDIT_SENTINEL_EVENT_TYPE = 'SOAK_PR2335_SENTINEL';
+
 /** The audit row `cleanup_expired_data()` writes on a run that did work. */
 export const CLEANUP_AUDIT_EVENT_TYPE = 'DATA_RETENTION_CLEANUP';
 
@@ -1273,6 +1286,30 @@ const WEBHOOK_SPEC: SeedSpec = {
 
 const ORG_SCOPED_SPECS: readonly SeedSpec[] = [VERIFICATION_SPEC, AI_USAGE_SPEC, AUDIT_SPEC];
 
+/** Build the guard-probe sentinel: one retained-side `audit_events` row owned by
+ *  org A that the driver then asks PostgREST to DELETE. Carries
+ *  `AUDIT_SENTINEL_EVENT_TYPE`, so it is invisible to every seeded-row count. */
+export function buildGuardSentinelRow(context: {
+  nowMs: number;
+  marginDays: number;
+  orgId: string;
+  cycleTag: string;
+  targetId: string;
+}): Record<string, unknown> {
+  const stamps = seedTimestamps(context.nowMs, AUDIT_SPEC.boundaryDays, context.marginDays);
+  return {
+    ...AUDIT_SPEC.buildRow({
+      createdAtIso: stamps.keepIso,
+      orgId: context.orgId,
+      index: 0,
+      cycleTag: context.cycleTag,
+      webhookEndpointId: null,
+    }),
+    target_id: context.targetId,
+    event_type: AUDIT_SENTINEL_EVENT_TYPE,
+  };
+}
+
 interface LiveContext {
   db: Db;
   args: DriverArgs;
@@ -1360,7 +1397,7 @@ async function probeAppendOnlyGuard(db: Db, orgId: string, targetId: string): Pr
     .from('audit_events')
     .delete()
     .eq('org_id', orgId)
-    .eq('event_type', AUDIT_PROBE_EVENT_TYPE)
+    .eq('event_type', AUDIT_SENTINEL_EVENT_TYPE)
     .eq('target_id', targetId);
   if (!error) return false;
   return isAppendOnlyGuardError(error);
@@ -1471,18 +1508,8 @@ async function runCycle(context: LiveContext, cycle: number, totals: CycleTotals
 
   // --- sentinel + guard probe (before) ------------------------------------
   const sentinelTarget = `${SEED_MARKER}:sentinel-${cycleTag}`;
-  const sentinelStamps = seedTimestamps(nowMs, AUDIT_SPEC.boundaryDays, marginDays);
   await insertRows(db, AUDIT_SPEC.table, [
-    {
-      ...AUDIT_SPEC.buildRow({
-        createdAtIso: sentinelStamps.keepIso,
-        orgId: context.orgA,
-        index: 0,
-        cycleTag,
-        webhookEndpointId: null,
-      }),
-      target_id: sentinelTarget,
-    },
+    buildGuardSentinelRow({ nowMs, marginDays, orgId: context.orgA, cycleTag, targetId: sentinelTarget }),
   ]);
   const guardBefore = await probeAppendOnlyGuard(db, context.orgA, sentinelTarget);
 

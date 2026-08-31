@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AUDIT_PROBE_EVENT_TYPE,
+  AUDIT_SENTINEL_EVENT_TYPE,
   CHANGED_BEHAVIOR,
   DEFAULT_ARGS,
   MIN_CONCURRENCY,
@@ -9,6 +11,7 @@ import {
   SQLSTATE_CHECK_VIOLATION,
   SQLSTATE_DEADLOCK,
   SQLSTATE_LOCK_NOT_AVAILABLE,
+  buildGuardSentinelRow,
   classifyCall,
   computeCycleVerdict,
   counterSegment,
@@ -638,6 +641,23 @@ describe('Per-org isolation', () => {
     expect(evaluated.counts.perOrgUnattributedDeletedRows).toBe(0);
   });
 
+  it('FAILS on the shape the guard sentinel used to produce — one extra retained row on org A', () => {
+    // Regression guard for the pre-fix driver: the append-only guard probe was
+    // written with AUDIT_PROBE_EVENT_TYPE into org A's retained window, so org A
+    // counted `seedRows + 1` retained audit rows and `keepSeeded - keepRemaining`
+    // came out at -1 on EVERY cycle. The evaluator was right to fail it; the row
+    // should never have been in the population. This pins the failure so the
+    // sentinel can never rejoin it silently.
+    const evaluated = evaluatePerOrgIsolation({
+      orgA: [{ table: 'audit_events', pastSeeded: 50, pastRemaining: 0, keepSeeded: 50, keepRemaining: 51 }],
+      orgB: [{ table: 'audit_events', pastSeeded: 50, pastRemaining: 0, keepSeeded: 50, keepRemaining: 50 }],
+      reportedDeletedByTable: { audit_events: 100 },
+      sentinelTables: [],
+    });
+    expect(evaluated.held).toBe(false);
+    expect(evaluated.counts.perOrgCrossOrgKeepRowsRemoved).toBe(-1);
+  });
+
   it('FAILS when nothing was seeded — an empty isolation check proves nothing', () => {
     expect(
       evaluatePerOrgIsolation({
@@ -647,6 +667,34 @@ describe('Per-org isolation', () => {
         sentinelTables: [],
       }).held,
     ).toBe(false);
+  });
+});
+
+describe('Guard-probe sentinel row', () => {
+  const built = buildGuardSentinelRow({
+    nowMs: Date.parse('2026-08-31T00:00:00.000Z'),
+    marginDays: 30,
+    orgId: '00000000-0000-4000-8000-00000000000a',
+    cycleTag: '1-1756598400000',
+    targetId: 'soak-pr2335:sentinel-1-1756598400000',
+  });
+
+  it('does NOT carry the seeded-row marker, so no seed count can see it', () => {
+    expect(built.event_type).toBe(AUDIT_SENTINEL_EVENT_TYPE);
+    expect(built.event_type).not.toBe(AUDIT_PROBE_EVENT_TYPE);
+  });
+
+  it('sits on the retained side of the audit boundary and carries its own target_id', () => {
+    // 730d boundary minus a 30d margin: retained, and far enough clear that a
+    // 48h window cannot carry it across.
+    const createdAt = Date.parse(built.created_at as string);
+    const ageDays = (Date.parse('2026-08-31T00:00:00.000Z') - createdAt) / 86_400_000;
+    expect(ageDays).toBeCloseTo(700, 6);
+    expect(built.target_id).toBe('soak-pr2335:sentinel-1-1756598400000');
+  });
+
+  it('is owned by the org it is probed against', () => {
+    expect(built.org_id).toBe('00000000-0000-4000-8000-00000000000a');
   });
 });
 
