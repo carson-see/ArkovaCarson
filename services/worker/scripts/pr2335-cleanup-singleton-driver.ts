@@ -1205,8 +1205,10 @@ export interface SeedSpec {
    *  measure the cycle it is actually running. null = every row is deleted at
    *  the end of its own cycle, so no scoping is needed. */
   cycleColumn: string | null;
-  /** Value `cycleColumn` carries for a given cycle tag. */
-  cycleValue?: (cycleTag: string) => string;
+  /** Value `cycleColumn` carries for a given cycle tag and boundary side.
+   *  `seedPopulation` stamps rows with `${cycleTag}-${side}`, so the counting
+   *  filter has to reproduce both halves or it matches nothing. */
+  cycleValue?: (cycleTag: string, side: 'past' | 'keep') => string;
   buildRow(context: SeedRowContext): Record<string, unknown>;
 }
 
@@ -1267,7 +1269,7 @@ export const AUDIT_SPEC: SeedSpec = {
   // to self-expire one margin window after the soak instead.
   deletable: false,
   cycleColumn: 'target_id',
-  cycleValue: (cycleTag: string) => `${SEED_MARKER}:${cycleTag}`,
+  cycleValue: (cycleTag: string, side: 'past' | 'keep') => `${SEED_MARKER}:${cycleTagForSide(cycleTag, side)}`,
   buildRow: ({ createdAtIso, orgId, cycleTag }) => ({
     event_type: AUDIT_PROBE_EVENT_TYPE,
     event_category: 'SYSTEM',
@@ -1383,12 +1385,25 @@ function seedRowsFor(
         createdAtIso,
         orgId: context.orgId,
         index,
-        cycleTag: `${context.cycleTag}-${side}`,
+        cycleTag: cycleTagForSide(context.cycleTag, side),
         webhookEndpointId: context.webhookEndpointId,
       }),
     );
   }
   return rows;
+}
+
+/**
+ * The cycle tag a seeded row carries, for one boundary side.
+ *
+ * `seedPopulation` stamps rows with it and `SeedSpec.cycleValue` counts them
+ * back by it. They must agree exactly, so both call this rather than
+ * re-deriving the shape -- an earlier revision had the counting side omit the
+ * `-past` / `-keep` half, which silently matched zero rows and read as "every
+ * retained row was deleted".
+ */
+export function cycleTagForSide(cycleTag: string, side: 'past' | 'keep'): string {
+  return `${cycleTag}-${side}`;
 }
 
 export function seededFilters(
@@ -1403,7 +1418,7 @@ export function seededFilters(
   const filters: CountFilter[] = [{ op: 'eq', column: spec.markerColumn, value: spec.markerValue }];
   if (orgId && spec.orgColumn) filters.push({ op: 'eq', column: spec.orgColumn, value: orgId });
   if (cycleTag && spec.cycleColumn && spec.cycleValue) {
-    filters.push({ op: 'eq', column: spec.cycleColumn, value: spec.cycleValue(cycleTag) });
+    filters.push({ op: 'eq', column: spec.cycleColumn, value: spec.cycleValue(cycleTag, side) });
   }
   if (side === 'past') {
     // Anything at or before the past stamp for this cycle.

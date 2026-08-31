@@ -30,6 +30,7 @@ import {
   parseArgs,
   parseCleanupResult,
   projectRefFromUrl,
+  cycleTagForSide,
   runSelfTest,
   VERIFICATION_SPEC,
   seedTimestamps,
@@ -842,7 +843,7 @@ describe('Per-cycle scoping of seeded-row counts', () => {
   it('scopes audit_events counts to the cycle tag, because its rows outlive the cycle', () => {
     const filters = seededFilters(AUDIT_SPEC, 'keep', t0, margin, null, 'c07');
     const cycleFilter = filters.find((f) => f.column === 'target_id');
-    expect(cycleFilter).toEqual({ op: 'eq', column: 'target_id', value: 'soak-pr2335:c07' });
+    expect(cycleFilter).toEqual({ op: 'eq', column: 'target_id', value: 'soak-pr2335:c07-keep' });
   });
 
   it('does not scope tables the driver deletes at the end of their own cycle', () => {
@@ -875,7 +876,31 @@ describe('Per-cycle scoping of seeded-row counts', () => {
     expect(cycle2PastFilters).toContainEqual({
       op: 'eq',
       column: 'target_id',
-      value: 'soak-pr2335:c02',
+      value: 'soak-pr2335:c02-past',
     });
+  });
+});
+
+describe('Seeded tag round-trip', () => {
+  const t0 = Date.parse('2026-08-31T00:00:00.000Z');
+
+  it.each(['past', 'keep'] as const)(
+    'counts back exactly the target_id it seeded (%s side)',
+    (side) => {
+      const seeded = AUDIT_SPEC.buildRow({
+        createdAtIso: new Date(t0).toISOString(),
+        orgId: '5eed0000-0000-4000-8000-0000000000b1',
+        index: 0,
+        cycleTag: cycleTagForSide('9-1788137189724', side),
+        webhookEndpointId: null,
+      });
+      const filters = seededFilters(AUDIT_SPEC, side, t0, 30, null, '9-1788137189724');
+      const cycleFilter = filters.find((f) => f.column === 'target_id');
+      expect(cycleFilter?.value).toBe(seeded.target_id);
+    },
+  );
+
+  it('gives the two sides different tags, so one cannot count the other', () => {
+    expect(cycleTagForSide('c1', 'past')).not.toBe(cycleTagForSide('c1', 'keep'));
   });
 });
