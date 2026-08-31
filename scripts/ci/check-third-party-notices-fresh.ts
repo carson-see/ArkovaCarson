@@ -306,9 +306,14 @@ export function evaluate(args: {
   }
   const blockedKnown = missingRoots.filter((m) => !expired && blockedRoots.has(m.root));
   if (blockedKnown.length > 0) {
+    // Pluralise on DISTINCT roots, not on entries: one root routinely covers
+    // several installed packages (an ubuntu runner has both
+    // @img/sharp-libvips-linux-x64 and -linuxmusl-x64 under @img/sharp-libvips),
+    // so counting entries said "families" while listing one.
+    const knownRoots = [...new Set(blockedKnown.map((m) => m.root))];
     warnings.push(
-      `Generator still failing closed on known-blocked famil${blockedKnown.length === 1 ? 'y' : 'ies'}: ` +
-        `${[...new Set(blockedKnown.map((m) => m.root))].join(', ')} — ` +
+      `Generator still failing closed on known-blocked famil${knownRoots.length === 1 ? 'y' : 'ies'}: ` +
+        `${knownRoots.join(', ')} — ` +
         `\`npm run license:notices:generate\` cannot write until this is resolved.`,
     );
   }

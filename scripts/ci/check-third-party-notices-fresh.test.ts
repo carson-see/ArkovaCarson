@@ -246,6 +246,28 @@ describe('evaluate', () => {
     }
   });
 
+  it('counts distinct family roots, not installed packages, when it reports', () => {
+    // An ubuntu runner installs BOTH @img/sharp-libvips-linux-x64 and
+    // -linuxmusl-x64, which share one root. Pluralising on entries said
+    // "families" while listing a single name.
+    const verdict = evaluate({
+      diff: noDiff,
+      baseline: { ...emptyBaseline, blockedPinnedNotices: ['@img/sharp-libvips'] },
+      missingNotice: [
+        entry('@img/sharp-libvips-linux-x64', '1.2.4', 'LGPL-3.0-or-later'),
+        entry('@img/sharp-libvips-linuxmusl-x64', '1.2.4', 'LGPL-3.0-or-later'),
+      ],
+      today,
+    });
+
+    expect(verdict.ok).toBe(true);
+    const warned = verdict.warnings.join('\n');
+    expect(warned).toContain('known-blocked family:');
+    expect(warned).not.toContain('families');
+    // ...and the root is listed once, not twice.
+    expect(warned.match(/@img\/sharp-libvips/gu)).toHaveLength(1);
+  });
+
   it('fails on a NEW missing pinned notice even when another one is baselined', () => {
     const verdict = evaluate({
       diff: noDiff,
