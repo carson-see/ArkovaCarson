@@ -366,3 +366,16 @@ student-ID stripper does not cover them: `STUDENT_ID_KEYWORD` joins its words wi
 `\s+`, so `Student ID: 88213` redacts but the snake_case CSV header form
 `student_id: 88213` does not. That gap is in `piiStripper.ts`, predates this PR,
 and is not fixed here.
+
+## DI-775 / SCRUM-3538 — `WEBHOOK_EVENT_DESCRIPTIONS` is a registration surface
+
+`WEBHOOK_EVENT_DESCRIPTIONS` in `copy.ts` is keyed by webhook event id and must carry an entry for
+every key of `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` in
+`services/worker/src/webhooks/payload-schemas.ts` — the event catalog renders
+`WEBHOOK_EVENT_DESCRIPTIONS[entry.id]`, so a missing key renders an event with no description at
+all. `anchor.superseded` was added here alongside the picker and catalog.
+
+Keep the entries in the worker's declaration order and keep the copy §1.3-clean (no Transaction /
+Hash / Blockchain — "replaced by a newer version", not "superseded transaction").
+`scripts/ci/check-webhook-event-registration-drift.ts` compares this map's key list against the
+worker map on every PR, in the required root `Tests` job.
