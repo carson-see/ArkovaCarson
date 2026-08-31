@@ -45,15 +45,62 @@
 -- self (see task brief), and because it's free.
 --
 -- ROLLBACK:
+--   Corrected 2026-08-30 per the mig-docusign-trust T3 soak rehearsal
+--   (docs/staging/mig-docusign-trust/STANDUP.md, rig yfqgxycaiwgvvvbzhkma):
+--   running the ORIGINAL two-step form of this block (re-add the old global
+--   UNIQUE straight after dropping the new one) failed with a unique-
+--   violation the moment two different accounts had legitimately shared an
+--   (envelope_id, event_id, generated_at) tuple — exactly the case this
+--   migration exists to permit. The corrected form below adds the missing
+--   dedup step and was rehearsed clean on the soak rig (`DELETE 15`,
+--   constraint swapped back and forward, `/health` stayed healthy, ledger
+--   untouched).
+--
+--   THIS ROLLBACK IS LOSSY once ENABLE_DOCUSIGN_INBOUND has actually been on
+--   and two accounts have shared a tuple: step 2 below permanently discards
+--   every row that is a tenant-distinct delivery under the NEW
+--   (account_id, envelope_id, event_id, generated_at) key but a duplicate
+--   under the OLD global (envelope_id, event_id, generated_at) key — i.e.
+--   precisely the rows only the new key can tell apart. The surviving row per
+--   tuple is chosen deterministically (earliest received_at, ties broken by
+--   id), but the discarded row's data is gone, not archived. An operator
+--   running this during an incident should expect that loss going in, not
+--   discover it after the fact.
+--
 --   BEGIN;
 --   SET LOCAL lock_timeout = '5s';
+--
+--   -- 1. Drop the tenant-scoped constraint this migration added.
 --   ALTER TABLE public.docusign_webhook_nonces
 --     DROP CONSTRAINT IF EXISTS docusign_webhook_nonces_account_envelope_event_gen_key;
+--
+--   -- 2. DEDUP (lossy — see note above). The old 3-column key does not
+--   --    include account_id, so any two accounts that legitimately share
+--   --    (envelope_id, event_id, generated_at) now collide under it. Keep
+--   --    exactly one row per tuple — earliest received_at, ties broken by id
+--   --    for a fully deterministic result on a re-run — and delete the rest.
+--   DELETE FROM public.docusign_webhook_nonces t
+--   USING (
+--     SELECT id,
+--            ROW_NUMBER() OVER (
+--              PARTITION BY envelope_id, event_id, generated_at
+--              ORDER BY received_at ASC, id ASC
+--            ) AS rn
+--     FROM public.docusign_webhook_nonces
+--   ) dedup
+--   WHERE t.id = dedup.id
+--     AND dedup.rn > 1;
+--
+--   -- 3. Re-add the original global uniqueness key. Cannot fail now: step 2
+--   --    guarantees at most one row per (envelope_id, event_id, generated_at).
 --   ALTER TABLE public.docusign_webhook_nonces
 --     ADD CONSTRAINT docusign_webhook_nonces_envelope_id_event_id_generated_at_key
 --       UNIQUE (envelope_id, event_id, generated_at);
+--
+--   -- 4. Drop the tenant column.
 --   ALTER TABLE public.docusign_webhook_nonces
 --     DROP COLUMN IF EXISTS account_id;
+--
 --   COMMIT;
 
 BEGIN;
