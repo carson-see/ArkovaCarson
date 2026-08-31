@@ -14,8 +14,9 @@
  * Exit code 0 = VERIFIED, 1 = NOT VERIFIED, 2 = usage / input error.
  */
 
-import { readFileSync } from 'node:fs';
-import { createEsploraFetch } from '@arkova/verifier';
+import { readFileSync, realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { createEsploraFetch } from 'arkova-verifier';
 import { verifyProof } from './verify.js';
 import { renderReport } from './lib/report.js';
 import { assertIndependentEndpoint, DEFAULT_ESPLORA } from './lib/independent-endpoint.js';
@@ -154,7 +155,7 @@ function loadInputs(args: CliArgs): LoadedInputs {
 /**
  * Build the independent on-chain source from the vetted `--rpc` endpoint, or
  * undefined in `--offline` mode. Refuses an Arkova endpoint up front; the
- * on-chain confirmation itself is delegated to @arkova/verifier's
+ * on-chain confirmation itself is delegated to arkova-verifier's
  * createEsploraFetch + confirmInclusion.
  */
 function buildChain(args: CliArgs): IndependentNode | undefined {
@@ -199,9 +200,56 @@ export async function main(argv: string[]): Promise<number> {
   return report.ok ? 0 : 1;
 }
 
+/**
+ * True when this module is the process entry point (so `main()` should run),
+ * false when it is merely imported (tests, library use).
+ *
+ * `import.meta.url` is ALWAYS the realpath-resolved module URL, but
+ * `process.argv[1]` is the path exactly as invoked. npm installs a `bin` as a
+ * SYMLINK — `node_modules/.bin/arkova-verify -> ../arkova-verifier-cli/dist/cli.js`
+ * — so for every global install and every `npx` run the two differ. Comparing
+ * them unresolved makes the installed binary a silent no-op: it exits 0 having
+ * printed nothing. Resolve the entry path before comparing.
+ *
+ * `pathToFileURL` (not `new URL('file://' + p)`) because the latter mis-parses
+ * any path containing `#`, `?` or `%` — it treats them as URL syntax — and so
+ * would fail to match `import.meta.url` for a perfectly ordinary checkout path.
+ *
+ * BOTH forms are accepted, resolved and unresolved, because which one matches
+ * depends on flags outside this package's control: normally `import.meta.url`
+ * is the realpath and only the resolved comparison hits, but under
+ * `node --preserve-symlinks-main` `import.meta.url` is the SYMLINK url and only
+ * the unresolved comparison hits. Checking one form would be a silent no-op in
+ * the other mode — the same class of bug this function exists to fix.
+ *
+ * Fails CLOSED (returns false) when neither comparison can be made. That is
+ * deliberate, not an oversight: failing open would auto-run `main()` on mere
+ * import, which would fire during `test/cli.test.ts` and for any library
+ * consumer of `src/index.ts`. A no-op in an unreachable case is recoverable; a
+ * CLI that runs itself on import is not. The dual comparison above already
+ * removes the realistic failure mode.
+ *
+ * Exported so the guard itself is testable; every other CLI test drives
+ * `main()` directly and would never exercise this.
+ */
+export function isDirectInvocation(entryPath: string | undefined, moduleUrl: string): boolean {
+  if (entryPath == null) return false;
+  // Unresolved first: works under --preserve-symlinks-main, and needs no fs access.
+  try {
+    if (pathToFileURL(entryPath).href === moduleUrl) return true;
+  } catch {
+    // Unrepresentable as a URL — fall through to the resolved comparison.
+  }
+  try {
+    return pathToFileURL(realpathSync(entryPath)).href === moduleUrl;
+  } catch {
+    // Entry path missing/unreadable — never throw out of a module-load guard.
+    return false;
+  }
+}
+
 // Only auto-run when invoked as a script (not when imported by tests).
-const invokedDirectly =
-  process.argv[1] != null && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+const invokedDirectly = isDirectInvocation(process.argv[1], import.meta.url);
 if (invokedDirectly) {
   try {
     process.exit(await main(process.argv.slice(2)));

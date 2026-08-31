@@ -66,7 +66,7 @@ Verified 2026-08-01: `Model checking completed. No error has been found.`
 (529 distinct states, depth 15).
 
 Invoking it from the repo root with a path prefix
-(`tla-precheck check machines/foo.machine.ts`) aborts at the typecheck phase
+(`tla-precheck check machines/<name>.machine.ts`) aborts at the typecheck phase
 with TS5096 / TS5103 against the pinned `typescript@6.0.3`. That is an
 **invocation-path artifact, not a broken gate** — a 2026-07-20 note previously
 recorded it as "cannot run for every machine / gate non-functional", which is

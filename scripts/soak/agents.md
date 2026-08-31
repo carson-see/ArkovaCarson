@@ -75,10 +75,11 @@ processing; with throttling on (the default), this service's background
 `setInterval` loops stall completely between inbound HTTP requests — observed
 live during the 2026-07-28 rollout: `achieved_rps=0.00` for a 69s window with
 default settings, immediately fixed by redeploying with `--no-cpu-throttling`.
-Same class of gotcha as `memory/project_cloudrun_inprocess_cron_gotcha.md`
-(`node-cron` not firing on throttled Cloud Run), but for an in-process JS
-timer loop instead of node-cron specifically — worth generalizing that memory
-note if this pattern recurs.
+Same class of gotcha as node-cron not firing on throttled Cloud Run, but for
+an in-process JS timer loop instead of node-cron specifically — worth
+generalizing if this pattern recurs. Root cause either way: without
+`--no-cpu-throttling` an instance gets no CPU between requests, so anything
+driven by a timer rather than an inbound request does not run at all.
 
 ## Auth model
 

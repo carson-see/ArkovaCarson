@@ -1,7 +1,9 @@
 # scripts/ci/agents.md
 
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation — plus the base-drift ledger carve-out matching `.sql`, not the migrations directory, and the typecheck-parity `if:` scan covering the whole step block, not just name→run)._
+_Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus `TIER_SPECS.T1` aligned to §1.12: 2h soak with required `Soak start:`/`Soak end:`)._
 _Last updated: 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus the SCRUM-3802 anchor-feeder T3 path rule)._
+_Last updated: 2026-08-30 (orphan-row blast radius scoped to migration-surface PRs) — previously 2026-08-29 (evidence-gate integrity — emphasis stripping, approver independence, `packages/sdk`, roster removal, anchored RC base ancestry, T1 `Human approver:` value validation, the base-drift ledger carve-out matching `.sql` — plus the SCRUM-3802 anchor-feeder T3 path rule)._
 
 ## 2026-08-29 — `check-staging-evidence.ts` anchor-feeder T3 path rule (SCRUM-3802)
 
@@ -216,6 +218,28 @@ original closure classes.
   `GITHUB_ACTIONS=true`, so unit runs stay quiet and every CI base-drift verdict, pass or fail,
   states the file sets it was computed from.
 
+## 2026-08-29 — eighth closure: `TIER_SPECS.T1.soakHours` was 0 while CLAUDE.md §1.12 says "2 h soak"
+
+The seventh closure fixed the approver half of the T1 gap and recorded the other half in
+passing: with `soakHours: 0` and no window fields, a green T1 gate proved no soak either.
+That was a constitution/gate disagreement, not a policy choice — §1.12's T1 row has said
+"2 h soak" with "soak start/end" in its required evidence all along, and every other
+surface already agreed (docs/staging/PR_TEMPLATE.md's T1 block carries `Soak start:` /
+`Soak end:` with "at least 2h after Soak start"; the `soak-evidence` skill says "T1 (2 h
+soak): … soak start + end"; the Files section below has said "T1 is a 2h soak path, not a
+zero-soak bypass" since PR #801). CTO decision (merged #2241/#2264 history): the GATE
+matches the constitution. `TIER_SPECS.T1` is now `soakHours: 2` with `Soak start:` /
+`Soak end:` required. No new validators were needed — `soakDurationErrors()` was already
+tier-generic (field-presence-driven, comparing elapsed hours against
+`TIER_SPECS[tier].soakHours`), `requiredValueErrors`' T1 arm picks the new fields up for
+non-empty enforcement, `futureTimestampErrors()` already covered future-dated windows at
+every tier, and the T2-only RM targeted-duration waiver cannot leak into T1
+(`targetedDurationWaiverErrors` returns invalid for anything but T2). The RC-manifest path
+inherits the 2h floor through the same `TIER_SPECS[tier].soakHours` read. Red-first: 5
+failed on the prior head (the 0h pin, the missing-window pin, a no-window T1 body passing,
+and two sub-2h windows passing), green after. **This raises the bar for in-flight T1
+PRs**: any open T1 PR whose evidence block has no `Soak start:`/`Soak end:` (or a window
+under 2h) goes red on its next evaluation and needs a real 2h window added.
 
 ## 2026-08-23 — `aggregate-commit-messages.ts` (new): commit messages ship by FILE, not by env var (E2BIG)
 
@@ -380,6 +404,41 @@ Two design points to preserve if you touch it:
   open PR for most of a day, because each owning PR carried one of the two and
   was held red by the other. `main()` keeps these violations out of `blocking`;
   a unit test pins that contract.
+- **`prod-migration-apply-hook.test.ts` lives here, not next to the hook it tests
+  (2026-08-30).** It covers `.claude/hooks/check-prod-migration-apply.sh`, which
+  blocks a PROD `apply_migration` whose `NNNN` prefix is neither on `origin/main`
+  nor in `snapshots/ledger-numeric-exemptions.json` — the same-motion rule that
+  `0401`/`0402`, `0418`/`0419` and `0425` each violated. The test is under
+  `scripts/` because vitest's include globs are `tests/**`, `src/**` and
+  `scripts/**` — **`.claude/**` is in none of them**, so a test placed beside the
+  hook would never run, which is the bullet below in a different costume. Two of
+  its cases assert WIRING rather than behavior: that `.claude/settings.json`
+  registers the hook on a matcher which actually matches a real MCP tool name,
+  and that the hook's prod project ref equals `migration-drift.yml`'s. Before
+  this hook existed, `settings.json` matched only `Bash` and
+  `Edit|Write|NotebookEdit`, so no hook had ever been offered an MCP tool call at
+  all — which is the whole reason CLAUDE.md called that path unenforceable.
+- **`ledger-orphan-prod-row` blocks only PRs that touch the migration surface
+  (2026-08-30) — do not "restore" it to blocking everywhere.** Same whole-ledger
+  evaluation, same board-wide blast radius as the bullet above, but for the class
+  that actually keeps recurring: an out-of-band prod apply reds this required
+  check on EVERY open PR, and because it is a Mergify queue gate that is a full
+  board stall. Three times in under three weeks — `0401`/`0402` (08-11),
+  `0418`/`0419` (08-27), `0425` (08-30, 36 open PRs, surfaced on #2249 which
+  touches zero migrations). The asymmetry is the point: an orphan's only remedies
+  are "merge the owning PR" or "write the exemption", and an unrelated PR's author
+  can do neither, so the gate blocked exactly the people without the remedy.
+  `partitionOrphanViolations()` now downgrades orphans to warnings when the PR
+  touches neither `supabase/migrations/**` nor
+  `snapshots/ledger-numeric-exemptions.json`. Detection is UNCHANGED — the
+  annotation is emitted on every run either way; only the blast radius shrank.
+  FAIL-CLOSED: `migration-drift.yml` sets `LEDGER_PR_MIGRATION_SURFACE=0` only for
+  a `pull_request` it successfully diffed, and the script treats every other value
+  (including unset — push-to-`main`, `workflow_dispatch`, a diff failure, an older
+  workflow revision) as blocking. Ledger CORRUPTION (non-numeric version,
+  duplicate name/version) is never downgraded: it means the ledger is untrustworthy
+  for everyone, so no PR is more responsible than another. Unit tests pin both the
+  partition and the fail-closed CLI default.
 - **A gate is only real if it is wired.** Several scripts here were written but
   never made required — check `ci.yml` (and branch protection) before assuming
   a script gates anything. `evidence-identity-report` is deliberately
@@ -630,3 +689,13 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 ---
 
 Historical change log: [./agents-changelog.md](./agents-changelog.md)
+
+## Doc Pointer Resolution (`check-doc-pointers.ts`)
+
+- **`check-doc-pointers.ts`** — every repo-relative path cited by the required-reading set must resolve. Scan set: `CLAUDE.md`, `AGENTS.md`, `.claude/skills/*/SKILL.md`, `.claude/hooks/*.sh`, `memory/**/*.md`, **every tracked nested `agents.md`**, and the **comment lines** of `.github/workflows/*.yml`. Runs as its own ci.yml job `doc-pointers` / **`Doc Pointer Resolution`**.
+- **It is NOT in `.mergify.yml merge_conditions` and `main` has no `required_status_checks`**, so today it reports without blocking a merge. Treat a red run as a real defect anyway; making it a queue gate is a separate, deliberate change.
+- **Resolution is multi-base**, most specific first: the doc's own directory → each ancestor package root (a dir with `package.json`/`pyproject.toml`) → repo root. Folder-local notes write paths the way their readers do: `packages/verifier-cli/agents.md` names its entry point relative to its own directory (the file being `packages/verifier-cli/src/cli.ts`), and `services/worker/src/api/v1/agents.md` names the org-auth guard relative to the worker package root (`services/worker/src/api/_org-auth.ts`). Repo-root-only resolution called 59 correctly-written references dead.
+- **Workflow YAML: comments only, governance prefixes only** (`memory/`, `docs/`, `.claude/`, `.github/`). A `run:` value is config, not prose, and its paths are relative to the step's `working-directory:`. Even a *comment* inherits that frame: `deploy-worker.yml` names `services/worker/src/ai/zk-proof.test.ts` in worker-relative shorthand, which is correct in context and unresolvable from the workflow file's own location. Asserting source prefixes there would be noise, so it does not.
+- **Out of scope on purpose:** `HANDOFF.md` (`## History` is an append-only dated log) and `docs/**` narrative — release runbooks, soak premortems and RC manifests carry ~120 pointers that are dead by design because the run they describe is over. Their folder-local `agents.md` files ARE scanned.
+- **Deliberately-absent paths** (negative examples, generated artifacts, a file a command writes, named planned work) go in `scripts/ci/snapshots/doc-pointer-exemptions.json` with a `reason`. `check-doc-pointers.test.ts` fails on a stale exemption (the path now resolves), a missing reason, or an exemption naming a doc outside the scan set — so the list cannot quietly grow into a bypass.
+- Tests: `check-doc-pointers.test.ts` (20 tests) — scan-set contract, the multi-base resolution rules, workflow comment-vs-config split, exemption scoping, and a live-repo ratchet asserting zero dead pointers across the whole set. That ratchet is the assertion that would have caught `memory/project_deploy_typecheck_blackout.md`, which was cited by two gate sources and three `agents.md` files while never existing in the repo.

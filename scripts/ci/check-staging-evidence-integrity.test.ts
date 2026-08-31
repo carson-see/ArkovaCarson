@@ -634,8 +634,11 @@ describe('base-drift residual-risk note is held to the same approver independenc
 // rejects only the EMPTY value, so `Human approver: NONE` — and the exact
 // spelling PR #2264 merged with, `NONE.` followed by an explanation — passed
 // the T1 gate. That field is the ONLY approval evidence T1 carries
-// (`TIER_SPECS.T1.soakHours` is 0), so a value that names no human, names the
-// agent, or names "me" left a green T1 gate proving neither soak nor approval.
+// (`TIER_SPECS.T1.soakHours` was 0 at the time; the soak half is closed now —
+// T1 requires a 2h `Soak start:`/`Soak end:` window per CLAUDE.md §1.12, which
+// is why the fixture below carries one), so a value that names no human, names
+// the agent, or names "me" left a green T1 gate proving neither soak nor
+// approval.
 describe('T1 Human approver must name a human', () => {
   const T1_FILES = ['src/components/Foo.tsx'];
 
@@ -644,6 +647,8 @@ describe('T1 Human approver must name a human', () => {
 - PR head SHA: ${HEAD}
 - Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - Health/smoke result: health ok, targeted smoke green
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
 - CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
 - Rollback plan: revert this PR and redeploy previous worker image
 - Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
