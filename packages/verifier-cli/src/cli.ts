@@ -14,8 +14,9 @@
  * Exit code 0 = VERIFIED, 1 = NOT VERIFIED, 2 = usage / input error.
  */
 
-import { readFileSync } from 'node:fs';
-import { createEsploraFetch } from '@arkova/verifier';
+import { readFileSync, realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { createEsploraFetch } from 'arkova-verifier';
 import { verifyProof } from './verify.js';
 import { renderReport } from './lib/report.js';
 import { assertIndependentEndpoint, DEFAULT_ESPLORA } from './lib/independent-endpoint.js';
@@ -154,7 +155,7 @@ function loadInputs(args: CliArgs): LoadedInputs {
 /**
  * Build the independent on-chain source from the vetted `--rpc` endpoint, or
  * undefined in `--offline` mode. Refuses an Arkova endpoint up front; the
- * on-chain confirmation itself is delegated to @arkova/verifier's
+ * on-chain confirmation itself is delegated to arkova-verifier's
  * createEsploraFetch + confirmInclusion.
  */
 function buildChain(args: CliArgs): IndependentNode | undefined {
@@ -199,9 +200,36 @@ export async function main(argv: string[]): Promise<number> {
   return report.ok ? 0 : 1;
 }
 
+/**
+ * True when this module is the process entry point (so `main()` should run),
+ * false when it is merely imported (tests, library use).
+ *
+ * `import.meta.url` is ALWAYS the realpath-resolved module URL, but
+ * `process.argv[1]` is the path exactly as invoked. npm installs a `bin` as a
+ * SYMLINK — `node_modules/.bin/arkova-verify -> ../arkova-verifier-cli/dist/cli.js`
+ * — so for every global install and every `npx` run the two differ. Comparing
+ * them unresolved makes the installed binary a silent no-op: it exits 0 having
+ * printed nothing. Resolve the entry path before comparing.
+ *
+ * `pathToFileURL` (not `new URL('file://' + p)`) because the latter mis-parses
+ * any path containing `#`, `?` or `%` — it treats them as URL syntax — and so
+ * would fail to match `import.meta.url` for a perfectly ordinary checkout path.
+ *
+ * Exported so the guard itself is testable; every other CLI test drives
+ * `main()` directly and would never exercise this.
+ */
+export function isDirectInvocation(entryPath: string | undefined, moduleUrl: string): boolean {
+  if (entryPath == null) return false;
+  try {
+    return pathToFileURL(realpathSync(entryPath)).href === moduleUrl;
+  } catch {
+    // Entry path missing/unreadable — never throw out of a module-load guard.
+    return false;
+  }
+}
+
 // Only auto-run when invoked as a script (not when imported by tests).
-const invokedDirectly =
-  process.argv[1] != null && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+const invokedDirectly = isDirectInvocation(process.argv[1], import.meta.url);
 if (invokedDirectly) {
   try {
     process.exit(await main(process.argv.slice(2)));

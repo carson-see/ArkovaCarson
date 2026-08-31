@@ -1,6 +1,6 @@
 /**
  * Conformance suite — runs every self-describing fixture through verifyProof()
- * with an OFFLINE, fixture-backed independent node (an @arkova/verifier
+ * with an OFFLINE, fixture-backed independent node (an arkova-verifier
  * IndependentNodeFetch served from canned Esplora REST responses). No network
  * is touched.
  *

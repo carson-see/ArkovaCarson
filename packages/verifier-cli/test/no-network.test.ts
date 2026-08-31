@@ -25,7 +25,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createEsploraFetch, confirmInclusion } from '@arkova/verifier';
+import { createEsploraFetch, confirmInclusion } from 'arkova-verifier';
 import { verifyProof } from '../src/verify.js';
 import { main } from '../src/cli.js';
 import {
@@ -221,13 +221,41 @@ describe('code audit — the verifier packages contain NO Arkova client or fallb
     expect(files.length).toBeGreaterThanOrEqual(8);
   });
 
+  // Defense-in-depth for a public OSS artifact: block raw-socket / DNS /
+  // subprocess modules too, not just high-level HTTP clients — a dependency
+  // opening a raw socket would escape the fetch lockdown otherwise.
+  //
+  // The sibling allowlist is NAMESPACE-scoped: `arkova-verifier` (the shared
+  // on-chain routine) is the ONE Arkova package these may import; every other
+  // `arkova*` / `@arkova/*` specifier stays blocked. The packages were renamed
+  // off the `@arkova/` scope to the unscoped `arkova-verifier` for publishing,
+  // so this guard tracks the UNSCOPED namespace — keyed on `@arkova/` it would
+  // match nothing and silently guard nothing.
+  const FORBIDDEN_IMPORT = /from\s+['"](node:(https?|net|tls|dgram|http2|dns|dns\/promises)|https?|dns|net|tls|child_process|node:child_process|axios|undici|node-fetch|got|ky|@supabase\/[^'"]*|@arkova\/[^'"]*|arkova(?!-verifier['"])[^'"]*)['"]/;
+
   it('imports no HTTP client library anywhere', () => {
-    // Defense-in-depth for a public OSS artifact: block raw-socket / DNS /
-    // subprocess modules too, not just high-level HTTP clients — a dependency
-    // opening a raw socket would escape the fetch lockdown otherwise.
-    const FORBIDDEN_IMPORT = /from\s+['"](node:(https?|net|tls|dgram|http2|dns|dns\/promises)|https?|dns|net|tls|child_process|node:child_process|axios|undici|node-fetch|got|ky|@supabase\/[^'"]*|@arkova\/(?!verifier)[^'"]*)['"]/;
     for (const file of files) {
       expect(readFileSync(file, 'utf8'), `forbidden HTTP-client import in ${file}`).not.toMatch(FORBIDDEN_IMPORT);
+    }
+  });
+
+  // Ratchet: pins what FORBIDDEN_IMPORT actually blocks. Without this, a package
+  // rename can leave the pattern keyed on a namespace nothing uses any more and
+  // the audit above passes vacuously.
+  it('the forbidden-import guard blocks the namespace it claims to', () => {
+    for (const allowed of ["from 'arkova-verifier'", "from 'node:crypto'", "from 'node:fs'"]) {
+      expect(FORBIDDEN_IMPORT.test(allowed), `${allowed} must be allowed`).toBe(false);
+    }
+    for (const blocked of [
+      "from 'arkova'",
+      "from 'arkova-mcp-server'",
+      "from 'arkova-verifier-cli'",
+      "from '@arkova/verifier'",
+      "from '@supabase/supabase-js'",
+      "from 'axios'",
+      "from 'node:net'",
+    ]) {
+      expect(FORBIDDEN_IMPORT.test(blocked), `${blocked} must be blocked`).toBe(true);
     }
   });
 
