@@ -187,17 +187,37 @@ export function stripPlatformSuffix(name: string): string {
   }
 }
 
+/**
+ * Group entries by package name. A name can legitimately appear MORE THAN ONCE:
+ * `onnxruntime-common`, `pako` and `sprintf-js` are each present at two hoisted
+ * versions in this tree. Keying a plain Map by name would silently keep only the
+ * last of each, which both hides drift on the dropped one and makes the result
+ * depend on license-checker's iteration order — an ordering nothing guarantees
+ * is identical across hosts. Hence a name -> entries[] multimap, compared as
+ * order-independent sorted sets below.
+ */
 function byName(entries: readonly NoticeLike[], skip: ReadonlySet<string>) {
-  const map = new Map<string, NoticeLike>();
+  const map = new Map<string, NoticeLike[]>();
   const skipped: string[] = [];
   for (const e of entries) {
     if (skip.has(e.name)) {
       skipped.push(e.name);
       continue;
     }
-    map.set(e.name, e);
+    const existing = map.get(e.name);
+    if (existing) existing.push(e);
+    else map.set(e.name, [e]);
   }
   return { map, skipped };
+}
+
+/** Sorted, de-duplicated projection so comparison never depends on input order. */
+function versionsOf(entries: readonly NoticeLike[]): string {
+  return [...new Set(entries.map((e) => e.version))].sort().join(', ');
+}
+
+function licensesOf(entries: readonly NoticeLike[]): string {
+  return [...new Set(entries.map((e) => e.license))].sort().join(', ');
 }
 
 export function diffNotices(args: {
@@ -216,11 +236,15 @@ export function diffNotices(args: {
   for (const [name, before] of a.map) {
     const after = b.map.get(name);
     if (!after) continue;
-    if (before.version !== after.version) {
-      changedVersions.push({ name, committed: before.version, fresh: after.version });
+    const beforeVersions = versionsOf(before);
+    const afterVersions = versionsOf(after);
+    if (beforeVersions !== afterVersions) {
+      changedVersions.push({ name, committed: beforeVersions, fresh: afterVersions });
     }
-    if (before.license !== after.license) {
-      changedLicenses.push({ name, committed: before.license, fresh: after.license });
+    const beforeLicenses = licensesOf(before);
+    const afterLicenses = licensesOf(after);
+    if (beforeLicenses !== afterLicenses) {
+      changedLicenses.push({ name, committed: beforeLicenses, fresh: afterLicenses });
     }
   }
 

@@ -138,6 +138,28 @@ describe('diffNotices', () => {
     expect(diff.changedVersions).toEqual([{ name: 'bumped', committed: '1.0.0', fresh: '2.0.0' }]);
   });
 
+  it('does not collapse a package that appears at two hoisted versions', () => {
+    // onnxruntime-common, pako and sprintf-js are each present TWICE in this
+    // tree. A name-keyed Map would keep only the last, hiding drift on the other.
+    const committed = [entry('pako', '1.0.11'), entry('pako', '2.1.0')];
+    const fresh = [entry('pako', '1.0.11'), entry('pako', '2.1.1')];
+
+    const diff = diffNotices({ committed, fresh, platformVariantNames: platform });
+
+    expect(diff.changedVersions).toEqual([
+      { name: 'pako', committed: '1.0.11, 2.1.0', fresh: '1.0.11, 2.1.1' },
+    ]);
+  });
+
+  it('compares duplicate-name versions as an order-independent set', () => {
+    // license-checker's iteration order is not guaranteed to match across hosts,
+    // so the same two versions listed in the other order must NOT read as drift.
+    const committed = [entry('pako', '2.1.0'), entry('pako', '1.0.11')];
+    const fresh = [entry('pako', '1.0.11'), entry('pako', '2.1.0')];
+
+    expect(diffNotices({ committed, fresh, platformVariantNames: platform })).toEqual(noDiff);
+  });
+
   it('catches a license change on an otherwise unchanged dependency', () => {
     const committed = [entry('relicensed', '1.0.0', 'MIT')];
     const fresh = [entry('relicensed', '1.0.0', 'BSD-3-Clause')];
