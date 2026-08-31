@@ -775,8 +775,8 @@ Prod `vzwyaatejekddvltxyye` has 118 ledger rows, head `0419`, with a genuine gap
 ## Recent migrations (0426 org_integrations.webhook_id)
 
 `0426` — `0426_org_integrations_adobe_sign_webhook_id.sql`, branch
-`claude/intelligent-sinoussi-807743` (no PR opened yet at write time). **FILE-ONLY, applied
-nowhere.** T3 (touches `supabase/migrations/`).
+`claude/intelligent-sinoussi-807743`, PR #2519 (**DRAFT — not soaked, migrations are always T3
+per CLAUDE.md §1.12**). **FILE-ONLY, applied nowhere.** T3 (touches `supabase/migrations/`).
 
 **Bug fix, not a feature add.** `services/worker/src/api/v1/webhooks/adobe-sign.ts`
 `findIntegration()` has always queried `org_integrations.webhook_id`, a column that has never
