@@ -3,6 +3,20 @@ _Last updated: 2026-08-03 (merge: PR #1944 Drive review rounds 2-3 create-then-s
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
+## 2026-08-30 — `config.ts` gains `enableDocusignSignerBackfill` (`feat/docusign-signer-backfill`, draft, T2)
+
+Gates `POST /jobs/docusign-signer-backfill` (`jobs/docusign-signer-backfill.ts` +
+`-deps.ts`), a one-time historical scan that enriches pre-existing DocuSign
+anchors — created before signer capture (PR #2474) shipped — with
+`metadata._signers`. Default false. Cross-field guard: requires
+`ENABLE_DOCUSIGN_OAUTH=true` (the backfill authenticates via the same
+refreshable OAuth connection that flag gates). OUTBOUND-only by construction —
+see `jobs/agents.md` for the critical inbound-exclusion writeup. Branched from
+`rc/docusign-bilateral-2026-08-30` (NOT `main`) because the `DocusignCapturedSigner`
+schema, `resolveDocusignEnvironment`, and `ENVELOPE_ID_METADATA_KEYS` this job
+reuses live only on that RC as of this writing (PRs #2472/#2474/#2473/#2476
+mid-T3-soak) — see the PR body for the soak-safety rationale.
+
 ## 2026-08-18 — `config.ts` gains `enablePlatformHealthDigest` (`feat/platform-admin-daily-health-digest`, draft, T2)
 
 New `boolFlag(true)` (`ENABLE_PLATFORM_HEALTH_DIGEST`) gates `jobs/platform-health-digest-cron.ts`'s

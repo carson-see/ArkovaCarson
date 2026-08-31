@@ -489,6 +489,26 @@ vi.mock('../jobs/docusign-listener-drift.js', () => ({
   reconcileListenerDrift: (...args: unknown[]) => mockReconcileListenerDrift(...args),
 }));
 
+const mockMakeDocusignSignerBackfillDeps = vi.fn(() => ({ deps: 'signer-backfill' }));
+vi.mock('../jobs/docusign-signer-backfill-deps.js', () => ({
+  makeDocusignSignerBackfillDeps: () => mockMakeDocusignSignerBackfillDeps(),
+}));
+
+const mockRunDocusignSignerBackfill = vi.fn().mockResolvedValue({
+  ok: true,
+  integrationsChecked: 1,
+  anchorsScanned: 0,
+  anchorsUpdated: 0,
+  anchorsSkippedInbound: 0,
+  anchorsSkippedNoEnvelopeId: 0,
+  anchorsSkippedNotFound: 0,
+  anchorsAlreadyEnriched: 0,
+  errors: [],
+});
+vi.mock('../jobs/docusign-signer-backfill.js', () => ({
+  runDocusignSignerBackfill: (...args: unknown[]) => mockRunDocusignSignerBackfill(...args),
+}));
+
 // PROOF-03 (SCRUM-2336): confirmation-proof backfill HTTP endpoint. Cloud
 // Scheduler hits POST /jobs/populate-confirmation-proofs because in-process
 // node-cron is dormant under Cloud Run CPU throttling (the soak proved the
@@ -598,11 +618,13 @@ describe('cron routes', () => {
       cronSecret?: string;
       cronOidcAudience?: string;
       enableProfessionalEducationSchemaReady?: boolean;
+      enableDocusignSignerBackfill?: boolean;
     };
     mutableConfig.nodeEnv = 'development';
     mutableConfig.cronSecret = 'test-cron-secret-1234';
     mutableConfig.cronOidcAudience = 'https://arkova-worker.run.app';
     mutableConfig.enableProfessionalEducationSchemaReady = true;
+    mutableConfig.enableDocusignSignerBackfill = false;
   });
 
   // ═══════════════════════════════════════
@@ -2105,6 +2127,97 @@ describe('cron routes', () => {
 
       expect(res.status).toBe(500);
       expect(res.body).toEqual(driftResult);
+    });
+  });
+
+  describe('POST /docusign-signer-backfill', () => {
+    it('is a no-op when ENABLE_DOCUSIGN_SIGNER_BACKFILL is off (default)', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-signer-backfill');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ skipped: true, reason: 'ENABLE_DOCUSIGN_SIGNER_BACKFILL disabled' });
+      expect(mockRunDocusignSignerBackfill).not.toHaveBeenCalled();
+    });
+
+    it('runs the backfill and wires production dependencies when the flag is on', async () => {
+      (config as { enableDocusignSignerBackfill?: boolean }).enableDocusignSignerBackfill = true;
+      const backfillResult = {
+        ok: true,
+        integrationsChecked: 2,
+        anchorsScanned: 5,
+        anchorsUpdated: 3,
+        anchorsSkippedInbound: 1,
+        anchorsSkippedNoEnvelopeId: 0,
+        anchorsSkippedNotFound: 1,
+        anchorsAlreadyEnriched: 0,
+        errors: [],
+      };
+      mockRunDocusignSignerBackfill.mockResolvedValueOnce(backfillResult);
+
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-signer-backfill');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(backfillResult);
+      expect(mockMakeDocusignSignerBackfillDeps).toHaveBeenCalledTimes(1);
+      expect(mockRunDocusignSignerBackfill).toHaveBeenCalledWith(
+        { deps: 'signer-backfill' },
+        { pageSize: undefined, runLimit: undefined },
+      );
+    });
+
+    it('threads page_size/run_limit query params through to the job', async () => {
+      (config as { enableDocusignSignerBackfill?: boolean }).enableDocusignSignerBackfill = true;
+
+      const app = createApp();
+      await request(app).post('/cron/docusign-signer-backfill?page_size=10&run_limit=100');
+
+      expect(mockRunDocusignSignerBackfill).toHaveBeenCalledWith(
+        { deps: 'signer-backfill' },
+        { pageSize: 10, runLimit: 100 },
+      );
+    });
+
+    it('rejects an out-of-range page_size with 400', async () => {
+      (config as { enableDocusignSignerBackfill?: boolean }).enableDocusignSignerBackfill = true;
+
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-signer-backfill?page_size=999999');
+
+      expect(res.status).toBe(400);
+      expect(mockRunDocusignSignerBackfill).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 when the backfill run reports ok:false', async () => {
+      (config as { enableDocusignSignerBackfill?: boolean }).enableDocusignSignerBackfill = true;
+      mockRunDocusignSignerBackfill.mockResolvedValueOnce({
+        ok: false,
+        integrationsChecked: 1,
+        anchorsScanned: 1,
+        anchorsUpdated: 0,
+        anchorsSkippedInbound: 0,
+        anchorsSkippedNoEnvelopeId: 0,
+        anchorsSkippedNotFound: 0,
+        anchorsAlreadyEnriched: 0,
+        errors: [{ anchor_id: 'a1', error: 'boom' }],
+      });
+
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-signer-backfill');
+
+      expect(res.status).toBe(500);
+    });
+
+    it('returns 500 when the backfill throws', async () => {
+      (config as { enableDocusignSignerBackfill?: boolean }).enableDocusignSignerBackfill = true;
+      mockRunDocusignSignerBackfill.mockRejectedValueOnce(new Error('docusign down'));
+
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-signer-backfill');
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Processing failed' });
     });
   });
 

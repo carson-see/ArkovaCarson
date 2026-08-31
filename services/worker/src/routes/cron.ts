@@ -127,6 +127,8 @@ import { pollDocusignConnectFailures } from '../jobs/docusign-connect-failures.j
 import { makeConnectFailuresDeps } from '../jobs/docusign-connect-failures-deps.js';
 import { reconcileListenerDrift } from '../jobs/docusign-listener-drift.js';
 import { makeListenerDriftDeps } from '../jobs/docusign-listener-drift-deps.js';
+import { runDocusignSignerBackfill } from '../jobs/docusign-signer-backfill.js';
+import { makeDocusignSignerBackfillDeps } from '../jobs/docusign-signer-backfill-deps.js';
 import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
@@ -139,6 +141,8 @@ import { corsMiddleware } from './middleware.js';
 
 const DocusignEnvelopeCompletedLimitSchema = z.coerce.number().int().min(1).max(100);
 const DriveFileChangedLimitSchema = z.coerce.number().int().min(1).max(100);
+const DocusignSignerBackfillPageSizeSchema = z.coerce.number().int().min(1).max(200);
+const DocusignSignerBackfillRunLimitSchema = z.coerce.number().int().min(1).max(2000);
 
 cronRouter.use(corsMiddleware);
 
@@ -2322,6 +2326,52 @@ cronRouter.post('/docusign-listener-drift', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign listener drift reconciliation failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── DocuSign signer backfill (record-detail signer rows) ───
+// Enriches PRE-EXISTING DocuSign anchors (created before signer capture
+// shipped, docusign-bilateral-2026-08 / PR #2474) with `metadata._signers` by
+// fetching each envelope's current recipients from the DocuSign eSignature
+// REST API. OUTBOUND (own-account envelopes) ONLY — see
+// jobs/docusign-signer-backfill.ts for the critical inbound exclusion.
+// Idempotent/resumable by construction: `_signers IS NULL` is the candidate
+// filter AND the watermark, so re-triggering this on demand only ever touches
+// still-unenriched anchors. Gated OFF by default via
+// ENABLE_DOCUSIGN_SIGNER_BACKFILL — this is a one-time historical scan, not a
+// launch-required path. `page_size`/`run_limit` query params allow a tighter
+// bound per invocation than the job's own defaults; omit for the defaults.
+cronRouter.post('/docusign-signer-backfill', async (req, res) => {
+  if (!config.enableDocusignSignerBackfill) {
+    res.json({ skipped: true, reason: 'ENABLE_DOCUSIGN_SIGNER_BACKFILL disabled' });
+    return;
+  }
+  try {
+    const rawPageSize = req.query.page_size;
+    const pageSizeParsed = rawPageSize === undefined ? undefined : DocusignSignerBackfillPageSizeSchema.safeParse(rawPageSize);
+    if (pageSizeParsed && !pageSizeParsed.success) {
+      res.status(400).json({ error: 'invalid page_size' });
+      return;
+    }
+    const rawRunLimit = req.query.run_limit;
+    const runLimitParsed = rawRunLimit === undefined ? undefined : DocusignSignerBackfillRunLimitSchema.safeParse(rawRunLimit);
+    if (runLimitParsed && !runLimitParsed.success) {
+      res.status(400).json({ error: 'invalid run_limit' });
+      return;
+    }
+
+    const result = await runDocusignSignerBackfill(makeDocusignSignerBackfillDeps(), {
+      pageSize: pageSizeParsed?.success ? pageSizeParsed.data : undefined,
+      runLimit: runLimitParsed?.success ? runLimitParsed.data : undefined,
+    });
+    if (!result.ok) {
+      res.status(500).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DocuSign signer backfill failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
